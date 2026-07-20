@@ -12,6 +12,15 @@ dist
 dist-ssr
 *.local
 
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -1,0 +1,49 @@
+.worldgen-screen .panel {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1rem;
+  min-width: 240px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  font-family: sans-serif;
+  border-radius: 8px;
+}
+
+.worldgen-screen .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.worldgen-screen .field-label {
+  display: flex;
+  justify-content: space-between;
+}
+
+.worldgen-screen .field-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.worldgen-screen .seed-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.worldgen-screen input[type='range'] {
+  width: 100%;
+}
+
+.worldgen-screen button {
+  padding: 0.4rem;
+  cursor: pointer;
+}
+
+.worldgen-screen [data-action='randomize-seed'] {
+  padding: 0.3rem 0.6rem;
+}
