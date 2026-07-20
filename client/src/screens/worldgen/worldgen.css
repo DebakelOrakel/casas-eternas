@@ -47,3 +47,8 @@
 .worldgen-screen [data-action='randomize-seed'] {
   padding: 0.3rem 0.6rem;
 }
+
+.worldgen-screen .plate-info {
+  font-size: 0.75rem;
+  opacity: 0.75;
+}

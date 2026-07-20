@@ -2,14 +2,17 @@ import {
   ArcRotateCamera,
   Color3,
   HemisphericLight,
+  type Mesh,
   MeshBuilder,
   PointerEventTypes,
   Scene,
   StandardMaterial,
   TransformNode,
   Vector3,
+  VertexBuffer,
 } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
+import { generatePlateWorld, nearestPlateIndex, type PlateWorld } from '../../worldgen/plates'
 import './worldgen.css'
 
 const DEFAULT_TILT_DEG = 23.5
@@ -30,6 +33,23 @@ function computeMinCameraRadius(camera: ArcRotateCamera, aspectRatio: number): n
   const distanceForWidth = PLANET_RADIUS / (coverage * Math.tan(halfHFov))
 
   return Math.max(distanceForHeight, distanceForWidth)
+}
+
+function applyPlateColoring(planet: Mesh, world: PlateWorld): void {
+  const positions = planet.getVerticesData(VertexBuffer.PositionKind)!
+  const colors = new Float32Array((positions.length / 3) * 4)
+  const point = Vector3.Zero()
+  for (let i = 0; i < positions.length; i += 3) {
+    point.set(positions[i], positions[i + 1], positions[i + 2])
+    point.normalize()
+    const [r, g, b] = world.colors[nearestPlateIndex(point, world)]
+    const base = (i / 3) * 4
+    colors[base] = r
+    colors[base + 1] = g
+    colors[base + 2] = b
+    colors[base + 3] = 1
+  }
+  planet.setVerticesData(VertexBuffer.ColorKind, colors, true)
 }
 
 export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
@@ -69,8 +89,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const planet = MeshBuilder.CreateSphere('planet', { diameter: 2, segments: 64 }, scene)
   planet.parent = spinPivot
   const material = new StandardMaterial('planetMaterial', scene)
-  material.diffuseColor = new Color3(0.2, 0.4, 0.8)
-  material.wireframe = true
+  material.diffuseColor = new Color3(1, 1, 1)
+  material.specularColor = new Color3(0, 0, 0)
   planet.material = material
 
   const poleAxis = MeshBuilder.CreateCylinder('poleAxis', { diameter: 0.04, height: 2.6, tessellation: 12 }, scene)
@@ -115,6 +135,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       <label class="field">
         <span class="field-label">Land / ocean ratio <span data-value="ratio">35%</span></span>
         <input type="range" class="ratio-input" min="0" max="1" step="0.01" value="0.35" />
+        <span class="plate-info" data-value="plate-info"></span>
       </label>
 
       <label class="field">
@@ -127,23 +148,37 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     </div>
   `
 
+  const plateInfo = root.querySelector<HTMLElement>('[data-value="plate-info"]')!
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
-  seedInput.value = randomSeed()
-  root.querySelector('[data-action="randomize-seed"]')!.addEventListener('click', () => {
-    seedInput.value = randomSeed()
-  })
-
   const continentsInput = root.querySelector<HTMLInputElement>('.continents-input')!
   const continentsValue = root.querySelector<HTMLElement>('[data-value="continents"]')!
-  continentsInput.addEventListener('input', () => {
-    continentsValue.textContent = continentsInput.value
-  })
-
   const ratioInput = root.querySelector<HTMLInputElement>('.ratio-input')!
   const ratioValue = root.querySelector<HTMLElement>('[data-value="ratio"]')!
+
+  const regenerateWorld = () => {
+    const world = generatePlateWorld(seedInput.value, Number(continentsInput.value), Number(ratioInput.value))
+    applyPlateColoring(planet, world)
+    plateInfo.textContent = `${world.totalCount} plates total — ${continentsInput.value} continental, ${world.oceanicCount} oceanic`
+  }
+
+  seedInput.value = randomSeed()
+  seedInput.addEventListener('input', regenerateWorld)
+  root.querySelector('[data-action="randomize-seed"]')!.addEventListener('click', () => {
+    seedInput.value = randomSeed()
+    regenerateWorld()
+  })
+
+  continentsInput.addEventListener('input', () => {
+    continentsValue.textContent = continentsInput.value
+    regenerateWorld()
+  })
+
   ratioInput.addEventListener('input', () => {
     ratioValue.textContent = `${Math.round(Number(ratioInput.value) * 100)}%`
+    regenerateWorld()
   })
+
+  regenerateWorld()
 
   const tiltInput = root.querySelector<HTMLInputElement>('.tilt-input')!
   const tiltValue = root.querySelector<HTMLElement>('[data-value="tilt"]')!
