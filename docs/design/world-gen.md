@@ -34,15 +34,28 @@ and the architecture follows that split rather than a blanket
   world, not just store an opaque blob the client uploaded), and the
   client needs it for rendering.
 
-What gets uploaded to the server at world-creation time is the *compact*
-result of the simulation (seed plus the final boundary-curve state from
-A3), not a baked full-resolution raster — small enough to transfer
-outright, and cheap plain arithmetic to query, no shader or texture
-lookup required. This is also why A3 (boundary-curve-local state) matters
-architecturally beyond just realism: a full-surface raster (A1) would
-fight this requirement no matter how fast it was to produce, since the
-problem is storing/querying it everywhere it's needed — including a
+Geography is static once world creation stops — gameplay doesn't need
+plates to keep drifting, so nothing at query time needs kinematics,
+rotation math, or an ongoing simulation step. What gets uploaded to the
+server at world-creation time is a *frozen snapshot*, not an opaque blob
+and not an ongoing state to keep advancing: the final plate list
+(identity, position, type — Euler-pole axis/speed no longer matter once
+nothing moves) plus the final terrain-feature list from A3's
+boundary-curve-local state (position, accumulated thickness, which side
+subducts, and which plate each feature belongs to). That's small enough
+to transfer outright, and cheap plain arithmetic to query, no shader or
+texture lookup required. This is also why A3 (boundary-curve-local state)
+matters architecturally beyond just realism: a full-surface raster (A1)
+would fight this requirement no matter how fast it was to produce, since
+the problem is storing/querying it everywhere it's needed — including a
 server with no GPU — not how fast it was to compute in the first place.
+
+Not part of that frozen snapshot: the first working implementation
+(`client/src/worldgen/crust.ts`) also keeps a dense fixed sample grid
+purely to *detect* new boundary activity while world creation is actively
+running. That grid is scratch state for the world-creation phase only —
+once creation stops, nothing downstream needs it, only the terrain
+features it fed do.
 
 Not yet decided: how the shared field-evaluation logic gets implemented
 on both sides — reimplement the same (small, pure-function) evaluation in
@@ -70,9 +83,31 @@ noting explicitly that this didn't reopen the A3 decision:
   epoch without maintaining a persistent accumulator texture the way A1
   would need.
 
+## Rendering pipeline notes
+
+From building the live world-creation preview
+(`client/src/screens/worldgen/WorldGenScreen.ts`):
+
+- **Lighting matters more than mesh resolution for perceived detail.** A
+  single straight-overhead `HemisphericLight` has no direction to rake
+  across displaced terrain, so real geometric detail can be present and
+  still look flat. A low-angle `DirectionalLight` plus a small, tight
+  specular term revealed the same underlying data far more clearly, at
+  zero simulation cost — worth reaching for before spending budget on
+  higher mesh or field resolution.
+- **Mesh resolution trades directly against the epoch-step animation
+  budget**, since every vertex costs a plate lookup plus an elevation
+  query: measured cost scales roughly with vertex count, and roughly
+  quadruples if mesh resolution and terrain-feature/field resolution both
+  double together. No spatial acceleration structure exists yet for
+  these per-vertex nearest-neighbor queries (plain O(n) scans throughout)
+  — fine at current scale (dozens of plates, low thousands of terrain
+  features), but the thing to build first if resolution needs to go
+  substantially higher than it is now.
+
 ## Open threads for later
 
 - Shared field-evaluation implementation strategy (duplicate vs. WASM) —
   not decided.
-- Rivers/lakes, climate/biomes, and rendering-pipeline design notes to be
-  added here as they firm up.
+- Rivers/lakes and climate/biomes design notes to be added here as they
+  firm up.

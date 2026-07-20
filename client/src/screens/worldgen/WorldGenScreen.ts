@@ -1,6 +1,7 @@
 import {
   ArcRotateCamera,
   Color3,
+  DirectionalLight,
   HemisphericLight,
   type Mesh,
   MeshBuilder,
@@ -10,15 +11,35 @@ import {
   TransformNode,
   Vector3,
   VertexBuffer,
+  VertexData,
 } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
-import { generatePlateWorld, nearestPlateIndex, type PlateWorld } from '../../worldgen/plates'
+import {
+  advanceCrustState,
+  advanceTerrainFeatures,
+  applyRiftAndMergeEvents,
+  createCrustState,
+  elevationAt,
+  type CrustState,
+} from '../../worldgen/crust'
+import { generatePlateWorld, nearestPlateIndex, stepPlateEpoch, type PlateWorld } from '../../worldgen/plates'
 import './worldgen.css'
 
 const DEFAULT_TILT_DEG = 23.5
 const PLANET_RADIUS = 1
 const MIN_SCREEN_MARGIN = 0.1
 const SPIN_SENSITIVITY = 0.01 // radians per pixel of drag
+const DEFAULT_EPOCHS_PER_CLICK = 10
+// Measured render cost at segments=96 (~245ms) comfortably fits this,
+// with margin for the rest of renderWorld's per-frame work.
+const EPOCH_STEP_DELAY_MS = 400
+
+// Real elevation differences are a tiny fraction of a planet's radius —
+// invisible at this scale — so uplift is deliberately exaggerated to read
+// as actual terrain rather than a flat-colored sphere.
+const ELEVATION_DISPLACEMENT_SCALE = 0.2
+const MOUNTAIN_TINT: [number, number, number] = [0.85, 0.8, 0.72]
+const RIFT_TINT: [number, number, number] = [0.05, 0.15, 0.35]
 
 function randomSeed(): string {
   return Math.floor(Math.random() * 1_000_000_000).toString()
@@ -35,21 +56,65 @@ function computeMinCameraRadius(camera: ArcRotateCamera, aspectRatio: number): n
   return Math.max(distanceForHeight, distanceForWidth)
 }
 
-function applyPlateColoring(planet: Mesh, world: PlateWorld): void {
-  const positions = planet.getVerticesData(VertexBuffer.PositionKind)!
-  const colors = new Float32Array((positions.length / 3) * 4)
-  const point = Vector3.Zero()
-  for (let i = 0; i < positions.length; i += 3) {
-    point.set(positions[i], positions[i + 1], positions[i + 2])
-    point.normalize()
-    const [r, g, b] = world.colors[nearestPlateIndex(point, world)]
-    const base = (i / 3) * 4
-    colors[base] = r
-    colors[base + 1] = g
-    colors[base + 2] = b
-    colors[base + 3] = 1
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t
+}
+
+function elevationTint(base: [number, number, number], elevation: number): [number, number, number] {
+  const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
+  const uplift = clamp01((elevation - 0.05) / 0.3)
+  const depression = clamp01((-elevation - 0.05) / 0.15)
+  let [r, g, b] = base
+  if (uplift > 0) {
+    r = lerp(r, MOUNTAIN_TINT[0], uplift)
+    g = lerp(g, MOUNTAIN_TINT[1], uplift)
+    b = lerp(b, MOUNTAIN_TINT[2], uplift)
   }
+  if (depression > 0) {
+    r = lerp(r, RIFT_TINT[0], depression)
+    g = lerp(g, RIFT_TINT[1], depression)
+    b = lerp(b, RIFT_TINT[2], depression)
+  }
+  return [r, g, b]
+}
+
+// basePositions are the pristine unit-sphere vertex positions captured
+// once at mesh creation — every render recomputes displacement from that
+// fixed base rather than compounding onto the previous frame's already
+// displaced geometry.
+function renderWorld(planet: Mesh, basePositions: Float32Array, world: PlateWorld, crust: CrustState): void {
+  const vertexCount = basePositions.length / 3
+  const positions = new Float32Array(basePositions.length)
+  const colors = new Float32Array(vertexCount * 4)
+  const point = Vector3.Zero()
+
+  for (let i = 0; i < vertexCount; i++) {
+    const base = i * 3
+    point.set(basePositions[base], basePositions[base + 1], basePositions[base + 2])
+    point.normalize()
+
+    const plateIndex = nearestPlateIndex(point, world)
+    const elevation = elevationAt(point, world.types[plateIndex], world.ids[plateIndex], crust)
+    const radius = 1 + elevation * ELEVATION_DISPLACEMENT_SCALE
+
+    positions[base] = point.x * radius
+    positions[base + 1] = point.y * radius
+    positions[base + 2] = point.z * radius
+
+    const [r, g, b] = elevationTint(world.colors[plateIndex], elevation)
+    const colorBase = i * 4
+    colors[colorBase] = r
+    colors[colorBase + 1] = g
+    colors[colorBase + 2] = b
+    colors[colorBase + 3] = 1
+  }
+
+  planet.setVerticesData(VertexBuffer.PositionKind, positions, true)
   planet.setVerticesData(VertexBuffer.ColorKind, colors, true)
+
+  const normals = new Float32Array(positions.length)
+  VertexData.ComputeNormals(positions, planet.getIndices()!, normals)
+  planet.setVerticesData(VertexBuffer.NormalKind, normals, true)
 }
 
 export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
@@ -84,14 +149,25 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   camera.radius = camera.lowerRadiusLimit!
   window.addEventListener('resize', updateMinZoom)
 
-  new HemisphericLight('light', new Vector3(0, 1, 0), scene)
+  // A straight-overhead HemisphericLight has no direction to rake across a
+  // bump, and specular was fully off — so the real vertex displacement in
+  // renderWorld had nothing to actually reveal it as shape. A low-angle
+  // directional "sun" plus a small, tight specular gives terrain visible
+  // highlight/shadow contrast; the weak hemispheric stays only as an
+  // ambient fill so the unlit side isn't pure black.
+  const sunLight = new DirectionalLight('sun', new Vector3(0.5, -0.5, 0.6), scene)
+  sunLight.intensity = 1.1
+  const fillLight = new HemisphericLight('fill', new Vector3(0, 1, 0), scene)
+  fillLight.intensity = 0.35
 
-  const planet = MeshBuilder.CreateSphere('planet', { diameter: 2, segments: 64 }, scene)
+  const planet = MeshBuilder.CreateSphere('planet', { diameter: 2, segments: 96 }, scene)
   planet.parent = spinPivot
   const material = new StandardMaterial('planetMaterial', scene)
   material.diffuseColor = new Color3(1, 1, 1)
-  material.specularColor = new Color3(0, 0, 0)
+  material.specularColor = new Color3(0.15, 0.15, 0.15)
+  material.specularPower = 48
   planet.material = material
+  const basePositions = Float32Array.from(planet.getVerticesData(VertexBuffer.PositionKind)!)
 
   const poleAxis = MeshBuilder.CreateCylinder('poleAxis', { diameter: 0.04, height: 2.6, tessellation: 12 }, scene)
   poleAxis.parent = tiltPivot
@@ -143,6 +219,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <input type="range" class="tilt-input" min="10" max="40" step="0.5" value="${DEFAULT_TILT_DEG}" />
       </label>
 
+      <label class="field">
+        <span class="field-label">Epochs per click</span>
+        <input type="number" class="epochs-input" min="1" max="100" step="1" value="${DEFAULT_EPOCHS_PER_CLICK}" />
+      </label>
+
       <button data-action="run">Run Epoch</button>
       <button data-action="back">Back</button>
     </div>
@@ -154,16 +235,60 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const continentsValue = root.querySelector<HTMLElement>('[data-value="continents"]')!
   const ratioInput = root.querySelector<HTMLInputElement>('.ratio-input')!
   const ratioValue = root.querySelector<HTMLElement>('[data-value="ratio"]')!
+  const epochsInput = root.querySelector<HTMLInputElement>('.epochs-input')!
+  const randomizeButton = root.querySelector<HTMLButtonElement>('[data-action="randomize-seed"]')!
+  const runButton = root.querySelector<HTMLButtonElement>('[data-action="run"]')!
+
+  let world: PlateWorld
+  let crust: CrustState
+  let epochCount = 0
+  let disposed = false
+  let pendingTimeoutId: ReturnType<typeof setTimeout> | undefined
+
+  const setControlsDisabled = (disabled: boolean) => {
+    seedInput.disabled = disabled
+    continentsInput.disabled = disabled
+    ratioInput.disabled = disabled
+    epochsInput.disabled = disabled
+    randomizeButton.disabled = disabled
+    runButton.disabled = disabled
+  }
+
+  const cancelEpochRun = () => {
+    if (pendingTimeoutId !== undefined) {
+      clearTimeout(pendingTimeoutId)
+      pendingTimeoutId = undefined
+      setControlsDisabled(false)
+      runButton.textContent = 'Run Epoch'
+    }
+  }
+
+  const updateInfo = () => {
+    // Continental/oceanic counts are read live from world, not the slider
+    // — under rift/merge, they drift from the generation-time parameter
+    // (rifts add oceanic plates, merges remove continental ones).
+    const continentalCount = world.totalCount - world.oceanicCount
+    const oldestPlateAge = Math.max(...world.ages)
+    plateInfo.textContent =
+      `${world.totalCount} plates total — ${continentalCount} continental, ${world.oceanicCount} oceanic` +
+      ` · epoch ${epochCount} · oldest plate ${oldestPlateAge}`
+  }
 
   const regenerateWorld = () => {
-    const world = generatePlateWorld(seedInput.value, Number(continentsInput.value), Number(ratioInput.value))
-    applyPlateColoring(planet, world)
-    plateInfo.textContent = `${world.totalCount} plates total — ${continentsInput.value} continental, ${world.oceanicCount} oceanic`
+    cancelEpochRun()
+    const seedText = seedInput.value
+    const continentCount = Number(continentsInput.value)
+    const ratio = Number(ratioInput.value)
+    world = generatePlateWorld(seedText, continentCount, ratio)
+    crust = createCrustState(seedText, continentCount, ratio, world.totalCount)
+    epochCount = 0
+    renderWorld(planet, basePositions, world, crust)
+    updateInfo()
   }
 
   seedInput.value = randomSeed()
   seedInput.addEventListener('input', regenerateWorld)
-  root.querySelector('[data-action="randomize-seed"]')!.addEventListener('click', () => {
+  randomizeButton.addEventListener('click', () => {
     seedInput.value = randomSeed()
     regenerateWorld()
   })
@@ -188,9 +313,31 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     tiltPivot.rotation.z = (deg * Math.PI) / 180
   })
 
-  root.querySelector('[data-action="run"]')!.addEventListener('click', () => {
-    // TODO: step the worldgen/ simulation module by one epoch and refresh the visualization
+  const runEpochs = (remaining: number, total: number) => {
+    if (disposed || remaining <= 0) {
+      pendingTimeoutId = undefined
+      setControlsDisabled(false)
+      runButton.textContent = 'Run Epoch'
+      return
+    }
+    stepPlateEpoch(world)
+    advanceTerrainFeatures(crust, world)
+    advanceCrustState(crust, world)
+    applyRiftAndMergeEvents(crust, world)
+    epochCount += 1
+    renderWorld(planet, basePositions, world, crust)
+    updateInfo()
+    runButton.textContent = `Running… (${total - remaining + 1}/${total})`
+    pendingTimeoutId = setTimeout(() => runEpochs(remaining - 1, total), EPOCH_STEP_DELAY_MS)
+  }
+
+  runButton.addEventListener('click', () => {
+    if (pendingTimeoutId !== undefined) return
+    const epochsPerClick = Math.max(1, Math.round(Number(epochsInput.value) || DEFAULT_EPOCHS_PER_CLICK))
+    setControlsDisabled(true)
+    runEpochs(epochsPerClick, epochsPerClick)
   })
+
   root.querySelector('[data-action="back"]')!.addEventListener('click', () => {
     ctx.goTo('title')
   })
@@ -199,6 +346,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   return {
     scene,
     dispose() {
+      disposed = true
+      cancelEpochRun()
       window.removeEventListener('resize', updateMinZoom)
       scene.dispose()
     },

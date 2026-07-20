@@ -140,9 +140,45 @@ changing mid-simulation as it splits.
     state (subduction/rift accelerate, collision decelerates/locks); full
     mantle-convection-driven drift remains a further-out stretch item.
 
-Follow-up decisions (not blocking this doc): exact area-weighting
-mechanism for the land/ocean ratio, exact drift-update and age-tracking
-rules, rift/merge mechanics and epoch stopping condition for B2. Boundary
-convergence/elevation modeling built on this kinematic model is decided
-separately in
+## Follow-up resolutions
+
+Status of the follow-ups named above, as of the first working
+implementation (`client/src/worldgen/plates.ts`, `crust.ts`):
+
+- **Area-weighting mechanism — resolved.** Continental seeds get an
+  additive weight in the Voronoi cost function, calibrated at generation
+  via binary search against sampled points to hit the target ratio. A
+  single weight calibrated once and left alone drifted badly over long
+  runs — one run swung from 36% land down to 9% purely from plates
+  rotating into a crowded configuration, no tectonic event involved — so
+  each continental plate's weight is now also nudged every epoch toward
+  its fair share of the target ratio (`adaptContinentalWeights`),
+  reusing the boundary-detection pass's own sampling as the area signal
+  rather than a separate measurement.
+- **Age-tracking rules — resolved.** Age increments every epoch and
+  resets to 0 for a plate born from a rift, driving both effects named
+  above: the oceanic-oceanic subduction tiebreak (older/denser subducts)
+  and mountain character (younger collisions build faster; the
+  multiplier decays by half every ~150 epochs).
+- **Rift/merge mechanics — resolved**, mechanism and thresholds both.
+  See [plate-tectonics-simulation.md](./plate-tectonics-simulation.md)
+  for why the exact threshold values are a tuning detail rather than a
+  design fork.
+- **Drift-update rules — not resolved, and this is a real gap, not just
+  an unaddressed followup.** The Decision above states drift should
+  "evolve per epoch based on current boundary state." The current
+  implementation never does this: every plate's Euler-pole axis and
+  angular speed are fixed at spawn for its entire life. Full
+  mantle-convection-driven drift was already flagged above as a
+  further-out stretch item, but even the lighter reactive version decided
+  here (subduction/rift accelerates, active collision decelerates/locks)
+  hasn't been built.
+- **Epoch stopping condition — still open.** Not addressed. May not
+  need one, since world creation is user-driven (click to advance a
+  chosen number of epochs) rather than something that runs
+  unsupervised — worth confirming that's actually sufficient rather than
+  assuming it, if unattended/batch world creation ever becomes a goal.
+
+Boundary convergence/elevation modeling built on this kinematic model is
+decided separately in
 [plate-tectonics-simulation.md](./plate-tectonics-simulation.md).

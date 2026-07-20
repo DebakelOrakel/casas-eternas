@@ -1,10 +1,13 @@
 import { Vector3 } from '@babylonjs/core'
 import { hashSeedString, mulberry32 } from './rng'
+import { angularDistance, fibonacciSpherePoints, randomUnitVector, rotateAroundAxis, shuffleIndices } from './sphere'
 
 // Spatial substrate + initial per-plate parameters, per
 // docs/decisions/plate-tectonics-initial-state.md (A2: continuous
-// unit-sphere points, geodesic-distance Voronoi). This module only builds
-// the *initial* state — no epoch stepping.
+// unit-sphere points, geodesic-distance Voronoi) and
+// docs/decisions/plate-tectonics-simulation.md (kinematics: Euler-pole
+// rotation per plate). generatePlateWorld builds the initial state;
+// stepPlateEpoch advances the kinematics by one epoch.
 
 export type PlateType = 'continental' | 'oceanic'
 
@@ -13,6 +16,18 @@ export interface PlateWorld {
   types: PlateType[]
   weights: number[]
   colors: Array<[number, number, number]>
+  eulerAxes: Vector3[]
+  angularSpeeds: number[]
+  // Epochs since this plate was born — 0 for everything spawned by
+  // generatePlateWorld, since B2 rift/merge (crust.ts) is what gives later
+  // plates a younger age than the ones they split from.
+  ages: number[]
+  // Stable identity, independent of array position. removePlate (a merge)
+  // shifts every later plate's index down by one, so crust.ts can't hold
+  // onto a plate *index* across epochs to remember "which side subducts"
+  // at a boundary — it holds this id instead.
+  ids: number[]
+  nextId: number
   totalCount: number
   oceanicCount: number
 }
@@ -31,48 +46,10 @@ const CONTINENTAL_BASE: [number, number, number] = [0.42, 0.5, 0.27]
 const OCEANIC_BASE: [number, number, number] = [0.11, 0.33, 0.62]
 const COLOR_JITTER = 0.08
 
-function randomUnitVector(rng: () => number): Vector3 {
-  const z = rng() * 2 - 1
-  const theta = rng() * Math.PI * 2
-  const radius = Math.sqrt(Math.max(0, 1 - z * z))
-  return new Vector3(radius * Math.cos(theta), radius * Math.sin(theta), z)
-}
-
-function fibonacciSpherePoints(count: number, phaseOffset: number): Vector3[] {
-  const goldenAngle = Math.PI * (3 - Math.sqrt(5))
-  const points: Vector3[] = []
-  for (let i = 0; i < count; i++) {
-    const y = count === 1 ? 0 : 1 - (2 * i) / (count - 1)
-    const radiusAtY = Math.sqrt(Math.max(0, 1 - y * y))
-    const theta = goldenAngle * i + phaseOffset
-    points.push(new Vector3(Math.cos(theta) * radiusAtY, y, Math.sin(theta) * radiusAtY))
-  }
-  return points
-}
-
-function rotateAroundAxis(point: Vector3, axis: Vector3, angle: number): Vector3 {
-  const cos = Math.cos(angle)
-  const sin = Math.sin(angle)
-  const dot = Vector3.Dot(axis, point)
-  const cross = Vector3.Cross(axis, point)
-  return point.scale(cos).add(cross.scale(sin)).add(axis.scale(dot * (1 - cos)))
-}
-
-function angularDistance(a: Vector3, b: Vector3): number {
-  const dot = Math.min(1, Math.max(-1, Vector3.Dot(a, b)))
-  return Math.acos(dot)
-}
-
-function shuffleIndices(count: number, rng: () => number): number[] {
-  const indices = Array.from({ length: count }, (_, i) => i)
-  for (let i = count - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1))
-    const tmp = indices[i]
-    indices[i] = indices[j]
-    indices[j] = tmp
-  }
-  return indices
-}
+// Chosen so ~10 epochs of drift reads as gradual movement rather than a
+// jump cut or no visible change at all.
+const MIN_ANGULAR_SPEED_DEG = 0.3
+const MAX_ANGULAR_SPEED_DEG = 2
 
 function continentalAreaFraction(
   seeds: Vector3[],
@@ -126,6 +103,19 @@ function jitterColor(base: [number, number, number], amount: number, rng: () => 
   return [clamp01(base[0] + jitter()), clamp01(base[1] + jitter()), clamp01(base[2] + jitter())]
 }
 
+export function createPlateColor(type: PlateType, rng: () => number): [number, number, number] {
+  return jitterColor(type === 'continental' ? CONTINENTAL_BASE : OCEANIC_BASE, COLOR_JITTER, rng)
+}
+
+// Used to give a rift-spawned plate (crust.ts) the same kind of kinematics
+// a plate would get at world generation, without reworking generatePlateWorld's
+// own draw order below.
+export function randomEulerKinematics(rng: () => number): { axis: Vector3; angularSpeed: number } {
+  const axis = randomUnitVector(rng)
+  const degreesPerEpoch = MIN_ANGULAR_SPEED_DEG + rng() * (MAX_ANGULAR_SPEED_DEG - MIN_ANGULAR_SPEED_DEG)
+  return { axis, angularSpeed: (degreesPerEpoch * Math.PI) / 180 }
+}
+
 export function generatePlateWorld(seedText: string, continentCount: number, landOceanRatio: number): PlateWorld {
   const rng = mulberry32(hashSeedString(seedText))
 
@@ -151,9 +141,65 @@ export function generatePlateWorld(seedText: string, continentCount: number, lan
 
   const continentalWeight = calibrateContinentalWeight(seeds, types, landOceanRatio, rng)
   const weights = types.map((type) => (type === 'continental' ? continentalWeight : 0))
-  const colors = types.map((type) => jitterColor(type === 'continental' ? CONTINENTAL_BASE : OCEANIC_BASE, COLOR_JITTER, rng))
+  const colors = types.map((type) => createPlateColor(type, rng))
 
-  return { seeds, types, weights, colors, totalCount, oceanicCount }
+  // Euler-pole kinematics per docs/decisions/plate-tectonics-simulation.md:
+  // rigid rotation about a random axis, not a translation vector.
+  const eulerAxes = seeds.map(() => randomUnitVector(rng))
+  const angularSpeeds = seeds.map(() => {
+    const degreesPerEpoch = MIN_ANGULAR_SPEED_DEG + rng() * (MAX_ANGULAR_SPEED_DEG - MIN_ANGULAR_SPEED_DEG)
+    return (degreesPerEpoch * Math.PI) / 180
+  })
+  const ages = new Array(totalCount).fill(0)
+  const ids = Array.from({ length: totalCount }, (_, i) => i)
+
+  return { seeds, types, weights, colors, eulerAxes, angularSpeeds, ages, ids, nextId: totalCount, totalCount, oceanicCount }
+}
+
+export function stepPlateEpoch(world: PlateWorld): void {
+  for (let i = 0; i < world.seeds.length; i++) {
+    world.seeds[i] = rotateAroundAxis(world.seeds[i], world.eulerAxes[i], world.angularSpeeds[i])
+    world.ages[i] += 1
+  }
+}
+
+// Rift/merge (crust.ts) are threshold crossings on the crust-curve state,
+// per docs/decisions/plate-tectonics-simulation.md — these two just keep
+// PlateWorld's parallel arrays (and the derived counts) in sync with that.
+export function addPlate(
+  world: PlateWorld,
+  seed: Vector3,
+  type: PlateType,
+  weight: number,
+  color: [number, number, number],
+  eulerAxis: Vector3,
+  angularSpeed: number,
+): void {
+  world.seeds.push(seed)
+  world.types.push(type)
+  world.weights.push(weight)
+  world.colors.push(color)
+  world.eulerAxes.push(eulerAxis)
+  world.angularSpeeds.push(angularSpeed)
+  world.ages.push(0)
+  world.ids.push(world.nextId)
+  world.nextId += 1
+  world.totalCount += 1
+  if (type === 'oceanic') world.oceanicCount += 1
+}
+
+export function removePlate(world: PlateWorld, index: number): void {
+  const removedType = world.types[index]
+  world.seeds.splice(index, 1)
+  world.types.splice(index, 1)
+  world.weights.splice(index, 1)
+  world.colors.splice(index, 1)
+  world.eulerAxes.splice(index, 1)
+  world.angularSpeeds.splice(index, 1)
+  world.ages.splice(index, 1)
+  world.ids.splice(index, 1)
+  world.totalCount -= 1
+  if (removedType === 'oceanic') world.oceanicCount -= 1
 }
 
 export function nearestPlateIndex(point: Vector3, world: PlateWorld): number {
@@ -167,4 +213,34 @@ export function nearestPlateIndex(point: Vector3, world: PlateWorld): number {
     }
   }
   return bestIndex
+}
+
+export interface NearestPlates {
+  first: number
+  firstCost: number
+  second: number
+  secondCost: number
+}
+
+// Used to detect points sitting near a plate boundary (small gap between
+// the nearest and second-nearest plate) for the crustal-thickness
+// accumulation in crust.ts.
+export function nearestTwoPlateIndices(point: Vector3, world: PlateWorld): NearestPlates {
+  let first = 0
+  let firstCost = Infinity
+  let second = 0
+  let secondCost = Infinity
+  for (let i = 0; i < world.seeds.length; i++) {
+    const cost = angularDistance(point, world.seeds[i]) - world.weights[i]
+    if (cost < firstCost) {
+      second = first
+      secondCost = firstCost
+      first = i
+      firstCost = cost
+    } else if (cost < secondCost) {
+      second = i
+      secondCost = cost
+    }
+  }
+  return { first, firstCost, second, secondCost }
 }
