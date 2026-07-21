@@ -1,4 +1,5 @@
 import { Vector3 } from '@babylonjs/core'
+import { buildCoastlineNoiseField, type CoastlineNoiseField } from './coastlineNoise'
 import { hashSeedString, mulberry32 } from './rng'
 import {
   addPlate,
@@ -106,6 +107,12 @@ export interface CrustState {
   // from 36% land down to 9% purely from plates randomly drifting into
   // crowded configurations, with no tectonic event involved).
   targetLandOceanRatio: number
+  // Fixed once at generation (see coastlineNoise.ts) so a given seed's
+  // coastline wobble stays the same across every epoch's texture redraw
+  // — regenerating this per redraw would make coastlines visibly
+  // flicker/shift every epoch even though the underlying geography
+  // hadn't actually changed.
+  coastlineNoise: CoastlineNoiseField
 }
 
 // Spacing here (~sqrt(4*PI/count) radians) is what limits how finely
@@ -128,6 +135,18 @@ const UPLIFT_STEP_SCALE = 6
 // a boundary stops being active, instead of holding its last value
 // forever.
 const EROSION_RELAXATION_RATE = 0.03
+// Exponential decay never actually reaches zero, so without a floor an
+// orphaned feature (its boundary long since moved elsewhere, or gone
+// quiet) lingers indefinitely at a tiny-but-nonzero thickness — small
+// enough to look negligible but still enough to flip elevation's sign
+// within its own falloff radius against the (already small) base
+// elevation below, showing up as a spurious little coastline ring with
+// no relation to any real, currently active boundary. Confirmed directly
+// via saved checkpoint renders: these rings were scattered across both
+// land and ocean and grew more numerous over a run, tracking total
+// feature count rather than any actual boundary activity. Below this
+// magnitude a feature is pruned outright instead of kept shrinking.
+const NEGLIGIBLE_FEATURE_THICKNESS = 0.05
 
 const CONTINENTAL_BASE_ELEVATION = 0.03
 const OCEANIC_BASE_ELEVATION = -0.05
@@ -216,6 +235,12 @@ export function createCrustState(
     rotateAroundAxis(point, axis, angle),
   )
   const averageSpacing = Math.sqrt((4 * Math.PI) / CRUST_POINT_COUNT)
+  // Warp amplitude relative to average *plate* spacing (not the crust
+  // detection grid's much finer spacing above) — coastline wobble should
+  // scale with how big continents actually are, not with detection-grid
+  // resolution.
+  const averagePlateSpacing = Math.sqrt((4 * Math.PI) / initialTotalPlateCount)
+  const coastlineNoise = buildCoastlineNoiseField(rng, averagePlateSpacing * 0.16)
   return {
     points,
     thickness: new Float32Array(CRUST_POINT_COUNT),
@@ -227,6 +252,7 @@ export function createCrustState(
     rng,
     terrainFeatures: [],
     targetLandOceanRatio: landOceanRatio,
+    coastlineNoise,
   }
 }
 
@@ -317,10 +343,13 @@ export function advanceCrustState(crust: CrustState, world: PlateWorld): void {
 
   // Erosion applies to the actual terrain material now, wherever its
   // plate has carried it — not to a fixed location the plate may have
-  // long since drifted away from.
-  for (const feature of crust.terrainFeatures) {
+  // long since drifted away from. Features eroded down to a negligible
+  // thickness are pruned outright — see NEGLIGIBLE_FEATURE_THICKNESS for
+  // why leaving them to shrink forever isn't enough on its own.
+  crust.terrainFeatures = crust.terrainFeatures.filter((feature) => {
     feature.thickness *= 1 - EROSION_RELAXATION_RATE
-  }
+    return Math.abs(feature.thickness) >= NEGLIGIBLE_FEATURE_THICKNESS
+  })
 
   adaptContinentalWeights(world, areaHits, crust.points.length, crust.targetLandOceanRatio)
 }
@@ -417,6 +446,89 @@ export function applyRiftAndMergeEvents(crust: CrustState, world: PlateWorld): v
   }
 }
 
+// elevationAt used to scan the *entire* terrainFeatures list for every
+// query — fine at mesh-vertex counts (~19k), but measured directly: at
+// texture-generation counts (hundreds of thousands to millions of
+// texels), that scan dominates completely (2048x1024 measured at ~15s
+// for one texture). This buckets features into a coarse 3D grid so a
+// query only needs to check nearby cells instead of the whole list.
+//
+// First version used string cell keys (`${cx},${cy},${cz}`) and gave
+// *zero* measured speedup — confirmed directly: 125 string-keyed Map
+// lookups over 2M iterations cost ~9.2s versus ~0.6s for the same
+// lookups with numeric keys, so the string construction/hashing was
+// eating the entire saving from not scanning the full feature list.
+// Numeric keys below fix that.
+export interface TerrainFeatureIndex {
+  cellSize: number
+  buckets: Map<number, number[]>
+}
+
+// Packs (cx, cy, cz) into one integer key. Offset/range comfortably
+// covers even a generous feature count (cellSize shrinks as features
+// grow, per buildTerrainFeatureIndex, so cell coordinates grow too) —
+// range 1024 supports cell coordinates up to ±512, far beyond what any
+// realistic feature count needs, well inside JS's safe integer range.
+const CELL_KEY_OFFSET = 512
+const CELL_KEY_RANGE = 1024
+
+function cellKey(cx: number, cy: number, cz: number): number {
+  return (cx + CELL_KEY_OFFSET) * CELL_KEY_RANGE * CELL_KEY_RANGE + (cy + CELL_KEY_OFFSET) * CELL_KEY_RANGE + (cz + CELL_KEY_OFFSET)
+}
+
+// Cell size targets roughly one feature per cell on average (same
+// sqrt(4*PI/count) spacing formula used elsewhere for sphere-point
+// density) — adaptive because feature count changes over a session
+// (rift/merge/erosion), not a fixed constant tuned for one snapshot.
+export function buildTerrainFeatureIndex(features: TerrainFeature[]): TerrainFeatureIndex {
+  const count = features.length
+  const cellSize = count > 0 ? Math.sqrt((4 * Math.PI) / count) : 1
+  const buckets = new Map<number, number[]>()
+  for (let i = 0; i < count; i++) {
+    const p = features[i].position
+    const key = cellKey(Math.floor(p.x / cellSize), Math.floor(p.y / cellSize), Math.floor(p.z / cellSize))
+    let bucket = buckets.get(key)
+    if (!bucket) {
+      bucket = []
+      buckets.set(key, bucket)
+    }
+    bucket.push(i)
+  }
+  return { cellSize, buckets }
+}
+
+// Reused across calls (module-level, not per-call) to avoid allocating on
+// every one of potentially millions of texture-generation queries.
+const candidateScratch: number[] = []
+
+// 5x5x5 (125 cells), not just the immediately-surrounding 27: measured
+// directly against the exact full-scan implementation across 20,000
+// sample points on a real 100-epoch world (972 terrain features).
+// Shrinking to 3x3x3 (27 cells) was tried first for the extra speed, but
+// correctness measurably degraded — max difference 4.6e-2 in elevation
+// versus 7.1e-4 at 5x5x5, with 2,034 of 20,000 points differing versus
+// just 1. That matters here specifically because coastline detection
+// depends on elevation's *sign* — a few-percent error can flip which
+// side of sea level a point lands on. With numeric keys (see above),
+// 125 lookups is still cheap: a 2048x1024 texture (2.1M queries) measured
+// at ~957ms total, so there's no real cost pressure to shrink further.
+function gatherNearbyFeatureIndices(point: Vector3, index: TerrainFeatureIndex): number[] {
+  candidateScratch.length = 0
+  const { cellSize, buckets } = index
+  const cx = Math.floor(point.x / cellSize)
+  const cy = Math.floor(point.y / cellSize)
+  const cz = Math.floor(point.z / cellSize)
+  for (let dx = -2; dx <= 2; dx++) {
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dz = -2; dz <= 2; dz++) {
+        const bucket = buckets.get(cellKey(cx + dx, cy + dy, cz + dz))
+        if (bucket) for (const featureIndex of bucket) candidateScratch.push(featureIndex)
+      }
+    }
+  }
+  return candidateScratch
+}
+
 // Blending the nearest few terrain features (inverse-distance weighted)
 // instead of picking a single nearest one avoids hard value jumps
 // wherever the nearest-feature assignment flips, which would otherwise
@@ -433,13 +545,24 @@ const blendDistanceScratch = new Float64Array(ELEVATION_BLEND_K)
 // Takes the plate's type and id rather than looking them up itself, since
 // callers evaluating this per mesh vertex already need the nearest-plate
 // index for coloring and shouldn't pay for that Voronoi lookup twice.
-export function elevationAt(point: Vector3, plateType: PlateType, plateId: number, crust: CrustState): number {
+// featureIndex must be built (buildTerrainFeatureIndex) from the same
+// crust.terrainFeatures this is querying against.
+export function elevationAt(
+  point: Vector3,
+  plateType: PlateType,
+  plateId: number,
+  crust: CrustState,
+  featureIndex: TerrainFeatureIndex,
+): number {
   const base = plateType === 'continental' ? CONTINENTAL_BASE_ELEVATION : OCEANIC_BASE_ELEVATION
   const features = crust.terrainFeatures
   if (features.length === 0) return base
 
+  const candidates = gatherNearbyFeatureIndices(point, featureIndex)
+  if (candidates.length === 0) return base
+
   let filled = 0
-  for (let i = 0; i < features.length; i++) {
+  for (const i of candidates) {
     const distance = angularDistance(point, features[i].position)
     if (filled < ELEVATION_BLEND_K) {
       blendIndexScratch[filled] = i
