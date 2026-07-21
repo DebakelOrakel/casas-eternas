@@ -18,15 +18,33 @@ import {
   Texture,
   TransformNode,
   Vector3,
+  VertexBuffer,
   VertexData,
 } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
+import { displaceSphereVertices } from '../../worldgen/meshDisplacement'
 import { TEXTURE_HEIGHT, TEXTURE_WIDTH } from '../../worldgen/textureConfig'
-import type { WorkerResponse } from '../../worldgen/worldgen.worker'
+import type { StateResponse, WorkerResponse } from '../../worldgen/worldgen.worker'
 import './worldgen.css'
 
 const DEFAULT_TILT_DEG = 23.5
 const PLANET_RADIUS = 1
+// Real vertex displacement needs far more geometry than the flat-texture
+// sphere ever did — 48 was plenty when nothing was computed per-vertex,
+// but can't show anything the erosion pass produces. 384 is a starting
+// point within a 256-512 range judged reasonable for a single, uniform,
+// non-LOD mesh (~300k vertices) — a one-shot vertex-buffer write on
+// erosion completion, not a per-epoch cost, so it doesn't reintroduce the
+// animation-budget problem docs/design/world-gen.md records for the
+// earlier (abandoned) per-epoch displacement attempt. Pure tuning, safe
+// to adjust by eye once displacement is visible.
+const PLANET_MESH_SEGMENTS = 384
+// Eroded elevation values run roughly the same range the color texture's
+// land/water tint thresholds already use (see faintColorForElevation in
+// texture.ts) — nowhere near sphere-radius units. Displacing 1:1 would
+// blow "mountains" up to a large fraction of the planet's own radius;
+// this scales that down to a modest, tunable-by-eye peak relief instead.
+const EROSION_DISPLACEMENT_SCALE = 0.05
 // Fixed low-orbit camera shot — see the camera setup below for how these
 // combine. Chosen by simulating camera rays against the sphere in a
 // headless script and checking the resulting hit/miss grid (not
@@ -391,21 +409,51 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const sunLight = new DirectionalLight('sun', new Vector3(-0.287, -0.549, 0.785), scene)
   sunLight.intensity = 1.1
   // Not zero — the far side of the sphere (facing away from both viewer
-  // and sun) would otherwise fall to pure black, since no terrain bumps
-  // exist anymore for a raking light to reveal; this just keeps the
-  // faint land/water texture legible on the unlit side.
-  new HemisphericLight('fill', new Vector3(0.3, 1, 0.2), scene).intensity = 0.5
+  // and sun) would otherwise fall to pure black; this just keeps the
+  // faint land/water texture legible on the unlit side. Kept fairly low
+  // (down from an original 0.5) now that the planet has real displaced
+  // geometry — a strong flat fill light adds uniform illumination
+  // regardless of surface normal, which flattens perceived relief right
+  // when the raking sunLight + specular below exist specifically to show
+  // it off (see docs/design/world-gen.md's note on this exact tradeoff
+  // from the project's earlier, since-abandoned displacement attempt).
+  new HemisphericLight('fill', new Vector3(0.3, 1, 0.2), scene).intensity = 0.3
 
-  // Plain sphere — no need for the icosphere/welding/adjacency machinery
-  // the previous vertex-displacement approach needed, since nothing is
-  // computed per-vertex anymore. Its default UVs already match the
-  // equirectangular texture's u/v convention.
-  const planet = MeshBuilder.CreateSphere('planet', { diameter: PLANET_RADIUS * 2, segments: 48 }, scene)
+  // Its default UVs already match the equirectangular texture's u/v
+  // convention. `updatable: true` and PLANET_MESH_SEGMENTS (well above
+  // the other spheres in this scene) exist specifically for the erosion
+  // pass below to actually displace vertices once — see applyErosionToMesh.
+  const planet = MeshBuilder.CreateSphere('planet', { diameter: PLANET_RADIUS * 2, segments: PLANET_MESH_SEGMENTS, updatable: true }, scene)
   planet.parent = spinPivot
   const material = new StandardMaterial('planetMaterial', scene)
   material.diffuseColor = new Color3(1, 1, 1)
-  material.specularColor = new Color3(0, 0, 0)
+  // A tight (high-power, i.e. small/sharp) specular highlight is far more
+  // sensitive to small per-vertex normal variation than diffuse shading
+  // alone — this is the specific ingredient docs/design/world-gen.md
+  // credits for actually revealing geometric relief in the project's
+  // earlier displacement attempt ("a raking DirectionalLight plus a tight
+  // specular term revealed real geometric detail that a straight-overhead
+  // HemisphericLight flattened out"). Left at 0 for years while the
+  // planet was a flat texture-only sphere with nothing for it to reveal;
+  // now that erosion actually displaces vertices, this is what makes that
+  // displacement visible rather than just geometrically present.
+  material.specularColor = new Color3(0.3, 0.3, 0.3)
+  // 48 (an earlier attempt at this value) turned out to be on the *broad*
+  // end for Babylon's Blinn-Phong power, not tight — visibly a large,
+  // washed-out soft highlight covering a big fraction of the close shot
+  // rather than a small, sharp one. 200 is meaningfully tighter/smaller,
+  // and — the actual point of it — moves and varies quickly across small
+  // per-vertex normal changes, which is what makes fine ridge/valley
+  // detail glint rather than a soft sphere-wide sheen.
+  material.specularPower = 200
   planet.material = material
+
+  // Cached once, right after creation, so invalidateErosion (wired up
+  // below) can cheaply revert to the flat sphere without recreating the
+  // mesh whenever tectonics parameters change after an erosion snapshot
+  // was taken.
+  const originalPlanetPositions = (planet.getVerticesData(VertexBuffer.PositionKind) as Float32Array).slice()
+  const originalPlanetNormals = (planet.getVerticesData(VertexBuffer.NormalKind) as Float32Array).slice()
 
   const worldTexture = RawTexture.CreateRGBATexture(
     new Uint8Array(TEXTURE_WIDTH * TEXTURE_HEIGHT * 4),
@@ -877,6 +925,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <span data-value="temp-max"></span>
         </div>
       </div>
+      <button type="button" class="icon-button" data-action="run-erosion" aria-label="Run erosion">
+        <img src="/icons/erosion.png" alt="" />
+      </button>
+      <div class="erosion-status" data-value="erosion-status"></div>
     </div>
   `
 
@@ -899,6 +951,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const toggleTemperatureIcon = toggleTemperatureButton.querySelector<HTMLImageElement>('img')!
   const runButton = root.querySelector<HTMLButtonElement>('[data-action="run"]')!
   const runIcon = runButton.querySelector<HTMLImageElement>('img')!
+  const runErosionButton = root.querySelector<HTMLButtonElement>('[data-action="run-erosion"]')!
+  const erosionStatus = root.querySelector<HTMLElement>('[data-value="erosion-status"]')!
 
   // All simulation state (PlateWorld/CrustState) and the expensive
   // per-epoch texture generation now live entirely in this worker — see
@@ -908,10 +962,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // cost anymore.
   const worker = new Worker(new URL('../../worldgen/worldgen.worker.ts', import.meta.url), { type: 'module' })
 
-  let latestState: WorkerResponse | undefined
+  let latestState: StateResponse | undefined
   let disposed = false
   let isRunning = false
   let pendingTimeoutId: ReturnType<typeof setTimeout> | undefined
+  let isErosionRunning = false
+  let hasErosionApplied = false
 
   // The run button itself is deliberately excluded — it's the toggle
   // that starts/stops the loop below, so it needs to stay clickable
@@ -921,6 +977,43 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     continentsInput.disabled = disabled
     ratioInput.disabled = disabled
     randomizeButton.disabled = disabled
+  }
+
+  // Erosion, unlike a tectonics run, has no "stop" — while the worker is
+  // computing it, a regenerate or a tectonics-run start must not be able
+  // to fire (either would race a stale in-flight erosion response against
+  // a world it no longer applies to). Also disables runButton/
+  // runErosionButton themselves, which setControlsDisabled deliberately
+  // leaves alone for the tectonics-run case above.
+  const setErosionControlsDisabled = (disabled: boolean) => {
+    setControlsDisabled(disabled)
+    runButton.disabled = disabled
+    runErosionButton.disabled = disabled
+  }
+
+  // Displaces the planet mesh from its cached original (flat) positions —
+  // never from whatever's currently on the mesh — so re-running erosion
+  // is idempotent instead of compounding on a previous displacement.
+  const applyErosionToMesh = (elevations: Float32Array, gridWidth: number, gridHeight: number): void => {
+    const uvs = planet.getVerticesData(VertexBuffer.UVKind) as Float32Array
+    const displaced = new Float32Array(originalPlanetPositions.length)
+    displaceSphereVertices(originalPlanetPositions, uvs, elevations, gridWidth, gridHeight, PLANET_RADIUS, EROSION_DISPLACEMENT_SCALE, displaced)
+    planet.updateVerticesData(VertexBuffer.PositionKind, displaced)
+    const normals = new Float32Array(originalPlanetPositions.length)
+    VertexData.ComputeNormals(displaced, planet.getIndices()!, normals)
+    planet.updateVerticesData(VertexBuffer.NormalKind, normals)
+    hasErosionApplied = true
+  }
+
+  // Reverts to the flat sphere — called wherever tectonics parameters can
+  // change after an erosion snapshot was taken (regenerateWorld, starting
+  // a tectonics run), since an eroded mesh from a superseded world would
+  // be actively wrong to keep showing.
+  const invalidateErosion = (): void => {
+    if (!hasErosionApplied) return
+    hasErosionApplied = false
+    planet.updateVerticesData(VertexBuffer.PositionKind, originalPlanetPositions)
+    planet.updateVerticesData(VertexBuffer.NormalKind, originalPlanetNormals)
   }
 
   const stopEpochRun = () => {
@@ -945,7 +1038,27 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
     if (disposed) return
-    latestState = event.data
+    const message = event.data
+
+    if (message.type === 'erosionProgress') {
+      erosionStatus.textContent = `Eroding… ${Math.round(message.fraction * 100)}%`
+      return
+    }
+
+    if (message.type === 'erosion') {
+      applyErosionToMesh(message.elevations, message.width, message.height)
+      // Recolors from the eroded heightmap, not the original pre-erosion
+      // field — otherwise the coastline/relief painted on the texture
+      // would no longer match the now-displaced geometry.
+      worldTexture.update(message.pixels)
+      isErosionRunning = false
+      setErosionControlsDisabled(false)
+      runErosionButton.setAttribute('aria-label', 'Run erosion')
+      erosionStatus.textContent = ''
+      return
+    }
+
+    latestState = message
     worldTexture.update(latestState.pixels)
     updateInfo()
 
@@ -958,6 +1071,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   const regenerateWorld = () => {
     stopEpochRun()
+    invalidateErosion()
     worker.postMessage({
       type: 'init',
       seedText: seedInput.value,
@@ -1026,11 +1140,21 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       stopEpochRun()
       return
     }
+    invalidateErosion()
     isRunning = true
     setControlsDisabled(true)
     runIcon.src = '/icons/tectonics_on.png'
     runButton.setAttribute('aria-label', 'Stop tectonics')
     worker.postMessage({ type: 'stepEpoch' })
+  })
+
+  runErosionButton.addEventListener('click', () => {
+    if (isErosionRunning) return
+    isErosionRunning = true
+    setErosionControlsDisabled(true)
+    runErosionButton.setAttribute('aria-label', 'Eroding…')
+    erosionStatus.textContent = 'Eroding… 0%'
+    worker.postMessage({ type: 'runErosion' })
   })
 
   // Panel switching only toggles which controls/overlays are showing now
