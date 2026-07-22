@@ -1,21 +1,5 @@
-import {
-  Color3,
-  Color4,
-  FreeCamera,
-  HemisphericLight,
-  Mesh,
-  MeshBuilder,
-  PointerEventTypes,
-  Quaternion,
-  Scalar,
-  Scene,
-  StandardMaterial,
-  Texture,
-  TransformNode,
-  Vector3,
-  VertexBuffer,
-  VertexData,
-} from '@babylonjs/core'
+import { Color3, Color4, HemisphericLight, Mesh, MeshBuilder, Scalar, Scene, StandardMaterial, Texture, Vector3, VertexBuffer, VertexData } from '@babylonjs/core'
+import { createOrbitSwoopCamera } from '../../camera/orbitSwoopCamera'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { displaceSphereVertices } from '../../worldgen/meshDisplacement'
 import marsHeightmapUrl from '../../mars_8k.jpg'
@@ -41,9 +25,9 @@ const LOD_HIGH_SEGMENTS = 256
 const LOD_MEDIUM_SEGMENTS = 128
 const LOD_LOW_SEGMENTS = 64
 // Distance (from camera to the planet's own origin) beyond which Babylon
-// switches to the next lower tier. Tunable by eye — camera distance
-// ranges from ~1.15 (fully zoomed in) to 4 (fully zoomed out), see
-// FAR_CAMERA_DISTANCE/CLOSE_POSITION below.
+// switches to the next lower tier. Tunable by eye — orbitSwoopCamera's
+// default range puts camera distance somewhere between ~1.15 (fully
+// zoomed in) and 4 (fully zoomed out) for this radius-1 sphere.
 const LOD_MEDIUM_DISTANCE = 2.2
 const LOD_LOW_DISTANCE = 3.2
 
@@ -72,72 +56,24 @@ const WATER_LEVEL_DEFAULT_PERCENT = 23
 const WATER_COLOR = new Color3(0.16, 0.45, 0.7)
 const WATER_ALPHA = 0.75
 
-// An ArcRotateCamera aimed at the sphere's own center can't produce a
-// "tilt toward the horizon" effect no matter how its polar angle is
-// driven: the closest point on a sphere to an external point always sits
-// dead-ahead, perpendicular to the surface, so the camera ends up staring
-// straight down into whatever's nearest at every angle. A camera that
-// hovers above the surface with its own explicit, non-center look
-// direction is what actually shows a horizon — same conclusion
-// WorldGenScreen.ts already reached for the same reason (see its camera
-// setup comments).
-//
-// Horizontal mouse drag spins the planet itself (viewPivot below) rather
-// than moving the camera, so "orbit" and "zoom" stay on entirely separate
-// controls — dragging can never affect zoom, and zooming can never affect
-// spin.
-
-// Far shot: classic "whole globe" framing, looking at the planet's center.
-const FAR_CAMERA_DISTANCE = 4
-// Close shot: hovering just above the surface, pitched down toward the
-// ground — see hoverDirection/tangentForward/lookDirection below for how
-// this is built. Values match WorldGenScreen's already-tuned equivalents.
-const HOVER_BETA_DEG = 35
-const ALTITUDE_FACTOR = 0.15
-const PITCH_DEG = 38
-
-// How much each wheel notch moves the normalized zoom amount (0 = far, 1
-// = close).
-const ZOOM_STEP = 0.05
-// How quickly the camera eases toward its target zoom position/look each
-// second (higher = snappier).
-const ZOOM_EASE_RATE = 6
-// Radians per pixel of horizontal drag when spinning the planet.
-const DRAG_SENSITIVITY = 0.01
-
 export const createMarsScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   const scene = new Scene(ctx.engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
 
-  const hoverBeta = (HOVER_BETA_DEG * Math.PI) / 180
-  const hoverDirection = new Vector3(0, Math.cos(hoverBeta), -Math.sin(hoverBeta))
-  const nadir = hoverDirection.scale(-1)
-  const tangentForward = Vector3.Up().subtract(hoverDirection.scale(Vector3.Dot(Vector3.Up(), hoverDirection))).normalize()
-  const pitch = (PITCH_DEG * Math.PI) / 180
-  const lookDirection = tangentForward.scale(Math.cos(pitch)).add(nadir.scale(Math.sin(pitch))).normalize()
-
-  const FAR_POSITION = hoverDirection.scale(FAR_CAMERA_DISTANCE)
-  const FAR_TARGET = Vector3.Zero()
-  const CLOSE_POSITION = hoverDirection.scale(PLANET_RADIUS * (1 + ALTITUDE_FACTOR))
-  const CLOSE_TARGET = CLOSE_POSITION.add(lookDirection)
-
-  const camera = new FreeCamera('camera', FAR_POSITION.clone(), scene)
-  camera.setTarget(FAR_TARGET)
-  camera.minZ = 0.05
+  // See orbitSwoopCamera.ts for why this camera model (a hovering camera
+  // with its own explicit look direction, rather than an ArcRotateCamera
+  // aimed at the sphere's center) is what actually shows a horizon on
+  // zoom-in, and why drag (viewPivot) and zoom (camera) are kept on
+  // entirely separate controls. All of orbitSwoopCamera's defaults were
+  // tuned here first, for this exact radius-1 sphere, so no overrides are
+  // needed beyond the radius itself.
+  const { viewPivot, dispose: disposeCamera } = createOrbitSwoopCamera({
+    scene,
+    canvas: ctx.canvas,
+    engine: ctx.engine,
+    radius: PLANET_RADIUS,
+  })
   new HemisphericLight('light', new Vector3(0, 1, 0), scene)
-
-  // The planet spins under mouse drag — the camera itself never moves in
-  // response to dragging, keeping zoom and drag fully independent.
-  // rotationQuaternion (not Euler .rotation) from the start: the drag
-  // handler below composes each incremental rotation in world space via
-  // quaternion multiplication, which is what keeps "drag right" and "drag
-  // up/down" each meaning the same thing on screen no matter how much
-  // rotation has already accumulated — accumulating separate .rotation.x
-  // / .rotation.y values instead (the previous approach) gimbal-locks
-  // once you've dragged a fair amount in both directions, which is what
-  // made panning feel "weird".
-  const viewPivot = new TransformNode('viewPivot', scene)
-  viewPivot.rotationQuaternion = Quaternion.Identity()
 
   const material = new StandardMaterial('marsMaterial', scene)
   // invertY defaults to true on Texture — Babylon flips the V axis when
@@ -243,55 +179,6 @@ export const createMarsScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
       console.error('Failed to load Mars heightmap', error)
     })
 
-  let isDragging = false
-  let lastPointerX = 0
-  let lastPointerY = 0
-  scene.onPointerObservable.add((pointerInfo) => {
-    if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
-      isDragging = true
-      lastPointerX = pointerInfo.event.clientX
-      lastPointerY = pointerInfo.event.clientY
-    } else if (pointerInfo.type === PointerEventTypes.POINTERUP) {
-      isDragging = false
-    } else if (pointerInfo.type === PointerEventTypes.POINTERMOVE && isDragging) {
-      const deltaX = pointerInfo.event.clientX - lastPointerX
-      const deltaY = pointerInfo.event.clientY - lastPointerY
-      lastPointerX = pointerInfo.event.clientX
-      lastPointerY = pointerInfo.event.clientY
-      // Both increments rotate around fixed WORLD axes (Up/Right), not
-      // the pivot's own — pre-multiplying applies them in world space on
-      // top of whatever orientation the pivot already has, so "drag
-      // right" and "drag up/down" keep their same on-screen meaning
-      // regardless of how much spin has already accumulated. Our camera
-      // setup has no roll (see hoverDirection/lookDirection above — both
-      // confined to the Y-Z plane), so world Right really is the camera's
-      // screen-horizontal axis here.
-      const yaw = Quaternion.RotationAxis(Vector3.Up(), deltaX * DRAG_SENSITIVITY)
-      const rollTilt = Quaternion.RotationAxis(Vector3.Right(), deltaY * DRAG_SENSITIVITY)
-      viewPivot.rotationQuaternion = yaw.multiply(rollTilt).multiply(viewPivot.rotationQuaternion!)
-    }
-  })
-
-  let targetZoom = 0
-  let currentZoom = 0
-  ctx.canvas.addEventListener(
-    'wheel',
-    (event) => {
-      event.preventDefault()
-      // Natural scroll convention: scrolling up/forward (negative deltaY)
-      // zooms in (increases targetZoom, toward the close/horizon shot).
-      targetZoom = Scalar.Clamp(targetZoom - Math.sign(event.deltaY) * ZOOM_STEP, 0, 1)
-    },
-    { passive: false },
-  )
-
-  scene.onBeforeRenderObservable.add(() => {
-    const easeFactor = 1 - Math.exp(-ZOOM_EASE_RATE * (ctx.engine.getDeltaTime() / 1000))
-    currentZoom = Scalar.Lerp(currentZoom, targetZoom, easeFactor)
-    camera.position.copyFrom(Vector3.Lerp(FAR_POSITION, CLOSE_POSITION, currentZoom))
-    camera.setTarget(Vector3.Lerp(FAR_TARGET, CLOSE_TARGET, currentZoom))
-  })
-
   const root = document.createElement('div')
   root.className = 'mars-screen'
   root.innerHTML = `
@@ -314,6 +201,11 @@ export const createMarsScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
     scene,
     dispose() {
       disposed = true
+      // scene.dispose() alone doesn't remove the camera module's own
+      // 'wheel' listener on the shared canvas (that's a DOM-level
+      // listener, not a scene resource) — without this it'd keep firing
+      // (and preventDefault-ing) after navigating away from this screen.
+      disposeCamera()
       scene.dispose()
     },
   }
