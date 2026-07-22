@@ -1,0 +1,28 @@
+.mars-screen {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+}
+
+.mars-screen button {
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+
+.mars-screen .water-control {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: rgba(255, 255, 255, 0.85);
+  padding: 0.4rem 0.8rem;
+  border-radius: 4px;
+  font-family: sans-serif;
+  font-size: 0.85rem;
+}
+
+.mars-screen .water-control input[type='range'] {
+  cursor: pointer;
+}

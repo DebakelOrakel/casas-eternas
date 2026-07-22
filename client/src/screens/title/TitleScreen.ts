@@ -14,10 +14,16 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
       <h1>Casas Eternas</h1>
       <p class="subtitle">Herederos del Mundo</p>
     </div>
-    <button class="text-link" data-action="worldgen">World Generation</button>
+    <nav class="title-nav">
+      <button class="text-link" data-action="worldgen">World Generation</button>
+      <button class="text-link" data-action="mars">Mars</button>
+    </nav>
   `
   root.querySelector('[data-action="worldgen"]')!.addEventListener('click', () => {
     ctx.goTo('worldgen')
+  })
+  root.querySelector('[data-action="mars"]')!.addEventListener('click', () => {
+    ctx.goTo('mars')
   })
   ctx.overlay.appendChild(root)
 
