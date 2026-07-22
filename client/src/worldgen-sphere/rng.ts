@@ -1,5 +1,5 @@
 // Deterministic string seed -> PRNG, so a given seed always reproduces the
-// same plate layout (seed positions, colors).
+// same plate layout (positions, types, weights, colors).
 
 export function hashSeedString(seed: string): number {
   let hash = 2166136261 // FNV-1a offset basis

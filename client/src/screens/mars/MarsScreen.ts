@@ -1,7 +1,7 @@
 import { Color3, Color4, HemisphericLight, Mesh, MeshBuilder, Scalar, Scene, StandardMaterial, Texture, Vector3, VertexBuffer, VertexData } from '@babylonjs/core'
 import { createOrbitSwoopCamera } from '../../camera/orbitSwoopCamera'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
-import { displaceSphereVertices } from '../../worldgen/meshDisplacement'
+import { displaceSphereVertices } from '../../worldgen-sphere/meshDisplacement'
 import marsHeightmapUrl from '../../mars_8k.jpg'
 // `?url` forces Vite to treat this as a static asset URL regardless of
 // extension — .bin isn't in Vite's default asset-type list the way .jpg

@@ -1,0 +1,88 @@
+import type { ContinentLabelPlacement } from './continentLabelLayout'
+
+// Matches the title screen's own fantasy-map font (see title.css) —
+// loaded globally via the Google Fonts link in index.html, so it's
+// already available to any canvas 2D context in the document by the time
+// this runs.
+const FONT_FAMILY = 'Cinzel, serif'
+const MIN_FONT_SIZE = 10
+const MAX_FONT_SIZE = 46
+// Keeps a label comfortably inside its own coastline rather than
+// touching it — extent is a hard pixel measurement of the plate's own
+// footprint, not a stylistic margin.
+const WIDTH_MARGIN_FACTOR = 0.82
+const HEIGHT_MARGIN_FACTOR = 0.6
+// Arc radius as a multiple of the label's own rendered width — large
+// relative to the text, so the bend stays gentle rather than a
+// pronounced curl. This is a fixed, purely decorative amount (an
+// hand-lettered-map touch, echoing how a real illustrated map's labels
+// often follow a coastline's own curve) — it is NOT what makes a long
+// name fit a small continent; font-size shrinking below already handles
+// that, and a name that still doesn't fit at the size floor is skipped
+// rather than bent harder to force it.
+const CURVE_RADIUS_FACTOR = 2.5
+
+const LABEL_FILL = '#2a2016'
+const LABEL_STROKE = 'rgba(255, 255, 255, 0.65)'
+
+// Draws one continent's name along a gentle arc centered on its own
+// principal axis — the classic "text on a path" technique: measure each
+// character, walk them along a circular arc one at a time, rotating each
+// to stay tangent to it. Picks the largest font size (within
+// [MIN_FONT_SIZE, MAX_FONT_SIZE]) that still fits the plate's own
+// measured footprint; skips the label entirely rather than drawing
+// something illegible or overflowing if even the size floor doesn't fit.
+export function drawContinentLabel(ctx: CanvasRenderingContext2D, placement: ContinentLabelPlacement): void {
+  const { name, centerX, centerY, angle, alongExtent, perpExtent } = placement
+  const availableWidth = alongExtent * WIDTH_MARGIN_FACTOR
+  const availableHeight = perpExtent * HEIGHT_MARGIN_FACTOR
+
+  let fontSize = Math.min(MAX_FONT_SIZE, availableHeight)
+  if (fontSize < MIN_FONT_SIZE) return
+  ctx.font = `${fontSize}px ${FONT_FAMILY}`
+  let textWidth = ctx.measureText(name).width
+  if (textWidth > availableWidth) {
+    fontSize *= availableWidth / textWidth
+  }
+  fontSize = Math.floor(fontSize)
+  if (fontSize < MIN_FONT_SIZE) return
+
+  ctx.font = `${fontSize}px ${FONT_FAMILY}`
+  textWidth = ctx.measureText(name).width
+
+  const arcRadius = Math.max(textWidth, 1) * CURVE_RADIUS_FACTOR
+  const totalAngleSpan = textWidth / arcRadius
+
+  ctx.save()
+  ctx.translate(centerX, centerY)
+  ctx.rotate(angle)
+  ctx.fillStyle = LABEL_FILL
+  ctx.strokeStyle = LABEL_STROKE
+  ctx.lineWidth = Math.max(1, fontSize * 0.08)
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+
+  let cumulativeWidth = 0
+  for (const char of name) {
+    const charWidth = ctx.measureText(char).width
+    const charCenterOffset = cumulativeWidth + charWidth / 2
+    const t = charCenterOffset / textWidth - 0.5
+    const charAngle = t * totalAngleSpan
+    const px = Math.sin(charAngle) * arcRadius
+    const py = arcRadius - Math.cos(charAngle) * arcRadius
+
+    ctx.save()
+    ctx.translate(px, py)
+    ctx.rotate(charAngle)
+    ctx.strokeText(char, 0, 0)
+    ctx.fillText(char, 0, 0)
+    ctx.restore()
+
+    cumulativeWidth += charWidth
+  }
+  ctx.restore()
+}
+
+export function drawContinentLabels(ctx: CanvasRenderingContext2D, placements: ContinentLabelPlacement[]): void {
+  for (const placement of placements) drawContinentLabel(ctx, placement)
+}

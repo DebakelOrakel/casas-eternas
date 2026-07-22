@@ -1,6 +1,6 @@
 import type { Engine, Scene } from '@babylonjs/core'
 
-export type ScreenId = 'title' | 'worldgen' | 'game' | 'mars'
+export type ScreenId = 'title' | 'worldgen' | 'worldgen-sphere' | 'game' | 'mars'
 
 export interface ScreenContext {
   engine: Engine
