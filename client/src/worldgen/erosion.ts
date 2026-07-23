@@ -23,6 +23,25 @@ import { wrappedDelta } from './toroidal'
 
 export const SEA_LEVEL = 0
 
+// Called at every progress-reporting checkpoint across this module's
+// long loops (fillDepressions' pop count, and one per outer iteration in
+// runStreamPowerIterations/runThermalErosion/runPeakWeathering) — always
+// awaits a real macrotask boundary (a zero-delay setTimeout), not just
+// every Nth call. This exists entirely for plateSimulationWorker.ts's
+// 'erode' handler: postMessage calls made during a long, uninterrupted
+// synchronous stretch get queued for delivery, but browsers commonly
+// don't actually flush that delivery to the main thread until the
+// sending side yields back to its own event loop — without yielding
+// often enough, a ~10+ second erosion pass reads as one all-at-once
+// burst of progress messages right before the final render, not a live
+// updating percentage. Unconditional rather than throttled to every Nth
+// call — an earlier 1-in-8 version still wasn't frequent enough to read
+// as live, so this trades the small per-yield overhead (browser-clamped,
+// often 1-4ms) for actually solving the problem.
+function maybeYield(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
 // Fixed N,NE,E,SE,S,SW,W,NW order — fillDepressionsAndRouteFlow and any
 // future river tracing both walk neighbors in this order, so a stored
 // direction index means the same thing everywhere it's used.
@@ -155,7 +174,7 @@ const EPSILON_FLOOD_STEP = 1e-7
 // zero — a graceful no-routing degradation (computeSteepestDescentFlowTargets
 // then finds no downhill gradient anywhere and leaves every flowTarget at
 // -1) rather than a crash.
-function fillDepressions(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void): { filled: Float32Array; popOrder: Int32Array; poppedCount: number } {
+async function fillDepressions(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void): Promise<{ filled: Float32Array; popOrder: Int32Array; poppedCount: number }> {
   const cellCount = width * height
   const filled = new Float32Array(cellCount)
   const popOrder = new Int32Array(cellCount)
@@ -180,7 +199,10 @@ function fillDepressions(raw: Float32Array, width: number, height: number, seaLe
     const current = heap.poppedIndex
     popOrder[poppedCount] = current
     poppedCount++
-    if (onProgress && poppedCount % progressStep === 0) onProgress(poppedCount / cellCount)
+    if (poppedCount % progressStep === 0) {
+      onProgress?.(poppedCount / cellCount)
+      await maybeYield()
+    }
 
     const y = (current / width) | 0
     const x = current - y * width
@@ -347,8 +369,8 @@ function computeMfdEdges(filled: Float32Array, width: number, height: number): M
   return { outEdgeStart, outEdgeTargets, outEdgeWeights }
 }
 
-export function fillDepressionsAndRouteFlow(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void): FlowRouting {
-  const { filled, popOrder, poppedCount } = fillDepressions(raw, width, height, seaLevel, onProgress)
+export async function fillDepressionsAndRouteFlow(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void): Promise<FlowRouting> {
+  const { filled, popOrder, poppedCount } = await fillDepressions(raw, width, height, seaLevel, onProgress)
   // popOrder remains a valid topological order for both of these, with
   // no change needed: both steepest descent and every MFD edge only ever
   // route a cell to a neighbor at or below its own filled elevation, and
@@ -443,7 +465,7 @@ export const DEFAULT_STREAM_POWER_PARAMS: StreamPowerParams = {
 // first line of defense; if tuning timeStep down doesn't tame it, the
 // known escape hatch is Braun & Willett (2013)'s semi-implicit scheme
 // (unconditionally stable, more code) — not built here.
-export function runStreamPowerIterations(
+export async function runStreamPowerIterations(
   elevations: Float32Array,
   routing: FlowRouting,
   accumulation: Float32Array,
@@ -452,7 +474,7 @@ export function runStreamPowerIterations(
   height: number,
   params: StreamPowerParams,
   onProgress?: (fraction: number) => void,
-): void {
+): Promise<void> {
   const { flowTarget, popOrder, poppedCount } = routing
   const useSqrtForArea = params.areaExponentM === 0.5
   const slopeExponentIsOne = params.slopeExponentN === 1
@@ -484,6 +506,7 @@ export function runStreamPowerIterations(
       elevations[cell] = Math.max(elevations[target], elevations[cell] + dh * params.timeStep)
     }
     onProgress?.((iteration + 1) / params.iterations)
+    await maybeYield()
   }
 }
 
@@ -537,7 +560,7 @@ export const DEFAULT_THERMAL_EROSION_PARAMS: ThermalErosionParams = {
 // cell's own scan sees a non-positive drop to that same neighbor and
 // skips it), so mass moved off a cell and mass moved onto it never
 // double-counts within one iteration.
-export function runThermalErosion(elevations: Float32Array, isLand: Uint8Array, width: number, height: number, params: ThermalErosionParams, onProgress?: (fraction: number) => void): void {
+export async function runThermalErosion(elevations: Float32Array, isLand: Uint8Array, width: number, height: number, params: ThermalErosionParams, onProgress?: (fraction: number) => void): Promise<void> {
   const cellCount = width * height
   const delta = new Float32Array(cellCount)
 
@@ -568,6 +591,7 @@ export function runThermalErosion(elevations: Float32Array, isLand: Uint8Array, 
     }
     for (let i = 0; i < cellCount; i++) elevations[i] += delta[i]
     onProgress?.((iteration + 1) / params.iterations)
+    await maybeYield()
   }
 }
 
@@ -680,7 +704,7 @@ export const DEFAULT_PEAK_WEATHERING_PARAMS: PeakWeatheringParams = {
 // grooves can start attracting real fluvial erosion of their own,
 // compounding into sharper ridge definition over successive rounds
 // rather than staying a fixed, one-off texture.
-export function runPeakWeathering(elevations: Float32Array, isLand: Uint8Array, width: number, height: number, warpSeed: number, params: PeakWeatheringParams, onProgress?: (fraction: number) => void): void {
+export async function runPeakWeathering(elevations: Float32Array, isLand: Uint8Array, width: number, height: number, warpSeed: number, params: PeakWeatheringParams, onProgress?: (fraction: number) => void): Promise<void> {
   for (let iteration = 0; iteration < params.iterations; iteration++) {
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -696,6 +720,7 @@ export function runPeakWeathering(elevations: Float32Array, isLand: Uint8Array, 
       }
     }
     onProgress?.((iteration + 1) / params.iterations)
+    await maybeYield()
   }
 }
 
@@ -747,14 +772,21 @@ export const DEFAULT_EROSION_PASS_PARAMS: ErosionPassParams = {
 // produce it. U (uplift) is not modeled here: the mountain-building
 // already happened via the tectonics epochs, so this pass is pure
 // denudation of that shape, not a coupled uplift/erosion balance.
-export function runErosionPass(
+export async function runErosionPass(
   rawElevations: Float32Array,
   width: number,
   height: number,
   warpSeed: number,
   params: ErosionPassParams = DEFAULT_EROSION_PASS_PARAMS,
   onProgress?: (phase: ErosionPhase, fraction: number) => void,
-): { elevations: Float32Array; routing: FlowRouting; accumulation: Float32Array } {
+  // Awaited after every round, given a *copy* of that round's own
+  // elevations — lets a caller (plateSimulationWorker.ts) redraw the map
+  // once per round instead of only once at the very end, without this
+  // module needing to know anything about rendering. Awaited (not fired
+  // and forgotten) deliberately, so a slow redraw can't overlap with the
+  // next round's computation touching the same underlying arrays.
+  onRoundComplete?: (elevations: Float32Array, round: number) => void | Promise<void>,
+): Promise<{ elevations: Float32Array; routing: FlowRouting; accumulation: Float32Array }> {
   const cellCount = width * height
   // Copied rather than aliased — runPeakWeathering below now mutates
   // `elevations` before the first routing pass even runs, and
@@ -765,8 +797,39 @@ export function runErosionPass(
   let routing: FlowRouting | undefined
   let accumulation: Float32Array | undefined
 
+  // Each phase's own onProgress reports 0->1 for *itself* — without
+  // weighting, naively scaling every phase's fraction by 1/rounds would
+  // have the overall progress climb to the round's ceiling and then drop
+  // back down at every one of the 5 phase boundaries within that same
+  // round, instead of climbing smoothly across the whole call. Weighted
+  // by iteration count (a reasonable proxy for relative cost — the two
+  // single-pass O(cells) steps that don't have their own iteration count
+  // get small fixed shares instead), so a phase with more iterations
+  // — and therefore more onProgress calls, i.e. more visible granularity
+  // — also claims a proportionally bigger slice of the overall bar.
+  const FLOODING_WEIGHT = 15
+  const ACCUMULATING_WEIGHT = 5
+  const phaseOrder: ErosionPhase[] = ['peakWeathering', 'flooding', 'accumulating', 'streamPower', 'thermal']
+  const phaseWeight: Record<ErosionPhase, number> = {
+    peakWeathering: params.peakWeathering.iterations,
+    flooding: FLOODING_WEIGHT,
+    accumulating: ACCUMULATING_WEIGHT,
+    streamPower: params.streamPower.iterations,
+    thermal: params.thermal.iterations,
+  }
+  const roundWeightTotal = phaseOrder.reduce((sum, phase) => sum + phaseWeight[phase], 0)
+  const phaseStartFraction: Record<ErosionPhase, number> = {} as Record<ErosionPhase, number>
+  let cumulativeWeight = 0
+  for (const phase of phaseOrder) {
+    phaseStartFraction[phase] = cumulativeWeight / roundWeightTotal
+    cumulativeWeight += phaseWeight[phase]
+  }
+
   for (let round = 0; round < params.rounds; round++) {
-    const roundProgress = (phase: ErosionPhase, fraction: number): void => onProgress?.(phase, (round + fraction) / params.rounds)
+    const roundProgress = (phase: ErosionPhase, fraction: number): void => {
+      const withinRound = phaseStartFraction[phase] + (fraction * phaseWeight[phase]) / roundWeightTotal
+      onProgress?.(phase, (round + withinRound) / params.rounds)
+    }
 
     // Re-derived every round from that round's own starting elevations
     // (not fixed once from the very first raw field) — a cell fluvial
@@ -780,23 +843,26 @@ export function runErosionPass(
     // it just carved into a peak cap are visible to *this* round's
     // fillDepressionsAndRouteFlow, not just the next one (see
     // runPeakWeathering's own comment).
-    runPeakWeathering(elevations, isLand, width, height, warpSeed, params.peakWeathering, (fraction) => roundProgress('peakWeathering', fraction))
+    await runPeakWeathering(elevations, isLand, width, height, warpSeed, params.peakWeathering, (fraction) => roundProgress('peakWeathering', fraction))
 
-    routing = fillDepressionsAndRouteFlow(elevations, width, height, SEA_LEVEL, (fraction) => roundProgress('flooding', fraction))
+    routing = await fillDepressionsAndRouteFlow(elevations, width, height, SEA_LEVEL, (fraction) => roundProgress('flooding', fraction))
 
     roundProgress('accumulating', 0)
     accumulation = accumulateFlow(routing)
     roundProgress('accumulating', 1)
+    await maybeYield()
 
     elevations = routing.filled.slice()
-    runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, params.streamPower, (fraction) => roundProgress('streamPower', fraction))
+    await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, params.streamPower, (fraction) => roundProgress('streamPower', fraction))
     // Order matters only a little here (both passes reread whatever the
     // other just wrote next round, since routing gets rederived from
     // the combined result either way) — runs second so a talus slide's
     // own runoff isn't immediately re-carved by this same round's
     // stream-power step, which read accumulation computed before either
     // pass touched elevations.
-    runThermalErosion(elevations, isLand, width, height, params.thermal, (fraction) => roundProgress('thermal', fraction))
+    await runThermalErosion(elevations, isLand, width, height, params.thermal, (fraction) => roundProgress('thermal', fraction))
+
+    await onRoundComplete?.(elevations.slice(), round)
   }
 
   return { elevations, routing: routing!, accumulation: accumulation! }

@@ -122,6 +122,12 @@ export interface SimulationRenderResult {
   // cosmetic reshaping — the physically meaningful values a later erosion
   // pass (erosion.ts) needs to act on, not the display-squashed ones.
   rawElevations: Float32Array
+  // The redistributed values actually used for elevationToColor — what a
+  // debug 3D heightmap preview (see WorldGenScreen.ts) should displace
+  // by, so the relief it shows matches what the 2D color map is already
+  // showing (a white "snow-capped" pixel should also be the tallest
+  // point in 3D) rather than the pre-redistribution physical field.
+  elevations: Float32Array
 }
 
 export interface RenderSimulationOptions {
@@ -271,5 +277,5 @@ export async function renderSimulationImage(sim: PlateSimulation, pool: Elevatio
     ? computeContinentLabelPlacements(cellIds, sim.types, sim.continentNames, centroids, width, height)
     : []
 
-  return { buffer, landFraction: landPixelCount / (width * height), labelPlacements, rawElevations }
+  return { buffer, landFraction: landPixelCount / (width * height), labelPlacements, rawElevations, elevations }
 }

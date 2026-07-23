@@ -41,6 +41,22 @@ export interface HexMapCameraOptions {
 export interface HexMapCamera {
   camera: FreeCamera
   dispose: () => void
+  // Pitches the camera from straight-down (angleRadians = 0, the default
+  // and this module's original-only behavior) toward looking at an
+  // oblique angle off vertical, while keeping whatever ground point pan
+  // currently has centered still centered. A real, permanent camera
+  // capability — added for the debug 3D relief preview (see
+  // WorldGenScreen.ts's toggleDebug3DView), but not itself tied to that
+  // preview's lifetime.
+  setTilt: (angleRadians: number) => void
+  // The ground point pan currently keeps centered. Callers that need
+  // "where is the map logically centered" (e.g. WorldGenScreen.ts's
+  // toroidal-tile recentering) should use this instead of
+  // camera.position.x/z — once tilted, the camera's own position is
+  // deliberately offset backward from this point (see setTilt), so
+  // reading raw camera.position there would recenter around the wrong
+  // spot by a large, tilt-dependent margin.
+  getFocus: () => { x: number; z: number }
 }
 
 export function createHexMapCamera(options: HexMapCameraOptions): HexMapCamera {
@@ -88,6 +104,40 @@ export function createHexMapCamera(options: HexMapCameraOptions): HexMapCamera {
   // them, however early a pointer event fires.
   updateOrthoExtents(0)
 
+  // The ground point pan keeps centered — camera.position.x/z directly
+  // mirrored this before tilt existed; kept as separate state now since
+  // a tilted camera's position is offset from its focus, not equal to it.
+  let focusX = 0
+  let focusZ = 0
+  let tiltAngle = 0
+
+  // Called from pan (every pointermove) to re-derive camera.position
+  // from the current focus point and tilt. At tiltAngle === 0 this
+  // reproduces the original untilted behavior exactly — position set
+  // directly, rotation never touched — specifically so a pan drag
+  // doesn't reintroduce the roll-drift risk the original setup avoided
+  // by setting a straight-down look-at once and never re-deriving it.
+  // That risk is real only for a repeatedly-re-derived *vertical*
+  // forward vector (gimbal-degenerate against the default up), so it
+  // doesn't apply once tiltAngle is nonzero — setTarget there is safe to
+  // call as often as pan needs. NOT used for tilt changes themselves —
+  // see setTilt below for why that path always re-derives rotation
+  // regardless of direction.
+  const applyFocusAndTilt = (): void => {
+    if (tiltAngle === 0) {
+      camera.position.x = focusX
+      camera.position.z = focusZ
+      return
+    }
+    // Camera stays cameraHeight above the ground vertically, but pulls
+    // back along -Z as tilt increases so the focus point — not the
+    // camera itself — stays the pivot, the same way an orbit camera
+    // would read even though this still isn't one.
+    const backOffset = cameraHeight * Math.tan(tiltAngle)
+    camera.position.set(focusX, cameraHeight, focusZ - backOffset)
+    camera.setTarget(new Vector3(focusX, 0, focusZ))
+  }
+
   let isDragging = false
   let lastPointerX = 0
   let lastPointerY = 0
@@ -106,11 +156,18 @@ export function createHexMapCamera(options: HexMapCameraOptions): HexMapCamera {
       // Converts a pixel drag into world units at the CURRENT zoom level,
       // so a drag always moves the point under the cursor by the same
       // amount the cursor itself moved — "grab and slide the map" — no
-      // matter how zoomed in/out the view currently is.
+      // matter how zoomed in/out the view currently is. Still based on
+      // the untilted ortho width even when tilted — a tilted view's
+      // pixel-to-world ratio genuinely varies with on-screen depth (near
+      // vs far part of the tilted ground plane), so this is only exactly
+      // right at tilt = 0; an acceptable inexactness for the debug 3D
+      // preview this exists for, not worth solving properly for a
+      // throwaway view.
       const visibleWorldWidth = camera.orthoRight! - camera.orthoLeft!
       const worldUnitsPerPixel = visibleWorldWidth / engine.getRenderWidth()
-      camera.position.x -= deltaX * worldUnitsPerPixel
-      camera.position.z += deltaY * worldUnitsPerPixel
+      focusX -= deltaX * worldUnitsPerPixel
+      focusZ += deltaY * worldUnitsPerPixel
+      applyFocusAndTilt()
     }
   })
 
@@ -128,16 +185,33 @@ export function createHexMapCamera(options: HexMapCameraOptions): HexMapCamera {
     const easeFactor = 1 - Math.exp(-zoomEaseRate * (engine.getDeltaTime() / 1000))
     currentZoom = Scalar.Lerp(currentZoom, targetZoom, easeFactor)
     updateOrthoExtents(currentZoom)
-    // Orientation is fixed once at setup (see setTarget above) and never
-    // touched again here — pan only ever translates camera.position.x/z,
-    // it never needs to re-aim. Re-deriving a look-at rotation every
-    // frame for a camera pointed straight down (a gimbal-degenerate
-    // direction) is exactly the kind of thing that can accumulate a slow
-    // roll drift, which read as the whole world slowly spinning.
+    // Orientation itself is never touched here, tilted or not — pan and
+    // tilt both go through applyFocusAndTilt from their own discrete
+    // events (pointermove, setTilt) instead. See that function's own
+    // comment for why re-deriving a look-at every frame specifically
+    // matters at tilt = 0 (a gimbal-degenerate straight-down direction,
+    // prone to accumulating a slow roll drift if re-derived on a tight
+    // loop like this render callback).
   })
 
   return {
     camera,
+    // Always re-derives orientation via setTarget, even back down to
+    // angleRadians = 0 — unlike applyFocusAndTilt's own pan-driven fast
+    // path, this is a rare, discrete call (a UI toggle), not a tight
+    // per-pointermove loop, so the anti-drift shortcut doesn't apply and
+    // would actively be wrong here: without re-deriving rotation on the
+    // way back to 0, the camera would move back overhead while staying
+    // aimed at whatever angle it was last tilted to.
+    setTilt(angleRadians: number) {
+      tiltAngle = angleRadians
+      const backOffset = cameraHeight * Math.tan(tiltAngle)
+      camera.position.set(focusX, cameraHeight, focusZ - backOffset)
+      camera.setTarget(new Vector3(focusX, 0, focusZ))
+    },
+    getFocus() {
+      return { x: focusX, z: focusZ }
+    },
     dispose() {
       scene.onPointerObservable.remove(pointerObserver)
       scene.onBeforeRenderObservable.remove(renderObserver)
