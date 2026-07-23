@@ -157,6 +157,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button" data-action="toggle-sim" aria-label="Run tectonics">
             <img src="/icons/tectonics_off.png" alt="" />
           </button>
+          <button type="button" class="icon-button" data-action="erode" aria-label="Run erosion">
+            <img src="/icons/erosion.png" alt="" />
+          </button>
           <span class="tectonics-stats">
             <span>Land: <span data-value="stat-land"></span>%</span>
             <span>Epoch: <span data-value="stat-epoch"></span></span>
@@ -175,6 +178,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const resetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-sim"]')!
   const toggleSimButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-sim"]')!
   const toggleSimIcon = toggleSimButton.querySelector<HTMLImageElement>('img')!
+  const erodeButton = root.querySelector<HTMLButtonElement>('[data-action="erode"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
   const statEpoch = root.querySelector<HTMLElement>('[data-value="stat-epoch"]')!
 
@@ -186,6 +190,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const postToWorker = (message: WorkerInboundMessage): void => worker.postMessage(message)
 
   let simRunning = false
+  // Erosion (erosion.ts, run once on demand rather than every epoch —
+  // see WorkerErodeMessage's own comment) only makes sense against a
+  // settled field, so the button stays disabled while tectonics is
+  // actively ticking, and again for the stretch between clicking it and
+  // the eroded render coming back.
+  let erodeInFlight = false
+  const updateErodeButtonState = (): void => {
+    erodeButton.disabled = simRunning || erodeInFlight
+  }
 
   const updateStats = (): void => {
     statLand.textContent = String(Math.round(lastLandFraction * 100))
@@ -254,6 +267,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastLandFraction = message.landFraction
     lastEpoch = message.epoch
     updateStats()
+
+    erodeInFlight = false
+    updateErodeButtonState()
   }
 
   const initSim = (seed: string, plateCount: number, continentalCount: number): void => {
@@ -280,6 +296,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     plateCountInput.disabled = false
     continentalCountInput.disabled = false
     randomizeButton.disabled = false
+    updateErodeButtonState()
   }
 
   const startSim = (): void => {
@@ -292,11 +309,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     plateCountInput.disabled = true
     continentalCountInput.disabled = true
     randomizeButton.disabled = true
+    updateErodeButtonState()
   }
 
   toggleSimButton.addEventListener('click', () => {
     if (simRunning) stopSim()
     else startSim()
+  })
+
+  erodeButton.addEventListener('click', () => {
+    if (simRunning || erodeInFlight) return
+    erodeInFlight = true
+    updateErodeButtonState()
+    postToWorker({ type: 'erode' })
   })
 
   const regenerate = (): void => {

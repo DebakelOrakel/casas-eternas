@@ -24,6 +24,7 @@ interface RenderSliceRequest {
   height: number
   blendedBaselineSlice: ArrayBuffer
   features: TerrainFeature[]
+  warpSeed: number
 }
 
 export interface RenderSliceResponse {
@@ -34,7 +35,7 @@ export interface RenderSliceResponse {
 }
 
 self.onmessage = (event: MessageEvent<RenderSliceRequest>) => {
-  const { requestId, startY, endY, width, height, blendedBaselineSlice, features } = event.data
+  const { requestId, startY, endY, width, height, blendedBaselineSlice, features, warpSeed } = event.data
   const baselineSlice = new Float32Array(blendedBaselineSlice)
   // Rebuilt locally from the FULL feature list (not just ones inside this
   // band) rather than trying to hand each worker a pre-filtered slice —
@@ -50,7 +51,7 @@ self.onmessage = (event: MessageEvent<RenderSliceRequest>) => {
     const rowOffset = (y - startY) * width
     for (let x = 0; x < width; x++) {
       const idx = rowOffset + x
-      elevations[idx] = computeElevation(x, y, baselineSlice[idx], buckets, width, height)
+      elevations[idx] = computeElevation(x, y, baselineSlice[idx], buckets, width, height, warpSeed)
     }
   }
 

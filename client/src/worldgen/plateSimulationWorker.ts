@@ -4,6 +4,7 @@ import { renderSimulationImage } from './elevationMapImage'
 import type { BoundaryHighlight, LocationHighlight, RenderSimulationOptions } from './elevationMapImage'
 import type { ContinentLabelPlacement } from './continentLabelLayout'
 import { ElevationRenderPool } from './elevationRenderPool'
+import { runErosionPass } from './erosion'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
 // rendering the full 2048x1024 raster (a per-pixel query against every
@@ -46,7 +47,19 @@ export interface WorkerStartMessage {
 export interface WorkerStopMessage {
   type: 'stop'
 }
-export type WorkerInboundMessage = WorkerInitMessage | WorkerStartMessage | WorkerStopMessage
+// Runs a stream-power erosion pass (erosion.ts) once against the most
+// recently rendered raw elevation field and re-renders — a one-shot
+// action like 'reset', not a toggle, so there's only ever one message
+// type for it. Deliberately not something that keeps running alongside
+// live epoch-stepping: per docs/design/world-gen.md, geography is meant
+// to settle into a frozen shape once tectonics stops, and erosion is a
+// denudation pass over that settled shape, not a coupled per-epoch
+// process — WorldGenScreen.ts only enables the button while the sim is
+// stopped.
+export interface WorkerErodeMessage {
+  type: 'erode'
+}
+export type WorkerInboundMessage = WorkerInitMessage | WorkerStartMessage | WorkerStopMessage | WorkerErodeMessage
 
 export interface WorkerRenderedMessage {
   type: 'rendered'
@@ -68,6 +81,12 @@ let renderOptions: RenderSimulationOptions = {}
 let epochIntervalMs = 400
 let intervalId: ReturnType<typeof setInterval> | undefined
 let pendingEvents: SimEvent[] = []
+// The last render's pre-redistribution elevation field — physical input
+// an 'erode' request needs (see WorkerErodeMessage). Kept up to date by
+// every renderAndPost call, not just ones that happen while stopped, so
+// erosion always has *something* to act on the first time it's used
+// without needing a dedicated "prepare for erosion" render first.
+let lastRawElevations: Float32Array | null = null
 
 interface ActivePlateHighlight {
   plateIndex: number
@@ -117,8 +136,14 @@ const renderPool = new ElevationRenderPool()
 // read.
 let renderInFlight = false
 
-async function renderAndPost(): Promise<void> {
+// precomputedElevations, when passed, is an erosion pass's output (see
+// the 'erode' handler below) — always explicitly set (even to undefined)
+// rather than left alone, since renderOptions is a shared, reused-every-
+// call object and an erosion-triggered call's value would otherwise leak
+// into the next ordinary epoch-driven render.
+async function renderAndPost(precomputedElevations?: Float32Array): Promise<void> {
   if (!sim) return
+  renderOptions.precomputedElevations = precomputedElevations
 
   const plateHighlights = new Map<number, number>()
   const nowEpoch = sim.epoch
@@ -163,6 +188,7 @@ async function renderAndPost(): Promise<void> {
   renderOptions.boundaryHighlights = boundaryHighlights
 
   const result = await renderSimulationImage(sim, renderPool, renderOptions)
+  lastRawElevations = result.rawElevations
   const eventsToSend = pendingEvents
   pendingEvents = []
 
@@ -198,6 +224,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     activePlateHighlights = []
     activeLocationHighlights = []
     activeBoundaryHighlights = []
+    lastRawElevations = null
     renderOptions = message.renderOptions
     epochIntervalMs = message.epochIntervalMs
     renderAndPost()
@@ -231,5 +258,20 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     }, epochIntervalMs)
   } else if (message.type === 'stop') {
     stopTicking()
+  } else if (message.type === 'erode') {
+    if (!sim || !lastRawElevations || renderInFlight) return
+    // Synchronous and potentially multi-second at this grid size (a
+    // 2048x1024 priority-flood plus up to 100 stream-power iterations) —
+    // blocks only this worker's own message loop for that stretch, not
+    // the main UI thread, since this is a dedicated worker already
+    // separate from rendering/input. No onProgress wired up yet; if the
+    // wait proves long enough in practice to want a progress readout,
+    // runErosionPass already exposes the phase/fraction callback needed
+    // for one.
+    renderInFlight = true
+    const erosionResult = runErosionPass(lastRawElevations, sim.width, sim.height, sim.warpSeed)
+    renderAndPost(erosionResult.elevations).finally(() => {
+      renderInFlight = false
+    })
   }
 }

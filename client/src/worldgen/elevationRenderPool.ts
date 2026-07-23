@@ -32,7 +32,7 @@ export class ElevationRenderPool {
     this.workers = Array.from({ length: poolSize }, () => new Worker(new URL('./elevationRenderWorker.ts', import.meta.url), { type: 'module' }))
   }
 
-  async renderElevations(width: number, height: number, blendedBaselines: Float32Array, features: TerrainFeature[]): Promise<Float32Array> {
+  async renderElevations(width: number, height: number, blendedBaselines: Float32Array, features: TerrainFeature[], warpSeed: number): Promise<Float32Array> {
     const poolSize = this.workers.length
     const rowsPerWorker = Math.ceil(height / poolSize)
     const result = new Float32Array(width * height)
@@ -56,7 +56,7 @@ export class ElevationRenderPool {
           resolve()
         }
         worker.addEventListener('message', handleMessage)
-        const message = { type: 'renderSlice', requestId, startY, endY, width, height, blendedBaselineSlice: baselineSlice.buffer, features }
+        const message = { type: 'renderSlice', requestId, startY, endY, width, height, blendedBaselineSlice: baselineSlice.buffer, features, warpSeed }
         worker.postMessage(message, [message.blendedBaselineSlice])
       })
     })

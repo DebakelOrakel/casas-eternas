@@ -117,6 +117,11 @@ export interface SimulationRenderResult {
   landFraction: number
   // Geometry only — no pixels drawn yet, see computeContinentLabels.
   labelPlacements: ContinentLabelPlacement[]
+  // Elevation exactly as the field query (or precomputedElevations, if
+  // that path was taken) produced it, *before* applyMountainRedistribution's
+  // cosmetic reshaping — the physically meaningful values a later erosion
+  // pass (erosion.ts) needs to act on, not the display-squashed ones.
+  rawElevations: Float32Array
 }
 
 export interface RenderSimulationOptions {
@@ -143,6 +148,14 @@ export interface RenderSimulationOptions {
   // from plateHighlights, which fills a plate's whole territory rather
   // than tracing just one specific edge.
   boundaryHighlights?: BoundaryHighlight[]
+  // Skip the elevation field query (baseline blend + pool.renderElevations
+  // — together the ~88%+~15% of a normal render's cost) and use this
+  // array instead, e.g. the output of an erosion pass (erosion.ts) run
+  // against a previous render's own rawElevations. Everything downstream
+  // — redistribution, coloring, boundaries, highlights, arrows, labels —
+  // runs exactly as it would on a freshly-queried field, since none of it
+  // knows or cares where the elevation values came from.
+  precomputedElevations?: Float32Array
 }
 
 // Renders the simulation's current state into an RGBA buffer: elevation
@@ -159,11 +172,9 @@ export interface RenderSimulationOptions {
 // lines, arrows, labels) stays single-threaded — combined, profiling
 // showed it's under 15% of total cost, not worth distributing too.
 export async function renderSimulationImage(sim: PlateSimulation, pool: ElevationRenderPool, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
-  const { showBoundaries = true, showArrows = true, computeContinentLabels = true, plateHighlights, locationHighlights, boundaryHighlights } = options
+  const { showBoundaries = true, showArrows = true, computeContinentLabels = true, plateHighlights, locationHighlights, boundaryHighlights, precomputedElevations } = options
   const { width, height } = sim
   const cellIds = rasterizeVoronoiPlates(sim.seeds, width, height)
-  const agedBaseElevations = computeAgedBaseElevations(sim.baseElevations, sim.types, sim.ages)
-  const blendedBaselines = computeBlendedBaselines(sim.seeds, agedBaseElevations, width, height)
   const buffer = new Uint8Array(width * height * 4)
 
   let boundaryHighlightField: Float32Array | null = null
@@ -179,7 +190,22 @@ export async function renderSimulationImage(sim: PlateSimulation, pool: Elevatio
     }
   }
 
-  const elevations = await pool.renderElevations(width, height, blendedBaselines, sim.features)
+  let elevations: Float32Array
+  if (precomputedElevations) {
+    // Copied rather than used directly — applyMountainRedistribution
+    // below mutates in place, and precomputedElevations may be a caller-
+    // retained array (e.g. the worker's own cached "last raw elevations"
+    // it plans to erode again from later) that shouldn't be silently
+    // reshaped as a side effect of rendering it once.
+    elevations = precomputedElevations.slice()
+  } else {
+    const agedBaseElevations = computeAgedBaseElevations(sim.baseElevations, sim.types, sim.ages)
+    const blendedBaselines = computeBlendedBaselines(sim.seeds, agedBaseElevations, width, height, sim.warpSeed)
+    elevations = await pool.renderElevations(width, height, blendedBaselines, sim.features, sim.warpSeed)
+  }
+  // Captured before redistribution reshapes elevations in place — see
+  // SimulationRenderResult.rawElevations.
+  const rawElevations = elevations.slice()
   // Normalizes against this map's own actual highest point — has to
   // happen after every pixel's raw elevation is known (i.e. after the
   // pool has finished, not per-pixel/per-slice as each one is computed)
@@ -245,5 +271,5 @@ export async function renderSimulationImage(sim: PlateSimulation, pool: Elevatio
     ? computeContinentLabelPlacements(cellIds, sim.types, sim.continentNames, centroids, width, height)
     : []
 
-  return { buffer, landFraction: landPixelCount / (width * height), labelPlacements }
+  return { buffer, landFraction: landPixelCount / (width * height), labelPlacements, rawElevations }
 }

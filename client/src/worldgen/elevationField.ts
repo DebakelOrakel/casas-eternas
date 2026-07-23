@@ -1,6 +1,7 @@
 import type { PlateSeed } from './plateSeeds'
 import type { TerrainFeature } from './terrainFeatures'
 import { toroidalDistanceSq } from './toroidal'
+import { domainWarpDelta } from './domainWarp'
 
 // How far a terrain feature's influence reaches before falling off to
 // zero — bounds each query's cost (features farther than this are
@@ -101,14 +102,20 @@ export function buildFeatureBuckets(features: TerrainFeature[], width: number, h
 // (which plate counts as "second-nearest" could flip to an unrelated
 // third plate mid-cell) since every plate's weight is a continuous
 // function of its own gap, with no hard cutoff to trip over.
-export function computeBlendedBaselines(seeds: PlateSeed[], baseElevations: number[], width: number, height: number): Float32Array {
+export function computeBlendedBaselines(seeds: PlateSeed[], baseElevations: number[], width: number, height: number, warpSeed: number): Float32Array {
   const result = new Float32Array(width * height)
   const distances = new Float32Array(seeds.length)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
+      // Sampled at a warped point rather than (x, y) itself — see
+      // domainWarp.ts. toroidalDistanceSq's own wrappedDelta already
+      // handles a warped coordinate landing outside [0, width)/[0,
+      // height), so the result doesn't need re-wrapping into range first.
+      const wx = x + domainWarpDelta(x, y, width, height, warpSeed, 'x')
+      const wy = y + domainWarpDelta(x, y, width, height, warpSeed, 'y')
       let nearestDist = Infinity
       for (let i = 0; i < seeds.length; i++) {
-        const distance = Math.sqrt(toroidalDistanceSq(x, y, seeds[i].x, seeds[i].y, width, height))
+        const distance = Math.sqrt(toroidalDistanceSq(wx, wy, seeds[i].x, seeds[i].y, width, height))
         distances[i] = distance
         if (distance < nearestDist) nearestDist = distance
       }
@@ -142,10 +149,27 @@ export function computeElevation(
   featureBuckets: FeatureBuckets,
   width: number,
   height: number,
+  warpSeed: number,
 ): number {
+  // Same warped sample point computeBlendedBaselines used for this same
+  // (x, y) — both independently recompute it from the same pure inputs
+  // rather than passing it across the render-pool worker boundary, so a
+  // mountain range's own uplift query warps together with the baseline
+  // it's stacked on instead of drifting apart from it (see domainWarp.ts).
+  // Wrapped into [0, width)/[0, height) here — unlike computeBlendedBaselines,
+  // this warped point also drives a bucket *index* below, and
+  // Math.floor(negative or >=width) would pick the wrong (or an
+  // out-of-bounds) bucket; toroidalDistanceSq's own wrapping makes the
+  // later distance checks correct regardless, but the bucket lookup isn't
+  // covered by that the same way.
+  const rawWx = x + domainWarpDelta(x, y, width, height, warpSeed, 'x')
+  const rawWy = y + domainWarpDelta(x, y, width, height, warpSeed, 'y')
+  const wx = ((rawWx % width) + width) % width
+  const wy = ((rawWy % height) + height) % height
+
   const { buckets, bucketsX, bucketsY, bucketSizeX, bucketSizeY } = featureBuckets
-  const centerBx = Math.min(bucketsX - 1, Math.floor(x / bucketSizeX))
-  const centerBy = Math.min(bucketsY - 1, Math.floor(y / bucketSizeY))
+  const centerBx = Math.min(bucketsX - 1, Math.floor(wx / bucketSizeX))
+  const centerBy = Math.min(bucketsY - 1, Math.floor(wy / bucketSizeY))
 
   let upliftSum = 0
   let weightSum = 0
@@ -154,7 +178,7 @@ export function computeElevation(
     for (let dx = -1; dx <= 1; dx++) {
       const bx = (((centerBx + dx) % bucketsX) + bucketsX) % bucketsX
       for (const feature of buckets[by * bucketsX + bx]) {
-        const distSq = toroidalDistanceSq(x, y, feature.x, feature.y, width, height)
+        const distSq = toroidalDistanceSq(wx, wy, feature.x, feature.y, width, height)
         if (distSq > FEATURE_FALLOFF_RADIUS_SQ) continue
         const distance = Math.sqrt(distSq)
         const falloff = 1 - distance / FEATURE_FALLOFF_RADIUS

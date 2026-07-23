@@ -153,6 +153,13 @@ export interface PlateSimulation {
   features: TerrainFeature[]
   epoch: number
   random: () => number
+  // Seeds the coastline/contour domain-warp noise (domainWarp.ts) —
+  // derived from the same world seed string but kept independent of
+  // `random` above, since that generator's output sequence is order-
+  // sensitive (every plate-generation call consumes from it) and warp
+  // noise needs to be a pure, repeatable function of position alone, not
+  // dependent on how many other random values happened to be drawn first.
+  warpSeed: number
   // Fixed lattice + persistent per-point state, all keyed by lattice
   // index (stable across epochs — see boundaryLattice.ts). Used only to
   // trigger rift/merge, never rendered directly — mirrors the sphere
@@ -168,6 +175,11 @@ export interface PlateSimulation {
 
 export function createPlateSimulation(seedString: string, plateCount: number, continentalCount: number, width: number, height: number): PlateSimulation {
   const random = mulberry32(hashSeedString(seedString))
+  // A distinctly-salted hash of the same seed string, not hashSeedString(seedString)
+  // itself — keeps this fully deterministic per world seed without reusing
+  // the exact numeric seed `random` was already built from for a
+  // different purpose.
+  const warpSeed = hashSeedString(`${seedString}:coastalWarp`)
   const seeds = generatePlateSeeds(plateCount, width, height, random)
   const types = assignPlateTypes(plateCount, continentalCount, random)
   const motions = generatePlateMotions(seeds, width, height, random)
@@ -188,6 +200,7 @@ export function createPlateSimulation(seedString: string, plateCount: number, co
     features: [],
     epoch: 0,
     random,
+    warpSeed,
     lattice,
     latticeAccumulated: new Float32Array(lattice.length),
     latticeLockedEpochs: new Int16Array(lattice.length),
