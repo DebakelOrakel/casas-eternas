@@ -99,9 +99,9 @@
   align-items: center;
 }
 
+.worldgen-screen .plate-count-input,
 .worldgen-screen .continental-count-input {
-  width: 120px;
-  flex: none;
+  width: 100%;
 }
 
 .worldgen-screen .tectonics-stats {

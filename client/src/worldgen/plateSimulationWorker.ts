@@ -3,6 +3,7 @@ import type { PlateSimulation } from './plateSimulation'
 import { renderSimulationImage } from './elevationMapImage'
 import type { RenderSimulationOptions } from './elevationMapImage'
 import type { ContinentLabelPlacement } from './continentLabelLayout'
+import { ElevationRenderPool } from './elevationRenderPool'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
 // rendering the full 2048x1024 raster (a per-pixel query against every
@@ -11,6 +12,17 @@ import type { ContinentLabelPlacement } from './continentLabelLayout'
 // panning/input for the duration of every tick. The worker owns the
 // PlateSimulation instance entirely — only the rendered RGBA buffer (and
 // the couple of numbers the UI displays) cross back over.
+//
+// This worker is itself a coordinator, not the one doing the expensive
+// per-pixel work anymore — it owns a pool of further-nested workers (see
+// elevationRenderPool.ts) that the actual elevation query gets farmed
+// out to, since profiling showed that single loop is ~88% of render
+// time and is trivially parallel (every pixel's elevation is independent
+// of every other pixel, given the current seeds/features state).
+// stepEpoch itself stays right here, sequential — it has real epoch-to-
+// epoch dependencies (boundary detection depends on current seeds,
+// deposits depend on boundary detection, rift/merge depend on deposits)
+// that can't be farmed out the same way.
 //
 // `self` is typed loosely rather than via `/// <reference lib="webworker" />`
 // — that lib's ambient globals (self, postMessage, MessageEvent, ...)
@@ -53,10 +65,23 @@ let sim: PlateSimulation | null = null
 let renderOptions: RenderSimulationOptions = {}
 let epochIntervalMs = 400
 let intervalId: ReturnType<typeof setInterval> | undefined
+// Created once and reused for the lifetime of this worker — pool workers
+// have their own startup cost, not worth paying every epoch.
+const renderPool = new ElevationRenderPool()
+// Renders are now async (they await the pool) — without this guard, a
+// render that takes longer than epochIntervalMs would still be in
+// flight when the next interval tick fires, and that tick's stepEpoch
+// call would mutate sim.seeds/features while the in-flight render's
+// pool dispatch is still reading them. Skipping the whole tick (not just
+// the render) when busy keeps stepEpoch and an in-flight render from
+// ever overlapping — the simulation simply paces itself to whatever the
+// render pool can actually keep up with, rather than risking a torn
+// read.
+let renderInFlight = false
 
-function renderAndPost(): void {
+async function renderAndPost(): Promise<void> {
   if (!sim) return
-  const result = renderSimulationImage(sim, renderOptions)
+  const result = await renderSimulationImage(sim, renderPool, renderOptions)
   const message: WorkerRenderedMessage = {
     type: 'rendered',
     buffer: result.buffer.buffer as ArrayBuffer,
@@ -89,9 +114,12 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
   } else if (message.type === 'start') {
     if (intervalId !== undefined) return
     intervalId = setInterval(() => {
-      if (!sim) return
+      if (!sim || renderInFlight) return
       stepEpoch(sim)
-      renderAndPost()
+      renderInFlight = true
+      renderAndPost().finally(() => {
+        renderInFlight = false
+      })
     }, epochIntervalMs)
   } else if (message.type === 'stop') {
     stopTicking()

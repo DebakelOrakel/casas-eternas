@@ -16,15 +16,11 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
     </div>
     <nav class="title-nav">
       <button class="text-link" data-action="worldgen">Hacedor del Mundo</button>
-      <button class="text-link" data-action="worldgen-sphere">Hacedor del Mundo (Sphere)</button>
       <button class="text-link" data-action="mars">Mars</button>
     </nav>
   `
   root.querySelector('[data-action="worldgen"]')!.addEventListener('click', () => {
     ctx.goTo('worldgen')
-  })
-  root.querySelector('[data-action="worldgen-sphere"]')!.addEventListener('click', () => {
-    ctx.goTo('worldgen-sphere')
   })
   root.querySelector('[data-action="mars"]')!.addEventListener('click', () => {
     ctx.goTo('mars')

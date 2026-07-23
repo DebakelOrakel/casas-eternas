@@ -18,13 +18,16 @@ import './worldgen.css'
 const WORLD_WIDTH = 20
 const WORLD_HEIGHT = 10
 
-// Real Earth has ~15 major plates — 25 gives a first look with a bit more
-// texture without being a different order of magnitude.
-const PLATE_COUNT = 25
+// Real Earth has ~15 major plates — the slider's own default (21) sits a
+// bit above that for more texture without being a different order of
+// magnitude.
+const TOTAL_PLATE_COUNT_MIN = 13
+const TOTAL_PLATE_COUNT_MAX = 31
+const TOTAL_PLATE_COUNT_DEFAULT = 21
 
-const CONTINENTAL_COUNT_MIN = 7
-const CONTINENTAL_COUNT_MAX = 17
-const CONTINENTAL_COUNT_DEFAULT = 12
+const CONTINENTAL_COUNT_MIN = 3
+const CONTINENTAL_COUNT_MAX = 13
+const CONTINENTAL_COUNT_DEFAULT = 5
 
 // How often, while running, the sim advances one epoch and re-renders —
 // paced deliberately (not "as fast as possible") so a run reads as
@@ -122,16 +125,35 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           </button>
         </span>
       </label>
+      <label class="field">
+        <span class="field-label">Total plates: <span data-value="plate-count-label">${TOTAL_PLATE_COUNT_DEFAULT}</span></span>
+        <input
+          type="range"
+          class="plate-count-input"
+          min="${TOTAL_PLATE_COUNT_MIN}"
+          max="${TOTAL_PLATE_COUNT_MAX}"
+          step="1"
+          value="${TOTAL_PLATE_COUNT_DEFAULT}"
+        />
+      </label>
+      <label class="field">
+        <span class="field-label">Continental plates: <span data-value="continental-count-label">${CONTINENTAL_COUNT_DEFAULT}</span></span>
+        <input
+          type="range"
+          class="continental-count-input"
+          min="${CONTINENTAL_COUNT_MIN}"
+          max="${CONTINENTAL_COUNT_MAX}"
+          step="1"
+          value="${CONTINENTAL_COUNT_DEFAULT}"
+        />
+      </label>
+    </div>
+    <div class="panel" data-panel="1">
       <label class="field field--tectonics">
         <span class="field-row">
-          <input
-            type="range"
-            class="continental-count-input"
-            min="${CONTINENTAL_COUNT_MIN}"
-            max="${CONTINENTAL_COUNT_MAX}"
-            step="1"
-            value="${CONTINENTAL_COUNT_DEFAULT}"
-          />
+          <button type="button" class="icon-button" data-action="reset-sim" aria-label="Reset simulation">
+            <img src="/icons/reset.png" alt="" />
+          </button>
           <button type="button" class="icon-button" data-action="toggle-sim" aria-label="Run tectonics">
             <img src="/icons/tectonics_off.png" alt="" />
           </button>
@@ -145,8 +167,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   `
 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
+  const plateCountInput = root.querySelector<HTMLInputElement>('.plate-count-input')!
+  const plateCountLabel = root.querySelector<HTMLElement>('[data-value="plate-count-label"]')!
   const continentalCountInput = root.querySelector<HTMLInputElement>('.continental-count-input')!
+  const continentalCountLabel = root.querySelector<HTMLElement>('[data-value="continental-count-label"]')!
   const randomizeButton = root.querySelector<HTMLButtonElement>('[data-action="randomize-seed"]')!
+  const resetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-sim"]')!
   const toggleSimButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-sim"]')!
   const toggleSimIcon = toggleSimButton.querySelector<HTMLImageElement>('img')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
@@ -191,11 +217,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateStats()
   }
 
-  const initSim = (seed: string, continentalCount: number): void => {
+  const initSim = (seed: string, plateCount: number, continentalCount: number): void => {
     postToWorker({
       type: 'init',
       seed,
-      plateCount: PLATE_COUNT,
+      plateCount,
       continentalCount,
       width: MAP_WIDTH,
       height: MAP_HEIGHT,
@@ -203,7 +229,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       renderOptions: { showBoundaries: SHOW_PLATE_BOUNDARIES, showArrows: SHOW_VELOCITY_ARROWS },
     })
   }
-  initSim(initialSeed, CONTINENTAL_COUNT_DEFAULT)
+  initSim(initialSeed, TOTAL_PLATE_COUNT_DEFAULT, CONTINENTAL_COUNT_DEFAULT)
 
   const stopSim = (): void => {
     if (!simRunning) return
@@ -212,6 +238,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     toggleSimIcon.src = '/icons/tectonics_off.png'
     toggleSimButton.setAttribute('aria-label', 'Run tectonics')
     seedInput.disabled = false
+    plateCountInput.disabled = false
     continentalCountInput.disabled = false
     randomizeButton.disabled = false
   }
@@ -223,6 +250,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     toggleSimIcon.src = '/icons/tectonics_on.png'
     toggleSimButton.setAttribute('aria-label', 'Stop tectonics')
     seedInput.disabled = true
+    plateCountInput.disabled = true
     continentalCountInput.disabled = true
     randomizeButton.disabled = true
   }
@@ -234,22 +262,29 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   const regenerate = (): void => {
     stopSim()
-    initSim(seedInput.value, Number(continentalCountInput.value))
+    initSim(seedInput.value, Number(plateCountInput.value), Number(continentalCountInput.value))
   }
+  resetButton.addEventListener('click', regenerate)
   seedInput.addEventListener('input', regenerate)
   randomizeButton.addEventListener('click', () => {
     seedInput.value = randomSeed()
     regenerate()
   })
+  plateCountInput.addEventListener('input', () => {
+    plateCountLabel.textContent = plateCountInput.value
+    regenerate()
+  })
   continentalCountInput.addEventListener('input', () => {
+    continentalCountLabel.textContent = continentalCountInput.value
     regenerate()
   })
 
   // Same back/next convention as the sphere screen: back steps to the
   // previous panel, or exits to the title screen from the first one;
-  // next steps forward and is a no-op past the last panel. Only one
-  // panel exists so far — this is the shell future hex-tile panels
-  // (generation controls, etc.) slot into via the same data-panel pattern.
+  // next steps forward and is a no-op past the last panel. Generation
+  // parameters (seed, plate counts) live on panel 0, running the
+  // simulation on panel 1 — future panels slot in the same way via the
+  // data-panel pattern.
   const panels = Array.from(root.querySelectorAll<HTMLElement>('.panel'))
   let panelIndex = 0
   const showPanel = (index: number): void => {

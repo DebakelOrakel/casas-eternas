@@ -56,6 +56,20 @@ export function drawContinentLabel(ctx: CanvasRenderingContext2D, placement: Con
   ctx.save()
   ctx.translate(centerX, centerY)
   ctx.rotate(angle)
+  // The buffer this canvas draws into ends up mirrored horizontally by
+  // the time it reaches the screen (confirmed empirically: rendered
+  // labels came out with each glyph individually mirror-flipped and
+  // reading right-to-left, not just rotated) — something in the ground
+  // mesh's UV mapping or the top-down camera's basis flips U, not a bug
+  // in the character layout math itself, which places characters in the
+  // correct left-to-right order in buffer space. Terrain never revealed
+  // this because a horizontally-mirrored coastline still looks like a
+  // perfectly plausible coastline; text is what makes an orientation bug
+  // like this actually visible. Compensating here (mirror what we draw,
+  // so the display's own mirror cancels it back out) is far less risky
+  // than touching the mesh/camera setup, which arrows and boundary lines
+  // already depend on looking correct.
+  ctx.scale(-1, 1)
   ctx.fillStyle = LABEL_FILL
   ctx.strokeStyle = LABEL_STROKE
   ctx.lineWidth = Math.max(1, fontSize * 0.08)

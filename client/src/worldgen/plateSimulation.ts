@@ -59,6 +59,27 @@ const LOCK_EPOCHS_REQUIRED = 40
 // empirically: plate count went 25 -> 34 in 20 seconds of real time.
 const RIFT_ACCUMULATOR_THRESHOLD = -40
 const MERGE_ACCUMULATOR_THRESHOLD = 60
+// Rift and merge aren't naturally symmetric: merge has three eligible
+// boundary characters (foldMountains, subductionArc, islandArc) against
+// rift's effectively one (any sustained divergent boundary), and
+// convergent rates (FOLD_MOUNTAIN_RATE/SUBDUCTION_RATE/ISLAND_ARC_RATE,
+// averaging ~0.8) run roughly double the divergent ones
+// (RIFT_VALLEY_RATE/MID_OCEAN_RIDGE_RATE, averaging ~0.4) — see
+// boundaryClassification.ts. Confirmed empirically: total plate count
+// drifted from 25 down to as few as 2 over an 800-epoch run, with no
+// sign of leveling off, because merges kept outpacing rifts on average.
+// Rather than hand-tune the thresholds/rates to cancel this out (fragile
+// — the right constants would depend on exactly how many plates and
+// which types exist, and could still drift over a long enough run),
+// this scales both thresholds each epoch by how far the CURRENT plate
+// count sits from where the simulation started: rifting gets easier and
+// merging gets harder as plates grow scarce, and the reverse as they
+// grow plentiful — a self-correcting negative-feedback loop targeting
+// the simulation's own starting plate count as its equilibrium, rather
+// than a second hardcoded target that could drift out of sync with
+// whatever PLATE_COUNT the UI is actually configured to.
+const PLATE_COUNT_PRESSURE_STRENGTH = 0.03
+const PLATE_COUNT_PRESSURE_CLAMP = 0.6
 // Thickness decays a little every epoch even without erosion actually
 // being built yet (explicitly out of scope for this feature per the
 // decision doc) — a real forcing/response model still needs *some*
@@ -68,6 +89,39 @@ const MERGE_ACCUMULATOR_THRESHOLD = 60
 // boundaries reliably saturated the elevation clamp into solid white
 // disks within well under a minute of running.
 const THICKNESS_DECAY_PER_EPOCH = 0.99
+// Bounds how long a terrain feature can accumulate in sim.features once
+// its boundary has gone inactive — without this, every feature ever
+// created (even ones long abandoned, decaying toward negligible
+// thickness under THICKNESS_DECAY_PER_EPOCH but never actually removed)
+// stays in the array forever. Confirmed empirically as the direct cause
+// of the simulation slowing down over a long run: feature count grew
+// from 237 to 7625 over 550 epochs, with per-render time growing
+// proportionally (561ms to 8.8s) since every pixel's elevation query
+// scans nearby features (elevationField.ts). A feature is only ever
+// pruned once BOTH conditions hold — never while it's still recently
+// active, regardless of how thin it currently is (a fresh deposit starts
+// at 0 thickness and needs epochs to grow; pruning by thickness alone
+// would delete brand-new features on the same epoch they're created).
+//
+// INACTIVITY_EPOCHS matches LOCK_EPOCHS_REQUIRED (both are "enough
+// epochs to trust this isn't just one noisy epoch"); MAX_INACTIVITY
+// matches the same order as AGE_MULTIPLIER_HALF_LIFE_EPOCHS. A more
+// lenient first pass (60 / 500) still let equilibrium feature count
+// settle around 5000 over an 800-epoch run (6+ second renders); these
+// tighter values settle around 2000 instead (~2s renders) — confirmed
+// empirically, not guessed. Render time still doesn't return to the
+// sub-100-feature-count speeds (there's real fixed per-render cost
+// elsewhere — computeBlendedBaselines alone measured ~140ms independent
+// of feature count) — pruning bounds the *growth*, it doesn't make the
+// renderer itself fast.
+const FEATURE_PRUNE_THICKNESS = 0.05
+const FEATURE_PRUNE_INACTIVITY_EPOCHS = 40
+// Hard cutoff regardless of remaining thickness — without this, a large,
+// long-abandoned mountain range (thickness decays slowly in proportion
+// to how large it already was) could still take hundreds of epochs to
+// cross FEATURE_PRUNE_THICKNESS on decay alone, limiting how much the
+// thickness-based rule above actually bounds worst-case growth.
+const FEATURE_PRUNE_MAX_INACTIVITY_EPOCHS = 150
 // A boundary's own uplift-rate multiplier decays with how long it's been
 // continuously active (latticeLockedEpochs — already tracked for the
 // rift/merge lock, reused here rather than adding new state): a
@@ -82,6 +136,10 @@ const AGE_MULTIPLIER_HALF_LIFE_EPOCHS = 150
 export interface PlateSimulation {
   width: number
   height: number
+  // Plate count as configured at creation — the target the plate-count
+  // homeostasis (PLATE_COUNT_PRESSURE_STRENGTH) steers back toward as
+  // rift/merge events change seeds.length over time.
+  initialPlateCount: number
   seeds: PlateSeed[]
   types: PlateType[]
   motions: PlateMotion[]
@@ -120,6 +178,7 @@ export function createPlateSimulation(seedString: string, plateCount: number, co
   return {
     width,
     height,
+    initialPlateCount: plateCount,
     seeds,
     types,
     motions,
@@ -213,10 +272,24 @@ export function stepEpoch(sim: PlateSimulation): void {
     sim.ages[i] += 1
   }
   advanceTerrainFeatures(sim.features, sim.motions, EPOCH_ANGLE_STEP, width, height)
-  for (const feature of sim.features) feature.thickness *= THICKNESS_DECAY_PER_EPOCH
+  for (const feature of sim.features) {
+    feature.thickness *= THICKNESS_DECAY_PER_EPOCH
+    feature.epochsSinceDeposit += 1
+  }
 
   // 2. Detect this epoch's boundaries against the fixed lattice.
   const boundaries = detectBoundaries(sim.lattice, sim.seeds, width, height)
+
+  // Scales the rift/merge thresholds toward whichever makes the currently-
+  // scarce event easier — see PLATE_COUNT_PRESSURE_STRENGTH's own comment.
+  // Positive pressure means too few plates (rifting should get easier,
+  // merging harder); negative means too many (the reverse).
+  const plateCountPressure = Math.max(
+    -PLATE_COUNT_PRESSURE_CLAMP,
+    Math.min(PLATE_COUNT_PRESSURE_CLAMP, (sim.initialPlateCount - sim.seeds.length) * PLATE_COUNT_PRESSURE_STRENGTH),
+  )
+  const effectiveRiftThreshold = RIFT_ACCUMULATOR_THRESHOLD * (1 - plateCountPressure)
+  const effectiveMergeThreshold = MERGE_ACCUMULATOR_THRESHOLD * (1 + plateCountPressure)
 
   let riftEvent: RiftEvent | null = null
   let mergeEvent: MergeEvent | null = null
@@ -290,9 +363,9 @@ export function stepEpoch(sim: PlateSimulation): void {
     }
 
     if (sim.latticeLockedEpochs[index] < LOCK_EPOCHS_REQUIRED) continue
-    if (!riftEvent && convergence.motionClass === 'divergent' && sim.latticeAccumulated[index] <= RIFT_ACCUMULATOR_THRESHOLD) {
+    if (!riftEvent && convergence.motionClass === 'divergent' && sim.latticeAccumulated[index] <= effectiveRiftThreshold) {
       riftEvent = { x: boundary.x, y: boundary.y }
-    } else if (!mergeEvent && sim.latticeAccumulated[index] >= MERGE_ACCUMULATOR_THRESHOLD) {
+    } else if (!mergeEvent && sim.latticeAccumulated[index] >= effectiveMergeThreshold) {
       // Continent-continent collision (foldMountains) merges the two
       // into one — doesn't matter which index survives, both are
       // continental. Subduction (subductionArc, islandArc) instead
@@ -325,6 +398,7 @@ export function stepEpoch(sim: PlateSimulation): void {
   for (const [featureIndex, { sum, count }] of featureDeposits) {
     const feature = sim.features[featureIndex]
     feature.thickness += sum / count
+    feature.epochsSinceDeposit = 0
   }
 
   // At most one rift and one merge per epoch — both are rare (locking
@@ -333,6 +407,17 @@ export function stepEpoch(sim: PlateSimulation): void {
   // in a single epoch would need.
   if (riftEvent) applyRift(sim, riftEvent)
   if (mergeEvent) applyMerge(sim, mergeEvent)
+
+  // Drop features that have been both inactive for a while AND decayed
+  // to a negligible thickness, plus anything inactive long enough to hit
+  // the hard cap regardless of thickness — see FEATURE_PRUNE_THICKNESS's
+  // own comment for why this is the actual fix for the simulation
+  // slowing down over a long run.
+  sim.features = sim.features.filter((feature) => {
+    if (feature.epochsSinceDeposit <= FEATURE_PRUNE_INACTIVITY_EPOCHS) return true
+    if (feature.epochsSinceDeposit > FEATURE_PRUNE_MAX_INACTIVITY_EPOCHS) return false
+    return Math.abs(feature.thickness) >= FEATURE_PRUNE_THICKNESS
+  })
 
   sim.epoch += 1
 }

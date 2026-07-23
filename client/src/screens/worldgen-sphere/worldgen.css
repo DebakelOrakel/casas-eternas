@@ -10,7 +10,13 @@
   justify-content: center;
   gap: 1.5rem;
   padding: 4rem 1.5rem 1.25rem;
-  background: linear-gradient(to top, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.85) 55%, rgba(255, 255, 255, 0) 100%);
+  background: linear-gradient(
+    to top, 
+    rgba(255, 255, 255, 1) 0%, 
+    rgba(255, 255, 255, 0.95) 45%, 
+    rgba(255, 255, 255, 0.85) 75%, 
+    rgba(255, 255, 255, 0) 100%
+  );
   color: #1a1a1a;
   font-family: sans-serif;
 }

@@ -37,6 +37,17 @@ export interface TerrainFeature {
   // to pull the two sides' deposits apart (45px within 40 epochs),
   // fragmenting one ridge into two separately-drifting mounds.
   movesWithPlate: number | 'both'
+  // Epochs since this feature last received a deposit — reset to 0 in
+  // plateSimulation.ts's stepEpoch whenever it's touched, incremented
+  // every other epoch. Drives pruning: without it, every feature ever
+  // created (even ones whose boundary went inactive epochs ago, decaying
+  // toward zero thickness) stays in this array forever, since nothing
+  // else ever removes one. Confirmed empirically that this is the actual
+  // cause of the simulation slowing down over a long run — features grew
+  // from 237 to 7625 over 550 epochs, and per-render time grew right
+  // alongside it (561ms to 8.8s) since every pixel's elevation query
+  // scans nearby features.
+  epochsSinceDeposit: number
 }
 
 // How close an active boundary point needs to be to an existing feature
@@ -79,7 +90,7 @@ export function findOrCreateFeatureIndex(
     const dy = wrappedDelta(y, feature.y, height)
     if (dx * dx + dy * dy <= mergeRadiusSq) return i
   }
-  features.push({ x, y, thickness: 0, plateA, plateB, movesWithPlate })
+  features.push({ x, y, thickness: 0, plateA, plateB, movesWithPlate, epochsSinceDeposit: 0 })
   return features.length - 1
 }
 

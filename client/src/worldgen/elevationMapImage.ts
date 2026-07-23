@@ -1,12 +1,14 @@
 import { drawPlateArrows } from './plateArrows'
 import { elevationToColor } from './elevationColor'
-import { applyMountainRedistribution, buildFeatureBuckets, computeBlendedBaselines, computeElevation } from './elevationField'
+import { applyMountainRedistribution, computeBlendedBaselines } from './elevationField'
+import { computeAgedBaseElevations } from './plateBaseline'
 import { getVelocityAt } from './plateMotion'
 import type { PlateSimulation } from './plateSimulation'
 import { rasterizeVoronoiPlates } from './voronoiRaster'
 import { computePlateCentroids } from './plateGeometry'
 import { computeContinentLabelPlacements } from './continentLabelLayout'
 import type { ContinentLabelPlacement } from './continentLabelLayout'
+import type { ElevationRenderPool } from './elevationRenderPool'
 
 const BOUNDARY_COLOR: [number, number, number] = [15, 15, 15]
 
@@ -44,26 +46,27 @@ export interface RenderSimulationOptions {
 // color, except pixels right on a plate boundary — those stay a dark
 // outline on top (see showBoundaries). Velocity arrows are drawn last, on
 // top of both (see showArrows).
-export function renderSimulationImage(sim: PlateSimulation, options: RenderSimulationOptions = {}): SimulationRenderResult {
+//
+// Async, and takes a render pool, because the actual per-pixel elevation
+// query — profiled at ~88% of total render time — is farmed out across
+// a pool of nested workers (see elevationRenderPool.ts) rather than
+// computed inline here. Everything else in this function (Voronoi
+// rasterization, baseline blending, redistribution, coloring, boundary
+// lines, arrows, labels) stays single-threaded — combined, profiling
+// showed it's under 15% of total cost, not worth distributing too.
+export async function renderSimulationImage(sim: PlateSimulation, pool: ElevationRenderPool, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
   const { showBoundaries = true, showArrows = true, computeContinentLabels = true } = options
   const { width, height } = sim
   const cellIds = rasterizeVoronoiPlates(sim.seeds, width, height)
-  const blendedBaselines = computeBlendedBaselines(sim.seeds, sim.baseElevations, width, height)
-  const featureBuckets = buildFeatureBuckets(sim.features, width, height)
+  const agedBaseElevations = computeAgedBaseElevations(sim.baseElevations, sim.types, sim.ages)
+  const blendedBaselines = computeBlendedBaselines(sim.seeds, agedBaseElevations, width, height)
   const buffer = new Uint8Array(width * height * 4)
 
-  // Computed into a full array first (rather than colored straight away)
-  // so applyMountainRedistribution can normalize against this map's own
-  // actual highest point before reshaping — see its own comment for why
-  // that has to happen after every pixel's raw elevation is known, not
-  // per-pixel as each one is computed.
-  const elevations = new Float32Array(width * height)
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = y * width + x
-      elevations[idx] = computeElevation(x, y, blendedBaselines[idx], featureBuckets, width, height)
-    }
-  }
+  const elevations = await pool.renderElevations(width, height, blendedBaselines, sim.features)
+  // Normalizes against this map's own actual highest point — has to
+  // happen after every pixel's raw elevation is known (i.e. after the
+  // pool has finished, not per-pixel/per-slice as each one is computed)
+  // — see applyMountainRedistribution's own comment for why.
   applyMountainRedistribution(elevations)
 
   let landPixelCount = 0
