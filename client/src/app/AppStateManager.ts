@@ -1,5 +1,6 @@
 import type { Engine } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory, ScreenId } from './Screen'
+import { NotificationManager } from '../ui/NotificationManager'
 
 export class AppStateManager {
   private current: Screen | null = null
@@ -7,6 +8,7 @@ export class AppStateManager {
   private readonly canvas: HTMLCanvasElement
   private readonly overlay: HTMLElement
   private readonly factories: Record<ScreenId, ScreenFactory>
+  private readonly notifications: NotificationManager
 
   constructor(
     engine: Engine,
@@ -18,16 +20,20 @@ export class AppStateManager {
     this.canvas = canvas
     this.overlay = overlay
     this.factories = factories
+    this.notifications = new NotificationManager(overlay)
   }
 
   goTo(id: ScreenId): void {
     this.current?.dispose()
+    this.notifications.clearAll()
     this.overlay.replaceChildren()
+    this.notifications.ensureContainer(this.overlay)
 
     const ctx: ScreenContext = {
       engine: this.engine,
       canvas: this.canvas,
       overlay: this.overlay,
+      notifications: this.notifications,
       goTo: (next) => this.goTo(next),
     }
     this.current = this.factories[id](ctx)

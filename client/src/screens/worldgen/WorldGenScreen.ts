@@ -206,11 +206,89 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   labelCanvas.height = MAP_HEIGHT
   const labelCtx = labelCanvas.getContext('2d')!
 
+  interface EventMarker {
+    x: number
+    y: number
+    startEpoch: number
+  }
+  const activeEventMarkers: EventMarker[] = []
+
   worker.onmessage = (event: MessageEvent<WorkerRenderedMessage>) => {
     const message = event.data
     const imageData = new ImageData(new Uint8ClampedArray(message.buffer), message.width, message.height)
     labelCtx.putImageData(imageData, 0, 0)
     drawContinentLabels(labelCtx, message.labelPlacements)
+
+    if (message.events) {
+      for (const ev of message.events) {
+        if (ev.x !== undefined && ev.y !== undefined) {
+          activeEventMarkers.push({ x: ev.x, y: ev.y, startEpoch: message.epoch })
+        }
+        if (ev.type === 'continental_created' && ev.name) {
+          ctx.notifications.show({
+            message: `New continental plate just dropped: ${ev.name}`,
+            icon: '/icons/continent.png',
+            durationMs: 15000,
+          })
+        } else if (ev.type === 'oceanic_created') {
+          ctx.notifications.show({
+            message: 'New oceanic plate just dropped',
+            icon: '/icons/ocean.png',
+            durationMs: 15000,
+          })
+        } else if (ev.type === 'oceanic_subducted') {
+          ctx.notifications.show({
+            message: 'Oceanic plate subducted',
+            icon: '/icons/ocean.png',
+            durationMs: 15000,
+          })
+        } else if (ev.type === 'continental_merged') {
+          const text = ev.nameA && ev.nameB ? `Continental plates merged: ${ev.nameA} & ${ev.nameB}` : 'Continental plates merged'
+          ctx.notifications.show({
+            message: text,
+            icon: '/icons/continent.png',
+            durationMs: 15000,
+          })
+        } else if (ev.type === 'continental_split') {
+          const text = ev.name ? `Continental plate split: ${ev.name}` : 'Continental plate split'
+          ctx.notifications.show({
+            message: text,
+            icon: '/icons/continent.png',
+            durationMs: 15000,
+          })
+        }
+      }
+    }
+
+    // Draw red pulsing circles around active tectonic event locations
+    const MARKER_LIFESPAN_EPOCHS = 18
+    const nowEpoch = message.epoch
+    for (let i = activeEventMarkers.length - 1; i >= 0; i--) {
+      const marker = activeEventMarkers[i]
+      const age = nowEpoch - marker.startEpoch
+      if (age >= MARKER_LIFESPAN_EPOCHS) {
+        activeEventMarkers.splice(i, 1)
+        continue
+      }
+
+      const progress = age / MARKER_LIFESPAN_EPOCHS
+      const alpha = 1.0 - progress
+      const radius = 16 + progress * 24
+
+      labelCtx.save()
+      labelCtx.beginPath()
+      labelCtx.arc(marker.x, marker.y, radius, 0, Math.PI * 2)
+      labelCtx.strokeStyle = `rgba(255, 30, 40, ${alpha})`
+      labelCtx.lineWidth = 5
+      labelCtx.stroke()
+
+      labelCtx.beginPath()
+      labelCtx.arc(marker.x, marker.y, Math.max(3, radius * 0.35), 0, Math.PI * 2)
+      labelCtx.fillStyle = `rgba(255, 50, 50, ${alpha * 0.75})`
+      labelCtx.fill()
+      labelCtx.restore()
+    }
+
     mapTexture.update(new Uint8Array(labelCtx.getImageData(0, 0, message.width, message.height).data.buffer))
     lastLandFraction = message.landFraction
     lastEpoch = message.epoch
@@ -218,6 +296,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   const initSim = (seed: string, plateCount: number, continentalCount: number): void => {
+    activeEventMarkers.length = 0
     postToWorker({
       type: 'init',
       seed,
@@ -262,6 +341,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   const regenerate = (): void => {
     stopSim()
+    ctx.notifications.clearAll()
     initSim(seedInput.value, Number(plateCountInput.value), Number(continentalCountInput.value))
   }
   resetButton.addEventListener('click', regenerate)

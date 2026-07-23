@@ -23,3 +23,9 @@ app.goTo('title')
 
 engine.runRenderLoop(() => app.render())
 window.addEventListener('resize', () => engine.resize())
+
+if (import.meta.hot) {
+  import.meta.hot.accept(() => {
+    window.location.reload()
+  })
+}

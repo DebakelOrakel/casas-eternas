@@ -199,9 +199,40 @@ function motionClassCode(motionClass: 'convergent' | 'divergent' | 'transform'):
   return motionClass === 'convergent' ? 0 : motionClass === 'divergent' ? 1 : 2
 }
 
+export type SimEventType =
+  | 'continental_created'
+  | 'oceanic_created'
+  | 'oceanic_subducted'
+  | 'continental_merged'
+  | 'continental_split'
+
+export interface SimEvent {
+  type: SimEventType
+  name?: string
+  nameA?: string
+  nameB?: string
+  x?: number
+  y?: number
+}
+
+export function getInitialPlateEvents(sim: PlateSimulation): SimEvent[] {
+  const events: SimEvent[] = []
+  for (let i = 0; i < sim.types.length; i++) {
+    if (sim.types[i] === 'continental') {
+      events.push({
+        type: 'continental_created',
+        name: sim.continentNames[i] || undefined,
+      })
+    }
+  }
+  return events
+}
+
 interface RiftEvent {
   x: number
   y: number
+  plateA: number
+  plateB: number
 }
 
 // Which plate is actually removed (consumed) vs. which one survives and
@@ -209,6 +240,8 @@ interface RiftEvent {
 // subducting oceanic plate must be the one removed regardless of which
 // index it happens to hold (see stepEpoch's merge-resolution branch).
 interface MergeEvent {
+  x: number
+  y: number
   keepIndex: number
   removeIndex: number
 }
@@ -259,7 +292,7 @@ function applyMerge(sim: PlateSimulation, event: MergeEvent): void {
   sim.continentNames.splice(removeIndex, 1)
 }
 
-export function stepEpoch(sim: PlateSimulation): void {
+export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   const { width, height } = sim
 
   // 1. Advance every plate (and whatever terrain is attached to it)
@@ -364,7 +397,7 @@ export function stepEpoch(sim: PlateSimulation): void {
 
     if (sim.latticeLockedEpochs[index] < LOCK_EPOCHS_REQUIRED) continue
     if (!riftEvent && convergence.motionClass === 'divergent' && sim.latticeAccumulated[index] <= effectiveRiftThreshold) {
-      riftEvent = { x: boundary.x, y: boundary.y }
+      riftEvent = { x: boundary.x, y: boundary.y, plateA: boundary.plateA, plateB: boundary.plateB }
     } else if (!mergeEvent && sim.latticeAccumulated[index] >= effectiveMergeThreshold) {
       // Continent-continent collision (foldMountains) merges the two
       // into one — doesn't matter which index survives, both are
@@ -379,12 +412,12 @@ export function stepEpoch(sim: PlateSimulation): void {
       // plate, even though real subduction is the main way a plate
       // vanishes entirely.
       if (classification.character === 'foldMountains') {
-        mergeEvent = { keepIndex: Math.min(boundary.plateA, boundary.plateB), removeIndex: Math.max(boundary.plateA, boundary.plateB) }
+        mergeEvent = { x: boundary.x, y: boundary.y, keepIndex: Math.min(boundary.plateA, boundary.plateB), removeIndex: Math.max(boundary.plateA, boundary.plateB) }
       } else if (classification.character === 'subductionArc') {
         const plateAIsOceanic = sim.types[boundary.plateA] === 'oceanic'
-        mergeEvent = plateAIsOceanic ? { keepIndex: boundary.plateB, removeIndex: boundary.plateA } : { keepIndex: boundary.plateA, removeIndex: boundary.plateB }
+        mergeEvent = { x: boundary.x, y: boundary.y, keepIndex: plateAIsOceanic ? boundary.plateB : boundary.plateA, removeIndex: plateAIsOceanic ? boundary.plateA : boundary.plateB }
       } else if (classification.character === 'islandArc') {
-        mergeEvent = classification.upliftSide === 'a' ? { keepIndex: boundary.plateA, removeIndex: boundary.plateB } : { keepIndex: boundary.plateB, removeIndex: boundary.plateA }
+        mergeEvent = { x: boundary.x, y: boundary.y, keepIndex: classification.upliftSide === 'a' ? boundary.plateA : boundary.plateB, removeIndex: classification.upliftSide === 'a' ? boundary.plateB : boundary.plateA }
       }
     }
   }
@@ -401,12 +434,35 @@ export function stepEpoch(sim: PlateSimulation): void {
     feature.epochsSinceDeposit = 0
   }
 
+  const events: SimEvent[] = []
+
   // At most one rift and one merge per epoch — both are rare (locking
   // takes LOCK_EPOCHS_REQUIRED epochs to even become eligible) and this
   // sidesteps the bookkeeping multiple simultaneous plate-count changes
   // in a single epoch would need.
-  if (riftEvent) applyRift(sim, riftEvent)
-  if (mergeEvent) applyMerge(sim, mergeEvent)
+  if (riftEvent) {
+    const isContinentalRift = sim.types[riftEvent.plateA] === 'continental' || sim.types[riftEvent.plateB] === 'continental'
+    const continentName = sim.continentNames[riftEvent.plateA] || sim.continentNames[riftEvent.plateB] || undefined
+    if (isContinentalRift) {
+      events.push({ type: 'continental_split', name: continentName, x: riftEvent.x, y: riftEvent.y })
+    }
+    events.push({ type: 'oceanic_created', x: riftEvent.x, y: riftEvent.y })
+    applyRift(sim, riftEvent)
+  }
+
+  if (mergeEvent) {
+    const keepType = sim.types[mergeEvent.keepIndex]
+    const removeType = sim.types[mergeEvent.removeIndex]
+    const keepName = sim.continentNames[mergeEvent.keepIndex]
+    const removeName = sim.continentNames[mergeEvent.removeIndex]
+
+    if (removeType === 'oceanic') {
+      events.push({ type: 'oceanic_subducted', x: mergeEvent.x, y: mergeEvent.y })
+    } else if (keepType === 'continental' && removeType === 'continental') {
+      events.push({ type: 'continental_merged', nameA: keepName || undefined, nameB: removeName || undefined, x: mergeEvent.x, y: mergeEvent.y })
+    }
+    applyMerge(sim, mergeEvent)
+  }
 
   // Drop features that have been both inactive for a while AND decayed
   // to a negligible thickness, plus anything inactive long enough to hit
@@ -420,4 +476,6 @@ export function stepEpoch(sim: PlateSimulation): void {
   })
 
   sim.epoch += 1
+
+  return events
 }

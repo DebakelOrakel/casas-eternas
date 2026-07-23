@@ -1,5 +1,5 @@
-import { createPlateSimulation, stepEpoch } from './plateSimulation'
-import type { PlateSimulation } from './plateSimulation'
+import { createPlateSimulation, getInitialPlateEvents, stepEpoch } from './plateSimulation'
+import type { PlateSimulation, SimEvent } from './plateSimulation'
 import { renderSimulationImage } from './elevationMapImage'
 import type { RenderSimulationOptions } from './elevationMapImage'
 import type { ContinentLabelPlacement } from './continentLabelLayout'
@@ -59,12 +59,16 @@ export interface WorkerRenderedMessage {
   // the worker (no Canvas2D), so the main thread draws the actual labels
   // once this arrives (see WorldGenScreen.ts).
   labelPlacements: ContinentLabelPlacement[]
+  continentNames: (string | null)[]
+  events: SimEvent[]
 }
 
 let sim: PlateSimulation | null = null
 let renderOptions: RenderSimulationOptions = {}
 let epochIntervalMs = 400
 let intervalId: ReturnType<typeof setInterval> | undefined
+let pendingEvents: SimEvent[] = []
+
 // Created once and reused for the lifetime of this worker — pool workers
 // have their own startup cost, not worth paying every epoch.
 const renderPool = new ElevationRenderPool()
@@ -82,6 +86,9 @@ let renderInFlight = false
 async function renderAndPost(): Promise<void> {
   if (!sim) return
   const result = await renderSimulationImage(sim, renderPool, renderOptions)
+  const eventsToSend = pendingEvents
+  pendingEvents = []
+
   const message: WorkerRenderedMessage = {
     type: 'rendered',
     buffer: result.buffer.buffer as ArrayBuffer,
@@ -90,6 +97,8 @@ async function renderAndPost(): Promise<void> {
     landFraction: result.landFraction,
     epoch: sim.epoch,
     labelPlacements: result.labelPlacements,
+    continentNames: sim.continentNames,
+    events: eventsToSend,
   }
   // Transfers the underlying ArrayBuffer instead of copying it — safe
   // because renderSimulationImage allocates a fresh Uint8Array every call,
@@ -108,6 +117,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
   if (message.type === 'init') {
     stopTicking()
     sim = createPlateSimulation(message.seed, message.plateCount, message.continentalCount, message.width, message.height)
+    pendingEvents = getInitialPlateEvents(sim)
     renderOptions = message.renderOptions
     epochIntervalMs = message.epochIntervalMs
     renderAndPost()
@@ -115,7 +125,8 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     if (intervalId !== undefined) return
     intervalId = setInterval(() => {
       if (!sim || renderInFlight) return
-      stepEpoch(sim)
+      const tickEvents = stepEpoch(sim)
+      pendingEvents.push(...tickEvents)
       renderInFlight = true
       renderAndPost().finally(() => {
         renderInFlight = false
