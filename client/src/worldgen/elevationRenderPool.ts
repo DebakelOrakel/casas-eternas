@@ -43,31 +43,42 @@ export class ElevationRenderPool {
     this.workers = Array.from({ length: poolSize }, () => new ElevationRenderWorker())
   }
 
-  async renderElevations(width: number, height: number, blendedBaselines: Float32Array, features: TerrainFeature[], warpSeed: number): Promise<Float32Array> {
+  // renderWidth/renderHeight is the output grid (can be coarser than the
+  // world for a low-res live preview); worldWidth/worldHeight is the space
+  // features/seeds live in. blendedBaselines is at the render resolution.
+  async renderElevations(
+    renderWidth: number,
+    renderHeight: number,
+    worldWidth: number,
+    worldHeight: number,
+    blendedBaselines: Float32Array,
+    features: TerrainFeature[],
+    warpSeed: number,
+  ): Promise<Float32Array> {
     const poolSize = this.workers.length
-    const rowsPerWorker = Math.ceil(height / poolSize)
-    const result = new Float32Array(width * height)
+    const rowsPerWorker = Math.ceil(renderHeight / poolSize)
+    const result = new Float32Array(renderWidth * renderHeight)
 
     const tasks = this.workers.map((worker, i) => {
       const startY = i * rowsPerWorker
-      const endY = Math.min(height, startY + rowsPerWorker)
+      const endY = Math.min(renderHeight, startY + rowsPerWorker)
       if (startY >= endY) return Promise.resolve()
 
       // .slice() copies (doesn't alias blendedBaselines' own buffer), so
       // transferring the copy's buffer is safe — the shared array every
       // worker reads from stays intact for the next worker's slice.
-      const baselineSlice = blendedBaselines.slice(startY * width, endY * width)
+      const baselineSlice = blendedBaselines.slice(startY * renderWidth, endY * renderWidth)
       const requestId = this.nextRequestId++
 
       return new Promise<void>((resolve) => {
         const handleMessage = (event: MessageEvent<RenderSliceResponse>) => {
           if (event.data.requestId !== requestId) return
           worker.removeEventListener('message', handleMessage)
-          result.set(new Float32Array(event.data.elevations), startY * width)
+          result.set(new Float32Array(event.data.elevations), startY * renderWidth)
           resolve()
         }
         worker.addEventListener('message', handleMessage)
-        const message = { type: 'renderSlice', requestId, startY, endY, width, height, blendedBaselineSlice: baselineSlice.buffer, features, warpSeed }
+        const message = { type: 'renderSlice', requestId, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight, blendedBaselineSlice: baselineSlice.buffer, features, warpSeed }
         worker.postMessage(message, [message.blendedBaselineSlice])
       })
     })

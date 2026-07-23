@@ -2,7 +2,7 @@ import type { PlateSeed } from './plateSeeds'
 import type { TerrainFeature } from './terrainFeatures'
 import { toroidalDistanceSq, wrappedDelta } from './toroidal'
 import { domainWarpDelta } from './domainWarp'
-import { ridgedMultifractal, RIDGE_MEAN } from './ridgedNoise'
+import { RIDGE_MEAN } from './ridgedNoise'
 
 // A terrain feature is no longer an isotropic blob but an oriented ridge
 // segment: its influence reaches far ALONG its own boundary tangent
@@ -130,20 +130,39 @@ export function buildFeatureBuckets(features: TerrainFeature[], width: number, h
 // (which plate counts as "second-nearest" could flip to an unrelated
 // third plate mid-cell) since every plate's weight is a continuous
 // function of its own gap, with no hard cutoff to trip over.
-export function computeBlendedBaselines(seeds: PlateSeed[], baseElevations: number[], width: number, height: number, warpSeed: number): Float32Array {
-  const result = new Float32Array(width * height)
+export function computeBlendedBaselines(
+  seeds: PlateSeed[],
+  baseElevations: number[],
+  renderWidth: number,
+  renderHeight: number,
+  worldWidth: number,
+  worldHeight: number,
+  warpSeed: number,
+): Float32Array {
+  const result = new Float32Array(renderWidth * renderHeight)
   const distances = new Float32Array(seeds.length)
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      // Sampled at a warped point rather than (x, y) itself — see
-      // domainWarp.ts. toroidalDistanceSq's own wrappedDelta already
-      // handles a warped coordinate landing outside [0, width)/[0,
-      // height), so the result doesn't need re-wrapping into range first.
-      const wx = x + domainWarpDelta(x, y, width, height, warpSeed, 'x')
-      const wy = y + domainWarpDelta(x, y, width, height, warpSeed, 'y')
+  // The render grid can be coarser than the world (a low-res live preview
+  // — see renderSimulationImage's elevationScale): each render pixel samples
+  // a world coordinate scaled up by worldWidth/renderWidth, covering the
+  // whole world at fewer points rather than only a corner of it. At full
+  // resolution renderWidth === worldWidth, so scale is 1 and world coord ==
+  // pixel, identical to before. Seed positions and BASELINE_BLEND_RADIUS
+  // stay in world units throughout.
+  const scaleX = worldWidth / renderWidth
+  const scaleY = worldHeight / renderHeight
+  for (let py = 0; py < renderHeight; py++) {
+    const worldY = py * scaleY
+    for (let px = 0; px < renderWidth; px++) {
+      const worldX = px * scaleX
+      // Sampled at a warped point rather than the world coord itself — see
+      // domainWarp.ts. toroidalDistanceSq's own wrappedDelta already handles
+      // a warped coordinate landing outside [0, worldWidth)/[0, worldHeight),
+      // so the result doesn't need re-wrapping into range first.
+      const wx = worldX + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'x')
+      const wy = worldY + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'y')
       let nearestDist = Infinity
       for (let i = 0; i < seeds.length; i++) {
-        const distance = Math.sqrt(toroidalDistanceSq(wx, wy, seeds[i].x, seeds[i].y, width, height))
+        const distance = Math.sqrt(toroidalDistanceSq(wx, wy, seeds[i].x, seeds[i].y, worldWidth, worldHeight))
         distances[i] = distance
         if (distance < nearestDist) nearestDist = distance
       }
@@ -157,23 +176,31 @@ export function computeBlendedBaselines(seeds: PlateSeed[], baseElevations: numb
         baselineSum += baseElevations[i] * weight
         weightSum += weight
       }
-      result[y * width + x] = baselineSum / weightSum
+      result[py * renderWidth + px] = baselineSum / weightSum
     }
   }
   return result
 }
 
-// Ridged-multifractal relief added on top of the smooth tectonic uplift,
-// modulated by that uplift so only raised terrain gets rugged (see
-// RIDGE_RELATIVE_STRENGTH). Centered on RIDGE_MEAN so ridgelines add height
-// and valleys cut down with no net bias, and gated to positive uplift so
-// trenches and rift valleys (negative uplift) stay smooth depressions
-// rather than getting ridged. Sampled at the same warped point as the rest
-// of the field so it moves together with the coastline/uplift warp.
-function ridgedDetail(wx: number, wy: number, uplift: number, width: number, height: number, warpSeed: number): number {
-  if (uplift <= 0) return 0
-  const ridge = ridgedMultifractal(wx, wy, width, height, warpSeed)
-  return (ridge - RIDGE_MEAN) * uplift * RIDGE_RELATIVE_STRENGTH
+// The warped sample point for a pixel — the same warp computeBlendedBaselines
+// applies (domainWarp.ts), so a mountain's uplift query warps together with
+// the baseline it sits on rather than drifting apart from it. A pure function
+// of (x, y, warpSeed), and warpSeed is constant for a world's lifetime, so
+// the render worker precomputes this once per world and caches it across
+// epochs instead of recomputing the warp noise every epoch (see
+// elevationRenderWorker.ts). Wrapped into [0, width)/[0, height) because the
+// result drives a bucket *index* in computeElevation — Math.floor of a
+// negative or overflowing coord would pick the wrong (or an out-of-bounds)
+// bucket; toroidalDistanceSq's own wrapping makes the later distance checks
+// correct regardless, but the bucket lookup isn't covered by that the same
+// way.
+export function warpedSamplePoint(x: number, y: number, width: number, height: number, warpSeed: number): { wx: number; wy: number } {
+  const rawWx = x + domainWarpDelta(x, y, width, height, warpSeed, 'x')
+  const rawWy = y + domainWarpDelta(x, y, width, height, warpSeed, 'y')
+  return {
+    wx: ((rawWx % width) + width) % width,
+    wy: ((rawWy % height) + height) % height,
+  }
 }
 
 // Stateless distance-field query, per the decided A3 model: elevation
@@ -183,31 +210,22 @@ function ridgedDetail(wx: number, wy: number, uplift: number, width: number, hei
 // of overlapping features' contribution — otherwise a cluster of
 // features along a long-lived range would stack without bound instead of
 // blending into one continuous ridge.
+//
+// Takes the already-warped sample point (wx, wy) and the precomputed ridged-
+// multifractal value there, rather than (x, y) + warpSeed: both are pure
+// functions of position that the render worker precomputes once per world and
+// caches (see warpedSamplePoint / elevationRenderWorker.ts), so this per-epoch
+// hot loop does no warp or ridge noise math at all — only the dynamic feature
+// blend and baseline, which are all that actually change epoch to epoch.
 export function computeElevation(
-  x: number,
-  y: number,
+  wx: number,
+  wy: number,
   blendedBaseline: number,
   featureBuckets: FeatureBuckets,
   width: number,
   height: number,
-  warpSeed: number,
+  ridgeValue: number,
 ): number {
-  // Same warped sample point computeBlendedBaselines used for this same
-  // (x, y) — both independently recompute it from the same pure inputs
-  // rather than passing it across the render-pool worker boundary, so a
-  // mountain range's own uplift query warps together with the baseline
-  // it's stacked on instead of drifting apart from it (see domainWarp.ts).
-  // Wrapped into [0, width)/[0, height) here — unlike computeBlendedBaselines,
-  // this warped point also drives a bucket *index* below, and
-  // Math.floor(negative or >=width) would pick the wrong (or an
-  // out-of-bounds) bucket; toroidalDistanceSq's own wrapping makes the
-  // later distance checks correct regardless, but the bucket lookup isn't
-  // covered by that the same way.
-  const rawWx = x + domainWarpDelta(x, y, width, height, warpSeed, 'x')
-  const rawWy = y + domainWarpDelta(x, y, width, height, warpSeed, 'y')
-  const wx = ((rawWx % width) + width) % width
-  const wy = ((rawWy % height) + height) % height
-
   const { buckets, bucketsX, bucketsY, bucketSizeX, bucketSizeY } = featureBuckets
   const centerBx = Math.min(bucketsX - 1, Math.floor(wx / bucketSizeX))
   const centerBy = Math.min(bucketsY - 1, Math.floor(wy / bucketSizeY))
@@ -251,7 +269,14 @@ export function computeElevation(
     }
   }
   const uplift = weightSum > 0 ? upliftSum / weightSum : 0
-  const elevation = blendedBaseline + uplift + ridgedDetail(wx, wy, uplift, width, height, warpSeed)
+  // Ridged-multifractal relief on top of the smooth uplift, modulated by
+  // that uplift so only raised terrain gets rugged (RIDGE_RELATIVE_STRENGTH),
+  // centered on RIDGE_MEAN so ridgelines add height and valleys cut down with
+  // no net bias, and gated to positive uplift so trenches and rift valleys
+  // (negative uplift) stay smooth depressions. ridgeValue is the precomputed
+  // ridgedMultifractal sample at this warped point.
+  const detail = uplift > 0 ? (ridgeValue - RIDGE_MEAN) * uplift * RIDGE_RELATIVE_STRENGTH : 0
+  const elevation = blendedBaseline + uplift + detail
   return Math.max(-1, Math.min(1, elevation))
 }
 

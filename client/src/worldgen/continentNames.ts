@@ -35,7 +35,7 @@ export const CONTINENT_NAME_POOL: readonly string[] = [
   'Nythrivane',
   'Quorvanth',
   'Nissendral',
-  '3.Harkovane',
+  'Harkovane',
   'Embrilis',
   'Talvorune',
   'Cindrathal',

@@ -35,6 +35,13 @@ const CONTINENTAL_COUNT_DEFAULT = 5
 // some final state.
 const EPOCH_INTERVAL_MS = 400
 
+// Safety cap: the live tectonics stepping auto-stops once it reaches this
+// epoch, so a run left going by accident doesn't keep stepping (and
+// steadily slowing down as terrain features accumulate) forever. Only a
+// safety net — deliberately restarting after it fires keeps going (see
+// autoStopTriggered), and generating a new world re-arms it.
+const MAX_TECTONICS_EPOCHS = 100
+
 // Debug/visualization toggles — no UI for these yet, flip in code.
 const SHOW_PLATE_BOUNDARIES = true
 const SHOW_VELOCITY_ARROWS = false
@@ -58,6 +65,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const initialSeed = randomSeed()
   let lastLandFraction = 0
   let lastEpoch = 0
+  // Epoch the safety auto-stop will fire at. Re-armed to (current epoch +
+  // MAX_TECTONICS_EPOCHS) every time the sim is started (see startSim), so
+  // each run halts ~MAX_TECTONICS_EPOCHS after it began: start at 0 stops
+  // at 100, restarting at 100 stops at 200, and so on.
+  let autoStopAtEpoch = MAX_TECTONICS_EPOCHS
 
   // The worker computes the first frame asynchronously, so the texture
   // starts out as a flat placeholder (matching the scene's own clear
@@ -506,6 +518,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastEpoch = message.epoch
     updateStats()
 
+    // Safety auto-stop once this run reaches its armed target epoch (see
+    // startSim / autoStopAtEpoch) — reuses the manual-pause path (stopSim),
+    // so the play/pause button and everything else it toggles stay in sync.
+    // Guarded by simRunning, so it's a no-op during erosion redraws (which
+    // run while stopped) and can't re-fire before the next deliberate start
+    // re-arms it.
+    if (simRunning && message.epoch >= autoStopAtEpoch) {
+      stopSim()
+    }
+
     // DEBUG 3D preview data — kept fresh on every render (see
     // WorkerRenderedMessage.debugHeightmapGrid), not just while the
     // preview is open, so toggling it on always shows the latest state
@@ -530,6 +552,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   const initSim = (seed: string, plateCount: number, continentalCount: number): void => {
+    // Reset immediately (not only once the worker's first render arrives),
+    // so a start clicked in that brief gap arms autoStopAtEpoch off epoch 0,
+    // not the previous world's last epoch.
+    lastEpoch = 0
     postToWorker({
       type: 'init',
       seed,
@@ -559,6 +585,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const startSim = (): void => {
     if (simRunning) return
     simRunning = true
+    // Re-arm the safety auto-stop for another MAX_TECTONICS_EPOCHS from
+    // wherever this run begins (see MAX_TECTONICS_EPOCHS / the 'rendered'
+    // handler), so restarting after a stop halts again 100 epochs later.
+    autoStopAtEpoch = lastEpoch + MAX_TECTONICS_EPOCHS
     postToWorker({ type: 'start' })
     toggleSimIcon.src = '/icons/tectonics_on.png'
     toggleSimButton.setAttribute('aria-label', 'Stop tectonics')

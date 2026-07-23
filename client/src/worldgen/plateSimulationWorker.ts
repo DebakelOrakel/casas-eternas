@@ -279,9 +279,18 @@ let renderInFlight = false
 // into the next ordinary epoch-driven render. intermediate marks a
 // once-per-round redraw fired mid-erosion (see runErodeRequest) — see
 // WorkerRenderedMessage.intermediate for why the client needs to know.
-async function renderAndPost(precomputedElevations?: Float32Array, intermediate = false): Promise<void> {
+// Downscale factor for the live-preview elevation query while the sim is
+// actively stepping — see RenderSimulationOptions.elevationScale. 2 renders
+// the field on a 1024x512 grid (a quarter of the pixels) and bilinearly
+// upscales, for a several-times-faster preview at a slightly softer
+// elevation shading; plate outlines/overlays stay full-res. Any render that
+// feeds erosion/export, or the crisp paused view, uses scale 1 instead.
+const PREVIEW_RENDER_SCALE = 2
+
+async function renderAndPost(precomputedElevations?: Float32Array, intermediate = false, elevationScale = 1): Promise<void> {
   if (!sim) return
   renderOptions.precomputedElevations = precomputedElevations
+  renderOptions.elevationScale = elevationScale
 
   const plateHighlights = new Map<number, number>()
   const nowEpoch = sim.epoch
@@ -435,12 +444,24 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
         }
       }
       renderInFlight = true
-      renderAndPost().finally(() => {
+      // Live preview renders at a coarser scale for speed (see
+      // PREVIEW_RENDER_SCALE); erosion/export force full res of their own.
+      renderAndPost(undefined, false, PREVIEW_RENDER_SCALE).finally(() => {
         renderInFlight = false
       })
     }, epochIntervalMs)
   } else if (message.type === 'stop') {
     stopTicking()
+    // Re-render once at full resolution so the paused view is crisp (the
+    // live preview above renders coarser) and lastRawElevations is refreshed
+    // to a full-res field for any subsequent erode/export. Skipped if a
+    // render is still in flight (the erode handler forces full res anyway).
+    if (sim && !renderInFlight) {
+      renderInFlight = true
+      renderAndPost(undefined, false, 1).finally(() => {
+        renderInFlight = false
+      })
+    }
   } else if (message.type === 'erode') {
     if (!sim || !lastRawElevations || renderInFlight) return
     // Multi-second at this grid size (a 2048x1024 priority-flood plus up
@@ -449,8 +470,16 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     // thread regardless (this is a dedicated worker already separate
     // from rendering/input), but see runErodeRequest's own comment for
     // why it's async rather than a tight synchronous loop.
+    const currentSim = sim
     renderInFlight = true
-    runErodeRequest(lastRawElevations, sim.width, sim.height, sim.warpSeed).finally(() => {
+    ;(async () => {
+      // Refresh to a full-resolution field first: the live preview renders
+      // coarser (PREVIEW_RENDER_SCALE), so lastRawElevations may be an
+      // upscaled low-res field, and erosion must run on the crisp full-res
+      // elevation rather than a blurred preview.
+      await renderAndPost(undefined, false, 1)
+      if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height, currentSim.warpSeed)
+    })().finally(() => {
       renderInFlight = false
     })
   } else if (message.type === 'resetErosion') {

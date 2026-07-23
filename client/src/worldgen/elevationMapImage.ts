@@ -169,6 +169,17 @@ export interface RenderSimulationOptions {
   // runs exactly as it would on a freshly-queried field, since none of it
   // knows or cares where the elevation values came from.
   precomputedElevations?: Float32Array
+  // Downscale factor for the expensive elevation-field query only (baseline
+  // blend + pool.renderElevations): the field is sampled on a grid of
+  // width/scale x height/scale and bilinearly upscaled back to full
+  // resolution before coloring, so a live preview can render several times
+  // faster at a slightly softer elevation shading. Must divide the map
+  // dimensions evenly. Defaults to 1 (full resolution — no downscale, no
+  // upscale). Everything else (Voronoi/plate boundaries, coloring,
+  // highlights, arrows, labels) stays full resolution regardless, so plate
+  // outlines and overlays remain crisp. Ignored when precomputedElevations
+  // is supplied (that array is already the final full-res field).
+  elevationScale?: number
 }
 
 // Renders the simulation's current state into an RGBA buffer: elevation
@@ -177,6 +188,40 @@ export interface RenderSimulationOptions {
 // outline on top (see showBoundaries). Velocity arrows are drawn last, on
 // top of both (see showArrows).
 //
+// Bilinear upscale of a low-res elevation grid back to full resolution,
+// wrapping toroidally at both seams (the map wraps in both axes, so the
+// last row/column interpolate against the first, not a clamped edge). Used
+// to expand a downscaled live-preview elevation field (see
+// RenderSimulationOptions.elevationScale) to the full raster the coloring
+// pass and everything downstream expect.
+function upscaleBilinearToroidal(src: Float32Array, srcWidth: number, srcHeight: number, dstWidth: number, dstHeight: number): Float32Array {
+  const dst = new Float32Array(dstWidth * dstHeight)
+  const fx = srcWidth / dstWidth
+  const fy = srcHeight / dstHeight
+  for (let y = 0; y < dstHeight; y++) {
+    const sy = y * fy
+    const y0 = Math.floor(sy)
+    const ty = sy - y0
+    const y0m = ((y0 % srcHeight) + srcHeight) % srcHeight
+    const y1m = (y0m + 1) % srcHeight
+    for (let x = 0; x < dstWidth; x++) {
+      const sx = x * fx
+      const x0 = Math.floor(sx)
+      const tx = sx - x0
+      const x0m = ((x0 % srcWidth) + srcWidth) % srcWidth
+      const x1m = (x0m + 1) % srcWidth
+      const v00 = src[y0m * srcWidth + x0m]
+      const v10 = src[y0m * srcWidth + x1m]
+      const v01 = src[y1m * srcWidth + x0m]
+      const v11 = src[y1m * srcWidth + x1m]
+      const top = v00 + (v10 - v00) * tx
+      const bottom = v01 + (v11 - v01) * tx
+      dst[y * dstWidth + x] = top + (bottom - top) * ty
+    }
+  }
+  return dst
+}
+
 // Async, and takes a render pool, because the actual per-pixel elevation
 // query — profiled at ~88% of total render time — is farmed out across
 // a pool of nested workers (see elevationRenderPool.ts) rather than
@@ -212,9 +257,16 @@ export async function renderSimulationImage(sim: PlateSimulation, pool: Elevatio
     // reshaped as a side effect of rendering it once.
     elevations = precomputedElevations.slice()
   } else {
+    // The elevation field query runs on a (possibly coarser) render grid;
+    // everything else stays at full world resolution. scale 1 == no
+    // downscale/upscale, identical to before.
+    const scale = Math.max(1, Math.floor(options.elevationScale ?? 1))
+    const renderWidth = Math.floor(width / scale)
+    const renderHeight = Math.floor(height / scale)
     const agedBaseElevations = computeAgedBaseElevations(sim.baseElevations, sim.types, sim.ages)
-    const blendedBaselines = computeBlendedBaselines(sim.seeds, agedBaseElevations, width, height, sim.warpSeed)
-    elevations = await pool.renderElevations(width, height, blendedBaselines, sim.features, sim.warpSeed)
+    const blendedBaselines = computeBlendedBaselines(sim.seeds, agedBaseElevations, renderWidth, renderHeight, width, height, sim.warpSeed)
+    const rendered = await pool.renderElevations(renderWidth, renderHeight, width, height, blendedBaselines, sim.features, sim.warpSeed)
+    elevations = scale === 1 ? rendered : upscaleBilinearToroidal(rendered, renderWidth, renderHeight, width, height)
   }
   // Captured before redistribution reshapes elevations in place — see
   // SimulationRenderResult.rawElevations.
