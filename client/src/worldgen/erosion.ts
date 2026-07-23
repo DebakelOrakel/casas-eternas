@@ -682,7 +682,15 @@ export interface PeakWeatheringParams {
 // 0.65) — a starting point still worth checking visually and retuning
 // further by eye, like the rest of this file's visual-tuning constants.
 export const DEFAULT_PEAK_WEATHERING_PARAMS: PeakWeatheringParams = {
-  iterations: 20,
+  // DISABLED (2026-07-23, iterations 0 = no-op): peak weathering was built
+  // to carve ridge grooves into the otherwise-smooth tectonic caps so
+  // fluvial erosion had something to follow — a job the ridged-multifractal
+  // detail now added directly to the tectonic uplift field (ridgedNoise.ts)
+  // does earlier and more directly, so this became largely redundant.
+  // Turned to 0 rather than removed so it's trivially restorable if the
+  // caps turn out to want it after all — set back to 20. The rest of the
+  // params below stay at their tuned values for that case.
+  iterations: 0,
   thresholdElevation: 0.55,
   fullStrengthElevation: 0.75,
   baseRate: 0.005,
@@ -739,6 +747,17 @@ export interface ErosionPassParams {
   // forever against a stale network instead of ever letting it widen or
   // shift.
   rounds: number
+  // Coupled tectonic uplift, per round: each land cell is nudged back
+  // toward its original tectonic height (the "envelope") by this fraction
+  // of its own tectonic relief, before that round erodes. This is what
+  // turns the pass from pure denudation into a forcing/response balance
+  // (uplift feeding the mountains, erosion carving them) — the competing
+  // terms are what let incised, near-equilibrium valley networks develop
+  // instead of a fixed shape just rounding down (per Cordonnier et al.,
+  // the model this whole system takes its cue from). 0 recovers the old
+  // pure-denudation behavior exactly. See runErosionPass for why it's
+  // capped at the envelope rather than an unbounded uplift term.
+  upliftRate: number
   // Applied identically every round, not divided across them — e.g.
   // streamPower.iterations is iterations *per round*, so total fluvial
   // work scales with rounds * streamPower.iterations.
@@ -755,6 +774,13 @@ export interface ErosionPassParams {
 // re-derivation of them.
 export const DEFAULT_EROSION_PASS_PARAMS: ErosionPassParams = {
   rounds: 5,
+  // Per-round fraction of a cell's tectonic relief re-applied as uplift
+  // (see ErosionPassParams.upliftRate). A moderate starting value —
+  // enough that valleys stay incised against the uplift rather than being
+  // refilled flat, without the uplift overpowering erosion — meant to be
+  // retuned by eye alongside `rounds`, like the rest of this file's
+  // visual-tuning constants. 0 would restore pure denudation.
+  upliftRate: 0.15,
   streamPower: DEFAULT_STREAM_POWER_PARAMS,
   thermal: DEFAULT_THERMAL_EROSION_PARAMS,
   peakWeathering: DEFAULT_PEAK_WEATHERING_PARAMS,
@@ -769,9 +795,21 @@ export const DEFAULT_EROSION_PASS_PARAMS: ErosionPassParams = {
 // since this map's tectonics worker already has that array on hand from
 // its own last render (see SimulationRenderResult.rawElevations in
 // elevationMapImage.ts) — no need for this module to know how to
-// produce it. U (uplift) is not modeled here: the mountain-building
-// already happened via the tectonics epochs, so this pass is pure
-// denudation of that shape, not a coupled uplift/erosion balance.
+// produce it.
+//
+// Uplift IS modeled here, but as a forcing derived from that same input
+// field rather than a separately-supplied rate: `rawElevations` is the
+// finished tectonic surface, so its own positive relief doubles as both
+// the uplift pattern (where, and how strongly, to push crust up) and the
+// envelope (how high — the tectonic height this pass won't exceed). Each
+// round re-applies params.upliftRate of that relief before eroding (see
+// the round loop), so mountains are held up while valleys incise into
+// them — a coupled uplift/erosion balance, not pure denudation of a fixed
+// shape. Capping at the envelope (rather than an unbounded Cordonnier-style
+// uplift term that would set equilibrium height purely from the uplift/
+// erodibility ratio) keeps the already-tuned tectonic heights as the
+// ceiling and makes the pass unconditionally non-inflating: uplift can
+// only ever resist erosion up to the original surface, never grow past it.
 export async function runErosionPass(
   rawElevations: Float32Array,
   width: number,
@@ -829,6 +867,23 @@ export async function runErosionPass(
     const roundProgress = (phase: ErosionPhase, fraction: number): void => {
       const withinRound = phaseStartFraction[phase] + (fraction * phaseWeight[phase]) / roundWeightTotal
       onProgress?.(phase, (round + withinRound) / params.rounds)
+    }
+
+    // Coupled uplift: before this round erodes, push every land cell back
+    // toward its tectonic height by params.upliftRate of that cell's own
+    // tectonic relief, capped at the tectonic envelope (rawElevations) so
+    // peaks are held up against erosion but never inflated past their
+    // tuned height. This is the forcing term that competes with the
+    // round's erosion below — see runErosionPass's and
+    // ErosionPassParams.upliftRate's own comments. Runs before isLand so a
+    // valley refilled back above sea level counts as land again this round.
+    if (params.upliftRate > 0) {
+      for (let i = 0; i < cellCount; i++) {
+        const envelope = rawElevations[i]
+        if (envelope <= SEA_LEVEL) continue
+        const restored = elevations[i] + envelope * params.upliftRate
+        elevations[i] = restored < envelope ? restored : envelope
+      }
     }
 
     // Re-derived every round from that round's own starting elevations

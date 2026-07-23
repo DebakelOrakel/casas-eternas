@@ -13,6 +13,13 @@ import { toroidalDistanceSq } from './toroidal'
 
 const BOUNDARY_COLOR: [number, number, number] = [15, 15, 15]
 
+// Whether to apply the mountain-accentuating gamma redistribution curve
+// (applyMountainRedistribution) before coloring. Temporarily false
+// (2026-07-23) to evaluate the raw new tectonic terrain — the redistribution
+// reshapes elevations against the map's own peak and can mask what the
+// ridge/trench/ridged-multifractal changes actually produce.
+const ACCENTUATE_MOUNTAINS = false
+
 // A subducted oceanic plate no longer has any territory of its own to
 // highlight (applyMerge splices it out of sim.seeds entirely) — tinting
 // the survivor's plateIndex instead would flash the whole absorbing
@@ -216,7 +223,10 @@ export async function renderSimulationImage(sim: PlateSimulation, pool: Elevatio
   // happen after every pixel's raw elevation is known (i.e. after the
   // pool has finished, not per-pixel/per-slice as each one is computed)
   // — see applyMountainRedistribution's own comment for why.
-  applyMountainRedistribution(elevations)
+  // Temporarily gated off (2026-07-23) while evaluating the new tectonic
+  // ridge/trench/ridged-multifractal terrain by eye — flip back to true to
+  // restore the mountain-accentuating gamma curve.
+  if (ACCENTUATE_MOUNTAINS) applyMountainRedistribution(elevations)
 
   let landPixelCount = 0
   for (let y = 0; y < height; y++) {

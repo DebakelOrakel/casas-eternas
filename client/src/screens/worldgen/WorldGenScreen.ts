@@ -143,7 +143,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // to horizontal scale (Everest is ~0.14% of Earth's radius) — mapped
   // 1:1 this would read as almost perfectly flat. Purely a stylized
   // exaggeration so the preview actually looks like terrain; tune by eye.
-  const DEBUG_VERTICAL_EXAGGERATION = 2.5
+  const DEBUG_VERTICAL_EXAGGERATION = 1.0
   // Camera angle (radians off vertical) the preview snaps to on entry —
   // see hexMapCamera.ts's setTilt. Tune by eye.
   const DEBUG_TILT_RADIANS = Math.PI / 3

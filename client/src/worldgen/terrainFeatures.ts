@@ -2,6 +2,15 @@ import { rotateAroundCenter, wrappedDelta } from './toroidal'
 import { getVelocityAt } from './plateMotion'
 import type { PlateMotion } from './plateMotion'
 
+// A feature is a mountain *range* (or arc/ridge), or a *trench* — the
+// paired negative depression on the subducting side of a subduction/
+// island arc (see plateSimulation.ts's trench deposit). Both are oriented
+// ridge features; the distinction keeps a trench from ever merging into
+// its own arc's range feature in findOrCreateFeatureIndex (same plate
+// pair, only offset apart), and lets computeElevation give a trench a
+// narrower, deeper cross-section than a broad range.
+export type FeatureKind = 'range' | 'trench'
+
 export interface TerrainFeature {
   x: number
   y: number
@@ -13,6 +22,19 @@ export interface TerrainFeature {
   // is the rendering-relevant accumulator, separate from the lattice's
   // own signed rift/merge trigger state in plateSimulation.ts.
   thickness: number
+  // Unit vector along the boundary curve at this feature's location (the
+  // ridge's own long axis) — perpendicular to the seed-to-seed normal at
+  // deposit time. computeElevation uses it for an anisotropic falloff:
+  // long along this tangent (so features spaced along one boundary blend
+  // into a single continuous linear range instead of a row of round
+  // blobs), narrow across it (so the range reads as a ridge with a crest,
+  // not a dome). Refreshed toward the current boundary tangent whenever a
+  // feature is deposited onto again, so an active range keeps following
+  // its boundary as it reorients; a feature drifting inactively keeps a
+  // slightly stale tangent, which is harmless since it's decaying anyway.
+  tangentX: number
+  tangentY: number
+  kind: FeatureKind
   // The two plates on either side of the boundary that created this
   // feature — kept as an unordered pair (see findOrCreateFeatureIndex)
   // even for asymmetric uplift, where only one side actually builds
@@ -53,8 +75,23 @@ export interface TerrainFeature {
 // How close an active boundary point needs to be to an existing feature
 // to deposit onto it rather than spawning a new one — keeps feature
 // count bounded to roughly one cluster per active stretch of boundary,
-// instead of a new feature at every lattice point every epoch.
+// instead of a new feature at every lattice point every epoch. Kept well
+// below computeElevation's along-tangent reach (RANGE_ALONG_RADIUS) so
+// consecutive features along one boundary overlap heavily and blend into
+// a continuous ridge rather than reading as separate lumps.
 const MERGE_RADIUS = 40
+
+// Weight of the current boundary tangent when refreshing an existing
+// feature's stored tangent (exponential moving average) — low, so a
+// range's orientation is stable across epochs but still tracks a boundary
+// slowly reorienting under plate drift rather than being pinned to
+// whatever tangent it happened to be born with.
+const TANGENT_REFRESH_RATE = 0.1
+
+function normalizeTangent(tx: number, ty: number): { tangentX: number; tangentY: number } {
+  const length = Math.sqrt(tx * tx + ty * ty) || 1
+  return { tangentX: tx / length, tangentY: ty / length }
+}
 
 // Finds the feature (x, y, plateA, plateB) would deposit onto, creating
 // one on the spot if none matches yet — but does NOT apply any thickness
@@ -78,19 +115,41 @@ export function findOrCreateFeatureIndex(
   plateA: number,
   plateB: number,
   movesWithPlate: number | 'both',
+  tangentX: number,
+  tangentY: number,
+  kind: FeatureKind,
   width: number,
   height: number,
 ): number {
   const mergeRadiusSq = MERGE_RADIUS * MERGE_RADIUS
   for (let i = 0; i < features.length; i++) {
     const feature = features[i]
+    // Kind must also match — a trench and its own arc's range feature
+    // share the same plate pair and can drift within MERGE_RADIUS of each
+    // other, but must never merge into one feature (they carry opposite-
+    // sign thickness and opposite cross-sections).
+    if (feature.kind !== kind) continue
     const samePair = (feature.plateA === plateA && feature.plateB === plateB) || (feature.plateA === plateB && feature.plateB === plateA)
     if (!samePair) continue
     const dx = wrappedDelta(x, feature.x, width)
     const dy = wrappedDelta(y, feature.y, height)
-    if (dx * dx + dy * dy <= mergeRadiusSq) return i
+    if (dx * dx + dy * dy <= mergeRadiusSq) {
+      // Refresh orientation toward the current boundary tangent. Tangent
+      // direction is sign-ambiguous (a line and its reverse are the same
+      // axis), so flip the incoming one to the stored one's hemisphere
+      // first — otherwise an EMA between t and -t cancels to near-zero.
+      const aligned = feature.tangentX * tangentX + feature.tangentY * tangentY < 0 ? -1 : 1
+      const blended = normalizeTangent(
+        feature.tangentX * (1 - TANGENT_REFRESH_RATE) + aligned * tangentX * TANGENT_REFRESH_RATE,
+        feature.tangentY * (1 - TANGENT_REFRESH_RATE) + aligned * tangentY * TANGENT_REFRESH_RATE,
+      )
+      feature.tangentX = blended.tangentX
+      feature.tangentY = blended.tangentY
+      return i
+    }
   }
-  features.push({ x, y, thickness: 0, plateA, plateB, movesWithPlate, epochsSinceDeposit: 0 })
+  const normalized = normalizeTangent(tangentX, tangentY)
+  features.push({ x, y, thickness: 0, tangentX: normalized.tangentX, tangentY: normalized.tangentY, kind, plateA, plateB, movesWithPlate, epochsSinceDeposit: 0 })
   return features.length - 1
 }
 

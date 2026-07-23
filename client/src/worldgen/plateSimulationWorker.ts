@@ -162,6 +162,13 @@ export interface WorkerExportDataMessage {
     x: number
     y: number
     thickness: number
+    // Orientation + kind are part of the elevation model now (anisotropic
+    // ridge falloff, trench vs. range cross-section — see
+    // elevationField.ts), so a faithful server-side reproduction of the
+    // terrain needs them, not just position/thickness.
+    tangentX: number
+    tangentY: number
+    kind: string
     plateA: number
     plateB: number
   }[]
@@ -477,6 +484,9 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
         x: feature.x,
         y: feature.y,
         thickness: feature.thickness,
+        tangentX: feature.tangentX,
+        tangentY: feature.tangentY,
+        kind: feature.kind,
         plateA: feature.plateA,
         plateB: feature.plateB,
       })),

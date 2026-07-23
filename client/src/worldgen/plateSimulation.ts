@@ -14,7 +14,7 @@ import type { PlateType } from './plateTypes'
 import { assignContinentNames } from './continentNames'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from './terrainFeatures'
 import type { TerrainFeature } from './terrainFeatures'
-import { rotateAroundCenter } from './toroidal'
+import { rotateAroundCenter, wrappedDelta } from './toroidal'
 
 // A fixed grid independent of the 2048x1024 display raster — see
 // boundaryLattice.ts for why its resolution doesn't need to match either
@@ -132,6 +132,19 @@ const FEATURE_PRUNE_MAX_INACTIVITY_EPOCHS = 150
 const AGE_MULTIPLIER_FLOOR = 0.5
 const AGE_MULTIPLIER_RANGE = 1.0
 const AGE_MULTIPLIER_HALF_LIFE_EPOCHS = 150
+
+// A subduction/island arc deposits, besides its uplift on the overriding
+// side, a paired *trench* on the subducting (oceanic) side — the deep,
+// narrow depression that makes a real subduction margin read as
+// asymmetric (trench + arc) rather than a symmetric bump. The trench sits
+// offset from the boundary toward the subducting plate (well past
+// terrainFeatures' MERGE_RADIUS so it never fuses with the arc's own
+// range feature) and carries a fraction of the arc's per-epoch uplift as
+// negative thickness. Fold-mountain (continent-continent) and divergent
+// boundaries get no trench — only convergence with a downgoing oceanic
+// slab does.
+const TRENCH_OFFSET = 60
+const TRENCH_DEPTH_FRACTION = 0.6
 
 export interface PlateSimulation {
   width: number
@@ -407,12 +420,40 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
     if (classification.elevationSign !== 0) {
       const ageMultiplier = AGE_MULTIPLIER_FLOOR + AGE_MULTIPLIER_RANGE * Math.pow(2, -sim.latticeLockedEpochs[index] / AGE_MULTIPLIER_HALF_LIFE_EPOCHS)
       const amount = Math.abs(epochConvergence) * classification.rate * ageMultiplier * classification.elevationSign
+      // Boundary tangent (the ridge's own long axis): perpendicular to the
+      // seed-to-seed normal, so a feature can be laid down as an oriented
+      // ridge segment rather than an isotropic blob (see
+      // TerrainFeature.tangentX / computeElevation's anisotropic falloff).
+      const ndx = wrappedDelta(seedA.x, seedB.x, width)
+      const ndy = wrappedDelta(seedA.y, seedB.y, height)
+      const nlen = Math.sqrt(ndx * ndx + ndy * ndy) || 1
+      const tangentX = -ndy / nlen
+      const tangentY = ndx / nlen
       // 'both' deposits onto a single shared feature (see
       // findOrCreateFeatureIndex/advanceTerrainFeatures) rather than one
       // per side — a real collision range is one ridge straddling the
       // boundary, not two independent ones.
       const movesWithPlate = classification.upliftSide === 'both' ? 'both' : classification.upliftSide === 'a' ? boundary.plateA : boundary.plateB
-      addDeposit(findOrCreateFeatureIndex(sim.features, boundary.x, boundary.y, boundary.plateA, boundary.plateB, movesWithPlate, width, height), amount)
+      addDeposit(findOrCreateFeatureIndex(sim.features, boundary.x, boundary.y, boundary.plateA, boundary.plateB, movesWithPlate, tangentX, tangentY, 'range', width, height), amount)
+
+      // Paired trench on the subducting side of a subduction/island arc —
+      // the side that is NOT the uplift side (continental crust never
+      // subducts; the older oceanic plate goes under at an island arc).
+      if (classification.character === 'subductionArc' || classification.character === 'islandArc') {
+        const subductingPlate = classification.upliftSide === 'a' ? boundary.plateB : boundary.plateA
+        const subductingSeed = sim.seeds[subductingPlate]
+        let offsetX = wrappedDelta(subductingSeed.x, boundary.x, width)
+        let offsetY = wrappedDelta(subductingSeed.y, boundary.y, height)
+        const offsetLen = Math.sqrt(offsetX * offsetX + offsetY * offsetY) || 1
+        offsetX /= offsetLen
+        offsetY /= offsetLen
+        const trenchX = (((boundary.x + offsetX * TRENCH_OFFSET) % width) + width) % width
+        const trenchY = (((boundary.y + offsetY * TRENCH_OFFSET) % height) + height) % height
+        addDeposit(
+          findOrCreateFeatureIndex(sim.features, trenchX, trenchY, boundary.plateA, boundary.plateB, subductingPlate, tangentX, tangentY, 'trench', width, height),
+          -Math.abs(amount) * TRENCH_DEPTH_FRACTION,
+        )
+      }
     }
 
     if (sim.latticeLockedEpochs[index] < LOCK_EPOCHS_REQUIRED) continue
