@@ -9,8 +9,102 @@ import { computePlateCentroids } from './plateGeometry'
 import { computeContinentLabelPlacements } from './continentLabelLayout'
 import type { ContinentLabelPlacement } from './continentLabelLayout'
 import type { ElevationRenderPool } from './elevationRenderPool'
+import { toroidalDistanceSq } from './toroidal'
 
 const BOUNDARY_COLOR: [number, number, number] = [15, 15, 15]
+
+// A subducted oceanic plate no longer has any territory of its own to
+// highlight (applyMerge splices it out of sim.seeds entirely) — tinting
+// the survivor's plateIndex instead would flash the whole absorbing
+// continent, which doesn't show where the subduction actually happened.
+// This is a point highlight around the event's own boundary coordinate
+// instead, sized similarly to a terrain feature's own falloff (see
+// FEATURE_FALLOFF_RADIUS in terrainFeatures.ts) rather than plate-sized.
+const LOCATION_HIGHLIGHT_RADIUS = 90
+const LOCATION_HIGHLIGHT_RADIUS_SQ = LOCATION_HIGHLIGHT_RADIUS * LOCATION_HIGHLIGHT_RADIUS
+
+export interface LocationHighlight {
+  x: number
+  y: number
+  alpha: number
+}
+
+// A split's new plate starts as a single point sitting exactly on the
+// old boundary between the two plates it rifted apart from — tracing
+// just that one shared edge (not the new plate's whole boundary, which
+// may later touch other neighbors too) and fading away from it in both
+// directions reads as "here's the rift line" instead of a filled halo
+// over a plate's whole territory, which is what a plain plateHighlights
+// entry for the new plate would give. Bounded multi-source BFS in pixel
+// space rather than a per-pixel distance check against every source
+// pixel (as locationHighlights uses against a handful of fixed points)
+// — this scales with the edge's own length, not with the edge length
+// times every pixel in the map.
+const BOUNDARY_HIGHLIGHT_RADIUS = 90
+
+export interface BoundaryHighlight {
+  plateIndexA: number
+  plateIndexB: number
+  alpha: number
+}
+
+// Distance (in pixels, 4-connected, toroidally wrapped) from every pixel
+// to the nearest point where plateIndexA's Voronoi cell touches
+// plateIndexB's — i.e. to the specific shared edge between just these
+// two plates, not either plate's boundary with anything else. Infinity
+// beyond maxRadius (never gets that far; BFS stops expanding once a
+// frontier pixel's own distance already hits the cap).
+function computeBoundaryDistanceField(cellIds: Uint16Array, width: number, height: number, plateIndexA: number, plateIndexB: number, maxRadius: number): Float32Array {
+  const dist = new Float32Array(width * height).fill(Infinity)
+  const queue: number[] = []
+
+  const markSource = (idx: number): void => {
+    if (dist[idx] === 0) return
+    dist[idx] = 0
+    queue.push(idx)
+  }
+
+  const isTargetPair = (a: number, b: number): boolean => (a === plateIndexA && b === plateIndexB) || (a === plateIndexB && b === plateIndexA)
+
+  for (let y = 0; y < height; y++) {
+    const downRow = (y + 1) % height
+    for (let x = 0; x < width; x++) {
+      const rightCol = (x + 1) % width
+      const idx = y * width + x
+      const rightIdx = y * width + rightCol
+      const downIdx = downRow * width + x
+      const p = cellIds[idx]
+      const pRight = cellIds[rightIdx]
+      const pDown = cellIds[downIdx]
+      if (isTargetPair(p, pRight)) {
+        markSource(idx)
+        markSource(rightIdx)
+      }
+      if (isTargetPair(p, pDown)) {
+        markSource(idx)
+        markSource(downIdx)
+      }
+    }
+  }
+
+  let queueHead = 0
+  while (queueHead < queue.length) {
+    const idx = queue[queueHead++]
+    const d = dist[idx]
+    if (d >= maxRadius) continue
+    const y = Math.floor(idx / width)
+    const x = idx - y * width
+    const neighbors = [y * width + ((x + 1) % width), y * width + ((x - 1 + width) % width), ((y + 1) % height) * width + x, ((y - 1 + height) % height) * width + x]
+    for (const n of neighbors) {
+      if (d + 1 < dist[n]) {
+        dist[n] = d + 1
+        queue.push(n)
+      }
+    }
+  }
+
+  return dist
+}
 
 export interface SimulationRenderResult {
   buffer: Uint8Array
@@ -39,6 +133,16 @@ export interface RenderSimulationOptions {
   // text on the main thread via Canvas2D once the buffer arrives). On by
   // default; set false to skip the extra geometry passes entirely.
   computeContinentLabels?: boolean
+  // Map of plateIndex -> opacity (0..1) for translucent event highlight overlays.
+  plateHighlights?: Map<number, number>
+  // Point-based highlights (see LOCATION_HIGHLIGHT_RADIUS) for events with
+  // no surviving plate territory of their own to tint, e.g. subduction.
+  locationHighlights?: LocationHighlight[]
+  // Plate-pair highlights for the "red line at the new boundary"
+  // treatment a split gets (see BOUNDARY_HIGHLIGHT_RADIUS) — distinct
+  // from plateHighlights, which fills a plate's whole territory rather
+  // than tracing just one specific edge.
+  boundaryHighlights?: BoundaryHighlight[]
 }
 
 // Renders the simulation's current state into an RGBA buffer: elevation
@@ -55,12 +159,25 @@ export interface RenderSimulationOptions {
 // lines, arrows, labels) stays single-threaded — combined, profiling
 // showed it's under 15% of total cost, not worth distributing too.
 export async function renderSimulationImage(sim: PlateSimulation, pool: ElevationRenderPool, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
-  const { showBoundaries = true, showArrows = true, computeContinentLabels = true } = options
+  const { showBoundaries = true, showArrows = true, computeContinentLabels = true, plateHighlights, locationHighlights, boundaryHighlights } = options
   const { width, height } = sim
   const cellIds = rasterizeVoronoiPlates(sim.seeds, width, height)
   const agedBaseElevations = computeAgedBaseElevations(sim.baseElevations, sim.types, sim.ages)
   const blendedBaselines = computeBlendedBaselines(sim.seeds, agedBaseElevations, width, height)
   const buffer = new Uint8Array(width * height * 4)
+
+  let boundaryHighlightField: Float32Array | null = null
+  if (boundaryHighlights && boundaryHighlights.length > 0) {
+    boundaryHighlightField = new Float32Array(width * height)
+    for (const { plateIndexA, plateIndexB, alpha } of boundaryHighlights) {
+      const distField = computeBoundaryDistanceField(cellIds, width, height, plateIndexA, plateIndexB, BOUNDARY_HIGHLIGHT_RADIUS)
+      for (let i = 0; i < distField.length; i++) {
+        if (distField[i] >= BOUNDARY_HIGHLIGHT_RADIUS) continue
+        const falloff = (1 - distField[i] / BOUNDARY_HIGHLIGHT_RADIUS) * alpha
+        if (falloff > boundaryHighlightField[i]) boundaryHighlightField[i] = falloff
+      }
+    }
+  }
 
   const elevations = await pool.renderElevations(width, height, blendedBaselines, sim.features)
   // Normalizes against this map's own actual highest point — has to
@@ -80,11 +197,40 @@ export async function renderSimulationImage(sim: PlateSimulation, pool: Elevatio
       const elevation = elevations[idx]
       if (elevation > 0) landPixelCount++
       const color = isBoundary ? BOUNDARY_COLOR : elevationToColor(elevation)
+
       const pixelIndex = idx * 4
-      buffer[pixelIndex] = color[0]
-      buffer[pixelIndex + 1] = color[1]
-      buffer[pixelIndex + 2] = color[2]
-      buffer[pixelIndex + 3] = 255
+      let highlightStrength = 0
+      if (!isBoundary && plateHighlights && plateHighlights.has(plateIndex)) {
+        highlightStrength = plateHighlights.get(plateIndex)!
+      }
+      if (!isBoundary && locationHighlights) {
+        for (const lh of locationHighlights) {
+          const distSq = toroidalDistanceSq(x, y, lh.x, lh.y, width, height)
+          if (distSq >= LOCATION_HIGHLIGHT_RADIUS_SQ) continue
+          const falloff = 1 - Math.sqrt(distSq) / LOCATION_HIGHLIGHT_RADIUS
+          highlightStrength = Math.max(highlightStrength, falloff * lh.alpha)
+        }
+      }
+      // Not gated on !isBoundary like the other two — the whole point is
+      // a red line right at the boundary itself, fading into ordinary
+      // territory on both sides of it, not a halo that stops short of
+      // the boundary pixels and leaves them dark.
+      if (boundaryHighlightField && boundaryHighlightField[idx] > 0) {
+        highlightStrength = Math.max(highlightStrength, boundaryHighlightField[idx])
+      }
+
+      if (highlightStrength > 0) {
+        const highlightAlpha = highlightStrength * 0.45
+        buffer[pixelIndex] = Math.round(color[0] * (1 - highlightAlpha) + 255 * highlightAlpha)
+        buffer[pixelIndex + 1] = Math.round(color[1] * (1 - highlightAlpha) + 45 * highlightAlpha)
+        buffer[pixelIndex + 2] = Math.round(color[2] * (1 - highlightAlpha) + 45 * highlightAlpha)
+        buffer[pixelIndex + 3] = 255
+      } else {
+        buffer[pixelIndex] = color[0]
+        buffer[pixelIndex + 1] = color[1]
+        buffer[pixelIndex + 2] = color[2]
+        buffer[pixelIndex + 3] = 255
+      }
     }
   }
 

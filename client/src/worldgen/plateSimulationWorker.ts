@@ -1,7 +1,7 @@
 import { createPlateSimulation, getInitialPlateEvents, stepEpoch } from './plateSimulation'
 import type { PlateSimulation, SimEvent } from './plateSimulation'
 import { renderSimulationImage } from './elevationMapImage'
-import type { RenderSimulationOptions } from './elevationMapImage'
+import type { BoundaryHighlight, LocationHighlight, RenderSimulationOptions } from './elevationMapImage'
 import type { ContinentLabelPlacement } from './continentLabelLayout'
 import { ElevationRenderPool } from './elevationRenderPool'
 
@@ -69,6 +69,40 @@ let epochIntervalMs = 400
 let intervalId: ReturnType<typeof setInterval> | undefined
 let pendingEvents: SimEvent[] = []
 
+interface ActivePlateHighlight {
+  plateIndex: number
+  startEpoch: number
+}
+let activePlateHighlights: ActivePlateHighlight[] = []
+
+// Subduction removes the oceanic plate from sim.seeds entirely (see
+// applyMerge), so there's no surviving plateIndex left to represent "the
+// thing that just happened" — it's tracked by the event's own boundary
+// coordinate instead and rendered as a point highlight (see
+// LOCATION_HIGHLIGHT_RADIUS in elevationMapImage.ts) rather than tinting
+// the whole plate that absorbed it.
+interface ActiveLocationHighlight {
+  x: number
+  y: number
+  startEpoch: number
+}
+let activeLocationHighlights: ActiveLocationHighlight[] = []
+
+// A split's new plate is tracked here as a specific (plateIndex,
+// otherPlateIndex) pair rather than as a plain plateHighlights entry —
+// just the one shared edge between the new plate and the flank it split
+// away from gets drawn (see BOUNDARY_HIGHLIGHT_RADIUS in
+// elevationMapImage.ts), not the new plate's whole boundary, which may
+// end up touching unrelated neighbors too.
+interface ActiveBoundaryHighlight {
+  plateIndex: number
+  otherPlateIndex: number
+  startEpoch: number
+}
+let activeBoundaryHighlights: ActiveBoundaryHighlight[] = []
+
+const HIGHLIGHT_LIFESPAN_EPOCHS = 18
+
 // Created once and reused for the lifetime of this worker — pool workers
 // have their own startup cost, not worth paying every epoch.
 const renderPool = new ElevationRenderPool()
@@ -85,6 +119,49 @@ let renderInFlight = false
 
 async function renderAndPost(): Promise<void> {
   if (!sim) return
+
+  const plateHighlights = new Map<number, number>()
+  const nowEpoch = sim.epoch
+  for (let i = activePlateHighlights.length - 1; i >= 0; i--) {
+    const hl = activePlateHighlights[i]
+    const age = nowEpoch - hl.startEpoch
+    if (age >= HIGHLIGHT_LIFESPAN_EPOCHS) {
+      activePlateHighlights.splice(i, 1)
+      continue
+    }
+    const progress = age / HIGHLIGHT_LIFESPAN_EPOCHS
+    const alpha = 1.0 - progress
+    const existing = plateHighlights.get(hl.plateIndex) ?? 0
+    plateHighlights.set(hl.plateIndex, Math.max(existing, alpha))
+  }
+  renderOptions.plateHighlights = plateHighlights
+
+  const locationHighlights: LocationHighlight[] = []
+  for (let i = activeLocationHighlights.length - 1; i >= 0; i--) {
+    const hl = activeLocationHighlights[i]
+    const age = nowEpoch - hl.startEpoch
+    if (age >= HIGHLIGHT_LIFESPAN_EPOCHS) {
+      activeLocationHighlights.splice(i, 1)
+      continue
+    }
+    const progress = age / HIGHLIGHT_LIFESPAN_EPOCHS
+    locationHighlights.push({ x: hl.x, y: hl.y, alpha: 1.0 - progress })
+  }
+  renderOptions.locationHighlights = locationHighlights
+
+  const boundaryHighlights: BoundaryHighlight[] = []
+  for (let i = activeBoundaryHighlights.length - 1; i >= 0; i--) {
+    const hl = activeBoundaryHighlights[i]
+    const age = nowEpoch - hl.startEpoch
+    if (age >= HIGHLIGHT_LIFESPAN_EPOCHS) {
+      activeBoundaryHighlights.splice(i, 1)
+      continue
+    }
+    const progress = age / HIGHLIGHT_LIFESPAN_EPOCHS
+    boundaryHighlights.push({ plateIndexA: hl.plateIndex, plateIndexB: hl.otherPlateIndex, alpha: 1.0 - progress })
+  }
+  renderOptions.boundaryHighlights = boundaryHighlights
+
   const result = await renderSimulationImage(sim, renderPool, renderOptions)
   const eventsToSend = pendingEvents
   pendingEvents = []
@@ -118,6 +195,9 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     stopTicking()
     sim = createPlateSimulation(message.seed, message.plateCount, message.continentalCount, message.width, message.height)
     pendingEvents = getInitialPlateEvents(sim)
+    activePlateHighlights = []
+    activeLocationHighlights = []
+    activeBoundaryHighlights = []
     renderOptions = message.renderOptions
     epochIntervalMs = message.epochIntervalMs
     renderAndPost()
@@ -127,6 +207,23 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       if (!sim || renderInFlight) return
       const tickEvents = stepEpoch(sim)
       pendingEvents.push(...tickEvents)
+      for (const ev of tickEvents) {
+        if (ev.type === 'oceanic_subducted' && ev.x !== undefined && ev.y !== undefined) {
+          activeLocationHighlights.push({ x: ev.x, y: ev.y, startEpoch: sim.epoch })
+        } else if (ev.type === 'oceanic_created' && ev.plateIndex !== undefined && ev.otherPlateIndex !== undefined) {
+          // A rift's new plate always pairs with a 'continental_split'
+          // event on the same tick when the rift was continental — that
+          // one is intentionally skipped below rather than also getting
+          // a plateHighlights entry for the (unchanged, pre-existing)
+          // continental plate; this boundary highlight already shows
+          // where the split happened.
+          activeBoundaryHighlights.push({ plateIndex: ev.plateIndex, otherPlateIndex: ev.otherPlateIndex, startEpoch: sim.epoch })
+        } else if (ev.type === 'continental_split') {
+          // no-op — see the oceanic_created branch's comment above
+        } else if (ev.plateIndex !== undefined) {
+          activePlateHighlights.push({ plateIndex: ev.plateIndex, startEpoch: sim.epoch })
+        }
+      }
       renderInFlight = true
       renderAndPost().finally(() => {
         renderInFlight = false

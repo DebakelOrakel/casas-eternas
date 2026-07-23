@@ -211,6 +211,12 @@ export interface SimEvent {
   name?: string
   nameA?: string
   nameB?: string
+  plateIndex?: number
+  // Set on oceanic_created when it came from a rift — the specific
+  // flanking plate this new plate split away from, so a highlight can
+  // trace just that one shared edge instead of the new plate's entire
+  // boundary (which may end up touching other neighbors too).
+  otherPlateIndex?: number
   x?: number
   y?: number
 }
@@ -222,6 +228,7 @@ export function getInitialPlateEvents(sim: PlateSimulation): SimEvent[] {
       events.push({
         type: 'continental_created',
         name: sim.continentNames[i] || undefined,
+        plateIndex: i,
       })
     }
   }
@@ -443,10 +450,15 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   if (riftEvent) {
     const isContinentalRift = sim.types[riftEvent.plateA] === 'continental' || sim.types[riftEvent.plateB] === 'continental'
     const continentName = sim.continentNames[riftEvent.plateA] || sim.continentNames[riftEvent.plateB] || undefined
+    const continentalPlateIndex = sim.types[riftEvent.plateA] === 'continental' ? riftEvent.plateA : riftEvent.plateB
     if (isContinentalRift) {
-      events.push({ type: 'continental_split', name: continentName, x: riftEvent.x, y: riftEvent.y })
+      events.push({ type: 'continental_split', name: continentName, plateIndex: continentalPlateIndex, x: riftEvent.x, y: riftEvent.y })
     }
-    events.push({ type: 'oceanic_created', x: riftEvent.x, y: riftEvent.y })
+    // Falls back to plateA for an oceanic-oceanic rift (no continental
+    // side to prefer) — either flank is an equally valid "this is the
+    // plate the new one split away from" for highlighting purposes.
+    const otherPlateIndex = isContinentalRift ? continentalPlateIndex : riftEvent.plateA
+    events.push({ type: 'oceanic_created', plateIndex: sim.seeds.length, otherPlateIndex, x: riftEvent.x, y: riftEvent.y })
     applyRift(sim, riftEvent)
   }
 
@@ -457,9 +469,9 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
     const removeName = sim.continentNames[mergeEvent.removeIndex]
 
     if (removeType === 'oceanic') {
-      events.push({ type: 'oceanic_subducted', x: mergeEvent.x, y: mergeEvent.y })
+      events.push({ type: 'oceanic_subducted', plateIndex: mergeEvent.keepIndex, x: mergeEvent.x, y: mergeEvent.y })
     } else if (keepType === 'continental' && removeType === 'continental') {
-      events.push({ type: 'continental_merged', nameA: keepName || undefined, nameB: removeName || undefined, x: mergeEvent.x, y: mergeEvent.y })
+      events.push({ type: 'continental_merged', nameA: keepName || undefined, nameB: removeName || undefined, plateIndex: mergeEvent.keepIndex, x: mergeEvent.x, y: mergeEvent.y })
     }
     applyMerge(sim, mergeEvent)
   }
