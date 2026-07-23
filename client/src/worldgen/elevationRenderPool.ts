@@ -1,5 +1,16 @@
 import type { TerrainFeature } from './terrainFeatures'
 import type { RenderSliceResponse } from './elevationRenderWorker'
+// Imported via Vite's `?worker` suffix rather than `new Worker(new URL(...,
+// import.meta.url))`: this pool is itself constructed *inside*
+// plateSimulationWorker (a worker), and Firefox leaves `import.meta.url`
+// empty in a nested worker context, so the URL form resolved to an empty
+// source there — the workers were created but never ran, so renderElevations
+// hung forever and the map stayed on its blank placeholder (Firefox-only
+// white screen; Chrome resolves the nested import.meta.url fine). The
+// `?worker` form bakes the (bundled, self-contained) worker URL in at
+// transform time instead, so it works the same nested or not, in every
+// browser.
+import ElevationRenderWorker from './elevationRenderWorker.ts?worker'
 
 declare const self: any
 
@@ -29,7 +40,7 @@ export class ElevationRenderPool {
   private nextRequestId = 0
 
   constructor(poolSize: number = resolvePoolSize()) {
-    this.workers = Array.from({ length: poolSize }, () => new Worker(new URL('./elevationRenderWorker.ts', import.meta.url), { type: 'module' }))
+    this.workers = Array.from({ length: poolSize }, () => new ElevationRenderWorker())
   }
 
   async renderElevations(width: number, height: number, blendedBaselines: Float32Array, features: TerrainFeature[], warpSeed: number): Promise<Float32Array> {
