@@ -68,7 +68,20 @@ export interface WorkerErodeMessage {
 export interface WorkerResetErosionMessage {
   type: 'resetErosion'
 }
-export type WorkerInboundMessage = WorkerInitMessage | WorkerStartMessage | WorkerStopMessage | WorkerErodeMessage | WorkerResetErosionMessage
+// Requests a WorkerExportDataMessage — see that interface for what it
+// contains and why. A read of existing state, not a computation, so
+// (unlike erode/resetErosion) this doesn't need to be gated behind
+// renderInFlight.
+export interface WorkerExportMessage {
+  type: 'export'
+}
+export type WorkerInboundMessage =
+  | WorkerInitMessage
+  | WorkerStartMessage
+  | WorkerStopMessage
+  | WorkerErodeMessage
+  | WorkerResetErosionMessage
+  | WorkerExportMessage
 
 export interface WorkerRenderedMessage {
   type: 'rendered'
@@ -118,6 +131,47 @@ export interface WorkerErosionProgressMessage {
   fraction: number
 }
 
+// Everything a future hex-tile importer needs, sent in response to
+// WorkerExportMessage. Two genuinely different kinds of data, for a
+// reason worth keeping straight: `plates`/`terrainFeatures` are the
+// compact, stateless "recipe" the tectonics field is generated from
+// (see docs/design/world-gen.md's "frozen snapshot") — re-queryable at
+// any resolution or point, motion/kinematics deliberately omitted since
+// those stop mattering once nothing's still moving, same as that doc
+// already settled. `elevations` is different in kind, not just a
+// convenience duplicate of the same information: erosion has no such
+// compact recipe (it's the result of an iterative D8/thermal simulation
+// over a discrete grid, not a stateless function of position), so its
+// contribution can only ship as the actual raster it ran on.
+export interface WorkerExportDataMessage {
+  type: 'exportData'
+  seed: string
+  epoch: number
+  width: number
+  height: number
+  landFraction: number
+  plates: {
+    x: number
+    y: number
+    type: string
+    age: number
+    continentName: string | null
+    baseElevation: number
+  }[]
+  terrainFeatures: {
+    x: number
+    y: number
+    thickness: number
+    plateA: number
+    plateB: number
+  }[]
+  // Float32Array bytes, width*height, row-major — pre-redistribution
+  // physical values (see SimulationRenderResult.rawElevations), not the
+  // cosmetic display-gamma-curved ones, since this is meant as real data
+  // for a future importer, not something tuned to look good on screen.
+  elevations: ArrayBuffer
+}
+
 let sim: PlateSimulation | null = null
 let renderOptions: RenderSimulationOptions = {}
 let epochIntervalMs = 400
@@ -129,6 +183,10 @@ let pendingEvents: SimEvent[] = []
 // erosion always has *something* to act on the first time it's used
 // without needing a dedicated "prepare for erosion" render first.
 let lastRawElevations: Float32Array | null = null
+// PlateSimulation itself doesn't retain the original seed string (only
+// the numeric hashes derived from it) — tracked here separately so
+// WorkerExportDataMessage can include it.
+let currentSeedString: string | null = null
 // A second, deliberately less-eagerly-updated snapshot: the raw
 // elevations from the last *non*-erosion render only (see renderAndPost
 // — only updated when precomputedElevations wasn't supplied). Erosion
@@ -336,6 +394,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
   if (message.type === 'init') {
     stopTicking()
     sim = createPlateSimulation(message.seed, message.plateCount, message.continentalCount, message.width, message.height)
+    currentSeedString = message.seed
     pendingEvents = getInitialPlateEvents(sim)
     activePlateHighlights = []
     activeLocationHighlights = []
@@ -393,5 +452,36 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     renderAndPost(preErosionElevations).finally(() => {
       renderInFlight = false
     })
+  } else if (message.type === 'export') {
+    if (!sim || !lastRawElevations || currentSeedString === null) return
+    // .slice(), not the live array itself — transferring lastRawElevations.buffer
+    // directly would neuter it, and the erode handler still needs to read
+    // lastRawElevations after this.
+    const elevations = lastRawElevations.slice()
+    const exportMessage: WorkerExportDataMessage = {
+      type: 'exportData',
+      seed: currentSeedString,
+      epoch: sim.epoch,
+      width: sim.width,
+      height: sim.height,
+      landFraction: lastRawElevations.reduce((count, e) => count + (e > 0 ? 1 : 0), 0) / lastRawElevations.length,
+      plates: sim.seeds.map((seed, i) => ({
+        x: seed.x,
+        y: seed.y,
+        type: sim!.types[i],
+        age: sim!.ages[i],
+        continentName: sim!.continentNames[i],
+        baseElevation: sim!.baseElevations[i],
+      })),
+      terrainFeatures: sim.features.map((feature) => ({
+        x: feature.x,
+        y: feature.y,
+        thickness: feature.thickness,
+        plateA: feature.plateA,
+        plateB: feature.plateB,
+      })),
+      elevations: elevations.buffer as ArrayBuffer,
+    }
+    self.postMessage(exportMessage, [exportMessage.elevations])
   }
 }

@@ -21,6 +21,11 @@ dist-ssr
 *.test
 *.out
 
+# Exported world data (see saves/README.md) — large, regeneratable from
+# a seed, not worth tracking in git.
+saves/*.json
+saves/*.f32
+
 # Editor directories and files
 .claude/*
 .vscode/*

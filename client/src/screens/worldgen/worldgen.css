@@ -105,6 +105,25 @@
   display: block;
 }
 
+.worldgen-screen .text-button {
+  flex: none;
+  align-self: center;
+  border: 1px solid rgba(26, 26, 26, 0.4);
+  border-radius: 4px;
+  background: none;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+  color: #1a1a1a;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+
+.worldgen-screen .text-button:hover {
+  opacity: 1;
+}
+
 .worldgen-screen .field--icon-row {
   width: auto;
 }

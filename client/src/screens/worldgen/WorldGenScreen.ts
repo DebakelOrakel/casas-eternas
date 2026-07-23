@@ -3,7 +3,7 @@ import type { InstancedMesh } from '@babylonjs/core'
 import { createHexMapCamera } from '../../camera/hexMapCamera'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/mapConfig'
-import type { WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage } from '../../worldgen/plateSimulationWorker'
+import type { WorkerErosionProgressMessage, WorkerExportDataMessage, WorkerInboundMessage, WorkerRenderedMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/continentLabelRenderer'
 import './worldgen.css'
 
@@ -350,6 +350,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button" data-action="toggle-debug-3d" aria-label="Debug: enter 3D preview">
             <img src="/icons/tilt_on.png" alt="" />
           </button>
+          <button type="button" class="text-button" data-action="export" aria-label="Export world data for hex-tile conversion">Export</button>
         </span>
       </label>
     </div>
@@ -368,6 +369,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const resetErosionButton = root.querySelector<HTMLButtonElement>('[data-action="reset-erosion"]')!
   const erosionStatus = root.querySelector<HTMLElement>('[data-value="erosion-status"]')!
   const toggleDebug3DButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-debug-3d"]')!
+  const exportButton = root.querySelector<HTMLButtonElement>('[data-action="export"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
   const statEpoch = root.querySelector<HTMLElement>('[data-value="stat-epoch"]')!
 
@@ -411,11 +413,49 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   labelCanvas.height = MAP_HEIGHT
   const labelCtx = labelCanvas.getContext('2d')!
 
-  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage>) => {
+  function downloadBlob(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // A browser can't write to an arbitrary filesystem path (the repo's
+  // own /saves/ included) — this is the platform's actual ceiling, not a
+  // choice. Triggers two ordinary downloads into wherever the browser's
+  // normal downloads location is; move them into /saves/ by hand — see
+  // saves/README.md for what the two files contain and why there are
+  // two of them.
+  function handleExportData(message: WorkerExportDataMessage): void {
+    const safeSeed = message.seed.replace(/[^a-zA-Z0-9_-]/g, '_')
+    const baseName = `world_${safeSeed}_epoch${message.epoch}`
+    const metadata = {
+      formatVersion: 1,
+      seed: message.seed,
+      epoch: message.epoch,
+      width: message.width,
+      height: message.height,
+      landFraction: message.landFraction,
+      elevationsFile: `${baseName}.f32`,
+      plates: message.plates,
+      terrainFeatures: message.terrainFeatures,
+    }
+    downloadBlob(new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' }), `${baseName}.json`)
+    downloadBlob(new Blob([message.elevations], { type: 'application/octet-stream' }), `${baseName}.f32`)
+  }
+
+  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerExportDataMessage>) => {
     const message = event.data
 
     if (message.type === 'erosionProgress') {
       erosionStatus.textContent = `${Math.round(message.fraction * 100)}%`
+      return
+    }
+
+    if (message.type === 'exportData') {
+      handleExportData(message)
       return
     }
 
@@ -549,6 +589,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   })
 
   toggleDebug3DButton.addEventListener('click', () => setDebug3DActive(!debug3DActive))
+
+  exportButton.addEventListener('click', () => postToWorker({ type: 'export' }))
 
   const regenerate = (): void => {
     stopSim()
