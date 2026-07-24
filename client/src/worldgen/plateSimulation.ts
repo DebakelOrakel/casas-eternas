@@ -10,9 +10,8 @@ import type { PlateSeed } from './plateSeeds'
 import { hashSeedString, mulberry32 } from './rng'
 import type { PlateType } from './plateTypes'
 import { generateInitialRafts, advanceRafts, derivePlateTypes, accreteToNearestRaft, mergeOverlappingRafts, splitRaftAtRift, raftMembership } from './rafts'
-import type { Raft } from './rafts'
+import type { Raft, RaftBlob, RaftSplitEvent } from './rafts'
 import { createOceanAgeField, advectOceanAge, resetOceanAgeAt } from './oceanAge'
-import { assignContinentNames } from './continentNames'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from './terrainFeatures'
 import type { TerrainFeature } from './terrainFeatures'
 import { rotateAroundCenter, wrappedDelta } from './toroidal'
@@ -219,11 +218,6 @@ export interface PlateSimulation {
   types: PlateType[]
   motions: PlateMotion[]
   ages: number[]
-  // One name per plate, `null` for oceanic ones — see continentNames.ts.
-  // Kept as a plain parallel array indexed the same way as types/motions/
-  // etc. so applyMerge's existing splice-based removal keeps it aligned
-  // for free.
-  continentNames: (string | null)[]
   features: TerrainFeature[]
   epoch: number
   random: () => number
@@ -249,6 +243,12 @@ export interface PlateSimulation {
   // baseline — advected with plate motion each epoch, reset to 0 at divergent
   // boundaries. Continental (raft-covered) points ignore it.
   oceanAge: Float32Array
+  // Hysteresis latch for the supercontinent_formed event: true once all
+  // rafts have assembled into one, cleared again only after breakup pushes
+  // the count back up, so the milestone fires once per assembly, not every
+  // epoch the single raft persists. Seeded from the initial raft count so a
+  // single-craton start doesn't spuriously fire at epoch 0.
+  supercontinentActive: boolean
 }
 
 export function createPlateSimulation(seedString: string, plateCount: number, landFraction: number, clustering: number, cratonCount: number, width: number, height: number): PlateSimulation {
@@ -260,12 +260,10 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
   const warpSeed = hashSeedString(`${seedString}:coastalWarp`)
   const seeds = generatePlateSeeds(plateCount, width, height, random)
   // Rafts are generated first — they're the source of truth for crust type;
-  // plate `types` are then derived from raft coverage (see rafts.ts). The
-  // per-plate continentNames stay as a compat shim.
+  // plate `types` are then derived from raft coverage (see rafts.ts).
   const rafts = generateInitialRafts(random, landFraction, clustering, cratonCount, width, height)
   const types = derivePlateTypes(seeds, rafts, width, height)
   const motions = generatePlateMotions(seeds, width, height, random)
-  const continentNames = assignContinentNames(types, random)
   const lattice = generateDetectionLattice(width, height, DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y)
 
   return {
@@ -277,7 +275,6 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
     types,
     motions,
     ages: seeds.map(() => 0),
-    continentNames,
     features: [],
     epoch: 0,
     random,
@@ -287,6 +284,7 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
     latticeLockedEpochs: new Int16Array(lattice.length),
     latticeLastClassCode: new Int8Array(lattice.length).fill(-1),
     oceanAge: createOceanAgeField(OCEAN_AGE_INIT),
+    supercontinentActive: rafts.length <= 1,
   }
 }
 
@@ -294,26 +292,46 @@ function motionClassCode(motionClass: 'convergent' | 'divergent' | 'transform'):
   return motionClass === 'convergent' ? 0 : motionClass === 'divergent' ? 1 : 2
 }
 
+// Two tiers, matching how they're surfaced (see the overlay/notification
+// design): the `continent_*` events are the rare, narratively significant
+// ones (the supercontinent cycle) — they get a notification AND a geologic
+// map marker. The `oceanic_*` events are routine crust churn (a rift opening
+// seafloor, a slab subducting) — frequent, so they feed the events *overlay*
+// only, never a toast. `eventCategory` below classifies which is which.
 export type SimEventType =
-  | 'continental_created'
+  | 'continent_collided'
+  | 'continent_broke_up'
+  | 'supercontinent_formed'
   | 'oceanic_created'
   | 'oceanic_subducted'
-  | 'continental_merged'
-  | 'continental_split'
+
+export function eventCategory(type: SimEventType): 'continent' | 'routine' {
+  return type === 'oceanic_created' || type === 'oceanic_subducted' ? 'routine' : 'continent'
+}
 
 export interface SimEvent {
   type: SimEventType
+  // Continent names involved (collision: the two continents; breakup: the
+  // parent in `name`). Either may be absent for an unnamed raft.
   name?: string
   nameA?: string
   nameB?: string
+  // Event location (seam point for a collision, rift point for a breakup,
+  // boundary point for a routine crust event).
+  x?: number
+  y?: number
+  // Marker line direction (unit): the suture tangent for a collision or the
+  // rift axis for a breakup — the geologic line the map marker draws along.
+  dirX?: number
+  dirY?: number
+  // Routine crust events still carry the plate indices the interim
+  // worker-baked highlight uses; continent events use x/y + dir instead.
   plateIndex?: number
   // Set on oceanic_created when it came from a rift — the specific
   // flanking plate this new plate split away from, so a highlight can
   // trace just that one shared edge instead of the new plate's entire
   // boundary (which may end up touching other neighbors too).
   otherPlateIndex?: number
-  x?: number
-  y?: number
 }
 
 export function getInitialPlateEvents(_sim: PlateSimulation): SimEvent[] {
@@ -358,7 +376,6 @@ function applyRift(sim: PlateSimulation, event: RiftEvent): void {
   sim.types.push('oceanic')
   sim.motions.push(newMotion)
   sim.ages.push(0)
-  sim.continentNames.push(null)
 }
 
 // Merging drops one of the two plates and reassigns anything attached to
@@ -383,7 +400,19 @@ function applyMerge(sim: PlateSimulation, event: MergeEvent): void {
   sim.types.splice(removeIndex, 1)
   sim.motions.splice(removeIndex, 1)
   sim.ages.splice(removeIndex, 1)
-  sim.continentNames.splice(removeIndex, 1)
+}
+
+// A single point to anchor the supercontinent_formed marker/label on — the
+// biggest blob's center, a cheap stand-in for the continent's visual middle
+// (a proper toroidal centroid comes with per-raft labels in the overlay work).
+function supercontinentAnchor(rafts: Raft[]): { x: number; y: number } | null {
+  let best: RaftBlob | null = null
+  for (const raft of rafts) {
+    for (const blob of raft.blobs) {
+      if (!best || blob.radius > best.radius) best = blob
+    }
+  }
+  return best ? { x: best.x, y: best.y } : null
 }
 
 export function stepEpoch(sim: PlateSimulation): SimEvent[] {
@@ -617,12 +646,14 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   }
 
   // Continents that have drifted (or grown by accretion) into contact this
-  // epoch suture into one (Phase 2c).
-  mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, width, height)
+  // epoch suture into one (Phase 2c). Each suture is a continent-collision
+  // event (name + seam geometry) for the notification/overlay layer.
+  const raftMerges = mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, width, height)
 
   // Continental breakup: a sustained divergent point under a continent tears it
   // into two halves that the rift gap shoves apart (Phase 2d). Independent of
   // the plate rift below, which fires at oceanic ridges.
+  let raftSplit: RaftSplitEvent | null = null
   if (continentalRift) {
     const cSeedA = sim.seeds[continentalRift.plateA]
     const cSeedB = sim.seeds[continentalRift.plateB]
@@ -630,43 +661,52 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
     const cny = wrappedDelta(cSeedA.y, cSeedB.y, height)
     const cnl = Math.sqrt(cnx * cnx + cny * cny) || 1
     const newRaftId = sim.rafts.reduce((max, raft) => Math.max(max, raft.id), -1) + 1
-    const didSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, SPLIT_MAX_DIST_SQ, SPLIT_GAP, width, height)
+    raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, SPLIT_MAX_DIST_SQ, SPLIT_GAP, width, height)
     // Reset that point's divergence accumulator so it doesn't immediately
     // re-split the fresh halves next epoch.
-    if (didSplit) sim.latticeAccumulated[continentalRift.index] = 0
+    if (raftSplit) sim.latticeAccumulated[continentalRift.index] = 0
   }
 
   const events: SimEvent[] = []
 
-  // At most one rift and one merge per epoch — both are rare (locking
-  // takes LOCK_EPOCHS_REQUIRED epochs to even become eligible) and this
-  // sidesteps the bookkeeping multiple simultaneous plate-count changes
+  // --- Continent-scale events (the supercontinent cycle) ---
+  // These come from the raft lifecycle (sutures/rifts already applied
+  // above), NOT the plate rift/merge below — a continent is a raft across
+  // plates, so plate-count changes and continent events are decoupled.
+  for (const m of raftMerges) {
+    const len = Math.hypot(m.tangentX, m.tangentY) || 1
+    events.push({ type: 'continent_collided', nameA: m.nameA ?? undefined, nameB: m.nameB ?? undefined, x: m.x, y: m.y, dirX: m.tangentX / len, dirY: m.tangentY / len })
+  }
+  if (raftSplit) {
+    const len = Math.hypot(raftSplit.axisX, raftSplit.axisY) || 1
+    events.push({ type: 'continent_broke_up', name: raftSplit.parentName ?? undefined, x: raftSplit.x, y: raftSplit.y, dirX: raftSplit.axisX / len, dirY: raftSplit.axisY / len })
+  }
+  // Supercontinent milestone, latched by supercontinentActive so it fires
+  // once per assembly rather than every epoch the single raft persists.
+  if (sim.rafts.length <= 1 && !sim.supercontinentActive) {
+    sim.supercontinentActive = true
+    const anchor = supercontinentAnchor(sim.rafts)
+    if (anchor) events.push({ type: 'supercontinent_formed', name: sim.rafts[0]?.name ?? undefined, x: anchor.x, y: anchor.y })
+  } else if (sim.rafts.length >= 2) {
+    sim.supercontinentActive = false
+  }
+
+  // --- Routine crust churn (events overlay only, never a notification) ---
+  // At most one plate rift and one plate merge per epoch — both are rare
+  // (locking takes LOCK_EPOCHS_REQUIRED epochs to even become eligible) and
+  // this sidesteps the bookkeeping multiple simultaneous plate-count changes
   // in a single epoch would need.
   if (riftEvent) {
-    const isContinentalRift = sim.types[riftEvent.plateA] === 'continental' || sim.types[riftEvent.plateB] === 'continental'
-    const continentName = sim.continentNames[riftEvent.plateA] || sim.continentNames[riftEvent.plateB] || undefined
-    const continentalPlateIndex = sim.types[riftEvent.plateA] === 'continental' ? riftEvent.plateA : riftEvent.plateB
-    if (isContinentalRift) {
-      events.push({ type: 'continental_split', name: continentName, plateIndex: continentalPlateIndex, x: riftEvent.x, y: riftEvent.y })
-    }
-    // Falls back to plateA for an oceanic-oceanic rift (no continental
-    // side to prefer) — either flank is an equally valid "this is the
-    // plate the new one split away from" for highlighting purposes.
-    const otherPlateIndex = isContinentalRift ? continentalPlateIndex : riftEvent.plateA
-    events.push({ type: 'oceanic_created', plateIndex: sim.seeds.length, otherPlateIndex, x: riftEvent.x, y: riftEvent.y })
+    // Which flank the new oceanic plate split away from — the continental
+    // side if this rift was under a continent, else either flank (plateA).
+    const continentalSide = sim.types[riftEvent.plateA] === 'continental' ? riftEvent.plateA : sim.types[riftEvent.plateB] === 'continental' ? riftEvent.plateB : riftEvent.plateA
+    events.push({ type: 'oceanic_created', plateIndex: sim.seeds.length, otherPlateIndex: continentalSide, x: riftEvent.x, y: riftEvent.y })
     applyRift(sim, riftEvent)
   }
 
   if (mergeEvent) {
-    const keepType = sim.types[mergeEvent.keepIndex]
-    const removeType = sim.types[mergeEvent.removeIndex]
-    const keepName = sim.continentNames[mergeEvent.keepIndex]
-    const removeName = sim.continentNames[mergeEvent.removeIndex]
-
-    if (removeType === 'oceanic') {
+    if (sim.types[mergeEvent.removeIndex] === 'oceanic') {
       events.push({ type: 'oceanic_subducted', plateIndex: mergeEvent.keepIndex, x: mergeEvent.x, y: mergeEvent.y })
-    } else if (keepType === 'continental' && removeType === 'continental') {
-      events.push({ type: 'continental_merged', nameA: keepName || undefined, nameB: removeName || undefined, plateIndex: mergeEvent.keepIndex, x: mergeEvent.x, y: mergeEvent.y })
     }
     applyMerge(sim, mergeEvent)
   }

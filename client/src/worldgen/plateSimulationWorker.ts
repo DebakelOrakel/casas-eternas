@@ -1,7 +1,7 @@
 import { createPlateSimulation, getInitialPlateEvents, stepEpoch } from './plateSimulation'
 import type { PlateSimulation, SimEvent } from './plateSimulation'
 import { renderSimulationImage } from './elevationMapImage'
-import type { BoundaryHighlight, LocationHighlight, RenderSimulationOptions } from './elevationMapImage'
+import type { PlateArrow, RenderSimulationOptions } from './elevationMapImage'
 import type { ContinentLabelPlacement } from './continentLabelLayout'
 import { ElevationRenderPool } from './elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './erosion'
@@ -96,11 +96,17 @@ export interface WorkerRenderedMessage {
   height: number
   landFraction: number
   epoch: number
-  // Placement geometry only — no font/text rendering available inside
-  // the worker (no Canvas2D), so the main thread draws the actual labels
-  // once this arrives (see WorldGenScreen.ts).
-  labelPlacements: ContinentLabelPlacement[]
-  continentNames: (string | null)[]
+  // Overlay source data for the toggleable main-thread layers (no font or
+  // Canvas2D in the worker, so nothing is drawn here — the screen composites
+  // boundaries, arrows, names, and event markers on top of `buffer`).
+  // Full-res plate-boundary mask (1 = on a Voronoi edge), as raw bytes.
+  boundaryMask: ArrayBuffer
+  // Per-plate velocity arrows (world coords) for the motion overlay.
+  plateArrows: PlateArrow[]
+  // Per-raft continent-name label geometry for the names overlay.
+  raftLabels: ContinentLabelPlacement[]
+  // Sim events this render batch — the screen turns continent-scale ones
+  // into notifications + geologic map markers (see the event overlay).
   events: SimEvent[]
   // True for the once-per-round redraws an 'erode' request posts while
   // it's still running (see runErodeRequest) — everything about the
@@ -227,39 +233,10 @@ let currentSeedString: string | null = null
 // revert. WorkerResetErosionMessage re-renders from this instead.
 let preErosionElevations: Float32Array | null = null
 
-interface ActivePlateHighlight {
-  plateIndex: number
-  startEpoch: number
-}
-let activePlateHighlights: ActivePlateHighlight[] = []
-
-// Subduction removes the oceanic plate from sim.seeds entirely (see
-// applyMerge), so there's no surviving plateIndex left to represent "the
-// thing that just happened" — it's tracked by the event's own boundary
-// coordinate instead and rendered as a point highlight (see
-// LOCATION_HIGHLIGHT_RADIUS in elevationMapImage.ts) rather than tinting
-// the whole plate that absorbed it.
-interface ActiveLocationHighlight {
-  x: number
-  y: number
-  startEpoch: number
-}
-let activeLocationHighlights: ActiveLocationHighlight[] = []
-
-// A split's new plate is tracked here as a specific (plateIndex,
-// otherPlateIndex) pair rather than as a plain plateHighlights entry —
-// just the one shared edge between the new plate and the flank it split
-// away from gets drawn (see BOUNDARY_HIGHLIGHT_RADIUS in
-// elevationMapImage.ts), not the new plate's whole boundary, which may
-// end up touching unrelated neighbors too.
-interface ActiveBoundaryHighlight {
-  plateIndex: number
-  otherPlateIndex: number
-  startEpoch: number
-}
-let activeBoundaryHighlights: ActiveBoundaryHighlight[] = []
-
-const HIGHLIGHT_LIFESPAN_EPOCHS = 18
+// Event markers no longer live here — they moved to the main thread as
+// wall-clock-faded overlay markers driven by the forwarded sim events (see
+// WorldGenScreen's event overlay). The worker just relays events; it does
+// not track or bake any highlight state.
 
 // DEBUG-ONLY, see WorkerRenderedMessage.debugHeightmapGrid — delete
 // alongside that field and the preview it feeds once the real hex-tile
@@ -315,48 +292,6 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   renderOptions.precomputedElevations = precomputedElevations
   renderOptions.elevationScale = elevationScale
 
-  const plateHighlights = new Map<number, number>()
-  const nowEpoch = sim.epoch
-  for (let i = activePlateHighlights.length - 1; i >= 0; i--) {
-    const hl = activePlateHighlights[i]
-    const age = nowEpoch - hl.startEpoch
-    if (age >= HIGHLIGHT_LIFESPAN_EPOCHS) {
-      activePlateHighlights.splice(i, 1)
-      continue
-    }
-    const progress = age / HIGHLIGHT_LIFESPAN_EPOCHS
-    const alpha = 1.0 - progress
-    const existing = plateHighlights.get(hl.plateIndex) ?? 0
-    plateHighlights.set(hl.plateIndex, Math.max(existing, alpha))
-  }
-  renderOptions.plateHighlights = plateHighlights
-
-  const locationHighlights: LocationHighlight[] = []
-  for (let i = activeLocationHighlights.length - 1; i >= 0; i--) {
-    const hl = activeLocationHighlights[i]
-    const age = nowEpoch - hl.startEpoch
-    if (age >= HIGHLIGHT_LIFESPAN_EPOCHS) {
-      activeLocationHighlights.splice(i, 1)
-      continue
-    }
-    const progress = age / HIGHLIGHT_LIFESPAN_EPOCHS
-    locationHighlights.push({ x: hl.x, y: hl.y, alpha: 1.0 - progress })
-  }
-  renderOptions.locationHighlights = locationHighlights
-
-  const boundaryHighlights: BoundaryHighlight[] = []
-  for (let i = activeBoundaryHighlights.length - 1; i >= 0; i--) {
-    const hl = activeBoundaryHighlights[i]
-    const age = nowEpoch - hl.startEpoch
-    if (age >= HIGHLIGHT_LIFESPAN_EPOCHS) {
-      activeBoundaryHighlights.splice(i, 1)
-      continue
-    }
-    const progress = age / HIGHLIGHT_LIFESPAN_EPOCHS
-    boundaryHighlights.push({ plateIndexA: hl.plateIndex, plateIndexB: hl.otherPlateIndex, alpha: 1.0 - progress })
-  }
-  renderOptions.boundaryHighlights = boundaryHighlights
-
   const result = await renderSimulationImage(sim, renderPool, renderOptions)
   lastRawElevations = result.rawElevations
   if (precomputedElevations === undefined) preErosionElevations = result.rawElevations
@@ -371,19 +306,20 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     height: sim.height,
     landFraction: result.landFraction,
     epoch: sim.epoch,
-    labelPlacements: result.labelPlacements,
-    continentNames: sim.continentNames,
+    boundaryMask: result.boundaryMask.buffer as ArrayBuffer,
+    plateArrows: result.plateArrows,
+    raftLabels: result.raftLabels,
     events: eventsToSend,
     intermediate,
     debugHeightmapGrid: debugHeightmapGrid.buffer as ArrayBuffer,
     debugHeightmapGridWidth: DEBUG_HEIGHTMAP_GRID_WIDTH,
     debugHeightmapGridHeight: DEBUG_HEIGHTMAP_GRID_HEIGHT,
   }
-  // Transfers both underlying ArrayBuffers instead of copying them —
-  // safe because both renderSimulationImage and
-  // downsampleDebugHeightmapGrid allocate a fresh array every call, so
-  // there's no reference to either now-neutered buffer left to reuse.
-  self.postMessage(message, [message.buffer, message.debugHeightmapGrid])
+  // Transfers the underlying ArrayBuffers instead of copying them — safe
+  // because renderSimulationImage (buffer + boundaryMask) and
+  // downsampleDebugHeightmapGrid allocate fresh arrays every call, so
+  // there's no reference to any now-neutered buffer left to reuse.
+  self.postMessage(message, [message.buffer, message.boundaryMask, message.debugHeightmapGrid])
 }
 
 // Runs one 'erode' request end to end — extracted out of the onmessage
@@ -434,9 +370,6 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     sim = createPlateSimulation(message.seed, message.plateCount, message.landFraction, message.clustering, message.cratonCount, message.width, message.height)
     currentSeedString = message.seed
     pendingEvents = getInitialPlateEvents(sim)
-    activePlateHighlights = []
-    activeLocationHighlights = []
-    activeBoundaryHighlights = []
     lastRawElevations = null
     preErosionElevations = null
     renderOptions = message.renderOptions
@@ -447,24 +380,9 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     intervalId = setInterval(() => {
       if (!sim || renderInFlight) return
       const tickEvents = stepEpoch(sim)
+      // Events are forwarded to the main thread (batched with the next
+      // render), which owns their notifications + faded map markers now.
       pendingEvents.push(...tickEvents)
-      for (const ev of tickEvents) {
-        if (ev.type === 'oceanic_subducted' && ev.x !== undefined && ev.y !== undefined) {
-          activeLocationHighlights.push({ x: ev.x, y: ev.y, startEpoch: sim.epoch })
-        } else if (ev.type === 'oceanic_created' && ev.plateIndex !== undefined && ev.otherPlateIndex !== undefined) {
-          // A rift's new plate always pairs with a 'continental_split'
-          // event on the same tick when the rift was continental — that
-          // one is intentionally skipped below rather than also getting
-          // a plateHighlights entry for the (unchanged, pre-existing)
-          // continental plate; this boundary highlight already shows
-          // where the split happened.
-          activeBoundaryHighlights.push({ plateIndex: ev.plateIndex, otherPlateIndex: ev.otherPlateIndex, startEpoch: sim.epoch })
-        } else if (ev.type === 'continental_split') {
-          // no-op — see the oceanic_created branch's comment above
-        } else if (ev.plateIndex !== undefined) {
-          activePlateHighlights.push({ plateIndex: ev.plateIndex, startEpoch: sim.epoch })
-        }
-      }
       renderInFlight = true
       // Live preview renders at a coarser scale for speed (see
       // PREVIEW_RENDER_SCALE); erosion/export force full res of their own.

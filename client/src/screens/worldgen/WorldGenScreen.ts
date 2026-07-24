@@ -5,7 +5,31 @@ import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/mapConfig'
 import type { WorkerErosionProgressMessage, WorkerExportDataMessage, WorkerInboundMessage, WorkerRenderedMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/continentLabelRenderer'
+import type { ContinentLabelPlacement } from '../../worldgen/continentLabelLayout'
+import type { PlateArrow } from '../../worldgen/elevationMapImage'
+import type { SimEvent } from '../../worldgen/plateSimulation'
+import { eventCategory } from '../../worldgen/plateSimulation'
 import './worldgen.css'
+
+// Plate-boundary line color for the boundaries overlay (drawn main-thread
+// from the worker's boundary mask — see the compositor).
+const BOUNDARY_COLOR: [number, number, number] = [15, 15, 15]
+const ARROW_COLOR = '#0f0f0f'
+
+// Event markers + notifications share one wall-clock lifetime, so a toast and
+// its geologic map marker appear and fade together (the user's coupling
+// choice). Continent-scale events (collision/breakup/supercontinent) get a
+// bold marker AND a notification; routine crust churn gets only a faint,
+// shorter marker (no toast). Colors are "r, g, b" fragments for rgba().
+const EVENT_CONTINENT_LIFETIME_MS = 15000
+const EVENT_ROUTINE_LIFETIME_MS = 6000
+const EVENT_MARKER_HALF_LENGTH = 90
+const COLLISION_COLOR = '220, 45, 45'
+const BREAKUP_COLOR = '235, 140, 30'
+const ROUTINE_COLOR = '90, 130, 200'
+// ~15fps is plenty for a multi-second fade and keeps the full-texture
+// re-upload each marker frame off the 60fps path.
+const MARKER_FRAME_INTERVAL_MS = 66
 
 // Fresh start for the hex-tile world generation approach — the sphere-
 // based version this replaces lives on under 'worldgen-sphere' (see
@@ -55,10 +79,6 @@ const EPOCH_INTERVAL_MS = 400
 // safety net — deliberately restarting after it fires keeps going (see
 // autoStopTriggered), and generating a new world re-arms it.
 const MAX_TECTONICS_EPOCHS = 100
-
-// Debug/visualization toggles — no UI for these yet, flip in code.
-const SHOW_PLATE_BOUNDARIES = true
-const SHOW_VELOCITY_ARROWS = false
 
 function randomSeed(): string {
   return Math.floor(Math.random() * 1_000_000_000).toString()
@@ -405,6 +425,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </span>
       </label>
     </div>
+    <div class="overlay-toggles">
+      <button type="button" class="overlay-toggle is-active" data-overlay="boundaries" aria-pressed="true">Grenzen</button>
+      <button type="button" class="overlay-toggle is-active" data-overlay="names" aria-pressed="true">Namen</button>
+      <button type="button" class="overlay-toggle is-active" data-overlay="events" aria-pressed="true">Ereignisse</button>
+      <button type="button" class="overlay-toggle" data-overlay="arrows" aria-pressed="false">Pfeile</button>
+    </div>
   `
 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
@@ -468,6 +494,180 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   labelCanvas.height = MAP_HEIGHT
   const labelCtx = labelCanvas.getContext('2d')!
 
+  // Overlay layers are composited on the main thread from the worker's
+  // base color raster + overlay source data, each toggled independently.
+  // Toggling just re-runs composite() from the retained last render — no
+  // worker round-trip, so it's instant. Defaults: boundaries/names/events
+  // on, motion arrows off (debug-ish).
+  const overlayState = { boundaries: true, names: true, events: true, arrows: false }
+  let lastBaseBuffer: Uint8ClampedArray | null = null
+  let lastBoundaryMask: Uint8Array | null = null
+  let lastPlateArrows: PlateArrow[] = []
+  let lastRaftLabels: ContinentLabelPlacement[] = []
+
+  function drawArrowsOverlay(arrows: PlateArrow[]): void {
+    labelCtx.strokeStyle = ARROW_COLOR
+    labelCtx.lineWidth = 2
+    labelCtx.lineCap = 'round'
+    for (const { x, y, vx, vy } of arrows) {
+      const endX = x + vx
+      const endY = y + vy
+      const angle = Math.atan2(vy, vx)
+      labelCtx.beginPath()
+      labelCtx.moveTo(x, y)
+      labelCtx.lineTo(endX, endY)
+      for (const wing of [-1, 1]) {
+        const wa = angle + Math.PI + wing * ((25 * Math.PI) / 180)
+        labelCtx.moveTo(endX, endY)
+        labelCtx.lineTo(endX + Math.cos(wa) * 12, endY + Math.sin(wa) * 12)
+      }
+      labelCtx.stroke()
+    }
+  }
+
+  // Active event markers: geologic lines/points that fade over their own
+  // wall-clock lifetime, drawn into the events overlay. Continent markers
+  // share their notification's lifetime, so the two fade in lockstep.
+  interface EventMarker {
+    type: SimEvent['type']
+    x: number
+    y: number
+    // Line direction (unit) for seam/rift markers; (0,0) => a point marker.
+    dirX: number
+    dirY: number
+    birth: number
+    lifetime: number
+  }
+  let eventMarkers: EventMarker[] = []
+  let markerRaf: number | null = null
+
+  function eventText(ev: SimEvent): { message: string; icon: string } {
+    switch (ev.type) {
+      case 'continent_collided':
+        return { message: ev.nameA && ev.nameB ? `${ev.nameA} und ${ev.nameB} sind kollidiert` : 'Zwei Kontinente sind kollidiert', icon: '/icons/continent.png' }
+      case 'continent_broke_up':
+        return { message: ev.name ? `${ev.name} bricht auseinander` : 'Ein Kontinent bricht auseinander', icon: '/icons/continent.png' }
+      case 'supercontinent_formed':
+        return { message: ev.name ? `Superkontinent ${ev.name} gebildet` : 'Ein Superkontinent hat sich gebildet', icon: '/icons/crown.png' }
+      default:
+        return { message: '', icon: '/icons/ocean.png' }
+    }
+  }
+
+  function handleSimEvents(events: SimEvent[]): void {
+    if (!events || events.length === 0) return
+    const now = Date.now()
+    for (const ev of events) {
+      const continent = eventCategory(ev.type) === 'continent'
+      const lifetime = continent ? EVENT_CONTINENT_LIFETIME_MS : EVENT_ROUTINE_LIFETIME_MS
+      if (ev.x !== undefined && ev.y !== undefined) {
+        eventMarkers.push({ type: ev.type, x: ev.x, y: ev.y, dirX: ev.dirX ?? 0, dirY: ev.dirY ?? 0, birth: now, lifetime })
+      }
+      // Only continent-scale events raise a toast; routine crust churn lives
+      // in the events overlay alone (the user's "rare events only" choice).
+      if (continent) {
+        const { message, icon } = eventText(ev)
+        ctx.notifications.show({ message, icon, durationMs: lifetime })
+      }
+    }
+    ensureMarkerAnimation()
+  }
+
+  function drawEventMarkers(ctx2: CanvasRenderingContext2D): void {
+    const now = Date.now()
+    ctx2.lineCap = 'round'
+    for (const m of eventMarkers) {
+      const alpha = 1 - (now - m.birth) / m.lifetime
+      if (alpha <= 0) continue
+      const color = m.type === 'continent_collided' || m.type === 'supercontinent_formed' ? COLLISION_COLOR : m.type === 'continent_broke_up' ? BREAKUP_COLOR : ROUTINE_COLOR
+      ctx2.strokeStyle = `rgba(${color}, ${alpha})`
+      if (m.dirX !== 0 || m.dirY !== 0) {
+        // Geologic line: the suture seam (collision) or rift axis (breakup,
+        // dashed) centered on the event point, running along its direction.
+        const hl = EVENT_MARKER_HALF_LENGTH
+        ctx2.lineWidth = m.type === 'continent_collided' ? 8 : 5
+        if (m.type === 'continent_broke_up') ctx2.setLineDash([14, 10])
+        ctx2.beginPath()
+        ctx2.moveTo(m.x - m.dirX * hl, m.y - m.dirY * hl)
+        ctx2.lineTo(m.x + m.dirX * hl, m.y + m.dirY * hl)
+        ctx2.stroke()
+        ctx2.setLineDash([])
+      } else {
+        // Point marker: a ring (a bold one for the supercontinent milestone,
+        // a small one for routine crust events).
+        const r = m.type === 'supercontinent_formed' ? 26 : 12
+        ctx2.lineWidth = m.type === 'supercontinent_formed' ? 5 : 3
+        ctx2.beginPath()
+        ctx2.arc(m.x, m.y, r, 0, Math.PI * 2)
+        ctx2.stroke()
+      }
+    }
+  }
+
+  // Drives the wall-clock marker fade: re-composites (~15fps) while any
+  // marker is alive — even while paused, since it's wall-clock — pruning
+  // expired ones, and stops with one clean final composite when none remain.
+  function ensureMarkerAnimation(): void {
+    if (markerRaf !== null) return
+    let lastFrame = 0
+    const tick = (ts: number): void => {
+      if (ts - lastFrame >= MARKER_FRAME_INTERVAL_MS) {
+        lastFrame = ts
+        const now = Date.now()
+        eventMarkers = eventMarkers.filter((m) => now - m.birth < m.lifetime)
+        composite()
+        if (eventMarkers.length === 0) {
+          markerRaf = null
+          return
+        }
+      }
+      markerRaf = requestAnimationFrame(tick)
+    }
+    markerRaf = requestAnimationFrame(tick)
+  }
+
+  function resetEventMarkers(): void {
+    eventMarkers = []
+    if (markerRaf !== null) {
+      cancelAnimationFrame(markerRaf)
+      markerRaf = null
+    }
+  }
+
+  // Repaints labelCanvas from the retained render + current toggle state and
+  // uploads it to the map texture. Cheap enough to call on every toggle.
+  function composite(): void {
+    if (!lastBaseBuffer) return
+    const img = new ImageData(new Uint8ClampedArray(lastBaseBuffer), MAP_WIDTH, MAP_HEIGHT)
+    if (overlayState.boundaries && lastBoundaryMask) {
+      const d = img.data
+      const m = lastBoundaryMask
+      for (let i = 0; i < m.length; i++) {
+        if (m[i]) {
+          const p = i * 4
+          d[p] = BOUNDARY_COLOR[0]
+          d[p + 1] = BOUNDARY_COLOR[1]
+          d[p + 2] = BOUNDARY_COLOR[2]
+        }
+      }
+    }
+    labelCtx.putImageData(img, 0, 0)
+    if (overlayState.arrows) drawArrowsOverlay(lastPlateArrows)
+    if (overlayState.events) drawEventMarkers(labelCtx)
+    if (overlayState.names) drawContinentLabels(labelCtx, lastRaftLabels)
+    mapTexture.update(new Uint8Array(labelCtx.getImageData(0, 0, MAP_WIDTH, MAP_HEIGHT).data.buffer))
+  }
+
+  for (const btn of root.querySelectorAll<HTMLButtonElement>('.overlay-toggle')) {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.overlay as keyof typeof overlayState
+      overlayState[key] = !overlayState[key]
+      btn.classList.toggle('is-active', overlayState[key])
+      btn.setAttribute('aria-pressed', String(overlayState[key]))
+      composite()
+    })
+  }
+
   function downloadBlob(blob: Blob, filename: string): void {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -523,34 +723,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       return
     }
 
-    const imageData = new ImageData(new Uint8ClampedArray(message.buffer), message.width, message.height)
-    labelCtx.putImageData(imageData, 0, 0)
-    drawContinentLabels(labelCtx, message.labelPlacements)
+    // Retain the base raster + overlay source data so a toggle can
+    // re-composite without a worker round-trip, then draw the current
+    // layer set.
+    lastBaseBuffer = new Uint8ClampedArray(message.buffer)
+    lastBoundaryMask = new Uint8Array(message.boundaryMask)
+    lastPlateArrows = message.plateArrows
+    lastRaftLabels = message.raftLabels
+    handleSimEvents(message.events)
+    composite()
 
-    if (message.events) {
-      for (const ev of message.events) {
-        // Raft model: crust type is no longer a plate property, so these are
-        // generic oceanic-CRUST events (new seafloor at a rift; oceanic crust
-        // consumed at subduction), not "plate" events. Continent-level events
-        // (continental_created/merged/split) are dropped here — real continent
-        // events arrive with the raft lifecycle in a later phase.
-        if (ev.type === 'oceanic_created') {
-          ctx.notifications.show({
-            message: 'New oceanic crust just dropped',
-            icon: '/icons/ocean.png',
-            durationMs: 15000,
-          })
-        } else if (ev.type === 'oceanic_subducted') {
-          ctx.notifications.show({
-            message: 'Oceanic crust subducted',
-            icon: '/icons/ocean.png',
-            durationMs: 15000,
-          })
-        }
-      }
-    }
-
-    mapTexture.update(new Uint8Array(labelCtx.getImageData(0, 0, message.width, message.height).data.buffer))
     lastLandFraction = message.landFraction
     lastEpoch = message.epoch
     updateStats()
@@ -603,10 +785,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       width: MAP_WIDTH,
       height: MAP_HEIGHT,
       epochIntervalMs: EPOCH_INTERVAL_MS,
-      // Continent labels off for now: they're still per-plate, so a raft
-      // (continent) spanning several plates would show several labels. Proper
-      // per-raft labels come back in the toggleable-overlays step.
-      renderOptions: { showBoundaries: SHOW_PLATE_BOUNDARIES, showArrows: SHOW_VELOCITY_ARROWS, computeContinentLabels: false },
+      // Overlays (boundaries/names/arrows/events) are composited on the main
+      // thread now and toggled there, so the render itself needs no overlay
+      // flags — it always emits the full overlay source data.
+      renderOptions: {},
     })
   }
   initSim(initialSeed, TOTAL_PLATE_COUNT_DEFAULT, LAND_FRACTION_DEFAULT, CLUSTERING_DEFAULT, CRATON_COUNT_DEFAULT)
@@ -674,6 +856,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // preview left showing the previous world's now-stale mesh.
     setDebug3DActive(false)
     ctx.notifications.clearAll()
+    resetEventMarkers()
     initSim(seedInput.value, Number(plateCountInput.value), Number(landFractionInput.value), Number(clusteringInput.value), Number(cratonCountInput.value))
   }
   // Debounced so dragging a slider (or typing a seed) doesn't fire a full
@@ -747,6 +930,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scene,
     dispose() {
       stopSim()
+      resetEventMarkers()
       worker.terminate()
       // scene.dispose() doesn't remove the camera module's own 'wheel'
       // listener on the shared canvas — same reasoning as MarsScreen's

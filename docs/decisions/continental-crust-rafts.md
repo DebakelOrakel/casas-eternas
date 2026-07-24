@@ -233,10 +233,36 @@ not dead code): the derived `plate.type` (awaits boundary classification
 from direct raft geometry) and per-plate `continentNames` (awaits per-raft
 labels in the overlay rework).
 
+## Overlays + notifications (done)
+
+Built 2026-07-24, after Phase 5:
+
+- **Events moved onto the raft lifecycle.** The old plate-based
+  `continental_*` events are gone; `mergeOverlappingRafts` /
+  `splitRaftAtRift` now report the collision seam / rift axis, and stepEpoch
+  emits `continent_collided` / `continent_broke_up` / `supercontinent_formed`
+  (the last latched by `supercontinentActive` so it fires once per assembly).
+  `oceanic_created` / `oceanic_subducted` stay as *routine* crust events
+  (see `eventCategory`).
+- **Overlays are separate, toggleable main-thread layers.** The worker no
+  longer bakes boundaries/arrows/labels/highlights into the raster — it
+  sends a base color raster plus overlay source data (boundary mask,
+  per-plate arrows, per-raft label geometry via `raftLabelLayout`), and the
+  screen composites the toggled layers (plate boundaries / continent names /
+  events / motion arrows) onto one texture. Toggling is a re-composite, no
+  worker round-trip.
+- **Event markers are geologic lines coupled to notifications.** A collision
+  draws a suture band, a breakup a dashed rift axis, a supercontinent a ring;
+  each shares its notification's wall-clock lifetime and fades with it (a
+  ~15fps rAF re-composite). Only continent-scale events raise a toast;
+  routine crust churn is overlay-only. The per-raft names overlay uses
+  `raft.name`, which let the per-plate `continentNames` bridge (array,
+  `assignContinentNames`, and its rift/merge bookkeeping) be **deleted
+  entirely** — nothing read it once labels/events moved to rafts.
+
 ## Remaining
 
 - **Phase 2 optionals:** island-arc births; boundary classification from
-  direct raft geometry (retires the `plate.type` bridge).
-- **Toggleable overlays** (plate lines / per-raft names / arrows) —
-  retires the `continentNames` bridge.
+  direct raft geometry — retires the derived `plate.type` bridge, the last
+  vestige of the plate=crust-type model.
 - Revisit later whether further design decisions warrant their own docs.

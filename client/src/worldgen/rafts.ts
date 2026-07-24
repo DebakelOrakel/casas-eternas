@@ -28,6 +28,31 @@ export interface Raft {
   blobs: RaftBlob[]
 }
 
+// What a raft collision (mergeOverlappingRafts) reports for the event/overlay
+// layer: the two continents' names (either may be null) plus the suture
+// geometry — a point on the collision seam and the tangent the seam runs
+// along (perpendicular to the convergence direction, i.e. along the
+// fold-mountain belt). The map marker draws a short band there.
+export interface RaftMergeEvent {
+  nameA: string | null
+  nameB: string | null
+  x: number
+  y: number
+  tangentX: number
+  tangentY: number
+}
+
+// What a continental breakup (splitRaftAtRift) reports: the parent
+// continent's name plus the rift axis — a point on the tear and the
+// direction the rift line runs (perpendicular to the divergence normal).
+export interface RaftSplitEvent {
+  parentName: string | null
+  x: number
+  y: number
+  axisX: number
+  axisY: number
+}
+
 // Metaball kernel: (1 - (d/r)²)² inside the blob, 0 outside. Smooth, finite
 // support (so a query only sums nearby blobs), peaks at 1 at the center.
 function blobKernel(distSq: number, radius: number): number {
@@ -147,23 +172,53 @@ export function accreteToNearestRaft(
 // sum of two blobs' radii into the center-distance at which they count as
 // overlapping (~0.5 ≈ their coastlines meet). Cheap at realistic raft/blob
 // counts.
-function raftsOverlap(a: Raft, b: Raft, overlapFactor: number, width: number, height: number): boolean {
+// The closest *overlapping* blob pair between two rafts (nearest pair that's
+// within the overlap threshold), or null if none overlap. That pair's
+// midpoint is where the two coastlines actually meet — the collision seam —
+// so it doubles as the overlap test and the seam-geometry source.
+function closestOverlappingBlobs(a: Raft, b: Raft, overlapFactor: number, width: number, height: number): { blobA: RaftBlob; blobB: RaftBlob } | null {
+  let best: { blobA: RaftBlob; blobB: RaftBlob } | null = null
+  let bestDistSq = Infinity
   for (const ba of a.blobs) {
     for (const bb of b.blobs) {
       const threshold = (ba.radius + bb.radius) * overlapFactor
-      if (toroidalDistanceSq(ba.x, ba.y, bb.x, bb.y, width, height) < threshold * threshold) return true
+      const d = toroidalDistanceSq(ba.x, ba.y, bb.x, bb.y, width, height)
+      if (d < threshold * threshold && d < bestDistSq) {
+        bestDistSq = d
+        best = { blobA: ba, blobB: bb }
+      }
     }
   }
-  return false
+  return best
 }
 
-export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, width: number, height: number): void {
+// Sutures every pair of rafts whose coastlines have come into contact this
+// epoch into one, repeatedly until nothing overlaps. Returns one
+// RaftMergeEvent per collision (with seam geometry) so the caller can raise a
+// "continents collided" event. A name is carried through a collision — if the
+// survivor is unnamed but the absorbed raft had a name, the survivor inherits
+// it, so a named continent doesn't lose its identity by absorbing a nameless
+// (freshly-split or arc-born) piece.
+export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, width: number, height: number): RaftMergeEvent[] {
+  const merges: RaftMergeEvent[] = []
   let mergedAny = true
   while (mergedAny) {
     mergedAny = false
     for (let i = 0; i < rafts.length && !mergedAny; i++) {
       for (let j = i + 1; j < rafts.length && !mergedAny; j++) {
-        if (raftsOverlap(rafts[i], rafts[j], overlapFactor, width, height)) {
+        const overlap = closestOverlappingBlobs(rafts[i], rafts[j], overlapFactor, width, height)
+        if (overlap) {
+          const nameA = rafts[i].name
+          const nameB = rafts[j].name
+          // Seam point: midpoint of the meeting blob pair (wrapped). Seam
+          // tangent: perpendicular to the convergence direction between them.
+          const dx = wrappedDelta(overlap.blobB.x, overlap.blobA.x, width)
+          const dy = wrappedDelta(overlap.blobB.y, overlap.blobA.y, height)
+          const seamX = (((overlap.blobA.x + dx / 2) % width) + width) % width
+          const seamY = (((overlap.blobA.y + dy / 2) % height) + height) % height
+          const len = Math.hypot(dx, dy) || 1
+          merges.push({ nameA, nameB, x: seamX, y: seamY, tangentX: -dy / len, tangentY: dx / len })
+          if (!rafts[i].name && rafts[j].name) rafts[i].name = rafts[j].name
           for (const blob of rafts[j].blobs) rafts[i].blobs.push(blob)
           rafts.splice(j, 1)
           mergedAny = true
@@ -171,6 +226,7 @@ export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, widt
       }
     }
   }
+  return merges
 }
 
 // Split (Phase 2d): a rift tearing through a continent partitions its blobs
@@ -180,7 +236,7 @@ export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, widt
 // maxDistSq of the rift point) is split, and only if it has crust on both
 // sides; an oceanic rift, or one grazing a continent's edge, does nothing.
 // The far half becomes a new raft (id `newId`); the near half stays. Returns
-// whether a split happened.
+// the RaftSplitEvent (parent name + rift axis) if a split happened, else null.
 export function splitRaftAtRift(
   rafts: Raft[],
   riftX: number,
@@ -192,7 +248,7 @@ export function splitRaftAtRift(
   gap: number,
   width: number,
   height: number,
-): boolean {
+): RaftSplitEvent | null {
   let target = -1
   let bestDistSq = Infinity
   for (let i = 0; i < rafts.length; i++) {
@@ -204,7 +260,7 @@ export function splitRaftAtRift(
       }
     }
   }
-  if (target < 0 || bestDistSq > maxDistSq) return false
+  if (target < 0 || bestDistSq > maxDistSq) return null
   const raft = rafts[target]
   const near: RaftBlob[] = []
   const far: RaftBlob[] = []
@@ -213,7 +269,7 @@ export function splitRaftAtRift(
     if (side >= 0) near.push(blob)
     else far.push(blob)
   }
-  if (near.length === 0 || far.length === 0) return false
+  if (near.length === 0 || far.length === 0) return null
   // Open an ocean gap between the two halves by pushing them apart across the
   // rift line, so their seam blobs no longer overlap and the merge pass won't
   // immediately weld them back together — a rift genuinely separates the
@@ -226,9 +282,12 @@ export function splitRaftAtRift(
     blob.x = (((blob.x - normalX * gap) % width) + width) % width
     blob.y = (((blob.y - normalY * gap) % height) + height) % height
   }
+  const parentName = raft.name
   raft.blobs = near
   rafts.push({ id: newId, name: null, blobs: far })
-  return true
+  // Rift axis runs perpendicular to the divergence normal (the tear line
+  // itself, not the pull-apart direction).
+  return { parentName, x: riftX, y: riftY, axisX: -normalY, axisY: normalX }
 }
 
 // Blobs per craton and their size spread (as a fraction of the craton's
