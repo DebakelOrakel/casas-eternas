@@ -23,6 +23,10 @@ export interface OverlayLayer {
   // Shown on the layer's toggle chip (see OverlayToggleBar).
   label: string
   enabled: boolean
+  // Skip this layer in the toggle bar — it's still composited, but a screen
+  // controls it elsewhere (e.g. the temperature layer, toggled from the
+  // climate panel), so it shouldn't also appear as a chip.
+  hidden?: boolean
   // Full-raster overlay: mutate the base image bytes before they're drawn.
   paintPixels?: (data: Uint8ClampedArray) => void
   // Vector overlay: draw on top of the base after it's drawn.

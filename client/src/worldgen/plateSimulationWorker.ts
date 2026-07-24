@@ -7,6 +7,8 @@ import { ElevationRenderPool } from './elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './erosion'
 import type { ErosionPhase } from './erosion'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './oceanAge'
+import { computeTemperature } from './climate/temperature'
+import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climate/climateField'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
 // rendering the full 2048x1024 raster (a per-pixel query against every
@@ -81,6 +83,14 @@ export interface WorkerResetErosionMessage {
 export interface WorkerExportMessage {
   type: 'export'
 }
+// Requests the climate step (temperature so far) be computed on the current,
+// possibly-eroded elevation — see docs/decisions/climate-biomes.md. Replies
+// with a WorkerClimateDataMessage.
+export interface WorkerComputeClimateMessage {
+  type: 'computeClimate'
+  // Global temperature offset in °C (greenhouse) — see computeTemperature.
+  temperatureOffset: number
+}
 export type WorkerInboundMessage =
   | WorkerInitMessage
   | WorkerStartMessage
@@ -88,6 +98,7 @@ export type WorkerInboundMessage =
   | WorkerErodeMessage
   | WorkerResetErosionMessage
   | WorkerExportMessage
+  | WorkerComputeClimateMessage
 
 export interface WorkerRenderedMessage {
   type: 'rendered'
@@ -206,6 +217,15 @@ export interface WorkerExportDataMessage {
   // cosmetic display-gamma-curved ones, since this is meant as real data
   // for a future importer, not something tuned to look good on screen.
   elevations: ArrayBuffer
+}
+
+// The computed climate rasters (coarse grid — see climate/climateField.ts).
+// Grows per phase; temperature (°C, Float32, resX*resY row-major) first.
+export interface WorkerClimateDataMessage {
+  type: 'climateData'
+  resX: number
+  resY: number
+  temperature: ArrayBuffer
 }
 
 let sim: PlateSimulation | null = null
@@ -471,5 +491,17 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       elevations: elevations.buffer as ArrayBuffer,
     }
     self.postMessage(exportMessage, [exportMessage.elevations, exportMessage.oceanAge.values])
+  } else if (message.type === 'computeClimate') {
+    // Runs on the current, possibly-eroded elevation (lastRawElevations). A
+    // fresh Float32Array per field, so its buffer can be transferred.
+    if (!sim || !lastRawElevations) return
+    const temperature = computeTemperature(lastRawElevations, sim.width, sim.height, message.temperatureOffset)
+    const climateMessage: WorkerClimateDataMessage = {
+      type: 'climateData',
+      resX: CLIMATE_RES_X,
+      resY: CLIMATE_RES_Y,
+      temperature: temperature.buffer as ArrayBuffer,
+    }
+    self.postMessage(climateMessage, [climateMessage.temperature])
   }
 }

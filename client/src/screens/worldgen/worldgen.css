@@ -152,6 +152,17 @@
   line-height: 1.2;
 }
 
+/* Min/max average-temperature readout, stacked beside the compute button. */
+.worldgen-flat-screen .climate-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  line-height: 1.2;
+  min-width: 5.5em;
+}
+
 .worldgen-flat-screen .erosion-status {
   font-size: 0.75rem;
   white-space: nowrap;

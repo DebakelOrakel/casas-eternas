@@ -8,9 +8,13 @@ export function createOverlayToggleBar(compositor: MapOverlayCompositor, contain
   const bar = document.createElement('div')
   bar.className = 'overlay-toggles'
   for (const layer of compositor.getLayers()) {
+    if (layer.hidden) continue
     const button = document.createElement('button')
     button.type = 'button'
     button.className = layer.enabled ? 'overlay-toggle is-active' : 'overlay-toggle'
+    // data-layer lets a screen re-sync a chip when it enables/disables a layer
+    // programmatically (see setOverlayChipActive usage).
+    button.dataset.layer = layer.id
     button.textContent = layer.label
     button.setAttribute('aria-pressed', String(layer.enabled))
     button.addEventListener('click', () => {

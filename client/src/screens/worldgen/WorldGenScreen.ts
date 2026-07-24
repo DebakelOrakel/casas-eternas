@@ -4,7 +4,7 @@ import { createHexMapCamera } from '../../camera/hexMapCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/mapConfig'
-import type { WorkerErosionProgressMessage, WorkerExportDataMessage, WorkerInboundMessage, WorkerRenderedMessage } from '../../worldgen/plateSimulationWorker'
+import type { WorkerClimateDataMessage, WorkerErosionProgressMessage, WorkerExportDataMessage, WorkerInboundMessage, WorkerRenderedMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/continentLabelRenderer'
 import type { PlateArrow } from '../../worldgen/elevationMapImage'
@@ -12,6 +12,7 @@ import type { SimEvent } from '../../worldgen/plateSimulation'
 import { eventCategory } from '../../worldgen/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { createOverlayToggleBar } from '../../ui/mapOverlay/OverlayToggleBar'
+import { temperatureColor } from '../../worldgen/climate/climateColors'
 import './worldgen.css'
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
@@ -387,6 +388,24 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </span>
       </label>
     </div>
+    <div class="panel" data-panel="3">
+      <label class="field">
+        <span class="field-label">Temperatur: <span><span data-value="temp-band-label">0</span>°C</span></span>
+        <input type="range" class="temp-band-input" min="-20" max="20" step="1" value="0" aria-label="Temperature offset (°C)" />
+      </label>
+      <label class="field field--icon-row">
+        <span class="field-row">
+          <button type="button" class="icon-button" data-action="toggle-temperature" aria-label="Toggle temperature overlay">
+            <img src="/icons/temp_off.png" alt="" />
+          </button>
+          <span class="climate-readout">
+            <span>Min: <span data-value="temp-min">–</span>°C</span>
+            <span>Max: <span data-value="temp-max">–</span>°C</span>
+          </span>
+          <span class="erosion-status" data-value="climate-status"></span>
+        </span>
+      </label>
+    </div>
   `
 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
@@ -407,6 +426,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const erosionStatus = root.querySelector<HTMLElement>('[data-value="erosion-status"]')!
   const toggleDebug3DButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-debug-3d"]')!
   const exportButton = root.querySelector<HTMLButtonElement>('[data-action="export"]')!
+  const tempToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-temperature"]')!
+  const tempToggleIcon = tempToggleButton.querySelector<HTMLImageElement>('img')!
+  const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
+  const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
+  const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
+  const tempMaxLabel = root.querySelector<HTMLElement>('[data-value="temp-max"]')!
+  const tempMinLabel = root.querySelector<HTMLElement>('[data-value="temp-min"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
   const statEpoch = root.querySelector<HTMLElement>('[data-value="stat-epoch"]')!
 
@@ -447,6 +473,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastBoundaryMask: Uint8Array | null = null
   let lastPlateArrows: PlateArrow[] = []
   let lastRaftLabels: ContinentLabelPlacement[] = []
+  // Coarse climate rasters (from the worker's computeClimate step). Sampled up
+  // to full map resolution in the overlay paint fns. null until computed / when
+  // invalidated by an upstream reset.
+  const CLIMATE_PANEL_INDEX = 3
+  let lastTemperature: Float32Array | null = null
+  let climateResX = 0
+  let climateResY = 0
 
   function paintBoundaryMask(data: Uint8ClampedArray): void {
     if (!lastBoundaryMask) return
@@ -480,17 +513,50 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
-  // Layer draw/list order: names last so labels stay on top (always readable);
-  // arrows default off (debug-ish). The 'events' layer has no static paint —
-  // it just gates the transient event markers (added via overlay.addMarker).
+  // Temperature heatmap tint (climate) — a pixel layer blended over the terrain
+  // so both show. Samples the coarse climate grid (nearest cell) per map pixel.
+  // No-op until climate is computed. Drawn before boundaries/names so those
+  // stay legible on top.
+  function paintTemperature(data: Uint8ClampedArray): void {
+    if (!lastTemperature) return
+    const alpha = 0.55
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
+        const [r, g, b] = temperatureColor(lastTemperature[gy * climateResX + gx])
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - alpha) + r * alpha
+        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
+        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
+      }
+    }
+  }
+
+  // Layer draw/list order: temperature first (a base tint), names last so labels
+  // stay on top (always readable); temperature + arrows default off. The
+  // 'events' layer has no static paint — it just gates the transient event
+  // markers (added via overlay.addMarker).
   const overlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => mapView.texture.update(pixels))
   overlay.setLayers([
+    // Not a chip in the overlay bar (hidden) — the climate panel's own temp
+    // button toggles it, so it doesn't need a second control up top.
+    { id: 'temperature', label: 'Temp', enabled: false, hidden: true, paintPixels: paintTemperature },
     { id: 'boundaries', label: 'Grenzen', enabled: true, paintPixels: paintBoundaryMask },
     { id: 'arrows', label: 'Pfeile', enabled: false, paint: drawArrows },
     { id: 'events', label: 'Ereignisse', enabled: true },
     { id: 'names', label: 'Namen', enabled: true, paint: (c) => drawContinentLabels(c, lastRaftLabels) },
   ])
   createOverlayToggleBar(overlay, root)
+
+  // Syncs a toggle chip's visual state when a layer is enabled/disabled in code
+  // (the bar otherwise only updates on click).
+  function setOverlayChipActive(layerId: string, active: boolean): void {
+    const chip = root.querySelector<HTMLButtonElement>(`.overlay-toggle[data-layer="${layerId}"]`)
+    if (!chip) return
+    chip.classList.toggle('is-active', active)
+    chip.setAttribute('aria-pressed', String(active))
+  }
 
   // Draws one tectonic event's geologic marker, faded by `alpha`: a suture band
   // (collision), a dashed rift axis (breakup), or a ring (supercontinent /
@@ -549,6 +615,57 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // Shows/hides the temperature overlay and keeps its three visual states in
+  // sync: the panel's temp toggle button (icon), the overlay-bar chip, and the
+  // layer itself. The panel button and the overlay chip are two doors to the
+  // same switch.
+  function setTemperatureOverlay(on: boolean): void {
+    overlay.setLayerEnabled('temperature', on)
+    setOverlayChipActive('temperature', on)
+    tempToggleIcon.src = on ? '/icons/temp_on.png' : '/icons/temp_off.png'
+    overlay.composite()
+  }
+
+  function handleClimateData(message: WorkerClimateDataMessage): void {
+    lastTemperature = new Float32Array(message.temperature)
+    climateResX = message.resX
+    climateResY = message.resY
+    climateStatus.textContent = ''
+    // Coldest/warmest average temperature on this world (reflects latitude,
+    // the greenhouse offset, and elevation lapse — a high pole peak is the min).
+    let min = Infinity
+    let max = -Infinity
+    for (const t of lastTemperature) {
+      if (t < min) min = t
+      if (t > max) max = t
+    }
+    tempMinLabel.textContent = String(Math.round(min))
+    tempMaxLabel.textContent = String(Math.round(max))
+    // Auto-show the freshly-computed result — but only if still on the climate
+    // panel (the compute is async; the user may have navigated away, and
+    // climate overlays are hidden off-panel).
+    if (panelIndex === CLIMATE_PANEL_INDEX) setTemperatureOverlay(true)
+  }
+
+  // Invalidate the (now stale) climate when an upstream step changes the
+  // topography — the rasters no longer match. Recomputed on the next climate-
+  // panel open.
+  function invalidateClimate(): void {
+    lastTemperature = null
+    setTemperatureOverlay(false)
+    climateStatus.textContent = ''
+    tempMinLabel.textContent = '–'
+    tempMaxLabel.textContent = '–'
+  }
+
+  // Posts a climate compute with the current band-slider offset. Fired on
+  // opening the climate panel and by the slider (debounced) for live re-tuning.
+  function requestClimate(): void {
+    if (simRunning) return
+    climateStatus.textContent = '…'
+    postToWorker({ type: 'computeClimate', temperatureOffset: Number(tempBandInput.value) })
+  }
+
   function downloadBlob(blob: Blob, filename: string): void {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -591,11 +708,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     downloadBlob(new Blob([message.oceanAge.values], { type: 'application/octet-stream' }), `${baseName}.oceanage.f32`)
   }
 
-  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerExportDataMessage>) => {
+  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerExportDataMessage | WorkerClimateDataMessage>) => {
     const message = event.data
 
     if (message.type === 'erosionProgress') {
       erosionStatus.textContent = `${Math.round(message.fraction * 100)}%`
+      return
+    }
+
+    if (message.type === 'climateData') {
+      handleClimateData(message)
       return
     }
 
@@ -696,6 +818,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // wherever this run begins (see MAX_TECTONICS_EPOCHS / the 'rendered'
     // handler), so restarting after a stop halts again 100 epochs later.
     autoStopAtEpoch = lastEpoch + MAX_TECTONICS_EPOCHS
+    // Running tectonics will change the topography → any computed climate is stale.
+    invalidateClimate()
     postToWorker({ type: 'start' })
     toggleSimIcon.src = '/icons/tectonics_on.png'
     toggleSimButton.setAttribute('aria-label', 'Stop tectonics')
@@ -716,6 +840,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   erodeButton.addEventListener('click', () => {
     if (simRunning || erosionOpInFlight) return
     erosionOpInFlight = true
+    invalidateClimate()
     updateErosionButtonsState()
     postToWorker({ type: 'erode' })
   })
@@ -723,6 +848,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   resetErosionButton.addEventListener('click', () => {
     if (simRunning || erosionOpInFlight) return
     erosionOpInFlight = true
+    invalidateClimate()
     updateErosionButtonsState()
     postToWorker({ type: 'resetErosion' })
   })
@@ -731,6 +857,22 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   exportButton.addEventListener('click', () => postToWorker({ type: 'export' }))
 
+  // The temp button just toggles the overlay on/off (climate is computed on
+  // panel open, not here).
+  tempToggleButton.addEventListener('click', () => setTemperatureOverlay(!overlay.isLayerEnabled('temperature')))
+
+  // Dragging the band slider live-recomputes the climate (debounced) once a
+  // world exists — the worker no-ops if there's no elevation yet. Recomputes
+  // only while not running tectonics (topography would be mid-change).
+  let climateDebounce: ReturnType<typeof setTimeout> | undefined
+  tempBandInput.addEventListener('input', () => {
+    const v = Number(tempBandInput.value)
+    tempBandLabel.textContent = v > 0 ? `+${v}` : String(v)
+    if (simRunning) return
+    clearTimeout(climateDebounce)
+    climateDebounce = setTimeout(requestClimate, 150)
+  })
+
   const regenerate = (): void => {
     stopSim()
     // Otherwise a fresh sim would start ticking underneath a debug 3D
@@ -738,6 +880,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     setDebug3DActive(false)
     ctx.notifications.clearAll()
     overlay.clearMarkers()
+    invalidateClimate()
     initSim(seedInput.value, Number(plateCountInput.value), Number(landFractionInput.value), Number(clusteringInput.value), Number(cratonCountInput.value))
   }
   // Debounced so dragging a slider (or typing a seed) doesn't fire a full
@@ -781,7 +924,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // parameters (seed, plate counts) live on panel 0, tectonics on panel
   // 1, erosion on panel 2 — future panels slot in the same way via the
   // data-panel pattern, with one more entry in PANEL_TITLES to match.
-  const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion']
+  const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion', 'Climate']
   const panelTitle = root.querySelector<HTMLElement>('[data-value="panel-title"]')!
   const panels = Array.from(root.querySelectorAll<HTMLElement>('.panel'))
   let panelIndex = 0
@@ -791,6 +934,17 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       panel.hidden = i !== index
     })
     panelTitle.textContent = PANEL_TITLES[index]
+    // Climate overlays only show on the climate panel. Entering it computes the
+    // climate if it isn't up to date (first open, or after an upstream reset
+    // invalidated it), else re-shows the already-computed result; leaving it
+    // hides the overlays (but keeps the data, so returning doesn't recompute).
+    // requestClimate self-guards a running sim / missing world.
+    if (index === CLIMATE_PANEL_INDEX) {
+      if (lastTemperature === null) requestClimate()
+      else setTemperatureOverlay(true)
+    } else {
+      setTemperatureOverlay(false)
+    }
   }
   showPanel(0)
 
