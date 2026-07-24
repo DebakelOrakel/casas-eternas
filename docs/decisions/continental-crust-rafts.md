@@ -1,14 +1,15 @@
 ---
 summary: Continental crust modeled as persistent "rafts" decoupled from the kinematic plates, so land/ocean ratio is emergent and conserved.
 date: 2026-07-24
-status: decided; Phases 1–4 implemented
+status: decided; Phases 1–5 implemented
 ---
 
 # Continental Crust: Rafts Decoupled from Plates
 
-**Status:** Decided, and **Phases 1–4 are implemented** — see
-[Implementation status](#implementation-status-phases-14) at the end for
-what was built and where it deviates from the design below. Revises the
+**Status:** Decided, and **Phases 1–5 are implemented** — see
+[Implementation status](#implementation-status-phases-14) and the
+[Phase 5 cleanup](#phase-5--cleanup-done) at the end for what was built and
+where it deviates from the design below. Revises the
 "each plate is wholly continental or wholly oceanic" assumption from
 [plate-tectonics-initial-state.md](./plate-tectonics-initial-state.md) —
 that stays true for the *kinematics*, but crust type is no longer a plate
@@ -203,16 +204,39 @@ Built 2026-07-24, all verified via a headless render harness:
   describes. Fine in practice; cleanup deferred.
 - **Raft motion is rigid** (whole raft on one host plate), not per-blob.
 - **Island-arc proto-continent birth** not built yet.
-- `plate.type` / `baseElevations` / per-plate `continentNames` still exist
-  as vestigial shims; continent labels are off pending per-raft labels.
+- The derived `plate.type` and the per-plate `continentNames` still exist
+  as bridges (classification + labels); `baseElevations` is gone. Continent
+  labels are off pending per-raft labels.
+
+## Phase 5 — cleanup (done)
+
+Built 2026-07-24:
+
+- **Dead per-plate baseline machinery removed.** `baseElevations` (the
+  plate interface field, its generation, and the rift/merge push/splice
+  bookkeeping) and the whole `plateBaseline.ts` module (`generateBaseElevations`,
+  the dead `computeAgedBaseElevations`/oceanic-subsidence) are gone; so is
+  the pre-raft `assignPlateTypes` and the unused `computeBlendedBaselines`.
+  The baseline is `computeRaftBaseline` alone now.
+- **Export snapshot moved to rafts + ocean-age.** `WorkerExportDataMessage`
+  now carries bare kinematic plates (position + age), the raft set (names +
+  blobs), and the coarse ocean-age raster (shipped as a separate binary
+  blob, like the elevation raster), instead of per-plate type/baseElevation/
+  name. JSON `formatVersion` bumped to 2.
+- **Architecture notes added** to [world-gen.md](../design/world-gen.md)
+  (the raft subsystem section + the frozen-snapshot contents) and the
+  mountain-realism refinements to
+  [plate-tectonics-simulation.md](./plate-tectonics-simulation.md).
+
+Two bridges deliberately kept (removal is entangled with deferred work,
+not dead code): the derived `plate.type` (awaits boundary classification
+from direct raft geometry) and per-plate `continentNames` (awaits per-raft
+labels in the overlay rework).
 
 ## Remaining
 
-- **Phase 5 cleanup:** remove the vestigial plate.type/baseElevations
-  machinery; move the export snapshot to rafts + ocean-age; add the raft
-  subsystem's architecture notes to [world-gen.md](../design/world-gen.md)
-  (still a TODO — world-gen.md does not yet describe rafts).
 - **Phase 2 optionals:** island-arc births; boundary classification from
-  direct raft geometry.
-- **Toggleable overlays** (plate lines / per-raft names / arrows).
+  direct raft geometry (retires the `plate.type` bridge).
+- **Toggleable overlays** (plate lines / per-raft names / arrows) —
+  retires the `continentNames` bridge.
 - Revisit later whether further design decisions warrant their own docs.

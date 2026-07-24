@@ -38,13 +38,21 @@ Geography is static once world creation stops — gameplay doesn't need
 plates to keep drifting, so nothing at query time needs kinematics,
 rotation math, or an ongoing simulation step. What gets uploaded to the
 server at world-creation time is a *frozen snapshot*, not an opaque blob
-and not an ongoing state to keep advancing: the final plate list
-(identity, position, type — Euler-pole axis/speed no longer matter once
-nothing moves) plus the final terrain-feature list from A3's
-boundary-curve-local state (position, accumulated thickness, which side
-subducts, and which plate each feature belongs to). That's small enough
-to transfer outright, and cheap plain arithmetic to query, no shader or
-texture lookup required. This is also why A3 (boundary-curve-local state)
+and not an ongoing state to keep advancing:
+
+- the final **plate list** (identity, position — Euler-pole axis/speed no
+  longer matter once nothing moves; crust type is no longer a plate
+  property, see the raft subsystem below);
+- the **rafts** — continental crust as metaball blob sets (name + blob
+  centers/radii), the source of truth for where land is;
+- the coarse **ocean-age field** (a small raster) that drives oceanic
+  depth via the age-depth √ law;
+- the final **terrain-feature list** from A3's boundary-curve-local state
+  (position, accumulated thickness, orientation, range vs. trench, and
+  which plates each feature belongs to).
+
+That's small enough to transfer outright, and cheap plain arithmetic to
+query, no shader or texture lookup required. This is also why A3 (boundary-curve-local state)
 matters architecturally beyond just realism: a full-surface raster (A1)
 would fight this requirement no matter how fast it was to produce, since
 the problem is storing/querying it everywhere it's needed — including a
@@ -64,6 +72,49 @@ and compile to WASM for the client to call into, removing any risk of
 client/server disagreement about terrain at the cost of Go-WASM's
 runtime/init overhead (worth a quick prototype before committing either
 way).
+
+## Continental crust: the raft subsystem
+
+The tectonics simulation runs on **two decoupled layers**, which is worth
+spelling out because "a plate is continental or oceanic" is the intuitive
+model and the code deliberately does *not* work that way. Full rationale
+and the phased build log are in
+[continental-crust-rafts.md](../decisions/continental-crust-rafts.md);
+this is the architectural shape.
+
+- **Plates** (`plateSeeds`/`plateMotion`/`voronoiRaster`) are the purely
+  *kinematic* layer — Voronoi seeds with Euler-pole motion, age, and
+  boundary tectonics. A plate has no crust type of its own. Plate sizes
+  are deliberately skewed (a few large, many small) rather than equal-area
+  cells, matching real plate-size distribution.
+- **Rafts** (`rafts.ts`) are continental crust: persistent sets of soft
+  metaball **blobs** (center + radius) whose thresholded union is a
+  continent's outline. Rafts *ride on* plates (each raft drifts with the
+  plate under it) but are conserved independently — they never subduct.
+  Over a run they **grow** at subduction arcs (accretion welds a margin
+  blob onto the overriding continent), **merge** on collision (suturing),
+  and **split** at a continental rift (breakup) — the supercontinent cycle.
+  Land fraction is therefore *emergent and conserved*, not a fixed knob:
+  it starts at the initial-land-fraction slider and evolves.
+- **Oceanic crust** is simply everywhere no raft covers. Its depth comes
+  from a coarse, full-surface **ocean-age field** (`oceanAge.ts`)
+  advected with plate motion each epoch and reset to zero at divergent
+  boundaries — a deliberately bounded exception to the "no full-surface
+  accumulator" stance (it's a smooth, large-scale scalar, unlike an
+  uplift raster).
+
+The elevation baseline (`computeRaftBaseline` in `elevationField.ts`) is
+then a pure per-point query over these: oceanic-with-age-depth by default,
+lerped up to the continental baseline by raft membership, with the domain
+warp ruffling coastlines. The A3 terrain-feature layer (capsule ridge and
+trench chains) sits on top, unchanged by the raft model — it hangs off
+boundary classification, not off any per-plate type.
+
+There is one **remaining bridge**: boundary classification still reads a
+*derived* per-plate type (`derivePlateTypes` — a plate counts as
+continental if a raft covers its seed) rather than asking raft geometry
+directly on each side of a boundary. It's a faithful stand-in in practice;
+moving classification onto direct raft geometry is deferred.
 
 ## Why GPU availability doesn't change the elevation model choice
 

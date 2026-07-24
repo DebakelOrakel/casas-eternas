@@ -8,13 +8,10 @@ import { toroidalDistanceSq } from './toroidal'
 // pixels whose neighbor has a different ID rather than needing exact
 // edge geometry. One ID (index into `seeds`) per pixel.
 //
-// Previously also tracked second-nearest plate/distance for a baseline
-// blend that used only the nearest two plates — dropped because which
-// plate counts as *second*-nearest can switch identity at a line inside
-// a cell's own interior, causing a visible discontinuity there even
-// though nothing about the cell's actual boundary changed. See
-// elevationField.ts's computeBlendedBaselines for the replacement, which
-// blends across every nearby plate instead of a hard top-2 cutoff.
+// Only the nearest-plate ID now — earlier versions also tracked second-
+// nearest for a plate-distance baseline blend, but the baseline no longer
+// keys off plate distance at all (it's raft membership + ocean age; see
+// elevationField.ts's computeRaftBaseline), so that bookkeeping is gone.
 export function rasterizeVoronoiPlates(seeds: PlateSeed[], width: number, height: number): Uint16Array {
   const cellIds = new Uint16Array(width * height)
   for (let y = 0; y < height; y++) {

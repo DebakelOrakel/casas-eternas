@@ -487,7 +487,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const safeSeed = message.seed.replace(/[^a-zA-Z0-9_-]/g, '_')
     const baseName = `world_${safeSeed}_epoch${message.epoch}`
     const metadata = {
-      formatVersion: 1,
+      formatVersion: 2,
       seed: message.seed,
       epoch: message.epoch,
       width: message.width,
@@ -495,10 +495,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       landFraction: message.landFraction,
       elevationsFile: `${baseName}.f32`,
       plates: message.plates,
+      rafts: message.rafts,
+      // Age raster ships as a separate binary blob (like elevations) — it's
+      // a Float32 grid, not something to inline as JSON numbers.
+      oceanAge: {
+        resX: message.oceanAge.resX,
+        resY: message.oceanAge.resY,
+        valuesFile: `${baseName}.oceanage.f32`,
+      },
       terrainFeatures: message.terrainFeatures,
     }
     downloadBlob(new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' }), `${baseName}.json`)
     downloadBlob(new Blob([message.elevations], { type: 'application/octet-stream' }), `${baseName}.f32`)
+    downloadBlob(new Blob([message.oceanAge.values], { type: 'application/octet-stream' }), `${baseName}.oceanage.f32`)
   }
 
   worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerExportDataMessage>) => {

@@ -1,6 +1,5 @@
-import type { PlateSeed } from './plateSeeds'
 import type { TerrainFeature } from './terrainFeatures'
-import { toroidalDistanceSq, wrappedDelta } from './toroidal'
+import { wrappedDelta } from './toroidal'
 import { domainWarpDelta } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
 import { raftMembership } from './rafts'
@@ -88,20 +87,6 @@ const THICKNESS_TO_ELEVATION_SCALE = 0.035
 // bolted over everything. Tune by eye; higher = more dramatic ridging.
 const RIDGE_RELATIVE_STRENGTH = 0.5
 
-// Each plate's baseline (plateBaseline.ts) is otherwise a flat per-plate
-// constant, which reads as a hard, geologically-meaningless step right at
-// every cell boundary — visible even between two same-type neighbors
-// with barely different jitter — regardless of anything uplift is
-// doing. computeBlendedBaselines below smooths this out by blending
-// every plate within this radius of a point, not just the nearest one.
-// Wider than FEATURE_FALLOFF_RADIUS deliberately — a real coastal shelf
-// is a broader, gentler feature than a mountain range's own falloff, not
-// a narrower one, and this was the harshest-looking transition on the
-// map (an ocean/continent step is a bigger elevation swing than most
-// uplift ever produces) despite blending at all — narrow blend width
-// plus a steep step was still reading as harsh.
-const BASELINE_BLEND_RADIUS = 220
-
 export interface FeatureBuckets {
   buckets: TerrainFeature[][]
   bucketsX: number
@@ -152,81 +137,15 @@ export function buildFeatureBuckets(features: TerrainFeature[], width: number, h
   return { buckets, bucketsX, bucketsY, bucketSizeX, bucketSizeY }
 }
 
-// Per-pixel baseline, blended across every plate whose distance is within
-// BASELINE_BLEND_RADIUS of the *nearest* plate's own distance — a gap, not
-// an absolute distance from each seed. Weighting by raw distance from each
-// seed was tried first and doesn't work: a large plate's own seed can sit
-// far enough from its own boundary that every seed (including its own) is
-// already outside the blend radius by the time you reach the boundary, so
-// the blend silently falls back to a flat, unblended baseline exactly
-// where it mattered most. Measuring the gap to the nearest distance
-// instead means the *nearest* plate always has weight 1 (gap 0) and any
-// other plate contributes precisely in proportion to how close the pixel
-// is to being equally near to it — which is large near an actual boundary
-// and negligible deep in a cell's interior, regardless of that cell's
-// absolute size. This also avoids the earlier top-2 blend's discontinuity
-// (which plate counts as "second-nearest" could flip to an unrelated
-// third plate mid-cell) since every plate's weight is a continuous
-// function of its own gap, with no hard cutoff to trip over.
-export function computeBlendedBaselines(
-  seeds: PlateSeed[],
-  baseElevations: number[],
-  renderWidth: number,
-  renderHeight: number,
-  worldWidth: number,
-  worldHeight: number,
-  warpSeed: number,
-): Float32Array {
-  const result = new Float32Array(renderWidth * renderHeight)
-  const distances = new Float32Array(seeds.length)
-  // The render grid can be coarser than the world (a low-res live preview
-  // — see renderSimulationImage's elevationScale): each render pixel samples
-  // a world coordinate scaled up by worldWidth/renderWidth, covering the
-  // whole world at fewer points rather than only a corner of it. At full
-  // resolution renderWidth === worldWidth, so scale is 1 and world coord ==
-  // pixel, identical to before. Seed positions and BASELINE_BLEND_RADIUS
-  // stay in world units throughout.
-  const scaleX = worldWidth / renderWidth
-  const scaleY = worldHeight / renderHeight
-  for (let py = 0; py < renderHeight; py++) {
-    const worldY = py * scaleY
-    for (let px = 0; px < renderWidth; px++) {
-      const worldX = px * scaleX
-      // Sampled at a warped point rather than the world coord itself — see
-      // domainWarp.ts. toroidalDistanceSq's own wrappedDelta already handles
-      // a warped coordinate landing outside [0, worldWidth)/[0, worldHeight),
-      // so the result doesn't need re-wrapping into range first.
-      const wx = worldX + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'x')
-      const wy = worldY + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'y')
-      let nearestDist = Infinity
-      for (let i = 0; i < seeds.length; i++) {
-        const distance = Math.sqrt(toroidalDistanceSq(wx, wy, seeds[i].x, seeds[i].y, worldWidth, worldHeight))
-        distances[i] = distance
-        if (distance < nearestDist) nearestDist = distance
-      }
-      let weightSum = 0
-      let baselineSum = 0
-      for (let i = 0; i < seeds.length; i++) {
-        const gap = distances[i] - nearestDist
-        if (gap > BASELINE_BLEND_RADIUS) continue
-        const falloff = 1 - gap / BASELINE_BLEND_RADIUS
-        const weight = falloff * falloff * (3 - 2 * falloff)
-        baselineSum += baseElevations[i] * weight
-        weightSum += weight
-      }
-      result[py * renderWidth + px] = baselineSum / weightSum
-    }
-  }
-  return result
-}
 
-// Baseline elevation field from raft membership (rafts.ts) — the Phase-1
-// replacement for the per-plate-type baseline: oceanic by default,
-// continental where rafts cover, with a soft coastal transition straight out
-// of the metaball membership band. Warped like the old baseline so coastlines
-// stay ragged, and sampled at the render grid (which may be coarser than the
-// world — same renderWidth/worldWidth scaling as computeBlendedBaselines had).
-// Ocean age-depth is a later phase; this is flat ocean for now.
+// Baseline elevation field from raft membership (rafts.ts) — this replaced
+// the old per-plate-type baseline entirely: oceanic by default, continental
+// where rafts cover, with a soft coastal transition straight out of the
+// metaball membership band. Warped so coastlines stay ragged, and sampled at
+// the render grid (which may be coarser than the world — the renderWidth/
+// worldWidth scaling below covers the whole world at fewer points). Oceanic
+// depth follows the advected ocean-age field (age-depth √ law); continental
+// crust ignores it.
 const RAFT_CONTINENTAL_BASELINE = 0.35
 const RAFT_OCEANIC_BASELINE = -0.45
 // Age-depth coefficient: the oceanic baseline drops by AGE_DEPTH_K·√age
@@ -253,7 +172,7 @@ export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, rende
   return result
 }
 
-// The warped sample point for a pixel — the same warp computeBlendedBaselines
+// The warped sample point for a pixel — the same warp computeRaftBaseline
 // applies (domainWarp.ts), so a mountain's uplift query warps together with
 // the baseline it sits on rather than drifting apart from it. A pure function
 // of (x, y, warpSeed), and warpSeed is constant for a world's lifetime, so

@@ -68,13 +68,14 @@ export const CONTINENT_NAME_POOL: readonly string[] = [
 // Randomly gives each continental plate a unique name from the pool
 // (oceanic plates get none) via the same seeded random stream as the
 // rest of generation, so a given seed always reproduces the same names —
-// same Fisher-Yates-then-take-first pattern as assignPlateTypes.
+// a Fisher-Yates shuffle of the pool, then take names in order for the
+// continental plates.
 //
-// The pool only has finitely many names (30). CONTINENTAL_COUNT_MAX in
-// WorldGenScreen.ts is 17, comfortably under that, but this doesn't
-// defend against a future continental count exceeding the pool size —
-// plates beyond the 30th simply come back unnamed rather than erroring
-// or repeating a name.
+// This is a compat shim from the pre-raft model (names belong to rafts
+// now — see assignRaftNames in rafts.ts); it survives only while the
+// per-plate continentNames bridge does. The pool has finitely many names
+// (30); if more continental plates than that ever exist, the extras come
+// back unnamed rather than erroring or repeating a name.
 export function assignContinentNames(types: PlateType[], random: () => number): (string | null)[] {
   const pool = [...CONTINENT_NAME_POOL]
   for (let i = pool.length - 1; i > 0; i--) {

@@ -1,4 +1,3 @@
-import { generateBaseElevations } from './plateBaseline'
 import { classifyBoundary } from './boundaryClassification'
 import { detectBoundaries } from './boundaryDetection'
 import type { LatticePoint } from './boundaryLattice'
@@ -124,8 +123,8 @@ const OCEANIC_SUBSIDENCE_DECAY_PER_EPOCH = 0.85
 // tighter values settle around 2000 instead (~2s renders) — confirmed
 // empirically, not guessed. Render time still doesn't return to the
 // sub-100-feature-count speeds (there's real fixed per-render cost
-// elsewhere — computeBlendedBaselines alone measured ~140ms independent
-// of feature count) — pruning bounds the *growth*, it doesn't make the
+// elsewhere — the raft-membership baseline pass alone measured ~140ms
+// independent of feature count) — pruning bounds the *growth*, it doesn't make the
 // renderer itself fast.
 const FEATURE_PRUNE_THICKNESS = 0.05
 const FEATURE_PRUNE_INACTIVITY_EPOCHS = 40
@@ -209,9 +208,9 @@ export interface PlateSimulation {
   seeds: PlateSeed[]
   // Continental crust as persistent metaball rafts, decoupled from the
   // plates (see rafts.ts / docs/decisions/continental-crust-rafts.md). Rafts
-  // are the source of truth for land now; `types`/`baseElevations` below are
-  // Phase-1 compatibility shims derived from them so the existing
-  // classification/event/rift-merge code keeps working.
+  // are the source of truth for land now; `types` below is a compatibility
+  // shim derived from them so the existing classification/event/rift-merge
+  // code keeps working.
   rafts: Raft[]
   // Derived from rafts each epoch (a plate is continental if a raft covers
   // its seed) — a bridge for the crust-type-consuming code, not an
@@ -220,7 +219,6 @@ export interface PlateSimulation {
   types: PlateType[]
   motions: PlateMotion[]
   ages: number[]
-  baseElevations: number[]
   // One name per plate, `null` for oceanic ones — see continentNames.ts.
   // Kept as a plain parallel array indexed the same way as types/motions/
   // etc. so applyMerge's existing splice-based removal keeps it aligned
@@ -263,11 +261,10 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
   const seeds = generatePlateSeeds(plateCount, width, height, random)
   // Rafts are generated first — they're the source of truth for crust type;
   // plate `types` are then derived from raft coverage (see rafts.ts). The
-  // per-plate baseElevations/continentNames stay as Phase-1 compat shims.
+  // per-plate continentNames stay as a compat shim.
   const rafts = generateInitialRafts(random, landFraction, clustering, cratonCount, width, height)
   const types = derivePlateTypes(seeds, rafts, width, height)
   const motions = generatePlateMotions(seeds, width, height, random)
-  const baseElevations = generateBaseElevations(types, random)
   const continentNames = assignContinentNames(types, random)
   const lattice = generateDetectionLattice(width, height, DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y)
 
@@ -280,7 +277,6 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
     types,
     motions,
     ages: seeds.map(() => 0),
-    baseElevations,
     continentNames,
     features: [],
     epoch: 0,
@@ -358,12 +354,10 @@ interface MergeEvent {
 function applyRift(sim: PlateSimulation, event: RiftEvent): void {
   const newSeed: PlateSeed = { x: event.x, y: event.y }
   const newMotion = generatePlateMotions([newSeed], sim.width, sim.height, sim.random)[0]
-  const newBaseElevation = generateBaseElevations(['oceanic'], sim.random)[0]
   sim.seeds.push(newSeed)
   sim.types.push('oceanic')
   sim.motions.push(newMotion)
   sim.ages.push(0)
-  sim.baseElevations.push(newBaseElevation)
   sim.continentNames.push(null)
 }
 
@@ -389,7 +383,6 @@ function applyMerge(sim: PlateSimulation, event: MergeEvent): void {
   sim.types.splice(removeIndex, 1)
   sim.motions.splice(removeIndex, 1)
   sim.ages.splice(removeIndex, 1)
-  sim.baseElevations.splice(removeIndex, 1)
   sim.continentNames.splice(removeIndex, 1)
 }
 

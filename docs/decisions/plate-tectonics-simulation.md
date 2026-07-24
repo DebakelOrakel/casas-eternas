@@ -137,3 +137,44 @@ implementation happens to cost.
 
 Deferred: C (computational/performance envelope) — agreed this is a tuning
 concern to revisit later, not a real design decision to make now.
+
+## Implementation refinements (A3, built)
+
+A3 shipped, then got a round of realism work aimed specifically at making
+mountains read as mountains. These are refinements *within* A3, not
+reopenings of the decision above; recorded so the shape isn't rediscovered
+from the code.
+
+- **Ridge lines, not blob clouds (capsule falloff).** A terrain feature is
+  an *oriented* segment, not an isotropic blob: elevation falls off over a
+  short distance *across* the boundary tangent and a long distance *along*
+  it (`elevationField.ts`). Consecutive features on one boundary overlap
+  end-to-end into a continuous linear range instead of a row of domes. The
+  cross-section uses distance to a *finite* capsule segment, not an
+  ellipse — an ellipse's long axis overshoots at boundary curves and threw
+  "starburst" needles out into the ocean. Feature contributions are
+  normalized by `÷max(1, weightSum)` (not `÷weightSum`), so an isolated
+  feature keeps its natural falloff instead of being flattened to a plateau.
+- **Asymmetry + trenches.** Ocean–continent subduction builds an
+  asymmetric arc on the overriding side plus a paired trench offset toward
+  the downgoing plate (a real cross-section, not a symmetric bump).
+- **Ridged multifractal on the uplift.** Uplift amplitude is modulated by a
+  cached ridged-multifractal field (`ridgedNoise.ts`) so ranges get
+  fractal spurs and crestlines rather than smooth humps. Cached per world
+  (a pure function of position + warp seed), not recomputed per epoch.
+- **Erosion as a coupled finishing pass, not a separate stage.** The
+  dedicated erosion step stayed, but as a *finishing* pass that couples
+  uplift with stream-power incision and thermal (slope-limited) diffusion
+  in a relaxation loop (`erosion.ts`), rather than three independent
+  post-effects. Peak-weathering was **removed** — it was redundant once the
+  ridged multifractal shapes crests directly.
+- **Oceanic feature subsidence.** Purely-oceanic features decay their
+  thickness a little each epoch (`OCEANIC_SUBSIDENCE_DECAY_PER_EPOCH`),
+  countering the fact that every oceanic boundary interaction only ever
+  *adds* uplift — without it, old seafloor slowly accumulated ridge/arc
+  uplift and drifted above sea level. (This replaced an earlier per-plate
+  age-subsidence baseline, now gone with the plate-type baseline; ocean
+  depth proper comes from the raft subsystem's ocean-age field.)
+
+Crust type feeding all of the above is no longer a plate property — see
+[continental-crust-rafts.md](./continental-crust-rafts.md).

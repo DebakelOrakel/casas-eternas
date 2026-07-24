@@ -6,6 +6,7 @@ import type { ContinentLabelPlacement } from './continentLabelLayout'
 import { ElevationRenderPool } from './elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './erosion'
 import type { ErosionPhase } from './erosion'
+import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './oceanAge'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
 // rendering the full 2048x1024 raster (a per-pixel query against every
@@ -138,16 +139,22 @@ export interface WorkerErosionProgressMessage {
 
 // Everything a future hex-tile importer needs, sent in response to
 // WorkerExportMessage. Two genuinely different kinds of data, for a
-// reason worth keeping straight: `plates`/`terrainFeatures` are the
-// compact, stateless "recipe" the tectonics field is generated from
-// (see docs/design/world-gen.md's "frozen snapshot") — re-queryable at
-// any resolution or point, motion/kinematics deliberately omitted since
-// those stop mattering once nothing's still moving, same as that doc
-// already settled. `elevations` is different in kind, not just a
-// convenience duplicate of the same information: erosion has no such
-// compact recipe (it's the result of an iterative D8/thermal simulation
-// over a discrete grid, not a stateless function of position), so its
-// contribution can only ship as the actual raster it ran on.
+// reason worth keeping straight: `plates`/`rafts`/`oceanAge`/
+// `terrainFeatures` are the compact, stateless "recipe" the tectonics
+// field is generated from (see docs/design/world-gen.md's "frozen
+// snapshot") — re-queryable at any resolution or point, motion/kinematics
+// deliberately omitted since those stop mattering once nothing's still
+// moving, same as that doc already settled. `elevations` is different in
+// kind, not just a convenience duplicate of the same information: erosion
+// has no such compact recipe (it's the result of an iterative D8/thermal
+// simulation over a discrete grid, not a stateless function of position),
+// so its contribution can only ship as the actual raster it ran on.
+//
+// Crust type is no longer a plate property (see the raft decision doc):
+// `plates` are the bare kinematic units (position + age), continental
+// crust is the separate `rafts` set, and the ocean floor's depth comes
+// from the coarse `oceanAge` field. Together they reproduce the baseline
+// `computeRaftBaseline` builds — no per-plate type/baseElevation needed.
 export interface WorkerExportDataMessage {
   type: 'exportData'
   seed: string
@@ -158,11 +165,22 @@ export interface WorkerExportDataMessage {
   plates: {
     x: number
     y: number
-    type: string
     age: number
-    continentName: string | null
-    baseElevation: number
   }[]
+  // Continental crust: metaball rafts (name + union of soft blobs). A point
+  // is land where the summed blob field crosses the membership threshold —
+  // see rafts.ts / elevationField.ts's computeRaftBaseline.
+  rafts: {
+    name: string | null
+    blobs: { x: number; y: number; radius: number }[]
+  }[]
+  // Coarse ocean-floor age field (resX*resY, row-major), driving age-depth
+  // on oceanic points. Cell centers at (i+0.5); sampled bilinearly wrapped.
+  oceanAge: {
+    resX: number
+    resY: number
+    values: ArrayBuffer
+  }
   terrainFeatures: {
     x: number
     y: number
@@ -498,6 +516,9 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     // directly would neuter it, and the erode handler still needs to read
     // lastRawElevations after this.
     const elevations = lastRawElevations.slice()
+    // .slice() for the same neutering reason as elevations — the sim keeps
+    // running (and advecting) this field after the export.
+    const oceanAgeValues = sim.oceanAge.slice()
     const exportMessage: WorkerExportDataMessage = {
       type: 'exportData',
       seed: currentSeedString,
@@ -508,11 +529,17 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       plates: sim.seeds.map((seed, i) => ({
         x: seed.x,
         y: seed.y,
-        type: sim!.types[i],
         age: sim!.ages[i],
-        continentName: sim!.continentNames[i],
-        baseElevation: sim!.baseElevations[i],
       })),
+      rafts: sim.rafts.map((raft) => ({
+        name: raft.name,
+        blobs: raft.blobs.map((blob) => ({ x: blob.x, y: blob.y, radius: blob.radius })),
+      })),
+      oceanAge: {
+        resX: OCEAN_AGE_RES_X,
+        resY: OCEAN_AGE_RES_Y,
+        values: oceanAgeValues.buffer as ArrayBuffer,
+      },
       terrainFeatures: sim.features.map((feature) => ({
         x: feature.x,
         y: feature.y,
@@ -525,6 +552,6 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       })),
       elevations: elevations.buffer as ArrayBuffer,
     }
-    self.postMessage(exportMessage, [exportMessage.elevations])
+    self.postMessage(exportMessage, [exportMessage.elevations, exportMessage.oceanAge.values])
   }
 }
