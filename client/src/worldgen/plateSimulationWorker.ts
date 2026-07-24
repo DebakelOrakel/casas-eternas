@@ -2,7 +2,7 @@ import { createPlateSimulation, getInitialPlateEvents, stepEpoch } from './plate
 import type { PlateSimulation, SimEvent } from './plateSimulation'
 import { renderSimulationImage } from './elevationMapImage'
 import type { PlateArrow, RenderSimulationOptions } from './elevationMapImage'
-import type { ContinentLabelPlacement } from './continentLabelLayout'
+import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { ElevationRenderPool } from './elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './erosion'
 import type { ErosionPhase } from './erosion'

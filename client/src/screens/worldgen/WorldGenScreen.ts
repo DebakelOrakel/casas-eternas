@@ -1,14 +1,17 @@
-import { Color3, Color4, DirectionalLight, HemisphericLight, Mesh, MeshBuilder, RawTexture, Scene, StandardMaterial, Vector3, VertexData } from '@babylonjs/core'
+import { Color3, Color4, DirectionalLight, HemisphericLight, Mesh, Scene, StandardMaterial, Vector3, VertexData } from '@babylonjs/core'
 import type { InstancedMesh } from '@babylonjs/core'
 import { createHexMapCamera } from '../../camera/hexMapCamera'
+import { createToroidalMapView } from '../../map/ToroidalMapView'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/mapConfig'
 import type { WorkerErosionProgressMessage, WorkerExportDataMessage, WorkerInboundMessage, WorkerRenderedMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/continentLabelRenderer'
-import type { ContinentLabelPlacement } from '../../worldgen/continentLabelLayout'
+import type { ContinentLabelPlacement } from '../../worldgen/continentLabelRenderer'
 import type { PlateArrow } from '../../worldgen/elevationMapImage'
 import type { SimEvent } from '../../worldgen/plateSimulation'
 import { eventCategory } from '../../worldgen/plateSimulation'
+import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
+import { createOverlayToggleBar } from '../../ui/mapOverlay/OverlayToggleBar'
 import './worldgen.css'
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
@@ -27,9 +30,6 @@ const EVENT_MARKER_HALF_LENGTH = 90
 const COLLISION_COLOR = '220, 45, 45'
 const BREAKUP_COLOR = '235, 140, 30'
 const ROUTINE_COLOR = '90, 130, 200'
-// ~15fps is plenty for a multi-second fade and keeps the full-texture
-// re-upload each marker frame off the 60fps path.
-const MARKER_FRAME_INTERVAL_MS = 66
 
 // Fresh start for the hex-tile world generation approach — the sphere-
 // based version this replaces lives on under 'worldgen-sphere' (see
@@ -105,43 +105,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // at 100, restarting at 100 stops at 200, and so on.
   let autoStopAtEpoch = MAX_TECTONICS_EPOCHS
 
-  // The worker computes the first frame asynchronously, so the texture
-  // starts out as a flat placeholder (matching the scene's own clear
-  // color, so there's no visible flash) until the first 'rendered'
-  // message arrives.
-  const placeholderBuffer = new Uint8Array(MAP_WIDTH * MAP_HEIGHT * 4).fill(255)
-  const mapTexture = RawTexture.CreateRGBATexture(placeholderBuffer, MAP_WIDTH, MAP_HEIGHT, scene, false, false)
-  const mapMaterial = new StandardMaterial('mapMaterial', scene)
-  mapMaterial.diffuseTexture = mapTexture
-  mapMaterial.specularColor = new Color3(0, 0, 0)
-  // Flat lighting (no directional shading) — this is a top-down data map,
-  // not a lit 3D surface; emissive keeps the texture's own values as the
-  // only thing determining what's on screen.
-  mapMaterial.emissiveColor = new Color3(1, 1, 1)
-  mapMaterial.disableLighting = true
-
-  // Toroidal wraparound, made visible: a static 3x3 block of ground-plane
-  // copies (one real mesh + 8 instances, cheap — instances share geometry
-  // and material) recentered each frame on whichever tile the camera is
-  // currently over. Because the camera's own position is never wrapped
-  // or clamped — it can grow arbitrarily large as you keep panning in one
-  // direction — this reads as a truly infinite, seamlessly wrapping map
-  // rather than a finite one that stops or snaps at an edge. 3x3 is
-  // enough to always fill the frame at the current min/max zoom range;
-  // if a future LOD pass allows zooming out far enough to see more than
-  // one tile's width of margin, this needs a bigger block (5x5, etc.) or
-  // an actual chunked-LOD swap instead of more static copies.
-  const mapTile = MeshBuilder.CreateGround('mapTile', { width: WORLD_WIDTH, height: WORLD_HEIGHT, subdivisions: 1 }, scene)
-  mapTile.material = mapMaterial
-  const wrapInstances: InstancedMesh[] = []
-  for (let dz = -1; dz <= 1; dz++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      if (dx === 0 && dz === 0) continue
-      const instance = mapTile.createInstance(`mapTile_${dx}_${dz}`)
-      wrapInstances.push(instance)
-    }
-  }
-
   // DEBUG 3D preview state — see the "DEBUG: temporary 3D relief
   // preview" block further down for what builds/tears these down.
   // Declared up here (rather than only where they're built) so the
@@ -151,26 +114,27 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let debugMeshTile: Mesh | null = null
   let debugMeshWrapInstances: InstancedMesh[] = []
 
-  scene.onBeforeRenderObservable.add(() => {
-    // getCameraFocus(), not camera.position — once tilted, the camera's
-    // own position is deliberately offset backward from the pan focus
-    // (see hexMapCamera.ts's setTilt), so recentering off raw position
-    // would drift by a large, tilt-dependent margin instead of tracking
-    // where the view is actually centered.
-    const focus = getCameraFocus()
-    const centerX = Math.round(focus.x / WORLD_WIDTH) * WORLD_WIDTH
-    const centerZ = Math.round(focus.z / WORLD_HEIGHT) * WORLD_HEIGHT
-    mapTile.position.set(centerX, 0, centerZ)
-    if (debugMeshTile) debugMeshTile.position.set(centerX, 0, centerZ)
-    let i = 0
-    for (let dz = -1; dz <= 1; dz++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (dx === 0 && dz === 0) continue
-        wrapInstances[i].position.set(centerX + dx * WORLD_WIDTH, 0, centerZ + dz * WORLD_HEIGHT)
-        if (debugMeshWrapInstances[i]) debugMeshWrapInstances[i].position.set(centerX + dx * WORLD_WIDTH, 0, centerZ + dz * WORLD_HEIGHT)
-        i++
+  // The flat map plane + its toroidal 3x3 recentering (see ToroidalMapView).
+  // The temporary debug relief mesh tiles in lockstep via onRecenter, using
+  // the same center — it goes away when this whole debug block is deleted.
+  const mapView = createToroidalMapView({
+    scene,
+    worldWidth: WORLD_WIDTH,
+    worldHeight: WORLD_HEIGHT,
+    textureWidth: MAP_WIDTH,
+    textureHeight: MAP_HEIGHT,
+    getFocus: getCameraFocus,
+    onRecenter: (centerX, centerZ) => {
+      if (debugMeshTile) debugMeshTile.position.set(centerX, 0, centerZ)
+      let i = 0
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dz === 0) continue
+          debugMeshWrapInstances[i]?.position.set(centerX + dx * WORLD_WIDTH, 0, centerZ + dz * WORLD_HEIGHT)
+          i++
+        }
       }
-    }
+    },
   })
 
   // -----------------------------------------------------------------
@@ -287,7 +251,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     vertexData.applyToMesh(debugMeshTile)
 
     const material = new StandardMaterial('debugHeightmapMaterial', scene)
-    material.diffuseTexture = mapTexture
+    material.diffuseTexture = mapView.texture
     material.specularColor = new Color3(0, 0, 0)
     // Winding order for a hand-built grid mesh is easy to get backward
     // (which would make it invisible from directly above — exactly the
@@ -313,13 +277,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     debug3DActive = active
     if (active) {
       rebuildDebugMesh()
-      mapTile.setEnabled(false)
-      for (const inst of wrapInstances) inst.setEnabled(false)
+      mapView.setEnabled(false)
       setCameraTilt(DEBUG_TILT_RADIANS)
     } else {
       disposeDebugMesh()
-      mapTile.setEnabled(true)
-      for (const inst of wrapInstances) inst.setEnabled(true)
+      mapView.setEnabled(true)
       setCameraTilt(0)
     }
     // Queried later in the file (root.innerHTML hasn't run yet at this
@@ -425,12 +387,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </span>
       </label>
     </div>
-    <div class="overlay-toggles">
-      <button type="button" class="overlay-toggle is-active" data-overlay="boundaries" aria-pressed="true">Grenzen</button>
-      <button type="button" class="overlay-toggle is-active" data-overlay="names" aria-pressed="true">Namen</button>
-      <button type="button" class="overlay-toggle is-active" data-overlay="events" aria-pressed="true">Ereignisse</button>
-      <button type="button" class="overlay-toggle" data-overlay="arrows" aria-pressed="false">Pfeile</button>
-    </div>
   `
 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
@@ -481,65 +437,86 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
   updateStats()
 
-  // Continent-name labels need real font rendering (Canvas2D), which
-  // isn't available inside the worker — it only ever produces a raw
-  // pixel buffer (see elevationMapImage.ts). This reusable canvas
-  // composites that buffer with the labels on the main thread each time
-  // a render arrives: paint the buffer in as an image, draw text on top,
-  // then read the combined result back out for the texture. This only
-  // runs once per epoch tick (not per animation frame), so it doesn't
-  // reintroduce the per-frame stall the worker migration was for.
-  const labelCanvas = document.createElement('canvas')
-  labelCanvas.width = MAP_WIDTH
-  labelCanvas.height = MAP_HEIGHT
-  const labelCtx = labelCanvas.getContext('2d')!
-
-  // Overlay layers are composited on the main thread from the worker's
-  // base color raster + overlay source data, each toggled independently.
-  // Toggling just re-runs composite() from the retained last render — no
-  // worker round-trip, so it's instant. Defaults: boundaries/names/events
-  // on, motion arrows off (debug-ish).
-  const overlayState = { boundaries: true, names: true, events: true, arrows: false }
-  let lastBaseBuffer: Uint8ClampedArray | null = null
+  // Overlays (boundaries / names / events / arrows) are composited on the main
+  // thread over the worker's base color raster — the worker has no Canvas2D
+  // (fonts/strokes) and toggling must be instant, so the base raster + overlay
+  // source data are retained here and re-composited on demand rather than
+  // re-rendered. The generic mechanism (canvas, toggle state, marker fade,
+  // texture upload) lives in MapOverlayCompositor; only the worldgen-specific
+  // layer drawing + event→marker/notification mapping stays here.
   let lastBoundaryMask: Uint8Array | null = null
   let lastPlateArrows: PlateArrow[] = []
   let lastRaftLabels: ContinentLabelPlacement[] = []
 
-  function drawArrowsOverlay(arrows: PlateArrow[]): void {
-    labelCtx.strokeStyle = ARROW_COLOR
-    labelCtx.lineWidth = 2
-    labelCtx.lineCap = 'round'
-    for (const { x, y, vx, vy } of arrows) {
-      const endX = x + vx
-      const endY = y + vy
-      const angle = Math.atan2(vy, vx)
-      labelCtx.beginPath()
-      labelCtx.moveTo(x, y)
-      labelCtx.lineTo(endX, endY)
-      for (const wing of [-1, 1]) {
-        const wa = angle + Math.PI + wing * ((25 * Math.PI) / 180)
-        labelCtx.moveTo(endX, endY)
-        labelCtx.lineTo(endX + Math.cos(wa) * 12, endY + Math.sin(wa) * 12)
+  function paintBoundaryMask(data: Uint8ClampedArray): void {
+    if (!lastBoundaryMask) return
+    for (let i = 0; i < lastBoundaryMask.length; i++) {
+      if (lastBoundaryMask[i]) {
+        const p = i * 4
+        data[p] = BOUNDARY_COLOR[0]
+        data[p + 1] = BOUNDARY_COLOR[1]
+        data[p + 2] = BOUNDARY_COLOR[2]
       }
-      labelCtx.stroke()
     }
   }
 
-  // Active event markers: geologic lines/points that fade over their own
-  // wall-clock lifetime, drawn into the events overlay. Continent markers
-  // share their notification's lifetime, so the two fade in lockstep.
-  interface EventMarker {
-    type: SimEvent['type']
-    x: number
-    y: number
-    // Line direction (unit) for seam/rift markers; (0,0) => a point marker.
-    dirX: number
-    dirY: number
-    birth: number
-    lifetime: number
+  function drawArrows(c: CanvasRenderingContext2D): void {
+    c.strokeStyle = ARROW_COLOR
+    c.lineWidth = 2
+    c.lineCap = 'round'
+    for (const { x, y, vx, vy } of lastPlateArrows) {
+      const endX = x + vx
+      const endY = y + vy
+      const angle = Math.atan2(vy, vx)
+      c.beginPath()
+      c.moveTo(x, y)
+      c.lineTo(endX, endY)
+      for (const wing of [-1, 1]) {
+        const wa = angle + Math.PI + wing * ((25 * Math.PI) / 180)
+        c.moveTo(endX, endY)
+        c.lineTo(endX + Math.cos(wa) * 12, endY + Math.sin(wa) * 12)
+      }
+      c.stroke()
+    }
   }
-  let eventMarkers: EventMarker[] = []
-  let markerRaf: number | null = null
+
+  // Layer draw/list order: names last so labels stay on top (always readable);
+  // arrows default off (debug-ish). The 'events' layer has no static paint —
+  // it just gates the transient event markers (added via overlay.addMarker).
+  const overlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => mapView.texture.update(pixels))
+  overlay.setLayers([
+    { id: 'boundaries', label: 'Grenzen', enabled: true, paintPixels: paintBoundaryMask },
+    { id: 'arrows', label: 'Pfeile', enabled: false, paint: drawArrows },
+    { id: 'events', label: 'Ereignisse', enabled: true },
+    { id: 'names', label: 'Namen', enabled: true, paint: (c) => drawContinentLabels(c, lastRaftLabels) },
+  ])
+  createOverlayToggleBar(overlay, root)
+
+  // Draws one tectonic event's geologic marker, faded by `alpha`: a suture band
+  // (collision), a dashed rift axis (breakup), or a ring (supercontinent /
+  // routine point). The worldgen-specific side of the generic marker facility.
+  function drawEventMarker(c: CanvasRenderingContext2D, ev: SimEvent, alpha: number): void {
+    const color = ev.type === 'continent_collided' || ev.type === 'supercontinent_formed' ? COLLISION_COLOR : ev.type === 'continent_broke_up' ? BREAKUP_COLOR : ROUTINE_COLOR
+    c.strokeStyle = `rgba(${color}, ${alpha})`
+    c.lineCap = 'round'
+    if (ev.x === undefined || ev.y === undefined) return
+    if (ev.dirX && ev.dirY) {
+      const hl = EVENT_MARKER_HALF_LENGTH
+      c.lineWidth = ev.type === 'continent_collided' ? 8 : 5
+      if (ev.type === 'continent_broke_up') c.setLineDash([14, 10])
+      c.beginPath()
+      c.moveTo(ev.x - ev.dirX * hl, ev.y - ev.dirY * hl)
+      c.lineTo(ev.x + ev.dirX * hl, ev.y + ev.dirY * hl)
+      c.stroke()
+      c.setLineDash([])
+    } else {
+      const r = ev.type === 'supercontinent_formed' ? 26 : 12
+      c.lineWidth = ev.type === 'supercontinent_formed' ? 5 : 3
+      c.beginPath()
+      c.arc(ev.x, ev.y, r, 0, Math.PI * 2)
+      c.stroke()
+    }
+  }
 
   function eventText(ev: SimEvent): { message: string; icon: string } {
     switch (ev.type) {
@@ -554,118 +531,22 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // Turns sim events into faded map markers (all events) + notifications
+  // (continent-scale only), sharing one lifetime so a toast and its marker fade
+  // together (the user's coupling choice). Routine crust churn is overlay-only.
   function handleSimEvents(events: SimEvent[]): void {
     if (!events || events.length === 0) return
-    const now = Date.now()
     for (const ev of events) {
       const continent = eventCategory(ev.type) === 'continent'
-      const lifetime = continent ? EVENT_CONTINENT_LIFETIME_MS : EVENT_ROUTINE_LIFETIME_MS
+      const lifetimeMs = continent ? EVENT_CONTINENT_LIFETIME_MS : EVENT_ROUTINE_LIFETIME_MS
       if (ev.x !== undefined && ev.y !== undefined) {
-        eventMarkers.push({ type: ev.type, x: ev.x, y: ev.y, dirX: ev.dirX ?? 0, dirY: ev.dirY ?? 0, birth: now, lifetime })
+        overlay.addMarker('events', { lifetimeMs, paint: (c, alpha) => drawEventMarker(c, ev, alpha) })
       }
-      // Only continent-scale events raise a toast; routine crust churn lives
-      // in the events overlay alone (the user's "rare events only" choice).
       if (continent) {
         const { message, icon } = eventText(ev)
-        ctx.notifications.show({ message, icon, durationMs: lifetime })
+        ctx.notifications.show({ message, icon, durationMs: lifetimeMs })
       }
     }
-    ensureMarkerAnimation()
-  }
-
-  function drawEventMarkers(ctx2: CanvasRenderingContext2D): void {
-    const now = Date.now()
-    ctx2.lineCap = 'round'
-    for (const m of eventMarkers) {
-      const alpha = 1 - (now - m.birth) / m.lifetime
-      if (alpha <= 0) continue
-      const color = m.type === 'continent_collided' || m.type === 'supercontinent_formed' ? COLLISION_COLOR : m.type === 'continent_broke_up' ? BREAKUP_COLOR : ROUTINE_COLOR
-      ctx2.strokeStyle = `rgba(${color}, ${alpha})`
-      if (m.dirX !== 0 || m.dirY !== 0) {
-        // Geologic line: the suture seam (collision) or rift axis (breakup,
-        // dashed) centered on the event point, running along its direction.
-        const hl = EVENT_MARKER_HALF_LENGTH
-        ctx2.lineWidth = m.type === 'continent_collided' ? 8 : 5
-        if (m.type === 'continent_broke_up') ctx2.setLineDash([14, 10])
-        ctx2.beginPath()
-        ctx2.moveTo(m.x - m.dirX * hl, m.y - m.dirY * hl)
-        ctx2.lineTo(m.x + m.dirX * hl, m.y + m.dirY * hl)
-        ctx2.stroke()
-        ctx2.setLineDash([])
-      } else {
-        // Point marker: a ring (a bold one for the supercontinent milestone,
-        // a small one for routine crust events).
-        const r = m.type === 'supercontinent_formed' ? 26 : 12
-        ctx2.lineWidth = m.type === 'supercontinent_formed' ? 5 : 3
-        ctx2.beginPath()
-        ctx2.arc(m.x, m.y, r, 0, Math.PI * 2)
-        ctx2.stroke()
-      }
-    }
-  }
-
-  // Drives the wall-clock marker fade: re-composites (~15fps) while any
-  // marker is alive — even while paused, since it's wall-clock — pruning
-  // expired ones, and stops with one clean final composite when none remain.
-  function ensureMarkerAnimation(): void {
-    if (markerRaf !== null) return
-    let lastFrame = 0
-    const tick = (ts: number): void => {
-      if (ts - lastFrame >= MARKER_FRAME_INTERVAL_MS) {
-        lastFrame = ts
-        const now = Date.now()
-        eventMarkers = eventMarkers.filter((m) => now - m.birth < m.lifetime)
-        composite()
-        if (eventMarkers.length === 0) {
-          markerRaf = null
-          return
-        }
-      }
-      markerRaf = requestAnimationFrame(tick)
-    }
-    markerRaf = requestAnimationFrame(tick)
-  }
-
-  function resetEventMarkers(): void {
-    eventMarkers = []
-    if (markerRaf !== null) {
-      cancelAnimationFrame(markerRaf)
-      markerRaf = null
-    }
-  }
-
-  // Repaints labelCanvas from the retained render + current toggle state and
-  // uploads it to the map texture. Cheap enough to call on every toggle.
-  function composite(): void {
-    if (!lastBaseBuffer) return
-    const img = new ImageData(new Uint8ClampedArray(lastBaseBuffer), MAP_WIDTH, MAP_HEIGHT)
-    if (overlayState.boundaries && lastBoundaryMask) {
-      const d = img.data
-      const m = lastBoundaryMask
-      for (let i = 0; i < m.length; i++) {
-        if (m[i]) {
-          const p = i * 4
-          d[p] = BOUNDARY_COLOR[0]
-          d[p + 1] = BOUNDARY_COLOR[1]
-          d[p + 2] = BOUNDARY_COLOR[2]
-        }
-      }
-    }
-    labelCtx.putImageData(img, 0, 0)
-    if (overlayState.arrows) drawArrowsOverlay(lastPlateArrows)
-    if (overlayState.events) drawEventMarkers(labelCtx)
-    if (overlayState.names) drawContinentLabels(labelCtx, lastRaftLabels)
-    mapTexture.update(new Uint8Array(labelCtx.getImageData(0, 0, MAP_WIDTH, MAP_HEIGHT).data.buffer))
-  }
-
-  for (const btn of root.querySelectorAll<HTMLButtonElement>('.overlay-toggle')) {
-    btn.addEventListener('click', () => {
-      const key = btn.dataset.overlay as keyof typeof overlayState
-      overlayState[key] = !overlayState[key]
-      btn.classList.toggle('is-active', overlayState[key])
-      btn.setAttribute('aria-pressed', String(overlayState[key]))
-      composite()
-    })
   }
 
   function downloadBlob(blob: Blob, filename: string): void {
@@ -723,15 +604,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       return
     }
 
-    // Retain the base raster + overlay source data so a toggle can
-    // re-composite without a worker round-trip, then draw the current
-    // layer set.
-    lastBaseBuffer = new Uint8ClampedArray(message.buffer)
+    // Retain the overlay source data + feed the base raster to the compositor
+    // so a toggle can re-composite without a worker round-trip, then draw the
+    // current layer set.
     lastBoundaryMask = new Uint8Array(message.boundaryMask)
     lastPlateArrows = message.plateArrows
     lastRaftLabels = message.raftLabels
+    overlay.setBase(new Uint8ClampedArray(message.buffer))
     handleSimEvents(message.events)
-    composite()
+    overlay.composite()
 
     lastLandFraction = message.landFraction
     lastEpoch = message.epoch
@@ -856,7 +737,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // preview left showing the previous world's now-stale mesh.
     setDebug3DActive(false)
     ctx.notifications.clearAll()
-    resetEventMarkers()
+    overlay.clearMarkers()
     initSim(seedInput.value, Number(plateCountInput.value), Number(landFractionInput.value), Number(clusteringInput.value), Number(cratonCountInput.value))
   }
   // Debounced so dragging a slider (or typing a seed) doesn't fire a full
@@ -930,7 +811,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scene,
     dispose() {
       stopSim()
-      resetEventMarkers()
+      overlay.dispose()
+      mapView.dispose()
       worker.terminate()
       // scene.dispose() doesn't remove the camera module's own 'wheel'
       // listener on the shared canvas — same reasoning as MarsScreen's

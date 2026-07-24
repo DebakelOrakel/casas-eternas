@@ -1,4 +1,18 @@
-import type { ContinentLabelPlacement } from './continentLabelLayout'
+// Where and how to lay one continent's name out: center, principal-axis
+// angle, and the usable extent along/across that axis (so the renderer can
+// size the text to fit inside the landmass). Pure geometry, no font/canvas —
+// produced by raftLabelLayout.ts (blob-PCA) and drawn by drawContinentLabel
+// below. `plateIndex` is just a stable per-label key (the raft id), not a
+// plate index — kept for name stability across redraws.
+export interface ContinentLabelPlacement {
+  plateIndex: number
+  name: string
+  centerX: number
+  centerY: number
+  angle: number
+  alongExtent: number
+  perpExtent: number
+}
 
 // Matches the title screen's own fantasy-map font (see title.css) —
 // loaded globally via the Google Fonts link in index.html, so it's

@@ -18,10 +18,10 @@ function circularMeanToCoordinate(sinSum: number, cosSum: number, period: number
   return (normalized % 1) * period
 }
 
-// Shared by arrow placement (elevationMapImage.ts) and continent-name
-// placement (continentLabelLayout.ts) — both need each plate's true
-// visual center on a wrapping map, not just its (possibly off-territory)
-// seed position.
+// Each plate's true visual center on a wrapping map (not its possibly
+// off-territory seed position) — used to anchor the velocity arrows
+// (elevationMapImage.ts). Continent-name placement uses raft blob geometry
+// instead now (raftLabelLayout.ts), not plate centroids.
 export function computePlateCentroids(cellIds: Uint16Array, plateCount: number, width: number, height: number): { x: number; y: number }[] {
   const sinSumX = new Float64Array(plateCount)
   const cosSumX = new Float64Array(plateCount)

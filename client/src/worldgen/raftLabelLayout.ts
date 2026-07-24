@@ -1,5 +1,5 @@
 import type { Raft } from './rafts'
-import type { ContinentLabelPlacement } from './continentLabelLayout'
+import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { wrappedDelta } from './toroidal'
 
 // Label geometry for each named raft, computed straight from its blob set —

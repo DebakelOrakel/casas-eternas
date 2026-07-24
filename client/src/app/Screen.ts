@@ -1,5 +1,5 @@
 import type { Engine, Scene } from '@babylonjs/core'
-import type { NotificationManager } from '../ui/NotificationManager'
+import type { NotificationManager } from '../ui/notifications/NotificationManager'
 
 export type ScreenId = 'title' | 'worldgen' | 'worldgen-sphere' | 'game' | 'mars'
 

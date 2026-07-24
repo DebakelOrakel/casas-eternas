@@ -129,43 +129,6 @@
   opacity: 1;
 }
 
-/* Overlay layer toggles — a fixed bar, top-right, out of the bottom
-   wizard's way and visible across all panels since overlays apply to any
-   world state. Active = inverted (filled dark). */
-.worldgen-flat-screen .overlay-toggles {
-  position: fixed;
-  top: 1rem;
-  right: 1rem;
-  z-index: 1;
-  display: flex;
-  gap: 0.4rem;
-  font-family: sans-serif;
-}
-
-.worldgen-flat-screen .overlay-toggle {
-  border: 1px solid rgba(26, 26, 26, 0.35);
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.7);
-  padding: 0.3rem 0.6rem;
-  font-size: 0.8rem;
-  font-family: inherit;
-  color: #1a1a1a;
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
-}
-
-.worldgen-flat-screen .overlay-toggle:hover {
-  opacity: 0.9;
-}
-
-.worldgen-flat-screen .overlay-toggle.is-active {
-  opacity: 1;
-  background: rgba(26, 26, 26, 0.85);
-  color: #fff;
-  border-color: rgba(26, 26, 26, 0.85);
-}
-
 .worldgen-flat-screen .field--icon-row {
   width: auto;
 }

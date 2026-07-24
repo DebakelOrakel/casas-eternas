@@ -4,7 +4,7 @@ import { getVelocityAt } from './plateMotion'
 import type { PlateSimulation } from './plateSimulation'
 import { rasterizeVoronoiPlates } from './voronoiRaster'
 import { computePlateCentroids } from './plateGeometry'
-import type { ContinentLabelPlacement } from './continentLabelLayout'
+import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
 import type { ElevationRenderPool } from './elevationRenderPool'
 

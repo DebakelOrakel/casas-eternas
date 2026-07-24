@@ -1,6 +1,6 @@
 import type { Engine } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory, ScreenId } from './Screen'
-import { NotificationManager } from '../ui/NotificationManager'
+import { NotificationManager } from '../ui/notifications/NotificationManager'
 
 export class AppStateManager {
   private current: Screen | null = null
