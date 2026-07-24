@@ -9,7 +9,7 @@ import { generatePlateSeeds } from './plateSeeds'
 import type { PlateSeed } from './plateSeeds'
 import { hashSeedString, mulberry32 } from './rng'
 import type { PlateType } from './plateTypes'
-import { generateInitialRafts, advanceRafts, derivePlateTypes, accreteToNearestRaft, mergeOverlappingRafts, splitRaftAtRift, raftMembership } from './rafts'
+import { generateInitialRafts, advanceRafts, derivePlateTypes, accreteToNearestRaft, mergeOverlappingRafts, splitRaftAtRift, splitDisconnectedRafts, raftMembership, pickUnusedRaftName } from './rafts'
 import type { Raft, RaftBlob, RaftSplitEvent } from './rafts'
 import { createOceanAgeField, advectOceanAge, resetOceanAgeAt } from './oceanAge'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from './terrainFeatures'
@@ -181,9 +181,24 @@ const MERGE_OVERLAP_FACTOR = 0.5
 // through one — a raft blob must be within this distance of the rift point,
 // else the rift is oceanic and nothing splits.
 const SPLIT_MAX_DIST_SQ = 160 * 160
-// How far (each side) a rift shoves the two continent halves apart, opening an
-// ocean gap wide enough that the merge pass doesn't immediately re-weld them.
-const SPLIT_GAP = 70
+// How far (each side) a rift shoves the two continent halves apart — just
+// enough to open a visible gap. It no longer has to be large enough to stop
+// an immediate re-merge (the merge-immunity window below handles that); a big
+// push over-scattered the halves' blobs and made splitDisconnectedRafts
+// shatter them into many pieces.
+const SPLIT_GAP = 80
+// Epochs a freshly-split pair is immune from re-merging (Raft.noMergeUntilEpoch),
+// so a breakup stays visible while the halves drift instead of re-welding at
+// once. A band-aid over fixed Euler poles pulling the halves straight back.
+const SPLIT_MERGE_IMMUNITY_EPOCHS = 30
+// Blobs count as connected (same landmass) if their centers are within
+// (ra+rb)*this. Deliberately generous: two blobs render as one landmass at
+// ~0.7·(ra+rb), but the coastline is the SUMMED field, so a thin neck bridged
+// by several nearby blobs reads as connected even when no single pair is close.
+// A tight factor mistook those bridges for gaps and shattered rendered-
+// connected rafts into many pieces; this only decomposes clusters with a
+// clear, wide gap between them (the "obviously separate landmasses" case).
+const RAFT_CONNECT_FACTOR = 1.5
 // Continental breakup is more lenient than a plate rift — a shorter lock and a
 // gentler divergence threshold — so a supercontinent can rift apart from within
 // on the limited divergence available under it (plate motions are fixed, so
@@ -191,6 +206,17 @@ const SPLIT_GAP = 70
 // enough that continents don't churn apart constantly.
 const CONT_RIFT_LOCK_EPOCHS = 20
 const CONT_RIFT_THRESHOLD_FACTOR = 0.55
+// Global cooldown after a continental rift fires: no further continental rift
+// for this many epochs. Without it, an assembled supercontinent oscillates
+// every single epoch — the rift point stays divergent+locked+under-continent
+// (its lock never clears since the plate motions that made it divergent are
+// fixed), so it re-qualifies immediately, and the just-split halves drift back
+// together and re-merge on the very next epoch: a strobing split/merge limit
+// cycle (confirmed ~1 collision + 1 breakup per epoch past ~epoch 220). The
+// cooldown turns that into an occasional, dramatic breakup event instead —
+// which is the honest ceiling until evolving Euler poles let breakup actually
+// succeed (see the raft decision doc's "breakup is limited by fixed motions").
+const CONT_RIFT_COOLDOWN_EPOCHS = 40
 
 // Ocean-floor age (Phase 3, see oceanAge.ts): the field starts at a moderate
 // uniform age so the ocean isn't uniformly shallow at epoch 0, then evolves as
@@ -249,6 +275,9 @@ export interface PlateSimulation {
   // epoch the single raft persists. Seeded from the initial raft count so a
   // single-craton start doesn't spuriously fire at epoch 0.
   supercontinentActive: boolean
+  // Epoch until which no continental rift may fire — set after each one to
+  // space breakups out (see CONT_RIFT_COOLDOWN_EPOCHS). 0 = ready.
+  continentalRiftCooldownUntil: number
 }
 
 export function createPlateSimulation(seedString: string, plateCount: number, landFraction: number, clustering: number, cratonCount: number, width: number, height: number): PlateSimulation {
@@ -285,6 +314,7 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
     latticeLastClassCode: new Int8Array(lattice.length).fill(-1),
     oceanAge: createOceanAgeField(OCEAN_AGE_INIT),
     supercontinentActive: rafts.length <= 1,
+    continentalRiftCooldownUntil: 0,
   }
 }
 
@@ -598,6 +628,7 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
     // Checked before the plate-rift lock gate since it uses its own lock.
     if (
       !continentalRift &&
+      sim.epoch >= sim.continentalRiftCooldownUntil &&
       convergence.motionClass === 'divergent' &&
       sim.latticeLockedEpochs[index] >= CONT_RIFT_LOCK_EPOCHS &&
       sim.latticeAccumulated[index] <= effectiveRiftThreshold * CONT_RIFT_THRESHOLD_FACTOR &&
@@ -648,7 +679,7 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   // Continents that have drifted (or grown by accretion) into contact this
   // epoch suture into one (Phase 2c). Each suture is a continent-collision
   // event (name + seam geometry) for the notification/overlay layer.
-  const raftMerges = mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, width, height)
+  const raftMerges = mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, sim.epoch, width, height)
 
   // Continental breakup: a sustained divergent point under a continent tears it
   // into two halves that the rift gap shoves apart (Phase 2d). Independent of
@@ -661,11 +692,27 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
     const cny = wrappedDelta(cSeedA.y, cSeedB.y, height)
     const cnl = Math.sqrt(cnx * cnx + cny * cny) || 1
     const newRaftId = sim.rafts.reduce((max, raft) => Math.max(max, raft.id), -1) + 1
-    raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, SPLIT_MAX_DIST_SQ, SPLIT_GAP, width, height)
+    raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, SPLIT_MAX_DIST_SQ, SPLIT_GAP, sim.epoch, SPLIT_MERGE_IMMUNITY_EPOCHS, width, height)
     // Reset that point's divergence accumulator so it doesn't immediately
     // re-split the fresh halves next epoch.
-    if (raftSplit) sim.latticeAccumulated[continentalRift.index] = 0
+    if (raftSplit) {
+      sim.latticeAccumulated[continentalRift.index] = 0
+      // Space the next breakup out, so a supercontinent under fixed convergent
+      // motions doesn't strobe split/merge every epoch (see the cooldown const).
+      sim.continentalRiftCooldownUntil = sim.epoch + CONT_RIFT_COOLDOWN_EPOCHS
+      // The far half is a brand-new continent — give it its own name (the
+      // near half keeps the parent's), so split-born continents aren't
+      // left unnamed on the map.
+      const newRaft = sim.rafts.find((raft) => raft.id === newRaftId)
+      if (newRaft) newRaft.name = pickUnusedRaftName(sim.rafts, sim.random)
+    }
   }
+
+  // Rendering/identity cleanup: a raft whose blobs have drifted into spatially
+  // separate clusters (renders as several landmasses under one name) is
+  // decomposed into one named continent per cluster. No events — this isn't a
+  // tectonic breakup, just keeping "one raft = one visible landmass".
+  splitDisconnectedRafts(sim.rafts, RAFT_CONNECT_FACTOR, sim.random, width, height)
 
   const events: SimEvent[] = []
 

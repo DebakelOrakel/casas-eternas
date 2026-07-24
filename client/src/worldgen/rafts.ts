@@ -26,6 +26,12 @@ export interface Raft {
   // The continent's name (rafts, not plates, are continents now).
   name: string | null
   blobs: RaftBlob[]
+  // Freshly-split halves get this stamp so they don't instantly re-weld:
+  // mergeOverlappingRafts skips any pair where either side is still within
+  // its window. Lets a breakup stay visible instead of splitting and merging
+  // back on consecutive epochs (a band-aid over the fixed-Euler-pole ceiling
+  // — see the raft decision doc). Absent/0 = mergeable now.
+  noMergeUntilEpoch?: number
 }
 
 // What a raft collision (mergeOverlappingRafts) reports for the event/overlay
@@ -199,13 +205,15 @@ function closestOverlappingBlobs(a: Raft, b: Raft, overlapFactor: number, width:
 // survivor is unnamed but the absorbed raft had a name, the survivor inherits
 // it, so a named continent doesn't lose its identity by absorbing a nameless
 // (freshly-split or arc-born) piece.
-export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, width: number, height: number): RaftMergeEvent[] {
+export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, epoch: number, width: number, height: number): RaftMergeEvent[] {
   const merges: RaftMergeEvent[] = []
   let mergedAny = true
   while (mergedAny) {
     mergedAny = false
     for (let i = 0; i < rafts.length && !mergedAny; i++) {
       for (let j = i + 1; j < rafts.length && !mergedAny; j++) {
+        // Skip a pair while either side is in its post-split no-merge window.
+        if ((rafts[i].noMergeUntilEpoch ?? 0) > epoch || (rafts[j].noMergeUntilEpoch ?? 0) > epoch) continue
         const overlap = closestOverlappingBlobs(rafts[i], rafts[j], overlapFactor, width, height)
         if (overlap) {
           const nameA = rafts[i].name
@@ -246,6 +254,8 @@ export function splitRaftAtRift(
   newId: number,
   maxDistSq: number,
   gap: number,
+  currentEpoch: number,
+  mergeImmunity: number,
   width: number,
   height: number,
 ): RaftSplitEvent | null {
@@ -284,10 +294,80 @@ export function splitRaftAtRift(
   }
   const parentName = raft.name
   raft.blobs = near
-  rafts.push({ id: newId, name: null, blobs: far })
+  // Both halves get a no-merge window so they don't re-weld before they've
+  // had time to drift apart (the fixed convergent motions otherwise pull
+  // them straight back — see Raft.noMergeUntilEpoch).
+  raft.noMergeUntilEpoch = currentEpoch + mergeImmunity
+  rafts.push({ id: newId, name: null, blobs: far, noMergeUntilEpoch: currentEpoch + mergeImmunity })
   // Rift axis runs perpendicular to the divergence normal (the tear line
   // itself, not the pull-apart direction).
   return { parentName, x: riftX, y: riftY, axisX: -normalY, axisY: normalX }
+}
+
+// Connected components of a raft's blobs: two blobs are "connected" if their
+// centers are within (ra+rb)*connectFactor, i.e. their metaball fields still
+// join above the coastline threshold between them. Union-find, O(n²) over the
+// (small) blob set. connectFactor is chosen wider than MERGE_OVERLAP_FACTOR so
+// pieces declared disconnected here are also beyond merge range — they won't
+// immediately re-weld and ping-pong.
+function connectedBlobComponents(blobs: RaftBlob[], connectFactor: number, width: number, height: number): RaftBlob[][] {
+  const n = blobs.length
+  const parent = Array.from({ length: n }, (_, i) => i)
+  const find = (i: number): number => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]]
+      i = parent[i]
+    }
+    return i
+  }
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const threshold = (blobs[i].radius + blobs[j].radius) * connectFactor
+      if (toroidalDistanceSq(blobs[i].x, blobs[i].y, blobs[j].x, blobs[j].y, width, height) <= threshold * threshold) {
+        parent[find(i)] = find(j)
+      }
+    }
+  }
+  const groups = new Map<number, RaftBlob[]>()
+  for (let i = 0; i < n; i++) {
+    const root = find(i)
+    const g = groups.get(root)
+    if (g) g.push(blobs[i])
+    else groups.set(root, [blobs[i]])
+  }
+  return [...groups.values()]
+}
+
+// Decomposes any raft whose blobs have drifted into spatially separate
+// clusters (accretion at scattered margins, a rift leaving a stray arm) into
+// one raft per cluster — so each visibly-separate landmass is its own named
+// continent, not several under one label. The largest cluster keeps the
+// raft's id + name; the rest become fresh rafts with new ids/names. Mutates
+// `rafts` in place. No events raised — this is a rendering/identity cleanup,
+// not a tectonic breakup (which stays the continental-rift path's job).
+export function splitDisconnectedRafts(rafts: Raft[], connectFactor: number, random: () => number, width: number, height: number): void {
+  let maxId = rafts.reduce((m, raft) => Math.max(m, raft.id), -1)
+  const result: Raft[] = []
+  for (const raft of rafts) {
+    const components = connectedBlobComponents(raft.blobs, connectFactor, width, height)
+    if (components.length <= 1) {
+      result.push(raft)
+      continue
+    }
+    const blobArea = (blobs: RaftBlob[]): number => blobs.reduce((s, b) => s + b.radius * b.radius, 0)
+    components.sort((a, b) => blobArea(b) - blobArea(a))
+    result.push({ ...raft, blobs: components[0] })
+    for (let k = 1; k < components.length; k++) {
+      result.push({ id: ++maxId, name: null, blobs: components[k], noMergeUntilEpoch: raft.noMergeUntilEpoch })
+    }
+  }
+  // Name the freshly-separated pieces (after the full set exists, so names
+  // stay unique across everything).
+  for (const raft of result) {
+    if (raft.name === null) raft.name = pickUnusedRaftName(result, random)
+  }
+  rafts.length = 0
+  rafts.push(...result)
 }
 
 // Blobs per craton and their size spread (as a fraction of the craton's
@@ -415,6 +495,16 @@ export function generateInitialRafts(random: () => number, landFraction: number,
   }
 
   return assignRaftNames(rafts, random)
+}
+
+// Picks a pool name not already used by any current raft, for a newly born
+// continent (a rift's far half, or a future island arc). Random among the
+// still-free names; null only if the whole pool is in use.
+export function pickUnusedRaftName(rafts: Raft[], random: () => number): string | null {
+  const used = new Set(rafts.map((raft) => raft.name).filter((name): name is string => name !== null))
+  const available = CONTINENT_NAME_POOL.filter((name) => !used.has(name))
+  if (available.length === 0) return null
+  return available[Math.floor(random() * available.length)]
 }
 
 // Gives each raft a unique name from the shared pool — same shuffle-then-

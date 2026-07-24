@@ -198,6 +198,33 @@ Built 2026-07-24, all verified via a headless render harness:
   compensate. Truly realistic breakup needs evolving Euler poles — a
   deferred, bigger feature (the "drift doesn't evolve" gap flagged in
   [plate-tectonics-initial-state.md](./plate-tectonics-initial-state.md)).
+  A consequence of that leniency: past ~epoch 220 a supercontinent would
+  *strobe* split/merge every epoch (the rift point stays divergent+locked,
+  the split resets only the accumulator not the lock, and the halves drift
+  straight back and re-merge under the fixed convergent motions). Fixed with
+  a global **continental-rift cooldown** (`CONT_RIFT_COOLDOWN_EPOCHS`, ~40)
+  so breakup is an occasional dramatic event, not per-epoch jitter — the
+  honest ceiling until evolving Euler poles let a rift actually succeed.
+- **Split-born continents are named.** A rift's far half is a brand-new
+  continent, so it gets a fresh unused pool name (`pickUnusedRaftName`); the
+  near half keeps the parent's. (Island-arc births will need the same once
+  built.)
+- **Breakups are held open briefly (merge-immunity band-aid).** Even with the
+  cooldown, a rift was followed by a re-merge on the *next* epoch (fixed
+  convergent motions pull the halves straight back). Freshly-split halves now
+  carry a `noMergeUntilEpoch` window (~30 epochs) that `mergeOverlappingRafts`
+  respects, so the breakup stays visible instead of split-then-merge on
+  consecutive epochs. It's a band-aid: under fixed poles the halves still
+  overlap toward the end of the window (they can't truly drift apart), so the
+  real fix remains evolving Euler poles.
+- **Rafts are decomposed into connected landmasses.** A raft is a metaball
+  union; over a run its blobs can drift into spatially separate clusters that
+  render as several landmasses under one name. `splitDisconnectedRafts` (run
+  each epoch, no events) decomposes such a raft into one named continent per
+  cluster — largest keeps the id/name, the rest get fresh ones. Connectivity
+  is a generous pairwise proxy (`RAFT_CONNECT_FACTOR` ~1.5·(ra+rb)) so it only
+  splits clearly-separated clusters; a tight factor mistook summed-field necks
+  for gaps and shattered rendered-connected rafts into many pieces.
 - **Boundary classification still reads a DERIVED plate type**
   (`derivePlateTypes` — continental if a raft covers the seed), a Phase-1
   bridge, not the direct "is there a raft on side A/B?" the design
