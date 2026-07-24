@@ -107,6 +107,130 @@ export function advanceRafts(rafts: Raft[], seeds: PlateSeed[], motions: PlateMo
   }
 }
 
+// Accretion: grow the continent nearest (x, y) by welding a small margin blob
+// there — new continental crust added to the overriding plate at a subduction
+// arc (Andean-type arc magmatism). Guarded two ways so a subduction margin
+// advances the raft outward without exploding the blob count or attaching to a
+// far-off continent: skip if an existing blob of the nearest raft already
+// covers the spot (minGapSq), and skip if the nearest raft is too far to weld
+// onto (maxAttachSq). Returns whether crust was added.
+export function accreteToNearestRaft(
+  rafts: Raft[],
+  x: number,
+  y: number,
+  blobRadius: number,
+  minGapSq: number,
+  maxAttachSq: number,
+  width: number,
+  height: number,
+): boolean {
+  let nearestRaft = -1
+  let nearestDistSq = Infinity
+  for (let i = 0; i < rafts.length; i++) {
+    for (const blob of rafts[i].blobs) {
+      const d = toroidalDistanceSq(x, y, blob.x, blob.y, width, height)
+      if (d < nearestDistSq) {
+        nearestDistSq = d
+        nearestRaft = i
+      }
+    }
+  }
+  if (nearestRaft < 0 || nearestDistSq < minGapSq || nearestDistSq > maxAttachSq) return false
+  rafts[nearestRaft].blobs.push({ x, y, radius: blobRadius })
+  return true
+}
+
+// Merge (Phase 2c): when two continents drift together so their crust
+// overlaps, they suture into one — combine the two rafts' blob sets into the
+// lower-indexed one and drop the other. Repeats until no overlapping pair
+// remains (a three-way pileup collapses to one). overlapFactor scales the
+// sum of two blobs' radii into the center-distance at which they count as
+// overlapping (~0.5 ≈ their coastlines meet). Cheap at realistic raft/blob
+// counts.
+function raftsOverlap(a: Raft, b: Raft, overlapFactor: number, width: number, height: number): boolean {
+  for (const ba of a.blobs) {
+    for (const bb of b.blobs) {
+      const threshold = (ba.radius + bb.radius) * overlapFactor
+      if (toroidalDistanceSq(ba.x, ba.y, bb.x, bb.y, width, height) < threshold * threshold) return true
+    }
+  }
+  return false
+}
+
+export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, width: number, height: number): void {
+  let mergedAny = true
+  while (mergedAny) {
+    mergedAny = false
+    for (let i = 0; i < rafts.length && !mergedAny; i++) {
+      for (let j = i + 1; j < rafts.length && !mergedAny; j++) {
+        if (raftsOverlap(rafts[i], rafts[j], overlapFactor, width, height)) {
+          for (const blob of rafts[j].blobs) rafts[i].blobs.push(blob)
+          rafts.splice(j, 1)
+          mergedAny = true
+        }
+      }
+    }
+  }
+}
+
+// Split (Phase 2d): a rift tearing through a continent partitions its blobs
+// along the rift line (through the rift point, perpendicular to `normal` —
+// which points along the seed-to-seed divergence axis) into the two diverging
+// halves. Only the raft the rift actually runs through (a blob within
+// maxDistSq of the rift point) is split, and only if it has crust on both
+// sides; an oceanic rift, or one grazing a continent's edge, does nothing.
+// The far half becomes a new raft (id `newId`); the near half stays. Returns
+// whether a split happened.
+export function splitRaftAtRift(
+  rafts: Raft[],
+  riftX: number,
+  riftY: number,
+  normalX: number,
+  normalY: number,
+  newId: number,
+  maxDistSq: number,
+  gap: number,
+  width: number,
+  height: number,
+): boolean {
+  let target = -1
+  let bestDistSq = Infinity
+  for (let i = 0; i < rafts.length; i++) {
+    for (const blob of rafts[i].blobs) {
+      const d = toroidalDistanceSq(riftX, riftY, blob.x, blob.y, width, height)
+      if (d < bestDistSq) {
+        bestDistSq = d
+        target = i
+      }
+    }
+  }
+  if (target < 0 || bestDistSq > maxDistSq) return false
+  const raft = rafts[target]
+  const near: RaftBlob[] = []
+  const far: RaftBlob[] = []
+  for (const blob of raft.blobs) {
+    const side = wrappedDelta(blob.x, riftX, width) * normalX + wrappedDelta(blob.y, riftY, height) * normalY
+    if (side >= 0) near.push(blob)
+    else far.push(blob)
+  }
+  if (near.length === 0 || far.length === 0) return false
+  // Open an ocean gap between the two halves by pushing them apart across the
+  // rift line, so their seam blobs no longer overlap and the merge pass won't
+  // immediately weld them back together — a rift genuinely separates the
+  // diverging continents. They keep drifting apart afterward with their plates.
+  for (const blob of near) {
+    blob.x = (((blob.x + normalX * gap) % width) + width) % width
+    blob.y = (((blob.y + normalY * gap) % height) + height) % height
+  }
+  for (const blob of far) {
+    blob.x = (((blob.x - normalX * gap) % width) + width) % width
+    blob.y = (((blob.y - normalY * gap) % height) + height) % height
+  }
+  raft.blobs = near
+  rafts.push({ id: newId, name: null, blobs: far })
+  return true
+}
+
 // Blobs per craton and their size spread (as a fraction of the craton's
 // own reach) — several jittered blobs give an irregular, non-circular
 // continent once unioned.

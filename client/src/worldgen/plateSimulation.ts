@@ -10,7 +10,7 @@ import { generatePlateSeeds } from './plateSeeds'
 import type { PlateSeed } from './plateSeeds'
 import { hashSeedString, mulberry32 } from './rng'
 import type { PlateType } from './plateTypes'
-import { generateInitialRafts, advanceRafts, derivePlateTypes } from './rafts'
+import { generateInitialRafts, advanceRafts, derivePlateTypes, accreteToNearestRaft, mergeOverlappingRafts, splitRaftAtRift, raftMembership } from './rafts'
 import type { Raft } from './rafts'
 import { assignContinentNames } from './continentNames'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from './terrainFeatures'
@@ -157,6 +157,41 @@ const AGE_MULTIPLIER_HALF_LIFE_EPOCHS = 150
 // slab does.
 const TRENCH_OFFSET = 60
 const TRENCH_DEPTH_FRACTION = 0.6
+
+// Continental accretion (Phase 2): at a subduction arc, new continental crust
+// welds onto the overriding plate's continent, growing it toward the trench —
+// the process that makes land grow over the run, balancing the crust lost to
+// rifting so land/ocean is truly emergent. Each active subduction-arc boundary
+// point adds a small margin blob just inside the continental side, guarded
+// (see accreteToNearestRaft) so the margin advances without exploding the blob
+// count. Rates/sizes are visual-tuning constants.
+const ACCRETION_BLOB_RADIUS = 70
+const ACCRETION_INSET = 30
+const ACCRETION_MIN_GAP_SQ = 85 * 85
+const ACCRETION_MAX_ATTACH_SQ = 150 * 150
+// Only accrete every Nth epoch — the direct lever on how fast continents grow
+// (and how many margin blobs pile up, which the raft membership query scans).
+// Raising it slows growth and keeps blob counts lower.
+const ACCRETION_EPOCH_INTERVAL = 3
+
+// Raft merge (Phase 2c): two continents whose crust overlaps suture into one.
+// The factor scales the sum of two blobs' radii into the center-distance that
+// counts as overlapping — ~0.5 ≈ their coastlines meet (see mergeOverlappingRafts).
+const MERGE_OVERLAP_FACTOR = 0.5
+// Raft split (Phase 2d): a rift only tears a continent if it actually runs
+// through one — a raft blob must be within this distance of the rift point,
+// else the rift is oceanic and nothing splits.
+const SPLIT_MAX_DIST_SQ = 160 * 160
+// How far (each side) a rift shoves the two continent halves apart, opening an
+// ocean gap wide enough that the merge pass doesn't immediately re-weld them.
+const SPLIT_GAP = 70
+// Continental breakup is more lenient than a plate rift — a shorter lock and a
+// gentler divergence threshold — so a supercontinent can rift apart from within
+// on the limited divergence available under it (plate motions are fixed, so
+// boundaries under an assembled continent are mostly convergent). Still gated
+// enough that continents don't churn apart constantly.
+const CONT_RIFT_LOCK_EPOCHS = 20
+const CONT_RIFT_THRESHOLD_FACTOR = 0.55
 
 export interface PlateSimulation {
   width: number
@@ -394,6 +429,11 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
 
   let riftEvent: RiftEvent | null = null
   let mergeEvent: MergeEvent | null = null
+  // A sustained-divergent boundary point sitting UNDER a continent — the seed
+  // of continental breakup, tracked separately from the plate rift above
+  // (which fires at oceanic ridges, away from continents). At most one per
+  // epoch tears a continent apart (Phase 2d).
+  let continentalRift: { x: number; y: number; plateA: number; plateB: number; index: number } | null = null
 
   // Many adjacent lattice points along the same physical boundary
   // stretch resolve to the same terrain feature (see
@@ -494,6 +534,34 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
           -Math.abs(amount) * TRENCH_DEPTH_FRACTION,
         )
       }
+
+      // Continental accretion at a subduction arc: weld a margin blob just
+      // inside the overriding (continental) side, growing that continent
+      // toward the trench (see the ACCRETION_* constants / accreteToNearestRaft).
+      // Throttled to every Nth epoch so continents grow at a measured pace.
+      if (classification.character === 'subductionArc' && sim.epoch % ACCRETION_EPOCH_INTERVAL === 0) {
+        const continentalSeed = classification.upliftSide === 'a' ? seedA : seedB
+        const inX = wrappedDelta(continentalSeed.x, boundary.x, width)
+        const inY = wrappedDelta(continentalSeed.y, boundary.y, height)
+        const inLen = Math.sqrt(inX * inX + inY * inY) || 1
+        const accreteX = (((boundary.x + (inX / inLen) * ACCRETION_INSET) % width) + width) % width
+        const accreteY = (((boundary.y + (inY / inLen) * ACCRETION_INSET) % height) + height) % height
+        accreteToNearestRaft(sim.rafts, accreteX, accreteY, ACCRETION_BLOB_RADIUS, ACCRETION_MIN_GAP_SQ, ACCRETION_MAX_ATTACH_SQ, width, height)
+      }
+    }
+
+    // Continental breakup: a divergent point under a continent, on a more
+    // lenient lock/threshold than the plate rift below, so a supercontinent
+    // can rift apart from within even when the plate rift lands in the ocean.
+    // Checked before the plate-rift lock gate since it uses its own lock.
+    if (
+      !continentalRift &&
+      convergence.motionClass === 'divergent' &&
+      sim.latticeLockedEpochs[index] >= CONT_RIFT_LOCK_EPOCHS &&
+      sim.latticeAccumulated[index] <= effectiveRiftThreshold * CONT_RIFT_THRESHOLD_FACTOR &&
+      raftMembership(boundary.x, boundary.y, sim.rafts, width, height) > 0.5
+    ) {
+      continentalRift = { x: boundary.x, y: boundary.y, plateA: boundary.plateA, plateB: boundary.plateB, index }
     }
 
     if (sim.latticeLockedEpochs[index] < LOCK_EPOCHS_REQUIRED) continue
@@ -533,6 +601,26 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
     const feature = sim.features[featureIndex]
     feature.thickness += sum / count
     feature.epochsSinceDeposit = 0
+  }
+
+  // Continents that have drifted (or grown by accretion) into contact this
+  // epoch suture into one (Phase 2c).
+  mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, width, height)
+
+  // Continental breakup: a sustained divergent point under a continent tears it
+  // into two halves that the rift gap shoves apart (Phase 2d). Independent of
+  // the plate rift below, which fires at oceanic ridges.
+  if (continentalRift) {
+    const cSeedA = sim.seeds[continentalRift.plateA]
+    const cSeedB = sim.seeds[continentalRift.plateB]
+    const cnx = wrappedDelta(cSeedA.x, cSeedB.x, width)
+    const cny = wrappedDelta(cSeedA.y, cSeedB.y, height)
+    const cnl = Math.sqrt(cnx * cnx + cny * cny) || 1
+    const newRaftId = sim.rafts.reduce((max, raft) => Math.max(max, raft.id), -1) + 1
+    const didSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, SPLIT_MAX_DIST_SQ, SPLIT_GAP, width, height)
+    // Reset that point's divergence accumulator so it doesn't immediately
+    // re-split the fresh halves next epoch.
+    if (didSplit) sim.latticeAccumulated[continentalRift.index] = 0
   }
 
   const events: SimEvent[] = []
