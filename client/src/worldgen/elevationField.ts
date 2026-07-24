@@ -5,6 +5,7 @@ import { domainWarpDelta } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
 import { raftMembership } from './rafts'
 import type { Raft } from './rafts'
+import { sampleOceanAge } from './oceanAge'
 
 // A terrain feature is no longer an isotropic blob but an oriented ridge
 // segment: its influence reaches far ALONG its own boundary tangent
@@ -228,8 +229,12 @@ export function computeBlendedBaselines(
 // Ocean age-depth is a later phase; this is flat ocean for now.
 const RAFT_CONTINENTAL_BASELINE = 0.35
 const RAFT_OCEANIC_BASELINE = -0.45
+// Age-depth coefficient: the oceanic baseline drops by AGE_DEPTH_K·√age
+// (oceanAge.ts), so young ridge crust sits near RAFT_OCEANIC_BASELINE and old
+// basin floor sinks well below it — the real √age ocean-depth law.
+const AGE_DEPTH_K = 0.045
 
-export function computeRaftBaseline(rafts: Raft[], renderWidth: number, renderHeight: number, worldWidth: number, worldHeight: number, warpSeed: number): Float32Array {
+export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, renderWidth: number, renderHeight: number, worldWidth: number, worldHeight: number, warpSeed: number): Float32Array {
   const result = new Float32Array(renderWidth * renderHeight)
   const scaleX = worldWidth / renderWidth
   const scaleY = worldHeight / renderHeight
@@ -240,7 +245,9 @@ export function computeRaftBaseline(rafts: Raft[], renderWidth: number, renderHe
       const wx = worldX + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'x')
       const wy = worldY + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'y')
       const membership = raftMembership(wx, wy, rafts, worldWidth, worldHeight)
-      result[py * renderWidth + px] = RAFT_OCEANIC_BASELINE + (RAFT_CONTINENTAL_BASELINE - RAFT_OCEANIC_BASELINE) * membership
+      // Oceanic floor deepens with its age; continental (raft) crust ignores it.
+      const oceanicBaseline = RAFT_OCEANIC_BASELINE - AGE_DEPTH_K * Math.sqrt(sampleOceanAge(oceanAge, wx, wy, worldWidth, worldHeight))
+      result[py * renderWidth + px] = oceanicBaseline + (RAFT_CONTINENTAL_BASELINE - oceanicBaseline) * membership
     }
   }
   return result

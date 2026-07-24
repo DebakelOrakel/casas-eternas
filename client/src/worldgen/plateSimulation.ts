@@ -12,6 +12,7 @@ import { hashSeedString, mulberry32 } from './rng'
 import type { PlateType } from './plateTypes'
 import { generateInitialRafts, advanceRafts, derivePlateTypes, accreteToNearestRaft, mergeOverlappingRafts, splitRaftAtRift, raftMembership } from './rafts'
 import type { Raft } from './rafts'
+import { createOceanAgeField, advectOceanAge, resetOceanAgeAt } from './oceanAge'
 import { assignContinentNames } from './continentNames'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from './terrainFeatures'
 import type { TerrainFeature } from './terrainFeatures'
@@ -193,6 +194,11 @@ const SPLIT_GAP = 70
 const CONT_RIFT_LOCK_EPOCHS = 20
 const CONT_RIFT_THRESHOLD_FACTOR = 0.55
 
+// Ocean-floor age (Phase 3, see oceanAge.ts): the field starts at a moderate
+// uniform age so the ocean isn't uniformly shallow at epoch 0, then evolves as
+// ridges reset it to 0 and advection ages crust away from them.
+const OCEAN_AGE_INIT = 40
+
 export interface PlateSimulation {
   width: number
   height: number
@@ -241,6 +247,10 @@ export interface PlateSimulation {
   latticeAccumulated: Float32Array
   latticeLockedEpochs: Int16Array
   latticeLastClassCode: Int8Array
+  // Coarse ocean-floor age field (oceanAge.ts) driving age-depth in the
+  // baseline — advected with plate motion each epoch, reset to 0 at divergent
+  // boundaries. Continental (raft-covered) points ignore it.
+  oceanAge: Float32Array
 }
 
 export function createPlateSimulation(seedString: string, plateCount: number, landFraction: number, clustering: number, cratonCount: number, width: number, height: number): PlateSimulation {
@@ -280,6 +290,7 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
     latticeAccumulated: new Float32Array(lattice.length),
     latticeLockedEpochs: new Int16Array(lattice.length),
     latticeLastClassCode: new Int8Array(lattice.length).fill(-1),
+    oceanAge: createOceanAgeField(OCEAN_AGE_INIT),
   }
 }
 
@@ -400,6 +411,8 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   // come later.
   advanceRafts(sim.rafts, sim.seeds, sim.motions, EPOCH_ANGLE_STEP, width, height)
   sim.types = derivePlateTypes(sim.seeds, sim.rafts, width, height)
+  // Advect the ocean-age field along with the plates that just moved (Phase 3).
+  sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, EPOCH_ANGLE_STEP, width, height)
   advanceTerrainFeatures(sim.features, sim.motions, EPOCH_ANGLE_STEP, width, height)
   for (const feature of sim.features) {
     feature.thickness *= THICKNESS_DECAY_PER_EPOCH
@@ -472,6 +485,13 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
       height,
     )
     const classification = classifyBoundary(sim.types[boundary.plateA], sim.ages[boundary.plateA], sim.types[boundary.plateB], sim.ages[boundary.plateB], convergence.motionClass)
+
+    // Fresh oceanic crust forms at a divergent boundary (a mid-ocean ridge or
+    // opening rift) — reset its floor age to 0 so age-depth reads it as young
+    // and shallow (Phase 3).
+    if (convergence.motionClass === 'divergent') {
+      resetOceanAgeAt(sim.oceanAge, boundary.x, boundary.y, width, height)
+    }
 
     const classCode = motionClassCode(convergence.motionClass)
     const index = boundary.latticeIndex
