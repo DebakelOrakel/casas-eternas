@@ -152,6 +152,16 @@
   line-height: 1.2;
 }
 
+/* Climate overlay toggle buttons: dimmed when their overlay is off, full when
+   on (the temp/wind icons also swap on/off; precipitation shows state via this
+   alone). */
+.worldgen-flat-screen .climate-toggle:not(.is-active) {
+  opacity: 0.35;
+}
+.worldgen-flat-screen .climate-toggle.is-active {
+  opacity: 1;
+}
+
 /* Min/max average-temperature readout, stacked beside the compute button. */
 .worldgen-flat-screen .climate-readout {
   display: flex;

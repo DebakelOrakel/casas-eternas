@@ -12,7 +12,8 @@ import type { SimEvent } from '../../worldgen/plateSimulation'
 import { eventCategory } from '../../worldgen/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { createOverlayToggleBar } from '../../ui/mapOverlay/OverlayToggleBar'
-import { temperatureColor } from '../../worldgen/climate/climateColors'
+import { temperatureColor, precipitationColor } from '../../worldgen/climate/climateColors'
+import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import './worldgen.css'
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
@@ -395,15 +396,18 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
       <label class="field field--icon-row">
         <span class="field-row">
-          <button type="button" class="icon-button" data-action="toggle-temperature" aria-label="Toggle temperature overlay">
+          <button type="button" class="icon-button climate-toggle" data-action="toggle-temperature" aria-label="Toggle temperature overlay">
             <img src="/icons/temp_off.png" alt="" />
           </button>
           <span class="climate-readout">
             <span>Min: <span data-value="temp-min">–</span>°C</span>
             <span>Max: <span data-value="temp-max">–</span>°C</span>
           </span>
-          <button type="button" class="icon-button" data-action="toggle-wind" aria-label="Toggle wind overlay">
+          <button type="button" class="icon-button climate-toggle" data-action="toggle-wind" aria-label="Toggle wind overlay">
             <img src="/icons/wind_off.png" alt="" />
+          </button>
+          <button type="button" class="icon-button climate-toggle" data-action="toggle-precipitation" aria-label="Toggle precipitation overlay">
+            <img src="/icons/ocean.png" alt="" />
           </button>
           <span class="erosion-status" data-value="climate-status"></span>
         </span>
@@ -433,6 +437,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const tempToggleIcon = tempToggleButton.querySelector<HTMLImageElement>('img')!
   const windToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-wind"]')!
   const windToggleIcon = windToggleButton.querySelector<HTMLImageElement>('img')!
+  const precipToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-precipitation"]')!
+  const precipToggleIcon = precipToggleButton.querySelector<HTMLImageElement>('img')!
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
@@ -484,6 +490,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const CLIMATE_PANEL_INDEX = 3
   let lastTemperature: Float32Array | null = null
   let lastWind: Float32Array | null = null
+  let lastPrecipitation: Float32Array | null = null
   let climateResX = 0
   let climateResY = 0
 
@@ -539,6 +546,26 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // Precipitation heatmap tint (climate), land only — ocean cells carry the
+  // OCEAN_PRECIP sentinel and are left as terrain. No-op until computed.
+  function paintPrecipitation(data: Uint8ClampedArray): void {
+    if (!lastPrecipitation) return
+    const alpha = 0.6
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
+        const mm = lastPrecipitation[gy * climateResX + gx]
+        if (mm === OCEAN_PRECIP) continue
+        const [r, g, b] = precipitationColor(mm)
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - alpha) + r * alpha
+        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
+        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
+      }
+    }
+  }
+
   // Prevailing-wind arrows (climate) — a coarse grid of arrows sampling the
   // wind field, drawn over the map. Calm belts (near-zero magnitude) draw no
   // arrow. No-op until climate is computed.
@@ -583,6 +610,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const overlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => mapView.texture.update(pixels))
   overlay.setLayers([
     { id: 'temperature', label: 'Temp', enabled: false, hidden: true, paintPixels: paintTemperature },
+    { id: 'precipitation', label: 'Niederschlag', enabled: false, hidden: true, paintPixels: paintPrecipitation },
     { id: 'boundaries', label: 'Grenzen', enabled: true, paintPixels: paintBoundaryMask },
     { id: 'arrows', label: 'Pfeile', enabled: false, paint: drawArrows },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
@@ -656,20 +684,26 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // (the toggle buttons flip these). The overlays only actually SHOW while on
   // the climate panel; off-panel they're hidden but the desired state (and the
   // data) is kept, so returning restores them. Defaults: temperature on, wind off.
-  const climateOverlaysOn: Record<string, boolean> = { temperature: true, wind: false }
-  const climateToggleIcons: Record<string, { icon: HTMLImageElement; on: string; off: string }> = {
-    temperature: { icon: tempToggleIcon, on: '/icons/temp_on.png', off: '/icons/temp_off.png' },
-    wind: { icon: windToggleIcon, on: '/icons/wind_on.png', off: '/icons/wind_off.png' },
+  const climateOverlaysOn: Record<string, boolean> = { temperature: true, wind: false, precipitation: false }
+  // Per overlay: its toggle button (for the active-state class) and, where a
+  // pair exists, the on/off icon to swap. Precipitation reuses one icon and
+  // shows state via the class alone.
+  const climateToggleIcons: Record<string, { button: HTMLButtonElement; icon: HTMLImageElement; on: string; off: string }> = {
+    temperature: { button: tempToggleButton, icon: tempToggleIcon, on: '/icons/temp_on.png', off: '/icons/temp_off.png' },
+    wind: { button: windToggleButton, icon: windToggleIcon, on: '/icons/wind_on.png', off: '/icons/wind_off.png' },
+    precipitation: { button: precipToggleButton, icon: precipToggleIcon, on: '/icons/ocean.png', off: '/icons/ocean.png' },
   }
 
   // Enables each climate layer only when on the climate panel AND wanted; the
-  // button icons always reflect the wanted state. One composite at the end.
+  // button icon + active-state class always reflect the wanted state. One
+  // composite at the end.
   function applyClimateOverlays(onClimatePanel: boolean): void {
     for (const id of Object.keys(climateOverlaysOn)) {
       const want = climateOverlaysOn[id]
       overlay.setLayerEnabled(id, onClimatePanel && want)
       const t = climateToggleIcons[id]
       t.icon.src = want ? t.on : t.off
+      t.button.classList.toggle('is-active', want)
     }
     overlay.composite()
   }
@@ -682,6 +716,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function handleClimateData(message: WorkerClimateDataMessage): void {
     lastTemperature = new Float32Array(message.temperature)
     lastWind = new Float32Array(message.wind)
+    lastPrecipitation = new Float32Array(message.precipitation)
     climateResX = message.resX
     climateResY = message.resY
     climateStatus.textContent = ''
@@ -706,6 +741,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function invalidateClimate(): void {
     lastTemperature = null
     lastWind = null
+    lastPrecipitation = null
     applyClimateOverlays(false)
     climateStatus.textContent = ''
     tempMinLabel.textContent = '–'
@@ -915,6 +951,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // on panel open, not here).
   tempToggleButton.addEventListener('click', () => toggleClimateOverlay('temperature'))
   windToggleButton.addEventListener('click', () => toggleClimateOverlay('wind'))
+  precipToggleButton.addEventListener('click', () => toggleClimateOverlay('precipitation'))
 
   // Dragging the band slider live-recomputes the climate (debounced) once a
   // world exists — the worker no-ops if there's no elevation yet. Recomputes

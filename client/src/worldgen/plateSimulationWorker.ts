@@ -9,6 +9,7 @@ import type { ErosionPhase } from './erosion'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './oceanAge'
 import { computeTemperature } from './climate/temperature'
 import { computeWind } from './climate/wind'
+import { computePrecipitation } from './climate/precipitation'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climate/climateField'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
@@ -231,6 +232,9 @@ export interface WorkerClimateDataMessage {
   // Prevailing wind, Float32 interleaved [u0,v0,…], resX*resY cells
   // (u = eastward, v = toward the bottom/"south"). See climate/wind.ts.
   wind: ArrayBuffer
+  // Annual precipitation mm/yr, Float32, resX*resY row-major; land only (ocean
+  // cells carry OCEAN_PRECIP). See climate/precipitation.ts.
+  precipitation: ArrayBuffer
 }
 
 let sim: PlateSimulation | null = null
@@ -502,13 +506,15 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     if (!sim || !lastRawElevations) return
     const temperature = computeTemperature(lastRawElevations, sim.width, sim.height, message.temperatureOffset)
     const wind = computeWind()
+    const precipitation = computePrecipitation(lastRawElevations, temperature, wind, sim.width, sim.height)
     const climateMessage: WorkerClimateDataMessage = {
       type: 'climateData',
       resX: CLIMATE_RES_X,
       resY: CLIMATE_RES_Y,
       temperature: temperature.buffer as ArrayBuffer,
       wind: wind.buffer as ArrayBuffer,
+      precipitation: precipitation.buffer as ArrayBuffer,
     }
-    self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind])
+    self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.precipitation])
   }
 }

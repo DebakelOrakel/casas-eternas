@@ -14,15 +14,25 @@ const TEMPERATURE_STOPS: { c: number; rgb: Rgb }[] = [
   { c: 40, rgb: [180, 40, 40] },
 ]
 
-export function temperatureColor(celsius: number): Rgb {
-  const stops = TEMPERATURE_STOPS
-  if (celsius <= stops[0].c) return stops[0].rgb
-  if (celsius >= stops[stops.length - 1].c) return stops[stops.length - 1].rgb
+// Precipitation → color ramp (mm/yr): arid tan → grassland yellow-green →
+// green → wet teal/blue. Stops in mm/yr.
+const PRECIPITATION_STOPS: { c: number; rgb: Rgb }[] = [
+  { c: 0, rgb: [205, 180, 130] },
+  { c: 250, rgb: [215, 205, 120] },
+  { c: 600, rgb: [150, 190, 90] },
+  { c: 1200, rgb: [70, 160, 80] },
+  { c: 2000, rgb: [40, 140, 130] },
+  { c: 3500, rgb: [40, 90, 180] },
+]
+
+function rampColor(stops: { c: number; rgb: Rgb }[], value: number): Rgb {
+  if (value <= stops[0].c) return stops[0].rgb
+  if (value >= stops[stops.length - 1].c) return stops[stops.length - 1].rgb
   for (let i = 1; i < stops.length; i++) {
-    if (celsius <= stops[i].c) {
+    if (value <= stops[i].c) {
       const a = stops[i - 1]
       const b = stops[i]
-      const t = (celsius - a.c) / (b.c - a.c)
+      const t = (value - a.c) / (b.c - a.c)
       return [
         Math.round(a.rgb[0] + (b.rgb[0] - a.rgb[0]) * t),
         Math.round(a.rgb[1] + (b.rgb[1] - a.rgb[1]) * t),
@@ -31,4 +41,12 @@ export function temperatureColor(celsius: number): Rgb {
     }
   }
   return stops[stops.length - 1].rgb
+}
+
+export function temperatureColor(celsius: number): Rgb {
+  return rampColor(TEMPERATURE_STOPS, celsius)
+}
+
+export function precipitationColor(mmPerYear: number): Rgb {
+  return rampColor(PRECIPITATION_STOPS, mmPerYear)
 }
