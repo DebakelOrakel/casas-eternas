@@ -59,6 +59,16 @@ export interface TerrainFeature {
   // to pull the two sides' deposits apart (45px within 40 epochs),
   // fragmenting one ridge into two separately-drifting mounds.
   movesWithPlate: number | 'both'
+  // Whether this feature rides on oceanic crust and should subside as it
+  // ages away from its boundary — island arcs, mid-ocean ridges, and
+  // trenches (all oceanic), as opposed to continental fold mountains and
+  // subduction-arc ranges, which persist. Set from the boundary character
+  // at creation (see plateSimulation.ts). Drives the extra age-depth decay
+  // that keeps drifted oceanic features from cluttering the ocean: real
+  // oceanic crust cools and sinks as it moves off the ridge, so an old,
+  // drifted mid-ocean-ridge/arc feature should fade, while a continental
+  // range stays put.
+  subsides: boolean
   // Epochs since this feature last received a deposit — reset to 0 in
   // plateSimulation.ts's stepEpoch whenever it's touched, incremented
   // every other epoch. Drives pruning: without it, every feature ever
@@ -118,6 +128,7 @@ export function findOrCreateFeatureIndex(
   tangentX: number,
   tangentY: number,
   kind: FeatureKind,
+  subsides: boolean,
   width: number,
   height: number,
 ): number {
@@ -149,7 +160,7 @@ export function findOrCreateFeatureIndex(
     }
   }
   const normalized = normalizeTangent(tangentX, tangentY)
-  features.push({ x, y, thickness: 0, tangentX: normalized.tangentX, tangentY: normalized.tangentY, kind, plateA, plateB, movesWithPlate, epochsSinceDeposit: 0 })
+  features.push({ x, y, thickness: 0, tangentX: normalized.tangentX, tangentY: normalized.tangentY, kind, subsides, plateA, plateB, movesWithPlate, epochsSinceDeposit: 0 })
   return features.length - 1
 }
 

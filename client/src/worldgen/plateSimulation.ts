@@ -89,6 +89,17 @@ const PLATE_COUNT_PRESSURE_CLAMP = 0.6
 // boundaries reliably saturated the elevation clamp into solid white
 // disks within well under a minute of running.
 const THICKNESS_DECAY_PER_EPOCH = 0.99
+// Extra per-epoch decay applied to an *oceanic* feature (see
+// TerrainFeature.subsides) once it goes idle — age-depth subsidence: oceanic
+// crust cools and sinks as it drifts off the ridge/arc that formed it, so a
+// drifted mid-ocean-ridge/island-arc/trench feature should fade rather than
+// linger as ocean clutter. Multiplies on top of THICKNESS_DECAY_PER_EPOCH, so
+// an idle oceanic feature decays at ~0.99*0.85/epoch and is invisible (and
+// then pruned by the existing thickness rule) within ~15-20 idle epochs,
+// while continental fold-mountain / subduction-arc ranges keep their slow
+// 0.99 decay and persist. Confirmed via the headless render harness to clear
+// the drift "corduroy" without touching the ridges themselves.
+const OCEANIC_SUBSIDENCE_DECAY_PER_EPOCH = 0.85
 // Bounds how long a terrain feature can accumulate in sim.features once
 // its boundary has gone inactive — without this, every feature ever
 // created (even ones long abandoned, decaying toward negligible
@@ -340,6 +351,13 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   advanceTerrainFeatures(sim.features, sim.motions, EPOCH_ANGLE_STEP, width, height)
   for (const feature of sim.features) {
     feature.thickness *= THICKNESS_DECAY_PER_EPOCH
+    // Age-depth subsidence for oceanic features once idle (no longer fed by
+    // their boundary, i.e. drifting off-ridge). Gated on epochsSinceDeposit
+    // > 0 so a still-active ridge/arc (refreshed every epoch) keeps full
+    // height — see OCEANIC_SUBSIDENCE_DECAY_PER_EPOCH.
+    if (feature.subsides && feature.epochsSinceDeposit > 0) {
+      feature.thickness *= OCEANIC_SUBSIDENCE_DECAY_PER_EPOCH
+    }
     feature.epochsSinceDeposit += 1
   }
 
@@ -434,7 +452,11 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
       // per side — a real collision range is one ridge straddling the
       // boundary, not two independent ones.
       const movesWithPlate = classification.upliftSide === 'both' ? 'both' : classification.upliftSide === 'a' ? boundary.plateA : boundary.plateB
-      addDeposit(findOrCreateFeatureIndex(sim.features, boundary.x, boundary.y, boundary.plateA, boundary.plateB, movesWithPlate, tangentX, tangentY, 'range', width, height), amount)
+      // Oceanic-crust ranges (island arcs, mid-ocean ridges) subside as they
+      // drift off their boundary; continental ones (fold mountains, subduction
+      // arcs) persist — see TerrainFeature.subsides.
+      const featureSubsides = classification.character === 'islandArc' || classification.character === 'midOceanRidge'
+      addDeposit(findOrCreateFeatureIndex(sim.features, boundary.x, boundary.y, boundary.plateA, boundary.plateB, movesWithPlate, tangentX, tangentY, 'range', featureSubsides, width, height), amount)
 
       // Paired trench on the subducting side of a subduction/island arc —
       // the side that is NOT the uplift side (continental crust never
@@ -450,7 +472,8 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
         const trenchX = (((boundary.x + offsetX * TRENCH_OFFSET) % width) + width) % width
         const trenchY = (((boundary.y + offsetY * TRENCH_OFFSET) % height) + height) % height
         addDeposit(
-          findOrCreateFeatureIndex(sim.features, trenchX, trenchY, boundary.plateA, boundary.plateB, subductingPlate, tangentX, tangentY, 'trench', width, height),
+          // Trenches are always oceanic (the subducting slab), so they subside.
+          findOrCreateFeatureIndex(sim.features, trenchX, trenchY, boundary.plateA, boundary.plateB, subductingPlate, tangentX, tangentY, 'trench', true, width, height),
           -Math.abs(amount) * TRENCH_DEPTH_FRACTION,
         )
       }

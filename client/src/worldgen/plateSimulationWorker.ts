@@ -370,7 +370,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
 // its onProgress-driven postMessage calls below actually reach the main
 // thread live instead of arriving in one burst after the whole ~10+
 // second pass finishes).
-async function runErodeRequest(rawElevations: Float32Array, width: number, height: number, warpSeed: number): Promise<void> {
+async function runErodeRequest(rawElevations: Float32Array, width: number, height: number): Promise<void> {
   // Throttled to once per whole-percent change rather than every
   // onProgress call (~500+ for the default params) — that's plenty of
   // granularity for a UI percentage readout without flooding postMessage.
@@ -379,7 +379,6 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
     rawElevations,
     width,
     height,
-    warpSeed,
     DEFAULT_EROSION_PASS_PARAMS,
     (phase, fraction) => {
       const percent = Math.round(fraction * 100)
@@ -478,7 +477,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       // upscaled low-res field, and erosion must run on the crisp full-res
       // elevation rather than a blurred preview.
       await renderAndPost(undefined, false, 1)
-      if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height, currentSim.warpSeed)
+      if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height)
     })().finally(() => {
       renderInFlight = false
     })

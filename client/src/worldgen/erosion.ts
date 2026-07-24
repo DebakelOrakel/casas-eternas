@@ -25,7 +25,7 @@ export const SEA_LEVEL = 0
 
 // Called at every progress-reporting checkpoint across this module's
 // long loops (fillDepressions' pop count, and one per outer iteration in
-// runStreamPowerIterations/runThermalErosion/runPeakWeathering) — always
+// runStreamPowerIterations/runThermalErosion) — always
 // awaits a real macrotask boundary (a zero-delay setTimeout), not just
 // every Nth call. This exists entirely for plateSimulationWorker.ts's
 // 'erode' handler: postMessage calls made during a long, uninterrupted
@@ -595,144 +595,7 @@ export async function runThermalErosion(elevations: Float32Array, isLand: Uint8A
   }
 }
 
-// Cheap integer hash + periodic (tiles exactly at cellsX/cellsY) value
-// noise, same technique as domainWarp.ts's own — but deliberately not
-// shared with it: domainWarp.ts's octaves are tuned for continent-scale
-// coastline roughness, while this needs a texture-scale frequency (tens
-// of cells across the map, not domainWarp.ts's 8/16/32) so multiple
-// ridges/grooves can appear within a single mountain feature's own
-// footprint (FEATURE_FALLOFF_RADIUS=160px in elevationField.ts) — a
-// different enough tuning concern that duplicating this ~15-line helper
-// reads clearer than parameterizing one shared function for both.
-function hashLatticePoint(ix: number, iy: number, seed: number): number {
-  let h = (ix * 374761393 + iy * 668265263 + seed * 2246822519) >>> 0
-  h = Math.imul(h ^ (h >>> 13), 1274126177)
-  h = (h ^ (h >>> 16)) >>> 0
-  return h / 4294967296 // [0, 1)
-}
-
-function smoothstep01(t: number): number {
-  return t * t * (3 - 2 * t)
-}
-
-function ridgeNoise01(x: number, y: number, width: number, height: number, seed: number, cellsX: number, cellsY: number): number {
-  const lx = (x / width) * cellsX
-  const ly = (y / height) * cellsY
-  const x0 = Math.floor(lx)
-  const y0 = Math.floor(ly)
-  const fx = lx - x0
-  const fy = ly - y0
-  const x0m = ((x0 % cellsX) + cellsX) % cellsX
-  const y0m = ((y0 % cellsY) + cellsY) % cellsY
-  const x1m = (x0m + 1) % cellsX
-  const y1m = (y0m + 1) % cellsY
-  const v00 = hashLatticePoint(x0m, y0m, seed)
-  const v10 = hashLatticePoint(x1m, y0m, seed)
-  const v01 = hashLatticePoint(x0m, y1m, seed)
-  const v11 = hashLatticePoint(x1m, y1m, seed)
-  const sx = smoothstep01(fx)
-  const sy = smoothstep01(fy)
-  const top = v00 + (v10 - v00) * sx
-  const bottom = v01 + (v11 - v01) * sx
-  return top + (bottom - top) * sy
-}
-
-export interface PeakWeatheringParams {
-  iterations: number
-  // Elevation at/below which nothing weathers.
-  thresholdElevation: number
-  // Elevation at/above which weathering reaches full base rate — a
-  // linear ramp between thresholdElevation and this, so there's no hard
-  // visible seam right at the threshold.
-  fullStrengthElevation: number
-  // Max fraction of excess-above-threshold removed per iteration, BEFORE
-  // noise modulation (see noiseMinFactor) — the noise is what matters
-  // for ridges, not this on its own.
-  baseRate: number
-  // Actual per-cell rate is baseRate * lerp(noiseMinFactor, 1, noise) —
-  // this floor is what keeps some strips of an otherwise near-uniform
-  // cap eroding much slower than their neighbors even at the identical
-  // elevation. That differential, not the elevation ramp alone, is what
-  // carves grooves into a cap instead of uniformly lowering the whole
-  // thing into a smaller, still-flat dome — the un-grooved strips
-  // between fast-eroding patches are what end up reading as ridges.
-  noiseMinFactor: number
-  noiseCellsX: number
-  noiseCellsY: number
-}
-
-// thresholdElevation/fullStrengthElevation bracket the "mountain"/"peak"
-// color bands (elevationColor.ts's own stops sit at 0.45 and 0.75) —
-// deliberately starting the ramp a little below the grey band itself so
-// there's no seam right at a color boundary.
-//
-// baseRate re-verified headless (same methodology as erodibilityK), not
-// guessed: applied every round for DEFAULT_EROSION_PASS_PARAMS.rounds x
-// this.iterations = 100 total compounded applications, so per-application
-// rate and total effect are very different numbers. An initial guess of
-// 0.05 compounds to (1-0.05)^100 ≈ 0.6% of excess-above-threshold
-// remaining even for the *slowest* (noiseMinFactor-floored) cells —
-// confirmed empirically: it collapsed the map's highest point from 0.815
-// to 0.65 and flattened the whole peak band toward thresholdElevation
-// regardless of noise modulation, exactly the uniform "rounding" this
-// was built to avoid, just via compounding rather than a smooth formula.
-// 0.005 keeps fast-modulation cells eroding clearly (peak-band
-// meanAbsDelta 0.0624 vs 0.0143 with peak weathering off entirely) while
-// leaving real elevation still standing (max drops only to 0.778, not
-// 0.65) — a starting point still worth checking visually and retuning
-// further by eye, like the rest of this file's visual-tuning constants.
-export const DEFAULT_PEAK_WEATHERING_PARAMS: PeakWeatheringParams = {
-  // DISABLED (2026-07-23, iterations 0 = no-op): peak weathering was built
-  // to carve ridge grooves into the otherwise-smooth tectonic caps so
-  // fluvial erosion had something to follow — a job the ridged-multifractal
-  // detail now added directly to the tectonic uplift field (ridgedNoise.ts)
-  // does earlier and more directly, so this became largely redundant.
-  // Turned to 0 rather than removed so it's trivially restorable if the
-  // caps turn out to want it after all — set back to 20. The rest of the
-  // params below stay at their tuned values for that case.
-  iterations: 0,
-  thresholdElevation: 0.55,
-  fullStrengthElevation: 0.75,
-  baseRate: 0.005,
-  noiseMinFactor: 0.15,
-  noiseCellsX: 96,
-  noiseCellsY: 48,
-}
-
-// Elevation-driven weathering, independent of both drainage area (stream-
-// power) and local slope (thermal erosion) — the piece that actually
-// reaches the near-flat peak caps neither of those two structurally
-// touch (see DEFAULT_THERMAL_EROSION_PARAMS' own comment on why: a
-// smoothstep-falloff summit is close to flat right at its own center by
-// construction, and a divide/peak's drainage area is always minimal).
-// Deliberately differential (see PeakWeatheringParams.noiseMinFactor)
-// rather than a flat per-cell rate, specifically so repeated rounds
-// carve grooves into a cap — and once fillDepressionsAndRouteFlow
-// re-derives the network from that grooved shape next round, those
-// grooves can start attracting real fluvial erosion of their own,
-// compounding into sharper ridge definition over successive rounds
-// rather than staying a fixed, one-off texture.
-export async function runPeakWeathering(elevations: Float32Array, isLand: Uint8Array, width: number, height: number, warpSeed: number, params: PeakWeatheringParams, onProgress?: (fraction: number) => void): Promise<void> {
-  for (let iteration = 0; iteration < params.iterations; iteration++) {
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const cell = y * width + x
-        if (!isLand[cell]) continue
-        const elevation = elevations[cell]
-        if (elevation <= params.thresholdElevation) continue
-        const rampT = Math.min(1, (elevation - params.thresholdElevation) / (params.fullStrengthElevation - params.thresholdElevation))
-        const excess = elevation - params.thresholdElevation
-        const noise = ridgeNoise01(x, y, width, height, warpSeed, params.noiseCellsX, params.noiseCellsY)
-        const modulation = params.noiseMinFactor + (1 - params.noiseMinFactor) * noise
-        elevations[cell] -= excess * params.baseRate * rampT * modulation
-      }
-    }
-    onProgress?.((iteration + 1) / params.iterations)
-    await maybeYield()
-  }
-}
-
-export type ErosionPhase = 'flooding' | 'accumulating' | 'streamPower' | 'thermal' | 'peakWeathering'
+export type ErosionPhase = 'flooding' | 'accumulating' | 'streamPower' | 'thermal'
 
 export interface ErosionPassParams {
   // How many times to redo the whole flooding -> accumulation ->
@@ -763,7 +626,6 @@ export interface ErosionPassParams {
   // work scales with rounds * streamPower.iterations.
   streamPower: StreamPowerParams
   thermal: ThermalErosionParams
-  peakWeathering: PeakWeatheringParams
 }
 
 // rounds=5 chosen to fold what manual testing showed needed ~5 repeated
@@ -783,7 +645,6 @@ export const DEFAULT_EROSION_PASS_PARAMS: ErosionPassParams = {
   upliftRate: 0.15,
   streamPower: DEFAULT_STREAM_POWER_PARAMS,
   thermal: DEFAULT_THERMAL_EROSION_PARAMS,
-  peakWeathering: DEFAULT_PEAK_WEATHERING_PARAMS,
 }
 
 // The one function callers actually need — chains flow-routing through
@@ -814,7 +675,6 @@ export async function runErosionPass(
   rawElevations: Float32Array,
   width: number,
   height: number,
-  warpSeed: number,
   params: ErosionPassParams = DEFAULT_EROSION_PASS_PARAMS,
   onProgress?: (phase: ErosionPhase, fraction: number) => void,
   // Awaited after every round, given a *copy* of that round's own
@@ -826,11 +686,11 @@ export async function runErosionPass(
   onRoundComplete?: (elevations: Float32Array, round: number) => void | Promise<void>,
 ): Promise<{ elevations: Float32Array; routing: FlowRouting; accumulation: Float32Array }> {
   const cellCount = width * height
-  // Copied rather than aliased — runPeakWeathering below now mutates
-  // `elevations` before the first routing pass even runs, and
-  // rawElevations may be a caller-retained array (the tectonics worker's
-  // own cached "last raw elevations") that shouldn't be silently
-  // reshaped as a side effect of eroding it once.
+  // Copied rather than aliased — the round loop mutates `elevations` in
+  // place, and rawElevations may be a caller-retained array (the tectonics
+  // worker's own cached "last raw elevations") that shouldn't be silently
+  // reshaped as a side effect of eroding it once. rawElevations is still
+  // read directly as the uplift envelope, so it must stay intact.
   let elevations = rawElevations.slice()
   let routing: FlowRouting | undefined
   let accumulation: Float32Array | undefined
@@ -847,9 +707,8 @@ export async function runErosionPass(
   // — also claims a proportionally bigger slice of the overall bar.
   const FLOODING_WEIGHT = 15
   const ACCUMULATING_WEIGHT = 5
-  const phaseOrder: ErosionPhase[] = ['peakWeathering', 'flooding', 'accumulating', 'streamPower', 'thermal']
+  const phaseOrder: ErosionPhase[] = ['flooding', 'accumulating', 'streamPower', 'thermal']
   const phaseWeight: Record<ErosionPhase, number> = {
-    peakWeathering: params.peakWeathering.iterations,
     flooding: FLOODING_WEIGHT,
     accumulating: ACCUMULATING_WEIGHT,
     streamPower: params.streamPower.iterations,
@@ -893,12 +752,6 @@ export async function runErosionPass(
     // already would if that round were a separate manual click.
     const isLand = new Uint8Array(cellCount)
     for (let i = 0; i < cellCount; i++) isLand[i] = elevations[i] > SEA_LEVEL ? 1 : 0
-
-    // Runs first, before this round's own routing — so whatever grooves
-    // it just carved into a peak cap are visible to *this* round's
-    // fillDepressionsAndRouteFlow, not just the next one (see
-    // runPeakWeathering's own comment).
-    await runPeakWeathering(elevations, isLand, width, height, warpSeed, params.peakWeathering, (fraction) => roundProgress('peakWeathering', fraction))
 
     routing = await fillDepressionsAndRouteFlow(elevations, width, height, SEA_LEVEL, (fraction) => roundProgress('flooding', fraction))
 

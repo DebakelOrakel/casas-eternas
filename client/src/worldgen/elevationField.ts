@@ -19,16 +19,51 @@ import { RIDGE_MEAN } from './ridgedNoise'
 // A trench (the paired subduction depression) is narrower still across its
 // axis than a range — deep and tight, the way a real trench reads against
 // its broad companion arc.
-const RANGE_ALONG_RADIUS = 220
-const RANGE_PERP_RADIUS = 85
-const TRENCH_ALONG_RADIUS = 180
-const TRENCH_PERP_RADIUS = 45
-// The largest distance any feature can influence in an arbitrary world
-// direction (its longest semi-axis) — the spatial bucket index must be at
-// least this wide/tall in each axis to keep the "any in-range feature is
-// in this or a neighbor bucket" guarantee, since a feature oriented
-// diagonally reaches this far along either world axis.
-const FEATURE_MAX_REACH = Math.max(RANGE_ALONG_RADIUS, RANGE_PERP_RADIUS, TRENCH_ALONG_RADIUS, TRENCH_PERP_RADIUS)
+// Perp radii calibrated to physical scale: at a ~1/4-Earth-area world
+// (~127.5 Mkm² over 2048x1024) one pixel is ~7.8 km, so an 85px half-width
+// range spanned ~1300 km — 2-4x wider than real orogens (Andes ~500-700 km,
+// Himalaya ~250-400 km) and read as broad massifs swallowing continent
+// interiors rather than narrow cordilleras. 28px ≈ 440 km full width lands
+// in the realistic band and, as a bonus, sharpens the crest (steeper across-
+// ridge falloff). Trench perp scaled down with it, keeping roughly its old
+// proportion to the range.
+//
+// Along radii must stay in proportion to the (now much smaller) perp radii,
+// NOT at their original large values: a feature is an oriented ellipse, and
+// a very long-but-thin one (the old 220x28 ≈ 8:1) sits tangent to the plate
+// boundary and extends its thin needle ~1700 km along that tangent into open
+// ocean, where — no fat neighbor left to blend with at that distance — each
+// needle shows as an isolated ray. On a curved boundary the adjacent needles
+// splay apart, producing a radial starburst fanning out of each plate. A
+// range still reads as long because it's a *chain* of these features along
+// the boundary (spaced MERGE_RADIUS=40 apart), not one long feature — so the
+// along radius only needs to be a few times that spacing for the chain to
+// blend continuously, keeping the per-feature ellipse a modest ~3-4:1 rather
+// than a needle.
+// Each terrain feature is rendered as a finite line SEGMENT (a short stretch
+// of its boundary curve) rather than an oriented ellipse: a "capsule" —
+// distance to the segment, then a perpendicular profile. This is the
+// boundary-curve (distance-to-polyline) model: consecutive features along one
+// boundary are short segments that abut/overlap into a continuous ridge, and
+// — crucially — a segment is FINITE, so beyond its ends it falls off as a
+// rounded cap instead of a long soft gradient. That's what lets ranges be
+// realistically narrow (perp ~30px ≈ 470 km) without the radial "starburst"
+// the old anisotropic ellipse produced: the ellipse's long soft along-axis
+// overshot past every boundary curve/Voronoi vertex as a thin needle into
+// open ocean (root cause confirmed via a headless render sweep, 2026-07-24 —
+// it survived removing trenches, keeping only active features, and aggressive
+// pruning, so it was the shape, not clutter); a capsule can't overshoot past
+// its segment ends. Half-length ~ the feature spacing (terrainFeatures'
+// MERGE_RADIUS) so consecutive segments chain continuously.
+const RANGE_PERP_RADIUS = 30
+const RANGE_SEGMENT_HALF_LENGTH = 35
+const TRENCH_PERP_RADIUS = 15
+const TRENCH_SEGMENT_HALF_LENGTH = 25
+// Farthest a feature can influence in any direction — its segment half-length
+// plus the perpendicular cap radius. The spatial bucket index must be at
+// least this wide/tall in each axis so any in-range feature lands in a point's
+// own bucket or a neighbor.
+const FEATURE_MAX_REACH = Math.max(RANGE_SEGMENT_HALF_LENGTH + RANGE_PERP_RADIUS, TRENCH_SEGMENT_HALF_LENGTH + TRENCH_PERP_RADIUS)
 // Converts accumulated crustal thickness into actual elevation — a
 // simple isostasy-style relation (thicker/more compressed crust sits
 // higher), not a real buoyancy simulation. Dropped from 0.06 to 0.02
@@ -237,38 +272,51 @@ export function computeElevation(
     for (let dx = -1; dx <= 1; dx++) {
       const bx = (((centerBx + dx) % bucketsX) + bucketsX) % bucketsX
       for (const feature of buckets[by * bucketsX + bx]) {
-        // Anisotropic ridge falloff: decompose the (wrapped) offset from
-        // the feature into components along its own boundary tangent and
-        // across it, then measure distance in units where 1.0 is the
-        // reach on each axis separately. Along-axis reach is long (ridges
-        // stay continuous end-to-end), across-axis short (a real crest,
-        // not a dome); a trench is tighter still across its axis. The
-        // decomposition is sign-agnostic — only the squared components
-        // matter — so the tangent's arbitrary orientation sign is
-        // irrelevant.
+        // Capsule falloff: distance to the feature's finite boundary segment
+        // (± half-length along its tangent), then a perpendicular profile.
+        // The tangent's arbitrary orientation sign doesn't matter — the
+        // segment is symmetric about the feature.
         const offX = wrappedDelta(wx, feature.x, width)
         const offY = wrappedDelta(wy, feature.y, height)
         const along = offX * feature.tangentX + offY * feature.tangentY
         const across = -offX * feature.tangentY + offY * feature.tangentX
-        const alongRadius = feature.kind === 'trench' ? TRENCH_ALONG_RADIUS : RANGE_ALONG_RADIUS
-        const perpRadius = feature.kind === 'trench' ? TRENCH_PERP_RADIUS : RANGE_PERP_RADIUS
-        const na = along / alongRadius
-        const np = across / perpRadius
-        const normalizedDistSq = na * na + np * np
-        if (normalizedDistSq >= 1) continue
-        const falloff = 1 - Math.sqrt(normalizedDistSq)
+        const isTrench = feature.kind === 'trench'
+        const halfLength = isTrench ? TRENCH_SEGMENT_HALF_LENGTH : RANGE_SEGMENT_HALF_LENGTH
+        const perpRadius = isTrench ? TRENCH_PERP_RADIUS : RANGE_PERP_RADIUS
+        // Within the segment (|along| <= halfLength) the nearest point is
+        // straight across, so distance is the perpendicular offset — a narrow
+        // crest. Past an end, the nearest point is that endpoint, so distance
+        // grows radially — a rounded cap that stops the feature overshooting
+        // into open ocean the way the old ellipse's long soft axis did.
+        const clampedAlong = along < -halfLength ? -halfLength : along > halfLength ? halfLength : along
+        const overshoot = along - clampedAlong
+        const distance = Math.sqrt(overshoot * overshoot + across * across)
+        if (distance >= perpRadius) continue
+        const falloff = 1 - distance / perpRadius
         // Smoothstep (3t² - 2t³) rather than a plain square — both have
         // zero slope right at the radius edge (no visible seam where a
         // feature's influence cuts off), but smoothstep also flattens out
-        // near the feature's own center instead of peaking sharply there,
-        // reading as a rounder, less blob-like bump overall.
+        // near the crest instead of peaking sharply, reading as a rounder
+        // ridge profile.
         const weight = falloff * falloff * (3 - 2 * falloff)
         upliftSum += feature.thickness * THICKNESS_TO_ELEVATION_SCALE * weight
         weightSum += weight
       }
     }
   }
-  const uplift = weightSum > 0 ? upliftSum / weightSum : 0
+  // Divide by max(1, weightSum), not weightSum itself. A plain weighted
+  // average (÷weightSum) makes the falloff weight cancel wherever a single
+  // feature is the only contributor — uplift collapses to that feature's
+  // full thickness everywhere inside its ellipse, giving a flat-topped
+  // patch with a hard edge instead of a bump that fades with distance.
+  // That was invisible while features were fat enough to overlap
+  // everywhere, but once they're narrow, an isolated (e.g. drifted) feature
+  // in open ocean shows as a sharp streak — the "starburst" artifact.
+  // Clamping the denominator at 1 keeps proper averaging where features
+  // densely overlap (weightSum >= 1, so no unbounded stacking along a
+  // range) while letting sparse/edge coverage (weightSum < 1) actually
+  // attenuate by the falloff, so isolated features fade out smoothly.
+  const uplift = weightSum > 0 ? upliftSum / Math.max(1, weightSum) : 0
   // Ridged-multifractal relief on top of the smooth uplift, modulated by
   // that uplift so only raised terrain gets rugged (RIDGE_RELATIVE_STRENGTH),
   // centered on RIDGE_MEAN so ridgelines add height and valleys cut down with
