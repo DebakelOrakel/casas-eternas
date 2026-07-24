@@ -1,4 +1,4 @@
-.worldgen-screen .panel {
+.worldgen-flat-screen .panel {
   position: fixed;
   bottom: 0;
   left: 0;
@@ -15,11 +15,11 @@
   font-family: sans-serif;
 }
 
-.worldgen-screen .panel[hidden] {
+.worldgen-flat-screen .panel[hidden] {
   display: none;
 }
 
-.worldgen-screen .nav-arrow {
+.worldgen-flat-screen .nav-arrow {
   position: fixed;
   bottom: 1.25rem;
   z-index: 1;
@@ -34,19 +34,19 @@
   transition: opacity 0.15s ease;
 }
 
-.worldgen-screen .nav-arrow:hover {
+.worldgen-flat-screen .nav-arrow:hover {
   opacity: 1;
 }
 
-.worldgen-screen .nav-arrow--back {
+.worldgen-flat-screen .nav-arrow--back {
   left: 1rem;
 }
 
-.worldgen-screen .nav-arrow--next {
+.worldgen-flat-screen .nav-arrow--next {
   right: 1rem;
 }
 
-.worldgen-screen .panel-title {
+.worldgen-flat-screen .panel-title {
   position: fixed;
   left: 4.75rem;
   bottom: 1.60rem;
@@ -60,30 +60,35 @@
   pointer-events: none;
 }
 
-.worldgen-screen .field {
+.worldgen-flat-screen .field {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
   font-size: 0.85rem;
-  width: 160px;
+  width: 120px;
 }
 
-.worldgen-screen .field-label {
+.worldgen-flat-screen .field-label {
   display: flex;
   justify-content: space-between;
 }
 
-.worldgen-screen .field-row {
+.worldgen-flat-screen .field-row {
   display: flex;
   gap: 0.4rem;
 }
 
-.worldgen-screen .seed-input {
+/* Seed field: no label, and a bit narrower than the slider fields. */
+.worldgen-flat-screen .field--seed {
+  width: 150px;
+}
+
+.worldgen-flat-screen .seed-input {
   flex: 1;
   min-width: 0;
 }
 
-.worldgen-screen .icon-button {
+.worldgen-flat-screen .icon-button {
   width: 32px;
   height: 32px;
   flex: none;
@@ -95,17 +100,17 @@
   transition: opacity 0.15s ease;
 }
 
-.worldgen-screen .icon-button:hover {
+.worldgen-flat-screen .icon-button:hover {
   opacity: 1;
 }
 
-.worldgen-screen .icon-button img {
+.worldgen-flat-screen .icon-button img {
   width: 100%;
   height: 100%;
   display: block;
 }
 
-.worldgen-screen .text-button {
+.worldgen-flat-screen .text-button {
   flex: none;
   align-self: center;
   border: 1px solid rgba(26, 26, 26, 0.4);
@@ -120,24 +125,25 @@
   transition: opacity 0.15s ease;
 }
 
-.worldgen-screen .text-button:hover {
+.worldgen-flat-screen .text-button:hover {
   opacity: 1;
 }
 
-.worldgen-screen .field--icon-row {
+.worldgen-flat-screen .field--icon-row {
   width: auto;
 }
 
-.worldgen-screen .field--icon-row .field-row {
+.worldgen-flat-screen .field--icon-row .field-row {
   align-items: center;
 }
 
-.worldgen-screen .plate-count-input,
-.worldgen-screen .continental-count-input {
+/* All range sliders fill their field's width (which is what sets their size)
+   rather than the browser's intrinsic range-input width. */
+.worldgen-flat-screen input[type="range"] {
   width: 100%;
 }
 
-.worldgen-screen .tectonics-stats {
+.worldgen-flat-screen .tectonics-stats {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
@@ -146,7 +152,7 @@
   line-height: 1.2;
 }
 
-.worldgen-screen .erosion-status {
+.worldgen-flat-screen .erosion-status {
   font-size: 0.75rem;
   white-space: nowrap;
   /* Reserves room for "100%" so the row doesn't reflow/jitter as the

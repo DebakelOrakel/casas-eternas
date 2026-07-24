@@ -36,7 +36,12 @@ export interface WorkerInitMessage {
   type: 'init'
   seed: string
   plateCount: number
-  continentalCount: number
+  // Raft model (see docs/decisions/continental-crust-rafts.md): starting land
+  // coverage and how tightly continents cluster (both 0..1), and how many
+  // separate continents (cratons) to seed.
+  landFraction: number
+  clustering: number
+  cratonCount: number
   width: number
   height: number
   epochIntervalMs: number
@@ -408,7 +413,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
   const message = event.data
   if (message.type === 'init') {
     stopTicking()
-    sim = createPlateSimulation(message.seed, message.plateCount, message.continentalCount, message.width, message.height)
+    sim = createPlateSimulation(message.seed, message.plateCount, message.landFraction, message.clustering, message.cratonCount, message.width, message.height)
     currentSeedString = message.seed
     pendingEvents = getInitialPlateEvents(sim)
     activePlateHighlights = []

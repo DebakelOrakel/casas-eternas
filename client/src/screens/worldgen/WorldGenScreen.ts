@@ -25,9 +25,21 @@ const TOTAL_PLATE_COUNT_MIN = 13
 const TOTAL_PLATE_COUNT_MAX = 31
 const TOTAL_PLATE_COUNT_DEFAULT = 21
 
-const CONTINENTAL_COUNT_MIN = 3
-const CONTINENTAL_COUNT_MAX = 13
-const CONTINENTAL_COUNT_DEFAULT = 5
+// Raft model: continental crust is no longer "how many plates are
+// continental" but how much of the surface starts as land (raft coverage,
+// which then evolves emergently) and how tightly those continents cluster.
+// Both are percentages in the UI, converted to 0..1 fractions for the sim.
+const LAND_FRACTION_MIN = 8
+const LAND_FRACTION_MAX = 45
+const LAND_FRACTION_DEFAULT = 25
+const CLUSTERING_MIN = 0
+const CLUSTERING_MAX = 100
+const CLUSTERING_DEFAULT = 50
+// How many separate continents (cratons) to seed. Direct control rather than
+// seed-derived — see rafts.ts / the decision doc follow-up.
+const CRATON_COUNT_MIN = 1
+const CRATON_COUNT_MAX = 8
+const CRATON_COUNT_DEFAULT = 4
 
 // How often, while running, the sim advances one epoch and re-renders —
 // paced deliberately (not "as fast as possible") so a run reads as
@@ -295,16 +307,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   const root = document.createElement('div')
-  root.className = 'worldgen-screen'
+  // Own root class (not the shared 'worldgen-screen') so this screen's CSS
+  // doesn't collide with the legacy sphere screen's worldgen.css, which uses
+  // the same selectors at equal specificity and was silently overriding these
+  // styles depending on bundle order.
+  root.className = 'worldgen-flat-screen'
   root.innerHTML = `
     <button type="button" class="nav-arrow nav-arrow--back" data-action="back" aria-label="Back">‹</button>
     <button type="button" class="nav-arrow nav-arrow--next" data-action="next" aria-label="Next">›</button>
     <span class="panel-title" data-value="panel-title"></span>
     <div class="panel" data-panel="0">
-      <label class="field">
-        <span class="field-label">Seed</span>
+      <label class="field field--seed">
         <span class="field-row">
-          <input type="text" class="seed-input" value="${initialSeed}" />
+          <input type="text" class="seed-input" placeholder="Seed" value="${initialSeed}" />
           <button type="button" class="icon-button" data-action="randomize-seed" aria-label="Randomize seed">
             <img src="/icons/dice.png" alt="" />
           </button>
@@ -322,14 +337,36 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         />
       </label>
       <label class="field">
-        <span class="field-label">Continental plates: <span data-value="continental-count-label">${CONTINENTAL_COUNT_DEFAULT}</span></span>
+        <span class="field-label">Land fraction: <span><span data-value="land-fraction-label">${LAND_FRACTION_DEFAULT}</span>%</span></span>
         <input
           type="range"
-          class="continental-count-input"
-          min="${CONTINENTAL_COUNT_MIN}"
-          max="${CONTINENTAL_COUNT_MAX}"
+          class="land-fraction-input"
+          min="${LAND_FRACTION_MIN}"
+          max="${LAND_FRACTION_MAX}"
           step="1"
-          value="${CONTINENTAL_COUNT_DEFAULT}"
+          value="${LAND_FRACTION_DEFAULT}"
+        />
+      </label>
+      <label class="field">
+        <span class="field-label">Continents: <span data-value="craton-count-label">${CRATON_COUNT_DEFAULT}</span></span>
+        <input
+          type="range"
+          class="craton-count-input"
+          min="${CRATON_COUNT_MIN}"
+          max="${CRATON_COUNT_MAX}"
+          step="1"
+          value="${CRATON_COUNT_DEFAULT}"
+        />
+      </label>
+      <label class="field">
+        <span class="field-label">Clustering: <span><span data-value="clustering-label">${CLUSTERING_DEFAULT}</span>%</span></span>
+        <input
+          type="range"
+          class="clustering-input"
+          min="${CLUSTERING_MIN}"
+          max="${CLUSTERING_MAX}"
+          step="1"
+          value="${CLUSTERING_DEFAULT}"
         />
       </label>
     </div>
@@ -371,8 +408,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
   const plateCountInput = root.querySelector<HTMLInputElement>('.plate-count-input')!
   const plateCountLabel = root.querySelector<HTMLElement>('[data-value="plate-count-label"]')!
-  const continentalCountInput = root.querySelector<HTMLInputElement>('.continental-count-input')!
-  const continentalCountLabel = root.querySelector<HTMLElement>('[data-value="continental-count-label"]')!
+  const landFractionInput = root.querySelector<HTMLInputElement>('.land-fraction-input')!
+  const landFractionLabel = root.querySelector<HTMLElement>('[data-value="land-fraction-label"]')!
+  const clusteringInput = root.querySelector<HTMLInputElement>('.clustering-input')!
+  const clusteringLabel = root.querySelector<HTMLElement>('[data-value="clustering-label"]')!
+  const cratonCountInput = root.querySelector<HTMLInputElement>('.craton-count-input')!
+  const cratonCountLabel = root.querySelector<HTMLElement>('[data-value="craton-count-label"]')!
   const randomizeButton = root.querySelector<HTMLButtonElement>('[data-action="randomize-seed"]')!
   const resetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-sim"]')!
   const toggleSimButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-sim"]')!
@@ -477,36 +518,21 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
     if (message.events) {
       for (const ev of message.events) {
-        if (ev.type === 'continental_created' && ev.name) {
+        // Raft model: crust type is no longer a plate property, so these are
+        // generic oceanic-CRUST events (new seafloor at a rift; oceanic crust
+        // consumed at subduction), not "plate" events. Continent-level events
+        // (continental_created/merged/split) are dropped here — real continent
+        // events arrive with the raft lifecycle in a later phase.
+        if (ev.type === 'oceanic_created') {
           ctx.notifications.show({
-            message: `New continental plate just dropped: ${ev.name}`,
-            icon: '/icons/continent.png',
-            durationMs: 15000,
-          })
-        } else if (ev.type === 'oceanic_created') {
-          ctx.notifications.show({
-            message: 'New oceanic plate just dropped',
+            message: 'New oceanic crust just dropped',
             icon: '/icons/ocean.png',
             durationMs: 15000,
           })
         } else if (ev.type === 'oceanic_subducted') {
           ctx.notifications.show({
-            message: 'Oceanic plate subducted',
+            message: 'Oceanic crust subducted',
             icon: '/icons/ocean.png',
-            durationMs: 15000,
-          })
-        } else if (ev.type === 'continental_merged') {
-          const text = ev.nameA && ev.nameB ? `Continental plates merged: ${ev.nameA} & ${ev.nameB}` : 'Continental plates merged'
-          ctx.notifications.show({
-            message: text,
-            icon: '/icons/continent.png',
-            durationMs: 15000,
-          })
-        } else if (ev.type === 'continental_split') {
-          const text = ev.name ? `Continental plate split: ${ev.name}` : 'Continental plate split'
-          ctx.notifications.show({
-            message: text,
-            icon: '/icons/continent.png',
             durationMs: 15000,
           })
         }
@@ -551,7 +577,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
-  const initSim = (seed: string, plateCount: number, continentalCount: number): void => {
+  const initSim = (seed: string, plateCount: number, landFractionPct: number, clusteringPct: number, cratonCount: number): void => {
     // Reset immediately (not only once the worker's first render arrives),
     // so a start clicked in that brief gap arms autoStopAtEpoch off epoch 0,
     // not the previous world's last epoch.
@@ -560,14 +586,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       type: 'init',
       seed,
       plateCount,
-      continentalCount,
+      landFraction: landFractionPct / 100,
+      clustering: clusteringPct / 100,
+      cratonCount,
       width: MAP_WIDTH,
       height: MAP_HEIGHT,
       epochIntervalMs: EPOCH_INTERVAL_MS,
-      renderOptions: { showBoundaries: SHOW_PLATE_BOUNDARIES, showArrows: SHOW_VELOCITY_ARROWS },
+      // Continent labels off for now: they're still per-plate, so a raft
+      // (continent) spanning several plates would show several labels. Proper
+      // per-raft labels come back in the toggleable-overlays step.
+      renderOptions: { showBoundaries: SHOW_PLATE_BOUNDARIES, showArrows: SHOW_VELOCITY_ARROWS, computeContinentLabels: false },
     })
   }
-  initSim(initialSeed, TOTAL_PLATE_COUNT_DEFAULT, CONTINENTAL_COUNT_DEFAULT)
+  initSim(initialSeed, TOTAL_PLATE_COUNT_DEFAULT, LAND_FRACTION_DEFAULT, CLUSTERING_DEFAULT, CRATON_COUNT_DEFAULT)
 
   const stopSim = (): void => {
     if (!simRunning) return
@@ -577,7 +608,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     toggleSimButton.setAttribute('aria-label', 'Run tectonics')
     seedInput.disabled = false
     plateCountInput.disabled = false
-    continentalCountInput.disabled = false
+    landFractionInput.disabled = false
+    clusteringInput.disabled = false
+    cratonCountInput.disabled = false
     randomizeButton.disabled = false
     updateErosionButtonsState()
   }
@@ -594,7 +627,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     toggleSimButton.setAttribute('aria-label', 'Stop tectonics')
     seedInput.disabled = true
     plateCountInput.disabled = true
-    continentalCountInput.disabled = true
+    landFractionInput.disabled = true
+    clusteringInput.disabled = true
+    cratonCountInput.disabled = true
     randomizeButton.disabled = true
     updateErosionButtonsState()
   }
@@ -628,21 +663,41 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // preview left showing the previous world's now-stale mesh.
     setDebug3DActive(false)
     ctx.notifications.clearAll()
-    initSim(seedInput.value, Number(plateCountInput.value), Number(continentalCountInput.value))
+    initSim(seedInput.value, Number(plateCountInput.value), Number(landFractionInput.value), Number(clusteringInput.value), Number(cratonCountInput.value))
+  }
+  // Debounced so dragging a slider (or typing a seed) doesn't fire a full
+  // world regen + render on every input event — the label updates live, the
+  // world rebuilds once the value settles. A single click (reset/randomize)
+  // regenerates immediately.
+  let regenerateTimer: ReturnType<typeof setTimeout> | undefined
+  const regenerateDebounced = (): void => {
+    if (regenerateTimer !== undefined) clearTimeout(regenerateTimer)
+    regenerateTimer = setTimeout(() => {
+      regenerateTimer = undefined
+      regenerate()
+    }, 150)
   }
   resetButton.addEventListener('click', regenerate)
-  seedInput.addEventListener('input', regenerate)
+  seedInput.addEventListener('input', regenerateDebounced)
   randomizeButton.addEventListener('click', () => {
     seedInput.value = randomSeed()
     regenerate()
   })
   plateCountInput.addEventListener('input', () => {
     plateCountLabel.textContent = plateCountInput.value
-    regenerate()
+    regenerateDebounced()
   })
-  continentalCountInput.addEventListener('input', () => {
-    continentalCountLabel.textContent = continentalCountInput.value
-    regenerate()
+  landFractionInput.addEventListener('input', () => {
+    landFractionLabel.textContent = landFractionInput.value
+    regenerateDebounced()
+  })
+  clusteringInput.addEventListener('input', () => {
+    clusteringLabel.textContent = clusteringInput.value
+    regenerateDebounced()
+  })
+  cratonCountInput.addEventListener('input', () => {
+    cratonCountLabel.textContent = cratonCountInput.value
+    regenerateDebounced()
   })
 
   // Same back/next convention as the sphere screen: back steps to the

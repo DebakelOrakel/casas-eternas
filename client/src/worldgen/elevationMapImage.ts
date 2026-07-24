@@ -1,7 +1,6 @@
 import { drawPlateArrows } from './plateArrows'
 import { elevationToColor } from './elevationColor'
-import { applyMountainRedistribution, computeBlendedBaselines } from './elevationField'
-import { computeAgedBaseElevations } from './plateBaseline'
+import { applyMountainRedistribution, computeRaftBaseline } from './elevationField'
 import { getVelocityAt } from './plateMotion'
 import type { PlateSimulation } from './plateSimulation'
 import { rasterizeVoronoiPlates } from './voronoiRaster'
@@ -263,8 +262,7 @@ export async function renderSimulationImage(sim: PlateSimulation, pool: Elevatio
     const scale = Math.max(1, Math.floor(options.elevationScale ?? 1))
     const renderWidth = Math.floor(width / scale)
     const renderHeight = Math.floor(height / scale)
-    const agedBaseElevations = computeAgedBaseElevations(sim.baseElevations, sim.types, sim.ages)
-    const blendedBaselines = computeBlendedBaselines(sim.seeds, agedBaseElevations, renderWidth, renderHeight, width, height, sim.warpSeed)
+    const blendedBaselines = computeRaftBaseline(sim.rafts, renderWidth, renderHeight, width, height, sim.warpSeed)
     const rendered = await pool.renderElevations(renderWidth, renderHeight, width, height, blendedBaselines, sim.features, sim.warpSeed)
     elevations = scale === 1 ? rendered : upscaleBilinearToroidal(rendered, renderWidth, renderHeight, width, height)
   }

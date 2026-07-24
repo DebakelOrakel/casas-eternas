@@ -9,8 +9,9 @@ import { classifyBoundaryMotion } from './plateVelocityDecomposition'
 import { generatePlateSeeds } from './plateSeeds'
 import type { PlateSeed } from './plateSeeds'
 import { hashSeedString, mulberry32 } from './rng'
-import { assignPlateTypes } from './plateTypes'
 import type { PlateType } from './plateTypes'
+import { generateInitialRafts, advanceRafts, derivePlateTypes } from './rafts'
+import type { Raft } from './rafts'
 import { assignContinentNames } from './continentNames'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from './terrainFeatures'
 import type { TerrainFeature } from './terrainFeatures'
@@ -165,6 +166,16 @@ export interface PlateSimulation {
   // rift/merge events change seeds.length over time.
   initialPlateCount: number
   seeds: PlateSeed[]
+  // Continental crust as persistent metaball rafts, decoupled from the
+  // plates (see rafts.ts / docs/decisions/continental-crust-rafts.md). Rafts
+  // are the source of truth for land now; `types`/`baseElevations` below are
+  // Phase-1 compatibility shims derived from them so the existing
+  // classification/event/rift-merge code keeps working.
+  rafts: Raft[]
+  // Derived from rafts each epoch (a plate is continental if a raft covers
+  // its seed) — a bridge for the crust-type-consuming code, not an
+  // independent state, and slated to be removed once those consumers read
+  // rafts directly.
   types: PlateType[]
   motions: PlateMotion[]
   ages: number[]
@@ -197,7 +208,7 @@ export interface PlateSimulation {
   latticeLastClassCode: Int8Array
 }
 
-export function createPlateSimulation(seedString: string, plateCount: number, continentalCount: number, width: number, height: number): PlateSimulation {
+export function createPlateSimulation(seedString: string, plateCount: number, landFraction: number, clustering: number, cratonCount: number, width: number, height: number): PlateSimulation {
   const random = mulberry32(hashSeedString(seedString))
   // A distinctly-salted hash of the same seed string, not hashSeedString(seedString)
   // itself — keeps this fully deterministic per world seed without reusing
@@ -205,7 +216,11 @@ export function createPlateSimulation(seedString: string, plateCount: number, co
   // different purpose.
   const warpSeed = hashSeedString(`${seedString}:coastalWarp`)
   const seeds = generatePlateSeeds(plateCount, width, height, random)
-  const types = assignPlateTypes(plateCount, continentalCount, random)
+  // Rafts are generated first — they're the source of truth for crust type;
+  // plate `types` are then derived from raft coverage (see rafts.ts). The
+  // per-plate baseElevations/continentNames stay as Phase-1 compat shims.
+  const rafts = generateInitialRafts(random, landFraction, clustering, cratonCount, width, height)
+  const types = derivePlateTypes(seeds, rafts, width, height)
   const motions = generatePlateMotions(seeds, width, height, random)
   const baseElevations = generateBaseElevations(types, random)
   const continentNames = assignContinentNames(types, random)
@@ -216,6 +231,7 @@ export function createPlateSimulation(seedString: string, plateCount: number, co
     height,
     initialPlateCount: plateCount,
     seeds,
+    rafts,
     types,
     motions,
     ages: seeds.map(() => 0),
@@ -258,18 +274,13 @@ export interface SimEvent {
   y?: number
 }
 
-export function getInitialPlateEvents(sim: PlateSimulation): SimEvent[] {
-  const events: SimEvent[] = []
-  for (let i = 0; i < sim.types.length; i++) {
-    if (sim.types[i] === 'continental') {
-      events.push({
-        type: 'continental_created',
-        name: sim.continentNames[i] || undefined,
-        plateIndex: i,
-      })
-    }
-  }
-  return events
+export function getInitialPlateEvents(_sim: PlateSimulation): SimEvent[] {
+  // Phase 1: initial continent notifications dropped (user's call). In the
+  // raft model a continent is a raft spanning several plates, so the old
+  // per-continental-plate "created" event no longer maps; real continent
+  // events (raft birth/split/merge) arrive with the raft lifecycle in a
+  // later phase.
+  return []
 }
 
 interface RiftEvent {
@@ -348,6 +359,12 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
     sim.seeds[i].y = rotated.y
     sim.ages[i] += 1
   }
+  // Rafts (continents) ride their host plates, and plate types are re-derived
+  // from the new raft positions so boundary classification below sees the
+  // current crust layout. Phase 1: rafts only drift; split/merge/accretion
+  // come later.
+  advanceRafts(sim.rafts, sim.seeds, sim.motions, EPOCH_ANGLE_STEP, width, height)
+  sim.types = derivePlateTypes(sim.seeds, sim.rafts, width, height)
   advanceTerrainFeatures(sim.features, sim.motions, EPOCH_ANGLE_STEP, width, height)
   for (const feature of sim.features) {
     feature.thickness *= THICKNESS_DECAY_PER_EPOCH

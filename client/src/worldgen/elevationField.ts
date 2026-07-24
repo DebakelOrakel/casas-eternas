@@ -3,6 +3,8 @@ import type { TerrainFeature } from './terrainFeatures'
 import { toroidalDistanceSq, wrappedDelta } from './toroidal'
 import { domainWarpDelta } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
+import { raftMembership } from './rafts'
+import type { Raft } from './rafts'
 
 // A terrain feature is no longer an isotropic blob but an oriented ridge
 // segment: its influence reaches far ALONG its own boundary tangent
@@ -212,6 +214,33 @@ export function computeBlendedBaselines(
         weightSum += weight
       }
       result[py * renderWidth + px] = baselineSum / weightSum
+    }
+  }
+  return result
+}
+
+// Baseline elevation field from raft membership (rafts.ts) — the Phase-1
+// replacement for the per-plate-type baseline: oceanic by default,
+// continental where rafts cover, with a soft coastal transition straight out
+// of the metaball membership band. Warped like the old baseline so coastlines
+// stay ragged, and sampled at the render grid (which may be coarser than the
+// world — same renderWidth/worldWidth scaling as computeBlendedBaselines had).
+// Ocean age-depth is a later phase; this is flat ocean for now.
+const RAFT_CONTINENTAL_BASELINE = 0.35
+const RAFT_OCEANIC_BASELINE = -0.45
+
+export function computeRaftBaseline(rafts: Raft[], renderWidth: number, renderHeight: number, worldWidth: number, worldHeight: number, warpSeed: number): Float32Array {
+  const result = new Float32Array(renderWidth * renderHeight)
+  const scaleX = worldWidth / renderWidth
+  const scaleY = worldHeight / renderHeight
+  for (let py = 0; py < renderHeight; py++) {
+    const worldY = py * scaleY
+    for (let px = 0; px < renderWidth; px++) {
+      const worldX = px * scaleX
+      const wx = worldX + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'x')
+      const wy = worldY + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'y')
+      const membership = raftMembership(wx, wy, rafts, worldWidth, worldHeight)
+      result[py * renderWidth + px] = RAFT_OCEANIC_BASELINE + (RAFT_CONTINENTAL_BASELINE - RAFT_OCEANIC_BASELINE) * membership
     }
   }
   return result

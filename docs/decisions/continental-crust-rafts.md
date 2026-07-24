@@ -129,10 +129,11 @@ once plates have no type:
   philosophy.
 - **Clustering** — dispersed vs. supercontinent, since real continents are
   grouped (supercontinent cycle), not randomly scattered.
-- **Craton count is derived** from seed + land fraction rather than a
-  knob — keeps the UI to two meaningful macro parameters and lets the seed
-  fill in specifics. (Add an explicit knob later only if direct control
-  over continent count is wanted.)
+- **Craton count** — a "Continents" slider (direct control over how many
+  separate continents to seed). Originally intended to be seed-derived to
+  keep the UI minimal, but promoted to an explicit knob during Phase 1
+  since direct control turned out to be wanted; land fraction is held by
+  calibration regardless of the count.
 
 Also at init, independent of rafts but the natural place for it:
 **skewed plate sizes** (weighted Voronoi / clustered seeds) instead of the
