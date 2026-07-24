@@ -8,6 +8,7 @@ import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './erosion'
 import type { ErosionPhase } from './erosion'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './oceanAge'
 import { computeTemperature } from './climate/temperature'
+import { computeWind } from './climate/wind'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climate/climateField'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
@@ -220,12 +221,16 @@ export interface WorkerExportDataMessage {
 }
 
 // The computed climate rasters (coarse grid — see climate/climateField.ts).
-// Grows per phase; temperature (°C, Float32, resX*resY row-major) first.
+// Grows per phase.
 export interface WorkerClimateDataMessage {
   type: 'climateData'
   resX: number
   resY: number
+  // Temperature in °C, Float32, resX*resY row-major.
   temperature: ArrayBuffer
+  // Prevailing wind, Float32 interleaved [u0,v0,…], resX*resY cells
+  // (u = eastward, v = toward the bottom/"south"). See climate/wind.ts.
+  wind: ArrayBuffer
 }
 
 let sim: PlateSimulation | null = null
@@ -496,12 +501,14 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     // fresh Float32Array per field, so its buffer can be transferred.
     if (!sim || !lastRawElevations) return
     const temperature = computeTemperature(lastRawElevations, sim.width, sim.height, message.temperatureOffset)
+    const wind = computeWind()
     const climateMessage: WorkerClimateDataMessage = {
       type: 'climateData',
       resX: CLIMATE_RES_X,
       resY: CLIMATE_RES_Y,
       temperature: temperature.buffer as ArrayBuffer,
+      wind: wind.buffer as ArrayBuffer,
     }
-    self.postMessage(climateMessage, [climateMessage.temperature])
+    self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind])
   }
 }

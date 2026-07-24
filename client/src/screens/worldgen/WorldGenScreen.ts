@@ -402,6 +402,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
             <span>Min: <span data-value="temp-min">–</span>°C</span>
             <span>Max: <span data-value="temp-max">–</span>°C</span>
           </span>
+          <button type="button" class="icon-button" data-action="toggle-wind" aria-label="Toggle wind overlay">
+            <img src="/icons/wind_off.png" alt="" />
+          </button>
           <span class="erosion-status" data-value="climate-status"></span>
         </span>
       </label>
@@ -428,6 +431,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const exportButton = root.querySelector<HTMLButtonElement>('[data-action="export"]')!
   const tempToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-temperature"]')!
   const tempToggleIcon = tempToggleButton.querySelector<HTMLImageElement>('img')!
+  const windToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-wind"]')!
+  const windToggleIcon = windToggleButton.querySelector<HTMLImageElement>('img')!
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
@@ -478,6 +483,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // invalidated by an upstream reset.
   const CLIMATE_PANEL_INDEX = 3
   let lastTemperature: Float32Array | null = null
+  let lastWind: Float32Array | null = null
   let climateResX = 0
   let climateResY = 0
 
@@ -533,30 +539,57 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // Prevailing-wind arrows (climate) — a coarse grid of arrows sampling the
+  // wind field, drawn over the map. Calm belts (near-zero magnitude) draw no
+  // arrow. No-op until climate is computed.
+  function drawWind(c: CanvasRenderingContext2D): void {
+    if (!lastWind) return
+    const cols = 40
+    const rows = 20
+    const scale = 42
+    c.strokeStyle = 'rgba(15, 45, 65, 0.8)'
+    c.lineWidth = 2
+    c.lineCap = 'round'
+    for (let r = 0; r < rows; r++) {
+      const py = ((r + 0.5) / rows) * MAP_HEIGHT
+      const gy = Math.min(climateResY - 1, Math.floor((py / MAP_HEIGHT) * climateResY))
+      for (let col = 0; col < cols; col++) {
+        const px = ((col + 0.5) / cols) * MAP_WIDTH
+        const gx = Math.min(climateResX - 1, Math.floor((px / MAP_WIDTH) * climateResX))
+        const u = lastWind[(gy * climateResX + gx) * 2]
+        const v = lastWind[(gy * climateResX + gx) * 2 + 1]
+        if (Math.hypot(u, v) < 0.05) continue
+        const ex = px + u * scale
+        const ey = py + v * scale
+        const angle = Math.atan2(v, u)
+        c.beginPath()
+        c.moveTo(px, py)
+        c.lineTo(ex, ey)
+        for (const wing of [-1, 1]) {
+          const wa = angle + Math.PI + wing * ((25 * Math.PI) / 180)
+          c.moveTo(ex, ey)
+          c.lineTo(ex + Math.cos(wa) * 8, ey + Math.sin(wa) * 8)
+        }
+        c.stroke()
+      }
+    }
+  }
+
   // Layer draw/list order: temperature first (a base tint), names last so labels
-  // stay on top (always readable); temperature + arrows default off. The
+  // stay on top (always readable); the climate layers (temperature, wind) are
+  // hidden from the overlay bar — toggled from the climate panel instead. The
   // 'events' layer has no static paint — it just gates the transient event
   // markers (added via overlay.addMarker).
   const overlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => mapView.texture.update(pixels))
   overlay.setLayers([
-    // Not a chip in the overlay bar (hidden) — the climate panel's own temp
-    // button toggles it, so it doesn't need a second control up top.
     { id: 'temperature', label: 'Temp', enabled: false, hidden: true, paintPixels: paintTemperature },
     { id: 'boundaries', label: 'Grenzen', enabled: true, paintPixels: paintBoundaryMask },
     { id: 'arrows', label: 'Pfeile', enabled: false, paint: drawArrows },
+    { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
     { id: 'events', label: 'Ereignisse', enabled: true },
     { id: 'names', label: 'Namen', enabled: true, paint: (c) => drawContinentLabels(c, lastRaftLabels) },
   ])
   createOverlayToggleBar(overlay, root)
-
-  // Syncs a toggle chip's visual state when a layer is enabled/disabled in code
-  // (the bar otherwise only updates on click).
-  function setOverlayChipActive(layerId: string, active: boolean): void {
-    const chip = root.querySelector<HTMLButtonElement>(`.overlay-toggle[data-layer="${layerId}"]`)
-    if (!chip) return
-    chip.classList.toggle('is-active', active)
-    chip.setAttribute('aria-pressed', String(active))
-  }
 
   // Draws one tectonic event's geologic marker, faded by `alpha`: a suture band
   // (collision), a dashed rift axis (breakup), or a ring (supercontinent /
@@ -619,15 +652,36 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // sync: the panel's temp toggle button (icon), the overlay-bar chip, and the
   // layer itself. The panel button and the overlay chip are two doors to the
   // same switch.
-  function setTemperatureOverlay(on: boolean): void {
-    overlay.setLayerEnabled('temperature', on)
-    setOverlayChipActive('temperature', on)
-    tempToggleIcon.src = on ? '/icons/temp_on.png' : '/icons/temp_off.png'
+  // Desired on/off of each climate overlay — persists across panel switches
+  // (the toggle buttons flip these). The overlays only actually SHOW while on
+  // the climate panel; off-panel they're hidden but the desired state (and the
+  // data) is kept, so returning restores them. Defaults: temperature on, wind off.
+  const climateOverlaysOn: Record<string, boolean> = { temperature: true, wind: false }
+  const climateToggleIcons: Record<string, { icon: HTMLImageElement; on: string; off: string }> = {
+    temperature: { icon: tempToggleIcon, on: '/icons/temp_on.png', off: '/icons/temp_off.png' },
+    wind: { icon: windToggleIcon, on: '/icons/wind_on.png', off: '/icons/wind_off.png' },
+  }
+
+  // Enables each climate layer only when on the climate panel AND wanted; the
+  // button icons always reflect the wanted state. One composite at the end.
+  function applyClimateOverlays(onClimatePanel: boolean): void {
+    for (const id of Object.keys(climateOverlaysOn)) {
+      const want = climateOverlaysOn[id]
+      overlay.setLayerEnabled(id, onClimatePanel && want)
+      const t = climateToggleIcons[id]
+      t.icon.src = want ? t.on : t.off
+    }
     overlay.composite()
+  }
+
+  function toggleClimateOverlay(id: string): void {
+    climateOverlaysOn[id] = !climateOverlaysOn[id]
+    applyClimateOverlays(true) // only reachable from the climate panel
   }
 
   function handleClimateData(message: WorkerClimateDataMessage): void {
     lastTemperature = new Float32Array(message.temperature)
+    lastWind = new Float32Array(message.wind)
     climateResX = message.resX
     climateResY = message.resY
     climateStatus.textContent = ''
@@ -641,10 +695,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
     tempMinLabel.textContent = String(Math.round(min))
     tempMaxLabel.textContent = String(Math.round(max))
-    // Auto-show the freshly-computed result — but only if still on the climate
-    // panel (the compute is async; the user may have navigated away, and
-    // climate overlays are hidden off-panel).
-    if (panelIndex === CLIMATE_PANEL_INDEX) setTemperatureOverlay(true)
+    // Show the freshly-computed result — but only if still on the climate panel
+    // (the compute is async; the user may have navigated away).
+    applyClimateOverlays(panelIndex === CLIMATE_PANEL_INDEX)
   }
 
   // Invalidate the (now stale) climate when an upstream step changes the
@@ -652,7 +705,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // panel open.
   function invalidateClimate(): void {
     lastTemperature = null
-    setTemperatureOverlay(false)
+    lastWind = null
+    applyClimateOverlays(false)
     climateStatus.textContent = ''
     tempMinLabel.textContent = '–'
     tempMaxLabel.textContent = '–'
@@ -857,9 +911,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   exportButton.addEventListener('click', () => postToWorker({ type: 'export' }))
 
-  // The temp button just toggles the overlay on/off (climate is computed on
-  // panel open, not here).
-  tempToggleButton.addEventListener('click', () => setTemperatureOverlay(!overlay.isLayerEnabled('temperature')))
+  // The temp/wind buttons just toggle their overlay on/off (climate is computed
+  // on panel open, not here).
+  tempToggleButton.addEventListener('click', () => toggleClimateOverlay('temperature'))
+  windToggleButton.addEventListener('click', () => toggleClimateOverlay('wind'))
 
   // Dragging the band slider live-recomputes the climate (debounced) once a
   // world exists — the worker no-ops if there's no elevation yet. Recomputes
@@ -941,9 +996,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // requestClimate self-guards a running sim / missing world.
     if (index === CLIMATE_PANEL_INDEX) {
       if (lastTemperature === null) requestClimate()
-      else setTemperatureOverlay(true)
+      else applyClimateOverlays(true)
     } else {
-      setTemperatureOverlay(false)
+      applyClimateOverlays(false)
     }
   }
   showPanel(0)
