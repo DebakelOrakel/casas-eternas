@@ -19,6 +19,37 @@
   display: none;
 }
 
+/* Load / save buttons, fixed top-left. */
+.worldgen-flat-screen .file-actions {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 1;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.worldgen-flat-screen .file-button {
+  width: 32px;
+  flex: none;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+
+.worldgen-flat-screen .file-button:hover {
+  opacity: 1;
+}
+
+.worldgen-flat-screen .file-button img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
 .worldgen-flat-screen .nav-arrow {
   position: fixed;
   bottom: 1.25rem;

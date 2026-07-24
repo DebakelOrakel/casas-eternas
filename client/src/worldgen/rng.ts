@@ -10,13 +10,25 @@ export function hashSeedString(seed: string): number {
   return hash >>> 0
 }
 
-export function mulberry32(seed: number): () => number {
+// A seeded PRNG that also exposes its current internal state, so a simulation
+// can be serialized mid-run and resumed bit-identically (see the save/load
+// world snapshot). Call it like a plain `() => number`; `state()` reads the
+// counter to store, and passing that counter back to mulberry32() resumes from
+// exactly there.
+export interface SeededRandom {
+  (): number
+  state(): number
+}
+
+export function mulberry32(seed: number): SeededRandom {
   let state = seed >>> 0
-  return () => {
+  const rng = (() => {
     state = (state + 0x6d2b79f5) >>> 0
     let t = state
     t = Math.imul(t ^ (t >>> 15), t | 1)
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
+  }) as SeededRandom
+  rng.state = () => state
+  return rng
 }

@@ -4,11 +4,12 @@ import { createHexMapCamera } from '../../camera/hexMapCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/mapConfig'
-import type { WorkerClimateDataMessage, WorkerErosionProgressMessage, WorkerExportDataMessage, WorkerInboundMessage, WorkerRenderedMessage } from '../../worldgen/plateSimulationWorker'
+import JSZip from 'jszip'
+import type { WorkerClimateDataMessage, WorkerErosionProgressMessage, WorkerExportDataMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/continentLabelRenderer'
 import type { PlateArrow } from '../../worldgen/elevationMapImage'
-import type { SimEvent } from '../../worldgen/plateSimulation'
+import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/plateSimulation'
 import { eventCategory } from '../../worldgen/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { createOverlayToggleBar } from '../../ui/mapOverlay/OverlayToggleBar'
@@ -101,6 +102,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const initialSeed = randomSeed()
   let lastLandFraction = 0
   let lastEpoch = 0
+  // How many erosion passes have been applied to the current world (status
+  // .erosionRun in a save). Reset when the topography is remade (regenerate /
+  // running tectonics / reset-erosion), bumped per erode, set on load.
+  let erosionRunCount = 0
   // Epoch the safety auto-stop will fire at. Re-armed to (current epoch +
   // MAX_TECTONICS_EPOCHS) every time the sim is started (see startSim), so
   // each run halts ~MAX_TECTONICS_EPOCHS after it began: start at 0 stops
@@ -299,6 +304,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // styles depending on bundle order.
   root.className = 'worldgen-flat-screen'
   root.innerHTML = `
+    <div class="file-actions">
+      <button type="button" class="file-button" data-action="load-world" aria-label="Load world">
+        <img src="/icons/folder.png" alt="" />
+      </button>
+      <button type="button" class="file-button" data-action="save-world" aria-label="Save world">
+        <img src="/icons/floppy.png" alt="" />
+      </button>
+    </div>
     <button type="button" class="nav-arrow nav-arrow--back" data-action="back" aria-label="Back">‹</button>
     <button type="button" class="nav-arrow nav-arrow--next" data-action="next" aria-label="Next">›</button>
     <span class="panel-title" data-value="panel-title"></span>
@@ -433,6 +446,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const erosionStatus = root.querySelector<HTMLElement>('[data-value="erosion-status"]')!
   const toggleDebug3DButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-debug-3d"]')!
   const exportButton = root.querySelector<HTMLButtonElement>('[data-action="export"]')!
+  const loadWorldButton = root.querySelector<HTMLButtonElement>('[data-action="load-world"]')!
+  const saveWorldButton = root.querySelector<HTMLButtonElement>('[data-action="save-world"]')!
   const tempToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-temperature"]')!
   const tempToggleIcon = tempToggleButton.querySelector<HTMLImageElement>('img')!
   const windToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-wind"]')!
@@ -607,7 +622,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // hidden from the overlay bar — toggled from the climate panel instead. The
   // 'events' layer has no static paint — it just gates the transient event
   // markers (added via overlay.addMarker).
-  const overlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => mapView.texture.update(pixels))
+  // Latest composited RGBA (retained for the save preview thumbnail).
+  let lastCompositePixels: Uint8Array | null = null
+  const overlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => {
+    lastCompositePixels = pixels
+    mapView.texture.update(pixels)
+  })
   overlay.setLayers([
     { id: 'temperature', label: 'Temp', enabled: false, hidden: true, paintPixels: paintTemperature },
     { id: 'precipitation', label: 'Niederschlag', enabled: false, hidden: true, paintPixels: paintPrecipitation },
@@ -798,11 +818,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     downloadBlob(new Blob([message.oceanAge.values], { type: 'application/octet-stream' }), `${baseName}.oceanage.f32`)
   }
 
-  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerExportDataMessage | WorkerClimateDataMessage>) => {
+  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerExportDataMessage | WorkerClimateDataMessage | WorkerWorldDataMessage>) => {
     const message = event.data
 
     if (message.type === 'erosionProgress') {
       erosionStatus.textContent = `${Math.round(message.fraction * 100)}%`
+      return
+    }
+
+    if (message.type === 'worldData') {
+      void handleWorldData(message)
       return
     }
 
@@ -908,8 +933,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // wherever this run begins (see MAX_TECTONICS_EPOCHS / the 'rendered'
     // handler), so restarting after a stop halts again 100 epochs later.
     autoStopAtEpoch = lastEpoch + MAX_TECTONICS_EPOCHS
-    // Running tectonics will change the topography → any computed climate is stale.
+    // Running tectonics will change the topography → any computed climate is
+    // stale, and prior erosion no longer applies.
     invalidateClimate()
+    erosionRunCount = 0
     postToWorker({ type: 'start' })
     toggleSimIcon.src = '/icons/tectonics_on.png'
     toggleSimButton.setAttribute('aria-label', 'Stop tectonics')
@@ -930,6 +957,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   erodeButton.addEventListener('click', () => {
     if (simRunning || erosionOpInFlight) return
     erosionOpInFlight = true
+    erosionRunCount += 1
     invalidateClimate()
     updateErosionButtonsState()
     postToWorker({ type: 'erode' })
@@ -938,6 +966,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   resetErosionButton.addEventListener('click', () => {
     if (simRunning || erosionOpInFlight) return
     erosionOpInFlight = true
+    erosionRunCount = 0
     invalidateClimate()
     updateErosionButtonsState()
     postToWorker({ type: 'resetErosion' })
@@ -946,6 +975,146 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   toggleDebug3DButton.addEventListener('click', () => setDebug3DActive(!debug3DActive))
 
   exportButton.addEventListener('click', () => postToWorker({ type: 'export' }))
+
+  // Load a previously-saved world (top-left folder button). Intended handler:
+  // open a file picker for a saved snapshot (the export format — world_*.json
+  // metadata + the .f32 elevation + .oceanage.f32 rasters), parse it, and
+  // --- Save / load a world as a .zip (world.yaml recipe+status + state.json
+  // sim snapshot + oceanAge.f32 + elevation.f32 + preview.png). See
+  // docs/decisions/... (the save/load design). The deterministic parts could be
+  // replayed from the recipe, but the snapshot is stored so a 300-epoch world
+  // loads instantly and survives generator changes.
+
+  // The world.yaml recipe (spec) + how far it was taken (status).
+  function buildWorldYaml(): string {
+    const name = seedInput.value || 'world'
+    return [
+      'apiVersion: casas-eternas/v1alpha1',
+      'kind: World',
+      'metadata:',
+      `  name: ${name}`,
+      'spec:',
+      `  seed: "${seedInput.value}"`,
+      `  platesTotal: ${Number(plateCountInput.value)}`,
+      `  landRatio: ${Number(landFractionInput.value)}`,
+      `  initialContinents: ${Number(cratonCountInput.value)}`,
+      `  clusterFactor: ${Number(clusteringInput.value)}`,
+      `  tempOffset: ${Number(tempBandInput.value)}`,
+      'status:',
+      `  tectonicsRun: ${lastEpoch}`,
+      `  erosionRun: ${erosionRunCount}`,
+      '',
+    ].join('\n')
+  }
+
+  // Refresh every slider's readout label from its input value — used after a
+  // load sets the inputs programmatically (which doesn't fire input events).
+  function syncSliderLabels(): void {
+    plateCountLabel.textContent = plateCountInput.value
+    landFractionLabel.textContent = landFractionInput.value
+    cratonCountLabel.textContent = cratonCountInput.value
+    clusteringLabel.textContent = clusteringInput.value
+    const t = Number(tempBandInput.value)
+    tempBandLabel.textContent = t > 0 ? `+${t}` : String(t)
+  }
+
+  // Flat, single-occurrence keys → a tiny regex parser, no YAML dependency.
+  function readYamlValue(text: string, key: string): string | undefined {
+    const match = text.match(new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm'))
+    return match ? match[1].replace(/^["']|["']$/g, '') : undefined
+  }
+
+  // Downscaled PNG of the current composited map, for the save's preview.png.
+  async function makePreviewBlob(): Promise<Blob | null> {
+    if (!lastCompositePixels) return null
+    const full = document.createElement('canvas')
+    full.width = MAP_WIDTH
+    full.height = MAP_HEIGHT
+    full.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(lastCompositePixels), MAP_WIDTH, MAP_HEIGHT), 0, 0)
+    const thumb = document.createElement('canvas')
+    thumb.width = 512
+    thumb.height = 256
+    thumb.getContext('2d')!.drawImage(full, 0, 0, thumb.width, thumb.height)
+    return new Promise((resolve) => thumb.toBlob((blob) => resolve(blob), 'image/png'))
+  }
+
+  // Save flow: worker replies with the sim snapshot + rasters → zip it up.
+  async function handleWorldData(message: WorkerWorldDataMessage): Promise<void> {
+    const zip = new JSZip()
+    zip.file('world.yaml', buildWorldYaml())
+    zip.file('state.json', JSON.stringify(message.snapshot))
+    zip.file('oceanAge.f32', message.oceanAge)
+    zip.file('elevation.f32', message.elevation)
+    const preview = await makePreviewBlob()
+    if (preview) zip.file('preview.png', preview)
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
+    const safeName = (seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')
+    downloadBlob(blob, `${safeName}.zip`)
+  }
+
+  saveWorldButton.addEventListener('click', () => {
+    if (simRunning) return
+    postToWorker({ type: 'serializeWorld' })
+  })
+
+  // Load flow: unzip → set the UI from the recipe/status → restore the sim in
+  // the worker (no replay) → the render it posts back displays the world.
+  async function loadWorldFromZip(file: File): Promise<void> {
+    let zip: JSZip
+    let yaml: string
+    let snapshot: PlateSimulationSnapshot
+    let oceanAge: ArrayBuffer
+    let elevation: ArrayBuffer
+    try {
+      zip = await JSZip.loadAsync(file)
+      const yamlFile = zip.file('world.yaml')
+      const stateFile = zip.file('state.json')
+      const oceanFile = zip.file('oceanAge.f32')
+      const elevFile = zip.file('elevation.f32')
+      if (!yamlFile || !stateFile || !oceanFile || !elevFile) throw new Error('missing files')
+      yaml = await yamlFile.async('string')
+      snapshot = JSON.parse(await stateFile.async('string'))
+      oceanAge = await oceanFile.async('arraybuffer')
+      elevation = await elevFile.async('arraybuffer')
+    } catch {
+      ctx.notifications.show({ message: 'Ungültige Welt-Datei', icon: '/icons/folder.png', durationMs: 6000 })
+      return
+    }
+
+    stopSim()
+    // Drop any pending debounced regenerate — it would fire an `init` after the
+    // restore and overwrite the loaded world.
+    if (regenerateTimer !== undefined) clearTimeout(regenerateTimer)
+    setDebug3DActive(false)
+    ctx.notifications.clearAll()
+    overlay.clearMarkers()
+    invalidateClimate()
+
+    const seed = readYamlValue(yaml, 'seed') ?? ''
+    seedInput.value = seed
+    plateCountInput.value = readYamlValue(yaml, 'platesTotal') ?? plateCountInput.value
+    landFractionInput.value = readYamlValue(yaml, 'landRatio') ?? landFractionInput.value
+    cratonCountInput.value = readYamlValue(yaml, 'initialContinents') ?? cratonCountInput.value
+    clusteringInput.value = readYamlValue(yaml, 'clusterFactor') ?? clusteringInput.value
+    tempBandInput.value = readYamlValue(yaml, 'tempOffset') ?? '0'
+    syncSliderLabels()
+    erosionRunCount = Number(readYamlValue(yaml, 'erosionRun') ?? 0)
+    // lastEpoch is set from the restore render's reported epoch (status
+    // .tectonicsRun == the snapshot's epoch), so no need to set it here.
+
+    postToWorker({ type: 'restoreWorld', seed, snapshot, oceanAge, elevation })
+  }
+
+  loadWorldButton.addEventListener('click', () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.zip'
+    input.addEventListener('change', () => {
+      const file = input.files?.[0]
+      if (file) void loadWorldFromZip(file)
+    })
+    input.click()
+  })
 
   // The temp/wind buttons just toggle their overlay on/off (climate is computed
   // on panel open, not here).
@@ -973,6 +1142,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     ctx.notifications.clearAll()
     overlay.clearMarkers()
     invalidateClimate()
+    erosionRunCount = 0
     initSim(seedInput.value, Number(plateCountInput.value), Number(landFractionInput.value), Number(clusteringInput.value), Number(cratonCountInput.value))
   }
   // Debounced so dragging a slider (or typing a seed) doesn't fire a full

@@ -8,6 +8,7 @@ import { classifyBoundaryMotion } from './plateVelocityDecomposition'
 import { generatePlateSeeds } from './plateSeeds'
 import type { PlateSeed } from './plateSeeds'
 import { hashSeedString, mulberry32 } from './rng'
+import type { SeededRandom } from './rng'
 import type { PlateType } from './plateTypes'
 import { generateInitialRafts, advanceRafts, derivePlateTypes, accreteToNearestRaft, mergeOverlappingRafts, splitRaftAtRift, splitDisconnectedRafts, raftMembership, pickUnusedRaftName } from './rafts'
 import type { Raft, RaftBlob, RaftSplitEvent } from './rafts'
@@ -246,7 +247,7 @@ export interface PlateSimulation {
   ages: number[]
   features: TerrainFeature[]
   epoch: number
-  random: () => number
+  random: SeededRandom
   // Seeds the coastline/contour domain-warp noise (domainWarp.ts) —
   // derived from the same world seed string but kept independent of
   // `random` above, since that generator's output sequence is order-
@@ -315,6 +316,72 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
     oceanAge: createOceanAgeField(OCEAN_AGE_INIT),
     supercontinentActive: rafts.length <= 1,
     continentalRiftCooldownUntil: 0,
+  }
+}
+
+// A JSON-serializable snapshot of a running simulation — everything needed to
+// reconstruct it and CONTINUE from exactly where it was (see the save/load
+// world feature). Deliberately excludes: `types` (derived from rafts), the
+// detection lattice (regenerated + its accumulators reset on restore — a rift
+// or merge just needs to re-lock over a few epochs, cheap), and `oceanAge`
+// (carried separately as a binary float raster). The RNG's internal state is
+// stored so continuation is bit-identical.
+export interface PlateSimulationSnapshot {
+  width: number
+  height: number
+  initialPlateCount: number
+  seeds: PlateSeed[]
+  motions: PlateMotion[]
+  ages: number[]
+  rafts: Raft[]
+  features: TerrainFeature[]
+  epoch: number
+  warpSeed: number
+  supercontinentActive: boolean
+  continentalRiftCooldownUntil: number
+  rngState: number
+}
+
+export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationSnapshot {
+  return {
+    width: sim.width,
+    height: sim.height,
+    initialPlateCount: sim.initialPlateCount,
+    seeds: sim.seeds,
+    motions: sim.motions,
+    ages: sim.ages,
+    rafts: sim.rafts,
+    features: sim.features,
+    epoch: sim.epoch,
+    warpSeed: sim.warpSeed,
+    supercontinentActive: sim.supercontinentActive,
+    continentalRiftCooldownUntil: sim.continentalRiftCooldownUntil,
+    rngState: sim.random.state(),
+  }
+}
+
+export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: Float32Array): PlateSimulation {
+  const lattice = generateDetectionLattice(snap.width, snap.height, DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y)
+  return {
+    width: snap.width,
+    height: snap.height,
+    initialPlateCount: snap.initialPlateCount,
+    seeds: snap.seeds,
+    rafts: snap.rafts,
+    types: derivePlateTypes(snap.seeds, snap.rafts, snap.width, snap.height),
+    motions: snap.motions,
+    ages: snap.ages,
+    features: snap.features,
+    epoch: snap.epoch,
+    random: mulberry32(snap.rngState),
+    warpSeed: snap.warpSeed,
+    lattice,
+    latticeAccumulated: new Float32Array(lattice.length),
+    latticeLockedEpochs: new Int16Array(lattice.length),
+    latticeLastClassCode: new Int8Array(lattice.length).fill(-1),
+    oceanAge,
+    supercontinentActive: snap.supercontinentActive,
+    continentalRiftCooldownUntil: snap.continentalRiftCooldownUntil,
   }
 }
 

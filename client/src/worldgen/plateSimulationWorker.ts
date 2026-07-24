@@ -1,5 +1,5 @@
-import { createPlateSimulation, getInitialPlateEvents, stepEpoch } from './plateSimulation'
-import type { PlateSimulation, SimEvent } from './plateSimulation'
+import { createPlateSimulation, getInitialPlateEvents, stepEpoch, serializePlateSimulation, deserializePlateSimulation } from './plateSimulation'
+import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from './plateSimulation'
 import { renderSimulationImage } from './elevationMapImage'
 import type { PlateArrow, RenderSimulationOptions } from './elevationMapImage'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
@@ -93,6 +93,21 @@ export interface WorkerComputeClimateMessage {
   // Global temperature offset in °C (greenhouse) — see computeTemperature.
   temperatureOffset: number
 }
+// Requests the full sim snapshot (+ ocean-age + current elevation) for saving —
+// replies with a WorkerWorldDataMessage.
+export interface WorkerSerializeWorldMessage {
+  type: 'serializeWorld'
+}
+// Restores a saved world: rebuild the sim from the snapshot + ocean-age raster,
+// inject the stored (post-erosion) elevation, and render it — no replay, no
+// re-erosion. `seed` is the original seed string (kept for a later export).
+export interface WorkerRestoreWorldMessage {
+  type: 'restoreWorld'
+  seed: string
+  snapshot: PlateSimulationSnapshot
+  oceanAge: ArrayBuffer
+  elevation: ArrayBuffer
+}
 export type WorkerInboundMessage =
   | WorkerInitMessage
   | WorkerStartMessage
@@ -101,6 +116,8 @@ export type WorkerInboundMessage =
   | WorkerResetErosionMessage
   | WorkerExportMessage
   | WorkerComputeClimateMessage
+  | WorkerSerializeWorldMessage
+  | WorkerRestoreWorldMessage
 
 export interface WorkerRenderedMessage {
   type: 'rendered'
@@ -237,6 +254,16 @@ export interface WorkerClimateDataMessage {
   precipitation: ArrayBuffer
 }
 
+// The data a world SAVE needs (see the save/load feature): the JSON-able sim
+// snapshot plus the two large float rasters carried as binary buffers. The
+// caller (WorldGenScreen) packages these into the zip alongside world.yaml.
+export interface WorkerWorldDataMessage {
+  type: 'worldData'
+  snapshot: PlateSimulationSnapshot
+  oceanAge: ArrayBuffer
+  elevation: ArrayBuffer
+}
+
 let sim: PlateSimulation | null = null
 let renderOptions: RenderSimulationOptions = {}
 let epochIntervalMs = 400
@@ -301,6 +328,14 @@ const renderPool = new ElevationRenderPool()
 // read.
 let renderInFlight = false
 
+// Bumped whenever the world is REPLACED (a fresh init, or a restored save).
+// A render captures it at the start; if a newer init/restore superseded the
+// world while its (async) render was in flight, that stale render is discarded
+// — otherwise a slow initial pool render can land AFTER a fast precomputed
+// restore render and overwrite the just-loaded world (only visible when
+// loading quickly, before the initial render finished).
+let worldGeneration = 0
+
 // precomputedElevations, when passed, is an erosion pass's output (see
 // the 'erode' handler below) — always explicitly set (even to undefined)
 // rather than left alone, since renderOptions is a shared, reused-every-
@@ -318,10 +353,14 @@ const PREVIEW_RENDER_SCALE = 2
 
 async function renderAndPost(precomputedElevations?: Float32Array, intermediate = false, elevationScale = 1): Promise<void> {
   if (!sim) return
+  const gen = worldGeneration
   renderOptions.precomputedElevations = precomputedElevations
   renderOptions.elevationScale = elevationScale
 
   const result = await renderSimulationImage(sim, renderPool, renderOptions)
+  // A newer init/restore replaced the world while this render was in flight —
+  // discard it before it clobbers lastRawElevations or posts a stale frame.
+  if (gen !== worldGeneration) return
   lastRawElevations = result.rawElevations
   if (precomputedElevations === undefined) preErosionElevations = result.rawElevations
   const eventsToSend = pendingEvents
@@ -396,6 +435,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
   const message = event.data
   if (message.type === 'init') {
     stopTicking()
+    worldGeneration += 1
     sim = createPlateSimulation(message.seed, message.plateCount, message.landFraction, message.clustering, message.cratonCount, message.width, message.height)
     currentSeedString = message.seed
     pendingEvents = getInitialPlateEvents(sim)
@@ -516,5 +556,31 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       precipitation: precipitation.buffer as ArrayBuffer,
     }
     self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.precipitation])
+  } else if (message.type === 'serializeWorld') {
+    if (!sim || !lastRawElevations) return
+    // .slice() so transferring these buffers doesn't neuter the live sim's
+    // ocean-age / the worker's retained elevation.
+    const oceanAge = sim.oceanAge.slice()
+    const elevation = lastRawElevations.slice()
+    const worldMessage: WorkerWorldDataMessage = {
+      type: 'worldData',
+      snapshot: serializePlateSimulation(sim),
+      oceanAge: oceanAge.buffer as ArrayBuffer,
+      elevation: elevation.buffer as ArrayBuffer,
+    }
+    self.postMessage(worldMessage, [worldMessage.oceanAge, worldMessage.elevation])
+  } else if (message.type === 'restoreWorld') {
+    stopTicking()
+    worldGeneration += 1
+    sim = deserializePlateSimulation(message.snapshot, new Float32Array(message.oceanAge))
+    currentSeedString = message.seed
+    pendingEvents = []
+    lastRawElevations = new Float32Array(message.elevation)
+    // No stored pre-erosion field — a reset-erosion after a load just reverts
+    // to the loaded state.
+    preErosionElevations = lastRawElevations
+    // Render the injected (stored, post-erosion) elevation directly — no pool
+    // query, no re-erosion.
+    renderAndPost(lastRawElevations, false, 1)
   }
 }
