@@ -1,13 +1,15 @@
 ---
 summary: Continental crust modeled as persistent "rafts" decoupled from the kinematic plates, so land/ocean ratio is emergent and conserved.
 date: 2026-07-24
-status: decided (design), not yet implemented
+status: decided; Phases 1–4 implemented
 ---
 
 # Continental Crust: Rafts Decoupled from Plates
 
-**Status:** Design decided, not yet built. Revises the "each plate is
-wholly continental or wholly oceanic" assumption from
+**Status:** Decided, and **Phases 1–4 are implemented** — see
+[Implementation status](#implementation-status-phases-14) at the end for
+what was built and where it deviates from the design below. Revises the
+"each plate is wholly continental or wholly oceanic" assumption from
 [plate-tectonics-initial-state.md](./plate-tectonics-initial-state.md) —
 that stays true for the *kinematics*, but crust type is no longer a plate
 property.
@@ -136,9 +138,13 @@ once plates have no type:
   calibration regardless of the count.
 
 Also at init, independent of rafts but the natural place for it:
-**skewed plate sizes** (weighted Voronoi / clustered seeds) instead of the
-current ~equal-area cells — real plates span a ~400× size range (Pacific
-↔ Juan de Fuca), so uniform cells read as unnaturally regular.
+**skewed plate sizes** instead of the old ~equal-area Poisson-disc cells,
+since real plates span a ~400× size range (Pacific ↔ Juan de Fuca). Built
+via non-uniform seed placement (per-seed skewed "reach"), not weighted
+Voronoi — and the bigger lever turned out to be plate *count*: dropping the
+range to 5–13 (default 8) measures out earthlike (largest plate ~15–18% of
+the surface, ~7 plates cover 90%, like Earth's majors). The full 400× ratio
+isn't reproduced, but that's Earth's microplate tail, not its major plates.
 
 ## Impact map
 
@@ -164,9 +170,49 @@ current ~equal-area cells — real plates span a ~400× size range (Pacific
 - Metaball threshold, blob radii, split/merge thresholds — visual tuning.
 - Ocean-age field resolution and the age-depth coefficient.
 
-## Follow-ups
+## Implementation status (Phases 1–4)
 
-- Architecture notes (how the raft subsystem wires into the render
-  pipeline) to be added to [world-gen.md](../design/world-gen.md) when
-  building.
+Built 2026-07-24, all verified via a headless render harness:
+
+- **Phase 1 — foundation.** `rafts.ts` (metaball blobs, `raftMembership`,
+  `generateInitialRafts` with land-fraction calibration + clustering, rigid
+  drift on a host plate). Baseline from raft membership
+  (`computeRaftBaseline`). Land is emergent + conserved — the 17%→7% loss
+  bug is gone. UI sliders re-cut (land fraction, clustering, continents).
+- **Phase 2 — lifecycle.** Accretion at subduction arcs (continents grow →
+  land rises over a run); merge on contact; breakup via a **continental
+  rift** (a divergent boundary *under* a continent, deliberately separate
+  from the plate rift, which fires at oceanic ridges). The supercontinent
+  cycle oscillates over a run.
+- **Phase 3 — ocean age.** `oceanAge.ts`: a coarse advected age field,
+  reset at ridges, driving `OCEANIC_BASELINE − k·√age`.
+- **Phase 4 — plate sizes.** Skewed non-uniform placement + the plate-count
+  range drop above.
+
+### Deviations from the design above
+
+- **Breakup is limited by fixed plate motions.** Plates that converged to
+  assemble a supercontinent keep converging, so divergence under it is
+  scarce; the continental-rift trigger is deliberately lenient to
+  compensate. Truly realistic breakup needs evolving Euler poles — a
+  deferred, bigger feature (the "drift doesn't evolve" gap flagged in
+  [plate-tectonics-initial-state.md](./plate-tectonics-initial-state.md)).
+- **Boundary classification still reads a DERIVED plate type**
+  (`derivePlateTypes` — continental if a raft covers the seed), a Phase-1
+  bridge, not the direct "is there a raft on side A/B?" the design
+  describes. Fine in practice; cleanup deferred.
+- **Raft motion is rigid** (whole raft on one host plate), not per-blob.
+- **Island-arc proto-continent birth** not built yet.
+- `plate.type` / `baseElevations` / per-plate `continentNames` still exist
+  as vestigial shims; continent labels are off pending per-raft labels.
+
+## Remaining
+
+- **Phase 5 cleanup:** remove the vestigial plate.type/baseElevations
+  machinery; move the export snapshot to rafts + ocean-age; add the raft
+  subsystem's architecture notes to [world-gen.md](../design/world-gen.md)
+  (still a TODO — world-gen.md does not yet describe rafts).
+- **Phase 2 optionals:** island-arc births; boundary classification from
+  direct raft geometry.
+- **Toggleable overlays** (plate lines / per-raft names / arrows).
 - Revisit later whether further design decisions warrant their own docs.

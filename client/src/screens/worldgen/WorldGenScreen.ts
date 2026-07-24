@@ -18,12 +18,14 @@ import './worldgen.css'
 const WORLD_WIDTH = 20
 const WORLD_HEIGHT = 10
 
-// Real Earth has ~15 major plates — the slider's own default (21) sits a
-// bit above that for more texture without being a different order of
-// magnitude.
-const TOTAL_PLATE_COUNT_MIN = 13
-const TOTAL_PLATE_COUNT_MAX = 31
-const TOTAL_PLATE_COUNT_DEFAULT = 21
+// Earth has ~7 major plates (covering ~90% of the surface) plus a tail of
+// minor/microplates. Measured against this generator's own Voronoi areas, a
+// default of 8 reproduces that major-plate structure closely: largest plate
+// ~15-18% of the surface (Pacific is ~20%), ~7 plates covering 90%. Fewer =
+// bigger, more dominant plates; more = a busier, more uniform patchwork.
+const TOTAL_PLATE_COUNT_MIN = 5
+const TOTAL_PLATE_COUNT_MAX = 13
+const TOTAL_PLATE_COUNT_DEFAULT = 8
 
 // Raft model: continental crust is no longer "how many plates are
 // continental" but how much of the surface starts as land (raft coverage,
