@@ -766,15 +766,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   })
   overlay.setLayers([
     { id: 'temperature', label: 'Temp', enabled: false, hidden: true, paintPixels: paintTemperature },
-    { id: 'precipitation', label: 'Niederschlag', enabled: false, hidden: true, paintPixels: paintPrecipitation },
-    { id: 'seasonality', label: 'Saisonalität', enabled: false, hidden: true, paintPixels: paintSeasonality },
-    { id: 'biomes', label: 'Biome', enabled: false, hidden: true, paintPixels: paintBiomes },
-    { id: 'boundaries', label: 'Grenzen', enabled: true, paintPixels: paintBoundaryMask },
-    { id: 'arrows', label: 'Pfeile', enabled: false, paint: drawArrows },
+    { id: 'precipitation', label: 'Precipitation', enabled: false, hidden: true, paintPixels: paintPrecipitation },
+    { id: 'seasonality', label: 'Seasonality', enabled: false, hidden: true, paintPixels: paintSeasonality },
+    { id: 'biomes', label: 'Biomes', enabled: false, hidden: true, paintPixels: paintBiomes },
+    { id: 'boundaries', label: 'Boundaries', enabled: true, paintPixels: paintBoundaryMask },
+    { id: 'arrows', label: 'Arrows', enabled: false, paint: drawArrows },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
-    { id: 'currents', label: 'Strömungen', enabled: false, hidden: true, paint: drawCurrents },
-    { id: 'events', label: 'Ereignisse', enabled: true },
-    { id: 'names', label: 'Namen', enabled: true, paint: (c) => drawContinentLabels(c, lastRaftLabels) },
+    { id: 'currents', label: 'Currents', enabled: false, hidden: true, paint: drawCurrents },
+    { id: 'events', label: 'Events', enabled: true },
+    { id: 'names', label: 'Names', enabled: true, paint: (c) => drawContinentLabels(c, lastRaftLabels) },
   ])
   createOverlayToggleBar(overlay, root)
 
@@ -807,11 +807,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function eventText(ev: SimEvent): { message: string; icon: string } {
     switch (ev.type) {
       case 'continent_collided':
-        return { message: ev.nameA && ev.nameB ? `${ev.nameA} und ${ev.nameB} sind kollidiert` : 'Zwei Kontinente sind kollidiert', icon: '/icons/continent.png' }
+        return { message: ev.nameA && ev.nameB ? `${ev.nameA} and ${ev.nameB} collided` : 'Two continents collided', icon: '/icons/continent.png' }
       case 'continent_broke_up':
-        return { message: ev.name ? `${ev.name} bricht auseinander` : 'Ein Kontinent bricht auseinander', icon: '/icons/continent.png' }
+        return { message: ev.name ? `${ev.name} is breaking apart` : 'A continent is breaking apart', icon: '/icons/continent.png' }
       case 'supercontinent_formed':
-        return { message: ev.name ? `Superkontinent ${ev.name} gebildet` : 'Ein Superkontinent hat sich gebildet', icon: '/icons/crown.png' }
+        return { message: ev.name ? `Supercontinent ${ev.name} formed` : 'A supercontinent has formed', icon: '/icons/crown.png' }
       default:
         return { message: '', icon: '/icons/ocean.png' }
     }
@@ -1283,7 +1283,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       oceanAge = await oceanFile.async('arraybuffer')
       elevation = await elevFile.async('arraybuffer')
     } catch {
-      ctx.notifications.show({ message: 'Ungültige Welt-Datei', icon: '/icons/folder.png', durationMs: 6000 })
+      ctx.notifications.show({ message: 'Invalid world file', icon: '/icons/folder.png', durationMs: 6000 })
       return
     }
 
