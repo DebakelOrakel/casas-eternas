@@ -1,66 +1,88 @@
 import type { PlateSeed } from './plateSeeds'
-import { wrappedDelta } from './toroidal'
+import { rotateAroundCenter, wrappedDelta } from './toroidal'
 
-// Flat-torus analog of a real tectonic plate's Euler-pole rotation: each
-// plate rotates about its own independent center point at its own
-// angular speed, rather than having a separate "drift vector" plus a
-// separate "self-spin" — one rotation naturally covers both ends of that
-// spectrum depending on how far the center sits from the plate itself
-// (far => mostly drifting in a near-straight line locally, near/inside
-// => mostly spinning in place), the same way a real Euler pole does on a
-// sphere. Rotating every plate about one *shared* center (e.g. the map's
-// center) was considered and rejected: it only produces concentric shear
-// bands (everything co-rotating around one axis), not the independently-
-// varying convergent/divergent/transform motion real plate boundaries
-// need — see the design discussion this followed from.
+// Flat-torus analog of a real tectonic plate's Euler-pole rotation, stored in a
+// RIGID-BODY form: a drift (translation) plus a spin (rotation about the plate's
+// own centroid). This is equivalent to a single Euler pole — a rotation about an
+// offset center decomposes exactly into rotation-about-centroid + a constant
+// drift — but it's the form the future mantle-field coupling needs (a net flow
+// under a plate fits cleanly to drift+spin, whereas migrating a single pole does
+// not). See docs/decisions/evolving-euler-poles.md. For now the motion is still
+// generated once and fixed for the plate's life; the field-driven update comes in
+// Phase M2. Rotating about a *shared* center was considered and rejected (only
+// concentric shear, not independent convergent/divergent/transform boundaries).
 export interface PlateMotion {
-  centerX: number
-  centerY: number
-  // Signed — direction (sign) and speed (magnitude) of rotation about
-  // (centerX, centerY). Chosen so that the resulting linear speed at the
-  // plate's own seed lands in a visually reasonable range (see
-  // generatePlateMotions), not from any physically-meaningful unit yet.
-  angularSpeed: number
+  // Translation per unit spin-angle (the same abstract time unit angularSpeed
+  // used) — the velocity a point AT the centroid has.
+  driftX: number
+  driftY: number
+  // Signed angular speed about (centroidX, centroidY): direction (sign) + rate.
+  spin: number
+  // The plate's reference point the spin turns about (its seed at generation).
+  // Fixed — velocity is invariant to this choice since drift compensates.
+  centroidX: number
+  centroidY: number
 }
 
-// How far a plate's own rotation center is placed from its seed, as a
-// multiple of the typical spacing between seeds — keeps the center
-// "reasonably near" its own plate, which is what keeps the flat-map
-// rotation well-behaved (see toroidal.ts's wrapped-delta approach this
-// relies on): a torus doesn't admit arbitrary rotations as *global*
-// isometries, but rotating one bounded plate's neighborhood around a
-// nearby local center, using wrapped deltas, is perfectly well-posed.
+// How far a plate's own rotation center is placed from its seed, as a multiple
+// of the typical spacing between seeds (see the pre-refactor note: keeps the
+// implied rotation well-behaved on the torus via wrapped deltas).
 const ROTATION_RADIUS_MIN_FACTOR = 0.5
 const ROTATION_RADIUS_MAX_FACTOR = 2.5
 
-// Target linear speed (pixels) at the plate's own seed — this is what's
-// actually tuned for a reasonable-looking arrow; angularSpeed is then
-// derived to reproduce it at whatever radius that plate ended up with
-// (angularSpeed = speed / radius), rather than picking angularSpeed
-// directly and letting arrow length vary wildly with radius.
+// Target linear speed (pixels) at the plate's own seed — tuned for a
+// reasonable-looking arrow; spin is derived to reproduce it at whatever radius
+// the plate ended up with.
 const LINEAR_SPEED_MIN_PX = 30
 const LINEAR_SPEED_MAX_PX = 90
 
 export function generatePlateMotions(seeds: PlateSeed[], width: number, height: number, random: () => number): PlateMotion[] {
   const typicalSpacing = Math.sqrt((width * height) / seeds.length)
   return seeds.map((seed) => {
+    // Same draw as before (an offset Euler center + a signed angular speed),
+    // then decomposed into the equivalent drift+spin about the seed. Keeps the
+    // motion distribution identical to the pre-refactor generator.
     const radius = (ROTATION_RADIUS_MIN_FACTOR + random() * (ROTATION_RADIUS_MAX_FACTOR - ROTATION_RADIUS_MIN_FACTOR)) * typicalSpacing
     const angle = random() * Math.PI * 2
     const centerX = seed.x + Math.cos(angle) * radius
     const centerY = seed.y + Math.sin(angle) * radius
     const targetSpeed = LINEAR_SPEED_MIN_PX + random() * (LINEAR_SPEED_MAX_PX - LINEAR_SPEED_MIN_PX)
     const direction = random() < 0.5 ? 1 : -1
-    const angularSpeed = (direction * targetSpeed) / radius
-    return { centerX, centerY, angularSpeed }
+    const spin = (direction * targetSpeed) / radius
+    // Velocity of the centroid (= seed) under rotation about the offset center:
+    // ω · ẑ × (centroid − center). ẑ × (rx, ry) = (−ry, rx).
+    const rx = wrappedDelta(seed.x, centerX, width)
+    const ry = wrappedDelta(seed.y, centerY, height)
+    return { driftX: -ry * spin, driftY: rx * spin, spin, centroidX: seed.x, centroidY: seed.y }
   })
 }
 
-// Instantaneous linear velocity at `point` given a rigid rotation about
-// (centerX, centerY) — the flat-plane version of the sphere's ω × r:
-// r is the (wrapped) offset from the rotation center to the point,
-// velocity is r rotated 90° and scaled by angular speed.
+// Instantaneous linear velocity at `point`: drift + spin · (ẑ × r), where r is
+// the wrapped offset from the centroid to the point. Equivalent to the old
+// ω × r about an offset Euler center (drift folds in the center offset).
 export function getVelocityAt(point: PlateSeed, motion: PlateMotion, width: number, height: number): { vx: number; vy: number } {
-  const rx = wrappedDelta(point.x, motion.centerX, width)
-  const ry = wrappedDelta(point.y, motion.centerY, height)
-  return { vx: -ry * motion.angularSpeed, vy: rx * motion.angularSpeed }
+  const rx = wrappedDelta(point.x, motion.centroidX, width)
+  const ry = wrappedDelta(point.y, motion.centroidY, height)
+  return { vx: motion.driftX - ry * motion.spin, vy: motion.driftY + rx * motion.spin }
+}
+
+// Advances a point by one finite motion step: rotate about the centroid by
+// `spin · step`, then translate by `drift · step` (wrapped). Replaces the old
+// pure rotateAroundCenter advection — a rigid transform (rotation + translation),
+// the drift+spin form of the same per-epoch move.
+export function advancePointByMotion(x: number, y: number, motion: PlateMotion, step: number, width: number, height: number): { x: number; y: number } {
+  const rotated = rotateAroundCenter(x, y, motion.centroidX, motion.centroidY, motion.spin * step, width, height)
+  return {
+    x: (((rotated.x + motion.driftX * step) % width) + width) % width,
+    y: (((rotated.y + motion.driftY * step) % height) + height) % height,
+  }
+}
+
+// The inverse of advancePointByMotion — used for ocean-age's backward
+// semi-Lagrangian step (where does the material now here come FROM). Undo the
+// translation first, then the rotation: p = R(−θ)(p' − drift·step).
+export function reversePointByMotion(x: number, y: number, motion: PlateMotion, step: number, width: number, height: number): { x: number; y: number } {
+  const untranslatedX = x - motion.driftX * step
+  const untranslatedY = y - motion.driftY * step
+  return rotateAroundCenter(untranslatedX, untranslatedY, motion.centroidX, motion.centroidY, -motion.spin * step, width, height)
 }

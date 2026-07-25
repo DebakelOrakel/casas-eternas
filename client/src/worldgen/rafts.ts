@@ -1,7 +1,7 @@
 import type { PlateSeed } from './plateSeeds'
-import type { PlateMotion } from './plateMotion'
+import { advancePointByMotion, type PlateMotion } from './plateMotion'
 import type { PlateType } from './plateTypes'
-import { rotateAroundCenter, toroidalDistanceSq, wrappedDelta } from './toroidal'
+import { toroidalDistanceSq, wrappedDelta } from './toroidal'
 import { CONTINENT_NAME_POOL } from './continentNames'
 
 // Continental crust modeled as persistent "rafts" that ride on the
@@ -131,7 +131,7 @@ export function advanceRafts(rafts: Raft[], seeds: PlateSeed[], motions: PlateMo
     const host = nearestPlateIndex(raft.blobs[0].x, raft.blobs[0].y, seeds, width, height)
     const motion = motions[host]
     for (const blob of raft.blobs) {
-      const rotated = rotateAroundCenter(blob.x, blob.y, motion.centerX, motion.centerY, motion.angularSpeed * angleStep, width, height)
+      const rotated = advancePointByMotion(blob.x, blob.y, motion, angleStep, width, height)
       blob.x = rotated.x
       blob.y = rotated.y
     }

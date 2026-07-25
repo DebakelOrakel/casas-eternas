@@ -1,6 +1,6 @@
 import type { PlateSeed } from './plateSeeds'
-import type { PlateMotion } from './plateMotion'
-import { rotateAroundCenter, toroidalDistanceSq } from './toroidal'
+import { reversePointByMotion, type PlateMotion } from './plateMotion'
+import { toroidalDistanceSq } from './toroidal'
 
 // Ocean-floor age as a coarse full-surface field (Phase 3, see
 // docs/decisions/continental-crust-rafts.md). Oceanic crust deepens as it ages
@@ -71,7 +71,7 @@ export function advectOceanAge(
         }
       }
       const motion = motions[nearest]
-      const prev = rotateAroundCenter(wx, wy, motion.centerX, motion.centerY, -motion.angularSpeed * angleStep, worldWidth, worldHeight)
+      const prev = reversePointByMotion(wx, wy, motion, angleStep, worldWidth, worldHeight)
       next[cy * OCEAN_AGE_RES_X + cx] = sampleOceanAge(age, prev.x, prev.y, worldWidth, worldHeight) + 1
     }
   }

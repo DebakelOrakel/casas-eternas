@@ -33,7 +33,8 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
         <li>Watercolour relief rendering, scene-space vector rivers, toggleable overlays</li>
         <li class="backlog">To do: Tectonic rift lakes (Baikal-type) — the big dramatic lakes</li>
         <li class="backlog">To do: Sharper valleys via Braun–Willett erosion (implicit, O(n))</li>
-        <li class="backlog">To do: Evolving Euler poles → realistic supercontinent breakup</li>
+        <li class="backlog">To do: Evolving plate motion via a mantle field → realistic supercontinent breakup</li>
+        <li class="backlog">To do: Volcanism — arcs, hotspot chains, flood basalts (from the mantle field)</li>
         <li class="backlog">To do: Tune lake abundance, riparian strength, river-density default</li>
         <li class="backlog">To do: Combined biome + rivers view in one panel</li>
         <li class="backlog">To do: On-demand / hex-tile fine hydrology (creeks are sub-grid at ~8 km/cell)</li>

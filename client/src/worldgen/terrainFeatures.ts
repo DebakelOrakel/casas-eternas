@@ -1,5 +1,5 @@
-import { rotateAroundCenter, wrappedDelta } from './toroidal'
-import { getVelocityAt } from './plateMotion'
+import { wrappedDelta } from './toroidal'
+import { getVelocityAt, advancePointByMotion } from './plateMotion'
 import type { PlateMotion } from './plateMotion'
 
 // A feature is a mountain *range* (or arc/ridge), or a *trench* — the
@@ -187,7 +187,7 @@ export function advanceTerrainFeatures(features: TerrainFeature[], motions: Plat
       feature.y = (((feature.y + vy * angleStep) % height) + height) % height
     } else {
       const motion = motions[feature.movesWithPlate]
-      const rotated = rotateAroundCenter(feature.x, feature.y, motion.centerX, motion.centerY, motion.angularSpeed * angleStep, width, height)
+      const rotated = advancePointByMotion(feature.x, feature.y, motion, angleStep, width, height)
       feature.x = rotated.x
       feature.y = rotated.y
     }

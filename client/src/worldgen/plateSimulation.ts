@@ -2,7 +2,7 @@ import { classifyBoundary } from './boundaryClassification'
 import { detectBoundaries } from './boundaryDetection'
 import type { LatticePoint } from './boundaryLattice'
 import { generateDetectionLattice } from './boundaryLattice'
-import { generatePlateMotions } from './plateMotion'
+import { generatePlateMotions, advancePointByMotion } from './plateMotion'
 import type { PlateMotion } from './plateMotion'
 import { classifyBoundaryMotion } from './plateVelocityDecomposition'
 import { generatePlateSeeds } from './plateSeeds'
@@ -15,7 +15,7 @@ import type { Raft, RaftBlob, RaftSplitEvent } from './rafts'
 import { createOceanAgeField, advectOceanAge, resetOceanAgeAt } from './oceanAge'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from './terrainFeatures'
 import type { TerrainFeature } from './terrainFeatures'
-import { rotateAroundCenter, wrappedDelta } from './toroidal'
+import { wrappedDelta } from './toroidal'
 
 // A fixed grid independent of the 2048x1024 display raster — see
 // boundaryLattice.ts for why its resolution doesn't need to match either
@@ -519,7 +519,7 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   // along its own rotation.
   for (let i = 0; i < sim.seeds.length; i++) {
     const motion = sim.motions[i]
-    const rotated = rotateAroundCenter(sim.seeds[i].x, sim.seeds[i].y, motion.centerX, motion.centerY, motion.angularSpeed * EPOCH_ANGLE_STEP, width, height)
+    const rotated = advancePointByMotion(sim.seeds[i].x, sim.seeds[i].y, motion, EPOCH_ANGLE_STEP, width, height)
     sim.seeds[i].x = rotated.x
     sim.seeds[i].y = rotated.y
     sim.ages[i] += 1
