@@ -535,7 +535,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let mantleResX = 0
   let mantleResY = 0
   let lastHotspots: { x: number; y: number }[] = []
-  let lastVolcanoes: { x: number; y: number; thickness: number; flood: boolean }[] = []
+  let lastVolcanoes: { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[] = []
   // Two base rasters: the full-colour terrain (default) and a neutral relief base
   // (light-blue water, white-shaded land) used on the Climate/Rivers panels so
   // the data overlays read clearly. The simplified RGBA is built lazily from the
@@ -601,8 +601,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // rings) the hotspot chains trail from.
   function drawMantleMarkers(c: CanvasRenderingContext2D): void {
     for (const v of lastVolcanoes) {
-      // Cone height ∝ thickness (hotspot cones ~4-24, flood provinces ~15-50).
-      const s = Math.max(4, Math.min(15, 3 + v.thickness * 0.35))
+      // Arc volcanoes are smaller (individual cones in a chain); hotspot cones and
+      // flood-basalt provinces are larger single edifices. Cone height ∝ thickness.
+      const isArc = v.kind === 'arc'
+      const s = isArc ? Math.max(3, Math.min(9, 2 + v.thickness * 0.25)) : Math.max(4, Math.min(15, 3 + v.thickness * 0.35))
       // The base texture is displayed Y-flipped, so the apex sits at +s (canvas
       // space) to point up on screen.
       c.beginPath()
@@ -610,9 +612,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       c.lineTo(v.x - s * 0.85, v.y - s * 0.6)
       c.lineTo(v.x + s * 0.85, v.y - s * 0.6)
       c.closePath()
-      c.fillStyle = v.flood ? 'rgba(120, 25, 20, 0.85)' : 'rgba(220, 55, 30, 0.9)'
+      // flood = dark maroon province, hotspot = bright red cone, arc = orange cone.
+      c.fillStyle = v.kind === 'flood' ? 'rgba(120, 25, 20, 0.85)' : v.kind === 'arc' ? 'rgba(235, 120, 30, 0.9)' : 'rgba(220, 55, 30, 0.9)'
       c.fill()
-      c.lineWidth = 1.5
+      c.lineWidth = isArc ? 1 : 1.5
       c.strokeStyle = 'rgba(60, 12, 0, 0.9)'
       c.stroke()
     }

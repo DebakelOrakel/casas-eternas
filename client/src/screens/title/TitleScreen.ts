@@ -34,7 +34,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
         <li>Plate motion driven by an evolving mantle field — the supercontinent (Wilson) cycle emerges</li>
         <li>Volcanism: hotspot island chains + flood-basalt provinces at continental breakup</li>
         <li>Continental breakup opens a real ocean basin — a spreading ridge is born, the mantle dome is released</li>
-        <li>Volcanic markers: hotspot cones &amp; flood-basalt provinces flagged on the mantle overlay</li>
+        <li>Volcanic markers: hotspot cones, flood-basalt provinces &amp; subduction-arc chains on the mantle overlay</li>
         <li class="backlog">To do: Tectonic rift lakes (Baikal-type) — the big dramatic lakes</li>
         <li class="backlog">To do: Sharper valleys via Braun–Willett erosion (implicit, O(n))</li>
         <li class="backlog">To do: Tune lake abundance, riparian strength, river-density default</li>

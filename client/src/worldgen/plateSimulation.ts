@@ -815,7 +815,12 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
       // drift off their boundary; continental ones (fold mountains, subduction
       // arcs) persist — see TerrainFeature.subsides.
       const featureSubsides = classification.character === 'islandArc' || classification.character === 'midOceanRidge'
-      addDeposit(findOrCreateFeatureIndex(sim.features, boundary.x, boundary.y, boundary.plateA, boundary.plateB, movesWithPlate, tangentX, tangentY, 'range', featureSubsides, width, height), amount)
+      const rangeIdx = findOrCreateFeatureIndex(sim.features, boundary.x, boundary.y, boundary.plateA, boundary.plateB, movesWithPlate, tangentX, tangentY, 'range', featureSubsides, width, height)
+      // Subduction/island arcs are volcanic (a chain of volcanoes); flag them so the
+      // screen can mark them (see TerrainFeature.volcanic). Only ever set true — a
+      // shared feature reused across epochs stays flagged once it's been an arc.
+      if (classification.character === 'subductionArc' || classification.character === 'islandArc') sim.features[rangeIdx].volcanic = true
+      addDeposit(rangeIdx, amount)
 
       // Paired trench on the subducting side of a subduction/island arc —
       // the side that is NOT the uplift side (continental crust never

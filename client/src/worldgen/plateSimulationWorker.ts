@@ -8,6 +8,7 @@ import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass, fillDepressionsAndRouteFlo
 import type { ErosionPhase, FlowRouting } from './erosion'
 import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from './mantleField'
+import type { TerrainFeature } from './terrainFeatures'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './oceanAge'
 import { computeTemperature } from './climate/temperature'
 import { computeWind } from './climate/wind'
@@ -154,10 +155,11 @@ export interface WorkerRenderedMessage {
   mantleResX: number
   mantleResY: number
   hotspots: { x: number; y: number }[]
-  // Volcanic features for distinct markers: hotspot volcanoes + flood-basalt
-  // provinces (the plateB < 0 features). `flood` = a large-igneous-province vs a
-  // hotspot cone; `thickness` sizes the marker. See plateSimulation.ts.
-  volcanoes: { x: number; y: number; thickness: number; flood: boolean }[]
+  // Volcanic features for distinct markers: hotspot cones (plateB = -1), flood-basalt
+  // provinces (plateB = -2), and volcanic arcs (the `volcanic` range features — Andes/
+  // island-arc chains). `kind` picks the marker style; `thickness` sizes it. See
+  // plateSimulation.ts.
+  volcanoes: { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[]
   width: number
   height: number
   landFraction: number
@@ -397,6 +399,32 @@ function downsampleDebugHeightmapGrid(elevations: Float32Array, width: number, h
   return grid
 }
 
+// World-cell size for grid-thinning the volcanic-arc markers: a long subduction zone
+// has one range feature every ~MERGE_RADIUS (40px), so hundreds accumulate — one
+// (tallest) cone per this-size cell keeps the arc reading as a dotted chain without
+// flooding the marker layer. Hotspots/flood basalts are few, so they're never thinned.
+const ARC_MARKER_CELL = 60
+
+// Volcanic markers for the mantle overlay: hotspot cones (plateB -1) + flood-basalt
+// provinces (plateB -2), both always shown, plus ACTIVE volcanic arcs (subduction/
+// island arcs still being fed at their boundary — epochsSinceDeposit small — with real
+// relief), grid-thinned so a busy world doesn't send thousands. See TerrainFeature.volcanic.
+function collectVolcanoes(features: TerrainFeature[]): { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[] {
+  const out: { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[] = []
+  const arcByCell = new Map<number, TerrainFeature>()
+  for (const f of features) {
+    if (f.plateB === -1) out.push({ x: f.x, y: f.y, thickness: Math.abs(f.thickness), kind: 'hotspot' })
+    else if (f.plateB === -2) out.push({ x: f.x, y: f.y, thickness: Math.abs(f.thickness), kind: 'flood' })
+    else if (f.volcanic && f.epochsSinceDeposit < 8 && Math.abs(f.thickness) > 3) {
+      const key = Math.floor(f.y / ARC_MARKER_CELL) * 100000 + Math.floor(f.x / ARC_MARKER_CELL)
+      const cur = arcByCell.get(key)
+      if (!cur || Math.abs(f.thickness) > Math.abs(cur.thickness)) arcByCell.set(key, f)
+    }
+  }
+  for (const f of arcByCell.values()) out.push({ x: f.x, y: f.y, thickness: Math.abs(f.thickness), kind: 'arc' })
+  return out
+}
+
 // Created once and reused for the lifetime of this worker — pool workers
 // have their own startup cost, not worth paying every epoch.
 const renderPool = new ElevationRenderPool()
@@ -452,6 +480,8 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   pendingEvents = []
   const debugHeightmapGrid = downsampleDebugHeightmapGrid(result.elevations, sim.width, sim.height)
 
+  const volcanoes = collectVolcanoes(sim.features)
+
   const message: WorkerRenderedMessage = {
     type: 'rendered',
     buffer: result.buffer.buffer as ArrayBuffer,
@@ -461,11 +491,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
     hotspots: sim.hotspots,
-    // Volcanic features carry a negative plateB marker: -1 hotspot cone, -2 flood
-    // basalt. Thickness (kept positive here) sizes the marker on the screen.
-    volcanoes: sim.features
-      .filter((f) => f.plateB < 0)
-      .map((f) => ({ x: f.x, y: f.y, thickness: Math.abs(f.thickness), flood: f.plateB === -2 })),
+    volcanoes,
     width: sim.width,
     height: sim.height,
     landFraction: result.landFraction,

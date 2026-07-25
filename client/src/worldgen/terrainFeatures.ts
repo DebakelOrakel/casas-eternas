@@ -80,6 +80,15 @@ export interface TerrainFeature {
   // alongside it (561ms to 8.8s) since every pixel's elevation query
   // scans nearby features.
   epochsSinceDeposit: number
+  // Whether this feature is a volcanic arc — a subduction arc (oceanic-continental
+  // convergent) or island arc (oceanic-oceanic convergent), the two boundary
+  // characters that build a chain of volcanoes (Andes, Cascades, Aleutians), as
+  // opposed to (non-volcanic) continental fold mountains or a mid-ocean ridge. Set
+  // from the boundary character at deposit time in plateSimulation.ts. A pure render
+  // hint: the screen flags these with volcano markers, distinct from the hotspot
+  // (plateB = -1) and flood-basalt (plateB = -2) volcanoes. Optional so old
+  // deserialized features (which lack it) simply read as non-volcanic.
+  volcanic?: boolean
 }
 
 // How close an active boundary point needs to be to an existing feature
