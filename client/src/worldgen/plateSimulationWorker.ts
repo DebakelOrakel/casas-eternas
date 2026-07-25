@@ -12,6 +12,7 @@ import { computeWind } from './climate/wind'
 import { computeOceanCurrents, applyOceanSST } from './climate/oceanCurrents'
 import { computePrecipitation } from './climate/precipitation'
 import { computeSeasonalAmplitude } from './climate/seasonality'
+import { computeBiomes } from './climate/biomes'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climate/climateField'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
@@ -260,6 +261,8 @@ export interface WorkerClimateDataMessage {
   // Annual temperature amplitude °C (summer−winter range), Float32. See
   // climate/seasonality.ts.
   seasonalAmplitude: ArrayBuffer
+  // Whittaker biome id per cell (Uint8; ocean = Biome.Ocean). See climate/biomes.ts.
+  biomes: ArrayBuffer
 }
 
 // The data a world SAVE needs (see the save/load feature): the JSON-able sim
@@ -561,6 +564,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     applyOceanSST(temperature, currents, lastRawElevations, sim.width, sim.height)
     const precipitation = computePrecipitation(lastRawElevations, temperature, wind, sim.width, sim.height)
     const seasonalAmplitude = computeSeasonalAmplitude(lastRawElevations, sim.width, sim.height)
+    const biomes = computeBiomes(temperature, precipitation, seasonalAmplitude, lastRawElevations, sim.width, sim.height)
     const climateMessage: WorkerClimateDataMessage = {
       type: 'climateData',
       resX: CLIMATE_RES_X,
@@ -570,8 +574,9 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       currents: currents.buffer as ArrayBuffer,
       precipitation: precipitation.buffer as ArrayBuffer,
       seasonalAmplitude: seasonalAmplitude.buffer as ArrayBuffer,
+      biomes: biomes.buffer as ArrayBuffer,
     }
-    self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude])
+    self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.biomes])
   } else if (message.type === 'serializeWorld') {
     if (!sim || !lastRawElevations) return
     // .slice() so transferring these buffers doesn't neuter the live sim's

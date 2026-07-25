@@ -1,7 +1,7 @@
 ---
 summary: Static, latitude-based climate (temperature + precipitation + wind + ocean currents) computed at world-gen time, feeding a Whittaker biome classification. No dynamic weather.
 date: 2026-07-24
-status: designed; not implemented
+status: implemented (all 6 phases built)
 ---
 
 # Climate & Biomes
@@ -166,6 +166,13 @@ way the raft work was.
    one algorithmically open stage.
 5. Continentality + seasonal amplitude.
 6. Aridity + Whittaker biome classification → **biome map** (the payoff).
+   *(Built — `climate/biomes.ts`.)* 11 classes (ocean, ice, tundra, boreal,
+   grassland, woodland, temperate forest, temperate rainforest, desert, savanna,
+   tropical rainforest). `classify(T_mean, P_annual, amplitude)` is threshold-
+   banded: aridity is implicit in the temperature bands (hotter needs more P to
+   escape desert); seasonal amplitude splits continental grassland (>20 °C swing)
+   from milder mediterranean woodland. Ocean = `elevation ≤ seaLevel`. Computed
+   last in the worker's climate pass and surfaced as an opaque land-only overlay.
 
 ## Deferred / out of scope
 

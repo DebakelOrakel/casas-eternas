@@ -16,6 +16,7 @@ import { createOverlayToggleBar } from '../../ui/mapOverlay/OverlayToggleBar'
 import { temperatureColor, precipitationColor, amplitudeColor } from '../../worldgen/climate/climateColors'
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
+import { biomeColor, Biome } from '../../worldgen/climate/biomes'
 import './worldgen.css'
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
@@ -429,6 +430,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button climate-toggle" data-action="toggle-seasonality" aria-label="Toggle seasonality overlay">
             <img src="/icons/seasonality.png" alt="" />
           </button>
+          <button type="button" class="icon-button climate-toggle" data-action="toggle-biomes" aria-label="Toggle biome overlay">
+            <img src="/icons/biomes.png" alt="" />
+          </button>
           <span class="erosion-status" data-value="climate-status"></span>
         </span>
       </label>
@@ -465,6 +469,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const currentsToggleIcon = currentsToggleButton.querySelector<HTMLImageElement>('img')!
   const seasonalityToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-seasonality"]')!
   const seasonalityToggleIcon = seasonalityToggleButton.querySelector<HTMLImageElement>('img')!
+  const biomesToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-biomes"]')!
+  const biomesToggleIcon = biomesToggleButton.querySelector<HTMLImageElement>('img')!
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
@@ -519,6 +525,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastPrecipitation: Float32Array | null = null
   let lastCurrents: Float32Array | null = null
   let lastSeasonality: Float32Array | null = null
+  let lastBiomes: Uint8Array | null = null
   let climateResX = 0
   let climateResY = 0
 
@@ -651,6 +658,27 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // Biome tint (climate payoff): the Whittaker class per land cell, opaque so it
+  // reads as a map rather than a wash. Ocean cells are skipped (the base ocean
+  // shows through). No-op until computed.
+  function paintBiomes(data: Uint8ClampedArray): void {
+    if (!lastBiomes) return
+    const alpha = 0.85
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
+        const id = lastBiomes[gy * climateResX + gx]
+        if (id === Biome.Ocean) continue
+        const [r, g, b] = biomeColor(id)
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - alpha) + r * alpha
+        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
+        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
+      }
+    }
+  }
+
   // Bilinear-sampled ocean current (u,v) at a map pixel, wrapped. Zero over land.
   function sampleCurrent(px: number, py: number): [number, number] {
     if (!lastCurrents) return [0, 0]
@@ -727,6 +755,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'temperature', label: 'Temp', enabled: false, hidden: true, paintPixels: paintTemperature },
     { id: 'precipitation', label: 'Niederschlag', enabled: false, hidden: true, paintPixels: paintPrecipitation },
     { id: 'seasonality', label: 'Saisonalität', enabled: false, hidden: true, paintPixels: paintSeasonality },
+    { id: 'biomes', label: 'Biome', enabled: false, hidden: true, paintPixels: paintBiomes },
     { id: 'boundaries', label: 'Grenzen', enabled: true, paintPixels: paintBoundaryMask },
     { id: 'arrows', label: 'Pfeile', enabled: false, paint: drawArrows },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
@@ -801,7 +830,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // (the toggle buttons flip these). The overlays only actually SHOW while on
   // the climate panel; off-panel they're hidden but the desired state (and the
   // data) is kept, so returning restores them. Defaults: temperature on, wind off.
-  const climateOverlaysOn: Record<string, boolean> = { temperature: true, wind: false, precipitation: false, currents: false, seasonality: false }
+  const climateOverlaysOn: Record<string, boolean> = { temperature: true, wind: false, precipitation: false, currents: false, seasonality: false, biomes: false }
   // Per overlay: its toggle button (for the active-state class) and, where a
   // pair exists, the on/off icon to swap. Precipitation reuses one icon and
   // shows state via the class alone.
@@ -811,6 +840,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     precipitation: { button: precipToggleButton, icon: precipToggleIcon, on: '/icons/ocean.png', off: '/icons/ocean.png' },
     currents: { button: currentsToggleButton, icon: currentsToggleIcon, on: '/icons/gyres.png', off: '/icons/gyres.png' },
     seasonality: { button: seasonalityToggleButton, icon: seasonalityToggleIcon, on: '/icons/seasonality.png', off: '/icons/seasonality.png' },
+    biomes: { button: biomesToggleButton, icon: biomesToggleIcon, on: '/icons/biomes.png', off: '/icons/biomes.png' },
   }
 
   // Enables each climate layer only when on the climate panel AND wanted; the
@@ -838,6 +868,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastCurrents = new Float32Array(message.currents)
     lastPrecipitation = new Float32Array(message.precipitation)
     lastSeasonality = new Float32Array(message.seasonalAmplitude)
+    lastBiomes = new Uint8Array(message.biomes)
     climateResX = message.resX
     climateResY = message.resY
     climateStatus.textContent = ''
@@ -865,6 +896,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastCurrents = null
     lastPrecipitation = null
     lastSeasonality = null
+    lastBiomes = null
     applyClimateOverlays(false)
     climateStatus.textContent = ''
     tempMinLabel.textContent = '–'
@@ -1226,6 +1258,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   precipToggleButton.addEventListener('click', () => toggleClimateOverlay('precipitation'))
   currentsToggleButton.addEventListener('click', () => toggleClimateOverlay('currents'))
   seasonalityToggleButton.addEventListener('click', () => toggleClimateOverlay('seasonality'))
+  biomesToggleButton.addEventListener('click', () => toggleClimateOverlay('biomes'))
 
   // Dragging the band slider live-recomputes the climate (debounced) once a
   // world exists — the worker no-ops if there's no elevation yet. Recomputes
