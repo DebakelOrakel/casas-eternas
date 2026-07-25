@@ -2,7 +2,7 @@ import { classifyBoundary } from './boundaryClassification'
 import { detectBoundaries } from './boundaryDetection'
 import type { LatticePoint } from './boundaryLattice'
 import { generateDetectionLattice } from './boundaryLattice'
-import { generatePlateMotions, advancePointByMotion } from './plateMotion'
+import { generatePlateMotions, advancePointByMotion, getVelocityAt } from './plateMotion'
 import type { PlateMotion } from './plateMotion'
 import { createMantleField, evolveMantleField, computeMantleFlow, fitMotionsToFlow } from './mantleField'
 import { classifyBoundaryMotion } from './plateVelocityDecomposition'
@@ -16,7 +16,7 @@ import type { Raft, RaftBlob, RaftSplitEvent } from './rafts'
 import { createOceanAgeField, advectOceanAge, resetOceanAgeAt } from './oceanAge'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from './terrainFeatures'
 import type { TerrainFeature } from './terrainFeatures'
-import { wrappedDelta } from './toroidal'
+import { wrappedDelta, toroidalDistanceSq } from './toroidal'
 
 // A fixed grid independent of the 2048x1024 display raster — see
 // boundaryLattice.ts for why its resolution doesn't need to match either
@@ -284,12 +284,62 @@ export interface PlateSimulation {
   // continents insulate it (→ upwelling → breakup), ocean cools it (→ downwelling
   // → assembly). Plate motions are re-fit to its surface flow each epoch.
   mantle: Float32Array
+  // Fixed mantle-plume points (world coords), stationary in the deep-mantle frame
+  // while plates drift OVER them — each punches a volcano onto the overlying plate
+  // every epoch, so the plate carries a chain away (a hotspot trail, Hawaii-style;
+  // Phase M3). Fixed for the world's life.
+  hotspots: { x: number; y: number }[]
 }
 
 // How fast a plate's motion relaxes toward the mantle-flow-fitted target each
 // epoch (inertia) — low enough that motion changes smoothly, high enough that the
 // evolving field actually reorganizes the plates over a run.
 const MANTLE_COUPLING_RATE = 0.15
+
+// Volcanic hotspots: a handful of fixed plumes, each depositing this much crustal
+// thickness per epoch onto whatever plate currently sits over it. Big enough that
+// even the brief pass before the plate carries the volcano off builds a visible
+// island; a slow plate lingers → deposits merge into one large volcano.
+const HOTSPOT_COUNT = 5
+const HOTSPOT_DEPOSIT_PER_EPOCH = 4
+// Only erupt every few epochs — spaces the chain into distinct volcanoes (like a
+// real island chain, not a continuous ridge) and keeps the feature count in check.
+const HOTSPOT_EPOCH_INTERVAL = 2
+
+function generateHotspots(random: () => number, width: number, height: number): { x: number; y: number }[] {
+  return Array.from({ length: HOTSPOT_COUNT }, () => ({ x: random() * width, y: random() * height }))
+}
+
+// Each hotspot punches a volcano onto the overlying plate at its fixed location.
+// tangent = the plate's motion direction there, so successive deposits (as the
+// plate drifts the volcano off) line up into a chain; oceanic ones subside with
+// age (old seamounts sink). plateA===plateB marks these as hotspot features so
+// they only merge with each other, never with boundary ranges.
+function depositHotspotVolcanoes(sim: PlateSimulation): void {
+  const { width, height } = sim
+  for (const hs of sim.hotspots) {
+    let plate = 0
+    let bestSq = Infinity
+    for (let p = 0; p < sim.seeds.length; p++) {
+      const d = toroidalDistanceSq(hs.x, hs.y, sim.seeds[p].x, sim.seeds[p].y, width, height)
+      if (d < bestSq) {
+        bestSq = d
+        plate = p
+      }
+    }
+    const v = getVelocityAt(hs, sim.motions[plate], width, height)
+    const speed = Math.hypot(v.vx, v.vy) || 1
+    // plateB = -1 is a dedicated hotspot marker (no real boundary can have it, and
+    // plate-index shifts on merge only ever decrease indices, never to -1) — so
+    // these only ever merge with other deposits from the SAME plume, never with
+    // boundary ranges. Always subsides: the edifice cools + erodes once the plate
+    // carries it off the plume, so the trail fades with age (old seamounts sink),
+    // which also lets the feature prune bound the chain length.
+    const idx = findOrCreateFeatureIndex(sim.features, hs.x, hs.y, plate, -1, plate, v.vx / speed, v.vy / speed, 'range', true, width, height)
+    sim.features[idx].thickness += HOTSPOT_DEPOSIT_PER_EPOCH
+    sim.features[idx].epochsSinceDeposit = 0
+  }
+}
 
 export function createPlateSimulation(seedString: string, plateCount: number, landFraction: number, clustering: number, cratonCount: number, width: number, height: number): PlateSimulation {
   const random = mulberry32(hashSeedString(seedString))
@@ -327,6 +377,7 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
     supercontinentActive: rafts.length <= 1,
     continentalRiftCooldownUntil: 0,
     mantle: createMantleField(random),
+    hotspots: generateHotspots(random, width, height),
   }
 }
 
@@ -350,6 +401,7 @@ export interface PlateSimulationSnapshot {
   warpSeed: number
   supercontinentActive: boolean
   continentalRiftCooldownUntil: number
+  hotspots: { x: number; y: number }[]
   rngState: number
 }
 
@@ -367,6 +419,7 @@ export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationS
     warpSeed: sim.warpSeed,
     supercontinentActive: sim.supercontinentActive,
     continentalRiftCooldownUntil: sim.continentalRiftCooldownUntil,
+    hotspots: sim.hotspots,
     rngState: sim.random.state(),
   }
 }
@@ -397,6 +450,7 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
     // it re-evolves toward the current crust config over a few epochs. Uses an
     // independent RNG so it doesn't disturb the bit-identical continuation RNG.
     mantle: createMantleField(mulberry32((snap.warpSeed ^ 0x5bd1e995) >>> 0)),
+    hotspots: snap.hotspots ?? [],
   }
 }
 
@@ -578,6 +632,10 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
     }
     feature.epochsSinceDeposit += 1
   }
+  // Hotspot volcanism: the plumes are fixed while plates drift over them, so this
+  // deposits a fresh volcano at each plume onto the current overlying plate (after
+  // the decay above, so today's deposit stands full height). See M3 / mantleField.
+  if (sim.epoch % HOTSPOT_EPOCH_INTERVAL === 0) depositHotspotVolcanoes(sim)
 
   // 2. Detect this epoch's boundaries against the fixed lattice.
   const boundaries = detectBoundaries(sim.lattice, sim.seeds, width, height)

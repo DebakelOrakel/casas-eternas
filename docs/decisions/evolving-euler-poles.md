@@ -122,8 +122,21 @@ finite-step advection (exact offset-center rotation → rotation+translation), s
   (merge-immunity / cont-rift cooldown / lenient trigger) — they don't block the emergent
   breakup and removing them needs its own verification; deferred as a follow-up (the cooldown
   may now be suppressing some breakups — a tuning lever).
-- **M3 — Volcanism.** Arc + hotspot + flood-basalt provinces → terrain features +
-  eruption events; optional volcanism overlay + a mantle-field overlay.
+- **M3 — Volcanism. Hotspots DONE 2026-07-25; arc + flood basalts remain.**
+  `sim.hotspots` = 5 fixed plumes (world coords, stationary in the deep-mantle frame);
+  `depositHotspotVolcanoes` (in stepEpoch, throttled to every 2 epochs) finds the
+  overlying plate at each plume and deposits a `range` feature there with tangent =
+  plate-motion direction (so successive deposits line up into a chain), marked
+  `plateB = -1` (dedicated hotspot id — never merges with boundary ranges, immune to
+  merge index-shifts) and `subsides: true` (the trail fades with age → old seamounts
+  sink → the feature prune bounds chain length). Harness-verified: chains form on 4–5/5
+  plumes, feature count bounded (~30–45), visible thickness, 0 NaN. Remaining: **arc**
+  volcanoes (subduction boundaries already build arc ranges — could mark/enhance them)
+  and **flood basalts** (a big volcanic province at a continental-rift/breakup event).
+  Optional: distinct volcanic RENDERING (currently they read as ordinary mountains/
+  islands) + a mantle-field/volcanism overlay. NOTE: vigorous M2 tectonics accumulates
+  more boundary features on some seeds (total ~2–5k over long runs) — a pre-existing
+  prune-tuning item, not caused by hotspots (which are bounded).
 - **M4 (optional) — refinement.** Tuning, overlays, perf (the field adds a coarse
   advection/diffusion + one Poisson solve per epoch — comparable to ocean currents).
 

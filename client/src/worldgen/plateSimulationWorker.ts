@@ -7,6 +7,7 @@ import { ElevationRenderPool } from './elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass, fillDepressionsAndRouteFlow } from './erosion'
 import type { ErosionPhase, FlowRouting } from './erosion'
 import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './hydrology'
+import { MANTLE_RES_X, MANTLE_RES_Y } from './mantleField'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './oceanAge'
 import { computeTemperature } from './climate/temperature'
 import { computeWind } from './climate/wind'
@@ -146,6 +147,13 @@ export interface WorkerRenderedMessage {
   // screen expands it to a light-blue-water / white-shaded-land RGBA. See
   // SimulationRenderResult.relief.
   relief: ArrayBuffer
+  // Coarse mantle buoyancy field (Float32, mantleResX*mantleResY) + the fixed
+  // hotspot plume points — for the tectonics "Mantle" overlay (hot=upwelling red,
+  // cold=downwelling blue + plume markers). See mantleField.ts.
+  mantle: ArrayBuffer
+  mantleResX: number
+  mantleResY: number
+  hotspots: { x: number; y: number }[]
   width: number
   height: number
   landFraction: number
@@ -444,6 +452,11 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     type: 'rendered',
     buffer: result.buffer.buffer as ArrayBuffer,
     relief: result.relief.buffer as ArrayBuffer,
+    // Copy (not transfer) — sim.mantle is retained + mutated each epoch.
+    mantle: sim.mantle.slice().buffer as ArrayBuffer,
+    mantleResX: MANTLE_RES_X,
+    mantleResY: MANTLE_RES_Y,
+    hotspots: sim.hotspots,
     width: sim.width,
     height: sim.height,
     landFraction: result.landFraction,
@@ -461,7 +474,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   // because renderSimulationImage (buffer + boundaryMask) and
   // downsampleDebugHeightmapGrid allocate fresh arrays every call, so
   // there's no reference to any now-neutered buffer left to reuse.
-  self.postMessage(message, [message.buffer, message.relief, message.boundaryMask, message.debugHeightmapGrid])
+  self.postMessage(message, [message.buffer, message.relief, message.mantle, message.boundaryMask, message.debugHeightmapGrid])
 }
 
 // Runs one 'erode' request end to end — extracted out of the onmessage

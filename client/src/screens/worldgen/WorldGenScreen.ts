@@ -528,6 +528,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastBoundaryMask: Uint8Array | null = null
   let lastPlateArrows: PlateArrow[] = []
   let lastRaftLabels: ContinentLabelPlacement[] = []
+  // Coarse mantle buoyancy field + hotspot plumes (from each render) for the
+  // tectonics "Mantle" overlay: hot upwelling → red, cold downwelling → blue, plus
+  // a marker at each fixed plume (the source of the hotspot volcano chains).
+  let lastMantle: Float32Array | null = null
+  let mantleResX = 0
+  let mantleResY = 0
+  let lastHotspots: { x: number; y: number }[] = []
   // Two base rasters: the full-colour terrain (default) and a neutral relief base
   // (light-blue water, white-shaded land) used on the Climate/Rivers panels so
   // the data overlays read clearly. The simplified RGBA is built lazily from the
@@ -562,6 +569,42 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         data[p + 1] = BOUNDARY_COLOR[1]
         data[p + 2] = BOUNDARY_COLOR[2]
       }
+    }
+  }
+
+  // Mantle buoyancy tint: hot upwelling → red, cold downwelling → blue, strength
+  // ∝ |value| (near-zero stays transparent). Coarse field sampled up to full res.
+  function paintMantle(data: Uint8ClampedArray): void {
+    if (!lastMantle) return
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const gy = Math.min(mantleResY - 1, Math.floor((y / MAP_HEIGHT) * mantleResY))
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        const gx = Math.min(mantleResX - 1, Math.floor((x / MAP_WIDTH) * mantleResX))
+        const v = lastMantle[gy * mantleResX + gx]
+        const a = Math.min(1, Math.abs(v) / 1.0) * 0.55
+        if (a < 0.01) continue
+        const r = v >= 0 ? 225 : 55
+        const g = v >= 0 ? 85 : 110
+        const b = v >= 0 ? 55 : 210
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - a) + r * a
+        data[p + 1] = data[p + 1] * (1 - a) + g * a
+        data[p + 2] = data[p + 2] * (1 - a) + b * a
+      }
+    }
+  }
+
+  // Fixed hotspot plumes: a distinct marker at each (the source the volcano chains
+  // trail from). Drawn onto the base texture, so the toroidal tiling wraps them.
+  function drawHotspots(c: CanvasRenderingContext2D): void {
+    for (const hs of lastHotspots) {
+      c.beginPath()
+      c.arc(hs.x, hs.y, 9, 0, Math.PI * 2)
+      c.fillStyle = 'rgba(255, 140, 0, 0.9)'
+      c.fill()
+      c.lineWidth = 3
+      c.strokeStyle = 'rgba(90, 30, 0, 0.95)'
+      c.stroke()
     }
   }
 
@@ -806,6 +849,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'precipitation', label: 'Precipitation', enabled: false, hidden: true, paintPixels: paintPrecipitation },
     { id: 'seasonality', label: 'Seasonality', enabled: false, hidden: true, paintPixels: paintSeasonality },
     { id: 'biomes', label: 'Biomes', enabled: false, hidden: true, paintPixels: paintBiomes },
+    // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
+    { id: 'mantle', label: 'Mantle', enabled: false, hidden: true, paintPixels: paintMantle, paint: drawHotspots },
     { id: 'boundaries', label: 'Boundaries', enabled: false, paintPixels: paintBoundaryMask },
     { id: 'arrows', label: 'Arrows', enabled: false, paint: drawArrows },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
@@ -891,6 +936,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'terrain', icon: '/icons/colours.png', label: 'Terrain colour', available: () => lastColoredBase !== null },
     { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null },
     { id: 'names', icon: '/icons/continent_name.png', label: 'Continent names', available: () => lastRaftLabels.length > 0 },
+    { id: 'mantle', icon: '/icons/mantle.png', label: 'Mantle field + hotspots', available: () => lastMantle !== null },
     { id: 'temperature', icon: '/icons/temp_on.png', label: 'Temperature', available: () => lastTemperature !== null },
     { id: 'wind', icon: '/icons/wind.png', label: 'Wind', available: () => lastWind !== null },
     { id: 'precipitation', icon: '/icons/ocean.png', label: 'Precipitation', available: () => lastPrecipitation !== null },
@@ -900,11 +946,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'rivers', icon: '/icons/river.png', label: 'Rivers & lakes', available: () => lastRiverData !== null },
   ]
   // Desired on/off per overlay (persists as availability comes and goes). Voronoi
-  // + names default on (topography exists first); terrain default on too but is
-  // re-set per panel in showPanel (on for the shaping panels, off for the neutral
-  // data panels); data overlays default off.
+  // + names + mantle default on (they show as soon as their data exists); terrain
+  // default on too but is re-set per panel in showPanel (on for the shaping panels,
+  // off for the neutral data panels); other data overlays default off.
   const overlaysOn: Record<string, boolean> = {}
-  for (const def of OVERLAY_DEFS) overlaysOn[def.id] = def.id === 'boundaries' || def.id === 'names' || def.id === 'terrain'
+  for (const def of OVERLAY_DEFS) overlaysOn[def.id] = def.id === 'boundaries' || def.id === 'names' || def.id === 'terrain' || def.id === 'mantle'
 
   const overlayBar = document.createElement('div')
   overlayBar.className = 'overlay-bar'
@@ -1248,6 +1294,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastRaftLabels = message.raftLabels
     lastColoredBase = new Uint8ClampedArray(message.buffer)
     lastRelief = new Uint8Array(message.relief)
+    lastMantle = new Float32Array(message.mantle)
+    mantleResX = message.mantleResX
+    mantleResY = message.mantleResY
+    lastHotspots = message.hotspots
     simplifiedBaseCache = null // rebuilt lazily from the fresh relief
     terrainTintCache = null // rebuilt lazily from the fresh colour render
     applyBase()
@@ -1665,6 +1715,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // (Genesis/Tectonics/Erosion), off for the neutral data panels (Climate/
     // Rivers). Still toggleable in the bar within a panel; resets on switch.
     overlaysOn.terrain = index < CLIMATE_PANEL_INDEX
+    // The mantle overlay is on for Genesis/Tectonics (where you watch the plates
+    // drive), off from the Erosion panel (index 2) onward. Same per-panel reset.
+    overlaysOn.mantle = index < 2
     if (lastColoredBase) updateOverlays()
     updateNavState()
   }

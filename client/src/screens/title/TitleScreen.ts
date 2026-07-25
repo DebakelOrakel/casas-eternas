@@ -31,10 +31,11 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
         <li>Endorheic lakes: inflow vs. evaporation balance</li>
         <li>Riparian zones green the biomes (Nile effect)</li>
         <li>Watercolour relief rendering, scene-space vector rivers, toggleable overlays</li>
+        <li>Plate motion driven by an evolving mantle field — the supercontinent (Wilson) cycle emerges</li>
+        <li>Hotspot volcanism: fixed plumes punch age-progressive island chains</li>
         <li class="backlog">To do: Tectonic rift lakes (Baikal-type) — the big dramatic lakes</li>
         <li class="backlog">To do: Sharper valleys via Braun–Willett erosion (implicit, O(n))</li>
-        <li class="backlog">To do: Evolving plate motion via a mantle field → realistic supercontinent breakup</li>
-        <li class="backlog">To do: Volcanism — arcs, hotspot chains, flood basalts (from the mantle field)</li>
+        <li class="backlog">To do: Volcanism — subduction arcs + flood basalts (hotspot chains done)</li>
         <li class="backlog">To do: Tune lake abundance, riparian strength, river-density default</li>
         <li class="backlog">To do: Combined biome + rivers view in one panel</li>
         <li class="backlog">To do: On-demand / hex-tile fine hydrology (creeks are sub-grid at ~8 km/cell)</li>
