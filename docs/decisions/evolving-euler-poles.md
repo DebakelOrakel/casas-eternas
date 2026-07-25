@@ -118,10 +118,21 @@ finite-step advection (exact offset-center rotation → rotation+translation), s
   them), field bounded (~[−1.2, 1.1]), 0 NaN, plate speeds ~75–115 avg (variable, physically
   motivated, near the old 30–90 band). TUNING that mattered: FLOW_SPEED_SCALE (speed) + 1
   diffusion pass (over-diffusion flattened the upwelling and starved breakup). Mantle NOT
-  serialized — regenerated fresh on restore (independent RNG). **Band-aids NOT yet retired**
-  (merge-immunity / cont-rift cooldown / lenient trigger) — they don't block the emergent
-  breakup and removing them needs its own verification; deferred as a follow-up (the cooldown
-  may now be suppressing some breakups — a tuning lever).
+  serialized — regenerated fresh on restore (independent RNG). **Band-aids REVIEWED 2026-07-25
+  (harness A/B, 3 seeds × 300 epochs; metric = breakups / collisions / raft min-max / strobing
+  = max breakups in any 20-epoch window / tail breakups):** only one was truly a fixed-motion
+  crutch. **Merge-immunity RETIRED** (`SPLIT_MERGE_IMMUNITY_EPOCHS` 30 → 0): identical to
+  baseline (7 breakups, raft 1–4, no strobing) because the mantle upwelling now drives the split
+  halves apart on its own. **Cont-rift cooldown KEPT** (`CONT_RIFT_COOLDOWN_EPOCHS` = 40): not a
+  band-aid after all — removing it (0) still strobes catastrophically *with* the mantle field
+  (breakups 7 → 73, strobing 1 → 12, raft → 35), because coupling relaxes motion only ~0.15/epoch
+  and the fixed Voronoi lattice keeps the rift point divergent long before the flow reverses; it's
+  a legitimate rate-limiter. **Lenient trigger KEPT** (`CONT_RIFT_LOCK_EPOCHS` 20 /
+  `CONT_RIFT_THRESHOLD_FACTOR` 0.55): the strict plate-rift threshold (40 / 1.0) also breaks
+  continents up but fewer/smaller (5 vs 7 breakups, raft to 3 vs 4) — lenient gives a livelier,
+  more dramatic Wilson cycle without strobing, so it now tunes breakup vigour rather than
+  compensating for fixed motions. The three constant comments in plateSimulation.ts were rewritten
+  to this reality.
 - **M3 — Volcanism. Hotspots DONE 2026-07-25; arc + flood basalts remain.**
   `sim.hotspots` = 5 fixed plumes (world coords, stationary in the deep-mantle frame);
   `depositHotspotVolcanoes` (in stepEpoch, throttled to every 2 epochs) finds the

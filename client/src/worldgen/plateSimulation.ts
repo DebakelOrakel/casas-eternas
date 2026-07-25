@@ -189,10 +189,15 @@ const SPLIT_MAX_DIST_SQ = 160 * 160
 // push over-scattered the halves' blobs and made splitDisconnectedRafts
 // shatter them into many pieces.
 const SPLIT_GAP = 80
-// Epochs a freshly-split pair is immune from re-merging (Raft.noMergeUntilEpoch),
-// so a breakup stays visible while the halves drift instead of re-welding at
-// once. A band-aid over fixed Euler poles pulling the halves straight back.
-const SPLIT_MERGE_IMMUNITY_EPOCHS = 30
+// Epochs a freshly-split pair is immune from re-merging (Raft.noMergeUntilEpoch).
+// RETIRED 2026-07-25 (set to 0): this was a band-aid over fixed Euler poles that
+// pulled the halves straight back. Now that the mantle field (mantleField.ts)
+// evolves the plate motions, the upwelling under a fresh rift genuinely drives
+// the halves apart, so no artificial immunity window is needed — verified
+// equivalent to the old 30 (breakups, raft range, no re-welding all unchanged
+// across seeds/300 epochs). Left as a named constant (not deleted) so it can be
+// dialled back up if a future seed ever shows an instant re-weld.
+const SPLIT_MERGE_IMMUNITY_EPOCHS = 0
 // Blobs count as connected (same landmass) if their centers are within
 // (ra+rb)*this. Deliberately generous: two blobs render as one landmass at
 // ~0.7·(ra+rb), but the coastline is the SUMMED field, so a thin neck bridged
@@ -202,22 +207,27 @@ const SPLIT_MERGE_IMMUNITY_EPOCHS = 30
 // clear, wide gap between them (the "obviously separate landmasses" case).
 const RAFT_CONNECT_FACTOR = 1.5
 // Continental breakup is more lenient than a plate rift — a shorter lock and a
-// gentler divergence threshold — so a supercontinent can rift apart from within
-// on the limited divergence available under it (plate motions are fixed, so
-// boundaries under an assembled continent are mostly convergent). Still gated
-// enough that continents don't churn apart constantly.
+// gentler divergence threshold — so a supercontinent rifts apart from within on
+// the divergence concentrated under it. Kept lenient on purpose (NOT retired):
+// with the mantle field, the strict plate-rift threshold (lock 40, factor 1.0)
+// also produces breakups, but fewer and smaller — the lenient trigger gives a
+// livelier, more dramatic Wilson cycle (verified: 7 vs 5 breakups, raft swings
+// to 4 vs 3) without any strobing. So this now tunes breakup vigour rather than
+// compensating for fixed motions.
 const CONT_RIFT_LOCK_EPOCHS = 20
 const CONT_RIFT_THRESHOLD_FACTOR = 0.55
 // Global cooldown after a continental rift fires: no further continental rift
 // for this many epochs. Without it, an assembled supercontinent oscillates
-// every single epoch — the rift point stays divergent+locked+under-continent
-// (its lock never clears since the plate motions that made it divergent are
-// fixed), so it re-qualifies immediately, and the just-split halves drift back
-// together and re-merge on the very next epoch: a strobing split/merge limit
-// cycle (confirmed ~1 collision + 1 breakup per epoch past ~epoch 220). The
-// cooldown turns that into an occasional, dramatic breakup event instead —
-// which is the honest ceiling until evolving Euler poles let breakup actually
-// succeed (see the raft decision doc's "breakup is limited by fixed motions").
+// every single epoch — the rift point stays divergent+locked+under-continent,
+// so it re-qualifies immediately and strobes split/merge (confirmed ~1 collision
+// + 1 breakup per epoch past ~epoch 220). NOTE 2026-07-25: this is NOT retired
+// with the other fixed-motion band-aids — verified that removing it (0) STILL
+// strobes catastrophically even with the mantle field driving the plates
+// (breakups 7→73, 12 breakups per 20-epoch window, raft count → 35). The mantle
+// coupling relaxes motion only ~0.15/epoch, and the Voronoi lattice keeps the
+// rift point divergent, so the point re-qualifies long before the flow reverses.
+// So the cooldown is a legitimate rate-limiter, not a crutch: it turns breakup
+// into an occasional, dramatic event.
 const CONT_RIFT_COOLDOWN_EPOCHS = 40
 
 // Ocean-floor age (Phase 3, see oceanAge.ts): the field starts at a moderate
