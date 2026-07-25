@@ -1049,6 +1049,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverLayer?.setPolylines(lastRiverData.points, lastRiverData.lengths)
     // Lakes only arrive on a re-route (empty buffer = unchanged, keep the last).
     if (message.lakeDepth.byteLength > 0) lastLakeDepth = new Float32Array(message.lakeDepth)
+    // Riparian-refined biomes replace the climate step's water-free ones (same
+    // coarse grid). Visible via the biome overlay on the Climate panel.
+    if (message.biomes.byteLength > 0) lastBiomes = new Uint8Array(message.biomes)
     hydrologyStatus.textContent = ''
     applyRiverOverlay(panelIndex === HYDROLOGY_PANEL_INDEX)
   }

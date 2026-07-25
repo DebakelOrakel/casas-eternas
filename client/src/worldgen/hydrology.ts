@@ -1,5 +1,7 @@
 import { SEA_LEVEL } from './erosion'
 import type { FlowRouting } from './erosion'
+import { computeBiomes } from './climate/biomes'
+import { OCEAN_PRECIP } from './climate/precipitation'
 
 // Rivers & lakes on the post-erosion topography. Reuses the erosion module's
 // drainage network (FlowRouting: D8 flowTarget for the channel tree,
@@ -275,4 +277,63 @@ export function extractRiverPolylines(routing: FlowRouting, discharge: Float32Ar
     else points.length -= len * 3 // drop a lone point
   }
   return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) }
+}
+
+// --- Phase 3: riparian zones (rivers/lakes moisten nearby land → wetter biomes) ---
+
+// Peak precipitation bonus (mm/yr) a cell gets right at a full-strength river/lake
+// — enough to lift a hot desert (P<250) into savanna/forest (the Nile effect).
+const MAX_RIPARIAN_MM = 900
+// How far the moisture bleeds into neighbouring coarse cells, and its per-step
+// falloff. Coarse cells are large (~60 km), so 1 step already reads as a green
+// valley band without washing out the whole continent.
+const RIPARIAN_SPREAD = 1
+const RIPARIAN_DECAY = 0.45
+
+// Re-classifies biomes with a riparian moisture bonus: builds a coarse water-
+// strength field (1 at lakes, √(discharge/max) at river channels — big rivers
+// moisten more), bleeds it into neighbours with decay, adds it (× MAX_RIPARIAN_MM)
+// to precipitation, and re-runs the Whittaker classification. So a river or lake
+// greens its surroundings — a desert with a big river through it becomes a
+// vegetated corridor. `elevation` is the display terrain (land/ocean + biome
+// substrate); discharge/lakeDepth share its grid. Coarse (climate-grid) output.
+export function computeRiparianBiomes(elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number): Uint8Array {
+  const scale = maxDischarge > 0 ? maxDischarge : 1
+  const strength = new Float32Array(climateResX * climateResY)
+  for (let cell = 0; cell < elevation.length; cell++) {
+    if (elevation[cell] <= SEA_LEVEL) continue
+    let w = 0
+    if (lakeDepth[cell] > 0) w = 1
+    else if (discharge[cell] >= threshold) w = Math.min(1, Math.sqrt(discharge[cell] / scale))
+    if (w <= 0) continue
+    const x = cell % worldW
+    const y = (cell - x) / worldW
+    const gx = Math.min(climateResX - 1, Math.floor((x / worldW) * climateResX))
+    const gy = Math.min(climateResY - 1, Math.floor((y / worldH) * climateResY))
+    const gi = gy * climateResX + gx
+    if (w > strength[gi]) strength[gi] = w
+  }
+  // Decay-bleed into neighbours (toroidal), taking the max so a band forms.
+  let field = strength
+  for (let it = 0; it < RIPARIAN_SPREAD; it++) {
+    const next = field.slice()
+    for (let gy = 0; gy < climateResY; gy++) {
+      for (let gx = 0; gx < climateResX; gx++) {
+        const gi = gy * climateResX + gx
+        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+          const nx = (((gx + dx) % climateResX) + climateResX) % climateResX
+          const ny = (((gy + dy) % climateResY) + climateResY) % climateResY
+          const v = field[ny * climateResX + nx] * RIPARIAN_DECAY
+          if (v > next[gi]) next[gi] = v
+        }
+      }
+    }
+    field = next
+  }
+  const precipEff = precip.slice()
+  for (let i = 0; i < precipEff.length; i++) {
+    if (precipEff[i] === OCEAN_PRECIP) continue
+    precipEff[i] = precipEff[i] + field[i] * MAX_RIPARIAN_MM
+  }
+  return computeBiomes(temperature, precipEff, seasonalAmplitude, elevation, worldW, worldH)
 }

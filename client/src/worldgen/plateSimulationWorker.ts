@@ -6,7 +6,7 @@ import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { ElevationRenderPool } from './elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass, fillDepressionsAndRouteFlow } from './erosion'
 import type { ErosionPhase, FlowRouting } from './erosion'
-import { accumulateDischarge, extractRiverPolylines, computeLakes, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './hydrology'
+import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './hydrology'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './oceanAge'
 import { computeTemperature } from './climate/temperature'
 import { computeWind } from './climate/wind'
@@ -296,6 +296,10 @@ export interface WorkerHydrologyDataMessage {
   // density-only re-extract sends an empty buffer, meaning "lakes unchanged". See
   // computeLakes.
   lakeDepth: ArrayBuffer
+  // Biomes RE-classified with the riparian moisture bonus from rivers/lakes
+  // (Uint8, coarse climate grid — replaces the climate step's water-free biomes).
+  // Empty when no climate is available to reclassify. See computeRiparianBiomes.
+  biomes: ArrayBuffer
 }
 
 // The data a world SAVE needs (see the save/load feature): the JSON-able sim
@@ -339,6 +343,7 @@ let preErosionElevations: Float32Array | null = null
 // after any topography or climate change (set wherever those happen).
 let lastClimatePrecip: Float32Array | null = null
 let lastClimateTemperature: Float32Array | null = null
+let lastClimateSeasonalAmplitude: Float32Array | null = null
 // The last erosion's pre-fill elevations (basins still intact) — the terrain the
 // hydrology runs on, so lakes have depressions to fill. null when the current
 // terrain wasn't produced by erosion (fresh tectonics / restore), in which case
@@ -626,6 +631,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     // the final (SST-adjusted) temperature for evaporation.
     lastClimatePrecip = precipitation.slice()
     lastClimateTemperature = temperature.slice()
+    lastClimateSeasonalAmplitude = seasonalAmplitude.slice()
     hydrologyDirty = true
     const climateMessage: WorkerClimateDataMessage = {
       type: 'climateData',
@@ -673,13 +679,21 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       const rivers = extractRiverPolylines(lastHydrologyRouting, lastHydrologyDischarge, elevation, threshold, lastHydrologyMaxDischarge)
       // Lakes only change on a re-route; a density-only call sends an empty buffer.
       const lakeOut = rerouted && lastHydrologyLakeDepth ? lastHydrologyLakeDepth.slice() : new Float32Array(0)
+      // Riparian biome reclassification depends on the channel set (so it moves
+      // with the density knob) — recompute every call when climate is available.
+      // Uses the display terrain (lastRawElevations) so land/ocean matches the map.
+      let biomesOut: Uint8Array = new Uint8Array(0)
+      if (lastRawElevations && lastClimateTemperature && lastClimateSeasonalAmplitude && lastHydrologyLakeDepth) {
+        biomesOut = computeRiparianBiomes(lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, precip, lastClimateTemperature, lastClimateSeasonalAmplitude, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+      }
       const hydrologyMessage: WorkerHydrologyDataMessage = {
         type: 'hydrologyData',
         riverPoints: rivers.points.buffer as ArrayBuffer,
         riverLengths: rivers.lengths.buffer as ArrayBuffer,
         lakeDepth: lakeOut.buffer as ArrayBuffer,
+        biomes: biomesOut.buffer as ArrayBuffer,
       }
-      self.postMessage(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth])
+      self.postMessage(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes])
     })()
   } else if (message.type === 'serializeWorld') {
     if (!sim || !lastRawElevations) return
