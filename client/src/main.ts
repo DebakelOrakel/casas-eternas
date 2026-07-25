@@ -22,7 +22,12 @@ const app = new AppStateManager(engine, canvas, overlay, {
 app.goTo('title')
 
 engine.runRenderLoop(() => app.render())
-window.addEventListener('resize', () => engine.resize())
+
+// Keep the render buffer matched to the canvas's actual on-screen size. A
+// ResizeObserver on the canvas covers everything a `window resize` listener
+// misses on mobile — orientation changes and the browser chrome showing/hiding
+// (which changes 100dvh) — so the map always scales to the visible viewport.
+new ResizeObserver(() => engine.resize()).observe(canvas)
 
 if (import.meta.hot) {
   import.meta.hot.accept(() => {

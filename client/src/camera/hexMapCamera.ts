@@ -80,17 +80,21 @@ export function createHexMapCamera(options: HexMapCameraOptions): HexMapCamera {
   camera.upVector = new Vector3(0, 0, 1)
   camera.setTarget(new Vector3(0, 0, 0))
 
-  // Fits both the target visible width AND height within the current
-  // canvas aspect ratio without distorting the map — whichever axis needs
-  // more screen space relative to its own target extent wins, the same
-  // "contain" logic an image would use to fit a frame.
+  // Fills the whole canvas with the map WITHOUT distorting it ("cover", the way
+  // background-size: cover fits an image): the aspect is preserved (so the map
+  // never stretches), and whichever axis overflows the canvas is simply cropped
+  // — the view shows LESS of that axis rather than shrinking the map and letting
+  // the toroidal 3x3 tiling repeat into the empty margin. So a portrait/narrow
+  // screen shows a slice of the world at full size (pan for the rest), not the
+  // whole world tiled several times over. (Was "contain", which letterboxed and
+  // tiled on off-aspect screens.)
   const updateOrthoExtents = (zoomT: number): void => {
     const visibleWorldWidth = Scalar.Lerp(worldWidth / minZoomWorldFraction, worldWidth * maxZoomWorldFraction, zoomT)
     const visibleWorldHeight = Scalar.Lerp(worldHeight / minZoomWorldFraction, worldHeight * maxZoomWorldFraction, zoomT)
     const aspect = engine.getRenderWidth() / engine.getRenderHeight()
     let halfWidth = visibleWorldWidth / 2
     let halfHeight = halfWidth / aspect
-    if (halfHeight < visibleWorldHeight / 2) {
+    if (halfHeight > visibleWorldHeight / 2) {
       halfHeight = visibleWorldHeight / 2
       halfWidth = halfHeight * aspect
     }
