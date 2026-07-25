@@ -96,6 +96,31 @@ export function evolveMantleField(field: Float32Array, rafts: Raft[], worldWidth
   return zeroMean(clampField(field))
 }
 
+// Release the thermal doming at a continental breakup: subtract a broad bump of
+// buoyancy around the rift point (linear falloff to 0 at `worldRadius`). Physically,
+// the upwelling that built under the insulating supercontinent has now breached the
+// surface (the flood-basalt eruption) and the widening gap is floored with new,
+// cooling ocean — so the buoyancy that DROVE the divergence is spent. This is what
+// lets the global CONT_RIFT_COOLDOWN band-aid be retired (Option C): without it, the
+// broad hot dome under an assembled continent keeps many boundary points divergent,
+// so one breakup fires every epoch (strobing); draining the dome at breakup collapses
+// that forcing regionally, so the flow (recomputed next epoch) stops pushing the
+// halves apart at that spot and the strobing stops on its own. Mutates the field;
+// the next evolveMantleField re-clamps + re-zero-means it.
+export function coolMantleAt(field: Float32Array, x: number, y: number, worldWidth: number, worldHeight: number, worldRadius: number, amount: number): void {
+  const r2 = worldRadius * worldRadius
+  for (let gy = 0; gy < RY; gy++) {
+    const wy = ((gy + 0.5) / RY) * worldHeight
+    for (let gx = 0; gx < RX; gx++) {
+      const wx = ((gx + 0.5) / RX) * worldWidth
+      const d2 = toroidalDistanceSq(wx, wy, x, y, worldWidth, worldHeight)
+      if (d2 > r2) continue
+      const falloff = 1 - Math.sqrt(d2) / worldRadius
+      field[gy * RX + gx] = Math.max(-T_CLAMP, field[gy * RX + gx] - amount * falloff)
+    }
+  }
+}
+
 // Surface flow from the field: solve ∇²φ = (T − mean) (zero-mean source on the
 // torus, Gauss-Seidel), then u = ∇φ. u DIVERGES from hot upwellings and CONVERGES
 // to cold downwellings (φ has a minimum at a hot source, so ∇φ points outward).

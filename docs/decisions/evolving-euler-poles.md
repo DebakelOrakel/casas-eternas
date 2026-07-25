@@ -133,6 +133,86 @@ finite-step advection (exact offset-center rotation → rotation+translation), s
   more dramatic Wilson cycle without strobing, so it now tunes breakup vigour rather than
   compensating for fixed motions. The three constant comments in plateSimulation.ts were rewritten
   to this reality.
+  - **Classification of the two kept constants (2026-07-25) — where they sit on the
+    artifact ↔ real-physics axis:**
+    - *Lenient continental-rift trigger = a real mechanism, only PRESCRIBED not EMERGENT.*
+      Continents rift on less divergence than oceanic ridges because an insulating
+      supercontinent traps heat (the very `INSULATION_RATE` doming the mantle field models),
+      which thermally weakens the lithosphere and lowers the rifting stress — that is the
+      genuine Wilson-cycle breakup driver. It also compensates a modelling gap: the kinematic
+      mantle coupling (rate 0.15) under-transmits the doming's divergence signal to the boundary
+      accumulator, so the lenient threshold makes up the difference. In a fuller model
+      (temperature-dependent lithospheric strength, crustal thickness, inherited weak zones) the
+      leniency would *emerge*; the **effect** (continents rift more readily) would remain — you'd
+      change its derivation, never remove it. Verdict: keep; it's physically honest.
+    - *Cont-rift cooldown = an ARTIFACT of static plate boundaries* (theoretically removable).
+      It stands in for a missing model feature: real rifts become spreading ridges / new ocean
+      basins (rift → ridge → passive margin), so the rifted spot literally *becomes ocean* and
+      cannot re-qualify as a continental rift. The fixed Voronoi lattice never reorganizes, and —
+      critically — the continental rift (`raftSplit`) moves the raft halves apart but, unlike the
+      plate rift (`applyRift`, which already pushes a new oceanic seed), does NOT birth an oceanic
+      plate in the gap; so the same two continental seeds stay adjacent+divergent and re-fire every
+      epoch. The cooldown (and its being GLOBAL, not per-margin — it would wrongly block a second
+      supercontinent from rifting) is the crutch for that. It disappears once the continental rift
+      also spawns a ridge plate (see the follow-up below). Verdict: keep for now; retire with
+      dynamic boundaries.
+  - **Follow-up (scoped 2026-07-25) — retire the cooldown by giving the continental rift a
+    spreading ridge.** The plate rift already does exactly the needed thing (`applyRift` pushes a
+    new oceanic seed at the rift so the gap becomes young ocean). Options: (A) **minimal** — make
+    `raftSplit` also insert an oceanic seed at the rift point, so the spot becomes ocean, its
+    `raftMembership` drops, and it can't re-qualify as a continental rift → no strobing, cooldown
+    removable. Small, local, cheap (~1 seed per breakup, ~7/300 epochs; merges keep `seeds.length`
+    bounded). (B) **local margin state** — replace the global timer with a per-lattice "recently
+    rifted" flag; cheaper but still a band-aid, only less crude (fixes the global-blocks-everything
+    wrongness). (C) **full rift→ridge→passive-margin lifecycle** integrated with `oceanAge` for
+    symmetric Atlantic-style opening; biggest, best realism, but really (A) done thoroughly.
+    Compute: NONE change complexity — per-epoch cost is dominated by the fixed-size boundary scan
+    (256×128 = 32,768 lattice points × `seeds.length` nearest-seed search) + the 128×64 Poisson
+    solve; the options only nudge `seeds.length`, which the Wilson cycle's merges already bound.
+    Recommended: (A). **DECIDED 2026-07-25: build (C)** — the user explicitly chose the full
+    rift→ridge→passive-margin lifecycle integrated with `oceanAge` ("keine Angst vor grossen
+    Brocken, wenn es der sim hilft"), not the minimal (A). So: continental rift births a real
+    spreading ridge that seeds age-0 ocean in the widening gap, the new seafloor ages/spreads
+    symmetrically (Atlantic-style opening), the old rifted edges become passive margins, and the
+    global `CONT_RIFT_COOLDOWN_EPOCHS` is retired once the rifted spot genuinely becomes ocean and
+    can no longer re-qualify. (A) is the first phase of (C). **BUILT 2026-07-25 — with an honest
+    finding that changes the outcome.** Implemented: `birthRidgePlate` (a young oceanic plate is
+    born at every continental rift, mean-velocity drift so the basin opens symmetrically, age-0
+    seafloor); `coolMantleAt` (the breakup releases the local mantle dome — the LIP/plume-head
+    heat escapes); and a negative-lock **passive-margin recovery** in a radius around the rift (the
+    ruptured zone must re-establish sustained divergence before rifting again). **But full
+    retirement of the global cooldown proved NOT cheaply achievable, contra the original analysis.**
+    The analysis was half-right: `birthRidgePlate` kills SAME-spot re-firing, but a single assembled
+    supercontinent domes across the WHOLE torus and rifts all over that dome — and the local
+    mechanisms (ridge birth, mantle release, margin recovery) act locally while the dome is global,
+    and the ~0.15/epoch motion coupling keeps neighbouring points diverging faster than they drain.
+    Harness (3 seeds × 300 epochs): cooldown 0 + ridge birth alone = 114 breakups (heavy strobing);
+    + mantle release = 60; + zone lock-reset = 33; + dome-wide release (r900) = ~30 — never clean.
+    **Resolution: the global cooldown is KEPT but reframed + HALVED (40 → 20).** It is a legitimate
+    GLOBAL breakup-STAGING interval (a supercontinent rifts in pulses, not all at once — Pangaea),
+    not a fixed-motion band-aid; the Option-C machinery is what let it halve while staying clean.
+    Result at cooldown 20 (4 seeds × 300ep): 13-14 breakups (LIVELIER than the old 40's 7),
+    **max 1 breakup per 20-epoch window (zero strobing)**, raft 1-4/1-7, seeds bounded (5-26,
+    ridge plates born then subducted → real ocean basins open + close), 0 NaN; tsc + dev clean. The
+    cooldown's one real defect (global → also gates a 2nd separate supercontinent) is mitigated by
+    being short + rarely biting (one dominant landmass). Net win regardless: real ocean basins now
+    open at breakup (Atlantic-style), the dome is released, margins go passive. FULL retirement is
+    deferred — it needs a deeper change (break the dome's coherence at breakup, or a much faster
+    motion response). Constants: `RIFT_COOL_RADIUS/AMOUNT` (380/1.8), `RIFT_RESET_RADIUS` (400),
+    `RIFT_MARGIN_RECOVERY_EPOCHS` (45), `CONT_RIFT_COOLDOWN_EPOCHS` (20).
+  - **Coupling of the two remaining knobs, and why full retirement was declined (2026-07-25).**
+    The lenient continental-rift trigger and the cooldown are COUPLED: both tame strobing and both
+    feed liveliness (inversely). Strobing needs BOTH abundant rift candidates AND no rate-limit, so
+    you can tame it by removing either — a rate-limit (cooldown) OR a strict trigger that keeps
+    candidates scarce. Verified matrix (Option-C machinery always on, 300 epochs): lenient+cd20 =
+    13-14 breakups, no strobing, **plate count healthy (min 5)**; lenient+cd0 = 114 breakups
+    (strobing); strict+cd20 = 4-7 (doubly-limited); strict+cd0 = 2-7, strobe-free BUT the plate
+    count terminally **COLLAPSES to 1** on some seeds (~epoch 200, stuck — a single plate has no
+    boundaries to rift back from); a middle trigger (0.75/30)+cd0 still collapsed on some seeds.
+    KEY: the lenient trigger is *load-bearing for plate-count health* (its continental rifts birth
+    ocean plates via `birthRidgePlate` that offset merges), not merely a liveliness knob — so it
+    can't be traded away to drop the cooldown. **DECISION: keep lenient trigger + cd20** (the user
+    confirmed "leave it as we had it"). The cooldown stays; it earns its keep.
 - **M3 — Volcanism. Hotspots DONE 2026-07-25; arc + flood basalts remain.**
   `sim.hotspots` = 5 fixed plumes (world coords, stationary in the deep-mantle frame);
   `depositHotspotVolcanoes` (in stepEpoch, throttled to every 2 epochs) finds the

@@ -4,7 +4,7 @@ import type { LatticePoint } from './boundaryLattice'
 import { generateDetectionLattice } from './boundaryLattice'
 import { generatePlateMotions, advancePointByMotion, getVelocityAt } from './plateMotion'
 import type { PlateMotion } from './plateMotion'
-import { createMantleField, evolveMantleField, computeMantleFlow, fitMotionsToFlow } from './mantleField'
+import { createMantleField, evolveMantleField, computeMantleFlow, fitMotionsToFlow, coolMantleAt } from './mantleField'
 import { classifyBoundaryMotion } from './plateVelocityDecomposition'
 import { generatePlateSeeds } from './plateSeeds'
 import type { PlateSeed } from './plateSeeds'
@@ -206,29 +206,34 @@ const SPLIT_MERGE_IMMUNITY_EPOCHS = 0
 // connected rafts into many pieces; this only decomposes clusters with a
 // clear, wide gap between them (the "obviously separate landmasses" case).
 const RAFT_CONNECT_FACTOR = 1.5
-// Continental breakup is more lenient than a plate rift — a shorter lock and a
-// gentler divergence threshold — so a supercontinent rifts apart from within on
-// the divergence concentrated under it. Kept lenient on purpose (NOT retired):
-// with the mantle field, the strict plate-rift threshold (lock 40, factor 1.0)
-// also produces breakups, but fewer and smaller — the lenient trigger gives a
-// livelier, more dramatic Wilson cycle (verified: 7 vs 5 breakups, raft swings
-// to 4 vs 3) without any strobing. So this now tunes breakup vigour rather than
-// compensating for fixed motions.
+// Continental breakup is more lenient than a plate rift — a shorter lock and a gentler
+// divergence threshold — so a supercontinent rifts apart from within on the divergence
+// concentrated under it (still gated on raftMembership > 0.5). KEPT LENIENT 2026-07-25.
+// This is LOAD-BEARING, not just for a livelier cycle: its continental rifts birth ocean
+// plates (birthRidgePlate) that counter merges and keep the plate count healthy. Going
+// strict (40 / 1.0) to try to retire the global cooldown was tested and REJECTED — it
+// starves that plate source and the world terminally COLLAPSES to a single plate on some
+// seeds (plate count → 1 by ~epoch 200 and stuck, since 1 plate has no boundaries to
+// rift back from); a middle setting (0.75 / 30) still collapsed on some seeds. So the
+// lenient trigger + a short cooldown is the stable regime. The two are coupled knobs
+// (both tame strobing, both feed liveliness/candidate-abundance) — see the decision doc.
 const CONT_RIFT_LOCK_EPOCHS = 20
 const CONT_RIFT_THRESHOLD_FACTOR = 0.55
-// Global cooldown after a continental rift fires: no further continental rift
-// for this many epochs. Without it, an assembled supercontinent oscillates
-// every single epoch — the rift point stays divergent+locked+under-continent,
-// so it re-qualifies immediately and strobes split/merge (confirmed ~1 collision
-// + 1 breakup per epoch past ~epoch 220). NOTE 2026-07-25: this is NOT retired
-// with the other fixed-motion band-aids — verified that removing it (0) STILL
-// strobes catastrophically even with the mantle field driving the plates
-// (breakups 7→73, 12 breakups per 20-epoch window, raft count → 35). The mantle
-// coupling relaxes motion only ~0.15/epoch, and the Voronoi lattice keeps the
-// rift point divergent, so the point re-qualifies long before the flow reverses.
-// So the cooldown is a legitimate rate-limiter, not a crutch: it turns breakup
-// into an occasional, dramatic event.
-const CONT_RIFT_COOLDOWN_EPOCHS = 40
+// GLOBAL breakup-staging interval: no further continental rift for this many epochs
+// after one fires. Reframed + HALVED (was 40) 2026-07-25 with the Option-C rift
+// lifecycle (birthRidgePlate + coolMantleAt + passive-margin recovery). It is NOT a pure
+// band-aid: a single assembled supercontinent domes across the whole torus, so without a
+// GLOBAL rate-limit it rifts all over that dome every epoch (strobing: breakups 7→114 at
+// 0, even with the mantle field + the local Option-C machinery — which acts locally while
+// the dome is global). Fully retiring it needs the trigger to go strict, which collapses
+// the plate count (see CONT_RIFT_LOCK_EPOCHS above) — rejected. So it stays, but the
+// Option-C machinery let it HALVE to 20 while staying strobe-free (max 1 breakup / 20-epoch
+// window) and running LIVELIER than the old 40 (13-14 vs 7 breakups / 300ep) — physically
+// the interval between successive rift stages of a supercontinent (Pangaea rifted in
+// pulses). Its one real defect (global → also gates a 2nd separate supercontinent) is
+// mitigated by being short + rarely biting (one dominant landmass). Full retirement is
+// deferred; it needs a deeper change (break the dome's coherence at breakup).
+const CONT_RIFT_COOLDOWN_EPOCHS = 20
 
 // Ocean-floor age (Phase 3, see oceanAge.ts): the field starts at a moderate
 // uniform age so the ocean isn't uniformly shallow at epoch 0, then evolves as
@@ -322,6 +327,27 @@ const HOTSPOT_EPOCH_INTERVAL = 2
 // (continental) so it stays as a lasting mark of the breakup. plateB = -2 is its
 // own marker (like hotspots' -1) so it never merges with boundary/hotspot features.
 const FLOOD_BASALT_DEPOSIT = 50
+
+// At a continental breakup, release the mantle doming that drove it (see
+// coolMantleAt): subtract this much buoyancy over a disc of this world-radius
+// around the rift, so the divergent forcing under the (former) supercontinent
+// collapses regionally and the strobing that made CONT_RIFT_COOLDOWN necessary
+// stops on its own (Option C). Radius covers a good part of a supercontinent-scale
+// dome; amount pushes the peak (~1.1) past zero into cooling-ocean territory.
+// Tuned by harness so cooldown can go to 0 without runaway breakups.
+const RIFT_COOL_RADIUS = 380
+const RIFT_COOL_AMOUNT = 1.8
+// After a breakup, reset the rift/lock accumulators for every boundary point within
+// this world-radius of the rift — the rifted zone's stress state is relieved.
+const RIFT_RESET_RADIUS = 400
+// A just-rifted margin is tectonically quiet while it cools into a passive margin:
+// the zone's boundary points get their lock counter set NEGATIVE, so they need this
+// many epochs of sustained divergence (on top of CONT_RIFT_LOCK_EPOCHS) before they
+// could rift again. This is the LOCAL margin-recovery state that replaces the old
+// GLOBAL cooldown timer — local means a second, separate supercontinent elsewhere can
+// still rift freely (the global timer wrongly blocked that). Paired with the mantle
+// release, which removes the forcing so the recovery isn't fighting a live dome.
+const RIFT_MARGIN_RECOVERY_EPOCHS = 45
 
 function generateHotspots(random: () => number, width: number, height: number): { x: number; y: number }[] {
   return Array.from({ length: HOTSPOT_COUNT }, () => ({ x: random() * width, y: random() * height }))
@@ -558,6 +584,34 @@ function applyRift(sim: PlateSimulation, event: RiftEvent): void {
   sim.seeds.push(newSeed)
   sim.types.push('oceanic')
   sim.motions.push(newMotion)
+  sim.ages.push(0)
+}
+
+// A continental breakup opens a real ocean basin: birth a young oceanic plate —
+// a mid-ocean ridge — in the gap between the two separating halves (dynamic-
+// boundaries / rift lifecycle, Option C; see docs/decisions/evolving-euler-poles.md).
+// This is what retires the CONT_RIFT_COOLDOWN band-aid: once the rifted spot is
+// its own oceanic plate (not the two continental seeds still adjacent+divergent),
+// its raftMembership drops and it can no longer re-qualify as a continental rift,
+// so it stops strobing on its own — no global timer needed. The new plate takes
+// the MEAN velocity of the two flanks AT the rift point (pure drift, spin 0), so
+// it sits centred between them and the basin opens symmetrically, Atlantic-style;
+// the mantle coupling refines the motion next epoch. Ocean-floor age at the point
+// is already reset to 0 by the divergent-boundary reset in the boundary loop, and
+// advection then ages the new seafloor outward from the ridge.
+function birthRidgePlate(sim: PlateSimulation, x: number, y: number, flankA: number, flankB: number): void {
+  const vA = getVelocityAt({ x, y }, sim.motions[flankA], sim.width, sim.height)
+  const vB = getVelocityAt({ x, y }, sim.motions[flankB], sim.width, sim.height)
+  const motion: PlateMotion = {
+    driftX: (vA.vx + vB.vx) / 2,
+    driftY: (vA.vy + vB.vy) / 2,
+    spin: 0,
+    centroidX: x,
+    centroidY: y,
+  }
+  sim.seeds.push({ x, y })
+  sim.types.push('oceanic')
+  sim.motions.push(motion)
   sim.ages.push(0)
 }
 
@@ -872,9 +926,27 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
     // Reset that point's divergence accumulator so it doesn't immediately
     // re-split the fresh halves next epoch.
     if (raftSplit) {
-      sim.latticeAccumulated[continentalRift.index] = 0
-      // Space the next breakup out, so a supercontinent under fixed convergent
-      // motions doesn't strobe split/merge every epoch (see the cooldown const).
+      // Relieve the accumulated strain across the whole rifted ZONE, not just the
+      // one fired point: the rupture reset the region's stress state, so every
+      // boundary point near the rift must re-establish sustained divergence (re-lock
+      // over CONT_RIFT_LOCK_EPOCHS) before it can rift again. This is the local,
+      // physical replacement for the old global cooldown timer — together with the
+      // mantle release below (which removes the FORCING that would re-lock them), it
+      // stops the broad hot dome under a supercontinent from strobing a breakup every
+      // epoch. See the RIFT_RESET_RADIUS const.
+      const rr2 = RIFT_RESET_RADIUS * RIFT_RESET_RADIUS
+      for (const b of boundaries) {
+        if (toroidalDistanceSq(b.x, b.y, continentalRift.x, continentalRift.y, width, height) <= rr2) {
+          // Negative lock = a passive-margin recovery delay: needs
+          // RIFT_MARGIN_RECOVERY_EPOCHS + CONT_RIFT_LOCK_EPOCHS of sustained
+          // divergence to rift again. Local, so a separate supercontinent is unaffected.
+          sim.latticeLockedEpochs[b.latticeIndex] = -RIFT_MARGIN_RECOVERY_EPOCHS
+          sim.latticeAccumulated[b.latticeIndex] = 0
+        }
+      }
+      // Global breakup-staging interval (halved to 20; the zone reset + mantle release
+      // above cut the local strobing, but a coherent supercontinent still needs a global
+      // rate-limit — see CONT_RIFT_COOLDOWN_EPOCHS).
       sim.continentalRiftCooldownUntil = sim.epoch + CONT_RIFT_COOLDOWN_EPOCHS
       // The far half is a brand-new continent — give it its own name (the
       // near half keeps the parent's), so split-born continents aren't
@@ -888,6 +960,13 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
       const fbIdx = findOrCreateFeatureIndex(sim.features, continentalRift.x, continentalRift.y, continentalRift.plateA, -2, continentalRift.plateA, fbTangentX, fbTangentY, 'range', false, width, height)
       sim.features[fbIdx].thickness += FLOOD_BASALT_DEPOSIT
       sim.features[fbIdx].epochsSinceDeposit = 0
+      // Open a real ocean basin in the gap: a young oceanic plate (mid-ocean
+      // ridge) is born between the two halves (Option C, the rift lifecycle).
+      birthRidgePlate(sim, continentalRift.x, continentalRift.y, continentalRift.plateA, continentalRift.plateB)
+      // Release the thermal doming that drove the breakup — this is what actually
+      // retires the global cooldown: it collapses the broad divergent forcing under
+      // the (former) supercontinent so neighbouring points stop re-qualifying.
+      coolMantleAt(sim.mantle, continentalRift.x, continentalRift.y, width, height, RIFT_COOL_RADIUS, RIFT_COOL_AMOUNT)
     }
   }
 
