@@ -14,7 +14,6 @@ import type { PlateArrow } from '../../worldgen/elevationMapImage'
 import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/plateSimulation'
 import { eventCategory } from '../../worldgen/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
-import { createOverlayToggleBar } from '../../ui/mapOverlay/OverlayToggleBar'
 import { temperatureColor, precipitationColor, amplitudeColor } from '../../worldgen/climate/climateColors'
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
@@ -436,28 +435,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
       <label class="field field--icon-row">
         <span class="field-row">
-          <button type="button" class="icon-button climate-toggle" data-action="toggle-temperature" aria-label="Toggle temperature overlay">
-            <img src="/icons/temp_off.png" alt="" />
-          </button>
           <span class="climate-readout">
             <span>Min: <span data-value="temp-min">–</span>°C</span>
             <span>Max: <span data-value="temp-max">–</span>°C</span>
           </span>
-          <button type="button" class="icon-button climate-toggle" data-action="toggle-wind" aria-label="Toggle wind overlay">
-            <img src="/icons/wind_off.png" alt="" />
-          </button>
-          <button type="button" class="icon-button climate-toggle" data-action="toggle-precipitation" aria-label="Toggle precipitation overlay">
-            <img src="/icons/ocean.png" alt="" />
-          </button>
-          <button type="button" class="icon-button climate-toggle" data-action="toggle-currents" aria-label="Toggle ocean current overlay">
-            <img src="/icons/gyres.png" alt="" />
-          </button>
-          <button type="button" class="icon-button climate-toggle" data-action="toggle-seasonality" aria-label="Toggle seasonality overlay">
-            <img src="/icons/seasonality.png" alt="" />
-          </button>
-          <button type="button" class="icon-button climate-toggle" data-action="toggle-biomes" aria-label="Toggle biome overlay">
-            <img src="/icons/biomes.png" alt="" />
-          </button>
           <span class="erosion-status" data-value="climate-status"></span>
         </span>
       </label>
@@ -469,9 +450,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
       <label class="field field--icon-row">
         <span class="field-row">
-          <button type="button" class="icon-button climate-toggle" data-action="toggle-rivers" aria-label="Toggle river overlay">
-            <img src="/icons/river.png" alt="" />
-          </button>
           <span class="erosion-status" data-value="hydrology-status"></span>
         </span>
       </label>
@@ -498,18 +476,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const exportButton = root.querySelector<HTMLButtonElement>('[data-action="export"]')!
   const loadWorldButton = root.querySelector<HTMLButtonElement>('[data-action="load-world"]')!
   const saveWorldButton = root.querySelector<HTMLButtonElement>('[data-action="save-world"]')!
-  const tempToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-temperature"]')!
-  const tempToggleIcon = tempToggleButton.querySelector<HTMLImageElement>('img')!
-  const windToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-wind"]')!
-  const windToggleIcon = windToggleButton.querySelector<HTMLImageElement>('img')!
-  const precipToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-precipitation"]')!
-  const precipToggleIcon = precipToggleButton.querySelector<HTMLImageElement>('img')!
-  const currentsToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-currents"]')!
-  const currentsToggleIcon = currentsToggleButton.querySelector<HTMLImageElement>('img')!
-  const seasonalityToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-seasonality"]')!
-  const seasonalityToggleIcon = seasonalityToggleButton.querySelector<HTMLImageElement>('img')!
-  const biomesToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-biomes"]')!
-  const biomesToggleIcon = biomesToggleButton.querySelector<HTMLImageElement>('img')!
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
@@ -519,7 +485,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const contrastLabel = root.querySelector<HTMLElement>('[data-value="contrast-label"]')!
   const riverDensityInput = root.querySelector<HTMLInputElement>('.river-density-input')!
   const riverDensityLabel = root.querySelector<HTMLElement>('[data-value="river-density-label"]')!
-  const riversToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-rivers"]')!
   const hydrologyStatus = root.querySelector<HTMLElement>('[data-value="hydrology-status"]')!
   const tempMaxLabel = root.querySelector<HTMLElement>('[data-value="temp-max"]')!
   const tempMinLabel = root.querySelector<HTMLElement>('[data-value="temp-min"]')!
@@ -580,7 +545,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const HYDROLOGY_PANEL_INDEX = 4
   let lastRiverData: { points: Float32Array; lengths: Uint32Array } | null = null
   let lastLakeDepth: Float32Array | null = null
-  let riversOn = true
 
   function paintBoundaryMask(data: Uint8ClampedArray): void {
     if (!lastBoundaryMask) return
@@ -833,15 +797,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'precipitation', label: 'Precipitation', enabled: false, hidden: true, paintPixels: paintPrecipitation },
     { id: 'seasonality', label: 'Seasonality', enabled: false, hidden: true, paintPixels: paintSeasonality },
     { id: 'biomes', label: 'Biomes', enabled: false, hidden: true, paintPixels: paintBiomes },
-    { id: 'boundaries', label: 'Boundaries', enabled: true, paintPixels: paintBoundaryMask },
+    { id: 'boundaries', label: 'Boundaries', enabled: false, paintPixels: paintBoundaryMask },
     { id: 'arrows', label: 'Arrows', enabled: false, paint: drawArrows },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
     { id: 'currents', label: 'Currents', enabled: false, hidden: true, paint: drawCurrents },
     { id: 'lakes', label: 'Lakes', enabled: false, hidden: true, paintPixels: paintLakes },
+    // Events are always on — a persistent notification-coupled marker layer, not
+    // a user toggle. Arrows are unused (no toggle), kept only so the id resolves.
     { id: 'events', label: 'Events', enabled: true },
-    { id: 'names', label: 'Names', enabled: true, paint: (c) => drawContinentLabels(c, lastRaftLabels) },
+    { id: 'names', label: 'Names', enabled: false, paint: (c) => drawContinentLabels(c, lastRaftLabels) },
   ])
-  createOverlayToggleBar(overlay, root)
 
   // Draws one tectonic event's geologic marker, faded by `alpha`: a suture band
   // (collision), a dashed rift axis (breakup), or a ring (supercontinent /
@@ -904,45 +869,89 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // sync: the panel's temp toggle button (icon), the overlay-bar chip, and the
   // layer itself. The panel button and the overlay chip are two doors to the
   // same switch.
-  // Desired on/off of each climate overlay — persists across panel switches
-  // (the toggle buttons flip these). The overlays only actually SHOW while on
-  // the climate panel; off-panel they're hidden but the desired state (and the
-  // data) is kept, so returning restores them. Defaults: temperature on, wind off.
-  const climateOverlaysOn: Record<string, boolean> = { temperature: true, wind: false, precipitation: false, currents: false, seasonality: false, biomes: false }
-  // Per overlay: its toggle button (for the active-state class) and, where a
-  // pair exists, the on/off icon to swap. Precipitation reuses one icon and
-  // shows state via the class alone.
-  const climateToggleIcons: Record<string, { button: HTMLButtonElement; icon: HTMLImageElement; on: string; off: string }> = {
-    temperature: { button: tempToggleButton, icon: tempToggleIcon, on: '/icons/temp_on.png', off: '/icons/temp_off.png' },
-    wind: { button: windToggleButton, icon: windToggleIcon, on: '/icons/wind_on.png', off: '/icons/wind_off.png' },
-    precipitation: { button: precipToggleButton, icon: precipToggleIcon, on: '/icons/ocean.png', off: '/icons/ocean.png' },
-    currents: { button: currentsToggleButton, icon: currentsToggleIcon, on: '/icons/gyres.png', off: '/icons/gyres.png' },
-    seasonality: { button: seasonalityToggleButton, icon: seasonalityToggleIcon, on: '/icons/seasonality.png', off: '/icons/seasonality.png' },
-    biomes: { button: biomesToggleButton, icon: biomesToggleIcon, on: '/icons/biomes.png', off: '/icons/biomes.png' },
-  }
-
   // The hover tooltip (created near setup end); refresh()ed whenever the data or
   // active overlays change so a stationary readout stays in sync.
   let hoverTooltip: ReturnType<typeof createMapHoverTooltip> | null = null
 
-  // Enables each climate layer only when on the climate panel AND wanted; the
-  // button icon + active-state class always reflect the wanted state. One
-  // composite at the end.
-  function applyClimateOverlays(onClimatePanel: boolean): void {
-    for (const id of Object.keys(climateOverlaysOn)) {
-      const want = climateOverlaysOn[id]
-      overlay.setLayerEnabled(id, onClimatePanel && want)
-      const t = climateToggleIcons[id]
-      t.icon.src = want ? t.on : t.off
-      t.button.classList.toggle('is-active', want)
+  // Unified overlay toolbar (top-center, persistent across all panels). Every
+  // toggleable overlay is one icon button; a button is disabled until its data
+  // exists (its `available`), and shows an active state when on. 'rivers' bundles
+  // the scene-space river ribbons + the lake tint under one control. Events are
+  // NOT here — they're always on. Order = display order in the bar.
+  const OVERLAY_DEFS: { id: string; icon: string; label: string; available: () => boolean }[] = [
+    { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null },
+    { id: 'names', icon: '/icons/continent_name.png', label: 'Continent names', available: () => lastRaftLabels.length > 0 },
+    { id: 'temperature', icon: '/icons/temp_on.png', label: 'Temperature', available: () => lastTemperature !== null },
+    { id: 'wind', icon: '/icons/wind.png', label: 'Wind', available: () => lastWind !== null },
+    { id: 'precipitation', icon: '/icons/ocean.png', label: 'Precipitation', available: () => lastPrecipitation !== null },
+    { id: 'currents', icon: '/icons/gyres.png', label: 'Ocean currents', available: () => lastCurrents !== null },
+    { id: 'seasonality', icon: '/icons/seasonality.png', label: 'Seasonality', available: () => lastSeasonality !== null },
+    { id: 'biomes', icon: '/icons/biomes.png', label: 'Biomes', available: () => lastBiomes !== null },
+    { id: 'rivers', icon: '/icons/river.png', label: 'Rivers & lakes', available: () => lastRiverData !== null },
+  ]
+  // Desired on/off per overlay (persists as availability comes and goes). Voronoi
+  // + names default on (topography exists first); data overlays default off.
+  const overlaysOn: Record<string, boolean> = {}
+  for (const def of OVERLAY_DEFS) overlaysOn[def.id] = def.id === 'boundaries' || def.id === 'names'
+
+  const overlayBar = document.createElement('div')
+  overlayBar.className = 'overlay-bar'
+  const overlayButtons: Record<string, HTMLButtonElement> = {}
+  for (const def of OVERLAY_DEFS) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'overlay-icon'
+    btn.title = def.label
+    btn.setAttribute('aria-label', def.label)
+    const img = document.createElement('img')
+    img.src = def.icon
+    img.alt = ''
+    btn.appendChild(img)
+    btn.addEventListener('click', () => toggleOverlay(def.id))
+    overlayBar.appendChild(btn)
+    overlayButtons[def.id] = btn
+  }
+  root.appendChild(overlayBar)
+
+  // Enable each layer per its wanted state AND availability; 'rivers' drives the
+  // scene ribbons + lake tint together. One composite at the end.
+  function applyOverlays(): void {
+    for (const def of OVERLAY_DEFS) {
+      const show = overlaysOn[def.id] && def.available()
+      if (def.id === 'rivers') {
+        riverLayer?.setEnabled(show)
+        overlay.setLayerEnabled('lakes', show)
+      } else {
+        overlay.setLayerEnabled(def.id, show)
+      }
     }
     overlay.composite()
     hoverTooltip?.refresh()
   }
 
-  function toggleClimateOverlay(id: string): void {
-    climateOverlaysOn[id] = !climateOverlaysOn[id]
-    applyClimateOverlays(true) // only reachable from the climate panel
+  // Sync each button's disabled (unavailable) + active (on) look.
+  function refreshOverlayBar(): void {
+    for (const def of OVERLAY_DEFS) {
+      const btn = overlayButtons[def.id]
+      const avail = def.available()
+      btn.disabled = !avail
+      btn.classList.toggle('is-disabled', !avail)
+      btn.classList.toggle('is-active', avail && overlaysOn[def.id])
+    }
+  }
+
+  // Called whenever overlay data appears/disappears (climate/hydrology computed
+  // or invalidated, world re-rendered) so the bar + layers stay in sync.
+  function updateOverlays(): void {
+    applyOverlays()
+    refreshOverlayBar()
+  }
+
+  function toggleOverlay(id: string): void {
+    const def = OVERLAY_DEFS.find((d) => d.id === id)
+    if (!def || !def.available()) return
+    overlaysOn[id] = !overlaysOn[id]
+    updateOverlays()
   }
 
   // 8-point compass for a (u,v) field vector — u east+, v toward the bottom
@@ -965,20 +974,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const gy = Math.min(climateResY - 1, Math.floor((mapY / MAP_HEIGHT) * climateResY))
     const i = gy * climateResX + gx
     const lines: string[] = []
-    if (climateOverlaysOn.biomes && lastBiomes) lines.push(biomeLabel(lastBiomes[i]))
-    if (climateOverlaysOn.temperature && lastTemperature) lines.push(`${Math.round(lastTemperature[i])} °C`)
-    if (climateOverlaysOn.precipitation && lastPrecipitation) {
+    if (overlaysOn.biomes && lastBiomes) lines.push(biomeLabel(lastBiomes[i]))
+    if (overlaysOn.temperature && lastTemperature) lines.push(`${Math.round(lastTemperature[i])} °C`)
+    if (overlaysOn.precipitation && lastPrecipitation) {
       const p = lastPrecipitation[i]
       lines.push(p === OCEAN_PRECIP ? 'Ocean' : `${Math.round(p)} mm/yr`)
     }
-    if (climateOverlaysOn.seasonality && lastSeasonality) {
+    if (overlaysOn.seasonality && lastSeasonality) {
       const a = lastSeasonality[i]
       lines.push(a === OCEAN_AMPLITUDE ? 'Ocean' : `${Math.round(a)} °C range`)
     }
-    if (climateOverlaysOn.wind && lastWind) {
+    if (overlaysOn.wind && lastWind) {
       lines.push(`Wind ${compass(lastWind[i * 2], lastWind[i * 2 + 1])}`)
     }
-    if (climateOverlaysOn.currents && lastCurrents) {
+    if (overlaysOn.currents && lastCurrents) {
       const u = lastCurrents[i * 2]
       const v = lastCurrents[i * 2 + 1]
       if (Math.hypot(u, v) > 0.02) {
@@ -1009,9 +1018,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
     tempMinLabel.textContent = String(Math.round(min))
     tempMaxLabel.textContent = String(Math.round(max))
-    // Show the freshly-computed result — but only if still on the climate panel
-    // (the compute is async; the user may have navigated away).
-    applyClimateOverlays(panelIndex === CLIMATE_PANEL_INDEX)
+    // Climate data now exists → its overlay buttons become available.
+    updateOverlays()
   }
 
   // Invalidate the (now stale) climate when an upstream step changes the
@@ -1024,24 +1032,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastPrecipitation = null
     lastSeasonality = null
     lastBiomes = null
-    applyClimateOverlays(false)
     climateStatus.textContent = ''
     tempMinLabel.textContent = '–'
     tempMaxLabel.textContent = '–'
     // Rivers depend on both topography and climate, so any climate invalidation
     // (which fires on every topography change too) also stales the hydrology.
     invalidateHydrology()
-  }
-
-  // One "water" toggle drives both rivers (scene-space ribbons) and lakes
-  // (texture layer) — they belong together. Shown only on the hydrology panel
-  // AND when wanted; keeps the toggle button's active state in sync.
-  function applyRiverOverlay(onHydrologyPanel: boolean): void {
-    const show = onHydrologyPanel && riversOn
-    riverLayer?.setEnabled(show && lastRiverData !== null)
-    overlay.setLayerEnabled('lakes', show && lastLakeDepth !== null)
-    riversToggleButton.classList.toggle('is-active', riversOn)
-    overlay.composite()
+    updateOverlays() // climate overlays no longer available
   }
 
   function handleHydrologyData(message: WorkerHydrologyDataMessage): void {
@@ -1049,11 +1046,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverLayer?.setPolylines(lastRiverData.points, lastRiverData.lengths)
     // Lakes only arrive on a re-route (empty buffer = unchanged, keep the last).
     if (message.lakeDepth.byteLength > 0) lastLakeDepth = new Float32Array(message.lakeDepth)
-    // Riparian-refined biomes replace the climate step's water-free ones (same
-    // coarse grid). Visible via the biome overlay on the Climate panel.
+    // Riparian-refined biomes replace the climate step's water-free ones.
     if (message.biomes.byteLength > 0) lastBiomes = new Uint8Array(message.biomes)
     hydrologyStatus.textContent = ''
-    applyRiverOverlay(panelIndex === HYDROLOGY_PANEL_INDEX)
+    updateOverlays() // rivers/lakes + refreshed biomes now available
   }
 
   function invalidateHydrology(): void {
@@ -1166,7 +1162,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastRaftLabels = message.raftLabels
     overlay.setBase(new Uint8ClampedArray(message.buffer))
     handleSimEvents(message.events)
-    overlay.composite()
+    // Applies the current overlay states over the fresh base + syncs the bar
+    // (boundaries/names data now exists → their buttons become available).
+    updateOverlays()
 
     lastLandFraction = message.landFraction
     lastEpoch = message.epoch
@@ -1445,15 +1443,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     input.click()
   })
 
-  // The temp/wind buttons just toggle their overlay on/off (climate is computed
-  // on panel open, not here).
-  tempToggleButton.addEventListener('click', () => toggleClimateOverlay('temperature'))
-  windToggleButton.addEventListener('click', () => toggleClimateOverlay('wind'))
-  precipToggleButton.addEventListener('click', () => toggleClimateOverlay('precipitation'))
-  currentsToggleButton.addEventListener('click', () => toggleClimateOverlay('currents'))
-  seasonalityToggleButton.addEventListener('click', () => toggleClimateOverlay('seasonality'))
-  biomesToggleButton.addEventListener('click', () => toggleClimateOverlay('biomes'))
-
   // Dragging the band slider live-recomputes the climate (debounced) once a
   // world exists — the worker no-ops if there's no elevation yet. Recomputes
   // only while not running tectonics (topography would be mid-change).
@@ -1485,10 +1474,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (simRunning) return
     clearTimeout(hydrologyDebounce)
     hydrologyDebounce = setTimeout(requestHydrology, 150)
-  })
-  riversToggleButton.addEventListener('click', () => {
-    riversOn = !riversOn
-    applyRiverOverlay(true) // only reachable from the hydrology panel
   })
 
   const regenerate = (): void => {
@@ -1576,37 +1561,23 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       panel.hidden = i !== index
     })
     panelTitle.textContent = PANEL_TITLES[index]
-    // Climate overlays only show on the climate panel. Entering it computes the
-    // climate if it isn't up to date (first open, or after an upstream reset
-    // invalidated it), else re-shows the already-computed result; leaving it
-    // hides the overlays (but keeps the data, so returning doesn't recompute).
-    // requestClimate self-guards a running sim / missing world.
-    if (index === CLIMATE_PANEL_INDEX) {
-      if (lastTemperature === null) requestClimate()
-      else applyClimateOverlays(true)
-    } else {
-      applyClimateOverlays(false)
-    }
-    // Rivers show only on the hydrology panel. Entering it ensures a climate is
-    // computed first (the worker caches its precipitation as the river source —
-    // posting climate then hydrology keeps that order), then computes rivers if
-    // stale, else re-shows them. Leaving hides them (data kept).
+    // Overlays are toggled from the persistent top bar, not the panel — but the
+    // Climate / Rivers panels are still where their data gets computed. Entering
+    // Climate computes it if stale; entering Rivers ensures a climate first (the
+    // worker caches its precipitation as the river source — posting climate then
+    // hydrology keeps that order), then computes rivers if stale.
+    if (index === CLIMATE_PANEL_INDEX && lastTemperature === null) requestClimate()
     if (index === HYDROLOGY_PANEL_INDEX) {
       if (lastTemperature === null) requestClimate()
       if (lastRiverData === null) requestHydrology()
-      else applyRiverOverlay(true)
-    } else {
-      applyRiverOverlay(false)
     }
-    // The hover readout describes the climate overlays, so it's only live on the
-    // climate panel.
-    hoverTooltip?.setEnabled(index === CLIMATE_PANEL_INDEX)
     updateNavState()
   }
 
-  // Cursor readout over the map (reusable module; here it reports the active
-  // climate overlays for the hovered cell). Created before the first showPanel
-  // so that call sets its enabled state.
+  // Cursor readout over the map (reusable module; reports the active climate
+  // overlays for the hovered cell). Always enabled — it self-hides when no
+  // data-bearing overlay is on (describeClimateCell returns null), and overlays
+  // are now global rather than climate-panel-only.
   hoverTooltip = createMapHoverTooltip({
     scene,
     host: root,

@@ -193,14 +193,45 @@
   line-height: 1.2;
 }
 
-/* Climate overlay toggle buttons: dimmed when their overlay is off, full when
-   on (the temp/wind icons also swap on/off; precipitation shows state via this
-   alone). */
-.worldgen-flat-screen .climate-toggle:not(.is-active) {
-  opacity: 0.35;
+/* Unified overlay toolbar: a persistent row of icon toggles, top-center, across
+   all panels. Off = dim, on = full, unavailable (data not computed yet) =
+   greyed + not clickable. */
+.worldgen-flat-screen .overlay-bar {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
 }
-.worldgen-flat-screen .climate-toggle.is-active {
+.worldgen-flat-screen .overlay-icon {
+  width: 32px;
+  flex: none;
+  border: none;
+  background: none;
+  padding: 0;
+  line-height: 0;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 0.15s ease;
+}
+.worldgen-flat-screen .overlay-icon img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.worldgen-flat-screen .overlay-icon:hover {
+  opacity: 0.7;
+}
+.worldgen-flat-screen .overlay-icon.is-active {
   opacity: 1;
+}
+.worldgen-flat-screen .overlay-icon.is-disabled {
+  opacity: 0.15;
+  cursor: not-allowed;
+  filter: grayscale(1);
 }
 
 /* Min/max average-temperature readout, stacked beside the compute button. */
