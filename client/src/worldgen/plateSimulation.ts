@@ -348,6 +348,15 @@ const RIFT_RESET_RADIUS = 400
 // still rift freely (the global timer wrongly blocked that). Paired with the mantle
 // release, which removes the forcing so the recovery isn't fighting a live dome.
 const RIFT_MARGIN_RECOVERY_EPOCHS = 45
+// Depth cap (most-negative thickness) for a continental rift-valley trough, so its
+// floor stays just above sea level and it reads as a deep LAKE basin, not an ocean
+// incursion. floor elevation ≈ RAFT_CONTINENTAL_BASELINE (0.35) + this·THICKNESS_TO_
+// ELEVATION_SCALE (0.035) ≈ 0.07 at −8 — well above SEA_LEVEL (0), deep below the 0.35
+// continent that encloses it, so computeLakes fills it into a Baikal/Tanganyika-scale
+// rift lake. Without the cap the trough sinks to the −1 elevation clamp (ocean). The
+// lake is transient: at actual breakup birthRidgePlate drops the baseline to oceanic
+// and it floods to sea. See the rift-lake work in docs/decisions.
+const RIFT_BASIN_FLOOR_THICKNESS = -8
 
 function generateHotspots(random: () => number, width: number, height: number): { x: number; y: number }[] {
   return Array.from({ length: HOTSPOT_COUNT }, () => ({ x: random() * width, y: random() * height }))
@@ -909,6 +918,16 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
     const feature = sim.features[featureIndex]
     feature.thickness += sum / count
     feature.epochsSinceDeposit = 0
+    // Rift-lake floor: a continental rift trough (the only negative-thickness range —
+    // trenches are 'trench' kind) is capped so its floor stays just ABOVE sea level
+    // instead of running away to the elevation clamp (thickness → ~−50 → elevation −1 →
+    // ocean). At the cap the graben floor is ~0.35 + (−8)·0.035 ≈ 0.07, a deep but
+    // dry-land enclosed basin that the hydrology's computeLakes fills into a deep rift
+    // lake (Baikal/Tanganyika-scale). It stays a LAKE, not an ocean, until the rift
+    // actually breaks up — then birthRidgePlate drops the whole area to the oceanic
+    // baseline and the lake floods to sea (transient, Red-Sea-style). See the tectonic-
+    // rift-lakes work in docs/decisions and RIFT_BASIN_FLOOR_THICKNESS.
+    if (feature.kind === 'range' && feature.thickness < RIFT_BASIN_FLOOR_THICKNESS) feature.thickness = RIFT_BASIN_FLOOR_THICKNESS
   }
 
   // Continents that have drifted (or grown by accretion) into contact this
