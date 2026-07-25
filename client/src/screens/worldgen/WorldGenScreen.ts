@@ -3,10 +3,11 @@ import type { InstancedMesh } from '@babylonjs/core'
 import { createHexMapCamera } from '../../camera/hexMapCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
+import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/mapConfig'
 import JSZip from 'jszip'
-import type { WorkerClimateDataMessage, WorkerErosionProgressMessage, WorkerExportDataMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
+import type { WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerErosionProgressMessage, WorkerExportDataMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/continentLabelRenderer'
 import type { PlateArrow } from '../../worldgen/elevationMapImage'
@@ -123,6 +124,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // observer.
   let debugMeshTile: Mesh | null = null
   let debugMeshWrapInstances: InstancedMesh[] = []
+  // Scene-space river ribbons (crisp at any zoom, not baked into the map
+  // texture). Declared before the map view so its onRecenter can tile them.
+  let riverLayer: ReturnType<typeof createToroidalRibbonOverlay> | null = null
 
   // The flat map plane + its toroidal 3x3 recentering (see ToroidalMapView).
   // The temporary debug relief mesh tiles in lockstep via onRecenter, using
@@ -144,8 +148,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           i++
         }
       }
+      riverLayer?.recenter(centerX, centerZ)
     },
   })
+
+  // River ribbons live in the scene over the map plane; segments come from the
+  // hydrology step, tiled for the torus wrap via the recenter hook above.
+  riverLayer = createToroidalRibbonOverlay({
+    scene,
+    worldWidth: WORLD_WIDTH,
+    worldHeight: WORLD_HEIGHT,
+    textureWidth: MAP_WIDTH,
+    textureHeight: MAP_HEIGHT,
+  })
+  riverLayer.setEnabled(false)
 
   // -----------------------------------------------------------------
   // DEBUG: temporary 3D relief preview ("enter 3D" button on the
@@ -446,6 +462,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </span>
       </label>
     </div>
+    <div class="panel" data-panel="4">
+      <label class="field">
+        <span class="field-label">River density: <span data-value="river-density-label">55</span></span>
+        <input type="range" class="river-density-input" min="0" max="100" step="1" value="55" aria-label="River density" />
+      </label>
+      <label class="field field--icon-row">
+        <span class="field-row">
+          <button type="button" class="icon-button climate-toggle" data-action="toggle-rivers" aria-label="Toggle river overlay">
+            <img src="/icons/river.png" alt="" />
+          </button>
+          <span class="erosion-status" data-value="hydrology-status"></span>
+        </span>
+      </label>
+    </div>
   `
 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
@@ -487,6 +517,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const humidityLabel = root.querySelector<HTMLElement>('[data-value="humidity-label"]')!
   const contrastInput = root.querySelector<HTMLInputElement>('.contrast-input')!
   const contrastLabel = root.querySelector<HTMLElement>('[data-value="contrast-label"]')!
+  const riverDensityInput = root.querySelector<HTMLInputElement>('.river-density-input')!
+  const riverDensityLabel = root.querySelector<HTMLElement>('[data-value="river-density-label"]')!
+  const riversToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-rivers"]')!
+  const hydrologyStatus = root.querySelector<HTMLElement>('[data-value="hydrology-status"]')!
   const tempMaxLabel = root.querySelector<HTMLElement>('[data-value="temp-max"]')!
   const tempMinLabel = root.querySelector<HTMLElement>('[data-value="temp-min"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
@@ -541,6 +575,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastBiomes: Uint8Array | null = null
   let climateResX = 0
   let climateResY = 0
+  // Rivers/lakes (hydrology) panel — its own step after climate. River segments
+  // come from the worker's computeHydrology; null until computed / invalidated.
+  const HYDROLOGY_PANEL_INDEX = 4
+  let lastRiverData: { points: Float32Array; lengths: Uint32Array } | null = null
+  let riversOn = true
 
   function paintBoundaryMask(data: Uint8ClampedArray): void {
     if (!lastBoundaryMask) return
@@ -753,6 +792,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     c.stroke(coldPath)
   }
 
+  // Rivers are NOT a compositor (texture) layer — they're scene-space ribbon
+  // geometry (riverLayer) so they stay crisp at any zoom. See handleHydrologyData.
+
   // Layer draw/list order: temperature first (a base tint), names last so labels
   // stay on top (always readable); the climate layers (temperature, wind) are
   // hidden from the overlay bar — toggled from the climate panel instead. The
@@ -963,6 +1005,39 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     climateStatus.textContent = ''
     tempMinLabel.textContent = '–'
     tempMaxLabel.textContent = '–'
+    // Rivers depend on both topography and climate, so any climate invalidation
+    // (which fires on every topography change too) also stales the hydrology.
+    invalidateHydrology()
+  }
+
+  // Shows the scene-space river ribbons only when on the hydrology panel AND
+  // wanted; keeps the toggle button's active state in sync.
+  function applyRiverOverlay(onHydrologyPanel: boolean): void {
+    riverLayer?.setEnabled(onHydrologyPanel && riversOn && lastRiverData !== null)
+    riversToggleButton.classList.toggle('is-active', riversOn)
+  }
+
+  function handleHydrologyData(message: WorkerHydrologyDataMessage): void {
+    lastRiverData = { points: new Float32Array(message.riverPoints), lengths: new Uint32Array(message.riverLengths) }
+    riverLayer?.setPolylines(lastRiverData.points, lastRiverData.lengths)
+    hydrologyStatus.textContent = ''
+    applyRiverOverlay(panelIndex === HYDROLOGY_PANEL_INDEX)
+  }
+
+  function invalidateHydrology(): void {
+    lastRiverData = null
+    riverLayer?.setPolylines(new Float32Array(0), new Uint32Array(0))
+    riverLayer?.setEnabled(false)
+    hydrologyStatus.textContent = ''
+  }
+
+  // Posts a hydrology compute with the current density knob. Needs a computed
+  // climate (the worker caches its precipitation as the river water source); the
+  // hydrology panel ensures that first. Self-guards a running sim.
+  function requestHydrology(): void {
+    if (simRunning) return
+    hydrologyStatus.textContent = '…'
+    postToWorker({ type: 'computeHydrology', riverDensity: Number(riverDensityInput.value) })
   }
 
   // Posts a climate compute with the current band-slider offset. Fired on
@@ -1020,7 +1095,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     downloadBlob(new Blob([message.oceanAge.values], { type: 'application/octet-stream' }), `${baseName}.oceanage.f32`)
   }
 
-  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerExportDataMessage | WorkerClimateDataMessage | WorkerWorldDataMessage>) => {
+  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerExportDataMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerWorldDataMessage>) => {
     const message = event.data
 
     if (message.type === 'erosionProgress') {
@@ -1035,6 +1110,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
     if (message.type === 'climateData') {
       handleClimateData(message)
+      return
+    }
+
+    if (message.type === 'hydrologyData') {
+      handleHydrologyData(message)
       return
     }
 
@@ -1204,6 +1284,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       `  tempOffset: ${Number(tempBandInput.value)}`,
       `  humidity: ${Number(humidityInput.value)}`,
       `  contrast: ${Number(contrastInput.value)}`,
+      `  riverDensity: ${Number(riverDensityInput.value)}`,
       'status:',
       `  tectonicsRun: ${lastEpoch}`,
       `  erosionRun: ${erosionRunCount}`,
@@ -1222,6 +1303,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     tempBandLabel.textContent = t > 0 ? `+${t}` : String(t)
     humidityLabel.textContent = humidityInput.value
     contrastLabel.textContent = contrastInput.value
+    riverDensityLabel.textContent = riverDensityInput.value
   }
 
   // Flat, single-occurrence keys → a tiny regex parser, no YAML dependency.
@@ -1305,6 +1387,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     tempBandInput.value = readYamlValue(yaml, 'tempOffset') ?? '0'
     humidityInput.value = readYamlValue(yaml, 'humidity') ?? '100'
     contrastInput.value = readYamlValue(yaml, 'contrast') ?? '100'
+    riverDensityInput.value = readYamlValue(yaml, 'riverDensity') ?? '55'
     syncSliderLabels()
     erosionRunCount = Number(readYamlValue(yaml, 'erosionRun') ?? 0)
     // lastEpoch is set from the restore render's reported epoch (status
@@ -1355,6 +1438,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
   wireClimateSlider(humidityInput, humidityLabel)
   wireClimateSlider(contrastInput, contrastLabel)
+
+  // River density: live-recompute (debounced); a density-only change reuses the
+  // worker's cached routing/discharge, so it's cheap.
+  let hydrologyDebounce: ReturnType<typeof setTimeout> | undefined
+  riverDensityInput.addEventListener('input', () => {
+    riverDensityLabel.textContent = riverDensityInput.value
+    if (simRunning) return
+    clearTimeout(hydrologyDebounce)
+    hydrologyDebounce = setTimeout(requestHydrology, 150)
+  })
+  riversToggleButton.addEventListener('click', () => {
+    riversOn = !riversOn
+    applyRiverOverlay(true) // only reachable from the hydrology panel
+  })
 
   const regenerate = (): void => {
     stopSim()
@@ -1408,7 +1505,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // parameters (seed, plate counts) live on panel 0, tectonics on panel
   // 1, erosion on panel 2 — future panels slot in the same way via the
   // data-panel pattern, with one more entry in PANEL_TITLES to match.
-  const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion', 'Climate']
+  const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion', 'Climate', 'Rivers']
   const panelTitle = root.querySelector<HTMLElement>('[data-value="panel-title"]')!
   const panels = Array.from(root.querySelectorAll<HTMLElement>('.panel'))
   let panelIndex = 0
@@ -1428,6 +1525,17 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       else applyClimateOverlays(true)
     } else {
       applyClimateOverlays(false)
+    }
+    // Rivers show only on the hydrology panel. Entering it ensures a climate is
+    // computed first (the worker caches its precipitation as the river source —
+    // posting climate then hydrology keeps that order), then computes rivers if
+    // stale, else re-shows them. Leaving hides them (data kept).
+    if (index === HYDROLOGY_PANEL_INDEX) {
+      if (lastTemperature === null) requestClimate()
+      if (lastRiverData === null) requestHydrology()
+      else applyRiverOverlay(true)
+    } else {
+      applyRiverOverlay(false)
     }
     // The hover readout describes the climate overlays, so it's only live on the
     // climate panel.
@@ -1464,6 +1572,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     dispose() {
       stopSim()
       hoverTooltip?.dispose()
+      riverLayer?.dispose()
       overlay.dispose()
       mapView.dispose()
       worker.terminate()

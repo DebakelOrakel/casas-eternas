@@ -4,8 +4,9 @@ import { renderSimulationImage } from './elevationMapImage'
 import type { PlateArrow, RenderSimulationOptions } from './elevationMapImage'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { ElevationRenderPool } from './elevationRenderPool'
-import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './erosion'
-import type { ErosionPhase } from './erosion'
+import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass, fillDepressionsAndRouteFlow } from './erosion'
+import type { ErosionPhase, FlowRouting } from './erosion'
+import { accumulateDischarge, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './hydrology'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './oceanAge'
 import { computeTemperature } from './climate/temperature'
 import { computeWind } from './climate/wind'
@@ -100,6 +101,17 @@ export interface WorkerComputeClimateMessage {
   // Global precipitation multiplier (1 = default) — see computePrecipitation.
   humidity: number
 }
+// Requests a rivers/lakes (hydrology) compute on the current topography, using
+// the precipitation cached from the last computeClimate as the water source.
+// `riverDensity` (0–100) is an intuitive knob the worker maps to an actual
+// discharge threshold against the computed maximum (higher density = lower
+// threshold = more/smaller rivers). Routing + discharge are cached in the
+// worker, so a density-only change re-extracts cheaply without re-routing.
+// Replies with WorkerHydrologyDataMessage.
+export interface WorkerComputeHydrologyMessage {
+  type: 'computeHydrology'
+  riverDensity: number
+}
 // Requests the full sim snapshot (+ ocean-age + current elevation) for saving —
 // replies with a WorkerWorldDataMessage.
 export interface WorkerSerializeWorldMessage {
@@ -123,6 +135,7 @@ export type WorkerInboundMessage =
   | WorkerResetErosionMessage
   | WorkerExportMessage
   | WorkerComputeClimateMessage
+  | WorkerComputeHydrologyMessage
   | WorkerSerializeWorldMessage
   | WorkerRestoreWorldMessage
 
@@ -269,6 +282,17 @@ export interface WorkerClimateDataMessage {
   biomes: ArrayBuffer
 }
 
+// Rivers/lakes result for the hydrology overlay. Phase 1: river segments only
+// (lakes + riparian biome feedback come in later phases). See worldgen/hydrology.ts.
+export interface WorkerHydrologyDataMessage {
+  type: 'hydrologyData'
+  // Connected river polylines for the scene-space ribbon overlay: `riverPoints`
+  // is Float32 [x, y, widthPx, …] (texel coords) with all polylines concatenated,
+  // `riverLengths` is Uint32 point-counts per polyline. See extractRiverPolylines.
+  riverPoints: ArrayBuffer
+  riverLengths: ArrayBuffer
+}
+
 // The data a world SAVE needs (see the save/load feature): the JSON-able sim
 // snapshot plus the two large float rasters carried as binary buffers. The
 // caller (WorldGenScreen) packages these into the zip alongside world.yaml.
@@ -303,6 +327,17 @@ let currentSeedString: string | null = null
 // re-running the whole live epoch-stepping loop again, not an instant
 // revert. WorkerResetErosionMessage re-renders from this instead.
 let preErosionElevations: Float32Array | null = null
+
+// Hydrology (rivers/lakes) cache. Precipitation from the last computeClimate is
+// the river water source; routing + discharge are the expensive parts, cached
+// so a threshold-only re-extract is cheap. `hydrologyDirty` forces a rebuild
+// after any topography or climate change (set wherever those happen).
+let lastClimatePrecip: Float32Array | null = null
+let lastHydrologyRouting: FlowRouting | null = null
+let lastHydrologyDischarge: Float32Array | null = null
+let lastHydrologyMaxDischarge = 0
+let lastHydrologyMeanRunoff = 0
+let hydrologyDirty = true
 
 // Event markers no longer live here — they moved to the main thread as
 // wall-clock-faded overlay markers driven by the forwarded sim events (see
@@ -377,6 +412,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   // discard it before it clobbers lastRawElevations or posts a stale frame.
   if (gen !== worldGeneration) return
   lastRawElevations = result.rawElevations
+  hydrologyDirty = true // topography changed → rivers/lakes must re-route
   if (precomputedElevations === undefined) preErosionElevations = result.rawElevations
   const eventsToSend = pendingEvents
   pendingEvents = []
@@ -569,6 +605,10 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     const precipitation = computePrecipitation(lastRawElevations, temperature, wind, sim.width, sim.height, message.humidity)
     const seasonalAmplitude = computeSeasonalAmplitude(lastRawElevations, sim.width, sim.height)
     const biomes = computeBiomes(temperature, precipitation, seasonalAmplitude, lastRawElevations, sim.width, sim.height)
+    // Cache a copy for hydrology (the precipitation buffer below is transferred,
+    // which would neuter a retained reference) — rivers use it as their source.
+    lastClimatePrecip = precipitation.slice()
+    hydrologyDirty = true
     const climateMessage: WorkerClimateDataMessage = {
       type: 'climateData',
       resX: CLIMATE_RES_X,
@@ -581,6 +621,36 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       biomes: biomes.buffer as ArrayBuffer,
     }
     self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.biomes])
+  } else if (message.type === 'computeHydrology') {
+    // Needs the current topography + a climate precip (rivers' water source).
+    if (!sim || !lastRawElevations || !lastClimatePrecip) return
+    const { riverDensity } = message
+    const width = sim.width
+    const height = sim.height
+    const elevation = lastRawElevations
+    const precip = lastClimatePrecip
+    // Async (the priority-flood routing is a Promise); the onmessage handler is
+    // sync, so run it in an IIFE like the erode branch does.
+    ;(async () => {
+      // Re-route only when topography/climate changed; a density-only tweak
+      // reuses the cached routing + discharge + sorted distribution (the
+      // expensive parts) and just re-thresholds.
+      if (hydrologyDirty || !lastHydrologyRouting || !lastHydrologyDischarge) {
+        lastHydrologyRouting = await fillDepressionsAndRouteFlow(elevation, width, height, 0)
+        lastHydrologyDischarge = accumulateDischarge(lastHydrologyRouting, elevation, precip, CLIMATE_RES_X, CLIMATE_RES_Y)
+        lastHydrologyMaxDischarge = maxDischargeOverLand(lastHydrologyDischarge, elevation)
+        lastHydrologyMeanRunoff = meanLandRunoff(precip, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+        hydrologyDirty = false
+      }
+      const threshold = channelThreshold(densityToCriticalArea(riverDensity), lastHydrologyMeanRunoff)
+      const rivers = extractRiverPolylines(lastHydrologyRouting, lastHydrologyDischarge, elevation, threshold, lastHydrologyMaxDischarge)
+      const hydrologyMessage: WorkerHydrologyDataMessage = {
+        type: 'hydrologyData',
+        riverPoints: rivers.points.buffer as ArrayBuffer,
+        riverLengths: rivers.lengths.buffer as ArrayBuffer,
+      }
+      self.postMessage(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths])
+    })()
   } else if (message.type === 'serializeWorld') {
     if (!sim || !lastRawElevations) return
     // .slice() so transferring these buffers doesn't neuter the live sim's
