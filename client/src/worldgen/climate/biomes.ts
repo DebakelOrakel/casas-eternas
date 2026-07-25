@@ -42,23 +42,23 @@ export function biomeColor(id: number): [number, number, number] {
   return BIOME_COLORS[id] ?? [128, 128, 128]
 }
 
-// German display names (UI language), e.g. for a hover readout.
+// Display names (UI language), e.g. for a hover readout.
 const BIOME_LABELS: Record<number, string> = {
-  [Biome.Ocean]: 'Ozean',
-  [Biome.Ice]: 'Eiskappe',
+  [Biome.Ocean]: 'Ocean',
+  [Biome.Ice]: 'Ice cap',
   [Biome.Tundra]: 'Tundra',
-  [Biome.Boreal]: 'Borealer Wald',
-  [Biome.Grassland]: 'Steppe',
-  [Biome.Woodland]: 'Hartlaubwald',
-  [Biome.TemperateForest]: 'Laubwald',
-  [Biome.TemperateRainforest]: 'Gemäßigter Regenwald',
-  [Biome.Desert]: 'Wüste',
-  [Biome.Savanna]: 'Savanne',
-  [Biome.TropicalRainforest]: 'Tropischer Regenwald',
+  [Biome.Boreal]: 'Boreal forest',
+  [Biome.Grassland]: 'Grassland',
+  [Biome.Woodland]: 'Woodland',
+  [Biome.TemperateForest]: 'Temperate forest',
+  [Biome.TemperateRainforest]: 'Temperate rainforest',
+  [Biome.Desert]: 'Desert',
+  [Biome.Savanna]: 'Savanna',
+  [Biome.TropicalRainforest]: 'Tropical rainforest',
 }
 
 export function biomeLabel(id: number): string {
-  return BIOME_LABELS[id] ?? 'Unbekannt'
+  return BIOME_LABELS[id] ?? 'Unknown'
 }
 
 // Classify one cell. T = mean annual °C, P = annual precip mm/yr, amp = seasonal

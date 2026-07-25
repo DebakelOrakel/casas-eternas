@@ -148,12 +148,23 @@ rivers/lakes split (channel geometry = erosion's, discharge/fill = climate's).
 
 ## UI / overlays
 
-A climate panel (like the erosion panel), with a few global knobs (e.g. overall
-temperature offset / "greenhouse", overall humidity, seasonality strength) and
-**toggleable overlay layers** via `MapOverlayCompositor`: temperature,
-precipitation, wind (arrows/streamlines), ocean currents, biomes. Each stage
-below produces a visible overlay, so the build is incrementally verifiable the
-way the raft work was.
+A climate panel (like the erosion panel), with **three global knobs** (chosen to
+stay minimal while spanning the model: the two Whittaker axes + one pattern
+control) and **toggleable overlay layers** via `MapOverlayCompositor`.
+
+- **Temperatur** — global °C offset ("greenhouse"), shifts the whole field.
+- **Feuchtigkeit** — global precipitation multiplier (the Whittaker P-axis:
+  desert ↔ rainforest).
+- **Klimazonen-Kontrast** — equator↔pole temperature-spread multiplier, scaled
+  around the mean: strong banding ↔ mild uniform world. Changes the *pattern*,
+  independent of the offset. (Seasonality-strength and lapse-rate were
+  considered and left out — too little visible effect per extra lever.)
+
+Overlay layers: temperature, precipitation, wind (streamlines), ocean currents
+(warm/cold streamlines), seasonality, biomes. Each stage produces a visible
+overlay, so the build was incrementally verifiable the way the raft work was. A
+reusable **hover tooltip** (`map/MapHoverTooltip.ts`) reports the active
+overlays' values for the cell under the cursor.
 
 ## Phasing (each phase = a visible overlay)
 

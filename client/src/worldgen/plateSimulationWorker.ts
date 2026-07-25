@@ -95,6 +95,10 @@ export interface WorkerComputeClimateMessage {
   type: 'computeClimate'
   // Global temperature offset in °C (greenhouse) — see computeTemperature.
   temperatureOffset: number
+  // Equator↔pole spread multiplier (1 = default) — see computeTemperature.
+  temperatureContrast: number
+  // Global precipitation multiplier (1 = default) — see computePrecipitation.
+  humidity: number
 }
 // Requests the full sim snapshot (+ ocean-age + current elevation) for saving —
 // replies with a WorkerWorldDataMessage.
@@ -558,11 +562,11 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     // Order matters: base temperature → wind → ocean currents (which adjust
     // temperature via SST + coastal nudge) → precipitation (evaporation reads
     // the current-adjusted temperature, so warm currents wet their coasts).
-    const temperature = computeTemperature(lastRawElevations, sim.width, sim.height, message.temperatureOffset)
+    const temperature = computeTemperature(lastRawElevations, sim.width, sim.height, message.temperatureOffset, message.temperatureContrast)
     const wind = computeWind()
     const currents = computeOceanCurrents(lastRawElevations, wind, sim.width, sim.height)
     applyOceanSST(temperature, currents, lastRawElevations, sim.width, sim.height)
-    const precipitation = computePrecipitation(lastRawElevations, temperature, wind, sim.width, sim.height)
+    const precipitation = computePrecipitation(lastRawElevations, temperature, wind, sim.width, sim.height, message.humidity)
     const seasonalAmplitude = computeSeasonalAmplitude(lastRawElevations, sim.width, sim.height)
     const biomes = computeBiomes(temperature, precipitation, seasonalAmplitude, lastRawElevations, sim.width, sim.height)
     const climateMessage: WorkerClimateDataMessage = {

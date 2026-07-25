@@ -78,7 +78,11 @@ function elevationAtWorld(elevation: Float32Array, wx: number, wy: number, world
 // wet-equator / dry-subtropics / wet-subpolar / dry-pole structure. See
 // docs/decisions/climate-biomes.md. Elevation is the full-res post-erosion
 // field; temperature/wind are the coarse climate grids.
-export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number): Float32Array {
+// `humidity` is a global wetness multiplier on the final land precipitation (1 =
+// default; <1 = a drier world with expanding deserts, >1 = a wetter, greener
+// one — the user's humidity slider). It scales the mm/yr directly, sliding every
+// cell along the Whittaker precipitation axis; ocean sentinels are untouched.
+export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number, humidity = 1): Float32Array {
   const n = RX * RY
   const ocean = new Uint8Array(n)
   const evap = new Float32Array(n)
@@ -137,7 +141,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
     const band = bandFactor(Math.abs(yNorm - 0.5) * 2)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      precip[i] = ocean[i] ? OCEAN_PRECIP : rainedOut[i] * band * PRECIP_SCALE
+      precip[i] = ocean[i] ? OCEAN_PRECIP : rainedOut[i] * band * PRECIP_SCALE * humidity
     }
   }
   return precip

@@ -407,8 +407,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     </div>
     <div class="panel" data-panel="3">
       <label class="field">
-        <span class="field-label">Temperatur: <span><span data-value="temp-band-label">0</span>°C</span></span>
+        <span class="field-label">Temperature: <span><span data-value="temp-band-label">0</span>°C</span></span>
         <input type="range" class="temp-band-input" min="-20" max="20" step="1" value="0" aria-label="Temperature offset (°C)" />
+      </label>
+      <label class="field">
+        <span class="field-label">Humidity: <span><span data-value="humidity-label">100</span>%</span></span>
+        <input type="range" class="humidity-input" min="40" max="200" step="5" value="100" aria-label="Global humidity (%)" />
+      </label>
+      <label class="field">
+        <span class="field-label">Contrast: <span><span data-value="contrast-label">100</span>%</span></span>
+        <input type="range" class="contrast-input" min="30" max="170" step="5" value="100" aria-label="Equator–pole temperature contrast (%)" />
       </label>
       <label class="field field--icon-row">
         <span class="field-row">
@@ -475,6 +483,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
+  const humidityInput = root.querySelector<HTMLInputElement>('.humidity-input')!
+  const humidityLabel = root.querySelector<HTMLElement>('[data-value="humidity-label"]')!
+  const contrastInput = root.querySelector<HTMLInputElement>('.contrast-input')!
+  const contrastLabel = root.querySelector<HTMLElement>('[data-value="contrast-label"]')!
   const tempMaxLabel = root.querySelector<HTMLElement>('[data-value="temp-max"]')!
   const tempMinLabel = root.querySelector<HTMLElement>('[data-value="temp-min"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
@@ -873,7 +885,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function compass(u: number, v: number): string {
     if (Math.hypot(u, v) < 1e-4) return '–'
     const angle = Math.atan2(u, -v) // 0 = N, increasing clockwise
-    const dirs = ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW']
+    const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
     const idx = Math.round((((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (Math.PI / 4)) % 8
     return dirs[idx]
   }
@@ -892,11 +904,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (climateOverlaysOn.temperature && lastTemperature) lines.push(`${Math.round(lastTemperature[i])} °C`)
     if (climateOverlaysOn.precipitation && lastPrecipitation) {
       const p = lastPrecipitation[i]
-      lines.push(p === OCEAN_PRECIP ? 'Ozean' : `${Math.round(p)} mm/Jahr`)
+      lines.push(p === OCEAN_PRECIP ? 'Ocean' : `${Math.round(p)} mm/yr`)
     }
     if (climateOverlaysOn.seasonality && lastSeasonality) {
       const a = lastSeasonality[i]
-      lines.push(a === OCEAN_AMPLITUDE ? 'Ozean' : `${Math.round(a)} °C Schwankung`)
+      lines.push(a === OCEAN_AMPLITUDE ? 'Ocean' : `${Math.round(a)} °C range`)
     }
     if (climateOverlaysOn.wind && lastWind) {
       lines.push(`Wind ${compass(lastWind[i * 2], lastWind[i * 2 + 1])}`)
@@ -906,7 +918,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const v = lastCurrents[i * 2 + 1]
       if (Math.hypot(u, v) > 0.02) {
         const warm = v * (gy + 0.5 - climateResY / 2) > 0 // poleward = warm (see drawCurrents)
-        lines.push(`Strömung ${warm ? 'warm' : 'kalt'} ${compass(u, v)}`)
+        lines.push(`Current ${warm ? 'warm' : 'cold'} ${compass(u, v)}`)
       }
     }
     return lines.length ? lines.join('\n') : null
@@ -958,7 +970,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function requestClimate(): void {
     if (simRunning) return
     climateStatus.textContent = '…'
-    postToWorker({ type: 'computeClimate', temperatureOffset: Number(tempBandInput.value) })
+    postToWorker({
+      type: 'computeClimate',
+      temperatureOffset: Number(tempBandInput.value),
+      temperatureContrast: Number(contrastInput.value) / 100,
+      humidity: Number(humidityInput.value) / 100,
+    })
   }
 
   function downloadBlob(blob: Blob, filename: string): void {
@@ -1185,6 +1202,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       `  initialContinents: ${Number(cratonCountInput.value)}`,
       `  clusterFactor: ${Number(clusteringInput.value)}`,
       `  tempOffset: ${Number(tempBandInput.value)}`,
+      `  humidity: ${Number(humidityInput.value)}`,
+      `  contrast: ${Number(contrastInput.value)}`,
       'status:',
       `  tectonicsRun: ${lastEpoch}`,
       `  erosionRun: ${erosionRunCount}`,
@@ -1201,6 +1220,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     clusteringLabel.textContent = clusteringInput.value
     const t = Number(tempBandInput.value)
     tempBandLabel.textContent = t > 0 ? `+${t}` : String(t)
+    humidityLabel.textContent = humidityInput.value
+    contrastLabel.textContent = contrastInput.value
   }
 
   // Flat, single-occurrence keys → a tiny regex parser, no YAML dependency.
@@ -1282,6 +1303,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     cratonCountInput.value = readYamlValue(yaml, 'initialContinents') ?? cratonCountInput.value
     clusteringInput.value = readYamlValue(yaml, 'clusterFactor') ?? clusteringInput.value
     tempBandInput.value = readYamlValue(yaml, 'tempOffset') ?? '0'
+    humidityInput.value = readYamlValue(yaml, 'humidity') ?? '100'
+    contrastInput.value = readYamlValue(yaml, 'contrast') ?? '100'
     syncSliderLabels()
     erosionRunCount = Number(readYamlValue(yaml, 'erosionRun') ?? 0)
     // lastEpoch is set from the restore render's reported epoch (status
@@ -1321,6 +1344,17 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     clearTimeout(climateDebounce)
     climateDebounce = setTimeout(requestClimate, 150)
   })
+  // Humidity + contrast: percentage sliders, same debounced live-recompute.
+  const wireClimateSlider = (input: HTMLInputElement, label: HTMLElement): void => {
+    input.addEventListener('input', () => {
+      label.textContent = input.value
+      if (simRunning) return
+      clearTimeout(climateDebounce)
+      climateDebounce = setTimeout(requestClimate, 150)
+    })
+  }
+  wireClimateSlider(humidityInput, humidityLabel)
+  wireClimateSlider(contrastInput, contrastLabel)
 
   const regenerate = (): void => {
     stopSim()
