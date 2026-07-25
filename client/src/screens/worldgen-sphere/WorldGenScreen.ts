@@ -960,7 +960,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // command and applies whatever pixel buffer comes back; nothing here
   // can block a render frame or a pointer-drag handler on simulation
   // cost anymore.
-  const worker = new Worker(new URL('../../worldgen/worldgen.worker.ts', import.meta.url), { type: 'module' })
+  const worker = new Worker(new URL('../../worldgen-sphere/worldgen.worker.ts', import.meta.url), { type: 'module' })
 
   let latestState: StateResponse | undefined
   let disposed = false

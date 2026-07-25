@@ -5,7 +5,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 12vh;
+  padding-top: 6vh;
   font-family: 'Cinzel', serif;
   color: #1a1a1a;
 }
@@ -29,6 +29,52 @@
   letter-spacing: 0.12em;
 }
 
+.title-screen .title-columns {
+  display: flex;
+  gap: 4rem;
+  width: min(1100px, 88vw);
+  text-align: left;
+}
+
+.title-screen .title-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.title-screen .title-col h2 {
+  margin: 0 0 1rem;
+  font-size: clamp(1.1rem, 2vw, 1.5rem);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(26, 26, 26, 0.2);
+  padding-bottom: 0.5rem;
+}
+
+.title-screen .title-col ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.title-screen .title-col li {
+  position: relative;
+  padding-left: 1.1rem;
+  margin-bottom: 0.55rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  color: #333;
+}
+
+.title-screen .title-col li::before {
+  content: "–";
+  position: absolute;
+  left: 0;
+  color: #999;
+}
+
 .title-screen .title-nav {
   position: absolute;
   bottom: 15%;
@@ -38,6 +84,12 @@
   flex-direction: column;
   align-items: center;
   gap: 0.8rem;
+}
+
+/* Secondary destinations (sphere + mars) side by side under the main entry. */
+.title-screen .title-nav-row {
+  display: flex;
+  gap: 2.5rem;
 }
 
 .title-screen .text-link {
