@@ -50,3 +50,18 @@ export function temperatureColor(celsius: number): Rgb {
 export function precipitationColor(mmPerYear: number): Rgb {
   return rampColor(PRECIPITATION_STOPS, mmPerYear)
 }
+
+// Seasonal temperature amplitude → color (°C annual range): stable teal → mild
+// green → strong orange → extreme purple. Low = maritime/equatorial (even
+// climate), high = continental/high-latitude (harsh seasons).
+const AMPLITUDE_STOPS: { c: number; rgb: Rgb }[] = [
+  { c: 0, rgb: [60, 160, 160] },
+  { c: 10, rgb: [120, 190, 120] },
+  { c: 22, rgb: [230, 200, 90] },
+  { c: 34, rgb: [220, 120, 50] },
+  { c: 45, rgb: [140, 50, 130] },
+]
+
+export function amplitudeColor(celsiusRange: number): Rgb {
+  return rampColor(AMPLITUDE_STOPS, celsiusRange)
+}

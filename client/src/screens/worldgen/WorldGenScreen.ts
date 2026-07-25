@@ -13,8 +13,9 @@ import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/plateSimu
 import { eventCategory } from '../../worldgen/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { createOverlayToggleBar } from '../../ui/mapOverlay/OverlayToggleBar'
-import { temperatureColor, precipitationColor } from '../../worldgen/climate/climateColors'
+import { temperatureColor, precipitationColor, amplitudeColor } from '../../worldgen/climate/climateColors'
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
+import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
 import './worldgen.css'
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
@@ -423,7 +424,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
             <img src="/icons/ocean.png" alt="" />
           </button>
           <button type="button" class="icon-button climate-toggle" data-action="toggle-currents" aria-label="Toggle ocean current overlay">
-            <img src="/icons/spin_off.png" alt="" />
+            <img src="/icons/gyres.png" alt="" />
+          </button>
+          <button type="button" class="icon-button climate-toggle" data-action="toggle-seasonality" aria-label="Toggle seasonality overlay">
+            <img src="/icons/seasonality.png" alt="" />
           </button>
           <span class="erosion-status" data-value="climate-status"></span>
         </span>
@@ -459,6 +463,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const precipToggleIcon = precipToggleButton.querySelector<HTMLImageElement>('img')!
   const currentsToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-currents"]')!
   const currentsToggleIcon = currentsToggleButton.querySelector<HTMLImageElement>('img')!
+  const seasonalityToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-seasonality"]')!
+  const seasonalityToggleIcon = seasonalityToggleButton.querySelector<HTMLImageElement>('img')!
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
@@ -512,6 +518,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastWind: Float32Array | null = null
   let lastPrecipitation: Float32Array | null = null
   let lastCurrents: Float32Array | null = null
+  let lastSeasonality: Float32Array | null = null
   let climateResX = 0
   let climateResY = 0
 
@@ -623,6 +630,27 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // Seasonality tint (climate): the annual temperature amplitude everywhere —
+  // stable teal near coasts/equator, extreme purple in continental interiors at
+  // high latitude. No-op until computed.
+  function paintSeasonality(data: Uint8ClampedArray): void {
+    if (!lastSeasonality) return
+    const alpha = 0.6
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
+        const amp = lastSeasonality[gy * climateResX + gx]
+        if (amp === OCEAN_AMPLITUDE) continue
+        const [r, g, b] = amplitudeColor(amp)
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - alpha) + r * alpha
+        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
+        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
+      }
+    }
+  }
+
   // Bilinear-sampled ocean current (u,v) at a map pixel, wrapped. Zero over land.
   function sampleCurrent(px: number, py: number): [number, number] {
     if (!lastCurrents) return [0, 0]
@@ -698,6 +726,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   overlay.setLayers([
     { id: 'temperature', label: 'Temp', enabled: false, hidden: true, paintPixels: paintTemperature },
     { id: 'precipitation', label: 'Niederschlag', enabled: false, hidden: true, paintPixels: paintPrecipitation },
+    { id: 'seasonality', label: 'Saisonalität', enabled: false, hidden: true, paintPixels: paintSeasonality },
     { id: 'boundaries', label: 'Grenzen', enabled: true, paintPixels: paintBoundaryMask },
     { id: 'arrows', label: 'Pfeile', enabled: false, paint: drawArrows },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
@@ -772,7 +801,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // (the toggle buttons flip these). The overlays only actually SHOW while on
   // the climate panel; off-panel they're hidden but the desired state (and the
   // data) is kept, so returning restores them. Defaults: temperature on, wind off.
-  const climateOverlaysOn: Record<string, boolean> = { temperature: true, wind: false, precipitation: false, currents: false }
+  const climateOverlaysOn: Record<string, boolean> = { temperature: true, wind: false, precipitation: false, currents: false, seasonality: false }
   // Per overlay: its toggle button (for the active-state class) and, where a
   // pair exists, the on/off icon to swap. Precipitation reuses one icon and
   // shows state via the class alone.
@@ -780,7 +809,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     temperature: { button: tempToggleButton, icon: tempToggleIcon, on: '/icons/temp_on.png', off: '/icons/temp_off.png' },
     wind: { button: windToggleButton, icon: windToggleIcon, on: '/icons/wind_on.png', off: '/icons/wind_off.png' },
     precipitation: { button: precipToggleButton, icon: precipToggleIcon, on: '/icons/ocean.png', off: '/icons/ocean.png' },
-    currents: { button: currentsToggleButton, icon: currentsToggleIcon, on: '/icons/spin_on.png', off: '/icons/spin_off.png' },
+    currents: { button: currentsToggleButton, icon: currentsToggleIcon, on: '/icons/gyres.png', off: '/icons/gyres.png' },
+    seasonality: { button: seasonalityToggleButton, icon: seasonalityToggleIcon, on: '/icons/seasonality.png', off: '/icons/seasonality.png' },
   }
 
   // Enables each climate layer only when on the climate panel AND wanted; the
@@ -807,6 +837,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastWind = new Float32Array(message.wind)
     lastCurrents = new Float32Array(message.currents)
     lastPrecipitation = new Float32Array(message.precipitation)
+    lastSeasonality = new Float32Array(message.seasonalAmplitude)
     climateResX = message.resX
     climateResY = message.resY
     climateStatus.textContent = ''
@@ -833,6 +864,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastWind = null
     lastCurrents = null
     lastPrecipitation = null
+    lastSeasonality = null
     applyClimateOverlays(false)
     climateStatus.textContent = ''
     tempMinLabel.textContent = '–'
@@ -1193,6 +1225,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   windToggleButton.addEventListener('click', () => toggleClimateOverlay('wind'))
   precipToggleButton.addEventListener('click', () => toggleClimateOverlay('precipitation'))
   currentsToggleButton.addEventListener('click', () => toggleClimateOverlay('currents'))
+  seasonalityToggleButton.addEventListener('click', () => toggleClimateOverlay('seasonality'))
 
   // Dragging the band slider live-recomputes the climate (debounced) once a
   // world exists — the worker no-ops if there's no elevation yet. Recomputes

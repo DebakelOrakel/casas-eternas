@@ -69,9 +69,14 @@ full-res post-erosion field where needed, for lapse + orographic).
    thus the coastal warm/cold pattern — come out right; validated against exactly
    that (W-coast cold, E-coast warm, mirror-symmetric). Precipitation runs after
    this, so evaporation sees the current-adjusted temperature.
-5. **Continentality.** Distance-to-coast (distance transform) → interiors get
-   larger seasonal swing + less moisture; coasts get their mean moderated
-   toward SST.
+5. **Continentality + seasonal amplitude.** *(Built.)* Continentality = a
+   distance-to-nearest-ocean transform (0 at coast → 1 deep inland). It drives
+   the **seasonal temperature amplitude** (the annual summer−winter range):
+   `MAX·φ × (coastFloor + (1−coastFloor)·continentality)` — ~0 at the equator,
+   rising toward the poles, and far larger in continental interiors than on
+   maritime coasts (ocean cells stay low, thermal inertia). Biomes read
+   `T_mean ± amplitude/2`. (Continentality's drying effect is already covered by
+   Phase 3's inland moisture depletion, so it isn't re-applied to precip here.)
 6. **Temperature final.** `T_mean(x,y)` = base − lapse + coastal-SST +
    continental adjustments. `T_amplitude(x,y)` = seasonal swing (grows with
    latitude and continentality, damped near ocean) — the requested seasonality.
