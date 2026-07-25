@@ -7,7 +7,7 @@ import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/mapConfig'
 import JSZip from 'jszip'
-import type { WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerErosionProgressMessage, WorkerExportDataMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
+import type { WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/continentLabelRenderer'
 import type { PlateArrow } from '../../worldgen/elevationMapImage'
@@ -404,6 +404,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
     </div>
     <div class="panel" data-panel="2">
+      <label class="field">
+        <span class="field-label">Strength: <span><span data-value="erosion-strength-label">4</span>×</span></span>
+        <input type="range" class="erosion-strength-input" min="1" max="5" step="1" value="4" aria-label="Erosion strength multiplier" />
+      </label>
+      <label class="field">
+        <span class="field-label">Drainage: <span><span data-value="erosion-refresh-label">5</span>×</span></span>
+        <input type="range" class="erosion-refresh-input" min="1" max="5" step="1" value="5" aria-label="Drainage network refreshes per round" />
+      </label>
       <label class="field field--icon-row">
         <span class="field-row">
           <button type="button" class="icon-button" data-action="reset-erosion" aria-label="Revert to tectonics result">
@@ -416,7 +424,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button" data-action="toggle-debug-3d" aria-label="Debug: enter 3D preview">
             <img src="/icons/tilt_on.png" alt="" />
           </button>
-          <button type="button" class="text-button" data-action="export" aria-label="Export world data for hex-tile conversion">Export</button>
         </span>
       </label>
     </div>
@@ -470,10 +477,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const toggleSimButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-sim"]')!
   const toggleSimIcon = toggleSimButton.querySelector<HTMLImageElement>('img')!
   const erodeButton = root.querySelector<HTMLButtonElement>('[data-action="erode"]')!
+  // Erosion-strength multiplier (scales the fluvial time step — essentially free
+  // compute-wise, it just erodes more per step) and drainage-network refresh count
+  // (re-derives the river network within a round so channels migrate/capture — costs
+  // one extra priority-flood each, the only real time cost). See the erosion docs.
+  const strengthInput = root.querySelector<HTMLInputElement>('.erosion-strength-input')!
+  const strengthLabel = root.querySelector<HTMLElement>('[data-value="erosion-strength-label"]')!
+  const refreshInput = root.querySelector<HTMLInputElement>('.erosion-refresh-input')!
+  const refreshLabel = root.querySelector<HTMLElement>('[data-value="erosion-refresh-label"]')!
+  strengthInput.addEventListener('input', () => { strengthLabel.textContent = strengthInput.value })
+  refreshInput.addEventListener('input', () => { refreshLabel.textContent = refreshInput.value })
   const resetErosionButton = root.querySelector<HTMLButtonElement>('[data-action="reset-erosion"]')!
   const erosionStatus = root.querySelector<HTMLElement>('[data-value="erosion-status"]')!
   const toggleDebug3DButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-debug-3d"]')!
-  const exportButton = root.querySelector<HTMLButtonElement>('[data-action="export"]')!
   const loadWorldButton = root.querySelector<HTMLButtonElement>('[data-action="load-world"]')!
   const saveWorldButton = root.querySelector<HTMLButtonElement>('[data-action="save-world"]')!
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
@@ -1247,40 +1263,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     URL.revokeObjectURL(url)
   }
 
-  // A browser can't write to an arbitrary filesystem path (the repo's
-  // own /saves/ included) — this is the platform's actual ceiling, not a
-  // choice. Triggers two ordinary downloads into wherever the browser's
-  // normal downloads location is; move them into /saves/ by hand — see
-  // saves/README.md for what the two files contain and why there are
-  // two of them.
-  function handleExportData(message: WorkerExportDataMessage): void {
-    const safeSeed = message.seed.replace(/[^a-zA-Z0-9_-]/g, '_')
-    const baseName = `world_${safeSeed}_epoch${message.epoch}`
-    const metadata = {
-      formatVersion: 2,
-      seed: message.seed,
-      epoch: message.epoch,
-      width: message.width,
-      height: message.height,
-      landFraction: message.landFraction,
-      elevationsFile: `${baseName}.f32`,
-      plates: message.plates,
-      rafts: message.rafts,
-      // Age raster ships as a separate binary blob (like elevations) — it's
-      // a Float32 grid, not something to inline as JSON numbers.
-      oceanAge: {
-        resX: message.oceanAge.resX,
-        resY: message.oceanAge.resY,
-        valuesFile: `${baseName}.oceanage.f32`,
-      },
-      terrainFeatures: message.terrainFeatures,
-    }
-    downloadBlob(new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' }), `${baseName}.json`)
-    downloadBlob(new Blob([message.elevations], { type: 'application/octet-stream' }), `${baseName}.f32`)
-    downloadBlob(new Blob([message.oceanAge.values], { type: 'application/octet-stream' }), `${baseName}.oceanage.f32`)
-  }
-
-  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerExportDataMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerWorldDataMessage>) => {
+  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerWorldDataMessage>) => {
     const message = event.data
 
     if (message.type === 'erosionProgress') {
@@ -1300,11 +1283,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
     if (message.type === 'hydrologyData') {
       handleHydrologyData(message)
-      return
-    }
-
-    if (message.type === 'exportData') {
-      handleExportData(message)
       return
     }
 
@@ -1440,7 +1418,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     invalidateClimate()
     updateErosionButtonsState()
     updateNavState() // first erosion unlocks Climate/Rivers
-    postToWorker({ type: 'erode' })
+    postToWorker({ type: 'erode', strength: Number(strengthInput.value), networkRefreshes: Number(refreshInput.value) })
   })
 
   resetErosionButton.addEventListener('click', () => {
@@ -1454,8 +1432,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   })
 
   toggleDebug3DButton.addEventListener('click', () => setDebug3DActive(!debug3DActive))
-
-  exportButton.addEventListener('click', () => postToWorker({ type: 'export' }))
 
   // Load a previously-saved world (top-left folder button). Intended handler:
   // open a file picker for a saved snapshot (the export format — world_*.json
@@ -1471,7 +1447,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const name = seedInput.value || 'world'
     return [
       'apiVersion: casas-eternas/v1alpha1',
-      'kind: World',
+      'kind: FlatWorld',
       'metadata:',
       `  name: ${name}`,
       'spec:',
@@ -1484,6 +1460,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       `  humidity: ${Number(humidityInput.value)}`,
       `  contrast: ${Number(contrastInput.value)}`,
       `  riverDensity: ${Number(riverDensityInput.value)}`,
+      `  erosionStrength: ${Number(strengthInput.value)}`,
+      `  drainageRefresh: ${Number(refreshInput.value)}`,
       'status:',
       `  tectonicsRun: ${lastEpoch}`,
       `  erosionRun: ${erosionRunCount}`,
@@ -1503,6 +1481,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     humidityLabel.textContent = humidityInput.value
     contrastLabel.textContent = contrastInput.value
     riverDensityLabel.textContent = riverDensityInput.value
+    strengthLabel.textContent = strengthInput.value
+    refreshLabel.textContent = refreshInput.value
   }
 
   // Flat, single-occurrence keys → a tiny regex parser, no YAML dependency.
@@ -1587,6 +1567,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     humidityInput.value = readYamlValue(yaml, 'humidity') ?? '100'
     contrastInput.value = readYamlValue(yaml, 'contrast') ?? '100'
     riverDensityInput.value = readYamlValue(yaml, 'riverDensity') ?? '55'
+    strengthInput.value = readYamlValue(yaml, 'erosionStrength') ?? strengthInput.value
+    refreshInput.value = readYamlValue(yaml, 'drainageRefresh') ?? refreshInput.value
     syncSliderLabels()
     erosionRunCount = Number(readYamlValue(yaml, 'erosionRun') ?? 0)
     // lastEpoch is set from the restore render's reported epoch (status

@@ -626,6 +626,14 @@ export interface ErosionPassParams {
   // work scales with rounds * streamPower.iterations.
   streamPower: StreamPowerParams
   thermal: ThermalErosionParams
+  // How many times to RE-DERIVE the drainage network (priority-flood + flow
+  // accumulation) WITHIN a single round's fluvial phase, splitting streamPower.iterations
+  // evenly across them. 1 = the original behaviour (network frozen for the whole 100-iter
+  // phase). >1 lets rivers migrate and capture each other as the terrain incises — the
+  // real realism gain, only affordable because Braun-Willett is O(n) and unconditionally
+  // stable (the explicit scheme would risk oscillating between re-routings). Total cost
+  // adds (rounds · (networkRefreshes − 1)) extra priority-floods, so keep it modest.
+  networkRefreshes: number
 }
 
 // rounds=5 chosen to fold what manual testing showed needed ~5 repeated
@@ -645,6 +653,7 @@ export const DEFAULT_EROSION_PASS_PARAMS: ErosionPassParams = {
   upliftRate: 0.15,
   streamPower: DEFAULT_STREAM_POWER_PARAMS,
   thermal: DEFAULT_THERMAL_EROSION_PARAMS,
+  networkRefreshes: 1,
 }
 
 // The one function callers actually need — chains flow-routing through
@@ -767,8 +776,24 @@ export async function runErosionPass(
 
     // Capture the last round's basins before the fill flattens them (for lakes).
     if (round === params.rounds - 1) preFillElevations = elevations.slice()
-    elevations = routing.filled.slice()
-    await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, params.streamPower, (fraction) => roundProgress('streamPower', fraction))
+
+    // Fluvial phase, with the drainage network re-derived params.networkRefreshes times
+    // across it (not frozen for the whole phase) — rivers can migrate/capture as they
+    // incise. The first sub-pass reuses the network already routed above; each later one
+    // re-runs priority-flood + accumulation on the partially-incised terrain (isLand is
+    // held for the round, so only the drainage geometry updates). streamPower.iterations
+    // is split evenly across the sub-passes so total fluvial work is unchanged.
+    const refreshes = Math.max(1, params.networkRefreshes)
+    const itersPerRefresh = Math.max(1, Math.round(params.streamPower.iterations / refreshes))
+    const refreshParams: StreamPowerParams = { ...params.streamPower, iterations: itersPerRefresh }
+    for (let r = 0; r < refreshes; r++) {
+      if (r > 0) {
+        routing = await fillDepressionsAndRouteFlow(elevations, width, height, SEA_LEVEL)
+        accumulation = accumulateFlow(routing)
+      }
+      elevations = routing.filled.slice()
+      await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, refreshParams, (fraction) => roundProgress('streamPower', (r + fraction) / refreshes))
+    }
     // Order matters only a little here (both passes reread whatever the
     // other just wrote next round, since routing gets rederived from
     // the combined result either way) — runs second so a talus slide's

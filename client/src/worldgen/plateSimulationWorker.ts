@@ -5,11 +5,10 @@ import type { PlateArrow, RenderSimulationOptions } from './elevationMapImage'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { ElevationRenderPool } from './elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass, fillDepressionsAndRouteFlow } from './erosion'
-import type { ErosionPhase, FlowRouting } from './erosion'
+import type { ErosionPhase, FlowRouting, ErosionPassParams } from './erosion'
 import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from './mantleField'
 import type { TerrainFeature } from './terrainFeatures'
-import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './oceanAge'
 import { computeTemperature } from './climate/temperature'
 import { computeWind } from './climate/wind'
 import { computeOceanCurrents, applyOceanSST } from './climate/oceanCurrents'
@@ -75,6 +74,14 @@ export interface WorkerStopMessage {
 // stopped.
 export interface WorkerErodeMessage {
   type: 'erode'
+  // Multiplier on the fluvial time step — dials erosion strength up (deeper valleys,
+  // more drainage rearrangement) at essentially no extra compute (it scales dh per
+  // step, not the step count). Default 1.
+  strength?: number
+  // How many times to re-derive the drainage network per round (see
+  // ErosionPassParams.networkRefreshes) — the lever that lets rivers migrate/capture,
+  // at one extra priority-flood each. Default = DEFAULT_EROSION_PASS_PARAMS'.
+  networkRefreshes?: number
 }
 // Discards whatever erosion has done and re-renders from the elevations
 // last seen right when tectonics stopped producing new ones (see
@@ -83,13 +90,6 @@ export interface WorkerErodeMessage {
 // non-erosion render.
 export interface WorkerResetErosionMessage {
   type: 'resetErosion'
-}
-// Requests a WorkerExportDataMessage — see that interface for what it
-// contains and why. A read of existing state, not a computation, so
-// (unlike erode/resetErosion) this doesn't need to be gated behind
-// renderInFlight.
-export interface WorkerExportMessage {
-  type: 'export'
 }
 // Requests the climate step (temperature so far) be computed on the current,
 // possibly-eroded elevation — see docs/decisions/climate-biomes.md. Replies
@@ -121,7 +121,8 @@ export interface WorkerSerializeWorldMessage {
 }
 // Restores a saved world: rebuild the sim from the snapshot + ocean-age raster,
 // inject the stored (post-erosion) elevation, and render it — no replay, no
-// re-erosion. `seed` is the original seed string (kept for a later export).
+// re-erosion. `seed` is the original seed string, carried in the save format
+// (currently unused by the worker on restore, kept for forward compatibility).
 export interface WorkerRestoreWorldMessage {
   type: 'restoreWorld'
   seed: string
@@ -135,7 +136,6 @@ export type WorkerInboundMessage =
   | WorkerStopMessage
   | WorkerErodeMessage
   | WorkerResetErosionMessage
-  | WorkerExportMessage
   | WorkerComputeClimateMessage
   | WorkerComputeHydrologyMessage
   | WorkerSerializeWorldMessage
@@ -211,71 +211,6 @@ export interface WorkerErosionProgressMessage {
   fraction: number
 }
 
-// Everything a future hex-tile importer needs, sent in response to
-// WorkerExportMessage. Two genuinely different kinds of data, for a
-// reason worth keeping straight: `plates`/`rafts`/`oceanAge`/
-// `terrainFeatures` are the compact, stateless "recipe" the tectonics
-// field is generated from (see docs/design/world-gen.md's "frozen
-// snapshot") — re-queryable at any resolution or point, motion/kinematics
-// deliberately omitted since those stop mattering once nothing's still
-// moving, same as that doc already settled. `elevations` is different in
-// kind, not just a convenience duplicate of the same information: erosion
-// has no such compact recipe (it's the result of an iterative D8/thermal
-// simulation over a discrete grid, not a stateless function of position),
-// so its contribution can only ship as the actual raster it ran on.
-//
-// Crust type is no longer a plate property (see the raft decision doc):
-// `plates` are the bare kinematic units (position + age), continental
-// crust is the separate `rafts` set, and the ocean floor's depth comes
-// from the coarse `oceanAge` field. Together they reproduce the baseline
-// `computeRaftBaseline` builds — no per-plate type/baseElevation needed.
-export interface WorkerExportDataMessage {
-  type: 'exportData'
-  seed: string
-  epoch: number
-  width: number
-  height: number
-  landFraction: number
-  plates: {
-    x: number
-    y: number
-    age: number
-  }[]
-  // Continental crust: metaball rafts (name + union of soft blobs). A point
-  // is land where the summed blob field crosses the membership threshold —
-  // see rafts.ts / elevationField.ts's computeRaftBaseline.
-  rafts: {
-    name: string | null
-    blobs: { x: number; y: number; radius: number }[]
-  }[]
-  // Coarse ocean-floor age field (resX*resY, row-major), driving age-depth
-  // on oceanic points. Cell centers at (i+0.5); sampled bilinearly wrapped.
-  oceanAge: {
-    resX: number
-    resY: number
-    values: ArrayBuffer
-  }
-  terrainFeatures: {
-    x: number
-    y: number
-    thickness: number
-    // Orientation + kind are part of the elevation model now (anisotropic
-    // ridge falloff, trench vs. range cross-section — see
-    // elevationField.ts), so a faithful server-side reproduction of the
-    // terrain needs them, not just position/thickness.
-    tangentX: number
-    tangentY: number
-    kind: string
-    plateA: number
-    plateB: number
-  }[]
-  // Float32Array bytes, width*height, row-major — pre-redistribution
-  // physical values (see SimulationRenderResult.rawElevations), not the
-  // cosmetic display-gamma-curved ones, since this is meant as real data
-  // for a future importer, not something tuned to look good on screen.
-  elevations: ArrayBuffer
-}
-
 // The computed climate rasters (coarse grid — see climate/climateField.ts).
 // Grows per phase.
 export interface WorkerClimateDataMessage {
@@ -341,10 +276,6 @@ let pendingEvents: SimEvent[] = []
 // erosion always has *something* to act on the first time it's used
 // without needing a dedicated "prepare for erosion" render first.
 let lastRawElevations: Float32Array | null = null
-// PlateSimulation itself doesn't retain the original seed string (only
-// the numeric hashes derived from it) — tracked here separately so
-// WorkerExportDataMessage can include it.
-let currentSeedString: string | null = null
 // A second, deliberately less-eagerly-updated snapshot: the raw
 // elevations from the last *non*-erosion render only (see renderAndPost
 // — only updated when precomputedElevations wasn't supplied). Erosion
@@ -519,16 +450,27 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
 // its onProgress-driven postMessage calls below actually reach the main
 // thread live instead of arriving in one burst after the whole ~10+
 // second pass finishes).
-async function runErodeRequest(rawElevations: Float32Array, width: number, height: number): Promise<void> {
+async function runErodeRequest(rawElevations: Float32Array, width: number, height: number, opts: { strength?: number; networkRefreshes?: number } = {}): Promise<void> {
   // Throttled to once per whole-percent change rather than every
   // onProgress call (~500+ for the default params) — that's plenty of
   // granularity for a UI percentage readout without flooding postMessage.
   let lastReportedPercent = -1
+  const base = DEFAULT_EROSION_PASS_PARAMS
+  const strength = opts.strength && opts.strength > 0 ? opts.strength : 1
+  const params: ErosionPassParams = {
+    ...base,
+    streamPower: {
+      ...base.streamPower,
+      // Strength scales the time step — more incision per step, same op count (free).
+      timeStep: base.streamPower.timeStep * strength,
+    },
+    networkRefreshes: opts.networkRefreshes && opts.networkRefreshes > 0 ? Math.floor(opts.networkRefreshes) : base.networkRefreshes,
+  }
   const erosionResult = await runErosionPass(
     rawElevations,
     width,
     height,
-    DEFAULT_EROSION_PASS_PARAMS,
+    params,
     (phase, fraction) => {
       const percent = Math.round(fraction * 100)
       if (percent === lastReportedPercent) return
@@ -562,7 +504,6 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     stopTicking()
     worldGeneration += 1
     sim = createPlateSimulation(message.seed, message.plateCount, message.landFraction, message.clustering, message.cratonCount, message.width, message.height)
-    currentSeedString = message.seed
     pendingEvents = getInitialPlateEvents(sim)
     lastRawElevations = null
     preErosionElevations = null
@@ -612,7 +553,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       // upscaled low-res field, and erosion must run on the crisp full-res
       // elevation rather than a blurred preview.
       await renderAndPost(undefined, false, 1)
-      if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height)
+      if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height, { strength: message.strength, networkRefreshes: message.networkRefreshes })
     })().finally(() => {
       renderInFlight = false
     })
@@ -622,49 +563,6 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     renderAndPost(preErosionElevations).finally(() => {
       renderInFlight = false
     })
-  } else if (message.type === 'export') {
-    if (!sim || !lastRawElevations || currentSeedString === null) return
-    // .slice(), not the live array itself — transferring lastRawElevations.buffer
-    // directly would neuter it, and the erode handler still needs to read
-    // lastRawElevations after this.
-    const elevations = lastRawElevations.slice()
-    // .slice() for the same neutering reason as elevations — the sim keeps
-    // running (and advecting) this field after the export.
-    const oceanAgeValues = sim.oceanAge.slice()
-    const exportMessage: WorkerExportDataMessage = {
-      type: 'exportData',
-      seed: currentSeedString,
-      epoch: sim.epoch,
-      width: sim.width,
-      height: sim.height,
-      landFraction: lastRawElevations.reduce((count, e) => count + (e > 0 ? 1 : 0), 0) / lastRawElevations.length,
-      plates: sim.seeds.map((seed, i) => ({
-        x: seed.x,
-        y: seed.y,
-        age: sim!.ages[i],
-      })),
-      rafts: sim.rafts.map((raft) => ({
-        name: raft.name,
-        blobs: raft.blobs.map((blob) => ({ x: blob.x, y: blob.y, radius: blob.radius })),
-      })),
-      oceanAge: {
-        resX: OCEAN_AGE_RES_X,
-        resY: OCEAN_AGE_RES_Y,
-        values: oceanAgeValues.buffer as ArrayBuffer,
-      },
-      terrainFeatures: sim.features.map((feature) => ({
-        x: feature.x,
-        y: feature.y,
-        thickness: feature.thickness,
-        tangentX: feature.tangentX,
-        tangentY: feature.tangentY,
-        kind: feature.kind,
-        plateA: feature.plateA,
-        plateB: feature.plateB,
-      })),
-      elevations: elevations.buffer as ArrayBuffer,
-    }
-    self.postMessage(exportMessage, [exportMessage.elevations, exportMessage.oceanAge.values])
   } else if (message.type === 'computeClimate') {
     // Runs on the current, possibly-eroded elevation (lastRawElevations). A
     // fresh Float32Array per field, so its buffer can be transferred.
@@ -765,7 +663,6 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     stopTicking()
     worldGeneration += 1
     sim = deserializePlateSimulation(message.snapshot, new Float32Array(message.oceanAge))
-    currentSeedString = message.seed
     pendingEvents = []
     lastRawElevations = new Float32Array(message.elevation)
     // No stored pre-erosion field — a reset-erosion after a load just reverts
