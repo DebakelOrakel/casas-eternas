@@ -9,6 +9,7 @@ import type { ErosionPhase } from './erosion'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './oceanAge'
 import { computeTemperature } from './climate/temperature'
 import { computeWind } from './climate/wind'
+import { computeOceanCurrents, applyOceanSST } from './climate/oceanCurrents'
 import { computePrecipitation } from './climate/precipitation'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climate/climateField'
 
@@ -249,6 +250,9 @@ export interface WorkerClimateDataMessage {
   // Prevailing wind, Float32 interleaved [u0,v0,…], resX*resY cells
   // (u = eastward, v = toward the bottom/"south"). See climate/wind.ts.
   wind: ArrayBuffer
+  // Ocean surface currents, Float32 interleaved [u0,v0,…], normalized to max 1,
+  // zero on land. See climate/oceanCurrents.ts.
+  currents: ArrayBuffer
   // Annual precipitation mm/yr, Float32, resX*resY row-major; land only (ocean
   // cells carry OCEAN_PRECIP). See climate/precipitation.ts.
   precipitation: ArrayBuffer
@@ -544,8 +548,13 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     // Runs on the current, possibly-eroded elevation (lastRawElevations). A
     // fresh Float32Array per field, so its buffer can be transferred.
     if (!sim || !lastRawElevations) return
+    // Order matters: base temperature → wind → ocean currents (which adjust
+    // temperature via SST + coastal nudge) → precipitation (evaporation reads
+    // the current-adjusted temperature, so warm currents wet their coasts).
     const temperature = computeTemperature(lastRawElevations, sim.width, sim.height, message.temperatureOffset)
     const wind = computeWind()
+    const currents = computeOceanCurrents(lastRawElevations, wind, sim.width, sim.height)
+    applyOceanSST(temperature, currents, lastRawElevations, sim.width, sim.height)
     const precipitation = computePrecipitation(lastRawElevations, temperature, wind, sim.width, sim.height)
     const climateMessage: WorkerClimateDataMessage = {
       type: 'climateData',
@@ -553,9 +562,10 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       resY: CLIMATE_RES_Y,
       temperature: temperature.buffer as ArrayBuffer,
       wind: wind.buffer as ArrayBuffer,
+      currents: currents.buffer as ArrayBuffer,
       precipitation: precipitation.buffer as ArrayBuffer,
     }
-    self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.precipitation])
+    self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation])
   } else if (message.type === 'serializeWorld') {
     if (!sim || !lastRawElevations) return
     // .slice() so transferring these buffers doesn't neuter the live sim's

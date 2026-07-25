@@ -422,6 +422,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button climate-toggle" data-action="toggle-precipitation" aria-label="Toggle precipitation overlay">
             <img src="/icons/ocean.png" alt="" />
           </button>
+          <button type="button" class="icon-button climate-toggle" data-action="toggle-currents" aria-label="Toggle ocean current overlay">
+            <img src="/icons/spin_off.png" alt="" />
+          </button>
           <span class="erosion-status" data-value="climate-status"></span>
         </span>
       </label>
@@ -454,6 +457,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const windToggleIcon = windToggleButton.querySelector<HTMLImageElement>('img')!
   const precipToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-precipitation"]')!
   const precipToggleIcon = precipToggleButton.querySelector<HTMLImageElement>('img')!
+  const currentsToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-currents"]')!
+  const currentsToggleIcon = currentsToggleButton.querySelector<HTMLImageElement>('img')!
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
@@ -506,6 +511,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastTemperature: Float32Array | null = null
   let lastWind: Float32Array | null = null
   let lastPrecipitation: Float32Array | null = null
+  let lastCurrents: Float32Array | null = null
   let climateResX = 0
   let climateResY = 0
 
@@ -617,6 +623,67 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // Bilinear-sampled ocean current (u,v) at a map pixel, wrapped. Zero over land.
+  function sampleCurrent(px: number, py: number): [number, number] {
+    if (!lastCurrents) return [0, 0]
+    const fx = (px / MAP_WIDTH) * climateResX - 0.5
+    const fy = (py / MAP_HEIGHT) * climateResY - 0.5
+    const x0 = Math.floor(fx)
+    const y0 = Math.floor(fy)
+    const tx = fx - x0
+    const ty = fy - y0
+    const wrap = (a: number, n: number): number => ((a % n) + n) % n
+    const xa = wrap(x0, climateResX)
+    const xb = wrap(x0 + 1, climateResX)
+    const ya = wrap(y0, climateResY)
+    const yb = wrap(y0 + 1, climateResY)
+    const at = (xw: number, yw: number, comp: number): number => lastCurrents![(yw * climateResX + xw) * 2 + comp]
+    const lerp2 = (comp: number): number =>
+      (at(xa, ya, comp) * (1 - tx) + at(xb, ya, comp) * tx) * (1 - ty) + (at(xa, yb, comp) * (1 - tx) + at(xb, yb, comp) * tx) * ty
+    return [lerp2(0), lerp2(1)]
+  }
+
+  // Ocean currents as streamlines: from a grid of seeds, trace along the current
+  // and draw the path, so the gyres read as loops. Each segment is colored by
+  // whether the flow is poleward (carrying warm water — reddish) or equatorward
+  // (cold — bluish), the climate-relevant distinction. Two batched paths keep it
+  // to two strokes. Streamlines stop where the current goes calm (i.e. at land).
+  function drawCurrents(c: CanvasRenderingContext2D): void {
+    if (!lastCurrents) return
+    const cols = 60
+    const rows = 30
+    const step = 6
+    const steps = 28
+    const threshold = 0.1
+    const mid = MAP_HEIGHT / 2
+    const warmPath = new Path2D()
+    const coldPath = new Path2D()
+    for (let r = 0; r < rows; r++) {
+      for (let col = 0; col < cols; col++) {
+        let x = ((col + 0.5) / cols) * MAP_WIDTH
+        let y = ((r + 0.5) / rows) * MAP_HEIGHT
+        for (let s = 0; s < steps; s++) {
+          const [u, v] = sampleCurrent(x, y)
+          if (Math.hypot(u, v) < threshold) break
+          const nx = x + u * step
+          const ny = y + v * step
+          const path = v * (y - mid) > 0 ? warmPath : coldPath
+          path.moveTo(x, y)
+          path.lineTo(nx, ny)
+          // Wrap for the next sample; a seam-crossing segment just clips.
+          x = ((nx % MAP_WIDTH) + MAP_WIDTH) % MAP_WIDTH
+          y = ((ny % MAP_HEIGHT) + MAP_HEIGHT) % MAP_HEIGHT
+        }
+      }
+    }
+    c.lineWidth = 1.5
+    c.lineCap = 'round'
+    c.strokeStyle = 'rgba(205, 65, 50, 0.55)'
+    c.stroke(warmPath)
+    c.strokeStyle = 'rgba(40, 95, 185, 0.6)'
+    c.stroke(coldPath)
+  }
+
   // Layer draw/list order: temperature first (a base tint), names last so labels
   // stay on top (always readable); the climate layers (temperature, wind) are
   // hidden from the overlay bar — toggled from the climate panel instead. The
@@ -634,6 +701,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'boundaries', label: 'Grenzen', enabled: true, paintPixels: paintBoundaryMask },
     { id: 'arrows', label: 'Pfeile', enabled: false, paint: drawArrows },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
+    { id: 'currents', label: 'Strömungen', enabled: false, hidden: true, paint: drawCurrents },
     { id: 'events', label: 'Ereignisse', enabled: true },
     { id: 'names', label: 'Namen', enabled: true, paint: (c) => drawContinentLabels(c, lastRaftLabels) },
   ])
@@ -704,7 +772,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // (the toggle buttons flip these). The overlays only actually SHOW while on
   // the climate panel; off-panel they're hidden but the desired state (and the
   // data) is kept, so returning restores them. Defaults: temperature on, wind off.
-  const climateOverlaysOn: Record<string, boolean> = { temperature: true, wind: false, precipitation: false }
+  const climateOverlaysOn: Record<string, boolean> = { temperature: true, wind: false, precipitation: false, currents: false }
   // Per overlay: its toggle button (for the active-state class) and, where a
   // pair exists, the on/off icon to swap. Precipitation reuses one icon and
   // shows state via the class alone.
@@ -712,6 +780,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     temperature: { button: tempToggleButton, icon: tempToggleIcon, on: '/icons/temp_on.png', off: '/icons/temp_off.png' },
     wind: { button: windToggleButton, icon: windToggleIcon, on: '/icons/wind_on.png', off: '/icons/wind_off.png' },
     precipitation: { button: precipToggleButton, icon: precipToggleIcon, on: '/icons/ocean.png', off: '/icons/ocean.png' },
+    currents: { button: currentsToggleButton, icon: currentsToggleIcon, on: '/icons/spin_on.png', off: '/icons/spin_off.png' },
   }
 
   // Enables each climate layer only when on the climate panel AND wanted; the
@@ -736,6 +805,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function handleClimateData(message: WorkerClimateDataMessage): void {
     lastTemperature = new Float32Array(message.temperature)
     lastWind = new Float32Array(message.wind)
+    lastCurrents = new Float32Array(message.currents)
     lastPrecipitation = new Float32Array(message.precipitation)
     climateResX = message.resX
     climateResY = message.resY
@@ -761,6 +831,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function invalidateClimate(): void {
     lastTemperature = null
     lastWind = null
+    lastCurrents = null
     lastPrecipitation = null
     applyClimateOverlays(false)
     climateStatus.textContent = ''
@@ -1121,6 +1192,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   tempToggleButton.addEventListener('click', () => toggleClimateOverlay('temperature'))
   windToggleButton.addEventListener('click', () => toggleClimateOverlay('wind'))
   precipToggleButton.addEventListener('click', () => toggleClimateOverlay('precipitation'))
+  currentsToggleButton.addEventListener('click', () => toggleClimateOverlay('currents'))
 
   // Dragging the band slider live-recomputes the climate (debounced) once a
   // world exists — the worker no-ops if there's no elevation yet. Recomputes

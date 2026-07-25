@@ -56,13 +56,19 @@ full-res post-erosion field where needed, for lapse + orographic).
    from the sinking ones (~30°, poles); zonal sign from Coriolis. One vector
    field `W(x,y)` — it drives currents + moisture **and** is surfaced as a wind
    overlay.
-4. **Ocean currents (gyres) + SST.** Wind stress over ocean → surface currents,
-   deflected by Coriolis, constrained tangential to coastlines → closed
-   **gyres per basin** (subtropical ~30°, subpolar ~60°, opposite rotation).
-   Advect a sea-surface-temperature field along them: **warm western boundary
-   currents** (Gulf-Stream-like → mild high-latitude coasts), **cold eastern
-   boundary currents + upwelling** (→ coastal deserts, Atacama/Namib). Coastal
-   land temperature is nudged toward nearby SST.
+4. **Ocean currents (gyres) + SST.** *(Built — method validated by prototype.)*
+   Wind-stress **curl** forces a **streamfunction** ψ solved by relaxation with
+   ψ=0 on land, so the flow is automatically tangent to coastlines and closes
+   into basin-scale gyres (no explicit Coriolis/boundary bookkeeping). Velocity
+   is derived from ψ (non-divergent). A sea-surface-temperature field is advected
+   along it: **warm western ocean boundaries** → mild EASTERN continental coasts,
+   **cold eastern ocean boundaries** → cool WESTERN continental coasts (coastal
+   deserts). Coastal land temperature gets a maritime band (the SST anomaly
+   propagated a few cells inland, decaying). A pure Poisson ψ gives symmetric
+   gyres (no western intensification), which is enough because the *sides* — and
+   thus the coastal warm/cold pattern — come out right; validated against exactly
+   that (W-coast cold, E-coast warm, mirror-symmetric). Precipitation runs after
+   this, so evaporation sees the current-adjusted temperature.
 5. **Continentality.** Distance-to-coast (distance transform) → interiors get
    larger seasonal swing + less moisture; coasts get their mean moderated
    toward SST.
