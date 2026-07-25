@@ -306,6 +306,13 @@ const HOTSPOT_DEPOSIT_PER_EPOCH = 4
 // real island chain, not a continuous ridge) and keeps the feature count in check.
 const HOTSPOT_EPOCH_INTERVAL = 2
 
+// Flood basalt / large igneous province: when a supercontinent rifts apart (the
+// doming upwelling breaching the crust), one big volcanic province erupts at the
+// rift, along it — a Deccan/CAMP-scale plateau. A single large deposit, persistent
+// (continental) so it stays as a lasting mark of the breakup. plateB = -2 is its
+// own marker (like hotspots' -1) so it never merges with boundary/hotspot features.
+const FLOOD_BASALT_DEPOSIT = 50
+
 function generateHotspots(random: () => number, width: number, height: number): { x: number; y: number }[] {
   return Array.from({ length: HOTSPOT_COUNT }, () => ({ x: random() * width, y: random() * height }))
 }
@@ -864,6 +871,13 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
       // left unnamed on the map.
       const newRaft = sim.rafts.find((raft) => raft.id === newRaftId)
       if (newRaft) newRaft.name = pickUnusedRaftName(sim.rafts, sim.random)
+      // Flood-basalt province at the breakup: one big volcanic deposit along the
+      // rift line (tangent ⟂ the seed-to-seed normal), riding one half. See M3.
+      const fbTangentX = -cny / cnl
+      const fbTangentY = cnx / cnl
+      const fbIdx = findOrCreateFeatureIndex(sim.features, continentalRift.x, continentalRift.y, continentalRift.plateA, -2, continentalRift.plateA, fbTangentX, fbTangentY, 'range', false, width, height)
+      sim.features[fbIdx].thickness += FLOOD_BASALT_DEPOSIT
+      sim.features[fbIdx].epochsSinceDeposit = 0
     }
   }
 

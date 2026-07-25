@@ -535,6 +535,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let mantleResX = 0
   let mantleResY = 0
   let lastHotspots: { x: number; y: number }[] = []
+  let lastVolcanoes: { x: number; y: number; thickness: number; flood: boolean }[] = []
   // Two base rasters: the full-colour terrain (default) and a neutral relief base
   // (light-blue water, white-shaded land) used on the Climate/Rivers panels so
   // the data overlays read clearly. The simplified RGBA is built lazily from the
@@ -594,9 +595,27 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
-  // Fixed hotspot plumes: a distinct marker at each (the source the volcano chains
-  // trail from). Drawn onto the base texture, so the toroidal tiling wraps them.
-  function drawHotspots(c: CanvasRenderingContext2D): void {
+  // Mantle-driver markers, drawn onto the base texture so the toroidal tiling wraps
+  // them: the volcanic PRODUCTS (red cones = hotspot chains, dark cones = flood-basalt
+  // provinces, sized by thickness) underneath, then the fixed plume SOURCES (orange
+  // rings) the hotspot chains trail from.
+  function drawMantleMarkers(c: CanvasRenderingContext2D): void {
+    for (const v of lastVolcanoes) {
+      // Cone height ∝ thickness (hotspot cones ~4-24, flood provinces ~15-50).
+      const s = Math.max(4, Math.min(15, 3 + v.thickness * 0.35))
+      // The base texture is displayed Y-flipped, so the apex sits at +s (canvas
+      // space) to point up on screen.
+      c.beginPath()
+      c.moveTo(v.x, v.y + s)
+      c.lineTo(v.x - s * 0.85, v.y - s * 0.6)
+      c.lineTo(v.x + s * 0.85, v.y - s * 0.6)
+      c.closePath()
+      c.fillStyle = v.flood ? 'rgba(120, 25, 20, 0.85)' : 'rgba(220, 55, 30, 0.9)'
+      c.fill()
+      c.lineWidth = 1.5
+      c.strokeStyle = 'rgba(60, 12, 0, 0.9)'
+      c.stroke()
+    }
     for (const hs of lastHotspots) {
       c.beginPath()
       c.arc(hs.x, hs.y, 9, 0, Math.PI * 2)
@@ -850,7 +869,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'seasonality', label: 'Seasonality', enabled: false, hidden: true, paintPixels: paintSeasonality },
     { id: 'biomes', label: 'Biomes', enabled: false, hidden: true, paintPixels: paintBiomes },
     // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
-    { id: 'mantle', label: 'Mantle', enabled: false, hidden: true, paintPixels: paintMantle, paint: drawHotspots },
+    { id: 'mantle', label: 'Mantle', enabled: false, hidden: true, paintPixels: paintMantle, paint: drawMantleMarkers },
     { id: 'boundaries', label: 'Boundaries', enabled: false, paintPixels: paintBoundaryMask },
     { id: 'arrows', label: 'Arrows', enabled: false, paint: drawArrows },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
@@ -936,7 +955,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'terrain', icon: '/icons/colours.png', label: 'Terrain colour', available: () => lastColoredBase !== null },
     { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null },
     { id: 'names', icon: '/icons/continent_name.png', label: 'Continent names', available: () => lastRaftLabels.length > 0 },
-    { id: 'mantle', icon: '/icons/mantle.png', label: 'Mantle field + hotspots', available: () => lastMantle !== null },
+    { id: 'mantle', icon: '/icons/mantle.png', label: 'Mantle field + volcanism', available: () => lastMantle !== null },
     { id: 'temperature', icon: '/icons/temp_on.png', label: 'Temperature', available: () => lastTemperature !== null },
     { id: 'wind', icon: '/icons/wind.png', label: 'Wind', available: () => lastWind !== null },
     { id: 'precipitation', icon: '/icons/ocean.png', label: 'Precipitation', available: () => lastPrecipitation !== null },
@@ -1298,6 +1317,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     mantleResX = message.mantleResX
     mantleResY = message.mantleResY
     lastHotspots = message.hotspots
+    lastVolcanoes = message.volcanoes
     simplifiedBaseCache = null // rebuilt lazily from the fresh relief
     terrainTintCache = null // rebuilt lazily from the fresh colour render
     applyBase()

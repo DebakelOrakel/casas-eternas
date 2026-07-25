@@ -154,6 +154,10 @@ export interface WorkerRenderedMessage {
   mantleResX: number
   mantleResY: number
   hotspots: { x: number; y: number }[]
+  // Volcanic features for distinct markers: hotspot volcanoes + flood-basalt
+  // provinces (the plateB < 0 features). `flood` = a large-igneous-province vs a
+  // hotspot cone; `thickness` sizes the marker. See plateSimulation.ts.
+  volcanoes: { x: number; y: number; thickness: number; flood: boolean }[]
   width: number
   height: number
   landFraction: number
@@ -457,6 +461,11 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
     hotspots: sim.hotspots,
+    // Volcanic features carry a negative plateB marker: -1 hotspot cone, -2 flood
+    // basalt. Thickness (kept positive here) sizes the marker on the screen.
+    volcanoes: sim.features
+      .filter((f) => f.plateB < 0)
+      .map((f) => ({ x: f.x, y: f.y, thickness: Math.abs(f.thickness), flood: f.plateB === -2 })),
     width: sim.width,
     height: sim.height,
     landFraction: result.landFraction,
