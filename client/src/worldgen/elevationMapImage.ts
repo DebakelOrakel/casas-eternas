@@ -37,6 +37,9 @@ export interface SimulationRenderResult {
   // main-thread overlay layers composited on top (see WorldGenScreen); the
   // three overlay-source fields below are the data they draw from.
   buffer: Uint8Array
+  // Neutral relief base, one byte/pixel: top bit = land, low 7 bits = hillshade
+  // (0..127), for BOTH land and ocean floor — see the render loop's comment.
+  relief: Uint8Array
   // Full-resolution plate-boundary mask (1 where the pixel sits on a Voronoi
   // cell edge, else 0). Drawn as fine boundary lines by the compositor; kept
   // full-res regardless of the elevation preview scale so the lines stay
@@ -179,6 +182,15 @@ export async function renderSimulationImage(sim: PlateSimulation, pool: Elevatio
   // painted, so the compositor can draw (or hide) the lines on the main
   // thread without a re-render.
   const boundaryMask = new Uint8Array(width * height)
+  // A neutral "relief" base (the "paper" the panels paint on): a subtle hillshade
+  // over BOTH land and ocean floor, packed into one byte — top bit = land, low 7
+  // bits = shade (0..127). The screen expands it to RGBA (land → near-white grey,
+  // ocean → light blue, each modulated by the shade so relief reads on water too).
+  // Forward-difference hillshade lit from the top-left; exaggerated since
+  // normalized elevation deltas are tiny per pixel. See WorldGenScreen.
+  const relief = new Uint8Array(width * height)
+  const RELIEF_EXAGGERATION = 45
+  const LX = -0.502, LY = -0.502, LZ = 0.703 // normalized top-left light
   let landPixelCount = 0
   for (let y = 0; y < height; y++) {
     const downRow = (y + 1) % height
@@ -189,6 +201,11 @@ export async function renderSimulationImage(sim: PlateSimulation, pool: Elevatio
       if (plateIndex !== cellIds[y * width + rightCol] || plateIndex !== cellIds[downRow * width + x]) boundaryMask[idx] = 1
       const elevation = elevations[idx]
       if (elevation > 0) landPixelCount++
+      const dzdx = (elevations[y * width + rightCol] - elevation) * RELIEF_EXAGGERATION
+      const dzdy = (elevations[downRow * width + x] - elevation) * RELIEF_EXAGGERATION
+      const ndotl = (-dzdx * LX - dzdy * LY + LZ) / Math.hypot(dzdx, dzdy, 1)
+      const shade = ndotl < 0 ? 0 : ndotl > 1 ? 1 : ndotl
+      relief[idx] = (elevation > 0 ? 128 : 0) | Math.round(shade * 127)
       const color = elevationToColor(elevation)
       const pixelIndex = idx * 4
       buffer[pixelIndex] = color[0]
@@ -207,5 +224,5 @@ export async function renderSimulationImage(sim: PlateSimulation, pool: Elevatio
   })
   const raftLabels = computeRaftLabelPlacements(sim.rafts, width, height)
 
-  return { buffer, boundaryMask, plateArrows, raftLabels, landFraction: landPixelCount / (width * height), rawElevations, elevations }
+  return { buffer, relief, boundaryMask, plateArrows, raftLabels, landFraction: landPixelCount / (width * height), rawElevations, elevations }
 }

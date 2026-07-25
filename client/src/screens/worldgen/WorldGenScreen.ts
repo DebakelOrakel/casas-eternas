@@ -528,6 +528,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastBoundaryMask: Uint8Array | null = null
   let lastPlateArrows: PlateArrow[] = []
   let lastRaftLabels: ContinentLabelPlacement[] = []
+  // Two base rasters: the full-colour terrain (default) and a neutral relief base
+  // (light-blue water, white-shaded land) used on the Climate/Rivers panels so
+  // the data overlays read clearly. The simplified RGBA is built lazily from the
+  // worker's compact relief bytes and cached until the next render.
+  let lastColoredBase: Uint8ClampedArray | null = null
+  let lastRelief: Uint8Array | null = null
+  let simplifiedBaseCache: Uint8ClampedArray | null = null
   // Coarse climate rasters (from the worker's computeClimate step). Sampled up
   // to full map resolution in the overlay paint fns. null until computed / when
   // invalidated by an upstream reset.
@@ -793,6 +800,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     mapView.texture.update(pixels)
   })
   overlay.setLayers([
+    // Muted terrain wash first (bottom-most tint, over the relief base).
+    { id: 'terrain', label: 'Terrain', enabled: false, hidden: true, paintPixels: paintTerrain },
     { id: 'temperature', label: 'Temp', enabled: false, hidden: true, paintPixels: paintTemperature },
     { id: 'precipitation', label: 'Precipitation', enabled: false, hidden: true, paintPixels: paintPrecipitation },
     { id: 'seasonality', label: 'Seasonality', enabled: false, hidden: true, paintPixels: paintSeasonality },
@@ -879,6 +888,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // the scene-space river ribbons + the lake tint under one control. Events are
   // NOT here — they're always on. Order = display order in the bar.
   const OVERLAY_DEFS: { id: string; icon: string; label: string; available: () => boolean }[] = [
+    { id: 'terrain', icon: '/icons/colours.png', label: 'Terrain colour', available: () => lastColoredBase !== null },
     { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null },
     { id: 'names', icon: '/icons/continent_name.png', label: 'Continent names', available: () => lastRaftLabels.length > 0 },
     { id: 'temperature', icon: '/icons/temp_on.png', label: 'Temperature', available: () => lastTemperature !== null },
@@ -890,9 +900,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'rivers', icon: '/icons/river.png', label: 'Rivers & lakes', available: () => lastRiverData !== null },
   ]
   // Desired on/off per overlay (persists as availability comes and goes). Voronoi
-  // + names default on (topography exists first); data overlays default off.
+  // + names default on (topography exists first); terrain default on too but is
+  // re-set per panel in showPanel (on for the shaping panels, off for the neutral
+  // data panels); data overlays default off.
   const overlaysOn: Record<string, boolean> = {}
-  for (const def of OVERLAY_DEFS) overlaysOn[def.id] = def.id === 'boundaries' || def.id === 'names'
+  for (const def of OVERLAY_DEFS) overlaysOn[def.id] = def.id === 'boundaries' || def.id === 'names' || def.id === 'terrain'
 
   const overlayBar = document.createElement('div')
   overlayBar.className = 'overlay-bar'
@@ -952,6 +964,80 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (!def || !def.available()) return
     overlaysOn[id] = !overlaysOn[id]
     updateOverlays()
+  }
+
+  // Expand the worker's packed relief bytes (top bit = land, low 7 = hillshade)
+  // into the RGBA "paper" base: land → near-white grey, ocean → light blue, each
+  // subtly modulated by the shade so relief reads on water too.
+  function buildSimplifiedBase(): Uint8ClampedArray | null {
+    if (!lastRelief) return null
+    if (simplifiedBaseCache) return simplifiedBaseCache
+    const out = new Uint8ClampedArray(lastRelief.length * 4)
+    for (let i = 0; i < lastRelief.length; i++) {
+      const v = lastRelief[i]
+      const shade = (v & 127) / 127
+      const p = i * 4
+      if (v & 128) {
+        // Land: near-white, subtle grey shading.
+        const b = 210 + shade * 45
+        out[p] = b
+        out[p + 1] = b
+        out[p + 2] = b
+      } else {
+        // Ocean: light blue, subtle bathymetric shading.
+        out[p] = 178 + shade * 30
+        out[p + 1] = 206 + shade * 22
+        out[p + 2] = 230 + shade * 18
+      }
+      out[p + 3] = 255
+    }
+    simplifiedBaseCache = out
+    return out
+  }
+
+  // Muted "watercolour" terrain wash derived from the (never-shown) full-colour
+  // render: desaturate the land colours, cache the pigment; paintTerrain then
+  // alpha-blends it over the relief base so the white + hillshade show through —
+  // pigment on paper. Land only; ocean stays the relief blue.
+  const TERRAIN_DESATURATE = 0.5
+  const TERRAIN_ALPHA = 0.62
+  let terrainTintCache: Uint8ClampedArray | null = null
+  function buildTerrainTint(): Uint8ClampedArray | null {
+    if (!lastColoredBase || !lastRelief) return null
+    if (terrainTintCache) return terrainTintCache
+    const out = new Uint8ClampedArray(lastColoredBase.length)
+    for (let i = 0; i < lastRelief.length; i++) {
+      const p = i * 4
+      if (!(lastRelief[i] & 128)) continue // ocean → no tint (alpha stays 0)
+      const r = lastColoredBase[p]
+      const g = lastColoredBase[p + 1]
+      const b = lastColoredBase[p + 2]
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b
+      out[p] = r + (lum - r) * TERRAIN_DESATURATE
+      out[p + 1] = g + (lum - g) * TERRAIN_DESATURATE
+      out[p + 2] = b + (lum - b) * TERRAIN_DESATURATE
+      out[p + 3] = 255
+    }
+    terrainTintCache = out
+    return out
+  }
+  function paintTerrain(data: Uint8ClampedArray): void {
+    const tint = buildTerrainTint()
+    if (!tint) return
+    const a = TERRAIN_ALPHA
+    for (let i = 0; i < tint.length; i += 4) {
+      if (tint[i + 3] === 0) continue
+      data[i] = data[i] * (1 - a) + tint[i] * a
+      data[i + 1] = data[i + 1] * (1 - a) + tint[i + 1] * a
+      data[i + 2] = data[i + 2] * (1 - a) + tint[i + 2] * a
+    }
+  }
+
+  // The base is always the neutral relief now; the full-colour render is only a
+  // source for the muted terrain wash. Does not composite.
+  function applyBase(): void {
+    const base = buildSimplifiedBase()
+    if (base) overlay.setBase(base)
   }
 
   // 8-point compass for a (u,v) field vector — u east+, v toward the bottom
@@ -1160,7 +1246,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastBoundaryMask = new Uint8Array(message.boundaryMask)
     lastPlateArrows = message.plateArrows
     lastRaftLabels = message.raftLabels
-    overlay.setBase(new Uint8ClampedArray(message.buffer))
+    lastColoredBase = new Uint8ClampedArray(message.buffer)
+    lastRelief = new Uint8Array(message.relief)
+    simplifiedBaseCache = null // rebuilt lazily from the fresh relief
+    terrainTintCache = null // rebuilt lazily from the fresh colour render
+    applyBase()
     handleSimEvents(message.events)
     // Applies the current overlay states over the fresh base + syncs the bar
     // (boundaries/names data now exists → their buttons become available).
@@ -1571,6 +1661,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       if (lastTemperature === null) requestClimate()
       if (lastRiverData === null) requestHydrology()
     }
+    // The terrain colour wash is panel-contextual: on for the shaping panels
+    // (Genesis/Tectonics/Erosion), off for the neutral data panels (Climate/
+    // Rivers). Still toggleable in the bar within a panel; resets on switch.
+    overlaysOn.terrain = index < CLIMATE_PANEL_INDEX
+    if (lastColoredBase) updateOverlays()
     updateNavState()
   }
 

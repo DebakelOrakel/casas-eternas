@@ -142,6 +142,10 @@ export type WorkerInboundMessage =
 export interface WorkerRenderedMessage {
   type: 'rendered'
   buffer: ArrayBuffer
+  // Neutral relief base (Uint8, 0 = ocean) for the climate/rivers panels — the
+  // screen expands it to a light-blue-water / white-shaded-land RGBA. See
+  // SimulationRenderResult.relief.
+  relief: ArrayBuffer
   width: number
   height: number
   landFraction: number
@@ -439,6 +443,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   const message: WorkerRenderedMessage = {
     type: 'rendered',
     buffer: result.buffer.buffer as ArrayBuffer,
+    relief: result.relief.buffer as ArrayBuffer,
     width: sim.width,
     height: sim.height,
     landFraction: result.landFraction,
@@ -456,7 +461,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   // because renderSimulationImage (buffer + boundaryMask) and
   // downsampleDebugHeightmapGrid allocate fresh arrays every call, so
   // there's no reference to any now-neutered buffer left to reuse.
-  self.postMessage(message, [message.buffer, message.boundaryMask, message.debugHeightmapGrid])
+  self.postMessage(message, [message.buffer, message.relief, message.boundaryMask, message.debugHeightmapGrid])
 }
 
 // Runs one 'erode' request end to end — extracted out of the onmessage
