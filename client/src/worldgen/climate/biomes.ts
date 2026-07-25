@@ -42,6 +42,25 @@ export function biomeColor(id: number): [number, number, number] {
   return BIOME_COLORS[id] ?? [128, 128, 128]
 }
 
+// German display names (UI language), e.g. for a hover readout.
+const BIOME_LABELS: Record<number, string> = {
+  [Biome.Ocean]: 'Ozean',
+  [Biome.Ice]: 'Eiskappe',
+  [Biome.Tundra]: 'Tundra',
+  [Biome.Boreal]: 'Borealer Wald',
+  [Biome.Grassland]: 'Steppe',
+  [Biome.Woodland]: 'Hartlaubwald',
+  [Biome.TemperateForest]: 'Laubwald',
+  [Biome.TemperateRainforest]: 'Gemäßigter Regenwald',
+  [Biome.Desert]: 'Wüste',
+  [Biome.Savanna]: 'Savanne',
+  [Biome.TropicalRainforest]: 'Tropischer Regenwald',
+}
+
+export function biomeLabel(id: number): string {
+  return BIOME_LABELS[id] ?? 'Unbekannt'
+}
+
 // Classify one cell. T = mean annual °C, P = annual precip mm/yr, amp = seasonal
 // temperature amplitude °C (aridity is implicit: at a given P, hotter needs more
 // water to escape desert; the T bands below encode that). Thresholds are the

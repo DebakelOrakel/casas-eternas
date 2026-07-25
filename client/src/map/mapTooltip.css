@@ -1,0 +1,18 @@
+.map-tooltip {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: rgba(18, 22, 28, 0.88);
+  color: #f2f4f7;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(2px);
+}
+
+.map-tooltip > div:first-child {
+  font-weight: 600;
+}

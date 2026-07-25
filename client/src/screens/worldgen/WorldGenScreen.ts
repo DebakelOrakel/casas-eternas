@@ -2,6 +2,7 @@ import { Color3, Color4, DirectionalLight, HemisphericLight, Mesh, Scene, Standa
 import type { InstancedMesh } from '@babylonjs/core'
 import { createHexMapCamera } from '../../camera/hexMapCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
+import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/mapConfig'
 import JSZip from 'jszip'
@@ -16,7 +17,7 @@ import { createOverlayToggleBar } from '../../ui/mapOverlay/OverlayToggleBar'
 import { temperatureColor, precipitationColor, amplitudeColor } from '../../worldgen/climate/climateColors'
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
-import { biomeColor, Biome } from '../../worldgen/climate/biomes'
+import { biomeColor, biomeLabel, Biome } from '../../worldgen/climate/biomes'
 import './worldgen.css'
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
@@ -843,6 +844,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     biomes: { button: biomesToggleButton, icon: biomesToggleIcon, on: '/icons/biomes.png', off: '/icons/biomes.png' },
   }
 
+  // The hover tooltip (created near setup end); refresh()ed whenever the data or
+  // active overlays change so a stationary readout stays in sync.
+  let hoverTooltip: ReturnType<typeof createMapHoverTooltip> | null = null
+
   // Enables each climate layer only when on the climate panel AND wanted; the
   // button icon + active-state class always reflect the wanted state. One
   // composite at the end.
@@ -855,11 +860,56 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       t.button.classList.toggle('is-active', want)
     }
     overlay.composite()
+    hoverTooltip?.refresh()
   }
 
   function toggleClimateOverlay(id: string): void {
     climateOverlaysOn[id] = !climateOverlaysOn[id]
     applyClimateOverlays(true) // only reachable from the climate panel
+  }
+
+  // 8-point compass for a (u,v) field vector — u east+, v toward the bottom
+  // ("south"), so north is −v. Names the direction the vector points toward.
+  function compass(u: number, v: number): string {
+    if (Math.hypot(u, v) < 1e-4) return '–'
+    const angle = Math.atan2(u, -v) // 0 = N, increasing clockwise
+    const dirs = ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW']
+    const idx = Math.round((((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (Math.PI / 4)) % 8
+    return dirs[idx]
+  }
+
+  // Hover readout: one line per active climate overlay for the map cell under
+  // the cursor (the reusable MapHoverTooltip resolves the cell; here we map it to
+  // the coarse climate grid and read the computed fields). Null when no climate
+  // is computed or no data-bearing overlay is on. mapX/mapY are full-res texels.
+  function describeClimateCell(mapX: number, mapY: number): string | null {
+    if (climateResX === 0) return null
+    const gx = Math.min(climateResX - 1, Math.floor((mapX / MAP_WIDTH) * climateResX))
+    const gy = Math.min(climateResY - 1, Math.floor((mapY / MAP_HEIGHT) * climateResY))
+    const i = gy * climateResX + gx
+    const lines: string[] = []
+    if (climateOverlaysOn.biomes && lastBiomes) lines.push(biomeLabel(lastBiomes[i]))
+    if (climateOverlaysOn.temperature && lastTemperature) lines.push(`${Math.round(lastTemperature[i])} °C`)
+    if (climateOverlaysOn.precipitation && lastPrecipitation) {
+      const p = lastPrecipitation[i]
+      lines.push(p === OCEAN_PRECIP ? 'Ozean' : `${Math.round(p)} mm/Jahr`)
+    }
+    if (climateOverlaysOn.seasonality && lastSeasonality) {
+      const a = lastSeasonality[i]
+      lines.push(a === OCEAN_AMPLITUDE ? 'Ozean' : `${Math.round(a)} °C Schwankung`)
+    }
+    if (climateOverlaysOn.wind && lastWind) {
+      lines.push(`Wind ${compass(lastWind[i * 2], lastWind[i * 2 + 1])}`)
+    }
+    if (climateOverlaysOn.currents && lastCurrents) {
+      const u = lastCurrents[i * 2]
+      const v = lastCurrents[i * 2 + 1]
+      if (Math.hypot(u, v) > 0.02) {
+        const warm = v * (gy + 0.5 - climateResY / 2) > 0 // poleward = warm (see drawCurrents)
+        lines.push(`Strömung ${warm ? 'warm' : 'kalt'} ${compass(u, v)}`)
+      }
+    }
+    return lines.length ? lines.join('\n') : null
   }
 
   function handleClimateData(message: WorkerClimateDataMessage): void {
@@ -1345,7 +1395,21 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     } else {
       applyClimateOverlays(false)
     }
+    // The hover readout describes the climate overlays, so it's only live on the
+    // climate panel.
+    hoverTooltip?.setEnabled(index === CLIMATE_PANEL_INDEX)
   }
+
+  // Cursor readout over the map (reusable module; here it reports the active
+  // climate overlays for the hovered cell). Created before the first showPanel
+  // so that call sets its enabled state.
+  hoverTooltip = createMapHoverTooltip({
+    scene,
+    host: root,
+    textureWidth: MAP_WIDTH,
+    textureHeight: MAP_HEIGHT,
+    describe: describeClimateCell,
+  })
   showPanel(0)
 
   root.querySelector('[data-action="back"]')!.addEventListener('click', () => {
@@ -1365,6 +1429,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scene,
     dispose() {
       stopSim()
+      hoverTooltip?.dispose()
       overlay.dispose()
       mapView.dispose()
       worker.terminate()
