@@ -4,6 +4,7 @@ import type { LatticePoint } from './boundaryLattice'
 import { generateDetectionLattice } from './boundaryLattice'
 import { generatePlateMotions, advancePointByMotion } from './plateMotion'
 import type { PlateMotion } from './plateMotion'
+import { createMantleField, evolveMantleField, computeMantleFlow, fitMotionsToFlow } from './mantleField'
 import { classifyBoundaryMotion } from './plateVelocityDecomposition'
 import { generatePlateSeeds } from './plateSeeds'
 import type { PlateSeed } from './plateSeeds'
@@ -279,7 +280,16 @@ export interface PlateSimulation {
   // Epoch until which no continental rift may fire — set after each one to
   // space breakups out (see CONT_RIFT_COOLDOWN_EPOCHS). 0 = ready.
   continentalRiftCooldownUntil: number
+  // Coarse evolving mantle buoyancy field the plates ride on (mantleField.ts) —
+  // continents insulate it (→ upwelling → breakup), ocean cools it (→ downwelling
+  // → assembly). Plate motions are re-fit to its surface flow each epoch.
+  mantle: Float32Array
 }
+
+// How fast a plate's motion relaxes toward the mantle-flow-fitted target each
+// epoch (inertia) — low enough that motion changes smoothly, high enough that the
+// evolving field actually reorganizes the plates over a run.
+const MANTLE_COUPLING_RATE = 0.15
 
 export function createPlateSimulation(seedString: string, plateCount: number, landFraction: number, clustering: number, cratonCount: number, width: number, height: number): PlateSimulation {
   const random = mulberry32(hashSeedString(seedString))
@@ -316,6 +326,7 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
     oceanAge: createOceanAgeField(OCEAN_AGE_INIT),
     supercontinentActive: rafts.length <= 1,
     continentalRiftCooldownUntil: 0,
+    mantle: createMantleField(random),
   }
 }
 
@@ -382,6 +393,10 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
     oceanAge,
     supercontinentActive: snap.supercontinentActive,
     continentalRiftCooldownUntil: snap.continentalRiftCooldownUntil,
+    // Regenerated fresh on restore (not serialized) — like the detection lattice,
+    // it re-evolves toward the current crust config over a few epochs. Uses an
+    // independent RNG so it doesn't disturb the bit-identical continuation RNG.
+    mantle: createMantleField(mulberry32((snap.warpSeed ^ 0x5bd1e995) >>> 0)),
   }
 }
 
@@ -514,6 +529,25 @@ function supercontinentAnchor(rafts: Raft[]): { x: number; y: number } | null {
 
 export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   const { width, height } = sim
+
+  // 0. The mantle drives the plates. Evolve the field under the current crust
+  // (continents insulate → upwelling; ocean cools → downwelling), derive its
+  // surface flow, and relax each plate's motion toward the flow-fitted rigid
+  // motion (inertia). This is what makes assembly AND breakup emerge — plates
+  // drift to downwellings and assemble, an assembled continent then insulates an
+  // upwelling beneath it that pushes its plates apart. See mantleField.ts.
+  sim.mantle = evolveMantleField(sim.mantle, sim.rafts, width, height)
+  const flow = computeMantleFlow(sim.mantle)
+  const fitted = fitMotionsToFlow(sim.seeds, flow, width, height)
+  for (let i = 0; i < sim.motions.length; i++) {
+    const m = sim.motions[i]
+    const f = fitted[i]
+    m.driftX += (f.driftX - m.driftX) * MANTLE_COUPLING_RATE
+    m.driftY += (f.driftY - m.driftY) * MANTLE_COUPLING_RATE
+    m.spin += (f.spin - m.spin) * MANTLE_COUPLING_RATE
+    m.centroidX = f.centroidX
+    m.centroidY = f.centroidY
+  }
 
   // 1. Advance every plate (and whatever terrain is attached to it)
   // along its own rotation.

@@ -1,7 +1,7 @@
 ---
 summary: An evolving coarse mantle field drives the plates (kinematic coupling) so the supercontinent (Wilson) cycle and volcanism both emerge from one substrate, instead of fixed Euler poles + scripted band-aids.
 date: 2026-07-25
-status: planned; Phase M1 (motion representation) implemented; M2+ not built
+status: M1 + M2 (mantle field drives plates, Wilson cycle emerges) implemented; M3 (volcanism) + M4 not built
 ---
 
 # Evolving Plate Motion via a Mantle Field (+ Volcanism)
@@ -106,10 +106,22 @@ finite-step advection (exact offset-center rotation → rotation+translation), s
   verified (160 epochs, dispersed + supercontinent): 0 NaN, raft cycle intact
   (supercontinent oscillates 1–2, dispersed 1–3), land/features healthy. No visible
   change — the field-driven update is M2.
-- **M2 — Mantle field + coupling (the payoff).** Add the coarse `T` field + evolution +
-  Poisson flow; couple plate motions to the flow (rigid fit + inertia). The Wilson cycle
-  emerges; **retire the band-aids**. Verify: bounded field/motion, supercontinent
-  assembles then breaks up with halves drifting apart, believable cycle period.
+- **M2 — Mantle field + coupling (the payoff). DONE 2026-07-25.** New `mantleField.ts`:
+  a coarse 128×64 `T` field, `createMantleField` (smoothed random blobs → convection from
+  epoch 0), `evolveMantleField` (continents +INSULATION, ocean −COOLING, 1 diffusion pass,
+  DECAY to zero mean, clamp), `computeMantleFlow` (Gauss-Seidel Poisson `∇²φ=T−mean` → `u=∇φ`,
+  scaled by FLOW_SPEED_SCALE), `fitMotionsToFlow` (each coarse cell → nearest plate seed →
+  least-squares rigid `{drift,spin}` fit). `plateSimulation`: `sim.mantle` state; `stepEpoch`
+  step 0 evolves the field, computes the flow, and relaxes each motion toward the fit by
+  `MANTLE_COUPLING_RATE` (0.15). **Harness-verified: the Wilson cycle EMERGES** — supercontinents
+  assemble AND break up (raft count oscillates 1–4/1–5 across seeds; fixed motions never broke
+  them), field bounded (~[−1.2, 1.1]), 0 NaN, plate speeds ~75–115 avg (variable, physically
+  motivated, near the old 30–90 band). TUNING that mattered: FLOW_SPEED_SCALE (speed) + 1
+  diffusion pass (over-diffusion flattened the upwelling and starved breakup). Mantle NOT
+  serialized — regenerated fresh on restore (independent RNG). **Band-aids NOT yet retired**
+  (merge-immunity / cont-rift cooldown / lenient trigger) — they don't block the emergent
+  breakup and removing them needs its own verification; deferred as a follow-up (the cooldown
+  may now be suppressing some breakups — a tuning lever).
 - **M3 — Volcanism.** Arc + hotspot + flood-basalt provinces → terrain features +
   eruption events; optional volcanism overlay + a mantle-field overlay.
 - **M4 (optional) — refinement.** Tuning, overlays, perf (the field adds a coarse
