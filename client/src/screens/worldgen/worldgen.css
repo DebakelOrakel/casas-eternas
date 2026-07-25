@@ -69,6 +69,16 @@
   opacity: 1;
 }
 
+/* Next-step gated: the upstream panel isn't settled enough yet (see
+   entryRequirementUnmet). Kept clickable so a click can explain why. */
+.worldgen-flat-screen .nav-arrow.is-disabled {
+  opacity: 0.2;
+  cursor: not-allowed;
+}
+.worldgen-flat-screen .nav-arrow.is-disabled:hover {
+  opacity: 0.3;
+}
+
 .worldgen-flat-screen .nav-arrow--back {
   left: 1rem;
 }

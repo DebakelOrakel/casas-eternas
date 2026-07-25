@@ -6,7 +6,7 @@ import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { ElevationRenderPool } from './elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass, fillDepressionsAndRouteFlow } from './erosion'
 import type { ErosionPhase, FlowRouting } from './erosion'
-import { accumulateDischarge, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './hydrology'
+import { accumulateDischarge, extractRiverPolylines, computeLakes, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './hydrology'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './oceanAge'
 import { computeTemperature } from './climate/temperature'
 import { computeWind } from './climate/wind'
@@ -291,6 +291,11 @@ export interface WorkerHydrologyDataMessage {
   // `riverLengths` is Uint32 point-counts per polyline. See extractRiverPolylines.
   riverPoints: ArrayBuffer
   riverLengths: ArrayBuffer
+  // Lake water depth per full-res cell (Float32, 0 = dry). Only populated when the
+  // hydrology was re-routed (lakes don't depend on the river-density knob); a
+  // density-only re-extract sends an empty buffer, meaning "lakes unchanged". See
+  // computeLakes.
+  lakeDepth: ArrayBuffer
 }
 
 // The data a world SAVE needs (see the save/load feature): the JSON-able sim
@@ -333,8 +338,15 @@ let preErosionElevations: Float32Array | null = null
 // so a threshold-only re-extract is cheap. `hydrologyDirty` forces a rebuild
 // after any topography or climate change (set wherever those happen).
 let lastClimatePrecip: Float32Array | null = null
+let lastClimateTemperature: Float32Array | null = null
+// The last erosion's pre-fill elevations (basins still intact) — the terrain the
+// hydrology runs on, so lakes have depressions to fill. null when the current
+// terrain wasn't produced by erosion (fresh tectonics / restore), in which case
+// hydrology falls back to the final elevations (few lakes — erosion drains them).
+let lastLakeBasinElevations: Float32Array | null = null
 let lastHydrologyRouting: FlowRouting | null = null
 let lastHydrologyDischarge: Float32Array | null = null
+let lastHydrologyLakeDepth: Float32Array | null = null
 let lastHydrologyMaxDischarge = 0
 let lastHydrologyMeanRunoff = 0
 let hydrologyDirty = true
@@ -413,6 +425,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   if (gen !== worldGeneration) return
   lastRawElevations = result.rawElevations
   hydrologyDirty = true // topography changed → rivers/lakes must re-route
+  lastLakeBasinElevations = null // stale until the next erosion re-captures basins
   if (precomputedElevations === undefined) preErosionElevations = result.rawElevations
   const eventsToSend = pendingEvents
   pendingEvents = []
@@ -474,6 +487,9 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
     (roundElevations) => renderAndPost(roundElevations, true),
   )
   await renderAndPost(erosionResult.elevations)
+  // Keep the pre-fill (basins-intact) terrain for the hydrology's lakes — set
+  // after renderAndPost, which clears it. See lastLakeBasinElevations.
+  lastLakeBasinElevations = erosionResult.preFillElevations
 }
 
 function stopTicking(): void {
@@ -605,9 +621,11 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     const precipitation = computePrecipitation(lastRawElevations, temperature, wind, sim.width, sim.height, message.humidity)
     const seasonalAmplitude = computeSeasonalAmplitude(lastRawElevations, sim.width, sim.height)
     const biomes = computeBiomes(temperature, precipitation, seasonalAmplitude, lastRawElevations, sim.width, sim.height)
-    // Cache a copy for hydrology (the precipitation buffer below is transferred,
-    // which would neuter a retained reference) — rivers use it as their source.
+    // Cache copies for hydrology (the buffers below are transferred, which would
+    // neuter retained references) — rivers use precip as their source, lakes use
+    // the final (SST-adjusted) temperature for evaporation.
     lastClimatePrecip = precipitation.slice()
+    lastClimateTemperature = temperature.slice()
     hydrologyDirty = true
     const climateMessage: WorkerClimateDataMessage = {
       type: 'climateData',
@@ -627,29 +645,41 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     const { riverDensity } = message
     const width = sim.width
     const height = sim.height
-    const elevation = lastRawElevations
+    // Run hydrology on the basins-intact (pre-fill) terrain when erosion produced
+    // it, so lakes have depressions to fill and rivers flow into them; otherwise
+    // the final drained terrain (few lakes). Same grid, so river/lake coords still
+    // line up with the displayed map.
+    const elevation = lastLakeBasinElevations ?? lastRawElevations
     const precip = lastClimatePrecip
     // Async (the priority-flood routing is a Promise); the onmessage handler is
     // sync, so run it in an IIFE like the erode branch does.
     ;(async () => {
       // Re-route only when topography/climate changed; a density-only tweak
-      // reuses the cached routing + discharge + sorted distribution (the
-      // expensive parts) and just re-thresholds.
+      // reuses the cached routing + discharge + lakes (the expensive parts) and
+      // just re-thresholds the rivers.
+      let rerouted = false
       if (hydrologyDirty || !lastHydrologyRouting || !lastHydrologyDischarge) {
         lastHydrologyRouting = await fillDepressionsAndRouteFlow(elevation, width, height, 0)
         lastHydrologyDischarge = accumulateDischarge(lastHydrologyRouting, elevation, precip, CLIMATE_RES_X, CLIMATE_RES_Y)
         lastHydrologyMaxDischarge = maxDischargeOverLand(lastHydrologyDischarge, elevation)
         lastHydrologyMeanRunoff = meanLandRunoff(precip, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+        lastHydrologyLakeDepth = lastClimateTemperature
+          ? computeLakes(lastHydrologyRouting, lastHydrologyDischarge, elevation, lastClimateTemperature, CLIMATE_RES_X, CLIMATE_RES_Y)
+          : new Float32Array(width * height)
         hydrologyDirty = false
+        rerouted = true
       }
       const threshold = channelThreshold(densityToCriticalArea(riverDensity), lastHydrologyMeanRunoff)
       const rivers = extractRiverPolylines(lastHydrologyRouting, lastHydrologyDischarge, elevation, threshold, lastHydrologyMaxDischarge)
+      // Lakes only change on a re-route; a density-only call sends an empty buffer.
+      const lakeOut = rerouted && lastHydrologyLakeDepth ? lastHydrologyLakeDepth.slice() : new Float32Array(0)
       const hydrologyMessage: WorkerHydrologyDataMessage = {
         type: 'hydrologyData',
         riverPoints: rivers.points.buffer as ArrayBuffer,
         riverLengths: rivers.lengths.buffer as ArrayBuffer,
+        lakeDepth: lakeOut.buffer as ArrayBuffer,
       }
-      self.postMessage(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths])
+      self.postMessage(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth])
     })()
   } else if (message.type === 'serializeWorld') {
     if (!sim || !lastRawElevations) return

@@ -45,6 +45,93 @@ export function meanLandRunoff(precip: Float32Array, elevation: Float32Array, wo
   return count > 0 ? sum / count : RUNOFF_FLOOR
 }
 
+// Potential evaporation from an open water surface (mm/yr), rising with
+// temperature — warm basins lose far more water, which is what makes hot dry
+// basins into shrunken salt lakes (or none) while cold/wet ones brim over. Same
+// mm/yr units as the discharge sum, so inflow and evaporation compare directly.
+// Tune by eye.
+export function evaporationPotential(tempC: number): number {
+  const pet = 150 + 60 * tempC
+  return pet < 100 ? 100 : pet > 3000 ? 3000 : pet
+}
+
+function tempAtCell(temperature: Float32Array, cx: number, cy: number, worldW: number, worldH: number, climateResX: number, climateResY: number): number {
+  const gx = Math.min(climateResX - 1, Math.floor((cx / worldW) * climateResX))
+  const gy = Math.min(climateResY - 1, Math.floor((cy / worldH) * climateResY))
+  return temperature[gy * climateResX + gx]
+}
+
+// Lake water depth per full-res cell (0 = dry). Climate-aware / endorheic:
+// priority-flood `filled` marks every depression's cells (filled > raw) and its
+// spill level; for each basin (a connected flooded region) we weigh the water
+// arriving (max discharge through it) against evaporation from the lake surface
+// (evaporationPotential × area). If inflow ≥ evaporation at the spill-full area,
+// the basin brims to its spill and overflows (an open lake feeding the river
+// below); otherwise it's ENDORHEIC — the level settles where inflow balances
+// evaporation, a shrunken closed lake (a hot dry basin becomes a small salt lake,
+// or nothing). Depth = level − raw for cells under the level. 4-connected,
+// toroidally wrapped. See docs/decisions/climate-biomes.md.
+export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, climateResX: number, climateResY: number): Float32Array {
+  const { width, height, filled } = routing
+  const n = width * height
+  const EPS = 1e-5
+  const depth = new Float32Array(n)
+  const flooded = new Uint8Array(n)
+  for (let cell = 0; cell < n; cell++) {
+    if (elevation[cell] > SEA_LEVEL && filled[cell] > elevation[cell] + EPS) flooded[cell] = 1
+  }
+  const wrap = (x: number, y: number): number => (((y % height) + height) % height) * width + (((x % width) + width) % width)
+  const seen = new Uint8Array(n)
+  const queue = new Int32Array(n)
+  for (let s = 0; s < n; s++) {
+    if (!flooded[s] || seen[s]) continue
+    // Gather the connected flooded region (one basin).
+    let head = 0
+    let tail = 0
+    queue[tail++] = s
+    seen[s] = 1
+    const region: number[] = []
+    let spill = -Infinity
+    let inflow = 0
+    let tempSum = 0
+    while (head < tail) {
+      const c = queue[head++]
+      region.push(c)
+      if (filled[c] > spill) spill = filled[c]
+      if (discharge[c] > inflow) inflow = discharge[c]
+      const cx = c % width
+      const cy = (c - cx) / width
+      tempSum += tempAtCell(temperature, cx, cy, width, height, climateResX, climateResY)
+      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+        const nb = wrap(cx + dx, cy + dy)
+        if (flooded[nb] && !seen[nb]) {
+          seen[nb] = 1
+          queue[tail++] = nb
+        }
+      }
+    }
+    const pet = evaporationPotential(tempSum / region.length)
+    // Overflow if the water arriving can sustain the full spill-level surface;
+    // otherwise find the endorheic level where inflow balances evaporation.
+    let level = spill
+    if (inflow < pet * region.length) {
+      const sorted = region.slice().sort((a, b) => elevation[a] - elevation[b])
+      let area = 0
+      for (const c of sorted) {
+        area++
+        if (pet * area >= inflow) {
+          level = elevation[c]
+          break
+        }
+      }
+    }
+    for (const c of region) {
+      if (elevation[c] <= level) depth[c] = level - elevation[c]
+    }
+  }
+  return depth
+}
+
 // Precipitation-weighted discharge (relative water volume) per full-res cell,
 // via SINGLE-flow (D8 flowTarget) reverse-popOrder accumulation: each cell is
 // seeded with its local runoff (sampled precip, land only) and pushes its whole

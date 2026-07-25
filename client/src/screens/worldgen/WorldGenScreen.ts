@@ -579,6 +579,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // come from the worker's computeHydrology; null until computed / invalidated.
   const HYDROLOGY_PANEL_INDEX = 4
   let lastRiverData: { points: Float32Array; lengths: Uint32Array } | null = null
+  let lastLakeDepth: Float32Array | null = null
   let riversOn = true
 
   function paintBoundaryMask(data: Uint8ClampedArray): void {
@@ -795,6 +796,27 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Rivers are NOT a compositor (texture) layer — they're scene-space ribbon
   // geometry (riverLayer) so they stay crisp at any zoom. See handleHydrologyData.
 
+  // Lakes ARE a texture layer (filled water areas, low-frequency — texture blur
+  // on zoom is far less objectionable than for thin rivers). Blue tint over cells
+  // with water depth, slightly deeper = darker. lakeDepth is full-res (= map
+  // resolution), so it indexes the pixel buffer directly.
+  function paintLakes(data: Uint8ClampedArray): void {
+    if (!lastLakeDepth) return
+    for (let i = 0; i < lastLakeDepth.length; i++) {
+      const d = lastLakeDepth[i]
+      if (d <= 0) continue
+      const shade = Math.min(1, d * 6) // deeper → richer blue
+      const r = 60 - 25 * shade
+      const g = 110 - 30 * shade
+      const b = 170 - 20 * shade
+      const p = i * 4
+      const a = 0.75
+      data[p] = data[p] * (1 - a) + r * a
+      data[p + 1] = data[p + 1] * (1 - a) + g * a
+      data[p + 2] = data[p + 2] * (1 - a) + b * a
+    }
+  }
+
   // Layer draw/list order: temperature first (a base tint), names last so labels
   // stay on top (always readable); the climate layers (temperature, wind) are
   // hidden from the overlay bar — toggled from the climate panel instead. The
@@ -815,6 +837,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'arrows', label: 'Arrows', enabled: false, paint: drawArrows },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
     { id: 'currents', label: 'Currents', enabled: false, hidden: true, paint: drawCurrents },
+    { id: 'lakes', label: 'Lakes', enabled: false, hidden: true, paintPixels: paintLakes },
     { id: 'events', label: 'Events', enabled: true },
     { id: 'names', label: 'Names', enabled: true, paint: (c) => drawContinentLabels(c, lastRaftLabels) },
   ])
@@ -1010,24 +1033,33 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     invalidateHydrology()
   }
 
-  // Shows the scene-space river ribbons only when on the hydrology panel AND
-  // wanted; keeps the toggle button's active state in sync.
+  // One "water" toggle drives both rivers (scene-space ribbons) and lakes
+  // (texture layer) — they belong together. Shown only on the hydrology panel
+  // AND when wanted; keeps the toggle button's active state in sync.
   function applyRiverOverlay(onHydrologyPanel: boolean): void {
-    riverLayer?.setEnabled(onHydrologyPanel && riversOn && lastRiverData !== null)
+    const show = onHydrologyPanel && riversOn
+    riverLayer?.setEnabled(show && lastRiverData !== null)
+    overlay.setLayerEnabled('lakes', show && lastLakeDepth !== null)
     riversToggleButton.classList.toggle('is-active', riversOn)
+    overlay.composite()
   }
 
   function handleHydrologyData(message: WorkerHydrologyDataMessage): void {
     lastRiverData = { points: new Float32Array(message.riverPoints), lengths: new Uint32Array(message.riverLengths) }
     riverLayer?.setPolylines(lastRiverData.points, lastRiverData.lengths)
+    // Lakes only arrive on a re-route (empty buffer = unchanged, keep the last).
+    if (message.lakeDepth.byteLength > 0) lastLakeDepth = new Float32Array(message.lakeDepth)
     hydrologyStatus.textContent = ''
     applyRiverOverlay(panelIndex === HYDROLOGY_PANEL_INDEX)
   }
 
   function invalidateHydrology(): void {
     lastRiverData = null
+    lastLakeDepth = null
     riverLayer?.setPolylines(new Float32Array(0), new Uint32Array(0))
     riverLayer?.setEnabled(false)
+    overlay.setLayerEnabled('lakes', false)
+    overlay.composite()
     hydrologyStatus.textContent = ''
   }
 
@@ -1136,6 +1168,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastLandFraction = message.landFraction
     lastEpoch = message.epoch
     updateStats()
+    updateNavState() // epoch progress may unlock the Erosion panel
 
     // Safety auto-stop once this run reaches its armed target epoch (see
     // startSim / autoStopAtEpoch) — reuses the manual-pause path (stopSim),
@@ -1242,6 +1275,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     erosionRunCount += 1
     invalidateClimate()
     updateErosionButtonsState()
+    updateNavState() // first erosion unlocks Climate/Rivers
     postToWorker({ type: 'erode' })
   })
 
@@ -1251,6 +1285,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     erosionRunCount = 0
     invalidateClimate()
     updateErosionButtonsState()
+    updateNavState() // reverting erosion re-locks Climate/Rivers
     postToWorker({ type: 'resetErosion' })
   })
 
@@ -1463,6 +1498,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     invalidateClimate()
     erosionRunCount = 0
     initSim(seedInput.value, Number(plateCountInput.value), Number(landFractionInput.value), Number(clusteringInput.value), Number(cratonCountInput.value))
+    updateNavState() // fresh world → re-lock downstream panels
   }
   // Debounced so dragging a slider (or typing a seed) doesn't fire a full
   // world regen + render on every input event — the label updates live, the
@@ -1507,8 +1543,30 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // data-panel pattern, with one more entry in PANEL_TITLES to match.
   const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion', 'Climate', 'Rivers']
   const panelTitle = root.querySelector<HTMLElement>('[data-value="panel-title"]')!
+  const nextArrow = root.querySelector<HTMLButtonElement>('[data-action="next"]')!
   const panels = Array.from(root.querySelectorAll<HTMLElement>('.panel'))
   let panelIndex = 0
+
+  // Each more-detailed panel needs its upstream step settled, else it operates on
+  // unfinished data (the hydrology test series proved rivers/lakes on un-eroded
+  // terrain are badly wrong: giant undrained lakes, unnatural drainage). So the
+  // forward step is gated: entering Erosion needs some tectonics, entering Climate
+  // or Rivers needs at least one erosion pass. Returns why entry is blocked, or
+  // null if allowed. Values are tunable.
+  const MIN_TECTONIC_EPOCHS = 30
+  const entryRequirementUnmet = (index: number): string | null => {
+    if (index === 2 && lastEpoch < MIN_TECTONIC_EPOCHS) return `First run tectonics to at least epoch ${MIN_TECTONIC_EPOCHS} (now ${lastEpoch}).`
+    if ((index === CLIMATE_PANEL_INDEX || index === HYDROLOGY_PANEL_INDEX) && erosionRunCount < 1) return 'First run erosion at least once — climate and rivers need the eroded terrain.'
+    return null
+  }
+  // Grey out (but keep clickable, so a click can explain why) the next arrow when
+  // the next panel's requirement isn't met yet.
+  const updateNavState = (): void => {
+    const target = panelIndex + 1
+    const blocked = target < panels.length && entryRequirementUnmet(target) !== null
+    nextArrow.classList.toggle('is-disabled', blocked)
+    nextArrow.setAttribute('aria-disabled', String(blocked))
+  }
   const showPanel = (index: number): void => {
     panelIndex = index
     panels.forEach((panel, i) => {
@@ -1540,6 +1598,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // The hover readout describes the climate overlays, so it's only live on the
     // climate panel.
     hoverTooltip?.setEnabled(index === CLIMATE_PANEL_INDEX)
+    updateNavState()
   }
 
   // Cursor readout over the map (reusable module; here it reports the active
@@ -1561,8 +1620,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
     ctx.goTo('title')
   })
-  root.querySelector('[data-action="next"]')!.addEventListener('click', () => {
-    if (panelIndex < panels.length - 1) showPanel(panelIndex + 1)
+  nextArrow.addEventListener('click', () => {
+    if (panelIndex >= panels.length - 1) return
+    const target = panelIndex + 1
+    const reason = entryRequirementUnmet(target)
+    if (reason) {
+      ctx.notifications.show({ message: reason, icon: '/icons/erosion.png', durationMs: 4000 })
+      return
+    }
+    showPanel(target)
   })
 
   ctx.overlay.appendChild(root)

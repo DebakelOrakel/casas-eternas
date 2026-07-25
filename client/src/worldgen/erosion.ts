@@ -684,7 +684,7 @@ export async function runErosionPass(
   // and forgotten) deliberately, so a slow redraw can't overlap with the
   // next round's computation touching the same underlying arrays.
   onRoundComplete?: (elevations: Float32Array, round: number) => void | Promise<void>,
-): Promise<{ elevations: Float32Array; routing: FlowRouting; accumulation: Float32Array }> {
+): Promise<{ elevations: Float32Array; routing: FlowRouting; accumulation: Float32Array; preFillElevations: Float32Array }> {
   const cellCount = width * height
   // Copied rather than aliased — the round loop mutates `elevations` in
   // place, and rawElevations may be a caller-retained array (the tectonics
@@ -694,6 +694,11 @@ export async function runErosionPass(
   let elevations = rawElevations.slice()
   let routing: FlowRouting | undefined
   let accumulation: Float32Array | undefined
+  // The last round's elevations *before* its depression fill — i.e. the eroded
+  // terrain with its closed basins still intact (the final `elevations` has them
+  // filled for drainage, so no basins survive there). This is what a rivers/lakes
+  // pass needs to place lakes: the filled terrain is basin-free by construction.
+  let preFillElevations: Float32Array | undefined
 
   // Each phase's own onProgress reports 0->1 for *itself* — without
   // weighting, naively scaling every phase's fraction by 1/rounds would
@@ -760,6 +765,8 @@ export async function runErosionPass(
     roundProgress('accumulating', 1)
     await maybeYield()
 
+    // Capture the last round's basins before the fill flattens them (for lakes).
+    if (round === params.rounds - 1) preFillElevations = elevations.slice()
     elevations = routing.filled.slice()
     await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, params.streamPower, (fraction) => roundProgress('streamPower', fraction))
     // Order matters only a little here (both passes reread whatever the
@@ -773,7 +780,7 @@ export async function runErosionPass(
     await onRoundComplete?.(elevations.slice(), round)
   }
 
-  return { elevations, routing: routing!, accumulation: accumulation! }
+  return { elevations, routing: routing!, accumulation: accumulation!, preFillElevations: preFillElevations ?? elevations }
 }
 
 // Rivers/lakes seam (not implemented here): `routing.filled` differing
