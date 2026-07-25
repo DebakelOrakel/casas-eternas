@@ -1,0 +1,108 @@
+# OpenShift manifests for the casas-eternas client (static SPA served by nginx).
+# Deployment + Service + Route. Route has NO host, so OpenShift generates one on
+# the cluster's default apps domain: casas-eternas-<namespace>.apps.<cluster>.
+#
+#   oc apply -f deploy/manifests.yaml
+#   oc get route casas-eternas -o jsonpath='{.spec.host}{"\n"}'
+#
+# Set `image:` below to where you pushed the image built from deploy/Dockerfile
+# (e.g. the internal registry: image-registry.openshift-image-registry.svc:5000/<ns>/casas-eternas:latest).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: casas-eternas
+  labels:
+    app: casas-eternas
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: casas-eternas
+  template:
+    metadata:
+      labels:
+        app: casas-eternas
+    spec:
+      containers:
+        - name: casas-eternas
+          image: ghcr.io/debakelorakel/casas-eternas:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 2018Mi
+          # Hardened, OpenShift restricted-v2 friendly. No runAsUser — OpenShift
+          # injects an arbitrary UID from the namespace range (member of GID 0);
+          # the image is built for exactly that. Verified with a read-only rootfs.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            # nginx writes only its pid + temp files, all under /tmp.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: casas-eternas
+  labels:
+    app: casas-eternas
+spec:
+  type: ClusterIP
+  selector:
+    app: casas-eternas
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: casas-eternas
+  labels:
+    app: casas-eternas
+spec:
+  # No host → OpenShift assigns one on the default apps domain.
+  to:
+    kind: Service
+    name: casas-eternas
+    weight: 100
+  port:
+    targetPort: http
+  # Serve over HTTPS with the router's default cert; redirect plain HTTP to it.
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

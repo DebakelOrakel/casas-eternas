@@ -1,0 +1,15 @@
+# Build context = repo root. Keep it small: the image only needs client/ (source)
+# and deploy/nginx.conf.
+**/node_modules
+client/dist
+.git
+.gitignore
+.claude
+.DS_Store
+**/.DS_Store
+saves
+docs
+*.md
+go.mod
+notes-dont-process.md
+GPU_TECTONICS_PLAN.md
