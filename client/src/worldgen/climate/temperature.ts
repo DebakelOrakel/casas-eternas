@@ -1,15 +1,20 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt, sampleElevationAtCell } from './climateField'
-import { SEA_LEVEL } from '../erosion'
 
 // Real-ish units (°C), so the later Whittaker biome thresholds are directly
 // usable. Tune by eye — these set the equator-to-pole span.
 const T_EQUATOR_C = 30
 const T_POLE_C = -25
-// °C lost per unit of elevation above sea level. Elevation here is the model's
-// normalized field (~0 sea level, land baseline ~0.35, peaks approaching ~1),
-// so a peak near 1.0 cools by ~this many degrees — an equatorial high mountain
-// ends up cold (Kilimanjaro/Andes), which is the point. Tune by eye.
+// °C lost per unit of elevation, applied only ABOVE the continental lowland baseline
+// (LAND_LAPSE_REF) — a peak near 1.0 cools by ~this·(1−ref), so an equatorial high
+// mountain ends up cold (Kilimanjaro/Andes). Tune by eye.
 const LAPSE_C_PER_ELEVATION = 35
+// The lapse reference: thick continental crust's isostatic baseline (≈ RAFT_
+// CONTINENTAL_BASELINE 0.35 in elevationField.ts) represents LOWLAND at essentially sea-
+// level temperature, not high ground. Cooling relative to SEA_LEVEL (0) instead cooled
+// EVERY land cell by ~12°C (0.35·35), shifting all climate bands too cold — a ~18°C
+// equator (few tropics/rainforest), frozen mid-latitudes (excess tundra), and, via the
+// lower evaporation, a drier/more-desert world. Only real uplift above this cools now.
+const LAND_LAPSE_REF = 0.35
 
 // Base air temperature: latitudinal insolation (cosine of latitude angle,
 // equator warm → pole cold) minus an elevation lapse on land, plus a global
@@ -33,7 +38,7 @@ export function computeTemperature(elevation: Float32Array, worldWidth: number, 
     const base = meanC + contrast * deviation
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const e = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
-      const value = e > SEA_LEVEL ? base - LAPSE_C_PER_ELEVATION * (e - SEA_LEVEL) : base
+      const value = base - LAPSE_C_PER_ELEVATION * Math.max(0, e - LAND_LAPSE_REF)
       temperature[gy * CLIMATE_RES_X + gx] = value + offsetC
     }
   }

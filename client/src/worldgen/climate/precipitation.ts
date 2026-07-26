@@ -24,12 +24,21 @@ const ADVECT_MERIDIONAL_SCALE = 0.3
 // climbing the windward slope, so little is left for the lee side downwind.
 const BASE_RAINOUT = 0.03
 const OROGRAPHIC_RATE = 0.9
+// Land moisture recycling (evapotranspiration): the fraction of rained-out water that
+// re-evaporates from soil/vegetation back into the airborne pool, feeding downwind rain.
+// This is a MAJOR real process — ~a third to a half of continental precipitation is
+// recycled from land ET, which is what keeps deep interiors (Amazon, Congo, monsoon
+// Asia) wet far from any coast rather than the near-zero our pure-depletion advection
+// gave. It sustains ALREADY-fed interiors (so rainforests/forests reach inland) without
+// rescuing genuine rain-shadow deserts (nothing rains → nothing recycles), so aridity
+// stays where it belongs. Net land depletion per step becomes rain·(1 − this).
+const LAND_RECYCLE_FRAC = 0.5
 // World px upwind to sample for the along-wind slope (needs the fine elevation,
 // not the coarse climate grid — the point of sampling full-res here).
 const OROG_SAMPLE_PX = 40
 // Raw rainout → mm/yr. Tunes overall wetness; a wet windward mountain lands
 // around a few thousand mm, deserts/rain-shadow near zero.
-const PRECIP_SCALE = 42000
+const PRECIP_SCALE = 60000
 // Ocean cells carry this sentinel instead of a precip value — the overlay and
 // the (later) biome step treat precipitation as a land-only field.
 export const OCEAN_PRECIP = -1
@@ -45,9 +54,15 @@ function evaporation(tempC: number): number {
 // Zonal wet/dry from the general circulation: rising (wet) air at the equator
 // ITCZ (φ=0) and the subpolar front (φ≈2/3), sinking (dry) air at the
 // subtropical highs (φ≈1/3 — the great deserts) and the poles (φ=1).
+// Floor for the zonal band multiplier — the subtropical-high / polar dry minimum. At
+// 0.1 the subtropics got a 15× dry penalty vs the equator, which (with interior
+// depletion) turned nearly all subtropical land into extreme desert. A higher floor
+// keeps those belts the driest zones without erasing all vegetation there (semi-arid
+// grassland/savanna rather than bare desert).
+const BAND_FLOOR = 0.13
 function bandFactor(phi: number): number {
   const f = 0.8 + 0.7 * Math.cos(3 * Math.PI * phi)
-  return f < 0.1 ? 0.1 : f
+  return f < BAND_FLOOR ? BAND_FLOOR : f
 }
 
 function sampleGridWrapped(field: Float32Array, fx: number, fy: number): number {
@@ -129,7 +144,9 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
         }
         const rain = advected * rainFrac[i]
         rainedOut[i] = rain // steady-state rainout — the last iteration wins
-        next[i] = advected - rain
+        // Depletes by the rain that stays on the ground; the recycled fraction re-enters
+        // the pool so downwind interiors keep getting fed (see LAND_RECYCLE_FRAC).
+        next[i] = advected - rain * (1 - LAND_RECYCLE_FRAC)
       }
     }
     moisture = next

@@ -108,8 +108,8 @@ function classify(tempC: number, precipMm: number, amplitude: number, season: nu
   // just the annual total: evergreen rainforest needs rain most of the year; a strong
   // wet-dry rhythm (monsoon) gives savanna even when the annual total is high.
   if (precipMm < 250) return Biome.Desert
-  if (precipMm < 800) return Biome.Savanna
-  return season > 0.35 ? Biome.Savanna : Biome.TropicalRainforest
+  if (precipMm < 600) return Biome.Savanna
+  return season > 0.45 ? Biome.Savanna : Biome.TropicalRainforest
 }
 
 // Biome id per climate cell (Uint8). Land only is classified; ocean → Biome.Ocean.
