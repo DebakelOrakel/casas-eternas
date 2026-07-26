@@ -268,7 +268,12 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      on-crust) + the advected sutures** (`orogenPoints`), not fixed sutures
      alone. (Suture advection only helps going forward; existing saves' sutures
      stay stale, but tin still shows via the on-crust fold-mountains.)
-   - **2d — prestige** (gold/silver/gems).
+   - **2d — prestige** ✅ BUILT 2026-07-26 (pending visual check): gold (placer
+     from rivers + lode at orogens), silver (hydrothermal at volcanic arcs), gems
+     (metamorphic at orogens + arid weathering / turquoise near copper). Separate
+     channel — none feed carrying capacity. Rare & clustered. 14 fields total;
+     headless-verified (gold@river+orogen, silver@arc, gems@orogen, ocean-
+     consistent).
    - **2e — fold-out** (togglable `.field` group; per-role nudges + metals submenu).
 3. **Polish** — legends, colours, world.yaml fields, save/load, wetlands
    derivation, title-screen mission bullet.

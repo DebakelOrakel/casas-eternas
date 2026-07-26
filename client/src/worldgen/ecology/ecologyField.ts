@@ -23,6 +23,7 @@ export type EcologyFieldId =
   | 'carryingCapacity'
   | 'arable' | 'fish' | 'game' | 'pasture'
   | 'timber' | 'salt' | 'toolStone' | 'copper' | 'tin' | 'iron'
+  | 'gold' | 'silver' | 'gems'
 
 export interface EcologyParams {
   // Global carrying-capacity gain (%). 100 = neutral; scales the LEVEL only.
@@ -271,6 +272,18 @@ const IRON_DEPOSIT_FREQ_X = 13
 const IRON_DEPOSIT_FREQ_Y = 7
 const IRON_DEPOSIT_FLOOR = 0.35
 
+// Prestige (rare & clustered — the point). Gold = placer (rivers) + lode (orogens);
+// silver = hydrothermal near volcanic arcs; gems = metamorphic (orogens) + arid
+// weathering (turquoise near copper). None feed carrying capacity.
+const GOLD_LODE_RADIUS_FRAC = 0.03
+const SILVER_RADIUS_FRAC = 0.035
+const GEM_RADIUS_FRAC = 0.028
+const GOLD_PLACER_W = 0.7
+const GOLD_LODE_W = 0.9
+const SILVER_W = 0.9
+const GEM_OROGEN_W = 0.85
+const GEM_ARID_W = 0.6
+
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 
 // Fraction of a land cell's 8 neighbours that are ocean.
@@ -366,6 +379,35 @@ function computeIron(cratonAge: Float32Array, wetland: Float32Array, land: Uint8
       const deposit = IRON_DEPOSIT_FLOOR + (1 - IRON_DEPOSIT_FLOOR) * noise01
       out[i] = clamp01(Math.max(IRON_CRATON_W * craton * deposit, IRON_BOG_W * wetland[i]))
     }
+  }
+  return out
+}
+
+// Gold: placer (carried down rivers) + lode at orogenic belts.
+function computeGold(coarseDischarge: Float32Array | null, maxDischarge: number, orogenLode: Float32Array, land: Uint8Array): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (let i = 0; i < out.length; i++) {
+    if (!land[i]) continue
+    const placer = coarseDischarge && maxDischarge > 0 ? Math.min(1, Math.sqrt(coarseDischarge[i] / maxDischarge) * 2) : 0
+    out[i] = clamp01(GOLD_PLACER_W * placer + GOLD_LODE_W * orogenLode[i])
+  }
+  return out
+}
+
+// Silver: hydrothermal, near volcanic arcs.
+function computeSilver(arcField: Float32Array, land: Uint8Array): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (let i = 0; i < out.length; i++) if (land[i]) out[i] = clamp01(SILVER_W * arcField[i])
+  return out
+}
+
+// Gems: metamorphic/orogenic belts + arid weathering (turquoise near copper).
+function computeGems(orogenField: Float32Array, copper: Float32Array, temperature: Float32Array, precipitation: Float32Array, land: Uint8Array): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (let i = 0; i < out.length; i++) {
+    if (!land[i]) continue
+    const aridity = clamp01(1 - precipitation[i] / SALT_ARID_PRECIP) * clamp01(temperature[i] / 25)
+    out[i] = clamp01(GEM_OROGEN_W * orogenField[i] + GEM_ARID_W * aridity * copper[i])
   }
   return out
 }
@@ -518,6 +560,12 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
   const wetland = computeWetland(precipitation, coarseDischarge, maxDischarge, coarseLake, elevation, land, worldWidth, worldHeight)
   const iron = computeIron(cratonAge, wetland, land, warpSeed)
 
+  // Prestige (separate channel — no carrying-capacity contribution). Rare &
+  // clustered: gold placer+lode, silver at arcs, gems at orogens + arid weathering.
+  const gold = computeGold(coarseDischarge, maxDischarge, rasterisePointField(orogenPoints, GOLD_LODE_RADIUS_FRAC, worldWidth, worldHeight), land)
+  const silver = computeSilver(maskToLand(rasterisePointField(arcVolcanoes, SILVER_RADIUS_FRAC, worldWidth, worldHeight), land), land)
+  const gems = computeGems(rasterisePointField(orogenPoints, GEM_RADIUS_FRAC, worldWidth, worldHeight), copper, temperature, precipitation, land)
+
   // Saturating carrying-capacity base: subsistence sources complement with
   // diminishing returns (1 - e^-Σ w·x); salt adds a small preservation bonus (the
   // one sanctioned material→subsistence bleed).
@@ -529,8 +577,8 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
   const carryingCapacity = concentrationPipeline(base, land, volcanoes, warpSeed, worldWidth, worldHeight, params)
 
   // Mask every per-resource field to the ocean sentinel so overlays skip water.
-  const perResource = [arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron]
+  const perResource = [arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron, gold, silver, gems]
   for (let i = 0; i < n; i++) if (!land[i]) for (const f of perResource) f[i] = ECOLOGY_OCEAN
 
-  return { resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y, fields: { carryingCapacity, arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron } }
+  return { resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y, fields: { carryingCapacity, arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron, gold, silver, gems } }
 }

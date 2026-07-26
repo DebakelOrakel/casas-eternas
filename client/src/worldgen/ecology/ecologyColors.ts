@@ -74,6 +74,18 @@ export const ECOLOGY_FIELD_META: Record<EcologyFieldId, EcologyFieldMeta> = {
     label: 'Iron', role: 'material', absolute: false,
     stops: [{ c: 0.0, rgb: [230, 212, 202] }, { c: 0.5, rgb: [200, 118, 88] }, { c: 1.0, rgb: [148, 54, 38] }],
   },
+  gold: {
+    label: 'Gold', role: 'prestige', absolute: false,
+    stops: [{ c: 0.0, rgb: [240, 232, 198] }, { c: 0.5, rgb: [228, 196, 84] }, { c: 1.0, rgb: [198, 150, 24] }],
+  },
+  silver: {
+    label: 'Silver', role: 'prestige', absolute: false,
+    stops: [{ c: 0.0, rgb: [240, 242, 245] }, { c: 0.5, rgb: [198, 204, 212] }, { c: 1.0, rgb: [150, 160, 176] }],
+  },
+  gems: {
+    label: 'Gems', role: 'prestige', absolute: false,
+    stops: [{ c: 0.0, rgb: [240, 222, 236] }, { c: 0.5, rgb: [214, 108, 170] }, { c: 1.0, rgb: [166, 38, 112] }],
+  },
 }
 
 // Selector groups, in display order.
