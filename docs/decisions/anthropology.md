@@ -59,10 +59,19 @@ Two candidate models were weighed:
 
 ### Bounded dispersal sketch (to flesh out later)
 
+> **The first step of this is now being designed in detail as the "initial
+> migration" — see `anthropology-initial-migration.md`.** That refines Origin +
+> Spread below into: **user-placed origins, one per ~3 toggleable races**, a
+> **multi-source least-cost (Dijkstra) spread** whose **predecessor tree +
+> population-flow accumulation** render as a **migration arrow-tree** (width =
+> flow, colour = race) over a coarse density background. Steerable-deterministic
+> (user places origins, spread is deterministic). Settlements / densification /
+> contact graph (steps below) come after.
+
 Keep it a few coarse epochs, **not** an agent sim:
 
-1. **Origin(s).** One or a handful of seed points (deterministic from the world
-   seed; maybe the single best cradle region, or a few).
+1. **Origin(s).** One or a handful of seed points. *(Initial-migration doc:
+   USER-PLACED, one per race, snapped to land.)*
 2. **Spread.** Least-cost expansion across the suitability field. Terrain cost:
    coast + river cheap (highways), mountain/desert/ice expensive. Settlements
    founded where local suitability clears the **settle threshold** *and*
