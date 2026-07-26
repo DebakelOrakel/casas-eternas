@@ -326,6 +326,8 @@ let lastClimateSeasonalAmplitude: Float32Array | null = null
 let lastClimateMonsoonIndex: Float32Array | null = null
 // Water-free biomes cached for the ecology step (game/pasture read biome type).
 let lastClimateBiomes: Uint8Array | null = null
+// Ocean currents cached for the ecology step (fish upwelling reads them).
+let lastClimateCurrents: Float32Array | null = null
 // The last erosion's pre-fill elevations (basins still intact) — the terrain the
 // hydrology runs on, so lakes have depressions to fill. null when the current
 // terrain wasn't produced by erosion (fresh tectonics / restore), in which case
@@ -606,6 +608,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     lastClimateSeasonalAmplitude = seasonalAmplitude.slice()
     lastClimateMonsoonIndex = seasonal.index.slice()
     lastClimateBiomes = biomes.slice()
+    lastClimateCurrents = currents.slice()
     hydrologyDirty = true
     const climateMessage: WorkerClimateDataMessage = {
       type: 'climateData',
@@ -675,8 +678,24 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     // productivity + pasture) plus the current elevation (arable slope) and the
     // sim's volcanoes (province layer). Noise seeded from warpSeed. Fresh arrays,
     // so every field buffer transfers.
-    if (!sim || !lastRawElevations || !lastClimateTemperature || !lastClimatePrecip || !lastClimateBiomes) return
-    const eco = computeEcology(lastClimateTemperature, lastClimatePrecip, lastClimateBiomes, lastRawElevations, collectVolcanoes(sim.features), sim.warpSeed, sim.width, sim.height, {
+    if (!sim || !lastRawElevations || !lastClimateTemperature || !lastClimatePrecip || !lastClimateBiomes || !lastClimateCurrents) return
+    // Hydrology (discharge/lakes) is optional here — if it hasn't been computed
+    // yet, fish falls back to its marine component; the ecology panel re-triggers
+    // this once hydrology lands (see WorldGenScreen's chaining).
+    const eco = computeEcology({
+      temperature: lastClimateTemperature,
+      precipitation: lastClimatePrecip,
+      biomes: lastClimateBiomes,
+      currents: lastClimateCurrents,
+      elevation: lastRawElevations,
+      discharge: lastHydrologyDischarge,
+      maxDischarge: lastHydrologyMaxDischarge,
+      lakeDepth: lastHydrologyLakeDepth,
+      volcanoes: collectVolcanoes(sim.features),
+      warpSeed: sim.warpSeed,
+      worldWidth: sim.width,
+      worldHeight: sim.height,
+    }, {
       carryingCapacity: message.carryingCapacity,
       concentration: message.concentration,
     })

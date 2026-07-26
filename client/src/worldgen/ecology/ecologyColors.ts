@@ -32,6 +32,12 @@ export const ECOLOGY_FIELD_META: Record<EcologyFieldId, EcologyFieldMeta> = {
       { c: 0.0, rgb: [214, 196, 158] }, { c: 0.5, rgb: [176, 190, 96] }, { c: 1.0, rgb: [70, 150, 60] },
     ],
   },
+  fish: {
+    label: 'Fish', role: 'subsistence', absolute: false,
+    stops: [
+      { c: 0.0, rgb: [206, 224, 226] }, { c: 0.5, rgb: [96, 174, 200] }, { c: 1.0, rgb: [30, 96, 168] },
+    ],
+  },
   game: {
     label: 'Game / forage', role: 'subsistence', absolute: false,
     stops: [

@@ -239,7 +239,14 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      label/role/ramp; message carries `fields[]`); selector + dynamic legend +
      per-field hover; worker caches biomes. Headless-verified (fields
      ocean-consistent, pipeline still mean-preserving/gain-linear).
-   - **2b — fish** (currents/coast/freshwater — needs a currents cache).
+   - **2b — fish** ✅ BUILT 2026-07-26 (pending visual check): marine (coastalness
+     × shelf-base + upwelling from adjacent-ocean current strength) + freshwater
+     (big rivers via discharge + lake presence), saturating; a 4th subsistence
+     source in the carrying-capacity combine. Worker caches currents; ecology now
+     also reads hydrology (discharge/lakeDepth, optional → marine-only fallback);
+     ecology panel ensures hydrology + re-triggers ecology when it lands.
+     `computeEcology` refactored to an inputs object. Headless-verified (coastal
+     ≫ interior fish, freshwater adds interior, marine-only fallback).
    - **2c — material** (timber/salt/tool-stone/metals via arcs+sutures+
      craton-age+wetlands).
    - **2d — prestige** (gold/silver/gems).

@@ -1317,6 +1317,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateControlsDisabled()
     updateProgress()
     updateOverlays() // rivers/lakes + refreshed biomes now available
+    // On the Ecology panel, fish (freshwater) depends on this hydrology, so
+    // (re)compute the ecology fields now that rivers/lakes are fresh.
+    if (panelIndex === ECOLOGY_PANEL_INDEX) requestEcology()
   }
 
   function invalidateHydrology(): void {
@@ -1385,7 +1388,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // climate (its cached temperature+precipitation feed productivity); the ecology
   // panel ensures that first. Self-guards a running sim.
   function requestEcology(): void {
-    if (simRunning) return
+    // Needs a computed climate (the worker no-ops without it, which would leave
+    // ecologyInFlight stuck). Hydrology is optional (fish falls back to marine).
+    if (simRunning || lastTemperature === null) return
     ecologyInFlight = true
     updateControlsDisabled()
     updateProgress()
@@ -1902,12 +1907,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       if (lastTemperature === null) requestClimate()
       if (lastRiverData === null) requestHydrology()
     }
-    // Entering Ecology ensures a climate first (its cached temperature +
-    // precipitation feed productivity — posting climate then ecology keeps that
-    // order in the worker), then computes the carrying-capacity field if stale.
+    // Entering Ecology ensures climate + hydrology first (its fields read both —
+    // productivity/biomes from climate, fish freshwater from rivers/lakes). If
+    // hydrology is stale it's posted here and ecology is triggered once it lands
+    // (see handleHydrologyData); otherwise ecology is computed directly.
     if (index === ECOLOGY_PANEL_INDEX) {
       if (lastTemperature === null) requestClimate()
-      if (!hasEcologyData()) requestEcology()
+      if (lastRiverData === null) requestHydrology()
+      else if (!hasEcologyData()) requestEcology()
     }
     // The terrain colour wash is panel-contextual: on for the shaping panels
     // (Genesis/Tectonics/Erosion), off for the neutral data panels (Climate/

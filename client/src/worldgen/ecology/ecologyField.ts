@@ -19,7 +19,7 @@ export const ECOLOGY_OCEAN = -1
 
 // The field ids the ecology step produces. Grows per sub-step; the worker sends
 // every field, the screen's selector lists them (see ecologyColors' metadata).
-export type EcologyFieldId = 'carryingCapacity' | 'arable' | 'game' | 'pasture'
+export type EcologyFieldId = 'carryingCapacity' | 'arable' | 'fish' | 'game' | 'pasture'
 
 export interface EcologyParams {
   // Global carrying-capacity gain (%). 100 = neutral; scales the LEVEL only.
@@ -43,6 +43,25 @@ export interface Volcano {
   y: number
   thickness: number
   kind: 'hotspot' | 'flood' | 'arc'
+}
+
+// Everything the ecology step reads. Climate fields are on the coarse grid;
+// elevation/discharge/lakeDepth are full-res (worldWidth×worldHeight), sampled/
+// downsampled here. Hydrology (discharge/lakeDepth) is optional — without it,
+// fish gets its marine component only (freshwater needs rivers/lakes).
+export interface EcologyInputs {
+  temperature: Float32Array // climate grid, °C (SST-adjusted on ocean)
+  precipitation: Float32Array // climate grid, mm/yr (OCEAN_PRECIP on water = land mask)
+  biomes: Uint8Array // climate grid
+  currents: Float32Array // climate grid, interleaved [u,v,…], 0 on land
+  elevation: Float32Array // full-res
+  discharge: Float32Array | null // full-res river discharge, or null (no hydrology yet)
+  maxDischarge: number // reference max discharge over land
+  lakeDepth: Float32Array | null // full-res lake depth, or null
+  volcanoes: Volcano[]
+  warpSeed: number
+  worldWidth: number
+  worldHeight: number
 }
 
 // --- shared helpers ---------------------------------------------------------
@@ -74,8 +93,16 @@ const PASTURE_BY_BIOME: Record<number, number> = {
 // Weights of each subsistence source in the saturating carrying-capacity combine
 // (arable dominant — farming supports the densest populations).
 const W_ARABLE = 2.6
+const W_FISH = 1.4
 const W_GAME = 1.0
 const W_PASTURE = 0.8
+
+// Fish tuning. Marine = coastal shelf base + upwelling (adjacent-ocean current
+// strength); freshwater = big rivers + lake presence.
+const FISH_SHELF_BASE = 0.35
+const FISH_UPWELLING_W = 0.65
+const FISH_RIVER_W = 0.6
+const FISH_LAKE_W = 0.5
 
 // Arable flatness sensitivity: steeper ground is progressively harder to farm.
 const SLOPE_K = 8
@@ -135,6 +162,63 @@ function computePasture(biomes: Uint8Array, land: Uint8Array): Float32Array {
   for (let i = 0; i < out.length; i++) {
     if (!land[i]) continue
     out[i] = PASTURE_BY_BIOME[biomes[i]] ?? 0.1
+  }
+  return out
+}
+
+// Max of a full-res field over each coarse climate cell's footprint — rivers/
+// lakes are thin, so a footprint max ("is there a big river/lake in this cell")
+// beats a single centre sample.
+function downsampleMax(fullRes: Float32Array, worldWidth: number, worldHeight: number): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  const fw = worldWidth / CLIMATE_RES_X
+  const fh = worldHeight / CLIMATE_RES_Y
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    const y0 = Math.floor(gy * fh)
+    const y1 = Math.floor((gy + 1) * fh)
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      const x0 = Math.floor(gx * fw)
+      const x1 = Math.floor((gx + 1) * fw)
+      let m = 0
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const v = fullRes[y * worldWidth + x]; if (v > m) m = v }
+      out[gy * CLIMATE_RES_X + gx] = m
+    }
+  }
+  return out
+}
+
+// Fish: a subsistence source for coastal + riverine/lake land. Marine = how
+// coastal the cell is × (a shelf base + upwelling read from adjacent-ocean
+// current strength — boundary currents/gyre edges are the great fisheries).
+// Freshwater = big rivers + nearby lakes. Saturating combine of the two.
+function computeFish(land: Uint8Array, currents: Float32Array, coarseDischarge: Float32Array | null, maxDischarge: number, coarseLake: Float32Array | null): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  const wrap = (i: number, n: number): number => ((i % n) + n) % n
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      const i = gy * CLIMATE_RES_X + gx
+      if (!land[i]) continue
+      // Coastalness + upwelling from the 8 neighbours' ocean cells.
+      let oceanN = 0
+      let upwelling = 0
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue
+          const j = wrap(gy + dy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrap(gx + dx, CLIMATE_RES_X)
+          if (land[j]) continue
+          oceanN++
+          const mag = Math.hypot(currents[j * 2], currents[j * 2 + 1])
+          if (mag > upwelling) upwelling = mag
+        }
+      }
+      const coastalness = oceanN / 8
+      const marine = coastalness * (FISH_SHELF_BASE + FISH_UPWELLING_W * upwelling)
+      let freshwater = 0
+      if (coarseDischarge && maxDischarge > 0) freshwater += FISH_RIVER_W * Math.min(1, Math.sqrt(coarseDischarge[i] / maxDischarge) * 2)
+      if (coarseLake && coarseLake[i] > 0) freshwater += FISH_LAKE_W
+      freshwater = Math.min(1, freshwater)
+      out[i] = 1 - Math.exp(-(marine + freshwater))
+    }
   }
   return out
 }
@@ -252,17 +336,8 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: 
 
 // --- entry point ------------------------------------------------------------
 
-export function computeEcology(
-  temperature: Float32Array,
-  precipitation: Float32Array,
-  biomes: Uint8Array,
-  elevation: Float32Array,
-  volcanoes: Volcano[],
-  warpSeed: number,
-  worldWidth: number,
-  worldHeight: number,
-  params: EcologyParams,
-): EcologyFields {
+export function computeEcology(inputs: EcologyInputs, params: EcologyParams): EcologyFields {
+  const { temperature, precipitation, biomes, currents, elevation, discharge, maxDischarge, lakeDepth, volcanoes, warpSeed, worldWidth, worldHeight } = inputs
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const land = new Uint8Array(n)
   for (let i = 0; i < n; i++) if (precipitation[i] !== OCEAN_PRECIP) land[i] = 1
@@ -270,18 +345,21 @@ export function computeEcology(
   const arable = computeArable(temperature, precipitation, elevation, land, worldWidth, worldHeight)
   const game = computeGame(temperature, precipitation, biomes, land)
   const pasture = computePasture(biomes, land)
+  const coarseDischarge = discharge ? downsampleMax(discharge, worldWidth, worldHeight) : null
+  const coarseLake = lakeDepth ? downsampleMax(lakeDepth, worldWidth, worldHeight) : null
+  const fish = computeFish(land, currents, coarseDischarge, maxDischarge, coarseLake)
 
   // Saturating carrying-capacity base: sources complement with diminishing
   // returns (1 - e^-Σ w·x), so stacking several helps but never linearly.
   const base = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     if (!land[i]) continue
-    base[i] = 1 - Math.exp(-(W_ARABLE * arable[i] + W_GAME * game[i] + W_PASTURE * pasture[i]))
+    base[i] = 1 - Math.exp(-(W_ARABLE * arable[i] + W_FISH * fish[i] + W_GAME * game[i] + W_PASTURE * pasture[i]))
   }
   const carryingCapacity = concentrationPipeline(base, land, volcanoes, warpSeed, worldWidth, worldHeight, params)
 
   // Mask the per-resource fields to the ocean sentinel too, so overlays skip water.
-  for (let i = 0; i < n; i++) if (!land[i]) { arable[i] = ECOLOGY_OCEAN; game[i] = ECOLOGY_OCEAN; pasture[i] = ECOLOGY_OCEAN }
+  for (let i = 0; i < n; i++) if (!land[i]) { arable[i] = ECOLOGY_OCEAN; fish[i] = ECOLOGY_OCEAN; game[i] = ECOLOGY_OCEAN; pasture[i] = ECOLOGY_OCEAN }
 
-  return { resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y, fields: { carryingCapacity, arable, game, pasture } }
+  return { resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y, fields: { carryingCapacity, arable, fish, game, pasture } }
 }
