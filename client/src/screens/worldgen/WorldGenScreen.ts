@@ -17,7 +17,7 @@ import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, tem
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
 import { biomeColor, biomeLabel, biomeLegend, Biome } from '../../worldgen/climate/biomes'
-import { ECOLOGY_FIELD_META, ECOLOGY_ROLE_LABELS, ecologyFieldColor, ecologyFieldLegendStops, type EcologyRole } from '../../worldgen/ecology/ecologyColors'
+import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '../../worldgen/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
 import './worldgen.css'
 
@@ -290,18 +290,25 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
     </div>
     <div class="panel" data-panel="5">
-      <label class="field">
-        <span class="field-label">Show</span>
-        <select class="ecology-field-select" aria-label="Ecology field to display"></select>
-      </label>
-      <label class="field">
+      <label class="field" data-ecofield="carryingCapacity">
         <span class="field-label">Carrying capacity: <span><span data-value="carrying-capacity-label">100</span>%</span></span>
         <input type="range" class="carrying-capacity-input" min="50" max="200" step="5" value="100" aria-label="Carrying capacity (%)" />
       </label>
-      <label class="field">
+      <label class="field" data-ecofield="carryingCapacity">
         <span class="field-label">Concentration: <span data-value="concentration-label">0</span></span>
         <input type="range" class="concentration-input" min="-100" max="100" step="5" value="0" aria-label="Resource concentration (even ↔ clumped)" />
       </label>
+      <label class="field" data-ecofield="carryingCapacity">
+        <span class="field-label">Provinces: <span data-value="province-label">45</span></span>
+        <input type="range" class="province-input" min="0" max="100" step="5" value="45" aria-label="Province strength" />
+      </label>
+      <span class="ecology-cat-buttons">
+        <button type="button" class="icon-button ecology-cat" data-eco-cat="subsistence" aria-label="Subsistence"><img src="/icons/wheat.png" alt="" /></button>
+        <button type="button" class="icon-button ecology-cat" data-eco-cat="material" aria-label="Material"><img src="/icons/stone_axe.png" alt="" /></button>
+        <button type="button" class="icon-button ecology-cat" data-eco-cat="metals" aria-label="Metals"><img src="/icons/ecology.png" alt="" /></button>
+        <button type="button" class="icon-button ecology-cat" data-eco-cat="prestige" aria-label="Prestige"><img src="/icons/crown.png" alt="" /></button>
+      </span>
+      <div class="ecology-foldout" data-value="ecology-foldout" hidden></div>
     </div>
   `
 
@@ -473,11 +480,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const ECOLOGY_PANEL_INDEX = 5
   // All computed ecology fields, keyed by id (see ecology/ecologyField). The
   // single ecology overlay paints whichever `selectedEcologyField` is chosen in
-  // the panel selector. `ecologyFieldMax` caches each field's land-max for the
-  // relative (non-absolute) fields' paint + hover normalisation.
+  // the panel selector, on an absolute 0..1 scale.
   let lastEcologyFields: Partial<Record<EcologyFieldId, Float32Array>> = {}
   let selectedEcologyField: EcologyFieldId = 'carryingCapacity'
-  const ecologyFieldMax: Partial<Record<EcologyFieldId, number>> = {}
+  // Field currently previewed by hovering a panel slider/icon (null = not
+  // hovering). While non-null the ecology overlay shows even if its toolbar
+  // toggle is off, and reverts when the mouse leaves the panel.
+  let ecologyHoverField: EcologyFieldId | null = null
+  const ecologyLayerOn = (): boolean => (overlaysOn.ecology || ecologyHoverField !== null) && hasEcologyData()
   let ecologyResX = 0
   let ecologyResY = 0
   const hasEcologyData = (): boolean => lastEcologyFields.carryingCapacity != null
@@ -592,16 +602,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   // Ecology tint: paints whichever field the panel selector has chosen, land
-  // only. Carrying capacity uses an ABSOLUTE scale (so its gain knob shows as the
-  // whole map dimming/greening); the relative resource fields normalise to their
-  // own land-max. Ocean = ECOLOGY_OCEAN sentinel, left as terrain. No-op until
-  // computed.
+  // only, on an ABSOLUTE 0..1 scale (the ramp clamps). Absolute — NOT self-
+  // normalised — so the fold-out weight/strength/rarity knobs are actually
+  // visible (a uniform scale would vanish under max-normalisation). Ocean =
+  // ECOLOGY_OCEAN sentinel, left as terrain. No-op until computed.
   function paintEcology(data: Uint8ClampedArray): void {
     const field = lastEcologyFields[selectedEcologyField]
     if (!field) return
-    const meta = ECOLOGY_FIELD_META[selectedEcologyField]
-    const denom = meta.absolute ? 1 : (ecologyFieldMax[selectedEcologyField] ?? 0)
-    if (!meta.absolute && denom <= 0) return
     const alpha = 0.6
     for (let y = 0; y < MAP_HEIGHT; y++) {
       const gy = Math.min(ecologyResY - 1, Math.floor((y / MAP_HEIGHT) * ecologyResY))
@@ -609,7 +616,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         const gx = Math.min(ecologyResX - 1, Math.floor((x / MAP_WIDTH) * ecologyResX))
         const v = field[gy * ecologyResX + gx]
         if (v === ECOLOGY_OCEAN) continue
-        const [r, g, b] = ecologyFieldColor(selectedEcologyField, v / denom)
+        const [r, g, b] = ecologyFieldColor(selectedEcologyField, v)
         const p = (y * MAP_WIDTH + x) * 4
         data[p] = data[p] * (1 - alpha) + r * alpha
         data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
@@ -1076,7 +1083,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Rebuild the right-side legend from whichever legend-bearing overlays are
   // currently on + available (stacked; usually one or two). Hidden when none.
   function renderLegends(): void {
-    const active = OVERLAY_DEFS.filter((d) => d.legend && overlaysOn[d.id] && d.available())
+    // Ecology's legend follows its EFFECTIVE state (toolbar toggle OR hover preview).
+    const active = OVERLAY_DEFS.filter((d) => d.legend && (d.id === 'ecology' ? ecologyLayerOn() : overlaysOn[d.id] && d.available()))
     if (active.length === 0) {
       overlayLegend.hidden = true
       overlayLegend.replaceChildren()
@@ -1090,7 +1098,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // scene ribbons + lake tint together. One composite at the end.
   function applyOverlays(): void {
     for (const def of OVERLAY_DEFS) {
-      const show = overlaysOn[def.id] && def.available()
+      // Ecology shows on its toolbar toggle OR while a panel slider is hovered.
+      const show = def.id === 'ecology' ? ecologyLayerOn() : overlaysOn[def.id] && def.available()
       if (def.id === 'rivers') {
         riverLayer?.setEnabled(show)
         overlay.setLayerEnabled('lakes', show)
@@ -1223,10 +1232,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const i = gy * climateResX + gx
     const lines: string[] = []
     if (overlaysOn.ecology && lastEcologyFields[selectedEcologyField]) {
-      const meta = ECOLOGY_FIELD_META[selectedEcologyField]
       const v = lastEcologyFields[selectedEcologyField]![i]
-      const denom = meta.absolute ? 1 : (ecologyFieldMax[selectedEcologyField] ?? 1)
-      lines.push(v === ECOLOGY_OCEAN ? 'Ocean' : `${meta.label} ${Math.round((v / denom) * 100)}%`)
+      lines.push(v === ECOLOGY_OCEAN ? 'Ocean' : `${ECOLOGY_FIELD_META[selectedEcologyField].label} ${Math.round(v * 100)}%`)
     }
     if (overlaysOn.biomes && lastBiomes) lines.push(biomeLabel(lastBiomes[i]))
     if (overlaysOn.temperature && lastTemperature) lines.push(`${Math.round(lastTemperature[i])} °C`)
@@ -1361,14 +1368,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   function handleEcologyData(message: WorkerEcologyDataMessage): void {
     lastEcologyFields = {}
-    for (const f of message.fields) {
-      const arr = new Float32Array(f.data)
-      lastEcologyFields[f.id as EcologyFieldId] = arr
-      // Land-max cached for the relative fields' paint/hover normalisation.
-      let max = 0
-      for (const v of arr) if (v !== ECOLOGY_OCEAN && v > max) max = v
-      ecologyFieldMax[f.id as EcologyFieldId] = max
-    }
+    for (const f of message.fields) lastEcologyFields[f.id as EcologyFieldId] = new Float32Array(f.data)
     ecologyResX = message.resX
     ecologyResY = message.resY
     ecologyInFlight = false
@@ -1394,10 +1394,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     ecologyInFlight = true
     updateControlsDisabled()
     updateProgress()
+    const w = (f: EcologyFieldId): number => (foldoutInputs[f] ? Number(foldoutInputs[f]!.value) / 100 : 1)
     postToWorker({
       type: 'computeEcology',
       carryingCapacity: Number(carryingCapacityInput.value),
       concentration: Number(concentrationInput.value),
+      provinceStrength: Number(provinceInput.value) / 100,
+      tinRarity: 0,
+      weights: {
+        arable: w('arable'), fish: w('fish'), game: w('game'), pasture: w('pasture'),
+        timber: w('timber'), salt: w('salt'), toolStone: w('toolStone'),
+        copper: w('copper'), tin: w('tin'), iron: w('iron'),
+        gold: w('gold'), silver: w('silver'), gems: w('gems'),
+      },
     })
   }
 
@@ -1789,31 +1798,109 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scheduleEcology()
   })
 
-  // Ecology field selector: one <select>, options grouped by role (built from the
-  // field registry so it grows as sub-steps add fields). Switching just repaints
-  // the single ecology overlay with the chosen field — no recompute.
-  const ecologyFieldSelect = root.querySelector<HTMLSelectElement>('.ecology-field-select')!
-  {
-    const byRole: Record<EcologyRole, EcologyFieldId[]> = { aggregate: [], subsistence: [], material: [], prestige: [] }
-    for (const id of Object.keys(ECOLOGY_FIELD_META) as EcologyFieldId[]) byRole[ECOLOGY_FIELD_META[id].role].push(id)
-    for (const role of ['aggregate', 'subsistence', 'material', 'prestige'] as EcologyRole[]) {
-      if (byRole[role].length === 0) continue
-      const group = document.createElement('optgroup')
-      group.label = ECOLOGY_ROLE_LABELS[role]
-      for (const id of byRole[role]) {
-        const opt = document.createElement('option')
-        opt.value = id
-        opt.textContent = ECOLOGY_FIELD_META[id].label
-        group.appendChild(opt)
-      }
-      ecologyFieldSelect.appendChild(group)
-    }
-    ecologyFieldSelect.value = selectedEcologyField
+  // Provinces is a main slider (a global spatial knob, alongside carrying capacity
+  // + concentration).
+  const provinceInput = root.querySelector<HTMLInputElement>('.province-input')!
+  const provinceLabel = root.querySelector<HTMLElement>('[data-value="province-label"]')!
+  provinceInput.addEventListener('input', () => { provinceLabel.textContent = provinceInput.value; scheduleEcology() })
+
+  // Hover-to-preview (replaces the old dropdown): hovering a slider/its icon shows
+  // that field on the ecology overlay — even if the overlay's toolbar toggle is
+  // OFF — and reverts when the mouse leaves the panel (see the panel mouseleave).
+  // The three main sliders preview the carrying-capacity aggregate.
+  const previewField = (id: EcologyFieldId): void => {
+    if (ecologyHoverField === id) return
+    ecologyHoverField = id
+    selectedEcologyField = id
+    updateOverlays()
   }
-  ecologyFieldSelect.addEventListener('change', () => {
-    selectedEcologyField = ecologyFieldSelect.value as EcologyFieldId
-    updateOverlays() // repaint the ecology layer + refresh its (dynamic) legend
-  })
+  const clearPreview = (): void => {
+    if (ecologyHoverField === null) return
+    ecologyHoverField = null
+    selectedEcologyField = 'carryingCapacity'
+    updateOverlays()
+  }
+
+  // Fold-out: three category icon-buttons in the base row; clicking one reveals
+  // that category's per-field abundance sliders (each with its resource icon) in
+  // the full-width sub-row (radio-style — one category open at a time). Hovering a
+  // row previews that field.
+  const ECOLOGY_CATEGORIES: { id: string; fields: EcologyFieldId[] }[] = [
+    { id: 'subsistence', fields: ['arable', 'fish', 'game', 'pasture'] },
+    { id: 'material', fields: ['timber', 'salt', 'toolStone'] },
+    { id: 'metals', fields: ['copper', 'tin', 'iron'] },
+    { id: 'prestige', fields: ['silver', 'gold', 'gems'] },
+  ]
+  // Per-field icon (falls back to the category icon if ever missing). Every field
+  // has a dedicated icon.
+  const FIELD_ICON: Partial<Record<EcologyFieldId, string>> = {
+    arable: 'wheat', fish: 'fish', game: 'deer', pasture: 'pastures',
+    timber: 'timber', salt: 'salt', toolStone: 'stone_axe',
+    copper: 'copper_ore', tin: 'tin_ore', iron: 'iron_ore',
+    silver: 'silver', gold: 'gold', gems: 'gems',
+  }
+  const CAT_ICON: Record<string, string> = { subsistence: 'wheat', material: 'stone_axe', metals: 'ecology', prestige: 'crown' }
+  const ecologyFoldout = root.querySelector<HTMLElement>('[data-value="ecology-foldout"]')!
+  const foldoutInputs: Partial<Record<EcologyFieldId, HTMLInputElement>> = {}
+  const catPanels: Record<string, HTMLElement> = {}
+  for (const cat of ECOLOGY_CATEGORIES) {
+    const panel = document.createElement('div')
+    panel.className = 'ecology-cat-panel'
+    panel.hidden = true
+    for (const field of cat.fields) {
+      const row = document.createElement('label')
+      row.className = 'field ecology-nudge'
+      row.dataset.ecofield = field
+      const icon = document.createElement('img')
+      icon.className = 'ecology-nudge-icon'
+      icon.src = `/icons/${FIELD_ICON[field] ?? CAT_ICON[cat.id]}.png`
+      icon.alt = ''
+      const label = document.createElement('span')
+      label.className = 'field-label'
+      const name = document.createElement('span')
+      name.textContent = `${ECOLOGY_FIELD_META[field].label}: `
+      const val = document.createElement('span')
+      val.textContent = '100'
+      label.append(name, val)
+      const input = document.createElement('input')
+      input.type = 'range'
+      input.min = '50'
+      input.max = '200'
+      input.step = '5'
+      input.value = '100'
+      input.setAttribute('aria-label', `${ECOLOGY_FIELD_META[field].label} abundance`)
+      input.addEventListener('input', () => { val.textContent = input.value; scheduleEcology() })
+      const body = document.createElement('span')
+      body.className = 'ecology-nudge-body'
+      body.append(label, input)
+      row.append(icon, body)
+      row.addEventListener('mouseenter', () => previewField(field))
+      panel.appendChild(row)
+      foldoutInputs[field] = input
+    }
+    ecologyFoldout.appendChild(panel)
+    catPanels[cat.id] = panel
+  }
+  let activeCat: string | null = null
+  const setActiveCat = (id: string | null): void => {
+    activeCat = id
+    for (const cat of ECOLOGY_CATEGORIES) {
+      catPanels[cat.id].hidden = cat.id !== id
+      root.querySelector<HTMLButtonElement>(`[data-eco-cat="${cat.id}"]`)!.classList.toggle('is-active', cat.id === id)
+    }
+    ecologyFoldout.hidden = id === null
+  }
+  for (const cat of ECOLOGY_CATEGORIES) {
+    root.querySelector<HTMLButtonElement>(`[data-eco-cat="${cat.id}"]`)!.addEventListener('click', () => setActiveCat(activeCat === cat.id ? null : cat.id))
+  }
+  // Main sliders (direct children of the panel) preview the aggregate on hover.
+  const ecologyPanel = root.querySelector<HTMLElement>('.panel[data-panel="5"]')!
+  for (const el of ecologyPanel.querySelectorAll<HTMLElement>(':scope > .field[data-ecofield]')) {
+    el.addEventListener('mouseenter', () => previewField(el.dataset.ecofield as EcologyFieldId))
+  }
+  // Leaving the whole panel clears the preview (moving between sliders keeps it,
+  // so no flicker) — the previewed overlay disappears when the mouse is away.
+  ecologyPanel.addEventListener('mouseleave', clearPreview)
 
   const regenerate = (): void => {
     stopSim()
@@ -1931,6 +2018,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // reason you're there), off elsewhere. handleEcologyData's updateOverlays()
     // makes it visible once the compute finishes.
     overlaysOn.ecology = index === ECOLOGY_PANEL_INDEX
+    ecologyHoverField = null // drop any stale hover preview when switching panels
     if (lastColoredBase) updateOverlays()
     updateNavState()
   }

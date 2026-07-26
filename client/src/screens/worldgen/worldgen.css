@@ -121,17 +121,65 @@
   gap: 0.4rem;
 }
 
-/* Ecology field selector — matches the light panel (dark text on near-white). */
-.worldgen-flat-screen .ecology-field-select {
-  width: 100%;
-  font: inherit;
-  font-size: 0.8rem;
-  color: #1a1a1a;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(0, 0, 0, 0.25);
-  border-radius: 4px;
-  padding: 0.15rem 0.25rem;
-  cursor: pointer;
+/* Ecology category buttons (Subsistence / Material / Prestige) in the base row —
+   click to reveal that category's per-field sliders in the fold-out sub-row. */
+.worldgen-flat-screen .ecology-cat-buttons {
+  display: flex;
+  gap: 0.3rem;
+  align-self: flex-end;
+}
+
+.worldgen-flat-screen .ecology-cat {
+  opacity: 0.5;
+}
+
+.worldgen-flat-screen .ecology-cat.is-active {
+  opacity: 1;
+}
+
+/* Fold-out: a full-width wrapping sub-row above the base row; shows one category's
+   per-field abundance sliders, each with its resource icon on the left. */
+.worldgen-flat-screen .ecology-foldout {
+  flex-basis: 100%;
+  order: -1;
+  margin-bottom: 0.5rem;
+}
+
+.worldgen-flat-screen .ecology-foldout[hidden] {
+  display: none;
+}
+
+.worldgen-flat-screen .ecology-cat-panel {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.6rem 1.4rem;
+}
+
+.worldgen-flat-screen .ecology-cat-panel[hidden] {
+  display: none;
+}
+
+/* One nudge slider: resource icon left of the label+slider stack. */
+.worldgen-flat-screen .ecology-nudge {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  width: auto;
+}
+
+.worldgen-flat-screen .ecology-nudge-icon {
+  width: 26px;
+  height: 26px;
+  flex: none;
+}
+
+.worldgen-flat-screen .ecology-nudge-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 120px;
 }
 
 /* Seed field: no label, and a bit narrower than the slider fields. */

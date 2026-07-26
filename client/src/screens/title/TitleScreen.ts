@@ -38,6 +38,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
         <li>Volcanism: hotspot island chains + flood-basalt provinces at continental breakup</li>
         <li>Continental breakup opens a real ocean basin — a spreading ridge is born, the mantle dome is released</li>
         <li>Volcanic markers: hotspot cones, flood-basalt provinces &amp; subduction-arc chains on the mantle overlay</li>
+        <li>Ecology: derived resource layer — carrying capacity + subsistence (arable, fish from upwelling, game, pasture), materials (timber, salt, tool-stone; full-geological copper/tin/iron from arcs/sutures/craton-age), prestige (gold, silver, gems)</li>
         <li class="backlog">To do: Tune lake abundance, riparian strength, river-density default</li>
         <li class="backlog">To do: On-demand / hex-tile fine hydrology (creeks are sub-grid at ~8 km/cell)</li>
         <li class="backlog">To do: Render-perf pass: cache ridged field + domain warp, GPU compute</li>

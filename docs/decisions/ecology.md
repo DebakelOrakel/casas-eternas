@@ -274,7 +274,43 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      channel — none feed carrying capacity. Rare & clustered. 14 fields total;
      headless-verified (gold@river+orogen, silver@arc, gems@orogen, ocean-
      consistent).
-   - **2e — fold-out** (togglable `.field` group; per-role nudges + metals submenu).
+   - **2e — fold-out** ✅ BUILT 2026-07-26 (pending visual check): a "Details"
+     toggle reveals a full-width wrapping sub-row of per-role nudge sliders
+     (config-generated): **Spatial** (province strength), **Subsistence** (fish/
+     game/pasture weights), **Material** (timber/salt/tool-stone weights + ore
+     richness → copper/tin/iron + tin rarity → tightens tin radius), **Prestige**
+     (gold/silver/gems weights). Weights scale each field (subsistence + salt
+     flow into carrying capacity). `EcologyParams` gained `weights`/`tinRarity`;
+     worker message carries them. Headless-verified (weights scale fields, tin
+     rarity tightens, province mean-preserving).
+
+**Phase 2 COMPLETE** — all 14 fields + selector + fold-out built.
+
+**Tuning (2026-07-26, visual review):**
+- **All ecology overlays now ABSOLUTE** (not self-normalised) — a uniform weight/
+  gain/strength change was invisible under max-normalisation, so the fold-out
+  knobs "did nothing." Fixed by dropping the per-field normalisation.
+- **Carrying-capacity recalibration:** the saturating weights were too high →
+  carrying capacity sat near 1 everywhere (all lush green), hiding both the level
+  knob and the province mottling. Halved-ish (W_ARABLE 2.6→1.1, FISH 1.4→0.6,
+  GAME 1.0→0.45, PASTURE 0.8→0.35, SALT_CC 0.35→0.15) → mean ~0.4, spans the
+  whole ramp (desert ~0.1 … rich coast ~0.8).
+- **Province layer strengthened:** smooth value-noise has low variance, so it was
+  a ~8% effect. Noise/volcanic weights raised (→ ~20% mean cell change at the
+  default 0.45 strength, ~45% at 1.0), freq 11×6, default strength 0.35→0.45.
+
+**Fold-out UI rework (2026-07-26, user request):** replaced the single "Details"
+fold-out + "Show" dropdown with **category icon-buttons** (Subsistence=wheat.png,
+Material=ecology.png, Prestige=crown.png) in the base row. Clicking one reveals
+that category's **per-field abundance sliders** (each with its resource icon —
+fish/deer/copper_ore/…) in the sub-row, radio-style. **Hover a slider (or its
+icon) → the overlay previews that field** (replaces the dropdown; sticky). Province
+strength promoted to a main slider (with carrying capacity + concentration; all
+three preview the aggregate on hover). Per-metal weights replaced the shared
+"ore richness"; tin-rarity radius knob dropped (per-field weights instead).
+
+Remaining: Phase 3 polish (world.yaml save/load of ecology params) + the parked
+overlay-bar-categories rework.
 3. **Polish** — legends, colours, world.yaml fields, save/load, wetlands
    derivation, title-screen mission bullet.
 

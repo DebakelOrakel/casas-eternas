@@ -136,6 +136,11 @@ export interface WorkerComputeEcologyMessage {
   carryingCapacity: number
   // Spatial concentration (-100..100, 0 = physics as-is) — shape knob.
   concentration: number
+  // Fold-out knobs. provinceStrength 0..1 (L2 volcanic-soil provinces); tinRarity
+  // 0..1 (tighter tin radius); weights = per-field abundance multipliers.
+  provinceStrength: number
+  tinRarity: number
+  weights: Record<string, number>
 }
 // Requests the full sim snapshot (+ ocean-age + current elevation) for saving —
 // replies with a WorkerWorldDataMessage.
@@ -718,6 +723,9 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     }, {
       carryingCapacity: message.carryingCapacity,
       concentration: message.concentration,
+      provinceStrength: message.provinceStrength,
+      tinRarity: message.tinRarity,
+      weights: message.weights,
     })
     const fields = Object.entries(eco.fields).map(([id, data]) => ({ id, data: data.buffer as ArrayBuffer }))
     const ecologyMessage: WorkerEcologyDataMessage = {

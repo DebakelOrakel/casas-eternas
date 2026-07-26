@@ -32,8 +32,14 @@ export interface EcologyParams {
   // Mean-preserving (shape only). See ecology.md Theme 1 (L1).
   concentration: number
   // L2 "province" strength (volcanic-soil fertility + light noise). Mean-1
-  // multiplicative. Default modest until the fold-out exposes it (Phase 2d).
+  // multiplicative. Fold-out knob (0 = off).
   provinceStrength?: number
+  // Per-field abundance multipliers (fold-out nudges), default 1. Applied to the
+  // field itself; for subsistence + salt it also scales their carrying-capacity
+  // contribution. Metals share one "ore richness" knob (set on copper/tin/iron).
+  weights?: Partial<Record<EcologyFieldId, number>>
+  // Tin rarity 0..1 (higher = rarer / more clustered) — shrinks the tin radius.
+  tinRarity?: number
 }
 
 export interface EcologyFields {
@@ -103,11 +109,15 @@ const PASTURE_BY_BIOME: Record<number, number> = {
 }
 
 // Weights of each subsistence source in the saturating carrying-capacity combine
-// (arable dominant — farming supports the densest populations).
-const W_ARABLE = 2.6
-const W_FISH = 1.4
-const W_GAME = 1.0
-const W_PASTURE = 0.8
+// (arable dominant — farming supports the densest populations). Kept LOW enough
+// that the combine (1 - e^-Σw·x) doesn't saturate near 1 for ordinary land — so
+// carrying capacity spreads across the whole ramp (desert ~0.1 … rich coast
+// ~0.8) instead of everything reading as lush green, which was hiding both the
+// level knob and the province mottling. Recalibrated 2026-07-26.
+const W_ARABLE = 1.1
+const W_FISH = 0.6
+const W_GAME = 0.45
+const W_PASTURE = 0.35
 
 // Fish tuning. Marine = coastal shelf base + upwelling (adjacent-ocean current
 // strength); freshwater = big rivers + lake presence.
@@ -262,7 +272,7 @@ const SALT_ARID_PRECIP = 500
 const SALT_COAST_W = 1.0
 const SALT_INTERIOR_W = 0.35
 // Salt's small bonus to carrying capacity (preservation → denser settlement).
-const W_SALT_CC = 0.35
+const W_SALT_CC = 0.15
 // Iron: broad craton signal + bog-iron in wetlands. Deposit noise breaks the
 // (nearly uniform) craton signal into banded-iron-style deposits, so iron stays
 // common but fluctuates rather than reading as a flat 100%.
@@ -453,11 +463,16 @@ function provinceNoise(u: number, v: number, freqX: number, freqY: number, seed:
 }
 
 const VOLCANIC_PROVINCE_RADIUS_FRAC = 0.05
-const DEFAULT_PROVINCE_STRENGTH = 0.35
-const PROVINCE_NOISE_FREQ_X = 7
-const PROVINCE_NOISE_FREQ_Y = 4
-const VOLCANIC_WEIGHT = 0.6
-const NOISE_WEIGHT = 0.4
+const DEFAULT_PROVINCE_STRENGTH = 0.45
+// Higher frequency → more mottling (broad smooth gradients read as "no variation").
+// Weights are large because smooth value-noise has LOW variance (interpolation
+// pulls values toward the mean), so it needs a big multiplier to produce visible
+// deviation; the strength knob (0..1) then scales this. Volcanic provinces punch
+// harder than the organic noise.
+const PROVINCE_NOISE_FREQ_X = 11
+const PROVINCE_NOISE_FREQ_Y = 6
+const VOLCANIC_WEIGHT = 1.6
+const NOISE_WEIGHT = 1.5
 
 // Rasterises a soft Gaussian "influence" field (0..1, union-max) around a set of
 // world-space points into the climate grid — reused for volcanic-soil provinces,
@@ -541,30 +556,25 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
   const land = new Uint8Array(n)
   for (let i = 0; i < n; i++) if (precipitation[i] !== OCEAN_PRECIP) land[i] = 1
 
-  // Subsistence.
-  const arable = computeArable(temperature, precipitation, elevation, land, worldWidth, worldHeight)
-  const game = computeGame(temperature, precipitation, biomes, land)
-  const pasture = computePasture(biomes, land)
+  // Fold-out nudges: per-field abundance multipliers, applied in place so they
+  // both scale the displayed field and (for subsistence + salt) flow into the
+  // carrying-capacity combine below.
+  const wmap = params.weights ?? {}
+  const scaleField = (arr: Float32Array, id: EcologyFieldId): Float32Array => {
+    const m = wmap[id] ?? 1
+    if (m !== 1) for (let i = 0; i < arr.length; i++) if (land[i]) arr[i] *= m
+    return arr
+  }
+
   const coarseDischarge = discharge ? downsampleMax(discharge, worldWidth, worldHeight) : null
   const coarseLake = lakeDepth ? downsampleMax(lakeDepth, worldWidth, worldHeight) : null
-  const fish = computeFish(land, currents, coarseDischarge, maxDischarge, coarseLake)
 
-  // Material (separate channel). Copper = arc volcanoes; tin = collision sutures
-  // (rare/clustered); iron = old cratons + bog iron in wetlands.
-  const timber = computeTimber(biomes, land)
-  const salt = computeSalt(temperature, precipitation, land)
-  const toolStone = computeToolStone(volcanoes, elevation, land, worldWidth, worldHeight)
-  const arcVolcanoes = volcanoes.filter((v) => v.kind === 'arc')
-  const copper = maskToLand(rasterisePointField(arcVolcanoes, COPPER_RADIUS_FRAC, worldWidth, worldHeight), land)
-  const tin = maskToLand(rasterisePointField(orogenPoints, TIN_RADIUS_FRAC, worldWidth, worldHeight), land)
-  const wetland = computeWetland(precipitation, coarseDischarge, maxDischarge, coarseLake, elevation, land, worldWidth, worldHeight)
-  const iron = computeIron(cratonAge, wetland, land, warpSeed)
-
-  // Prestige (separate channel — no carrying-capacity contribution). Rare &
-  // clustered: gold placer+lode, silver at arcs, gems at orogens + arid weathering.
-  const gold = computeGold(coarseDischarge, maxDischarge, rasterisePointField(orogenPoints, GOLD_LODE_RADIUS_FRAC, worldWidth, worldHeight), land)
-  const silver = computeSilver(maskToLand(rasterisePointField(arcVolcanoes, SILVER_RADIUS_FRAC, worldWidth, worldHeight), land), land)
-  const gems = computeGems(rasterisePointField(orogenPoints, GEM_RADIUS_FRAC, worldWidth, worldHeight), copper, temperature, precipitation, land)
+  // Subsistence.
+  const arable = scaleField(computeArable(temperature, precipitation, elevation, land, worldWidth, worldHeight), 'arable')
+  const fish = scaleField(computeFish(land, currents, coarseDischarge, maxDischarge, coarseLake), 'fish')
+  const game = scaleField(computeGame(temperature, precipitation, biomes, land), 'game')
+  const pasture = scaleField(computePasture(biomes, land), 'pasture')
+  const salt = scaleField(computeSalt(temperature, precipitation, land), 'salt')
 
   // Saturating carrying-capacity base: subsistence sources complement with
   // diminishing returns (1 - e^-Σ w·x); salt adds a small preservation bonus (the
@@ -575,6 +585,22 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
     base[i] = 1 - Math.exp(-(W_ARABLE * arable[i] + W_FISH * fish[i] + W_GAME * game[i] + W_PASTURE * pasture[i] + W_SALT_CC * salt[i]))
   }
   const carryingCapacity = concentrationPipeline(base, land, volcanoes, warpSeed, worldWidth, worldHeight, params)
+
+  // Material (separate channel). Copper = arc volcanoes; tin = orogen belts (rarer
+  // with tinRarity → tighter radius); iron = old cratons + bog iron.
+  const arcVolcanoes = volcanoes.filter((v) => v.kind === 'arc')
+  const timber = scaleField(computeTimber(biomes, land), 'timber')
+  const toolStone = scaleField(computeToolStone(volcanoes, elevation, land, worldWidth, worldHeight), 'toolStone')
+  const copper = scaleField(maskToLand(rasterisePointField(arcVolcanoes, COPPER_RADIUS_FRAC, worldWidth, worldHeight), land), 'copper')
+  const tinRadius = TIN_RADIUS_FRAC * (1 - 0.6 * Math.max(0, Math.min(1, params.tinRarity ?? 0)))
+  const tin = scaleField(maskToLand(rasterisePointField(orogenPoints, tinRadius, worldWidth, worldHeight), land), 'tin')
+  const wetland = computeWetland(precipitation, coarseDischarge, maxDischarge, coarseLake, elevation, land, worldWidth, worldHeight)
+  const iron = scaleField(computeIron(cratonAge, wetland, land, warpSeed), 'iron')
+
+  // Prestige (separate channel — no carrying-capacity contribution).
+  const gold = scaleField(computeGold(coarseDischarge, maxDischarge, rasterisePointField(orogenPoints, GOLD_LODE_RADIUS_FRAC, worldWidth, worldHeight), land), 'gold')
+  const silver = scaleField(computeSilver(maskToLand(rasterisePointField(arcVolcanoes, SILVER_RADIUS_FRAC, worldWidth, worldHeight), land), land), 'silver')
+  const gems = scaleField(computeGems(rasterisePointField(orogenPoints, GEM_RADIUS_FRAC, worldWidth, worldHeight), copper, temperature, precipitation, land), 'gems')
 
   // Mask every per-resource field to the ocean sentinel so overlays skip water.
   const perResource = [arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron, gold, silver, gems]
