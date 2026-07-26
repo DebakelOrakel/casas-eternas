@@ -19,6 +19,7 @@ import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
 import { biomeColor, biomeLabel, biomeLegend, Biome } from '../../worldgen/climate/biomes'
 import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '../../worldgen/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
+import { WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave/worldLayers'
 import './worldgen.css'
 
 // The ecology per-field abundance weights persisted in world.yaml (keys `w_<field>`).
@@ -384,6 +385,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let climateInFlight = false
   let hydrologyInFlight = false
   let ecologyInFlight = false
+  // One-shot resolvers so the save flow can await each compute (compute-on-save):
+  // set before requesting a step, called by its data handler when it lands.
+  let climateResolve: (() => void) | null = null
+  let hydrologyResolve: (() => void) | null = null
+  let ecologyResolve: (() => void) | null = null
+  // True while the save flow drives the compute chain — suppresses the ecology
+  // panel's own auto-recompute so it doesn't double-fire.
+  let saveChainActive = false
   let erosionProgressFraction = 0
   const isBusy = (): boolean => simRunning || erosionOpInFlight || climateInFlight || hydrologyInFlight || ecologyInFlight
 
@@ -1292,6 +1301,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     tempMaxLabel.textContent = String(Math.round(max))
     // Climate data now exists → its overlay buttons become available.
     updateOverlays()
+    climateResolve?.()
+    climateResolve = null
   }
 
   // Invalidate the (now stale) climate when an upstream step changes the
@@ -1327,9 +1338,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateControlsDisabled()
     updateProgress()
     updateOverlays() // rivers/lakes + refreshed biomes now available
+    hydrologyResolve?.()
+    hydrologyResolve = null
     // On the Ecology panel, fish (freshwater) depends on this hydrology, so
-    // (re)compute the ecology fields now that rivers/lakes are fresh.
-    if (panelIndex === ECOLOGY_PANEL_INDEX) requestEcology()
+    // (re)compute the ecology fields now that rivers/lakes are fresh. Skipped
+    // during a save (the save flow drives the compute chain itself).
+    if (panelIndex === ECOLOGY_PANEL_INDEX && !saveChainActive) requestEcology()
   }
 
   function invalidateHydrology(): void {
@@ -1378,6 +1392,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateControlsDisabled()
     updateProgress()
     updateOverlays() // ecology overlay now available
+    ecologyResolve?.()
+    ecologyResolve = null
   }
 
   // Ecology depends on climate (+ the sim's volcanoes), so any climate change
@@ -1678,13 +1694,66 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     return new Promise((resolve) => thumb.toBlob((blob) => resolve(blob), 'image/png'))
   }
 
-  // Save flow: worker replies with the sim snapshot + rasters → zip it up.
+  // Bakes the "query layers" + manifest into the save (see
+  // docs/decisions/queryable-world-save.md): every computed field, quantised per
+  // its layer spec, plus a manifest describing them — so the game server can look
+  // up any world value by sampling, with no generation code. Bakes whatever the
+  // main thread has cached (climate/hydrology/ecology from the panels visited);
+  // layers absent from the cache are simply omitted from the manifest.
+  function bakeQueryLayers(zip: JSZip): void {
+    type ManifestLayer = { name: string; file: string; kind: 'raster' | 'vector'; resX?: number; resY?: number; dtype?: string; encoding?: { scale: number; offset: number }; unit?: string; landOnly?: boolean }
+    const layers: ManifestLayer[] = []
+    // Elevation is always present (post-generation); carried raw as elevation.f32
+    // (it doubles as the restore raster).
+    layers.push({ name: 'elevation', file: 'elevation.f32', kind: 'raster', resX: MAP_WIDTH, resY: MAP_HEIGHT, dtype: 'f32', encoding: { scale: 1, offset: 0 }, unit: 'relative', landOnly: false })
+
+    // Climate/hydrology/ecology are only baked once they've been computed
+    // (compute-on-save ensures that when the world has been eroded).
+    if (climateResX > 0 && lastPrecipitation) {
+      const rx = climateResX
+      const ry = climateResY
+      const landMask = new Float32Array(rx * ry)
+      for (let i = 0; i < landMask.length; i++) landMask[i] = lastPrecipitation[i] !== OCEAN_PRECIP ? 1 : 0
+      const sources: Partial<Record<string, Float32Array | Uint8Array>> = {
+        landMask,
+        temperature: lastTemperature ?? undefined,
+        precipitation: lastPrecipitation ?? undefined,
+        biome: lastBiomes ?? undefined,
+        seasonalAmplitude: lastSeasonality ?? undefined,
+        monsoonIndex: lastMonsoonIndex ?? undefined,
+        lakeDepth: lastLakeDepth ? downsampleMax(lastLakeDepth, MAP_WIDTH, MAP_HEIGHT, rx, ry) : undefined,
+      }
+      for (const f of Object.keys(lastEcologyFields) as EcologyFieldId[]) sources[f] = lastEcologyFields[f]
+      for (const spec of WORLD_LAYERS) {
+        const src = sources[spec.name]
+        if (!src) continue
+        zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
+        layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: rx, resY: ry, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
+      }
+      // Rivers as vector polylines (texel coords: [x, y, widthPx, …] per polyline).
+      if (lastRiverData) {
+        zip.file('layers/rivers.json', JSON.stringify({ points: Array.from(lastRiverData.points), lengths: Array.from(lastRiverData.lengths) }))
+        layers.push({ name: 'rivers', file: 'layers/rivers.json', kind: 'vector' })
+      }
+    }
+    const manifest = {
+      formatVersion: 1,
+      generatorVersion: 'casas-eternas/v1alpha1',
+      world: { width: MAP_WIDTH, height: MAP_HEIGHT, topology: 'torus' },
+      layers,
+    }
+    zip.file('manifest.json', JSON.stringify(manifest, null, 2))
+  }
+
+  // Save flow: worker replies with the sim snapshot + rasters → zip it up (recipe
+  // + snapshot + baked query layers + manifest + preview).
   async function handleWorldData(message: WorkerWorldDataMessage): Promise<void> {
     const zip = new JSZip()
     zip.file('world.yaml', buildWorldYaml())
     zip.file('state.json', JSON.stringify(message.snapshot))
     zip.file('oceanAge.f32', message.oceanAge)
     zip.file('elevation.f32', message.elevation)
+    bakeQueryLayers(zip)
     const preview = await makePreviewBlob()
     if (preview) zip.file('preview.png', preview)
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
@@ -1692,10 +1761,31 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     downloadBlob(blob, `${safeName}.zip`)
   }
 
-  saveWorldButton.addEventListener('click', () => {
+  // Await one compute step: set its resolver, request it; the data handler
+  // resolves when it lands. Safe because save is only reachable while idle.
+  const awaitCompute = (setResolver: (r: () => void) => void, request: () => void): Promise<void> =>
+    new Promise((resolve) => { setResolver(resolve); request() })
+
+  saveWorldButton.addEventListener('click', () => { void saveWorld() })
+
+  async function saveWorld(): Promise<void> {
     if (simRunning) return
+    // Compute-on-save: bake everything the world's current pipeline stage allows,
+    // independent of which panels were visited. Climate/hydrology/ecology need
+    // eroded terrain (same gate as their panels) — pre-erosion, only elevation is
+    // baked. No panel switch: the computes run in the worker regardless of the view.
+    if (erosionRunCount >= 1) {
+      saveChainActive = true
+      try {
+        await awaitCompute((r) => { climateResolve = r }, requestClimate)
+        await awaitCompute((r) => { hydrologyResolve = r }, requestHydrology)
+        await awaitCompute((r) => { ecologyResolve = r }, requestEcology)
+      } finally {
+        saveChainActive = false
+      }
+    }
     postToWorker({ type: 'serializeWorld' })
-  })
+  }
 
   // Load flow: unzip → set the UI from the recipe/status → restore the sim in
   // the worker (no replay) → the render it posts back displays the world.

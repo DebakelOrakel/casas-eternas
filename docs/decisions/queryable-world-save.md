@@ -1,0 +1,178 @@
+---
+summary: Extend the world save into a self-describing, QUERYABLE dataset — every world aspect we generate is baked into field-layer rasters (+ vector layers) described by a manifest, so a game server can look up any value by sampling, with ZERO knowledge of the generation algorithms. The recipe (regenerate) and sim snapshot (continue) stay alongside, serving different consumers.
+date: 2026-07-26
+status: Phase 1 BUILT (2026-07-26) — main-thread bake from caches; see status note at end
+---
+
+# Queryable world save (baked layers)
+
+Extends the existing `.zip` save (see `world-save-format.md`). Motivated by the
+game **server**: when a generated world is handed to the server that runs the
+game, the server must answer spatial queries ("what biome / temperature /
+resources are at (x, y)?") **without running or even knowing the generation
+algorithms**.
+
+## Problem
+
+Today's save stores only the *expensive-to-reconstruct* intermediates: the sim
+snapshot (`state.json`) + the post-erosion elevation raster + ocean-age. Climate,
+hydrology and ecology are **not** stored — the client recomputes them on demand.
+For the server that's the wrong shape: it would have to either (a) run the exact
+same generation code (hard coupling, TS-bound, every algorithm change must stay
+in lockstep), or (b) look values up. **(b) is the goal.**
+
+## Decision
+
+Make the save a **three-purpose layered dataset**, each purpose independent:
+
+| Purpose | Artifact | Consumer |
+|---|---|---|
+| **Regenerate** from scratch | `world.yaml` (recipe: seed + params) | the generator (deterministic replay) |
+| **Continue / evolve** the sim | `state.json` (sim snapshot) | the generator/editor (step more epochs, re-erode, re-tune) |
+| **Query** the finished world | **baked field layers + `manifest.json`** (+ vector layers) | the **game server** (pure lookup, no algorithms) |
+
+The three coexist in the same zip; each consumer reads only what it needs (the
+server ignores `state.json`; the generator ignores the baked layers). Keeping the
+snapshot **and** baking is deliberate: the snapshot is small vs. the rasters, and
+dropping it would force a full regenerate (expensive + algorithm-drift risk) to
+ever reopen/evolve a world.
+
+**Rejected: share-the-code** (server runs the generation modules). Smaller saves,
+but couples the server to the client's exact algorithms + language, and any
+generator change would silently alter old worlds. Baking freezes each world's
+data so old saves stay readable forever without new code.
+
+## Format
+
+The zip gains a **`manifest.json`** (the self-describing contract) + a set of
+baked **layer files**. A consumer needs *only* the manifest + a ~50-line sampler
+— no generation knowledge.
+
+### `manifest.json`
+
+```jsonc
+{
+  "formatVersion": 1,
+  "generatorVersion": "…",        // provenance; NOT needed to read
+  "world": { "width": 2048, "height": 1024, "topology": "torus" },  // wraps x & y
+  "layers": [
+    { "name": "elevation",   "file": "layers/elevation.u16",  "kind": "raster",
+      "resX": 2048, "resY": 1024, "dtype": "u16",
+      "encoding": { "scale": …, "offset": … }, "unit": "relative" },
+    { "name": "temperature", "file": "layers/temperature.u8", "kind": "raster",
+      "resX": 256, "resY": 128, "dtype": "u8",
+      "encoding": { "scale": 0.294, "offset": -30 }, "unit": "°C" },
+    { "name": "carryingCapacity", …, "sentinel": 255 },   // ocean = sentinel
+    { "name": "rivers", "file": "layers/rivers.json", "kind": "vector" },
+    // …
+  ]
+}
+```
+
+Per-layer metadata makes each layer readable blind: `resX/resY` (its own grid —
+climate/ecology are coarse 256×128, elevation/lakes full-res), `dtype`, `encoding`
+(`value = stored·scale + offset`), `unit`, and `sentinel` (a reserved stored code
+marking "not applicable", e.g. ocean). A shared **`landMask`** raster is also
+provided for the common land/ocean test.
+
+### Baked layers (what gets stored)
+
+- **Tectonics/erosion:** elevation (full-res), oceanAge, landMask.
+- **Climate:** temperature, precipitation, biomes, seasonalAmplitude, monsoonIndex,
+  wind (u,v), currents (u,v).
+- **Hydrology:** discharge, lakeDepth (raster) + **rivers** (vector polylines,
+  reusing the existing `RiverPolylines` shape).
+- **Ecology:** carryingCapacity + the 13 resource fields.
+- **Later (Anthropology):** settlements, territories, trade graph — all as
+  **vector layers in the same manifest** (forward-fit, no format change).
+
+### Encoding / size
+
+Coarse fields (256×128 = 32k cells) quantize to `u8`/`u16` with a documented
+`scale/offset` → ~32–64 KB each; ~15 fields < 1 MB. Elevation full-res is the only
+large raster (~4 MB as u16). All zip-compressed. Dequantise = one multiply-add
+(in the manifest), so the sampler stays trivial.
+
+### Versioning
+
+`formatVersion` (sampler contract) + `generatorVersion` (provenance). The server
+reads any `formatVersion` it supports from the manifest alone; it never needs the
+generator that produced the world.
+
+## The sampler (lookup contract)
+
+A tiny, **algorithm-free** function, driven only by the manifest — shared by the
+client (to bake + self-verify) and reimplemented by the server (any language):
+
+```
+lookup(manifest, layers, name, x, y):
+  L = manifest.layer(name)
+  gx = floor(wrap(x, world.width)  / world.width  * L.resX)
+  gy = floor(wrap(y, world.height) / world.height * L.resY)
+  raw = layers[name][gy * L.resX + gx]           // (bilinear for smooth fields)
+  return raw == L.sentinel ? NONE : raw * L.encoding.scale + L.encoding.offset
+```
+
+Vector layers (rivers, later settlements/graph) are consumed directly or via a
+spatial query. This `lookup(aspect, x, y)` is exactly the "simple lookup function"
+the whole design is for.
+
+## The bake step (client)
+
+At **save time**, run the full derivation chain once (climate → hydrology →
+ecology) in the worker, collect *every* field's output (the compute functions
+already exist — we just stop discarding them), quantise per the manifest, and
+write the layers + manifest into the zip. The client keeps its live
+recompute-on-slider for the *editor*; baking freezes a snapshot of the fields for
+the *server*. Determinism guarantee: the server sees exactly what the client
+showed — no recompute, no drift.
+
+## Open questions (finalise at build)
+
+- Per-field quantisation precision (which fields need `u16`/`f32` vs `u8`;
+  discharge has a huge dynamic range → maybe log-encode or `f32`).
+- Sentinel vs. shared `landMask` per layer (some fields are ocean-valid: SST,
+  currents — those keep data over ocean; land-only fields use the mask/sentinel).
+- Keep oceanAge? (marginal for gameplay — decide by whether the server needs it.)
+- River/vector on-disk shape (reuse `RiverPolylines` binary, or GeoJSON-ish JSON).
+- Bilinear vs nearest per layer (smooth climate → bilinear; biome/enum → nearest).
+
+## Implementation phases
+
+1. **Manifest + sampler + bake for the existing aspects** (tectonics/climate/
+   hydrology/ecology). Self-verify: client bakes, then samples back and compares
+   to the live fields.
+2. **Anthropology** outputs slot in as new vector/raster layers — no format change.
+
+See also `world-save-format.md` (current zip layout) and
+`resolution-strategy.md` (why climate/ecology are coarse).
+
+## Implementation status (Phase 1, 2026-07-26)
+
+Built as a **main-thread bake** (lower risk — no worker orchestration): the shared
+contract module `client/src/worldgen/worldSave/worldLayers.ts` (`WORLD_LAYERS`
+specs, `bakeLayer` quantiser, `decodeLayer`/`sampleAt` sampler, `downsampleMax`),
+and `bakeQueryLayers()` in WorldGenScreen writes `manifest.json` + `layers/*.{u8,u16}`
+into the save zip from the main thread's cached fields. `elevation.f32` (also the
+restore raster) is referenced as a manifest layer; rivers as `layers/rivers.json`.
+Round-trip (bake→decode→sample) verified within quantisation error.
+
+**Baked now:** landMask, temperature, precipitation, biome, seasonalAmplitude,
+monsoonIndex, lakeDepth (downsampled), the 14 ecology fields, elevation (f32),
+rivers (vector).
+
+**Compute-on-save ✅ (2026-07-26):** the save button now runs the full derivation
+chain first (climate → hydrology → ecology, awaited via one-shot resolvers on the
+existing data handlers), *then* serialises + bakes — so completeness no longer
+depends on which panels were visited. Gated on `erosionRunCount >= 1` (same
+prerequisite as those panels): a pre-erosion world bakes only `elevation` +
+manifest; a processed world bakes everything. No panel switch, no warning — the
+manifest honestly lists whatever the world's stage produced. The chain runs on the
+main thread reusing `requestClimate/Hydrology/Ecology` (no worker rewrite).
+
+**Not yet / caveats (follow-ups):**
+- **Not baked yet:** wind + currents (interleaved u,v → add as 2 layers each),
+  raw discharge, oceanAge-as-query-layer (still saved as `oceanAge.f32` for
+  restore, just not in the manifest — its resolution/gameplay value TBD).
+- Nearest-sampling only so far (biome wants nearest anyway; smooth fields could
+  add bilinear in the sampler later).
