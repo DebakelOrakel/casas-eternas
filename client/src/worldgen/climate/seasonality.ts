@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell, shiftedYNorm } from './climateField'
 import { SEA_LEVEL } from '../erosion'
 
 const RX = CLIMATE_RES_X
@@ -66,11 +66,11 @@ function computeContinentality(elevation: Float32Array, worldWidth: number, worl
 // than maritime coasts); ocean cells stay low (thermal inertia). Biome
 // classification later reads T_mean ± amplitude/2 for cold-winter / growing-
 // season distinctions. See docs/decisions/climate-biomes.md.
-export function computeSeasonalAmplitude(elevation: Float32Array, worldWidth: number, worldHeight: number): Float32Array {
+export function computeSeasonalAmplitude(elevation: Float32Array, worldWidth: number, worldHeight: number, equatorOffset = 0): Float32Array {
   const continentality = computeContinentality(elevation, worldWidth, worldHeight)
   const amplitude = new Float32Array(RX * RY)
   for (let gy = 0; gy < RY; gy++) {
-    const yNorm = (gy + 0.5) / RY
+    const yNorm = shiftedYNorm(gy, RY, equatorOffset)
     const phi = Math.abs(yNorm - 0.5) * 2
     const ampLat = MAX_AMPLITUDE * phi
     for (let gx = 0; gx < RX; gx++) {

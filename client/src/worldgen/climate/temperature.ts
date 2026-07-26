@@ -22,11 +22,11 @@ const LAPSE_C_PER_ELEVATION = 35
 // sea-surface temperature from ocean currents is a later phase. Coarse climate
 // grid; elevation sampled from the full-res field so mountain cooling isn't
 // averaged away. Values in °C.
-export function computeTemperature(elevation: Float32Array, worldWidth: number, worldHeight: number, offsetC = 0, contrast = 1): Float32Array {
+export function computeTemperature(elevation: Float32Array, worldWidth: number, worldHeight: number, offsetC = 0, contrast = 1, equatorOffset = 0): Float32Array {
   const temperature = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   const meanC = (T_EQUATOR_C + T_POLE_C) / 2
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    const lat = latitudeAt(gy)
+    const lat = latitudeAt(gy, equatorOffset)
     // Deviation from the mean at this latitude (+ at the equator, − at the pole);
     // contrast scales it, so contrast 0 → uniform mean, 1 → the original span.
     const deviation = (T_EQUATOR_C - T_POLE_C) * (Math.cos((lat * Math.PI) / 2) - 0.5)

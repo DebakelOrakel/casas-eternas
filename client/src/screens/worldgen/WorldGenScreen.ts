@@ -433,6 +433,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <input type="range" class="temp-band-input" min="-20" max="20" step="1" value="0" aria-label="Temperature offset (°C)" />
       </label>
       <label class="field">
+        <span class="field-label">Equator: <span><span data-value="equator-offset-label">0</span>%</span></span>
+        <input type="range" class="equator-offset-input" min="-50" max="50" step="5" value="0" aria-label="Equator latitudinal shift (% of map height)" />
+      </label>
+      <label class="field">
         <span class="field-label">Humidity: <span><span data-value="humidity-label">100</span>%</span></span>
         <input type="range" class="humidity-input" min="40" max="200" step="5" value="100" aria-label="Global humidity (%)" />
       </label>
@@ -499,6 +503,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const humidityLabel = root.querySelector<HTMLElement>('[data-value="humidity-label"]')!
   const contrastInput = root.querySelector<HTMLInputElement>('.contrast-input')!
   const contrastLabel = root.querySelector<HTMLElement>('[data-value="contrast-label"]')!
+  const equatorOffsetInput = root.querySelector<HTMLInputElement>('.equator-offset-input')!
+  const equatorOffsetLabel = root.querySelector<HTMLElement>('[data-value="equator-offset-label"]')!
   const riverDensityInput = root.querySelector<HTMLInputElement>('.river-density-input')!
   const riverDensityLabel = root.querySelector<HTMLElement>('[data-value="river-density-label"]')!
   const hydrologyStatus = root.querySelector<HTMLElement>('[data-value="hydrology-status"]')!
@@ -1251,6 +1257,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       temperatureOffset: Number(tempBandInput.value),
       temperatureContrast: Number(contrastInput.value) / 100,
       humidity: Number(humidityInput.value) / 100,
+      equatorOffset: Number(equatorOffsetInput.value) / 100,
     })
   }
 
@@ -1459,6 +1466,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       `  tempOffset: ${Number(tempBandInput.value)}`,
       `  humidity: ${Number(humidityInput.value)}`,
       `  contrast: ${Number(contrastInput.value)}`,
+      `  equatorOffset: ${Number(equatorOffsetInput.value)}`,
       `  riverDensity: ${Number(riverDensityInput.value)}`,
       `  erosionStrength: ${Number(strengthInput.value)}`,
       `  drainageRefresh: ${Number(refreshInput.value)}`,
@@ -1480,6 +1488,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     tempBandLabel.textContent = t > 0 ? `+${t}` : String(t)
     humidityLabel.textContent = humidityInput.value
     contrastLabel.textContent = contrastInput.value
+    equatorOffsetLabel.textContent = equatorOffsetInput.value
     riverDensityLabel.textContent = riverDensityInput.value
     strengthLabel.textContent = strengthInput.value
     refreshLabel.textContent = refreshInput.value
@@ -1566,6 +1575,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     tempBandInput.value = readYamlValue(yaml, 'tempOffset') ?? '0'
     humidityInput.value = readYamlValue(yaml, 'humidity') ?? '100'
     contrastInput.value = readYamlValue(yaml, 'contrast') ?? '100'
+    equatorOffsetInput.value = readYamlValue(yaml, 'equatorOffset') ?? '0'
     riverDensityInput.value = readYamlValue(yaml, 'riverDensity') ?? '55'
     strengthInput.value = readYamlValue(yaml, 'erosionStrength') ?? strengthInput.value
     refreshInput.value = readYamlValue(yaml, 'drainageRefresh') ?? refreshInput.value
@@ -1610,6 +1620,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
   wireClimateSlider(humidityInput, humidityLabel)
   wireClimateSlider(contrastInput, contrastLabel)
+  wireClimateSlider(equatorOffsetInput, equatorOffsetLabel)
 
   // River density: live-recompute (debounced); a density-only change reuses the
   // worker's cached routing/discharge, so it's cheap.

@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell, shiftedYNorm } from './climateField'
 import { SEA_LEVEL } from '../erosion'
 
 const RX = CLIMATE_RES_X
@@ -82,7 +82,7 @@ function elevationAtWorld(elevation: Float32Array, wx: number, wy: number, world
 // default; <1 = a drier world with expanding deserts, >1 = a wetter, greener
 // one — the user's humidity slider). It scales the mm/yr directly, sliding every
 // cell along the Whittaker precipitation axis; ocean sentinels are untouched.
-export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number, humidity = 1): Float32Array {
+export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number, humidity = 1, equatorOffset = 0): Float32Array {
   const n = RX * RY
   const ocean = new Uint8Array(n)
   const evap = new Float32Array(n)
@@ -137,7 +137,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
 
   const precip = new Float32Array(n)
   for (let gy = 0; gy < RY; gy++) {
-    const yNorm = (gy + 0.5) / RY
+    const yNorm = shiftedYNorm(gy, RY, equatorOffset)
     const band = bandFactor(Math.abs(yNorm - 0.5) * 2)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx

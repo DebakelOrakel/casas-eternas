@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
 
 // Relative strengths — zonal (east/west) dominates the surface pattern, the
 // meridional (toward/away from the equator) component is weaker. Dimensionless;
@@ -16,10 +16,10 @@ const MERIDIONAL_STRENGTH = 0.4
 // latitudinal for now (no land/sea modulation). Returned interleaved
 // [u0,v0,u1,v1,…] on the climate grid: u = eastward (+x), v = toward the
 // bottom/"south" (+y). See docs/decisions/climate-biomes.md.
-export function computeWind(): Float32Array {
+export function computeWind(equatorOffset = 0): Float32Array {
   const wind = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y * 2)
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    const yNorm = (gy + 0.5) / CLIMATE_RES_Y
+    const yNorm = shiftedYNorm(gy, CLIMATE_RES_Y, equatorOffset)
     const sLat = (yNorm - 0.5) * 2 // signed latitude: −1 north(top) … +1 south(bottom)
     const phi = Math.abs(sLat)
     const hemi = Math.sign(sLat) // −1 north, +1 south, 0 at the equator

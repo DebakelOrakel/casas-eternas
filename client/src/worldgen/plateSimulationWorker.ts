@@ -102,6 +102,11 @@ export interface WorkerComputeClimateMessage {
   temperatureContrast: number
   // Global precipitation multiplier (1 = default) — see computePrecipitation.
   humidity: number
+  // Latitudinal shift of the whole zonal climate band (equator + poles), as a
+  // fraction of map height (0 = default; +ve moves the equator toward the bottom).
+  // Lets a continent stuck at the cold pole seam be brought under the warm equator.
+  // See climateField.shiftedYNorm.
+  equatorOffset: number
 }
 // Requests a rivers/lakes (hydrology) compute on the current topography, using
 // the precipitation cached from the last computeClimate as the water source.
@@ -570,12 +575,12 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     // Order matters: base temperature → wind → ocean currents (which adjust
     // temperature via SST + coastal nudge) → precipitation (evaporation reads
     // the current-adjusted temperature, so warm currents wet their coasts).
-    const temperature = computeTemperature(lastRawElevations, sim.width, sim.height, message.temperatureOffset, message.temperatureContrast)
-    const wind = computeWind()
+    const temperature = computeTemperature(lastRawElevations, sim.width, sim.height, message.temperatureOffset, message.temperatureContrast, message.equatorOffset)
+    const wind = computeWind(message.equatorOffset)
     const currents = computeOceanCurrents(lastRawElevations, wind, sim.width, sim.height)
     applyOceanSST(temperature, currents, lastRawElevations, sim.width, sim.height)
-    const precipitation = computePrecipitation(lastRawElevations, temperature, wind, sim.width, sim.height, message.humidity)
-    const seasonalAmplitude = computeSeasonalAmplitude(lastRawElevations, sim.width, sim.height)
+    const precipitation = computePrecipitation(lastRawElevations, temperature, wind, sim.width, sim.height, message.humidity, message.equatorOffset)
+    const seasonalAmplitude = computeSeasonalAmplitude(lastRawElevations, sim.width, sim.height, message.equatorOffset)
     const biomes = computeBiomes(temperature, precipitation, seasonalAmplitude, lastRawElevations, sim.width, sim.height)
     // Cache copies for hydrology (the buffers below are transferred, which would
     // neuter retained references) — rivers use precip as their source, lakes use
