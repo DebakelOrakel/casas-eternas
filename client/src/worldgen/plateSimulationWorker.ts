@@ -17,6 +17,7 @@ import { computeSeasonalPrecipitation } from './climate/monsoon'
 import { computeBiomes } from './climate/biomes'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climate/climateField'
 import { computeEcology } from './ecology/ecologyField'
+import { computeCratonOldnessField } from './rafts'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
 // rendering the full 2048x1024 raster (a per-pixel query against every
@@ -371,6 +372,20 @@ function collectVolcanoes(features: TerrainFeature[]): { x: number; y: number; t
   return out
 }
 
+// Current fold-mountain (continent-continent collision) belts, for the ecology
+// layer's tin / lode-gold / gem provenance: 'range' features that are NON-volcanic
+// (excludes subduction/island arcs) and non-subsiding (excludes oceanic ridges),
+// with real positive uplift, and a real plate pair (excludes hotspot -1 / flood
+// basalt -2 and rift-valley troughs, which are negative). On-crust (unlike the
+// fixed-coord sutures), so they don't drift off into the ocean.
+function collectOrogens(features: TerrainFeature[]): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = []
+  for (const f of features) {
+    if (f.kind === 'range' && !f.volcanic && !f.subsides && f.thickness > 3 && f.plateB >= 0) out.push({ x: f.x, y: f.y })
+  }
+  return out
+}
+
 // Created once and reused for the lifetime of this worker — pool workers
 // have their own startup cost, not worth paying every epoch.
 const renderPool = new ElevationRenderPool()
@@ -682,6 +697,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     // Hydrology (discharge/lakes) is optional here — if it hasn't been computed
     // yet, fish falls back to its marine component; the ecology panel re-triggers
     // this once hydrology lands (see WorldGenScreen's chaining).
+    const cratonAge = computeCratonOldnessField(sim.rafts, sim.epoch, CLIMATE_RES_X, CLIMATE_RES_Y, sim.width, sim.height)
     const eco = computeEcology({
       temperature: lastClimateTemperature,
       precipitation: lastClimatePrecip,
@@ -692,6 +708,10 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       maxDischarge: lastHydrologyMaxDischarge,
       lakeDepth: lastHydrologyLakeDepth,
       volcanoes: collectVolcanoes(sim.features),
+      // Collision belts for tin/lode-gold/gems: current fold mountains (on-crust)
+      // + the accumulated (advected) deep-time sutures.
+      orogenPoints: [...collectOrogens(sim.features), ...sim.sutures],
+      cratonAge,
       warpSeed: sim.warpSeed,
       worldWidth: sim.width,
       worldHeight: sim.height,

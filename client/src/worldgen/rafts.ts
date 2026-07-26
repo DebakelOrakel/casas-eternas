@@ -118,6 +118,32 @@ export function raftMembership(x: number, y: number, rafts: Raft[], width: numbe
   return smoothstep(FIELD_LO, FIELD_HI, field)
 }
 
+// A coarse (resX×resY) field of continental crust "oldness" 0..1 — 1 where the
+// crust formed at epoch 0 (the ancient cratonic cores), lower toward margins
+// accreted later (see RaftBlob.birthEpoch). Metaball-weighted mean birth epoch
+// per cell, normalized against the current epoch. Cells over ocean / no crust get
+// -1. Feeds iron placement (old cratons) in the Ecology layer. O(cells × blobs);
+// called on-demand, not per frame.
+export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, resX: number, resY: number, width: number, height: number): Float32Array {
+  const out = new Float32Array(resX * resY)
+  for (let gy = 0; gy < resY; gy++) {
+    const wy = ((gy + 0.5) / resY) * height
+    for (let gx = 0; gx < resX; gx++) {
+      const wx = ((gx + 0.5) / resX) * width
+      let wSum = 0
+      let ageSum = 0
+      for (const raft of rafts) {
+        for (const blob of raft.blobs) {
+          const w = blobKernel(toroidalDistanceSq(wx, wy, blob.x, blob.y, width, height), blob.radius)
+          if (w > 0) { wSum += w; ageSum += w * (blob.birthEpoch ?? 0) }
+        }
+      }
+      out[gy * resX + gx] = wSum === 0 ? -1 : currentEpoch <= 0 ? 1 : Math.max(0, Math.min(1, 1 - (ageSum / wSum) / currentEpoch))
+    }
+  }
+  return out
+}
+
 // Phase 1 bridge: the existing crust-type-consuming code (boundary
 // classification, events, rift/merge) still reads a per-plate PlateType, but
 // rafts are the source of truth now, so a plate's type is DERIVED — it's

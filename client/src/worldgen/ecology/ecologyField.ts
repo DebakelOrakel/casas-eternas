@@ -19,7 +19,10 @@ export const ECOLOGY_OCEAN = -1
 
 // The field ids the ecology step produces. Grows per sub-step; the worker sends
 // every field, the screen's selector lists them (see ecologyColors' metadata).
-export type EcologyFieldId = 'carryingCapacity' | 'arable' | 'fish' | 'game' | 'pasture'
+export type EcologyFieldId =
+  | 'carryingCapacity'
+  | 'arable' | 'fish' | 'game' | 'pasture'
+  | 'timber' | 'salt' | 'toolStone' | 'copper' | 'tin' | 'iron'
 
 export interface EcologyParams {
   // Global carrying-capacity gain (%). 100 = neutral; scales the LEVEL only.
@@ -59,6 +62,14 @@ export interface EcologyInputs {
   maxDischarge: number // reference max discharge over land
   lakeDepth: Float32Array | null // full-res lake depth, or null
   volcanoes: Volcano[]
+  // Collision-belt points — tin / lode-gold / gem provenance. Combines the
+  // CURRENT fold-mountain features (on-crust, always where collision ranges are)
+  // with the accumulated (advected) sutures for deep-time belts. Empty if the
+  // world has had no continental collisions.
+  orogenPoints: { x: number; y: number }[]
+  // Coarse (resX×resY) continental-crust oldness 0..1 (1 = ancient craton core),
+  // -1 over ocean — see rafts.computeCratonOldnessField. Feeds iron.
+  cratonAge: Float32Array
   warpSeed: number
   worldWidth: number
   worldHeight: number
@@ -223,6 +234,148 @@ function computeFish(land: Uint8Array, currents: Float32Array, coarseDischarge: 
   return out
 }
 
+// --- material fields (separate channel; salt also lightly feeds carrying cap) --
+
+// How much usable timber each biome yields (forests high, open/cold low).
+const TIMBER_BY_BIOME: Record<number, number> = {
+  [Biome.TropicalRainforest]: 1.0,
+  [Biome.TemperateRainforest]: 0.9,
+  [Biome.TemperateForest]: 0.85,
+  [Biome.Boreal]: 0.8,
+  [Biome.Woodland]: 0.5,
+  [Biome.Savanna]: 0.2,
+  [Biome.Grassland]: 0.1,
+  [Biome.Tundra]: 0.05,
+  [Biome.Desert]: 0.02,
+  [Biome.Ice]: 0.0,
+}
+
+// Metal / stone influence radii (world fraction). Tin is tightest → the rare,
+// clustered bottleneck; copper broader (arc belts); obsidian tight (point sources).
+const COPPER_RADIUS_FRAC = 0.04
+const TIN_RADIUS_FRAC = 0.038
+const OBSIDIAN_RADIUS_FRAC = 0.03
+const FLINT_BASE = 0.15
+// Salt: below this precip a cell reads arid; coasts evaporate best.
+const SALT_ARID_PRECIP = 500
+const SALT_COAST_W = 1.0
+const SALT_INTERIOR_W = 0.35
+// Salt's small bonus to carrying capacity (preservation → denser settlement).
+const W_SALT_CC = 0.35
+// Iron: broad craton signal + bog-iron in wetlands. Deposit noise breaks the
+// (nearly uniform) craton signal into banded-iron-style deposits, so iron stays
+// common but fluctuates rather than reading as a flat 100%.
+const IRON_CRATON_W = 0.9
+const IRON_BOG_W = 0.7
+const IRON_DEPOSIT_FREQ_X = 13
+const IRON_DEPOSIT_FREQ_Y = 7
+const IRON_DEPOSIT_FLOOR = 0.35
+
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
+
+// Fraction of a land cell's 8 neighbours that are ocean.
+function coastalnessAt(land: Uint8Array, gx: number, gy: number): number {
+  let ocean = 0
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue
+      const j = ((gy + dy + CLIMATE_RES_Y) % CLIMATE_RES_Y) * CLIMATE_RES_X + ((gx + dx + CLIMATE_RES_X) % CLIMATE_RES_X)
+      if (!land[j]) ocean++
+    }
+  }
+  return ocean / 8
+}
+
+// Terrain flatness 0..1 at a climate cell (from full-res elevation neighbours).
+function flatnessAt(elevation: Float32Array, gx: number, gy: number, worldW: number, worldH: number): number {
+  const eC = sampleElevationAtCell(elevation, gx, gy, worldW, worldH)
+  const eE = sampleElevationAtCell(elevation, (gx + 1) % CLIMATE_RES_X, gy, worldW, worldH)
+  const eS = sampleElevationAtCell(elevation, gx, (gy + 1) % CLIMATE_RES_Y, worldW, worldH)
+  return 1 / (1 + SLOPE_K * Math.hypot(eE - eC, eS - eC))
+}
+
+function computeTimber(biomes: Uint8Array, land: Uint8Array): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (let i = 0; i < out.length; i++) if (land[i]) out[i] = TIMBER_BY_BIOME[biomes[i]] ?? 0.05
+  return out
+}
+
+// Salt: arid evaporation, strongest on warm dry coasts (salt pans), weaker in
+// arid interiors (rock-salt / playa proxy).
+function computeSalt(temperature: Float32Array, precipitation: Float32Array, land: Uint8Array): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      const i = gy * CLIMATE_RES_X + gx
+      if (!land[i]) continue
+      const dryness = clamp01(1 - precipitation[i] / SALT_ARID_PRECIP)
+      const warmth = clamp01(temperature[i] / 25)
+      const arid = dryness * warmth
+      const coast = coastalnessAt(land, gx, gy)
+      out[i] = clamp01(arid * (SALT_INTERIOR_W + (SALT_COAST_W - SALT_INTERIOR_W) * coast))
+    }
+  }
+  return out
+}
+
+// Wetland: flat, wet, water-fed lowland (bog-iron country). Internal — feeds iron.
+function computeWetland(precipitation: Float32Array, coarseDischarge: Float32Array | null, maxDischarge: number, coarseLake: Float32Array | null, elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      const i = gy * CLIMATE_RES_X + gx
+      if (!land[i]) continue
+      const flat = flatnessAt(elevation, gx, gy, worldW, worldH)
+      let water = 0
+      if (coarseDischarge && maxDischarge > 0) water += Math.min(1, (coarseDischarge[i] / maxDischarge) * 4)
+      if (coarseLake && coarseLake[i] > 0) water = 1
+      const moisture = clamp01(precipitation[i] / 600)
+      out[i] = flat * water * moisture
+    }
+  }
+  return out
+}
+
+// Tool-stone: obsidian (volcanic point sources) with a low flint baseline on flat
+// lowland (sedimentary proxy).
+function computeToolStone(volcanoes: Volcano[], elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number): Float32Array {
+  const obsidian = rasterisePointField(volcanoes, OBSIDIAN_RADIUS_FRAC, worldW, worldH)
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      const i = gy * CLIMATE_RES_X + gx
+      if (!land[i]) continue
+      out[i] = Math.max(obsidian[i], FLINT_BASE * flatnessAt(elevation, gx, gy, worldW, worldH))
+    }
+  }
+  return out
+}
+
+// Iron: broad old-craton signal (cratonAge oldness) broken into deposits by a
+// seeded noise (so it fluctuates instead of reading as a flat 100%), plus bog
+// iron in wetlands.
+function computeIron(cratonAge: Float32Array, wetland: Float32Array, land: Uint8Array, warpSeed: number): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  const seed = (warpSeed ^ 0x51ed2701) | 0
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      const i = gy * CLIMATE_RES_X + gx
+      if (!land[i]) continue
+      const craton = Math.max(0, cratonAge[i])
+      const noise01 = (provinceNoise((gx + 0.5) / CLIMATE_RES_X, (gy + 0.5) / CLIMATE_RES_Y, IRON_DEPOSIT_FREQ_X, IRON_DEPOSIT_FREQ_Y, seed) + 1) / 2
+      const deposit = IRON_DEPOSIT_FLOOR + (1 - IRON_DEPOSIT_FLOOR) * noise01
+      out[i] = clamp01(Math.max(IRON_CRATON_W * craton * deposit, IRON_BOG_W * wetland[i]))
+    }
+  }
+  return out
+}
+
+// Mask a point-influence field (copper/tin) to land only.
+function maskToLand(field: Float32Array, land: Uint8Array): Float32Array {
+  for (let i = 0; i < field.length; i++) if (!land[i]) field[i] = 0
+  return field
+}
+
 // --- concentration pipeline (verified in Phase 1) ---------------------------
 
 function landMean(field: Float32Array, land: Uint8Array): number {
@@ -264,16 +417,20 @@ const PROVINCE_NOISE_FREQ_Y = 4
 const VOLCANIC_WEIGHT = 0.6
 const NOISE_WEIGHT = 0.4
 
-function rasteriseVolcanicProvinces(volcanoes: Volcano[], worldWidth: number, worldHeight: number): Float32Array {
+// Rasterises a soft Gaussian "influence" field (0..1, union-max) around a set of
+// world-space points into the climate grid — reused for volcanic-soil provinces,
+// copper (arc volcanoes), tin (sutures), obsidian, etc. Radius as a fraction of
+// the smaller world dimension; stamps only near each point, so cost is O(points).
+function rasterisePointField(points: { x: number; y: number }[], radiusFrac: number, worldWidth: number, worldHeight: number): Float32Array {
   const field = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  if (volcanoes.length === 0) return field
-  const radiusWorld = Math.min(worldWidth, worldHeight) * VOLCANIC_PROVINCE_RADIUS_FRAC
+  if (points.length === 0) return field
+  const radiusWorld = Math.min(worldWidth, worldHeight) * radiusFrac
   const radiusCellsX = Math.ceil((radiusWorld / worldWidth) * CLIMATE_RES_X) * 3
   const radiusCellsY = Math.ceil((radiusWorld / worldHeight) * CLIMATE_RES_Y) * 3
   const cellW = worldWidth / CLIMATE_RES_X
   const cellH = worldHeight / CLIMATE_RES_Y
   const inv2r2 = 1 / (2 * radiusWorld * radiusWorld)
-  for (const v of volcanoes) {
+  for (const v of points) {
     const cx = Math.floor((v.x / worldWidth) * CLIMATE_RES_X)
     const cy = Math.floor((v.y / worldHeight) * CLIMATE_RES_Y)
     for (let dy = -radiusCellsY; dy <= radiusCellsY; dy++) {
@@ -310,7 +467,7 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: 
   for (let i = 0; i < n; i++) if (land[i]) shaped[i] *= l1Scale
 
   const strength = params.provinceStrength ?? DEFAULT_PROVINCE_STRENGTH
-  const volcanic = rasteriseVolcanicProvinces(volcanoes, worldWidth, worldHeight)
+  const volcanic = rasterisePointField(volcanoes, VOLCANIC_PROVINCE_RADIUS_FRAC, worldWidth, worldHeight)
   const dev = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     if (!land[i]) continue
@@ -337,11 +494,12 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: 
 // --- entry point ------------------------------------------------------------
 
 export function computeEcology(inputs: EcologyInputs, params: EcologyParams): EcologyFields {
-  const { temperature, precipitation, biomes, currents, elevation, discharge, maxDischarge, lakeDepth, volcanoes, warpSeed, worldWidth, worldHeight } = inputs
+  const { temperature, precipitation, biomes, currents, elevation, discharge, maxDischarge, lakeDepth, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth, worldHeight } = inputs
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const land = new Uint8Array(n)
   for (let i = 0; i < n; i++) if (precipitation[i] !== OCEAN_PRECIP) land[i] = 1
 
+  // Subsistence.
   const arable = computeArable(temperature, precipitation, elevation, land, worldWidth, worldHeight)
   const game = computeGame(temperature, precipitation, biomes, land)
   const pasture = computePasture(biomes, land)
@@ -349,17 +507,30 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
   const coarseLake = lakeDepth ? downsampleMax(lakeDepth, worldWidth, worldHeight) : null
   const fish = computeFish(land, currents, coarseDischarge, maxDischarge, coarseLake)
 
-  // Saturating carrying-capacity base: sources complement with diminishing
-  // returns (1 - e^-Σ w·x), so stacking several helps but never linearly.
+  // Material (separate channel). Copper = arc volcanoes; tin = collision sutures
+  // (rare/clustered); iron = old cratons + bog iron in wetlands.
+  const timber = computeTimber(biomes, land)
+  const salt = computeSalt(temperature, precipitation, land)
+  const toolStone = computeToolStone(volcanoes, elevation, land, worldWidth, worldHeight)
+  const arcVolcanoes = volcanoes.filter((v) => v.kind === 'arc')
+  const copper = maskToLand(rasterisePointField(arcVolcanoes, COPPER_RADIUS_FRAC, worldWidth, worldHeight), land)
+  const tin = maskToLand(rasterisePointField(orogenPoints, TIN_RADIUS_FRAC, worldWidth, worldHeight), land)
+  const wetland = computeWetland(precipitation, coarseDischarge, maxDischarge, coarseLake, elevation, land, worldWidth, worldHeight)
+  const iron = computeIron(cratonAge, wetland, land, warpSeed)
+
+  // Saturating carrying-capacity base: subsistence sources complement with
+  // diminishing returns (1 - e^-Σ w·x); salt adds a small preservation bonus (the
+  // one sanctioned material→subsistence bleed).
   const base = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     if (!land[i]) continue
-    base[i] = 1 - Math.exp(-(W_ARABLE * arable[i] + W_FISH * fish[i] + W_GAME * game[i] + W_PASTURE * pasture[i]))
+    base[i] = 1 - Math.exp(-(W_ARABLE * arable[i] + W_FISH * fish[i] + W_GAME * game[i] + W_PASTURE * pasture[i] + W_SALT_CC * salt[i]))
   }
   const carryingCapacity = concentrationPipeline(base, land, volcanoes, warpSeed, worldWidth, worldHeight, params)
 
-  // Mask the per-resource fields to the ocean sentinel too, so overlays skip water.
-  for (let i = 0; i < n; i++) if (!land[i]) { arable[i] = ECOLOGY_OCEAN; fish[i] = ECOLOGY_OCEAN; game[i] = ECOLOGY_OCEAN; pasture[i] = ECOLOGY_OCEAN }
+  // Mask every per-resource field to the ocean sentinel so overlays skip water.
+  const perResource = [arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron]
+  for (let i = 0; i < n; i++) if (!land[i]) for (const f of perResource) f[i] = ECOLOGY_OCEAN
 
-  return { resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y, fields: { carryingCapacity, arable, fish, game, pasture } }
+  return { resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y, fields: { carryingCapacity, arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron } }
 }

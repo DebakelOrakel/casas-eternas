@@ -710,6 +710,21 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   // current crust layout. Phase 1: rafts only drift; split/merge/accretion
   // come later.
   advanceRafts(sim.rafts, sim.seeds, sim.motions, EPOCH_ANGLE_STEP, width, height)
+  // Sutures are welded into the drifting crust — advect each with the plate it
+  // sits on, so a collision belt stays ON its continent instead of being left
+  // behind in open ocean as the plates move (which would strand the tin/gem
+  // provenance offshore and mask it out in the ecology layer).
+  for (const s of sim.sutures) {
+    let host = 0
+    let bestSq = Infinity
+    for (let p = 0; p < sim.seeds.length; p++) {
+      const d = toroidalDistanceSq(s.x, s.y, sim.seeds[p].x, sim.seeds[p].y, width, height)
+      if (d < bestSq) { bestSq = d; host = p }
+    }
+    const rotated = advancePointByMotion(s.x, s.y, sim.motions[host], EPOCH_ANGLE_STEP, width, height)
+    s.x = rotated.x
+    s.y = rotated.y
+  }
   sim.types = derivePlateTypes(sim.seeds, sim.rafts, width, height)
   // Advect the ocean-age field along with the plates that just moved (Phase 3).
   sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, EPOCH_ANGLE_STEP, width, height)

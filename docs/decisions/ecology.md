@@ -247,8 +247,27 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      ecology panel ensures hydrology + re-triggers ecology when it lands.
      `computeEcology` refactored to an inputs object. Headless-verified (coastal
      ≫ interior fish, freshwater adds interior, marine-only fallback).
-   - **2c — material** (timber/salt/tool-stone/metals via arcs+sutures+
-     craton-age+wetlands).
+   - **2c — material** ✅ BUILT 2026-07-26 (pending visual check): timber (biome),
+     salt (arid coasts/interior; + small carrying-cap preservation bonus — the
+     one sanctioned material→subsistence bleed), tool-stone (obsidian from
+     volcanoes + flint baseline), and full-geological metals — **copper** (arc
+     volcanoes), **tin** (collision sutures = `sim.sutures`, tight radius →
+     rare/clustered), **iron** (old-craton oldness from blob `birthEpoch` via new
+     `rafts.computeCratonOldnessField`, + bog iron in derived wetlands). Material
+     is a separate channel (doesn't feed carrying capacity, except salt). Worker
+     passes sutures + a coarse craton-age field. Distinct per-metal colour ramps.
+     Headless-verified (copper@arc, tin@suture, iron@old-craton + bog, all 11
+     fields ocean-consistent, carrying capacity still mean-preserving).
+   - **2c fixes (visual review):** (1) **iron** read as a flat 100% (craton is
+     old ~everywhere → uniform); added seeded *deposit noise* so it stays common
+     but fluctuates (banded-iron style). (2) **tin** was invisible — sutures are
+     stored at FIXED world coords but the crust drifts (~3–4px/epoch), so old
+     sutures end up offshore and get masked out. Fixed two ways: sutures now
+     **advect with the plate they sit on** each epoch (stepEpoch), and tin is
+     now sourced from **current fold-mountain features (`collectOrogens`,
+     on-crust) + the advected sutures** (`orogenPoints`), not fixed sutures
+     alone. (Suture advection only helps going forward; existing saves' sutures
+     stay stale, but tin still shows via the on-crust fold-mountains.)
    - **2d — prestige** (gold/silver/gems).
    - **2e — fold-out** (togglable `.field` group; per-role nudges + metals submenu).
 3. **Polish** — legends, colours, world.yaml fields, save/load, wetlands

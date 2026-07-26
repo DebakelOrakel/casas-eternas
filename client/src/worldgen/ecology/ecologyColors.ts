@@ -50,6 +50,30 @@ export const ECOLOGY_FIELD_META: Record<EcologyFieldId, EcologyFieldMeta> = {
       { c: 0.0, rgb: [228, 216, 150] }, { c: 0.5, rgb: [206, 198, 96] }, { c: 1.0, rgb: [150, 180, 78] },
     ],
   },
+  timber: {
+    label: 'Timber', role: 'material', absolute: false,
+    stops: [{ c: 0.0, rgb: [214, 206, 180] }, { c: 0.5, rgb: [140, 138, 82] }, { c: 1.0, rgb: [72, 92, 40] }],
+  },
+  salt: {
+    label: 'Salt', role: 'material', absolute: false,
+    stops: [{ c: 0.0, rgb: [236, 232, 238] }, { c: 0.5, rgb: [186, 150, 202] }, { c: 1.0, rgb: [120, 72, 150] }],
+  },
+  toolStone: {
+    label: 'Tool-stone', role: 'material', absolute: false,
+    stops: [{ c: 0.0, rgb: [214, 214, 218] }, { c: 0.5, rgb: [126, 126, 134] }, { c: 1.0, rgb: [52, 52, 60] }],
+  },
+  copper: {
+    label: 'Copper', role: 'material', absolute: false,
+    stops: [{ c: 0.0, rgb: [232, 214, 194] }, { c: 0.5, rgb: [210, 140, 80] }, { c: 1.0, rgb: [176, 84, 40] }],
+  },
+  tin: {
+    label: 'Tin', role: 'material', absolute: false,
+    stops: [{ c: 0.0, rgb: [226, 228, 232] }, { c: 0.5, rgb: [168, 178, 190] }, { c: 1.0, rgb: [104, 116, 134] }],
+  },
+  iron: {
+    label: 'Iron', role: 'material', absolute: false,
+    stops: [{ c: 0.0, rgb: [230, 212, 202] }, { c: 0.5, rgb: [200, 118, 88] }, { c: 1.0, rgb: [148, 54, 38] }],
+  },
 }
 
 // Selector groups, in display order.
