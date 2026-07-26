@@ -1,6 +1,6 @@
 .notification-container {
   position: fixed;
-  top: 1.5rem;
+  top: 5.25rem;
   right: 1.5rem;
   width: 320px;
   max-width: calc(100vw - 3rem);

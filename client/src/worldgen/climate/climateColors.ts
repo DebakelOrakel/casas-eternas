@@ -65,3 +65,9 @@ const AMPLITUDE_STOPS: { c: number; rgb: Rgb }[] = [
 export function amplitudeColor(celsiusRange: number): Rgb {
   return rampColor(AMPLITUDE_STOPS, celsiusRange)
 }
+
+// The ramps as {value, rgb} lists, for building the overlay legend gradient bars
+// (same stops the paint uses, so the legend matches the map exactly).
+export const temperatureLegendStops = TEMPERATURE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
+export const precipitationLegendStops = PRECIPITATION_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
+export const amplitudeLegendStops = AMPLITUDE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))

@@ -19,12 +19,14 @@
   display: none;
 }
 
-/* Load / save buttons, fixed top-left. */
+/* Load / save buttons, fixed top-left — in FRONT of the top overlay bar + its fading
+   backdrop (z-index 3, above the backdrop's 1 and the icon bar's 2). The overlay legend
+   sits just below them (top 4rem). */
 .worldgen-flat-screen .file-actions {
   position: fixed;
   top: 1rem;
   left: 1rem;
-  z-index: 1;
+  z-index: 3;
   display: flex;
   gap: 0.5rem;
 }
@@ -145,6 +147,19 @@
   opacity: 1;
 }
 
+/* The tectonics run/stop button uses ONE icon (tectonics.png) and shows its state
+   by muting: greyed + dim while stopped, full colour while running (.is-active) —
+   instead of swapping dedicated _on/_off images. */
+.worldgen-flat-screen .icon-button.sim-toggle {
+  filter: grayscale(1);
+  opacity: 0.55;
+  transition: opacity 0.15s ease, filter 0.15s ease;
+}
+.worldgen-flat-screen .icon-button.sim-toggle.is-active {
+  filter: none;
+  opacity: 1;
+}
+
 .worldgen-flat-screen .icon-button img {
   width: 100%;
   height: 100%;
@@ -232,6 +247,95 @@
   opacity: 0.15;
   cursor: not-allowed;
   filter: grayscale(1);
+}
+
+/* Fading backdrop behind the top overlay bar — mirror of the bottom panel's fade,
+   but narrower — so the icons read against a busy map. Behind the icons (z 2). */
+.worldgen-flat-screen .overlay-bar-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 5rem;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.8) 45%, rgba(255, 255, 255, 0) 100%);
+}
+
+/* Right-side legend for the active overlay(s) that carry one. Vertically centred;
+   pointer-events off so it never blocks the map. */
+.worldgen-flat-screen .overlay-legend {
+  position: fixed;
+  top: 5.25rem;
+  left: 1rem;
+  z-index: 2;
+  width: 168px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-height: 82vh;
+  overflow: hidden;
+  padding: 0.6rem 0.7rem;
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 0.4rem;
+  color: #1a1a1a;
+  font-family: sans-serif;
+  font-size: 0.72rem;
+  pointer-events: none;
+}
+.worldgen-flat-screen .overlay-legend[hidden] {
+  display: none;
+}
+.worldgen-flat-screen .legend-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.worldgen-flat-screen .legend-title {
+  font-weight: 600;
+}
+.worldgen-flat-screen .legend-gradient-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.worldgen-flat-screen .legend-gradient-bar {
+  width: 100%;
+  height: 12px;
+  flex: none;
+  border-radius: 2px;
+}
+.worldgen-flat-screen .legend-gradient-labels {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+}
+.worldgen-flat-screen .legend-swatches {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.worldgen-flat-screen .legend-swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.worldgen-flat-screen .legend-swatch {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 2px;
+}
+/* Volcano cone marker in a legend row — a small upward triangle (border trick),
+   matching the map's volcano cones. Fill colour set inline via border-bottom-color. */
+.worldgen-flat-screen .legend-cone {
+  width: 0;
+  height: 0;
+  flex: none;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 12px solid currentColor;
 }
 
 /* Min/max average-temperature readout, stacked beside the compute button. */

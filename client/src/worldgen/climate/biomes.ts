@@ -24,18 +24,22 @@ export const Biome = {
 
 type BiomeId = (typeof Biome)[keyof typeof Biome]
 
+// Palette tuned for on-map distinguishability (2026-07-26): the four forests keep
+// green hues but spread across value/temperature (dark-muted → bright → teal → deep),
+// and the dry cluster (grassland/woodland/savanna/desert) is separated by hue + lightness
+// (pale-yellow / olive / gold / pale-sand) instead of the near-identical tans it was.
 const BIOME_COLORS: Record<number, [number, number, number]> = {
   [Biome.Ocean]: [40, 90, 140],
-  [Biome.Ice]: [235, 240, 245],
-  [Biome.Tundra]: [165, 172, 158],
-  [Biome.Boreal]: [70, 110, 88],
-  [Biome.Grassland]: [200, 190, 120],
-  [Biome.Woodland]: [150, 160, 92],
-  [Biome.TemperateForest]: [92, 150, 82],
-  [Biome.TemperateRainforest]: [48, 112, 72],
-  [Biome.Desert]: [222, 202, 150],
-  [Biome.Savanna]: [192, 178, 92],
-  [Biome.TropicalRainforest]: [30, 118, 60],
+  [Biome.Ice]: [240, 244, 249],
+  [Biome.Tundra]: [178, 176, 164], // warm light grey
+  [Biome.Boreal]: [60, 98, 86], // dark muted conifer green
+  [Biome.Grassland]: [214, 202, 122], // pale yellow
+  [Biome.Woodland]: [150, 162, 88], // olive green
+  [Biome.TemperateForest]: [96, 162, 78], // bright green
+  [Biome.TemperateRainforest]: [42, 130, 100], // teal-green (wet)
+  [Biome.Desert]: [236, 218, 170], // pale sand (lightest)
+  [Biome.Savanna]: [208, 166, 78], // gold / ochre
+  [Biome.TropicalRainforest]: [22, 106, 50], // deep saturated green
 }
 
 export function biomeColor(id: number): [number, number, number] {
@@ -59,6 +63,24 @@ const BIOME_LABELS: Record<number, string> = {
 
 export function biomeLabel(id: number): string {
   return BIOME_LABELS[id] ?? 'Unknown'
+}
+
+// Land biomes (excludes Ocean) as {label, rgb} for the overlay legend, in a
+// rough cold→hot / dry→wet reading order.
+export function biomeLegend(): { label: string; rgb: [number, number, number] }[] {
+  const order = [
+    Biome.Ice,
+    Biome.Tundra,
+    Biome.Boreal,
+    Biome.Grassland,
+    Biome.Woodland,
+    Biome.TemperateForest,
+    Biome.TemperateRainforest,
+    Biome.Desert,
+    Biome.Savanna,
+    Biome.TropicalRainforest,
+  ]
+  return order.map((id) => ({ label: biomeLabel(id), rgb: biomeColor(id) }))
 }
 
 // Classify one cell. T = mean annual °C, P = annual precip mm/yr, amp = seasonal

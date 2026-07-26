@@ -14,10 +14,10 @@ import type { PlateArrow } from '../../worldgen/elevationMapImage'
 import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/plateSimulation'
 import { eventCategory } from '../../worldgen/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
-import { temperatureColor, precipitationColor, amplitudeColor } from '../../worldgen/climate/climateColors'
+import { temperatureColor, precipitationColor, amplitudeColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops } from '../../worldgen/climate/climateColors'
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
-import { biomeColor, biomeLabel, Biome } from '../../worldgen/climate/biomes'
+import { biomeColor, biomeLabel, biomeLegend, Biome } from '../../worldgen/climate/biomes'
 import './worldgen.css'
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
@@ -27,15 +27,14 @@ const ARROW_COLOR = '#0f0f0f'
 
 // Event markers + notifications share one wall-clock lifetime, so a toast and
 // its geologic map marker appear and fade together (the user's coupling
-// choice). Continent-scale events (collision/breakup/supercontinent) get a
-// bold marker AND a notification; routine crust churn gets only a faint,
-// shorter marker (no toast). Colors are "r, g, b" fragments for rgba().
+// choice). ONLY continent-scale events (collision/breakup/supercontinent) get a
+// marker AND a notification now; routine crust churn (oceanic plate created/
+// subducted) used to add a cryptic unlabelled blue ring and was dropped (see
+// handleSimEvents). Colors are "r, g, b" fragments for rgba().
 const EVENT_CONTINENT_LIFETIME_MS = 15000
-const EVENT_ROUTINE_LIFETIME_MS = 6000
 const EVENT_MARKER_HALF_LENGTH = 90
 const COLLISION_COLOR = '220, 45, 45'
 const BREAKUP_COLOR = '235, 140, 30'
-const ROUTINE_COLOR = '90, 130, 200'
 
 // Fresh start for the hex-tile world generation approach — the sphere-
 // based version this replaces lives on under 'worldgen-sphere' (see
@@ -393,8 +392,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button" data-action="reset-sim" aria-label="Reset simulation">
             <img src="/icons/reset.png" alt="" />
           </button>
-          <button type="button" class="icon-button" data-action="toggle-sim" aria-label="Run tectonics">
-            <img src="/icons/tectonics_off.png" alt="" />
+          <button type="button" class="icon-button sim-toggle" data-action="toggle-sim" aria-label="Run tectonics">
+            <img src="/icons/tectonics.png" alt="" />
           </button>
           <span class="tectonics-stats">
             <span>Land: <span data-value="stat-land"></span>%</span>
@@ -479,7 +478,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const randomizeButton = root.querySelector<HTMLButtonElement>('[data-action="randomize-seed"]')!
   const resetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-sim"]')!
   const toggleSimButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-sim"]')!
-  const toggleSimIcon = toggleSimButton.querySelector<HTMLImageElement>('img')!
   const erodeButton = root.querySelector<HTMLButtonElement>('[data-action="erode"]')!
   // Erosion-strength multiplier (scales the fluvial time step — essentially free
   // compute-wise, it just erodes more per step) and drainage-network refresh count
@@ -910,7 +908,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // (collision), a dashed rift axis (breakup), or a ring (supercontinent /
   // routine point). The worldgen-specific side of the generic marker facility.
   function drawEventMarker(c: CanvasRenderingContext2D, ev: SimEvent, alpha: number): void {
-    const color = ev.type === 'continent_collided' || ev.type === 'supercontinent_formed' ? COLLISION_COLOR : ev.type === 'continent_broke_up' ? BREAKUP_COLOR : ROUTINE_COLOR
+    const color = ev.type === 'continent_broke_up' ? BREAKUP_COLOR : COLLISION_COLOR
     c.strokeStyle = `rgba(${color}, ${alpha})`
     c.lineCap = 'round'
     if (ev.x === undefined || ev.y === undefined) return
@@ -951,15 +949,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function handleSimEvents(events: SimEvent[]): void {
     if (!events || events.length === 0) return
     for (const ev of events) {
-      const continent = eventCategory(ev.type) === 'continent'
-      const lifetimeMs = continent ? EVENT_CONTINENT_LIFETIME_MS : EVENT_ROUTINE_LIFETIME_MS
+      // Only continent-scale events (collision / breakup / supercontinent) get a map
+      // marker + toast. Routine crust churn (oceanic plate created at a rift / subducted)
+      // used to drop a faint, unlabelled BLUE RING with no notification — removed as
+      // cryptic clutter. Re-add here if that seafloor activity is wanted back.
+      if (eventCategory(ev.type) !== 'continent') continue
       if (ev.x !== undefined && ev.y !== undefined) {
-        overlay.addMarker('events', { lifetimeMs, paint: (c, alpha) => drawEventMarker(c, ev, alpha) })
+        overlay.addMarker('events', { lifetimeMs: EVENT_CONTINENT_LIFETIME_MS, paint: (c, alpha) => drawEventMarker(c, ev, alpha) })
       }
-      if (continent) {
-        const { message, icon } = eventText(ev)
-        ctx.notifications.show({ message, icon, durationMs: lifetimeMs })
-      }
+      const { message, icon } = eventText(ev)
+      ctx.notifications.show({ message, icon, durationMs: EVENT_CONTINENT_LIFETIME_MS })
     }
   }
 
@@ -976,17 +975,31 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // exists (its `available`), and shows an active state when on. 'rivers' bundles
   // the scene-space river ribbons + the lake tint under one control. Events are
   // NOT here — they're always on. Order = display order in the bar.
-  const OVERLAY_DEFS: { id: string; icon: string; label: string; available: () => boolean }[] = [
+  // A legend explains an overlay's colours; only overlays whose colour→meaning
+  // isn't self-evident carry one (names/cells/wind/rivers don't). 'gradient' = a
+  // continuous colour ramp with value labels; 'swatches' = discrete colour+label
+  // rows. Shown on the right whenever a legend-bearing overlay is active.
+  type LegendSpec =
+    | { type: 'gradient'; title: string; unit: string; stops: { value: number; rgb: [number, number, number] }[] }
+    | { type: 'swatches'; title: string; items: { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' }[] }
+  const OVERLAY_DEFS: { id: string; icon: string; label: string; available: () => boolean; legend?: LegendSpec }[] = [
     { id: 'terrain', icon: '/icons/colours.png', label: 'Terrain colour', available: () => lastColoredBase !== null },
     { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null },
     { id: 'names', icon: '/icons/continent_name.png', label: 'Continent names', available: () => lastRaftLabels.length > 0 },
-    { id: 'mantle', icon: '/icons/mantle.png', label: 'Mantle field + volcanism', available: () => lastMantle !== null },
-    { id: 'temperature', icon: '/icons/temp_on.png', label: 'Temperature', available: () => lastTemperature !== null },
+    {
+      id: 'mantle', icon: '/icons/mantle.png', label: 'Mantle field + volcanism', available: () => lastMantle !== null,
+      legend: { type: 'swatches', title: 'Mantle & volcanism', items: [
+        { label: 'Upwelling (hot)', rgb: [225, 85, 55] },
+        { label: 'Downwelling (cold)', rgb: [55, 110, 210] },
+        { label: 'Volcano / hotspot', rgb: [220, 55, 30], shape: 'cone' },
+      ] },
+    },
+    { id: 'temperature', icon: '/icons/temperature.png', label: 'Temperature', available: () => lastTemperature !== null, legend: { type: 'gradient', title: 'Temperature', unit: '°C', stops: temperatureLegendStops } },
     { id: 'wind', icon: '/icons/wind.png', label: 'Wind', available: () => lastWind !== null },
-    { id: 'precipitation', icon: '/icons/ocean.png', label: 'Precipitation', available: () => lastPrecipitation !== null },
+    { id: 'precipitation', icon: '/icons/rain.png', label: 'Precipitation', available: () => lastPrecipitation !== null, legend: { type: 'gradient', title: 'Precipitation', unit: 'mm/yr', stops: precipitationLegendStops } },
     { id: 'currents', icon: '/icons/gyres.png', label: 'Ocean currents', available: () => lastCurrents !== null },
-    { id: 'seasonality', icon: '/icons/seasonality.png', label: 'Seasonality', available: () => lastSeasonality !== null },
-    { id: 'biomes', icon: '/icons/biomes.png', label: 'Biomes', available: () => lastBiomes !== null },
+    { id: 'seasonality', icon: '/icons/seasonality.png', label: 'Seasonality', available: () => lastSeasonality !== null, legend: { type: 'gradient', title: 'Seasonality', unit: '°C range', stops: amplitudeLegendStops } },
+    { id: 'biomes', icon: '/icons/biomes.png', label: 'Biomes', available: () => lastBiomes !== null, legend: { type: 'swatches', title: 'Biomes', items: biomeLegend() } },
     { id: 'rivers', icon: '/icons/river.png', label: 'Rivers & lakes', available: () => lastRiverData !== null },
   ]
   // Desired on/off per overlay (persists as availability comes and goes). Voronoi
@@ -1014,6 +1027,82 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     overlayButtons[def.id] = btn
   }
   root.appendChild(overlayBar)
+
+  // Fading backdrop behind the top overlay bar (mirrors the bottom panel's fade),
+  // so the icons read against a busy map.
+  const overlayBackdrop = document.createElement('div')
+  overlayBackdrop.className = 'overlay-bar-backdrop'
+  root.appendChild(overlayBackdrop)
+
+  // Right-side legend for the active overlay(s) that carry one (see OVERLAY_DEFS).
+  const overlayLegend = document.createElement('div')
+  overlayLegend.className = 'overlay-legend'
+  overlayLegend.hidden = true
+  root.appendChild(overlayLegend)
+
+  function buildLegendBlock(spec: LegendSpec): HTMLElement {
+    const block = document.createElement('div')
+    block.className = 'legend-block'
+    const title = document.createElement('div')
+    title.className = 'legend-title'
+    title.textContent = spec.type === 'gradient' ? `${spec.title} (${spec.unit})` : spec.title
+    block.appendChild(title)
+    if (spec.type === 'gradient') {
+      const min = spec.stops[0].value
+      const max = spec.stops[spec.stops.length - 1].value
+      const span = max - min || 1
+      const css = spec.stops.map((s) => `rgb(${s.rgb[0]},${s.rgb[1]},${s.rgb[2]}) ${(((s.value - min) / span) * 100).toFixed(1)}%`).join(', ')
+      const row = document.createElement('div')
+      row.className = 'legend-gradient-row'
+      const bar = document.createElement('div')
+      bar.className = 'legend-gradient-bar'
+      bar.style.background = `linear-gradient(to right, ${css})`
+      const labels = document.createElement('div')
+      labels.className = 'legend-gradient-labels'
+      for (const v of [min, Math.round((min + max) / 2), max]) {
+        const l = document.createElement('span')
+        l.textContent = String(v)
+        labels.appendChild(l)
+      }
+      row.append(bar, labels)
+      block.appendChild(row)
+    } else {
+      const list = document.createElement('div')
+      list.className = 'legend-swatches'
+      for (const it of spec.items) {
+        const r = document.createElement('div')
+        r.className = 'legend-swatch-row'
+        const sw = document.createElement('span')
+        if (it.shape === 'cone') {
+          // Match the map's volcano marker (an upward cone), not a flat square.
+          sw.className = 'legend-cone'
+          sw.style.borderBottomColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
+        } else {
+          sw.className = 'legend-swatch'
+          sw.style.background = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
+        }
+        const lb = document.createElement('span')
+        lb.textContent = it.label
+        r.append(sw, lb)
+        list.appendChild(r)
+      }
+      block.appendChild(list)
+    }
+    return block
+  }
+
+  // Rebuild the right-side legend from whichever legend-bearing overlays are
+  // currently on + available (stacked; usually one or two). Hidden when none.
+  function renderLegends(): void {
+    const active = OVERLAY_DEFS.filter((d) => d.legend && overlaysOn[d.id] && d.available())
+    if (active.length === 0) {
+      overlayLegend.hidden = true
+      overlayLegend.replaceChildren()
+      return
+    }
+    overlayLegend.replaceChildren(...active.map((d) => buildLegendBlock(d.legend!)))
+    overlayLegend.hidden = false
+  }
 
   // Enable each layer per its wanted state AND availability; 'rivers' drives the
   // scene ribbons + lake tint together. One composite at the end.
@@ -1047,6 +1136,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function updateOverlays(): void {
     applyOverlays()
     refreshOverlayBar()
+    renderLegends()
   }
 
   function toggleOverlay(id: string): void {
@@ -1379,7 +1469,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (!simRunning) return
     simRunning = false
     postToWorker({ type: 'stop' })
-    toggleSimIcon.src = '/icons/tectonics_off.png'
+    toggleSimButton.classList.remove('is-active')
     toggleSimButton.setAttribute('aria-label', 'Run tectonics')
     seedInput.disabled = false
     plateCountInput.disabled = false
@@ -1402,7 +1492,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     invalidateClimate()
     erosionRunCount = 0
     postToWorker({ type: 'start' })
-    toggleSimIcon.src = '/icons/tectonics_on.png'
+    toggleSimButton.classList.add('is-active')
     toggleSimButton.setAttribute('aria-label', 'Stop tectonics')
     seedInput.disabled = true
     plateCountInput.disabled = true
@@ -1685,7 +1775,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // parameters (seed, plate counts) live on panel 0, tectonics on panel
   // 1, erosion on panel 2 — future panels slot in the same way via the
   // data-panel pattern, with one more entry in PANEL_TITLES to match.
-  const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion', 'Climate', 'Rivers']
+  const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion', 'Climate', 'Hydrology']
   const panelTitle = root.querySelector<HTMLElement>('[data-value="panel-title"]')!
   const nextArrow = root.querySelector<HTMLButtonElement>('[data-action="next"]')!
   const panels = Array.from(root.querySelectorAll<HTMLElement>('.panel'))
@@ -1734,6 +1824,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // The mantle overlay is on for Genesis/Tectonics (where you watch the plates
     // drive), off from the Erosion panel (index 2) onward. Same per-panel reset.
     overlaysOn.mantle = index < 2
+    // Rivers/lakes come on automatically when you enter the Hydrology panel (the
+    // reason you're there), off elsewhere — same per-panel reset. Once the compute
+    // finishes, handleHydrologyData's updateOverlays() makes the layer visible.
+    overlaysOn.rivers = index === HYDROLOGY_PANEL_INDEX
     if (lastColoredBase) updateOverlays()
     updateNavState()
   }
