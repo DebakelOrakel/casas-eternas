@@ -18,6 +18,9 @@ import { computeBiomes } from './climate/biomes'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climate/climateField'
 import { computeEcology } from './ecology/ecologyField'
 import { computeCratonOldnessField } from './rafts'
+import { computeMigration } from './migration/migrationField'
+import type { MigrationOrigin } from './migration/migrationField'
+import { downsampleMax } from './worldSave/worldLayers'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
 // rendering the full 2048x1024 raster (a per-pixel query against every
@@ -142,6 +145,15 @@ export interface WorkerComputeEcologyMessage {
   tinRarity: number
   weights: Record<string, number>
 }
+// Requests an initial-migration compute: multi-source least-cost dispersal from the
+// given origins over the physical cost field, using the cached carrying capacity for
+// density. Replies with WorkerMigrationDataMessage. See anthropology-initial-migration.md.
+export interface WorkerComputeMigrationMessage {
+  type: 'computeMigration'
+  origins: MigrationOrigin[]
+  spreadBudget: number
+  seaCrossing: number
+}
 // Requests the full sim snapshot (+ ocean-age + current elevation) for saving —
 // replies with a WorkerWorldDataMessage.
 export interface WorkerSerializeWorldMessage {
@@ -168,6 +180,7 @@ export type WorkerInboundMessage =
   | WorkerComputeClimateMessage
   | WorkerComputeHydrologyMessage
   | WorkerComputeEcologyMessage
+  | WorkerComputeMigrationMessage
   | WorkerSerializeWorldMessage
   | WorkerRestoreWorldMessage
 
@@ -288,6 +301,17 @@ export interface WorkerEcologyDataMessage {
   fields: { id: string; data: ArrayBuffer }[]
 }
 
+// The initial-migration result (coarse climate grid). See migration/migrationField.ts.
+export interface WorkerMigrationDataMessage {
+  type: 'migrationData'
+  resX: number
+  resY: number
+  race: ArrayBuffer // Int8 owning race per cell (-1 = unreached)
+  density: ArrayBuffer // Float32 population per cell
+  flow: ArrayBuffer // Float32 accumulated population up the tree (arrow width)
+  predecessor: ArrayBuffer // Int32 parent cell toward the origin (-1 = root/unreached)
+}
+
 // The data a world SAVE needs (see the save/load feature): the JSON-able sim
 // snapshot plus the two large float rasters carried as binary buffers. The
 // caller (WorldGenScreen) packages these into the zip alongside world.yaml.
@@ -345,6 +369,9 @@ let lastHydrologyLakeDepth: Float32Array | null = null
 let lastHydrologyMaxDischarge = 0
 let lastHydrologyMeanRunoff = 0
 let hydrologyDirty = true
+// Carrying-capacity field cached from the last computeEcology — the initial-
+// migration step reads it as the population/density driver.
+let lastEcologyCarryingCapacity: Float32Array | null = null
 
 // Event markers no longer live here — they moved to the main thread as
 // wall-clock-faded overlay markers driven by the forwarded sim events (see
@@ -727,6 +754,9 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       tinRarity: message.tinRarity,
       weights: message.weights,
     })
+    // Cache a copy of carrying capacity BEFORE the buffers below are transferred
+    // (transfer neuters them) — the migration step reads it.
+    lastEcologyCarryingCapacity = eco.fields.carryingCapacity.slice()
     const fields = Object.entries(eco.fields).map(([id, data]) => ({ id, data: data.buffer as ArrayBuffer }))
     const ecologyMessage: WorkerEcologyDataMessage = {
       type: 'ecologyData',
@@ -735,6 +765,25 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       fields,
     }
     self.postMessage(ecologyMessage, fields.map((f) => f.data))
+  } else if (message.type === 'computeMigration') {
+    // Needs ecology's carrying capacity (density) + the current climate/hydrology
+    // for the cost field. Discharge is downsampled to the coarse grid for river corridors.
+    if (!sim || !lastRawElevations || !lastClimatePrecip || !lastEcologyCarryingCapacity) return
+    const coarseDischarge = lastHydrologyDischarge ? downsampleMax(lastHydrologyDischarge, sim.width, sim.height, CLIMATE_RES_X, CLIMATE_RES_Y) : null
+    const mig = computeMigration(lastEcologyCarryingCapacity, lastClimatePrecip, lastRawElevations, coarseDischarge, lastHydrologyMaxDischarge, message.origins, sim.width, sim.height, {
+      spreadBudget: message.spreadBudget,
+      seaCrossing: message.seaCrossing,
+    })
+    const migrationMessage: WorkerMigrationDataMessage = {
+      type: 'migrationData',
+      resX: mig.resX,
+      resY: mig.resY,
+      race: mig.race.buffer as ArrayBuffer,
+      density: mig.density.buffer as ArrayBuffer,
+      flow: mig.flow.buffer as ArrayBuffer,
+      predecessor: mig.predecessor.buffer as ArrayBuffer,
+    }
+    self.postMessage(migrationMessage, [migrationMessage.race, migrationMessage.density, migrationMessage.flow, migrationMessage.predecessor])
   } else if (message.type === 'serializeWorld') {
     if (!sim || !lastRawElevations) return
     // .slice() so transferring these buffers doesn't neuter the live sim's

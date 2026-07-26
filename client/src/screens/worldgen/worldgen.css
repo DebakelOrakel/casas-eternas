@@ -121,6 +121,25 @@
   gap: 0.4rem;
 }
 
+/* Per-panel reset button — bottom-aligned, left of the first slider. */
+.worldgen-flat-screen .panel-reset {
+  align-self: flex-end;
+  margin-bottom: 0.15rem;
+}
+
+/* Ghost dot that follows the cursor while dragging a migration origin. */
+.worldgen-flat-screen .migration-origin-ghost {
+  position: fixed;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  z-index: 10;
+}
+
 /* Ecology category buttons (Subsistence / Material / Prestige) in the base row —
    click to reveal that category's per-field sliders in the fold-out sub-row. */
 .worldgen-flat-screen .ecology-cat-buttons {

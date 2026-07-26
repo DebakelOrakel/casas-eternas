@@ -57,6 +57,10 @@ export interface HexMapCamera {
   // reading raw camera.position there would recenter around the wrong
   // spot by a large, tilt-dependent margin.
   getFocus: () => { x: number; z: number }
+  // Enable/disable pan-by-drag. Used to hand the pointer to another drag
+  // consumer (e.g. dragging a migration origin marker) without the map panning
+  // underneath it. Disabling also cancels any pan in progress.
+  setPanEnabled: (enabled: boolean) => void
 }
 
 export function createHexMapCamera(options: HexMapCameraOptions): HexMapCamera {
@@ -143,6 +147,7 @@ export function createHexMapCamera(options: HexMapCameraOptions): HexMapCamera {
   }
 
   let isDragging = false
+  let panEnabled = true
   let lastPointerX = 0
   let lastPointerY = 0
   const pointerObserver: Observer<PointerInfo> | null = scene.onPointerObservable.add((pointerInfo) => {
@@ -152,7 +157,7 @@ export function createHexMapCamera(options: HexMapCameraOptions): HexMapCamera {
       lastPointerY = pointerInfo.event.clientY
     } else if (pointerInfo.type === PointerEventTypes.POINTERUP) {
       isDragging = false
-    } else if (pointerInfo.type === PointerEventTypes.POINTERMOVE && isDragging) {
+    } else if (pointerInfo.type === PointerEventTypes.POINTERMOVE && isDragging && panEnabled) {
       const deltaX = pointerInfo.event.clientX - lastPointerX
       const deltaY = pointerInfo.event.clientY - lastPointerY
       lastPointerX = pointerInfo.event.clientX
@@ -215,6 +220,10 @@ export function createHexMapCamera(options: HexMapCameraOptions): HexMapCamera {
     },
     getFocus() {
       return { x: focusX, z: focusZ }
+    },
+    setPanEnabled(enabled: boolean) {
+      panEnabled = enabled
+      if (!enabled) isDragging = false // cancel any pan in progress
     },
     dispose() {
       scene.onPointerObservable.remove(pointerObserver)

@@ -1,4 +1,4 @@
-import { Color4, Scene } from '@babylonjs/core'
+import { Color4, PointerEventTypes, Scene } from '@babylonjs/core'
 import { createHexMapCamera } from '../../camera/hexMapCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
@@ -6,7 +6,7 @@ import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/mapConfig'
 import JSZip from 'jszip'
-import type { WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
+import type { WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/continentLabelRenderer'
 import type { PlateArrow } from '../../worldgen/elevationMapImage'
@@ -24,6 +24,14 @@ import './worldgen.css'
 
 // The ecology per-field abundance weights persisted in world.yaml (keys `w_<field>`).
 const ECOLOGY_WEIGHT_FIELDS: EcologyFieldId[] = ['arable', 'fish', 'game', 'pasture', 'timber', 'salt', 'toolStone', 'copper', 'tin', 'iron', 'gold', 'silver', 'gems']
+
+// The initial-migration races (icon toggles + distinct hues). Order = the race
+// index used in migrationOrigins / the worker's race field.
+const MIGRATION_RACES: { id: string; label: string; icon: string; rgb: [number, number, number] }[] = [
+  { id: 'caveman', label: 'Cavemen', icon: 'caveman', rgb: [86, 116, 200] },
+  { id: 'dwarf', label: 'Dwarves', icon: 'dwarf', rgb: [96, 176, 92] },
+  { id: 'beaver', label: 'Beavers', icon: 'beaver', rgb: [216, 76, 58] },
+]
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
 // from the worker's boundary mask — see the compositor).
@@ -98,7 +106,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const scene = new Scene(ctx.engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
 
-  const { dispose: disposeCamera, getFocus: getCameraFocus } = createHexMapCamera({
+  const { dispose: disposeCamera, getFocus: getCameraFocus, setPanEnabled: setCameraPanEnabled } = createHexMapCamera({
     scene,
     canvas: ctx.canvas,
     engine: ctx.engine,
@@ -241,6 +249,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
     </div>
     <div class="panel" data-panel="2">
+      <button type="button" class="icon-button panel-reset" data-action="reset-erosion" aria-label="Revert to tectonics result">
+        <img src="/icons/reset.png" alt="" />
+      </button>
       <label class="field">
         <span class="field-label">Strength: <span><span data-value="erosion-strength-label">4</span>×</span></span>
         <input type="range" class="erosion-strength-input" min="1" max="5" step="1" value="4" aria-label="Erosion strength multiplier" />
@@ -251,9 +262,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
       <label class="field field--icon-row">
         <span class="field-row">
-          <button type="button" class="icon-button" data-action="reset-erosion" aria-label="Revert to tectonics result">
-            <img src="/icons/reset.png" alt="" />
-          </button>
           <button type="button" class="icon-button" data-action="erode" aria-label="Run erosion">
             <img src="/icons/erosion.png" alt="" />
           </button>
@@ -261,6 +269,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
     </div>
     <div class="panel" data-panel="3">
+      <button type="button" class="icon-button panel-reset" data-action="reset-climate" aria-label="Reset climate to defaults">
+        <img src="/icons/reset.png" alt="" />
+      </button>
       <label class="field">
         <span class="field-label">Temperature: <span><span data-value="temp-band-label">0</span>°C</span></span>
         <input type="range" class="temp-band-input" min="-20" max="20" step="1" value="0" aria-label="Temperature offset (°C)" />
@@ -294,6 +305,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
     </div>
     <div class="panel" data-panel="5">
+      <button type="button" class="icon-button panel-reset" data-action="reset-ecology" aria-label="Reset ecology to defaults">
+        <img src="/icons/reset.png" alt="" />
+      </button>
       <label class="field" data-ecofield="carryingCapacity">
         <span class="field-label">Carrying capacity: <span><span data-value="carrying-capacity-label">100</span>%</span></span>
         <input type="range" class="carrying-capacity-input" min="50" max="200" step="5" value="100" aria-label="Carrying capacity (%)" />
@@ -313,6 +327,24 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <button type="button" class="icon-button ecology-cat" data-eco-cat="prestige" aria-label="Prestige"><img src="/icons/crown.png" alt="" /></button>
       </span>
       <div class="ecology-foldout" data-value="ecology-foldout" hidden></div>
+    </div>
+    <div class="panel" data-panel="6">
+      <button type="button" class="icon-button panel-reset" data-action="reset-migration" aria-label="Reset migration to defaults">
+        <img src="/icons/reset.png" alt="" />
+      </button>
+      <label class="field">
+        <span class="field-label">Spread: <span data-value="migration-spread-label">120</span></span>
+        <input type="range" class="migration-spread-input" min="20" max="400" step="10" value="120" aria-label="Migration spread extent" />
+      </label>
+      <label class="field">
+        <span class="field-label">Arrows: <span data-value="migration-threshold-label">50</span></span>
+        <input type="range" class="migration-threshold-input" min="0" max="100" step="5" value="50" aria-label="Arrow prune threshold" />
+      </label>
+      <label class="field">
+        <span class="field-label">Sea crossing: <span data-value="migration-sea-label">30</span>%</span>
+        <input type="range" class="migration-sea-input" min="0" max="100" step="5" value="30" aria-label="Sea crossing" />
+      </label>
+      <span class="ecology-cat-buttons" data-value="migration-races"></span>
     </div>
   `
 
@@ -340,6 +372,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   strengthInput.addEventListener('input', () => { strengthLabel.textContent = strengthInput.value })
   refreshInput.addEventListener('input', () => { refreshLabel.textContent = refreshInput.value })
   const resetErosionButton = root.querySelector<HTMLButtonElement>('[data-action="reset-erosion"]')!
+  const resetClimateButton = root.querySelector<HTMLButtonElement>('[data-action="reset-climate"]')!
+  const resetEcologyButton = root.querySelector<HTMLButtonElement>('[data-action="reset-ecology"]')!
+  const resetMigrationButton = root.querySelector<HTMLButtonElement>('[data-action="reset-migration"]')!
   const loadWorldButton = root.querySelector<HTMLButtonElement>('[data-action="load-world"]')!
   const saveWorldButton = root.querySelector<HTMLButtonElement>('[data-action="save-world"]')!
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
@@ -357,6 +392,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const carryingCapacityLabel = root.querySelector<HTMLElement>('[data-value="carrying-capacity-label"]')!
   const concentrationInput = root.querySelector<HTMLInputElement>('.concentration-input')!
   const concentrationLabel = root.querySelector<HTMLElement>('[data-value="concentration-label"]')!
+  const migrationSpreadInput = root.querySelector<HTMLInputElement>('.migration-spread-input')!
+  const migrationSpreadLabel = root.querySelector<HTMLElement>('[data-value="migration-spread-label"]')!
+  const migrationThresholdInput = root.querySelector<HTMLInputElement>('.migration-threshold-input')!
+  const migrationThresholdLabel = root.querySelector<HTMLElement>('[data-value="migration-threshold-label"]')!
+  const migrationSeaInput = root.querySelector<HTMLInputElement>('.migration-sea-input')!
+  const migrationSeaLabel = root.querySelector<HTMLElement>('[data-value="migration-sea-label"]')!
   const tempMaxLabel = root.querySelector<HTMLElement>('[data-value="temp-max"]')!
   const tempMinLabel = root.querySelector<HTMLElement>('[data-value="temp-min"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
@@ -385,6 +426,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let climateInFlight = false
   let hydrologyInFlight = false
   let ecologyInFlight = false
+  let migrationInFlight = false
   // One-shot resolvers so the save flow can await each compute (compute-on-save):
   // set before requesting a step, called by its data handler when it lands.
   let climateResolve: (() => void) | null = null
@@ -394,7 +436,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // panel's own auto-recompute so it doesn't double-fire.
   let saveChainActive = false
   let erosionProgressFraction = 0
-  const isBusy = (): boolean => simRunning || erosionOpInFlight || climateInFlight || hydrologyInFlight || ecologyInFlight
+  const isBusy = (): boolean => simRunning || erosionOpInFlight || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight
 
   // Disable every panel control while a compute runs; the running process keeps its
   // stop button live (tectonics = toggle-sim, erosion = erode, which becomes a stop).
@@ -403,6 +445,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     randomizeButton.disabled = busy
     resetButton.disabled = busy
     resetErosionButton.disabled = busy
+    resetClimateButton.disabled = busy
+    resetEcologyButton.disabled = busy
+    resetMigrationButton.disabled = busy
     loadWorldButton.disabled = busy
     saveWorldButton.disabled = busy
     // Stop buttons of the active process stay enabled.
@@ -425,7 +470,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       computeProgress.hidden = false
       computeProgress.classList.remove('is-indeterminate')
       computeProgressFill.style.width = `${Math.round(erosionProgressFraction * 100)}%`
-    } else if (simRunning || climateInFlight || hydrologyInFlight || ecologyInFlight) {
+    } else if (simRunning || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight) {
       computeProgress.hidden = false
       computeProgress.classList.add('is-indeterminate')
       computeProgressFill.style.width = ''
@@ -503,6 +548,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let ecologyResX = 0
   let ecologyResY = 0
   const hasEcologyData = (): boolean => lastEcologyFields.carryingCapacity != null
+  // Initial-migration panel — its own step after ecology. Three races (icon toggles),
+  // origins auto-placed at good cradles, least-cost dispersal → density + arrow tree.
+  const MIGRATION_PANEL_INDEX = 6
+  let lastMigration: { race: Int8Array; density: Float32Array; flow: Float32Array; predecessor: Int32Array; resX: number; resY: number } | null = null
+  const migrationRaceEnabled = MIGRATION_RACES.map(() => true)
+  let migrationOrigins: { cell: number; race: number }[] = [] // one per race index (by MIGRATION_RACES order)
+  let migrationMaxDensity = 0 // for the density-fill brightness (cached on compute)
+  let migrationMaxFlow = 0 // for the arrow-tree width + threshold (cached on compute)
 
   function paintBoundaryMask(data: Uint8ClampedArray): void {
     if (!lastBoundaryMask) return
@@ -870,6 +923,109 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // Migration density fill: each reached cell tinted its race's hue, alpha ∝
+  // population density (denser = stronger). Ocean/unreached left as terrain.
+  function paintMigration(data: Uint8ClampedArray): void {
+    if (!lastMigration || migrationMaxDensity <= 0) return
+    const { race, density, resX, resY } = lastMigration
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const gy = Math.min(resY - 1, Math.floor((y / MAP_HEIGHT) * resY))
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        const gx = Math.min(resX - 1, Math.floor((x / MAP_WIDTH) * resX))
+        const cell = gy * resX + gx
+        const r = race[cell]
+        if (r < 0) continue
+        const a = 0.62 * Math.min(1, density[cell] / migrationMaxDensity)
+        if (a < 0.02) continue
+        const [rr, gg, bb] = MIGRATION_RACES[r].rgb
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - a) + rr * a
+        data[p + 1] = data[p + 1] * (1 - a) + gg * a
+        data[p + 2] = data[p + 2] * (1 - a) + bb * a
+      }
+    }
+  }
+
+  // Migration arrow-tree: the pruned predecessor tree drawn as tapering ribbons —
+  // each edge's width ∝ the population flowing through it, so a corridor narrows
+  // as it fans out (flow[child] < flow[parent]). Race sets the hue, local density
+  // modulates brightness, and arrowheads mark only the outer *drawn* tips (the
+  // frontiers) so direction reads without clutter. Pruned by the "arrows"
+  // threshold slider (higher = lower flow cut = more arrows). No-op until computed.
+  const MIGRATION_ARROW_MAX_WIDTH = 15
+  const MIGRATION_ARROW_MIN_WIDTH = 1.4
+  function drawMigrationArrows(c: CanvasRenderingContext2D): void {
+    if (!lastMigration || migrationMaxFlow <= 0) return
+    const { race, density, flow, predecessor, resX, resY } = lastMigration
+    const n = resX * resY
+    // Flow spans orders of magnitude (trunk ≈ whole population, leaf ≈ one cell),
+    // so the slider maps EXPONENTIALLY onto the flow cut: s=0 → only the fattest
+    // trunks (0.12·max), s=1 → fine branches (0.0004·max). Higher slider = more arrows.
+    const s = Math.max(0, Math.min(1, Number(migrationThresholdInput.value) / 100))
+    const threshold = migrationMaxFlow * Math.exp(Math.log(0.12) + s * (Math.log(0.0004) - Math.log(0.12))) + 1e-9
+    const cellWX = (cell: number): number => (((cell % resX) + 0.5) / resX) * MAP_WIDTH
+    const cellWY = (cell: number): number => ((Math.floor(cell / resX) + 0.5) / resY) * MAP_HEIGHT
+    const wd = (a: number, b: number, m: number): number => { let d = a - b; if (d > m / 2) d -= m; if (d < -m / 2) d += m; return d }
+    // A drawn cell is a frontier tip if no drawn child hangs off it.
+    const hasDrawnChild = new Uint8Array(n)
+    for (let i = 0; i < n; i++) {
+      if (race[i] < 0 || flow[i] <= threshold) continue
+      const p = predecessor[i]
+      if (p >= 0) hasDrawnChild[p] = 1
+    }
+    c.lineCap = 'round'
+    c.lineJoin = 'round'
+    for (let i = 0; i < n; i++) {
+      if (race[i] < 0 || flow[i] <= threshold) continue
+      const p = predecessor[i]
+      if (p < 0) continue
+      const cx = cellWX(i)
+      const cy = cellWY(i)
+      const ddx = wd(cellWX(p), cx, MAP_WIDTH) // child→parent, wrapped (edges are grid-adjacent)
+      const ddy = wd(cellWY(p), cy, MAP_HEIGHT)
+      const width = MIGRATION_ARROW_MIN_WIDTH + (MIGRATION_ARROW_MAX_WIDTH - MIGRATION_ARROW_MIN_WIDTH) * Math.sqrt(Math.min(1, flow[i] / migrationMaxFlow))
+      const bright = 0.45 + 0.55 * (migrationMaxDensity > 0 ? Math.min(1, density[i] / migrationMaxDensity) : 1)
+      const [rr, gg, bb] = MIGRATION_RACES[race[i]].rgb
+      const col = `rgb(${Math.round(rr * bright)},${Math.round(gg * bright)},${Math.round(bb * bright)})`
+      c.strokeStyle = col
+      c.lineWidth = width
+      c.beginPath()
+      c.moveTo(cx + ddx, cy + ddy)
+      c.lineTo(cx, cy)
+      c.stroke()
+      if (!hasDrawnChild[i]) {
+        const angle = Math.atan2(-ddy, -ddx) // outward = parent→child direction
+        const head = Math.max(13, width * 3.2)
+        c.fillStyle = col
+        c.beginPath()
+        c.moveTo(cx + Math.cos(angle) * head, cy + Math.sin(angle) * head)
+        c.lineTo(cx + Math.cos(angle + 2.5) * head * 0.6, cy + Math.sin(angle + 2.5) * head * 0.6)
+        c.lineTo(cx + Math.cos(angle - 2.5) * head * 0.6, cy + Math.sin(angle - 2.5) * head * 0.6)
+        c.closePath()
+        c.fill()
+      }
+    }
+  }
+
+  // Origin markers: a filled disc in the race hue at each enabled race's origin.
+  function drawMigrationOrigins(c: CanvasRenderingContext2D): void {
+    for (const o of migrationOrigins) {
+      if (!lastMigration || !migrationRaceEnabled[o.race]) continue
+      const gy = Math.floor(o.cell / lastMigration.resX)
+      const gx = o.cell - gy * lastMigration.resX
+      const wx = ((gx + 0.5) / lastMigration.resX) * MAP_WIDTH
+      const wy = ((gy + 0.5) / lastMigration.resY) * MAP_HEIGHT
+      const [r, g, b] = MIGRATION_RACES[o.race].rgb
+      c.beginPath()
+      c.arc(wx, wy, 16, 0, Math.PI * 2)
+      c.fillStyle = `rgb(${r},${g},${b})`
+      c.fill()
+      c.lineWidth = 4
+      c.strokeStyle = 'rgba(255,255,255,0.9)'
+      c.stroke()
+    }
+  }
+
   overlay.setLayers([
     // Muted terrain wash first (bottom-most tint, over the relief base).
     { id: 'terrain', label: 'Terrain', enabled: false, hidden: true, paintPixels: paintTerrain },
@@ -879,6 +1035,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'seasonality', label: 'Seasonality', enabled: false, hidden: true, paintPixels: paintSeasonality },
     { id: 'biomes', label: 'Biomes', enabled: false, hidden: true, paintPixels: paintBiomes },
     { id: 'ecology', label: 'Ecology', enabled: false, hidden: true, paintPixels: paintEcology },
+    // Migration: race-tinted density fill (paintPixels) + origin markers (paint).
+    { id: 'migration', label: 'Migration', enabled: false, hidden: true, paintPixels: paintMigration, paint: (c) => paintWrapped(c, (cc) => { drawMigrationArrows(cc); drawMigrationOrigins(cc) }) },
     // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
     { id: 'mantle', label: 'Mantle', enabled: false, hidden: true, paintPixels: paintMantle, paint: (c) => paintWrapped(c, drawMantleMarkers) },
     { id: 'boundaries', label: 'Boundaries', enabled: false, paintPixels: paintBoundaryMask },
@@ -996,6 +1154,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     {
       id: 'ecology', icon: '/icons/ecology.png', label: 'Ecology (resources)', available: hasEcologyData,
       legend: () => ({ type: 'gradient', title: ECOLOGY_FIELD_META[selectedEcologyField].label, unit: '', stops: ecologyFieldLegendStops(selectedEcologyField) }),
+    },
+    // TODO(icon): placeholder caveman.png — a dedicated migration icon later.
+    {
+      id: 'migration', icon: '/icons/caveman.png', label: 'Migration', available: () => lastMigration !== null,
+      legend: { type: 'swatches', title: 'Peoples', items: MIGRATION_RACES.map((r) => ({ label: r.label, rgb: r.rgb })) },
     },
   ]
   // Desired on/off per overlay (persists as availability comes and goes). Voronoi
@@ -1400,7 +1563,94 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // stales it — recomputed on the next ecology-panel open / slider tweak.
   function invalidateEcology(): void {
     lastEcologyFields = {}
+    invalidateMigration() // migration reads ecology's carrying capacity
     updateOverlays()
+  }
+
+  // --- initial migration ---
+
+  function invalidateMigration(): void {
+    lastMigration = null
+    migrationMaxDensity = 0
+    migrationMaxFlow = 0
+    updateOverlays()
+  }
+
+  // Greedily pick one origin per race at the highest-carrying-capacity land cells,
+  // spaced apart (torus distance) so the races don't start on top of each other.
+  function autoPlaceMigrationOrigins(): void {
+    const cc = lastEcologyFields.carryingCapacity
+    if (!cc) return
+    const rx = ecologyResX
+    const ry = ecologyResY
+    const minDistSq = (rx * 0.22) * (rx * 0.22)
+    const excluded = new Uint8Array(rx * ry)
+    const chosen: number[] = []
+    for (let k = 0; k < MIGRATION_RACES.length; k++) {
+      let best = -1
+      let bestV = -Infinity
+      for (let i = 0; i < cc.length; i++) {
+        if (cc[i] === ECOLOGY_OCEAN || excluded[i]) continue
+        if (cc[i] > bestV) { bestV = cc[i]; best = i }
+      }
+      if (best < 0) break
+      chosen.push(best)
+      const by = Math.floor(best / rx)
+      const bx = best - by * rx
+      for (let i = 0; i < cc.length; i++) {
+        const gy = Math.floor(i / rx)
+        const gx = i - gy * rx
+        const dx = Math.min(Math.abs(gx - bx), rx - Math.abs(gx - bx))
+        const dy = Math.min(Math.abs(gy - by), ry - Math.abs(gy - by))
+        if (dx * dx + dy * dy < minDistSq) excluded[i] = 1
+      }
+    }
+    migrationOrigins = chosen.map((cell, race) => ({ cell, race }))
+  }
+
+  function handleMigrationData(message: WorkerMigrationDataMessage): void {
+    lastMigration = {
+      race: new Int8Array(message.race),
+      density: new Float32Array(message.density),
+      flow: new Float32Array(message.flow),
+      predecessor: new Int32Array(message.predecessor),
+      resX: message.resX,
+      resY: message.resY,
+    }
+    let maxD = 0
+    for (const v of lastMigration.density) if (v > maxD) maxD = v
+    migrationMaxDensity = maxD
+    let maxF = 0
+    for (const v of lastMigration.flow) if (v > maxF) maxF = v
+    migrationMaxFlow = maxF
+    migrationInFlight = false
+    updateControlsDisabled()
+    updateProgress()
+    updateOverlays()
+  }
+
+  // Posts a migration compute with the enabled races' origins + the sliders. Needs
+  // ecology (carrying capacity, cached in the worker) — the panel ensures it first.
+  function requestMigration(): void {
+    if (simRunning || !hasEcologyData() || migrationOrigins.length === 0) return
+    const origins = migrationOrigins.filter((o) => migrationRaceEnabled[o.race])
+    if (origins.length === 0) { invalidateMigration(); return } // all races off → nothing
+    migrationInFlight = true
+    updateControlsDisabled()
+    updateProgress()
+    postToWorker({ type: 'computeMigration', origins, spreadBudget: Number(migrationSpreadInput.value), seaCrossing: Number(migrationSeaInput.value) / 100 })
+  }
+
+  // Ensures the upstream chain (climate → hydrology → ecology) is computed, then
+  // auto-places origins (first time) and computes migration. Runs on panel open;
+  // no panel switch (the computes are worker-side).
+  async function ensureMigration(): Promise<void> {
+    if (simRunning || erosionRunCount < 1) return
+    if (lastTemperature === null) await awaitCompute((r) => { climateResolve = r }, requestClimate)
+    if (lastRiverData === null) await awaitCompute((r) => { hydrologyResolve = r }, requestHydrology)
+    if (!hasEcologyData()) await awaitCompute((r) => { ecologyResolve = r }, requestEcology)
+    if (migrationOrigins.length === 0) autoPlaceMigrationOrigins()
+    requestMigration()
   }
 
   // Posts an ecology compute with the current top-slider values. Needs a computed
@@ -1438,7 +1688,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     URL.revokeObjectURL(url)
   }
 
-  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerEcologyDataMessage | WorkerWorldDataMessage>) => {
+  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerEcologyDataMessage | WorkerMigrationDataMessage | WorkerWorldDataMessage>) => {
     const message = event.data
 
     if (message.type === 'erosionProgress') {
@@ -1464,6 +1714,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
     if (message.type === 'ecologyData') {
       handleEcologyData(message)
+      return
+    }
+
+    if (message.type === 'migrationData') {
+      handleMigrationData(message)
       return
     }
 
@@ -2017,11 +2272,151 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // so no flicker) — the previewed overlay disappears when the mouse is away.
   ecologyPanel.addEventListener('mouseleave', clearPreview)
 
+  // Migration panel: 3 race enable/disable icon-toggles + the 3 sliders. Spread +
+  // sea-crossing recompute (debounced); arrow threshold is a render-only knob
+  // (the arrow tree — Phase 3), so it just recomposites.
+  const migrationRacesContainer = root.querySelector<HTMLElement>('[data-value="migration-races"]')!
+  MIGRATION_RACES.forEach((race, i) => {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'icon-button ecology-cat is-active'
+    btn.title = race.label
+    btn.setAttribute('aria-label', race.label)
+    const img = document.createElement('img')
+    img.src = `/icons/${race.icon}.png`
+    img.alt = ''
+    btn.appendChild(img)
+    btn.addEventListener('click', () => {
+      migrationRaceEnabled[i] = !migrationRaceEnabled[i]
+      btn.classList.toggle('is-active', migrationRaceEnabled[i])
+      requestMigration()
+    })
+    migrationRacesContainer.appendChild(btn)
+  })
+  let migrationDebounce: ReturnType<typeof setTimeout> | undefined
+  const scheduleMigration = (): void => {
+    if (simRunning) return
+    clearTimeout(migrationDebounce)
+    migrationDebounce = setTimeout(requestMigration, 150)
+  }
+  migrationSpreadInput.addEventListener('input', () => { migrationSpreadLabel.textContent = migrationSpreadInput.value; scheduleMigration() })
+  migrationSeaInput.addEventListener('input', () => { migrationSeaLabel.textContent = migrationSeaInput.value; scheduleMigration() })
+  migrationThresholdInput.addEventListener('input', () => { migrationThresholdLabel.textContent = migrationThresholdInput.value; updateOverlays() })
+
+  // Per-panel reset: restore that panel's sliders to their defaults + recompute.
+  resetClimateButton.addEventListener('click', () => {
+    tempBandInput.value = '0'; equatorOffsetInput.value = '0'; humidityInput.value = '100'; contrastInput.value = '100'
+    tempBandLabel.textContent = '0'; equatorOffsetLabel.textContent = '0'; humidityLabel.textContent = '100'; contrastLabel.textContent = '100'
+    requestClimate()
+  })
+  resetEcologyButton.addEventListener('click', () => {
+    carryingCapacityInput.value = '100'; carryingCapacityLabel.textContent = '100'
+    concentrationInput.value = '0'; concentrationLabel.textContent = '0'
+    provinceInput.value = '45'; provinceLabel.textContent = '45'
+    for (const f of ECOLOGY_WEIGHT_FIELDS) {
+      const inp = foldoutInputs[f]
+      const lbl = foldoutLabels[f]
+      if (inp) inp.value = '100'
+      if (lbl) lbl.textContent = '100'
+    }
+    requestEcology()
+  })
+  resetMigrationButton.addEventListener('click', () => {
+    migrationSpreadInput.value = '120'; migrationSpreadLabel.textContent = '120'
+    migrationThresholdInput.value = '50'; migrationThresholdLabel.textContent = '50'
+    migrationSeaInput.value = '30'; migrationSeaLabel.textContent = '30'
+    migrationRaceEnabled.fill(true)
+    for (const btn of migrationRacesContainer.querySelectorAll('.ecology-cat')) btn.classList.add('is-active')
+    migrationOrigins = [] // re-auto-place at the default cradles
+    if (lastEcologyFields.carryingCapacity) autoPlaceMigrationOrigins()
+    requestMigration()
+  })
+
+  // --- Phase 2b: drag a migration origin marker to reposition it ---
+  const originGhost = document.createElement('div')
+  originGhost.className = 'migration-origin-ghost'
+  originGhost.hidden = true
+  root.appendChild(originGhost)
+  let draggingOriginRace = -1
+
+  // Pointer → full-res map texel (Babylon picking; wraps with the torus tiling).
+  const pointerToTexel = (): { mx: number; my: number } | null => {
+    const pick = scene.pick(scene.pointerX, scene.pointerY)
+    const uv = pick?.hit ? pick.getTextureCoordinates() : null
+    return uv ? { mx: uv.x * MAP_WIDTH, my: uv.y * MAP_HEIGHT } : null
+  }
+  // Nearest land cell (coarse grid) to a texel; spirals out if it lands on ocean.
+  const snapToLandCell = (mx: number, my: number): number => {
+    const cc = lastEcologyFields.carryingCapacity
+    if (!cc) return -1
+    const rx = ecologyResX
+    const ry = ecologyResY
+    const wrap = (i: number, m: number): number => ((i % m) + m) % m
+    const gx0 = wrap(Math.floor((mx / MAP_WIDTH) * rx), rx)
+    const gy0 = wrap(Math.floor((my / MAP_HEIGHT) * ry), ry)
+    const isLand = (i: number): boolean => cc[i] !== ECOLOGY_OCEAN
+    if (isLand(gy0 * rx + gx0)) return gy0 * rx + gx0
+    for (let r = 1; r < Math.max(rx, ry); r++) {
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
+        const ni = wrap(gy0 + dy, ry) * rx + wrap(gx0 + dx, rx)
+        if (isLand(ni)) return ni
+      }
+    }
+    return -1
+  }
+  scene.onPointerObservable.add((info) => {
+    if (panelIndex !== MIGRATION_PANEL_INDEX || !lastMigration) return
+    const { resX, resY } = lastMigration
+    if (info.type === PointerEventTypes.POINTERDOWN) {
+      const t = pointerToTexel()
+      if (!t) return
+      const hitR = MAP_WIDTH * 0.03
+      let best = -1
+      let bestD = hitR
+      for (const o of migrationOrigins) {
+        if (!migrationRaceEnabled[o.race]) continue
+        const gy = Math.floor(o.cell / resX)
+        const gx = o.cell - gy * resX
+        const ox = ((gx + 0.5) / resX) * MAP_WIDTH
+        const oy = ((gy + 0.5) / resY) * MAP_HEIGHT
+        const dx = Math.min(Math.abs(t.mx - ox), MAP_WIDTH - Math.abs(t.mx - ox))
+        const dy = Math.min(Math.abs(t.my - oy), MAP_HEIGHT - Math.abs(t.my - oy))
+        const d = Math.hypot(dx, dy)
+        if (d < bestD) { bestD = d; best = o.race }
+      }
+      if (best >= 0) {
+        draggingOriginRace = best
+        setCameraPanEnabled(false)
+        const [r, g, b] = MIGRATION_RACES[best].rgb
+        originGhost.style.background = `rgb(${r},${g},${b})`
+        originGhost.style.left = `${info.event.clientX}px`
+        originGhost.style.top = `${info.event.clientY}px`
+        originGhost.hidden = false
+      }
+    } else if (info.type === PointerEventTypes.POINTERMOVE && draggingOriginRace >= 0) {
+      originGhost.style.left = `${info.event.clientX}px`
+      originGhost.style.top = `${info.event.clientY}px`
+    } else if (info.type === PointerEventTypes.POINTERUP && draggingOriginRace >= 0) {
+      const t = pointerToTexel()
+      originGhost.hidden = true
+      setCameraPanEnabled(true)
+      const race = draggingOriginRace
+      draggingOriginRace = -1
+      if (t) {
+        const cell = snapToLandCell(t.mx, t.my)
+        const o = migrationOrigins.find((o) => o.race === race)
+        if (cell >= 0 && o) { o.cell = cell; requestMigration() }
+      }
+    }
+  })
+
   const regenerate = (): void => {
     stopSim()
     ctx.notifications.clearAll()
     overlay.clearMarkers()
     invalidateClimate()
+    migrationOrigins = [] // fresh world → re-auto-place origins on the next migration open
     erosionRunCount = 0
     initSim(seedInput.value, Number(plateCountInput.value), Number(landFractionInput.value), Number(clusteringInput.value), Number(cratonCountInput.value))
     updateNavState() // fresh world → re-lock downstream panels
@@ -2067,7 +2462,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // parameters (seed, plate counts) live on panel 0, tectonics on panel
   // 1, erosion on panel 2 — future panels slot in the same way via the
   // data-panel pattern, with one more entry in PANEL_TITLES to match.
-  const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion', 'Climate', 'Hydrology', 'Ecology']
+  const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion', 'Climate', 'Hydrology', 'Ecology', 'Migration']
   const panelTitle = root.querySelector<HTMLElement>('[data-value="panel-title"]')!
   const nextArrow = root.querySelector<HTMLButtonElement>('[data-action="next"]')!
   const panels = Array.from(root.querySelectorAll<HTMLElement>('.panel'))
@@ -2082,7 +2477,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const MIN_TECTONIC_EPOCHS = 30
   const entryRequirementUnmet = (index: number): string | null => {
     if (index === 2 && lastEpoch < MIN_TECTONIC_EPOCHS) return `First run tectonics to at least epoch ${MIN_TECTONIC_EPOCHS} (now ${lastEpoch}).`
-    if ((index === CLIMATE_PANEL_INDEX || index === HYDROLOGY_PANEL_INDEX || index === ECOLOGY_PANEL_INDEX) && erosionRunCount < 1) return 'First run erosion at least once — climate, rivers and ecology need the eroded terrain.'
+    if ((index === CLIMATE_PANEL_INDEX || index === HYDROLOGY_PANEL_INDEX || index === ECOLOGY_PANEL_INDEX || index === MIGRATION_PANEL_INDEX) && erosionRunCount < 1) return 'First run erosion at least once — climate, rivers, ecology and migration need the eroded terrain.'
     return null
   }
   // Grey out (but keep clickable, so a click can explain why) the next arrow when
@@ -2118,6 +2513,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       if (lastRiverData === null) requestHydrology()
       else if (!hasEcologyData()) requestEcology()
     }
+    // Entering Migration ensures the whole upstream chain (climate → hydrology →
+    // ecology), auto-places origins the first time, then computes the migration.
+    if (index === MIGRATION_PANEL_INDEX && lastMigration === null) void ensureMigration()
     // The terrain colour wash is panel-contextual: on for the shaping panels
     // (Genesis/Tectonics/Erosion), off for the neutral data panels (Climate/
     // Rivers). Still toggleable in the bar within a panel; resets on switch.
@@ -2134,6 +2532,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // makes it visible once the compute finishes.
     overlaysOn.ecology = index === ECOLOGY_PANEL_INDEX
     ecologyHoverField = null // drop any stale hover preview when switching panels
+    // Migration density fill + origin markers come on in the Migration panel.
+    overlaysOn.migration = index === MIGRATION_PANEL_INDEX
     if (lastColoredBase) updateOverlays()
     updateNavState()
   }

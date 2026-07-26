@@ -1,7 +1,7 @@
 ---
 summary: PROTO — the first Anthropology output. Seeds the world's peoples via USER-PLACED origins (one per race, ~3 races, toggleable) and a least-cost dispersal over the Ecology suitability, producing a "migration arrow-tree" (Dijkstra predecessor tree, arrow width = accumulated population flow, colour = race) over a coarse population-density background. Steerable-deterministic: the user places origins, the spread is deterministic.
 date: 2026-07-26
-status: proto / designing — theme-by-theme, nothing built
+status: proto BUILT — all 5 themes decided, Phases 1–3 built (worker core, panel + drag origins, ribbon arrow-tree)
 ---
 
 # Anthropology — initial migration (proto)
@@ -110,9 +110,45 @@ So the whole thing recycles what we already have:
    bridges are crossable; exposed, not hidden). Deferred: per-race terrain
    preference, discrete settlements, contact graph, seafaring race.
 
-**DESIGN ROUND COMPLETE (2026-07-26)** — all 5 themes decided. Ready to build,
-phased like Ecology: cost field + Dijkstra/tree/flow in the worker → panel + race
-toggles + draggable origins → ribbon arrow-tree render over the density fill.
+**DESIGN ROUND COMPLETE (2026-07-26)** — all 5 themes decided. Building phased
+like Ecology.
+
+## Implementation status
+
+- **Phase 1 — worker core ✅ BUILT + verified 2026-07-26.**
+  `client/src/worldgen/migration/migrationField.ts`: `computeMigration()` — builds
+  the physical cost field (slope + depth-based water with seaCrossing threshold +
+  coast/river corridors), runs a multi-source Dijkstra (binary-heap) over the
+  torus grid → per-cell `cost` / `race` / `predecessor`, then the frontier-gradient
+  `density` (capacity × fillFraction) and `flow` (population accumulated up the
+  predecessor tree). Headless-verified: predecessor tree + monotonic cost,
+  budget-cutoff frontier, flow = subtree population, deep water blocks / shallow +
+  land bridges cross, multi-source race watersheds.
+- **Phase 2a — panel + compute plumbing + density overlay ✅ BUILT 2026-07-26.**
+  Migration panel (index 6, gated on erosion) with **3 race icon-toggles**
+  (caveman/dwarf/beaver) + **3 sliders** (spread N, arrow threshold, sea
+  crossing); `computeMigration` worker message (worker caches ecology's carrying
+  capacity + downsamples discharge); a **compute-on-open chain** (climate →
+  hydrology → ecology → migration, reusing the awaitCompute helpers); **auto-placed
+  origins** (greedy top-capacity, torus-spaced) shown as markers; **race-tinted
+  density-fill overlay** (alpha ∝ density) + origin discs. The arrow-threshold
+  slider is wired but render-only (arrows are Phase 3). Icon = placeholder
+  caveman.png.
+- **Phase 2b — drag origins ✅ BUILT 2026-07-26.** Pointerdown on a marker (hit
+  radius, toroidal) starts a drag: the camera pan is suspended (new
+  `hexMapCamera.setPanEnabled`), a colour ghost dot follows the cursor (live, no
+  canvas repaint); pointerup snaps to the nearest land cell and recomputes.
+  Pointer→texel via Babylon picking (`getTextureCoordinates`, torus-aware).
+- **Phase 3 — ribbon arrow-tree render ✅ BUILT 2026-07-26.** `drawMigrationArrows`
+  draws the pruned predecessor tree as tapering ribbons: each edge parent→child at
+  `lineWidth ∝ √(flow[child]/maxFlow)` (round caps/joins), so a corridor narrows as
+  it fans out. Race sets the hue, local density modulates brightness, and
+  arrowheads mark only the outer *drawn* tips (cells above threshold with no drawn
+  child = frontiers). Torus-safe (wrapped child→parent delta + `paintWrapped`),
+  drawn under the origin discs. **Threshold slider maps EXPONENTIALLY** onto the
+  flow cut (`max·[0.12 → 0.0004]`, higher = more arrows) since flow spans orders of
+  magnitude (trunk ≈ whole population, leaf ≈ one cell); default 50. This completes
+  the initial-migration proto — all phases built.
 
 ## Open questions
 
