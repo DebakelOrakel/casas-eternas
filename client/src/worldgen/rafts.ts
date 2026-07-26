@@ -19,6 +19,13 @@ export interface RaftBlob {
   x: number
   y: number
   radius: number
+  // World epoch this piece of continental crust formed: 0 for the original
+  // cratonic nuclei (oldest), the accretion epoch for margin blobs welded on at
+  // subduction arcs (younger). Gives a real old-interior/young-margin craton-age
+  // gradient (continents grow by marginal accretion) that the Ecology layer
+  // samples for iron (old cratons). Optional so pre-existing saved rafts, which
+  // lack it, simply read as age 0 (oldest). See docs/decisions/ecology.md P2.
+  birthEpoch?: number
 }
 
 export interface Raft {
@@ -46,6 +53,21 @@ export interface RaftMergeEvent {
   y: number
   tangentX: number
   tangentY: number
+}
+
+// A persisted collision-belt record: the accumulated history of every raft
+// suture, kept for the world's life (NOT pruned like terrain features) so
+// deep-time orogens survive as the Ecology layer's provenance for tin, lode
+// gold, and metamorphic gems. One is appended per RaftMergeEvent (see
+// plateSimulation.stepEpoch); `epoch` stamps when the collision happened, so an
+// old suture can read differently from a fresh one. See docs/decisions/ecology.md P1.
+export interface Suture {
+  x: number
+  y: number
+  // Unit tangent along the collision seam (the fold-mountain belt's long axis).
+  tangentX: number
+  tangentY: number
+  epoch: number
 }
 
 // What a continental breakup (splitRaftAtRift) reports: the parent
@@ -150,6 +172,7 @@ export function accreteToNearestRaft(
   x: number,
   y: number,
   blobRadius: number,
+  epoch: number,
   minGapSq: number,
   maxAttachSq: number,
   width: number,
@@ -167,7 +190,9 @@ export function accreteToNearestRaft(
     }
   }
   if (nearestRaft < 0 || nearestDistSq < minGapSq || nearestDistSq > maxAttachSq) return false
-  rafts[nearestRaft].blobs.push({ x, y, radius: blobRadius })
+  // Young crust: stamped with the accretion epoch so the raft's margins read
+  // younger than its cratonic interior (see RaftBlob.birthEpoch).
+  rafts[nearestRaft].blobs.push({ x, y, radius: blobRadius, birthEpoch: epoch })
   return true
 }
 
@@ -435,7 +460,8 @@ export function generateInitialRafts(random: () => number, landFraction: number,
       const dist = random() * baseReach
       const bx = (((cx + Math.cos(angle) * dist) % width) + width) % width
       const by = (((cy + Math.sin(angle) * dist) % height) + height) % height
-      blobs.push({ x: bx, y: by, radius: baseReach * (0.5 + random() * 0.5) })
+      // Original cratonic nuclei: age 0, the oldest crust in the world.
+      blobs.push({ x: bx, y: by, radius: baseReach * (0.5 + random() * 0.5), birthEpoch: 0 })
     }
     rafts.push({ id: c, name: null, blobs })
   }

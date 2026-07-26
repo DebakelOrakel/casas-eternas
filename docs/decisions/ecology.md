@@ -133,14 +133,32 @@ tectonic provenance:
 - **Iron** → old craton interiors (old rafts) + **bog iron** in wetlands.
   **Common — the point:** iron's ubiquity is *why* it democratised metal.
 
-> **Feasibility note (implementation):** full-geological needs the ecology step
-> to see more than the current render exposes. Arc volcanoes/hotspots and
-> boundary masks exist; but **tin (collision sutures)** and **iron (craton age)**
-> need the sim to surface **raft-merge/suture zones** and **raft/crust age**, and
-> iron/salt need **wetland** flags. Confirm these are derivable (raft merge
-> history + raft age + hydrology wetlands) or plan to expose them. If any is
-> impractical, fall back to the simplified coupling (cluster near boundaries +
-> per-metal rarity) for *that* metal only. **Check this first when building.**
+> **Recon result (2026-07-26 — resolved, full-geological confirmed feasible).**
+> The Ecology step runs in the worker with full access to `sim` (like
+> `computeClimate`/`computeHydrology`). Data status per source:
+>
+> - 🟢 **Copper (arcs):** available — `sim.features` with `volcanic===true` +
+>   `sim.hotspots`; `collectVolcanoes()` already extracts them.
+> - 🟡 **Tin / gold-lode / gems-metamorphic (collision sutures):** the suture
+>   geometry (`RaftMergeEvent`: x, y, tangent) is computed every epoch in
+>   `mergeOverlappingRafts` but **thrown away** (only forwarded as a fading
+>   overlay marker); fold-mountain *features* persist but get pruned after ~150
+>   idle epochs, so deep-time orogens are lost. **Fix (PREREQ P1): cache them** —
+>   a persistent `sim.sutures` list, appended each merge (+ epoch stamp), added
+>   to the save snapshot. Cheap.
+> - 🔴→✅ **Iron (old cratons):** no crust age was tracked. **DECIDED (PREREQ
+>   P2): per-blob `birthEpoch`** on `RaftBlob` — initial craton blobs = 0
+>   (oldest), accreted margin blobs = `sim.epoch` (young). Gives the real
+>   old-interior/young-margin gradient; static (no per-epoch cost); rides the
+>   existing raft serialization. (Rejected a continental-age raster: same
+>   *information*, but per-epoch advection cost + desync risk for a provenance
+>   field — no realism gain.)
+> - 🟢 **Iron bog / wetlands, and rock salt basins:** not an explicit sim type,
+>   but **derivable** in Ecology from hydrology (low slope + high water-strength/
+>   near-lake + poor drainage + moisture > evaporation). A weighting fn, not
+>   missing data.
+> - 🟢 **Placer gold, salt evaporation, gems arid-weathering:** rivers +
+>   climate aridity (`evaporationPotential`, existing salt-lake logic) + coast.
 
 ## Theme 4 — prestige (gold · silver · gems)
 
@@ -179,6 +197,39 @@ contact) that Anthropology consumes. Ecology only places the goods.
 **Specialisation** (generalist ↔ specialist) — a real 4th spatial axis
 (per-location diversity, de-correlating the fields), but subtle → **back-pocket /
 future fold-out**, not in v1.
+
+# Implementation plan
+
+Phase 0 (recon) done — see the recon result under Theme 3. Then:
+
+**Prereqs (small sim-data plumbing) — ✅ DONE + verified 2026-07-26:**
+
+- **P1 — suture cache.** ✅ `sim.sutures: Suture[]` (`{x, y, tangentX,
+  tangentY, epoch}`, type in rafts.ts), appended in `stepEpoch` where
+  `raftMerges` is produced; in the snapshot + serialize/deserialize
+  (`?? []` for old saves). (Tin / gold-lode / gems provenance.)
+- **P2 — blob `birthEpoch`.** ✅ Optional field on `RaftBlob`; set in
+  `generateInitialRafts` (0 = oldest craton) and `accreteToNearestRaft`
+  (`sim.epoch` = young margin). Rides raft serialization; missing = 0 for old
+  saves. (Iron / craton age.)
+- Verified headless: birthEpoch gradient populates (craton 0 / accreted margins
+  up to near current epoch), sutures accumulate + persist, determinism
+  unchanged (no RNG touched), save round-trip + legacy fallback both OK.
+
+**Ecology feature:**
+
+1. **Vertical slice** — a `computeEcology` worker step (new message, like
+   `computeClimate`) that reads sim + climate + hydrology and outputs the
+   **carrying-capacity** field (subsistence aggregate, saturating) through the
+   **concentration pipeline** (`normalise → L1 gamma → L2 province → gain`);
+   the new **panel** with the **2 top sliders**; one **overlay** (carrying
+   capacity). Something visible early.
+2. **Resource fields** — fill in the named fields + their overlays: subsistence
+   (fish/game+ecotone/pasture), material (timber/salt/tool-stone/metals via
+   arcs+sutures+craton-age+wetlands), prestige (gold/silver/gems). The fold-out
+   (togglable `.field` group) with the per-role nudges + metals submenu.
+3. **Polish** — legends, colours, world.yaml fields, save/load, wetlands
+   derivation, title-screen mission bullet.
 
 # Provocations to resolve later
 

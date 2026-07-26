@@ -12,7 +12,7 @@ import { hashSeedString, mulberry32 } from './rng'
 import type { SeededRandom } from './rng'
 import type { PlateType } from './plateTypes'
 import { generateInitialRafts, advanceRafts, derivePlateTypes, accreteToNearestRaft, mergeOverlappingRafts, splitRaftAtRift, splitDisconnectedRafts, raftMembership, pickUnusedRaftName } from './rafts'
-import type { Raft, RaftBlob, RaftSplitEvent } from './rafts'
+import type { Raft, RaftBlob, RaftSplitEvent, Suture } from './rafts'
 import { createOceanAgeField, advectOceanAge, resetOceanAgeAt } from './oceanAge'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from './terrainFeatures'
 import type { TerrainFeature } from './terrainFeatures'
@@ -304,6 +304,12 @@ export interface PlateSimulation {
   // every epoch, so the plate carries a chain away (a hotspot trail, Hawaii-style;
   // Phase M3). Fixed for the world's life.
   hotspots: { x: number; y: number }[]
+  // Accumulated collision-belt history: every raft suture ever formed, kept for
+  // the world's life (unlike terrain features, which get pruned). The Ecology
+  // layer reads these as the provenance for tin / lode gold / metamorphic gems —
+  // deep-time orogens that the pruned mountain features no longer record. See
+  // rafts.ts Suture and docs/decisions/ecology.md P1.
+  sutures: Suture[]
 }
 
 // How fast a plate's motion relaxes toward the mantle-flow-fitted target each
@@ -430,6 +436,7 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
     continentalRiftCooldownUntil: 0,
     mantle: createMantleField(random),
     hotspots: generateHotspots(random, width, height),
+    sutures: [],
   }
 }
 
@@ -454,6 +461,7 @@ export interface PlateSimulationSnapshot {
   supercontinentActive: boolean
   continentalRiftCooldownUntil: number
   hotspots: { x: number; y: number }[]
+  sutures: Suture[]
   rngState: number
 }
 
@@ -472,6 +480,7 @@ export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationS
     supercontinentActive: sim.supercontinentActive,
     continentalRiftCooldownUntil: sim.continentalRiftCooldownUntil,
     hotspots: sim.hotspots,
+    sutures: sim.sutures,
     rngState: sim.random.state(),
   }
 }
@@ -503,6 +512,10 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
     // independent RNG so it doesn't disturb the bit-identical continuation RNG.
     mantle: createMantleField(mulberry32((snap.warpSeed ^ 0x5bd1e995) >>> 0)),
     hotspots: snap.hotspots ?? [],
+    // Old saves predate the suture cache — start empty; sutures re-accumulate as
+    // the restored world keeps colliding continents (deep-time record is lost for
+    // pre-existing saves, but never crashes). See P1.
+    sutures: snap.sutures ?? [],
   }
 }
 
@@ -862,7 +875,7 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
         const inLen = Math.sqrt(inX * inX + inY * inY) || 1
         const accreteX = (((boundary.x + (inX / inLen) * ACCRETION_INSET) % width) + width) % width
         const accreteY = (((boundary.y + (inY / inLen) * ACCRETION_INSET) % height) + height) % height
-        accreteToNearestRaft(sim.rafts, accreteX, accreteY, ACCRETION_BLOB_RADIUS, ACCRETION_MIN_GAP_SQ, ACCRETION_MAX_ATTACH_SQ, width, height)
+        accreteToNearestRaft(sim.rafts, accreteX, accreteY, ACCRETION_BLOB_RADIUS, sim.epoch, ACCRETION_MIN_GAP_SQ, ACCRETION_MAX_ATTACH_SQ, width, height)
       }
     }
 
@@ -934,6 +947,13 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   // epoch suture into one (Phase 2c). Each suture is a continent-collision
   // event (name + seam geometry) for the notification/overlay layer.
   const raftMerges = mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, sim.epoch, width, height)
+  // Persist each collision belt for the world's life — terrain features get
+  // pruned, so this is the only durable record of deep-time orogens (Ecology
+  // provenance for tin / lode gold / gems). Stamped with the current epoch
+  // (pre-increment). Merges are rare/gated, so this list grows slowly.
+  for (const m of raftMerges) {
+    sim.sutures.push({ x: m.x, y: m.y, tangentX: m.tangentX, tangentY: m.tangentY, epoch: sim.epoch })
+  }
 
   // Continental breakup: a sustained divergent point under a continent tears it
   // into two halves that the rift gap shoves apart (Phase 2d). Independent of
