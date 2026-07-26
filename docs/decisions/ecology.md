@@ -309,8 +309,18 @@ strength promoted to a main slider (with carrying capacity + concentration; all
 three preview the aggregate on hover). Per-metal weights replaced the shared
 "ore richness"; tin-rarity radius knob dropped (per-field weights instead).
 
-Remaining: Phase 3 polish (world.yaml save/load of ecology params) + the parked
-overlay-bar-categories rework.
+**Save/load persistence (2026-07-26) ✅:** ecology params now round-trip in
+world.yaml — `carryingCapacity`, `concentration`, `provinceStrength`, and the 13
+per-field weights as `w_<field>` (see `ECOLOGY_WEIGHT_FIELDS`). buildWorldYaml
+writes them, loadWorldFromZip reads them, syncSliderLabels refreshes the readouts.
+
+**Fold-out categories → 4 (2026-07-26):** Subsistence (wheat) · Material
+(stone_axe: timber/salt/tool-stone) · **Metals** (ecology: copper/tin/iron) ·
+Prestige (crown: silver/gold/gems). Each field has its own icon.
+
+**ECOLOGY IS COMPLETE.** Remaining project work: the parked overlay-bar-categories
+rework, and the **Anthropology panel** (the other half of the human layer — see
+anthropology.md; dispersal model, not yet started).
 3. **Polish** — legends, colours, world.yaml fields, save/load, wetlands
    derivation, title-screen mission bullet.
 

@@ -21,6 +21,9 @@ import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
 import './worldgen.css'
 
+// The ecology per-field abundance weights persisted in world.yaml (keys `w_<field>`).
+const ECOLOGY_WEIGHT_FIELDS: EcologyFieldId[] = ['arable', 'fish', 'game', 'pasture', 'timber', 'salt', 'toolStone', 'copper', 'tin', 'iron', 'gold', 'silver', 'gems']
+
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
 // from the worker's boundary mask — see the compositor).
 const BOUNDARY_COLOR: [number, number, number] = [15, 15, 15]
@@ -1618,6 +1621,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       `  riverDensity: ${Number(riverDensityInput.value)}`,
       `  erosionStrength: ${Number(strengthInput.value)}`,
       `  drainageRefresh: ${Number(refreshInput.value)}`,
+      `  carryingCapacity: ${Number(carryingCapacityInput.value)}`,
+      `  concentration: ${Number(concentrationInput.value)}`,
+      `  provinceStrength: ${Number(provinceInput.value)}`,
+      ...ECOLOGY_WEIGHT_FIELDS.map((f) => `  w_${f}: ${Number(foldoutInputs[f]?.value ?? 100)}`),
       'status:',
       `  tectonicsRun: ${lastEpoch}`,
       `  erosionRun: ${erosionRunCount}`,
@@ -1640,6 +1647,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverDensityLabel.textContent = riverDensityInput.value
     strengthLabel.textContent = strengthInput.value
     refreshLabel.textContent = refreshInput.value
+    carryingCapacityLabel.textContent = carryingCapacityInput.value
+    const c = Number(concentrationInput.value)
+    concentrationLabel.textContent = c > 0 ? `+${c}` : String(c)
+    provinceLabel.textContent = provinceInput.value
+    for (const f of ECOLOGY_WEIGHT_FIELDS) {
+      const lbl = foldoutLabels[f]
+      const inp = foldoutInputs[f]
+      if (lbl && inp) lbl.textContent = inp.value
+    }
   }
 
   // Flat, single-occurrence keys → a tiny regex parser, no YAML dependency.
@@ -1726,6 +1742,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverDensityInput.value = readYamlValue(yaml, 'riverDensity') ?? '55'
     strengthInput.value = readYamlValue(yaml, 'erosionStrength') ?? strengthInput.value
     refreshInput.value = readYamlValue(yaml, 'drainageRefresh') ?? refreshInput.value
+    carryingCapacityInput.value = readYamlValue(yaml, 'carryingCapacity') ?? '100'
+    concentrationInput.value = readYamlValue(yaml, 'concentration') ?? '0'
+    provinceInput.value = readYamlValue(yaml, 'provinceStrength') ?? '45'
+    for (const f of ECOLOGY_WEIGHT_FIELDS) {
+      const inp = foldoutInputs[f]
+      if (inp) inp.value = readYamlValue(yaml, `w_${f}`) ?? '100'
+    }
     syncSliderLabels()
     erosionRunCount = Number(readYamlValue(yaml, 'erosionRun') ?? 0)
     // lastEpoch is set from the restore render's reported epoch (status
@@ -1842,6 +1865,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const CAT_ICON: Record<string, string> = { subsistence: 'wheat', material: 'stone_axe', metals: 'ecology', prestige: 'crown' }
   const ecologyFoldout = root.querySelector<HTMLElement>('[data-value="ecology-foldout"]')!
   const foldoutInputs: Partial<Record<EcologyFieldId, HTMLInputElement>> = {}
+  const foldoutLabels: Partial<Record<EcologyFieldId, HTMLElement>> = {}
   const catPanels: Record<string, HTMLElement> = {}
   for (const cat of ECOLOGY_CATEGORIES) {
     const panel = document.createElement('div')
@@ -1877,6 +1901,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       row.addEventListener('mouseenter', () => previewField(field))
       panel.appendChild(row)
       foldoutInputs[field] = input
+      foldoutLabels[field] = val
     }
     ecologyFoldout.appendChild(panel)
     catPanels[cat.id] = panel
