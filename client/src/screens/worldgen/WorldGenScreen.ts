@@ -6,7 +6,7 @@ import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/mapConfig'
 import JSZip from 'jszip'
-import type { WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
+import type { WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/continentLabelRenderer'
 import type { PlateArrow } from '../../worldgen/elevationMapImage'
@@ -17,6 +17,8 @@ import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, tem
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
 import { biomeColor, biomeLabel, biomeLegend, Biome } from '../../worldgen/climate/biomes'
+import { ECOLOGY_FIELD_META, ECOLOGY_ROLE_LABELS, ecologyFieldColor, ecologyFieldLegendStops, type EcologyRole } from '../../worldgen/ecology/ecologyColors'
+import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
 import './worldgen.css'
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
@@ -287,6 +289,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <input type="range" class="river-density-input" min="0" max="100" step="1" value="55" aria-label="River density" />
       </label>
     </div>
+    <div class="panel" data-panel="5">
+      <label class="field">
+        <span class="field-label">Show</span>
+        <select class="ecology-field-select" aria-label="Ecology field to display"></select>
+      </label>
+      <label class="field">
+        <span class="field-label">Carrying capacity: <span><span data-value="carrying-capacity-label">100</span>%</span></span>
+        <input type="range" class="carrying-capacity-input" min="50" max="200" step="5" value="100" aria-label="Carrying capacity (%)" />
+      </label>
+      <label class="field">
+        <span class="field-label">Concentration: <span data-value="concentration-label">0</span></span>
+        <input type="range" class="concentration-input" min="-100" max="100" step="5" value="0" aria-label="Resource concentration (even ↔ clumped)" />
+      </label>
+    </div>
   `
 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
@@ -326,6 +342,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const equatorOffsetLabel = root.querySelector<HTMLElement>('[data-value="equator-offset-label"]')!
   const riverDensityInput = root.querySelector<HTMLInputElement>('.river-density-input')!
   const riverDensityLabel = root.querySelector<HTMLElement>('[data-value="river-density-label"]')!
+  const carryingCapacityInput = root.querySelector<HTMLInputElement>('.carrying-capacity-input')!
+  const carryingCapacityLabel = root.querySelector<HTMLElement>('[data-value="carrying-capacity-label"]')!
+  const concentrationInput = root.querySelector<HTMLInputElement>('.concentration-input')!
+  const concentrationLabel = root.querySelector<HTMLElement>('[data-value="concentration-label"]')!
   const tempMaxLabel = root.querySelector<HTMLElement>('[data-value="temp-max"]')!
   const tempMinLabel = root.querySelector<HTMLElement>('[data-value="temp-min"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
@@ -353,8 +373,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let erosionOpInFlight = false
   let climateInFlight = false
   let hydrologyInFlight = false
+  let ecologyInFlight = false
   let erosionProgressFraction = 0
-  const isBusy = (): boolean => simRunning || erosionOpInFlight || climateInFlight || hydrologyInFlight
+  const isBusy = (): boolean => simRunning || erosionOpInFlight || climateInFlight || hydrologyInFlight || ecologyInFlight
 
   // Disable every panel control while a compute runs; the running process keeps its
   // stop button live (tectonics = toggle-sim, erosion = erode, which becomes a stop).
@@ -385,7 +406,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       computeProgress.hidden = false
       computeProgress.classList.remove('is-indeterminate')
       computeProgressFill.style.width = `${Math.round(erosionProgressFraction * 100)}%`
-    } else if (simRunning || climateInFlight || hydrologyInFlight) {
+    } else if (simRunning || climateInFlight || hydrologyInFlight || ecologyInFlight) {
       computeProgress.hidden = false
       computeProgress.classList.add('is-indeterminate')
       computeProgressFill.style.width = ''
@@ -447,6 +468,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const HYDROLOGY_PANEL_INDEX = 4
   let lastRiverData: { points: Float32Array; lengths: Uint32Array } | null = null
   let lastLakeDepth: Float32Array | null = null
+  // Ecology (resource/suitability) panel — its own step after hydrology. Phase 1:
+  // the carrying-capacity field only. null until computed / invalidated.
+  const ECOLOGY_PANEL_INDEX = 5
+  // All computed ecology fields, keyed by id (see ecology/ecologyField). The
+  // single ecology overlay paints whichever `selectedEcologyField` is chosen in
+  // the panel selector. `ecologyFieldMax` caches each field's land-max for the
+  // relative (non-absolute) fields' paint + hover normalisation.
+  let lastEcologyFields: Partial<Record<EcologyFieldId, Float32Array>> = {}
+  let selectedEcologyField: EcologyFieldId = 'carryingCapacity'
+  const ecologyFieldMax: Partial<Record<EcologyFieldId, number>> = {}
+  let ecologyResX = 0
+  let ecologyResY = 0
+  const hasEcologyData = (): boolean => lastEcologyFields.carryingCapacity != null
 
   function paintBoundaryMask(data: Uint8ClampedArray): void {
     if (!lastBoundaryMask) return
@@ -549,6 +583,33 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       for (let x = 0; x < MAP_WIDTH; x++) {
         const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
         const [r, g, b] = temperatureColor(lastTemperature[gy * climateResX + gx])
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - alpha) + r * alpha
+        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
+        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
+      }
+    }
+  }
+
+  // Ecology tint: paints whichever field the panel selector has chosen, land
+  // only. Carrying capacity uses an ABSOLUTE scale (so its gain knob shows as the
+  // whole map dimming/greening); the relative resource fields normalise to their
+  // own land-max. Ocean = ECOLOGY_OCEAN sentinel, left as terrain. No-op until
+  // computed.
+  function paintEcology(data: Uint8ClampedArray): void {
+    const field = lastEcologyFields[selectedEcologyField]
+    if (!field) return
+    const meta = ECOLOGY_FIELD_META[selectedEcologyField]
+    const denom = meta.absolute ? 1 : (ecologyFieldMax[selectedEcologyField] ?? 0)
+    if (!meta.absolute && denom <= 0) return
+    const alpha = 0.6
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const gy = Math.min(ecologyResY - 1, Math.floor((y / MAP_HEIGHT) * ecologyResY))
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        const gx = Math.min(ecologyResX - 1, Math.floor((x / MAP_WIDTH) * ecologyResX))
+        const v = field[gy * ecologyResX + gx]
+        if (v === ECOLOGY_OCEAN) continue
+        const [r, g, b] = ecologyFieldColor(selectedEcologyField, v / denom)
         const p = (y * MAP_WIDTH + x) * 4
         data[p] = data[p] * (1 - alpha) + r * alpha
         data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
@@ -798,6 +859,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'monsoon', label: 'Monsoon', enabled: false, hidden: true, paintPixels: paintMonsoon },
     { id: 'seasonality', label: 'Seasonality', enabled: false, hidden: true, paintPixels: paintSeasonality },
     { id: 'biomes', label: 'Biomes', enabled: false, hidden: true, paintPixels: paintBiomes },
+    { id: 'ecology', label: 'Ecology', enabled: false, hidden: true, paintPixels: paintEcology },
     // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
     { id: 'mantle', label: 'Mantle', enabled: false, hidden: true, paintPixels: paintMantle, paint: (c) => paintWrapped(c, drawMantleMarkers) },
     { id: 'boundaries', label: 'Boundaries', enabled: false, paintPixels: paintBoundaryMask },
@@ -889,7 +951,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   type LegendSpec =
     | { type: 'gradient'; title: string; unit: string; stops: { value: number; rgb: [number, number, number] }[] }
     | { type: 'swatches'; title: string; items: { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' | 'ring' }[] }
-  const OVERLAY_DEFS: { id: string; icon: string; label: string; available: () => boolean; legend?: LegendSpec }[] = [
+  // `legend` may be a function so an overlay (ecology) can vary its legend with the
+  // selected field. Resolved at render time (see resolveLegend / renderLegends).
+  const OVERLAY_DEFS: { id: string; icon: string; label: string; available: () => boolean; legend?: LegendSpec | (() => LegendSpec) }[] = [
     { id: 'terrain', icon: '/icons/colours.png', label: 'Terrain colour', available: () => lastColoredBase !== null },
     { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null },
     { id: 'names', icon: '/icons/continent_name.png', label: 'Continent names', available: () => lastRaftLabels.length > 0 },
@@ -910,6 +974,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'monsoon', icon: '/icons/weather.png', label: 'Monsoon / precip seasonality', available: () => lastMonsoonIndex !== null, legend: { type: 'gradient', title: 'Monsoon index', unit: '', stops: monsoonLegendStops } },
     { id: 'biomes', icon: '/icons/biomes.png', label: 'Biomes', available: () => lastBiomes !== null, legend: { type: 'swatches', title: 'Biomes', items: biomeLegend() } },
     { id: 'rivers', icon: '/icons/river.png', label: 'Rivers & lakes', available: () => lastRiverData !== null },
+    {
+      id: 'ecology', icon: '/icons/ecology.png', label: 'Ecology (resources)', available: hasEcologyData,
+      legend: () => ({ type: 'gradient', title: ECOLOGY_FIELD_META[selectedEcologyField].label, unit: '', stops: ecologyFieldLegendStops(selectedEcologyField) }),
+    },
   ]
   // Desired on/off per overlay (persists as availability comes and goes). Voronoi
   // + names + mantle default on (they show as soon as their data exists); terrain
@@ -1014,7 +1082,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       overlayLegend.replaceChildren()
       return
     }
-    overlayLegend.replaceChildren(...active.map((d) => buildLegendBlock(d.legend!)))
+    overlayLegend.replaceChildren(...active.map((d) => buildLegendBlock(typeof d.legend === 'function' ? d.legend() : d.legend!)))
     overlayLegend.hidden = false
   }
 
@@ -1154,6 +1222,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const gy = Math.min(climateResY - 1, Math.floor((mapY / MAP_HEIGHT) * climateResY))
     const i = gy * climateResX + gx
     const lines: string[] = []
+    if (overlaysOn.ecology && lastEcologyFields[selectedEcologyField]) {
+      const meta = ECOLOGY_FIELD_META[selectedEcologyField]
+      const v = lastEcologyFields[selectedEcologyField]![i]
+      const denom = meta.absolute ? 1 : (ecologyFieldMax[selectedEcologyField] ?? 1)
+      lines.push(v === ECOLOGY_OCEAN ? 'Ocean' : `${meta.label} ${Math.round((v / denom) * 100)}%`)
+    }
     if (overlaysOn.biomes && lastBiomes) lines.push(biomeLabel(lastBiomes[i]))
     if (overlaysOn.temperature && lastTemperature) lines.push(`${Math.round(lastTemperature[i])} °C`)
     if (overlaysOn.precipitation && lastPrecipitation) {
@@ -1227,6 +1301,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Rivers depend on both topography and climate, so any climate invalidation
     // (which fires on every topography change too) also stales the hydrology.
     invalidateHydrology()
+    // Ecology reads the climate (productivity) too, so it stales alongside.
+    invalidateEcology()
     updateOverlays() // climate overlays no longer available
   }
 
@@ -1280,6 +1356,46 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     })
   }
 
+  function handleEcologyData(message: WorkerEcologyDataMessage): void {
+    lastEcologyFields = {}
+    for (const f of message.fields) {
+      const arr = new Float32Array(f.data)
+      lastEcologyFields[f.id as EcologyFieldId] = arr
+      // Land-max cached for the relative fields' paint/hover normalisation.
+      let max = 0
+      for (const v of arr) if (v !== ECOLOGY_OCEAN && v > max) max = v
+      ecologyFieldMax[f.id as EcologyFieldId] = max
+    }
+    ecologyResX = message.resX
+    ecologyResY = message.resY
+    ecologyInFlight = false
+    updateControlsDisabled()
+    updateProgress()
+    updateOverlays() // ecology overlay now available
+  }
+
+  // Ecology depends on climate (+ the sim's volcanoes), so any climate change
+  // stales it — recomputed on the next ecology-panel open / slider tweak.
+  function invalidateEcology(): void {
+    lastEcologyFields = {}
+    updateOverlays()
+  }
+
+  // Posts an ecology compute with the current top-slider values. Needs a computed
+  // climate (its cached temperature+precipitation feed productivity); the ecology
+  // panel ensures that first. Self-guards a running sim.
+  function requestEcology(): void {
+    if (simRunning) return
+    ecologyInFlight = true
+    updateControlsDisabled()
+    updateProgress()
+    postToWorker({
+      type: 'computeEcology',
+      carryingCapacity: Number(carryingCapacityInput.value),
+      concentration: Number(concentrationInput.value),
+    })
+  }
+
   function downloadBlob(blob: Blob, filename: string): void {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -1289,7 +1405,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     URL.revokeObjectURL(url)
   }
 
-  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerWorldDataMessage>) => {
+  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerEcologyDataMessage | WorkerWorldDataMessage>) => {
     const message = event.data
 
     if (message.type === 'erosionProgress') {
@@ -1310,6 +1426,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
     if (message.type === 'hydrologyData') {
       handleHydrologyData(message)
+      return
+    }
+
+    if (message.type === 'ecologyData') {
+      handleEcologyData(message)
       return
     }
 
@@ -1644,6 +1765,51 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     hydrologyDebounce = setTimeout(requestHydrology, 150)
   })
 
+  // Ecology top sliders (carrying capacity + concentration): live-recompute
+  // (debounced) — cheap (a single pass over the coarse climate grid). Concentration
+  // shows a signed value (+ clumped / − even).
+  let ecologyDebounce: ReturnType<typeof setTimeout> | undefined
+  const scheduleEcology = (): void => {
+    if (simRunning) return
+    clearTimeout(ecologyDebounce)
+    ecologyDebounce = setTimeout(requestEcology, 150)
+  }
+  carryingCapacityInput.addEventListener('input', () => {
+    carryingCapacityLabel.textContent = carryingCapacityInput.value
+    scheduleEcology()
+  })
+  concentrationInput.addEventListener('input', () => {
+    const v = Number(concentrationInput.value)
+    concentrationLabel.textContent = v > 0 ? `+${v}` : String(v)
+    scheduleEcology()
+  })
+
+  // Ecology field selector: one <select>, options grouped by role (built from the
+  // field registry so it grows as sub-steps add fields). Switching just repaints
+  // the single ecology overlay with the chosen field — no recompute.
+  const ecologyFieldSelect = root.querySelector<HTMLSelectElement>('.ecology-field-select')!
+  {
+    const byRole: Record<EcologyRole, EcologyFieldId[]> = { aggregate: [], subsistence: [], material: [], prestige: [] }
+    for (const id of Object.keys(ECOLOGY_FIELD_META) as EcologyFieldId[]) byRole[ECOLOGY_FIELD_META[id].role].push(id)
+    for (const role of ['aggregate', 'subsistence', 'material', 'prestige'] as EcologyRole[]) {
+      if (byRole[role].length === 0) continue
+      const group = document.createElement('optgroup')
+      group.label = ECOLOGY_ROLE_LABELS[role]
+      for (const id of byRole[role]) {
+        const opt = document.createElement('option')
+        opt.value = id
+        opt.textContent = ECOLOGY_FIELD_META[id].label
+        group.appendChild(opt)
+      }
+      ecologyFieldSelect.appendChild(group)
+    }
+    ecologyFieldSelect.value = selectedEcologyField
+  }
+  ecologyFieldSelect.addEventListener('change', () => {
+    selectedEcologyField = ecologyFieldSelect.value as EcologyFieldId
+    updateOverlays() // repaint the ecology layer + refresh its (dynamic) legend
+  })
+
   const regenerate = (): void => {
     stopSim()
     ctx.notifications.clearAll()
@@ -1694,7 +1860,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // parameters (seed, plate counts) live on panel 0, tectonics on panel
   // 1, erosion on panel 2 — future panels slot in the same way via the
   // data-panel pattern, with one more entry in PANEL_TITLES to match.
-  const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion', 'Climate', 'Hydrology']
+  const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion', 'Climate', 'Hydrology', 'Ecology']
   const panelTitle = root.querySelector<HTMLElement>('[data-value="panel-title"]')!
   const nextArrow = root.querySelector<HTMLButtonElement>('[data-action="next"]')!
   const panels = Array.from(root.querySelectorAll<HTMLElement>('.panel'))
@@ -1709,7 +1875,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const MIN_TECTONIC_EPOCHS = 30
   const entryRequirementUnmet = (index: number): string | null => {
     if (index === 2 && lastEpoch < MIN_TECTONIC_EPOCHS) return `First run tectonics to at least epoch ${MIN_TECTONIC_EPOCHS} (now ${lastEpoch}).`
-    if ((index === CLIMATE_PANEL_INDEX || index === HYDROLOGY_PANEL_INDEX) && erosionRunCount < 1) return 'First run erosion at least once — climate and rivers need the eroded terrain.'
+    if ((index === CLIMATE_PANEL_INDEX || index === HYDROLOGY_PANEL_INDEX || index === ECOLOGY_PANEL_INDEX) && erosionRunCount < 1) return 'First run erosion at least once — climate, rivers and ecology need the eroded terrain.'
     return null
   }
   // Grey out (but keep clickable, so a click can explain why) the next arrow when
@@ -1736,6 +1902,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       if (lastTemperature === null) requestClimate()
       if (lastRiverData === null) requestHydrology()
     }
+    // Entering Ecology ensures a climate first (its cached temperature +
+    // precipitation feed productivity — posting climate then ecology keeps that
+    // order in the worker), then computes the carrying-capacity field if stale.
+    if (index === ECOLOGY_PANEL_INDEX) {
+      if (lastTemperature === null) requestClimate()
+      if (!hasEcologyData()) requestEcology()
+    }
     // The terrain colour wash is panel-contextual: on for the shaping panels
     // (Genesis/Tectonics/Erosion), off for the neutral data panels (Climate/
     // Rivers). Still toggleable in the bar within a panel; resets on switch.
@@ -1747,6 +1920,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // reason you're there), off elsewhere — same per-panel reset. Once the compute
     // finishes, handleHydrologyData's updateOverlays() makes the layer visible.
     overlaysOn.rivers = index === HYDROLOGY_PANEL_INDEX
+    // Carrying-capacity overlay comes on automatically in the Ecology panel (the
+    // reason you're there), off elsewhere. handleEcologyData's updateOverlays()
+    // makes it visible once the compute finishes.
+    overlaysOn.ecology = index === ECOLOGY_PANEL_INDEX
     if (lastColoredBase) updateOverlays()
     updateNavState()
   }

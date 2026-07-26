@@ -1,0 +1,287 @@
+// The Ecology layer: turns the finished climate/topography into named resource /
+// suitability fields (see docs/decisions/ecology.md). Follows hydrology in the
+// pipeline; a function, not a simulation. The carrying-capacity aggregate is the
+// saturating combination of the subsistence fields, run through the two
+// top-level knobs (carrying capacity = level, concentration = spatial structure).
+//
+// PHASE 2a: subsistence split (arable / game / pasture) + the aggregate. Fish
+// (currents/coast/freshwater), material (timber/salt/tool-stone/metals) and
+// prestige (gold/silver/gems) grow the field set in later sub-steps; the field
+// registry + selector already carry them.
+
+import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
+import { OCEAN_PRECIP } from '../climate/precipitation'
+import { Biome } from '../climate/biomes'
+
+// Ocean sentinel for the output fields (matches the climate fields' convention):
+// a cell the ecology layer doesn't score (open water) reads -1.
+export const ECOLOGY_OCEAN = -1
+
+// The field ids the ecology step produces. Grows per sub-step; the worker sends
+// every field, the screen's selector lists them (see ecologyColors' metadata).
+export type EcologyFieldId = 'carryingCapacity' | 'arable' | 'game' | 'pasture'
+
+export interface EcologyParams {
+  // Global carrying-capacity gain (%). 100 = neutral; scales the LEVEL only.
+  carryingCapacity: number
+  // Spatial structure, -100..100. 0 = physics as-is; +ve clumps, -ve evens.
+  // Mean-preserving (shape only). See ecology.md Theme 1 (L1).
+  concentration: number
+  // L2 "province" strength (volcanic-soil fertility + light noise). Mean-1
+  // multiplicative. Default modest until the fold-out exposes it (Phase 2d).
+  provinceStrength?: number
+}
+
+export interface EcologyFields {
+  resX: number
+  resY: number
+  fields: Record<EcologyFieldId, Float32Array>
+}
+
+export interface Volcano {
+  x: number
+  y: number
+  thickness: number
+  kind: 'hotspot' | 'flood' | 'arc'
+}
+
+// --- shared helpers ---------------------------------------------------------
+
+// Terrestrial net primary productivity, Miami-model style (0..1): limited by
+// whichever of temperature and precipitation is scarcer (Liebig's law of the
+// minimum). The ecological backbone of both arable land and wild game.
+function productivity(tempC: number, precipMm: number): number {
+  const nppTemp = 1 / (1 + Math.exp(1.315 - 0.119 * tempC))
+  const nppPrecip = 1 - Math.exp(-0.000664 * Math.max(0, precipMm))
+  return Math.min(nppTemp, nppPrecip)
+}
+
+// How suitable each biome is for grazing (pasture). Open grassland/savanna best;
+// dense forest and ice worst; tundra/steppe support thin herding.
+const PASTURE_BY_BIOME: Record<number, number> = {
+  [Biome.Grassland]: 1.0,
+  [Biome.Savanna]: 0.9,
+  [Biome.Woodland]: 0.55,
+  [Biome.Tundra]: 0.35,
+  [Biome.TemperateForest]: 0.2,
+  [Biome.TemperateRainforest]: 0.12,
+  [Biome.Boreal]: 0.15,
+  [Biome.Desert]: 0.12,
+  [Biome.TropicalRainforest]: 0.06,
+  [Biome.Ice]: 0.0,
+}
+
+// Weights of each subsistence source in the saturating carrying-capacity combine
+// (arable dominant — farming supports the densest populations).
+const W_ARABLE = 2.6
+const W_GAME = 1.0
+const W_PASTURE = 0.8
+
+// Arable flatness sensitivity: steeper ground is progressively harder to farm.
+const SLOPE_K = 8
+// Ecotone (biome-boundary) game bonus and its cap.
+const ECOTONE_BONUS = 0.18
+
+const smoothstep = (t: number): number => t * t * (3 - 2 * t)
+
+// --- subsistence fields (climate grid) --------------------------------------
+
+// Arable land: productivity modulated by terrain flatness (steep = poor). Slope
+// is read from the full-res elevation across the cell's climate-grid neighbours.
+function computeArable(temperature: Float32Array, precipitation: Float32Array, elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      const i = gy * CLIMATE_RES_X + gx
+      if (!land[i]) continue
+      const npp = productivity(temperature[i], precipitation[i])
+      const eC = sampleElevationAtCell(elevation, gx, gy, worldW, worldH)
+      const eE = sampleElevationAtCell(elevation, (gx + 1) % CLIMATE_RES_X, gy, worldW, worldH)
+      const eS = sampleElevationAtCell(elevation, gx, (gy + 1) % CLIMATE_RES_Y, worldW, worldH)
+      const slope = Math.hypot(eE - eC, eS - eC)
+      const flatness = 1 / (1 + SLOPE_K * slope)
+      out[i] = npp * flatness
+    }
+  }
+  return out
+}
+
+// Wild game / forage: ecosystem productivity plus an ecotone bonus at biome
+// boundaries (forest↔grassland, land↔water edges are the richest hunting).
+function computeGame(temperature: Float32Array, precipitation: Float32Array, biomes: Uint8Array, land: Uint8Array): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      const i = gy * CLIMATE_RES_X + gx
+      if (!land[i]) continue
+      const npp = productivity(temperature[i], precipitation[i])
+      const here = biomes[i]
+      // Ecotone: any 4-neighbour with a different biome (incl. ocean edge) marks
+      // a boundary cell.
+      const left = biomes[gy * CLIMATE_RES_X + ((gx - 1 + CLIMATE_RES_X) % CLIMATE_RES_X)]
+      const right = biomes[gy * CLIMATE_RES_X + ((gx + 1) % CLIMATE_RES_X)]
+      const up = biomes[((gy - 1 + CLIMATE_RES_Y) % CLIMATE_RES_Y) * CLIMATE_RES_X + gx]
+      const down = biomes[((gy + 1) % CLIMATE_RES_Y) * CLIMATE_RES_X + gx]
+      const ecotone = here !== left || here !== right || here !== up || here !== down
+      out[i] = npp * (1 + (ecotone ? ECOTONE_BONUS : 0))
+    }
+  }
+  return out
+}
+
+// Pasture: open grazing land by biome (see PASTURE_BY_BIOME).
+function computePasture(biomes: Uint8Array, land: Uint8Array): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (let i = 0; i < out.length; i++) {
+    if (!land[i]) continue
+    out[i] = PASTURE_BY_BIOME[biomes[i]] ?? 0.1
+  }
+  return out
+}
+
+// --- concentration pipeline (verified in Phase 1) ---------------------------
+
+function landMean(field: Float32Array, land: Uint8Array): number {
+  let sum = 0
+  let n = 0
+  for (let i = 0; i < field.length; i++) if (land[i]) { sum += field[i]; n += 1 }
+  return n > 0 ? sum / n : 0
+}
+
+// Province noise (see Phase 1): smooth seeded value noise in [-1,1], toroidal, at
+// a coarse lattice frequency — broad "provinces", not fine texture.
+function hashLattice(ix: number, iy: number, seed: number): number {
+  let h = (ix * 374761393 + iy * 668265263 + seed * 1442695040) | 0
+  h = (h ^ (h >>> 13)) * 1274126177
+  h = h ^ (h >>> 16)
+  return (h >>> 0) / 4294967295
+}
+function provinceNoise(u: number, v: number, freqX: number, freqY: number, seed: number): number {
+  const gx = u * freqX
+  const gy = v * freqY
+  const x0 = Math.floor(gx)
+  const y0 = Math.floor(gy)
+  const fx = smoothstep(gx - x0)
+  const fy = smoothstep(gy - y0)
+  const wrap = (i: number, n: number): number => ((i % n) + n) % n
+  const c00 = hashLattice(wrap(x0, freqX), wrap(y0, freqY), seed)
+  const c10 = hashLattice(wrap(x0 + 1, freqX), wrap(y0, freqY), seed)
+  const c01 = hashLattice(wrap(x0, freqX), wrap(y0 + 1, freqY), seed)
+  const c11 = hashLattice(wrap(x0 + 1, freqX), wrap(y0 + 1, freqY), seed)
+  const top = c00 + (c10 - c00) * fx
+  const bottom = c01 + (c11 - c01) * fx
+  return (top + (bottom - top) * fy) * 2 - 1
+}
+
+const VOLCANIC_PROVINCE_RADIUS_FRAC = 0.05
+const DEFAULT_PROVINCE_STRENGTH = 0.35
+const PROVINCE_NOISE_FREQ_X = 7
+const PROVINCE_NOISE_FREQ_Y = 4
+const VOLCANIC_WEIGHT = 0.6
+const NOISE_WEIGHT = 0.4
+
+function rasteriseVolcanicProvinces(volcanoes: Volcano[], worldWidth: number, worldHeight: number): Float32Array {
+  const field = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  if (volcanoes.length === 0) return field
+  const radiusWorld = Math.min(worldWidth, worldHeight) * VOLCANIC_PROVINCE_RADIUS_FRAC
+  const radiusCellsX = Math.ceil((radiusWorld / worldWidth) * CLIMATE_RES_X) * 3
+  const radiusCellsY = Math.ceil((radiusWorld / worldHeight) * CLIMATE_RES_Y) * 3
+  const cellW = worldWidth / CLIMATE_RES_X
+  const cellH = worldHeight / CLIMATE_RES_Y
+  const inv2r2 = 1 / (2 * radiusWorld * radiusWorld)
+  for (const v of volcanoes) {
+    const cx = Math.floor((v.x / worldWidth) * CLIMATE_RES_X)
+    const cy = Math.floor((v.y / worldHeight) * CLIMATE_RES_Y)
+    for (let dy = -radiusCellsY; dy <= radiusCellsY; dy++) {
+      const gy = ((cy + dy) % CLIMATE_RES_Y + CLIMATE_RES_Y) % CLIMATE_RES_Y
+      for (let dx = -radiusCellsX; dx <= radiusCellsX; dx++) {
+        const gx = ((cx + dx) % CLIMATE_RES_X + CLIMATE_RES_X) % CLIMATE_RES_X
+        const wdx = Math.min(Math.abs(dx * cellW), worldWidth - Math.abs(dx * cellW))
+        const wdy = Math.min(Math.abs(dy * cellH), worldHeight - Math.abs(dy * cellH))
+        const bump = Math.exp(-(wdx * wdx + wdy * wdy) * inv2r2)
+        const i = gy * CLIMATE_RES_X + gx
+        if (bump > field[i]) field[i] = bump
+      }
+    }
+  }
+  return field
+}
+
+// Runs the base subsistence aggregate through `normalise → L1 gamma
+// (mean-preserving) → L2 province (mean-1) → gain`, so carrying capacity's gain
+// changes only the level and concentration only the shape. Verified in Phase 1.
+function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: Volcano[], warpSeed: number, worldWidth: number, worldHeight: number, params: EcologyParams): Float32Array {
+  const n = base.length
+  let maxBase = 0
+  for (let i = 0; i < n; i++) if (land[i] && base[i] > maxBase) maxBase = base[i]
+  const norm = new Float32Array(n)
+  if (maxBase > 0) for (let i = 0; i < n; i++) if (land[i]) norm[i] = base[i] / maxBase
+  const meanNorm = landMean(norm, land)
+
+  const gamma = Math.pow(2, params.concentration / 100)
+  const shaped = new Float32Array(n)
+  for (let i = 0; i < n; i++) if (land[i]) shaped[i] = Math.pow(norm[i], gamma)
+  const meanShaped = landMean(shaped, land)
+  const l1Scale = meanShaped > 0 ? meanNorm / meanShaped : 1
+  for (let i = 0; i < n; i++) if (land[i]) shaped[i] *= l1Scale
+
+  const strength = params.provinceStrength ?? DEFAULT_PROVINCE_STRENGTH
+  const volcanic = rasteriseVolcanicProvinces(volcanoes, worldWidth, worldHeight)
+  const dev = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    if (!land[i]) continue
+    const gy = Math.floor(i / CLIMATE_RES_X)
+    const gx = i - gy * CLIMATE_RES_X
+    const noise = provinceNoise((gx + 0.5) / CLIMATE_RES_X, (gy + 0.5) / CLIMATE_RES_Y, PROVINCE_NOISE_FREQ_X, PROVINCE_NOISE_FREQ_Y, warpSeed)
+    dev[i] = VOLCANIC_WEIGHT * volcanic[i] + NOISE_WEIGHT * noise
+  }
+  const meanDev = landMean(dev, land)
+  const provincal = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    if (!land[i]) continue
+    provincal[i] = shaped[i] * Math.max(0.1, 1 + strength * (dev[i] - meanDev))
+  }
+  const meanProv = landMean(provincal, land)
+  const l2Scale = meanProv > 0 ? meanNorm / meanProv : 1
+
+  const gain = params.carryingCapacity / 100
+  const out = new Float32Array(n)
+  for (let i = 0; i < n; i++) out[i] = land[i] ? provincal[i] * l2Scale * gain : ECOLOGY_OCEAN
+  return out
+}
+
+// --- entry point ------------------------------------------------------------
+
+export function computeEcology(
+  temperature: Float32Array,
+  precipitation: Float32Array,
+  biomes: Uint8Array,
+  elevation: Float32Array,
+  volcanoes: Volcano[],
+  warpSeed: number,
+  worldWidth: number,
+  worldHeight: number,
+  params: EcologyParams,
+): EcologyFields {
+  const n = CLIMATE_RES_X * CLIMATE_RES_Y
+  const land = new Uint8Array(n)
+  for (let i = 0; i < n; i++) if (precipitation[i] !== OCEAN_PRECIP) land[i] = 1
+
+  const arable = computeArable(temperature, precipitation, elevation, land, worldWidth, worldHeight)
+  const game = computeGame(temperature, precipitation, biomes, land)
+  const pasture = computePasture(biomes, land)
+
+  // Saturating carrying-capacity base: sources complement with diminishing
+  // returns (1 - e^-Σ w·x), so stacking several helps but never linearly.
+  const base = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    if (!land[i]) continue
+    base[i] = 1 - Math.exp(-(W_ARABLE * arable[i] + W_GAME * game[i] + W_PASTURE * pasture[i]))
+  }
+  const carryingCapacity = concentrationPipeline(base, land, volcanoes, warpSeed, worldWidth, worldHeight, params)
+
+  // Mask the per-resource fields to the ocean sentinel too, so overlays skip water.
+  for (let i = 0; i < n; i++) if (!land[i]) { arable[i] = ECOLOGY_OCEAN; game[i] = ECOLOGY_OCEAN; pasture[i] = ECOLOGY_OCEAN }
+
+  return { resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y, fields: { carryingCapacity, arable, game, pasture } }
+}

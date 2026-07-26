@@ -218,16 +218,32 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
 
 **Ecology feature:**
 
-1. **Vertical slice** — a `computeEcology` worker step (new message, like
-   `computeClimate`) that reads sim + climate + hydrology and outputs the
-   **carrying-capacity** field (subsistence aggregate, saturating) through the
-   **concentration pipeline** (`normalise → L1 gamma → L2 province → gain`);
-   the new **panel** with the **2 top sliders**; one **overlay** (carrying
-   capacity). Something visible early.
-2. **Resource fields** — fill in the named fields + their overlays: subsistence
-   (fish/game+ecotone/pasture), material (timber/salt/tool-stone/metals via
-   arcs+sutures+craton-age+wetlands), prestige (gold/silver/gems). The fold-out
-   (togglable `.field` group) with the per-role nudges + metals submenu.
+1. **Vertical slice** — ✅ BUILT 2026-07-26 (pending visual check). New
+   `ecology/ecologyField.ts` (`computeEcology`) + `ecology/ecologyColors.ts`;
+   worker `computeEcology` message + handler; Ecology **panel** (index 5) with
+   the **2 top sliders** (carrying capacity 50–200 %, concentration −100…+100);
+   carrying-capacity **overlay** (auto-on in the panel) + gradient legend + hover
+   readout. Phase-1 base = terrestrial productivity (Miami-model NPP); the full
+   concentration pipeline (`normalise → L1 gamma → L2 volcanic-province+noise →
+   gain`) is in and headless-verified (mean-preserving level, gain-linear,
+   concentration reshapes). Icon = placeholder `crown.png` (swap later).
+   *(Fish/game/pasture split + material + prestige + fold-out = Phase 2.)*
+2. **Resource fields** — fill in the named fields, presented via a **panel
+   selector** (DECIDED: one Ecology overlay in the toolbar; a `<select>` in the
+   panel, grouped by role, picks which field it paints — resolves the
+   aggregate-vs-per-resource-overlay provocation). Sub-steps:
+   - **2a — subsistence split** ✅ BUILT 2026-07-26 (pending visual check):
+     arable (NPP × flatness) / game (NPP + ecotone) / pasture (biome) → the
+     saturating carrying-capacity aggregate. Field-registry architecture
+     (`ecologyField` returns named fields; `ecologyColors` holds per-field
+     label/role/ramp; message carries `fields[]`); selector + dynamic legend +
+     per-field hover; worker caches biomes. Headless-verified (fields
+     ocean-consistent, pipeline still mean-preserving/gain-linear).
+   - **2b — fish** (currents/coast/freshwater — needs a currents cache).
+   - **2c — material** (timber/salt/tool-stone/metals via arcs+sutures+
+     craton-age+wetlands).
+   - **2d — prestige** (gold/silver/gems).
+   - **2e — fold-out** (togglable `.field` group; per-role nudges + metals submenu).
 3. **Polish** — legends, colours, world.yaml fields, save/load, wetlands
    derivation, title-screen mission bullet.
 
@@ -238,11 +254,10 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
   "unlock" with later tech (iron plough, clearing). If Anthropology's dispersal
   has a time axis, the suitability field should **evolve with the tech epoch** —
   a genuine link between Ecology and the Anthropology time axis.
-- **Aggregate vs per-resource overlays.** Anthropology consumes a weighted
-  *aggregate* suitability, but the game (and visual interest) wants individual
-  named resource fields (ore, salt, fish) as overlays. Likely: compute a handful
-  of named fields (cheap), show as overlays, aggregate for dispersal — mirrors
-  climate. **(Resolve when we hit it.)**
+- **Aggregate vs per-resource overlays.** ✅ RESOLVED 2026-07-26: compute all
+  named fields; present via a **panel selector** (one Ecology overlay icon, a
+  `<select>` grouped by role picks the displayed field) rather than many toolbar
+  icons. Anthropology still consumes the aggregate carrying capacity.
 - **Charcoal / deforestation depletion** (iron smelting strips forests) is a
   *dynamic* — probably runtime, not generation.
 

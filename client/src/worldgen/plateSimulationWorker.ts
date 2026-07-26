@@ -16,6 +16,7 @@ import { computeSeasonalAmplitude } from './climate/seasonality'
 import { computeSeasonalPrecipitation } from './climate/monsoon'
 import { computeBiomes } from './climate/biomes'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climate/climateField'
+import { computeEcology } from './ecology/ecologyField'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
 // rendering the full 2048x1024 raster (a per-pixel query against every
@@ -124,6 +125,17 @@ export interface WorkerComputeHydrologyMessage {
   type: 'computeHydrology'
   riverDensity: number
 }
+// Requests an ecology (resource/suitability) compute on the current climate. Uses
+// the cached climate temperature+precipitation as the productivity inputs and the
+// sim's volcanoes for the province layer. PHASE 1: the carrying-capacity field
+// only. Replies with WorkerEcologyDataMessage. See docs/decisions/ecology.md.
+export interface WorkerComputeEcologyMessage {
+  type: 'computeEcology'
+  // Global carrying-capacity gain (%, 100 = neutral) — level knob.
+  carryingCapacity: number
+  // Spatial concentration (-100..100, 0 = physics as-is) — shape knob.
+  concentration: number
+}
 // Requests the full sim snapshot (+ ocean-age + current elevation) for saving —
 // replies with a WorkerWorldDataMessage.
 export interface WorkerSerializeWorldMessage {
@@ -149,6 +161,7 @@ export type WorkerInboundMessage =
   | WorkerStopErosionMessage
   | WorkerComputeClimateMessage
   | WorkerComputeHydrologyMessage
+  | WorkerComputeEcologyMessage
   | WorkerSerializeWorldMessage
   | WorkerRestoreWorldMessage
 
@@ -259,6 +272,16 @@ export interface WorkerHydrologyDataMessage {
   biomes: ArrayBuffer
 }
 
+// The computed ecology fields (coarse climate grid), keyed by field id so the
+// set can grow per sub-step without changing the message shape. Each is Float32,
+// resX*resY, land only (ECOLOGY_OCEAN sentinel on water). See ecology/ecologyField.ts.
+export interface WorkerEcologyDataMessage {
+  type: 'ecologyData'
+  resX: number
+  resY: number
+  fields: { id: string; data: ArrayBuffer }[]
+}
+
 // The data a world SAVE needs (see the save/load feature): the JSON-able sim
 // snapshot plus the two large float rasters carried as binary buffers. The
 // caller (WorldGenScreen) packages these into the zip alongside world.yaml.
@@ -301,6 +324,8 @@ let lastClimatePrecip: Float32Array | null = null
 let lastClimateTemperature: Float32Array | null = null
 let lastClimateSeasonalAmplitude: Float32Array | null = null
 let lastClimateMonsoonIndex: Float32Array | null = null
+// Water-free biomes cached for the ecology step (game/pasture read biome type).
+let lastClimateBiomes: Uint8Array | null = null
 // The last erosion's pre-fill elevations (basins still intact) — the terrain the
 // hydrology runs on, so lakes have depressions to fill. null when the current
 // terrain wasn't produced by erosion (fresh tectonics / restore), in which case
@@ -580,6 +605,7 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     lastClimateTemperature = temperature.slice()
     lastClimateSeasonalAmplitude = seasonalAmplitude.slice()
     lastClimateMonsoonIndex = seasonal.index.slice()
+    lastClimateBiomes = biomes.slice()
     hydrologyDirty = true
     const climateMessage: WorkerClimateDataMessage = {
       type: 'climateData',
@@ -644,6 +670,24 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       }
       self.postMessage(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes])
     })()
+  } else if (message.type === 'computeEcology') {
+    // Needs a computed climate (cached temperature/precipitation/biomes feed
+    // productivity + pasture) plus the current elevation (arable slope) and the
+    // sim's volcanoes (province layer). Noise seeded from warpSeed. Fresh arrays,
+    // so every field buffer transfers.
+    if (!sim || !lastRawElevations || !lastClimateTemperature || !lastClimatePrecip || !lastClimateBiomes) return
+    const eco = computeEcology(lastClimateTemperature, lastClimatePrecip, lastClimateBiomes, lastRawElevations, collectVolcanoes(sim.features), sim.warpSeed, sim.width, sim.height, {
+      carryingCapacity: message.carryingCapacity,
+      concentration: message.concentration,
+    })
+    const fields = Object.entries(eco.fields).map(([id, data]) => ({ id, data: data.buffer as ArrayBuffer }))
+    const ecologyMessage: WorkerEcologyDataMessage = {
+      type: 'ecologyData',
+      resX: eco.resX,
+      resY: eco.resY,
+      fields,
+    }
+    self.postMessage(ecologyMessage, fields.map((f) => f.data))
   } else if (message.type === 'serializeWorld') {
     if (!sim || !lastRawElevations) return
     // .slice() so transferring these buffers doesn't neuter the live sim's
