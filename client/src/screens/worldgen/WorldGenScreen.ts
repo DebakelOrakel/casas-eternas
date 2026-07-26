@@ -14,7 +14,7 @@ import type { PlateArrow } from '../../worldgen/elevationMapImage'
 import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/plateSimulation'
 import { eventCategory } from '../../worldgen/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
-import { temperatureColor, precipitationColor, amplitudeColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops } from '../../worldgen/climate/climateColors'
+import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops } from '../../worldgen/climate/climateColors'
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
 import { biomeColor, biomeLabel, biomeLegend, Biome } from '../../worldgen/climate/biomes'
@@ -572,6 +572,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastPrecipitation: Float32Array | null = null
   let lastCurrents: Float32Array | null = null
   let lastSeasonality: Float32Array | null = null
+  let lastMonsoonIndex: Float32Array | null = null
   let lastBiomes: Uint8Array | null = null
   let climateResX = 0
   let climateResY = 0
@@ -702,6 +703,26 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         const mm = lastPrecipitation[gy * climateResX + gx]
         if (mm === OCEAN_PRECIP) continue
         const [r, g, b] = precipitationColor(mm)
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - alpha) + r * alpha
+        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
+        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
+      }
+    }
+  }
+
+  // Monsoon / precipitation-seasonality index (0 even → 1 strongly wet-dry), land only
+  // (ocean = OCEAN_PRECIP sentinel, left as terrain). No-op until computed.
+  function paintMonsoon(data: Uint8ClampedArray): void {
+    if (!lastMonsoonIndex) return
+    const alpha = 0.6
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
+        const idx = lastMonsoonIndex[gy * climateResX + gx]
+        if (idx === OCEAN_PRECIP) continue
+        const [r, g, b] = monsoonColor(idx)
         const p = (y * MAP_WIDTH + x) * 4
         data[p] = data[p] * (1 - alpha) + r * alpha
         data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
@@ -889,6 +910,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'terrain', label: 'Terrain', enabled: false, hidden: true, paintPixels: paintTerrain },
     { id: 'temperature', label: 'Temp', enabled: false, hidden: true, paintPixels: paintTemperature },
     { id: 'precipitation', label: 'Precipitation', enabled: false, hidden: true, paintPixels: paintPrecipitation },
+    { id: 'monsoon', label: 'Monsoon', enabled: false, hidden: true, paintPixels: paintMonsoon },
     { id: 'seasonality', label: 'Seasonality', enabled: false, hidden: true, paintPixels: paintSeasonality },
     { id: 'biomes', label: 'Biomes', enabled: false, hidden: true, paintPixels: paintBiomes },
     // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
@@ -995,10 +1017,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       ] },
     },
     { id: 'temperature', icon: '/icons/temperature.png', label: 'Temperature', available: () => lastTemperature !== null, legend: { type: 'gradient', title: 'Temperature', unit: '°C', stops: temperatureLegendStops } },
-    { id: 'wind', icon: '/icons/wind.png', label: 'Wind', available: () => lastWind !== null },
-    { id: 'precipitation', icon: '/icons/rain.png', label: 'Precipitation', available: () => lastPrecipitation !== null, legend: { type: 'gradient', title: 'Precipitation', unit: 'mm/yr', stops: precipitationLegendStops } },
-    { id: 'currents', icon: '/icons/gyres.png', label: 'Ocean currents', available: () => lastCurrents !== null },
     { id: 'seasonality', icon: '/icons/seasonality.png', label: 'Seasonality', available: () => lastSeasonality !== null, legend: { type: 'gradient', title: 'Seasonality', unit: '°C range', stops: amplitudeLegendStops } },
+    { id: 'wind', icon: '/icons/wind.png', label: 'Wind', available: () => lastWind !== null },
+    { id: 'currents', icon: '/icons/gyres.png', label: 'Ocean currents', available: () => lastCurrents !== null },
+    { id: 'precipitation', icon: '/icons/rain.png', label: 'Precipitation', available: () => lastPrecipitation !== null, legend: { type: 'gradient', title: 'Precipitation', unit: 'mm/yr', stops: precipitationLegendStops } },
+    { id: 'monsoon', icon: '/icons/weather.png', label: 'Monsoon / precip seasonality', available: () => lastMonsoonIndex !== null, legend: { type: 'gradient', title: 'Monsoon index', unit: '', stops: monsoonLegendStops } },
     { id: 'biomes', icon: '/icons/biomes.png', label: 'Biomes', available: () => lastBiomes !== null, legend: { type: 'swatches', title: 'Biomes', items: biomeLegend() } },
     { id: 'rivers', icon: '/icons/river.png', label: 'Rivers & lakes', available: () => lastRiverData !== null },
   ]
@@ -1045,7 +1068,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     block.className = 'legend-block'
     const title = document.createElement('div')
     title.className = 'legend-title'
-    title.textContent = spec.type === 'gradient' ? `${spec.title} (${spec.unit})` : spec.title
+    title.textContent = spec.type === 'gradient' && spec.unit ? `${spec.title} (${spec.unit})` : spec.title
     block.appendChild(title)
     if (spec.type === 'gradient') {
       const min = spec.stops[0].value
@@ -1059,9 +1082,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       bar.style.background = `linear-gradient(to right, ${css})`
       const labels = document.createElement('div')
       labels.className = 'legend-gradient-labels'
-      for (const v of [min, Math.round((min + max) / 2), max]) {
+      const fmt = (v: number): string => (Number.isInteger(v) ? String(v) : v.toFixed(1))
+      for (const v of [min, (min + max) / 2, max]) {
         const l = document.createElement('span')
-        l.textContent = String(v)
+        l.textContent = fmt(v)
         labels.appendChild(l)
       }
       row.append(bar, labels)
@@ -1250,6 +1274,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const a = lastSeasonality[i]
       lines.push(a === OCEAN_AMPLITUDE ? 'Ocean' : `${Math.round(a)} °C range`)
     }
+    if (overlaysOn.monsoon && lastMonsoonIndex) {
+      const m = lastMonsoonIndex[i]
+      lines.push(m === OCEAN_PRECIP ? 'Ocean' : `Monsoon ${m.toFixed(2)}`)
+    }
     if (overlaysOn.wind && lastWind) {
       lines.push(`Wind ${compass(lastWind[i * 2], lastWind[i * 2 + 1])}`)
     }
@@ -1270,6 +1298,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastCurrents = new Float32Array(message.currents)
     lastPrecipitation = new Float32Array(message.precipitation)
     lastSeasonality = new Float32Array(message.seasonalAmplitude)
+    lastMonsoonIndex = new Float32Array(message.monsoonIndex)
     lastBiomes = new Uint8Array(message.biomes)
     climateResX = message.resX
     climateResY = message.resY
@@ -1297,6 +1326,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastCurrents = null
     lastPrecipitation = null
     lastSeasonality = null
+    lastMonsoonIndex = null
     lastBiomes = null
     climateStatus.textContent = ''
     tempMinLabel.textContent = '–'

@@ -26,6 +26,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
         <li>Prescribed three-cell winds (Hadley / Ferrel / Polar)</li>
         <li>Ocean gyres from wind-stress curl (streamfunction) → sea-surface temperature</li>
         <li>Precipitation: moisture advection + orographic rain shadow</li>
+        <li>Seasonal precipitation &amp; monsoons: migrating ITCZ + land-sea wind reversal → wet-dry seasons, savannas</li>
         <li>Seasonality from continentality (distance-to-ocean)</li>
         <li>Whittaker biome classification</li>
         <li>Rivers: precipitation-weighted D8 discharge, spline-smoothed</li>
@@ -38,10 +39,8 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
         <li>Continental breakup opens a real ocean basin — a spreading ridge is born, the mantle dome is released</li>
         <li>Volcanic markers: hotspot cones, flood-basalt provinces &amp; subduction-arc chains on the mantle overlay</li>
         <li class="backlog">To do: Tune lake abundance, riparian strength, river-density default</li>
-        <li class="backlog">To do: Combined biome + rivers view in one panel</li>
         <li class="backlog">To do: On-demand / hex-tile fine hydrology (creeks are sub-grid at ~8 km/cell)</li>
         <li class="backlog">To do: Render-perf pass: cache ridged field + domain warp, GPU compute</li>
-        <li class="backlog">To do: Seasonal precipitation / monsoons</li>
         <li class="backlog">To do: Gain back my sanity</li>
       </ul>
     </section>

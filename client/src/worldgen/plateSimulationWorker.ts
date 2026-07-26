@@ -12,8 +12,8 @@ import type { TerrainFeature } from './terrainFeatures'
 import { computeTemperature } from './climate/temperature'
 import { computeWind } from './climate/wind'
 import { computeOceanCurrents, applyOceanSST } from './climate/oceanCurrents'
-import { computePrecipitation } from './climate/precipitation'
 import { computeSeasonalAmplitude } from './climate/seasonality'
+import { computeSeasonalPrecipitation } from './climate/monsoon'
 import { computeBiomes } from './climate/biomes'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climate/climateField'
 
@@ -236,6 +236,9 @@ export interface WorkerClimateDataMessage {
   // Annual temperature amplitude °C (summer−winter range), Float32. See
   // climate/seasonality.ts.
   seasonalAmplitude: ArrayBuffer
+  // Monsoon / precipitation-seasonality index (Float32, 0..1; OCEAN_PRECIP on ocean).
+  // See climate/monsoon.ts.
+  monsoonIndex: ArrayBuffer
   // Whittaker biome id per cell (Uint8; ocean = Biome.Ocean). See climate/biomes.ts.
   biomes: ArrayBuffer
 }
@@ -298,6 +301,7 @@ let preErosionElevations: Float32Array | null = null
 let lastClimatePrecip: Float32Array | null = null
 let lastClimateTemperature: Float32Array | null = null
 let lastClimateSeasonalAmplitude: Float32Array | null = null
+let lastClimateMonsoonIndex: Float32Array | null = null
 // The last erosion's pre-fill elevations (basins still intact) — the terrain the
 // hydrology runs on, so lakes have depressions to fill. null when the current
 // terrain wasn't produced by erosion (fresh tectonics / restore), in which case
@@ -579,15 +583,20 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     const wind = computeWind(message.equatorOffset)
     const currents = computeOceanCurrents(lastRawElevations, wind, sim.width, sim.height)
     applyOceanSST(temperature, currents, lastRawElevations, sim.width, sim.height)
-    const precipitation = computePrecipitation(lastRawElevations, temperature, wind, sim.width, sim.height, message.humidity, message.equatorOffset)
+    // Seasonal amplitude first — the monsoon model needs it (its land-sea contrast). Then
+    // run precipitation for two opposite seasons → annual mean precip + a monsoon index.
     const seasonalAmplitude = computeSeasonalAmplitude(lastRawElevations, sim.width, sim.height, message.equatorOffset)
-    const biomes = computeBiomes(temperature, precipitation, seasonalAmplitude, lastRawElevations, sim.width, sim.height)
+    const seasonal = computeSeasonalPrecipitation(lastRawElevations, temperature, seasonalAmplitude, wind, sim.width, sim.height, message.humidity, message.equatorOffset)
+    const precipitation = seasonal.annual
+    const biomes = computeBiomes(temperature, precipitation, seasonalAmplitude, seasonal.index, lastRawElevations, sim.width, sim.height)
     // Cache copies for hydrology (the buffers below are transferred, which would
     // neuter retained references) — rivers use precip as their source, lakes use
-    // the final (SST-adjusted) temperature for evaporation.
+    // the final (SST-adjusted) temperature for evaporation, riparian biomes reuse the
+    // monsoon index.
     lastClimatePrecip = precipitation.slice()
     lastClimateTemperature = temperature.slice()
     lastClimateSeasonalAmplitude = seasonalAmplitude.slice()
+    lastClimateMonsoonIndex = seasonal.index.slice()
     hydrologyDirty = true
     const climateMessage: WorkerClimateDataMessage = {
       type: 'climateData',
@@ -598,9 +607,10 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       currents: currents.buffer as ArrayBuffer,
       precipitation: precipitation.buffer as ArrayBuffer,
       seasonalAmplitude: seasonalAmplitude.buffer as ArrayBuffer,
+      monsoonIndex: seasonal.index.buffer as ArrayBuffer,
       biomes: biomes.buffer as ArrayBuffer,
     }
-    self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.biomes])
+    self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.biomes])
   } else if (message.type === 'computeHydrology') {
     // Needs the current topography + a climate precip (rivers' water source).
     if (!sim || !lastRawElevations || !lastClimatePrecip) return
@@ -639,8 +649,8 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       // with the density knob) — recompute every call when climate is available.
       // Uses the display terrain (lastRawElevations) so land/ocean matches the map.
       let biomesOut: Uint8Array = new Uint8Array(0)
-      if (lastRawElevations && lastClimateTemperature && lastClimateSeasonalAmplitude && lastHydrologyLakeDepth) {
-        biomesOut = computeRiparianBiomes(lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, precip, lastClimateTemperature, lastClimateSeasonalAmplitude, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+      if (lastRawElevations && lastClimateTemperature && lastClimateSeasonalAmplitude && lastClimateMonsoonIndex && lastHydrologyLakeDepth) {
+        biomesOut = computeRiparianBiomes(lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, precip, lastClimateTemperature, lastClimateSeasonalAmplitude, lastClimateMonsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
       }
       const hydrologyMessage: WorkerHydrologyDataMessage = {
         type: 'hydrologyData',

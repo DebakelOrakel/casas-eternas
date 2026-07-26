@@ -84,31 +84,38 @@ export function biomeLegend(): { label: string; rgb: [number, number, number] }[
 }
 
 // Classify one cell. T = mean annual °C, P = annual precip mm/yr, amp = seasonal
-// temperature amplitude °C (aridity is implicit: at a given P, hotter needs more
-// water to escape desert; the T bands below encode that). Thresholds are the
-// tunable part of the Whittaker mapping.
-function classify(tempC: number, precipMm: number, amplitude: number): BiomeId {
+// TEMPERATURE amplitude °C, season = monsoon / precipitation-SEASONALITY index (0 =
+// even year-round, →1 = strong wet-dry / monsoonal; see monsoon.ts). Aridity is
+// implicit in the T bands (hotter needs more water to escape desert). The season axis
+// is what separates evergreen forest (rain spread through the year) from open wet-dry
+// vegetation (savanna, seasonal woodland) at the SAME annual total — the classic
+// monsoon boundary. Thresholds are the tunable part of the Whittaker mapping.
+function classify(tempC: number, precipMm: number, amplitude: number, season: number): BiomeId {
   if (tempC < -10) return Biome.Ice
   if (tempC < 0) return Biome.Tundra
   if (tempC < 7) {
     return precipMm < 200 ? Biome.Tundra : Biome.Boreal
   }
   if (tempC < 20) {
+    // Temperate / subtropical. Strong precip seasonality opens the canopy: a marginal
+    // forest with a pronounced dry season reads as woodland/grassland, not closed forest.
     if (precipMm < 250) return Biome.Desert
-    if (precipMm < 600) return amplitude > 20 ? Biome.Grassland : Biome.Woodland
-    if (precipMm < 1500) return Biome.TemperateForest
+    if (precipMm < 600) return amplitude > 20 || season > 0.3 ? Biome.Grassland : Biome.Woodland
+    if (precipMm < 1500) return season > 0.4 ? Biome.Woodland : Biome.TemperateForest
     return Biome.TemperateRainforest
   }
-  // Hot (T ≥ 20)
+  // Hot (T ≥ 20). The tropical rainforest↔savanna split is driven by SEASONALITY, not
+  // just the annual total: evergreen rainforest needs rain most of the year; a strong
+  // wet-dry rhythm (monsoon) gives savanna even when the annual total is high.
   if (precipMm < 250) return Biome.Desert
-  if (precipMm < 1000) return Biome.Savanna
-  return Biome.TropicalRainforest
+  if (precipMm < 800) return Biome.Savanna
+  return season > 0.35 ? Biome.Savanna : Biome.TropicalRainforest
 }
 
 // Biome id per climate cell (Uint8). Land only is classified; ocean → Biome.Ocean.
 // Consumes the current-adjusted temperature, annual precipitation, and seasonal
 // amplitude (all already on the climate grid).
-export function computeBiomes(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number): Uint8Array {
+export function computeBiomes(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number): Uint8Array {
   const biomes = new Uint8Array(RX * RY)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
@@ -117,7 +124,7 @@ export function computeBiomes(temperature: Float32Array, precipitation: Float32A
         biomes[i] = Biome.Ocean
         continue
       }
-      biomes[i] = classify(temperature[i], precipitation[i], seasonalAmplitude[i])
+      biomes[i] = classify(temperature[i], precipitation[i], seasonalAmplitude[i], monsoonIndex[i])
     }
   }
   return biomes

@@ -297,7 +297,7 @@ const RIPARIAN_DECAY = 0.45
 // greens its surroundings — a desert with a big river through it becomes a
 // vegetated corridor. `elevation` is the display terrain (land/ocean + biome
 // substrate); discharge/lakeDepth share its grid. Coarse (climate-grid) output.
-export function computeRiparianBiomes(elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number): Uint8Array {
+export function computeRiparianBiomes(elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number): Uint8Array {
   const scale = maxDischarge > 0 ? maxDischarge : 1
   const strength = new Float32Array(climateResX * climateResY)
   for (let cell = 0; cell < elevation.length; cell++) {
@@ -335,5 +335,5 @@ export function computeRiparianBiomes(elevation: Float32Array, discharge: Float3
     if (precipEff[i] === OCEAN_PRECIP) continue
     precipEff[i] = precipEff[i] + field[i] * MAX_RIPARIAN_MM
   }
-  return computeBiomes(temperature, precipEff, seasonalAmplitude, elevation, worldW, worldH)
+  return computeBiomes(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, worldW, worldH)
 }

@@ -66,8 +66,23 @@ export function amplitudeColor(celsiusRange: number): Rgb {
   return rampColor(AMPLITUDE_STOPS, celsiusRange)
 }
 
+// Monsoon / precipitation-seasonality index (0..1) → color: pale neutral (even year-
+// round) → green → gold → orange → deep magenta (strongly wet-dry / monsoonal).
+const MONSOON_STOPS: { c: number; rgb: Rgb }[] = [
+  { c: 0.0, rgb: [232, 233, 226] },
+  { c: 0.2, rgb: [188, 210, 158] },
+  { c: 0.4, rgb: [232, 196, 100] },
+  { c: 0.6, rgb: [216, 122, 60] },
+  { c: 0.85, rgb: [150, 55, 92] },
+]
+
+export function monsoonColor(index: number): Rgb {
+  return rampColor(MONSOON_STOPS, index)
+}
+
 // The ramps as {value, rgb} lists, for building the overlay legend gradient bars
 // (same stops the paint uses, so the legend matches the map exactly).
 export const temperatureLegendStops = TEMPERATURE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
 export const precipitationLegendStops = PRECIPITATION_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
 export const amplitudeLegendStops = AMPLITUDE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
+export const monsoonLegendStops = MONSOON_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
