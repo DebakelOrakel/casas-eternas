@@ -693,6 +693,10 @@ export async function runErosionPass(
   // and forgotten) deliberately, so a slow redraw can't overlap with the
   // next round's computation touching the same underlying arrays.
   onRoundComplete?: (elevations: Float32Array, round: number) => void | Promise<void>,
+  // Checked at each round boundary — return true to stop early (the user hit stop). The
+  // partial result (rounds done so far) is returned as-is, so the caller can keep it and
+  // a later erode continues from there. Round 0 always completes so routing is valid.
+  shouldCancel?: () => boolean,
 ): Promise<{ elevations: Float32Array; routing: FlowRouting; accumulation: Float32Array; preFillElevations: Float32Array }> {
   const cellCount = width * height
   // Copied rather than aliased — the round loop mutates `elevations` in
@@ -737,6 +741,9 @@ export async function runErosionPass(
   }
 
   for (let round = 0; round < params.rounds; round++) {
+    // Stop early if the user cancelled — but only after round 0, so `routing`/
+    // `accumulation` are always set for the return.
+    if (round > 0 && shouldCancel?.()) break
     const roundProgress = (phase: ErosionPhase, fraction: number): void => {
       const withinRound = phaseStartFraction[phase] + (fraction * phaseWeight[phase]) / roundWeightTotal
       onProgress?.(phase, (round + withinRound) / params.rounds)

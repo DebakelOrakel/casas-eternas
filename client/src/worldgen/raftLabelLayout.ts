@@ -60,8 +60,22 @@ export function computeRaftLabelPlacements(rafts: Raft[], width: number, height:
       if (a > along) along = a
       if (pp > perp) perp = pp
     }
-    const centerX = (((anchor.x + meanX) % width) + width) % width
-    const centerY = (((anchor.y + meanY) % height) + height) % height
+    // If the area-weighted centre falls in an OCEAN GAP — inside no blob, which happens
+    // for a two-lobe (dumbbell) continent — a label placed there floats off the land and
+    // reads as missing. Re-anchor on the largest blob and size to it so the name always
+    // sits on solid ground (solid/elongated continents, whose centre is on land, are
+    // unchanged and keep their long spread-based label).
+    let localX = meanX
+    let localY = meanY
+    const centreOnLand = pts.some((p) => Math.hypot(p.dx - meanX, p.dy - meanY) < p.r)
+    if (!centreOnLand) {
+      localX = 0 // the anchor (largest) blob's own centre, dx=dy=0 in this frame
+      localY = 0
+      along = anchor.radius
+      perp = anchor.radius
+    }
+    const centerX = (((anchor.x + localX) % width) + width) % width
+    const centerY = (((anchor.y + localY) % height) + height) % height
     placements.push({ plateIndex: raft.id, name: raft.name, centerX, centerY, angle, alongExtent: along * 2, perpExtent: perp * 2 })
   }
   return placements

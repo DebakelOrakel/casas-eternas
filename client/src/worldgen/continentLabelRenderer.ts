@@ -36,8 +36,12 @@ const HEIGHT_MARGIN_FACTOR = 0.6
 // rather than bent harder to force it.
 const CURVE_RADIUS_FACTOR = 2.5
 
-const LABEL_FILL = '#2a2016'
-const LABEL_STROKE = 'rgba(255, 255, 255, 0.65)'
+const LABEL_FILL = '#241a10'
+// A strong, near-opaque halo so the name stays legible over busy terrain (mountain
+// features, dark biomes) rather than vanishing into it — the stroke is drawn first
+// (thick) and the fill on top. See STROKE_WIDTH_FACTOR.
+const LABEL_STROKE = 'rgba(255, 255, 255, 0.95)'
+const STROKE_WIDTH_FACTOR = 0.15
 
 // Draws one continent's name along a gentle arc centered on its own
 // principal axis — the classic "text on a path" technique: measure each
@@ -47,7 +51,15 @@ const LABEL_STROKE = 'rgba(255, 255, 255, 0.65)'
 // measured footprint; skips the label entirely rather than drawing
 // something illegible or overflowing if even the size floor doesn't fit.
 export function drawContinentLabel(ctx: CanvasRenderingContext2D, placement: ContinentLabelPlacement): void {
-  const { name, centerX, centerY, angle, alongExtent, perpExtent } = placement
+  const { name, centerX, centerY, alongExtent, perpExtent } = placement
+  // The principal-axis angle from PCA has an arbitrary ± sign, so first reduce it (mod π)
+  // into (−π/2, π/2] so the text tilts at most a quarter-turn either way. THEN rotate a
+  // further 180°: the map texture is displayed with a net 180° flip (a vertical mirror —
+  // same one the volcano cones compensate with +y — combined with the horizontal mirror
+  // the scale(−1, 1) below already cancels), so text laid out "upright" in buffer space
+  // comes out upside down on screen. See docs / the [[project_worldgen_canvas_flip]] note.
+  const readable = ((placement.angle + Math.PI / 2) % Math.PI + Math.PI) % Math.PI - Math.PI / 2
+  const angle = readable + Math.PI
   const availableWidth = alongExtent * WIDTH_MARGIN_FACTOR
   const availableHeight = perpExtent * HEIGHT_MARGIN_FACTOR
 
@@ -86,7 +98,8 @@ export function drawContinentLabel(ctx: CanvasRenderingContext2D, placement: Con
   ctx.scale(-1, 1)
   ctx.fillStyle = LABEL_FILL
   ctx.strokeStyle = LABEL_STROKE
-  ctx.lineWidth = Math.max(1, fontSize * 0.08)
+  ctx.lineWidth = Math.max(1.5, fontSize * STROKE_WIDTH_FACTOR)
+  ctx.lineJoin = 'round'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
 
@@ -102,6 +115,13 @@ export function drawContinentLabel(ctx: CanvasRenderingContext2D, placement: Con
     ctx.save()
     ctx.translate(px, py)
     ctx.rotate(charAngle)
+    // A gentle white glow under the outline keeps the name legible over varied terrain
+    // (white land, dark mountain shade, coloured biomes) without being heavy.
+    ctx.shadowColor = 'rgba(255, 255, 255, 0.8)'
+    ctx.shadowBlur = Math.max(2, fontSize * 0.2)
+    ctx.strokeText(char, 0, 0)
+    ctx.shadowBlur = 0
+    ctx.shadowColor = 'transparent'
     ctx.strokeText(char, 0, 0)
     ctx.fillText(char, 0, 0)
     ctx.restore()

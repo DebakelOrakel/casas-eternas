@@ -1018,6 +1018,10 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   // once per assembly rather than every epoch the single raft persists.
   if (sim.rafts.length <= 1 && !sim.supercontinentActive) {
     sim.supercontinentActive = true
+    // A newly-assembled supercontinent is a new entity — give it a fresh name (Pangaea,
+    // Rodinia, …) rather than inheriting whichever surviving raft's name, so each
+    // assembly reads as its own supercontinent.
+    if (sim.rafts[0]) sim.rafts[0].name = pickUnusedRaftName(sim.rafts, sim.random)
     const anchor = supercontinentAnchor(sim.rafts)
     if (anchor) events.push({ type: 'supercontinent_formed', name: sim.rafts[0]?.name ?? undefined, x: anchor.x, y: anchor.y })
   } else if (sim.rafts.length >= 2) {

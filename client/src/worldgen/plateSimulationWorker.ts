@@ -91,6 +91,11 @@ export interface WorkerErodeMessage {
 export interface WorkerResetErosionMessage {
   type: 'resetErosion'
 }
+// Requests the in-flight erosion pass stop at the next round boundary. The partial
+// result is kept (lastRawElevations), so a later 'erode' continues from there.
+export interface WorkerStopErosionMessage {
+  type: 'stopErosion'
+}
 // Requests the climate step (temperature so far) be computed on the current,
 // possibly-eroded elevation — see docs/decisions/climate-biomes.md. Replies
 // with a WorkerClimateDataMessage.
@@ -141,6 +146,7 @@ export type WorkerInboundMessage =
   | WorkerStopMessage
   | WorkerErodeMessage
   | WorkerResetErosionMessage
+  | WorkerStopErosionMessage
   | WorkerComputeClimateMessage
   | WorkerComputeHydrologyMessage
   | WorkerSerializeWorldMessage
@@ -178,6 +184,8 @@ export interface WorkerRenderedMessage {
   plateArrows: PlateArrow[]
   // Per-raft continent-name label geometry for the names overlay.
   raftLabels: ContinentLabelPlacement[]
+  // Current plate (Voronoi seed) count — for the tectonics panel stats.
+  plateCount: number
   // Sim events this render batch — the screen turns continent-scale ones
   // into notifications + geologic map markers (see the event overlay).
   events: SimEvent[]
@@ -191,18 +199,6 @@ export interface WorkerRenderedMessage {
   // render (init, epoch-driven, resetErosion, and the actual final
   // render an erode request ends with).
   intermediate?: boolean
-  // DEBUG-ONLY: a coarse, nearest-neighbor-downsampled grid of the same
-  // post-redistribution elevations the color map itself uses (see
-  // SimulationRenderResult.elevations) — feeds the temporary 3D relief
-  // preview in WorldGenScreen.ts (see toggleDebug3DView). Not part of
-  // the real terrain pipeline; delete this field (and the preview
-  // itself) once the actual hex-tile terrain system exists. Sent on
-  // every render rather than only when the preview is open, to keep the
-  // message shape uniform — the grid is small (debugHeightmapGridWidth x
-  // debugHeightmapGridHeight floats) so the always-on cost is negligible.
-  debugHeightmapGrid: ArrayBuffer
-  debugHeightmapGridWidth: number
-  debugHeightmapGridHeight: number
 }
 
 // Sent repeatedly (throttled to once per whole-percent change, not once
@@ -293,6 +289,9 @@ let lastRawElevations: Float32Array | null = null
 // re-running the whole live epoch-stepping loop again, not an instant
 // revert. WorkerResetErosionMessage re-renders from this instead.
 let preErosionElevations: Float32Array | null = null
+// Set by a 'stopErosion' message; the in-flight runErosionPass polls it at each round
+// boundary and returns its partial result (which then becomes lastRawElevations).
+let erosionStopRequested = false
 
 // Hydrology (rivers/lakes) cache. Precipitation from the last computeClimate is
 // the river water source; routing + discharge are the expensive parts, cached
@@ -318,26 +317,6 @@ let hydrologyDirty = true
 // wall-clock-faded overlay markers driven by the forwarded sim events (see
 // WorldGenScreen's event overlay). The worker just relays events; it does
 // not track or bake any highlight state.
-
-// DEBUG-ONLY, see WorkerRenderedMessage.debugHeightmapGrid — delete
-// alongside that field and the preview it feeds once the real hex-tile
-// terrain system exists. Nearest-neighbor, not averaged/box-filtered —
-// fine for a coarse sanity-check preview, but can alias/miss narrow
-// peaks or ridgelines thinner than one source-grid cell; not something
-// worth fixing for a throwaway view.
-const DEBUG_HEIGHTMAP_GRID_WIDTH = 256
-const DEBUG_HEIGHTMAP_GRID_HEIGHT = 128
-function downsampleDebugHeightmapGrid(elevations: Float32Array, width: number, height: number): Float32Array {
-  const grid = new Float32Array(DEBUG_HEIGHTMAP_GRID_WIDTH * DEBUG_HEIGHTMAP_GRID_HEIGHT)
-  for (let gy = 0; gy < DEBUG_HEIGHTMAP_GRID_HEIGHT; gy++) {
-    const sy = Math.min(height - 1, Math.floor((gy / DEBUG_HEIGHTMAP_GRID_HEIGHT) * height))
-    for (let gx = 0; gx < DEBUG_HEIGHTMAP_GRID_WIDTH; gx++) {
-      const sx = Math.min(width - 1, Math.floor((gx / DEBUG_HEIGHTMAP_GRID_WIDTH) * width))
-      grid[gy * DEBUG_HEIGHTMAP_GRID_WIDTH + gx] = elevations[sy * width + sx]
-    }
-  }
-  return grid
-}
 
 // World-cell size for grid-thinning the volcanic-arc markers: a long subduction zone
 // has one range feature every ~MERGE_RADIUS (40px), so hundreds accumulate — one
@@ -418,7 +397,6 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   if (precomputedElevations === undefined) preErosionElevations = result.rawElevations
   const eventsToSend = pendingEvents
   pendingEvents = []
-  const debugHeightmapGrid = downsampleDebugHeightmapGrid(result.elevations, sim.width, sim.height)
 
   const volcanoes = collectVolcanoes(sim.features)
 
@@ -439,17 +417,15 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     boundaryMask: result.boundaryMask.buffer as ArrayBuffer,
     plateArrows: result.plateArrows,
     raftLabels: result.raftLabels,
+    plateCount: sim.seeds.length,
     events: eventsToSend,
     intermediate,
-    debugHeightmapGrid: debugHeightmapGrid.buffer as ArrayBuffer,
-    debugHeightmapGridWidth: DEBUG_HEIGHTMAP_GRID_WIDTH,
-    debugHeightmapGridHeight: DEBUG_HEIGHTMAP_GRID_HEIGHT,
   }
   // Transfers the underlying ArrayBuffers instead of copying them — safe
-  // because renderSimulationImage (buffer + boundaryMask) and
-  // downsampleDebugHeightmapGrid allocate fresh arrays every call, so
-  // there's no reference to any now-neutered buffer left to reuse.
-  self.postMessage(message, [message.buffer, message.relief, message.mantle, message.boundaryMask, message.debugHeightmapGrid])
+  // because renderSimulationImage (buffer + boundaryMask) allocates fresh
+  // arrays every call, so there's no reference to any now-neutered buffer
+  // left to reuse.
+  self.postMessage(message, [message.buffer, message.relief, message.mantle, message.boundaryMask])
 }
 
 // Runs one 'erode' request end to end — extracted out of the onmessage
@@ -494,6 +470,7 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
     // ticks would roughly double or triple the total wait for little
     // added benefit over 5 visible in-progress steps.
     (roundElevations) => renderAndPost(roundElevations, true),
+    () => erosionStopRequested,
   )
   await renderAndPost(erosionResult.elevations)
   // Keep the pre-fill (basins-intact) terrain for the hydrology's lakes — set
@@ -556,16 +533,22 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
     // why it's async rather than a tight synchronous loop.
     const currentSim = sim
     renderInFlight = true
+    erosionStopRequested = false
     ;(async () => {
       // Refresh to a full-resolution field first: the live preview renders
       // coarser (PREVIEW_RENDER_SCALE), so lastRawElevations may be an
       // upscaled low-res field, and erosion must run on the crisp full-res
-      // elevation rather than a blurred preview.
-      await renderAndPost(undefined, false, 1)
+      // elevation rather than a blurred preview. Marked intermediate so the screen
+      // does NOT treat this pre-erosion refresh as "erosion done" (which would clear
+      // the stop icon + progress bar the instant a pass starts — see the render handler).
+      await renderAndPost(undefined, true, 1)
       if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height, { strength: message.strength, networkRefreshes: message.networkRefreshes })
     })().finally(() => {
       renderInFlight = false
     })
+  } else if (message.type === 'stopErosion') {
+    // The in-flight runErosionPass polls this and returns its partial result.
+    erosionStopRequested = true
   } else if (message.type === 'resetErosion') {
     if (!sim || !preErosionElevations || renderInFlight) return
     renderInFlight = true

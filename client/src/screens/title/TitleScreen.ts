@@ -41,6 +41,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
         <li class="backlog">To do: Tune lake abundance, riparian strength, river-density default</li>
         <li class="backlog">To do: On-demand / hex-tile fine hydrology (creeks are sub-grid at ~8 km/cell)</li>
         <li class="backlog">To do: Render-perf pass: cache ridged field + domain warp, GPU compute</li>
+        <li class="backlog">To do: Overlay canvas Y-flip — fix at the source, drop the per-element compensations</li>
         <li class="backlog">To do: Gain back my sanity</li>
       </ul>
     </section>

@@ -1,5 +1,4 @@
-import { Color3, Color4, DirectionalLight, HemisphericLight, Mesh, Scene, StandardMaterial, Vector3, VertexData } from '@babylonjs/core'
-import type { InstancedMesh } from '@babylonjs/core'
+import { Color4, Scene } from '@babylonjs/core'
 import { createHexMapCamera } from '../../camera/hexMapCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
@@ -93,7 +92,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const scene = new Scene(ctx.engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
 
-  const { dispose: disposeCamera, setTilt: setCameraTilt, getFocus: getCameraFocus } = createHexMapCamera({
+  const { dispose: disposeCamera, getFocus: getCameraFocus } = createHexMapCamera({
     scene,
     canvas: ctx.canvas,
     engine: ctx.engine,
@@ -114,21 +113,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // at 100, restarting at 100 stops at 200, and so on.
   let autoStopAtEpoch = MAX_TECTONICS_EPOCHS
 
-  // DEBUG 3D preview state — see the "DEBUG: temporary 3D relief
-  // preview" block further down for what builds/tears these down.
-  // Declared up here (rather than only where they're built) so the
-  // single recenter observer below can tile whichever mesh — flat 2D or
-  // debug 3D — is currently active without a second, near-duplicate
-  // observer.
-  let debugMeshTile: Mesh | null = null
-  let debugMeshWrapInstances: InstancedMesh[] = []
   // Scene-space river ribbons (crisp at any zoom, not baked into the map
   // texture). Declared before the map view so its onRecenter can tile them.
   let riverLayer: ReturnType<typeof createToroidalRibbonOverlay> | null = null
 
   // The flat map plane + its toroidal 3x3 recentering (see ToroidalMapView).
-  // The temporary debug relief mesh tiles in lockstep via onRecenter, using
-  // the same center — it goes away when this whole debug block is deleted.
   const mapView = createToroidalMapView({
     scene,
     worldWidth: WORLD_WIDTH,
@@ -137,15 +126,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     textureHeight: MAP_HEIGHT,
     getFocus: getCameraFocus,
     onRecenter: (centerX, centerZ) => {
-      if (debugMeshTile) debugMeshTile.position.set(centerX, 0, centerZ)
-      let i = 0
-      for (let dz = -1; dz <= 1; dz++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dz === 0) continue
-          debugMeshWrapInstances[i]?.position.set(centerX + dx * WORLD_WIDTH, 0, centerZ + dz * WORLD_HEIGHT)
-          i++
-        }
-      }
       riverLayer?.recenter(centerX, centerZ)
     },
   })
@@ -160,159 +140,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     textureHeight: MAP_HEIGHT,
   })
   riverLayer.setEnabled(false)
-
-  // -----------------------------------------------------------------
-  // DEBUG: temporary 3D relief preview ("enter 3D" button on the
-  // Erosion panel) — a coarse displaced grid mesh, NOT the real
-  // hex-tile terrain this screen's own top-of-file comment says is the
-  // actual target. Exists purely so the height map can be eyeballed in
-  // 3D without waiting on that system. Delete this whole block (plus
-  // the worker-side debugHeightmapGrid plumbing it depends on, in
-  // plateSimulationWorker.ts and elevationMapImage.ts) once real
-  // hex-tile terrain exists.
-  // -----------------------------------------------------------------
-
-  // World units of Y displacement per unit of (already redistributed,
-  // roughly [-1,1]) elevation. Real planetary relief is subtle relative
-  // to horizontal scale (Everest is ~0.14% of Earth's radius) — mapped
-  // 1:1 this would read as almost perfectly flat. Purely a stylized
-  // exaggeration so the preview actually looks like terrain; tune by eye.
-  const DEBUG_VERTICAL_EXAGGERATION = 1.0
-  // Camera angle (radians off vertical) the preview snaps to on entry —
-  // see hexMapCamera.ts's setTilt. Tune by eye.
-  const DEBUG_TILT_RADIANS = Math.PI / 3
-
-  // Only affects the debug mesh's own material (see rebuildDebugMesh) —
-  // mapMaterial keeps lighting disabled, so this has zero visible effect
-  // in ordinary 2D mode. Raking (low-angle), not overhead — per this
-  // project's own prior finding from the abandoned sphere-mesh attempt
-  // (docs/design/world-gen.md): lighting angle mattered more than mesh
-  // resolution for whether displaced terrain actually read as 3D.
-  const debugSunLight = new DirectionalLight('debugSunLight', new Vector3(-0.6, -1, -0.35), scene)
-  debugSunLight.intensity = 0.9
-  // Without this, anything facing away from debugSunLight (a single
-  // directional source, no bounce) goes pure black rather than merely
-  // dim — a heightfield mesh with real relief has plenty of steep,
-  // shadowed-from-the-sun faces, so this matters a lot more here than it
-  // did for the old sphere attempt's smoothly curved surface, where
-  // grazing light could still reach almost everywhere.
-  const debugAmbientLight = new HemisphericLight('debugAmbientLight', new Vector3(0, 1, 0), scene)
-  debugAmbientLight.intensity = 0.35
-
-  let debugHeightmapGrid: Float32Array | null = null
-  let debugHeightmapGridWidth = 0
-  let debugHeightmapGridHeight = 0
-  let debug3DActive = false
-
-  function disposeDebugMesh(): void {
-    for (const instance of debugMeshWrapInstances) instance.dispose()
-    debugMeshWrapInstances = []
-    if (debugMeshTile) {
-      debugMeshTile.material?.dispose()
-      debugMeshTile.dispose()
-      debugMeshTile = null
-    }
-  }
-
-  // Rebuilds from scratch every call rather than updating an existing
-  // mesh's vertex buffer in place — simpler code, and cheap enough at
-  // this grid's resolution (debugHeightmapGridWidth x
-  // debugHeightmapGridHeight, not the full 2048x1024 elevation raster)
-  // not to bother with an in-place-update path for a debug view.
-  function rebuildDebugMesh(): void {
-    disposeDebugMesh()
-    if (!debugHeightmapGrid) return
-    const grid = debugHeightmapGrid
-    const gridWidth = debugHeightmapGridWidth
-    const gridHeight = debugHeightmapGridHeight
-
-    const positions: number[] = []
-    const uvs: number[] = []
-    const indices: number[] = []
-    for (let gy = 0; gy < gridHeight; gy++) {
-      const v = gy / (gridHeight - 1)
-      const z = (v - 0.5) * WORLD_HEIGHT
-      for (let gx = 0; gx < gridWidth; gx++) {
-        const u = gx / (gridWidth - 1)
-        const x = (u - 0.5) * WORLD_WIDTH
-        positions.push(x, grid[gy * gridWidth + gx] * DEBUG_VERTICAL_EXAGGERATION, z)
-        uvs.push(u, v)
-      }
-    }
-    for (let gy = 0; gy < gridHeight - 1; gy++) {
-      for (let gx = 0; gx < gridWidth - 1; gx++) {
-        const topLeft = gy * gridWidth + gx
-        const topRight = topLeft + 1
-        const bottomLeft = topLeft + gridWidth
-        const bottomRight = bottomLeft + 1
-        indices.push(topLeft, bottomLeft, topRight, topRight, bottomLeft, bottomRight)
-      }
-    }
-    const normals: number[] = []
-    VertexData.ComputeNormals(positions, indices, normals)
-    // A heightfield never has overhangs, so every normal should
-    // legitimately have a positive Y (upward) component — if it
-    // doesn't, this hand-built index buffer's winding order came out
-    // backward for whatever handedness/culling convention
-    // ComputeNormals assumes, and every triangle lights as if seen from
-    // underneath (reads as almost entirely black under a directional
-    // light, which is exactly what a first look at this showed).
-    // Checking one normal and flipping all of them if it's
-    // downward-facing fixes that without needing to correctly guess the
-    // convention from memory — backFaceCulling is already off so this
-    // doesn't need to also reverse the index winding for visibility.
-    if (normals[1] < 0) {
-      for (let i = 0; i < normals.length; i++) normals[i] = -normals[i]
-    }
-
-    const vertexData = new VertexData()
-    vertexData.positions = positions
-    vertexData.indices = indices
-    vertexData.uvs = uvs
-    vertexData.normals = normals
-
-    debugMeshTile = new Mesh('debugHeightmapMesh', scene)
-    vertexData.applyToMesh(debugMeshTile)
-
-    const material = new StandardMaterial('debugHeightmapMaterial', scene)
-    material.diffuseTexture = mapView.texture
-    material.specularColor = new Color3(0, 0, 0)
-    // Winding order for a hand-built grid mesh is easy to get backward
-    // (which would make it invisible from directly above — exactly the
-    // angle this preview is meant to be viewed from). Disabling culling
-    // entirely sidesteps needing to get that exactly right for a
-    // throwaway debug view, at the cost of rendering both faces.
-    material.backFaceCulling = false
-    debugMeshTile.material = material
-
-    for (let dz = -1; dz <= 1; dz++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (dx === 0 && dz === 0) continue
-        debugMeshWrapInstances.push(debugMeshTile.createInstance(`debugHeightmapMesh_${dx}_${dz}`))
-      }
-    }
-  }
-
-  // No-ops if there's no heightmap data yet (e.g. clicked before the
-  // very first render arrives) rather than tilting into a blank view
-  // with nothing built to show.
-  function setDebug3DActive(active: boolean): void {
-    if (active && !debugHeightmapGrid) return
-    debug3DActive = active
-    if (active) {
-      rebuildDebugMesh()
-      mapView.setEnabled(false)
-      setCameraTilt(DEBUG_TILT_RADIANS)
-    } else {
-      disposeDebugMesh()
-      mapView.setEnabled(true)
-      setCameraTilt(0)
-    }
-    // Queried later in the file (root.innerHTML hasn't run yet at this
-    // function's own definition point) — safe since this function is
-    // only ever called after setup finishes, never during it.
-    toggleDebug3DButton.setAttribute('aria-label', debug3DActive ? 'Debug: exit 3D preview' : 'Debug: enter 3D preview')
-  }
 
   const root = document.createElement('div')
   // Own root class (not the shared 'worldgen-screen') so this screen's CSS
@@ -332,12 +159,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     <button type="button" class="nav-arrow nav-arrow--back" data-action="back" aria-label="Back">‹</button>
     <button type="button" class="nav-arrow nav-arrow--next" data-action="next" aria-label="Next">›</button>
     <span class="panel-title" data-value="panel-title"></span>
+    <div class="compute-progress" data-value="compute-progress" hidden>
+      <span class="compute-progress-fill" data-value="compute-progress-fill"></span>
+    </div>
     <div class="panel" data-panel="0">
       <label class="field field--seed">
         <span class="field-row">
           <input type="text" class="seed-input" placeholder="Seed" value="${initialSeed}" />
           <button type="button" class="icon-button" data-action="randomize-seed" aria-label="Randomize seed">
-            <img src="/icons/dice.png" alt="" />
+            <img src="/icons/reset.png" alt="" />
           </button>
         </span>
       </label>
@@ -392,12 +222,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button" data-action="reset-sim" aria-label="Reset simulation">
             <img src="/icons/reset.png" alt="" />
           </button>
-          <button type="button" class="icon-button sim-toggle" data-action="toggle-sim" aria-label="Run tectonics">
+          <button type="button" class="icon-button" data-action="toggle-sim" aria-label="Run tectonics">
             <img src="/icons/tectonics.png" alt="" />
           </button>
           <span class="tectonics-stats">
-            <span>Land: <span data-value="stat-land"></span>%</span>
-            <span>Epoch: <span data-value="stat-epoch"></span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-epoch">–</span><span class="stat-label">Epoch</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-plates">–</span><span class="stat-label">Plates</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-continents">–</span><span class="stat-label">Continents</span></span>
+            <span class="stat"><span class="stat-num"><span data-value="stat-land">–</span><span class="stat-unit">%</span></span><span class="stat-label">Land</span></span>
           </span>
         </span>
       </label>
@@ -418,10 +250,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           </button>
           <button type="button" class="icon-button" data-action="erode" aria-label="Run erosion">
             <img src="/icons/erosion.png" alt="" />
-          </button>
-          <span class="erosion-status" data-value="erosion-status"></span>
-          <button type="button" class="icon-button" data-action="toggle-debug-3d" aria-label="Debug: enter 3D preview">
-            <img src="/icons/tilt_on.png" alt="" />
           </button>
         </span>
       </label>
@@ -458,11 +286,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <span class="field-label">River density: <span data-value="river-density-label">55</span></span>
         <input type="range" class="river-density-input" min="0" max="100" step="1" value="55" aria-label="River density" />
       </label>
-      <label class="field field--icon-row">
-        <span class="field-row">
-          <span class="erosion-status" data-value="hydrology-status"></span>
-        </span>
-      </label>
     </div>
   `
 
@@ -490,8 +313,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   strengthInput.addEventListener('input', () => { strengthLabel.textContent = strengthInput.value })
   refreshInput.addEventListener('input', () => { refreshLabel.textContent = refreshInput.value })
   const resetErosionButton = root.querySelector<HTMLButtonElement>('[data-action="reset-erosion"]')!
-  const erosionStatus = root.querySelector<HTMLElement>('[data-value="erosion-status"]')!
-  const toggleDebug3DButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-debug-3d"]')!
   const loadWorldButton = root.querySelector<HTMLButtonElement>('[data-action="load-world"]')!
   const saveWorldButton = root.querySelector<HTMLButtonElement>('[data-action="save-world"]')!
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
@@ -505,11 +326,18 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const equatorOffsetLabel = root.querySelector<HTMLElement>('[data-value="equator-offset-label"]')!
   const riverDensityInput = root.querySelector<HTMLInputElement>('.river-density-input')!
   const riverDensityLabel = root.querySelector<HTMLElement>('[data-value="river-density-label"]')!
-  const hydrologyStatus = root.querySelector<HTMLElement>('[data-value="hydrology-status"]')!
   const tempMaxLabel = root.querySelector<HTMLElement>('[data-value="temp-max"]')!
   const tempMinLabel = root.querySelector<HTMLElement>('[data-value="temp-min"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
   const statEpoch = root.querySelector<HTMLElement>('[data-value="stat-epoch"]')!
+  const statPlates = root.querySelector<HTMLElement>('[data-value="stat-plates"]')!
+  const statContinents = root.querySelector<HTMLElement>('[data-value="stat-continents"]')!
+  const erodeIcon = erodeButton.querySelector<HTMLImageElement>('img')!
+  const toggleSimIcon = toggleSimButton.querySelector<HTMLImageElement>('img')!
+  const backButton = root.querySelector<HTMLButtonElement>('[data-action="back"]')!
+  const nextButton = root.querySelector<HTMLButtonElement>('[data-action="next"]')!
+  const computeProgress = root.querySelector<HTMLElement>('[data-value="compute-progress"]')!
+  const computeProgressFill = root.querySelector<HTMLElement>('[data-value="compute-progress-fill"]')!
 
   // Simulation and rendering both happen inside this worker (see
   // plateSimulationWorker.ts) — stepping an epoch and rendering the full
@@ -519,22 +347,60 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const postToWorker = (message: WorkerInboundMessage): void => worker.postMessage(message)
 
   let simRunning = false
-  // Erosion (erosion.ts, run once on demand rather than every epoch —
-  // see WorkerErodeMessage's own comment) only makes sense against a
-  // settled field, so both erosion buttons stay disabled while tectonics
-  // is actively ticking, and again for the stretch between clicking
-  // either one and its render coming back — the worker only ever
-  // processes one render at a time regardless of which of the two
-  // triggered it, so a single in-flight flag covers both.
+  // Any worker computation in flight: tectonics ticking, an erosion pass, or a
+  // climate/hydrology compute. While busy, ALL bottom-panel controls are disabled
+  // except the ACTIVE process's stop button (the only allowed action).
   let erosionOpInFlight = false
-  const updateErosionButtonsState = (): void => {
-    erodeButton.disabled = simRunning || erosionOpInFlight
-    resetErosionButton.disabled = simRunning || erosionOpInFlight
+  let climateInFlight = false
+  let hydrologyInFlight = false
+  let erosionProgressFraction = 0
+  const isBusy = (): boolean => simRunning || erosionOpInFlight || climateInFlight || hydrologyInFlight
+
+  // Disable every panel control while a compute runs; the running process keeps its
+  // stop button live (tectonics = toggle-sim, erosion = erode, which becomes a stop).
+  const updateControlsDisabled = (): void => {
+    const busy = isBusy()
+    randomizeButton.disabled = busy
+    resetButton.disabled = busy
+    resetErosionButton.disabled = busy
+    loadWorldButton.disabled = busy
+    saveWorldButton.disabled = busy
+    // Stop buttons of the active process stay enabled.
+    toggleSimButton.disabled = busy && !simRunning
+    erodeButton.disabled = busy && !erosionOpInFlight
+    // Genesis inputs (debounced-)regenerate the whole world, so lock them while busy;
+    // the erosion/climate/river sliders are left live for tuning (they only affect the
+    // next pass, not the one in flight).
+    for (const el of [seedInput, plateCountInput, landFractionInput, cratonCountInput, clusteringInput]) el.disabled = busy
+    backButton.disabled = busy
+    nextButton.disabled = busy
+    updateNavState() // nav arrows also lock while busy (see its own gating)
   }
 
+  // The centered progress indicator over the panel: a real 0..100 bar for erosion, an
+  // indeterminate sweep for the open-ended processes (tectonics runs until you stop it;
+  // climate/hydrology report no fraction). Hidden when idle.
+  const updateProgress = (): void => {
+    if (erosionOpInFlight) {
+      computeProgress.hidden = false
+      computeProgress.classList.remove('is-indeterminate')
+      computeProgressFill.style.width = `${Math.round(erosionProgressFraction * 100)}%`
+    } else if (simRunning || climateInFlight || hydrologyInFlight) {
+      computeProgress.hidden = false
+      computeProgress.classList.add('is-indeterminate')
+      computeProgressFill.style.width = ''
+    } else {
+      computeProgress.hidden = true
+    }
+  }
+
+  let lastPlateCount = 0
+  let lastContinentCount = 0
   const updateStats = (): void => {
     statLand.textContent = String(Math.round(lastLandFraction * 100))
     statEpoch.textContent = String(lastEpoch)
+    statPlates.textContent = String(lastPlateCount)
+    statContinents.textContent = String(lastContinentCount)
   }
   updateStats()
 
@@ -905,6 +771,25 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastCompositePixels = pixels
     mapView.texture.update(pixels)
   })
+
+  // Torus wrap for VECTOR overlays (labels, markers, arrows): the compositor canvas is
+  // MAP_WIDTH×MAP_HEIGHT and doesn't wrap, so an element straddling the seam gets clipped
+  // at the edge — a wide continent name near x=0/x=MAP_WIDTH loses half itself, then the
+  // 3×3 texture tiling just repeats the clipped copy. Drawing `fn` at all 9 tile offsets
+  // makes the overflow reappear on the opposite edge, so it stitches back together across
+  // the seam. (Full-raster paintPixels layers already cover the whole canvas, so only the
+  // shape/text `paint` layers need this.) See the [[project_worldgen_canvas_flip]] note.
+  const paintWrapped = (c: CanvasRenderingContext2D, fn: (c: CanvasRenderingContext2D) => void): void => {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        c.save()
+        c.translate(dx * MAP_WIDTH, dy * MAP_HEIGHT)
+        fn(c)
+        c.restore()
+      }
+    }
+  }
+
   overlay.setLayers([
     // Muted terrain wash first (bottom-most tint, over the relief base).
     { id: 'terrain', label: 'Terrain', enabled: false, hidden: true, paintPixels: paintTerrain },
@@ -914,16 +799,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'seasonality', label: 'Seasonality', enabled: false, hidden: true, paintPixels: paintSeasonality },
     { id: 'biomes', label: 'Biomes', enabled: false, hidden: true, paintPixels: paintBiomes },
     // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
-    { id: 'mantle', label: 'Mantle', enabled: false, hidden: true, paintPixels: paintMantle, paint: drawMantleMarkers },
+    { id: 'mantle', label: 'Mantle', enabled: false, hidden: true, paintPixels: paintMantle, paint: (c) => paintWrapped(c, drawMantleMarkers) },
     { id: 'boundaries', label: 'Boundaries', enabled: false, paintPixels: paintBoundaryMask },
-    { id: 'arrows', label: 'Arrows', enabled: false, paint: drawArrows },
+    { id: 'arrows', label: 'Arrows', enabled: false, paint: (c) => paintWrapped(c, drawArrows) },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
     { id: 'currents', label: 'Currents', enabled: false, hidden: true, paint: drawCurrents },
     { id: 'lakes', label: 'Lakes', enabled: false, hidden: true, paintPixels: paintLakes },
     // Events are always on — a persistent notification-coupled marker layer, not
     // a user toggle. Arrows are unused (no toggle), kept only so the id resolves.
     { id: 'events', label: 'Events', enabled: true },
-    { id: 'names', label: 'Names', enabled: false, paint: (c) => drawContinentLabels(c, lastRaftLabels) },
+    { id: 'names', label: 'Names', enabled: false, paint: (c) => paintWrapped(c, (cc) => drawContinentLabels(cc, lastRaftLabels)) },
   ])
 
   // Draws one tectonic event's geologic marker, faded by `alpha`: a suture band
@@ -977,7 +862,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // cryptic clutter. Re-add here if that seafloor activity is wanted back.
       if (eventCategory(ev.type) !== 'continent') continue
       if (ev.x !== undefined && ev.y !== undefined) {
-        overlay.addMarker('events', { lifetimeMs: EVENT_CONTINENT_LIFETIME_MS, paint: (c, alpha) => drawEventMarker(c, ev, alpha) })
+        overlay.addMarker('events', { lifetimeMs: EVENT_CONTINENT_LIFETIME_MS, paint: (c, alpha) => paintWrapped(c, (cc) => drawEventMarker(cc, ev, alpha)) })
       }
       const { message, icon } = eventText(ev)
       ctx.notifications.show({ message, icon, durationMs: EVENT_CONTINENT_LIFETIME_MS })
@@ -1003,7 +888,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // rows. Shown on the right whenever a legend-bearing overlay is active.
   type LegendSpec =
     | { type: 'gradient'; title: string; unit: string; stops: { value: number; rgb: [number, number, number] }[] }
-    | { type: 'swatches'; title: string; items: { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' }[] }
+    | { type: 'swatches'; title: string; items: { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' | 'ring' }[] }
   const OVERLAY_DEFS: { id: string; icon: string; label: string; available: () => boolean; legend?: LegendSpec }[] = [
     { id: 'terrain', icon: '/icons/colours.png', label: 'Terrain colour', available: () => lastColoredBase !== null },
     { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null },
@@ -1013,7 +898,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       legend: { type: 'swatches', title: 'Mantle & volcanism', items: [
         { label: 'Upwelling (hot)', rgb: [225, 85, 55] },
         { label: 'Downwelling (cold)', rgb: [55, 110, 210] },
-        { label: 'Volcano / hotspot', rgb: [220, 55, 30], shape: 'cone' },
+        { label: 'Volcano', rgb: [220, 55, 30], shape: 'cone' },
+        { label: 'Hotspot plume', rgb: [255, 140, 0], shape: 'ring' },
       ] },
     },
     { id: 'temperature', icon: '/icons/temperature.png', label: 'Temperature', available: () => lastTemperature !== null, legend: { type: 'gradient', title: 'Temperature', unit: '°C', stops: temperatureLegendStops } },
@@ -1101,6 +987,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           // Match the map's volcano marker (an upward cone), not a flat square.
           sw.className = 'legend-cone'
           sw.style.borderBottomColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
+        } else if (it.shape === 'ring') {
+          // Match the map's hotspot-plume marker (an orange ring).
+          sw.className = 'legend-ring'
+          sw.style.borderColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
         } else {
           sw.className = 'legend-swatch'
           sw.style.background = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
@@ -1303,6 +1193,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     climateResX = message.resX
     climateResY = message.resY
     climateStatus.textContent = ''
+    climateInFlight = false
+    updateControlsDisabled()
+    updateProgress()
     // Coldest/warmest average temperature on this world (reflects latitude,
     // the greenhouse offset, and elevation lapse — a high pole peak is the min).
     let min = Infinity
@@ -1344,7 +1237,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (message.lakeDepth.byteLength > 0) lastLakeDepth = new Float32Array(message.lakeDepth)
     // Riparian-refined biomes replace the climate step's water-free ones.
     if (message.biomes.byteLength > 0) lastBiomes = new Uint8Array(message.biomes)
-    hydrologyStatus.textContent = ''
+    hydrologyInFlight = false
+    updateControlsDisabled()
+    updateProgress()
     updateOverlays() // rivers/lakes + refreshed biomes now available
   }
 
@@ -1355,7 +1250,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverLayer?.setEnabled(false)
     overlay.setLayerEnabled('lakes', false)
     overlay.composite()
-    hydrologyStatus.textContent = ''
   }
 
   // Posts a hydrology compute with the current density knob. Needs a computed
@@ -1363,7 +1257,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // hydrology panel ensures that first. Self-guards a running sim.
   function requestHydrology(): void {
     if (simRunning) return
-    hydrologyStatus.textContent = '…'
+    hydrologyInFlight = true
+    updateControlsDisabled()
+    updateProgress()
     postToWorker({ type: 'computeHydrology', riverDensity: Number(riverDensityInput.value) })
   }
 
@@ -1372,6 +1268,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function requestClimate(): void {
     if (simRunning) return
     climateStatus.textContent = '…'
+    climateInFlight = true
+    updateControlsDisabled()
+    updateProgress()
     postToWorker({
       type: 'computeClimate',
       temperatureOffset: Number(tempBandInput.value),
@@ -1394,7 +1293,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const message = event.data
 
     if (message.type === 'erosionProgress') {
-      erosionStatus.textContent = `${Math.round(message.fraction * 100)}%`
+      erosionProgressFraction = message.fraction
+      updateProgress()
       return
     }
 
@@ -1436,6 +1336,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
     lastLandFraction = message.landFraction
     lastEpoch = message.epoch
+    lastPlateCount = message.plateCount
+    lastContinentCount = message.raftLabels.length
     updateStats()
     updateNavState() // epoch progress may unlock the Erosion panel
 
@@ -1449,17 +1351,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       stopSim()
     }
 
-    // DEBUG 3D preview data — kept fresh on every render (see
-    // WorkerRenderedMessage.debugHeightmapGrid), not just while the
-    // preview is open, so toggling it on always shows the latest state
-    // with no extra round trip. If the preview is already open when a
-    // new render lands (e.g. Erode clicked again without leaving it),
-    // rebuild immediately rather than leaving it showing a stale grid.
-    debugHeightmapGrid = new Float32Array(message.debugHeightmapGrid)
-    debugHeightmapGridWidth = message.debugHeightmapGridWidth
-    debugHeightmapGridHeight = message.debugHeightmapGridHeight
-    if (debug3DActive) rebuildDebugMesh()
-
     // Intermediate renders (see WorkerRenderedMessage.intermediate) are
     // one of 5 in-progress redraws an 'erode' request posts mid-flight —
     // the map/stats above should still reflect them live, but they're
@@ -1467,8 +1358,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // they are until the actual final render arrives.
     if (!message.intermediate) {
       erosionOpInFlight = false
-      erosionStatus.textContent = ''
-      updateErosionButtonsState()
+      erodeIcon.src = '/icons/erosion.png' // back from the stop icon
+      erodeButton.setAttribute('aria-label', 'Run erosion')
+      updateControlsDisabled()
+      updateProgress()
     }
   }
 
@@ -1499,15 +1392,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (!simRunning) return
     simRunning = false
     postToWorker({ type: 'stop' })
-    toggleSimButton.classList.remove('is-active')
+    toggleSimIcon.src = '/icons/tectonics.png'
     toggleSimButton.setAttribute('aria-label', 'Run tectonics')
-    seedInput.disabled = false
-    plateCountInput.disabled = false
-    landFractionInput.disabled = false
-    clusteringInput.disabled = false
-    cratonCountInput.disabled = false
-    randomizeButton.disabled = false
-    updateErosionButtonsState()
+    updateControlsDisabled()
+    updateProgress()
   }
 
   const startSim = (): void => {
@@ -1522,15 +1410,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     invalidateClimate()
     erosionRunCount = 0
     postToWorker({ type: 'start' })
-    toggleSimButton.classList.add('is-active')
+    toggleSimIcon.src = '/icons/stop.png'
     toggleSimButton.setAttribute('aria-label', 'Stop tectonics')
-    seedInput.disabled = true
-    plateCountInput.disabled = true
-    landFractionInput.disabled = true
-    clusteringInput.disabled = true
-    cratonCountInput.disabled = true
-    randomizeButton.disabled = true
-    updateErosionButtonsState()
+    updateControlsDisabled()
+    updateProgress()
   }
 
   toggleSimButton.addEventListener('click', () => {
@@ -1539,26 +1422,36 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   })
 
   erodeButton.addEventListener('click', () => {
-    if (simRunning || erosionOpInFlight) return
+    // While a pass is running the erode button IS the stop button (see the icon swap
+    // below); clicking it cancels — the worker keeps the partial result so a later
+    // click continues from there.
+    if (erosionOpInFlight) {
+      postToWorker({ type: 'stopErosion' })
+      return
+    }
+    if (isBusy()) return
     erosionOpInFlight = true
+    erosionProgressFraction = 0
     erosionRunCount += 1
     invalidateClimate()
-    updateErosionButtonsState()
+    erodeIcon.src = '/icons/stop.png'
+    erodeButton.setAttribute('aria-label', 'Stop erosion')
+    updateControlsDisabled()
+    updateProgress()
     updateNavState() // first erosion unlocks Climate/Rivers
     postToWorker({ type: 'erode', strength: Number(strengthInput.value), networkRefreshes: Number(refreshInput.value) })
   })
 
   resetErosionButton.addEventListener('click', () => {
-    if (simRunning || erosionOpInFlight) return
+    if (isBusy()) return
     erosionOpInFlight = true
     erosionRunCount = 0
     invalidateClimate()
-    updateErosionButtonsState()
+    updateControlsDisabled()
+    updateProgress()
     updateNavState() // reverting erosion re-locks Climate/Rivers
     postToWorker({ type: 'resetErosion' })
   })
-
-  toggleDebug3DButton.addEventListener('click', () => setDebug3DActive(!debug3DActive))
 
   // Load a previously-saved world (top-left folder button). Intended handler:
   // open a file picker for a saved snapshot (the export format — world_*.json
@@ -1681,7 +1574,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Drop any pending debounced regenerate — it would fire an `init` after the
     // restore and overwrite the loaded world.
     if (regenerateTimer !== undefined) clearTimeout(regenerateTimer)
-    setDebug3DActive(false)
     ctx.notifications.clearAll()
     overlay.clearMarkers()
     invalidateClimate()
@@ -1754,9 +1646,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   const regenerate = (): void => {
     stopSim()
-    // Otherwise a fresh sim would start ticking underneath a debug 3D
-    // preview left showing the previous world's now-stale mesh.
-    setDebug3DActive(false)
     ctx.notifications.clearAll()
     overlay.clearMarkers()
     invalidateClimate()
