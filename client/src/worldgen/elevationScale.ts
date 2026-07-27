@@ -21,6 +21,8 @@
 // An explicit metre anchor removes the ambiguity: a height is a height, the
 // reference points below are checkable against the real Earth, and the
 // translation hack disappears.
+import { METERS_PER_CELL } from './mapConfig'
+
 export const ELEVATION_METERS = 9000
 
 export const metersToElevation = (m: number): number => m / ELEVATION_METERS
@@ -148,6 +150,25 @@ export function marginProfile(t: number, abyssalFloor: number): number {
 // several overlapping blobs) sits comfortably at full interior height.
 export const MARGIN_FIELD_LO = 0.08
 export const MARGIN_FIELD_HI = 1.0
+
+// A real-world terrain angle, expressed in the units the erosion code measures
+// slope in: elevation units of rise per CELL of run (see runThermalErosion's
+// `drop / distance`, where distance is 1 or √2 cells). Converting needs both
+// scales — the vertical one from this module and the horizontal one from
+// mapConfig — which is exactly why an angle stated as a bare number was so easy
+// to get wrong.
+//
+// Worked example: a 45° slope is 7800 m of rise across one 7800 m cell, which is
+// 7800/9000 = 0.867 elevation units per cell. So the grid units are almost the
+// same size as tan(θ) here, but only by coincidence of the two scales — don't
+// assume that.
+export function slopeFromAngle(degrees: number): number {
+  return Math.tan((degrees * Math.PI) / 180) * (METERS_PER_CELL / ELEVATION_METERS)
+}
+
+export function angleFromSlope(slope: number): number {
+  return (Math.atan(slope * (ELEVATION_METERS / METERS_PER_CELL)) * 180) / Math.PI
+}
 
 // How much gentler land slopes became under the recalibration, measured rather
 // than derived: identical seed and epoch count, land-cell elevation differences

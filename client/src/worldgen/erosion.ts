@@ -1,5 +1,5 @@
 import { wrappedDelta } from './toroidal'
-import { SEA_LEVEL } from './elevationScale'
+import { SEA_LEVEL, slopeFromAngle } from './elevationScale'
 
 // Flat-torus port of worldgen-sphere/erosion.ts's stream-power/D8 model
 // (Cordonnier et al. 2016 — see docs/decisions/plate-tectonics-simulation.md).
@@ -523,22 +523,49 @@ export interface ThermalErosionParams {
   transportRate: number
 }
 
-// talusSlope set from a real land-cell downhill-slope distribution
-// (headless dump: createPlateSimulation -> 100 epochs -> the real
-// elevation query at 2048x1024 -> every downhill D8 neighbor pair's
-// slope), not guessed: median 0.00214, p90 0.00603, p99 0.00929, max
-// 0.01382. Set at the ~90th percentile so only the steepest ~10% of
-// downhill slopes on the map — concentrated at ridgelines and peaks,
-// exactly the grey/white high terrain that stream-power erosion (area-
-// driven, and a peak's own drainage area is always minimal since it's a
-// divide, not a collector) barely ever touches — count as unstable.
-// transportRate=0.3 chosen alongside it: at that talusSlope, produced a
-// clearly visible per-pass change concentrated at high elevation with no
-// runaway/oscillation across the same headless comparison used for
-// erodibilityK.
+// The critical slope is stated as a real ANGLE, not a bare number. It used to be
+// 0.006, set at the 90th percentile of the then-measured slope distribution — a
+// sound-looking calibration that turned out to describe the wrong thing, and the
+// metre anchor (elevationScale.ts) is what made that visible. In real units 0.006
+// is 0.40°, so the model was declaring anything steeper than a fifth of a degree
+// to be unstable scree.
+//
+// A talus threshold is an ATTRACTOR, not a filter: whatever starts above it is
+// ground down toward it, and with 50 iterations a round over 5 rounds the whole
+// map converges on it. At 0.40° that planed the mountains. Measured over a full
+// pass, mean local relief above 2 km: 693 m on the tectonic surface, 365 m after
+// erosion — the stream-power step carved it up to 748 m and this step then took
+// more than half of that back off. Which is exactly the "valleys everywhere on
+// the plains, none in the mountains" the terrain was showing.
+//
+// So the question is what the steepest SUSTAINABLE slope is at this grid's scale,
+// and the answer is not the angle of repose. Repose is ~33°, but at 7.8 km per
+// cell no such slope can exist — averaged over 8 km, even the Himalayan front is
+// only ~5.7°, and this world's tectonic surface measures p99 = 2.25° with an
+// absolute maximum of 7.97°. 3° sits just above the p99.9 of 4.13°... deliberately
+// below it: it fires on the steepest ~0.5% of downhill pairs, which are real range
+// fronts and freshly-incised channel banks, and leaves ordinary mountain slope
+// alone.
+//
+// Swept against the alternatives (mean local relief above 2 km after a full pass):
+//   0.40° (old) 365 m, fires on 10.1% of pairs
+//   1°          542 m,  3.7%
+//   2°          731 m,  1.3%
+//   3°          831 m,  0.5%   <- chosen
+//   5°          901 m,  0.03%  — effectively disabled
+//   8°+         915 m,  0%     — fully disabled, the no-thermal-erosion value
+// Above ~5° the step stops doing anything at all, which would leave the
+// valley-widening it exists for unimplemented; 3° keeps it working on the terrain
+// it was meant for while erosion now ADDS relief in the mountains (831 m against
+// the tectonic surface's 693 m) instead of removing it.
+//
+// transportRate = 0.3 and iterations = 50 are unchanged, but note they now apply
+// to a far smaller set of pairs, which is the point.
+const TALUS_ANGLE_DEGREES = 3
+
 export const DEFAULT_THERMAL_EROSION_PARAMS: ThermalErosionParams = {
   iterations: 50,
-  talusSlope: 0.006,
+  talusSlope: slopeFromAngle(TALUS_ANGLE_DEGREES),
   transportRate: 0.3,
 }
 
