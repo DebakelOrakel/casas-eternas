@@ -15,7 +15,7 @@ import { computeOceanCurrents, applyOceanSST } from './climate/oceanCurrents'
 import { computeSeasonalAmplitude } from './climate/seasonality'
 import { computeSeasonalPrecipitation } from './climate/monsoon'
 import { computeBiomes } from './climate/biomes'
-import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climate/climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from './climate/climateField'
 import { computeEcology } from './ecology/ecologyField'
 import { computeCratonOldnessField } from './rafts'
 import { computeMigration } from './migration/migrationField'
@@ -197,6 +197,19 @@ export interface WorkerRenderedMessage {
   mantle: ArrayBuffer
   mantleResX: number
   mantleResY: number
+  // Coarse elevation (Float32, CLIMATE_RES_X*CLIMATE_RES_Y) purely so the hover
+  // readout can report a height in metres for the cell under the cursor. Center-
+  // sampled off the full-res field at the climate grid, which is the same
+  // resolution — and the same sampler — every climate module already reads
+  // elevation at, so a hovered value matches what temperature/precipitation
+  // actually saw. Coarse deliberately: the full-res f32 raster is 8 MB, and
+  // re-slicing that every epoch to keep a live tooltip fed is not worth it, while
+  // regional heights (is this plateau really ~360 m? is that basin at -5700?) are
+  // exactly what the readout is for. Per-pixel peak heights belong in a dump
+  // script, not a tooltip.
+  elevation: ArrayBuffer
+  elevationResX: number
+  elevationResY: number
   hotspots: { x: number; y: number }[]
   // Volcanic features for distinct markers: hotspot cones (plateB = -1), flood-basalt
   // provinces (plateB = -2), and volcanic arcs (the `volcanic` range features — Andes/
@@ -482,6 +495,9 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     mantle: sim.mantle.slice().buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
+    elevation: coarseElevation(result.elevations).buffer as ArrayBuffer,
+    elevationResX: CLIMATE_RES_X,
+    elevationResY: CLIMATE_RES_Y,
     hotspots: sim.hotspots,
     volcanoes,
     width: sim.width,
@@ -499,7 +515,21 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   // because renderSimulationImage (buffer + boundaryMask) allocates fresh
   // arrays every call, so there's no reference to any now-neutered buffer
   // left to reuse.
-  self.postMessage(message, [message.buffer, message.relief, message.mantle, message.boundaryMask])
+  self.postMessage(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
+}
+
+// Full-res elevation → the climate grid, for WorkerRenderedMessage.elevation.
+// Center samples via the climate modules' own sampleElevationAtCell rather than
+// an area mean or max, so the tooltip reports the same value the climate
+// pipeline reads at that cell — not a differently-filtered one.
+function coarseElevation(elevations: Float32Array): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      out[gy * CLIMATE_RES_X + gx] = sampleElevationAtCell(elevations, gx, gy, sim!.width, sim!.height)
+    }
+  }
+  return out
 }
 
 // Runs one 'erode' request end to end — extracted out of the onmessage

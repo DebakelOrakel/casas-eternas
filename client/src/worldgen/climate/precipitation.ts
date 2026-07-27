@@ -1,5 +1,5 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell, shiftedYNorm } from './climateField'
-import { SEA_LEVEL } from '../erosion'
+import { SEA_LEVEL, SLOPE_RECALIBRATION } from '../elevationScale'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -23,7 +23,11 @@ const ADVECT_MERIDIONAL_SCALE = 0.3
 // lift). The orographic term also creates rain shadows: moisture rains out
 // climbing the windward slope, so little is left for the lee side downwind.
 const BASE_RAINOUT = 0.03
-const OROGRAPHIC_RATE = 0.9
+// Scaled by SLOPE_RECALIBRATION: land slopes halved when the continental
+// interior stopped being a flat plateau, so the same terrain now produces half
+// the measured upslope. Without this, orographic rain and its rain shadows both
+// collapse toward the BASE_RAINOUT floor.
+const OROGRAPHIC_RATE = 0.9 * SLOPE_RECALIBRATION
 // Land moisture recycling (evapotranspiration): the fraction of rained-out water that
 // re-evaporates from soil/vegetation back into the airborne pool, feeding downwind rain.
 // This is a MAJOR real process — ~a third to a half of continental precipitation is

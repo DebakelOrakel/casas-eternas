@@ -3,6 +3,7 @@ import { advancePointByMotion, type PlateMotion } from './plateMotion'
 import type { PlateType } from './plateTypes'
 import { toroidalDistanceSq, wrappedDelta } from './toroidal'
 import { CONTINENT_NAME_POOL } from './continentNames'
+import { ABYSSAL_FLOOR, SEA_LEVEL, marginParameter, marginProfile } from './elevationScale'
 
 // Continental crust modeled as persistent "rafts" that ride on the
 // kinematic plates, decoupled from them — see
@@ -103,19 +104,62 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t)
 }
 
-// Continental membership 0..1 at a world point — 0 open ocean, 1 solid
-// continental interior, the band between is the coastal shelf. Sums every
-// blob's kernel (toroidally wrapped); brute-force over blobs for now, like
-// the feature query was before bucketing — add a spatial index later if it
-// shows up in a profile.
-export function raftMembership(x: number, y: number, rafts: Raft[], width: number, height: number): number {
+// The raw summed metaball field at a world point — 0 far from any crust, 1 at a
+// lone blob's centre, higher where blobs overlap. Sums every blob's kernel
+// (toroidally wrapped); brute-force over blobs for now, like the feature query
+// was before bucketing — add a spatial index later if it shows up in a profile.
+//
+// Exposed separately from raftMembership because elevation needs the field
+// itself, not the thresholded membership: the margin profile (elevationScale.ts)
+// runs its own, wider band over this same field so a continental shelf has room
+// to exist. Thresholding first would throw away exactly the range it needs.
+export function raftField(x: number, y: number, rafts: Raft[], width: number, height: number): number {
   let field = 0
   for (const raft of rafts) {
     for (const blob of raft.blobs) {
       field += blobKernel(toroidalDistanceSq(x, y, blob.x, blob.y, width, height), blob.radius)
     }
   }
-  return smoothstep(FIELD_LO, FIELD_HI, field)
+  return field
+}
+
+// Continental membership 0..1 at a world point — 0 open ocean, 1 solid
+// continental interior. This is the "is it continental crust" question (plate
+// typing, accretion, mantle insulation, rift eligibility), NOT "is it above
+// water" — see marginProfile for the latter.
+export function raftMembership(x: number, y: number, rafts: Raft[], width: number, height: number): number {
+  return smoothstep(FIELD_LO, FIELD_HI, raftField(x, y, rafts, width, height))
+}
+
+// Continental membership sampled onto a coarse grid, computed ONCE per epoch and
+// shared by every consumer that needs "is there continent here" over the whole
+// surface. raftMembership is a brute-force scan over every blob of every raft, so
+// a full-surface sweep costs cells × blobs — and blob counts grow through a run as
+// margins accrete. mantleField already paid that (128×64 per epoch); adding a
+// second independent sweep for the ocean-age sink would have roughly quintupled it
+// at the 256×128 age resolution. One field, sampled by world coordinate, keeps it
+// at a single sweep regardless of how many consumers there are.
+export function computeMembershipField(rafts: Raft[], resX: number, resY: number, width: number, height: number): Float32Array {
+  const out = new Float32Array(resX * resY)
+  for (let gy = 0; gy < resY; gy++) {
+    const wy = ((gy + 0.5) / resY) * height
+    for (let gx = 0; gx < resX; gx++) {
+      const wx = ((gx + 0.5) / resX) * width
+      out[gy * resX + gx] = raftMembership(wx, wy, rafts, width, height)
+    }
+  }
+  return out
+}
+
+// Nearest-cell sample of a membership field at a world point (torus-wrapped), so
+// consumers on their own grids can read it without caring what resolution it was
+// computed at. Nearest rather than bilinear on purpose: every consumer thresholds
+// the result (> 0.5) rather than using its magnitude, so interpolation would only
+// cost time.
+export function sampleMembershipField(field: Float32Array, resX: number, resY: number, x: number, y: number, width: number, height: number): number {
+  const gx = Math.min(resX - 1, Math.floor((((x % width) + width) % width) / width * resX))
+  const gy = Math.min(resY - 1, Math.floor((((y % height) + height) % height) / height * resY))
+  return field[gy * resX + gx]
 }
 
 // A coarse (resX×resY) field of continental crust "oldness" 0..1 — 1 where the
@@ -427,8 +471,19 @@ export function splitDisconnectedRafts(rafts: Raft[], connectFactor: number, ran
 const MIN_BLOBS_PER_CRATON = 4
 const MAX_BLOBS_PER_CRATON = 8
 
+// Fraction of the surface that is actually DRY — the target the blob-radius
+// binary search in generateInitialRafts calibrates the user's land-fraction
+// slider against.
+//
+// Tests the margin profile's own zero crossing rather than `membership >= 0.5`,
+// which is what this used to do. That worked only by coincidence: under the old
+// linear ocean→continent lerp, sea level happened to fall at membership ≈ 0.56,
+// close enough to 0.5 for the proxy to pass. It stops holding the moment the
+// profile is shaped — the shoreline now sits at t = 0.88 — and a slider that
+// silently over-reports land by a wide margin is worse than one that's merely
+// approximate. Asking the profile directly can't drift out of sync again.
 function measureLandFraction(rafts: Raft[], width: number, height: number): number {
-  // Coarse membership sample — exact enough to calibrate blob sizes against.
+  // Coarse sample — exact enough to calibrate blob sizes against.
   const sx = 128
   const sy = 64
   let land = 0
@@ -436,7 +491,9 @@ function measureLandFraction(rafts: Raft[], width: number, height: number): numb
     for (let i = 0; i < sx; i++) {
       const x = (i + 0.5) * (width / sx)
       const y = (j + 0.5) * (height / sy)
-      if (raftMembership(x, y, rafts, width, height) >= 0.5) land++
+      // Ocean age is irrelevant here: the shoreline sits above the deep end of
+      // the profile, so any floor value gives the same land/water verdict.
+      if (marginProfile(marginParameter(raftField(x, y, rafts, width, height)), ABYSSAL_FLOOR) > SEA_LEVEL) land++
     }
   }
   return land / (sx * sy)

@@ -1,20 +1,28 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt, sampleElevationAtCell } from './climateField'
+import { ELEVATION_METERS, SEA_LEVEL } from '../elevationScale'
 
 // Real-ish units (°C), so the later Whittaker biome thresholds are directly
 // usable. Tune by eye — these set the equator-to-pole span.
 const T_EQUATOR_C = 30
 const T_POLE_C = -25
-// °C lost per unit of elevation, applied only ABOVE the continental lowland baseline
-// (LAND_LAPSE_REF) — a peak near 1.0 cools by ~this·(1−ref), so an equatorial high
-// mountain ends up cold (Kilimanjaro/Andes). Tune by eye.
-const LAPSE_C_PER_ELEVATION = 35
-// The lapse reference: thick continental crust's isostatic baseline (≈ RAFT_
-// CONTINENTAL_BASELINE 0.35 in elevationField.ts) represents LOWLAND at essentially sea-
-// level temperature, not high ground. Cooling relative to SEA_LEVEL (0) instead cooled
-// EVERY land cell by ~12°C (0.35·35), shifting all climate bands too cold — a ~18°C
-// equator (few tropics/rainforest), frozen mid-latitudes (excess tundra), and, via the
-// lower evaporation, a drier/more-desert world. Only real uplift above this cools now.
-const LAND_LAPSE_REF = 0.35
+// The environmental lapse rate — °C lost per unit of elevation. Now a derived
+// quantity rather than a tuned one: the real atmosphere loses ~6.5 °C/km, and
+// elevationScale says a full unit is ELEVATION_METERS, so this is simply the two
+// multiplied. A 1681 m peak (the measured 90th percentile of land) comes out
+// 10.9 °C cooler than its lowland, which is what 6.5 °C/km gives.
+//
+// This replaces a hand-tuned 35 paired with a LAND_LAPSE_REF = 0.35 offset, and
+// getting rid of that offset is the point. It existed because the old land
+// baseline of 0.35 was not physically a height at all — continental lowland was
+// SUPPOSED to read as sea-level-warm, but the scale placed it at what the lapse
+// rate had to treat as 3 km up, cooling every land cell on the planet by ~12 °C
+// and dragging the whole climate too cold (a ~18 °C equator, tundra across the
+// mid-latitudes, and a drier world via the suppressed evaporation). The offset
+// was the correct local fix for a scale that meant two different things in its
+// two halves. With lowland actually at 360 m, cooling can simply be measured
+// from sea level like it is in reality, and the special case disappears.
+const LAPSE_C_PER_KM = 6.5
+const LAPSE_C_PER_ELEVATION = LAPSE_C_PER_KM * (ELEVATION_METERS / 1000)
 
 // Base air temperature: latitudinal insolation (cosine of latitude angle,
 // equator warm → pole cold) minus an elevation lapse on land, plus a global
@@ -38,7 +46,7 @@ export function computeTemperature(elevation: Float32Array, worldWidth: number, 
     const base = meanC + contrast * deviation
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const e = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
-      const value = base - LAPSE_C_PER_ELEVATION * Math.max(0, e - LAND_LAPSE_REF)
+      const value = base - LAPSE_C_PER_ELEVATION * Math.max(0, e - SEA_LEVEL)
       temperature[gy * CLIMATE_RES_X + gx] = value + offsetC
     }
   }

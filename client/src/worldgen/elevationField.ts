@@ -2,9 +2,10 @@ import type { TerrainFeature } from './terrainFeatures'
 import { wrappedDelta } from './toroidal'
 import { domainWarpDelta } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
-import { raftMembership } from './rafts'
+import { raftField } from './rafts'
 import type { Raft } from './rafts'
 import { sampleOceanAge } from './oceanAge'
+import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './elevationScale'
 
 // A terrain feature is no longer an isotropic blob but an oriented ridge
 // segment: its influence reaches far ALONG its own boundary tangent
@@ -75,6 +76,23 @@ const FEATURE_MAX_REACH = Math.max(RANGE_SEGMENT_HALF_LENGTH + RANGE_PERP_RADIUS
 // bound, and baseline blending means a tall peak reads as a smooth rise
 // rather than a stark discontinuity), so there's headroom to push this
 // back up a bit without reintroducing that problem.
+//
+// Deliberately UNCHANGED by the metre recalibration, against the initial
+// expectation that dropping the land baseline from 0.35 to 0.04 would need this
+// roughly tripled to compensate. Measured instead (50-epoch run, 2440 features):
+// land median 360 m, p90 1681 m — against Earth's ~300 m and ~1600 m. It was
+// already right; what was wrong was the baseline underneath it eating most of
+// the range. Lowering it to 0.030 or 0.027 was tried and only made the
+// distribution worse (p90 1451 / 1314) without removing the clamp saturation,
+// because that saturation isn't the mountain distribution at all — it's
+// plateSimulation's FLOOD_BASALT_DEPOSIT of 50, which at any scale in this range
+// is a single deposit worth more than the entire ±1 clamp. Pre-existing, and
+// unaffected either way by the recalibration.
+//
+// Note this is the ONE knob between crustal thickness and height, which is why
+// none of the deposition/decay constants in plateSimulation.ts, nor the boundary
+// rates in boundaryClassification.ts, needed touching: they are all in thickness
+// units and keep their proportions to each other automatically.
 const THICKNESS_TO_ELEVATION_SCALE = 0.035
 
 // How strongly ridged-multifractal detail (ridgedNoise.ts) modulates
@@ -138,20 +156,70 @@ export function buildFeatureBuckets(features: TerrainFeature[], width: number, h
 }
 
 
-// Baseline elevation field from raft membership (rafts.ts) — this replaced
+// Baseline elevation field from the raft crust field (rafts.ts) — this replaced
 // the old per-plate-type baseline entirely: oceanic by default, continental
-// where rafts cover, with a soft coastal transition straight out of the
-// metaball membership band. Warped so coastlines stay ragged, and sampled at
-// the render grid (which may be coarser than the world — the renderWidth/
-// worldWidth scaling below covers the whole world at fewer points). Oceanic
-// depth follows the advected ocean-age field (age-depth √ law); continental
-// crust ignores it.
-const RAFT_CONTINENTAL_BASELINE = 0.35
-const RAFT_OCEANIC_BASELINE = -0.45
-// Age-depth coefficient: the oceanic baseline drops by AGE_DEPTH_K·√age
-// (oceanAge.ts), so young ridge crust sits near RAFT_OCEANIC_BASELINE and old
-// basin floor sinks well below it — the real √age ocean-depth law.
-const AGE_DEPTH_K = 0.045
+// where rafts cover. Warped so coastlines stay ragged, and sampled at the render
+// grid (which may be coarser than the world — the renderWidth/worldWidth scaling
+// below covers the whole world at fewer points).
+//
+// The ocean→continent transition used to be a plain lerp across the metaball
+// membership band between a fixed -0.45 ocean baseline and a fixed +0.35
+// continental one. Both halves of that are gone: depth now follows the advected
+// ocean-age field (oceanFloorAtAge), and the transition is a shaped continental
+// margin with a real shelf (elevationScale.marginProfile), which is what keeps a
+// coastline off the steepest part of the drop.
+
+// Ocean depth from crustal age. Was RAFT_OCEANIC_BASELINE − 0.045·√age, the
+// textbook √age law — which is right for YOUNG crust and wrong in exactly the
+// way that mattered here: √age is unbounded, and oceanAge.ts ages crust by +1
+// every epoch forever. Starting from OCEAN_AGE_INIT = 40 that reached the −1
+// elevation clamp at age 149, i.e. epoch 109 of a run that typically goes 300
+// to 800. Past that point every ocean cell away from a spreading ridge was
+// pinned flat at the clamp: the age-depth law — the entire reason the age field
+// exists — stopped producing any basin shape at all, the hillshade had nothing
+// to shade, and the continent→ocean drop grew to its maximum possible size and
+// kept growing with runtime. Confirmed by direct computation, not inferred.
+//
+// The real plate-cooling model (GDH1 and friends) doesn't run away: √age only
+// holds for the first ~20 Ma of a plate's ~180 Ma life, after which subsidence
+// decays exponentially toward an asymptotic depth as the lithosphere reaches
+// thermal equilibrium with the mantle below it. Using that shape here means the
+// floor CANNOT reach the clamp no matter how long the sim runs — it's bounded by
+// construction rather than by a constant that has to be re-checked against the
+// longest run anyone might do.
+//
+// The shape used is GDH1 (Stein & Stein 1992), the standard two-branch fit to
+// real bathymetry: √age while the plate is young and cooling fast, switching at
+// 20 Ma to an exponential approach to the equilibrium depth. Taken as a
+// dimensionless 0..1 fraction of total subsidence, so the actual depths stay
+// ours — RIDGE_CREST and ABYSSAL_FLOOR set where the curve starts and ends, and
+// only its SHAPE comes from the literature.
+//
+// One epoch is read as one million years here, which is what lets GDH1's
+// published coefficients be used as-is; it's also roughly what oceanAge's
+// MAX_SEAFLOOR_AGE = 180 already implied.
+//
+// A single plain exponential was tried first and is the obvious cheaper thing to
+// write, but it misses badly exactly where ocean floor is most visible: it has a
+// finite slope at age 0 where the real curve has √age's near-vertical one, so
+// young crust subsides far too slowly — measured up to 490 m too shallow across
+// the 5-40 Ma band, i.e. across most of the floor around every spreading ridge.
+// The two branches meet at 20 Ma to within half a metre, so the seam is not
+// visible.
+const GDH1_YOUNG_MAX_AGE = 20
+const GDH1_YOUNG_COEFF = 365 / (5651 - 2600)
+const GDH1_OLD_COEFF = 2473 / (5651 - 2600)
+const GDH1_OLD_DECAY = 0.0278
+
+// Fraction 0..1 of an ocean plate's total subsidence completed at `age` epochs.
+function subsidenceFraction(age: number): number {
+  if (age < GDH1_YOUNG_MAX_AGE) return GDH1_YOUNG_COEFF * Math.sqrt(age)
+  return 1 - GDH1_OLD_COEFF * Math.exp(-GDH1_OLD_DECAY * age)
+}
+
+export function oceanFloorAtAge(age: number): number {
+  return RIDGE_CREST + (ABYSSAL_FLOOR - RIDGE_CREST) * subsidenceFraction(age)
+}
 
 export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, renderWidth: number, renderHeight: number, worldWidth: number, worldHeight: number, warpSeed: number): Float32Array {
   const result = new Float32Array(renderWidth * renderHeight)
@@ -163,10 +231,12 @@ export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, rende
       const worldX = px * scaleX
       const wx = worldX + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'x')
       const wy = worldY + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'y')
-      const membership = raftMembership(wx, wy, rafts, worldWidth, worldHeight)
-      // Oceanic floor deepens with its age; continental (raft) crust ignores it.
-      const oceanicBaseline = RAFT_OCEANIC_BASELINE - AGE_DEPTH_K * Math.sqrt(sampleOceanAge(oceanAge, wx, wy, worldWidth, worldHeight))
-      result[py * renderWidth + px] = oceanicBaseline + (RAFT_CONTINENTAL_BASELINE - oceanicBaseline) * membership
+      // Ocean floor deepens with its crustal age; the margin profile then shapes
+      // everything from that floor up onto the continent, putting the shoreline
+      // on a flat shelf instead of mid-slope (see elevationScale.marginProfile).
+      const oceanicBaseline = oceanFloorAtAge(sampleOceanAge(oceanAge, wx, wy, worldWidth, worldHeight))
+      const t = marginParameter(raftField(wx, wy, rafts, worldWidth, worldHeight))
+      result[py * renderWidth + px] = marginProfile(t, oceanicBaseline)
     }
   }
   return result

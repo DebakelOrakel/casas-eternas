@@ -5,7 +5,12 @@
 // knowledge of the generation algorithms. This module is the algorithm-free
 // contract: the layer specs, the quantiser (bake), and the sampler (lookup).
 
+import { metersToElevation } from '../elevationScale'
+
 export type Dtype = 'u8' | 'u16' | 'f32'
+
+// Deepest lake the u8 lakeDepth layer needs to represent, in elevation units.
+const LAKE_DEPTH_RANGE = metersToElevation(3000)
 
 // A field layer's on-disk encoding. `value = raw * scale + offset`. `landOnly`
 // fields are only meaningful where the landMask is 1 (their ocean cells store 0).
@@ -36,7 +41,14 @@ export const WORLD_LAYERS: LayerSpec[] = [
   { name: 'biome', dtype: 'u8', scale: 1, offset: 0, unit: 'biomeId', landOnly: false },
   { name: 'seasonalAmplitude', dtype: 'u8', scale: 60 / 255, offset: 0, unit: '°C', landOnly: true },
   { name: 'monsoonIndex', dtype: 'u8', scale: 1 / 255, offset: 0, unit: '', landOnly: true },
-  { name: 'lakeDepth', dtype: 'u8', scale: 20 / 255, offset: 0, unit: 'depth', landOnly: true },
+  // Lake depth in elevation units. The range was 20 — off by nearly two orders
+  // of magnitude, since a lake's depth is `filled - elevation` and the whole
+  // elevation field only spans ±1. Measured over a real run: p50 0.004, p99
+  // 0.096, max 0.232 (35 m / 860 m / 2090 m). At the old range that quantised
+  // every lake on the map into three u8 steps. 0.333 (3000 m) keeps generous
+  // headroom over the measured maximum at ~12 m per step. The encoding is
+  // self-describing via the manifest, so this changes precision, not format.
+  { name: 'lakeDepth', dtype: 'u8', scale: LAKE_DEPTH_RANGE / 255, offset: 0, unit: 'depth', landOnly: true },
   ...ECOLOGY_LAYERS.map((name): LayerSpec => ({ name, dtype: 'u8', scale: 3 / 255, offset: 0, unit: '', landOnly: true })),
 ]
 

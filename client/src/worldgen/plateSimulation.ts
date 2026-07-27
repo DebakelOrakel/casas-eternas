@@ -4,16 +4,16 @@ import type { LatticePoint } from './boundaryLattice'
 import { generateDetectionLattice } from './boundaryLattice'
 import { generatePlateMotions, advancePointByMotion, getVelocityAt } from './plateMotion'
 import type { PlateMotion } from './plateMotion'
-import { createMantleField, evolveMantleField, computeMantleFlow, fitMotionsToFlow, coolMantleAt } from './mantleField'
+import { createMantleField, evolveMantleField, computeMantleFlow, fitMotionsToFlow, coolMantleAt, MANTLE_RES_X, MANTLE_RES_Y } from './mantleField'
 import { classifyBoundaryMotion } from './plateVelocityDecomposition'
 import { generatePlateSeeds } from './plateSeeds'
 import type { PlateSeed } from './plateSeeds'
 import { hashSeedString, mulberry32 } from './rng'
 import type { SeededRandom } from './rng'
 import type { PlateType } from './plateTypes'
-import { generateInitialRafts, advanceRafts, derivePlateTypes, accreteToNearestRaft, mergeOverlappingRafts, splitRaftAtRift, splitDisconnectedRafts, raftMembership, pickUnusedRaftName } from './rafts'
+import { generateInitialRafts, advanceRafts, derivePlateTypes, accreteToNearestRaft, mergeOverlappingRafts, splitRaftAtRift, splitDisconnectedRafts, raftMembership, computeMembershipField, pickUnusedRaftName } from './rafts'
 import type { Raft, RaftBlob, RaftSplitEvent, Suture } from './rafts'
-import { createOceanAgeField, advectOceanAge, resetOceanAgeAt } from './oceanAge'
+import { createOceanAgeField, advectOceanAge, resetOceanAgeAround } from './oceanAge'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from './terrainFeatures'
 import type { TerrainFeature } from './terrainFeatures'
 import { wrappedDelta, toroidalDistanceSq } from './toroidal'
@@ -239,6 +239,22 @@ const CONT_RIFT_COOLDOWN_EPOCHS = 20
 // uniform age so the ocean isn't uniformly shallow at epoch 0, then evolves as
 // ridges reset it to 0 and advection ages crust away from them.
 const OCEAN_AGE_INIT = 40
+// World radius around a divergent boundary point whose seafloor counts as newly
+// formed (resetOceanAgeAround). Two very different situations, two radii:
+//
+// An ordinary spreading ridge makes a narrow strip of new crust per epoch, so
+// this stays close to one age cell (world/OCEAN_AGE_RES_X = 8 px) — just wide
+// enough that a ridge line reads as continuous rather than dotted. It has to be
+// small: this fires for EVERY divergent boundary point every epoch, and an
+// earlier value of 80 (which conflated it with the breakup case below) zeroed
+// ~300 age cells per point, which flattened the whole age field — measured median
+// ocean age 0, i.e. half the ocean floor sitting at ridge-crest depth instead of
+// subsided. That is the age-depth law being erased from the other direction.
+const RIDGE_FRESH_CRUST_RADIUS = 12
+// A continental breakup is the other case: splitRaftAtRift shoves the two halves
+// SPLIT_GAP apart in a single step, and everything that gap exposes genuinely IS
+// crust the new ridge just made. Fires once per breakup, not per boundary point.
+const BREAKUP_FRESH_CRUST_RADIUS = SPLIT_GAP
 
 export interface PlateSimulation {
   width: number
@@ -356,13 +372,28 @@ const RIFT_RESET_RADIUS = 400
 const RIFT_MARGIN_RECOVERY_EPOCHS = 45
 // Depth cap (most-negative thickness) for a continental rift-valley trough, so its
 // floor stays just above sea level and it reads as a deep LAKE basin, not an ocean
-// incursion. floor elevation ≈ RAFT_CONTINENTAL_BASELINE (0.35) + this·THICKNESS_TO_
-// ELEVATION_SCALE (0.035) ≈ 0.07 at −8 — well above SEA_LEVEL (0), deep below the 0.35
-// continent that encloses it, so computeLakes fills it into a Baikal/Tanganyika-scale
-// rift lake. Without the cap the trough sinks to the −1 elevation clamp (ocean). The
-// lake is transient: at actual breakup birthRidgePlate drops the baseline to oceanic
-// and it floods to sea. See the rift-lake work in docs/decisions.
-const RIFT_BASIN_FLOOR_THICKNESS = -8
+// incursion. Without the cap the trough sinks to the −1 elevation clamp (ocean).
+// The lake is transient: at actual breakup birthRidgePlate drops the baseline to
+// oceanic and it floods to sea. See the rift-lake work in docs/decisions.
+//
+// Re-derived for the metre-anchored scale. The continental baseline this sits on
+// dropped from 0.35 to elevationScale's LAND_BASE (0.040 ≈ 360 m), so the old −8
+// would now put the floor at 0.040 + (−8 · 0.035) = −0.24, i.e. 2160 m BELOW sea
+// level — the exact ocean incursion the cap exists to prevent, and the flood fill
+// would seed it from the ocean and drown the basin instead of ponding a lake in
+// it. −0.9 puts the floor at 0.040 + (−0.9 · 0.035) = 0.0085 ≈ 76 m: still above
+// sea level, still ~280 m below the plateau enclosing it, so computeLakes ponds a
+// real rift lake there.
+//
+// The trade this makes explicit: a rift lake can now be at most LAND_BASE deep
+// (~360 m), where the old scale nominally allowed far more. That is not a loss of
+// realism but the arrival of it — the real Baikal and Tanganyika have floors well
+// BELOW sea level, and representing those needs the hydrology to tell an enclosed
+// sub-sea-level basin (Caspian, Dead Sea) apart from connected ocean, which
+// fillDepressionsAndRouteFlow currently cannot: it seeds from every cell at or
+// below SEA_LEVEL. That is the real blocker, and it was hidden before behind a
+// baseline on which "above sea level" stretched 3 km up.
+const RIFT_BASIN_FLOOR_THICKNESS = -0.9
 
 function generateHotspots(random: () => number, width: number, height: number): { x: number; y: number }[] {
   return Array.from({ length: HOTSPOT_COUNT }, () => ({ x: random() * width, y: random() * height }))
@@ -683,7 +714,21 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   // motion (inertia). This is what makes assembly AND breakup emerge — plates
   // drift to downwellings and assemble, an assembled continent then insulates an
   // upwelling beneath it that pushes its plates apart. See mantleField.ts.
-  sim.mantle = evolveMantleField(sim.mantle, sim.rafts, width, height)
+  // One continental-membership sweep for the whole epoch, shared by the mantle
+  // coupling and the ocean-age sink below — raftMembership is O(blobs) per query
+  // and blob counts grow through a run, so two independent full-surface sweeps
+  // would be the expensive way to ask the same question twice.
+  //
+  // Computed at the MANTLE resolution, not the finer ocean-age one, specifically
+  // so the mantle sees the same values as the raftMembership calls it used to make
+  // itself. Sampling a finer field at the mantle's cell centres lands half a fine
+  // cell off, which can flip a cell across the > 0.5 insulation threshold — and the
+  // mantle drives plate motion, so that is enough to send a chaotic system down a
+  // different path. The ocean-age sink is a new consumer with no behaviour to
+  // preserve, and "is this under a continent" is a broad question, so the coarser
+  // grid is fine for it.
+  const membership = computeMembershipField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, width, height)
+  sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, width, height)
   const flow = computeMantleFlow(sim.mantle)
   const fitted = fitMotionsToFlow(sim.seeds, flow, width, height)
   for (let i = 0; i < sim.motions.length; i++) {
@@ -727,7 +772,7 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   }
   sim.types = derivePlateTypes(sim.seeds, sim.rafts, width, height)
   // Advect the ocean-age field along with the plates that just moved (Phase 3).
-  sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, EPOCH_ANGLE_STEP, width, height)
+  sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, EPOCH_ANGLE_STEP, width, height, membership, MANTLE_RES_X, MANTLE_RES_Y)
   advanceTerrainFeatures(sim.features, sim.motions, EPOCH_ANGLE_STEP, width, height)
   for (const feature of sim.features) {
     feature.thickness *= THICKNESS_DECAY_PER_EPOCH
@@ -809,7 +854,7 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
     // opening rift) — reset its floor age to 0 so age-depth reads it as young
     // and shallow (Phase 3).
     if (convergence.motionClass === 'divergent') {
-      resetOceanAgeAt(sim.oceanAge, boundary.x, boundary.y, width, height)
+      resetOceanAgeAround(sim.oceanAge, boundary.x, boundary.y, RIDGE_FRESH_CRUST_RADIUS, width, height)
     }
 
     const classCode = motionClassCode(convergence.motionClass)
@@ -1022,6 +1067,12 @@ export function stepEpoch(sim: PlateSimulation): SimEvent[] {
       // Open a real ocean basin in the gap: a young oceanic plate (mid-ocean
       // ridge) is born between the two halves (Option C, the rift lifecycle).
       birthRidgePlate(sim, continentalRift.x, continentalRift.y, continentalRift.plateA, continentalRift.plateB)
+      // The whole gap the split just opened is brand-new seafloor, so it starts at
+      // age 0 — a young, shallow basin. The per-boundary-point reset above is far
+      // too narrow to cover a breakup's gap on its own, and without this the new
+      // basin inherits the age that kept ticking under the continent and renders at
+      // full abyssal depth: a newborn Atlantic as deep as the oldest Pacific.
+      resetOceanAgeAround(sim.oceanAge, continentalRift.x, continentalRift.y, BREAKUP_FRESH_CRUST_RADIUS, width, height)
       // Release the thermal doming that drove the breakup — this is what actually
       // retires the global cooldown: it collapses the broad divergent forcing under
       // the (former) supercontinent so neighbouring points stop re-qualifying.

@@ -1,4 +1,5 @@
 import { wrappedDelta } from './toroidal'
+import { SEA_LEVEL } from './elevationScale'
 
 // Flat-torus port of worldgen-sphere/erosion.ts's stream-power/D8 model
 // (Cordonnier et al. 2016 — see docs/decisions/plate-tectonics-simulation.md).
@@ -20,8 +21,6 @@ import { wrappedDelta } from './toroidal'
 //   both axes, so accumulateFlow below weights every cell by a flat 1,
 //   and runStreamPowerIterations uses plain wrapped pixel distance
 //   instead of any trig-based row scale.
-
-export const SEA_LEVEL = 0
 
 // Called at every progress-reporting checkpoint across this module's
 // long loops (fillDepressions' pop count, and one per outer iteration in

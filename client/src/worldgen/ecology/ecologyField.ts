@@ -12,6 +12,7 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { Biome } from '../climate/biomes'
+import { SLOPE_RECALIBRATION } from '../elevationScale'
 
 // Ocean sentinel for the output fields (matches the climate fields' convention):
 // a cell the ecology layer doesn't score (open water) reads -1.
@@ -127,7 +128,11 @@ const FISH_RIVER_W = 0.6
 const FISH_LAKE_W = 0.5
 
 // Arable flatness sensitivity: steeper ground is progressively harder to farm.
-const SLOPE_K = 8
+// Scaled by SLOPE_RECALIBRATION (see elevationScale.ts): flatness reads raw
+// elevation differences, which halved, so without this every slope on the map
+// would suddenly count as farmable. Used here and in flatnessAt (wetland, tool
+// stone).
+const SLOPE_K = 8 * SLOPE_RECALIBRATION
 // Ecotone (biome-boundary) game bonus and its cap.
 const ECOTONE_BONUS = 0.18
 

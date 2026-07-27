@@ -1,4 +1,4 @@
-import { SEA_LEVEL } from './erosion'
+import { SEA_LEVEL } from './elevationScale'
 import type { FlowRouting } from './erosion'
 import { computeBiomes } from './climate/biomes'
 import { OCEAN_PRECIP } from './climate/precipitation'

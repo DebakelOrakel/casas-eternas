@@ -10,6 +10,7 @@ import type { WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcolog
 import { drawContinentLabels } from '../../worldgen/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/continentLabelRenderer'
 import type { PlateArrow } from '../../worldgen/elevationMapImage'
+import { elevationToMeters } from '../../worldgen/elevationScale'
 import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/plateSimulation'
 import { eventCategory } from '../../worldgen/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
@@ -507,6 +508,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let mantleResY = 0
   let lastHotspots: { x: number; y: number }[] = []
   let lastVolcanoes: { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[] = []
+  // Coarse elevation for the hover readout's metre line (see
+  // WorkerRenderedMessage.elevation). Present from the first render on, which is
+  // why the readout works before any climate has been computed.
+  let lastCoarseElevation: Float32Array | null = null
+  let elevationResX = 0
+  let elevationResY = 0
   // Two base rasters: the full-colour terrain (default) and a neutral relief base
   // (light-blue water, white-shaded land) used on the Climate/Rivers panels so
   // the data overlays read clearly. The simplified RGBA is built lazily from the
@@ -872,6 +879,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Rivers are NOT a compositor (texture) layer — they're scene-space ribbon
   // geometry (riverLayer) so they stay crisp at any zoom. See handleHydrologyData.
 
+  // Lake depth at which the blue tint reaches full saturation. Set just above the
+  // measured 99th percentile (859 m) so the ramp spends its range on the depths
+  // lakes actually have, with only genuinely deep rift basins pinned at the end.
+  const LAKE_SHADE_SATURATION_M = 900
+
   // Lakes ARE a texture layer (filled water areas, low-frequency — texture blur
   // on zoom is far less objectionable than for thin rivers). Blue tint over cells
   // with water depth, slightly deeper = darker. lakeDepth is full-res (= map
@@ -881,7 +893,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     for (let i = 0; i < lastLakeDepth.length; i++) {
       const d = lastLakeDepth[i]
       if (d <= 0) continue
-      const shade = Math.min(1, d * 6) // deeper → richer blue
+      // Deeper → richer blue, saturating at LAKE_SHADE_SATURATION_M. Was a bare
+      // `d * 6`, i.e. full saturation at 0.167 elevation units — fine when land
+      // spanned most of the scale, but on the metre-anchored one that is 1500 m,
+      // and the measured 90th-percentile lake is 223 m deep, so nearly every lake
+      // would have rendered at the palest end of the ramp.
+      const shade = Math.min(1, elevationToMeters(d) / LAKE_SHADE_SATURATION_M)
       const r = 60 - 25 * shade
       const g = 110 - 30 * shade
       const b = 170 - 20 * shade
@@ -1396,16 +1413,25 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     return dirs[idx]
   }
 
-  // Hover readout: one line per active climate overlay for the map cell under
-  // the cursor (the reusable MapHoverTooltip resolves the cell; here we map it to
-  // the coarse climate grid and read the computed fields). Null when no climate
-  // is computed or no data-bearing overlay is on. mapX/mapY are full-res texels.
+  // Hover readout: the cell's height in metres, then one line per active climate
+  // overlay (the reusable MapHoverTooltip resolves the cell; here we map it to
+  // the coarse grids and read the computed fields). Null when there's nothing to
+  // report at all. mapX/mapY are full-res texels.
   function describeClimateCell(mapX: number, mapY: number): string | null {
-    if (climateResX === 0) return null
+    const lines: string[] = []
+    // Height first, and outside the climate guard — elevation exists from the
+    // first render, long before any climate does, and it's the readout that
+    // makes the metre calibration checkable by hovering (see elevationScale.ts).
+    if (lastCoarseElevation) {
+      const ex = Math.min(elevationResX - 1, Math.floor((mapX / MAP_WIDTH) * elevationResX))
+      const ey = Math.min(elevationResY - 1, Math.floor((mapY / MAP_HEIGHT) * elevationResY))
+      const m = Math.round(elevationToMeters(lastCoarseElevation[ey * elevationResX + ex]))
+      lines.push(m >= 0 ? `${m} m` : `${-m} m deep`)
+    }
+    if (climateResX === 0) return lines.length ? lines.join('\n') : null
     const gx = Math.min(climateResX - 1, Math.floor((mapX / MAP_WIDTH) * climateResX))
     const gy = Math.min(climateResY - 1, Math.floor((mapY / MAP_HEIGHT) * climateResY))
     const i = gy * climateResX + gx
-    const lines: string[] = []
     if (overlaysOn.ecology && lastEcologyFields[selectedEcologyField]) {
       const v = lastEcologyFields[selectedEcologyField]![i]
       lines.push(v === ECOLOGY_OCEAN ? 'Ocean' : `${ECOLOGY_FIELD_META[selectedEcologyField].label} ${Math.round(v * 100)}%`)
@@ -1733,6 +1759,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastMantle = new Float32Array(message.mantle)
     mantleResX = message.mantleResX
     mantleResY = message.mantleResY
+    lastCoarseElevation = new Float32Array(message.elevation)
+    elevationResX = message.elevationResX
+    elevationResY = message.elevationResY
     lastHotspots = message.hotspots
     lastVolcanoes = message.volcanoes
     simplifiedBaseCache = null // rebuilt lazily from the fresh relief
@@ -2538,10 +2567,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateNavState()
   }
 
-  // Cursor readout over the map (reusable module; reports the active climate
-  // overlays for the hovered cell). Always enabled — it self-hides when no
-  // data-bearing overlay is on (describeClimateCell returns null), and overlays
-  // are now global rather than climate-panel-only.
+  // Cursor readout over the map (reusable module; reports the hovered cell's
+  // height plus any active climate overlays). Always enabled, and — since the
+  // height line is there from the first render on — now effectively always
+  // showing, where it used to self-hide until a data-bearing overlay was on.
+  // That's deliberate on a worldgen tool screen: a height readout is what makes
+  // the metre calibration checkable by hovering.
   hoverTooltip = createMapHoverTooltip({
     scene,
     host: root,

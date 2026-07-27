@@ -1,7 +1,6 @@
 import type { PlateSeed } from './plateSeeds'
 import type { PlateMotion } from './plateMotion'
-import type { Raft } from './rafts'
-import { raftMembership } from './rafts'
+import { sampleMembershipField } from './rafts'
 import { toroidalDistanceSq, wrappedDelta } from './toroidal'
 
 // A coarse, evolving mantle buoyancy/temperature field under the whole torus
@@ -81,13 +80,20 @@ function clampField(field: Float32Array): Float32Array {
 // One epoch of field evolution: continents heat the mantle beneath (insulation →
 // the doming driver), ocean cools it (downwelling), then diffuse + decay to a
 // zero mean. Mutates + returns the field.
-export function evolveMantleField(field: Float32Array, rafts: Raft[], worldWidth: number, worldHeight: number): Float32Array {
+export function evolveMantleField(
+  field: Float32Array,
+  membership: Float32Array,
+  membershipResX: number,
+  membershipResY: number,
+  worldWidth: number,
+  worldHeight: number,
+): Float32Array {
   for (let gy = 0; gy < RY; gy++) {
     const wy = ((gy + 0.5) / RY) * worldHeight
     for (let gx = 0; gx < RX; gx++) {
       const wx = ((gx + 0.5) / RX) * worldWidth
       const i = gy * RX + gx
-      if (raftMembership(wx, wy, rafts, worldWidth, worldHeight) > 0.5) field[i] += INSULATION_RATE
+      if (sampleMembershipField(membership, membershipResX, membershipResY, wx, wy, worldWidth, worldHeight) > 0.5) field[i] += INSULATION_RATE
       else field[i] -= OCEAN_COOL_RATE
     }
   }

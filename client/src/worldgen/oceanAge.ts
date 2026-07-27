@@ -1,6 +1,7 @@
 import type { PlateSeed } from './plateSeeds'
 import { reversePointByMotion, type PlateMotion } from './plateMotion'
 import { toroidalDistanceSq } from './toroidal'
+import { sampleMembershipField } from './rafts'
 
 // Ocean-floor age as a coarse full-surface field (Phase 3, see
 // docs/decisions/continental-crust-rafts.md). Oceanic crust deepens as it ages
@@ -41,11 +42,32 @@ export function sampleOceanAge(age: Float32Array, x: number, y: number, worldWid
   return top + (bottom - top) * fy
 }
 
+// Oldest seafloor that can exist, in epochs. Earth's oceanic crust tops out
+// around 180 Ma because subduction destroys it as fast as ridges make it — there
+// is no ancient ocean floor anywhere. Advection here has no such sink (a cell
+// over a subduction zone just keeps sampling and incrementing), so without a cap
+// the mean age climbs monotonically for the whole run: 840 epochs of age after an
+// 800-epoch run, a number that describes nothing physical.
+//
+// The depth law in elevationField.ts saturates on its own, so this is not what
+// keeps the floor off the clamp — it's what keeps the SAVED field (oceanAge.f32
+// rides along in every world save) interpretable as an age rather than as a
+// runtime counter.
+const MAX_SEAFLOOR_AGE = 180
+
 // Semi-Lagrangian backward advection: each cell pulls its age from where its
 // crust was one epoch ago — rotate the cell's world position backward by its
 // (current nearest) plate's own motion, sample the old field there, and add one
 // epoch. Stable (each cell reads, never scatters), and cheap (~cells × seeds).
 // Returns a fresh field; the old one is read-only during the pass.
+//
+// `membership` (see rafts.computeMembershipField) zeroes the age under
+// continental crust. Without it, a cell that spends 200 epochs buried under a
+// supercontinent still ages the whole time, so when a breakup finally tears the
+// continent open, the freshly exposed basin floor reads as 200-epoch-old crust
+// and renders at full abyssal depth — a brand-new Atlantic born as deep as the
+// oldest Pacific. Continental crust simply isn't seafloor; when a rift exposes
+// what's under it, that floor is new.
 export function advectOceanAge(
   age: Float32Array,
   seeds: PlateSeed[],
@@ -53,6 +75,9 @@ export function advectOceanAge(
   angleStep: number,
   worldWidth: number,
   worldHeight: number,
+  membership: Float32Array,
+  membershipResX: number,
+  membershipResY: number,
 ): Float32Array {
   const next = new Float32Array(age.length)
   const cellW = worldWidth / OCEAN_AGE_RES_X
@@ -70,18 +95,45 @@ export function advectOceanAge(
           nearest = s
         }
       }
+      const i = cy * OCEAN_AGE_RES_X + cx
+      if (sampleMembershipField(membership, membershipResX, membershipResY, wx, wy, worldWidth, worldHeight) > 0.5) {
+        next[i] = 0
+        continue
+      }
       const motion = motions[nearest]
       const prev = reversePointByMotion(wx, wy, motion, angleStep, worldWidth, worldHeight)
-      next[cy * OCEAN_AGE_RES_X + cx] = sampleOceanAge(age, prev.x, prev.y, worldWidth, worldHeight) + 1
+      const advected = sampleOceanAge(age, prev.x, prev.y, worldWidth, worldHeight) + 1
+      next[i] = advected > MAX_SEAFLOOR_AGE ? MAX_SEAFLOOR_AGE : advected
     }
   }
   return next
 }
 
-// Reset the age cell containing a world point to 0 — fresh oceanic crust formed
-// at a divergent boundary (mid-ocean ridge / opening rift).
-export function resetOceanAgeAt(age: Float32Array, x: number, y: number, worldWidth: number, worldHeight: number): void {
-  const cx = Math.min(OCEAN_AGE_RES_X - 1, Math.max(0, Math.floor((x / worldWidth) * OCEAN_AGE_RES_X)))
-  const cy = Math.min(OCEAN_AGE_RES_Y - 1, Math.max(0, Math.floor((y / worldHeight) * OCEAN_AGE_RES_Y)))
-  age[cy * OCEAN_AGE_RES_X + cx] = 0
+// Reset the age to 0 in every cell within `worldRadius` of a world point — fresh
+// oceanic crust formed at a divergent boundary (mid-ocean ridge / opening rift).
+//
+// A radius rather than the single containing cell this used to zero: at a
+// continental breakup, splitRaftAtRift shoves the two halves a good distance
+// apart in one step, and only the boundary point itself landed in the zeroed
+// cell. Everything else in the gap kept whatever age it had, so the new basin
+// opened with a one-cell-wide young streak down the middle of otherwise old
+// floor. Sized by the caller to the gap it actually opened.
+export function resetOceanAgeAround(age: Float32Array, x: number, y: number, worldRadius: number, worldWidth: number, worldHeight: number): void {
+  const cellW = worldWidth / OCEAN_AGE_RES_X
+  const cellH = worldHeight / OCEAN_AGE_RES_Y
+  const spanX = Math.floor(worldRadius / cellW)
+  const spanY = Math.floor(worldRadius / cellH)
+  const cx = Math.floor((x / worldWidth) * OCEAN_AGE_RES_X)
+  const cy = Math.floor((y / worldHeight) * OCEAN_AGE_RES_Y)
+  const radiusSq = worldRadius * worldRadius
+  for (let dy = -spanY; dy <= spanY; dy++) {
+    const gy = ((cy + dy) % OCEAN_AGE_RES_Y + OCEAN_AGE_RES_Y) % OCEAN_AGE_RES_Y
+    const wy = (gy + 0.5) * cellH
+    for (let dx = -spanX; dx <= spanX; dx++) {
+      const gx = ((cx + dx) % OCEAN_AGE_RES_X + OCEAN_AGE_RES_X) % OCEAN_AGE_RES_X
+      const wx = (gx + 0.5) * cellW
+      // Round, not square — a square patch of fresh crust would show as one.
+      if (toroidalDistanceSq(wx, wy, x, y, worldWidth, worldHeight) <= radiusSq) age[gy * OCEAN_AGE_RES_X + gx] = 0
+    }
+  }
 }

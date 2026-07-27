@@ -7,7 +7,7 @@
 
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { OCEAN_PRECIP } from '../climate/precipitation'
-import { SEA_LEVEL } from '../erosion'
+import { SEA_LEVEL, SLOPE_RECALIBRATION, metersToElevation } from '../elevationScale'
 
 export interface MigrationOrigin {
   cell: number // gy * resX + gx (on the climate grid)
@@ -36,12 +36,29 @@ export interface MigrationFields {
 // --- cost field -------------------------------------------------------------
 
 const LAND_BASE = 1
-const SLOPE_COST = 14 // steep terrain penalty (× slope)
+// Scaled by SLOPE_RECALIBRATION (see elevationScale.ts) — the slope this
+// multiplies halved, and mountains should stay as discouraging to cross as they
+// were tuned to be.
+const SLOPE_COST = 14 * SLOPE_RECALIBRATION // steep terrain penalty (× slope)
 const CORRIDOR_DISCOUNT = 0.5 // coast/river cells are cheap highways
 const RIVER_DISCHARGE_FRAC = 0.05 // discharge above this fraction of max = a river corridor
 const WATER_BASE = 3 // shallow water is costlier than land to cross
-const WATER_DEPTH_COST = 25 // per unit depth below sea level
-const SEA_CROSSING_MAX_DEPTH = 0.25 // at seaCrossing=1, water this deep is still passable
+// Depth thresholds, restated in metres now that the elevation scale is anchored
+// (elevationScale.ts). The old bare 0.25 would read as 2250 m of open ocean
+// "still passable at seaCrossing = 1" — never the intent; on the old scale, where
+// ocean ran -0.45 to -1.0, a quarter unit was a shallow fringe. 600 m is the real
+// limit of the water proto-humans crossed: the shelf and the straits over it, not
+// the deep basins.
+//
+// This constraint only starts to MEAN anything now. Before, there was no shelf —
+// the coast dropped from continent to abyssal plain within a few cells — so at
+// the coarse climate grid these fields run on, shallow water barely existed as a
+// sampleable thing, and island hopping was near-impossible whatever the slider
+// said. With a real shelf there is finally passable water to cross.
+const SEA_CROSSING_MAX_DEPTH = metersToElevation(600)
+// Scaled with it, so the cost at the deepest crossable water stays what it was
+// tuned to be.
+const WATER_DEPTH_COST = 25 * (0.25 / SEA_CROSSING_MAX_DEPTH) // per unit depth below sea level
 
 // Builds the per-cell movement cost (cost to ENTER the cell). Land: base × slope,
 // discounted on coast/river corridors. Water: rises with depth; beyond the
