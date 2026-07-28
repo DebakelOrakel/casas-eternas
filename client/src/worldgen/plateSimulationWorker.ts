@@ -1,4 +1,4 @@
-import { createPlateSimulation, getInitialPlateEvents, stepEpoch, serializePlateSimulation, deserializePlateSimulation } from './tectonics/plateSimulation'
+import { getInitialPlateEvents, stepEpoch, serializePlateSimulation, deserializePlateSimulation } from './tectonics/plateSimulation'
 import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from './tectonics/plateSimulation'
 import { renderSimulationImage } from './render/elevationMapImage'
 import type { PlateArrow, RenderSimulationOptions } from './render/elevationMapImage'
@@ -7,6 +7,7 @@ import { ElevationRenderPool } from './render/elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './surface/erosion'
 import type { ArcheanSimulation } from './archean/archeanState'
 import { createArcheanSimulation } from './archean/archeanState'
+import type { ArcheanParams } from './archean/archeanStep'
 import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from './archean/archeanStep'
 import { finalizeArchean } from './archean/finalizeArchean'
 import { stabilisedFraction } from './crust/raftField'
@@ -56,21 +57,6 @@ import { computeCratonOldnessField } from './crust/raftField'
 // also picks up since it's under the single `src` tsconfig include.
 declare const self: any
 
-export interface WorkerInitMessage {
-  type: 'init'
-  seed: string
-  plateCount: number
-  // Raft model (see docs/decisions/continental-crust-rafts.md): starting land
-  // coverage and how tightly continents cluster (both 0..1), and how many
-  // separate continents (cratons) to seed.
-  landFraction: number
-  clustering: number
-  cratonCount: number
-  width: number
-  height: number
-  epochIntervalMs: number
-  renderOptions: RenderSimulationOptions
-}
 export interface WorkerStartMessage {
   type: 'start'
 }
@@ -180,7 +166,6 @@ export interface WorkerRestoreWorldMessage {
   elevation: ArrayBuffer
 }
 export type WorkerInboundMessage =
-  | WorkerInitMessage
   | WorkerStartMessage
   | WorkerStopMessage
   | WorkerErodeMessage
@@ -208,9 +193,13 @@ export interface WorkerArcheanInitMessage {
   height: number
   renderOptions: RenderSimulationOptions
   epochIntervalMs: number
-  // createMantleField's initial smoothing — the "mantle vigour" knob. Fewer passes
-  // give a finer-grained field, so more and smaller cratons and plates.
-  mantleSmoothing?: number
+  // Mantle mixing per epoch — the "mantle vigour" knob (ArcheanParams.diffusion).
+  // Less stirring leaves a finer-grained field, so more and smaller cratons and
+  // plates; more stirring collects crust into fewer, larger continents.
+  //
+  // This used to be createMantleField's INITIAL smoothing, which measurement showed
+  // washes out long before the phase is stopped. See DEFAULT_INITIAL_SMOOTHING.
+  mantleDiffusion?: number
   // Water offset in elevation units (see elevationScale.WATER_OFFSET_MAX_M).
   seaLevelOffset?: number
 }
@@ -248,6 +237,15 @@ export interface WorkerRenderedMessage {
   mantle: ArrayBuffer
   mantleResX: number
   mantleResY: number
+  // Coarse crust-age field (Float32, mantleResX*mantleResY; -1 = ocean, else 0..1
+  // with 1 = formed at epoch 0) for the "Craton age" overlay. See
+  // computeCratonOldnessField, which the Ecology layer also reads for iron.
+  //
+  // Deliberately on the MANTLE grid rather than the finer climate one: this is the
+  // Archean's per-epoch layer, and the crust it describes is made of blobs 70 world
+  // pixels across — about 4.4 cells here — so a finer grid would resolve nothing the
+  // eye can use while costing four times the work and transfer every epoch.
+  cratonAge: ArrayBuffer
   // Coarse elevation (Float32, CLIMATE_RES_X*CLIMATE_RES_Y) purely so the hover
   // readout can report a height in metres for the cell under the cursor. Center-
   // sampled off the full-res field at the climate grid, which is the same
@@ -392,7 +390,9 @@ let sim: PlateSimulation | null = null
 // second, and archeanReset goes back the other way.
 let archean: ArcheanSimulation | null = null
 let archeanSeed = ''
-let archeanSmoothing: number | undefined
+// The Archean's tuning, held here because archeanStep needs it every tick and a
+// reset has to rebuild the same world. Only `diffusion` is user-facing.
+let archeanParams: ArcheanParams = DEFAULT_ARCHEAN_PARAMS
 let archeanWater = 0
 let archeanWidth = 0
 let archeanHeight = 0
@@ -573,6 +573,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     mantle: sim.mantle.slice().buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
+    cratonAge: computeCratonOldnessField(sim.rafts, sim.epoch, MANTLE_RES_X, MANTLE_RES_Y, sim.width, sim.height).buffer as ArrayBuffer,
     elevation: coarseElevation(result.elevations, sim.width, sim.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
@@ -620,6 +621,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     mantle: archean.mantle.slice().buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
+    cratonAge: computeCratonOldnessField(archean.rafts, archean.epoch, MANTLE_RES_X, MANTLE_RES_Y, archean.width, archean.height).buffer as ArrayBuffer,
     elevation: coarseElevation(result.elevations, archean.width, archean.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
@@ -729,18 +731,6 @@ function stopTicking(): void {
 // wiring in their own right — the climate branch alone encodes the order
 // temperature → wind → currents → precipitation → biomes, which is real domain
 // knowledge that was invisible inside a chain of `else if`s.
-
-function handleInit(message: Extract<WorkerInboundMessage, { type: 'init' }>): void {
-  stopTicking()
-  worldGeneration += 1
-  sim = createPlateSimulation(message.seed, message.plateCount, message.landFraction, message.clustering, message.cratonCount, message.width, message.height)
-  pendingEvents = getInitialPlateEvents(sim)
-  lastRawElevations = null
-  preErosionElevations = null
-  renderOptions = message.renderOptions
-  epochIntervalMs = message.epochIntervalMs
-  renderAndPost()
-}
 
 function handleStart(): void {
   if (intervalId !== undefined) return
@@ -1014,11 +1004,11 @@ function handleArcheanInit(message: Extract<WorkerInboundMessage, { type: 'arche
   worldGeneration += 1
   sim = null
   archeanSeed = message.seed
-  archeanSmoothing = message.mantleSmoothing
+  archeanParams = { ...DEFAULT_ARCHEAN_PARAMS, diffusion: message.mantleDiffusion ?? DEFAULT_ARCHEAN_PARAMS.diffusion }
   archeanWater = message.seaLevelOffset ?? 0
   archeanWidth = message.width
   archeanHeight = message.height
-  archean = createArcheanSimulation(message.seed, message.width, message.height, message.mantleSmoothing, archeanWater)
+  archean = createArcheanSimulation(message.seed, message.width, message.height, archeanWater)
   lastRawElevations = null
   preErosionElevations = null
   renderOptions = message.renderOptions
@@ -1030,7 +1020,7 @@ function handleArcheanStart(): void {
   if (intervalId !== undefined) return
   intervalId = setInterval(() => {
     if (!archean || renderInFlight) return
-    archeanStep(archean)
+    archeanStep(archean, archeanParams)
     renderInFlight = true
     renderArcheanAndPost(PREVIEW_RENDER_SCALE).finally(() => { renderInFlight = false })
   }, epochIntervalMs)
@@ -1062,7 +1052,7 @@ function handleArcheanReset(): void {
   stopTicking()
   worldGeneration += 1
   sim = null
-  archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanSmoothing, archeanWater)
+  archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanWater)
   lastRawElevations = null
   preErosionElevations = null
   void renderArcheanAndPost()
@@ -1072,7 +1062,6 @@ function handleArcheanReset(): void {
 // worker understands is a list you can read, and so a new one cannot silently
 // land in the wrong branch.
 const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMessage) => void } = {
-  init: (m) => handleInit(m as Extract<WorkerInboundMessage, { type: 'init' }>),
   start: () => handleStart(),
   stop: () => handleStop(),
   erode: (m) => handleErode(m as Extract<WorkerInboundMessage, { type: 'erode' }>),

@@ -15,7 +15,8 @@ import { createMantleField, MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mant
 // Note what is NOT here:
 //   - **No ocean age.** Without ridges or subduction the seafloor would just age
 //     uniformly, which carries no information. It is initialised at the handover
-//     (finalizeArchean) exactly as createPlateSimulation does today.
+//     (finalizeArchean) with OCEAN_AGE_INIT, the same value the removed
+//     createPlateSimulation used to start a world with.
 //   - **No terrain features.** The Archean produces crust extent and crust age,
 //     nothing else. Elevation already derives from raft membership through the
 //     margin profile, so land appears without any relief machinery.
@@ -35,26 +36,30 @@ export interface ArcheanSimulation {
   upwellingStreak: Int16Array
   // Rolling count of blobs recycled per epoch, for the panel's readout.
   lastRecycled: number
+  // New rafts produced by the last split — the break-up rate, which is what raft
+  // rigidity trades against (see ArcheanParams.raftRigidity).
+  lastSplits: number
   // Water offset in elevation units — carried through the handover unchanged.
   seaLevelOffset: number
 }
 
-export function createArcheanSimulation(seedString: string, width: number, height: number, mantleSmoothing?: number, seaLevelOffset = 0): ArcheanSimulation {
+export function createArcheanSimulation(seedString: string, width: number, height: number, seaLevelOffset = 0): ArcheanSimulation {
   const random = mulberry32(hashSeedString(seedString))
   return {
     width,
     height,
     epoch: 0,
     random,
-    // Same salted derivation createPlateSimulation uses, so a seed produces the
-    // same coastline warp whichever path built the world.
+    // Same salted derivation the old createPlateSimulation used, so a seed produces
+    // the same coastline warp as it did before the Archean replaced that path.
     warpSeed: hashSeedString(`${seedString}:coastalWarp`),
     // The Archean starts with a wet planet and no land: Jack Hills zircons put
     // liquid water at the surface by ~4.4 Ga, well before the Archean begins.
     rafts: [],
-    mantle: createMantleField(random, mantleSmoothing),
+    mantle: createMantleField(random),
     upwellingStreak: new Int16Array(MANTLE_RES_X * MANTLE_RES_Y),
     lastRecycled: 0,
+    lastSplits: 0,
     seaLevelOffset,
   }
 }

@@ -67,12 +67,20 @@ const WORLD_HEIGHT = 10
 // default of 8 reproduces that major-plate structure closely: largest plate
 // ~15-18% of the surface (Pacific is ~20%), ~7 plates covering 90%. Fewer =
 // bigger, more dominant plates; more = a busier, more uniform patchwork.
-// Mantle vigour — the one Genesis knob besides the seed (and, later, water).
+// Mantle vigour — the one Genesis knob besides the seed and water.
 //
-// It is createMantleField's initial smoothing pass count, inverted for the UI so
-// the slider reads "more vigorous → higher": a finer-grained starting field has
-// more and smaller convection cells, so more and smaller cratons and, after the
-// handover, more and smaller plates.
+// It sets how hard the Archean mantle stirs each epoch (ArcheanParams.diffusion),
+// inverted for the UI so the slider reads "more vigorous → higher": less stirring
+// leaves a finer-grained buoyancy field, so more and smaller convection cells, so
+// more and smaller cratons and, after the handover, more and smaller plates. Turn it
+// down and crust collects into fewer, larger continents instead.
+//
+// It used to set createMantleField's INITIAL smoothing, on the reasoning that this
+// left the tuned epoch dynamics alone. Measurement showed the per-epoch diffusion
+// erases that initial smoothing within a few dozen epochs — nine tenths of the
+// difference gone by epoch 40, against a phase nobody stops before epoch 150 — and a
+// full sweep confirmed the slider moved craton count, plate count and land fraction
+// no more than two seeds at the same setting differed. See DEFAULT_INITIAL_SMOOTHING.
 //
 // This replaced four sliders — plate count, land fraction, craton count and
 // clustering — that all specified an OUTCOME. Those are now emergent: plate count
@@ -80,13 +88,34 @@ const WORLD_HEIGHT = 10
 // crust production against recycling. See docs/decisions/archean-genesis.md.
 const MANTLE_VIGOUR_MIN = 1
 const MANTLE_VIGOUR_MAX = 10
-const MANTLE_VIGOUR_DEFAULT = 5
+// 4, not the middle of the range: it is the setting vigourToDiffusion maps to exactly
+// 1.0, which is what the Archean ran at before this knob existed and what the tectonic
+// phase still uses. "Default" therefore means "unchanged behaviour" rather than
+// "halfway along a slider". It sits below centre because the response curve is
+// quadratic, so most of the useful travel lies above it.
+const MANTLE_VIGOUR_DEFAULT = 4
 // Water delivered to the planet, 0..100 with 50 = Earth-like. Together with crust
 // production this is what sets the land fraction — but as a RESULT of two physical
 // quantities rather than as a number you dial. See elevationScale.WATER_OFFSET_MAX_M.
 const WATER_DEFAULT = 50
-// Slider value → smoothing passes. Higher vigour = fewer passes = finer field.
-const vigourToSmoothing = (vigour: number): number => MANTLE_VIGOUR_MAX + 1 - vigour
+// Slider value → mantle mixing per epoch. Higher vigour = less stirring = finer
+// field = more, smaller plates.
+//
+// **Quadratic, not linear**, because the response is squeezed against zero. Measured
+// plate count against diffusion, mean of three seeds at 250 epochs:
+//
+//     diffusion   0    0.03  0.08  0.15  0.25  0.40  0.70  1.0  1.7  3.0
+//     plates     24.3  22.3  19.0  18.3  13.3  10.3  11.0   10    6  6.5
+//
+// Half the total swing (24 → 13) happens below diffusion 0.25, and nothing at all
+// happens above ~1.7. A linear slider would therefore spend a third of its travel in
+// the saturated tail and cram the entire upper half of the range into its last step —
+// which is exactly what the first attempt did, and why it read as a switch rather
+// than a control.
+const MANTLE_DIFFUSION_MAX = 2.25
+const MANTLE_DIFFUSION_CURVE = 2
+const vigourToDiffusion = (vigour: number): number =>
+  MANTLE_DIFFUSION_MAX * ((MANTLE_VIGOUR_MAX - vigour) / (MANTLE_VIGOUR_MAX - MANTLE_VIGOUR_MIN)) ** MANTLE_DIFFUSION_CURVE
 
 // How often, while running, the sim advances one epoch and re-renders —
 // paced deliberately (not "as fast as possible") so a run reads as gradual
@@ -98,6 +127,78 @@ const vigourToSmoothing = (vigour: number): number => MANTLE_VIGOUR_MAX + 1 - vi
 // interaction is "watch until it looks right". 180 ms keeps the growth legible while
 // putting that window inside half a minute.
 const EPOCH_INTERVAL_MS = 180
+
+// The mantle tint saturates at this multiple of the field's own p90(|value|),
+// rather than at a fixed number.
+//
+// It used to divide by a hardcoded 1.0. That happens to be well calibrated for the
+// TECTONIC phase — measured p90(|v|) climbs to 0.97 by epoch 100 over two seeds, so
+// the ramp there very nearly uses its full range. It is wrong for the Archean, whose
+// field sustainMantleVigour renormalises to a fixed RMS: p90 is 0.61, and the bulk
+// of the map is far below that. The measured median tint alpha in the Archean is
+// 0.06 out of a possible 0.55, falling from 0.16 by epoch 25 — a 6% wash in which
+// the field's real motion (correlation 0.9 per 25 epochs) is simply not visible.
+//
+// The reason the two phases differ is structural, not a tuning accident. The field
+// is zero-mean, and once continents cover roughly a quarter of the surface that
+// quarter carries nearly all of the variance (they insulate; the ocean cools), so
+// the remaining three quarters sit just barely below zero. The Archean's fixed-RMS
+// renormalisation is set by those few strong cells, which pushes everything else
+// down: p50 falls from 0.18 at epoch 100 to ~0.11 by epoch 300, where the tectonic
+// phase holds p50 near 0.33.
+//
+// Normalising by the field's own p90 makes the ramp mean the same thing in both
+// phases — "the strongest tenth of the map is fully saturated" — and removes the
+// magic number. Deliberately the ONLY difference from the old ramp: an Archean-only
+// gamma was tried on top, to lift the mid-tones there (p90 holds around 0.53-0.65
+// while p50 falls to ~0.11, so the distribution grows peakier over time and the
+// median tint sat at 0.09). It was dropped again once the vigour knob started
+// steering the field visibly — the extra contrast was compensating for a control
+// that did nothing, and both phases reading the same is worth more than the lift.
+const MANTLE_TINT_PERCENTILE = 0.9
+// Floor, so a nearly flat field is not amplified into noise: dividing by a p90 near
+// zero would paint numerical dust at full opacity.
+const MANTLE_TINT_FLOOR = 0.25
+// Craton-age ramp: pale sand for crust that formed just now, deep russet for cores
+// as old as the world. Warm and sequential on purpose — this is one quantity going
+// one direction, so a diverging or rainbow scale would invent a midpoint that has no
+// meaning. The dark end reads as "ancient shield", which is roughly how these are
+// drawn on real geological maps.
+const CRATON_AGE_STOPS: readonly (readonly [share: number, rgb: readonly [number, number, number]])[] = [
+  [0.0, [238, 219, 176]],
+  [0.5, [186, 122, 74]],
+  [1.0, [104, 40, 30]],
+]
+const CRATON_AGE_ALPHA = 0.8
+
+function cratonAgeColor(age: number): readonly [number, number, number] {
+  const a = age <= 0 ? 0 : age >= 1 ? 1 : age
+  for (let i = 1; i < CRATON_AGE_STOPS.length; i++) {
+    const [hi, hiRgb] = CRATON_AGE_STOPS[i]
+    if (a > hi && i < CRATON_AGE_STOPS.length - 1) continue
+    const [lo, loRgb] = CRATON_AGE_STOPS[i - 1]
+    const t = hi === lo ? 0 : (a - lo) / (hi - lo)
+    return [loRgb[0] + (hiRgb[0] - loRgb[0]) * t, loRgb[1] + (hiRgb[1] - loRgb[1]) * t, loRgb[2] + (hiRgb[2] - loRgb[2]) * t]
+  }
+  return CRATON_AGE_STOPS[0][1]
+}
+
+// Legend reads as a share of the world's history rather than an absolute age: the
+// field is normalised against the current epoch, so "1" means "here since the
+// beginning" and would be a different number of years at every moment you look.
+const cratonAgeLegendStops = CRATON_AGE_STOPS.map(([share, rgb]) => ({
+  value: Math.round(share * 100),
+  rgb: [rgb[0], rgb[1], rgb[2]] as [number, number, number],
+}))
+
+// Signed field value scaled so ±1 is full saturation. Precomputed per field rather
+// than per pixel: paintMantle runs over the full 2048×1024 map on every overlay
+// repaint, and this is constant across each coarse mantle cell.
+function mantleTintNorm(field: Float32Array): Float32Array {
+  const magnitudes = Float32Array.from(field, Math.abs).sort()
+  const scale = Math.max(MANTLE_TINT_FLOOR, magnitudes[Math.floor(magnitudes.length * MANTLE_TINT_PERCENTILE)])
+  return Float32Array.from(field, (v) => Math.max(-1, Math.min(1, v / scale)))
+}
 
 // Safety cap: the live tectonics stepping auto-stops once it reaches this
 // epoch, so a run left going by accident doesn't keep stepping (and
@@ -532,6 +633,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastMantle: Float32Array | null = null
   let mantleResX = 0
   let mantleResY = 0
+  // lastMantle scaled to ±1 for the tint ramp, recomputed per field (mantleTintNorm).
+  let mantleNorm: Float32Array | null = null
+  // Crust age on the mantle grid: -1 over ocean, else 0 (formed now) to 1 (formed
+  // at epoch 0). Drives the "Craton age" overlay — see computeCratonOldnessField.
+  let lastCratonAge: Float32Array | null = null
   let lastHotspots: { x: number; y: number }[] = []
   let lastVolcanoes: { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[] = []
   // Coarse elevation for the hover readout's metre line (see
@@ -607,13 +713,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Mantle buoyancy tint: hot upwelling → red, cold downwelling → blue, strength
   // ∝ |value| (near-zero stays transparent). Coarse field sampled up to full res.
   function paintMantle(data: Uint8ClampedArray): void {
-    if (!lastMantle) return
+    if (!mantleNorm) return
     for (let y = 0; y < MAP_HEIGHT; y++) {
       const gy = Math.min(mantleResY - 1, Math.floor((y / MAP_HEIGHT) * mantleResY))
       for (let x = 0; x < MAP_WIDTH; x++) {
         const gx = Math.min(mantleResX - 1, Math.floor((x / MAP_WIDTH) * mantleResX))
-        const v = lastMantle[gy * mantleResX + gx]
-        const a = Math.min(1, Math.abs(v) / 1.0) * 0.55
+        const v = mantleNorm[gy * mantleResX + gx]
+        const a = (v < 0 ? -v : v) * 0.55
         if (a < 0.01) continue
         const r = v >= 0 ? 225 : 55
         const g = v >= 0 ? 85 : 110
@@ -622,6 +728,32 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         data[p] = data[p] * (1 - a) + r * a
         data[p + 1] = data[p + 1] * (1 - a) + g * a
         data[p + 2] = data[p + 2] * (1 - a) + b * a
+      }
+    }
+  }
+
+  // Crust age: fresh crust pale, ancient cratonic cores deep russet. Ocean is left
+  // untouched, so this reads as a geological map of the land rather than a tint over
+  // everything — and it is what makes the Archean's structure legible, since a
+  // craton grows by welding younger crust onto an old core and that history is
+  // otherwise invisible in the coastline.
+  //
+  // Blended over the base at full strength rather than as a wash: unlike the mantle
+  // field, which is a cause acting everywhere, this is a property OF the land, and a
+  // faint version of it would be unreadable against the terrain colouring.
+  function paintCratonAge(data: Uint8ClampedArray): void {
+    if (!lastCratonAge) return
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const gy = Math.min(mantleResY - 1, Math.floor((y / MAP_HEIGHT) * mantleResY))
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        const gx = Math.min(mantleResX - 1, Math.floor((x / MAP_WIDTH) * mantleResX))
+        const age = lastCratonAge[gy * mantleResX + gx]
+        if (age < 0) continue // ocean — no crust here
+        const [r, g, b] = cratonAgeColor(age)
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - CRATON_AGE_ALPHA) + r * CRATON_AGE_ALPHA
+        data[p + 1] = data[p + 1] * (1 - CRATON_AGE_ALPHA) + g * CRATON_AGE_ALPHA
+        data[p + 2] = data[p + 2] * (1 - CRATON_AGE_ALPHA) + b * CRATON_AGE_ALPHA
       }
     }
   }
@@ -1084,6 +1216,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'migration', label: 'Migration', enabled: false, hidden: true, paintPixels: paintMigration, paint: (c) => paintWrapped(c, (cc) => { drawMigrationArrows(cc); drawMigrationOrigins(cc) }) },
     // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
     { id: 'mantle', label: 'Mantle', enabled: false, hidden: true, paintPixels: paintMantle, paint: (c) => paintWrapped(c, drawMantleMarkers) },
+    // After 'mantle', so on land the crust's own age wins over the tint of the
+    // mantle beneath it — the mantle field is the cause and covers the whole map,
+    // this is the result and covers only the crust.
+    { id: 'cratonAge', label: 'Craton age', enabled: false, hidden: true, paintPixels: paintCratonAge },
     { id: 'boundaries', label: 'Boundaries', enabled: false, paintPixels: paintBoundaryMask },
     { id: 'arrows', label: 'Arrows', enabled: false, paint: (c) => paintWrapped(c, drawArrows) },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
@@ -1193,6 +1329,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         { label: 'Volcano', rgb: [220, 55, 30], shape: 'cone' },
         { label: 'Hotspot plume', rgb: [255, 140, 0], shape: 'ring' },
       ] },
+    },
+    {
+      id: 'cratonAge', icon: '/icons/mantle.png', label: 'Craton age',
+      // Available as soon as any crust exists, which in the Archean is within a few
+      // epochs of the first upwelling standing still long enough.
+      available: () => lastCratonAge !== null && lastCratonAge.some((v) => v >= 0),
+      legend: { type: 'gradient', title: 'Craton age', unit: '% of world age', stops: cratonAgeLegendStops },
     },
     { id: 'temperature', icon: '/icons/temperature.png', label: 'Temperature', available: () => lastTemperature !== null, legend: { type: 'gradient', title: 'Temperature', unit: '°C', stops: temperatureLegendStops } },
     { id: 'seasonality', icon: '/icons/seasonality.png', label: 'Seasonality', available: () => lastSeasonality !== null, legend: { type: 'gradient', title: 'Seasonality', unit: '°C range', stops: amplitudeLegendStops } },
@@ -1807,6 +1950,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastColoredBase = new Uint8ClampedArray(message.buffer)
     lastRelief = new Uint8Array(message.relief)
     lastMantle = new Float32Array(message.mantle)
+    mantleNorm = mantleTintNorm(lastMantle)
+    lastCratonAge = new Float32Array(message.cratonAge)
     mantleResX = message.mantleResX
     mantleResY = message.mantleResY
     lastCoarseElevation = new Float32Array(message.elevation)
@@ -1864,7 +2009,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       width: MAP_WIDTH,
       height: MAP_HEIGHT,
       epochIntervalMs: EPOCH_INTERVAL_MS,
-      mantleSmoothing: vigourToSmoothing(vigour),
+      mantleDiffusion: vigourToDiffusion(vigour),
       seaLevelOffset: metersToElevation(waterSliderToOffsetM(water)),
       renderOptions: {},
     })
@@ -2662,6 +2807,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // The mantle overlay is on for Genesis/Tectonics (where you watch the plates
     // drive), off from the Erosion panel (index 2) onward. Same per-panel reset.
     overlaysOn.mantle = index < 2
+    // Craton age is on in Genesis only. There it is the point of the phase — the
+    // coastline alone cannot show that a continent grew by welding young crust onto
+    // an old core. From the Tectonics panel on, the same map has to carry plates,
+    // boundaries and names, so this stays available in the bar but off by default.
+    overlaysOn.cratonAge = index === 0
     // Rivers/lakes come on automatically when you enter the Hydrology panel (the
     // reason you're there), off elsewhere — same per-panel reset. Once the compute
     // finishes, handleHydrologyData's updateOverlays() makes the layer visible.

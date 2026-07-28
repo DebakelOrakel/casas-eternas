@@ -44,10 +44,9 @@ human, "temperature view") → `world.*`; is it a tool or a grouping *of the gen
 ### Final key namespace
 
 ```
-common.action.<id>.label / .help      back, next, loadWorld, saveWorld
-common.unit.<id>                       celsius, metres, mmPerYear, percent, …
-common.notify.<id>                     invalidWorldFile, dismiss
-common.title.mission.<id>              title-screen mission list (EN only, see below)
+common.action.<id>.label / .help      back, next, loadWorld, saveWorld, dismiss
+common.unit.<id>                       celsius, times, mmPerYear, percent, …
+common.notify.<id>                     invalidWorldFile
 
 world.biome.<slug>                     tundra, borealForest, ocean, …            (11)
 world.resource.<slug>                  arable, copper, gold, …                   (13)
@@ -165,10 +164,10 @@ ballast:
 
 - **Proper names stay untranslated** — "Casas Eternas", "Hacedor del Mundo", "Sphere",
   "Mars" (flair, and consistent with the existing German-kept title menus).
-- **The mission/backlog list** goes to `common.title.mission.*` in `en/common.json` but gets
-  **no German** at first; the built-in fallback shows it in English under DE. It is a
-  developer changelog kept continuously current — double-maintaining it costs more than it
-  returns. The `tsc` completeness check therefore exempts `common.title.mission.*`.
+- **The mission/backlog list is not localized at all** — it stays inline in `TitleScreen.ts`,
+  out of the catalogs entirely. It is a developer changelog kept continuously current; it is
+  not really UI to be translated, and giving it catalog keys only added ballast. (An earlier
+  version routed it to `common.title.mission.*` EN-only via fallback; dropped as unnecessary.)
 
 ## Numbers & units
 
@@ -186,4 +185,3 @@ The legacy `worldgen-sphere` and `mars` screens are out.
 - Building any of the above (this is a design decision, nothing is implemented yet).
 - The `race` → `species` identifier refactor (separate mechanical change, noted above).
 - Confirming/removing i18n from the worker import graph (open question above).
-- Full German for `common.title.mission.*` (fallback covers it until then).

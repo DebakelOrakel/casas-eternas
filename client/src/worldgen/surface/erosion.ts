@@ -20,7 +20,7 @@ export interface StreamPowerParams {
 }
 
 // erodibilityK re-verified for this grid via a headless dump script
-// (createPlateSimulation -> 100 epochs -> the real elevation query at
+// (a world built straight from plate seeds -> 100 epochs -> the real elevation query at
 // 2048x1024 -> runErosionPass -> diff against the pre-erosion field
 // through the same redistribution+color path the renderer uses), not
 // assumed. The sphere version's own value (0.00003) was calibrated

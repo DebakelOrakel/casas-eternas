@@ -74,10 +74,29 @@ export function advanceRafts(rafts: Raft[], seeds: PlateSeed[], motions: PlateMo
 // the plates (docs/decisions/continental-crust-rafts.md) is what makes this a small
 // function rather than a parallel system.
 //
-// Each blob is advected independently rather than the raft moving rigidly: a
-// continent straddling two convection cells SHOULD be pulled apart, and
-// splitDisconnectedRafts then turns that into two continents. Rigid motion would
-// suppress exactly the break-ups the Archean is supposed to produce.
+// A raft moves by the MEAN flow across its blobs, plus `1 - rigidity` of each blob's
+// own departure from that mean. Rigidity 1 is a rigid plate, 0 reproduces the purely
+// local advection this used to do.
+//
+// It used to advect every blob independently, reasoning that a continent straddling
+// two convection cells SHOULD be pulled apart and that splitDisconnectedRafts would
+// turn that into two continents. The reasoning was right; the omission was that
+// nothing then held a continent together either. mergeOverlappingRafts computes a
+// suture, raises a collision event and hands the name on — and then the next epoch
+// re-advected each blob separately and undid it. Cratons approached, touched and
+// drifted apart again, and no continent ever assembled.
+//
+// Measured over 250 epochs at three vigour settings: crust drifts 36-200 world pixels
+// per epoch against a blob radius of 70, and its nearest-neighbour spacing does fall
+// (1.8 → 0.55 radii, i.e. the blobs end up overlapping) — but the largest contiguous
+// landmass never exceeds ~26% of the land at any setting and shows no upward trend.
+// Locally dense, globally shattered.
+//
+// The blend keeps the original intent available: differential motion still stretches
+// a raft spanning opposed flow, so break-up remains possible, and in the Archean that
+// is the ONLY break-up mechanism there is — the tectonic phase tears continents apart
+// at rifts (splitRaftAtRift), which needs plates that do not exist yet. So rigidity
+// deliberately stops short of 1.
 export function advanceRaftsOnFlow(
   rafts: Raft[],
   flow: Float32Array,
@@ -85,14 +104,30 @@ export function advanceRaftsOnFlow(
   flowResY: number,
   width: number,
   height: number,
+  rigidity: number,
 ): void {
+  const flowAt = (x: number, y: number, component: number): number => {
+    const gx = Math.min(flowResX - 1, Math.floor((wrapValue(x, width) / width) * flowResX))
+    const gy = Math.min(flowResY - 1, Math.floor((wrapValue(y, height) / height) * flowResY))
+    return flow[(gy * flowResX + gx) * 2 + component]
+  }
   for (const raft of rafts) {
+    if (raft.blobs.length === 0) continue
+    // Averaging velocities, not positions — so no seam handling is needed here.
+    let meanX = 0
+    let meanY = 0
     for (const blob of raft.blobs) {
-      const gx = Math.min(flowResX - 1, Math.floor((wrapValue(blob.x, width) / width) * flowResX))
-      const gy = Math.min(flowResY - 1, Math.floor((wrapValue(blob.y, height) / height) * flowResY))
-      const i = (gy * flowResX + gx) * 2
-      blob.x = wrapValue(blob.x + flow[i], width)
-      blob.y = wrapValue(blob.y + flow[i + 1], height)
+      meanX += flowAt(blob.x, blob.y, 0)
+      meanY += flowAt(blob.x, blob.y, 1)
+    }
+    meanX /= raft.blobs.length
+    meanY /= raft.blobs.length
+    const differential = 1 - rigidity
+    for (const blob of raft.blobs) {
+      const localX = flowAt(blob.x, blob.y, 0)
+      const localY = flowAt(blob.x, blob.y, 1)
+      blob.x = wrapValue(blob.x + meanX + differential * (localX - meanX), width)
+      blob.y = wrapValue(blob.y + meanY + differential * (localY - meanY), height)
     }
   }
 }
@@ -328,7 +363,11 @@ function connectedBlobComponents(blobs: RaftBlob[], connectFactor: number, width
 // raft's id + name; the rest become fresh rafts with new ids/names. Mutates
 // `rafts` in place. No events raised — this is a rendering/identity cleanup,
 // not a tectonic breakup (which stays the continental-rift path's job).
-export function splitDisconnectedRafts(rafts: Raft[], connectFactor: number, random: () => number, width: number, height: number): void {
+// Returns how many NEW rafts the split produced (0 = nothing came apart). That count
+// is the counterweight to raft rigidity: it is the Archean's only break-up mechanism,
+// so a rigidity high enough to drive it to zero would freeze the continents for the
+// rest of the eon. See advanceRaftsOnFlow.
+export function splitDisconnectedRafts(rafts: Raft[], connectFactor: number, random: () => number, width: number, height: number): number {
   let maxId = rafts.reduce((m, raft) => Math.max(m, raft.id), -1)
   const result: Raft[] = []
   for (const raft of rafts) {
@@ -349,8 +388,10 @@ export function splitDisconnectedRafts(rafts: Raft[], connectFactor: number, ran
   for (const raft of result) {
     if (raft.name === null) raft.name = pickUnusedRaftName(result, random)
   }
+  const created = result.length - rafts.length
   rafts.length = 0
   rafts.push(...result)
+  return created
 }
 
 // Blobs per craton and their size spread (as a fraction of the craton's

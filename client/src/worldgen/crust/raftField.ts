@@ -92,24 +92,52 @@ export function sampleMembershipField(field: Float32Array, resX: number, resY: n
 // crust formed at epoch 0 (the ancient cratonic cores), lower toward margins
 // accreted later (see RaftBlob.birthEpoch). Metaball-weighted mean birth epoch
 // per cell, normalized against the current epoch. Cells over ocean / no crust get
-// -1. Feeds iron placement (old cratons) in the Ecology layer. O(cells × blobs);
-// called on-demand, not per frame.
+// -1. Feeds iron placement (old cratons) in the Ecology layer, and the Archean's
+// craton-age overlay.
+//
+// Scatters each blob over the cells it can reach, rather than asking every cell
+// about every blob. blobKernel is exactly zero at and beyond the blob radius, so
+// this is the same field to the last bit — only the work is proportional to the
+// crust that exists instead of to (cells × blobs). That matters because the Archean
+// recomputes this every epoch at 180 ms: gathering cost about 5 million kernel
+// evaluations per frame at 256×128 with 156 blobs, scattering costs about 40
+// thousand.
 export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, resX: number, resY: number, width: number, height: number): Float32Array {
-  const out = new Float32Array(resX * resY)
-  for (let gy = 0; gy < resY; gy++) {
-    const wy = ((gy + 0.5) / resY) * height
-    for (let gx = 0; gx < resX; gx++) {
-      const wx = ((gx + 0.5) / resX) * width
-      let wSum = 0
-      let ageSum = 0
-      for (const raft of rafts) {
-        for (const blob of raft.blobs) {
+  // Float64 accumulators, not Float32: the gathering version this replaces summed
+  // in JS numbers, and rounding each partial sum to float32 instead moved ~10% of
+  // cells by up to 9e-8 — enough to shift the Ecology hashes downstream.
+  const weight = new Float64Array(resX * resY)
+  const ageWeighted = new Float64Array(resX * resY)
+  const cellW = width / resX
+  const cellH = height / resY
+
+  for (const raft of rafts) {
+    for (const blob of raft.blobs) {
+      const birth = blob.birthEpoch ?? 0
+      // Cell range the blob's radius can reach. Left unwrapped here and wrapped per
+      // cell below, so a blob straddling the seam covers both sides.
+      const gx0 = Math.floor((blob.x - blob.radius) / cellW)
+      const gx1 = Math.ceil((blob.x + blob.radius) / cellW)
+      const gy0 = Math.floor((blob.y - blob.radius) / cellH)
+      const gy1 = Math.ceil((blob.y + blob.radius) / cellH)
+      for (let gy = gy0; gy <= gy1; gy++) {
+        const wy = (gy + 0.5) * cellH
+        const row = (((gy % resY) + resY) % resY) * resX
+        for (let gx = gx0; gx <= gx1; gx++) {
+          const wx = (gx + 0.5) * cellW
           const w = blobKernel(toroidalDistanceSq(wx, wy, blob.x, blob.y, width, height), blob.radius)
-          if (w > 0) { wSum += w; ageSum += w * (blob.birthEpoch ?? 0) }
+          if (w <= 0) continue
+          const i = row + (((gx % resX) + resX) % resX)
+          weight[i] += w
+          ageWeighted[i] += w * birth
         }
       }
-      out[gy * resX + gx] = wSum === 0 ? -1 : currentEpoch <= 0 ? 1 : Math.max(0, Math.min(1, 1 - (ageSum / wSum) / currentEpoch))
     }
+  }
+
+  const out = new Float32Array(resX * resY)
+  for (let i = 0; i < out.length; i++) {
+    out[i] = weight[i] === 0 ? -1 : currentEpoch <= 0 ? 1 : Math.max(0, Math.min(1, 1 - ageWeighted[i] / weight[i] / currentEpoch))
   }
   return out
 }

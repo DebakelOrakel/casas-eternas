@@ -30,11 +30,62 @@ export interface ArcheanParams {
   // able to survive the transit).
   stabilisationEpochs: number
   recycleThreshold: number
+  // **The mantle-vigour knob.** How much the mantle stirs each epoch, in blur passes
+  // (fractional allowed). More stirring smooths the buoyancy field into fewer, broader
+  // convection cells, so crust collects into fewer and larger continents.
+  //
+  // This is the knob because it is REAPPLIED every epoch. The slider used to set the
+  // field's initial smoothing instead, and that washed out — this very diffusion
+  // erased it, leaving a control that measurably did nothing by the time anyone
+  // stopped the phase (see DEFAULT_INITIAL_SMOOTHING).
+  //
+  // Measured at 250 epochs over two seeds — plates, then the largest landmass as a
+  // share of all land:
+  //
+  //     0.0 -> 26/24 plates,  8-10% in the biggest mass   (busy archipelago world)
+  //     1.0 -> 12/ 8 plates,  10-11%
+  //     2.0 ->  7/ 4 plates,  16-24%
+  //     3.0 ->  7/ 6 plates,  13-26%                      (saturating)
+  //
+  // Land fraction does NOT follow it monotonically, which is the point: how much land
+  // there is stays the water slider's job. Saturates past ~3, so that is the range's
+  // top end.
+  diffusion: number
+  // How rigidly a craton moves: 1 = a rigid plate carried by the mean flow under it,
+  // 0 = every blob advected by its own local flow. See advanceRaftsOnFlow for what
+  // this fixes and why it deliberately stops short of 1 (differential motion is the
+  // Archean's only break-up mechanism — there are no plates to rift yet).
+  raftRigidity: number
 }
 
 export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
   nucleation: DEFAULT_NUCLEATION_PARAMS,
   mantleRms: 0.4,
+  // Matches the tectonic phase's DIFFUSION_PASSES, so the default Archean stirs the
+  // mantle exactly as hard as the tectonic phase does.
+  diffusion: 1,
+  // Swept over two seeds at 250 epochs. Largest contiguous landmass as a share of all
+  // land, number of separate masses, and break-ups per 100 epochs:
+  //
+  //     rigidity   biggest mass    masses    break-ups
+  //       0.00      10-11%          48/46     555/518     <- the old behaviour
+  //       0.50      18-27%          29/30     272/295
+  //       0.80      23-25%          28/23     200/177
+  //       0.90      27-41%          12/18     129/123
+  //       0.95      43-70%          12/12      95/ 98
+  //       1.00      65-85%           7/ 7      64/ 69
+  //
+  // The worry that a rigid craton could never break up again turned out to be
+  // unfounded: recycleUnstabilisedCrust eats blobs out of a raft's middle and
+  // disconnects it that way, so break-ups survive even at 1.0. There is no trade-off
+  // to balance here — the old value was simply shredding the crust.
+  //
+  // 0.95 rather than 1.0 all the same, because at exactly 1.0 the differential term is
+  // zero and the only remaining way to break a continent is to have its middle
+  // recycled away. Being pulled apart across two convection cells — the mechanism
+  // archeanStep describes as THE Archean break-up — needs a non-zero differential, and
+  // the measurement shows it still contributes at 0.95 (95 break-ups against 64).
+  raftRigidity: 0.95,
   attachDistSq: 190 * 190,
   stabilisationEpochs: 25,
   recycleThreshold: -0.45,
@@ -64,14 +115,14 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // tectonic phase — which is what eventually turns a craton into the dome that
   // rifts it, and also why nucleation must exclude cells that already hold crust.
   const membership = computeMembershipField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, width, height)
-  sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, width, height)
+  sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, width, height, params.diffusion)
   // Internal heating keeps convection running; without it the field decays to
   // nothing on a planet that has no crust yet. See sustainMantleVigour.
   sim.mantle = sustainMantleVigour(sim.mantle, params.mantleRms)
   const flow = computeMantleFlow(sim.mantle)
 
   // 2. Crust rides the convection directly. No plates exist yet.
-  advanceRaftsOnFlow(sim.rafts, flow, MANTLE_RES_X, MANTLE_RES_Y, width, height)
+  advanceRaftsOnFlow(sim.rafts, flow, MANTLE_RES_X, MANTLE_RES_Y, width, height, params.raftRigidity)
 
   // 3. New crust over persistent upwellings that are still ocean.
   const sites = findNucleationSites(sim.mantle, sim.upwellingStreak, sim.rafts, params.nucleation, sim.random, width, height)
@@ -91,7 +142,7 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // tectonic-phase concept, and stamping them with Archean epochs would put them on
   // a different clock from the ones the Ecology layer already consumes.
   mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, sim.epoch, width, height)
-  splitDisconnectedRafts(sim.rafts, RAFT_CONNECT_FACTOR, sim.random, width, height)
+  sim.lastSplits = splitDisconnectedRafts(sim.rafts, RAFT_CONNECT_FACTOR, sim.random, width, height)
 
   sim.epoch += 1
 }

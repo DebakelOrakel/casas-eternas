@@ -240,19 +240,100 @@ as an animation because it is nice to watch, not because it needs the time.
 5. Water offset in `elevationScale.ts`.
 6. Retire the plate-count / land-fraction / craton-count / clustering sliders.
 
-Every step is covered by the golden-hash harness described in the worldgen
-structure notes, except the panel wiring — same gap, and same manual check, as the
-worker refactor.
+Every step is covered by the golden-hash harness — `client/scripts/golden.mjs`, run
+with `npm run golden` (and `npm run golden record` to re-baseline) — except the panel
+wiring, which is the same gap, and the same manual check, as the worker refactor.
+
+The harness builds its worlds through the Archean and the handover, i.e. the way the
+program does. It previously called the old `createPlateSimulation` with the four
+sliders this design retires, so it was guarding a path nothing reached while the live
+path went unguarded; it was switched over before that code was deleted, so the
+deletion could be checked against the real pipeline rather than against nothing.
+
+## Craton rigidity — why continents assemble at all
+
+Merging cratons was, for a while, pure bookkeeping. `mergeOverlappingRafts`
+computed a suture, raised a collision event and passed the continent's name to the
+survivor — and then the next epoch re-advected every blob by its own local flow and
+undid it. Cratons approached, touched, and drifted apart again. No continent ever
+assembled, at any vigour setting.
+
+The omission was one-sided reasoning. Blob-wise advection was chosen so that a
+continent straddling two convection cells would be pulled apart, which is right;
+what was missed is that nothing then held a continent *together* either.
+
+A raft now moves by the mean flow across its blobs plus `1 - rigidity` of each
+blob's own departure from that mean. Swept over two seeds at 250 epochs:
+
+| rigidity | biggest landmass | separate masses | break-ups / 100 epochs |
+|---|---|---|---|
+| 0.00 | 10-11% | 48 / 46 | 555 / 518 |
+| 0.50 | 18-27% | 29 / 30 | 272 / 295 |
+| 0.80 | 23-25% | 28 / 23 | 200 / 177 |
+| 0.90 | 27-41% | 12 / 18 | 129 / 123 |
+| **0.95** | **43-70%** | **12 / 12** | **95 / 98** |
+| 1.00 | 65-85% | 7 / 7 | 64 / 69 |
+
+Two things the measurement settled:
+
+- **There was no trade-off to balance.** The worry was that rigid cratons could
+  never break up again, since differential stretching is the Archean's only rifting
+  mechanism (the tectonic phase tears continents at rifts, which needs plates that
+  do not exist yet). But break-ups survive even at rigidity 1.0, because
+  `recycleUnstabilisedCrust` eats blobs out of a raft's middle and disconnects it
+  that way. The old value was not buying break-ups; it was shredding the crust, at
+  five and a half fragmentations per epoch.
+- **0.95 rather than 1.0 all the same.** At exactly 1.0 the differential term is
+  zero and the only way left to break a continent is to have its middle recycled
+  away — being pulled apart across two convection cells stops happening at all. The
+  measurement shows that mode still contributes at 0.95 (95 break-ups against 64).
+
+Rigidity is a tuning constant, not a slider. It stands for the strength of
+continental lithosphere, which is a material property of the world rather than a
+matter of taste — and a second knob acting on continent count and size would fight
+the mantle-vigour one, which is exactly the confusion `mantleRms` produced.
 
 ## Open questions
 
 - **Stabilisation age**: needs to be tuned against the resulting crust fraction
   and the size distribution of the cratons. Too low and everything survives (the
   runaway returns); too high and nothing does.
-- **Mantle vigour as a knob**: a hotter early mantle should mean more, smaller
-  convection cells and therefore more, smaller continents. Worth exposing, but the
-  mapping to `evolveMantleField`'s constants needs checking — it may be
-  `DIFFUSION_PASSES` and `DECAY_KEEP` rather than a single dial.
+- ~~**Mantle vigour as a knob**~~ — **resolved, and the suspicion above was right.**
+
+  It was first wired to `createMantleField`'s *initial* smoothing, on the reasoning
+  that changing the field's starting scale steers the world without touching the
+  tuned epoch dynamics. Measurement killed that: the per-epoch diffusion erases the
+  initial smoothing. Field roughness by starting pass count — 2.53× spread at epoch
+  0, 1.35× by epoch 10, **1.13× by epoch 40**, against a phase nobody stops before
+  epoch 150. A full sweep of the slider confirmed the consequence: craton count,
+  plate count and land fraction all moved non-monotonically, by no more than two
+  seeds differed at the *same* setting.
+
+  The knob is now `evolveMantleField`'s per-epoch diffusion, Archean-only
+  (`ArcheanParams.diffusion`; the tectonic phase keeps `DIFFUSION_PASSES`, whose
+  "over-diffusing starved the doming/breakup" warning still applies there). It
+  cannot wash out, because it is reapplied every epoch. Plate count against slider
+  position, three seeds at 250 epochs:
+
+  | vigour | 10 | 8 | 6 | 4 (default) | 2 | 1 |
+  |---|---|---|---|---|---|---|
+  | diffusion | 0.000 | 0.111 | 0.444 | 1.000 | 1.778 | 2.250 |
+  | plates | 24.3 | 17.3 | 10.3 | 9.7 | 6.3 | 5.0 |
+
+  Two details worth keeping:
+
+  - The mapping is **quadratic**, because half the swing (24 → 13 plates) happens
+    below diffusion 0.25 and nothing at all happens above ~1.7. A linear slider
+    spent a third of its travel in the saturated tail and crammed the upper half of
+    the range into its last step — it read as a switch, not a control.
+  - The default is **4, not the middle**: that is the setting mapping to diffusion
+    1.0, which is what the Archean ran at before the knob existed. "Default" means
+    unchanged behaviour rather than halfway along a slider.
+
+  Land fraction does *not* follow this knob monotonically, which is the point — how
+  much land there is stays the water slider's job. `mantleRms` was measured as the
+  other candidate and rejected for exactly that reason: it is monotone but it is a
+  land dial in disguise (47% land at 0.25, 20% at 0.40, 2% at 0.55).
 - **Does the Archean produce sutures the Ecology layer should see?** Archean
   collisions would be the oldest orogens, and sutures already feed tin/lode-gold/
   gem provenance. Almost certainly yes, but the age stamping needs to be

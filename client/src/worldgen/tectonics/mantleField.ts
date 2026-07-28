@@ -29,8 +29,12 @@ const INSULATION_RATE = 0.05
 const OCEAN_COOL_RATE = 0.025
 // One gentle pass — enough to make broad cells, few enough that an upwelling
 // building under a continent stays peaked (over-diffusing flattened it and
-// starved the doming/breakup).
+// starved the doming/breakup). That warning still holds for the TECTONIC phase,
+// which is why this stays the default; the Archean passes its own value (see
+// ArcheanParams.diffusion), where it is the mantle-mixing knob.
 const DIFFUSION_PASSES = 1
+// How much of a cell's value each pass replaces with its neighbours' mean.
+const DIFFUSION_WEIGHT = 0.5
 const DECAY_KEEP = 0.955
 const T_CLAMP = 2.5
 // Gauss-Seidel iterations for the Poisson flow solve.
@@ -47,14 +51,25 @@ function wrapIdx(x: number, y: number): number {
 // convection (and therefore plate motion) from epoch 0, before surface coupling
 // has reshaped it.
 // How many blur passes smooth the initial random field into convection cells.
-// This is the single honest handle on "how vigorous is this planet's mantle":
-// fewer passes leave a finer-grained field, so more and smaller cells, so more and
-// smaller continents. More passes give broad cells and few large ones.
 //
-// Deliberately this and NOT the per-epoch DIFFUSION_PASSES, which would look like
-// the obvious knob: that one is documented as touchy ("over-diffusing flattened it
-// and starved the doming/breakup") and it is part of the tuned epoch dynamics.
-// Changing the field's INITIAL characteristic scale leaves that dynamics alone.
+// This was the mantle-vigour knob, on the reasoning that changing the field's
+// initial characteristic scale steers the world while leaving the tuned epoch
+// dynamics alone. Measurement killed it: the per-epoch diffusion below erases the
+// initial smoothing within a few dozen epochs. Field roughness by starting value:
+//
+//     passes   epoch 0   epoch 10   epoch 40
+//       10      0.353      0.249      0.167
+//        1      0.894      0.336      0.189
+//     spread    2.53x      1.35x      1.13x
+//
+// Nine tenths of the difference is gone by epoch 40, and the phase is not stopped
+// before epoch 150. A sweep over the full slider range confirmed the consequence:
+// craton count, plate count and land fraction all varied non-monotonically, by no
+// more than they varied between two seeds at the same setting.
+//
+// The knob moved to the per-epoch diffusion, which cannot wash out because it is
+// reapplied every epoch — see ArcheanParams.diffusion. This constant is now just
+// the starting scale, with no claim to steer anything.
 export const DEFAULT_INITIAL_SMOOTHING = 6
 
 export function createMantleField(random: () => number, smoothingPasses = DEFAULT_INITIAL_SMOOTHING): Float32Array {
@@ -99,6 +114,7 @@ export function evolveMantleField(
   membershipResY: number,
   worldWidth: number,
   worldHeight: number,
+  diffusionPasses: number = DIFFUSION_PASSES,
 ): Float32Array {
   for (let gy = 0; gy < RY; gy++) {
     const wy = ((gy + 0.5) / RY) * worldHeight
@@ -109,7 +125,13 @@ export function evolveMantleField(
       else field[i] -= OCEAN_COOL_RATE
     }
   }
-  for (let p = 0; p < DIFFUSION_PASSES; p++) field = boxBlur(field, 0.5)
+  // Fractional passes: whole ones at full weight, then a partial one for the
+  // remainder. Integer passes alone would give the Archean's mixing knob three
+  // usable positions (0, 1, 2 — it saturates past that), which is not a slider.
+  const wholePasses = Math.floor(diffusionPasses)
+  for (let p = 0; p < wholePasses; p++) field = boxBlur(field, DIFFUSION_WEIGHT)
+  const remainder = diffusionPasses - wholePasses
+  if (remainder > 0) field = boxBlur(field, DIFFUSION_WEIGHT * remainder)
   for (let i = 0; i < field.length; i++) field[i] *= DECAY_KEEP
   return zeroMean(clampField(field))
 }

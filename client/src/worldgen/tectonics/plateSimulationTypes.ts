@@ -40,8 +40,8 @@ export interface PlateSimulation {
   epoch: number
   // Epochs the Archean phase ran before this simulation was handed over, so the
   // world-age readout stays continuous across the two phases (they run on
-  // different Ma-per-epoch scales — see core/worldTime). 0 for worlds built the
-  // old way, straight from createPlateSimulation.
+  // different Ma-per-epoch scales — see core/worldTime). 0 in saves written before
+  // the Archean existed, when a world was built straight from plate seeds.
   archeanEpochs: number
   // Water offset in ELEVATION units (metres / ELEVATION_METERS). A world property,
   // so it is serialised and survives a reload. See elevationScale's WATER_OFFSET_MAX_M.

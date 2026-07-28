@@ -1,12 +1,8 @@
 import { generateDetectionLattice } from './boundaryLattice'
-import { generatePlateMotions } from './plateMotion'
 import { createMantleField } from './mantleField'
-import { generatePlateSeeds } from './plateSeeds'
-import { hashSeedString, mulberry32 } from '../core/rng'
-import { createOceanAgeField } from './oceanAge'
+import { mulberry32 } from '../core/rng'
 import { derivePlateTypes } from '../crust/raftField'
-import { generateInitialRafts } from '../crust/raftGeneration'
-import { DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y, OCEAN_AGE_INIT, HOTSPOT_COUNT } from './tectonicsParams'
+import { DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y, HOTSPOT_COUNT } from './tectonicsParams'
 import { coupleMantleToPlates } from './epoch/mantleCoupling'
 import { advancePlatesAndCrust } from './epoch/plateDrift'
 import { runBoundaryPass } from './epoch/boundaryPass'
@@ -16,9 +12,15 @@ import { pruneSpentFeatures } from './epoch/featurePruning'
 import type { PlateSimulation, PlateSimulationSnapshot, SimEvent } from './plateSimulationTypes'
 
 
-// Building a world, persisting one, and running an epoch of it. The epoch's six
-// phases live in epoch/ — stepEpoch at the bottom is now just their order, which
-// is the one thing about them that has to be read top to bottom.
+// Persisting a world and running an epoch of it. The epoch's six phases live in
+// epoch/ — stepEpoch at the bottom is now just their order, which is the one thing
+// about them that has to be read top to bottom.
+//
+// BUILDING a world is no longer here. It happens in archean/, which runs the Archean
+// and then hands over through finalizeArchean; this module's createPlateSimulation
+// took the four Genesis sliders (plate count, land fraction, clustering, craton
+// count) that the panel replaced with an emergent simulation, and nothing had called
+// it since.
 export type { PlateSimulation, PlateSimulationSnapshot, SimEvent, SimEventType } from './plateSimulationTypes'
 export { eventCategory } from './plateSimulationTypes'
 
@@ -27,48 +29,6 @@ export function createHotspots(random: () => number, width: number, height: numb
   return Array.from({ length: HOTSPOT_COUNT }, () => ({ x: random() * width, y: random() * height }))
 }
 
-export function createPlateSimulation(seedString: string, plateCount: number, landFraction: number, clustering: number, cratonCount: number, width: number, height: number): PlateSimulation {
-  const random = mulberry32(hashSeedString(seedString))
-  // A distinctly-salted hash of the same seed string, not hashSeedString(seedString)
-  // itself — keeps this fully deterministic per world seed without reusing
-  // the exact numeric seed `random` was already built from for a
-  // different purpose.
-  const warpSeed = hashSeedString(`${seedString}:coastalWarp`)
-  const seeds = generatePlateSeeds(plateCount, width, height, random)
-  // Rafts are generated first — they're the source of truth for crust type;
-  // plate `types` are then derived from raft coverage (see rafts.ts).
-  const rafts = generateInitialRafts(random, landFraction, clustering, cratonCount, width, height)
-  const types = derivePlateTypes(seeds, rafts, width, height)
-  const motions = generatePlateMotions(seeds, width, height, random)
-  const lattice = generateDetectionLattice(width, height, DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y)
-
-  return {
-    width,
-    height,
-    initialPlateCount: plateCount,
-    seeds,
-    rafts,
-    types,
-    motions,
-    ages: seeds.map(() => 0),
-    features: [],
-    epoch: 0,
-    archeanEpochs: 0,
-    seaLevelOffset: 0,
-    random,
-    warpSeed,
-    lattice,
-    latticeAccumulated: new Float32Array(lattice.length),
-    latticeLockedEpochs: new Int16Array(lattice.length),
-    latticeLastClassCode: new Int8Array(lattice.length).fill(-1),
-    oceanAge: createOceanAgeField(OCEAN_AGE_INIT),
-    supercontinentActive: rafts.length <= 1,
-    continentalRiftCooldownUntil: 0,
-    mantle: createMantleField(random),
-    hotspots: createHotspots(random, width, height),
-    sutures: [],
-  }
-}
 
 export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationSnapshot {
   return {
