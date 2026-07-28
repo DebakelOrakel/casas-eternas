@@ -5,7 +5,14 @@ import type { PlateArrow, RenderSimulationOptions } from './render/elevationMapI
 import type { ContinentLabelPlacement } from './render/continentLabelRenderer'
 import { ElevationRenderPool } from './render/elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './surface/erosion'
+import type { ArcheanSimulation } from './archean/archeanState'
+import { createArcheanSimulation } from './archean/archeanState'
+import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from './archean/archeanStep'
+import { finalizeArchean } from './archean/finalizeArchean'
+import { stabilisedFraction } from './crust/raftField'
+import { worldAgeMa } from './core/worldTime'
 import { fillDepressionsAndRouteFlow } from './surface/flowRouting'
+import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './tectonics/oceanAge'
 import type { ErosionPhase, ErosionPassParams } from './surface/erosion'
 import type { FlowRouting } from './surface/flowRouting'
 import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './surface/hydrology'
@@ -185,6 +192,46 @@ export type WorkerInboundMessage =
   | WorkerComputeMigrationMessage
   | WorkerSerializeWorldMessage
   | WorkerRestoreWorldMessage
+  | WorkerArcheanInitMessage
+  | WorkerArcheanStartMessage
+  | WorkerArcheanStopMessage
+  | WorkerArcheanFinalizeMessage
+  | WorkerArcheanResetMessage
+
+// --- Archean phase (see docs/decisions/archean-genesis.md) ---
+// Its own message family rather than reusing init/start/stop, because the Archean
+// runs on a different state type (no plates exist yet) and a different clock.
+export interface WorkerArcheanInitMessage {
+  type: 'archeanInit'
+  seed: string
+  width: number
+  height: number
+  renderOptions: RenderSimulationOptions
+  epochIntervalMs: number
+  // createMantleField's initial smoothing — the "mantle vigour" knob. Fewer passes
+  // give a finer-grained field, so more and smaller cratons and plates.
+  mantleSmoothing?: number
+}
+export interface WorkerArcheanStartMessage { type: 'archeanStart' }
+export interface WorkerArcheanStopMessage { type: 'archeanStop' }
+// Ends the Archean and hands the world to the tectonic phase. Not reachable by
+// accident: the panel only sends it when the next phase is started.
+export interface WorkerArcheanFinalizeMessage { type: 'archeanFinalize' }
+// Back to a fresh Archean with the same seed, discarding any tectonic state.
+export interface WorkerArcheanResetMessage { type: 'archeanReset' }
+
+// Sent with every Archean render: the readouts the Genesis panel shows.
+export interface WorkerArcheanStatusMessage {
+  type: 'archeanStatus'
+  epoch: number
+  worldAgeMa: number
+  crustFraction: number
+  // Share of crust past the stabilisation age — the phase's progress indicator.
+  // Below ~0.2 nothing has settled; 0.4-0.7 is the window where separate cratons
+  // exist and still move; above ~0.85 the world only accumulates land.
+  stabilisedFraction: number
+  cratonCount: number
+}
 
 export interface WorkerRenderedMessage {
   type: 'rendered'
@@ -338,6 +385,14 @@ export interface WorkerWorldDataMessage {
 }
 
 let sim: PlateSimulation | null = null
+// The Archean world, while that phase is the active one. Exactly one of `archean`
+// and `sim` is meaningful at a time: finalizeArchean converts the first into the
+// second, and archeanReset goes back the other way.
+let archean: ArcheanSimulation | null = null
+let archeanSeed = ''
+let archeanSmoothing: number | undefined
+let archeanWidth = 0
+let archeanHeight = 0
 let renderOptions: RenderSimulationOptions = {}
 let epochIntervalMs = 400
 let intervalId: ReturnType<typeof setInterval> | undefined
@@ -515,7 +570,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     mantle: sim.mantle.slice().buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
-    elevation: coarseElevation(result.elevations).buffer as ArrayBuffer,
+    elevation: coarseElevation(result.elevations, sim.width, sim.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
     hotspots: sim.hotspots,
@@ -538,15 +593,73 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   self.postMessage(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
 }
 
+// Renders the Archean world and posts its status. Reuses renderSimulationImage
+// through RenderableWorld — the elevation raster, hillshade and colour ramp need no
+// plates, and the plate-shaped overlays are skipped there.
+async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
+  if (!archean) return
+  const gen = worldGeneration
+  renderOptions.precomputedElevations = undefined
+  renderOptions.elevationScale = elevationScale
+  const result = await renderSimulationImage(
+    { width: archean.width, height: archean.height, seeds: [], motions: [], rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed },
+    renderPool,
+    renderOptions,
+  )
+  if (gen !== worldGeneration || !archean) return
+  lastRawElevations = result.rawElevations
+  invalidateAfterTopographyChange()
+
+  const message: WorkerRenderedMessage = {
+    type: 'rendered',
+    buffer: result.buffer.buffer as ArrayBuffer,
+    relief: result.relief.buffer as ArrayBuffer,
+    mantle: archean.mantle.slice().buffer as ArrayBuffer,
+    mantleResX: MANTLE_RES_X,
+    mantleResY: MANTLE_RES_Y,
+    elevation: coarseElevation(result.elevations, archean.width, archean.height).buffer as ArrayBuffer,
+    elevationResX: CLIMATE_RES_X,
+    elevationResY: CLIMATE_RES_Y,
+    hotspots: [],
+    volcanoes: [],
+    width: archean.width,
+    height: archean.height,
+    landFraction: result.landFraction,
+    epoch: archean.epoch,
+    boundaryMask: result.boundaryMask.buffer as ArrayBuffer,
+    plateArrows: [],
+    raftLabels: result.raftLabels,
+    plateCount: 0,
+    events: [],
+  }
+  self.postMessage(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
+
+  const status: WorkerArcheanStatusMessage = {
+    type: 'archeanStatus',
+    epoch: archean.epoch,
+    worldAgeMa: worldAgeMa(archean.epoch, 0),
+    crustFraction: result.landFraction,
+    stabilisedFraction: stabilisedFraction(archean.rafts, archean.epoch, DEFAULT_ARCHEAN_PARAMS.stabilisationEpochs),
+    cratonCount: archean.rafts.length,
+  }
+  self.postMessage(status)
+}
+
+// The Archean has no ocean-age field (nothing creates or destroys seafloor yet), and
+// computeRaftBaseline needs one to sample. A zero field reads as freshly-formed
+// crust everywhere, which is the right answer for a world whose entire seafloor is
+// being recycled continuously.
+const EMPTY_OCEAN_AGE = new Float32Array(OCEAN_AGE_RES_X * OCEAN_AGE_RES_Y)
+
 // Full-res elevation → the climate grid, for WorkerRenderedMessage.elevation.
 // Center samples via the climate modules' own sampleElevationAtCell rather than
 // an area mean or max, so the tooltip reports the same value the climate
 // pipeline reads at that cell — not a differently-filtered one.
-function coarseElevation(elevations: Float32Array): Float32Array {
+function coarseElevation(elevations: Float32Array, worldWidth: number, worldHeight: number): Float32Array {
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      out[gy * CLIMATE_RES_X + gx] = sampleElevationAtCell(elevations, gx, gy, sim!.width, sim!.height)
+      out[gy * CLIMATE_RES_X + gx] = sampleElevationAtCell(elevations, gx, gy, worldWidth, worldHeight)
     }
   }
   return out
@@ -887,6 +1000,70 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   renderAndPost(lastRawElevations, false, 1)
 }
 
+
+// --- Archean phase ---
+// Mirrors the tectonic init/start/stop trio: same interval stepper, same
+// renderInFlight guard, same coarse-while-running / full-res-when-paused split.
+// What differs is only which state is being advanced.
+
+function handleArcheanInit(message: Extract<WorkerInboundMessage, { type: 'archeanInit' }>): void {
+  stopTicking()
+  worldGeneration += 1
+  sim = null
+  archeanSeed = message.seed
+  archeanSmoothing = message.mantleSmoothing
+  archeanWidth = message.width
+  archeanHeight = message.height
+  archean = createArcheanSimulation(message.seed, message.width, message.height, message.mantleSmoothing)
+  lastRawElevations = null
+  preErosionElevations = null
+  renderOptions = message.renderOptions
+  epochIntervalMs = message.epochIntervalMs
+  void renderArcheanAndPost()
+}
+
+function handleArcheanStart(): void {
+  if (intervalId !== undefined) return
+  intervalId = setInterval(() => {
+    if (!archean || renderInFlight) return
+    archeanStep(archean)
+    renderInFlight = true
+    renderArcheanAndPost(PREVIEW_RENDER_SCALE).finally(() => { renderInFlight = false })
+  }, epochIntervalMs)
+}
+
+// A pause, not an ending — the phase is resumable, and only becomes final when
+// archeanFinalize starts the tectonic phase.
+function handleArcheanStop(): void {
+  stopTicking()
+  if (archean && !renderInFlight) {
+    renderInFlight = true
+    renderArcheanAndPost(1).finally(() => { renderInFlight = false })
+  }
+}
+
+// Plate tectonics begins. The Archean state is dropped: everything worth keeping
+// (the rafts, their ages, the mantle field, the epoch count for the world clock)
+// is carried into the PlateSimulation by finalizeArchean.
+function handleArcheanFinalize(): void {
+  if (!archean) return
+  stopTicking()
+  sim = finalizeArchean(archean)
+  archean = null
+  pendingEvents = getInitialPlateEvents(sim)
+  void renderAndPost()
+}
+
+function handleArcheanReset(): void {
+  stopTicking()
+  worldGeneration += 1
+  sim = null
+  archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanSmoothing)
+  lastRawElevations = null
+  preErosionElevations = null
+  void renderArcheanAndPost()
+}
+
 // The dispatch table. A record rather than a chain so the set of messages this
 // worker understands is a list you can read, and so a new one cannot silently
 // land in the wrong branch.
@@ -903,6 +1080,11 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   computeMigration: (m) => handleComputeMigration(m as Extract<WorkerInboundMessage, { type: 'computeMigration' }>),
   serializeWorld: () => handleSerializeWorld(),
   restoreWorld: (m) => handleRestoreWorld(m as Extract<WorkerInboundMessage, { type: 'restoreWorld' }>),
+  archeanInit: (m) => handleArcheanInit(m as Extract<WorkerInboundMessage, { type: 'archeanInit' }>),
+  archeanStart: () => handleArcheanStart(),
+  archeanStop: () => handleArcheanStop(),
+  archeanFinalize: () => handleArcheanFinalize(),
+  archeanReset: () => handleArcheanReset(),
 }
 
 self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {

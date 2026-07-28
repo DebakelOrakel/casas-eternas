@@ -140,10 +140,31 @@ function upscaleBilinearToroidal(src: Float32Array, srcWidth: number, srcHeight:
 // rasterization, baseline blending, redistribution, coloring, boundary
 // lines, arrows, labels) stays single-threaded — combined, profiling
 // showed it's under 15% of total cost, not worth distributing too.
-export async function renderSimulationImage(sim: PlateSimulation, pool: ElevationRenderPool, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
+// What the renderer actually reads. Narrower than PlateSimulation on purpose: the
+// Archean has no plates, no features and no ocean-age field, and should not have to
+// fabricate a PlateSimulation just to be drawn. Empty arrays for the plate-shaped
+// fields are a truthful description of that phase, not a placeholder.
+export interface RenderableWorld {
+  width: number
+  height: number
+  seeds: PlateSimulation['seeds']
+  motions: PlateSimulation['motions']
+  rafts: PlateSimulation['rafts']
+  features: PlateSimulation['features']
+  oceanAge: Float32Array
+  warpSeed: number
+}
+
+export async function renderSimulationImage(sim: RenderableWorld, pool: ElevationRenderPool, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
   const { precomputedElevations } = options
   const { width, height } = sim
-  const cellIds = rasterizeVoronoiPlates(sim.seeds, width, height)
+  // The Archean phase runs with no plates at all — plate tectonics has not started
+  // yet (see archean/). Everything plate-shaped below is therefore skipped rather
+  // than given a second render function: the elevation raster, hillshade and colour
+  // ramp are ~90% of this and need no plates, so a parallel renderer would be
+  // almost entirely duplication. "No plates yet" is an honest special case.
+  const hasPlates = sim.seeds.length > 0
+  const cellIds = hasPlates ? rasterizeVoronoiPlates(sim.seeds, width, height) : new Uint16Array(width * height)
   const buffer = new Uint8Array(width * height * 4)
 
   let elevations: Float32Array
@@ -218,11 +239,12 @@ export async function renderSimulationImage(sim: PlateSimulation, pool: Elevatio
 
   // Overlay source data — always produced (cheap), toggled on the main
   // thread. Arrows anchor at plate centroids; labels come from raft blobs.
-  const centroids = computePlateCentroids(cellIds, sim.seeds.length, width, height)
-  const plateArrows: PlateArrow[] = centroids.map((centroid, i) => {
-    const { vx, vy } = getVelocityAt(centroid, sim.motions[i], width, height)
-    return { x: centroid.x, y: centroid.y, vx, vy }
-  })
+  const plateArrows: PlateArrow[] = hasPlates
+    ? computePlateCentroids(cellIds, sim.seeds.length, width, height).map((centroid, i) => {
+        const { vx, vy } = getVelocityAt(centroid, sim.motions[i], width, height)
+        return { x: centroid.x, y: centroid.y, vx, vy }
+      })
+    : []
   const raftLabels = computeRaftLabelPlacements(sim.rafts, width, height)
 
   return { buffer, relief, boundaryMask, plateArrows, raftLabels, landFraction: landPixelCount / (width * height), rawElevations, elevations }

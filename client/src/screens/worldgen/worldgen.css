@@ -325,6 +325,14 @@
   border-radius: 3px;
   transition: width 0.15s ease;
 }
+/* The Archean drives this bar determinately, and its fill is coloured by the same
+   three-stage judgement the banner text states: below 20% nothing has settled,
+   20-70% is the window where separate cratons exist and still move, above 70% only
+   land accumulates. Other phases leave data-stage unset and keep the default. */
+.worldgen-flat-screen .compute-progress-fill[data-stage='early'] { background: #7a8794; }
+.worldgen-flat-screen .compute-progress-fill[data-stage='window'] { background: #4f9d5d; }
+.worldgen-flat-screen .compute-progress-fill[data-stage='late'] { background: #c98a3c; }
+
 .worldgen-flat-screen .compute-progress.is-indeterminate .compute-progress-fill {
   width: 40%;
   transition: none;
@@ -393,6 +401,48 @@
   z-index: 1;
   pointer-events: none;
   background: linear-gradient(to bottom, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.8) 45%, rgba(255, 255, 255, 0) 100%);
+  transition: height 0.25s ease;
+}
+
+/* Grows only while a narration line is showing, and shrinks back when there is
+   none — the fade has to reach past the sentence (which sits at 4.2-5.9rem) or the
+   text would stand on the map instead of on white, but carrying that extra height
+   permanently would wash out the map for no reason. This is also why the banner
+   needs no background of its own. */
+.worldgen-flat-screen .overlay-bar-backdrop.has-banner {
+  height: 8.5rem;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.9) 40%, rgba(255, 255, 255, 0.85) 72%, rgba(255, 255, 255, 0) 100%);
+}
+
+/* World age + phase hint, directly under the overlay bar. Not in the Genesis
+   panel: the age is true of the world in every phase, and the hint describes what
+   the map is doing rather than a control. Pointer-events off so it never blocks
+   the map underneath. */
+/* Narration about the WORLD, as opposed to the panel below, which is about what
+   you can DO. That split is the scheme this is the first instance of: anything the
+   simulation wants to tell you about its own state belongs in this band.
+   
+   Cinzel, matching the panel title, so it reads as the same voice — but in mixed
+   case at weight 400, because a full sentence in the title's uppercase 600 is a
+   wall. Tracking is lighter than the title's 0.08em for the same reason: that
+   value is tuned for capitals. */
+.worldgen-flat-screen .world-banner {
+  position: fixed;
+  top: 4.2rem;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  text-align: center;
+}
+.worldgen-flat-screen .world-banner-hint {
+  font-family: 'Cinzel', serif;
+  font-weight: 400;
+  font-size: 1.35rem;
+  letter-spacing: 0.03em;
+  color: rgba(26, 26, 26, 0.72);
 }
 
 /* Right-side legend for the active overlay(s) that carry one. Vertically centred;

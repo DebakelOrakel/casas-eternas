@@ -6,11 +6,12 @@ import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/core/mapConfig'
 import JSZip from 'jszip'
-import type { WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
+import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/render/continentLabelRenderer'
 import type { PlateArrow } from '../../worldgen/render/elevationMapImage'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
+import { formatWorldAge, worldAgeMa } from '../../worldgen/core/worldTime'
 import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/tectonics/plateSimulation'
 import { eventCategory } from '../../worldgen/tectonics/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
@@ -66,31 +67,33 @@ const WORLD_HEIGHT = 10
 // default of 8 reproduces that major-plate structure closely: largest plate
 // ~15-18% of the surface (Pacific is ~20%), ~7 plates covering 90%. Fewer =
 // bigger, more dominant plates; more = a busier, more uniform patchwork.
-const TOTAL_PLATE_COUNT_MIN = 5
-const TOTAL_PLATE_COUNT_MAX = 13
-const TOTAL_PLATE_COUNT_DEFAULT = 8
-
-// Raft model: continental crust is no longer "how many plates are
-// continental" but how much of the surface starts as land (raft coverage,
-// which then evolves emergently) and how tightly those continents cluster.
-// Both are percentages in the UI, converted to 0..1 fractions for the sim.
-const LAND_FRACTION_MIN = 8
-const LAND_FRACTION_MAX = 45
-const LAND_FRACTION_DEFAULT = 25
-const CLUSTERING_MIN = 0
-const CLUSTERING_MAX = 100
-const CLUSTERING_DEFAULT = 50
-// How many separate continents (cratons) to seed. Direct control rather than
-// seed-derived — see rafts.ts / the decision doc follow-up.
-const CRATON_COUNT_MIN = 1
-const CRATON_COUNT_MAX = 8
-const CRATON_COUNT_DEFAULT = 4
+// Mantle vigour — the one Genesis knob besides the seed (and, later, water).
+//
+// It is createMantleField's initial smoothing pass count, inverted for the UI so
+// the slider reads "more vigorous → higher": a finer-grained starting field has
+// more and smaller convection cells, so more and smaller cratons and, after the
+// handover, more and smaller plates.
+//
+// This replaced four sliders — plate count, land fraction, craton count and
+// clustering — that all specified an OUTCOME. Those are now emergent: plate count
+// falls out of the convection cells (finalizeArchean), and land fraction out of
+// crust production against recycling. See docs/decisions/archean-genesis.md.
+const MANTLE_VIGOUR_MIN = 1
+const MANTLE_VIGOUR_MAX = 10
+const MANTLE_VIGOUR_DEFAULT = 5
+// Slider value → smoothing passes. Higher vigour = fewer passes = finer field.
+const vigourToSmoothing = (vigour: number): number => MANTLE_VIGOUR_MAX + 1 - vigour
 
 // How often, while running, the sim advances one epoch and re-renders —
-// paced deliberately (not "as fast as possible") so a run reads as
-// gradual mountain-building over time rather than flashing straight to
-// some final state.
-const EPOCH_INTERVAL_MS = 400
+// paced deliberately (not "as fast as possible") so a run reads as gradual
+// mountain-building over time rather than flashing straight to some final state.
+//
+// 400 ms was set when tectonics was the only thing that stepped. The Archean's
+// usable stopping window is 150-250 epochs wide, which at that pace is well over a
+// minute of watching before it is even reachable — too slow for a phase whose whole
+// interaction is "watch until it looks right". 180 ms keeps the growth legible while
+// putting that window inside half a minute.
+const EPOCH_INTERVAL_MS = 180
 
 // Safety cap: the live tectonics stepping auto-stops once it reaches this
 // epoch, so a run left going by accident doesn't keep stepping (and
@@ -182,53 +185,36 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <span class="field-row">
           <input type="text" class="seed-input" placeholder="Seed" value="${initialSeed}" />
           <button type="button" class="icon-button" data-action="randomize-seed" aria-label="Randomize seed">
-            <img src="/icons/reset.png" alt="" />
+            <img src="/icons/dice.png" alt="" />
           </button>
         </span>
       </label>
-      <label class="field">
-        <span class="field-label">Total plates: <span data-value="plate-count-label">${TOTAL_PLATE_COUNT_DEFAULT}</span></span>
-        <input
-          type="range"
-          class="plate-count-input"
-          min="${TOTAL_PLATE_COUNT_MIN}"
-          max="${TOTAL_PLATE_COUNT_MAX}"
-          step="1"
-          value="${TOTAL_PLATE_COUNT_DEFAULT}"
-        />
-      </label>
-      <label class="field">
-        <span class="field-label">Land fraction: <span><span data-value="land-fraction-label">${LAND_FRACTION_DEFAULT}</span>%</span></span>
-        <input
-          type="range"
-          class="land-fraction-input"
-          min="${LAND_FRACTION_MIN}"
-          max="${LAND_FRACTION_MAX}"
-          step="1"
-          value="${LAND_FRACTION_DEFAULT}"
-        />
-      </label>
-      <label class="field">
-        <span class="field-label">Continents: <span data-value="craton-count-label">${CRATON_COUNT_DEFAULT}</span></span>
-        <input
-          type="range"
-          class="craton-count-input"
-          min="${CRATON_COUNT_MIN}"
-          max="${CRATON_COUNT_MAX}"
-          step="1"
-          value="${CRATON_COUNT_DEFAULT}"
-        />
-      </label>
-      <label class="field">
-        <span class="field-label">Clustering: <span><span data-value="clustering-label">${CLUSTERING_DEFAULT}</span>%</span></span>
-        <input
-          type="range"
-          class="clustering-input"
-          min="${CLUSTERING_MIN}"
-          max="${CLUSTERING_MAX}"
-          step="1"
-          value="${CLUSTERING_DEFAULT}"
-        />
+      <label class="field field--icon-row">
+        <span class="field-row">
+          <button type="button" class="icon-button" data-action="reset-archean" aria-label="Restart the Archean">
+            <img src="/icons/reset.png" alt="" />
+          </button>
+          <span class="field field--inline">
+            <span class="field-label">Mantle vigour: <span data-value="mantle-vigour-label">${MANTLE_VIGOUR_DEFAULT}</span></span>
+            <input
+              type="range"
+              class="mantle-vigour-input"
+              min="${MANTLE_VIGOUR_MIN}"
+              max="${MANTLE_VIGOUR_MAX}"
+              step="1"
+              value="${MANTLE_VIGOUR_DEFAULT}"
+            />
+          </span>
+          <button type="button" class="icon-button" data-action="toggle-archean" aria-label="Run the Archean">
+            <img src="/icons/mantle.png" alt="" />
+          </button>
+          <span class="tectonics-stats">
+            <span class="stat"><span class="stat-num"><span data-value="stat-crust">–</span><span class="stat-unit">%</span></span><span class="stat-label">Crust</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-cratons">–</span><span class="stat-label">Cratons</span></span>
+            <span class="stat"><span class="stat-num"><span data-value="stat-stabilised">–</span><span class="stat-unit">%</span></span><span class="stat-label">Stabilised</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-world-age">–</span><span class="stat-label">Age</span></span>
+          </span>
+        </span>
       </label>
     </div>
     <div class="panel" data-panel="1">
@@ -241,6 +227,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
             <img src="/icons/tectonics.png" alt="" />
           </button>
           <span class="tectonics-stats">
+            <span class="stat"><span class="stat-num" data-value="stat-tect-age">–</span><span class="stat-label">Age</span></span>
             <span class="stat"><span class="stat-num" data-value="stat-epoch">–</span><span class="stat-label">Epoch</span></span>
             <span class="stat"><span class="stat-num" data-value="stat-plates">–</span><span class="stat-label">Plates</span></span>
             <span class="stat"><span class="stat-num" data-value="stat-continents">–</span><span class="stat-label">Continents</span></span>
@@ -350,14 +337,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   `
 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
-  const plateCountInput = root.querySelector<HTMLInputElement>('.plate-count-input')!
-  const plateCountLabel = root.querySelector<HTMLElement>('[data-value="plate-count-label"]')!
-  const landFractionInput = root.querySelector<HTMLInputElement>('.land-fraction-input')!
-  const landFractionLabel = root.querySelector<HTMLElement>('[data-value="land-fraction-label"]')!
-  const clusteringInput = root.querySelector<HTMLInputElement>('.clustering-input')!
-  const clusteringLabel = root.querySelector<HTMLElement>('[data-value="clustering-label"]')!
-  const cratonCountInput = root.querySelector<HTMLInputElement>('.craton-count-input')!
-  const cratonCountLabel = root.querySelector<HTMLElement>('[data-value="craton-count-label"]')!
+  const mantleVigourInput = root.querySelector<HTMLInputElement>('.mantle-vigour-input')!
+  const mantleVigourLabel = root.querySelector<HTMLElement>('[data-value="mantle-vigour-label"]')!
+  const resetArcheanButton = root.querySelector<HTMLButtonElement>('[data-action="reset-archean"]')!
+  const toggleArcheanButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-archean"]')!
+  const statCrust = root.querySelector<HTMLElement>('[data-value="stat-crust"]')!
+  const statCratons = root.querySelector<HTMLElement>('[data-value="stat-cratons"]')!
+  const statWorldAge = root.querySelector<HTMLElement>('[data-value="stat-world-age"]')!
+  const statStabilised = root.querySelector<HTMLElement>('[data-value="stat-stabilised"]')!
   const randomizeButton = root.querySelector<HTMLButtonElement>('[data-action="randomize-seed"]')!
   const resetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-sim"]')!
   const toggleSimButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-sim"]')!
@@ -403,6 +390,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const tempMinLabel = root.querySelector<HTMLElement>('[data-value="temp-min"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
   const statEpoch = root.querySelector<HTMLElement>('[data-value="stat-epoch"]')!
+  const statTectAge = root.querySelector<HTMLElement>('[data-value="stat-tect-age"]')!
   const statPlates = root.querySelector<HTMLElement>('[data-value="stat-plates"]')!
   const statContinents = root.querySelector<HTMLElement>('[data-value="stat-continents"]')!
   const erodeIcon = erodeButton.querySelector<HTMLImageElement>('img')!
@@ -420,6 +408,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const postToWorker = (message: WorkerInboundMessage): void => worker.postMessage(message)
 
   let simRunning = false
+  // The Archean phase is running (its own stepper in the worker, separate from the
+  // tectonic one). Both can never run at once: the Archean is finalised before the
+  // tectonic phase can start.
+  let archeanRunning = false
+  // Archean epochs completed — carried into the world.yaml recipe and, after the
+  // handover, into the world-age readout.
+  let lastArcheanEpochs = 0
+  // Latest stabilised fraction, so updateProgress can render the bar without the
+  // status message being in scope.
+  let archeanStabilised = 0
+  // Set once the Archean has been handed over, so re-entering the Tectonics panel
+  // doesn't finalise a world that is already past that point. Cleared by a
+  // regenerate or an Archean reset.
+  let archeanFinalised = false
   // Any worker computation in flight: tectonics ticking, an erosion pass, or a
   // climate/hydrology compute. While busy, ALL bottom-panel controls are disabled
   // except the ACTIVE process's stop button (the only allowed action).
@@ -457,7 +459,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Genesis inputs (debounced-)regenerate the whole world, so lock them while busy;
     // the erosion/climate/river sliders are left live for tuning (they only affect the
     // next pass, not the one in flight).
-    for (const el of [seedInput, plateCountInput, landFractionInput, cratonCountInput, clusteringInput]) el.disabled = busy
+    for (const el of [seedInput, mantleVigourInput]) el.disabled = busy
     backButton.disabled = busy
     nextButton.disabled = busy
     updateNavState() // nav arrows also lock while busy (see its own gating)
@@ -471,6 +473,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       computeProgress.hidden = false
       computeProgress.classList.remove('is-indeterminate')
       computeProgressFill.style.width = `${Math.round(erosionProgressFraction * 100)}%`
+      delete computeProgressFill.dataset.stage
+    } else if (archeanRunning) {
+      // Determinate, unlike the tectonic stepper's indeterminate bar: the Archean
+      // HAS a meaningful progress measure — the stabilised fraction, which runs
+      // monotonically from ~0 to ~90% across the phase. Its three-stage colour is
+      // the same judgement the banner text states, from the same call.
+      computeProgress.hidden = false
+      computeProgress.classList.remove('is-indeterminate')
+      computeProgressFill.style.width = `${Math.round(archeanStabilised * 100)}%`
+      computeProgressFill.dataset.stage = archeanStage(archeanStabilised).stage
     } else if (simRunning || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight) {
       computeProgress.hidden = false
       computeProgress.classList.add('is-indeterminate')
@@ -485,6 +497,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const updateStats = (): void => {
     statLand.textContent = String(Math.round(lastLandFraction * 100))
     statEpoch.textContent = String(lastEpoch)
+    // The world clock runs across both phases — the Archean's epochs are worth
+    // 5 Ma each and the tectonic ones 1 Ma, so this is not just the epoch count
+    // rescaled. See core/worldTime.
+    statTectAge.textContent = formatWorldAge(worldAgeMa(lastArcheanEpochs, lastEpoch))
     statPlates.textContent = String(lastPlateCount)
     statContinents.textContent = String(lastContinentCount)
   }
@@ -524,6 +540,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Coarse climate rasters (from the worker's computeClimate step). Sampled up
   // to full map resolution in the overlay paint fns. null until computed / when
   // invalidated by an upstream reset.
+  // Entering this panel commits the Archean — see showPanel.
+  const TECTONICS_PANEL_INDEX = 1
   const CLIMATE_PANEL_INDEX = 3
   let lastTemperature: Float32Array | null = null
   let lastWind: Float32Array | null = null
@@ -1149,8 +1167,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // selected field. Resolved at render time (see resolveLegend / renderLegends).
   const OVERLAY_DEFS: { id: string; icon: string; label: string; available: () => boolean; legend?: LegendSpec | (() => LegendSpec) }[] = [
     { id: 'terrain', icon: '/icons/colours.png', label: 'Terrain colour', available: () => lastColoredBase !== null },
-    { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null },
-    { id: 'names', icon: '/icons/continent_name.png', label: 'Continent names', available: () => lastRaftLabels.length > 0 },
+    // Plate outlines are meaningless during the Archean (no plates exist) and, in
+    // the tectonic phase, they redraw every epoch while running — which reads as
+    // flicker rather than information. Available only when something is paused.
+    { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null && archeanFinalised && !simRunning && !archeanRunning },
+    // Blocked during the Archean: proto-cratons are not continents yet, they merge
+    // and fragment constantly, and naming something that dissolves ten epochs later
+    // is noise. finalizeArchean names them all when plate tectonics begins.
+    { id: 'names', icon: '/icons/continent_name.png', label: 'Continent names', available: () => archeanFinalised && lastRaftLabels.length > 0 },
     {
       id: 'mantle', icon: '/icons/mantle.png', label: 'Mantle field + volcanism', available: () => lastMantle !== null,
       legend: { type: 'swatches', title: 'Mantle & volcanism', items: [
@@ -1209,6 +1233,17 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const overlayBackdrop = document.createElement('div')
   overlayBackdrop.className = 'overlay-bar-backdrop'
   root.appendChild(overlayBackdrop)
+
+  // The phase hint sits under the overlay bar because it describes what the MAP is
+  // doing, not a control — the numbers behind it live in the panel with the button
+  // they belong to.
+  const worldBanner = document.createElement('div')
+  worldBanner.className = 'world-banner'
+  worldBanner.hidden = true
+  const worldHintEl = document.createElement('span')
+  worldHintEl.className = 'world-banner-hint'
+  worldBanner.appendChild(worldHintEl)
+  root.appendChild(worldBanner)
 
   // Right-side legend for the active overlay(s) that carry one (see OVERLAY_DEFS).
   const overlayLegend = document.createElement('div')
@@ -1714,8 +1749,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     URL.revokeObjectURL(url)
   }
 
-  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerEcologyDataMessage | WorkerMigrationDataMessage | WorkerWorldDataMessage>) => {
+  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerEcologyDataMessage | WorkerMigrationDataMessage | WorkerWorldDataMessage | WorkerArcheanStatusMessage>) => {
     const message = event.data
+
+    if (message.type === 'archeanStatus') {
+      handleArcheanStatus(message)
+      return
+    }
 
     if (message.type === 'erosionProgress') {
       erosionProgressFraction = message.fraction
@@ -1803,33 +1843,88 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
-  const initSim = (seed: string, plateCount: number, landFractionPct: number, clusteringPct: number, cratonCount: number): void => {
-    // Reset immediately (not only once the worker's first render arrives),
-    // so a start clicked in that brief gap arms autoStopAtEpoch off epoch 0,
-    // not the previous world's last epoch.
+  // Genesis now starts an ARCHEAN world, not a plate simulation: no plates exist
+  // until finalizeArchean hands over. See docs/decisions/archean-genesis.md.
+  const initArchean = (seed: string, vigour: number): void => {
     lastEpoch = 0
+    archeanRunning = false
     postToWorker({
-      type: 'init',
+      type: 'archeanInit',
       seed,
-      plateCount,
-      landFraction: landFractionPct / 100,
-      clustering: clusteringPct / 100,
-      cratonCount,
       width: MAP_WIDTH,
       height: MAP_HEIGHT,
       epochIntervalMs: EPOCH_INTERVAL_MS,
-      // Overlays (boundaries/names/arrows/events) are composited on the main
-      // thread now and toggled there, so the render itself needs no overlay
-      // flags — it always emits the full overlay source data.
+      mantleSmoothing: vigourToSmoothing(vigour),
       renderOptions: {},
     })
   }
-  initSim(initialSeed, TOTAL_PLATE_COUNT_DEFAULT, LAND_FRACTION_DEFAULT, CLUSTERING_DEFAULT, CRATON_COUNT_DEFAULT)
+  initArchean(initialSeed, MANTLE_VIGOUR_DEFAULT)
+
+  // --- Archean controls -----------------------------------------------------
+  const setArcheanRunning = (running: boolean): void => {
+    archeanRunning = running
+    toggleArcheanButton.querySelector('img')!.src = running ? '/icons/stop.png' : '/icons/mantle.png'
+    toggleArcheanButton.setAttribute('aria-label', running ? 'Pause the Archean' : 'Run the Archean')
+  }
+
+  toggleArcheanButton.addEventListener('click', () => {
+    if (archeanRunning) {
+      postToWorker({ type: 'archeanStop' })
+      setArcheanRunning(false)
+      updateOverlays()
+      updateProgress()
+      return
+    }
+    postToWorker({ type: 'archeanStart' })
+    setArcheanRunning(true)
+    updateOverlays()
+  })
+
+  resetArcheanButton.addEventListener('click', () => {
+    postToWorker({ type: 'archeanReset' })
+    setArcheanRunning(false)
+    lastArcheanEpochs = 0
+    archeanFinalised = false
+  })
+
+  // The three-stage progress indicator. The stabilised fraction is the one quantity
+  // that reads the phase cleanly — measured over 600 epochs it runs 6% → 54% → 91%,
+  // monotone, while crust fraction keeps climbing and the age spread just grows
+  // forever. It also lines up with the map: several separate cratons hold until
+  // roughly 60%, and past ~85% the destructible pool is gone, so the world stops
+  // changing shape and only accumulates land.
+  //
+  // Deliberately a hint, not a hard stop — "lots of land, one supercontinent" is a
+  // legitimate world to start from, and a supercontinent closing the Archean is
+  // what actually happened (Kenorland, ~2.7 Ga).
+  const archeanStage = (stabilised: number): { hint: string; stage: 'early' | 'window' | 'late' } => {
+    if (stabilised < 0.2) return { stage: 'early', hint: 'Crust is still ephemeral — nothing has settled yet.' }
+    if (stabilised < 0.7) return { stage: 'window', hint: 'Cratons are forming and still moving. Good place to stop.' }
+    return { stage: 'late', hint: 'Supercontinent stage — running on now only adds land, not structure.' }
+  }
+
+  function handleArcheanStatus(message: WorkerArcheanStatusMessage): void {
+    lastArcheanEpochs = message.epoch
+    statCrust.textContent = String(Math.round(message.crustFraction * 100))
+    statCratons.textContent = String(message.cratonCount)
+    statStabilised.textContent = String(Math.round(message.stabilisedFraction * 100))
+    statWorldAge.textContent = formatWorldAge(message.worldAgeMa)
+    // One source for both readouts: the gauge's colour and the banner's wording are
+    // the same three-stage judgement, so they can never disagree.
+    const { hint } = archeanStage(message.stabilisedFraction)
+    archeanStabilised = message.stabilisedFraction
+    worldHintEl.textContent = hint
+    worldBanner.hidden = false
+    // The backdrop grows to carry the line and shrinks back when there is none.
+    overlayBackdrop.classList.add('has-banner')
+    updateProgress()
+  }
 
   const stopSim = (): void => {
     if (!simRunning) return
     simRunning = false
     postToWorker({ type: 'stop' })
+    updateOverlays()
     toggleSimIcon.src = '/icons/tectonics.png'
     toggleSimButton.setAttribute('aria-label', 'Run tectonics')
     updateControlsDisabled()
@@ -1839,6 +1934,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const startSim = (): void => {
     if (simRunning) return
     simRunning = true
+    updateOverlays()
     // Re-arm the safety auto-stop for another MAX_TECTONICS_EPOCHS from
     // wherever this run begins (see MAX_TECTONICS_EPOCHS / the 'rendered'
     // handler), so restarting after a stop halts again 100 epochs later.
@@ -1910,10 +2006,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       `  name: ${name}`,
       'spec:',
       `  seed: "${seedInput.value}"`,
-      `  platesTotal: ${Number(plateCountInput.value)}`,
-      `  landRatio: ${Number(landFractionInput.value)}`,
-      `  initialContinents: ${Number(cratonCountInput.value)}`,
-      `  clusterFactor: ${Number(clusteringInput.value)}`,
+      `  mantleVigour: ${Number(mantleVigourInput.value)}`,
+      `  archeanEpochs: ${lastArcheanEpochs}`,
       `  tempOffset: ${Number(tempBandInput.value)}`,
       `  humidity: ${Number(humidityInput.value)}`,
       `  contrast: ${Number(contrastInput.value)}`,
@@ -1935,10 +2029,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Refresh every slider's readout label from its input value — used after a
   // load sets the inputs programmatically (which doesn't fire input events).
   function syncSliderLabels(): void {
-    plateCountLabel.textContent = plateCountInput.value
-    landFractionLabel.textContent = landFractionInput.value
-    cratonCountLabel.textContent = cratonCountInput.value
-    clusteringLabel.textContent = clusteringInput.value
+    mantleVigourLabel.textContent = mantleVigourInput.value
     const t = Number(tempBandInput.value)
     tempBandLabel.textContent = t > 0 ? `+${t}` : String(t)
     humidityLabel.textContent = humidityInput.value
@@ -2105,10 +2196,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
     const seed = readYamlValue(yaml, 'seed') ?? ''
     seedInput.value = seed
-    plateCountInput.value = readYamlValue(yaml, 'platesTotal') ?? plateCountInput.value
-    landFractionInput.value = readYamlValue(yaml, 'landRatio') ?? landFractionInput.value
-    cratonCountInput.value = readYamlValue(yaml, 'initialContinents') ?? cratonCountInput.value
-    clusteringInput.value = readYamlValue(yaml, 'clusterFactor') ?? clusteringInput.value
+    mantleVigourInput.value = readYamlValue(yaml, 'mantleVigour') ?? mantleVigourInput.value
+    // A restored world is past the Archean: its state is loaded, not re-simulated.
+    lastArcheanEpochs = Number(readYamlValue(yaml, 'archeanEpochs') ?? '0')
+    setArcheanRunning(false)
     tempBandInput.value = readYamlValue(yaml, 'tempOffset') ?? '0'
     humidityInput.value = readYamlValue(yaml, 'humidity') ?? '100'
     contrastInput.value = readYamlValue(yaml, 'contrast') ?? '100'
@@ -2447,7 +2538,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     invalidateClimate()
     migrationOrigins = [] // fresh world → re-auto-place origins on the next migration open
     erosionRunCount = 0
-    initSim(seedInput.value, Number(plateCountInput.value), Number(landFractionInput.value), Number(clusteringInput.value), Number(cratonCountInput.value))
+    archeanFinalised = false
+    initArchean(seedInput.value, Number(mantleVigourInput.value))
     updateNavState() // fresh world → re-lock downstream panels
   }
   // Debounced so dragging a slider (or typing a seed) doesn't fire a full
@@ -2468,23 +2560,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     seedInput.value = randomSeed()
     regenerate()
   })
-  plateCountInput.addEventListener('input', () => {
-    plateCountLabel.textContent = plateCountInput.value
+  mantleVigourInput.addEventListener('input', () => {
+    mantleVigourLabel.textContent = mantleVigourInput.value
     regenerateDebounced()
   })
-  landFractionInput.addEventListener('input', () => {
-    landFractionLabel.textContent = landFractionInput.value
-    regenerateDebounced()
-  })
-  clusteringInput.addEventListener('input', () => {
-    clusteringLabel.textContent = clusteringInput.value
-    regenerateDebounced()
-  })
-  cratonCountInput.addEventListener('input', () => {
-    cratonCountLabel.textContent = cratonCountInput.value
-    regenerateDebounced()
-  })
-
   // Same back/next convention as the sphere screen: back steps to the
   // previous panel, or exits to the title screen from the first one;
   // next steps forward and is a no-op past the last panel. Generation
@@ -2528,6 +2607,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Climate computes it if stale; entering Rivers ensures a climate first (the
     // worker caches its precipitation as the river source — posting climate then
     // hydrology keeps that order), then computes rivers if stale.
+    // Leaving Genesis for Tectonics is what ENDS the Archean: plate tectonics
+    // begins, seeds are placed on the convection cells, and the rafts/ages/mantle
+    // carry over (finalizeArchean). Stopping the Archean is only ever a pause; this
+    // is the commit, and the Genesis panel's reset button is the way back.
+    if (index === TECTONICS_PANEL_INDEX && lastArcheanEpochs > 0 && !archeanFinalised) {
+      archeanFinalised = true
+      postToWorker({ type: 'archeanStop' })
+      postToWorker({ type: 'archeanFinalize' })
+      setArcheanRunning(false)
+      // Plate outlines and continent names unblock here — this is where plates and
+      // continents start existing.
+      updateOverlays()
+    }
     if (index === CLIMATE_PANEL_INDEX && lastTemperature === null) requestClimate()
     if (index === HYDROLOGY_PANEL_INDEX) {
       if (lastTemperature === null) requestClimate()

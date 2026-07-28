@@ -8,6 +8,7 @@ import { createOceanAgeField } from '../tectonics/oceanAge'
 import { createHotspots } from '../tectonics/plateSimulation'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
 import { toroidalDistanceSq } from '../core/toroidal'
+import { assignRaftNames } from '../crust/raftNames'
 import { DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y, OCEAN_AGE_INIT } from '../tectonics/tectonicsParams'
 
 // Plate tectonics begins: the Archean world becomes a PlateSimulation.
@@ -75,6 +76,12 @@ function convectionCellSeeds(mantle: Float32Array, width: number, height: number
 
 export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
   const { width, height, random } = archean
+  // Continents are named HERE, not during the Archean. Proto-cratons merge and
+  // fragment constantly — splitDisconnectedRafts hands out a name every time a
+  // raft breaks in two — so naming during the phase produces a stream of names for
+  // things that dissolve a few epochs later. A continent gets its name when it
+  // becomes a continent, which is now.
+  const named = assignRaftNames(archean.rafts, random)
   const seeds = convectionCellSeeds(archean.mantle, width, height)
   const lattice = generateDetectionLattice(width, height, DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y)
 
@@ -85,8 +92,8 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
     // convection produced, not a configured number.
     initialPlateCount: seeds.length,
     seeds,
-    rafts: archean.rafts,
-    types: derivePlateTypes(seeds, archean.rafts, width, height),
+    rafts: named,
+    types: derivePlateTypes(seeds, named, width, height),
     motions: generatePlateMotions(seeds, width, height, random),
     ages: seeds.map(() => 0),
     features: [],
@@ -104,7 +111,7 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
     // seafloor would only have aged uniformly, which carries no information, and
     // all of it would have been recycled long before the eon closed anyway.
     oceanAge: createOceanAgeField(OCEAN_AGE_INIT),
-    supercontinentActive: archean.rafts.length <= 1,
+    supercontinentActive: named.length <= 1,
     continentalRiftCooldownUntil: 0,
     mantle: archean.mantle,
     hotspots: createHotspots(random, width, height),
