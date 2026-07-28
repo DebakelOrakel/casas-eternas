@@ -153,6 +153,7 @@ export interface RenderableWorld {
   features: PlateSimulation['features']
   oceanAge: Float32Array
   warpSeed: number
+  seaLevelOffset: number
 }
 
 export async function renderSimulationImage(sim: RenderableWorld, pool: ElevationRenderPool, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
@@ -182,7 +183,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
     const scale = Math.max(1, Math.floor(options.elevationScale ?? 1))
     const renderWidth = Math.floor(width / scale)
     const renderHeight = Math.floor(height / scale)
-    const blendedBaselines = computeRaftBaseline(sim.rafts, sim.oceanAge, renderWidth, renderHeight, width, height, sim.warpSeed)
+    const blendedBaselines = computeRaftBaseline(sim.rafts, sim.oceanAge, renderWidth, renderHeight, width, height, sim.warpSeed, sim.seaLevelOffset)
     const rendered = await pool.renderElevations(renderWidth, renderHeight, width, height, blendedBaselines, sim.features, sim.warpSeed)
     elevations = scale === 1 ? rendered : upscaleBilinearToroidal(rendered, renderWidth, renderHeight, width, height)
   }

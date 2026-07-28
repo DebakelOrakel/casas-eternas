@@ -35,9 +35,11 @@ export interface ArcheanSimulation {
   upwellingStreak: Int16Array
   // Rolling count of blobs recycled per epoch, for the panel's readout.
   lastRecycled: number
+  // Water offset in elevation units — carried through the handover unchanged.
+  seaLevelOffset: number
 }
 
-export function createArcheanSimulation(seedString: string, width: number, height: number, mantleSmoothing?: number): ArcheanSimulation {
+export function createArcheanSimulation(seedString: string, width: number, height: number, mantleSmoothing?: number, seaLevelOffset = 0): ArcheanSimulation {
   const random = mulberry32(hashSeedString(seedString))
   return {
     width,
@@ -53,5 +55,6 @@ export function createArcheanSimulation(seedString: string, width: number, heigh
     mantle: createMantleField(random, mantleSmoothing),
     upwellingStreak: new Int16Array(MANTLE_RES_X * MANTLE_RES_Y),
     lastRecycled: 0,
+    seaLevelOffset,
   }
 }

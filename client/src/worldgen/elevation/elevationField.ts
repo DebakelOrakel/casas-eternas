@@ -222,7 +222,7 @@ export function oceanFloorAtAge(age: number): number {
   return RIDGE_CREST + (ABYSSAL_FLOOR - RIDGE_CREST) * subsidenceFraction(age)
 }
 
-export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, renderWidth: number, renderHeight: number, worldWidth: number, worldHeight: number, warpSeed: number): Float32Array {
+export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, renderWidth: number, renderHeight: number, worldWidth: number, worldHeight: number, warpSeed: number, seaLevelOffset = 0): Float32Array {
   const result = new Float32Array(renderWidth * renderHeight)
   const scaleX = worldWidth / renderWidth
   const scaleY = worldHeight / renderHeight
@@ -237,7 +237,10 @@ export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, rende
       // on a flat shelf instead of mid-slope (see elevationScale.marginProfile).
       const oceanicBaseline = oceanFloorAtAge(sampleOceanAge(oceanAge, wx, wy, worldWidth, worldHeight))
       const t = marginParameter(raftField(wx, wy, rafts, worldWidth, worldHeight))
-      result[py * renderWidth + px] = marginProfile(t, oceanicBaseline)
+      // The water knob: the whole solid surface sits lower relative to a sea level
+      // that stays at zero. Applied here rather than to the anchors because the two
+      // are identical and this is one subtraction — see WATER_OFFSET_MAX_M.
+      result[py * renderWidth + px] = marginProfile(t, oceanicBaseline) - seaLevelOffset
     }
   }
   return result

@@ -10,7 +10,7 @@ import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerHydrol
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/render/continentLabelRenderer'
 import type { PlateArrow } from '../../worldgen/render/elevationMapImage'
-import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
+import { elevationToMeters, metersToElevation, waterSliderToOffsetM } from '../../worldgen/elevation/elevationScale'
 import { formatWorldAge, worldAgeMa } from '../../worldgen/core/worldTime'
 import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/tectonics/plateSimulation'
 import { eventCategory } from '../../worldgen/tectonics/plateSimulation'
@@ -81,6 +81,10 @@ const WORLD_HEIGHT = 10
 const MANTLE_VIGOUR_MIN = 1
 const MANTLE_VIGOUR_MAX = 10
 const MANTLE_VIGOUR_DEFAULT = 5
+// Water delivered to the planet, 0..100 with 50 = Earth-like. Together with crust
+// production this is what sets the land fraction — but as a RESULT of two physical
+// quantities rather than as a number you dial. See elevationScale.WATER_OFFSET_MAX_M.
+const WATER_DEFAULT = 50
 // Slider value → smoothing passes. Higher vigour = fewer passes = finer field.
 const vigourToSmoothing = (vigour: number): number => MANTLE_VIGOUR_MAX + 1 - vigour
 
@@ -204,6 +208,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
               step="1"
               value="${MANTLE_VIGOUR_DEFAULT}"
             />
+          </span>
+          <span class="field field--inline">
+            <span class="field-label">Water: <span data-value="water-label">${WATER_DEFAULT}</span></span>
+            <input type="range" class="water-input" min="0" max="100" step="1" value="${WATER_DEFAULT}" />
           </span>
           <button type="button" class="icon-button" data-action="toggle-archean" aria-label="Run the Archean">
             <img src="/icons/mantle.png" alt="" />
@@ -339,6 +347,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
   const mantleVigourInput = root.querySelector<HTMLInputElement>('.mantle-vigour-input')!
   const mantleVigourLabel = root.querySelector<HTMLElement>('[data-value="mantle-vigour-label"]')!
+  const waterInput = root.querySelector<HTMLInputElement>('.water-input')!
+  const waterLabel = root.querySelector<HTMLElement>('[data-value="water-label"]')!
   const resetArcheanButton = root.querySelector<HTMLButtonElement>('[data-action="reset-archean"]')!
   const toggleArcheanButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-archean"]')!
   const statCrust = root.querySelector<HTMLElement>('[data-value="stat-crust"]')!
@@ -459,7 +469,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Genesis inputs (debounced-)regenerate the whole world, so lock them while busy;
     // the erosion/climate/river sliders are left live for tuning (they only affect the
     // next pass, not the one in flight).
-    for (const el of [seedInput, mantleVigourInput]) el.disabled = busy
+    for (const el of [seedInput, mantleVigourInput, waterInput]) el.disabled = busy
     backButton.disabled = busy
     nextButton.disabled = busy
     updateNavState() // nav arrows also lock while busy (see its own gating)
@@ -1845,7 +1855,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   // Genesis now starts an ARCHEAN world, not a plate simulation: no plates exist
   // until finalizeArchean hands over. See docs/decisions/archean-genesis.md.
-  const initArchean = (seed: string, vigour: number): void => {
+  const initArchean = (seed: string, vigour: number, water: number): void => {
     lastEpoch = 0
     archeanRunning = false
     postToWorker({
@@ -1855,10 +1865,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       height: MAP_HEIGHT,
       epochIntervalMs: EPOCH_INTERVAL_MS,
       mantleSmoothing: vigourToSmoothing(vigour),
+      seaLevelOffset: metersToElevation(waterSliderToOffsetM(water)),
       renderOptions: {},
     })
   }
-  initArchean(initialSeed, MANTLE_VIGOUR_DEFAULT)
+  initArchean(initialSeed, MANTLE_VIGOUR_DEFAULT, WATER_DEFAULT)
 
   // --- Archean controls -----------------------------------------------------
   const setArcheanRunning = (running: boolean): void => {
@@ -2007,6 +2018,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       'spec:',
       `  seed: "${seedInput.value}"`,
       `  mantleVigour: ${Number(mantleVigourInput.value)}`,
+      `  water: ${Number(waterInput.value)}`,
       `  archeanEpochs: ${lastArcheanEpochs}`,
       `  tempOffset: ${Number(tempBandInput.value)}`,
       `  humidity: ${Number(humidityInput.value)}`,
@@ -2030,6 +2042,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // load sets the inputs programmatically (which doesn't fire input events).
   function syncSliderLabels(): void {
     mantleVigourLabel.textContent = mantleVigourInput.value
+    waterLabel.textContent = waterInput.value
     const t = Number(tempBandInput.value)
     tempBandLabel.textContent = t > 0 ? `+${t}` : String(t)
     humidityLabel.textContent = humidityInput.value
@@ -2197,6 +2210,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const seed = readYamlValue(yaml, 'seed') ?? ''
     seedInput.value = seed
     mantleVigourInput.value = readYamlValue(yaml, 'mantleVigour') ?? mantleVigourInput.value
+    waterInput.value = readYamlValue(yaml, 'water') ?? waterInput.value
     // A restored world is past the Archean: its state is loaded, not re-simulated.
     lastArcheanEpochs = Number(readYamlValue(yaml, 'archeanEpochs') ?? '0')
     setArcheanRunning(false)
@@ -2539,7 +2553,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     migrationOrigins = [] // fresh world → re-auto-place origins on the next migration open
     erosionRunCount = 0
     archeanFinalised = false
-    initArchean(seedInput.value, Number(mantleVigourInput.value))
+    initArchean(seedInput.value, Number(mantleVigourInput.value), Number(waterInput.value))
     updateNavState() // fresh world → re-lock downstream panels
   }
   // Debounced so dragging a slider (or typing a seed) doesn't fire a full
@@ -2562,6 +2576,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   })
   mantleVigourInput.addEventListener('input', () => {
     mantleVigourLabel.textContent = mantleVigourInput.value
+    regenerateDebounced()
+  })
+  waterInput.addEventListener('input', () => {
+    waterLabel.textContent = waterInput.value
     regenerateDebounced()
   })
   // Same back/next convention as the sphere screen: back steps to the

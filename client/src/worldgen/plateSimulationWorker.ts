@@ -211,6 +211,8 @@ export interface WorkerArcheanInitMessage {
   // createMantleField's initial smoothing — the "mantle vigour" knob. Fewer passes
   // give a finer-grained field, so more and smaller cratons and plates.
   mantleSmoothing?: number
+  // Water offset in elevation units (see elevationScale.WATER_OFFSET_MAX_M).
+  seaLevelOffset?: number
 }
 export interface WorkerArcheanStartMessage { type: 'archeanStart' }
 export interface WorkerArcheanStopMessage { type: 'archeanStop' }
@@ -391,6 +393,7 @@ let sim: PlateSimulation | null = null
 let archean: ArcheanSimulation | null = null
 let archeanSeed = ''
 let archeanSmoothing: number | undefined
+let archeanWater = 0
 let archeanWidth = 0
 let archeanHeight = 0
 let renderOptions: RenderSimulationOptions = {}
@@ -602,7 +605,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   renderOptions.precomputedElevations = undefined
   renderOptions.elevationScale = elevationScale
   const result = await renderSimulationImage(
-    { width: archean.width, height: archean.height, seeds: [], motions: [], rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed },
+    { width: archean.width, height: archean.height, seeds: [], motions: [], rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset },
     renderPool,
     renderOptions,
   )
@@ -1012,9 +1015,10 @@ function handleArcheanInit(message: Extract<WorkerInboundMessage, { type: 'arche
   sim = null
   archeanSeed = message.seed
   archeanSmoothing = message.mantleSmoothing
+  archeanWater = message.seaLevelOffset ?? 0
   archeanWidth = message.width
   archeanHeight = message.height
-  archean = createArcheanSimulation(message.seed, message.width, message.height, message.mantleSmoothing)
+  archean = createArcheanSimulation(message.seed, message.width, message.height, message.mantleSmoothing, archeanWater)
   lastRawElevations = null
   preErosionElevations = null
   renderOptions = message.renderOptions
@@ -1058,7 +1062,7 @@ function handleArcheanReset(): void {
   stopTicking()
   worldGeneration += 1
   sim = null
-  archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanSmoothing)
+  archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanSmoothing, archeanWater)
   lastRawElevations = null
   preErosionElevations = null
   void renderArcheanAndPost()

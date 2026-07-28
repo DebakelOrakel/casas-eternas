@@ -60,6 +60,36 @@ export const SLOPE_FOOT = metersToElevation(-3000) // -0.333  base of the contin
 export const RIDGE_CREST = metersToElevation(-2600) // -0.289  mid-ocean ridge crest
 export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided old basin
 
+// How much water this planet was given, as a shift of the solid surface relative to
+// sea level, in metres.
+//
+// SEA_LEVEL stays 0 — that signed zero is load-bearing, since every land/ocean test
+// is a sign test and several are hardcoded (applyMountainRedistribution's
+// `elevation <= 0`, the renderer's land bit). "More water" and "sea level rises"
+// are the same statement in two coordinate systems; expressed with sea level pinned
+// at zero, more water means the solid surface sits LOWER relative to it. That is
+// also the isostatically honest description: added water loads the basins,
+// continents float relatively lower, and freeboard decreases.
+//
+// **Implemented as one subtraction, not as an offset on the six anchors below.**
+// Those two are identical: the margin profile is built entirely from the anchors,
+// and elevation is baseline + uplift + detail, so shifting every anchor by −Δ and
+// subtracting Δ from the finished baseline produce the same field. The subtraction
+// is a single argument to computeRaftBaseline; the anchor version would mean making
+// six exported constants mutable module state, which every importer would then have
+// to read at call time. Same result, far less to go wrong.
+//
+// Range is deliberately asymmetric-aware: downward there is ~3300 m of headroom
+// (ABYSSAL_FLOOR sits at −0.633 against the −1 clamp), upward much less, because
+// peaks already saturate +1 today. ±1350 m reads as "half to one and a half Earth
+// oceans" — Earth's oceans correspond to ~2.7 km of globally averaged depth.
+export const WATER_OFFSET_MAX_M = 1350
+
+// UI slider 0..100 (50 = Earth-like) → the metre shift.
+export function waterSliderToOffsetM(slider: number): number {
+  return ((slider - 50) / 50) * WATER_OFFSET_MAX_M
+}
+
 // The continental margin's shape, as a curve from open ocean (t = 0) to
 // continental interior (t = 1).
 //
