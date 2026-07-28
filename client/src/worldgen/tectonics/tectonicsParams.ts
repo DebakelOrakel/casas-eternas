@@ -171,6 +171,29 @@ export const ACCRETION_MAX_ATTACH_SQ = 150 * 150
 // Raising it slows growth and keeps blob counts lower.
 export const ACCRETION_EPOCH_INTERVAL = 3
 
+// Crust recycling — the counterweight accretion never had.
+//
+// Without it the model only ever gains continental crust: measured over 5 seeds,
+// land coverage went 0.26-0.32 at epoch 0 to 0.64-0.79 by epoch 300, every raft
+// collapsed into a single supercontinent, and on 3 of 5 seeds the plate count
+// collapsed too (no boundaries left, so the simulation stops evolving). The
+// comment on ACCRETION_BLOB_RADIUS above claims accretion "balanc[es] the crust
+// lost to rifting" — it does not; rifting moves crust, it does not destroy any.
+//
+// The physical sink is well documented and specific: most Archean crust was
+// destroyed by delamination and drips, and what survived was crust that had
+// stabilised into a thick, depleted, buoyant cratonic keel. So the rule is an age
+// gate, not a rate: young crust sitting over a downwelling is recycled, and once
+// crust is older than STABILISATION_EPOCHS nothing can destroy it. That is what
+// makes a craton a craton, and it is what turns a runaway into an equilibrium —
+// production keeps going, but the pool of destructible crust is bounded.
+//
+// The downwelling test reads the mantle field (negative = cold = downwelling), the
+// same field that already drives plate motion, so crust is destroyed exactly where
+// the mantle is pulling it under.
+export const STABILISATION_EPOCHS = 150
+export const RECYCLE_DOWNWELLING_THRESHOLD = -0.05
+
 // Raft merge (Phase 2c): two continents whose crust overlaps suture into one.
 // The factor scales the sum of two blobs' radii into the center-distance that
 // counts as overlapping — ~0.5 ≈ their coastlines meet (see mergeOverlappingRafts).

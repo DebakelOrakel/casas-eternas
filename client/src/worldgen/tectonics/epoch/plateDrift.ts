@@ -1,10 +1,10 @@
 import { toroidalDistanceSq } from '../../core/toroidal'
 import { derivePlateTypes } from '../../crust/raftField'
-import { advanceRafts } from '../../crust/raftLifecycle'
+import { advanceRafts, recycleUnstabilisedCrust } from '../../crust/raftLifecycle'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantleField'
 import { advectOceanAge } from '../oceanAge'
 import { advancePointByMotion, getVelocityAt } from '../plateMotion'
-import { EPOCH_ANGLE_STEP, HOTSPOT_DEPOSIT_PER_EPOCH, HOTSPOT_EPOCH_INTERVAL, OCEANIC_SUBSIDENCE_DECAY_PER_EPOCH, THICKNESS_DECAY_PER_EPOCH } from '../tectonicsParams'
+import { EPOCH_ANGLE_STEP, HOTSPOT_DEPOSIT_PER_EPOCH, HOTSPOT_EPOCH_INTERVAL, OCEANIC_SUBSIDENCE_DECAY_PER_EPOCH, RECYCLE_DOWNWELLING_THRESHOLD, STABILISATION_EPOCHS, THICKNESS_DECAY_PER_EPOCH } from '../tectonicsParams'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from '../terrainFeatures'
 import type { PlateSimulation } from '../plateSimulationTypes'
 
@@ -59,6 +59,11 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32A
   // current crust layout. Phase 1: rafts only drift; split/merge/accretion
   // come later.
   advanceRafts(sim.rafts, sim.seeds, sim.motions, EPOCH_ANGLE_STEP, width, height)
+  // Crust recycling, immediately after the drift that carried it here and before
+  // derivePlateTypes below reads the result. Blobs accreted last epoch are one
+  // epoch old now, so they are candidates — crust has to survive to the next epoch
+  // to count, which is the right gate. See STABILISATION_EPOCHS.
+  recycleUnstabilisedCrust(sim.rafts, sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, sim.epoch, STABILISATION_EPOCHS, RECYCLE_DOWNWELLING_THRESHOLD, width, height)
   // Sutures are welded into the drifting crust — advect each with the plate it
   // sits on, so a collision belt stays ON its continent instead of being left
   // behind in open ocean as the plates move (which would strand the tin/gem

@@ -2,7 +2,7 @@ import type { PlateSeed } from '../tectonics/plateSeeds'
 import { advancePointByMotion, type PlateMotion } from '../tectonics/plateMotion'
 import type { Raft, RaftBlob, RaftMergeEvent, RaftSplitEvent } from './raftTypes'
 import { toroidalDistanceSq, wrappedDelta } from '../core/toroidal'
-import { wrapValue } from '../core/field'
+import { sampleNearestWorld, wrapValue } from '../core/field'
 import { pickUnusedRaftName } from './raftNames'
 
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
@@ -52,6 +52,46 @@ export function advanceRafts(rafts: Raft[], seeds: PlateSeed[], motions: PlateMo
 // far-off continent: skip if an existing blob of the nearest raft already
 // covers the spot (minGapSq), and skip if the nearest raft is too far to weld
 // onto (maxAttachSq). Returns whether crust was added.
+// Destroys continental crust that has not yet stabilised and is sitting over a
+// mantle downwelling — the counterweight to accreteToNearestRaft below.
+//
+// Returns how many blobs were recycled. Rafts left with no blobs are dropped, so
+// callers never see an empty raft (advanceRaftsOnFlow and advanceRafts both index
+// blobs[0], and blobArea would divide by nothing).
+//
+// The age gate is the whole mechanism: a blob younger than `stabilisationEpochs`
+// can be destroyed, an older one never can. Production therefore continues
+// unchanged while the *destructible pool* stays bounded, which is what converts
+// the runaway into an equilibrium rather than just slowing it down. See
+// STABILISATION_EPOCHS for the measurements that motivated it.
+export function recycleUnstabilisedCrust(
+  rafts: Raft[],
+  mantle: Float32Array,
+  mantleResX: number,
+  mantleResY: number,
+  epoch: number,
+  stabilisationEpochs: number,
+  downwellingThreshold: number,
+  width: number,
+  height: number,
+): number {
+  let recycled = 0
+  for (const raft of rafts) {
+    const kept: RaftBlob[] = []
+    for (const blob of raft.blobs) {
+      const age = epoch - (blob.birthEpoch ?? 0)
+      const overDownwelling = sampleNearestWorld(mantle, mantleResX, mantleResY, blob.x, blob.y, width, height) < downwellingThreshold
+      if (age < stabilisationEpochs && overDownwelling) { recycled++; continue }
+      kept.push(blob)
+    }
+    raft.blobs = kept
+  }
+  for (let i = rafts.length - 1; i >= 0; i--) {
+    if (rafts[i].blobs.length === 0) rafts.splice(i, 1)
+  }
+  return recycled
+}
+
 export function accreteToNearestRaft(
   rafts: Raft[],
   x: number,
