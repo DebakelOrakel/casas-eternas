@@ -6,8 +6,12 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 ## 2026-07-28
 - **new** Genesis: Archean core — the genesis sliders start a short Archean simulation; crust nuclei form only where it is hot *and* ocean. `worldgen.panel.genesis`
 - **changed** Genesis: Archean tuned for the hand-off into the tectonics phase. `worldgen.panel.genesis`
+- **changed** Genesis: mantle vigour drives the per-epoch mantle mixing — plate count follows it from ~24 down to ~5, and the largest landmass grows with it. `worldgen.panel.genesis`
+- **dropped** Genesis: vigour as the mantle's *initial* smoothing — measured to wash out within ~40 epochs (2.53x spread at epoch 0, 1.13x by 40) against a phase nobody stops before 150, so the slider moved nothing by the time it was read. `worldgen.panel.genesis`
 - **changed** Hydrology: new water level integrated into elevation/hydrology. `worldgen.panel.hydrology`
 - **fixed** Crust: the crust sink — land is now conserved instead of growing unbounded; rafts run real supercontinent cycles. `world.event`
+- **fixed** Crust: cratons weld on contact — a collision computed a suture and passed the continent's name on, then the next epoch advected every blob separately and undid it; rafts now move with the mean flow across their blobs, and the largest landmass grows from ~10% of all land to 43-70%. `world.event`
+- **fixed** Crust: raft connectivity — rafts were grouped about three times looser than the coastline the renderer draws (3 rafts counted where the map showed 46 landmasses), which also drove the land-fraction drift and the plate-count collapse. `world.event`
 
 ## 2026-07-27
 - **changed** Elevation: recalibrated across the board — metre anchor (1.0 = 9000 m), GDH1 ocean age-depth, shelf-margin profile. `world.readout`
