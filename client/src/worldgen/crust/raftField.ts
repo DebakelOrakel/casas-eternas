@@ -124,3 +124,26 @@ const SEED_CONTINENTAL_THRESHOLD = 0.5
 export function derivePlateTypes(seeds: PlateSeed[], rafts: Raft[], width: number, height: number): PlateType[] {
   return seeds.map((seed) => (raftMembership(seed.x, seed.y, rafts, width, height) >= SEED_CONTINENTAL_THRESHOLD ? 'continental' : 'oceanic'))
 }
+
+// Fraction of crust blobs that have passed the stabilisation age and can no longer
+// be recycled — the Archean's progress indicator.
+//
+// Measured over 600 epochs this is the one quantity that reads the phase cleanly:
+// 6% at epoch 50, 54% at 200, 58% at 300, 91% at 600, monotone throughout. The age
+// SPREAD does not work for this (it just grows linearly forever, since the oldest
+// cores keep aging), and the crust fraction does not either (it keeps climbing).
+//
+// It also lines up with what the map is doing: "several separate cratons" holds
+// until roughly 60%, and past ~85% the destructible pool has nearly vanished, so
+// the world stops changing shape and only accumulates land.
+export function stabilisedFraction(rafts: Raft[], epoch: number, stabilisationEpochs: number): number {
+  let total = 0
+  let stable = 0
+  for (const raft of rafts) {
+    for (const blob of raft.blobs) {
+      total++
+      if (epoch - (blob.birthEpoch ?? 0) >= stabilisationEpochs) stable++
+    }
+  }
+  return total === 0 ? 0 : stable / total
+}

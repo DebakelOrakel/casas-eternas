@@ -23,7 +23,7 @@ export type { PlateSimulation, PlateSimulationSnapshot, SimEvent, SimEventType }
 export { eventCategory } from './plateSimulationTypes'
 
 
-function generateHotspots(random: () => number, width: number, height: number): { x: number; y: number }[] {
+export function createHotspots(random: () => number, width: number, height: number): { x: number; y: number }[] {
   return Array.from({ length: HOTSPOT_COUNT }, () => ({ x: random() * width, y: random() * height }))
 }
 
@@ -53,6 +53,7 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
     ages: seeds.map(() => 0),
     features: [],
     epoch: 0,
+    archeanEpochs: 0,
     random,
     warpSeed,
     lattice,
@@ -63,7 +64,7 @@ export function createPlateSimulation(seedString: string, plateCount: number, la
     supercontinentActive: rafts.length <= 1,
     continentalRiftCooldownUntil: 0,
     mantle: createMantleField(random),
-    hotspots: generateHotspots(random, width, height),
+    hotspots: createHotspots(random, width, height),
     sutures: [],
   }
 }
@@ -79,6 +80,7 @@ export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationS
     rafts: sim.rafts,
     features: sim.features,
     epoch: sim.epoch,
+    archeanEpochs: sim.archeanEpochs,
     warpSeed: sim.warpSeed,
     supercontinentActive: sim.supercontinentActive,
     continentalRiftCooldownUntil: sim.continentalRiftCooldownUntil,
@@ -101,6 +103,7 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
     ages: snap.ages,
     features: snap.features,
     epoch: snap.epoch,
+    archeanEpochs: snap.archeanEpochs ?? 0,
     random: mulberry32(snap.rngState),
     warpSeed: snap.warpSeed,
     lattice,

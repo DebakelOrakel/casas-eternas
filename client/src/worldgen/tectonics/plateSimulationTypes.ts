@@ -38,6 +38,11 @@ export interface PlateSimulation {
   ages: number[]
   features: TerrainFeature[]
   epoch: number
+  // Epochs the Archean phase ran before this simulation was handed over, so the
+  // world-age readout stays continuous across the two phases (they run on
+  // different Ma-per-epoch scales — see core/worldTime). 0 for worlds built the
+  // old way, straight from createPlateSimulation.
+  archeanEpochs: number
   random: SeededRandom
   // Seeds the coastline/contour domain-warp noise (domainWarp.ts) —
   // derived from the same world seed string but kept independent of
@@ -95,6 +100,8 @@ export interface PlateSimulation {
 // (carried separately as a binary float raster). The RNG's internal state is
 // stored so continuation is bit-identical.
 export interface PlateSimulationSnapshot {
+  // Absent in saves written before the Archean phase existed; treated as 0.
+  archeanEpochs?: number
   width: number
   height: number
   initialPlateCount: number
