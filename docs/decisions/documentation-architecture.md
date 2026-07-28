@@ -160,6 +160,11 @@ install would declare it via `docsSchema({ extend: … })`). Until then it is ju
 that costs nothing. The `title`/`description`/`sidebar` fields are conventional enough that
 they cost nothing to write now and fit any later consumer.
 
+This front-matter-as-data pattern is also why the internal decision docs need no separate
+changelog file: a date-ordered decisions overview is a **generated view** over each decision
+doc's own `date`/`summary`/`status`, not a hand-maintained list that would drift (see
+[grouped-changelog.md](./grouped-changelog.md)).
+
 ## The anchor IDs — the actual deliverable
 
 An anchor is the **same string** as the i18n area key. That is the point of the whole

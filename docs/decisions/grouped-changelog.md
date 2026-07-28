@@ -1,5 +1,5 @@
 ---
-summary: A categorized, human changelog under docs/changelog/ — NOT the git commit log. One file per area (worldgen, ui, mechanics, concepts, decisions, platform), each listing roughly when a feature was added / changed / dropped / fixed, with dates. Seeded retroactively from the 79 commits of 2026-07-20..28 and the decision docs, then grown by hand. Distinct from the title screen's mission list, which is a "what it can do now" snapshot.
+summary: A categorized, human changelog under docs/changelog/ — NOT the git commit log. One file per area (worldgen, ui, mechanics, concepts, platform), each listing roughly when a feature was added / changed / dropped / fixed, with dates. Seeded retroactively from the commits of 2026-07-20..28. No decisions category — decisions are self-dating via their own front matter, so a date-ordered decisions overview is generated, not hand-maintained. Distinct from the title screen's mission list, which is a "what it can do now" snapshot.
 date: 2026-07-28
 status: decided — not built
 ---
@@ -14,7 +14,7 @@ documentation pipeline's anchors (see [documentation-architecture.md](./document
 ## Layout
 
 One file per area, descending by date. The areas pick up the four i18n areas and add the axes
-those don't have (decisions, setting, platform):
+those don't have (setting, platform):
 
 ```
 docs/changelog/
@@ -23,9 +23,16 @@ docs/changelog/
   ui.md          controls, overlays, rendering, save/load
   mechanics.md   game mechanics — empty for now, grows from the game screen on
   concepts.md    setting & world concepts (species, factions, docs/ideas)
-  decisions.md   when a decision was taken — and when it was revised
   platform.md    build, worker pool, deploy, performance
 ```
+
+**No `decisions` category.** Decisions are self-dating — every doc in
+[docs/decisions/](.) already carries `date` / `summary` / `status` in its front matter — so a
+date-ordered decisions overview is a *generated view* over that front matter, not a
+hand-maintained changelog file that would only drift. Revisions (when a decision is later
+changed) belong in the decision doc's own status/body, as `continental-crust-rafts.md` already
+does. The other categories have no such per-item dated source — for them the changelog *is* the
+source of truth, which is why they exist.
 
 ## Entry format
 
@@ -47,11 +54,11 @@ what one goes looking for months later.
 
 ## Retroactive seeding
 
-Filled from the 79 commits (2026-07-20..28) plus the 11 documents in
-[docs/decisions/](.). The commit titles are unusually clean ("Implement whittaker biomes",
-"Rework continents as rafts not as plates") and transfer almost directly; date = commit date,
-which satisfies the "roughly when" bar. Rough distribution: worldgen ~40, ui ~20, decisions
-~11, platform ~6, concepts ~2.
+Filled from the commits (2026-07-20..28). The commit titles are unusually clean ("Implement
+whittaker biomes", "Rework continents as rafts not as plates") and transfer almost directly;
+date = commit date, which satisfies the "roughly when" bar. Rough distribution: worldgen ~40,
+ui ~20, platform ~6, concepts ~3. (The decision docs are not re-listed here — they are their
+own dated record, see above.)
 
 ## Relation to the title-screen mission list
 
