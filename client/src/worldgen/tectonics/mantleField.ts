@@ -46,10 +46,21 @@ function wrapIdx(x: number, y: number): number {
 // Smoothed random initial field — a few upwelling/downwelling blobs so there's
 // convection (and therefore plate motion) from epoch 0, before surface coupling
 // has reshaped it.
-export function createMantleField(random: () => number): Float32Array {
+// How many blur passes smooth the initial random field into convection cells.
+// This is the single honest handle on "how vigorous is this planet's mantle":
+// fewer passes leave a finer-grained field, so more and smaller cells, so more and
+// smaller continents. More passes give broad cells and few large ones.
+//
+// Deliberately this and NOT the per-epoch DIFFUSION_PASSES, which would look like
+// the obvious knob: that one is documented as touchy ("over-diffusing flattened it
+// and starved the doming/breakup") and it is part of the tuned epoch dynamics.
+// Changing the field's INITIAL characteristic scale leaves that dynamics alone.
+export const DEFAULT_INITIAL_SMOOTHING = 6
+
+export function createMantleField(random: () => number, smoothingPasses = DEFAULT_INITIAL_SMOOTHING): Float32Array {
   let field: Float32Array = new Float32Array(RX * RY)
   for (let i = 0; i < field.length; i++) field[i] = random() * 2 - 1
-  for (let pass = 0; pass < 6; pass++) field = boxBlur(field, 0.5)
+  for (let pass = 0; pass < smoothingPasses; pass++) field = boxBlur(field, 0.5)
   return zeroMean(clampField(field))
 }
 
@@ -101,6 +112,35 @@ export function evolveMantleField(
   for (let p = 0; p < DIFFUSION_PASSES; p++) field = boxBlur(field, 0.5)
   for (let i = 0; i < field.length; i++) field[i] *= DECAY_KEEP
   return zeroMean(clampField(field))
+}
+
+// Keeps Archean convection alive by renormalising the field to a target RMS.
+//
+// evolveMantleField is written for a world that HAS continents: they insulate, the
+// ocean cools, and the difference between the two sustains the pattern. With no
+// crust at all the ocean term is uniform, zeroMean cancels it exactly, and all that
+// remains is DECAY_KEEP — so the field decays exponentially to nothing. Measured
+// with zero crust: peak amplitude 0.443 at epoch 0, 0.007 by epoch 60.
+//
+// That would make the Archean impossible by construction — crust needs upwellings,
+// and upwellings would need crust. The resolution is physical rather than a fudge:
+// Archean convection was driven by RADIOGENIC HEAT and secular core cooling, not by
+// surface insulation. Internal heating is the driver; the insulation feedback is a
+// modulation on top of it, and it is the only one evolveMantleField models because
+// by the time plates exist it is the only one that varies.
+//
+// Renormalising rather than injecting fresh noise is deliberate: it preserves the
+// pattern the field has developed (cells keep their identity, drift and reorganise)
+// while holding its amplitude steady, so a fixed nucleation threshold keeps meaning
+// the same thing at epoch 10 and at epoch 300.
+export function sustainMantleVigour(field: Float32Array, targetRms: number): Float32Array {
+  let sq = 0
+  for (let i = 0; i < field.length; i++) sq += field[i] * field[i]
+  const rms = Math.sqrt(sq / field.length)
+  if (rms < 1e-6) return field
+  const scale = targetRms / rms
+  for (let i = 0; i < field.length; i++) field[i] = Math.max(-T_CLAMP, Math.min(T_CLAMP, field[i] * scale))
+  return field
 }
 
 // Release the thermal doming at a continental breakup: subtract a broad bump of

@@ -64,6 +64,39 @@ export function advanceRafts(rafts: Raft[], seeds: PlateSeed[], motions: PlateMo
 // unchanged while the *destructible pool* stays bounded, which is what converts
 // the runaway into an equilibrium rather than just slowing it down. See
 // STABILISATION_EPOCHS for the measurements that motivated it.
+// Drifts rafts on the mantle flow directly, with no plates involved — the Archean
+// counterpart to advanceRafts below, which picks a host plate and rotates the raft
+// with it.
+//
+// This is not a simplification of the plate version, it is the physically prior
+// case: plate tectonics initiates somewhere around 3.0-2.5 Ga, and before that
+// crust rides the convection directly. The raft model already being decoupled from
+// the plates (docs/decisions/continental-crust-rafts.md) is what makes this a small
+// function rather than a parallel system.
+//
+// Each blob is advected independently rather than the raft moving rigidly: a
+// continent straddling two convection cells SHOULD be pulled apart, and
+// splitDisconnectedRafts then turns that into two continents. Rigid motion would
+// suppress exactly the break-ups the Archean is supposed to produce.
+export function advanceRaftsOnFlow(
+  rafts: Raft[],
+  flow: Float32Array,
+  flowResX: number,
+  flowResY: number,
+  width: number,
+  height: number,
+): void {
+  for (const raft of rafts) {
+    for (const blob of raft.blobs) {
+      const gx = Math.min(flowResX - 1, Math.floor((wrapValue(blob.x, width) / width) * flowResX))
+      const gy = Math.min(flowResY - 1, Math.floor((wrapValue(blob.y, height) / height) * flowResY))
+      const i = (gy * flowResX + gx) * 2
+      blob.x = wrapValue(blob.x + flow[i], width)
+      blob.y = wrapValue(blob.y + flow[i + 1], height)
+    }
+  }
+}
+
 export function recycleUnstabilisedCrust(
   rafts: Raft[],
   mantle: Float32Array,
