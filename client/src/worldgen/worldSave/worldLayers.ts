@@ -5,7 +5,10 @@
 // knowledge of the generation algorithms. This module is the algorithm-free
 // contract: the layer specs, the quantiser (bake), and the sampler (lookup).
 
-import { metersToElevation } from '../elevationScale'
+import { metersToElevation } from '../elevation/elevationScale'
+import { sampleNearestWorld, downsampleMax } from '../core/field'
+
+export { downsampleMax }
 
 export type Dtype = 'u8' | 'u16' | 'f32'
 
@@ -81,32 +84,9 @@ export function decodeLayer(buffer: ArrayBuffer, spec: LayerSpec): Float32Array 
   return out
 }
 
-const wrap = (v: number, n: number): number => ((v % n) + n) % n
 
 // Nearest-cell sample of a decoded layer at a world coordinate (torus-wrapped).
 // resX/resY come from the manifest — the sampler needs nothing else.
 export function sampleAt(decoded: Float32Array, resX: number, resY: number, worldWidth: number, worldHeight: number, x: number, y: number): number {
-  const gx = Math.min(resX - 1, Math.floor((wrap(x, worldWidth) / worldWidth) * resX))
-  const gy = Math.min(resY - 1, Math.floor((wrap(y, worldHeight) / worldHeight) * resY))
-  return decoded[gy * resX + gx]
-}
-
-// Downsample a full-res field to coarse resX/resY by MAX over each footprint —
-// for thin features (lakes) a footprint max beats a centre sample.
-export function downsampleMax(fullRes: Float32Array, fullW: number, fullH: number, resX: number, resY: number): Float32Array {
-  const out = new Float32Array(resX * resY)
-  const fw = fullW / resX
-  const fh = fullH / resY
-  for (let gy = 0; gy < resY; gy++) {
-    const y0 = Math.floor(gy * fh)
-    const y1 = Math.floor((gy + 1) * fh)
-    for (let gx = 0; gx < resX; gx++) {
-      const x0 = Math.floor(gx * fw)
-      const x1 = Math.floor((gx + 1) * fw)
-      let m = 0
-      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const v = fullRes[y * fullW + x]; if (v > m) m = v }
-      out[gy * resX + gx] = m
-    }
-  }
-  return out
+  return sampleNearestWorld(decoded, resX, resY, x, y, worldWidth, worldHeight)
 }

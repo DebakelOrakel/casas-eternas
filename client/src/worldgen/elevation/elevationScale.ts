@@ -21,7 +21,8 @@
 // An explicit metre anchor removes the ambiguity: a height is a height, the
 // reference points below are checkable against the real Earth, and the
 // translation hack disappears.
-import { METERS_PER_CELL } from './mapConfig'
+import { METERS_PER_CELL } from '../core/mapConfig'
+import { smoothstep } from '../core/interpolation'
 
 export const ELEVATION_METERS = 9000
 
@@ -116,9 +117,6 @@ const MARGIN_STOPS: readonly (readonly [t: number, elevation: number])[] = [
 // LINEAR profile puts a visible crease at every control point, and the shelf
 // break is precisely where a crease would read as the artifact this is meant to
 // remove.
-function smoothstep(t: number): number {
-  return t * t * (3 - 2 * t)
-}
 
 // Elevation at margin parameter `t` (0 = open ocean, 1 = continental interior).
 // `abyssalFloor` is passed in rather than read from the constant above because

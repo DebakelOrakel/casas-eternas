@@ -1,5 +1,5 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt, sampleElevationAtCell } from './climateField'
-import { ELEVATION_METERS, SEA_LEVEL } from '../elevationScale'
+import { ELEVATION_METERS, SEA_LEVEL } from '../elevation/elevationScale'
 
 // Real-ish units (°C), so the later Whittaker biome thresholds are directly
 // usable. Tune by eye — these set the equator-to-pole span.

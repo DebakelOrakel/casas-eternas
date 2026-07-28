@@ -1,5 +1,6 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell, shiftedYNorm } from './climateField'
-import { SEA_LEVEL } from '../elevationScale'
+import { SEA_LEVEL } from '../elevation/elevationScale'
+import { wrapValue } from '../core/field'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -19,7 +20,7 @@ const COAST_DAMP = 0.3
 export const OCEAN_AMPLITUDE = -1
 
 function wrapIndex(x: number, y: number): number {
-  return (((y % RY) + RY) % RY) * RX + (((x % RX) + RX) % RX)
+  return wrapValue(y, RY) * RX + wrapValue(x, RX)
 }
 
 // Continentality 0..1 = normalized distance to the nearest ocean cell

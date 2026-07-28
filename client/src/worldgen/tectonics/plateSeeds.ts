@@ -1,4 +1,4 @@
-import { toroidalDistanceSq } from './toroidal'
+import { toroidalDistanceSq } from '../core/toroidal'
 
 export interface PlateSeed {
   x: number

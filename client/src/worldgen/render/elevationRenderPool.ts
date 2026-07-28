@@ -1,4 +1,4 @@
-import type { TerrainFeature } from './terrainFeatures'
+import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import type { RenderSliceResponse } from './elevationRenderWorker'
 // Imported via Vite's `?worker` suffix rather than `new Worker(new URL(...,
 // import.meta.url))`: this pool is itself constructed *inside*

@@ -1,5 +1,6 @@
 import type { PlateSeed } from './plateSeeds'
-import { rotateAroundCenter, wrappedDelta } from './toroidal'
+import { rotateAroundCenter, wrappedDelta } from '../core/toroidal'
+import { wrapValue } from '../core/field'
 
 // Flat-torus analog of a real tectonic plate's Euler-pole rotation, stored in a
 // RIGID-BODY form: a drift (translation) plus a spin (rotation about the plate's
@@ -73,8 +74,8 @@ export function getVelocityAt(point: PlateSeed, motion: PlateMotion, width: numb
 export function advancePointByMotion(x: number, y: number, motion: PlateMotion, step: number, width: number, height: number): { x: number; y: number } {
   const rotated = rotateAroundCenter(x, y, motion.centroidX, motion.centroidY, motion.spin * step, width, height)
   return {
-    x: (((rotated.x + motion.driftX * step) % width) + width) % width,
-    y: (((rotated.y + motion.driftY * step) % height) + height) % height,
+    x: wrapValue((rotated.x + motion.driftX * step), width),
+    y: wrapValue((rotated.y + motion.driftY * step), height),
   }
 }
 

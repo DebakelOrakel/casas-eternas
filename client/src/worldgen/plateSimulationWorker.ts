@@ -1,14 +1,16 @@
-import { createPlateSimulation, getInitialPlateEvents, stepEpoch, serializePlateSimulation, deserializePlateSimulation } from './plateSimulation'
-import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from './plateSimulation'
-import { renderSimulationImage } from './elevationMapImage'
-import type { PlateArrow, RenderSimulationOptions } from './elevationMapImage'
-import type { ContinentLabelPlacement } from './continentLabelRenderer'
-import { ElevationRenderPool } from './elevationRenderPool'
-import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass, fillDepressionsAndRouteFlow } from './erosion'
-import type { ErosionPhase, FlowRouting, ErosionPassParams } from './erosion'
-import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './hydrology'
-import { MANTLE_RES_X, MANTLE_RES_Y } from './mantleField'
-import type { TerrainFeature } from './terrainFeatures'
+import { createPlateSimulation, getInitialPlateEvents, stepEpoch, serializePlateSimulation, deserializePlateSimulation } from './tectonics/plateSimulation'
+import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from './tectonics/plateSimulation'
+import { renderSimulationImage } from './render/elevationMapImage'
+import type { PlateArrow, RenderSimulationOptions } from './render/elevationMapImage'
+import type { ContinentLabelPlacement } from './render/continentLabelRenderer'
+import { ElevationRenderPool } from './render/elevationRenderPool'
+import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './surface/erosion'
+import { fillDepressionsAndRouteFlow } from './surface/flowRouting'
+import type { ErosionPhase, ErosionPassParams } from './surface/erosion'
+import type { FlowRouting } from './surface/flowRouting'
+import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './surface/hydrology'
+import { MANTLE_RES_X, MANTLE_RES_Y } from './tectonics/mantleField'
+import type { TerrainFeature } from './tectonics/terrainFeatures'
 import { computeTemperature } from './climate/temperature'
 import { computeWind } from './climate/wind'
 import { computeOceanCurrents, applyOceanSST } from './climate/oceanCurrents'
@@ -17,10 +19,10 @@ import { computeSeasonalPrecipitation } from './climate/monsoon'
 import { computeBiomes } from './climate/biomes'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from './climate/climateField'
 import { computeEcology } from './ecology/ecologyField'
-import { computeCratonOldnessField } from './rafts'
 import { computeMigration } from './migration/migrationField'
 import type { MigrationOrigin } from './migration/migrationField'
 import { downsampleMax } from './worldSave/worldLayers'
+import { computeCratonOldnessField } from './crust/raftField'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
 // rendering the full 2048x1024 raster (a per-pixel query against every
@@ -382,6 +384,25 @@ let lastHydrologyLakeDepth: Float32Array | null = null
 let lastHydrologyMaxDischarge = 0
 let lastHydrologyMeanRunoff = 0
 let hydrologyDirty = true
+
+// The cache-invalidation rules, named. They used to be loose assignments spread
+// across the render path and the message branches, which meant the rules only
+// existed as "whatever those lines happen to do" — the single riskiest thing
+// about this file's ~24 pieces of module state. Naming them puts each rule in one
+// place and makes a caller state its intent rather than its mechanism.
+
+// New terrain: the drainage network has to be re-routed, and the last erosion's
+// basin snapshot no longer describes it.
+function invalidateAfterTopographyChange(): void {
+  hydrologyDirty = true
+  lastLakeBasinElevations = null
+}
+
+// New climate: rivers take their water from precipitation, so the discharge is
+// stale even though the terrain hasn't moved.
+function invalidateAfterClimateChange(): void {
+  hydrologyDirty = true
+}
 // Carrying-capacity field cached from the last computeEcology — the initial-
 // migration step reads it as the population/density driver.
 let lastEcologyCarryingCapacity: Float32Array | null = null
@@ -479,8 +500,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   // discard it before it clobbers lastRawElevations or posts a stale frame.
   if (gen !== worldGeneration) return
   lastRawElevations = result.rawElevations
-  hydrologyDirty = true // topography changed → rivers/lakes must re-route
-  lastLakeBasinElevations = null // stale until the next erosion re-captures basins
+  invalidateAfterTopographyChange()
   if (precomputedElevations === undefined) preErosionElevations = result.rawElevations
   const eventsToSend = pendingEvents
   pendingEvents = []
@@ -588,256 +608,303 @@ function stopTicking(): void {
   intervalId = undefined
 }
 
-self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
-  const message = event.data
-  if (message.type === 'init') {
-    stopTicking()
-    worldGeneration += 1
-    sim = createPlateSimulation(message.seed, message.plateCount, message.landFraction, message.clustering, message.cratonCount, message.width, message.height)
-    pendingEvents = getInitialPlateEvents(sim)
-    lastRawElevations = null
-    preErosionElevations = null
-    renderOptions = message.renderOptions
-    epochIntervalMs = message.epochIntervalMs
-    renderAndPost()
-  } else if (message.type === 'start') {
-    if (intervalId !== undefined) return
-    intervalId = setInterval(() => {
-      if (!sim || renderInFlight) return
-      const tickEvents = stepEpoch(sim)
-      // Events are forwarded to the main thread (batched with the next
-      // render), which owns their notifications + faded map markers now.
-      pendingEvents.push(...tickEvents)
-      renderInFlight = true
-      // Live preview renders at a coarser scale for speed (see
-      // PREVIEW_RENDER_SCALE); erosion/export force full res of their own.
-      renderAndPost(undefined, false, PREVIEW_RENDER_SCALE).finally(() => {
-        renderInFlight = false
-      })
-    }, epochIntervalMs)
-  } else if (message.type === 'stop') {
-    stopTicking()
-    // Re-render once at full resolution so the paused view is crisp (the
-    // live preview above renders coarser) and lastRawElevations is refreshed
-    // to a full-res field for any subsequent erode/export. Skipped if a
-    // render is still in flight (the erode handler forces full res anyway).
-    if (sim && !renderInFlight) {
-      renderInFlight = true
-      renderAndPost(undefined, false, 1).finally(() => {
-        renderInFlight = false
-      })
-    }
-  } else if (message.type === 'erode') {
-    if (!sim || !lastRawElevations || renderInFlight) return
-    // Multi-second at this grid size (a 2048x1024 priority-flood plus up
-    // to 100 stream-power iterations, repeated for
-    // DEFAULT_EROSION_PASS_PARAMS.rounds) — doesn't block the main UI
-    // thread regardless (this is a dedicated worker already separate
-    // from rendering/input), but see runErodeRequest's own comment for
-    // why it's async rather than a tight synchronous loop.
-    const currentSim = sim
+// One handler per inbound message type. The dispatcher below used to be a single
+// ~250-line if/else chain, several of whose branches were 40-50 lines of pipeline
+// wiring in their own right — the climate branch alone encodes the order
+// temperature → wind → currents → precipitation → biomes, which is real domain
+// knowledge that was invisible inside a chain of `else if`s.
+
+function handleInit(message: Extract<WorkerInboundMessage, { type: 'init' }>): void {
+  stopTicking()
+  worldGeneration += 1
+  sim = createPlateSimulation(message.seed, message.plateCount, message.landFraction, message.clustering, message.cratonCount, message.width, message.height)
+  pendingEvents = getInitialPlateEvents(sim)
+  lastRawElevations = null
+  preErosionElevations = null
+  renderOptions = message.renderOptions
+  epochIntervalMs = message.epochIntervalMs
+  renderAndPost()
+}
+
+function handleStart(): void {
+  if (intervalId !== undefined) return
+  intervalId = setInterval(() => {
+    if (!sim || renderInFlight) return
+    const tickEvents = stepEpoch(sim)
+    // Events are forwarded to the main thread (batched with the next
+    // render), which owns their notifications + faded map markers now.
+    pendingEvents.push(...tickEvents)
     renderInFlight = true
-    erosionStopRequested = false
-    ;(async () => {
-      // Refresh to a full-resolution field first: the live preview renders
-      // coarser (PREVIEW_RENDER_SCALE), so lastRawElevations may be an
-      // upscaled low-res field, and erosion must run on the crisp full-res
-      // elevation rather than a blurred preview. Marked intermediate so the screen
-      // does NOT treat this pre-erosion refresh as "erosion done" (which would clear
-      // the stop icon + progress bar the instant a pass starts — see the render handler).
-      await renderAndPost(undefined, true, 1)
-      if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height, { strength: message.strength, networkRefreshes: message.networkRefreshes })
-    })().finally(() => {
+    // Live preview renders at a coarser scale for speed (see
+    // PREVIEW_RENDER_SCALE); erosion/export force full res of their own.
+    renderAndPost(undefined, false, PREVIEW_RENDER_SCALE).finally(() => {
       renderInFlight = false
     })
-  } else if (message.type === 'stopErosion') {
-    // The in-flight runErosionPass polls this and returns its partial result.
-    erosionStopRequested = true
-  } else if (message.type === 'resetErosion') {
-    if (!sim || !preErosionElevations || renderInFlight) return
+  }, epochIntervalMs)
+}
+
+function handleStop(): void {
+  stopTicking()
+  // Re-render once at full resolution so the paused view is crisp (the
+  // live preview above renders coarser) and lastRawElevations is refreshed
+  // to a full-res field for any subsequent erode/export. Skipped if a
+  // render is still in flight (the erode handler forces full res anyway).
+  if (sim && !renderInFlight) {
     renderInFlight = true
-    renderAndPost(preErosionElevations).finally(() => {
+    renderAndPost(undefined, false, 1).finally(() => {
       renderInFlight = false
     })
-  } else if (message.type === 'computeClimate') {
-    // Runs on the current, possibly-eroded elevation (lastRawElevations). A
-    // fresh Float32Array per field, so its buffer can be transferred.
-    if (!sim || !lastRawElevations) return
-    // Order matters: base temperature → wind → ocean currents (which adjust
-    // temperature via SST + coastal nudge) → precipitation (evaporation reads
-    // the current-adjusted temperature, so warm currents wet their coasts).
-    const temperature = computeTemperature(lastRawElevations, sim.width, sim.height, message.temperatureOffset, message.temperatureContrast, message.equatorOffset)
-    const wind = computeWind(message.equatorOffset)
-    const currents = computeOceanCurrents(lastRawElevations, wind, sim.width, sim.height)
-    applyOceanSST(temperature, currents, lastRawElevations, sim.width, sim.height)
-    // Seasonal amplitude first — the monsoon model needs it (its land-sea contrast). Then
-    // run precipitation for two opposite seasons → annual mean precip + a monsoon index.
-    const seasonalAmplitude = computeSeasonalAmplitude(lastRawElevations, sim.width, sim.height, message.equatorOffset)
-    const seasonal = computeSeasonalPrecipitation(lastRawElevations, temperature, seasonalAmplitude, wind, sim.width, sim.height, message.humidity, message.equatorOffset)
-    const precipitation = seasonal.annual
-    const biomes = computeBiomes(temperature, precipitation, seasonalAmplitude, seasonal.index, lastRawElevations, sim.width, sim.height)
-    // Cache copies for hydrology (the buffers below are transferred, which would
-    // neuter retained references) — rivers use precip as their source, lakes use
-    // the final (SST-adjusted) temperature for evaporation, riparian biomes reuse the
-    // monsoon index.
-    lastClimatePrecip = precipitation.slice()
-    lastClimateTemperature = temperature.slice()
-    lastClimateSeasonalAmplitude = seasonalAmplitude.slice()
-    lastClimateMonsoonIndex = seasonal.index.slice()
-    lastClimateBiomes = biomes.slice()
-    lastClimateCurrents = currents.slice()
-    hydrologyDirty = true
-    const climateMessage: WorkerClimateDataMessage = {
-      type: 'climateData',
-      resX: CLIMATE_RES_X,
-      resY: CLIMATE_RES_Y,
-      temperature: temperature.buffer as ArrayBuffer,
-      wind: wind.buffer as ArrayBuffer,
-      currents: currents.buffer as ArrayBuffer,
-      precipitation: precipitation.buffer as ArrayBuffer,
-      seasonalAmplitude: seasonalAmplitude.buffer as ArrayBuffer,
-      monsoonIndex: seasonal.index.buffer as ArrayBuffer,
-      biomes: biomes.buffer as ArrayBuffer,
-    }
-    self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.biomes])
-  } else if (message.type === 'computeHydrology') {
-    // Needs the current topography + a climate precip (rivers' water source).
-    if (!sim || !lastRawElevations || !lastClimatePrecip) return
-    const { riverDensity } = message
-    const width = sim.width
-    const height = sim.height
-    // Run hydrology on the basins-intact (pre-fill) terrain when erosion produced
-    // it, so lakes have depressions to fill and rivers flow into them; otherwise
-    // the final drained terrain (few lakes). Same grid, so river/lake coords still
-    // line up with the displayed map.
-    const elevation = lastLakeBasinElevations ?? lastRawElevations
-    const precip = lastClimatePrecip
-    // Async (the priority-flood routing is a Promise); the onmessage handler is
-    // sync, so run it in an IIFE like the erode branch does.
-    ;(async () => {
-      // Re-route only when topography/climate changed; a density-only tweak
-      // reuses the cached routing + discharge + lakes (the expensive parts) and
-      // just re-thresholds the rivers.
-      let rerouted = false
-      if (hydrologyDirty || !lastHydrologyRouting || !lastHydrologyDischarge) {
-        lastHydrologyRouting = await fillDepressionsAndRouteFlow(elevation, width, height, 0)
-        lastHydrologyDischarge = accumulateDischarge(lastHydrologyRouting, elevation, precip, CLIMATE_RES_X, CLIMATE_RES_Y)
-        lastHydrologyMaxDischarge = maxDischargeOverLand(lastHydrologyDischarge, elevation)
-        lastHydrologyMeanRunoff = meanLandRunoff(precip, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
-        lastHydrologyLakeDepth = lastClimateTemperature
-          ? computeLakes(lastHydrologyRouting, lastHydrologyDischarge, elevation, lastClimateTemperature, CLIMATE_RES_X, CLIMATE_RES_Y)
-          : new Float32Array(width * height)
-        hydrologyDirty = false
-        rerouted = true
-      }
-      const threshold = channelThreshold(densityToCriticalArea(riverDensity), lastHydrologyMeanRunoff)
-      const rivers = extractRiverPolylines(lastHydrologyRouting, lastHydrologyDischarge, elevation, threshold, lastHydrologyMaxDischarge)
-      // Lakes only change on a re-route; a density-only call sends an empty buffer.
-      const lakeOut = rerouted && lastHydrologyLakeDepth ? lastHydrologyLakeDepth.slice() : new Float32Array(0)
-      // Riparian biome reclassification depends on the channel set (so it moves
-      // with the density knob) — recompute every call when climate is available.
-      // Uses the display terrain (lastRawElevations) so land/ocean matches the map.
-      let biomesOut: Uint8Array = new Uint8Array(0)
-      if (lastRawElevations && lastClimateTemperature && lastClimateSeasonalAmplitude && lastClimateMonsoonIndex && lastHydrologyLakeDepth) {
-        biomesOut = computeRiparianBiomes(lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, precip, lastClimateTemperature, lastClimateSeasonalAmplitude, lastClimateMonsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
-      }
-      const hydrologyMessage: WorkerHydrologyDataMessage = {
-        type: 'hydrologyData',
-        riverPoints: rivers.points.buffer as ArrayBuffer,
-        riverLengths: rivers.lengths.buffer as ArrayBuffer,
-        lakeDepth: lakeOut.buffer as ArrayBuffer,
-        biomes: biomesOut.buffer as ArrayBuffer,
-      }
-      self.postMessage(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes])
-    })()
-  } else if (message.type === 'computeEcology') {
-    // Needs a computed climate (cached temperature/precipitation/biomes feed
-    // productivity + pasture) plus the current elevation (arable slope) and the
-    // sim's volcanoes (province layer). Noise seeded from warpSeed. Fresh arrays,
-    // so every field buffer transfers.
-    if (!sim || !lastRawElevations || !lastClimateTemperature || !lastClimatePrecip || !lastClimateBiomes || !lastClimateCurrents) return
-    // Hydrology (discharge/lakes) is optional here — if it hasn't been computed
-    // yet, fish falls back to its marine component; the ecology panel re-triggers
-    // this once hydrology lands (see WorldGenScreen's chaining).
-    const cratonAge = computeCratonOldnessField(sim.rafts, sim.epoch, CLIMATE_RES_X, CLIMATE_RES_Y, sim.width, sim.height)
-    const eco = computeEcology({
-      temperature: lastClimateTemperature,
-      precipitation: lastClimatePrecip,
-      biomes: lastClimateBiomes,
-      currents: lastClimateCurrents,
-      elevation: lastRawElevations,
-      discharge: lastHydrologyDischarge,
-      maxDischarge: lastHydrologyMaxDischarge,
-      lakeDepth: lastHydrologyLakeDepth,
-      volcanoes: collectVolcanoes(sim.features),
-      // Collision belts for tin/lode-gold/gems: current fold mountains (on-crust)
-      // + the accumulated (advected) deep-time sutures.
-      orogenPoints: [...collectOrogens(sim.features), ...sim.sutures],
-      cratonAge,
-      warpSeed: sim.warpSeed,
-      worldWidth: sim.width,
-      worldHeight: sim.height,
-    }, {
-      carryingCapacity: message.carryingCapacity,
-      concentration: message.concentration,
-      provinceStrength: message.provinceStrength,
-      tinRarity: message.tinRarity,
-      weights: message.weights,
-    })
-    // Cache a copy of carrying capacity BEFORE the buffers below are transferred
-    // (transfer neuters them) — the migration step reads it.
-    lastEcologyCarryingCapacity = eco.fields.carryingCapacity.slice()
-    const fields = Object.entries(eco.fields).map(([id, data]) => ({ id, data: data.buffer as ArrayBuffer }))
-    const ecologyMessage: WorkerEcologyDataMessage = {
-      type: 'ecologyData',
-      resX: eco.resX,
-      resY: eco.resY,
-      fields,
-    }
-    self.postMessage(ecologyMessage, fields.map((f) => f.data))
-  } else if (message.type === 'computeMigration') {
-    // Needs ecology's carrying capacity (density) + the current climate/hydrology
-    // for the cost field. Discharge is downsampled to the coarse grid for river corridors.
-    if (!sim || !lastRawElevations || !lastClimatePrecip || !lastEcologyCarryingCapacity) return
-    const coarseDischarge = lastHydrologyDischarge ? downsampleMax(lastHydrologyDischarge, sim.width, sim.height, CLIMATE_RES_X, CLIMATE_RES_Y) : null
-    const mig = computeMigration(lastEcologyCarryingCapacity, lastClimatePrecip, lastRawElevations, coarseDischarge, lastHydrologyMaxDischarge, message.origins, sim.width, sim.height, {
-      spreadBudget: message.spreadBudget,
-      seaCrossing: message.seaCrossing,
-    })
-    const migrationMessage: WorkerMigrationDataMessage = {
-      type: 'migrationData',
-      resX: mig.resX,
-      resY: mig.resY,
-      race: mig.race.buffer as ArrayBuffer,
-      density: mig.density.buffer as ArrayBuffer,
-      flow: mig.flow.buffer as ArrayBuffer,
-      predecessor: mig.predecessor.buffer as ArrayBuffer,
-    }
-    self.postMessage(migrationMessage, [migrationMessage.race, migrationMessage.density, migrationMessage.flow, migrationMessage.predecessor])
-  } else if (message.type === 'serializeWorld') {
-    if (!sim || !lastRawElevations) return
-    // .slice() so transferring these buffers doesn't neuter the live sim's
-    // ocean-age / the worker's retained elevation.
-    const oceanAge = sim.oceanAge.slice()
-    const elevation = lastRawElevations.slice()
-    const worldMessage: WorkerWorldDataMessage = {
-      type: 'worldData',
-      snapshot: serializePlateSimulation(sim),
-      oceanAge: oceanAge.buffer as ArrayBuffer,
-      elevation: elevation.buffer as ArrayBuffer,
-    }
-    self.postMessage(worldMessage, [worldMessage.oceanAge, worldMessage.elevation])
-  } else if (message.type === 'restoreWorld') {
-    stopTicking()
-    worldGeneration += 1
-    sim = deserializePlateSimulation(message.snapshot, new Float32Array(message.oceanAge))
-    pendingEvents = []
-    lastRawElevations = new Float32Array(message.elevation)
-    // No stored pre-erosion field — a reset-erosion after a load just reverts
-    // to the loaded state.
-    preErosionElevations = lastRawElevations
-    // Render the injected (stored, post-erosion) elevation directly — no pool
-    // query, no re-erosion.
-    renderAndPost(lastRawElevations, false, 1)
   }
+}
+
+function handleErode(message: Extract<WorkerInboundMessage, { type: 'erode' }>): void {
+  if (!sim || !lastRawElevations || renderInFlight) return
+  // Multi-second at this grid size (a 2048x1024 priority-flood plus up
+  // to 100 stream-power iterations, repeated for
+  // DEFAULT_EROSION_PASS_PARAMS.rounds) — doesn't block the main UI
+  // thread regardless (this is a dedicated worker already separate
+  // from rendering/input), but see runErodeRequest's own comment for
+  // why it's async rather than a tight synchronous loop.
+  const currentSim = sim
+  renderInFlight = true
+  erosionStopRequested = false
+  ;(async () => {
+    // Refresh to a full-resolution field first: the live preview renders
+    // coarser (PREVIEW_RENDER_SCALE), so lastRawElevations may be an
+    // upscaled low-res field, and erosion must run on the crisp full-res
+    // elevation rather than a blurred preview. Marked intermediate so the screen
+    // does NOT treat this pre-erosion refresh as "erosion done" (which would clear
+    // the stop icon + progress bar the instant a pass starts — see the render handler).
+    await renderAndPost(undefined, true, 1)
+    if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height, { strength: message.strength, networkRefreshes: message.networkRefreshes })
+  })().finally(() => {
+    renderInFlight = false
+  })
+}
+
+function handleStopErosion(): void {
+  // The in-flight runErosionPass polls this and returns its partial result.
+  erosionStopRequested = true
+}
+
+function handleResetErosion(): void {
+  if (!sim || !preErosionElevations || renderInFlight) return
+  renderInFlight = true
+  renderAndPost(preErosionElevations).finally(() => {
+    renderInFlight = false
+  })
+}
+
+function handleComputeClimate(message: Extract<WorkerInboundMessage, { type: 'computeClimate' }>): void {
+  // Runs on the current, possibly-eroded elevation (lastRawElevations). A
+  // fresh Float32Array per field, so its buffer can be transferred.
+  if (!sim || !lastRawElevations) return
+  // Order matters: base temperature → wind → ocean currents (which adjust
+  // temperature via SST + coastal nudge) → precipitation (evaporation reads
+  // the current-adjusted temperature, so warm currents wet their coasts).
+  const temperature = computeTemperature(lastRawElevations, sim.width, sim.height, message.temperatureOffset, message.temperatureContrast, message.equatorOffset)
+  const wind = computeWind(message.equatorOffset)
+  const currents = computeOceanCurrents(lastRawElevations, wind, sim.width, sim.height)
+  applyOceanSST(temperature, currents, lastRawElevations, sim.width, sim.height)
+  // Seasonal amplitude first — the monsoon model needs it (its land-sea contrast). Then
+  // run precipitation for two opposite seasons → annual mean precip + a monsoon index.
+  const seasonalAmplitude = computeSeasonalAmplitude(lastRawElevations, sim.width, sim.height, message.equatorOffset)
+  const seasonal = computeSeasonalPrecipitation(lastRawElevations, temperature, seasonalAmplitude, wind, sim.width, sim.height, message.humidity, message.equatorOffset)
+  const precipitation = seasonal.annual
+  const biomes = computeBiomes(temperature, precipitation, seasonalAmplitude, seasonal.index, lastRawElevations, sim.width, sim.height)
+  // Cache copies for hydrology (the buffers below are transferred, which would
+  // neuter retained references) — rivers use precip as their source, lakes use
+  // the final (SST-adjusted) temperature for evaporation, riparian biomes reuse the
+  // monsoon index.
+  lastClimatePrecip = precipitation.slice()
+  lastClimateTemperature = temperature.slice()
+  lastClimateSeasonalAmplitude = seasonalAmplitude.slice()
+  lastClimateMonsoonIndex = seasonal.index.slice()
+  lastClimateBiomes = biomes.slice()
+  lastClimateCurrents = currents.slice()
+  invalidateAfterClimateChange()
+  const climateMessage: WorkerClimateDataMessage = {
+    type: 'climateData',
+    resX: CLIMATE_RES_X,
+    resY: CLIMATE_RES_Y,
+    temperature: temperature.buffer as ArrayBuffer,
+    wind: wind.buffer as ArrayBuffer,
+    currents: currents.buffer as ArrayBuffer,
+    precipitation: precipitation.buffer as ArrayBuffer,
+    seasonalAmplitude: seasonalAmplitude.buffer as ArrayBuffer,
+    monsoonIndex: seasonal.index.buffer as ArrayBuffer,
+    biomes: biomes.buffer as ArrayBuffer,
+  }
+  self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.biomes])
+}
+
+function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: 'computeHydrology' }>): void {
+  // Needs the current topography + a climate precip (rivers' water source).
+  if (!sim || !lastRawElevations || !lastClimatePrecip) return
+  const { riverDensity } = message
+  const width = sim.width
+  const height = sim.height
+  // Run hydrology on the basins-intact (pre-fill) terrain when erosion produced
+  // it, so lakes have depressions to fill and rivers flow into them; otherwise
+  // the final drained terrain (few lakes). Same grid, so river/lake coords still
+  // line up with the displayed map.
+  const elevation = lastLakeBasinElevations ?? lastRawElevations
+  const precip = lastClimatePrecip
+  // Async (the priority-flood routing is a Promise); the onmessage handler is
+  // sync, so run it in an IIFE like the erode branch does.
+  ;(async () => {
+    // Re-route only when topography/climate changed; a density-only tweak
+    // reuses the cached routing + discharge + lakes (the expensive parts) and
+    // just re-thresholds the rivers.
+    let rerouted = false
+    if (hydrologyDirty || !lastHydrologyRouting || !lastHydrologyDischarge) {
+      lastHydrologyRouting = await fillDepressionsAndRouteFlow(elevation, width, height, 0)
+      lastHydrologyDischarge = accumulateDischarge(lastHydrologyRouting, elevation, precip, CLIMATE_RES_X, CLIMATE_RES_Y)
+      lastHydrologyMaxDischarge = maxDischargeOverLand(lastHydrologyDischarge, elevation)
+      lastHydrologyMeanRunoff = meanLandRunoff(precip, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+      lastHydrologyLakeDepth = lastClimateTemperature
+        ? computeLakes(lastHydrologyRouting, lastHydrologyDischarge, elevation, lastClimateTemperature, CLIMATE_RES_X, CLIMATE_RES_Y)
+        : new Float32Array(width * height)
+      hydrologyDirty = false
+      rerouted = true
+    }
+    const threshold = channelThreshold(densityToCriticalArea(riverDensity), lastHydrologyMeanRunoff)
+    const rivers = extractRiverPolylines(lastHydrologyRouting, lastHydrologyDischarge, elevation, threshold, lastHydrologyMaxDischarge)
+    // Lakes only change on a re-route; a density-only call sends an empty buffer.
+    const lakeOut = rerouted && lastHydrologyLakeDepth ? lastHydrologyLakeDepth.slice() : new Float32Array(0)
+    // Riparian biome reclassification depends on the channel set (so it moves
+    // with the density knob) — recompute every call when climate is available.
+    // Uses the display terrain (lastRawElevations) so land/ocean matches the map.
+    let biomesOut: Uint8Array = new Uint8Array(0)
+    if (lastRawElevations && lastClimateTemperature && lastClimateSeasonalAmplitude && lastClimateMonsoonIndex && lastHydrologyLakeDepth) {
+      biomesOut = computeRiparianBiomes(lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, precip, lastClimateTemperature, lastClimateSeasonalAmplitude, lastClimateMonsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+    }
+    const hydrologyMessage: WorkerHydrologyDataMessage = {
+      type: 'hydrologyData',
+      riverPoints: rivers.points.buffer as ArrayBuffer,
+      riverLengths: rivers.lengths.buffer as ArrayBuffer,
+      lakeDepth: lakeOut.buffer as ArrayBuffer,
+      biomes: biomesOut.buffer as ArrayBuffer,
+    }
+    self.postMessage(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes])
+  })()
+}
+
+function handleComputeEcology(message: Extract<WorkerInboundMessage, { type: 'computeEcology' }>): void {
+  // Needs a computed climate (cached temperature/precipitation/biomes feed
+  // productivity + pasture) plus the current elevation (arable slope) and the
+  // sim's volcanoes (province layer). Noise seeded from warpSeed. Fresh arrays,
+  // so every field buffer transfers.
+  if (!sim || !lastRawElevations || !lastClimateTemperature || !lastClimatePrecip || !lastClimateBiomes || !lastClimateCurrents) return
+  // Hydrology (discharge/lakes) is optional here — if it hasn't been computed
+  // yet, fish falls back to its marine component; the ecology panel re-triggers
+  // this once hydrology lands (see WorldGenScreen's chaining).
+  const cratonAge = computeCratonOldnessField(sim.rafts, sim.epoch, CLIMATE_RES_X, CLIMATE_RES_Y, sim.width, sim.height)
+  const eco = computeEcology({
+    temperature: lastClimateTemperature,
+    precipitation: lastClimatePrecip,
+    biomes: lastClimateBiomes,
+    currents: lastClimateCurrents,
+    elevation: lastRawElevations,
+    discharge: lastHydrologyDischarge,
+    maxDischarge: lastHydrologyMaxDischarge,
+    lakeDepth: lastHydrologyLakeDepth,
+    volcanoes: collectVolcanoes(sim.features),
+    // Collision belts for tin/lode-gold/gems: current fold mountains (on-crust)
+    // + the accumulated (advected) deep-time sutures.
+    orogenPoints: [...collectOrogens(sim.features), ...sim.sutures],
+    cratonAge,
+    warpSeed: sim.warpSeed,
+    worldWidth: sim.width,
+    worldHeight: sim.height,
+  }, {
+    carryingCapacity: message.carryingCapacity,
+    concentration: message.concentration,
+    provinceStrength: message.provinceStrength,
+    tinRarity: message.tinRarity,
+    weights: message.weights,
+  })
+  // Cache a copy of carrying capacity BEFORE the buffers below are transferred
+  // (transfer neuters them) — the migration step reads it.
+  lastEcologyCarryingCapacity = eco.fields.carryingCapacity.slice()
+  const fields = Object.entries(eco.fields).map(([id, data]) => ({ id, data: data.buffer as ArrayBuffer }))
+  const ecologyMessage: WorkerEcologyDataMessage = {
+    type: 'ecologyData',
+    resX: eco.resX,
+    resY: eco.resY,
+    fields,
+  }
+  self.postMessage(ecologyMessage, fields.map((f) => f.data))
+}
+
+function handleComputeMigration(message: Extract<WorkerInboundMessage, { type: 'computeMigration' }>): void {
+  // Needs ecology's carrying capacity (density) + the current climate/hydrology
+  // for the cost field. Discharge is downsampled to the coarse grid for river corridors.
+  if (!sim || !lastRawElevations || !lastClimatePrecip || !lastEcologyCarryingCapacity) return
+  const coarseDischarge = lastHydrologyDischarge ? downsampleMax(lastHydrologyDischarge, sim.width, sim.height, CLIMATE_RES_X, CLIMATE_RES_Y) : null
+  const mig = computeMigration(lastEcologyCarryingCapacity, lastClimatePrecip, lastRawElevations, coarseDischarge, lastHydrologyMaxDischarge, message.origins, sim.width, sim.height, {
+    spreadBudget: message.spreadBudget,
+    seaCrossing: message.seaCrossing,
+  })
+  const migrationMessage: WorkerMigrationDataMessage = {
+    type: 'migrationData',
+    resX: mig.resX,
+    resY: mig.resY,
+    race: mig.race.buffer as ArrayBuffer,
+    density: mig.density.buffer as ArrayBuffer,
+    flow: mig.flow.buffer as ArrayBuffer,
+    predecessor: mig.predecessor.buffer as ArrayBuffer,
+  }
+  self.postMessage(migrationMessage, [migrationMessage.race, migrationMessage.density, migrationMessage.flow, migrationMessage.predecessor])
+}
+
+function handleSerializeWorld(): void {
+  if (!sim || !lastRawElevations) return
+  // .slice() so transferring these buffers doesn't neuter the live sim's
+  // ocean-age / the worker's retained elevation.
+  const oceanAge = sim.oceanAge.slice()
+  const elevation = lastRawElevations.slice()
+  const worldMessage: WorkerWorldDataMessage = {
+    type: 'worldData',
+    snapshot: serializePlateSimulation(sim),
+    oceanAge: oceanAge.buffer as ArrayBuffer,
+    elevation: elevation.buffer as ArrayBuffer,
+  }
+  self.postMessage(worldMessage, [worldMessage.oceanAge, worldMessage.elevation])
+}
+
+function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'restoreWorld' }>): void {
+  stopTicking()
+  worldGeneration += 1
+  sim = deserializePlateSimulation(message.snapshot, new Float32Array(message.oceanAge))
+  pendingEvents = []
+  lastRawElevations = new Float32Array(message.elevation)
+  // No stored pre-erosion field — a reset-erosion after a load just reverts
+  // to the loaded state.
+  preErosionElevations = lastRawElevations
+  // Render the injected (stored, post-erosion) elevation directly — no pool
+  // query, no re-erosion.
+  renderAndPost(lastRawElevations, false, 1)
+}
+
+// The dispatch table. A record rather than a chain so the set of messages this
+// worker understands is a list you can read, and so a new one cannot silently
+// land in the wrong branch.
+const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMessage) => void } = {
+  init: (m) => handleInit(m as Extract<WorkerInboundMessage, { type: 'init' }>),
+  start: () => handleStart(),
+  stop: () => handleStop(),
+  erode: (m) => handleErode(m as Extract<WorkerInboundMessage, { type: 'erode' }>),
+  stopErosion: () => handleStopErosion(),
+  resetErosion: () => handleResetErosion(),
+  computeClimate: (m) => handleComputeClimate(m as Extract<WorkerInboundMessage, { type: 'computeClimate' }>),
+  computeHydrology: (m) => handleComputeHydrology(m as Extract<WorkerInboundMessage, { type: 'computeHydrology' }>),
+  computeEcology: (m) => handleComputeEcology(m as Extract<WorkerInboundMessage, { type: 'computeEcology' }>),
+  computeMigration: (m) => handleComputeMigration(m as Extract<WorkerInboundMessage, { type: 'computeMigration' }>),
+  serializeWorld: () => handleSerializeWorld(),
+  restoreWorld: (m) => handleRestoreWorld(m as Extract<WorkerInboundMessage, { type: 'restoreWorld' }>),
+}
+
+self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
+  HANDLERS[event.data.type](event.data)
 }

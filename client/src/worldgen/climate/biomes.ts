@@ -1,5 +1,5 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from './climateField'
-import { SEA_LEVEL } from '../elevationScale'
+import { SEA_LEVEL } from '../elevation/elevationScale'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y

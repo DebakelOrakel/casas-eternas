@@ -7,7 +7,9 @@
 
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { OCEAN_PRECIP } from '../climate/precipitation'
-import { SEA_LEVEL, SLOPE_RECALIBRATION, metersToElevation } from '../elevationScale'
+import { MinHeap } from '../core/minHeap'
+import { wrapValue } from '../core/field'
+import { SEA_LEVEL, SLOPE_RECALIBRATION, metersToElevation } from '../elevation/elevationScale'
 
 export interface MigrationOrigin {
   cell: number // gy * resX + gx (on the climate grid)
@@ -69,7 +71,6 @@ function buildCostField(precipitation: Float32Array, elevation: Float32Array, co
   const cost = new Float32Array(n)
   const land = new Uint8Array(n)
   const maxDepth = SEA_CROSSING_MAX_DEPTH * Math.max(0, Math.min(1, seaCrossing))
-  const wrap = (i: number, m: number): number => ((i % m) + m) % m
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const i = gy * CLIMATE_RES_X + gx
@@ -81,68 +82,22 @@ function buildCostField(precipitation: Float32Array, elevation: Float32Array, co
         continue
       }
       land[i] = 1
-      const eE = sampleElevationAtCell(elevation, wrap(gx + 1, CLIMATE_RES_X), gy, worldWidth, worldHeight)
-      const eS = sampleElevationAtCell(elevation, gx, wrap(gy + 1, CLIMATE_RES_Y), worldWidth, worldHeight)
+      const eE = sampleElevationAtCell(elevation, wrapValue(gx + 1, CLIMATE_RES_X), gy, worldWidth, worldHeight)
+      const eS = sampleElevationAtCell(elevation, gx, wrapValue(gy + 1, CLIMATE_RES_Y), worldWidth, worldHeight)
       const slope = Math.hypot(eE - e, eS - e)
       let c = LAND_BASE + SLOPE_COST * slope
       // Corridor discount: coastal (an ocean 4-neighbour) or a river cell.
       const coastal =
-        precipitation[wrap(gy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrap(gx + 1, CLIMATE_RES_X)] === OCEAN_PRECIP ||
-        precipitation[wrap(gy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrap(gx - 1, CLIMATE_RES_X)] === OCEAN_PRECIP ||
-        precipitation[wrap(gy + 1, CLIMATE_RES_Y) * CLIMATE_RES_X + gx] === OCEAN_PRECIP ||
-        precipitation[wrap(gy - 1, CLIMATE_RES_Y) * CLIMATE_RES_X + gx] === OCEAN_PRECIP
+        precipitation[wrapValue(gy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrapValue(gx + 1, CLIMATE_RES_X)] === OCEAN_PRECIP ||
+        precipitation[wrapValue(gy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrapValue(gx - 1, CLIMATE_RES_X)] === OCEAN_PRECIP ||
+        precipitation[wrapValue(gy + 1, CLIMATE_RES_Y) * CLIMATE_RES_X + gx] === OCEAN_PRECIP ||
+        precipitation[wrapValue(gy - 1, CLIMATE_RES_Y) * CLIMATE_RES_X + gx] === OCEAN_PRECIP
       const river = coarseDischarge != null && maxDischarge > 0 && coarseDischarge[i] > RIVER_DISCHARGE_FRAC * maxDischarge
       if (coastal || river) c *= CORRIDOR_DISCOUNT
       cost[i] = c
     }
   }
   return { cost, land }
-}
-
-// --- min-heap for Dijkstra --------------------------------------------------
-
-class MinHeap {
-  private costs: number[] = []
-  private cells: number[] = []
-  get size(): number { return this.cells.length }
-  push(cost: number, cell: number): void {
-    this.costs.push(cost)
-    this.cells.push(cell)
-    let i = this.cells.length - 1
-    while (i > 0) {
-      const p = (i - 1) >> 1
-      if (this.costs[p] <= this.costs[i]) break
-      this.swap(i, p)
-      i = p
-    }
-  }
-  pop(): { cost: number; cell: number } {
-    const cost = this.costs[0]
-    const cell = this.cells[0]
-    const lastC = this.costs.pop()!
-    const lastCell = this.cells.pop()!
-    if (this.cells.length > 0) {
-      this.costs[0] = lastC
-      this.cells[0] = lastCell
-      let i = 0
-      const nn = this.cells.length
-      for (;;) {
-        const l = 2 * i + 1
-        const r = l + 1
-        let s = i
-        if (l < nn && this.costs[l] < this.costs[s]) s = l
-        if (r < nn && this.costs[r] < this.costs[s]) s = r
-        if (s === i) break
-        this.swap(i, s)
-        i = s
-      }
-    }
-    return { cost, cell }
-  }
-  private swap(a: number, b: number): void {
-    const c = this.costs[a]; this.costs[a] = this.costs[b]; this.costs[b] = c
-    const e = this.cells[a]; this.cells[a] = this.cells[b]; this.cells[b] = e
-  }
 }
 
 // 8-neighbour offsets (with movement distance for the diagonals).
@@ -174,10 +129,9 @@ export function computeMigration(
   const race = new Int8Array(n).fill(-1)
   const predecessor = new Int32Array(n).fill(-1)
   const settled = new Uint8Array(n)
-  const wrap = (i: number, m: number): number => ((i % m) + m) % m
 
   // Multi-source Dijkstra: every enabled origin seeded at cost 0.
-  const heap = new MinHeap()
+  const heap = new MinHeap(n)
   for (const o of origins) {
     if (o.cell < 0 || o.cell >= n || cellCost[o.cell] === Infinity) continue
     if (cost[o.cell] === 0) continue
@@ -186,16 +140,18 @@ export function computeMigration(
     predecessor[o.cell] = -1
     heap.push(0, o.cell)
   }
-  while (heap.size > 0) {
-    const { cost: c, cell } = heap.pop()
+  while (heap.length > 0) {
+    heap.pop()
+    const c = heap.poppedKey
+    const cell = heap.poppedIndex
     if (settled[cell]) continue
     settled[cell] = 1
     if (c > budget) continue // reached but don't expand past the budget frontier
     const gy = Math.floor(cell / rx)
     const gx = cell - gy * rx
     for (const nb of NEIGHBOURS) {
-      const nx = wrap(gx + nb.dx, rx)
-      const ny = wrap(gy + nb.dy, ry)
+      const nx = wrapValue(gx + nb.dx, rx)
+      const ny = wrapValue(gy + nb.dy, ry)
       const ni = ny * rx + nx
       if (settled[ni]) continue
       const step = cellCost[ni]

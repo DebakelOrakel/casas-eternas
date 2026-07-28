@@ -1,6 +1,6 @@
-import { buildFeatureBuckets, computeElevation, warpedSamplePoint } from './elevationField'
-import { ridgedMultifractal } from './ridgedNoise'
-import type { TerrainFeature } from './terrainFeatures'
+import { buildFeatureBuckets, computeElevation, warpedSamplePoint } from '../elevation/elevationField'
+import { ridgedMultifractal } from '../elevation/ridgedNoise'
+import type { TerrainFeature } from '../tectonics/terrainFeatures'
 
 // Computes raw (unshaped, unclamped-differently, uncolored) elevation for
 // one horizontal band [startY, endY) of the map — spawned and owned by

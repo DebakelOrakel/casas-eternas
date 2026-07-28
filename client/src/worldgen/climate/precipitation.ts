@@ -1,5 +1,7 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell, shiftedYNorm } from './climateField'
-import { SEA_LEVEL, SLOPE_RECALIBRATION } from '../elevationScale'
+import { SEA_LEVEL, SLOPE_RECALIBRATION } from '../elevation/elevationScale'
+import { sampleBilinearGrid } from '../core/field'
+import { wrapValue } from '../core/field'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -69,25 +71,16 @@ function bandFactor(phi: number): number {
   return f < BAND_FLOOR ? BAND_FLOOR : f
 }
 
-function sampleGridWrapped(field: Float32Array, fx: number, fy: number): number {
-  const x = ((fx % RX) + RX) % RX
-  const y = ((fy % RY) + RY) % RY
-  const x0 = Math.floor(x)
-  const y0 = Math.floor(y)
-  const x1 = (x0 + 1) % RX
-  const y1 = (y0 + 1) % RY
-  const tx = x - x0
-  const ty = y - y0
-  const top = field[y0 * RX + x0] * (1 - tx) + field[y0 * RX + x1] * tx
-  const bottom = field[y1 * RX + x0] * (1 - tx) + field[y1 * RX + x1] * tx
-  return top * (1 - ty) + bottom * ty
-}
-
+// Nearest-texel read of the FULL-RES elevation raster at a world point. Kept
+// local rather than folded into field.ts: that module samples coarse fields, and
+// this is the opposite — the orographic term needs the fine gradient, which is
+// the entire reason it reads full-res here instead of off the climate grid.
 function elevationAtWorld(elevation: Float32Array, wx: number, wy: number, worldW: number, worldH: number): number {
-  const x = Math.floor(((wx % worldW) + worldW) % worldW)
-  const y = Math.floor(((wy % worldH) + worldH) % worldH)
+  const x = Math.floor(wrapValue(wx, worldW))
+  const y = Math.floor(wrapValue(wy, worldH))
   return elevation[y * worldW + x]
 }
+
 
 // Annual precipitation (mm/yr) on the climate grid, land only (ocean cells =
 // OCEAN_PRECIP). Model: moisture evaporates over the ocean (∝ temperature),
@@ -141,7 +134,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
         const i = gy * RX + gx
         const u = wind[i * 2]
         const v = wind[i * 2 + 1]
-        const advected = sampleGridWrapped(moisture, gx - u * ADVECT_STEP, gy - v * ADVECT_MERIDIONAL_SCALE * ADVECT_STEP)
+        const advected = sampleBilinearGrid(moisture, RX, RY, gx - u * ADVECT_STEP, gy - v * ADVECT_MERIDIONAL_SCALE * ADVECT_STEP)
         if (ocean[i]) {
           next[i] = evap[i] // ocean is a fixed moisture source
           continue

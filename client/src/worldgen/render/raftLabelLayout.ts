@@ -1,6 +1,7 @@
-import type { Raft } from './rafts'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
-import { wrappedDelta } from './toroidal'
+import { wrappedDelta } from '../core/toroidal'
+import { wrapValue } from '../core/field'
+import type { Raft } from '../crust/raftTypes'
 
 // Label geometry for each named raft, computed straight from its blob set —
 // cheap (no raster pass, unlike the per-plate computeContinentLabelPlacements
@@ -74,8 +75,8 @@ export function computeRaftLabelPlacements(rafts: Raft[], width: number, height:
       along = anchor.radius
       perp = anchor.radius
     }
-    const centerX = (((anchor.x + localX) % width) + width) % width
-    const centerY = (((anchor.y + localY) % height) + height) % height
+    const centerX = wrapValue((anchor.x + localX), width)
+    const centerY = wrapValue((anchor.y + localY), height)
     placements.push({ plateIndex: raft.id, name: raft.name, centerX, centerY, angle, alongExtent: along * 2, perpExtent: perp * 2 })
   }
   return placements

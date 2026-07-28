@@ -1,11 +1,12 @@
-import type { TerrainFeature } from './terrainFeatures'
-import { wrappedDelta } from './toroidal'
+import type { TerrainFeature } from '../tectonics/terrainFeatures'
+import { wrappedDelta } from '../core/toroidal'
 import { domainWarpDelta } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
-import { raftField } from './rafts'
-import type { Raft } from './rafts'
-import { sampleOceanAge } from './oceanAge'
+import { sampleOceanAge } from '../tectonics/oceanAge'
 import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './elevationScale'
+import { wrapValue } from '../core/field'
+import { raftField } from '../crust/raftField'
+import type { Raft } from '../crust/raftTypes'
 
 // A terrain feature is no longer an isotropic blob but an oriented ridge
 // segment: its influence reaches far ALONG its own boundary tangent
@@ -258,8 +259,8 @@ export function warpedSamplePoint(x: number, y: number, width: number, height: n
   const rawWx = x + domainWarpDelta(x, y, width, height, warpSeed, 'x')
   const rawWy = y + domainWarpDelta(x, y, width, height, warpSeed, 'y')
   return {
-    wx: ((rawWx % width) + width) % width,
-    wy: ((rawWy % height) + height) % height,
+    wx: wrapValue(rawWx, width),
+    wy: wrapValue(rawWy, height),
   }
 }
 
@@ -293,9 +294,9 @@ export function computeElevation(
   let upliftSum = 0
   let weightSum = 0
   for (let dy = -1; dy <= 1; dy++) {
-    const by = (((centerBy + dy) % bucketsY) + bucketsY) % bucketsY
+    const by = wrapValue((centerBy + dy), bucketsY)
     for (let dx = -1; dx <= 1; dx++) {
-      const bx = (((centerBx + dx) % bucketsX) + bucketsX) % bucketsX
+      const bx = wrapValue((centerBx + dx), bucketsX)
       for (const feature of buckets[by * bucketsX + bx]) {
         // Capsule falloff: distance to the feature's finite boundary segment
         // (± half-length along its tangent), then a perpendicular profile.

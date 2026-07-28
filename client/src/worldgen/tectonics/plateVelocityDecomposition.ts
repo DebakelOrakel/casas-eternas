@@ -1,7 +1,7 @@
 import type { PlateMotion } from './plateMotion'
 import { getVelocityAt } from './plateMotion'
 import type { PlateSeed } from './plateSeeds'
-import { wrappedDelta } from './toroidal'
+import { wrappedDelta } from '../core/toroidal'
 
 export type BoundaryMotionClass = 'convergent' | 'divergent' | 'transform'
 

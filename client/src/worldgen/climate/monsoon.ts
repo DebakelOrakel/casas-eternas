@@ -1,3 +1,4 @@
+import { wrapValue } from '../core/field'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
 import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
 
@@ -55,7 +56,7 @@ function seasonalTemperature(annual: Float32Array, amplitude: Float32Array, equa
 // and reverses in winter (offshore, dry). Interleaved [u, v] like computeWind.
 function computeMonsoonWind(base: Float32Array, seasonalTemp: Float32Array): Float32Array {
   const out = new Float32Array(base.length)
-  const wrap = (x: number, y: number): number => (((y % RY) + RY) % RY) * RX + (((x % RX) + RX) % RX)
+  const wrap = (x: number, y: number): number => wrapValue(y, RY) * RX + wrapValue(x, RX)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx

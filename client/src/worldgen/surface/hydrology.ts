@@ -1,7 +1,8 @@
-import { SEA_LEVEL } from './elevationScale'
-import type { FlowRouting } from './erosion'
-import { computeBiomes } from './climate/biomes'
-import { OCEAN_PRECIP } from './climate/precipitation'
+import { SEA_LEVEL } from '../elevation/elevationScale'
+import { wrapValue } from '../core/field'
+import type { FlowRouting } from './flowRouting'
+import { computeBiomes } from '../climate/biomes'
+import { OCEAN_PRECIP } from '../climate/precipitation'
 
 // Rivers & lakes on the post-erosion topography. Reuses the erosion module's
 // drainage network (FlowRouting: D8 flowTarget for the channel tree,
@@ -82,7 +83,7 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
   for (let cell = 0; cell < n; cell++) {
     if (elevation[cell] > SEA_LEVEL && filled[cell] > elevation[cell] + EPS) flooded[cell] = 1
   }
-  const wrap = (x: number, y: number): number => (((y % height) + height) % height) * width + (((x % width) + width) % width)
+  const wrap = (x: number, y: number): number => wrapValue(y, height) * width + wrapValue(x, width)
   const seen = new Uint8Array(n)
   const queue = new Int32Array(n)
   for (let s = 0; s < n; s++) {
@@ -321,8 +322,8 @@ export function computeRiparianBiomes(elevation: Float32Array, discharge: Float3
       for (let gx = 0; gx < climateResX; gx++) {
         const gi = gy * climateResX + gx
         for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-          const nx = (((gx + dx) % climateResX) + climateResX) % climateResX
-          const ny = (((gy + dy) % climateResY) + climateResY) % climateResY
+          const nx = wrapValue((gx + dx), climateResX)
+          const ny = wrapValue((gy + dy), climateResY)
           const v = field[ny * climateResX + nx] * RIPARIAN_DECAY
           if (v > next[gi]) next[gi] = v
         }

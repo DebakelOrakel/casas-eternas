@@ -1,7 +1,8 @@
 import type { PlateSeed } from './plateSeeds'
 import { reversePointByMotion, type PlateMotion } from './plateMotion'
-import { toroidalDistanceSq } from './toroidal'
-import { sampleMembershipField } from './rafts'
+import { toroidalDistanceSq } from '../core/toroidal'
+import { sampleBilinearWorld } from '../core/field'
+import { sampleMembershipField } from '../crust/raftField'
 
 // Ocean-floor age as a coarse full-surface field (Phase 3, see
 // docs/decisions/continental-crust-rafts.md). Oceanic crust deepens as it ages
@@ -23,23 +24,7 @@ export function createOceanAgeField(initialAge: number): Float32Array {
 // Bilinear sample of the age field at a world point, wrapped toroidally (cell
 // centers sit at (i+0.5)·cellSize, hence the −0.5).
 export function sampleOceanAge(age: Float32Array, x: number, y: number, worldWidth: number, worldHeight: number): number {
-  const gx = (x / worldWidth) * OCEAN_AGE_RES_X - 0.5
-  const gy = (y / worldHeight) * OCEAN_AGE_RES_Y - 0.5
-  const x0 = Math.floor(gx)
-  const y0 = Math.floor(gy)
-  const fx = gx - x0
-  const fy = gy - y0
-  const x0m = ((x0 % OCEAN_AGE_RES_X) + OCEAN_AGE_RES_X) % OCEAN_AGE_RES_X
-  const y0m = ((y0 % OCEAN_AGE_RES_Y) + OCEAN_AGE_RES_Y) % OCEAN_AGE_RES_Y
-  const x1m = (x0m + 1) % OCEAN_AGE_RES_X
-  const y1m = (y0m + 1) % OCEAN_AGE_RES_Y
-  const v00 = age[y0m * OCEAN_AGE_RES_X + x0m]
-  const v10 = age[y0m * OCEAN_AGE_RES_X + x1m]
-  const v01 = age[y1m * OCEAN_AGE_RES_X + x0m]
-  const v11 = age[y1m * OCEAN_AGE_RES_X + x1m]
-  const top = v00 + (v10 - v00) * fx
-  const bottom = v01 + (v11 - v01) * fx
-  return top + (bottom - top) * fy
+  return sampleBilinearWorld(age, OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y, x, y, worldWidth, worldHeight)
 }
 
 // Oldest seafloor that can exist, in epochs. Earth's oceanic crust tops out

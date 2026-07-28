@@ -1,3 +1,5 @@
+import { smoothstep } from '../core/interpolation'
+import { wrapValue } from '../core/field'
 // Every contour the elevation field produces (elevationField.ts) is a sum
 // of smooth radial falloffs — baseline blend, feature uplift — so it's
 // geometrically incapable of looking jagged anywhere, coastlines
@@ -27,9 +29,6 @@ function hashLatticePoint(ix: number, iy: number, warpSeed: number, axisSalt: nu
   return h / 4294967296 // [0, 1)
 }
 
-function smoothstep(t: number): number {
-  return t * t * (3 - 2 * t)
-}
 
 // Bilinear-interpolated value noise over a lattice that repeats every
 // (periodX, periodY) integer units — periods are in *lattice* units, not
@@ -39,8 +38,8 @@ function periodicValueNoise2D(x: number, y: number, periodX: number, periodY: nu
   const y0 = Math.floor(y)
   const fx = x - x0
   const fy = y - y0
-  const x0m = (((x0 % periodX) + periodX) % periodX) | 0
-  const y0m = (((y0 % periodY) + periodY) % periodY) | 0
+  const x0m = wrapValue(x0, periodX) | 0
+  const y0m = wrapValue(y0, periodY) | 0
   const x1m = (x0m + 1) % periodX
   const y1m = (y0m + 1) % periodY
 

@@ -1,7 +1,8 @@
 import type { PlateSeed } from './plateSeeds'
 import type { PlateMotion } from './plateMotion'
-import { sampleMembershipField } from './rafts'
-import { toroidalDistanceSq, wrappedDelta } from './toroidal'
+import { toroidalDistanceSq, wrappedDelta } from '../core/toroidal'
+import { wrapValue } from '../core/field'
+import { sampleMembershipField } from '../crust/raftField'
 
 // A coarse, evolving mantle buoyancy/temperature field under the whole torus
 // surface — the CAUSE the plates ride on (Phase M2 of
@@ -39,7 +40,7 @@ const SOLVE_ITERS = 260
 const FLOW_SPEED_SCALE = 110
 
 function wrapIdx(x: number, y: number): number {
-  return (((y % RY) + RY) % RY) * RX + (((x % RX) + RX) % RX)
+  return wrapValue(y, RY) * RX + wrapValue(x, RX)
 }
 
 // Smoothed random initial field — a few upwelling/downwelling blobs so there's

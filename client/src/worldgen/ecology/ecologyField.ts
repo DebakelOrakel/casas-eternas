@@ -12,7 +12,9 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { Biome } from '../climate/biomes'
-import { SLOPE_RECALIBRATION } from '../elevationScale'
+import { clamp01, smoothstep } from '../core/interpolation'
+import { downsampleMax, wrapValue } from '../core/field'
+import { SLOPE_RECALIBRATION } from '../elevation/elevationScale'
 
 // Ocean sentinel for the output fields (matches the climate fields' convention):
 // a cell the ecology layer doesn't score (open water) reads -1.
@@ -136,7 +138,6 @@ const SLOPE_K = 8 * SLOPE_RECALIBRATION
 // Ecotone (biome-boundary) game bonus and its cap.
 const ECOTONE_BONUS = 0.18
 
-const smoothstep = (t: number): number => t * t * (3 - 2 * t)
 
 // --- subsistence fields (climate grid) --------------------------------------
 
@@ -196,23 +197,9 @@ function computePasture(biomes: Uint8Array, land: Uint8Array): Float32Array {
 // Max of a full-res field over each coarse climate cell's footprint — rivers/
 // lakes are thin, so a footprint max ("is there a big river/lake in this cell")
 // beats a single centre sample.
-function downsampleMax(fullRes: Float32Array, worldWidth: number, worldHeight: number): Float32Array {
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  const fw = worldWidth / CLIMATE_RES_X
-  const fh = worldHeight / CLIMATE_RES_Y
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    const y0 = Math.floor(gy * fh)
-    const y1 = Math.floor((gy + 1) * fh)
-    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      const x0 = Math.floor(gx * fw)
-      const x1 = Math.floor((gx + 1) * fw)
-      let m = 0
-      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const v = fullRes[y * worldWidth + x]; if (v > m) m = v }
-      out[gy * CLIMATE_RES_X + gx] = m
-    }
-  }
-  return out
-}
+// Bound to the climate grid, which is the only resolution this module reduces to.
+const toClimateGrid = (fullRes: Float32Array, worldWidth: number, worldHeight: number): Float32Array =>
+  downsampleMax(fullRes, worldWidth, worldHeight, CLIMATE_RES_X, CLIMATE_RES_Y)
 
 // Fish: a subsistence source for coastal + riverine/lake land. Marine = how
 // coastal the cell is × (a shelf base + upwelling read from adjacent-ocean
@@ -220,7 +207,6 @@ function downsampleMax(fullRes: Float32Array, worldWidth: number, worldHeight: n
 // Freshwater = big rivers + nearby lakes. Saturating combine of the two.
 function computeFish(land: Uint8Array, currents: Float32Array, coarseDischarge: Float32Array | null, maxDischarge: number, coarseLake: Float32Array | null): Float32Array {
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  const wrap = (i: number, n: number): number => ((i % n) + n) % n
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const i = gy * CLIMATE_RES_X + gx
@@ -231,7 +217,7 @@ function computeFish(land: Uint8Array, currents: Float32Array, coarseDischarge: 
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (dx === 0 && dy === 0) continue
-          const j = wrap(gy + dy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrap(gx + dx, CLIMATE_RES_X)
+          const j = wrapValue(gy + dy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrapValue(gx + dx, CLIMATE_RES_X)
           if (land[j]) continue
           oceanN++
           const mag = Math.hypot(currents[j * 2], currents[j * 2 + 1])
@@ -299,7 +285,6 @@ const SILVER_W = 0.9
 const GEM_OROGEN_W = 0.85
 const GEM_ARID_W = 0.6
 
-const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 
 // Fraction of a land cell's 8 neighbours that are ocean.
 function coastalnessAt(land: Uint8Array, gx: number, gy: number): number {
@@ -457,11 +442,10 @@ function provinceNoise(u: number, v: number, freqX: number, freqY: number, seed:
   const y0 = Math.floor(gy)
   const fx = smoothstep(gx - x0)
   const fy = smoothstep(gy - y0)
-  const wrap = (i: number, n: number): number => ((i % n) + n) % n
-  const c00 = hashLattice(wrap(x0, freqX), wrap(y0, freqY), seed)
-  const c10 = hashLattice(wrap(x0 + 1, freqX), wrap(y0, freqY), seed)
-  const c01 = hashLattice(wrap(x0, freqX), wrap(y0 + 1, freqY), seed)
-  const c11 = hashLattice(wrap(x0 + 1, freqX), wrap(y0 + 1, freqY), seed)
+  const c00 = hashLattice(wrapValue(x0, freqX), wrapValue(y0, freqY), seed)
+  const c10 = hashLattice(wrapValue(x0 + 1, freqX), wrapValue(y0, freqY), seed)
+  const c01 = hashLattice(wrapValue(x0, freqX), wrapValue(y0 + 1, freqY), seed)
+  const c11 = hashLattice(wrapValue(x0 + 1, freqX), wrapValue(y0 + 1, freqY), seed)
   const top = c00 + (c10 - c00) * fx
   const bottom = c01 + (c11 - c01) * fx
   return (top + (bottom - top) * fy) * 2 - 1
@@ -571,8 +555,8 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
     return arr
   }
 
-  const coarseDischarge = discharge ? downsampleMax(discharge, worldWidth, worldHeight) : null
-  const coarseLake = lakeDepth ? downsampleMax(lakeDepth, worldWidth, worldHeight) : null
+  const coarseDischarge = discharge ? toClimateGrid(discharge, worldWidth, worldHeight) : null
+  const coarseLake = lakeDepth ? toClimateGrid(lakeDepth, worldWidth, worldHeight) : null
 
   // Subsistence.
   const arable = scaleField(computeArable(temperature, precipitation, elevation, land, worldWidth, worldHeight), 'arable')

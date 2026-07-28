@@ -1,5 +1,5 @@
-import type { PlateSeed } from './plateSeeds'
-import { toroidalDistanceSq } from './toroidal'
+import type { PlateSeed } from '../tectonics/plateSeeds'
+import { toroidalDistanceSq } from '../core/toroidal'
 
 // Nearest-seed assignment per pixel, using toroidal (wrapped) distance —
 // this is the actual Voronoi partition of the map into plates, kept as a

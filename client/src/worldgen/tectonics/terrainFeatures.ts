@@ -1,6 +1,7 @@
-import { wrappedDelta } from './toroidal'
+import { wrappedDelta } from '../core/toroidal'
 import { getVelocityAt, advancePointByMotion } from './plateMotion'
 import type { PlateMotion } from './plateMotion'
+import { wrapValue } from '../core/field'
 
 // A feature is a mountain *range* (or arc/ridge), or a *trench* — the
 // paired negative depression on the subducting side of a subduction/
@@ -192,8 +193,8 @@ export function advanceTerrainFeatures(features: TerrainFeature[], motions: Plat
       const velocityB = getVelocityAt(feature, motions[feature.plateB], width, height)
       const vx = (velocityA.vx + velocityB.vx) / 2
       const vy = (velocityA.vy + velocityB.vy) / 2
-      feature.x = (((feature.x + vx * angleStep) % width) + width) % width
-      feature.y = (((feature.y + vy * angleStep) % height) + height) % height
+      feature.x = wrapValue((feature.x + vx * angleStep), width)
+      feature.y = wrapValue((feature.y + vy * angleStep), height)
     } else {
       const motion = motions[feature.movesWithPlate]
       const rotated = advancePointByMotion(feature.x, feature.y, motion, angleStep, width, height)

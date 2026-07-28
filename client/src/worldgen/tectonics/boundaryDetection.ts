@@ -1,6 +1,6 @@
 import type { LatticePoint } from './boundaryLattice'
 import type { PlateSeed } from './plateSeeds'
-import { toroidalDistanceSq } from './toroidal'
+import { toroidalDistanceSq } from '../core/toroidal'
 
 export interface BoundaryPoint {
   latticeIndex: number

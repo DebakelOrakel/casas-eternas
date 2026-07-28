@@ -1,12 +1,13 @@
-import { elevationToColor } from './elevationColor'
-import { applyMountainRedistribution, computeRaftBaseline } from './elevationField'
-import { getVelocityAt } from './plateMotion'
-import type { PlateSimulation } from './plateSimulation'
+import { elevationToColor } from '../elevation/elevationColor'
+import { applyMountainRedistribution, computeRaftBaseline } from '../elevation/elevationField'
+import { getVelocityAt } from '../tectonics/plateMotion'
+import type { PlateSimulation } from '../tectonics/plateSimulation'
 import { rasterizeVoronoiPlates } from './voronoiRaster'
-import { computePlateCentroids } from './plateGeometry'
+import { computePlateCentroids } from '../tectonics/plateGeometry'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
 import type { ElevationRenderPool } from './elevationRenderPool'
+import { wrapValue } from '../core/field'
 
 // A per-plate velocity arrow, in world coordinates — the source data the
 // main-thread overlay compositor strokes onto the map (see WorldGenScreen).
@@ -112,13 +113,13 @@ function upscaleBilinearToroidal(src: Float32Array, srcWidth: number, srcHeight:
     const sy = y * fy
     const y0 = Math.floor(sy)
     const ty = sy - y0
-    const y0m = ((y0 % srcHeight) + srcHeight) % srcHeight
+    const y0m = wrapValue(y0, srcHeight)
     const y1m = (y0m + 1) % srcHeight
     for (let x = 0; x < dstWidth; x++) {
       const sx = x * fx
       const x0 = Math.floor(sx)
       const tx = sx - x0
-      const x0m = ((x0 % srcWidth) + srcWidth) % srcWidth
+      const x0m = wrapValue(x0, srcWidth)
       const x1m = (x0m + 1) % srcWidth
       const v00 = src[y0m * srcWidth + x0m]
       const v10 = src[y0m * srcWidth + x1m]

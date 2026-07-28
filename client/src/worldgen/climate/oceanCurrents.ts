@@ -1,5 +1,7 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from './climateField'
-import { SEA_LEVEL } from '../elevationScale'
+import { SEA_LEVEL } from '../elevation/elevationScale'
+import { sampleBilinearGrid } from '../core/field'
+import { wrapValue } from '../core/field'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -24,22 +26,9 @@ const COASTAL_STEPS = 4
 const COASTAL_DECAY = 0.8
 
 function wrapIndex(x: number, y: number): number {
-  return (((y % RY) + RY) % RY) * RX + (((x % RX) + RX) % RX)
+  return wrapValue(y, RY) * RX + wrapValue(x, RX)
 }
 
-function sampleWrapped(field: Float32Array, fx: number, fy: number): number {
-  const x = ((fx % RX) + RX) % RX
-  const y = ((fy % RY) + RY) % RY
-  const x0 = Math.floor(x)
-  const y0 = Math.floor(y)
-  const x1 = (x0 + 1) % RX
-  const y1 = (y0 + 1) % RY
-  const tx = x - x0
-  const ty = y - y0
-  const top = field[y0 * RX + x0] * (1 - tx) + field[y0 * RX + x1] * tx
-  const bottom = field[y1 * RX + x0] * (1 - tx) + field[y1 * RX + x1] * tx
-  return top * (1 - ty) + bottom * ty
-}
 
 // Wind-driven ocean surface currents as gyres, on the climate grid. Solves a
 // streamfunction ψ forced by the wind-stress curl with ψ=0 on land (so the
@@ -127,7 +116,7 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
         if (land[i]) continue
         const u = current[i * 2]
         const v = current[i * 2 + 1]
-        const advected = sampleWrapped(sst, gx - u * ADVECT_STEP, gy - v * ADVECT_STEP)
+        const advected = sampleBilinearGrid(sst, RX, RY, gx - u * ADVECT_STEP, gy - v * ADVECT_STEP)
         next[i] = advected * (1 - BASE_RELAX) + temperature[i] * BASE_RELAX
       }
     }

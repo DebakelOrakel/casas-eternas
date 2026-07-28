@@ -1,3 +1,5 @@
+import { smoothstep } from '../core/interpolation'
+import { wrapValue } from '../core/field'
 // Periodic ridged multifractal, used by elevationField.ts to give
 // tectonically-uplifted terrain fine ridge-and-valley structure that the
 // smooth distance-field uplift alone can't produce (docs/vision.md Phase 3
@@ -21,9 +23,6 @@ function hashLatticePoint(ix: number, iy: number, seed: number): number {
   return h / 4294967296 // [0, 1)
 }
 
-function smoothstep(t: number): number {
-  return t * t * (3 - 2 * t)
-}
 
 // Bilinear value noise over a lattice that repeats every (cellsX, cellsY)
 // integer units — coordinates are in lattice units; the caller scales
@@ -33,8 +32,8 @@ function periodicValueNoise2D(x: number, y: number, cellsX: number, cellsY: numb
   const y0 = Math.floor(y)
   const fx = x - x0
   const fy = y - y0
-  const x0m = (((x0 % cellsX) + cellsX) % cellsX) | 0
-  const y0m = (((y0 % cellsY) + cellsY) % cellsY) | 0
+  const x0m = wrapValue(x0, cellsX) | 0
+  const y0m = wrapValue(y0, cellsY) | 0
   const x1m = (x0m + 1) % cellsX
   const y1m = (y0m + 1) % cellsY
 
