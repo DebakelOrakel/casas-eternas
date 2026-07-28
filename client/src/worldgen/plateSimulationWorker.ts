@@ -164,6 +164,14 @@ export interface WorkerRestoreWorldMessage {
   snapshot: PlateSimulationSnapshot
   oceanAge: ArrayBuffer
   elevation: ArrayBuffer
+  // Absent in saves written before the mantle was persisted — deserializePlateSimulation
+  // then falls back to regenerating one, which is what every save used to do.
+  mantle?: ArrayBuffer
+  // The boundary-detection lattice's accumulated history, likewise optional for older
+  // saves. Measured: mantle and lattice TOGETHER are exactly what a bit-identical
+  // continuation needs — with only one of them restored, a loaded world drifts off
+  // the trajectory it was saved on.
+  lattice?: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer }
 }
 export type WorkerInboundMessage =
   | WorkerStartMessage
@@ -378,6 +386,15 @@ export interface WorkerMigrationDataMessage {
 export interface WorkerWorldDataMessage {
   type: 'worldData'
   snapshot: PlateSimulationSnapshot
+  // The mantle field, saved rather than regenerated: it is what the plate motions
+  // were fitted to, and what finalizeArchean read to place the plates in the first
+  // place. Restoring a world with a fresh random field left the plates drifting
+  // against a mantle that never produced them.
+  mantle: ArrayBuffer
+  // See WorkerRestoreWorldMessage.lattice — the other half of a faithful continuation.
+  latticeAccumulated: ArrayBuffer
+  latticeLockedEpochs: ArrayBuffer
+  latticeLastClassCode: ArrayBuffer
   oceanAge: ArrayBuffer
   elevation: ArrayBuffer
 }
@@ -974,19 +991,40 @@ function handleSerializeWorld(): void {
   // ocean-age / the worker's retained elevation.
   const oceanAge = sim.oceanAge.slice()
   const elevation = lastRawElevations.slice()
+  const mantle = sim.mantle.slice()
+  const accumulated = sim.latticeAccumulated.slice()
+  const locked = sim.latticeLockedEpochs.slice()
+  const lastClass = sim.latticeLastClassCode.slice()
   const worldMessage: WorkerWorldDataMessage = {
     type: 'worldData',
     snapshot: serializePlateSimulation(sim),
+    mantle: mantle.buffer as ArrayBuffer,
+    latticeAccumulated: accumulated.buffer as ArrayBuffer,
+    latticeLockedEpochs: locked.buffer as ArrayBuffer,
+    latticeLastClassCode: lastClass.buffer as ArrayBuffer,
     oceanAge: oceanAge.buffer as ArrayBuffer,
     elevation: elevation.buffer as ArrayBuffer,
   }
-  self.postMessage(worldMessage, [worldMessage.oceanAge, worldMessage.elevation])
+  self.postMessage(worldMessage, [worldMessage.mantle, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge, worldMessage.elevation])
 }
 
 function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'restoreWorld' }>): void {
   stopTicking()
   worldGeneration += 1
-  sim = deserializePlateSimulation(message.snapshot, new Float32Array(message.oceanAge))
+  sim = deserializePlateSimulation(message.snapshot, new Float32Array(message.oceanAge), message.mantle ? new Float32Array(message.mantle) : undefined)
+  // Restored after construction rather than through the constructor: the arrays are
+  // sized from the lattice the deserializer just built, so a save from a different
+  // lattice resolution is ignored instead of corrupting the grid.
+  if (message.lattice) {
+    const acc = new Float32Array(message.lattice.accumulated)
+    const lock = new Int16Array(message.lattice.lockedEpochs)
+    const cls = new Int8Array(message.lattice.lastClassCode)
+    if (acc.length === sim.latticeAccumulated.length) {
+      sim.latticeAccumulated.set(acc)
+      sim.latticeLockedEpochs.set(lock)
+      sim.latticeLastClassCode.set(cls)
+    }
+  }
   pendingEvents = []
   lastRawElevations = new Float32Array(message.elevation)
   // No stored pre-erosion field — a reset-erosion after a load just reverts

@@ -24,7 +24,18 @@ import { WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave
 import './worldgen.css'
 
 // The ecology per-field abundance weights persisted in world.yaml (keys `w_<field>`).
-const ECOLOGY_WEIGHT_FIELDS: EcologyFieldId[] = ['arable', 'fish', 'game', 'pasture', 'timber', 'salt', 'toolStone', 'copper', 'tin', 'iron', 'gold', 'silver', 'gems']
+// The ecology weights, grouped the way world.yaml nests them. The flat list is
+// DERIVED from this rather than kept alongside it, so a field can never be in the
+// save under one grouping and in the UI under none.
+const ECOLOGY_WEIGHT_GROUPS: readonly { readonly group: string; readonly fields: readonly EcologyFieldId[] }[] = [
+  { group: 'subsistence', fields: ['arable', 'fish', 'game', 'pasture'] },
+  { group: 'material', fields: ['timber', 'salt', 'toolStone'] },
+  { group: 'metal', fields: ['copper', 'tin', 'iron'] },
+  { group: 'prestige', fields: ['gold', 'silver', 'gems'] },
+]
+const ECOLOGY_WEIGHT_FIELDS: EcologyFieldId[] = ECOLOGY_WEIGHT_GROUPS.flatMap((g) => [...g.fields])
+const ecologyWeightPath = (field: EcologyFieldId): string =>
+  `spec.ecology.${ECOLOGY_WEIGHT_GROUPS.find((g) => g.fields.includes(field))!.group}.${field}`
 
 // The initial-migration races (icon toggles + distinct hues). Order = the race
 // index used in migrationOrigins / the worker's race field.
@@ -514,7 +525,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const worker = new Worker(new URL('../../worldgen/plateSimulationWorker.ts', import.meta.url), { type: 'module' })
   const postToWorker = (message: WorkerInboundMessage): void => worker.postMessage(message)
 
-  let simRunning = false
+  // Named for the PHASE, not "the sim": the Archean is a simulation too, and its own
+  // stepper is archeanRunning. The two are mutually exclusive — the worker runs both
+  // off a single interval — but the UI gates different buttons on each.
+  let tectonicsRunning = false
   // The Archean phase is running (its own stepper in the worker, separate from the
   // tectonic one). Both can never run at once: the Archean is finalised before the
   // tectonic phase can start.
@@ -546,7 +560,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // panel's own auto-recompute so it doesn't double-fire.
   let saveChainActive = false
   let erosionProgressFraction = 0
-  const isBusy = (): boolean => simRunning || erosionOpInFlight || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight
+  const isBusy = (): boolean => tectonicsRunning || erosionOpInFlight || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight
 
   // Disable every panel control while a compute runs; the running process keeps its
   // stop button live (tectonics = toggle-sim, erosion = erode, which becomes a stop).
@@ -561,7 +575,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     loadWorldButton.disabled = busy
     saveWorldButton.disabled = busy
     // Stop buttons of the active process stay enabled.
-    toggleSimButton.disabled = busy && !simRunning
+    toggleSimButton.disabled = busy && !tectonicsRunning
     erodeButton.disabled = busy && !erosionOpInFlight
     // Genesis inputs (debounced-)regenerate the whole world, so lock them while busy;
     // the erosion/climate/river sliders are left live for tuning (they only affect the
@@ -590,7 +604,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       computeProgress.classList.remove('is-indeterminate')
       computeProgressFill.style.width = `${Math.round(archeanStabilised * 100)}%`
       computeProgressFill.dataset.stage = archeanStage(archeanStabilised).stage
-    } else if (simRunning || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight) {
+    } else if (tectonicsRunning || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight) {
       computeProgress.hidden = false
       computeProgress.classList.add('is-indeterminate')
       computeProgressFill.style.width = ''
@@ -1290,7 +1304,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // the tectonic phase, they redraw every epoch while running — which reads as
     // flicker rather than information. Available only when something is paused.
     // Available from the tectonic phase on, running or not — the plates are the thing
-    // you are watching there, and hiding them mid-run (which is what `!simRunning`
+    // you are watching there, and hiding them mid-run (which is what `!tectonicsRunning`
     // used to do) removed them exactly when they were moving.
     //
     // In Genesis it appears only while the Archean is PAUSED, where it previews the
@@ -1717,7 +1731,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // climate (the worker caches its precipitation as the river water source); the
   // hydrology panel ensures that first. Self-guards a running sim.
   function requestHydrology(): void {
-    if (simRunning) return
+    if (tectonicsRunning) return
     hydrologyInFlight = true
     updateControlsDisabled()
     updateProgress()
@@ -1727,7 +1741,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Posts a climate compute with the current band-slider offset. Fired on
   // opening the climate panel and by the slider (debounced) for live re-tuning.
   function requestClimate(): void {
-    if (simRunning) return
+    if (tectonicsRunning) return
     climateStatus.textContent = '…'
     climateInFlight = true
     updateControlsDisabled()
@@ -1827,7 +1841,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Posts a migration compute with the enabled races' origins + the sliders. Needs
   // ecology (carrying capacity, cached in the worker) — the panel ensures it first.
   function requestMigration(): void {
-    if (simRunning || !hasEcologyData() || migrationOrigins.length === 0) return
+    if (tectonicsRunning || !hasEcologyData() || migrationOrigins.length === 0) return
     const origins = migrationOrigins.filter((o) => migrationRaceEnabled[o.race])
     if (origins.length === 0) { invalidateMigration(); return } // all races off → nothing
     migrationInFlight = true
@@ -1840,7 +1854,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // auto-places origins (first time) and computes migration. Runs on panel open;
   // no panel switch (the computes are worker-side).
   async function ensureMigration(): Promise<void> {
-    if (simRunning || erosionRunCount < 1) return
+    if (tectonicsRunning || erosionRunCount < 1) return
     if (lastTemperature === null) await awaitCompute((r) => { climateResolve = r }, requestClimate)
     if (lastRiverData === null) await awaitCompute((r) => { hydrologyResolve = r }, requestHydrology)
     if (!hasEcologyData()) await awaitCompute((r) => { ecologyResolve = r }, requestEcology)
@@ -1854,7 +1868,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function requestEcology(): void {
     // Needs a computed climate (the worker no-ops without it, which would leave
     // ecologyInFlight stuck). Hydrology is optional (fish falls back to marine).
-    if (simRunning || lastTemperature === null) return
+    if (tectonicsRunning || lastTemperature === null) return
     ecologyInFlight = true
     updateControlsDisabled()
     updateProgress()
@@ -1957,10 +1971,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Safety auto-stop once this run reaches its armed target epoch (see
     // startSim / autoStopAtEpoch) — reuses the manual-pause path (stopSim),
     // so the play/pause button and everything else it toggles stay in sync.
-    // Guarded by simRunning, so it's a no-op during erosion redraws (which
+    // Guarded by tectonicsRunning, so it's a no-op during erosion redraws (which
     // run while stopped) and can't re-fire before the next deliberate start
     // re-arms it.
-    if (simRunning && message.epoch >= autoStopAtEpoch) {
+    if (tectonicsRunning && message.epoch >= autoStopAtEpoch) {
       stopSim()
     }
 
@@ -2061,8 +2075,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   const stopSim = (): void => {
-    if (!simRunning) return
-    simRunning = false
+    if (!tectonicsRunning) return
+    tectonicsRunning = false
     postToWorker({ type: 'stop' })
     updateOverlays()
     toggleSimIcon.src = '/icons/tectonics.png'
@@ -2072,8 +2086,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   const startSim = (): void => {
-    if (simRunning) return
-    simRunning = true
+    if (tectonicsRunning) return
+    tectonicsRunning = true
     updateOverlays()
     // Re-arm the safety auto-stop for another MAX_TECTONICS_EPOCHS from
     // wherever this run begins (see MAX_TECTONICS_EPOCHS / the 'rendered'
@@ -2091,7 +2105,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   toggleSimButton.addEventListener('click', () => {
-    if (simRunning) stopSim()
+    if (tectonicsRunning) stopSim()
     else startSim()
   })
 
@@ -2145,23 +2159,36 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       'metadata:',
       `  name: ${name}`,
       'spec:',
+      // Grouped by the pipeline stage that owns each knob, in the order the panels
+      // run. `seed` stays at the top: it is the world's identity, not a setting of
+      // any one stage.
       `  seed: "${seedInput.value}"`,
-      `  mantleVigour: ${Number(mantleVigourInput.value)}`,
-      `  water: ${Number(waterInput.value)}`,
-      `  archeanEpochs: ${lastArcheanEpochs}`,
-      `  tempOffset: ${Number(tempBandInput.value)}`,
-      `  humidity: ${Number(humidityInput.value)}`,
-      `  contrast: ${Number(contrastInput.value)}`,
-      `  equatorOffset: ${Number(equatorOffsetInput.value)}`,
-      `  riverDensity: ${Number(riverDensityInput.value)}`,
-      `  erosionStrength: ${Number(strengthInput.value)}`,
-      `  drainageRefresh: ${Number(refreshInput.value)}`,
-      `  carryingCapacity: ${Number(carryingCapacityInput.value)}`,
-      `  concentration: ${Number(concentrationInput.value)}`,
-      `  provinceStrength: ${Number(provinceInput.value)}`,
-      ...ECOLOGY_WEIGHT_FIELDS.map((f) => `  w_${f}: ${Number(foldoutInputs[f]?.value ?? 100)}`),
+      '  genesis:',
+      `    mantleVigour: ${Number(mantleVigourInput.value)}`,
+      `    water: ${Number(waterInput.value)}`,
+      '  erosion:',
+      `    erosionStrength: ${Number(strengthInput.value)}`,
+      `    drainageRefresh: ${Number(refreshInput.value)}`,
+      '  climate:',
+      `    tempOffset: ${Number(tempBandInput.value)}`,
+      `    humidity: ${Number(humidityInput.value)}`,
+      `    contrast: ${Number(contrastInput.value)}`,
+      `    equatorOffset: ${Number(equatorOffsetInput.value)}`,
+      '  hydrology:',
+      `    riverDensity: ${Number(riverDensityInput.value)}`,
+      '  ecology:',
+      `    carryingCapacity: ${Number(carryingCapacityInput.value)}`,
+      `    concentration: ${Number(concentrationInput.value)}`,
+      `    provinceStrength: ${Number(provinceInput.value)}`,
+      ...ECOLOGY_WEIGHT_GROUPS.flatMap((g) => [
+        `    ${g.group}:`,
+        ...g.fields.map((f) => `      ${f}: ${Number(foldoutInputs[f]?.value ?? 100)}`),
+      ]),
       'status:',
-      `  tectonicsRun: ${lastEpoch}`,
+      // Only what state.json does NOT already carry. tectonicsRun and archeanEpochs
+      // used to sit here and in spec, duplicating the snapshot's own `epoch` and
+      // `archeanEpochs` — two sources for one fact, and nothing read the yaml copies.
+      // The erosion count has no home in the snapshot, so this stays load-bearing.
       `  erosionRun: ${erosionRunCount}`,
       '',
     ].join('\n')
@@ -2192,9 +2219,24 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   // Flat, single-occurrence keys → a tiny regex parser, no YAML dependency.
-  function readYamlValue(text: string, key: string): string | undefined {
-    const match = text.match(new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm'))
-    return match ? match[1].replace(/^["']|["']$/g, '') : undefined
+  // Reads a dotted path ("ecology.metal.iron") out of the recipe by tracking
+  // indentation. It used to match the leaf name anywhere in the document, which
+  // worked only as long as no two groups ever shared a key — an invariant nothing
+  // enforced and the nesting makes easy to break.
+  function readYamlValue(text: string, path: string): string | undefined {
+    const stack: { indent: number; key: string }[] = []
+    for (const line of text.split('\n')) {
+      const match = line.match(/^(\s*)([\w-]+):\s*(.*)$/)
+      if (!match) continue
+      const [, indentText, key, rawValue] = match
+      const indent = indentText.length
+      while (stack.length > 0 && stack[stack.length - 1].indent >= indent) stack.pop()
+      stack.push({ indent, key })
+      if (rawValue !== '' && stack.map((e) => e.key).join('.') === path) {
+        return rawValue.replace(/^["']|["']$/g, '')
+      }
+    }
+    return undefined
   }
 
   // Downscaled PNG of the current composited map, for the save's preview.png.
@@ -2268,6 +2310,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const zip = new JSZip()
     zip.file('world.yaml', buildWorldYaml())
     zip.file('state.json', JSON.stringify(message.snapshot))
+    zip.file('mantle.f32', message.mantle)
+    zip.file('lattice.acc.f32', message.latticeAccumulated)
+    zip.file('lattice.lock.i16', message.latticeLockedEpochs)
+    zip.file('lattice.class.i8', message.latticeLastClassCode)
     zip.file('oceanAge.f32', message.oceanAge)
     zip.file('elevation.f32', message.elevation)
     bakeQueryLayers(zip)
@@ -2286,7 +2332,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   saveWorldButton.addEventListener('click', () => { void saveWorld() })
 
   async function saveWorld(): Promise<void> {
-    if (simRunning) return
+    if (tectonicsRunning) return
     // Compute-on-save: bake everything the world's current pipeline stage allows,
     // independent of which panels were visited. Climate/hydrology/ecology need
     // eroded terrain (same gate as their panels) — pre-erosion, only elevation is
@@ -2312,6 +2358,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     let snapshot: PlateSimulationSnapshot
     let oceanAge: ArrayBuffer
     let elevation: ArrayBuffer
+    // Optional: saves written before these were persisted have no such entries, and
+    // the worker falls back to regenerating the mantle and starting the lattice empty
+    // — exactly what every load used to do.
+    let mantle: ArrayBuffer | undefined
+    let lattice: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer } | undefined
     try {
       zip = await JSZip.loadAsync(file)
       const yamlFile = zip.file('world.yaml')
@@ -2323,6 +2374,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       snapshot = JSON.parse(await stateFile.async('string'))
       oceanAge = await oceanFile.async('arraybuffer')
       elevation = await elevFile.async('arraybuffer')
+      const mantleFile = zip.file('mantle.f32')
+      mantle = mantleFile ? await mantleFile.async('arraybuffer') : undefined
+      const accFile = zip.file('lattice.acc.f32')
+      const lockFile = zip.file('lattice.lock.i16')
+      const clsFile = zip.file('lattice.class.i8')
+      lattice = accFile && lockFile && clsFile
+        ? { accumulated: await accFile.async('arraybuffer'), lockedEpochs: await lockFile.async('arraybuffer'), lastClassCode: await clsFile.async('arraybuffer') }
+        : undefined
     } catch {
       ctx.notifications.show({ message: 'Invalid world file', icon: '/icons/folder.png', durationMs: 6000 })
       return
@@ -2336,33 +2395,35 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     overlay.clearMarkers()
     invalidateClimate()
 
-    const seed = readYamlValue(yaml, 'seed') ?? ''
+    const seed = readYamlValue(yaml, 'spec.seed') ?? ''
     seedInput.value = seed
-    mantleVigourInput.value = readYamlValue(yaml, 'mantleVigour') ?? mantleVigourInput.value
-    waterInput.value = readYamlValue(yaml, 'water') ?? waterInput.value
+    mantleVigourInput.value = readYamlValue(yaml, 'spec.genesis.mantleVigour') ?? mantleVigourInput.value
+    waterInput.value = readYamlValue(yaml, 'spec.genesis.water') ?? waterInput.value
     // A restored world is past the Archean: its state is loaded, not re-simulated.
-    lastArcheanEpochs = Number(readYamlValue(yaml, 'archeanEpochs') ?? '0')
+    // Read from the snapshot, which is where the number actually lives — the yaml
+    // used to carry a second copy under spec.
+    lastArcheanEpochs = snapshot.archeanEpochs ?? 0
     setArcheanRunning(false)
-    tempBandInput.value = readYamlValue(yaml, 'tempOffset') ?? '0'
-    humidityInput.value = readYamlValue(yaml, 'humidity') ?? '100'
-    contrastInput.value = readYamlValue(yaml, 'contrast') ?? '100'
-    equatorOffsetInput.value = readYamlValue(yaml, 'equatorOffset') ?? '0'
-    riverDensityInput.value = readYamlValue(yaml, 'riverDensity') ?? '55'
-    strengthInput.value = readYamlValue(yaml, 'erosionStrength') ?? strengthInput.value
-    refreshInput.value = readYamlValue(yaml, 'drainageRefresh') ?? refreshInput.value
-    carryingCapacityInput.value = readYamlValue(yaml, 'carryingCapacity') ?? '100'
-    concentrationInput.value = readYamlValue(yaml, 'concentration') ?? '0'
-    provinceInput.value = readYamlValue(yaml, 'provinceStrength') ?? '45'
+    tempBandInput.value = readYamlValue(yaml, 'spec.climate.tempOffset') ?? '0'
+    humidityInput.value = readYamlValue(yaml, 'spec.climate.humidity') ?? '100'
+    contrastInput.value = readYamlValue(yaml, 'spec.climate.contrast') ?? '100'
+    equatorOffsetInput.value = readYamlValue(yaml, 'spec.climate.equatorOffset') ?? '0'
+    riverDensityInput.value = readYamlValue(yaml, 'spec.hydrology.riverDensity') ?? '55'
+    strengthInput.value = readYamlValue(yaml, 'spec.erosion.erosionStrength') ?? strengthInput.value
+    refreshInput.value = readYamlValue(yaml, 'spec.erosion.drainageRefresh') ?? refreshInput.value
+    carryingCapacityInput.value = readYamlValue(yaml, 'spec.ecology.carryingCapacity') ?? '100'
+    concentrationInput.value = readYamlValue(yaml, 'spec.ecology.concentration') ?? '0'
+    provinceInput.value = readYamlValue(yaml, 'spec.ecology.provinceStrength') ?? '45'
     for (const f of ECOLOGY_WEIGHT_FIELDS) {
       const inp = foldoutInputs[f]
-      if (inp) inp.value = readYamlValue(yaml, `w_${f}`) ?? '100'
+      if (inp) inp.value = readYamlValue(yaml, ecologyWeightPath(f)) ?? '100'
     }
     syncSliderLabels()
-    erosionRunCount = Number(readYamlValue(yaml, 'erosionRun') ?? 0)
+    erosionRunCount = Number(readYamlValue(yaml, 'status.erosionRun') ?? 0)
     // lastEpoch is set from the restore render's reported epoch (status
     // .tectonicsRun == the snapshot's epoch), so no need to set it here.
 
-    postToWorker({ type: 'restoreWorld', seed, snapshot, oceanAge, elevation })
+    postToWorker({ type: 'restoreWorld', seed, snapshot, oceanAge, elevation, mantle, lattice })
   }
 
   loadWorldButton.addEventListener('click', () => {
@@ -2383,7 +2444,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   tempBandInput.addEventListener('input', () => {
     const v = Number(tempBandInput.value)
     tempBandLabel.textContent = v > 0 ? `+${v}` : String(v)
-    if (simRunning) return
+    if (tectonicsRunning) return
     clearTimeout(climateDebounce)
     climateDebounce = setTimeout(requestClimate, 150)
   })
@@ -2391,7 +2452,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const wireClimateSlider = (input: HTMLInputElement, label: HTMLElement): void => {
     input.addEventListener('input', () => {
       label.textContent = input.value
-      if (simRunning) return
+      if (tectonicsRunning) return
       clearTimeout(climateDebounce)
       climateDebounce = setTimeout(requestClimate, 150)
     })
@@ -2405,7 +2466,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let hydrologyDebounce: ReturnType<typeof setTimeout> | undefined
   riverDensityInput.addEventListener('input', () => {
     riverDensityLabel.textContent = riverDensityInput.value
-    if (simRunning) return
+    if (tectonicsRunning) return
     clearTimeout(hydrologyDebounce)
     hydrologyDebounce = setTimeout(requestHydrology, 150)
   })
@@ -2415,7 +2476,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // shows a signed value (+ clumped / − even).
   let ecologyDebounce: ReturnType<typeof setTimeout> | undefined
   const scheduleEcology = (): void => {
-    if (simRunning) return
+    if (tectonicsRunning) return
     clearTimeout(ecologyDebounce)
     ecologyDebounce = setTimeout(requestEcology, 150)
   }
@@ -2558,7 +2619,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   })
   let migrationDebounce: ReturnType<typeof setTimeout> | undefined
   const scheduleMigration = (): void => {
-    if (simRunning) return
+    if (tectonicsRunning) return
     clearTimeout(migrationDebounce)
     migrationDebounce = setTimeout(requestMigration, 150)
   }

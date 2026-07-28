@@ -52,7 +52,7 @@ export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationS
   }
 }
 
-export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: Float32Array): PlateSimulation {
+export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: Float32Array, mantle?: Float32Array): PlateSimulation {
   const lattice = generateDetectionLattice(snap.width, snap.height, DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y)
   return {
     width: snap.width,
@@ -76,10 +76,17 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
     oceanAge,
     supercontinentActive: snap.supercontinentActive,
     continentalRiftCooldownUntil: snap.continentalRiftCooldownUntil,
-    // Regenerated fresh on restore (not serialized) — like the detection lattice,
-    // it re-evolves toward the current crust config over a few epochs. Uses an
-    // independent RNG so it doesn't disturb the bit-identical continuation RNG.
-    mantle: createMantleField(mulberry32((snap.warpSeed ^ 0x5bd1e995) >>> 0)),
+    // Restored when the save carries one. It used to be regenerated unconditionally,
+    // on the reasoning that it re-evolves toward the current crust config within a few
+    // epochs — but the plate motions were FITTED to the saved field, and the plate
+    // positions themselves came from its extrema at the Archean handover. Continuing
+    // from a fresh random field therefore refitted every plate to a mantle that had
+    // never produced them.
+    //
+    // Saves written before the field was persisted still land here, and still get a
+    // regenerated one. The fallback RNG is independent of `random` so it cannot
+    // disturb the bit-identical continuation.
+    mantle: mantle ?? createMantleField(mulberry32((snap.warpSeed ^ 0x5bd1e995) >>> 0)),
     hotspots: snap.hotspots ?? [],
     // Old saves predate the suture cache — start empty; sutures re-accumulate as
     // the restored world keeps colliding continents (deep-time record is lost for

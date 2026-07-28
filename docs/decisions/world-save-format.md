@@ -16,48 +16,80 @@ loads are **instant** and survive generator-code changes.
 
 ```
 <name>.zip
-├── world.yaml       # the recipe (spec) + how far it was taken (status)
-├── state.json       # the sim snapshot (PlateSimulationSnapshot)
-├── oceanAge.f32     # ocean-age raster, Float32 256×128
-├── elevation.f32    # current (post-erosion) elevation, Float32 2048×1024
-└── preview.png      # 512×256 thumbnail of the composited map
+├── world.yaml            # the recipe (spec) + what only it records (status)
+├── state.json            # the sim snapshot (PlateSimulationSnapshot)
+├── mantle.f32            # mantle buoyancy field, Float32 128×64
+├── lattice.acc.f32       # boundary-detection accumulator, Float32 256×128
+├── lattice.lock.i16      # epochs each lattice point has held its class, Int16
+├── lattice.class.i8      # last boundary class per lattice point, Int8
+├── oceanAge.f32          # ocean-age raster, Float32 256×128
+├── elevation.f32         # current (post-erosion) elevation, Float32 2048×1024
+├── manifest.json         # layer index for consumers (see queryable-world-save.md)
+├── layers/…              # baked query layers (climate / ecology / rivers)
+└── preview.png           # 512×256 thumbnail of the composited map
 ```
 
 ### world.yaml (Kubernetes-style)
 
 ```yaml
 apiVersion: casas-eternas/v1alpha1
-kind: World
+kind: FlatWorld
 metadata:
   name: <name>
 spec:
   seed: "<seed>"
-  platesTotal: <int>        # plate count
-  landRatio: <int>          # land fraction %
-  initialContinents: <int>  # craton count
-  clusterFactor: <int>      # clustering %
+  mantleVigour: <1-10>      # Archean mantle mixing (see archean-genesis.md)
+  water: <0-100>            # water delivered; 50 = Earth-like
   tempOffset: <int>         # climate temperature offset °C
+  humidity: <int>           # …and the rest of the climate / erosion / ecology sliders
 status:
-  tectonicsRun: <epochs>
   erosionRun: <passes>
 ```
 
-`spec` is the human-editable recipe; `status` records where the world was taken
-to. `apiVersion` versions the *generator*: while worldgen is under active
+`spec` is the human-editable recipe. The four sliders that used to sit there —
+plate count, land fraction, craton count, clustering — are gone: those specified an
+OUTCOME, and the Archean simulation makes them emergent (see archean-genesis.md).
+
+`status` holds **only what state.json does not**. It used to also carry
+`tectonicsRun`, and `spec` an `archeanEpochs`, both duplicating fields the snapshot
+already has (`epoch`, `archeanEpochs`) and neither read on load — two sources for
+one fact. The erosion pass count has no home in the snapshot, so it stays here and
+is genuinely load-bearing. `apiVersion` versions the *generator*: while worldgen is under active
 development, a save only guarantees a faithful reload against the same code
 version — bump the version on breaking generation changes so old saves are
 recognizably out of date.
 
 ## What's stored vs regenerated
 
-- **Stored** (in `state.json` + the two `.f32`): the sim snapshot — plate seeds/
-  motions/ages, rafts, terrain features, ocean age, epoch, warp seed, the flags,
-  and the **RNG internal state** (so continuation is bit-identical) — plus the
-  eroded elevation. These are what's expensive to replay.
+- **Stored**: the sim snapshot — plate seeds/motions/ages, rafts (with blob birth
+  epochs), terrain features, sutures, hotspots, ocean age, epoch, Archean epochs,
+  sea-level offset, warp seed, the flags, and the **RNG internal state** — plus the
+  eroded elevation, the mantle field, and the boundary-detection lattice.
 - **Regenerated on demand** (cheap, not stored): the derived plate `types`, the
-  boundary-detection lattice (its accumulators reset — a rift/merge just re-locks
-  over a few epochs), and all **climate layers** (temperature/wind/precipitation
-  recompute from the elevation + `tempOffset` when the climate panel opens).
+  lattice *geometry* (only its accumulated history is stored), and all **climate
+  layers** (temperature/wind/precipitation recompute from the elevation +
+  `tempOffset` when the climate panel opens).
+
+The mantle field and the lattice accumulators used to be in the second list, on the
+reasoning that both re-evolve toward the current configuration within a few epochs.
+Measured against a world that was never saved, continuing for 40 epochs after a
+round trip:
+
+| restored | calibration | alpha | bravo |
+|---|---|---|---|
+| neither | differs | differs | differs |
+| mantle only | identical | **differs** | identical |
+| lattice only | differs | differs | differs |
+| **both** | **identical** | **identical** | **identical** |
+
+So they are needed together, and the RNG state alone never bought the bit-identical
+continuation this section claimed. The reason is that neither is really derived: the
+plate motions were *fitted* to the saved mantle field, and the plate positions came
+from its extrema at the Archean handover — restoring a fresh field left the plates
+drifting against a mantle that had never produced them.
+
+Both are optional on load. Saves written before they were persisted still open, and
+still get a regenerated mantle and an empty lattice.
 
 ### Format choices
 
