@@ -9,7 +9,6 @@ import JSZip from 'jszip'
 import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/render/continentLabelRenderer'
-import type { PlateArrow } from '../../worldgen/render/elevationMapImage'
 import { elevationToMeters, metersToElevation, waterSliderToOffsetM } from '../../worldgen/elevation/elevationScale'
 import { formatWorldAge, worldAgeMa } from '../../worldgen/core/worldTime'
 import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/tectonics/plateSimulation'
@@ -38,7 +37,6 @@ const MIGRATION_RACES: { id: string; label: string; icon: string; rgb: [number, 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
 // from the worker's boundary mask — see the compositor).
 const BOUNDARY_COLOR: [number, number, number] = [15, 15, 15]
-const ARROW_COLOR = '#0f0f0f'
 
 // Event markers + notifications share one wall-clock lifetime, so a toast and
 // its geologic map marker appear and fade together (the user's coupling
@@ -336,11 +334,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
             <img src="/icons/tectonics.png" alt="" />
           </button>
           <span class="tectonics-stats">
-            <span class="stat"><span class="stat-num" data-value="stat-tect-age">–</span><span class="stat-label">Age</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-epoch">–</span><span class="stat-label">Epoch</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-plates">–</span><span class="stat-label">Plates</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-continents">–</span><span class="stat-label">Continents</span></span>
             <span class="stat"><span class="stat-num"><span data-value="stat-land">–</span><span class="stat-unit">%</span></span><span class="stat-label">Land</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-continents">–</span><span class="stat-label">Continents</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-plates">–</span><span class="stat-label">Plates</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-tect-age">–</span><span class="stat-label">Age</span></span>
           </span>
         </span>
       </label>
@@ -500,7 +497,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const tempMaxLabel = root.querySelector<HTMLElement>('[data-value="temp-max"]')!
   const tempMinLabel = root.querySelector<HTMLElement>('[data-value="temp-min"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
-  const statEpoch = root.querySelector<HTMLElement>('[data-value="stat-epoch"]')!
   const statTectAge = root.querySelector<HTMLElement>('[data-value="stat-tect-age"]')!
   const statPlates = root.querySelector<HTMLElement>('[data-value="stat-plates"]')!
   const statContinents = root.querySelector<HTMLElement>('[data-value="stat-continents"]')!
@@ -607,7 +603,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastContinentCount = 0
   const updateStats = (): void => {
     statLand.textContent = String(Math.round(lastLandFraction * 100))
-    statEpoch.textContent = String(lastEpoch)
     // The world clock runs across both phases — the Archean's epochs are worth
     // 5 Ma each and the tectonic ones 1 Ma, so this is not just the epoch count
     // rescaled. See core/worldTime.
@@ -617,7 +612,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
   updateStats()
 
-  // Overlays (boundaries / names / events / arrows) are composited on the main
+  // Overlays (boundaries / names / events) are composited on the main
   // thread over the worker's base color raster — the worker has no Canvas2D
   // (fonts/strokes) and toggling must be instant, so the base raster + overlay
   // source data are retained here and re-composited on demand rather than
@@ -625,7 +620,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // texture upload) lives in MapOverlayCompositor; only the worldgen-specific
   // layer drawing + event→marker/notification mapping stays here.
   let lastBoundaryMask: Uint8Array | null = null
-  let lastPlateArrows: PlateArrow[] = []
   let lastRaftLabels: ContinentLabelPlacement[] = []
   // Coarse mantle buoyancy field + hotspot plumes (from each render) for the
   // tectonics "Mantle" overlay: hot upwelling → red, cold downwelling → blue, plus
@@ -789,26 +783,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       c.fill()
       c.lineWidth = 3
       c.strokeStyle = 'rgba(90, 30, 0, 0.95)'
-      c.stroke()
-    }
-  }
-
-  function drawArrows(c: CanvasRenderingContext2D): void {
-    c.strokeStyle = ARROW_COLOR
-    c.lineWidth = 2
-    c.lineCap = 'round'
-    for (const { x, y, vx, vy } of lastPlateArrows) {
-      const endX = x + vx
-      const endY = y + vy
-      const angle = Math.atan2(vy, vx)
-      c.beginPath()
-      c.moveTo(x, y)
-      c.lineTo(endX, endY)
-      for (const wing of [-1, 1]) {
-        const wa = angle + Math.PI + wing * ((25 * Math.PI) / 180)
-        c.moveTo(endX, endY)
-        c.lineTo(endX + Math.cos(wa) * 12, endY + Math.sin(wa) * 12)
-      }
       c.stroke()
     }
   }
@@ -1221,12 +1195,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // this is the result and covers only the crust.
     { id: 'cratonAge', label: 'Craton age', enabled: false, hidden: true, paintPixels: paintCratonAge },
     { id: 'boundaries', label: 'Boundaries', enabled: false, paintPixels: paintBoundaryMask },
-    { id: 'arrows', label: 'Arrows', enabled: false, paint: (c) => paintWrapped(c, drawArrows) },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
     { id: 'currents', label: 'Currents', enabled: false, hidden: true, paint: drawCurrents },
     { id: 'lakes', label: 'Lakes', enabled: false, hidden: true, paintPixels: paintLakes },
-    // Events are always on — a persistent notification-coupled marker layer, not
-    // a user toggle. Arrows are unused (no toggle), kept only so the id resolves.
+    // Events are always on — a persistent notification-coupled marker layer,
+    // not a user toggle.
     { id: 'events', label: 'Events', enabled: true },
     { id: 'names', label: 'Names', enabled: false, paint: (c) => paintWrapped(c, (cc) => drawContinentLabels(cc, lastRaftLabels)) },
   ])
@@ -1316,7 +1289,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Plate outlines are meaningless during the Archean (no plates exist) and, in
     // the tectonic phase, they redraw every epoch while running — which reads as
     // flicker rather than information. Available only when something is paused.
-    { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null && archeanFinalised && !simRunning && !archeanRunning },
+    // Available from the tectonic phase on, running or not — the plates are the thing
+    // you are watching there, and hiding them mid-run (which is what `!simRunning`
+    // used to do) removed them exactly when they were moving.
+    //
+    // In Genesis it appears only while the Archean is PAUSED, where it previews the
+    // plates a handover would produce (see the worker's convectionCellSeeds call).
+    // Running, it is deliberately gone: the convection reorganises every epoch, so a
+    // live preview would flicker between answers none of which the world has taken.
+    { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null && (archeanFinalised || !archeanRunning) },
     // Blocked during the Archean: proto-cratons are not continents yet, they merge
     // and fragment constantly, and naming something that dissolves ten epochs later
     // is noise. finalizeArchean names them all when plate tectonics begins.
@@ -1945,7 +1926,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // so a toggle can re-composite without a worker round-trip, then draw the
     // current layer set.
     lastBoundaryMask = new Uint8Array(message.boundaryMask)
-    lastPlateArrows = message.plateArrows
     lastRaftLabels = message.raftLabels
     lastColoredBase = new Uint8ClampedArray(message.buffer)
     lastRelief = new Uint8Array(message.relief)
@@ -2070,9 +2050,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const { hint } = archeanStage(message.stabilisedFraction)
     archeanStabilised = message.stabilisedFraction
     worldHintEl.textContent = hint
-    worldBanner.hidden = false
+    // Genesis only, same rule the panel switch applies. Guarded here too rather than
+    // trusting that no Archean status can arrive once the phase has been handed over
+    // — the visibility rule then lives in one condition instead of in the timing of
+    // two messages.
+    worldBanner.hidden = panelIndex !== 0
     // The backdrop grows to carry the line and shrinks back when there is none.
-    overlayBackdrop.classList.add('has-banner')
+    overlayBackdrop.classList.toggle('has-banner', !worldBanner.hidden)
     updateProgress()
   }
 
@@ -2812,6 +2796,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // an old core. From the Tectonics panel on, the same map has to carry plates,
     // boundaries and names, so this stays available in the bar but off by default.
     overlaysOn.cratonAge = index === 0
+    // The narration band belongs to Genesis. It describes what the Archean is doing
+    // right now ("cratons are forming and still moving"), which stops being true the
+    // moment the phase is handed over — and it was previously only ever shown, never
+    // hidden, so the last Archean sentence stayed on screen for the rest of the run.
+    const genesis = index === 0
+    worldBanner.hidden = !genesis || worldHintEl.textContent === ''
+    overlayBackdrop.classList.toggle('has-banner', !worldBanner.hidden)
     // Rivers/lakes come on automatically when you enter the Hydrology panel (the
     // reason you're there), off elsewhere — same per-panel reset. Once the compute
     // finishes, handleHydrologyData's updateOverlays() makes the layer visible.

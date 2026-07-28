@@ -22,7 +22,8 @@ export const DETECTION_LATTICE_RESOLUTION_Y = 128
 
 // Angle (radians) each plate rotates about its own center every epoch.
 // plateMotion.ts calibrates angularSpeed so that a *full* unit of it
-// produces the target 30-90px "arrow length" speed at the seed — stepping
+// produces the target 30-90px speed at the seed (see LINEAR_SPEED_MIN/MAX_PX) —
+// stepping
 // by only 0.01 of that unit per epoch (the original value here) meant
 // actual on-screen displacement was ~0.3-0.9px/epoch, confirmed
 // empirically (10.41px measured over 18 epochs) — technically moving, far

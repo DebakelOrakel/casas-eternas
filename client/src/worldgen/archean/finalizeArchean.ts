@@ -38,7 +38,10 @@ const EXTREMUM_PROMINENCE = 0.35
 // not two plates.
 const MIN_SEED_SEPARATION_FRAC = 0.22
 
-function convectionCellSeeds(mantle: Float32Array, width: number, height: number): PlateSeed[] {
+// Exported so the Genesis panel can PREVIEW the plates a handover would produce
+// while the Archean is paused. It is the same function finalizeArchean uses, so the
+// preview is the answer, not an approximation of it.
+export function convectionCellSeeds(mantle: Float32Array, width: number, height: number): PlateSeed[] {
   const candidates: { x: number; y: number; strength: number }[] = []
   const at = (gx: number, gy: number): number =>
     mantle[(((gy % MANTLE_RES_Y) + MANTLE_RES_Y) % MANTLE_RES_Y) * MANTLE_RES_X + (((gx % MANTLE_RES_X) + MANTLE_RES_X) % MANTLE_RES_X)]

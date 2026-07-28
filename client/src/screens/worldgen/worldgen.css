@@ -437,6 +437,12 @@
   pointer-events: none;
   text-align: center;
 }
+/* Needed because the rule above sets `display: flex`, which outranks the browser's
+   own `[hidden] { display: none }` — so without this the banner ignores `hidden`
+   entirely and the last Archean sentence stays on screen for the whole run. */
+.worldgen-flat-screen .world-banner[hidden] {
+  display: none;
+}
 .worldgen-flat-screen .world-banner-hint {
   font-family: 'Cinzel', serif;
   font-weight: 400;

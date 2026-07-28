@@ -1,23 +1,11 @@
 import { elevationToColor } from '../elevation/elevationColor'
 import { applyMountainRedistribution, computeRaftBaseline } from '../elevation/elevationField'
-import { getVelocityAt } from '../tectonics/plateMotion'
 import type { PlateSimulation } from '../tectonics/plateSimulation'
 import { rasterizeVoronoiPlates } from './voronoiRaster'
-import { computePlateCentroids } from '../tectonics/plateGeometry'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
 import type { ElevationRenderPool } from './elevationRenderPool'
 import { wrapValue } from '../core/field'
-
-// A per-plate velocity arrow, in world coordinates — the source data the
-// main-thread overlay compositor strokes onto the map (see WorldGenScreen).
-// Kept as plain geometry here (worker has no Canvas2D); nothing is drawn.
-export interface PlateArrow {
-  x: number
-  y: number
-  vx: number
-  vy: number
-}
 
 // Whether to apply the mountain-accentuating gamma redistribution curve
 // (applyMountainRedistribution) before coloring. Temporarily false
@@ -46,8 +34,6 @@ export interface SimulationRenderResult {
   // full-res regardless of the elevation preview scale so the lines stay
   // crisp. Uint8 rather than a bitset for a straightforward transfer + draw.
   boundaryMask: Uint8Array
-  // Per-plate velocity arrows (world coords) for the motion overlay.
-  plateArrows: PlateArrow[]
   // Per-raft continent-name label geometry (position/angle/fit size) for the
   // names overlay — computed from raft blobs, no text drawn here.
   raftLabels: ContinentLabelPlacement[]
@@ -86,7 +72,7 @@ export interface RenderSimulationOptions {
   // resolution before coloring, so a live preview can render several times
   // faster at a slightly softer elevation shading. Must divide the map
   // dimensions evenly. Defaults to 1 (full resolution — no downscale, no
-  // upscale). The boundary mask, arrows, and labels stay full resolution
+  // upscale). The boundary mask and labels stay full resolution
   // regardless, so plate outlines and overlays remain crisp. Ignored when
   // precomputedElevations is supplied (that array is already the final
   // full-res field).
@@ -96,8 +82,7 @@ export interface RenderSimulationOptions {
 // Renders the simulation's current state into an RGBA buffer: elevation
 // (from the stateless distance-field query) determines every pixel's
 // color, except pixels right on a plate boundary — those stay a dark
-// outline on top (see showBoundaries). Velocity arrows are drawn last, on
-// top of both (see showArrows).
+// outline on top (see showBoundaries).
 //
 // Bilinear upscale of a low-res elevation grid back to full resolution,
 // wrapping toroidally at both seams (the map wraps in both axes, so the
@@ -138,7 +123,7 @@ function upscaleBilinearToroidal(src: Float32Array, srcWidth: number, srcHeight:
 // a pool of nested workers (see elevationRenderPool.ts) rather than
 // computed inline here. Everything else in this function (Voronoi
 // rasterization, baseline blending, redistribution, coloring, boundary
-// lines, arrows, labels) stays single-threaded — combined, profiling
+// lines, labels) stays single-threaded — combined, profiling
 // showed it's under 15% of total cost, not worth distributing too.
 // What the renderer actually reads. Narrower than PlateSimulation on purpose: the
 // Archean has no plates, no features and no ocean-age field, and should not have to
@@ -148,7 +133,6 @@ export interface RenderableWorld {
   width: number
   height: number
   seeds: PlateSimulation['seeds']
-  motions: PlateSimulation['motions']
   rafts: PlateSimulation['rafts']
   features: PlateSimulation['features']
   oceanAge: Float32Array
@@ -239,14 +223,8 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
   }
 
   // Overlay source data — always produced (cheap), toggled on the main
-  // thread. Arrows anchor at plate centroids; labels come from raft blobs.
-  const plateArrows: PlateArrow[] = hasPlates
-    ? computePlateCentroids(cellIds, sim.seeds.length, width, height).map((centroid, i) => {
-        const { vx, vy } = getVelocityAt(centroid, sim.motions[i], width, height)
-        return { x: centroid.x, y: centroid.y, vx, vy }
-      })
-    : []
+  // thread. Labels come from raft blobs.
   const raftLabels = computeRaftLabelPlacements(sim.rafts, width, height)
 
-  return { buffer, relief, boundaryMask, plateArrows, raftLabels, landFraction: landPixelCount / (width * height), rawElevations, elevations }
+  return { buffer, relief, boundaryMask, raftLabels, landFraction: landPixelCount / (width * height), rawElevations, elevations }
 }

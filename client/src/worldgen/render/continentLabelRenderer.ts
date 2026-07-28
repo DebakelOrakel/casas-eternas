@@ -93,7 +93,7 @@ export function drawContinentLabel(ctx: CanvasRenderingContext2D, placement: Con
   // perfectly plausible coastline; text is what makes an orientation bug
   // like this actually visible. Compensating here (mirror what we draw,
   // so the display's own mirror cancels it back out) is far less risky
-  // than touching the mesh/camera setup, which arrows and boundary lines
+  // than touching the mesh/camera setup, which the boundary lines
   // already depend on looking correct.
   ctx.scale(-1, 1)
   ctx.fillStyle = LABEL_FILL

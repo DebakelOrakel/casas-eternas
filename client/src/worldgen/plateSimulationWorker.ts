@@ -1,7 +1,7 @@
 import { getInitialPlateEvents, stepEpoch, serializePlateSimulation, deserializePlateSimulation } from './tectonics/plateSimulation'
 import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from './tectonics/plateSimulation'
 import { renderSimulationImage } from './render/elevationMapImage'
-import type { PlateArrow, RenderSimulationOptions } from './render/elevationMapImage'
+import type { RenderSimulationOptions } from './render/elevationMapImage'
 import type { ContinentLabelPlacement } from './render/continentLabelRenderer'
 import { ElevationRenderPool } from './render/elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './surface/erosion'
@@ -9,7 +9,7 @@ import type { ArcheanSimulation } from './archean/archeanState'
 import { createArcheanSimulation } from './archean/archeanState'
 import type { ArcheanParams } from './archean/archeanStep'
 import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from './archean/archeanStep'
-import { finalizeArchean } from './archean/finalizeArchean'
+import { convectionCellSeeds, finalizeArchean } from './archean/finalizeArchean'
 import { stabilisedFraction } from './crust/raftField'
 import { worldAgeMa } from './core/worldTime'
 import { fillDepressionsAndRouteFlow } from './surface/flowRouting'
@@ -271,11 +271,9 @@ export interface WorkerRenderedMessage {
   epoch: number
   // Overlay source data for the toggleable main-thread layers (no font or
   // Canvas2D in the worker, so nothing is drawn here — the screen composites
-  // boundaries, arrows, names, and event markers on top of `buffer`).
+  // boundaries, names, and event markers on top of `buffer`).
   // Full-res plate-boundary mask (1 = on a Voronoi edge), as raw bytes.
   boundaryMask: ArrayBuffer
-  // Per-plate velocity arrows (world coords) for the motion overlay.
-  plateArrows: PlateArrow[]
   // Per-raft continent-name label geometry for the names overlay.
   raftLabels: ContinentLabelPlacement[]
   // Current plate (Voronoi seed) count — for the tectonics panel stats.
@@ -584,7 +582,6 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     landFraction: result.landFraction,
     epoch: sim.epoch,
     boundaryMask: result.boundaryMask.buffer as ArrayBuffer,
-    plateArrows: result.plateArrows,
     raftLabels: result.raftLabels,
     plateCount: sim.seeds.length,
     events: eventsToSend,
@@ -605,8 +602,16 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   const gen = worldGeneration
   renderOptions.precomputedElevations = undefined
   renderOptions.elevationScale = elevationScale
+  const previewSeeds = intervalId === undefined ? convectionCellSeeds(archean.mantle, archean.width, archean.height) : []
   const result = await renderSimulationImage(
-    { width: archean.width, height: archean.height, seeds: [], motions: [], rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset },
+    // While PAUSED, show the plates this world would hand over — the same seeds
+    // finalizeArchean would place, so the preview is the answer rather than a guess.
+    // While running they are omitted: the convection reorganises every epoch, so a
+    // live preview would be a flicker of boundaries that mean nothing yet.
+    //
+    // Seeds only drive the Voronoi mask; the elevation raster reads rafts, ocean age
+    // and features, so previewing cannot disturb the terrain.
+    { width: archean.width, height: archean.height, seeds: previewSeeds, rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset },
     renderPool,
     renderOptions,
   )
@@ -632,7 +637,6 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     landFraction: result.landFraction,
     epoch: archean.epoch,
     boundaryMask: result.boundaryMask.buffer as ArrayBuffer,
-    plateArrows: [],
     raftLabels: result.raftLabels,
     plateCount: 0,
     events: [],

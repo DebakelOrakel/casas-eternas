@@ -31,9 +31,11 @@ export interface PlateMotion {
 const ROTATION_RADIUS_MIN_FACTOR = 0.5
 const ROTATION_RADIUS_MAX_FACTOR = 2.5
 
-// Target linear speed (pixels) at the plate's own seed — tuned for a
-// reasonable-looking arrow; spin is derived to reproduce it at whatever radius
-// the plate ended up with.
+// Target linear speed, in world pixels per full unit of angular speed, at the
+// plate's own seed; spin is derived to reproduce it at whatever radius the plate
+// ended up with. The range was originally chosen to make a legible velocity arrow
+// on a debug overlay that no longer exists — it survives as the calibration these
+// numbers were actually fitted to, not as something still checkable on screen.
 const LINEAR_SPEED_MIN_PX = 30
 const LINEAR_SPEED_MAX_PX = 90
 

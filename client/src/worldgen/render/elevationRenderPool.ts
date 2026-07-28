@@ -31,7 +31,7 @@ function resolvePoolSize(): number {
 // genuinely expensive part of a render (the per-pixel feature-uplift
 // query — see that file's own comment) out across them by horizontal
 // band. Everything else about a render (Voronoi rasterization, baseline
-// blending, redistribution, coloring, boundary lines, arrows, labels)
+// blending, redistribution, coloring, boundary lines, labels)
 // stays on the calling worker, single-threaded — profiling showed all
 // of that combined is under 15% of total render time, not worth the
 // complexity of distributing too.
