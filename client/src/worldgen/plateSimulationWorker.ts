@@ -10,6 +10,7 @@ import { createArcheanSimulation } from './archean/archeanState'
 import type { ArcheanParams } from './archean/archeanStep'
 import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from './archean/archeanStep'
 import { convectionCellSeeds, finalizeArchean } from './archean/finalizeArchean'
+import { findPlumeSites } from './tectonics/plumes'
 import { stabilisedFraction } from './crust/raftField'
 import { worldAgeMa } from './core/worldTime'
 import { fillDepressionsAndRouteFlow } from './surface/flowRouting'
@@ -647,7 +648,10 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     elevation: coarseElevation(result.elevations, archean.width, archean.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
-    hotspots: [],
+    // The Archean has plumes too — the same persistent upwellings crustNucleation
+    // reads to decide where crust appears. Showing them costs nothing new: the phase
+    // already computes them, and seeing WHERE crust is about to form is the point.
+    hotspots: findPlumeSites(archean.mantle, archean.width, archean.height),
     volcanoes: [],
     width: archean.width,
     height: archean.height,

@@ -1,7 +1,7 @@
 ---
 summary: An evolving coarse mantle field drives the plates (kinematic coupling) so the supercontinent (Wilson) cycle and volcanism both emerge from one substrate, instead of fixed Euler poles + scripted band-aids.
 date: 2026-07-25
-status: M1 + M2 (mantle field drives plates, Wilson cycle emerges) implemented; M3 (volcanism) + M4 not built
+status: M1 + M2 + M3 implemented (mantle field drives plates, Wilson cycle emerges, all three volcanism kinds ship); M4 not built
 ---
 
 # Evolving Plate Motion via a Mantle Field (+ Volcanism)
@@ -213,7 +213,9 @@ finite-step advection (exact offset-center rotation → rotation+translation), s
     ocean plates via `birthRidgePlate` that offset merges), not merely a liveliness knob — so it
     can't be traded away to drop the cooldown. **DECISION: keep lenient trigger + cd20** (the user
     confirmed "leave it as we had it"). The cooldown stays; it earns its keep.
-- **M3 — Volcanism. Hotspots DONE 2026-07-25; arc + flood basalts remain.**
+- **M3 — Volcanism. DONE.** Hotspots 2026-07-25; arc + flood basalts followed — `collectVolcanoes`
+  now emits all three kinds (`hotspot` / `flood` / `arc`), and since 2026-07-29 they have
+  their own overlay, split off the mantle field's.
   `sim.hotspots` = 5 fixed plumes (world coords, stationary in the deep-mantle frame);
   `depositHotspotVolcanoes` (in stepEpoch, throttled to every 2 epochs) finds the
   overlying plate at each plume and deposits a `range` feature there with tangent =

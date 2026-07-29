@@ -4,6 +4,7 @@ import { advanceRafts, recycleUnstabilisedCrust } from '../../crust/raftLifecycl
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantleField'
 import { advectOceanAge } from '../oceanAge'
 import { advancePointByMotion, getVelocityAt } from '../plateMotion'
+import { advancePlumes } from '../plumes'
 import { EPOCH_ANGLE_STEP, HOTSPOT_DEPOSIT_PER_EPOCH, HOTSPOT_EPOCH_INTERVAL, OCEANIC_SUBSIDENCE_DECAY_PER_EPOCH, RECYCLE_DOWNWELLING_THRESHOLD, STABILISATION_EPOCHS, THICKNESS_DECAY_PER_EPOCH } from '../tectonicsParams'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from '../terrainFeatures'
 import type { PlateSimulation } from '../plateSimulationTypes'
@@ -97,5 +98,8 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32A
   // Hotspot volcanism: the plumes are fixed while plates drift over them, so this
   // deposits a fresh volcano at each plume onto the current overlying plate (after
   // the decay above, so today's deposit stands full height). See M3 / mantleField.
+  // Before the deposit, so a cone lands where the plume is now. The plume creeps with
+  // its upwelling while the plate above races over it — which is what bends a chain.
+  advancePlumes(sim.hotspots, sim.mantle, sim.width, sim.height, sim.epoch)
   if (sim.epoch % HOTSPOT_EPOCH_INTERVAL === 0) depositHotspotVolcanoes(sim)
 }

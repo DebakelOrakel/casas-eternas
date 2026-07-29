@@ -2,7 +2,7 @@ import { generateDetectionLattice } from './boundaryLattice'
 import { createMantleField } from './mantleField'
 import { mulberry32 } from '../core/rng'
 import { derivePlateTypes } from '../crust/raftField'
-import { DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y, HOTSPOT_COUNT } from './tectonicsParams'
+import { DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y } from './tectonicsParams'
 import { coupleMantleToPlates } from './epoch/mantleCoupling'
 import { advancePlatesAndCrust } from './epoch/plateDrift'
 import { runBoundaryPass } from './epoch/boundaryPass'
@@ -23,11 +23,6 @@ import type { PlateSimulation, PlateSimulationSnapshot, SimEvent } from './plate
 // it since.
 export type { PlateSimulation, PlateSimulationSnapshot, SimEvent, SimEventType } from './plateSimulationTypes'
 export { eventCategory } from './plateSimulationTypes'
-
-
-export function createHotspots(random: () => number, width: number, height: number): { x: number; y: number }[] {
-  return Array.from({ length: HOTSPOT_COUNT }, () => ({ x: random() * width, y: random() * height }))
-}
 
 
 export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationSnapshot {

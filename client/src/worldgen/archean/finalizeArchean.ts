@@ -5,7 +5,7 @@ import { generatePlateMotions } from '../tectonics/plateMotion'
 import { derivePlateTypes } from '../crust/raftField'
 import { generateDetectionLattice } from '../tectonics/boundaryLattice'
 import { createOceanAgeField } from '../tectonics/oceanAge'
-import { createHotspots } from '../tectonics/plateSimulation'
+import { findPlumeSites } from '../tectonics/plumes'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
 import { toroidalDistanceSq } from '../core/toroidal'
 import { assignRaftNames } from '../crust/raftNames'
@@ -118,7 +118,9 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
     supercontinentActive: named.length <= 1,
     continentalRiftCooldownUntil: 0,
     mantle: archean.mantle,
-    hotspots: createHotspots(random, width, height),
+    // Derived from the mantle field the world just spent a whole eon shaping, not
+    // scattered at random — see plumes.ts. They keep moving with it from here on.
+    hotspots: findPlumeSites(archean.mantle, width, height),
     sutures: [],
   }
 }

@@ -1,3 +1,4 @@
+import type { Plume } from './plumes'
 import type { PlateSeed } from './plateSeeds'
 import type { PlateMotion } from './plateMotion'
 import type { PlateType } from './plateTypes'
@@ -86,7 +87,7 @@ export interface PlateSimulation {
   // while plates drift OVER them — each punches a volcano onto the overlying plate
   // every epoch, so the plate carries a chain away (a hotspot trail, Hawaii-style;
   // Phase M3). Fixed for the world's life.
-  hotspots: { x: number; y: number }[]
+  hotspots: Plume[]
   // Accumulated collision-belt history: every raft suture ever formed, kept for
   // the world's life (unlike terrain features, which get pruned). The Ecology
   // layer reads these as the provenance for tin / lode gold / metamorphic gems —
@@ -119,7 +120,7 @@ export interface PlateSimulationSnapshot {
   warpSeed: number
   supercontinentActive: boolean
   continentalRiftCooldownUntil: number
-  hotspots: { x: number; y: number }[]
+  hotspots: Plume[]
   sutures: Suture[]
   rngState: number
 }

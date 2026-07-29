@@ -785,7 +785,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // them: the volcanic PRODUCTS (red cones = hotspot chains, dark cones = flood-basalt
   // provinces, sized by thickness) underneath, then the fixed plume SOURCES (orange
   // rings) the hotspot chains trail from.
-  function drawMantleMarkers(c: CanvasRenderingContext2D): void {
+  function drawVolcanoes(c: CanvasRenderingContext2D): void {
     for (const v of lastVolcanoes) {
       // Arc volcanoes are smaller (individual cones in a chain); hotspot cones and
       // flood-basalt provinces are larger single edifices. Cone height ∝ thickness.
@@ -805,6 +805,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       c.strokeStyle = 'rgba(60, 12, 0, 0.9)'
       c.stroke()
     }
+  }
+
+  // The plume SOURCES, split from the cones they produce: a plume is a fixture of the
+  // deep mantle, the volcanoes are what it prints onto whatever drifts over it. They
+  // also do not exist in the same phases — the Archean has neither, while the mantle
+  // field it shares a button with is that phase's main content.
+  function drawHotspots(c: CanvasRenderingContext2D): void {
     for (const hs of lastHotspots) {
       c.beginPath()
       c.arc(hs.x, hs.y, 9, 0, Math.PI * 2)
@@ -1218,7 +1225,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Migration: race-tinted density fill (paintPixels) + origin markers (paint).
     { id: 'migration', label: 'Migration', enabled: false, hidden: true, paintPixels: paintMigration, paint: (c) => paintWrapped(c, (cc) => { drawMigrationArrows(cc); drawMigrationOrigins(cc) }) },
     // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
-    { id: 'mantle', label: 'Mantle', enabled: false, hidden: true, paintPixels: paintMantle, paint: (c) => paintWrapped(c, drawMantleMarkers) },
+    { id: 'mantle', label: 'Mantle', enabled: false, hidden: true, paintPixels: paintMantle },
+    { id: 'volcanoes', label: 'Volcanoes', enabled: false, hidden: true, paint: (c) => paintWrapped(c, drawVolcanoes) },
+    { id: 'hotspots', label: 'Hotspots', enabled: false, hidden: true, paint: (c) => paintWrapped(c, drawHotspots) },
     // After 'mantle', so on land the crust's own age wins over the tint of the
     // mantle beneath it — the mantle field is the cause and covers the whole map,
     // this is the result and covers only the crust.
@@ -1337,15 +1346,31 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'names', icon: '/icons/continent_name.png', labelKey: 'world.overlay.names', available: () => archeanFinalised && lastRaftLabels.length > 0 },
     {
       id: 'mantle', icon: '/icons/mantle.png', labelKey: 'world.overlay.mantle', available: () => lastMantle !== null,
-      legend: { type: 'swatches', title: 'Mantle & volcanism', items: [
-        { label: 'Upwelling (hot)', rgb: [225, 85, 55] },
-        { label: 'Downwelling (cold)', rgb: [55, 110, 210] },
-        { label: 'Volcano', rgb: [220, 55, 30], shape: 'cone' },
-        { label: 'Hotspot plume', rgb: [255, 140, 0], shape: 'ring' },
+      legend: { type: 'swatches', title: t('world.overlay.mantle.legend.title'), items: [
+        { label: t('world.overlay.mantle.legend.upwelling'), rgb: [225, 85, 55] },
+        { label: t('world.overlay.mantle.legend.downwelling'), rgb: [55, 110, 210] },
+      ] },
+    },
+    // Split out of the mantle overlay. It used to carry the field tint, the volcanic
+    // cones and the plume rings under one button with one static legend — which in the
+    // Genesis panel promised a "Volcano" and a "Hotspot plume" that can never appear
+    // there, because the Archean has neither. Three buttons, three honest legends.
+    {
+      id: 'volcanoes', icon: '/icons/volcano.png', labelKey: 'world.overlay.volcanoes', available: () => lastVolcanoes.length > 0,
+      legend: { type: 'swatches', title: t('world.overlay.volcanoes.legend.title'), items: [
+        { label: t('world.overlay.volcanoes.legend.hotspot'), rgb: [220, 55, 30], shape: 'cone' },
+        { label: t('world.overlay.volcanoes.legend.arc'), rgb: [235, 120, 30], shape: 'cone' },
+        { label: t('world.overlay.volcanoes.legend.flood'), rgb: [120, 25, 20], shape: 'cone' },
       ] },
     },
     {
-      id: 'cratonAge', icon: '/icons/mantle.png', labelKey: 'world.overlay.cratonAge',
+      id: 'hotspots', icon: '/icons/hotspot.png', labelKey: 'world.overlay.hotspots', available: () => lastHotspots.length > 0,
+      legend: { type: 'swatches', title: t('world.overlay.hotspots.legend.title'), items: [
+        { label: t('world.overlay.hotspots.legend.plume'), rgb: [255, 140, 0], shape: 'ring' },
+      ] },
+    },
+    {
+      id: 'cratonAge', icon: '/icons/craton.png', labelKey: 'world.overlay.cratonAge',
       // Available as soon as any crust exists, which in the Archean is within a few
       // epochs of the first upwelling standing still long enough.
       available: () => lastCratonAge !== null && lastCratonAge.some((v) => v >= 0),
@@ -1388,7 +1413,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // directly. Otherwise opening a category would reveal one identical button, which is
   // a click that buys nothing.
   const OVERLAY_GROUPS: { id: string; icon: string; labelKey: string; members: string[]; ecologyFields?: EcologyFieldId[] }[] = [
-    { id: 'genesis', icon: '/icons/mantle.png', labelKey: 'worldgen.panel.genesis.title', members: ['mantle', 'cratonAge'] },
+    { id: 'genesis', icon: '/icons/mantle.png', labelKey: 'worldgen.panel.genesis.title', members: ['mantle', 'cratonAge', 'volcanoes', 'hotspots'] },
     { id: 'tectonics', icon: '/icons/tectonics.png', labelKey: 'worldgen.panel.tectonics.title', members: ['boundaries', 'names'] },
     { id: 'climate', icon: '/icons/temperature.png', labelKey: 'worldgen.panel.climate.title', members: ['temperature', 'seasonality', 'wind', 'currents', 'precipitation', 'monsoon', 'biomes'] },
     { id: 'hydrology', icon: '/icons/river.png', labelKey: 'world.overlay.rivers.label', members: ['rivers'] },
@@ -3003,6 +3028,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // The mantle overlay is on for Genesis/Tectonics (where you watch the plates
     // drive), off from the Erosion panel (index 2) onward. Same per-panel reset.
     overlaysOn.mantle = index < 2
+    // Volcanism follows the mantle: both are the tectonic phase's story, and neither
+    // exists during Genesis (the Archean produces no features and no plumes).
+    overlaysOn.volcanoes = index === TECTONICS_PANEL_INDEX
+    overlaysOn.hotspots = index === TECTONICS_PANEL_INDEX
     // Craton age is on in Genesis only. There it is the point of the phase — the
     // coastline alone cannot show that a continent grew by welding young crust onto
     // an old core. From the Tectonics panel on, the same map has to carry plates,

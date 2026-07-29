@@ -296,11 +296,6 @@ export const BREAKUP_FRESH_CRUST_RADIUS = SPLIT_GAP
 // evolving field actually reorganizes the plates over a run.
 export const MANTLE_COUPLING_RATE = 0.15
 
-// Volcanic hotspots: a handful of fixed plumes, each depositing this much crustal
-// thickness per epoch onto whatever plate currently sits over it. Big enough that
-// even the brief pass before the plate carries the volcano off builds a visible
-// island; a slow plate lingers → deposits merge into one large volcano.
-export const HOTSPOT_COUNT = 5
 export const HOTSPOT_DEPOSIT_PER_EPOCH = 4
 // Only erupt every few epochs — spaces the chain into distinct volcanoes (like a
 // real island chain, not a continuous ridge) and keeps the feature count in check.
