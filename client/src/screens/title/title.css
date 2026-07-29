@@ -66,55 +66,7 @@
   letter-spacing: 0.12em;
 }
 
-.title-screen .mission {
-  width: min(1100px, 88vw);
-  text-align: left;
-}
-
-.title-screen .mission-title {
-  margin: 0 0 1.3rem;
-  font-size: clamp(1.3rem, 2.4vw, 1.9rem);
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  text-align: center;
-}
-
-.title-screen .mission-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  columns: 2;
-  column-gap: 3.5rem;
-  font-family: system-ui, -apple-system, sans-serif;
-}
-
-.title-screen .mission-list li {
-  position: relative;
-  padding-left: 1.1rem;
-  margin-bottom: 0.55rem;
-  font-size: 0.92rem;
-  line-height: 1.45;
-  letter-spacing: 0.01em;
-  color: #333;
-  break-inside: avoid;
-}
-
-.title-screen .mission-list li::before {
-  content: "–";
-  position: absolute;
-  left: 0;
-  color: #999;
-}
-
-/* Backlog items: reddish, appended to the same list (no separate heading). */
-.title-screen .mission-list li.backlog {
-  color: #b0433a;
-}
-
-.title-screen .mission-list li.backlog::before {
-  color: #b0433a;
-}
+/* The changelog viewer's own styles live in ui/changelog/changelog.css. */
 
 .title-screen .title-nav {
   position: absolute;
@@ -150,14 +102,9 @@
   text-decoration: underline;
 }
 
-/* Narrow screens: collapse the mission list to a single column, and drop the
-   bottom nav out of its absolute position into the normal flow (below the
-   list) so it can never overlap the list. The screen itself scrolls. */
+/* Narrow screens: drop the bottom nav out of its absolute position into the
+   normal flow (below the changelog) so it can never overlap. The screen scrolls. */
 @media (max-width: 720px) {
-  .title-screen .mission-list {
-    columns: 1;
-  }
-
   .title-screen .title-nav {
     position: static;
     left: auto;

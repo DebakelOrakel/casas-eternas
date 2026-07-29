@@ -4,37 +4,37 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-07-28
-- **new** Genesis: Archean core — the genesis sliders start a short Archean simulation; crust nuclei form only where it is hot *and* ocean. `worldgen.panel.genesis`
-- **changed** Genesis: Archean tuned for the hand-off into the tectonics phase. `worldgen.panel.genesis`
-- **changed** Genesis: mantle vigour drives the per-epoch mantle mixing — plate count follows it from ~24 down to ~5, and the largest landmass grows with it. `worldgen.panel.genesis`
-- **dropped** Genesis: vigour as the mantle's *initial* smoothing — measured to wash out within ~40 epochs (2.53x spread at epoch 0, 1.13x by 40) against a phase nobody stops before 150, so the slider moved nothing by the time it was read. `worldgen.panel.genesis`
+- **new** Genesis: Archean core — genesis sliders start a short Archean sim; crust nucleates only where hot *and* ocean. `worldgen.panel.genesis`
+- **changed** Genesis: Archean tuned for the hand-off into tectonics. `worldgen.panel.genesis`
+- **changed** Genesis: mantle vigour now drives the per-epoch mantle mixing — fewer plates, bigger landmasses. `worldgen.panel.genesis`
+- **dropped** Genesis: vigour as the mantle's *initial* smoothing — washed out within ~40 epochs, so the slider did nothing. `worldgen.panel.genesis`
 - **changed** Hydrology: new water level integrated into elevation/hydrology. `worldgen.panel.hydrology`
-- **fixed** Crust: the crust sink — land is now conserved instead of growing unbounded; rafts run real supercontinent cycles. `world.event`
-- **fixed** Crust: cratons weld on contact — a collision computed a suture and passed the continent's name on, then the next epoch advected every blob separately and undid it; rafts now move with the mean flow across their blobs, and the largest landmass grows from ~10% of all land to 43-70%. `world.event`
-- **fixed** Crust: raft connectivity — rafts were grouped about three times looser than the coastline the renderer draws (3 rafts counted where the map showed 46 landmasses), which also drove the land-fraction drift and the plate-count collapse. `world.event`
+- **fixed** Crust: crust sink — land conserved instead of growing unbounded; rafts cycle properly. `world.event`
+- **fixed** Crust: cratons weld on contact — rafts advect with the mean flow across their blobs instead of drifting apart. `world.event`
+- **fixed** Crust: raft connectivity — rafts now grouped to match the drawn coastline. `world.event`
 
 ## 2026-07-27
 - **changed** Elevation: recalibrated across the board — metre anchor (1.0 = 9000 m), GDH1 ocean age-depth, shelf-margin profile. `world.readout`
 - **changed** Erosion: step tuned (strength + drainage-refresh levers). `worldgen.panel.erosion`
-- **dropped** Erosion: deposition budget — deltas attempted, then reverted; erosion deliberately deletes its material (no excavation budget). `worldgen.panel.erosion`
+- **dropped** Erosion: deposition budget — deltas attempted, reverted; erosion deletes its material by design. `worldgen.panel.erosion`
 
 ## 2026-07-26
-- **new** Migration: initial migration (anthropology proto) — user-placed origins → least-cost dispersal → migration arrow-tree. `worldgen.panel.migration`
+- **new** Migration: initial migration (anthropology proto) — user-placed origins → least-cost dispersal → arrow-tree. `worldgen.panel.migration`
 - **new** Ecology: prestige resources — gold, silver, gems. `world.resource`
 - **new** Ecology: material resources — copper/tin/iron (geological), timber, salt, tool-stone. `world.resource`
 - **new** Ecology: fish — marine subsistence from upwelling. `world.resource.fish`
-- **new** Ecology: carrying-capacity / sustainability field (aggregate suitability). `world.resource.carryingCapacity`
+- **new** Ecology: carrying-capacity / sustainability field. `world.resource.carryingCapacity`
 - **changed** Ecology: sim prepared for the ecology phase.
 - **new** Climate: monsoon season — migrating ITCZ + land-sea wind reversal → wet-dry seasons, savannas. `world.overlay.monsoon`
-- **changed** Climate: model tuned; equator offset lever added (latitudinal shift). `worldgen.panel.climate`
+- **changed** Climate: model tuned; equator offset lever added. `worldgen.panel.climate`
 
 ## 2026-07-25
 - **new** Tectonics: mantle field coupled to plate motion — the supercontinent (Wilson) cycle emerges. `world.overlay.mantle`
-- **new** Tectonics: seafloor spreading — new ocean floor created at rifts, with ocean-age tracking.
+- **new** Tectonics: seafloor spreading — new ocean floor at rifts, with ocean-age tracking.
 - **new** Volcanism: hotspot island chains + overlay. `world.overlay.mantle`
 - **new** Volcanism: flood-basalt provinces at continental breakup.
 - **new** Volcanism: subduction-arc chains.
-- **new** Hydrology: tectonic rift lakes — grabens depth-capped so they fill into deep Baikal/Tanganyika-type lakes. `world.overlay.rivers`
+- **new** Hydrology: tectonic rift lakes — depth-capped grabens fill into deep lakes. `world.overlay.rivers`
 - **new** Climate: ocean currents — wind-stress-curl gyres → sea-surface temperature. `world.overlay.currents`
 - **new** Climate: seasonal fluctuations — seasonal temperature amplitude. `world.overlay.seasonality`
 - **new** Biomes: Whittaker classification. `world.biome`
@@ -42,10 +42,10 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **new** Hydrology: erosion-driven endorheic lakes — inflow vs. evaporation balance. `world.overlay.rivers`
 - **changed** Hydrology: fed back into biomes — riparian greening (Nile effect).
 - **changed** Erosion: step tuned.
-- **dropped** Erosion: Braun-Willett incision routing — built, then dropped as too subtle against the existing clamp; shipped strength + drainage-refresh sliders instead. `worldgen.panel.erosion`
+- **dropped** Erosion: Braun-Willett incision routing — too subtle against the existing clamp; shipped strength + drainage sliders instead. `worldgen.panel.erosion`
 
 ## 2026-07-24
-- **changed** Crust: continents reworked as metaball rafts decoupled from the plates — land/ocean ratio is emergent and conserved. `world.event`
+- **changed** Crust: continents reworked as metaball rafts decoupled from plates — land/ocean ratio emergent and conserved. `world.event`
 - **changed** Crust: raft lifecycle reworked — accretion, collision, breakup.
 - **changed** Tectonics: plate age modelled as a local field; plate sizes reworked (fewer, more size-skewed).
 - **changed** Tectonics: simulation tuned; realism improved.
@@ -54,7 +54,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **new** Climate: precipitation — moisture advection + orographic rain shadow. `world.overlay.precipitation`
 
 ## 2026-07-23
-- **new** Erosion: erosion phase — hybrid stream-power (MFD drainage area, D8 incision) + thermal talus, priority-flood pit filling. `worldgen.panel.erosion`
+- **new** Erosion: erosion phase — hybrid stream-power (MFD area, D8 incision) + thermal talus, priority-flood pit fill. `worldgen.panel.erosion`
 - **changed** Tectonics & erosion: improved.
 
 ## 2026-07-22
@@ -65,4 +65,4 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **changed** Tectonics: plate tectonics + visuals improved.
 
 ## 2026-07-20
-- **new** Tectonics: plate tectonics — Voronoi plates, Euler-pole motion, with an initial erosion pass. `worldgen.panel.tectonics`
+- **new** Tectonics: plate tectonics — Voronoi plates, Euler-pole motion, initial erosion pass. `worldgen.panel.tectonics`

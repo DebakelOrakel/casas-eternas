@@ -4,16 +4,16 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-07-28
-- **changed** Structure: worldgen restructured into modules (core / elevation / tectonics / crust / surface / render); a golden-hash harness now gates any refactor there.
-- **changed** Structure: the golden-hash harness moved into the repo (`npm run golden`) and builds its worlds through the Archean — it used to construct them from the four retired Genesis sliders, guarding a path nothing reached while the live one went unguarded.
-- **dropped** Structure: the pre-Archean world builder (`createPlateSimulation`, the initial raft generator, the worker's `init` path) — it took the four Genesis sliders the Archean replaced, and nothing had called it since.
-- **changed** Performance: the craton-age field scatters each blob over the cells it reaches instead of asking every cell about every blob — 92 ms down to 1 ms per epoch, which is what made it affordable as a live overlay.
+- **changed** Structure: worldgen restructured into modules (core / elevation / tectonics / crust / surface / render); golden-hash harness gates refactors.
+- **changed** Structure: golden-hash harness moved into the repo (`npm run golden`), now building worlds through the Archean.
+- **dropped** Structure: the pre-Archean world builder (`createPlateSimulation`, initial raft generator, worker `init`) — replaced by the Archean.
+- **changed** Performance: craton-age field scatters per blob instead of per cell — 92 ms → 1 ms per epoch.
 
 ## 2026-07-25
 - **new** Deploy: Dockerfile + Kubernetes manifests.
 
 ## 2026-07-24
-- **changed** Workers: Firefox nested-worker fix regressed — still open; workaround is to develop on Safari, real fix is to un-nest the render pool.
+- **changed** Workers: Firefox nested-worker fix regressed — open; workaround: dev on Safari (real fix: un-nest the render pool).
 
 ## 2026-07-23
 - **new** Workers: multi-worker simulation — a CPU worker pool (no GPU compute).
