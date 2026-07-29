@@ -362,7 +362,41 @@
   gap: 0.4rem;
   align-items: center;
 }
+/* The bar wraps so the fold-out can sit on its own full-width line beneath the
+   category row, centred with it. */
+.worldgen-flat-screen .overlay-bar {
+  flex-flow: row wrap;
+  justify-content: center;
+}
+
+/* Fold-out: the open category's overlays, on a line under the bar. `order: 1` puts it
+   below the categories (the ecology panel's own fold-out uses -1 to sit above its
+   row — there the row is at the bottom of the screen). */
+.worldgen-flat-screen .overlay-foldout {
+  flex-basis: 100%;
+  order: 1;
+  margin-top: 0.45rem;
+}
+.worldgen-flat-screen .overlay-foldout[hidden] {
+  display: none;
+}
+.worldgen-flat-screen .overlay-group-panel {
+  display: flex;
+  flex-flow: row wrap;
+  justify-content: center;
+  gap: 0.4rem;
+}
+.worldgen-flat-screen .overlay-group-panel[hidden] {
+  display: none;
+}
+
+/* Two questions, two channels — they used to share the opacity ramp (0.4 off, 0.7
+   hover, 1 active, 0.15 unavailable), which made "has data" and "is showing" hard to
+   tell apart at a glance. Now COLOUR answers "does this layer have data" and the DOT
+   below answers "is it on the map". Hover therefore cannot use opacity either, so it
+   nudges the icon instead. */
 .worldgen-flat-screen .overlay-icon {
+  position: relative;
   width: 32px;
   flex: none;
   border: none;
@@ -370,19 +404,29 @@
   padding: 0;
   line-height: 0;
   cursor: pointer;
-  opacity: 0.4;
-  transition: opacity 0.15s ease;
+  opacity: 1;
+  transition: transform 0.15s ease, opacity 0.15s ease;
 }
 .worldgen-flat-screen .overlay-icon img {
   width: 100%;
   height: auto;
   display: block;
 }
-.worldgen-flat-screen .overlay-icon:hover {
-  opacity: 0.7;
+.worldgen-flat-screen .overlay-icon:hover:not(.is-disabled) {
+  transform: scale(1.12);
 }
-.worldgen-flat-screen .overlay-icon.is-active {
-  opacity: 1;
+/* Sits just clear of the fold-out row below (icons end at 3rem, the fold-out starts
+   at 3.45rem). On a category button it means "something in this group is showing". */
+.worldgen-flat-screen .overlay-icon.is-active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -0.3rem;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: rgba(26, 26, 26, 0.7);
 }
 .worldgen-flat-screen .overlay-icon.is-disabled {
   opacity: 0.15;
@@ -392,6 +436,14 @@
 
 /* Fading backdrop behind the top overlay bar — mirror of the bottom panel's fade,
    but narrower — so the icons read against a busy map. Behind the icons (z 2). */
+/* Grows while a fold-out is open so its icons read against white, and shrinks back
+   when it closes — the fold-out is only ever on screen while the pointer is on the
+   bar, so the extra height is never carried for long. */
+.worldgen-flat-screen .overlay-bar-backdrop.has-foldout {
+  height: 8.5rem;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.9) 45%, rgba(255, 255, 255, 0.85) 70%, rgba(255, 255, 255, 0) 100%);
+}
+
 .worldgen-flat-screen .overlay-bar-backdrop {
   position: fixed;
   top: 0;
@@ -404,14 +456,14 @@
   transition: height 0.25s ease;
 }
 
-/* Grows only while a narration line is showing, and shrinks back when there is
-   none — the fade has to reach past the sentence (which sits at 4.2-5.9rem) or the
-   text would stand on the map instead of on white, but carrying that extra height
-   permanently would wash out the map for no reason. This is also why the banner
-   needs no background of its own. */
-.worldgen-flat-screen .overlay-bar-backdrop.has-banner {
-  height: 8.5rem;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.9) 40%, rgba(255, 255, 255, 0.85) 72%, rgba(255, 255, 255, 0) 100%);
+/* The Genesis panel's fade grows only while a narration line is showing, and shrinks
+   back when there is none — it has to reach past the sentence or the text would stand
+   on the map instead of on white, and carrying that extra height permanently would
+   wash out the map for no reason. This is also why the banner needs no background of
+   its own. Content is bottom-aligned, so the extra padding grows the fade upward
+   without moving a single control. */
+.worldgen-flat-screen .panel.has-banner {
+  padding-top: 7.5rem;
 }
 
 /* World age + phase hint, directly under the overlay bar. Not in the Genesis
@@ -428,7 +480,7 @@
    value is tuned for capitals. */
 .worldgen-flat-screen .world-banner {
   position: fixed;
-  top: 4.2rem;
+  bottom: 8.4rem;
   left: 0;
   right: 0;
   z-index: 2;

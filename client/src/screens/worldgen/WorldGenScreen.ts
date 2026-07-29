@@ -26,18 +26,32 @@ import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import './worldgen.css'
 
 // The ecology per-field abundance weights persisted in world.yaml (keys `w_<field>`).
-// The ecology weights, grouped the way world.yaml nests them. The flat list is
-// DERIVED from this rather than kept alongside it, so a field can never be in the
-// save under one grouping and in the UI under none.
-const ECOLOGY_WEIGHT_GROUPS: readonly { readonly group: string; readonly fields: readonly EcologyFieldId[] }[] = [
-  { group: 'subsistence', fields: ['arable', 'fish', 'game', 'pasture'] },
-  { group: 'material', fields: ['timber', 'salt', 'toolStone'] },
-  { group: 'metal', fields: ['copper', 'tin', 'iron'] },
-  { group: 'prestige', fields: ['gold', 'silver', 'gems'] },
+// The one grouping of ecology resources — used by the panel's abundance fold-out, by
+// the overlay bar's Ecology category, and by the nesting in world.yaml.
+//
+// It was briefly two lists, and they had already drifted: the panel called the third
+// group `metals` and ordered prestige silver-gold-gems, the save called it `metal` and
+// ordered it gold-silver-gems. One of them names a key in the save format, so a
+// divergence here is not cosmetic.
+const ECOLOGY_CATEGORIES: readonly { readonly id: string; readonly icon: string; readonly fields: readonly EcologyFieldId[] }[] = [
+  { id: 'subsistence', icon: 'wheat', fields: ['arable', 'fish', 'game', 'pasture'] },
+  { id: 'material', icon: 'stone_axe', fields: ['timber', 'salt', 'toolStone'] },
+  { id: 'metal', icon: 'ecology', fields: ['copper', 'tin', 'iron'] },
+  { id: 'prestige', icon: 'crown', fields: ['gold', 'silver', 'gems'] },
 ]
-const ECOLOGY_WEIGHT_FIELDS: EcologyFieldId[] = ECOLOGY_WEIGHT_GROUPS.flatMap((g) => [...g.fields])
+// Flat list DERIVED from the grouping, so a field can never be in the save under one
+// group and in the UI under none.
+const ECOLOGY_WEIGHT_FIELDS: EcologyFieldId[] = ECOLOGY_CATEGORIES.flatMap((c) => [...c.fields])
 const ecologyWeightPath = (field: EcologyFieldId): string =>
-  `spec.ecology.${ECOLOGY_WEIGHT_GROUPS.find((g) => g.fields.includes(field))!.group}.${field}`
+  `spec.ecology.${ECOLOGY_CATEGORIES.find((c) => c.fields.includes(field))!.id}.${field}`
+// Per-field icon; every field has its own.
+const FIELD_ICON: Record<EcologyFieldId, string> = {
+  carryingCapacity: 'ecology',
+  arable: 'wheat', fish: 'fish', game: 'deer', pasture: 'pastures',
+  timber: 'timber', salt: 'salt', toolStone: 'stone_axe',
+  copper: 'copper_ore', tin: 'tin_ore', iron: 'iron_ore',
+  silver: 'silver', gold: 'gold', gems: 'gems',
+}
 
 // The initial-migration races (icon toggles + distinct hues). Order = the race
 // index used in migrationOrigins / the worker's race field.
@@ -427,11 +441,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <span class="field-label">Provinces: <span data-value="province-label">45</span></span>
         <input type="range" class="province-input" min="0" max="100" step="5" value="45" aria-label="Province strength" />
       </label>
-      <span class="ecology-cat-buttons">
-        <button type="button" class="icon-button ecology-cat" data-eco-cat="subsistence" aria-label="Subsistence"><img src="/icons/wheat.png" alt="" /></button>
-        <button type="button" class="icon-button ecology-cat" data-eco-cat="material" aria-label="Material"><img src="/icons/stone_axe.png" alt="" /></button>
-        <button type="button" class="icon-button ecology-cat" data-eco-cat="metals" aria-label="Metals"><img src="/icons/ecology.png" alt="" /></button>
-        <button type="button" class="icon-button ecology-cat" data-eco-cat="prestige" aria-label="Prestige"><img src="/icons/crown.png" alt="" /></button>
+      <!-- Generated from ECOLOGY_CATEGORIES so the ids here cannot drift from the
+           ones the fold-out and world.yaml use; they already had once. -->
+      <span class="ecology-cat-buttons">${ECOLOGY_CATEGORIES.map((c) => `
+        <button type="button" class="icon-button ecology-cat" data-eco-cat="${c.id}" aria-label="${c.id}"><img src="/icons/${c.icon}.png" alt="" /></button>`).join('')}
       </span>
       <div class="ecology-foldout" data-value="ecology-foldout" hidden></div>
     </div>
@@ -1363,25 +1376,144 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const overlaysOn: Record<string, boolean> = {}
   for (const def of OVERLAY_DEFS) overlaysOn[def.id] = def.id === 'boundaries' || def.id === 'names' || def.id === 'terrain' || def.id === 'mantle'
 
+  // The bar carries one button per pipeline stage rather than one per overlay —
+  // fifteen icons in a row read as a wall, and most of them belong to a stage you are
+  // not looking at. Clicking a stage folds its overlays out beneath the bar; the
+  // Ecology panel's category fold-out is the model.
+  //
+  // `terrain` stays outside the grouping: it is not a data layer of any one stage but
+  // the map's own colouring, and it is the one people reach for constantly.
+  //
+  // A stage with a single overlay does NOT fold out — its button toggles that overlay
+  // directly. Otherwise opening a category would reveal one identical button, which is
+  // a click that buys nothing.
+  const OVERLAY_GROUPS: { id: string; icon: string; labelKey: string; members: string[]; ecologyFields?: EcologyFieldId[] }[] = [
+    { id: 'genesis', icon: '/icons/mantle.png', labelKey: 'worldgen.panel.genesis.title', members: ['mantle', 'cratonAge'] },
+    { id: 'tectonics', icon: '/icons/tectonics.png', labelKey: 'worldgen.panel.tectonics.title', members: ['boundaries', 'names'] },
+    { id: 'climate', icon: '/icons/temperature.png', labelKey: 'worldgen.panel.climate.title', members: ['temperature', 'seasonality', 'wind', 'currents', 'precipitation', 'monsoon', 'biomes'] },
+    { id: 'hydrology', icon: '/icons/river.png', labelKey: 'world.overlay.rivers.label', members: ['rivers'] },
+    // Ecology carries the aggregate plus every resource field. The fields duplicate
+    // the panel's own fold-out at the bottom, deliberately: down there they set
+    // ABUNDANCE, up here they choose what the map paints — same list, different job.
+    { id: 'ecology', icon: '/icons/ecology.png', labelKey: 'world.overlay.resources.label', members: [], ecologyFields: ['carryingCapacity', ...ECOLOGY_WEIGHT_FIELDS] },
+    { id: 'migration', icon: '/icons/human.png', labelKey: 'world.overlay.migration.label', members: ['migration'] },
+  ]
+  const defOf = (id: string): (typeof OVERLAY_DEFS)[number] => OVERLAY_DEFS.find((d) => d.id === id)!
+
   const overlayBar = document.createElement('div')
   overlayBar.className = 'overlay-bar'
   const overlayButtons: Record<string, HTMLButtonElement> = {}
-  for (const def of OVERLAY_DEFS) {
+  const groupButtons: Record<string, HTMLButtonElement> = {}
+  const groupPanels: Record<string, HTMLElement> = {}
+  const ecologyFieldButtons: Partial<Record<EcologyFieldId, HTMLButtonElement>> = {}
+  let openGroup: string | null = null
+
+  // `label` is the finished string; `helpBase` is the catalog prefix the hover help
+  // card reads its label+sentence from (null = no card). Split because the category
+  // buttons borrow the panel titles, which are `…title` keys with no `.help` sibling —
+  // reusing them costs those three buttons their help card and saves six keys.
+  function makeIconButton(icon: string, label: string, helpBase: string | null, onClick: () => void): HTMLButtonElement {
     const btn = document.createElement('button')
     btn.type = 'button'
     btn.className = 'overlay-icon'
-    // aria-label carries the localized name; data-help drives the hover help card
-    // (label + explanation from the catalog), replacing the native `title`.
-    btn.setAttribute('aria-label', t(`${def.labelKey}.label` as TKey))
-    btn.dataset.help = def.labelKey
+    btn.setAttribute('aria-label', label)
+    if (helpBase) btn.dataset.help = helpBase
     const img = document.createElement('img')
-    img.src = def.icon
+    img.src = icon
     img.alt = ''
     btn.appendChild(img)
-    btn.addEventListener('click', () => toggleOverlay(def.id))
-    overlayBar.appendChild(btn)
-    overlayButtons[def.id] = btn
+    btn.addEventListener('click', onClick)
+    return btn
   }
+
+  const terrainDef = defOf('terrain')
+  overlayButtons.terrain = makeIconButton(terrainDef.icon, t(`${terrainDef.labelKey}.label` as TKey), terrainDef.labelKey, () => toggleOverlay('terrain'))
+  overlayBar.appendChild(overlayButtons.terrain)
+
+  // Opening is a CLICK, but once something is open, hovering a neighbour switches to
+  // it — the desktop menu-bar convention. Hover-to-open was considered and rejected:
+  // this bar sits over the map, so moving the pointer across it to reach a control
+  // would flash panels onto exactly what you are looking at, and with six buttons in a
+  // row every trip to the far one crosses all the others.
+  function setOpenGroup(id: string | null): void {
+    openGroup = id
+    for (const group of OVERLAY_GROUPS) {
+      const panel = groupPanels[group.id]
+      if (panel) panel.hidden = group.id !== id
+    }
+    overlayFoldout.hidden = id === null || !groupPanels[id]
+    // The backdrop has to reach past the fold-out or its icons would sit on the bare
+    // map; carrying that height permanently would wash the map out for nothing. Same
+    // mechanism the narration line uses on the bottom panel.
+    overlayBackdrop.classList.toggle('has-foldout', !overlayFoldout.hidden)
+  }
+
+  // Closing on mouse-leave keeps the map clear without a second click. The grace
+  // period is what makes it bearable: the pointer clips a corner constantly on the way
+  // from the category row to the row below it, and closing on every one of those would
+  // read as the panel fighting back. Bound to the whole BAR, not to single buttons —
+  // the fold-out is a child of it, so travelling between the two rows never leaves.
+  const FOLDOUT_CLOSE_GRACE_MS = 180
+  let foldoutCloseTimer: number | undefined
+  overlayBar.addEventListener('mouseenter', () => {
+    if (foldoutCloseTimer !== undefined) { clearTimeout(foldoutCloseTimer); foldoutCloseTimer = undefined }
+  })
+  overlayBar.addEventListener('mouseleave', () => {
+    if (openGroup === null) return
+    foldoutCloseTimer = window.setTimeout(() => { foldoutCloseTimer = undefined; setOpenGroup(null) }, FOLDOUT_CLOSE_GRACE_MS)
+  })
+
+  const overlayFoldout = document.createElement('div')
+  overlayFoldout.className = 'overlay-foldout'
+  overlayFoldout.hidden = true
+
+  // Picking a resource field turns the ecology layer on and points it at that field.
+  // Unlike every other overlay these are mutually exclusive — paintEcology renders ONE
+  // field over the whole land, so a second could only overwrite the first. Clicking the
+  // one already showing switches the layer off again.
+  function selectEcologyField(field: EcologyFieldId): void {
+    if (overlaysOn.ecology && selectedEcologyField === field) {
+      overlaysOn.ecology = false
+    } else {
+      selectedEcologyField = field
+      overlaysOn.ecology = true
+    }
+    updateOverlays()
+  }
+
+  for (const group of OVERLAY_GROUPS) {
+    const single = group.members.length === 1 && !group.ecologyFields ? group.members[0] : null
+    const btn = makeIconButton(group.icon, t(group.labelKey as TKey), single ? group.labelKey.replace(/\.label$/, '') : null, () => {
+      if (single) toggleOverlay(single)
+      else setOpenGroup(openGroup === group.id ? null : group.id)
+    })
+    btn.addEventListener('mouseenter', () => {
+      if (openGroup !== null && !single) setOpenGroup(group.id)
+    })
+    groupButtons[group.id] = btn
+    overlayBar.appendChild(btn)
+    if (single) {
+      overlayButtons[single] = btn
+      continue
+    }
+    const panel = document.createElement('div')
+    panel.className = 'overlay-group-panel'
+    panel.hidden = true
+    for (const id of group.members) {
+      const def = defOf(id)
+      const memberBtn = makeIconButton(def.icon, t(`${def.labelKey}.label` as TKey), def.labelKey, () => toggleOverlay(id))
+      overlayButtons[id] = memberBtn
+      panel.appendChild(memberBtn)
+    }
+    for (const field of group.ecologyFields ?? []) {
+      const btn = makeIconButton(`/icons/${FIELD_ICON[field]}.png`, t(`world.resource.${field}.label` as TKey), `world.resource.${field}`, () => selectEcologyField(field))
+      ecologyFieldButtons[field] = btn
+      panel.appendChild(btn)
+    }
+    groupPanels[group.id] = panel
+    overlayFoldout.appendChild(panel)
+  }
+  overlayBar.appendChild(overlayFoldout)
   root.appendChild(overlayBar)
 
   // Fading backdrop behind the top overlay bar (mirrors the bottom panel's fade),
@@ -1390,9 +1522,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   overlayBackdrop.className = 'overlay-bar-backdrop'
   root.appendChild(overlayBackdrop)
 
-  // The phase hint sits under the overlay bar because it describes what the MAP is
-  // doing, not a control — the numbers behind it live in the panel with the button
-  // they belong to.
+  // The phase hint sits just above the compute bar, at the bottom. It used to sit
+  // under the overlay bar — until the bar grew a fold-out that landed on top of it —
+  // and the move turned out to be the better place anyway: the bar's three-stage
+  // COLOUR and this sentence come from the same archeanStage() call, so they say the
+  // same thing and had no business being at opposite edges of the screen.
   const worldBanner = document.createElement('div')
   worldBanner.className = 'world-banner'
   worldBanner.hidden = true
@@ -1494,14 +1628,38 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     hoverTooltip?.refresh()
   }
 
-  // Sync each button's disabled (unavailable) + active (on) look.
+  // Sync every button's disabled (unavailable) + active (on) look, at all three
+  // levels: the standalone terrain button, the per-stage category buttons, and the
+  // members inside a fold-out.
   function refreshOverlayBar(): void {
     for (const def of OVERLAY_DEFS) {
+      // `ecology` has no button of its own — its fold-out offers the fields directly,
+      // and the layer is on whenever one of them is picked.
       const btn = overlayButtons[def.id]
+      if (!btn) continue
       const avail = def.available()
       btn.disabled = !avail
       btn.classList.toggle('is-disabled', !avail)
       btn.classList.toggle('is-active', avail && overlaysOn[def.id])
+    }
+    const ecoAvailable = defOf('ecology').available()
+    for (const [field, btn] of Object.entries(ecologyFieldButtons) as [EcologyFieldId, HTMLButtonElement][]) {
+      btn.disabled = !ecoAvailable
+      btn.classList.toggle('is-disabled', !ecoAvailable)
+      btn.classList.toggle('is-active', ecoAvailable && overlaysOn.ecology && selectedEcologyField === field)
+    }
+    for (const group of OVERLAY_GROUPS) {
+      // A category is reachable when anything inside it is, and reads as active when
+      // anything inside it is showing — so a collapsed fold-out still tells you
+      // whether that stage is contributing to the map.
+      const ids = group.ecologyFields ? ['ecology'] : group.members
+      const avail = ids.some((id) => defOf(id).available())
+      const anyOn = ids.some((id) => overlaysOn[id] && defOf(id).available())
+      const btn = groupButtons[group.id]
+      btn.disabled = !avail
+      btn.classList.toggle('is-disabled', !avail)
+      btn.classList.toggle('is-active', anyOn)
+      if (!avail && openGroup === group.id) setOpenGroup(null)
     }
   }
 
@@ -2078,7 +2236,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // two messages.
     worldBanner.hidden = panelIndex !== 0
     // The backdrop grows to carry the line and shrinks back when there is none.
-    overlayBackdrop.classList.toggle('has-banner', !worldBanner.hidden)
+    panels[0].classList.toggle('has-banner', !worldBanner.hidden)
     updateProgress()
   }
 
@@ -2188,9 +2346,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       `    carryingCapacity: ${Number(carryingCapacityInput.value)}`,
       `    concentration: ${Number(concentrationInput.value)}`,
       `    provinceStrength: ${Number(provinceInput.value)}`,
-      ...ECOLOGY_WEIGHT_GROUPS.flatMap((g) => [
-        `    ${g.group}:`,
-        ...g.fields.map((f) => `      ${f}: ${Number(foldoutInputs[f]?.value ?? 100)}`),
+      ...ECOLOGY_CATEGORIES.flatMap((c) => [
+        `    ${c.id}:`,
+        ...c.fields.map((f) => `      ${f}: ${Number(foldoutInputs[f]?.value ?? 100)}`),
       ]),
       'status:',
       // Only what state.json does NOT already carry. tectonicsRun and archeanEpochs
@@ -2525,21 +2683,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // that category's per-field abundance sliders (each with its resource icon) in
   // the full-width sub-row (radio-style — one category open at a time). Hovering a
   // row previews that field.
-  const ECOLOGY_CATEGORIES: { id: string; fields: EcologyFieldId[] }[] = [
-    { id: 'subsistence', fields: ['arable', 'fish', 'game', 'pasture'] },
-    { id: 'material', fields: ['timber', 'salt', 'toolStone'] },
-    { id: 'metals', fields: ['copper', 'tin', 'iron'] },
-    { id: 'prestige', fields: ['silver', 'gold', 'gems'] },
-  ]
-  // Per-field icon (falls back to the category icon if ever missing). Every field
-  // has a dedicated icon.
-  const FIELD_ICON: Partial<Record<EcologyFieldId, string>> = {
-    arable: 'wheat', fish: 'fish', game: 'deer', pasture: 'pastures',
-    timber: 'timber', salt: 'salt', toolStone: 'stone_axe',
-    copper: 'copper_ore', tin: 'tin_ore', iron: 'iron_ore',
-    silver: 'silver', gold: 'gold', gems: 'gems',
-  }
-  const CAT_ICON: Record<string, string> = { subsistence: 'wheat', material: 'stone_axe', metals: 'ecology', prestige: 'crown' }
   const ecologyFoldout = root.querySelector<HTMLElement>('[data-value="ecology-foldout"]')!
   const foldoutInputs: Partial<Record<EcologyFieldId, HTMLInputElement>> = {}
   const foldoutLabels: Partial<Record<EcologyFieldId, HTMLElement>> = {}
@@ -2554,7 +2697,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       row.dataset.ecofield = field
       const icon = document.createElement('img')
       icon.className = 'ecology-nudge-icon'
-      icon.src = `/icons/${FIELD_ICON[field] ?? CAT_ICON[cat.id]}.png`
+      icon.src = `/icons/${FIELD_ICON[field]}.png`
       icon.alt = ''
       const label = document.createElement('span')
       label.className = 'field-label'
@@ -2871,7 +3014,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // hidden, so the last Archean sentence stayed on screen for the rest of the run.
     const genesis = index === 0
     worldBanner.hidden = !genesis || worldHintEl.textContent === ''
-    overlayBackdrop.classList.toggle('has-banner', !worldBanner.hidden)
+    panels[0].classList.toggle('has-banner', !worldBanner.hidden)
+    // Temperature comes on when you enter the Climate panel — the same reasoning as
+    // rivers below, and the same mechanism: it is switched on even before the climate
+    // has been computed (the entry above requests it), and handleClimateData's
+    // updateOverlays() makes the layer visible the moment the data lands. Otherwise
+    // entering the panel computed a climate and then showed a blank map until you
+    // found the right button.
+    overlaysOn.temperature = index === CLIMATE_PANEL_INDEX
     // Rivers/lakes come on automatically when you enter the Hydrology panel (the
     // reason you're there), off elsewhere — same per-panel reset. Once the compute
     // finishes, handleHydrologyData's updateOverlays() makes the layer visible.
