@@ -3,6 +3,10 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-07-29
+- **new** Localization: UI text starts moving to an i18n runtime (`i18n/i18n.ts`) with full EN + DE catalogs (209 keys, tsc-gated for completeness) and a title-screen EN/DE flag switch (top-right, persisted, applied at startup); the top overlay-icon bar reads its labels from the catalog (the rest of the UI is translated but not yet wired to `t()`). `world.overlay`
+- **new** Tooltips: a shared white floating-card primitive (`ui/tooltip/`) + a delegated control-help tooltip (`ui/help/HelpTooltip`, `data-help` → catalog label + help sentence, replacing native `title`), wired to the overlay icons (EN + DE); the map hover readout moved onto the same white card. `world.overlay`
+
 ## 2026-07-28
 - **new** Genesis: Archean UI — genesis-phase controls for the Archean simulation. `worldgen.panel.genesis`
 - **new** Genesis: plate preview — pausing the Archean shows the plates a hand-off would produce, from the very seeds the hand-off would use. `world.overlay`

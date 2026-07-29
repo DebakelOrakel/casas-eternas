@@ -11,6 +11,42 @@
   color: #1a1a1a;
 }
 
+/* Language switch — top-right, mirroring the worldgen load/save buttons on the
+   opposite edge. 32px like those, but text (EN/DE) rather than an icon. */
+.title-screen .lang-actions {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 3;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.title-screen .lang-button {
+  width: 32px;
+  flex: none;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.35;
+  transition: opacity 0.15s ease;
+}
+
+.title-screen .lang-button:hover {
+  opacity: 0.7;
+}
+
+.title-screen .lang-button.is-active {
+  opacity: 1;
+}
+
+.title-screen .lang-button img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
 .title-screen .title-block {
   text-align: center;
 }

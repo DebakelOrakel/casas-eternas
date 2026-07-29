@@ -1,6 +1,6 @@
 import { PointerEventTypes, Scene } from '@babylonjs/core'
 import type { Observer, PointerInfo } from '@babylonjs/core'
-import './mapTooltip.css'
+import { createFloatingCard } from '../ui/tooltip/floatingCard'
 
 export interface MapHoverTooltipOptions {
   scene: Scene
@@ -38,10 +38,8 @@ export interface MapHoverTooltip {
 export function createMapHoverTooltip(options: MapHoverTooltipOptions): MapHoverTooltip {
   const { scene, host, textureWidth, textureHeight, describe } = options
 
-  const el = document.createElement('div')
-  el.className = 'map-tooltip'
-  el.hidden = true
-  host.appendChild(el)
+  // The shared white floating card, following the cursor (see floatingCard.ts).
+  const card = createFloatingCard(host, 'tooltip-card--readout')
 
   let enabled = true
   // Last resolved cell + client position, so refresh() can re-describe in place.
@@ -51,22 +49,9 @@ export function createMapHoverTooltip(options: MapHoverTooltipOptions): MapHover
   let lastClientY = 0
 
   function hide(): void {
-    el.hidden = true
+    card.hide()
     lastCellX = -1
     lastCellY = -1
-  }
-
-  // Position near the cursor, nudged so the box never sits under the pointer or
-  // runs off the right/bottom edge.
-  function place(clientX: number, clientY: number): void {
-    const pad = 14
-    const rect = el.getBoundingClientRect()
-    let x = clientX + pad
-    let y = clientY + pad
-    if (x + rect.width > window.innerWidth) x = clientX - pad - rect.width
-    if (y + rect.height > window.innerHeight) y = clientY - pad - rect.height
-    el.style.left = `${Math.max(0, x)}px`
-    el.style.top = `${Math.max(0, y)}px`
   }
 
   function show(cellX: number, cellY: number, clientX: number, clientY: number): void {
@@ -76,14 +61,13 @@ export function createMapHoverTooltip(options: MapHoverTooltipOptions): MapHover
       return
     }
     // \n → separate lines; textContent per line keeps caller strings inert.
-    el.textContent = ''
+    card.el.textContent = ''
     for (const line of text.split('\n')) {
       const row = document.createElement('div')
       row.textContent = line
-      el.appendChild(row)
+      card.el.appendChild(row)
     }
-    el.hidden = false
-    place(clientX, clientY)
+    card.showAtPoint(clientX, clientY)
   }
 
   function probe(clientX: number, clientY: number): void {
@@ -129,7 +113,7 @@ export function createMapHoverTooltip(options: MapHoverTooltipOptions): MapHover
     dispose(): void {
       scene.onPointerObservable.remove(observer)
       canvas?.removeEventListener('pointerleave', onLeave)
-      el.remove()
+      card.dispose()
     },
   }
 }

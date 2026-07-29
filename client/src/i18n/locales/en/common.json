@@ -1,0 +1,19 @@
+{
+  "common.action.back.label": "Back",
+  "common.action.back.help": "Return to the previous generation step.",
+  "common.action.next.label": "Next",
+  "common.action.next.help": "Advance to the next generation step.",
+  "common.action.loadWorld.label": "Load world",
+  "common.action.loadWorld.help": "Open a previously saved world from a .zip file.",
+  "common.action.saveWorld.label": "Save world",
+  "common.action.saveWorld.help": "Download the current world as a .zip file.",
+  "common.action.dismiss.label": "Dismiss",
+  "common.action.dismiss.help": "Close this notification.",
+
+  "common.unit.celsius": "°C",
+  "common.unit.percent": "%",
+  "common.unit.times": "×",
+  "common.unit.mmPerYear": "mm/yr",
+
+  "common.notify.invalidWorldFile": "Invalid world file"
+}

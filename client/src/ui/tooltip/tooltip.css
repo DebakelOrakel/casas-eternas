@@ -1,0 +1,33 @@
+/* Shared floating-card look for both tooltip kinds (control help + map readout).
+   White, matching the light UI. Positioned by floatingCard.ts; pointer-inert so
+   it never eats hover. First line is the bold heading (label / first readout line). */
+.tooltip-card {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  max-width: 260px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #1a1a1a;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.16);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tooltip-card > div:first-child {
+  font-weight: 600;
+}
+
+/* Map hover readout: short value lines, one per active overlay — never wrap. */
+.tooltip-card--readout {
+  max-width: none;
+  white-space: nowrap;
+}
+
+/* Control help: label heading + a wrapping explanation sentence below it. */
+.tooltip-card--help > div:not(:first-child) {
+  margin-top: 2px;
+  opacity: 0.72;
+}

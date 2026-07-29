@@ -1,5 +1,6 @@
 import { ArcRotateCamera, Color4, Scene, Vector3 } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
+import { getLocale, setLocale, type Locale } from '../../i18n/i18n'
 import './title.css'
 
 export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
@@ -10,6 +11,14 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
   const root = document.createElement('div')
   root.className = 'title-screen'
   root.innerHTML = `
+    <div class="lang-actions">
+      <button type="button" class="lang-button" data-lang="en" aria-label="English">
+        <img src="/icons/lang_en.png" alt="" />
+      </button>
+      <button type="button" class="lang-button" data-lang="de" aria-label="Deutsch">
+        <img src="/icons/lang_de.png" alt="" />
+      </button>
+    </div>
     <!-- <div class="title-block">
       <h1>Casas Eternas</h1>
       <p class="subtitle">Herederos del Mundo</p>
@@ -61,6 +70,20 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
   root.querySelector('[data-action="mars"]')!.addEventListener('click', () => {
     ctx.goTo('mars')
   })
+
+  // Language switch (title screen only): mark the active locale, and on a change
+  // set it and rebuild the screen so every screen entered afterwards is localized.
+  const activeLocale = getLocale()
+  root.querySelectorAll<HTMLButtonElement>('.lang-button').forEach((btn) => {
+    const lang = btn.dataset.lang as Locale
+    if (lang === activeLocale) btn.classList.add('is-active')
+    btn.addEventListener('click', () => {
+      if (getLocale() === lang) return
+      setLocale(lang)
+      ctx.goTo('title')
+    })
+  })
+
   ctx.overlay.appendChild(root)
 
   return {

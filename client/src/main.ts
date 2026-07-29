@@ -1,5 +1,6 @@
 import './style.css'
 import { Engine } from '@babylonjs/core'
+import { initI18n } from './i18n/i18n'
 import { AppStateManager } from './app/AppStateManager'
 import { createTitleScreen } from './screens/title/TitleScreen'
 import { createWorldGenScreen } from './screens/worldgen/WorldGenScreen'
@@ -10,6 +11,8 @@ import { createMarsScreen } from './screens/mars/MarsScreen'
 const canvas = document.querySelector<HTMLCanvasElement>('#renderCanvas')!
 const overlay = document.querySelector<HTMLDivElement>('#overlay')!
 const engine = new Engine(canvas, true)
+
+initI18n()
 
 const app = new AppStateManager(engine, canvas, overlay, {
   title: createTitleScreen,

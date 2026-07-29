@@ -21,6 +21,8 @@ import { biomeColor, biomeLabel, biomeLegend, Biome } from '../../worldgen/clima
 import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '../../worldgen/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
 import { WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave/worldLayers'
+import { t, type TKey } from '../../i18n/i18n'
+import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import './worldgen.css'
 
 // The ecology per-field abundance weights persisted in world.yaml (keys `w_<field>`).
@@ -40,7 +42,7 @@ const ecologyWeightPath = (field: EcologyFieldId): string =>
 // The initial-migration races (icon toggles + distinct hues). Order = the race
 // index used in migrationOrigins / the worker's race field.
 const MIGRATION_RACES: { id: string; label: string; icon: string; rgb: [number, number, number] }[] = [
-  { id: 'caveman', label: 'Cavemen', icon: 'caveman', rgb: [86, 116, 200] },
+  { id: 'human', label: 'Humans', icon: 'human', rgb: [86, 116, 200] },
   { id: 'dwarf', label: 'Dwarves', icon: 'dwarf', rgb: [96, 176, 92] },
   { id: 'beaver', label: 'Beavers', icon: 'beaver', rgb: [216, 76, 58] },
 ]
@@ -1298,8 +1300,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     | { type: 'swatches'; title: string; items: { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' | 'ring' }[] }
   // `legend` may be a function so an overlay (ecology) can vary its legend with the
   // selected field. Resolved at render time (see resolveLegend / renderLegends).
-  const OVERLAY_DEFS: { id: string; icon: string; label: string; available: () => boolean; legend?: LegendSpec | (() => LegendSpec) }[] = [
-    { id: 'terrain', icon: '/icons/colours.png', label: 'Terrain colour', available: () => lastColoredBase !== null },
+  // `labelKey` is the world.overlay catalog key (see i18n/locales/en/world.json);
+  // `t(labelKey + '.label')` is the button's tooltip/aria text. The id and the key
+  // slug match except 'ecology' → 'resources'. (Legend titles below are not yet
+  // localized — a later step.)
+  const OVERLAY_DEFS: { id: string; icon: string; labelKey: string; available: () => boolean; legend?: LegendSpec | (() => LegendSpec) }[] = [
+    { id: 'terrain', icon: '/icons/colours.png', labelKey: 'world.overlay.terrain', available: () => lastColoredBase !== null },
     // Plate outlines are meaningless during the Archean (no plates exist) and, in
     // the tectonic phase, they redraw every epoch while running — which reads as
     // flicker rather than information. Available only when something is paused.
@@ -1311,13 +1317,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // plates a handover would produce (see the worker's convectionCellSeeds call).
     // Running, it is deliberately gone: the convection reorganises every epoch, so a
     // live preview would flicker between answers none of which the world has taken.
-    { id: 'boundaries', icon: '/icons/voronoi.png', label: 'Voronoi cells', available: () => lastBoundaryMask !== null && (archeanFinalised || !archeanRunning) },
+    { id: 'boundaries', icon: '/icons/voronoi.png', labelKey: 'world.overlay.boundaries', available: () => lastBoundaryMask !== null && (archeanFinalised || !archeanRunning) },
     // Blocked during the Archean: proto-cratons are not continents yet, they merge
     // and fragment constantly, and naming something that dissolves ten epochs later
     // is noise. finalizeArchean names them all when plate tectonics begins.
-    { id: 'names', icon: '/icons/continent_name.png', label: 'Continent names', available: () => archeanFinalised && lastRaftLabels.length > 0 },
+    { id: 'names', icon: '/icons/continent_name.png', labelKey: 'world.overlay.names', available: () => archeanFinalised && lastRaftLabels.length > 0 },
     {
-      id: 'mantle', icon: '/icons/mantle.png', label: 'Mantle field + volcanism', available: () => lastMantle !== null,
+      id: 'mantle', icon: '/icons/mantle.png', labelKey: 'world.overlay.mantle', available: () => lastMantle !== null,
       legend: { type: 'swatches', title: 'Mantle & volcanism', items: [
         { label: 'Upwelling (hot)', rgb: [225, 85, 55] },
         { label: 'Downwelling (cold)', rgb: [55, 110, 210] },
@@ -1326,27 +1332,27 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       ] },
     },
     {
-      id: 'cratonAge', icon: '/icons/mantle.png', label: 'Craton age',
+      id: 'cratonAge', icon: '/icons/mantle.png', labelKey: 'world.overlay.cratonAge',
       // Available as soon as any crust exists, which in the Archean is within a few
       // epochs of the first upwelling standing still long enough.
       available: () => lastCratonAge !== null && lastCratonAge.some((v) => v >= 0),
       legend: { type: 'gradient', title: 'Craton age', unit: '% of world age', stops: cratonAgeLegendStops },
     },
-    { id: 'temperature', icon: '/icons/temperature.png', label: 'Temperature', available: () => lastTemperature !== null, legend: { type: 'gradient', title: 'Temperature', unit: '°C', stops: temperatureLegendStops } },
-    { id: 'seasonality', icon: '/icons/seasonality.png', label: 'Seasonality', available: () => lastSeasonality !== null, legend: { type: 'gradient', title: 'Seasonality', unit: '°C range', stops: amplitudeLegendStops } },
-    { id: 'wind', icon: '/icons/wind.png', label: 'Wind', available: () => lastWind !== null },
-    { id: 'currents', icon: '/icons/gyres.png', label: 'Ocean currents', available: () => lastCurrents !== null },
-    { id: 'precipitation', icon: '/icons/rain.png', label: 'Precipitation', available: () => lastPrecipitation !== null, legend: { type: 'gradient', title: 'Precipitation', unit: 'mm/yr', stops: precipitationLegendStops } },
-    { id: 'monsoon', icon: '/icons/weather.png', label: 'Monsoon / precip seasonality', available: () => lastMonsoonIndex !== null, legend: { type: 'gradient', title: 'Monsoon index', unit: '', stops: monsoonLegendStops } },
-    { id: 'biomes', icon: '/icons/biomes.png', label: 'Biomes', available: () => lastBiomes !== null, legend: { type: 'swatches', title: 'Biomes', items: biomeLegend() } },
-    { id: 'rivers', icon: '/icons/river.png', label: 'Rivers & lakes', available: () => lastRiverData !== null },
+    { id: 'temperature', icon: '/icons/temperature.png', labelKey: 'world.overlay.temperature', available: () => lastTemperature !== null, legend: { type: 'gradient', title: 'Temperature', unit: '°C', stops: temperatureLegendStops } },
+    { id: 'seasonality', icon: '/icons/seasonality.png', labelKey: 'world.overlay.seasonality', available: () => lastSeasonality !== null, legend: { type: 'gradient', title: 'Seasonality', unit: '°C range', stops: amplitudeLegendStops } },
+    { id: 'wind', icon: '/icons/wind.png', labelKey: 'world.overlay.wind', available: () => lastWind !== null },
+    { id: 'currents', icon: '/icons/gyres.png', labelKey: 'world.overlay.currents', available: () => lastCurrents !== null },
+    { id: 'precipitation', icon: '/icons/rain.png', labelKey: 'world.overlay.precipitation', available: () => lastPrecipitation !== null, legend: { type: 'gradient', title: 'Precipitation', unit: 'mm/yr', stops: precipitationLegendStops } },
+    { id: 'monsoon', icon: '/icons/weather.png', labelKey: 'world.overlay.monsoon', available: () => lastMonsoonIndex !== null, legend: { type: 'gradient', title: 'Monsoon index', unit: '', stops: monsoonLegendStops } },
+    { id: 'biomes', icon: '/icons/biomes.png', labelKey: 'world.overlay.biomes', available: () => lastBiomes !== null, legend: { type: 'swatches', title: 'Biomes', items: biomeLegend() } },
+    { id: 'rivers', icon: '/icons/river.png', labelKey: 'world.overlay.rivers', available: () => lastRiverData !== null },
     {
-      id: 'ecology', icon: '/icons/ecology.png', label: 'Ecology (resources)', available: hasEcologyData,
+      id: 'ecology', icon: '/icons/ecology.png', labelKey: 'world.overlay.resources', available: hasEcologyData,
       legend: () => ({ type: 'gradient', title: ECOLOGY_FIELD_META[selectedEcologyField].label, unit: '', stops: ecologyFieldLegendStops(selectedEcologyField) }),
     },
-    // TODO(icon): placeholder caveman.png — a dedicated migration icon later.
+    // TODO(icon): reuses the human species icon — a dedicated migration icon later.
     {
-      id: 'migration', icon: '/icons/caveman.png', label: 'Migration', available: () => lastMigration !== null,
+      id: 'migration', icon: '/icons/human.png', labelKey: 'world.overlay.migration', available: () => lastMigration !== null,
       legend: { type: 'swatches', title: 'Peoples', items: MIGRATION_RACES.map((r) => ({ label: r.label, rgb: r.rgb })) },
     },
   ]
@@ -1364,8 +1370,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const btn = document.createElement('button')
     btn.type = 'button'
     btn.className = 'overlay-icon'
-    btn.title = def.label
-    btn.setAttribute('aria-label', def.label)
+    // aria-label carries the localized name; data-help drives the hover help card
+    // (label + explanation from the catalog), replacing the native `title`.
+    btn.setAttribute('aria-label', t(`${def.labelKey}.label` as TKey))
+    btn.dataset.help = def.labelKey
     const img = document.createElement('img')
     img.src = def.icon
     img.alt = ''
@@ -2892,6 +2900,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     textureHeight: MAP_HEIGHT,
     describe: describeClimateCell,
   })
+
+  // Control-help tooltips: one delegated listener on the screen root drives the
+  // hover help card for every element carrying data-help (the overlay icons for
+  // now; more controls as they get keys).
+  const helpTooltip = createHelpTooltip(root)
+
   showPanel(0)
 
   root.querySelector('[data-action="back"]')!.addEventListener('click', () => {
@@ -2918,6 +2932,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scene,
     dispose() {
       stopSim()
+      helpTooltip.dispose()
       hoverTooltip?.dispose()
       riverLayer?.dispose()
       overlay.dispose()

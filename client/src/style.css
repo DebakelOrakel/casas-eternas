@@ -3,6 +3,9 @@ html, body {
   padding: 0;
   overflow: hidden;
   height: 100%;
+  /* App-wide default font — the same sans-serif the bottom panel labels use.
+     Tooltips (and anything else) inherit it; the title screen opts into Cinzel. */
+  font-family: sans-serif;
 }
 
 #renderCanvas {
