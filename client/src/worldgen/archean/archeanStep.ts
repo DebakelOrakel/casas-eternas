@@ -142,7 +142,7 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // tectonic-phase concept, and stamping them with Archean epochs would put them on
   // a different clock from the ones the Ecology layer already consumes.
   mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, sim.epoch, width, height)
-  sim.lastSplits = splitDisconnectedRafts(sim.rafts, RAFT_CONNECT_FACTOR, sim.random, width, height)
+  sim.lastSplits = splitDisconnectedRafts(sim.rafts, RAFT_CONNECT_FACTOR, sim.random, width, height, false)
 
   sim.epoch += 1
 }

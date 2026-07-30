@@ -765,15 +765,23 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // field, which is a cause acting everywhere, this is a property OF the land, and a
   // faint version of it would be unreadable against the terrain colouring.
   function paintCratonAge(data: Uint8ClampedArray): void {
-    if (!lastCratonAge) return
+    if (!lastCratonAge || !lastRelief) return
     for (let y = 0; y < MAP_HEIGHT; y++) {
       const gy = Math.min(mantleResY - 1, Math.floor((y / MAP_HEIGHT) * mantleResY))
       for (let x = 0; x < MAP_WIDTH; x++) {
+        const i = y * MAP_WIDTH + x
+        // Masked to the coastline the renderer actually drew, not to the crust field's
+        // own reach. computeCratonOldnessField reports an age wherever ANY blob kernel
+        // touches — that is the full blob radius — but land only begins where the
+        // SUMMED metaball field clears sea level, which for a lone blob is 0.458 of its
+        // radius. Painting the field directly therefore covered about five times the
+        // area of the island under it, and the overlay visibly overhung the coast.
+        if (!(lastRelief[i] & 128)) continue
         const gx = Math.min(mantleResX - 1, Math.floor((x / MAP_WIDTH) * mantleResX))
         const age = lastCratonAge[gy * mantleResX + gx]
-        if (age < 0) continue // ocean — no crust here
+        if (age < 0) continue // no crust here at all
         const [r, g, b] = cratonAgeColor(age)
-        const p = (y * MAP_WIDTH + x) * 4
+        const p = i * 4
         data[p] = data[p] * (1 - CRATON_AGE_ALPHA) + r * CRATON_AGE_ALPHA
         data[p + 1] = data[p + 1] * (1 - CRATON_AGE_ALPHA) + g * CRATON_AGE_ALPHA
         data[p + 2] = data[p + 2] * (1 - CRATON_AGE_ALPHA) + b * CRATON_AGE_ALPHA

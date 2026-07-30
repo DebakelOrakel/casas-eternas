@@ -221,3 +221,27 @@ export function marginParameter(field: number): number {
   const t = Math.max(0, Math.min(1, (field - MARGIN_FIELD_LO) / (MARGIN_FIELD_HI - MARGIN_FIELD_LO)))
   return smoothstep(t)
 }
+
+// The raft-field value at which land begins — the single answer to "is there crust
+// here", for everyone who needs to ask.
+//
+// It existed implicitly as the zero crossing of marginProfile, and everything that
+// needed the answer guessed its own: the mantle's membership band sat at 0.35-0.65,
+// and the Archean's "already crust here" test at 0.15. Measured against the rendered
+// coastline, that last one treated one and a half to two times the land area as
+// occupied — a belt of open water around every island in which no new crust could
+// form, so crust could never grow onto an existing shore and always arrived as a
+// separate island instead.
+//
+// Solved numerically rather than written down, so it follows MARGIN_STOPS and the
+// LO/HI band instead of drifting from them the moment either is retuned.
+export const SHORELINE_FIELD = ((): number => {
+  let lo = MARGIN_FIELD_LO
+  let hi = MARGIN_FIELD_HI
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2
+    if (marginProfile(marginParameter(mid), ABYSSAL_FLOOR) > 0) hi = mid
+    else lo = mid
+  }
+  return (lo + hi) / 2
+})()

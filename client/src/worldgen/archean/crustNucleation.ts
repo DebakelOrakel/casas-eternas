@@ -2,6 +2,7 @@ import type { Raft, RaftBlob } from '../crust/raftTypes'
 import { raftField } from '../crust/raftField'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
 import { toroidalDistanceSq } from '../core/toroidal'
+import { SHORELINE_FIELD } from '../elevation/elevationScale'
 
 // Where new continental crust appears in the Archean.
 //
@@ -33,8 +34,15 @@ export interface NucleationParams {
   // Consecutive epochs above that threshold before crust forms.
   persistenceEpochs: number
   // Raft field value above which a cell already counts as crust and is skipped.
-  // Read from the raw metaball field rather than thresholded membership, so the
-  // "is this already continent" test is as generous as the crust's actual reach.
+  //
+  // This is SHORELINE_FIELD — the level at which land begins — and not a number of its
+  // own. It used to be 0.15, chosen to be "as generous as the crust's actual reach",
+  // which turned out to mean something quite different from what it sounds like:
+  // measured against the rendered coastline, it treated 1.5 to 2 times the land area
+  // as occupied. Every island sat inside a belt of open water where nothing could
+  // nucleate, so new crust could never appear against an existing shore and fuse with
+  // it — it had to land far enough out to become its own island. Hence a world of many
+  // small masses that stopped growing.
   occupiedFieldLevel: number
   // Radius of a newly nucleated crust blob, in world pixels.
   blobRadius: number
@@ -46,7 +54,7 @@ export interface NucleationParams {
 export const DEFAULT_NUCLEATION_PARAMS: NucleationParams = {
   upwellingThreshold: 0.70,
   persistenceEpochs: 5,
-  occupiedFieldLevel: 0.15,
+  occupiedFieldLevel: SHORELINE_FIELD,
   blobRadius: 70,
   maxPerEpoch: 4,
 }

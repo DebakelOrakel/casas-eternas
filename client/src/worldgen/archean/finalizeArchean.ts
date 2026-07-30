@@ -2,7 +2,9 @@ import type { ArcheanSimulation } from './archeanState'
 import type { PlateSimulation } from '../tectonics/plateSimulationTypes'
 import type { PlateSeed } from '../tectonics/plateSeeds'
 import { generatePlateMotions } from '../tectonics/plateMotion'
-import { derivePlateTypes } from '../crust/raftField'
+import { derivePlateTypes, raftField } from '../crust/raftField'
+import { marginParameter, marginProfile, ABYSSAL_FLOOR } from '../elevation/elevationScale'
+import type { Raft } from '../crust/raftTypes'
 import { generateDetectionLattice } from '../tectonics/boundaryLattice'
 import { createOceanAgeField } from '../tectonics/oceanAge'
 import { findPlumeSites } from '../tectonics/plumes'
@@ -77,6 +79,35 @@ export function convectionCellSeeds(mantle: Float32Array, width: number, height:
   return seeds
 }
 
+// Land area per raft, off the same coastline the renderer draws: a cell counts as land
+// where the SUMMED metaball field clears sea level, and is credited to whichever raft
+// contributes most of the field there.
+//
+// Coarse on purpose. It runs once, at the hand-off, and only ever feeds a ratio — which
+// continent is big enough to be called one. The masses that decide that question are
+// tens of cells across at this resolution, so the odd boundary cell changes nothing.
+const LAND_MEASURE_RES_X = 512
+const LAND_MEASURE_RES_Y = 256
+
+function measureRaftLandAreas(rafts: Raft[], width: number, height: number): number[] {
+  const areas = new Array<number>(rafts.length).fill(0)
+  for (let gy = 0; gy < LAND_MEASURE_RES_Y; gy++) {
+    const wy = ((gy + 0.5) / LAND_MEASURE_RES_Y) * height
+    for (let gx = 0; gx < LAND_MEASURE_RES_X; gx++) {
+      const wx = ((gx + 0.5) / LAND_MEASURE_RES_X) * width
+      if (marginProfile(marginParameter(raftField(wx, wy, rafts, width, height)), ABYSSAL_FLOOR) <= 0) continue
+      let best = -1
+      let bestField = 0
+      for (let i = 0; i < rafts.length; i++) {
+        const f = raftField(wx, wy, [rafts[i]], width, height)
+        if (f > bestField) { bestField = f; best = i }
+      }
+      if (best >= 0) areas[best] += 1
+    }
+  }
+  return areas
+}
+
 export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
   const { width, height, random } = archean
   // Continents are named HERE, not during the Archean. Proto-cratons merge and
@@ -84,7 +115,7 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
   // raft breaks in two — so naming during the phase produces a stream of names for
   // things that dissolve a few epochs later. A continent gets its name when it
   // becomes a continent, which is now.
-  const named = assignRaftNames(archean.rafts, random)
+  const named = assignRaftNames(archean.rafts, random, measureRaftLandAreas(archean.rafts, width, height))
   const seeds = convectionCellSeeds(archean.mantle, width, height)
   const lattice = generateDetectionLattice(width, height, DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y)
 

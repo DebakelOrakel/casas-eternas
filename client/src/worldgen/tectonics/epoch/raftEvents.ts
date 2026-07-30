@@ -1,6 +1,6 @@
 import { toroidalDistanceSq, wrappedDelta } from '../../core/toroidal'
 import { mergeOverlappingRafts, splitDisconnectedRafts, splitRaftAtRift } from '../../crust/raftLifecycle'
-import { pickUnusedRaftName } from '../../crust/raftNames'
+import { deservesContinentName, pickUnusedRaftName } from '../../crust/raftNames'
 import type { RaftMergeEvent, RaftSplitEvent } from '../../crust/raftTypes'
 import { coolMantleAt } from '../mantleField'
 import { resetOceanAgeAround } from '../oceanAge'
@@ -101,11 +101,17 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
       // above cut the local strobing, but a coherent supercontinent still needs a global
       // rate-limit — see CONT_RIFT_COOLDOWN_EPOCHS).
       sim.continentalRiftCooldownUntil = sim.epoch + CONT_RIFT_COOLDOWN_EPOCHS
-      // The far half is a brand-new continent — give it its own name (the
-      // near half keeps the parent's), so split-born continents aren't
-      // left unnamed on the map.
+      // The far half is a brand-new continent — give it its own name (the near half
+      // keeps the parent's), so split-born continents aren't left unnamed on the map.
+      // Unless it is a splinter: the same size rule the hand-off applies, or a rift
+      // that shears off one blob would put a continent's name on an island.
       const newRaft = sim.rafts.find((raft) => raft.id === newRaftId)
-      if (newRaft) newRaft.name = pickUnusedRaftName(sim.rafts, sim.random)
+      if (newRaft) {
+        const areas = sim.rafts.map((raft) => raft.blobs.reduce((sum, b) => sum + b.radius * b.radius, 0))
+        const total = areas.reduce((a, b) => a + b, 0)
+        const own = newRaft.blobs.reduce((sum, b) => sum + b.radius * b.radius, 0)
+        if (deservesContinentName(own, total)) newRaft.name = pickUnusedRaftName(sim.rafts, sim.random)
+      }
       // Flood-basalt province at the breakup: one big volcanic deposit along the
       // rift line (tangent ⟂ the seed-to-seed normal), riding one half. See M3.
       const fbTangentX = -cny / cnl

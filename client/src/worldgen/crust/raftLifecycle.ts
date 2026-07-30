@@ -3,7 +3,7 @@ import { advancePointByMotion, type PlateMotion } from '../tectonics/plateMotion
 import type { Raft, RaftBlob, RaftMergeEvent, RaftSplitEvent } from './raftTypes'
 import { toroidalDistanceSq, wrappedDelta } from '../core/toroidal'
 import { sampleNearestWorld, wrapValue } from '../core/field'
-import { pickUnusedRaftName } from './raftNames'
+import { deservesContinentName, pickUnusedRaftName } from './raftNames'
 
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
 // plates, decoupled from them — see docs/decisions/continental-crust-rafts.md. A
@@ -367,7 +367,12 @@ function connectedBlobComponents(blobs: RaftBlob[], connectFactor: number, width
 // is the counterweight to raft rigidity: it is the Archean's only break-up mechanism,
 // so a rigidity high enough to drive it to zero would freeze the continents for the
 // rest of the eon. See advanceRaftsOnFlow.
-export function splitDisconnectedRafts(rafts: Raft[], connectFactor: number, random: () => number, width: number, height: number): number {
+// `nameNewFragments` is false in the Archean, where naming is deliberately deferred to
+// the hand-off: proto-cratons split and merge constantly, so naming here produced a
+// stream of names for things that dissolved a few epochs later — and then
+// finalizeArchean reshuffled them all anyway, so the names visibly changed the moment
+// you left the phase.
+export function splitDisconnectedRafts(rafts: Raft[], connectFactor: number, random: () => number, width: number, height: number, nameNewFragments = true): number {
   let maxId = rafts.reduce((m, raft) => Math.max(m, raft.id), -1)
   const result: Raft[] = []
   for (const raft of rafts) {
@@ -383,10 +388,16 @@ export function splitDisconnectedRafts(rafts: Raft[], connectFactor: number, ran
       result.push({ id: ++maxId, name: null, blobs: components[k], noMergeUntilEpoch: raft.noMergeUntilEpoch })
     }
   }
-  // Name the freshly-separated pieces (after the full set exists, so names
-  // stay unique across everything).
-  for (const raft of result) {
-    if (raft.name === null) raft.name = pickUnusedRaftName(result, random)
+  // Name the freshly-separated pieces (after the full set exists, so names stay unique
+  // across everything) — but only the ones big enough to be continents. Naming every
+  // fragment is what put a continent name on each of a dozen islands, and it undid the
+  // hand-off's own size rule one epoch after that rule had been applied.
+  if (nameNewFragments) {
+    const areas = result.map((raft) => raft.blobs.reduce((sum, b) => sum + b.radius * b.radius, 0))
+    const total = areas.reduce((a, b) => a + b, 0)
+    for (let i = 0; i < result.length; i++) {
+      if (result[i].name === null && deservesContinentName(areas[i], total)) result[i].name = pickUnusedRaftName(result, random)
+    }
   }
   const created = result.length - rafts.length
   rafts.length = 0
