@@ -2252,10 +2252,24 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Deliberately a hint, not a hard stop — "lots of land, one supercontinent" is a
   // legitimate world to start from, and a supercontinent closing the Archean is
   // what actually happened (Kenorland, ~2.7 Ga).
+  // The three bands were checked against what the land actually does, over three seeds
+  // from epoch 100 to 400. They hold up — but the wording did not:
+  //
+  //   stabilised     continents >=5% of land     biggest mass
+  //     0-20%              5-6                     13-24%
+  //    20-70%              4-6                     23-54%
+  //     >70%               2-3                     41-88%
+  //
+  // The late band used to read "running on now only adds land, not structure", which
+  // is the opposite of the truth: above 70% the continents assemble into one mass —
+  // and then break it up again. One seed went from 88% of all land in a single
+  // continent at epoch 350 to 29% across four at epoch 400. That is a Wilson cycle
+  // running inside the Archean, and it is the most structural thing in the whole
+  // phase.
   const archeanStage = (stabilised: number): { hint: string; stage: 'early' | 'window' | 'late' } => {
     if (stabilised < 0.2) return { stage: 'early', hint: 'Crust is still ephemeral — nothing has settled yet.' }
-    if (stabilised < 0.7) return { stage: 'window', hint: 'Cratons are forming and still moving. Good place to stop.' }
-    return { stage: 'late', hint: 'Supercontinent stage — running on now only adds land, not structure.' }
+    if (stabilised < 0.7) return { stage: 'window', hint: 'Several separate continents, still drifting. Good place to stop.' }
+    return { stage: 'late', hint: 'Continents are merging into a supercontinent — and will tear it apart again.' }
   }
 
   function handleArcheanStatus(message: WorkerArcheanStatusMessage): void {
