@@ -1467,10 +1467,24 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       if (panel) panel.hidden = group.id !== id
     }
     overlayFoldout.hidden = id === null || !groupPanels[id]
+    if (id !== null && !overlayFoldout.hidden) positionFoldoutUnder(groupButtons[id])
     // The backdrop has to reach past the fold-out or its icons would sit on the bare
     // map; carrying that height permanently would wash the map out for nothing. Same
     // mechanism the narration line uses on the bottom panel.
     overlayBackdrop.classList.toggle('has-foldout', !overlayFoldout.hidden)
+  }
+
+  // Hangs the fold-out under its own category button, then pulls it back inside the
+  // viewport if that would push it off an edge — the Climate category carries seven
+  // icons, which is wider than the distance from an outer button to the screen edge.
+  function positionFoldoutUnder(button: HTMLButtonElement): void {
+    overlayFoldout.style.left = `${button.offsetLeft + button.offsetWidth / 2}px`
+    const box = overlayFoldout.getBoundingClientRect()
+    const margin = 8
+    const overshootRight = box.right - (window.innerWidth - margin)
+    const overshootLeft = margin - box.left
+    const correction = overshootRight > 0 ? -overshootRight : overshootLeft > 0 ? overshootLeft : 0
+    if (correction !== 0) overlayFoldout.style.left = `${button.offsetLeft + button.offsetWidth / 2 + correction}px`
   }
 
   // Closing on mouse-leave keeps the map clear without a second click. The grace
@@ -3031,7 +3045,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Volcanism follows the mantle: both are the tectonic phase's story, and neither
     // exists during Genesis (the Archean produces no features and no plumes).
     overlaysOn.volcanoes = index === TECTONICS_PANEL_INDEX
-    overlaysOn.hotspots = index === TECTONICS_PANEL_INDEX
+    // Plumes follow the mantle field into Genesis, because the Archean now has them
+    // too — and there they are worth more than in the tectonic phase: they mark where
+    // crust is about to nucleate, before anything is visible on the map.
+    overlaysOn.hotspots = index < 2
     // Craton age is on in Genesis only. There it is the point of the phase — the
     // coastline alone cannot show that a continent grew by welding young crust onto
     // an old core. From the Tectonics panel on, the same map has to carry plates,

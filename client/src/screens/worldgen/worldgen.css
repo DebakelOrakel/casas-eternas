@@ -369,20 +369,32 @@
   justify-content: center;
 }
 
-/* Fold-out: the open category's overlays, on a line under the bar. `order: 1` puts it
-   below the categories (the ecology panel's own fold-out uses -1 to sit above its
-   row — there the row is at the bottom of the screen). */
+/* Fold-out: the open category's overlays, hanging under ITS OWN button rather than
+   centred on the bar — `left` is set per category in setOpenGroup and this centres the
+   panel on it. Out of flow on purpose, so the bar's row does not reflow when it opens.
+   
+   Taking it out of flow means the pointer crosses a gap between the two rows, which
+   fires mouseleave on the bar; the close grace period is what absorbs that (entering
+   the fold-out fires mouseenter on the bar again, because it is still a descendant). */
 .worldgen-flat-screen .overlay-foldout {
-  flex-basis: 100%;
-  order: 1;
+  position: absolute;
+  top: 100%;
   margin-top: 0.45rem;
+  transform: translateX(-50%);
+  /* Sized by its contents, not by the space left over inside the bar. Without this an
+     absolutely positioned box shrink-wraps to the AVAILABLE width — which here is the
+     bar (about seven icons wide) minus the offset of the button it hangs under, so
+     Climate's seven icons broke into rows of three and Ecology's fourteen into a
+     column. The edge clamp in positionFoldoutUnder is what keeps the wider ones on
+     screen. */
+  width: max-content;
 }
 .worldgen-flat-screen .overlay-foldout[hidden] {
   display: none;
 }
 .worldgen-flat-screen .overlay-group-panel {
   display: flex;
-  flex-flow: row wrap;
+  flex-flow: row nowrap;
   justify-content: center;
   gap: 0.4rem;
 }
