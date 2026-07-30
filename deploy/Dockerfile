@@ -3,7 +3,7 @@
 # Container image for the casas-eternas client (a static Vite/TypeScript SPA).
 # Multi-stage: build the bundle with Node, then serve it with unprivileged nginx.
 #
-# Build context is the REPO ROOT (needs client/ and deploy/nginx.conf):
+# Build context is the REPO ROOT (needs client/, docs/changelog/ and deploy/nginx.conf):
 #   docker build -f deploy/Dockerfile -t casas-eternas:latest .
 #
 # OpenShift-ready: runs as a non-root, ARBITRARY UID (member of GID 0), listens
@@ -11,13 +11,22 @@
 
 # ---- Build stage -----------------------------------------------------------
 FROM node:22-alpine AS builder
-WORKDIR /app
+# Mirrors the repo layout (/app/client + /app/docs) rather than flattening the client
+# to /app. The title screen's changelog viewer imports `../../../../docs/changelog/*.md`
+# with Vite's ?raw, which reaches OUT of client/ — flattened, that path resolved to a
+# /docs that does not exist in the image, and the build failed on five unresolved
+# imports. Keeping the same shape inside and outside the container means a relative
+# import that works in the repo works here too, without a second path to maintain.
+WORKDIR /app/client
 
 # Install deps first so this layer is cached until the manifests change.
 COPY client/package.json client/package-lock.json ./
 RUN npm ci
 
-# Build the static bundle (npm run build == `tsc && vite build` → /app/dist).
+# Only the changelog is needed, not all of docs/ — the viewer reads exactly these.
+COPY docs/changelog/ /app/docs/changelog/
+
+# Build the static bundle (npm run build == `tsc && vite build` → dist/).
 COPY client/ ./
 RUN npm run build
 
@@ -33,7 +42,7 @@ USER root
 
 # Server config + the built SPA.
 COPY deploy/nginx.conf /etc/nginx/nginx.conf
-COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /app/client/dist /usr/share/nginx/html
 
 # The base image's stray default site would make the entrypoint's ipv6 script
 # try to sed it — which fails on a read-only root filesystem. Our nginx.conf

@@ -1,5 +1,6 @@
-# Build context = repo root. Keep it small: the image only needs client/ (source)
-# and deploy/nginx.conf.
+# Build context = repo root. Keep it small: the image needs client/ (source),
+# docs/changelog/ (the title screen's changelog viewer imports it with ?raw) and
+# deploy/nginx.conf.
 **/node_modules
 client/dist
 .git
@@ -10,6 +11,11 @@ client/dist
 saves
 docs
 *.md
+# …except the changelog, which the title screen's viewer imports at build time with
+# Vite's ?raw. Both rules above would swallow it, so it is re-included explicitly —
+# the negations must come after the patterns they undo.
+!docs/changelog
+!docs/changelog/*.md
 go.mod
 notes-dont-process.md
 GPU_TECTONICS_PLAN.md

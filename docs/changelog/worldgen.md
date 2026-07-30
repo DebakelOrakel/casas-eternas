@@ -4,10 +4,10 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-07-30
-- **fixed** Crust: "where does this continent end" had four different answers on one field — coastline at 0.648, the mantle's membership at 0.5, the nucleation blocker at 0.15. The blocker treated 1.5-2x the land area as already-crust, so new crust could never form against an existing shore and always arrived as its own island; all of them now read one derived `SHORELINE_FIELD`. `world.event`
-- **fixed** Crust: continents are named by land area measured off the coastline (>=5%, about Australia's share of Earth's land) and no longer during the Archean, where every fragment was named and the hand-off then reshuffled the lot. `world.event`
-- **changed** Tectonics: hotspot plumes derive from the mantle field and drift with it instead of being five fixed random points — measured 6-9x slower than the plates above them, living 90-130 epochs, neither of which had to be tuned. `world.overlay.mantle`
-- **new** Genesis: the Archean shows its plumes — the persistent upwellings crust nucleates on, so you see where land is about to appear. `world.overlay`
+- **fixed** Crust: "is there crust here" is one shared answer now, so new crust can grow onto an existing shore. `world.event`
+- **fixed** Crust: continents are named by land area, and no longer during the Archean. `world.event`
+- **changed** Tectonics: hotspot plumes come from the mantle field and drift with it, instead of five fixed points. `world.overlay.mantle`
+- **new** Genesis: the Archean shows its plumes. `world.overlay`
 
 ## 2026-07-28
 - **new** Genesis: Archean core — genesis sliders start a short Archean sim; crust nucleates only where hot *and* ocean. `worldgen.panel.genesis`

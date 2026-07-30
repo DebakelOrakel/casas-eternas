@@ -4,9 +4,9 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-07-30
-- **changed** Overlays: the mantle overlay split into mantle field / volcanoes / hotspot plumes, one legend each — the old shared legend promised Genesis a "volcano" and a "hotspot plume" that phase cannot have. `world.overlay.mantle`
-- **changed** Overlays: a fold-out hangs under its own category button and keeps its icons on one row. `world.overlay`
-- **fixed** Overlays: craton age is masked to the drawn coastline — it used to paint the full blob radius, roughly five times the island beneath it. `world.overlay.cratonAge`
+- **changed** Overlays: the mantle overlay split into mantle field, volcanoes and hotspot plumes. `world.overlay.mantle`
+- **changed** Overlays: a fold-out hangs under its own category button, icons on one row. `world.overlay`
+- **fixed** Overlays: craton age is masked to the coastline instead of the full blob radius. `world.overlay.cratonAge`
 
 ## 2026-07-29
 - **new** Title screen: mission-statement list → a Changelog viewer, category tabs rendering the `docs/changelog` files inline. `common`
