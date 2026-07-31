@@ -7,6 +7,8 @@ import { ElevationRenderPool } from './render/elevationRenderPool'
 import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './surface/erosion'
 import type { ArcheanSimulation } from './archean/archeanState'
 import { createArcheanSimulation } from './archean/archeanState'
+import type { ArcheanSnapshot } from './archean/archeanSnapshot'
+import { deserializeArchean, serializeArchean } from './archean/archeanSnapshot'
 import type { ArcheanParams } from './archean/archeanStep'
 import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from './archean/archeanStep'
 import { convectionCellSeeds, finalizeArchean } from './archean/finalizeArchean'
@@ -31,6 +33,7 @@ import { computeEcology } from './ecology/ecologyField'
 import { computeMigration } from './migration/migrationField'
 import type { MigrationOrigin } from './migration/migrationField'
 import { downsampleMax } from './worldSave/worldLayers'
+import { collectVolcanoes } from './tectonics/volcanoes'
 import { computeCratonOldnessField } from './crust/raftField'
 
 // Runs the whole simulation off the main thread: stepping an epoch and
@@ -168,6 +171,8 @@ export interface WorkerRestoreWorldMessage {
   // Absent in saves written before the mantle was persisted — deserializePlateSimulation
   // then falls back to regenerating one, which is what every save used to do.
   mantle?: ArrayBuffer
+  // Set when the saved world was still in the Archean; `snapshot` is then unused.
+  archean?: { snapshot: ArcheanSnapshot; mantle: ArrayBuffer; streak: ArrayBuffer }
   // The boundary-detection lattice's accumulated history, likewise optional for older
   // saves. Measured: mantle and lattice TOGETHER are exactly what a bit-identical
   // continuation needs — with only one of them restored, a loaded world drifts off
@@ -386,6 +391,9 @@ export interface WorkerMigrationDataMessage {
 // caller (WorldGenScreen) packages these into the zip alongside world.yaml.
 export interface WorkerWorldDataMessage {
   type: 'worldData'
+  // Present instead of `snapshot` when the world is still in the Archean — the phase is
+  // a pause, so it has to be savable, and there is no PlateSimulation yet to snapshot.
+  archean?: { snapshot: ArcheanSnapshot; mantle: ArrayBuffer; streak: ArrayBuffer }
   snapshot: PlateSimulationSnapshot
   // The mantle field, saved rather than regenerated: it is what the plate motions
   // were fitted to, and what finalizeArchean read to place the plates in the first
@@ -486,31 +494,7 @@ let lastEcologyCarryingCapacity: Float32Array | null = null
 // WorldGenScreen's event overlay). The worker just relays events; it does
 // not track or bake any highlight state.
 
-// World-cell size for grid-thinning the volcanic-arc markers: a long subduction zone
-// has one range feature every ~MERGE_RADIUS (40px), so hundreds accumulate — one
-// (tallest) cone per this-size cell keeps the arc reading as a dotted chain without
-// flooding the marker layer. Hotspots/flood basalts are few, so they're never thinned.
-const ARC_MARKER_CELL = 60
 
-// Volcanic markers for the mantle overlay: hotspot cones (plateB -1) + flood-basalt
-// provinces (plateB -2), both always shown, plus ACTIVE volcanic arcs (subduction/
-// island arcs still being fed at their boundary — epochsSinceDeposit small — with real
-// relief), grid-thinned so a busy world doesn't send thousands. See TerrainFeature.volcanic.
-function collectVolcanoes(features: TerrainFeature[]): { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[] {
-  const out: { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[] = []
-  const arcByCell = new Map<number, TerrainFeature>()
-  for (const f of features) {
-    if (f.plateB === -1) out.push({ x: f.x, y: f.y, thickness: Math.abs(f.thickness), kind: 'hotspot' })
-    else if (f.plateB === -2) out.push({ x: f.x, y: f.y, thickness: Math.abs(f.thickness), kind: 'flood' })
-    else if (f.volcanic && f.epochsSinceDeposit < 8 && Math.abs(f.thickness) > 3) {
-      const key = Math.floor(f.y / ARC_MARKER_CELL) * 100000 + Math.floor(f.x / ARC_MARKER_CELL)
-      const cur = arcByCell.get(key)
-      if (!cur || Math.abs(f.thickness) > Math.abs(cur.thickness)) arcByCell.set(key, f)
-    }
-  }
-  for (const f of arcByCell.values()) out.push({ x: f.x, y: f.y, thickness: Math.abs(f.thickness), kind: 'arc' })
-  return out
-}
 
 // Current fold-mountain (continent-continent collision) belts, for the ecology
 // layer's tin / lode-gold / gem provenance: 'range' features that are NON-volcanic
@@ -990,6 +974,30 @@ function handleComputeMigration(message: Extract<WorkerInboundMessage, { type: '
 }
 
 function handleSerializeWorld(): void {
+  if (archean && !sim && lastRawElevations) {
+    const snapshot = serializeArchean(archean)
+    const mantle = archean.mantle.slice()
+    const streak = archean.upwellingStreak.slice()
+    const elevation = lastRawElevations.slice()
+    const message: WorkerWorldDataMessage = {
+      type: 'worldData',
+      archean: { snapshot, mantle: mantle.buffer as ArrayBuffer, streak: streak.buffer as ArrayBuffer },
+      // The tectonic fields still travel, empty: the screen writes one zip either way,
+      // and a reader that only understands the tectonic form gets a coherent (if
+      // pre-tectonic) world rather than a half-written file.
+      snapshot: null as unknown as PlateSimulationSnapshot,
+      // A copy: the same buffer cannot be transferred twice, and it also travels as
+      // the Archean payload's own mantle above.
+      mantle: archean.mantle.slice().buffer as ArrayBuffer,
+      latticeAccumulated: new Float32Array(0).buffer as ArrayBuffer,
+      latticeLockedEpochs: new Int16Array(0).buffer as ArrayBuffer,
+      latticeLastClassCode: new Int8Array(0).buffer as ArrayBuffer,
+      oceanAge: EMPTY_OCEAN_AGE.slice().buffer as ArrayBuffer,
+      elevation: elevation.buffer as ArrayBuffer,
+    }
+    self.postMessage(message, [message.archean!.mantle, message.archean!.streak, message.elevation])
+    return
+  }
   if (!sim || !lastRawElevations) return
   // .slice() so transferring these buffers doesn't neuter the live sim's
   // ocean-age / the worker's retained elevation.
@@ -1015,6 +1023,18 @@ function handleSerializeWorld(): void {
 function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'restoreWorld' }>): void {
   stopTicking()
   worldGeneration += 1
+  if (message.archean) {
+    sim = null
+    archean = deserializeArchean(message.archean.snapshot, new Float32Array(message.archean.mantle), new Int16Array(message.archean.streak))
+    archeanSeed = message.seed
+    archeanWater = archean.seaLevelOffset
+    archeanWidth = archean.width
+    archeanHeight = archean.height
+    lastRawElevations = new Float32Array(message.elevation)
+    preErosionElevations = lastRawElevations
+    void renderArcheanAndPost()
+    return
+  }
   sim = deserializePlateSimulation(message.snapshot, new Float32Array(message.oceanAge), message.mantle ? new Float32Array(message.mantle) : undefined)
   // Restored after construction rather than through the constructor: the arrays are
   // sized from the lattice the deserializer just built, so a save from a different

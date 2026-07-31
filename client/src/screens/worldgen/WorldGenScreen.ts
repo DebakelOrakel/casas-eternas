@@ -2536,6 +2536,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   async function handleWorldData(message: WorkerWorldDataMessage): Promise<void> {
     const zip = new JSZip()
     zip.file('world.yaml', buildWorldYaml())
+    // A world saved during the Archean has no plate simulation yet — it carries its own
+    // snapshot instead. The phase is a pause, so it has to be savable there; before this
+    // the save button posted its request and the worker silently declined.
+    if (message.archean) {
+      zip.file('archean.json', JSON.stringify(message.archean.snapshot))
+      zip.file('archean.mantle.f32', message.archean.mantle)
+      zip.file('archean.streak.i16', message.archean.streak)
+      zip.file('elevation.f32', message.elevation)
+      const archeanPreview = await makePreviewBlob()
+      if (archeanPreview) zip.file('preview.png', archeanPreview)
+      const archeanBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
+      downloadBlob(archeanBlob, `${(seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)
+      return
+    }
     zip.file('state.json', JSON.stringify(message.snapshot))
     zip.file('mantle.f32', message.mantle)
     zip.file('lattice.acc.f32', message.latticeAccumulated)
@@ -2559,7 +2573,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   saveWorldButton.addEventListener('click', () => { void saveWorld() })
 
   async function saveWorld(): Promise<void> {
-    if (tectonicsRunning) return
+    // Neither phase may be stepping: a snapshot taken mid-epoch would capture a world
+    // the simulation has already moved past.
+    if (tectonicsRunning || archeanRunning) return
     // Compute-on-save: bake everything the world's current pipeline stage allows,
     // independent of which panels were visited. Climate/hydrology/ecology need
     // eroded terrain (same gate as their panels) — pre-erosion, only elevation is
@@ -2582,33 +2598,49 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   async function loadWorldFromZip(file: File): Promise<void> {
     let zip: JSZip
     let yaml: string
-    let snapshot: PlateSimulationSnapshot
+    let snapshot: PlateSimulationSnapshot | undefined
     let oceanAge: ArrayBuffer
     let elevation: ArrayBuffer
     // Optional: saves written before these were persisted have no such entries, and
     // the worker falls back to regenerating the mantle and starting the lattice empty
     // — exactly what every load used to do.
+    let archeanPayload: { snapshot: unknown; mantle: ArrayBuffer; streak: ArrayBuffer } | undefined
     let mantle: ArrayBuffer | undefined
     let lattice: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer } | undefined
     try {
       zip = await JSZip.loadAsync(file)
       const yamlFile = zip.file('world.yaml')
+      const archeanFile = zip.file('archean.json')
       const stateFile = zip.file('state.json')
       const oceanFile = zip.file('oceanAge.f32')
       const elevFile = zip.file('elevation.f32')
-      if (!yamlFile || !stateFile || !oceanFile || !elevFile) throw new Error('missing files')
+      if (!yamlFile || !elevFile) throw new Error('missing files')
+      if (archeanFile) {
+        // Archean save: no plate simulation, no ocean age, no lattice.
+        const mantleF = zip.file('archean.mantle.f32')
+        const streakF = zip.file('archean.streak.i16')
+        if (!mantleF || !streakF) throw new Error('missing files')
+        archeanPayload = {
+          snapshot: JSON.parse(await archeanFile.async('string')),
+          mantle: await mantleF.async('arraybuffer'),
+          streak: await streakF.async('arraybuffer'),
+        }
+      }
       yaml = await yamlFile.async('string')
-      snapshot = JSON.parse(await stateFile.async('string'))
-      oceanAge = await oceanFile.async('arraybuffer')
       elevation = await elevFile.async('arraybuffer')
-      const mantleFile = zip.file('mantle.f32')
-      mantle = mantleFile ? await mantleFile.async('arraybuffer') : undefined
-      const accFile = zip.file('lattice.acc.f32')
-      const lockFile = zip.file('lattice.lock.i16')
-      const clsFile = zip.file('lattice.class.i8')
-      lattice = accFile && lockFile && clsFile
-        ? { accumulated: await accFile.async('arraybuffer'), lockedEpochs: await lockFile.async('arraybuffer'), lastClassCode: await clsFile.async('arraybuffer') }
-        : undefined
+      if (!archeanPayload) {
+        if (!stateFile || !oceanFile) throw new Error('missing files')
+        snapshot = JSON.parse(await stateFile.async('string'))
+        oceanAge = await oceanFile.async('arraybuffer')
+        const mantleFile = zip.file('mantle.f32')
+        mantle = mantleFile ? await mantleFile.async('arraybuffer') : undefined
+        const accFile = zip.file('lattice.acc.f32')
+        const lockFile = zip.file('lattice.lock.i16')
+        const clsFile = zip.file('lattice.class.i8')
+        lattice = accFile && lockFile && clsFile
+          ? { accumulated: await accFile.async('arraybuffer'), lockedEpochs: await lockFile.async('arraybuffer'), lastClassCode: await clsFile.async('arraybuffer') }
+          : undefined
+      }
     } catch {
       ctx.notifications.show({ message: 'Invalid world file', icon: '/icons/folder.png', durationMs: 6000 })
       return
@@ -2626,10 +2658,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     seedInput.value = seed
     mantleVigourInput.value = readYamlValue(yaml, 'spec.genesis.mantleVigour') ?? mantleVigourInput.value
     waterInput.value = readYamlValue(yaml, 'spec.genesis.water') ?? waterInput.value
-    // A restored world is past the Archean: its state is loaded, not re-simulated.
-    // Read from the snapshot, which is where the number actually lives — the yaml
-    // used to carry a second copy under spec.
-    lastArcheanEpochs = snapshot.archeanEpochs ?? 0
+    // How far the Archean got, read from whichever snapshot the file carries — the yaml
+    // used to hold a second copy of this under spec. An Archean save reopens IN the
+    // Archean, so the tectonics panel must still be able to finalise it.
+    lastArcheanEpochs = archeanPayload ? (archeanPayload.snapshot as { epoch: number }).epoch : (snapshot?.archeanEpochs ?? 0)
+    if (archeanPayload) archeanFinalised = false
     setArcheanRunning(false)
     tempBandInput.value = readYamlValue(yaml, 'spec.climate.tempOffset') ?? '0'
     humidityInput.value = readYamlValue(yaml, 'spec.climate.humidity') ?? '100'
@@ -2650,7 +2683,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // lastEpoch is set from the restore render's reported epoch (status
     // .tectonicsRun == the snapshot's epoch), so no need to set it here.
 
-    postToWorker({ type: 'restoreWorld', seed, snapshot, oceanAge, elevation, mantle, lattice })
+    postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, archean: archeanPayload as never })
   }
 
   loadWorldButton.addEventListener('click', () => {

@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-07-31
+- **fixed** Save/Load: a world can be saved while it is still in the Archean; the button did nothing there. `common.action.saveWorld`
+
 ## 2026-07-30
 - **changed** Overlays: the mantle overlay split into mantle field, volcanoes and hotspot plumes. `world.overlay.mantle`
 - **changed** Overlays: a fold-out hangs under its own category button, icons on one row. `world.overlay`

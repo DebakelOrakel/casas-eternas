@@ -52,6 +52,7 @@ const M = {
   ecology: await L('/src/worldgen/ecology/ecologyField.ts'),
   migration: await L('/src/worldgen/migration/migrationField.ts'),
   rafts: await L('/src/worldgen/crust/raftField.ts'),
+  volcanoes: await L('/src/worldgen/tectonics/volcanoes.ts'),
   archean: await L('/src/worldgen/archean/archeanState.ts'),
   archeanStep: await L('/src/worldgen/archean/archeanStep.ts'),
   finalize: await L('/src/worldgen/archean/finalizeArchean.ts'),
@@ -149,11 +150,19 @@ async function stageHashes(seed) {
 
   // --- ecology + migration ---
   const cratonAge = M.rafts.computeCratonOldnessField(sim.rafts, sim.epoch, CRX, CRY, W, H)
+  // Real volcanoes and sutures, and real params — through the very function the worker
+  // uses, not a copy of it. This used to pass `volcanoes: []`, `orogenPoints: []` and
+  // `{}`, which left copper, tin, obsidian, gold, silver and gems on empty inputs and
+  // made carryingCapacity NaN on every land cell (`params.carryingCapacity / 100` with
+  // no value). Being JS, nothing complained; the NaN hashed consistently, so those
+  // stages and the three migration ones below guarded nothing at all.
+  const volcanoes = M.volcanoes.collectVolcanoes(sim.features)
   const eco = M.ecology.computeEcology({
     temperature, precipitation, biomes, currents, elevation: el,
-    discharge, maxDischarge: maxDis, lakeDepth, volcanoes: [], orogenPoints: [],
+    discharge, maxDischarge: maxDis, lakeDepth, volcanoes,
+    orogenPoints: sim.sutures.map((s) => ({ x: s.x, y: s.y })),
     cratonAge, warpSeed: sim.warpSeed, worldWidth: W, worldHeight: H,
-  }, {})
+  }, { carryingCapacity: 100, concentration: 0 })
   for (const k of Object.keys(eco.fields).sort()) out[`eco.${k}`] = hashBytes(eco.fields[k])
 
   const mig = M.migration.computeMigration(
