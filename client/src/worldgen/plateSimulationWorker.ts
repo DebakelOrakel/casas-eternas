@@ -1,4 +1,4 @@
-import { getInitialPlateEvents, stepEpoch, serializePlateSimulation, deserializePlateSimulation } from './tectonics/plateSimulation'
+import { stepEpoch, serializePlateSimulation, deserializePlateSimulation } from './tectonics/plateSimulation'
 import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from './tectonics/plateSimulation'
 import { renderSimulationImage } from './render/elevationMapImage'
 import type { RenderSimulationOptions } from './render/elevationMapImage'
@@ -1159,7 +1159,11 @@ function handleArcheanFinalize(): void {
   handoverOceanAge = sim.oceanAge.slice()
   handoverMantle = sim.mantle.slice()
   archean = null
-  pendingEvents = getInitialPlateEvents(sim)
+  // No initial events under the raft model — a continent is a raft spanning
+  // several plates, so there's no per-plate "continent created" moment to
+  // announce at handover/reset; real continent events (collision/breakup/
+  // supercontinent) only ever arrive from stepEpoch's own raft lifecycle.
+  pendingEvents = []
   void renderAndPost()
 }
 
@@ -1175,7 +1179,11 @@ function handleResetTectonics(): void {
   preErosionElevations = null
   lastLakeBasinElevations = null
   hydrologyDirty = true
-  pendingEvents = getInitialPlateEvents(sim)
+  // No initial events under the raft model — a continent is a raft spanning
+  // several plates, so there's no per-plate "continent created" moment to
+  // announce at handover/reset; real continent events (collision/breakup/
+  // supercontinent) only ever arrive from stepEpoch's own raft lifecycle.
+  pendingEvents = []
   void renderAndPost()
 }
 

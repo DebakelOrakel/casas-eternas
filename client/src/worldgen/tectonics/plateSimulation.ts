@@ -97,15 +97,6 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
   }
 }
 
-export function getInitialPlateEvents(_sim: PlateSimulation): SimEvent[] {
-  // Phase 1: initial continent notifications dropped (user's call). In the
-  // raft model a continent is a raft spanning several plates, so the old
-  // per-continental-plate "created" event no longer maps; real continent
-  // events (raft birth/split/merge) arrive with the raft lifecycle in a
-  // later phase.
-  return []
-}
-
 export function stepEpoch(sim: PlateSimulation): SimEvent[] {
   const membership = coupleMantleToPlates(sim)
   advancePlatesAndCrust(sim, membership)
