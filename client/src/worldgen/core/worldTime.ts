@@ -25,7 +25,9 @@ export function worldAgeMa(archeanEpochs: number, tectonicEpochs: number): numbe
   return archeanEpochs * ARCHEAN_MA_PER_EPOCH + tectonicEpochs * TECTONIC_MA_PER_EPOCH
 }
 
-// Formatted for display: Ga above a billion years, Ma below.
+// Formatted for display: always Ma, never Ga (user's call, 2026-08-06) — one
+// unit for the whole readout's life beats a nicer-looking big number that
+// changes units mid-run. Both the Genesis and Tectonics panels show this.
 export function formatWorldAge(ma: number): string {
-  return ma >= 1000 ? `${(ma / 1000).toFixed(2)} Ga` : `${Math.round(ma)} Ma`
+  return `${Math.round(ma)} Ma`
 }

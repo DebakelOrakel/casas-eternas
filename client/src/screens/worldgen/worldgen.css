@@ -325,10 +325,12 @@
   border-radius: 3px;
   transition: width 0.15s ease;
 }
-/* The Archean drives this bar determinately, and its fill is coloured by the same
-   three-stage judgement the banner text states: below 20% nothing has settled,
-   20-70% is the window where separate cratons exist and still move, above 70% only
-   land accumulates. Other phases leave data-stage unset and keep the default. */
+/* The Archean runs the same indeterminate sweep as the tectonic stepper (it is
+   an open-ended process you stop, not one that finishes), but its fill is
+   coloured by the same three-stage judgement the banner text states: below 20%
+   nothing has settled, 20-70% is the window where separate cratons exist and
+   still move, above 70% continents assemble. Other phases leave data-stage
+   unset and keep the default. */
 .worldgen-flat-screen .compute-progress-fill[data-stage='early'] { background: #7a8794; }
 .worldgen-flat-screen .compute-progress-fill[data-stage='window'] { background: #4f9d5d; }
 .worldgen-flat-screen .compute-progress-fill[data-stage='late'] { background: #c98a3c; }

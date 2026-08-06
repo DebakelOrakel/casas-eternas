@@ -647,18 +647,22 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       computeProgressFill.style.width = `${Math.round(erosionProgressFraction * 100)}%`
       delete computeProgressFill.dataset.stage
     } else if (archeanRunning) {
-      // Determinate, unlike the tectonic stepper's indeterminate bar: the Archean
-      // HAS a meaningful progress measure — the stabilised fraction, which runs
-      // monotonically from ~0 to ~90% across the phase. Its three-stage colour is
+      // The same continuous sweep as the tectonic stepper (user's call,
+      // 2026-08-06 — a filling bar reads as "almost done", but the Archean is
+      // an open-ended process you STOP, not one that finishes). The stabilised
+      // fraction still speaks through the fill's three-stage colour, which is
       // the same judgement the banner text states, from the same call.
       computeProgress.hidden = false
-      computeProgress.classList.remove('is-indeterminate')
-      computeProgressFill.style.width = `${Math.round(archeanStabilised * 100)}%`
+      computeProgress.classList.add('is-indeterminate')
+      computeProgressFill.style.width = ''
       computeProgressFill.dataset.stage = archeanStage(archeanStabilised).stage
     } else if (tectonicsRunning || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight) {
       computeProgress.hidden = false
       computeProgress.classList.add('is-indeterminate')
       computeProgressFill.style.width = ''
+      // Not the Archean's sweep — drop its stage colour instead of letting it
+      // linger into the tectonic phase's bar.
+      delete computeProgressFill.dataset.stage
     } else {
       computeProgress.hidden = true
     }
@@ -2368,10 +2372,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // continent at epoch 350 to 29% across four at epoch 400. That is a Wilson cycle
   // running inside the Archean, and it is the most structural thing in the whole
   // phase.
+  // Wording reworked 2026-08-06 (user: the old lines were confusing without
+  // knowing the mechanics): each hint now tells you what you GET if you stop
+  // now, not what the simulation is doing internally. The late line
+  // deliberately drops the Wilson-cycle "and will tear it apart again" —
+  // true, but it read as a warning against the very thing it announces.
   const archeanStage = (stabilised: number): { hint: string; stage: 'early' | 'window' | 'late' } => {
-    if (stabilised < 0.2) return { stage: 'early', hint: 'Crust is still ephemeral — nothing has settled yet.' }
-    if (stabilised < 0.7) return { stage: 'window', hint: 'Several separate continents, still drifting. Good place to stop.' }
-    return { stage: 'late', hint: 'Continents are merging into a supercontinent — and will tear it apart again.' }
+    if (stabilised < 0.2) return { stage: 'early', hint: 'New crust is still forming and dissolving — keep running.' }
+    if (stabilised < 0.7) return { stage: 'window', hint: 'Still drifting — stop now for an archipelago world.' }
+    return { stage: 'late', hint: 'Continents are merging into a supercontinent.' }
   }
 
   function handleArcheanStatus(message: WorkerArcheanStatusMessage): void {
