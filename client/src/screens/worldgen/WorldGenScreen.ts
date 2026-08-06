@@ -374,11 +374,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <img src="/icons/reset.png" alt="" />
       </button>
       <label class="field">
-        <span class="field-label">Strength: <span><span data-value="erosion-strength-label">4</span>×</span></span>
+        <span class="field-label">Strength: <span><span data-value="erosion-strength-label">2</span>×</span></span>
         <input type="range" class="erosion-strength-input" min="1" max="5" step="1" value="2" aria-label="Erosion strength multiplier" />
       </label>
       <label class="field">
-        <span class="field-label">Drainage: <span><span data-value="erosion-refresh-label">5</span>×</span></span>
+        <span class="field-label">Drainage: <span><span data-value="erosion-refresh-label">3</span>×</span></span>
         <input type="range" class="erosion-refresh-input" min="1" max="5" step="1" value="3" aria-label="Drainage network refreshes per round" />
       </label>
       <label class="field">

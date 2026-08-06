@@ -88,7 +88,18 @@ export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
   raftRigidity: 0.95,
   attachDistSq: 190 * 190,
   stabilisationEpochs: 25,
-  recycleThreshold: -0.45,
+  // -0.60, from -0.45 (2026-08-06): only genuinely cold downwellings recycle.
+  // At -0.45 the continents assembled far too late — measured over two seeds
+  // (largest CONNECTED landmass as a share of land, at the realistic ~300-epoch
+  // Archean length): 17-35% connected on 3-22% land, with true assembly
+  // (73-97% connected) only arriving at epochs 500-600 — twice the real
+  // Archean's duration, and after the stabilised gauge had long read "late".
+  // At -0.60: 78-84% connected on 32-52% land at epoch 300, while the
+  // stabilised clock stays closest to its calibrated banner thresholds (the
+  // stabilisationEpochs 25->15 alternative assembled equally fast but pushed
+  // the gauge to 75-86% by epoch 200, collapsing the advertised archipelago
+  // window). Side effect: more land overall — that is the water knob's job.
+  recycleThreshold: -0.6,
 }
 
 // One Archean epoch.

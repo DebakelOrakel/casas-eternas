@@ -4,6 +4,9 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-08-06
+- **changed** Genesis: continents assemble into a supercontinent within the Archean's natural span, instead of long after it. `worldgen.panel.genesis`
+- **changed** Genesis: the water slider's range now matches what the terrain visibly responds to. `worldgen.panel.genesis`
+- **changed** Genesis: clearer phase hints, a continuous progress sweep, and ages shown in Ma only. `worldgen.panel.genesis`
 - **new** Biomes: alpine — high mountains above the treeline are their own biome instead of reading as arctic tundra. `world.biome`
 - **new** Elevation: plains carry a fine, slope-conditioned detail texture (render-only) instead of staying billiard-smooth.
 - **fixed** Tectonics: plate merges stop at a floor of three plates, so a world can no longer collapse into a single frozen plate. `world.event`

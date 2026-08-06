@@ -79,11 +79,17 @@ export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided 
 // six exported constants mutable module state, which every importer would then have
 // to read at call time. Same result, far less to go wrong.
 //
-// Range is deliberately asymmetric-aware: downward there is ~3300 m of headroom
-// (ABYSSAL_FLOOR sits at −0.633 against the −1 clamp), upward much less, because
-// peaks already saturate +1 today. ±1350 m reads as "half to one and a half Earth
-// oceans" — Earth's oceans correspond to ~2.7 km of globally averaged depth.
-export const WATER_OFFSET_MAX_M = 1350
+// ±600 m, down from ±1350 (2026-08-06) — recalibrated to the range the terrain
+// actually RESPONDS in, measured on Archean worlds (two seeds, 600 epochs):
+// raising by +675 m already drowned 100% of the land (crust tops sit below
+// ~650 m), while the entire −675…−1350 m stretch changed land area by under
+// one point (the young ocean floor lies at −2600 m, so lowering exposes only
+// the margin band). At ±1350 three quarters of the slider's travel therefore
+// did nothing visible — the user-reported "the water knob has no effect".
+// ±600 spreads the same visible response across the whole travel instead.
+// (The old "half to one and a half Earth oceans" framing described water
+// VOLUME faithfully but not what a player can see happen.)
+export const WATER_OFFSET_MAX_M = 600
 
 // UI slider 0..100 (50 = Earth-like) → the metre shift.
 export function waterSliderToOffsetM(slider: number): number {
