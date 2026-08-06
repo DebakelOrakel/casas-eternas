@@ -1,7 +1,7 @@
-import { SEA_LEVEL } from '../elevation/elevationScale'
+import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
 import { wrapValue } from '../core/field'
 import type { FlowRouting } from './flowRouting'
-import { computeBiomes } from '../climate/biomes'
+import { Biome, computeBiomes } from '../climate/biomes'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 
 // Rivers & lakes on the post-erosion topography. Reuses the erosion module's
@@ -74,14 +74,49 @@ function tempAtCell(temperature: Float32Array, cx: number, cy: number, worldW: n
 // evaporation, a shrunken closed lake (a hot dry basin becomes a small salt lake,
 // or nothing). Depth = level − raw for cells under the level. 4-connected,
 // toroidally wrapped. See docs/decisions/climate-biomes.md.
-export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, climateResX: number, climateResY: number): Float32Array {
+// Basins shallower than this (spill level minus the basin's lowest point)
+// are not lakes — they are terrain texture. Became necessary 2026-08-06 when
+// computeElevation gained the plains micro-relief seed (PLAIN_DETAIL_MAX,
+// ±10 m typical): every noise dimple with any inflow classified as a lake and
+// the plains drowned in puddles. Re-swept under the overflow-only rule
+// (one seed; "plains" = bodies whose basin sits below 600 m tectonic):
+//
+//     gate    lakes   on plains
+//      0 m     816       740      <- every dimple on a river overflows
+//      4 m     199       139
+//      8 m      88        35      <- chosen: plains keep a visible lake
+//     12 m      71        22         population without the puddle flood
+//     15 m      66        20      <- at 15 (under the older endorheic
+//                                    model) the plains read as lakeless
+//
+// The 135k km² shallow mega-pan (a genuine Lake-Chad-style feature, present
+// without the noise too) survives every gate under the overflow rule — the
+// spill-brimming level keeps it a throughflow lake. Genuine deep lakes sit
+// far above the gate either way (rift grabens are depth-capped in the
+// hundreds of metres).
+const MIN_LAKE_BASIN_RELIEF_M = 8
+
+export interface LakeFields {
+  // Water depth per cell (0 = dry) — land lakes at their spill, terminal seas
+  // at their climate balance level.
+  depth: Float32Array
+  // 1 where a terminal basin's floor lies exposed: sub-sea-level ground the
+  // balance level does not reach. The SaltFlat biome override's source.
+  saltFlat: Uint8Array
+}
+
+export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = MIN_LAKE_BASIN_RELIEF_M): LakeFields {
   const { width, height, filled } = routing
   const n = width * height
   const EPS = 1e-5
   const depth = new Float32Array(n)
+  const saltFlat = new Uint8Array(n)
   const flooded = new Uint8Array(n)
   for (let cell = 0; cell < n; cell++) {
-    if (elevation[cell] > SEA_LEVEL && filled[cell] > elevation[cell] + EPS) flooded[cell] = 1
+    // Sub-sea-level cells count too now: with the flood seeded from the world
+    // ocean only, an enclosed sea is a depression like any other, and its
+    // basin must be gathered as one region with its above-sea shores.
+    if (filled[cell] > elevation[cell] + EPS) flooded[cell] = 1
   }
   const wrap = (x: number, y: number): number => wrapValue(y, height) * width + wrapValue(x, width)
   const seen = new Uint8Array(n)
@@ -113,26 +148,48 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
         }
       }
     }
+    let basinFloor = Infinity
+    for (const c of region) if (elevation[c] < basinFloor) basinFloor = elevation[c]
     const pet = evaporationPotential(tempSum / region.length)
-    // Overflow if the water arriving can sustain the full spill-level surface;
-    // otherwise find the endorheic level where inflow balances evaporation.
-    let level = spill
-    if (inflow < pet * region.length) {
-      const sorted = region.slice().sort((a, b) => elevation[a] - elevation[b])
-      let area = 0
-      for (const c of sorted) {
-        area++
-        if (pet * area >= inflow) {
-          level = elevation[c]
-          break
+    if (basinFloor < SEA_LEVEL) {
+      // TERMINAL SEA (the Caspian/Chad class): an enclosed basin whose floor
+      // lies below sea level — a landlocked ocean remnant or deep rift graben.
+      // These are the legitimate river ENDPOINTS without an outflow, so the
+      // endorheic balance (removed for ordinary land basins the same day)
+      // applies here: the water settles where inflow matches evaporation.
+      // Whatever sub-sea-level floor stays dry is a salt flat — evaporation
+      // concentrated everything the rivers ever carried in.
+      let level = spill
+      if (inflow < pet * region.length) {
+        const sorted = region.slice().sort((a, b) => elevation[a] - elevation[b])
+        let area = 0
+        level = basinFloor
+        for (const c of sorted) {
+          area++
+          if (pet * area >= inflow) {
+            level = elevation[c]
+            break
+          }
         }
       }
+      for (const c of region) {
+        if (elevation[c] <= level) depth[c] = level - elevation[c]
+        else if (elevation[c] <= SEA_LEVEL) saltFlat[c] = 1
+      }
+      continue
     }
+    // Ordinary land basin: texture dimples are not lakes (see
+    // MIN_LAKE_BASIN_RELIEF_M), and a lake must OVERFLOW — river in, lake,
+    // river out (user rule, 2026-08-06). A basin whose inflow cannot sustain
+    // its full spill-level surface holds no lake at all; the terminal-sea
+    // branch above is the one deliberate exception to that rule.
+    if (spill - basinFloor < metersToElevation(minBasinReliefM)) continue
+    if (inflow < pet * region.length) continue
     for (const c of region) {
-      if (elevation[c] <= level) depth[c] = level - elevation[c]
+      if (elevation[c] <= spill) depth[c] = spill - elevation[c]
     }
   }
-  return depth
+  return { depth, saltFlat }
 }
 
 // Precipitation-weighted discharge (relative water volume) per full-res cell,
@@ -155,6 +212,14 @@ export function accumulateDischarge(routing: FlowRouting, elevation: Float32Arra
   }
   for (let i = poppedCount - 1; i >= 0; i--) {
     const cell = popOrder[i]
+    // A water body swallows what reaches it: rivers END in seas. With the
+    // flood seeded from the world ocean only (2026-08-06), an enclosed
+    // basin's filled surface technically drains onward over its spill — but
+    // a terminal sea has no outflow river, so the discharge must not march
+    // across the spill and draw a phantom river on the far side. The first
+    // sub-sea-level cell keeps the arriving discharge (computeLakes reads
+    // its basin inflow from exactly these shore cells).
+    if (elevation[cell] <= SEA_LEVEL) continue
     const target = flowTarget[cell]
     if (target >= 0) discharge[target] += discharge[cell]
   }
@@ -210,7 +275,11 @@ function riverWidth(dischargeAtCell: number, maxDischarge: number): number {
 }
 
 // Connected river polylines for smooth rendering. Each channel cell (discharge ≥
-// threshold, land, not lake bed) flows to one D8 neighbour, so channel cells form
+// threshold, land — INCLUDING lake beds and filled dimples since 2026-08-06:
+// excluding depression cells broke every river at every basin it crossed, and
+// once the plains micro-relief landed the lines shattered map-wide; a river now
+// draws as one continuous line through the lakes it feeds, river → lake →
+// river, the way the user reads the map) flows to one D8 neighbour, so channel cells form
 // trees rooted at the sea. We trace each headwater (a channel cell with no
 // channel cell flowing into it) downstream along flowTarget, emitting an ORDERED
 // path of [x, y, widthPx] points until it merges into an already-traced trunk
@@ -225,13 +294,11 @@ export interface RiverPolylines {
 }
 
 export function extractRiverPolylines(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, threshold: number, maxDischarge: number): RiverPolylines {
-  const { width, height, flowTarget, filled } = routing
+  const { width, height, flowTarget } = routing
   const n = width * height
-  const DEPRESSION_EPS = 1e-5
   const channel = new Uint8Array(n)
   for (let cell = 0; cell < n; cell++) {
     if (elevation[cell] <= SEA_LEVEL) continue
-    if (filled[cell] > elevation[cell] + DEPRESSION_EPS) continue
     if (discharge[cell] < threshold) continue
     channel[cell] = 1
   }
@@ -298,7 +365,7 @@ const RIPARIAN_DECAY = 0.45
 // greens its surroundings — a desert with a big river through it becomes a
 // vegetated corridor. `elevation` is the display terrain (land/ocean + biome
 // substrate); discharge/lakeDepth share its grid. Coarse (climate-grid) output.
-export function computeRiparianBiomes(elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number): Uint8Array {
+export function computeRiparianBiomes(elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array): Uint8Array {
   const scale = maxDischarge > 0 ? maxDischarge : 1
   const strength = new Float32Array(climateResX * climateResY)
   for (let cell = 0; cell < elevation.length; cell++) {
@@ -336,5 +403,24 @@ export function computeRiparianBiomes(elevation: Float32Array, discharge: Float3
     if (precipEff[i] === OCEAN_PRECIP) continue
     precipEff[i] = precipEff[i] + field[i] * MAX_RIPARIAN_MM
   }
-  return computeBiomes(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, worldW, worldH)
+  const biomes = computeBiomes(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, worldW, worldH)
+  // Salt-flat override (see computeLakes' LakeFields.saltFlat): a terminal
+  // basin's exposed floor is a hydrology state, not a climate — it wins over
+  // whatever the Whittaker mapping said. Full-res mask onto the coarse biome
+  // grid: a coarse cell flips when a majority of its area is crust.
+  if (saltFlat) {
+    const counts = new Uint16Array(climateResX * climateResY)
+    const totals = new Uint16Array(climateResX * climateResY)
+    for (let cell = 0; cell < saltFlat.length; cell++) {
+      const x = cell % worldW
+      const y = (cell - x) / worldW
+      const gi = Math.min(climateResY - 1, Math.floor((y / worldH) * climateResY)) * climateResX + Math.min(climateResX - 1, Math.floor((x / worldW) * climateResX))
+      totals[gi]++
+      if (saltFlat[cell]) counts[gi]++
+    }
+    for (let gi = 0; gi < counts.length; gi++) {
+      if (totals[gi] > 0 && counts[gi] * 2 > totals[gi]) biomes[gi] = Biome.SaltFlat
+    }
+  }
+  return biomes
 }

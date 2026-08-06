@@ -2,7 +2,7 @@ import type { Raft } from '../crust/raftTypes'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { buildFeatureBuckets, computeElevation, raftBaselineAt, warpedSamplePoint } from '../elevation/elevationField'
-import { fineDetailNoise, ridgedMultifractal } from '../elevation/ridgedNoise'
+import { FINE_DETAIL_SEED_SALT, fineDetailNoise, ridgedMultifractal } from '../elevation/ridgedNoise'
 import { wrapValue } from '../core/field'
 import { D8_OFFSETS, accumulateFlow, d8Neighbor, fillDepressionsAndRouteFlow } from './flowRouting'
 import type { FlowRouting } from './flowRouting'
@@ -121,7 +121,7 @@ export function buildTileElevation(world: TileWorld, spec: TileSpec, macroDelta?
       const worldX = wrapValue(spec.x0 + (i + 0.5) / spec.factor, world.width)
       const s = warpedSamplePoint(worldX, worldY, world.width, world.height, world.warpSeed)
       const base = raftBaselineAt(worldX, worldY, world.rafts, world.oceanAge, world.width, world.height, world.warpSeed, world.seaLevelOffset)
-      let e = computeElevation(s.wx, s.wy, base, buckets, world.width, world.height, ridgedMultifractal(s.wx, s.wy, world.width, world.height, world.warpSeed))
+      let e = computeElevation(s.wx, s.wy, base, buckets, world.width, world.height, ridgedMultifractal(s.wx, s.wy, world.width, world.height, world.warpSeed), fineDetailNoise(s.wx, s.wy, world.width, world.height, (world.warpSeed ^ FINE_DETAIL_SEED_SALT) >>> 0))
       if (macroDelta) e += sampleBilinearWrapped(macroDelta.field, macroDelta.width, macroDelta.height, worldX, worldY)
       out[j * n + i] = e + fineDetailNoise(s.wx, s.wy, world.width, world.height, noiseSeed) * tileSeedRoughnessAmplitude(e)
     }

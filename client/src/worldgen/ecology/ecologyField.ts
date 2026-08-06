@@ -112,6 +112,8 @@ const PASTURE_BY_BIOME: Record<number, number> = {
   // Alpine meadows above the treeline support real (seasonal/transhumance)
   // grazing — comparable to tundra, not to bare ice.
   [Biome.Alpine]: 0.3,
+  // A salt crust grows nothing.
+  [Biome.SaltFlat]: 0.0,
 }
 
 // Weights of each subsistence source in the saturating carrying-capacity combine
@@ -255,6 +257,7 @@ const TIMBER_BY_BIOME: Record<number, number> = {
   [Biome.Ice]: 0.0,
   // Above the treeline by definition — no timber.
   [Biome.Alpine]: 0.0,
+  [Biome.SaltFlat]: 0.0,
 }
 
 // Metal / stone influence radii (world fraction). Tin is tightest → the rare,

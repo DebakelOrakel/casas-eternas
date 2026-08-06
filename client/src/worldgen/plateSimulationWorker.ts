@@ -520,6 +520,9 @@ let lastLakeBasinElevations: Float32Array | null = null
 let lastHydrologyRouting: FlowRouting | null = null
 let lastHydrologyDischarge: Float32Array | null = null
 let lastHydrologyLakeDepth: Float32Array | null = null
+// Terminal basins' exposed floor (computeLakes' LakeFields.saltFlat) — the
+// SaltFlat biome override's source, cached with the lake depths it came with.
+let lastHydrologySaltFlat: Uint8Array | null = null
 let lastHydrologyMaxDischarge = 0
 let lastHydrologyMeanRunoff = 0
 let hydrologyDirty = true
@@ -1032,9 +1035,14 @@ function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: '
       lastHydrologyDischarge = accumulateDischarge(lastHydrologyRouting, elevation, precip, CLIMATE_RES_X, CLIMATE_RES_Y)
       lastHydrologyMaxDischarge = maxDischargeOverLand(lastHydrologyDischarge, elevation)
       lastHydrologyMeanRunoff = meanLandRunoff(precip, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
-      lastHydrologyLakeDepth = lastClimateTemperature
-        ? computeLakes(lastHydrologyRouting, lastHydrologyDischarge, elevation, lastClimateTemperature, CLIMATE_RES_X, CLIMATE_RES_Y)
-        : new Float32Array(width * height)
+      if (lastClimateTemperature) {
+        const lakes = computeLakes(lastHydrologyRouting, lastHydrologyDischarge, elevation, lastClimateTemperature, CLIMATE_RES_X, CLIMATE_RES_Y)
+        lastHydrologyLakeDepth = lakes.depth
+        lastHydrologySaltFlat = lakes.saltFlat
+      } else {
+        lastHydrologyLakeDepth = new Float32Array(width * height)
+        lastHydrologySaltFlat = null
+      }
       hydrologyDirty = false
       rerouted = true
     }
@@ -1047,7 +1055,7 @@ function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: '
     // Uses the display terrain (lastRawElevations) so land/ocean matches the map.
     let biomesOut: Uint8Array = new Uint8Array(0)
     if (lastRawElevations && lastClimateTemperature && lastClimateSeasonalAmplitude && lastClimateMonsoonIndex && lastHydrologyLakeDepth) {
-      biomesOut = computeRiparianBiomes(lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, precip, lastClimateTemperature, lastClimateSeasonalAmplitude, lastClimateMonsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+      biomesOut = computeRiparianBiomes(lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, precip, lastClimateTemperature, lastClimateSeasonalAmplitude, lastClimateMonsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, lastHydrologySaltFlat ?? undefined)
     }
     const hydrologyMessage: WorkerHydrologyDataMessage = {
       type: 'hydrologyData',

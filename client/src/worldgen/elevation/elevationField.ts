@@ -296,6 +296,20 @@ export function warpedSamplePoint(x: number, y: number, width: number, height: n
 // caches (see warpedSamplePoint / elevationRenderWorker.ts), so this per-epoch
 // hot loop does no warp or ridge noise math at all — only the dynamic feature
 // blend and baseline, which are all that actually change epoch to epoch.
+// Sub-range-scale relief for the LOWLANDS, the counterpart of the ridged
+// multifractal (which is gated on uplift, so plains never see it): the raw
+// fineDetailNoise sample for this point (see FINE_DETAIL_SEED_SALT), scaled
+// here by min(20 m, half the cell's own height) — land only, fading to zero
+// at the coast so no shoreline speckle. Added 2026-08-06 for flatland river
+// spread: without ANY plains texture, lowland drainage follows the priority
+// flood's epsilon ramp into a few straight trunks. Measured (one seed, 2x2
+// sweep vs plainFactor): this seed alone raises plain channel junctions
+// 139->174 per 1k and cuts mean distance-to-stream 13.7->10.4 px; with
+// plainFactor 0.3 it reaches 198 and 9.6 px, at +2% mountain roughness.
+// Passed in precomputed (like ridgeValue) so the render pool can cache it
+// per world; default 0 keeps old callers' fields bit-identical.
+const PLAIN_DETAIL_MAX = 20 / 9000 // 20 m, in elevation units
+
 export function computeElevation(
   wx: number,
   wy: number,
@@ -304,6 +318,7 @@ export function computeElevation(
   width: number,
   height: number,
   ridgeValue: number,
+  fineValue = 0,
 ): number {
   const { buckets, bucketsX, bucketsY, bucketSizeX, bucketSizeY } = featureBuckets
   const centerBx = Math.min(bucketsX - 1, Math.floor(wx / bucketSizeX))
@@ -368,7 +383,8 @@ export function computeElevation(
   // (negative uplift) stay smooth depressions. ridgeValue is the precomputed
   // ridgedMultifractal sample at this warped point.
   const detail = uplift > 0 ? (ridgeValue - RIDGE_MEAN) * uplift * RIDGE_RELATIVE_STRENGTH : 0
-  const elevation = blendedBaseline + uplift + detail
+  let elevation = blendedBaseline + uplift + detail
+  if (fineValue !== 0 && elevation > 0) elevation += fineValue * Math.min(PLAIN_DETAIL_MAX, elevation * 0.5)
   return Math.max(-1, Math.min(1, elevation))
 }
 

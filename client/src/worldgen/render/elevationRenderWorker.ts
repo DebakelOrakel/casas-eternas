@@ -1,5 +1,5 @@
 import { buildFeatureBuckets, computeElevation, warpedSamplePoint } from '../elevation/elevationField'
-import { ridgedMultifractal } from '../elevation/ridgedNoise'
+import { FINE_DETAIL_SEED_SALT, fineDetailNoise, ridgedMultifractal } from '../elevation/ridgedNoise'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 
 // Computes raw (unshaped, unclamped-differently, uncolored) elevation for
@@ -65,6 +65,10 @@ interface StaticFieldCache {
   warpedX: Float32Array
   warpedY: Float32Array
   ridge: Float32Array
+  // fineDetailNoise at the same warped points — the plains micro-relief
+  // computeElevation's fineValue parameter consumes. warpSeed-constant like
+  // ridge, so cached with it.
+  fine: Float32Array
 }
 
 let staticCache: StaticFieldCache | null = null
@@ -96,6 +100,8 @@ function getStaticFieldCache(
   const warpedX = new Float32Array(renderWidth * rowCount)
   const warpedY = new Float32Array(renderWidth * rowCount)
   const ridge = new Float32Array(renderWidth * rowCount)
+  const fine = new Float32Array(renderWidth * rowCount)
+  const fineSeed = (warpSeed ^ FINE_DETAIL_SEED_SALT) >>> 0
   for (let py = startY; py < endY; py++) {
     const rowOffset = (py - startY) * renderWidth
     const worldY = py * scaleY
@@ -106,9 +112,10 @@ function getStaticFieldCache(
       warpedX[idx] = wx
       warpedY[idx] = wy
       ridge[idx] = ridgedMultifractal(wx, wy, worldWidth, worldHeight, warpSeed)
+      fine[idx] = fineDetailNoise(wx, wy, worldWidth, worldHeight, fineSeed)
     }
   }
-  staticCache = { warpSeed, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight, warpedX, warpedY, ridge }
+  staticCache = { warpSeed, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight, warpedX, warpedY, ridge, fine }
   return staticCache
 }
 
@@ -131,7 +138,7 @@ self.onmessage = (event: MessageEvent<RenderSliceRequest>) => {
     const rowOffset = (py - startY) * renderWidth
     for (let px = 0; px < renderWidth; px++) {
       const idx = rowOffset + px
-      elevations[idx] = computeElevation(cache.warpedX[idx], cache.warpedY[idx], baselineSlice[idx], buckets, worldWidth, worldHeight, cache.ridge[idx])
+      elevations[idx] = computeElevation(cache.warpedX[idx], cache.warpedY[idx], baselineSlice[idx], buckets, worldWidth, worldHeight, cache.ridge[idx], cache.fine[idx])
     }
   }
 

@@ -11,8 +11,15 @@ import { metersToElevation } from '../elevation/elevationScale'
 // it adds one more, finer noise octave to the EXISTING 2048x1024 grid, at
 // render time only.
 //
-// Why plains specifically need this: a flat, tectonically-quiet cell gets
-// near-zero detail from TWO separate places today. computeElevation's
+// NOTE 2026-08-06: partially superseded. computeElevation now embeds a
+// PHYSICAL plains micro-relief (fineValue / PLAIN_DETAIL_MAX — added for
+// flatland river spread, which a display-only layer cannot influence), so
+// the premise below ("plains get near-zero detail") no longer holds for the
+// simulation field. This texture remains as an optional, purely cosmetic
+// extra on top and stays off by default.
+//
+// Why plains specifically needed this: a flat, tectonically-quiet cell got
+// near-zero detail from TWO separate places at the time of writing. computeElevation's
 // ridged-multifractal term (elevationField.ts) is gated on `uplift > 0`, so
 // anywhere with no nearby terrain feature gets none of it. And
 // runErosionPass's own incision is scaled down to EROSION_PLAIN_FACTOR (15%)

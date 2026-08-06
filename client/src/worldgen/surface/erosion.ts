@@ -1,6 +1,6 @@
 import { wrappedDelta } from '../core/toroidal'
 import { SEA_LEVEL, SHELF_BREAK, metersToElevation, slopeFromAngle } from '../elevation/elevationScale'
-import { D8_OFFSETS, d8Neighbor, maybeYield, fillDepressionsAndRouteFlow, accumulateFlow } from './flowRouting'
+import { D8_OFFSETS, d8Neighbor, maybeYield, fillDepressionsAndRouteFlow, accumulateFlow, largestWaterComponent } from './flowRouting'
 import type { FlowRouting } from './flowRouting'
 
 // The erosion processes themselves — stream-power fluvial incision and thermal
@@ -384,20 +384,33 @@ function depositSediment(
 const EROSION_PLAIN_TOP_M = 600 // at or below this: plains, essentially left alone
 const EROSION_MOUNTAIN_FULL_M = 1500 // at or above this: full incision
 // Not zero. A dead-flat plain gives the priority flood nothing to route along, and the
-// trunk rivers then wander on numerical noise instead of on terrain. A sixth of the
-// rate keeps drainage well defined while being far too weak to dissect anything.
-const EROSION_PLAIN_FACTOR = 0.15
+// trunk rivers then wander on numerical noise instead of on terrain.
+//
+// 0.30, from 0.15 (2026-08-06, flatland river-spread work): with the plains
+// micro-relief seed in computeElevation (see PLAIN_DETAIL_MAX there), letting
+// plains take 30% incision is what connects the seeded texture into dendritic
+// valley networks. Measured, one seed, plain cells only:
+//
+//                       junctions/1k   mean dist to stream   mtn roughness
+//     0.15, no seed         139            13.7 px               84.2 m
+//     0.15 + seed           174            10.4 px               84.2 m
+//     0.30 + seed           198             9.6 px               86.0 m   <- this
+//     0.30, no seed         160            13.0 px               86.0 m
+//
+// The old worry (plains incision fights flatness) stays bounded: plains mean
+// roughness moved 27.2 -> 27.5 m.
+export const EROSION_PLAIN_FACTOR = 0.3
 
 // Exported for tileErosion.ts — the thresholds are METRES on the tectonic
 // envelope, so the same mask logic is valid at any grid resolution.
-export function buildErosionMask(tectonic: Float32Array): Float32Array {
+export function buildErosionMask(tectonic: Float32Array, plainFactor = EROSION_PLAIN_FACTOR): Float32Array {
   const lo = metersToElevation(EROSION_PLAIN_TOP_M)
   const hi = metersToElevation(EROSION_MOUNTAIN_FULL_M)
   const mask = new Float32Array(tectonic.length)
   for (let i = 0; i < tectonic.length; i++) {
     const e = tectonic[i]
     const t = e <= lo ? 0 : e >= hi ? 1 : (e - lo) / (hi - lo)
-    mask[i] = EROSION_PLAIN_FACTOR + (1 - EROSION_PLAIN_FACTOR) * t
+    mask[i] = plainFactor + (1 - plainFactor) * t
   }
   return mask
 }
@@ -630,6 +643,12 @@ export interface ErosionPassParams {
   // stable (the explicit scheme would risk oscillating between re-routings). Total cost
   // adds (rounds · (networkRefreshes − 1)) extra priority-floods, so keep it modest.
   networkRefreshes: number
+  // The plains damping of the erosion mask (see buildErosionMask /
+  // EROSION_PLAIN_FACTOR) — how much of full incision land below
+  // EROSION_PLAIN_TOP_M receives. Optional so existing callers keep the
+  // long-standing default; made a parameter (2026-08-06) for the flatland
+  // river-spread work, which sweeps it against seeded plains micro-relief.
+  plainFactor?: number
 }
 
 // rounds=5 chosen to fold what manual testing showed needed ~5 repeated
@@ -650,6 +669,7 @@ export const DEFAULT_EROSION_PASS_PARAMS: ErosionPassParams = {
   streamPower: DEFAULT_STREAM_POWER_PARAMS,
   thermal: DEFAULT_THERMAL_EROSION_PARAMS,
   networkRefreshes: 1,
+  plainFactor: EROSION_PLAIN_FACTOR,
 }
 
 // The one function callers actually need — chains flow-routing through
@@ -703,7 +723,27 @@ export async function runErosionPass(
   let elevations = rawElevations.slice()
   // Built once from the tectonic envelope — see buildErosionMask for why the zoning
   // keys on that rather than on the terrain as it erodes.
-  const erosionMask = buildErosionMask(rawElevations)
+  const erosionMask = buildErosionMask(rawElevations, params.plainFactor)
+  // Enclosed water (sub-sea-level cells NOT part of the world ocean — landlocked
+  // seas, deep rift grabens). Since the priority flood seeds only the world
+  // ocean (2026-08-06), these are depressions to it, and `elevations =
+  // routing.filled.slice()` would BAKE their fill into the terrain: the basin
+  // rises to its spill in round 1, the uplift term skips water-envelope cells,
+  // and a 3000 m deep landlocked sea leaves the map as a plateau forever
+  // (measured: the largest enclosed body, 4218 cells at −3122 m, vanished from
+  // preFillElevations entirely). The fill is a ROUTING surface for these
+  // cells, not terrain — after each refresh their pre-fill values (which still
+  // carry any marine deposition) are restored.
+  const oceanMask = largestWaterComponent(rawElevations, width, height, SEA_LEVEL)
+  let enclosedWater: Uint8Array | null = null
+  if (oceanMask) {
+    enclosedWater = new Uint8Array(cellCount)
+    let any = false
+    for (let i = 0; i < cellCount; i++) {
+      if (rawElevations[i] <= SEA_LEVEL && !oceanMask[i]) { enclosedWater[i] = 1; any = true }
+    }
+    if (!any) enclosedWater = null
+  }
   let routing: FlowRouting | undefined
   let accumulation: Float32Array | undefined
   // The last round's elevations *before* its depression fill — i.e. the eroded
@@ -797,7 +837,12 @@ export async function runErosionPass(
         routing = await fillDepressionsAndRouteFlow(elevations, width, height, SEA_LEVEL)
         accumulation = accumulateFlow(routing)
       }
+      const beforeFill = elevations
       elevations = routing.filled.slice()
+      // Enclosed seas keep their real bathymetry — see enclosedWater above.
+      if (enclosedWater) {
+        for (let i = 0; i < cellCount; i++) if (enclosedWater[i]) elevations[i] = beforeFill[i]
+      }
       await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, refreshParams, erosionMask, rawElevations, (fraction) => roundProgress('streamPower', (r + fraction) / refreshes))
     }
     // Order matters only a little here (both passes reread whatever the

@@ -1,6 +1,6 @@
 import type { Raft } from '../crust/raftTypes'
 import { buildFeatureBuckets, computeElevation, computeRaftBaseline, warpedSamplePoint } from './elevationField'
-import { ridgedMultifractal } from './ridgedNoise'
+import { FINE_DETAIL_SEED_SALT, fineDetailNoise, ridgedMultifractal } from './ridgedNoise'
 import { SEA_LEVEL, metersToElevation } from './elevationScale'
 
 // The water control, as a TARGET rather than a displacement.
@@ -70,7 +70,7 @@ function landFractionAt(
   for (let py = 0; py < h; py++) {
     for (let px = 0; px < w; px++) {
       const s = warpedSamplePoint(px * scaleX, py * scaleY, worldWidth, worldHeight, warpSeed)
-      const e = computeElevation(s.wx, s.wy, baseline[py * w + px], buckets, worldWidth, worldHeight, ridgedMultifractal(s.wx, s.wy, worldWidth, worldHeight, warpSeed))
+      const e = computeElevation(s.wx, s.wy, baseline[py * w + px], buckets, worldWidth, worldHeight, ridgedMultifractal(s.wx, s.wy, worldWidth, worldHeight, warpSeed), fineDetailNoise(s.wx, s.wy, worldWidth, worldHeight, (warpSeed ^ FINE_DETAIL_SEED_SALT) >>> 0))
       if (e > SEA_LEVEL) land++
     }
   }

@@ -21,6 +21,9 @@ export const Biome = {
   Savanna: 9,
   TropicalRainforest: 10,
   Alpine: 11,
+  // Hydrology override, not a Whittaker class (like Ocean): the exposed dry
+  // floor of a terminal basin — see computeLakes' salt-flat mask.
+  SaltFlat: 12,
 } as const
 
 type BiomeId = (typeof Biome)[keyof typeof Biome]
@@ -42,6 +45,7 @@ const BIOME_COLORS: Record<number, [number, number, number]> = {
   [Biome.Savanna]: [208, 166, 78], // gold / ochre
   [Biome.TropicalRainforest]: [22, 106, 50], // deep saturated green
   [Biome.Alpine]: [158, 154, 168], // cool slate/lavender-grey — bare rock, distinct from Tundra's warm grey and Ice's near-white
+  [Biome.SaltFlat]: [236, 230, 218], // warm off-white salt crust — real pans aren't snow-white, and Ice keeps the cold near-white
 }
 
 export function biomeColor(id: number): [number, number, number] {
@@ -66,6 +70,7 @@ const BIOME_LABEL_KEYS: Record<number, string> = {
   [Biome.Savanna]: 'world.biome.savanna',
   [Biome.TropicalRainforest]: 'world.biome.tropicalRainforest',
   [Biome.Alpine]: 'world.biome.alpine',
+  [Biome.SaltFlat]: 'world.biome.saltFlat',
 }
 
 export function biomeLabelKey(id: number): string {
@@ -86,6 +91,7 @@ export function biomeLegend(): { labelKey: string; rgb: [number, number, number]
     Biome.TemperateForest,
     Biome.TemperateRainforest,
     Biome.Desert,
+    Biome.SaltFlat,
     Biome.Savanna,
     Biome.TropicalRainforest,
   ]

@@ -75,7 +75,7 @@ function buildElevation(sim) {
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
-      el[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, W, H, M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed))
+      el[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, W, H, M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed), M.ridged.fineDetailNoise(s.wx, s.wy, W, H, (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0))
     }
   }
   return el
@@ -140,9 +140,11 @@ async function stageHashes(seed) {
   const meanRunoff = M.hydro.meanLandRunoff(precipitation, el, W, H, CRX, CRY)
   const discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
   const maxDis = M.hydro.maxDischargeOverLand(discharge, el)
-  const lakeDepth = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, temperature, CRX, CRY)
+  const lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, temperature, CRX, CRY)
+  const lakeDepth = lakes.depth
   out.discharge = hashBytes(discharge)
   out.lakeDepth = hashBytes(lakeDepth)
+  out.saltFlat = hashBytes(lakes.saltFlat)
   out.hydroScalars = `${meanRunoff.toFixed(9)}/${maxDis.toFixed(6)}`
   let lakeCells = 0
   for (const v of lakeDepth) if (v > 0) lakeCells++

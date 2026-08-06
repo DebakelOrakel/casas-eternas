@@ -102,6 +102,42 @@ export interface FlowRouting {
 
 const EPSILON_FLOOD_STEP = 1e-7
 
+// Mask of the largest 4-connected ≤ seaLevel component — the world ocean.
+// Null when there is no water at all. O(n) flood fill; cheap next to the
+// priority flood it feeds.
+export function largestWaterComponent(raw: Float32Array, width: number, height: number, seaLevel: number): Uint8Array | null {
+  const n = width * height
+  const label = new Int32Array(n).fill(-1)
+  const sizes: number[] = []
+  const stack: number[] = []
+  for (let s = 0; s < n; s++) {
+    if (raw[s] > seaLevel || label[s] !== -1) continue
+    const id = sizes.length
+    let size = 0
+    stack.push(s)
+    label[s] = id
+    while (stack.length) {
+      const i = stack.pop()!
+      size++
+      const y = (i / width) | 0
+      const x = i - y * width
+      for (const nb of [y * width + ((x + 1) % width), y * width + ((x + width - 1) % width), (((y + 1) % height) * width) + x, (((y + height - 1) % height) * width) + x]) {
+        if (raw[nb] <= seaLevel && label[nb] === -1) {
+          label[nb] = id
+          stack.push(nb)
+        }
+      }
+    }
+    sizes.push(size)
+  }
+  if (sizes.length === 0) return null
+  let best = 0
+  for (let i = 1; i < sizes.length; i++) if (sizes[i] > sizes[best]) best = i
+  const mask = new Uint8Array(n)
+  for (let i = 0; i < n; i++) if (label[i] === best) mask[i] = 1
+  return mask
+}
+
 // Priority-flood depression filling + D8 flow-direction assignment,
 // seeded from the ocean (every cell at or below seaLevel) rather than a
 // map edge — this grid wraps in both axes (no edge to drain off of
@@ -131,13 +167,22 @@ async function fillDepressions(raw: Float32Array, width: number, height: number,
   const visited = new Uint8Array(cellCount)
   const heap = new MinHeap(cellCount)
 
+  // Torus mode seeds only the WORLD OCEAN — the largest connected ≤ seaLevel
+  // body (2026-08-06). Seeding every ≤ seaLevel cell made any ENCLOSED
+  // sub-sea-level basin (a landlocked ocean remnant, a deep rift graben) an
+  // unconditional "sea at level 0": always brim-full regardless of climate,
+  // and a base level the flood radiated from. Seeded from the world ocean
+  // alone, an enclosed basin is what it physically is — a depression: the
+  // flood fills it to its spill, computeLakes then classifies it as a
+  // TERMINAL SEA and sets its real water level from inflow vs evaporation
+  // (the Caspian/Chad class). Bounded tiles keep the old all-water + border
+  // seeding — a tile window can't know which of its water bodies connects to
+  // the world ocean outside the window, and its rim is the drain anyway.
+  const oceanSeed = bounded ? null : largestWaterComponent(raw, width, height, seaLevel)
   for (let i = 0; i < cellCount; i++) {
-    // Bounded grids additionally seed every BORDER cell at its own elevation —
-    // the classic Barnes bounded-tile variant this torus version's own comment
-    // cites: on a tile cut out of the torus, water that reaches the rim leaves
-    // the tile, so the rim plays the drain role the ocean plays globally.
     const isBorderSeed = bounded && ((i % width) === 0 || (i % width) === width - 1 || i < width || i >= cellCount - width)
-    if (raw[i] <= seaLevel || isBorderSeed) {
+    const isWaterSeed = oceanSeed ? oceanSeed[i] === 1 : raw[i] <= seaLevel
+    if (isWaterSeed || isBorderSeed) {
       filled[i] = raw[i]
       visited[i] = 1
       heap.push(filled[i], i)

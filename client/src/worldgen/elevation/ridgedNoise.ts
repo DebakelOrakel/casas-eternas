@@ -118,6 +118,12 @@ const DETAIL_OCTAVES: ReadonlyArray<{ cellsX: number; cellsY: number; amplitude:
   { cellsX: 1024, cellsY: 512, amplitude: 0.5 },
 ]
 
+// The one seed salt every consumer of fineDetailNoise-as-terrain shares
+// (xor'd with the world's warpSeed): the render pool, the land-target
+// solver, the micro tile and any headless harness must sample the SAME
+// field, or the plains drainage they each derive quietly disagrees.
+export const FINE_DETAIL_SEED_SALT = 0x11a7e5
+
 // Roughly [-0.5, 0.5], zero mean. Distinct seed salt from ridgedMultifractal
 // (xor'd by the caller, see erosionDetailTexture.ts) so the two layers don't
 // share a lattice phase either.

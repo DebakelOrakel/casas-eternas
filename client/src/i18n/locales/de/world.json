@@ -11,6 +11,7 @@
   "world.biome.savanna": "Savanne",
   "world.biome.tropicalRainforest": "Tropischer Regenwald",
   "world.biome.alpine": "Alpine Tundra",
+  "world.biome.saltFlat": "Salzpfanne",
   "world.biome.unknown": "Unbekannt",
   "world.resource.carryingCapacity.label": "Tragfähigkeit",
   "world.resource.carryingCapacity.help": "Wie viele Menschen das Land tragen kann — die Summe aller Ressourcen.",

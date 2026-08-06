@@ -11,6 +11,12 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **new** Biomes: alpine — high mountains above the treeline are their own biome instead of reading as arctic tundra. `world.biome`
 - **new** Elevation: plains carry a fine, slope-conditioned detail texture (render-only) instead of staying billiard-smooth.
 - **fixed** Tectonics: plate merges stop at a floor of three plates, so a world can no longer collapse into a single frozen plate. `world.event`
+- **changed** Hydrology: shallow terrain dimples no longer count as lakes — a lake needs a real basin under it. `world.overlay.rivers`
+- **dropped** Hydrology: endorheic (closed) lakes — every lake overflows into a river now; basins too dry to overflow stay dry. `world.overlay.rivers`
+- **new** Hydrology: landlocked seas are terminal basins — rivers end in them, and the climate sets their water level. `world.overlay.rivers`
+- **new** Biomes: salt flats — the exposed floor of a shrunken terminal sea. `world.biome`
+- **fixed** Hydrology: rivers draw as one continuous line through the lakes and hollows they cross. `world.overlay.rivers`
+- **changed** Erosion: lowlands carry real micro-relief now, so plains rivers branch into dendritic networks instead of running as a few straight trunks. `worldgen.panel.erosion`
 - **changed** Erosion: delta plains slope gently seaward and their lobes grow rounded instead of as one-cell staircase arms. `worldgen.panel.erosion`
 - **fixed** Erosion: coastal cliffs no longer pile talus into the sea — steep coasts stay steep instead of growing tall raised aprons. `worldgen.panel.erosion`
 
