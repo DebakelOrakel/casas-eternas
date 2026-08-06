@@ -95,7 +95,14 @@ full-res post-erosion field where needed, for lapse + orographic).
    woodland/shrub, temperate grassland/cold desert, boreal/taiga, tundra),
    plus ocean, ice, and an alpine override above the treeline. Seasonality
    splits savanna vs rainforest (dry-season length); tune the set down later
-   if it's too many.
+   if it's too many. **Alpine override built 2026-08-06** (see
+   `climate/biomes.ts`): a fixed global elevation threshold (2800 m, not
+   latitude-dependent — see `ALPINE_TREELINE_ELEVATION`'s own comment for why
+   a fixed value is the useful signal here, not a re-derivation of what the
+   lapse rate already gives) reclassifies any cell above it to Alpine, except
+   ones already cold enough to be Ice. "Mediterranean" was folded into
+   Woodland rather than getting its own class — the shipped set has 12 ids
+   including Alpine, within the original ~9–12 target.
 
 ## Decisions (locked)
 

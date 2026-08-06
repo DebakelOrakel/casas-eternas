@@ -1,5 +1,5 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from './climateField'
-import { SEA_LEVEL } from '../elevation/elevationScale'
+import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -20,6 +20,7 @@ export const Biome = {
   Desert: 8,
   Savanna: 9,
   TropicalRainforest: 10,
+  Alpine: 11,
 } as const
 
 type BiomeId = (typeof Biome)[keyof typeof Biome]
@@ -40,6 +41,7 @@ const BIOME_COLORS: Record<number, [number, number, number]> = {
   [Biome.Desert]: [236, 218, 170], // pale sand (lightest)
   [Biome.Savanna]: [208, 166, 78], // gold / ochre
   [Biome.TropicalRainforest]: [22, 106, 50], // deep saturated green
+  [Biome.Alpine]: [158, 154, 168], // cool slate/lavender-grey — bare rock, distinct from Tundra's warm grey and Ice's near-white
 }
 
 export function biomeColor(id: number): [number, number, number] {
@@ -59,6 +61,7 @@ const BIOME_LABELS: Record<number, string> = {
   [Biome.Desert]: 'Desert',
   [Biome.Savanna]: 'Savanna',
   [Biome.TropicalRainforest]: 'Tropical rainforest',
+  [Biome.Alpine]: 'Alpine tundra',
 }
 
 export function biomeLabel(id: number): string {
@@ -71,6 +74,7 @@ export function biomeLegend(): { label: string; rgb: [number, number, number] }[
   const order = [
     Biome.Ice,
     Biome.Tundra,
+    Biome.Alpine,
     Biome.Boreal,
     Biome.Grassland,
     Biome.Woodland,
@@ -82,6 +86,30 @@ export function biomeLegend(): { label: string; rgb: [number, number, number] }[
   ]
   return order.map((id) => ({ label: biomeLabel(id), rgb: biomeColor(id) }))
 }
+
+// The alpine override, promised by docs/decisions/climate-biomes.md ("plus ...
+// an alpine override above the treeline") but never built until 2026-08-06: a
+// mountain's cold-elevation biome used to fall out of the lapse rate alone —
+// which classifies it as Tundra, exactly the same id/color/label as arctic
+// lowland tundra. That is not wrong ecologically (a real snowline zone reads
+// similarly whether it got cold from latitude or elevation), but it meant an
+// equatorial snow-capped peak and a polar plain were visually and
+// mechanically indistinguishable — the elevation was invisible to gameplay.
+//
+// A single global elevation threshold (not latitude-dependent) is the whole
+// point of the override: real treeline elevation DOES fall with latitude, but
+// reproducing that here would just re-derive what the lapse-rate-driven T/P
+// classification already gives — the useful, DIFFERENT signal is "is this
+// high ground, regardless of where on the planet it is", so a fixed metres
+// threshold is what actually answers that. 2800 m sits within the commonly
+// cited real-world treeline range (roughly 2500-3800 m depending on
+// latitude/region) as a single representative value.
+//
+// A cell that would already classify as Ice (T < -10°C — a true glaciated
+// summit) is left alone: Alpine means "bare rock / sparse cold-adapted
+// vegetation above the treeline", not "less ice than Ice" — a permanently
+// glaciated peak should still read as ice, elevation or not.
+const ALPINE_TREELINE_ELEVATION = metersToElevation(2800)
 
 // Classify one cell. T = mean annual °C, P = annual precip mm/yr, amp = seasonal
 // TEMPERATURE amplitude °C, season = monsoon / precipitation-SEASONALITY index (0 =
@@ -120,11 +148,13 @@ export function computeBiomes(temperature: Float32Array, precipitation: Float32A
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      if (sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) <= SEA_LEVEL) {
+      const cellElevation = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
+      if (cellElevation <= SEA_LEVEL) {
         biomes[i] = Biome.Ocean
         continue
       }
-      biomes[i] = classify(temperature[i], precipitation[i], seasonalAmplitude[i], monsoonIndex[i])
+      const base = classify(temperature[i], precipitation[i], seasonalAmplitude[i], monsoonIndex[i])
+      biomes[i] = cellElevation > ALPINE_TREELINE_ELEVATION && base !== Biome.Ice ? Biome.Alpine : base
     }
   }
   return biomes
