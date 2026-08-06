@@ -15,7 +15,9 @@ import { convectionCellSeeds, finalizeArchean } from './archean/finalizeArchean'
 import { findPlumeSites } from './tectonics/plumes'
 import { stabilisedFraction } from './crust/raftField'
 import { worldAgeMa } from './core/worldTime'
-import { fillDepressionsAndRouteFlow } from './surface/flowRouting'
+import { accumulateFlow, fillDepressionsAndRouteFlow } from './surface/flowRouting'
+import { MICRO_TILE_EXTENT_MACRO, MICRO_TILE_FACTOR, buildTileElevation, buildTileInflow, burnMacroTrunks, pickLargestRiverMouth, runTileErosion, scaleErosionParamsForTile } from './surface/tileErosion'
+import { renderMicroTileImage } from './render/microTileImage'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './tectonics/oceanAge'
 import type { ErosionPhase, ErosionPassParams } from './surface/erosion'
 import type { FlowRouting } from './surface/flowRouting'
@@ -100,6 +102,13 @@ export interface WorkerResetErosionMessage {
 // result is kept (lastRawElevations), so a later 'erode' continues from there.
 export interface WorkerStopErosionMessage {
   type: 'stopErosion'
+}
+// Debug inspector: re-simulate a small window around the largest river mouth
+// at fine resolution (surface/tileErosion.ts — the resolution-strategy micro
+// tier's prototype) and reply with a WorkerMicroTileDataMessage. Derived
+// display detail only — nothing about the macro world changes.
+export interface WorkerComputeMicroTileMessage {
+  type: 'computeMicroTile'
 }
 // Requests the climate step (temperature so far) be computed on the current,
 // possibly-eroded elevation — see docs/decisions/climate-biomes.md. Replies
@@ -186,6 +195,7 @@ export type WorkerInboundMessage =
   | WorkerErodeMessage
   | WorkerResetErosionMessage
   | WorkerStopErosionMessage
+  | WorkerComputeMicroTileMessage
   | WorkerComputeClimateMessage
   | WorkerComputeHydrologyMessage
   | WorkerComputeEcologyMessage
@@ -380,6 +390,29 @@ export interface WorkerHydrologyDataMessage {
 export interface WorkerDeltaMaskMessage {
   type: 'deltaMask'
   mask: ArrayBuffer
+}
+
+// The finished micro tile: a baked RGBA image (n×n — hypsometric ramp,
+// hillshade, river tint; see render/microTileImage.ts) plus where the window
+// sits in world coordinates, so the viewer can caption it.
+export interface WorkerMicroTileDataMessage {
+  type: 'microTileData'
+  buffer: ArrayBuffer
+  n: number
+  x0: number
+  y0: number
+  extentMacro: number
+  factor: number
+  mouthX: number
+  mouthY: number
+}
+// Coarse progress for the viewer's label — macro routing, then one tick per
+// tile-erosion round. fraction -1 signals an aborted request (another
+// long-running render holds the worker, or the world has no river mouth) so
+// the screen can release its busy state instead of waiting forever.
+export interface WorkerMicroTileProgressMessage {
+  type: 'microTileProgress'
+  fraction: number
 }
 
 // The computed ecology fields (coarse climate grid), keyed by field id so the
@@ -754,9 +787,9 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
 }
 
 // Was under water before this pass and is measurably higher after it. The 10 m floor
-// keeps out the numerical dust and the thin talus spill that runThermalErosion has
-// always shed off coastal cells (it does not check isLand on the receiving side), so
-// what remains is deposition. rawElevations is safe to read: runErosionPass copies it
+// keeps out numerical dust (it also used to filter runThermalErosion's coastal talus
+// spill, but thermal is land-only since 2026-08-06 — see its own comment), so what
+// remains is deposition. rawElevations is safe to read: runErosionPass copies it
 // before touching anything.
 const DELTA_MARK_MIN_M = 10
 function postDeltaMask(raw: Float32Array, eroded: Float32Array): void {
@@ -840,6 +873,75 @@ function handleErode(message: Extract<WorkerInboundMessage, { type: 'erode' }>):
 function handleStopErosion(): void {
   // The in-flight runErosionPass polls this and returns its partial result.
   erosionStopRequested = true
+}
+
+// The micro-tile debug inspector (see WorkerComputeMicroTileMessage). Runs on
+// whatever terrain is currently shown (lastRawElevations — post-erosion if an
+// erode ran), inherits the macro erosion's carving as a correction against
+// preErosionElevations, and guards with renderInFlight like 'erode' so the two
+// long-running requests can't interleave. Purely derived output: no worker
+// state changes, nothing invalidated.
+function handleComputeMicroTile(): void {
+  const postProgress = (fraction: number): void => {
+    const progress: WorkerMicroTileProgressMessage = { type: 'microTileProgress', fraction }
+    self.postMessage(progress)
+  }
+  if (!sim || !lastRawElevations || renderInFlight) {
+    postProgress(-1)
+    return
+  }
+  const currentSim = sim
+  const macroElevations = lastRawElevations
+  renderInFlight = true
+  ;(async () => {
+    const { width, height } = currentSim
+    postProgress(0)
+    // Fresh macro routing on the current terrain — plain cell-count
+    // accumulation (what the erosion thresholds are calibrated in), NOT the
+    // hydrology cache's precipitation-weighted discharge.
+    const macroRouting = await fillDepressionsAndRouteFlow(macroElevations, width, height, SEA_LEVEL)
+    const macroAccumulation = accumulateFlow(macroRouting)
+    postProgress(0.2)
+    const mouth = pickLargestRiverMouth(macroElevations, macroAccumulation, width, height)
+    if (!mouth) {
+      postProgress(-1)
+      return
+    }
+    const spec = { x0: mouth.x - MICRO_TILE_EXTENT_MACRO / 2, y0: mouth.y - MICRO_TILE_EXTENT_MACRO / 2, extentMacro: MICRO_TILE_EXTENT_MACRO, factor: MICRO_TILE_FACTOR }
+    const n = spec.extentMacro * spec.factor
+    // Macro erosion's carving, inherited as a low-frequency correction. Same
+    // object means no erosion has run yet — the correction is simply zero.
+    const macroDelta = preErosionElevations && preErosionElevations !== macroElevations
+      ? (() => {
+          const diff = new Float32Array(width * height)
+          for (let i = 0; i < diff.length; i++) diff[i] = macroElevations[i] - preErosionElevations![i]
+          return { field: diff, width, height }
+        })()
+      : undefined
+    const world = { width, height, rafts: currentSim.rafts, features: currentSim.features, oceanAge: currentSim.oceanAge, warpSeed: currentSim.warpSeed, seaLevelOffset: currentSim.seaLevelOffset }
+    const envelope = buildTileElevation(world, spec, macroDelta)
+    burnMacroTrunks(envelope, spec, macroElevations, macroAccumulation, width, height)
+    const inflow = buildTileInflow(spec, macroRouting.flowTarget, macroAccumulation, width, height)
+    const params = scaleErosionParamsForTile(DEFAULT_EROSION_PASS_PARAMS, spec.factor)
+    const tile = await runTileErosion(envelope, n, params, inflow, (round, rounds) => postProgress(0.2 + 0.75 * (round / rounds)))
+    // River tint threshold: the same 60-macro-cell drainage the map's own
+    // river extraction regards as a stream, in fine-cell units.
+    const rgba = renderMicroTileImage(tile.elevations, tile.accumulation, n, spec.factor, 60 * spec.factor * spec.factor)
+    const message: WorkerMicroTileDataMessage = {
+      type: 'microTileData',
+      buffer: rgba.buffer as ArrayBuffer,
+      n,
+      x0: spec.x0,
+      y0: spec.y0,
+      extentMacro: spec.extentMacro,
+      factor: spec.factor,
+      mouthX: mouth.x,
+      mouthY: mouth.y,
+    }
+    self.postMessage(message, [message.buffer])
+  })().finally(() => {
+    renderInFlight = false
+  })
 }
 
 function handleResetErosion(): void {
@@ -1206,6 +1308,7 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   erode: (m) => handleErode(m as Extract<WorkerInboundMessage, { type: 'erode' }>),
   stopErosion: () => handleStopErosion(),
   resetErosion: () => handleResetErosion(),
+  computeMicroTile: () => handleComputeMicroTile(),
   computeClimate: (m) => handleComputeClimate(m as Extract<WorkerInboundMessage, { type: 'computeClimate' }>),
   computeHydrology: (m) => handleComputeHydrology(m as Extract<WorkerInboundMessage, { type: 'computeHydrology' }>),
   computeEcology: (m) => handleComputeEcology(m as Extract<WorkerInboundMessage, { type: 'computeEcology' }>),

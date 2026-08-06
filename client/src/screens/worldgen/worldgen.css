@@ -618,3 +618,49 @@
      digit count changes while erosion is running. */
   min-width: 2.5em;
 }
+
+/* Micro-tile debug viewer: a floating panel showing the fine-resolution
+   re-simulation of a region (see the erosion panel's zoom button). Centered
+   over the map, above the top overlay bar (z-index 3, like .file-actions). */
+.worldgen-flat-screen .micro-tile-viewer {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 6px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+  color: #1a1a1a;
+  font-family: sans-serif;
+  font-size: 0.85rem;
+}
+
+.worldgen-flat-screen .micro-tile-viewer[hidden] {
+  display: none;
+}
+
+.worldgen-flat-screen .micro-tile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-weight: 600;
+}
+
+.worldgen-flat-screen .micro-tile-canvas {
+  /* Native tile resolution capped to the viewport so the viewer never
+     overflows small windows; the canvas buffer stays n×n regardless. */
+  width: min(512px, 70vh, 80vw);
+  height: min(512px, 70vh, 80vw);
+  image-rendering: auto;
+}
+
+.worldgen-flat-screen .micro-tile-status {
+  font-size: 0.75rem;
+  color: #444;
+}

@@ -1,10 +1,10 @@
 import type { Raft } from '../crust/raftTypes'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
-import { SEA_LEVEL } from '../elevation/elevationScale'
+import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { buildFeatureBuckets, computeElevation, raftBaselineAt, warpedSamplePoint } from '../elevation/elevationField'
 import { fineDetailNoise, ridgedMultifractal } from '../elevation/ridgedNoise'
 import { wrapValue } from '../core/field'
-import { accumulateFlow, fillDepressionsAndRouteFlow } from './flowRouting'
+import { D8_OFFSETS, accumulateFlow, d8Neighbor, fillDepressionsAndRouteFlow } from './flowRouting'
 import type { FlowRouting } from './flowRouting'
 import { buildErosionMask, runStreamPowerIterations, runThermalErosion } from './erosion'
 import type { ErosionPassParams, StreamPowerParams, ThermalErosionParams } from './erosion'
@@ -161,6 +161,117 @@ export function scaleErosionParamsForTile(macro: ErosionPassParams, factor: numb
   return { ...macro, streamPower, thermal }
 }
 
+// Default tile placement for the debug inspector: 64 macro cells (~500 km)
+// refined 8× → a 512² grid at ~1 km/cell, ~14 s single-threaded.
+export const MICRO_TILE_EXTENT_MACRO = 64
+export const MICRO_TILE_FACTOR = 8
+
+// The largest river mouth on the macro map — the debug inspector's default
+// target, since a delta mouth is where fine resolution has the most to prove.
+// A mouth is a land cell with an ocean D8 neighbour; "largest" by drainage.
+export function pickLargestRiverMouth(elevations: Float32Array, accumulation: Float32Array, width: number, height: number): { x: number; y: number } | null {
+  let best = -1
+  let bestAcc = -1
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      if (elevations[i] <= SEA_LEVEL) continue
+      let coastal = false
+      for (const [dx, dy] of D8_OFFSETS) {
+        if (elevations[d8Neighbor(x, y, dx, dy, width, height)] <= SEA_LEVEL) { coastal = true; break }
+      }
+      if (coastal && accumulation[i] > bestAcc) { bestAcc = accumulation[i]; best = i }
+    }
+  }
+  if (best < 0) return null
+  return { x: best % width, y: (best / width) | 0 }
+}
+
+// --- Stream burning (DEM conditioning) -------------------------------------
+// The macro river course is authoritative, but near the tile rim and on low
+// coastal plains its real gradient is metres — smaller than the seed
+// roughness and the rim drain's pull — so without conditioning the fine
+// drainage loses the macro course (prototype runs 2-6, each constant below
+// is one measured failure):
+// - trunk rivers only (>= 500 macro cells): burning the whole acc>=60
+//   dendritic net flattened low plains into competing corridors.
+// - narrow V-grooves: a wide flat-bottomed groove makes MFD fan the river
+//   into strands below every downstream threshold.
+// - depth SCALED into the headroom above the floor, not clamped: clamping
+//   made dead-flat corridors at exactly the floor height.
+const BURN_MIN_MACRO_DRAINAGE = 500
+const BURN_RADIUS_FINE = 5
+const BURN_BASE_DEPTH_M = 25
+const BURN_DEPTH_LOG_GAIN_M = 10
+const BURN_FLOOR_M = 0.5
+
+export function burnMacroTrunks(envelope: Float32Array, spec: TileSpec, macroElevations: Float32Array, macroAccumulation: Float32Array, worldWidth: number, worldHeight: number): void {
+  const n = spec.extentMacro * spec.factor
+  const floor = SEA_LEVEL + metersToElevation(BURN_FLOOR_M)
+  const rel = (v: number, v0: number, size: number) => (((v - v0) % size) + size) % size
+  const depthAt = new Float32Array(n * n)
+  for (let my = 0; my < worldHeight; my++) {
+    for (let mx = 0; mx < worldWidth; mx++) {
+      const i = my * worldWidth + mx
+      if (macroElevations[i] <= SEA_LEVEL || macroAccumulation[i] < BURN_MIN_MACRO_DRAINAGE) continue
+      const rx = rel(mx, spec.x0, worldWidth)
+      const ry = rel(my, spec.y0, worldHeight)
+      if (rx >= spec.extentMacro || ry >= spec.extentMacro) continue
+      const fullDepth = metersToElevation(BURN_BASE_DEPTH_M + BURN_DEPTH_LOG_GAIN_M * Math.log10(macroAccumulation[i] / BURN_MIN_MACRO_DRAINAGE))
+      const cx = (rx + 0.5) * spec.factor
+      const cy = (ry + 0.5) * spec.factor
+      const centerIdx = Math.min(n - 1, Math.round(cy)) * n + Math.min(n - 1, Math.round(cx))
+      const headroom = envelope[centerIdx] - floor
+      if (headroom <= 0) continue
+      const depth = Math.min(fullDepth, headroom)
+      for (let dy = -BURN_RADIUS_FINE; dy <= BURN_RADIUS_FINE; dy++) {
+        const fy = Math.round(cy + dy)
+        if (fy < 0 || fy >= n) continue
+        for (let dx = -BURN_RADIUS_FINE; dx <= BURN_RADIUS_FINE; dx++) {
+          const fx = Math.round(cx + dx)
+          if (fx < 0 || fx >= n) continue
+          const dist = Math.hypot(dx, dy)
+          if (dist > BURN_RADIUS_FINE) continue
+          const d = depth * (1 - dist / BURN_RADIUS_FINE)
+          const fi = fy * n + fx
+          if (d > depthAt[fi]) depthAt[fi] = d
+        }
+      }
+    }
+  }
+  const hardFloor = SEA_LEVEL + metersToElevation(0.2)
+  for (let i = 0; i < depthAt.length; i++) {
+    if (depthAt[i] <= 0 || envelope[i] <= SEA_LEVEL) continue
+    envelope[i] = Math.max(hardFloor, envelope[i] - depthAt[i])
+  }
+}
+
+// Base-accumulation array for accumulateFlow: per-cell rain weight of 1, plus
+// the macro upstream drainage injected wherever a macro flow step crosses
+// from outside the window to a cell inside it — so a mouth tile sees its
+// whole catchment's discharge, not just in-window rain.
+export function buildTileInflow(spec: TileSpec, macroFlowTarget: Int32Array, macroAccumulation: Float32Array, worldWidth: number, worldHeight: number): Float32Array {
+  const n = spec.extentMacro * spec.factor
+  const inflow = new Float32Array(n * n).fill(1)
+  const rel = (v: number, v0: number, size: number) => (((v - v0) % size) + size) % size
+  for (let my = 0; my < worldHeight; my++) {
+    for (let mx = 0; mx < worldWidth; mx++) {
+      const i = my * worldWidth + mx
+      if (rel(mx, spec.x0, worldWidth) < spec.extentMacro && rel(my, spec.y0, worldHeight) < spec.extentMacro) continue
+      const t = macroFlowTarget[i]
+      if (t < 0) continue
+      const ty = (t / worldWidth) | 0
+      const tx = t - ty * worldWidth
+      const rx = rel(tx, spec.x0, worldWidth)
+      const ry = rel(ty, spec.y0, worldHeight)
+      if (rx >= spec.extentMacro || ry >= spec.extentMacro) continue
+      const fi = Math.min(n - 1, Math.floor((ry + 0.5) * spec.factor)) * n + Math.min(n - 1, Math.floor((rx + 0.5) * spec.factor))
+      inflow[fi] += macroAccumulation[i] * spec.factor * spec.factor
+    }
+  }
+  return inflow
+}
+
 export interface TileErosionResult {
   elevations: Float32Array
   routing: FlowRouting
@@ -179,7 +290,7 @@ export interface TileErosionResult {
 // `inflow`, if given, must be a full base-accumulation array (per-cell rain
 // weight of 1 plus the macro catchment injected at the entry cells) — see
 // accumulateFlow's baseAccumulation parameter.
-export async function runTileErosion(envelope: Float32Array, n: number, params: ErosionPassParams, inflow?: Float32Array): Promise<TileErosionResult> {
+export async function runTileErosion(envelope: Float32Array, n: number, params: ErosionPassParams, inflow?: Float32Array, onRound?: (round: number, rounds: number) => void): Promise<TileErosionResult> {
   const elevations0 = envelope.slice()
   const erosionMask = buildErosionMask(envelope)
   let elevations = elevations0
@@ -213,6 +324,7 @@ export async function runTileErosion(envelope: Float32Array, n: number, params: 
       await runStreamPowerIterations(elevations, routing, accumulation, isLand, n, n, refreshParams, erosionMask, envelope)
     }
     await runThermalErosion(elevations, isLand, n, n, params.thermal)
+    onRound?.(round + 1, params.rounds)
   }
 
   return { elevations, routing: routing!, accumulation: accumulation! }
