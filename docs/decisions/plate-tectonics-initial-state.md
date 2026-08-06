@@ -9,6 +9,13 @@ status: decided
 **Status:** Decided — substrate, simulation depth, and initial per-plate
 parameters all settled.
 
+**Superseded (substrate only):** the A2 substrate decided below (continuous
+unit-sphere points, geodesic Voronoi) was later replaced by a flat torus for
+the shipped generator — see
+[world-topology-torus.md](./world-topology-torus.md) for what changed and
+why. Simulation depth (B2) and the per-plate parameters below are
+topology-independent and still apply unchanged.
+
 ## Goal
 
 Define the starting spatial substrate and initial per-plate parameters for the
@@ -164,15 +171,18 @@ implementation (`client/src/worldgen/plates.ts`, `crust.ts`):
   See [plate-tectonics-simulation.md](./plate-tectonics-simulation.md)
   for why the exact threshold values are a tuning detail rather than a
   design fork.
-- **Drift-update rules — not resolved, and this is a real gap, not just
-  an unaddressed followup.** The Decision above states drift should
+- ~~**Drift-update rules — not resolved, and this is a real gap, not just
+  an unaddressed followup.**~~ **Resolved 2026-07-25.** The Decision above states drift should
   "evolve per epoch based on current boundary state." The current
   implementation never does this: every plate's Euler-pole axis and
   angular speed are fixed at spawn for its entire life. Full
   mantle-convection-driven drift was already flagged above as a
   further-out stretch item, but even the lighter reactive version decided
   here (subduction/rift accelerates, active collision decelerates/locks)
-  hasn't been built.
+  hasn't been built. See [evolving-euler-poles.md](./evolving-euler-poles.md)
+  M1–M3: plate motion is now fitted each epoch to an evolving mantle-convection
+  field (the fuller version, not just the lighter reactive one this bullet
+  originally asked for), superseding the fixed-at-spawn motion described above.
 - **Epoch stopping condition — still open.** Not addressed. May not
   need one, since world creation is user-driven (click to advance a
   chosen number of epochs) rather than something that runs

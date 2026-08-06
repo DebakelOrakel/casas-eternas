@@ -27,6 +27,12 @@ multi-epoch (B2), and plates carry type/age/drift that evolve over the run.
 This doc is about what happens *during* those epochs — how boundaries turn
 into terrain, and how plates split/merge as the epochs play out.
 
+(The substrate later became a flat torus, not a sphere — see
+[world-topology-torus.md](./world-topology-torus.md). Everything below is
+topology-independent — "distance to a boundary curve" doesn't care whether
+the curve lives on a sphere or a torus — and needed no change when that
+happened.)
+
 Model direction takes its cue from Cordonnier et al., "Large Scale Terrain
 Generation from Tectonic Uplift and Fluvial Erosion" (Eurographics 2016) —
 the closest thing to an established best practice for this exact problem:
