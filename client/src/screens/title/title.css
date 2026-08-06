@@ -1,0 +1,51 @@
+.title-screen {
+  position: absolute;
+  inset: 0;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 12vh;
+  font-family: 'Cinzel', serif;
+  color: #1a1a1a;
+}
+
+.title-screen .title-block {
+  text-align: center;
+}
+
+.title-screen h1 {
+  margin: 0;
+  font-size: clamp(3rem, 9vw, 7rem);
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.title-screen .subtitle {
+  margin: 0.5rem 0 0;
+  font-size: clamp(1.4rem, 4.4vw, 3.4rem);
+  font-weight: 400;
+  letter-spacing: 0.12em;
+}
+
+.title-screen .text-link {
+  position: absolute;
+  bottom: 15%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: clamp(1.1rem, 2.4vw, 1.6rem);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #1a1a1a;
+  cursor: pointer;
+}
+
+.title-screen .text-link:hover {
+  text-decoration: underline;
+}
