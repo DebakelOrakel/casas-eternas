@@ -216,13 +216,21 @@ export function derivePlateTypes(seeds: PlateSeed[], rafts: Raft[], width: numbe
 // It also lines up with what the map is doing: "several separate cratons" holds
 // until roughly 60%, and past ~85% the destructible pool has nearly vanished, so
 // the world stops changing shape and only accumulates land.
+// AREA-weighted (Σ radius²), not blob-counted (2026-08-06): blob
+// consolidation (consolidateRaftBlobs) merges stabilised blobs into fewer,
+// larger ones, so a count-based fraction structurally DEFLATES as the phase
+// matures — measured 61-63% at epoch 300 against 81-88% without
+// consolidation, for the same amount of stable crust. Area is what the
+// gauge always meant: how much of the CRUST is immune, not how many
+// bookkeeping blobs are.
 export function stabilisedFraction(rafts: Raft[], epoch: number, stabilisationEpochs: number): number {
   let total = 0
   let stable = 0
   for (const raft of rafts) {
     for (const blob of raft.blobs) {
-      total++
-      if (epoch - (blob.birthEpoch ?? 0) >= stabilisationEpochs) stable++
+      const area = blob.radius * blob.radius
+      total += area
+      if (epoch - (blob.birthEpoch ?? 0) >= stabilisationEpochs) stable += area
     }
   }
   return total === 0 ? 0 : stable / total

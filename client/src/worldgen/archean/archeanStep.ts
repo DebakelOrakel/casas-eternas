@@ -2,7 +2,7 @@ import type { ArcheanSimulation } from './archeanState'
 import type { NucleationParams } from './crustNucleation'
 import { DEFAULT_NUCLEATION_PARAMS, findNucleationSites, nucleateCrust } from './crustNucleation'
 import { computeMembershipField } from '../crust/raftField'
-import { advanceRaftsOnFlow, mergeOverlappingRafts, recycleUnstabilisedCrust, splitDisconnectedRafts } from '../crust/raftLifecycle'
+import { advanceRaftsOnFlow, compactRafts, consolidateRaftBlobs, mergeOverlappingRafts, recycleUnstabilisedCrust, splitDisconnectedRafts } from '../crust/raftLifecycle'
 import { evolveMantleField, computeMantleFlow, sustainMantleVigour, MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
 import { MERGE_OVERLAP_FACTOR, RAFT_CONNECT_FACTOR } from '../tectonics/tectonicsParams'
 
@@ -56,6 +56,16 @@ export interface ArcheanParams {
   // this fixes and why it deliberately stops short of 1 (differential motion is the
   // Archean's only break-up mechanism — there are no plates to rift yet).
   raftRigidity: number
+  // Fraction of a blob's excess distance beyond its raft's equivalent-disc
+  // radius pulled back toward the centroid each epoch — the rounding force
+  // that keeps continents from staying the strings the linear downwelling
+  // zones aggregate them into. See compactRafts. 0 disables.
+  compaction: number
+  // Blob consolidation (see consolidateRaftBlobs): near-concentric pairs of
+  // STABILISED blobs merge when within this fraction of the smaller radius,
+  // up to consolidateMaxRadius. 0 disables.
+  consolidateProximity: number
+  consolidateMaxRadius: number
 }
 
 export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
@@ -86,6 +96,35 @@ export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
   // archeanStep describes as THE Archean break-up — needs a non-zero differential, and
   // the measurement shows it still contributes at 0.95 (95 break-ups against 64).
   raftRigidity: 0.95,
+  // Swept over two seeds at epoch 300, isoperimetric Q of the largest
+  // landmass (grid disc ≈ 1.6; the "wie beim Bleigießen" strings measured
+  // 24-35 without compaction):
+  //
+  //     rate    largest-mass Q    land
+  //     0.00      23.9 / 34.7     32 / 52%
+  //     0.03      14.1 / 25.0     20 / 32%
+  //     0.06      11.6 / 11.0     22 / 26%    <- massif with bays
+  //     0.10      15.9 / 13.8     24 / 23%    (over-pulling churns it back up)
+  //
+  // 0.06 also pulls total land back toward Earth-like — rounder masses carry
+  // less margin-band area than sprawling strings do.
+  compaction: 0.06,
+  // Swept over two seeds (Q = largest-mass isoperimetric quotient, blob
+  // count = the raftField query cost everything from rendering to membership
+  // sweeps scales with):
+  //
+  //                        e300 Q      e300 blobs    e500 blobs
+  //     off                11.6/11.0    332/534       634/920
+  //     prox 0.4 cap 150    8.4/12.1    157/188       296/286   <- chosen
+  //     prox 0.6 cap 150   10.0/13.6    146/190       264/246
+  //     prox 0.6 cap 110   15.2/13.3    265/281       459/482   (cap too low)
+  //
+  // Shape: better early, neutral late (accretion outpaces it either way).
+  // The real win is the ~2-3x blob reduction at equal land. Note the
+  // count-based stabilised gauge deflated under consolidation — which is why
+  // stabilisedFraction is area-weighted now (see its own comment).
+  consolidateProximity: 0.4,
+  consolidateMaxRadius: 150,
   attachDistSq: 190 * 190,
   stabilisationEpochs: 25,
   // -0.60, from -0.45 (2026-08-06): only genuinely cold downwellings recycle.
@@ -132,8 +171,11 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   sim.mantle = sustainMantleVigour(sim.mantle, params.mantleRms)
   const flow = computeMantleFlow(sim.mantle)
 
-  // 2. Crust rides the convection directly. No plates exist yet.
+  // 2. Crust rides the convection directly. No plates exist yet. Compaction
+  // runs with the motion step: drift stretches rafts along the convergence
+  // lines, compaction trades that length back into width — see compactRafts.
   advanceRaftsOnFlow(sim.rafts, flow, MANTLE_RES_X, MANTLE_RES_Y, width, height, params.raftRigidity)
+  compactRafts(sim.rafts, params.compaction, width, height)
 
   // 3. New crust over persistent upwellings that are still ocean.
   const sites = findNucleationSites(sim.mantle, sim.upwellingStreak, sim.rafts, params.nucleation, sim.random, width, height)
@@ -154,6 +196,12 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // a different clock from the ones the Ecology layer already consumes.
   mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, sim.epoch, width, height)
   sim.lastSplits = splitDisconnectedRafts(sim.rafts, RAFT_CONNECT_FACTOR, sim.random, width, height, false)
+
+  // 6. Consolidation, on the settled geometry: heavily-overlapped stabilised
+  // blobs collapse into fewer larger ones — see consolidateRaftBlobs.
+  if (params.consolidateProximity > 0) {
+    consolidateRaftBlobs(sim.rafts, sim.epoch, params.stabilisationEpochs, params.consolidateProximity, params.consolidateMaxRadius, width, height)
+  }
 
   sim.epoch += 1
 }

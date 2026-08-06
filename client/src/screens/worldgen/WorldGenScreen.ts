@@ -2377,6 +2377,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // now, not what the simulation is doing internally. The late line
   // deliberately drops the Wilson-cycle "and will tear it apart again" —
   // true, but it read as a warning against the very thing it announces.
+  //
+  // Thresholds re-verified 2026-08-06 after stabilisedFraction went
+  // area-weighted and consolidation/compaction landed (three seeds, 500
+  // epochs): 20% crosses at epochs 43-130, 70% at 158-225 — which is exactly
+  // when the largest landmass is measurably assembling. The measured band
+  // table above predates that re-verification; its numbers are stale but its
+  // three-band judgement still holds.
   const archeanStage = (stabilised: number): { hint: string; stage: 'early' | 'window' | 'late' } => {
     if (stabilised < 0.2) return { stage: 'early', hint: 'New crust is still forming and dissolving — keep running.' }
     if (stabilised < 0.7) return { stage: 'window', hint: 'Still drifting — stop now for an archipelago world.' }

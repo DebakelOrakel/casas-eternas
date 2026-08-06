@@ -132,6 +132,141 @@ export function advanceRaftsOnFlow(
   }
 }
 
+// Rounds each raft toward the compact shape its own area implies — the
+// Archean's stand-in for what makes real continents blocky rather than
+// stringy: collision thickens crust and gravitational spreading pushes it
+// outward, so a filament of accreted terranes reorganises into a massif.
+// The Archean model has neither force, and its aggregation geometry is
+// actively AGAINST compactness: crust collects along the mantle's linear
+// downwelling convergence zones, so continents came out as strings of beads
+// ("wie beim Bleigießen", user, 2026-08-06).
+//
+// Mechanics: only blobs OUTSIDE the raft's compact-disc target radius are
+// pulled toward the centroid, by `rate` of their excess distance per epoch.
+// The target is sqrt(N/π) x the raft's own MEASURED median nearest-neighbour
+// blob spacing — i.e. the radius the raft would have if its blobs kept their
+// current packing but arranged as a disc. Measured (2026-08-06, epoch-300
+// rafts): a 306-blob raft runs blobs of radius ~70 at ~19 px spacing,
+// giving a ~190 px compact target against actual blob distances of 450 px
+// median / 880 px max — plenty for the pull to act on. (The first version
+// used sqrt(Σ radius²) ≈ 1224 px for that same raft — six times too large,
+// because heavily-overlapping metaballs cover far less area than their
+// radii sum to — and was measured to be a complete no-op.) The spacing term
+// is clamped to [0.5, 1.2] of the mean blob radius so the equilibrium can't
+// run away: as compaction crowds blobs the measured spacing shrinks, and an
+// unclamped target would chase it downward into a full collapse. A raft
+// that is already compact is untouched. Centroid via
+// unwrap-relative-to-the-first-blob, the same seam handling
+// splitDisconnectedRafts relies on; a raft spanning more than half the
+// torus would wobble, but a raft that size has outgrown "string" long ago.
+//
+// Archean-only by design: in the tectonic phase a raft's geometry is plate
+// kinematics' business, and a compaction force there would fight the very
+// motions the mantle coupling fits.
+export function compactRafts(rafts: Raft[], rate: number, width: number, height: number): void {
+  if (rate <= 0) return
+  for (const raft of rafts) {
+    const n = raft.blobs.length
+    if (n < 3) continue
+    const ref = raft.blobs[0]
+    let sumX = 0
+    let sumY = 0
+    let radiusSum = 0
+    for (const blob of raft.blobs) {
+      sumX += wrappedDelta(blob.x, ref.x, width)
+      sumY += wrappedDelta(blob.y, ref.y, height)
+      radiusSum += blob.radius
+    }
+    const cx = ref.x + sumX / n
+    const cy = ref.y + sumY / n
+    const meanRadius = radiusSum / n
+    // Median nearest-neighbour spacing — O(n²), but n is a few hundred and
+    // this runs once per raft per epoch, far below the mantle solve's cost.
+    const nearest = new Float64Array(n)
+    for (let i = 0; i < n; i++) {
+      let best = Infinity
+      const bi = raft.blobs[i]
+      for (let j = 0; j < n; j++) {
+        if (j === i) continue
+        const bj = raft.blobs[j]
+        const d = toroidalDistanceSq(bi.x, bi.y, bj.x, bj.y, width, height)
+        if (d < best) best = d
+      }
+      nearest[i] = Math.sqrt(best)
+    }
+    nearest.sort()
+    const spacing = Math.min(1.2 * meanRadius, Math.max(0.5 * meanRadius, nearest[n >> 1]))
+    const compactRadius = Math.sqrt(n / Math.PI) * spacing
+    for (const blob of raft.blobs) {
+      const dx = wrappedDelta(blob.x, cx, width)
+      const dy = wrappedDelta(blob.y, cy, height)
+      const dist = Math.hypot(dx, dy)
+      const excess = dist - compactRadius
+      if (excess <= 0) continue
+      const pull = (excess * rate) / dist
+      blob.x = wrapValue(blob.x - dx * pull, width)
+      blob.y = wrapValue(blob.y - dy * pull, height)
+    }
+  }
+}
+
+// Merges near-concentric blob pairs within a raft into single larger blobs —
+// the follow-up to compactRafts: compaction piles blobs into ~90% overlap
+// (measured: median spacing 19 px at radius ~70), where dozens of beads
+// contribute the same field one larger blob would, at dozens of times the
+// query cost, and their summed edges are what keeps coastlines fringy.
+//
+// Constraints that shape the rule:
+// - Only pairs that are BOTH stabilised (age ≥ stabilisationEpochs) merge.
+//   recycleUnstabilisedCrust destroys young crust blob-by-blob; merging a
+//   young blob away would silently change what can still be recycled, and
+//   merging young INTO old would grant it immunity it hasn't earned. Both
+//   already-immune: recycling semantics untouched.
+// - birthEpoch of the merged blob is the area-weighted mean — both inputs
+//   are immune, so the only consumer left is the craton-age field (iron
+//   placement, ecology), which wants the average age of the material.
+// - Radius caps at maxRadius: unbounded consolidation converges on one
+//   mega-blob per craton, whose single smooth kernel erases the metaball
+//   coastline character entirely.
+// - Radius combines area-conservingly (√(r₁²+r₂²)) and each blob merges at
+//   most once per epoch — consolidation is gradual and measurable, not a
+//   one-epoch phase change.
+export function consolidateRaftBlobs(rafts: Raft[], epoch: number, stabilisationEpochs: number, proximityFactor: number, maxRadius: number, width: number, height: number): number {
+  let merged = 0
+  for (const raft of rafts) {
+    const blobs = raft.blobs
+    const dead = new Uint8Array(blobs.length)
+    const used = new Uint8Array(blobs.length)
+    for (let i = 0; i < blobs.length; i++) {
+      if (dead[i] || used[i]) continue
+      const a = blobs[i]
+      if (epoch - (a.birthEpoch ?? 0) < stabilisationEpochs) continue
+      for (let j = i + 1; j < blobs.length; j++) {
+        if (dead[j] || used[j]) continue
+        const b = blobs[j]
+        if (epoch - (b.birthEpoch ?? 0) < stabilisationEpochs) continue
+        const newRadius = Math.sqrt(a.radius * a.radius + b.radius * b.radius)
+        if (newRadius > maxRadius) continue
+        const reach = proximityFactor * Math.min(a.radius, b.radius)
+        if (toroidalDistanceSq(a.x, a.y, b.x, b.y, width, height) >= reach * reach) continue
+        const wa = a.radius * a.radius
+        const wb = b.radius * b.radius
+        const t = wb / (wa + wb)
+        a.x = wrapValue(a.x + wrappedDelta(b.x, a.x, width) * t, width)
+        a.y = wrapValue(a.y + wrappedDelta(b.y, a.y, height) * t, height)
+        a.radius = newRadius
+        a.birthEpoch = Math.round((a.birthEpoch ?? 0) * (1 - t) + (b.birthEpoch ?? 0) * t)
+        dead[j] = 1
+        used[i] = 1
+        merged++
+        break
+      }
+    }
+    if (merged > 0) raft.blobs = blobs.filter((_, i) => !dead[i])
+  }
+  return merged
+}
+
 export function recycleUnstabilisedCrust(
   rafts: Raft[],
   mantle: Float32Array,
