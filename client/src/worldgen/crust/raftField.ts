@@ -3,7 +3,7 @@ import type { PlateType } from '../tectonics/plateTypes'
 import type { Raft } from './raftTypes'
 import { toroidalDistanceSq } from '../core/toroidal'
 import { smoothstepBetween } from '../core/interpolation'
-import { sampleNearestWorld } from '../core/field'
+import { sampleNearestWorld, wrapValue } from '../core/field'
 
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
 // plates, decoupled from them — see docs/decisions/continental-crust-rafts.md. A
@@ -140,6 +140,58 @@ export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, r
     out[i] = weight[i] === 0 ? -1 : currentEpoch <= 0 ? 1 : Math.max(0, Math.min(1, 1 - ageWeighted[i] / weight[i] / currentEpoch))
   }
   return out
+}
+
+// Coarse "which raft owns this point" field — the index (into `rafts`) of
+// whichever raft's blob contributes the MOST to the summed metaball field
+// there, or -1 where no raft reaches at all (open ocean, or a volcanic
+// island/ridge/hotspot-chain feature sitting on crust no raft claims — the
+// raft model never says those points are continental). Grouping land by this
+// is what lets applyMountainRedistribution (elevationField.ts) normalize each
+// continent against its OWN achieved peak instead of the whole world's — a
+// single exceptional summit anywhere used to flatten every other range's
+// relative prominence too, since they all shared one normalization reference.
+//
+// Scatter over each blob's own reach (same pattern as
+// computeCratonOldnessField below), not a per-cell scan over every raft's
+// every blob — cost proportional to how much crust exists, not to
+// resX*resY*raftCount. "Most contribution" (not just "any contribution") is
+// what makes this well-defined at a border where two continents' fields both
+// reach the same cell: whichever's blob is closer/bigger there wins that
+// cell, which is the same tie-break spirit as raftMembership's own summed
+// field, just tracked per-raft instead of pooled.
+export function computeOwnerField(rafts: Raft[], resX: number, resY: number, width: number, height: number): Int32Array {
+  const best = new Float32Array(resX * resY)
+  const owner = new Int32Array(resX * resY).fill(-1)
+  const cellW = width / resX
+  const cellH = height / resY
+  rafts.forEach((raft, raftIndex) => {
+    for (const blob of raft.blobs) {
+      const gx0 = Math.floor((blob.x - blob.radius) / cellW)
+      const gx1 = Math.ceil((blob.x + blob.radius) / cellW)
+      const gy0 = Math.floor((blob.y - blob.radius) / cellH)
+      const gy1 = Math.ceil((blob.y + blob.radius) / cellH)
+      for (let gy = gy0; gy <= gy1; gy++) {
+        const wy = (gy + 0.5) * cellH
+        const row = (((gy % resY) + resY) % resY) * resX
+        for (let gx = gx0; gx <= gx1; gx++) {
+          const wx = (gx + 0.5) * cellW
+          const v = blobKernel(toroidalDistanceSq(wx, wy, blob.x, blob.y, width, height), blob.radius)
+          const i = row + (((gx % resX) + resX) % resX)
+          if (v <= best[i]) continue
+          best[i] = v
+          owner[i] = raftIndex
+        }
+      }
+    }
+  })
+  return owner
+}
+
+export function sampleOwnerField(owner: Int32Array, resX: number, resY: number, x: number, y: number, worldWidth: number, worldHeight: number): number {
+  const gx = Math.min(resX - 1, Math.floor((wrapValue(x, worldWidth) / worldWidth) * resX))
+  const gy = Math.min(resY - 1, Math.floor((wrapValue(y, worldHeight) / worldHeight) * resY))
+  return owner[gy * resX + gx]
 }
 
 // Phase 1 bridge: the existing crust-type-consuming code (boundary

@@ -6,6 +6,9 @@ import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
 import type { ElevationRenderPool } from './elevationRenderPool'
 import { wrapValue } from '../core/field'
+import { computeOwnerField } from '../crust/raftField'
+import { MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
+import { applyErosionDetailTexture } from './erosionDetailTexture'
 
 // Whether to apply the mountain-accentuating gamma redistribution curve
 // (applyMountainRedistribution) before coloring. Temporarily false
@@ -13,6 +16,13 @@ import { wrapValue } from '../core/field'
 // reshapes elevations against the map's own peak and can mask what the
 // ridge/trench/ridged-multifractal changes actually produce.
 const ACCENTUATE_MOUNTAINS = false
+
+// Whether to add erosionDetailTexture.ts's slope-conditioned fine noise
+// (2026-08-06, new — not yet eye-verified against a running world). Default
+// off for the same reason ACCENTUATE_MOUNTAINS is: flip on to evaluate, keep
+// off while the constants above it are still starting values rather than
+// tuned ones.
+const APPLY_EROSION_DETAIL_TEXTURE = true
 
 // Event highlights (merge/rift/subduction markers) used to be baked into
 // the raster here as red plate-territory tints and distance-field halos.
@@ -180,8 +190,21 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
   // — see applyMountainRedistribution's own comment for why.
   // Temporarily gated off (2026-07-23) while evaluating the new tectonic
   // ridge/trench/ridged-multifractal terrain by eye — flip back to true to
-  // restore the mountain-accentuating gamma curve.
-  if (ACCENTUATE_MOUNTAINS) applyMountainRedistribution(elevations)
+  // restore the mountain-accentuating gamma curve. Now normalizes PER
+  // CONTINENT rather than against the whole world's max — see
+  // applyMountainRedistribution's own comment (2026-08-06 mountain-realism
+  // review) — via a coarse "which raft owns this point" field computed at
+  // the same MANTLE_RES grid every other raft-derived field already uses.
+  if (ACCENTUATE_MOUNTAINS) {
+    const ownerField = computeOwnerField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, width, height)
+    applyMountainRedistribution(elevations, width, height, ownerField, MANTLE_RES_X, MANTLE_RES_Y)
+  }
+
+  // Slope-conditioned fine detail — see erosionDetailTexture.ts. Reads slope
+  // from rawElevations (pre-redistribution, physically meaningful) but paints
+  // onto `elevations` (the display copy), so the two effects stay
+  // independent of each other's reshaping.
+  if (APPLY_EROSION_DETAIL_TEXTURE) applyErosionDetailTexture(elevations, rawElevations, width, height, sim.warpSeed)
 
   // Base color raster + the boundary mask, in one pass. The mask marks a
   // pixel whose right or down neighbor belongs to a different plate — the

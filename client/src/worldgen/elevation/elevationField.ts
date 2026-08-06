@@ -6,7 +6,7 @@ import { sampleOceanAge } from '../tectonics/oceanAge'
 import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './elevationScale'
 import { continentalHypsometry } from './hypsometry'
 import { wrapValue } from '../core/field'
-import { raftField } from '../crust/raftField'
+import { raftField, sampleOwnerField } from '../crust/raftField'
 import type { Raft } from '../crust/raftTypes'
 
 // A terrain feature is no longer an isotropic blob but an oriented ridge
@@ -383,20 +383,53 @@ export function computeElevation(
 // everything below it is compressed in proportion to how far below the
 // peak it started.
 //
+// "This map's own" is now PER CONTINENT, not the whole world (2026-08-06
+// mountain-realism review). A single global maximum coupled every range on
+// the planet through one pixel: an exceptional summit anywhere — one lucky
+// long-lived collision, one tall hotspot chain — set the curve for every
+// OTHER continent's mountains too, flattening their relative prominence for
+// a reason that has nothing to do with their own geology. Grouping by
+// raftField.computeOwnerField's "which raft dominates this point" query
+// gives each continent its own achieved peak. Land that belongs to no raft
+// at all — a volcanic island or ridge/arc/hotspot feature standing on open
+// oceanic crust, which the raft model never claims as continental — forms
+// its own shared group (owner id -1) rather than falling back to the world
+// max, so an isolated seamount chain isn't coupled to a continent's
+// mountains either.
+//
 // Ocean (elevation <= 0) is left untouched. Raise
 // MOUNTAIN_REDISTRIBUTION_GAMMA for flatter plains with more dramatic
 // peaks, lower it (toward 1) for today's more continuous, gradual slope.
 const MOUNTAIN_REDISTRIBUTION_GAMMA = 2.5
 
-export function applyMountainRedistribution(elevations: Float32Array): void {
-  let maxLandElevation = 0
-  for (let i = 0; i < elevations.length; i++) {
-    if (elevations[i] > maxLandElevation) maxLandElevation = elevations[i]
+export function applyMountainRedistribution(
+  elevations: Float32Array,
+  width: number,
+  height: number,
+  ownerField: Int32Array,
+  ownerResX: number,
+  ownerResY: number,
+): void {
+  // Owner looked up once per pixel and cached, not resampled in the second
+  // pass — sampleOwnerField's coordinate math is cheap but pointless to redo
+  // 2.1M times twice over.
+  const ownerAt = new Int32Array(elevations.length)
+  const maxByOwner = new Map<number, number>()
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      const owner = sampleOwnerField(ownerField, ownerResX, ownerResY, x, y, width, height)
+      ownerAt[i] = owner
+      const elevation = elevations[i]
+      if (elevation <= 0) continue
+      if (elevation > (maxByOwner.get(owner) ?? 0)) maxByOwner.set(owner, elevation)
+    }
   }
-  if (maxLandElevation <= 0) return
   for (let i = 0; i < elevations.length; i++) {
     const elevation = elevations[i]
     if (elevation <= 0) continue
+    const maxLandElevation = maxByOwner.get(ownerAt[i]) ?? 0
+    if (maxLandElevation <= 0) continue
     const normalized = elevation / maxLandElevation
     elevations[i] = Math.pow(normalized, MOUNTAIN_REDISTRIBUTION_GAMMA) * maxLandElevation
   }

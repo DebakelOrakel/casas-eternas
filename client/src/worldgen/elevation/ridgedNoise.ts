@@ -97,3 +97,41 @@ export function ridgedMultifractal(x: number, y: number, width: number, height: 
   }
   return sum / amplitudeSum
 }
+
+// Finer-frequency companion to ridgedMultifractal, for
+// render/erosionDetailTexture.ts's cosmetic detail pass — see that module's
+// own comment for why it exists (plains get near-zero detail from
+// ridgedMultifractal today, since computeElevation only applies it where
+// tectonic uplift is already positive). A separate octave table, not a
+// parameterization of RIDGE_OCTAVES: independently tunable frequency, and no
+// shared lattice phase to accidentally correlate the two.
+//
+// Plain (non-ridged) value-noise fBm, deliberately NOT ridge-folded —
+// ridgedMultifractal's fold-and-square step is what makes mountain terrain
+// read as crests and valleys, which is the wrong shape for gentle plains
+// texture; this wants soft undulation instead. Each octave's value noise is
+// centered at 0 before summing, so the result is zero-mean by construction —
+// no measured RIDGE_MEAN-style offset to correct for, since there's no
+// fold/square step to bias it.
+const DETAIL_OCTAVES: ReadonlyArray<{ cellsX: number; cellsY: number; amplitude: number }> = [
+  { cellsX: 512, cellsY: 256, amplitude: 1.0 },
+  { cellsX: 1024, cellsY: 512, amplitude: 0.5 },
+]
+
+// Roughly [-0.5, 0.5], zero mean. Distinct seed salt from ridgedMultifractal
+// (xor'd by the caller, see erosionDetailTexture.ts) so the two layers don't
+// share a lattice phase either.
+export function fineDetailNoise(x: number, y: number, width: number, height: number, seed: number): number {
+  let sum = 0
+  let amplitudeSum = 0
+  let octaveSeed = seed
+  for (const octave of DETAIL_OCTAVES) {
+    const lx = (x / width) * octave.cellsX
+    const ly = (y / height) * octave.cellsY
+    const n = periodicValueNoise2D(lx, ly, octave.cellsX, octave.cellsY, octaveSeed)
+    sum += (n - 0.5) * octave.amplitude
+    amplitudeSum += octave.amplitude
+    octaveSeed = (octaveSeed * 1664525 + 1013904223) >>> 0
+  }
+  return sum / amplitudeSum
+}
