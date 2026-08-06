@@ -62,6 +62,17 @@ export function d8Neighbor(x: number, y: number, dx: number, dy: number, width: 
   return ny * width + nx
 }
 
+// Clamped (non-wrapping) neighbor for BOUNDED grids — the micro-tile
+// prototype's window is a plain rectangle cut out of the torus, so a step off
+// its edge leads out of the tile, not around to the far side. Returns -1
+// off-grid; callers skip it.
+export function d8NeighborBounded(x: number, y: number, dx: number, dy: number, width: number, height: number): number {
+  const nx = x + dx
+  const ny = y + dy
+  if (nx < 0 || nx >= width || ny < 0 || ny >= height) return -1
+  return ny * width + nx
+}
+
 export interface FlowRouting {
   width: number
   height: number
@@ -113,7 +124,7 @@ const EPSILON_FLOOD_STEP = 1e-7
 // zero — a graceful no-routing degradation (computeSteepestDescentFlowTargets
 // then finds no downhill gradient anywhere and leaves every flowTarget at
 // -1) rather than a crash.
-async function fillDepressions(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void): Promise<{ filled: Float32Array; popOrder: Int32Array; poppedCount: number }> {
+async function fillDepressions(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void, bounded = false): Promise<{ filled: Float32Array; popOrder: Int32Array; poppedCount: number }> {
   const cellCount = width * height
   const filled = new Float32Array(cellCount)
   const popOrder = new Int32Array(cellCount)
@@ -121,7 +132,12 @@ async function fillDepressions(raw: Float32Array, width: number, height: number,
   const heap = new MinHeap(cellCount)
 
   for (let i = 0; i < cellCount; i++) {
-    if (raw[i] <= seaLevel) {
+    // Bounded grids additionally seed every BORDER cell at its own elevation —
+    // the classic Barnes bounded-tile variant this torus version's own comment
+    // cites: on a tile cut out of the torus, water that reaches the rim leaves
+    // the tile, so the rim plays the drain role the ocean plays globally.
+    const isBorderSeed = bounded && ((i % width) === 0 || (i % width) === width - 1 || i < width || i >= cellCount - width)
+    if (raw[i] <= seaLevel || isBorderSeed) {
       filled[i] = raw[i]
       visited[i] = 1
       heap.push(filled[i], i)
@@ -146,8 +162,8 @@ async function fillDepressions(raw: Float32Array, width: number, height: number,
     const y = (current / width) | 0
     const x = current - y * width
     for (const [dx, dy] of D8_OFFSETS) {
-      const neighbor = d8Neighbor(x, y, dx, dy, width, height)
-      if (visited[neighbor]) continue
+      const neighbor = bounded ? d8NeighborBounded(x, y, dx, dy, width, height) : d8Neighbor(x, y, dx, dy, width, height)
+      if (neighbor < 0 || visited[neighbor]) continue
       visited[neighbor] = 1
       // Scaled by step distance (a diagonal hop is really √2 away, not
       // 1), for consistency with computeSteepestDescentFlowTargets's own
@@ -191,7 +207,7 @@ async function fillDepressions(raw: Float32Array, width: number, height: number,
 // connections to dominate the tree almost regardless of actual
 // elevation shape). The visible symptom was drainage that read as
 // artificially streaky/parallel rather than naturally branching.
-function computeSteepestDescentFlowTargets(filled: Float32Array, width: number, height: number): Int32Array {
+function computeSteepestDescentFlowTargets(filled: Float32Array, width: number, height: number, bounded = false): Int32Array {
   const cellCount = width * height
   const flowTarget = new Int32Array(cellCount).fill(-1)
   for (let y = 0; y < height; y++) {
@@ -201,7 +217,8 @@ function computeSteepestDescentFlowTargets(filled: Float32Array, width: number, 
       let bestGradient = 0 // > 0 required — never route to an uphill or equal-elevation neighbor
       let bestTarget = -1
       for (const [dx, dy] of D8_OFFSETS) {
-        const neighbor = d8Neighbor(x, y, dx, dy, width, height)
+        const neighbor = bounded ? d8NeighborBounded(x, y, dx, dy, width, height) : d8Neighbor(x, y, dx, dy, width, height)
+        if (neighbor < 0) continue
         const distance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1
         const gradient = (ownElevation - filled[neighbor]) / distance
         if (gradient > bestGradient) {
@@ -254,7 +271,7 @@ export interface MfdEdges {
 // rather than caching it between passes — twice through an 8-neighbor
 // scan is still a small, linear cost next to the actual per-pixel
 // elevation query elsewhere in this app's render pipeline.
-function computeMfdEdges(filled: Float32Array, width: number, height: number): MfdEdges {
+function computeMfdEdges(filled: Float32Array, width: number, height: number, bounded = false): MfdEdges {
   const cellCount = width * height
   const outDegree = new Uint8Array(cellCount)
   // Reused across every cell rather than allocated fresh each time — at
@@ -267,7 +284,8 @@ function computeMfdEdges(filled: Float32Array, width: number, height: number): M
     let count = 0
     let weightSum = 0
     for (const [dx, dy] of D8_OFFSETS) {
-      const neighbor = d8Neighbor(x, y, dx, dy, width, height)
+      const neighbor = bounded ? d8NeighborBounded(x, y, dx, dy, width, height) : d8Neighbor(x, y, dx, dy, width, height)
+      if (neighbor < 0) continue
       const drop = ownElevation - filled[neighbor]
       if (drop <= 0) continue
       const distance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1
@@ -308,8 +326,12 @@ function computeMfdEdges(filled: Float32Array, width: number, height: number): M
   return { outEdgeStart, outEdgeTargets, outEdgeWeights }
 }
 
-export async function fillDepressionsAndRouteFlow(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void): Promise<FlowRouting> {
-  const { filled, popOrder, poppedCount } = await fillDepressions(raw, width, height, seaLevel, onProgress)
+// `bounded = true` treats the grid as a plain rectangle instead of a torus —
+// neighbors clamp at the edges and the border ring is seeded as a drain. Used
+// by the micro-tile prototype (tileErosion.ts); every existing global caller
+// keeps the torus default and identical behavior.
+export async function fillDepressionsAndRouteFlow(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void, bounded = false): Promise<FlowRouting> {
+  const { filled, popOrder, poppedCount } = await fillDepressions(raw, width, height, seaLevel, onProgress, bounded)
   // popOrder remains a valid topological order for both of these, with
   // no change needed: both steepest descent and every MFD edge only ever
   // route a cell to a neighbor at or below its own filled elevation, and
@@ -317,8 +339,8 @@ export async function fillDepressionsAndRouteFlow(raw: Float32Array, width: numb
   // construction — so a cell's target(s) were always popped no later
   // than the cell itself, exactly what accumulateFlow's reverse walk
   // requires.
-  const flowTarget = computeSteepestDescentFlowTargets(filled, width, height)
-  const mfd = computeMfdEdges(filled, width, height)
+  const flowTarget = computeSteepestDescentFlowTargets(filled, width, height, bounded)
+  const mfd = computeMfdEdges(filled, width, height, bounded)
   return { width, height, filled, flowTarget, mfd, popOrder, poppedCount }
 }
 
@@ -330,9 +352,14 @@ export async function fillDepressionsAndRouteFlow(raw: Float32Array, width: numb
 // weighting rather than porting cellAreaWeight. Single O(edges) pass, no
 // heap: walking popOrder in reverse visits every cell only after all of
 // its own upstream contributors already have (see FlowRouting.popOrder).
-export function accumulateFlow(routing: FlowRouting): Float32Array {
+// `baseAccumulation` (optional) replaces the uniform per-cell weight of 1 with
+// caller-provided starting weights — the micro-tile prototype injects the MACRO
+// river's upstream drainage area at the fine cells where it enters the tile, so
+// a mouth tile sees the whole catchment's discharge, not just the rain that
+// falls inside the window.
+export function accumulateFlow(routing: FlowRouting, baseAccumulation?: Float32Array): Float32Array {
   const { width, height, mfd, popOrder, poppedCount } = routing
-  const accumulation = new Float32Array(width * height).fill(1)
+  const accumulation = baseAccumulation ? baseAccumulation.slice() : new Float32Array(width * height).fill(1)
   for (let i = poppedCount - 1; i >= 0; i--) {
     const cell = popOrder[i]
     const cellAccumulation = accumulation[cell]

@@ -223,6 +223,30 @@ export function oceanFloorAtAge(age: number): number {
   return RIDGE_CREST + (ABYSSAL_FLOOR - RIDGE_CREST) * subsidenceFraction(age)
 }
 
+// The baseline at ONE world point — the per-point body computeRaftBaseline
+// always ran, extracted (2026-08-06) so the micro-tile prototype
+// (surface/tileErosion.ts) can query the baseline at arbitrary FRACTIONAL
+// world coordinates: the whole pre-erosion pipeline is analytic/vector, so a
+// tile sampled at sub-cell spacing gets genuinely finer terrain, not an
+// upscaled raster. Takes UNWARPED world coords and applies the domain warp
+// itself, exactly as the grid loop did.
+export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oceanAge: Float32Array, worldWidth: number, worldHeight: number, warpSeed: number, seaLevelOffset = 0): number {
+  const wx = worldX + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'x')
+  const wy = worldY + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'y')
+  // Ocean floor deepens with its crustal age; the margin profile then shapes
+  // everything from that floor up onto the continent, putting the shoreline
+  // on a flat shelf instead of mid-slope (see elevationScale.marginProfile).
+  const oceanicBaseline = oceanFloorAtAge(sampleOceanAge(oceanAge, wx, wy, worldWidth, worldHeight))
+  const t = marginParameter(raftField(wx, wy, rafts, worldWidth, worldHeight))
+  // The water knob: the whole solid surface sits lower relative to a sea level
+  // that stays at zero. Applied here rather than to the anchors because the two
+  // are identical and this is one subtraction — see WATER_OFFSET_MAX_M.
+  // Interior relief on top of the margin profile — see hypsometry.ts. Without it
+  // the inside of a continent is one flat height, which is what made the water
+  // control a switch rather than a slider.
+  return marginProfile(t, oceanicBaseline) + continentalHypsometry(wx, wy, t, worldWidth, worldHeight, warpSeed) - seaLevelOffset
+}
+
 export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, renderWidth: number, renderHeight: number, worldWidth: number, worldHeight: number, warpSeed: number, seaLevelOffset = 0): Float32Array {
   const result = new Float32Array(renderWidth * renderHeight)
   const scaleX = worldWidth / renderWidth
@@ -231,20 +255,7 @@ export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, rende
     const worldY = py * scaleY
     for (let px = 0; px < renderWidth; px++) {
       const worldX = px * scaleX
-      const wx = worldX + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'x')
-      const wy = worldY + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'y')
-      // Ocean floor deepens with its crustal age; the margin profile then shapes
-      // everything from that floor up onto the continent, putting the shoreline
-      // on a flat shelf instead of mid-slope (see elevationScale.marginProfile).
-      const oceanicBaseline = oceanFloorAtAge(sampleOceanAge(oceanAge, wx, wy, worldWidth, worldHeight))
-      const t = marginParameter(raftField(wx, wy, rafts, worldWidth, worldHeight))
-      // The water knob: the whole solid surface sits lower relative to a sea level
-      // that stays at zero. Applied here rather than to the anchors because the two
-      // are identical and this is one subtraction — see WATER_OFFSET_MAX_M.
-      // Interior relief on top of the margin profile — see hypsometry.ts. Without it
-      // the inside of a continent is one flat height, which is what made the water
-      // control a switch rather than a slider.
-      result[py * renderWidth + px] = marginProfile(t, oceanicBaseline) + continentalHypsometry(wx, wy, t, worldWidth, worldHeight, warpSeed) - seaLevelOffset
+      result[py * renderWidth + px] = raftBaselineAt(worldX, worldY, rafts, oceanAge, worldWidth, worldHeight, warpSeed, seaLevelOffset)
     }
   }
   return result

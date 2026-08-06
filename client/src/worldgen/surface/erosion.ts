@@ -386,7 +386,9 @@ const EROSION_MOUNTAIN_FULL_M = 1500 // at or above this: full incision
 // rate keeps drainage well defined while being far too weak to dissect anything.
 const EROSION_PLAIN_FACTOR = 0.15
 
-function buildErosionMask(tectonic: Float32Array): Float32Array {
+// Exported for tileErosion.ts — the thresholds are METRES on the tectonic
+// envelope, so the same mask logic is valid at any grid resolution.
+export function buildErosionMask(tectonic: Float32Array): Float32Array {
   const lo = metersToElevation(EROSION_PLAIN_TOP_M)
   const hi = metersToElevation(EROSION_MOUNTAIN_FULL_M)
   const mask = new Float32Array(tectonic.length)
