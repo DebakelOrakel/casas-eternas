@@ -7,6 +7,8 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **new** Biomes: alpine — high mountains above the treeline are their own biome instead of reading as arctic tundra. `world.biome`
 - **new** Elevation: plains carry a fine, slope-conditioned detail texture (render-only) instead of staying billiard-smooth.
 - **fixed** Tectonics: plate merges stop at a floor of three plates, so a world can no longer collapse into a single frozen plate. `world.event`
+- **changed** Erosion: delta plains slope gently seaward and their lobes grow rounded instead of as one-cell staircase arms. `worldgen.panel.erosion`
+- **fixed** Erosion: coastal cliffs no longer pile talus into the sea — steep coasts stay steep instead of growing tall raised aprons. `worldgen.panel.erosion`
 
 ## 2026-08-01
 - **new** Erosion: rivers carry their sediment to the sea and build deltas at the mouths. `worldgen.panel.erosion`

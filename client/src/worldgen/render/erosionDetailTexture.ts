@@ -84,12 +84,12 @@ export function applyErosionDetailTexture(display: Float32Array, reference: Floa
       const slope = Math.hypot(dzdx, dzdy)
       // Amplitude additionally capped by the cell's own height above sea level,
       // so display-only texture can never flip a land pixel's sign: a delta
-      // plain sits at just ~2 m freeboard (DELTA_PLAIN_FREEBOARD, erosion.ts),
-      // and the plain ±2 m floor amplitude was pushing single pixels below
-      // zero there — ocean-colored speckle across every delta. Capping at the
-      // smaller of reference/display height keeps the worst dip at half the
-      // cell's height (noise spans ±0.5), always above water, and fades the
-      // texture smoothly toward every coastline instead of clipping at it.
+      // plain sits at just ~0.5-4 m graded freeboard (DELTA_FREEBOARD_NEAR/FAR,
+      // erosion.ts), and the plain ±2 m floor amplitude was pushing single
+      // pixels below zero there — ocean-colored speckle across every delta.
+      // Capping at the smaller of reference/display height keeps the worst dip
+      // at half the cell's height (noise spans ±0.5), always above water, and
+      // fades the texture smoothly toward every coastline instead of clipping.
       const headroom = Math.min(e, display[i] > 0 ? display[i] : e)
       const amplitude = Math.min(DETAIL_CAP, DETAIL_FLOOR + DETAIL_SLOPE_GAIN * slope, headroom)
       display[i] += fineDetailNoise(x, y, width, height, noiseSeed) * amplitude

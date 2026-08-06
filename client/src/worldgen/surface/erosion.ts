@@ -69,13 +69,15 @@ export const DEFAULT_STREAM_POWER_PARAMS: StreamPowerParams = {
   areaExponentM: 0.5,
   slopeExponentN: 1,
   timeStep: 1,
-  // Deposition OFF on both sides as of 2026-08-01, on the user's verdict after
-  // looking at real maps: the deltas did not read as deltas (only ~27% of a body
-  // emerges — physically correct, since a prodelta is submarine, but on screen it is
-  // a fringe, averaging two cells per river mouth), and marine deposition drags the
-  // land with it by lifting base level. The machinery below stays and is measured;
-  // this is a default, not a deletion. Kt=0.016 gives Danube-to-Nile bodies,
-  // Kt=0.004 roughly triples the emerged area and reaches Ganges scale.
+  // Marine deposition (deltas) ON — shipped 2026-08-01 (see the worldgen
+  // changelog); land deposition measured and NOT recommended, see
+  // depositSediment's notes. An earlier stage had both off after the first
+  // look at real maps: under the land-donor ceiling only ~27% of a body
+  // emerged (physically correct — a prodelta is submarine — but on screen a
+  // fringe averaging two cells per mouth); the sea-reference ceiling in
+  // depositSediment is what fixed that and justified turning marine back on.
+  // Kt=0.016 gives Danube-to-Nile bodies, Kt=0.004 roughly triples the
+  // emerged area and reaches Ganges scale.
   transportCapacityKt: 0.016,
   depositBelowSeaLevel: true,
   depositOnLand: false,
@@ -193,7 +195,41 @@ export const DEFAULT_STREAM_POWER_PARAMS: StreamPowerParams = {
 // Real delta plains stand a metre or two above the sea, not level with it — and here
 // that is also load-bearing: every land test in the pipeline is `elevation > SEA_LEVEL`,
 // so a deposit capped exactly at sea level would still be ocean everywhere.
-const DELTA_PLAIN_FREEBOARD = metersToElevation(2)
+//
+// The freeboard is GRADED seaward (2026-08-06), not uniform: a delta plain caps
+// near NEAR where the original seabed was shallow (the old shoreline) and decays
+// to FAR where it approached the shelf break. The old single 2 m cap put every
+// delta cell at literally identical elevation — a dead-flat plate with one hard
+// rim. Keying the gradient on the ORIGINAL (tectonic) bathymetry needs no notion
+// of "distance to the mouth": seaward simply is where the water was deeper, and
+// the tectonic field holds still while the delta builds. Honest caveat: a few
+// metres of tilt across a fan is invisible in the colour ramp (0..200 m is one
+// sand→green blend) and in the 45× hillshade — this is for the 3D preview, the
+// detail texture's headroom, and downstream hydrology. What the EYE gets from
+// this change is the lobe-shape fix below (DELTA_SPREAD_FRACTION), which ships
+// together with it.
+const DELTA_FREEBOARD_NEAR = metersToElevation(4)
+const DELTA_FREEBOARD_FAR = metersToElevation(0.5)
+// Depth range the freeboard grades across: original seabed at 0 depth → NEAR,
+// at shelf-break depth (the deepest a delta may build, see belowShelf) → FAR.
+const DELTA_FREEBOARD_DEPTH_RANGE = SEA_LEVEL - SHELF_BREAK
+
+function gradedSeaCap(tectonic: Float32Array, cell: number): number {
+  const depth = SEA_LEVEL - tectonic[cell]
+  const t = depth <= 0 ? 0 : depth >= DELTA_FREEBOARD_DEPTH_RANGE ? 1 : depth / DELTA_FREEBOARD_DEPTH_RANGE
+  return SEA_LEVEL + DELTA_FREEBOARD_NEAR - (DELTA_FREEBOARD_NEAR - DELTA_FREEBOARD_FAR) * t
+}
+
+// Fraction of each marine surplus that settles onto the surrounding D8 ring
+// instead of the flow-path cell itself. Pure D8 deposition builds a delta one
+// cell-wide arm at a time — the fans came out as ragged staircase lobes ("noch
+// ein wenig roh", 2026-08-06). Physically, a sediment plume leaving a mouth
+// spreads laterally as it decelerates; splitting each deposit 60/40 between the
+// path cell and its underwater neighbours (each capped by its own graded
+// ceiling, anything that doesn't fit carried on downstream like any other
+// uncarried load) rounds the lobes without changing how much material a river
+// delivers. Raise for wider, gentler fans; 0 restores pure-D8 deposition.
+const DELTA_SPREAD_FRACTION = 0.4
 
 function depositSediment(
   elevations: Float32Array,
@@ -203,6 +239,12 @@ function depositSediment(
   excavated: Float32Array,
   load: Float32Array,
   donorFloor: Float32Array,
+  // The tectonic envelope (runErosionPass's rawElevations) — the ORIGINAL
+  // bathymetry the graded freeboard keys on. Deliberately not the live
+  // elevations: the gradient must hold still while the delta builds on top
+  // of it, or each round would re-derive its own cap from the previous
+  // round's deposit and the tilt would flatten itself out.
+  tectonic: Float32Array,
   width: number,
   height: number,
   transportCapacityKt: number,
@@ -239,7 +281,7 @@ function depositSediment(
     //
     // A LAND donor still constrains even below the waterline, so a delta growing at a
     // low-lying coast cannot rise above the ground behind it and seal it off.
-    const seaCap = SEA_LEVEL + DELTA_PLAIN_FREEBOARD
+    const seaCap = gradedSeaCap(tectonic, cell)
     const donor = donorFloor[cell]
     const ceiling = isLand[cell]
       ? donor
@@ -276,12 +318,37 @@ function depositSediment(
       // fed it rather than piling into a plug.
       const capacity = transportCapacityKt * accumulation[cell] * slope
       if (flux > capacity) {
-        let deposit = flux - capacity
+        const surplus = flux - capacity
+        // Marine deposits keep only (1 - DELTA_SPREAD_FRACTION) of the surplus on
+        // the flow-path cell — the rest settles onto the D8 ring below. Land
+        // deposits are unchanged: the spread is a delta-lobe-shape fix, and
+        // depositOnLand has its own unresolved problems (see the notes above).
+        const centerShare = isLand[cell] ? surplus : surplus * (1 - DELTA_SPREAD_FRACTION)
+        let deposit = centerShare
         const room = ceiling - elevations[cell]
         if (deposit > room) deposit = room
         if (deposit > 0) {
           elevations[cell] += deposit
           flux -= deposit
+        }
+        if (!isLand[cell]) {
+          // The lateral share, split evenly over the ring. A neighbour takes its
+          // slice only up to its own graded ceiling and never below the shelf
+          // break (same accounting cutoff as the flow path itself); whatever
+          // doesn't fit stays in the flux and carries on downstream like any
+          // other uncarried load, so mass is conserved either way.
+          const y = (cell / width) | 0
+          const x = cell - y * width
+          const slice = (surplus * DELTA_SPREAD_FRACTION) / D8_OFFSETS.length
+          for (const [dx, dy] of D8_OFFSETS) {
+            const neighbor = d8Neighbor(x, y, dx, dy, width, height)
+            if (isLand[neighbor] || elevations[neighbor] < SHELF_BREAK) continue
+            const neighborRoom = gradedSeaCap(tectonic, neighbor) - elevations[neighbor]
+            const placed = slice < neighborRoom ? slice : neighborRoom
+            if (placed <= 0) continue
+            elevations[neighbor] += placed
+            flux -= placed
+          }
         }
       }
     }
@@ -340,6 +407,9 @@ export async function runStreamPowerIterations(
   height: number,
   params: StreamPowerParams,
   erosionMask: Float32Array,
+  // Tectonic envelope, for depositSediment's graded delta freeboard — see its
+  // own `tectonic` parameter for why it must be the original field.
+  tectonic: Float32Array,
   onProgress?: (fraction: number) => void,
 ): Promise<void> {
   const { flowTarget, popOrder, poppedCount } = routing
@@ -384,7 +454,7 @@ export async function runStreamPowerIterations(
       if (excavated) excavated[cell] = before - elevations[cell]
     }
     if (excavated && load && donorFloor) {
-      depositSediment(elevations, routing, accumulation, isLand, excavated, load, donorFloor, width, height, params.transportCapacityKt, params.depositBelowSeaLevel, params.depositOnLand, params.deltaMinDrainageCells)
+      depositSediment(elevations, routing, accumulation, isLand, excavated, load, donorFloor, tectonic, width, height, params.transportCapacityKt, params.depositBelowSeaLevel, params.depositOnLand, params.deltaMinDrainageCells)
     }
     onProgress?.((iteration + 1) / params.iterations)
     await maybeYield()
@@ -481,6 +551,20 @@ export async function runThermalErosion(elevations: Float32Array, isLand: Uint8A
         const ownElevation = elevations[cell]
         for (const [dx, dy] of D8_OFFSETS) {
           const neighbor = d8Neighbor(x, y, dx, dy, width, height)
+          // Ocean receivers are skipped ENTIRELY — neither side of the pair
+          // moves (2026-08-06). Sliding talus into the sea unbounded built
+          // "apron" land out of coastal cliffs, up to 772 m above sea level and
+          // ~10× the area of all genuine deltas on a measured seed — nothing
+          // like reality, where waves and turbidity currents export cliff scree
+          // (real scree shores are tens of metres wide, deep sub-pixel at
+          // 7.8 km/cell) and sea cliffs stay steep precisely because their toe
+          // is kept clear. Skipping the pair (not just the deposit — removing
+          // only the receiver's gain would let the donor grind itself down to
+          // sea level) keeps coastal cliffs at their tectonic steepness and
+          // matches the pipeline's deliberate "erosion deletes its material"
+          // convention. Deltas are unaffected: they come from depositSediment's
+          // capacity law, not from talus.
+          if (!isLand[neighbor]) continue
           const drop = ownElevation - elevations[neighbor]
           if (drop <= 0) continue
           const distance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1
@@ -710,7 +794,7 @@ export async function runErosionPass(
         accumulation = accumulateFlow(routing)
       }
       elevations = routing.filled.slice()
-      await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, refreshParams, erosionMask, (fraction) => roundProgress('streamPower', (r + fraction) / refreshes))
+      await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, refreshParams, erosionMask, rawElevations, (fraction) => roundProgress('streamPower', (r + fraction) / refreshes))
     }
     // Order matters only a little here (both passes reread whatever the
     // other just wrote next round, since routing gets rederived from
