@@ -44,6 +44,32 @@ const LAND_RECYCLE_FRAC = 0.5
 const OROG_SAMPLE_PX = 40
 // Raw rainout → mm/yr. Tunes overall wetness; a wet windward mountain lands
 // around a few thousand mm, deserts/rain-shadow near zero.
+//
+// Known deviation, measured 2026-07-31 and deliberately left alone: the wettest
+// cells reach ~22500 mm/yr and ~1.3% of land exceeds Earth's all-time record of
+// 11900 — unphysical as a DISTRIBUTION (our cells are 62 km means, which should
+// sit below a point record, not above it). Do not reach for this constant to fix
+// it: the median is 813 mm/yr against Earth's ~700, so the overall calibration is
+// right and lowering it would drag the sound body down with the tail.
+//
+// The cause is the shape of the model, not a constant. `rainFrac` is a fraction
+// per iteration with no saturation, and one iteration advects 62 km — so at a p99
+// upslope roughly half the moisture column may rain out over that single step.
+// The 0.85 clamp below binds far too late to stop it (it needs a 4100 m rise over
+// the 312 km sample, and catches only 0.04-1.4% of land cells). The physical fix
+// is a soft saturation on rainFrac, not a lower ceiling here.
+//
+// Left as is because it costs nothing downstream: capping precipitation at 4000
+// changed ZERO biome cells on both test seeds (Whittaker's thresholds stop at
+// 1500 mm, and ecology's productivity is 1 − exp(−0.000664·P), already 0.98 at
+// 6000). It survives only into hydrology, which is linear in precip: mean runoff
+// +29% and maxDischarge +72%, i.e. rivers drawn about a quarter narrower. Those
+// are aesthetic knobs. A saturation would shift mean runoff ~30%, so it would cost
+// a re-tuned river-density default and a golden re-record — not worth it for a
+// number nothing reads. Three other suspects were ruled out first: the scale
+// (median is right), erosion's missing deposition (pre/post distributions are
+// identical), and ridged noise in the slope sample (the tail survives without
+// noise, and the wettest cells cluster 70-93%, so it is real orography).
 const PRECIP_SCALE = 60000
 // Ocean cells carry this sentinel instead of a precip value — the overlay and
 // the (later) biome step treat precipitation as a land-only field.

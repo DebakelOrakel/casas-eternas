@@ -1,5 +1,5 @@
 import { wrappedDelta } from '../core/toroidal'
-import { SEA_LEVEL, slopeFromAngle } from '../elevation/elevationScale'
+import { SEA_LEVEL, SHELF_BREAK, metersToElevation, slopeFromAngle } from '../elevation/elevationScale'
 import { D8_OFFSETS, d8Neighbor, maybeYield, fillDepressionsAndRouteFlow, accumulateFlow } from './flowRouting'
 import type { FlowRouting } from './flowRouting'
 
@@ -17,6 +17,28 @@ export interface StreamPowerParams {
   areaExponentM: number
   slopeExponentN: number
   timeStep: number
+  // Transport-capacity coefficient. A river carries a sediment load up to
+  // Kt·A·S (drainage area × slope); whatever exceeds that settles out. 0 skips
+  // the deposition pass entirely and restores the original detachment-limited
+  // model exactly — every excavated cubic metre deleted — so it is the off
+  // switch too. See depositSediment for the law and for why it cannot dam a
+  // valley.
+  transportCapacityKt: number
+  // Whether sediment may settle below the waterline (deltas) and above it (alluvial
+  // aggradation). Separate switches because they were measured to be worth very
+  // different things — see the notes on depositSediment — and because the
+  // 2026-07-27 attempt bundled them and had to revert the working half along with
+  // the broken one.
+  depositBelowSeaLevel: boolean
+  depositOnLand: boolean
+  // Minimum drainage area (in cells) a river must have at its mouth before it may
+  // build a delta at all. Without it every coastal trickle built one — 715 bodies on
+  // a single map — which is both dull and wrong: small rivers do NOT build deltas,
+  // because waves and longshore drift clear their sediment faster than it arrives. A
+  // delta forms only where a river delivers more than the sea can carry off, which is
+  // why Earth has a dozen worth naming and not one per estuary. Ignored when
+  // depositBelowSeaLevel is false.
+  deltaMinDrainageCells: number
 }
 
 // erodibilityK re-verified for this grid via a headless dump script
@@ -47,6 +69,22 @@ export const DEFAULT_STREAM_POWER_PARAMS: StreamPowerParams = {
   areaExponentM: 0.5,
   slopeExponentN: 1,
   timeStep: 1,
+  // Deposition OFF on both sides as of 2026-08-01, on the user's verdict after
+  // looking at real maps: the deltas did not read as deltas (only ~27% of a body
+  // emerges — physically correct, since a prodelta is submarine, but on screen it is
+  // a fringe, averaging two cells per river mouth), and marine deposition drags the
+  // land with it by lifting base level. The machinery below stays and is measured;
+  // this is a default, not a deletion. Kt=0.016 gives Danube-to-Nile bodies,
+  // Kt=0.004 roughly triples the emerged area and reaches Ganges scale.
+  transportCapacityKt: 0.016,
+  depositBelowSeaLevel: true,
+  depositOnLand: false,
+  // Set from the map's OWN river sizes, not from Earth's. The first value here was
+  // 8000 cells, reasoned from Earth's 100 000 km² delta-building rivers — but the
+  // largest catchment on a measured map is 3405 cells, so the gate sat above the
+  // maximum and no river ever qualified. At a quarter Earth with ~11% land the rivers
+  // are simply small. 2000 leaves roughly fifteen mouths building deltas.
+  deltaMinDrainageCells: 2000,
 }
 
 // Mutates `elevations` in place, starting from FlowRouting.filled.
@@ -72,6 +110,227 @@ export const DEFAULT_STREAM_POWER_PARAMS: StreamPowerParams = {
 // first line of defense; if tuning timeStep down doesn't tame it, the
 // known escape hatch is Braun & Willett (2013)'s semi-implicit scheme
 // (unconditionally stable, more code) — not built here.
+//
+// (The doc block above belongs to runStreamPowerIterations, which follows
+// depositSediment below — the helper is defined first because the loop calls it.)
+
+// Routes the material the erosion pass just excavated downstream and lets rivers
+// drop part of it again, so lowlands aggrade instead of being incised forever.
+// Without this the model deletes every cubic metre it cuts — `dh` in the loop below
+// is always negative and nothing ever receives it — which is why the map is valleys
+// all the way down with no plains, and why river mouths are drowned estuaries rather
+// than deltas (drainage area, and therefore incision, peaks exactly where a delta
+// should build). runThermalErosion already conserves its material; this pass was the
+// only sink in the model.
+//
+// Walks popOrder in REVERSE — the order in which every cell is visited only after
+// all of its own upstream contributors (the same property accumulateFlow relies on),
+// so `load[cell]` is complete before the cell spends it.
+//
+// The one invariant that matters, and the one the 2026-07-27 attempt was missing on
+// land: **a cell may never be raised above the lowest cell that drains into it.**
+// That is what `donorFloor` tracks. Aggradation on land was unbounded upward last
+// time, so a deposit at a valley mouth grew taller than the valley behind it and
+// dammed it — which is where the huge lakes, the coast-only rivers and the softened
+// mountains all came from (a lake cell carries no river, and material cut off a peak
+// landed back in the valley a few cells down). With the ceiling in place a deposit
+// cannot close a basin by construction: every cell stays at or below each of its
+// donors, so the downstream profile keeps decreasing and no depression can form.
+//
+// The law is transport capacity, NOT the Davy-Lague `G·load/area` form that was
+// tried first. That form has no slope dependence, so it drops material where the
+// drainage area is small — i.e. high in the catchment. Measured over G = 0.25…5 it
+// softened mountain relief 10% while flattening lowlands only 6%: it dissolved the
+// mountains instead of building the plains, and turning it up made the ratio worse,
+// which is the signature of a wrong shape rather than a wrong constant.
+//
+// Capacity ∝ drainage area × slope is the classic transport-limited form and puts
+// the deposition where it belongs: wherever a river loses gradient. That is the
+// mountain front, the lowland plain, and — since slope goes to zero there — the
+// river mouth, so the same equation that builds plains also builds deltas once
+// deposition below the waterline is allowed.
+//
+// Land and sea are separate switches, and measurement says they are worth very
+// different things:
+//
+//   depositOnLand      MEASURED, NOT RECOMMENDED. Retains mass, but the flat-area
+//                      share moved +22% on one seed and −14% on another — an effect
+//                      that changes sign between seeds is not an effect — while
+//                      costing 15-18% of mountain relief and doubling to septupling
+//                      lake area.
+//
+// A bedrock/alluvial regime gate was tried on top of that (2026-08-01) and REMOVED:
+// deposit only where the along-flow slope is under 1°, so that steep channels carry
+// their load through and mountains cannot be softened. It did neither. Mountain
+// relief still fell to 890 m against 882 m ungated and 1009 m with deposition off —
+// nothing changed — for two reasons. Channel slope is not relief: a high valley has
+// a gentle long profile, so its floor passes the gate and gets filled, which is
+// exactly what closes the peak-to-floor gap the metric measures. And the gate was
+// already satisfied, because the capacity law only deposits where slope is low. A
+// gate that would really protect mountains has to be on ELEVATION.
+//
+// Why the plains do not appear is still open. "Below this grid's resolution" is the
+// obvious guess and it is weaker than it sounds: the Mississippi and Amazon
+// floodplains are 50-125 km wide, i.e. 6-16 cells here, so the big ones ought to
+// resolve. The better suspect is that there is no accommodation space to begin with
+// — the raw terrain is smooth metaball rafts, erosion cuts valleys into it and
+// deposition fills them back, netting out at the smooth original.
+//   depositBelowSeaLevel  WORKS. Delta bodies at Kt=0.016 come out at 12 800 /
+//                      12 300 / 9 800 km² (Danube ~4 000, Nile ~22 000, Mississippi
+//                      ~28 000), ~760 of them, with ~73 000 km² of new delta plain.
+//                      Lake area and mountain relief are unchanged (1.82→1.81%,
+//                      1009→1008 m).
+//
+// Note that marine deposition is NOT confined to the sea in its effects: it lifts
+// base level at the mouths, and runErosionPass re-derives routing and the land mask
+// from the current terrain every round, so land elevations do shift (57% of land
+// cells, up to ~280 m). That feedback is physically right — a prograding delta
+// really does raise base level — but "land stays bit-identical" is false, and was
+// asserted before it was checked.
+//
+// The two switches stay separate because the 2026-07-27 attempt shipped both halves
+// together and had to revert the working half along with the broken one.
+// Real delta plains stand a metre or two above the sea, not level with it — and here
+// that is also load-bearing: every land test in the pipeline is `elevation > SEA_LEVEL`,
+// so a deposit capped exactly at sea level would still be ocean everywhere.
+const DELTA_PLAIN_FREEBOARD = metersToElevation(2)
+
+function depositSediment(
+  elevations: Float32Array,
+  routing: FlowRouting,
+  accumulation: Float32Array,
+  isLand: Uint8Array,
+  excavated: Float32Array,
+  load: Float32Array,
+  donorFloor: Float32Array,
+  width: number,
+  height: number,
+  transportCapacityKt: number,
+  depositBelowSeaLevel: boolean,
+  depositOnLand: boolean,
+  deltaMinDrainageCells: number,
+): void {
+  const { flowTarget, popOrder, poppedCount } = routing
+  load.fill(0)
+  donorFloor.fill(Infinity)
+
+  for (let k = poppedCount - 1; k >= 0; k--) {
+    const cell = popOrder[k]
+    const target = flowTarget[cell]
+    let flux = load[cell]
+    // A headwater (donorFloor still Infinity) has no upstream supply to drop, and
+    // must not re-deposit its own excavation onto itself — that would just undo the
+    // incision in place. Own material joins the outgoing load below instead.
+    // The ceiling, and the one place land and sea genuinely differ.
+    //
+    // On LAND it is the donor floor: never rise above the lowest cell draining into
+    // you, so no deposit can close a basin (see above).
+    //
+    // BELOW the waterline that rule is wrong, and applying it there is what made the
+    // first deltas look like silt fans instead of deltas. One cell seaward of a mouth
+    // the donor is already sea floor, so the ceiling sits under water — and every cell
+    // beyond it is capped by an ever-deeper predecessor. The deposit could only ever
+    // be a seaward-thinning veneer; just 21% of it emerged, all of it hugging the old
+    // shoreline. But there is no river to dam under water: the reference surface is
+    // the sea. A real delta aggrades TO the waterline and then progrades seaward, so
+    // that is the cap — plus the metre or two of freeboard a delta plain actually
+    // stands at, without which the cells would sit exactly at SEA_LEVEL and still
+    // count as ocean (every land test here is a sign test).
+    //
+    // A LAND donor still constrains even below the waterline, so a delta growing at a
+    // low-lying coast cannot rise above the ground behind it and seal it off.
+    const seaCap = SEA_LEVEL + DELTA_PLAIN_FREEBOARD
+    const donor = donorFloor[cell]
+    const ceiling = isLand[cell]
+      ? donor
+      : donor > SEA_LEVEL && donor < seaCap ? donor : seaCap
+    // Below the shelf break the load is written off rather than carried on. The
+    // priority flood lays a flow network over the seafloor too, and the first
+    // version followed it down into the abyss — where slope, and therefore
+    // capacity, is zero everywhere, so material rained out along the whole path.
+    // The result was 6 million km² of raised seabed with only 2% of it touching a
+    // coastline: a blanket over the ocean floor, not deltas. A delta is a shelf
+    // feature, so the shelf edge is where the accounting stops.
+    const belowShelf = elevations[cell] < SHELF_BREAK
+    if (belowShelf) {
+      load[cell] = 0
+      continue
+    }
+    // No outflow (a river mouth, or a closed basin's floor) means no gradient and so
+    // no transport capacity at all: the whole remaining load settles there, which is
+    // exactly how a delta builds.
+    let slope = 0
+    if (target !== -1) {
+      const y = (cell / width) | 0
+      const x = cell - y * width
+      const ty = (target / width) | 0
+      const tx = target - ty * width
+      const dx = wrappedDelta(tx, x, width)
+      const dy = wrappedDelta(ty, y, height)
+      const distance = Math.max(1e-6, Math.sqrt(dx * dx + dy * dy))
+      slope = Math.max(0, (elevations[cell] - elevations[target]) / distance)
+    }
+    const allowed = isLand[cell] ? depositOnLand : depositBelowSeaLevel && accumulation[cell] >= deltaMinDrainageCells
+    if (flux > 0 && allowed && ceiling < Infinity) {
+      // The donor ceiling still applies, so a deposit is graded to the surface that
+      // fed it rather than piling into a plug.
+      const capacity = transportCapacityKt * accumulation[cell] * slope
+      if (flux > capacity) {
+        let deposit = flux - capacity
+        const room = ceiling - elevations[cell]
+        if (deposit > room) deposit = room
+        if (deposit > 0) {
+          elevations[cell] += deposit
+          flux -= deposit
+        }
+      }
+    }
+    flux += excavated[cell]
+    if (target !== -1) {
+      load[target] += flux
+      // Recorded with this cell's FINAL height, which is settled by now — the
+      // reverse walk guarantees every donor is done before its target is reached.
+      if (elevations[cell] < donorFloor[target]) donorFloor[target] = elevations[cell]
+    }
+  }
+}
+
+// Fluvial incision is scaled by the cell's TECTONIC height, not its current one.
+//
+// The reason is a coupling that no single global setting can break: the same incision
+// that makes mountains striking — deep valleys between peaks — also furrows the
+// lowlands. Measured over the erosion-strength slider, mountain relief and flat-area
+// share move together in opposite directions every time (strength 4: relief 1895 m but
+// only 4.7% of land flat; strength 1: relief 1009 m and 9.6% flat). Raising the slope
+// exponent instead was tried and does the same thing more expensively.
+//
+// So the zoning is deliberate and frankly unphysical: erode the highlands hard, leave
+// the plains nearly alone, and the two stop fighting. Rivers are unaffected either way
+// — the network is drawn from flow accumulation, not from incision — so a trunk stream
+// still crosses a plain it is no longer allowed to carve.
+//
+// Keyed on the TECTONIC field so the zones hold still. Using the live elevation would
+// let a valley cut into a mountain drop below the threshold and freeze mid-incision,
+// and a plain that happened to sit high would erode forever.
+const EROSION_PLAIN_TOP_M = 600 // at or below this: plains, essentially left alone
+const EROSION_MOUNTAIN_FULL_M = 1500 // at or above this: full incision
+// Not zero. A dead-flat plain gives the priority flood nothing to route along, and the
+// trunk rivers then wander on numerical noise instead of on terrain. A sixth of the
+// rate keeps drainage well defined while being far too weak to dissect anything.
+const EROSION_PLAIN_FACTOR = 0.15
+
+function buildErosionMask(tectonic: Float32Array): Float32Array {
+  const lo = metersToElevation(EROSION_PLAIN_TOP_M)
+  const hi = metersToElevation(EROSION_MOUNTAIN_FULL_M)
+  const mask = new Float32Array(tectonic.length)
+  for (let i = 0; i < tectonic.length; i++) {
+    const e = tectonic[i]
+    const t = e <= lo ? 0 : e >= hi ? 1 : (e - lo) / (hi - lo)
+    mask[i] = EROSION_PLAIN_FACTOR + (1 - EROSION_PLAIN_FACTOR) * t
+  }
+  return mask
+}
+
 export async function runStreamPowerIterations(
   elevations: Float32Array,
   routing: FlowRouting,
@@ -80,13 +339,21 @@ export async function runStreamPowerIterations(
   width: number,
   height: number,
   params: StreamPowerParams,
+  erosionMask: Float32Array,
   onProgress?: (fraction: number) => void,
 ): Promise<void> {
   const { flowTarget, popOrder, poppedCount } = routing
   const useSqrtForArea = params.areaExponentM === 0.5
   const slopeExponentIsOne = params.slopeExponentN === 1
+  // Allocated once for the whole call, not per iteration. Left null when deposition
+  // is off so the original model costs exactly what it always did.
+  const depositing = params.transportCapacityKt > 0
+  const excavated = depositing ? new Float32Array(elevations.length) : null
+  const load = depositing ? new Float32Array(elevations.length) : null
+  const donorFloor = depositing ? new Float32Array(elevations.length) : null
 
   for (let iteration = 0; iteration < params.iterations; iteration++) {
+    excavated?.fill(0)
     for (let k = 0; k < poppedCount; k++) {
       const cell = popOrder[k]
       if (!isLand[cell]) continue
@@ -109,8 +376,15 @@ export async function runStreamPowerIterations(
       const area = useSqrtForArea ? Math.sqrt(accumulation[cell]) : Math.pow(accumulation[cell], params.areaExponentM)
       const slopeTerm = slopeExponentIsOne ? slope : Math.pow(slope, params.slopeExponentN)
 
-      const dh = -params.erodibilityK * area * slopeTerm
-      elevations[cell] = Math.max(elevations[target], elevations[cell] + dh * params.timeStep)
+      const dh = -params.erodibilityK * area * slopeTerm * erosionMask[cell]
+      const before = elevations[cell]
+      elevations[cell] = Math.max(elevations[target], before + dh * params.timeStep)
+      // The REALISED drop, not -dh·dt: the clamp above often bites, and booking the
+      // intended cut as sediment would invent material that was never removed.
+      if (excavated) excavated[cell] = before - elevations[cell]
+    }
+    if (excavated && load && donorFloor) {
+      depositSediment(elevations, routing, accumulation, isLand, excavated, load, donorFloor, width, height, params.transportCapacityKt, params.depositBelowSeaLevel, params.depositOnLand, params.deltaMinDrainageCells)
     }
     onProgress?.((iteration + 1) / params.iterations)
     await maybeYield()
@@ -339,6 +613,9 @@ export async function runErosionPass(
   // reshaped as a side effect of eroding it once. rawElevations is still
   // read directly as the uplift envelope, so it must stay intact.
   let elevations = rawElevations.slice()
+  // Built once from the tectonic envelope — see buildErosionMask for why the zoning
+  // keys on that rather than on the terrain as it erodes.
+  const erosionMask = buildErosionMask(rawElevations)
   let routing: FlowRouting | undefined
   let accumulation: Float32Array | undefined
   // The last round's elevations *before* its depression fill — i.e. the eroded
@@ -433,7 +710,7 @@ export async function runErosionPass(
         accumulation = accumulateFlow(routing)
       }
       elevations = routing.filled.slice()
-      await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, refreshParams, (fraction) => roundProgress('streamPower', (r + fraction) / refreshes))
+      await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, refreshParams, erosionMask, (fraction) => roundProgress('streamPower', (r + fraction) / refreshes))
     }
     // Order matters only a little here (both passes reread whatever the
     // other just wrote next round, since routing gets rederived from

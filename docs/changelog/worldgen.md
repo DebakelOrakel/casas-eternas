@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-08-01
+- **new** Erosion: rivers carry their sediment to the sea and build deltas at the mouths. `worldgen.panel.erosion`
+
 ## 2026-07-30
 - **fixed** Crust: "is there crust here" is one shared answer now, so new crust can grow onto an existing shore. `world.event`
 - **fixed** Crust: continents are named by land area, and no longer during the Archean. `world.event`

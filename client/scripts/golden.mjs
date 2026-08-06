@@ -75,7 +75,7 @@ function buildElevation(sim) {
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
-      el[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, W, H, M.ridged.ridgedMultifractal(s.wx, s.wy, W, H))
+      el[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, W, H, M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed))
     }
   }
   return el
@@ -165,11 +165,26 @@ async function stageHashes(seed) {
   }, { carryingCapacity: 100, concentration: 0 })
   for (const k of Object.keys(eco.fields).sort()) out[`eco.${k}`] = hashBytes(eco.fields[k])
 
+  // The origin has to be picked FROM the world, not fixed by index. It used to be
+  // cell CRX*CRY*0.4, and at 3-11% land that cell was ocean on all three seeds — so
+  // computeMigration skipped the only origin, the heap stayed empty, and all three
+  // outputs were constants (cost all-Infinity, density all-zero, race all -1). They
+  // hashed identically no matter what the whole pipeline upstream did: nine of the
+  // 132 hashes guarded nothing. Picking the most habitable land cell keeps it
+  // deterministic while guaranteeing the spread actually runs.
+  let originCell = -1
+  let bestCapacity = -Infinity
+  for (let i = 0; i < CRX * CRY; i++) {
+    if (precipitation[i] === M.precip.OCEAN_PRECIP) continue
+    const cap = eco.fields.carryingCapacity[i]
+    if (cap > bestCapacity) { bestCapacity = cap; originCell = i }
+  }
   const mig = M.migration.computeMigration(
     eco.fields.carryingCapacity, precipitation, el, null, 0,
-    [{ cell: Math.floor(CRX * CRY * 0.4), race: 0 }], W, H,
+    [{ cell: originCell, race: 0 }], W, H,
     { spreadBudget: 400, seaCrossing: 0.3 },
   )
+  out['mig.origin'] = `${originCell}`
   out['mig.cost'] = hashBytes(mig.cost)
   out['mig.density'] = hashBytes(mig.density)
   out['mig.race'] = hashBytes(mig.race)
@@ -184,6 +199,26 @@ for (const seed of SEEDS) {
   process.stderr.write('ok\n')
 }
 await server.close()
+
+// A stage that hashes the same for three different worlds is not computing anything
+// about the world, and it will keep matching its golden value forever — it looks
+// exactly like a passing guard. That is how the three migration stages sat dead from
+// the day they were added until 2026-08-01: the origin was a fixed cell index that
+// landed in the ocean on every seed, so cost/density/race came out all-Infinity /
+// all-zero / all -1 every time. Checked on every run, in both modes, because the
+// failure is invisible in a diff-against-golden by construction.
+//
+// `wind` is the one legitimate constant: computeWind() takes no arguments — it is the
+// prescribed three-cell circulation, identical in every world.
+const SEED_INDEPENDENT = new Set(['wind'])
+const constantStages = Object.keys(result[SEEDS[0]]).filter(
+  (stage) => !SEED_INDEPENDENT.has(stage) && new Set(SEEDS.map((s) => result[s][stage])).size === 1,
+)
+if (constantStages.length > 0) {
+  console.error(`\nTOT — diese Stufen sind über alle ${SEEDS.length} Seeds identisch und bewachen nichts:`)
+  for (const stage of constantStages) console.error(`         ${stage} = ${result[SEEDS[0]][stage]}`)
+  process.exit(3)
+}
 
 if (MODE === 'record') {
   writeFileSync(OUT, JSON.stringify(result, null, 2))

@@ -8,6 +8,7 @@ import type { Raft } from '../crust/raftTypes'
 import { generateDetectionLattice } from '../tectonics/boundaryLattice'
 import { createOceanAgeField } from '../tectonics/oceanAge'
 import { findPlumeSites } from '../tectonics/plumes'
+import { solveSeaLevelOffset } from '../elevation/landTarget'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
 import { toroidalDistanceSq } from '../core/toroidal'
 import { assignRaftNames } from '../crust/raftNames'
@@ -108,7 +109,11 @@ function measureRaftLandAreas(rafts: Raft[], width: number, height: number): num
   return areas
 }
 
-export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
+// `landTarget` is the share of the map that should be land as tectonics begins; the
+// sea-level offset that produces it is solved for here, because this is the first
+// moment the crust exists to measure. Omitted, the Archean's own offset carries over
+// unchanged — which is what the golden harness and any older caller get.
+export function finalizeArchean(archean: ArcheanSimulation, landTarget?: number): PlateSimulation {
   const { width, height, random } = archean
   // Continents are named HERE, not during the Archean. Proto-cratons merge and
   // fragment constantly — splitDisconnectedRafts hands out a name every time a
@@ -116,6 +121,10 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
   // things that dissolve a few epochs later. A continent gets its name when it
   // becomes a continent, which is now.
   const named = assignRaftNames(archean.rafts, random, measureRaftLandAreas(archean.rafts, width, height))
+  const oceanAge = createOceanAgeField(OCEAN_AGE_INIT)
+  const seaLevelOffset = landTarget === undefined
+    ? archean.seaLevelOffset
+    : solveSeaLevelOffset(named, oceanAge, archean.warpSeed, landTarget, width, height).offset
   const seeds = convectionCellSeeds(archean.mantle, width, height)
   const lattice = generateDetectionLattice(width, height, DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y)
 
@@ -135,7 +144,7 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
     // separately so the world-age readout stays continuous (see core/worldTime).
     epoch: 0,
     archeanEpochs: archean.epoch,
-    seaLevelOffset: archean.seaLevelOffset,
+    seaLevelOffset,
     random,
     warpSeed: archean.warpSeed,
     lattice,
@@ -145,7 +154,7 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
     // No ocean age is carried over: without ridges or subduction the Archean
     // seafloor would only have aged uniformly, which carries no information, and
     // all of it would have been recycled long before the eon closed anyway.
-    oceanAge: createOceanAgeField(OCEAN_AGE_INIT),
+    oceanAge,
     supercontinentActive: named.length <= 1,
     continentalRiftCooldownUntil: 0,
     mantle: archean.mantle,

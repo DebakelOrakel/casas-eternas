@@ -25,6 +25,13 @@ export type { PlateSimulation, PlateSimulationSnapshot, SimEvent, SimEventType }
 export { eventCategory } from './plateSimulationTypes'
 
 
+// NOTE: the array fields come back BY REFERENCE — `rafts`, `features`, `seeds`,
+// `motions` and `ages` are the simulation's own arrays, not copies. That is fine for
+// what this is for, because the result is posted or written out immediately and
+// structured-cloned on the way. It is NOT safe to hold: stepEpoch keeps mutating
+// those same arrays, so a snapshot kept as stored state quietly follows the world
+// forward. Copy it (structuredClone) if you intend to keep it — the tectonics reset
+// learned this the hard way, restoring epoch 0 with a 60-epoch-old world's continents.
 export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationSnapshot {
   return {
     width: sim.width,

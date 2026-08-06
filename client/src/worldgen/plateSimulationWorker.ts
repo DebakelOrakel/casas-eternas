@@ -21,6 +21,7 @@ import type { ErosionPhase, ErosionPassParams } from './surface/erosion'
 import type { FlowRouting } from './surface/flowRouting'
 import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from './tectonics/mantleField'
+import { SEA_LEVEL, metersToElevation } from './elevation/elevationScale'
 import type { TerrainFeature } from './tectonics/terrainFeatures'
 import { computeTemperature } from './climate/temperature'
 import { computeWind } from './climate/wind'
@@ -193,6 +194,7 @@ export type WorkerInboundMessage =
   | WorkerRestoreWorldMessage
   | WorkerArcheanInitMessage
   | WorkerArcheanStartMessage
+  | WorkerResetTectonicsMessage
   | WorkerArcheanStopMessage
   | WorkerArcheanFinalizeMessage
   | WorkerArcheanResetMessage
@@ -218,6 +220,12 @@ export interface WorkerArcheanInitMessage {
   seaLevelOffset?: number
 }
 export interface WorkerArcheanStartMessage { type: 'archeanStart' }
+// Tectonics back to the state the Archean handed it, epoch 0 — the panel's own input,
+// not a new world. A reset inside a panel undoes that panel's work and nothing else;
+// the erosion panel's reset already worked that way, this one did not (it re-ran
+// `regenerate`, which restarts the Archean from an epoch with no crust at all, so
+// every continent vanished).
+export interface WorkerResetTectonicsMessage { type: 'resetTectonics' }
 export interface WorkerArcheanStopMessage { type: 'archeanStop' }
 // Ends the Archean and hands the world to the tectonic phase. Not reachable by
 // accident: the panel only sends it when the next phase is started.
@@ -365,6 +373,15 @@ export interface WorkerHydrologyDataMessage {
   biomes: ArrayBuffer
 }
 
+// Debug aid for the erosion panel: which sea-floor cells the erosion pass raised,
+// i.e. where rivers dropped their sediment. Sent after every erode so the map can
+// mark them, because the deltas are ~0.24% of the grid and finding them by eye on a
+// 2048×1024 map is not realistic. Uint8, full-res, 1 = raised.
+export interface WorkerDeltaMaskMessage {
+  type: 'deltaMask'
+  mask: ArrayBuffer
+}
+
 // The computed ecology fields (coarse climate grid), keyed by field id so the
 // set can grow per sub-step without changing the message shape. Each is Float32,
 // resX*resY, land only (ECOLOGY_OCEAN sentinel on water). See ecology/ecologyField.ts.
@@ -429,6 +446,12 @@ let pendingEvents: SimEvent[] = []
 // every renderAndPost call, not just ones that happen while stopped, so
 // erosion always has *something* to act on the first time it's used
 // without needing a dedicated "prepare for erosion" render first.
+// The hand-over state, kept so the tectonics panel can return to it. Snapshotted
+// rather than re-derived: finalizeArchean consumes the Archean's RNG and names the
+// continents as it goes, so calling it twice does not produce the same world.
+let handoverSnapshot: PlateSimulationSnapshot | null = null
+let handoverOceanAge: Float32Array | null = null
+let handoverMantle: Float32Array | null = null
 let lastRawElevations: Float32Array | null = null
 // A second, deliberately less-eagerly-updated snapshot: the raw
 // elevations from the last *non*-erosion render only (see renderAndPost
@@ -727,6 +750,23 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
   // Keep the pre-fill (basins-intact) terrain for the hydrology's lakes — set
   // after renderAndPost, which clears it. See lastLakeBasinElevations.
   lastLakeBasinElevations = erosionResult.preFillElevations
+  postDeltaMask(rawElevations, erosionResult.elevations)
+}
+
+// Was under water before this pass and is measurably higher after it. The 10 m floor
+// keeps out the numerical dust and the thin talus spill that runThermalErosion has
+// always shed off coastal cells (it does not check isLand on the receiving side), so
+// what remains is deposition. rawElevations is safe to read: runErosionPass copies it
+// before touching anything.
+const DELTA_MARK_MIN_M = 10
+function postDeltaMask(raw: Float32Array, eroded: Float32Array): void {
+  const threshold = metersToElevation(DELTA_MARK_MIN_M)
+  const mask = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] <= SEA_LEVEL && eroded[i] - raw[i] > threshold) mask[i] = 1
+  }
+  const message: WorkerDeltaMaskMessage = { type: 'deltaMask', mask: mask.buffer as ArrayBuffer }
+  self.postMessage(message, [message.mask])
 }
 
 function stopTicking(): void {
@@ -1109,7 +1149,32 @@ function handleArcheanFinalize(): void {
   if (!archean) return
   stopTicking()
   sim = finalizeArchean(archean)
+  // Deep-copied, because serializePlateSimulation hands back the sim's OWN arrays
+  // (rafts, features, seeds, motions) rather than copies — fine for its real job,
+  // where the result is written to a file immediately, but useless as a stored state:
+  // tectonics goes on mutating those same arrays, so an uncopied "snapshot" drifts
+  // along with the world it was meant to preserve. Measured: after 60 epochs a reset
+  // restored epoch 0 but 20 rafts and 386 features instead of the hand-over's 13 and 0.
+  handoverSnapshot = structuredClone(serializePlateSimulation(sim))
+  handoverOceanAge = sim.oceanAge.slice()
+  handoverMantle = sim.mantle.slice()
   archean = null
+  pendingEvents = getInitialPlateEvents(sim)
+  void renderAndPost()
+}
+
+function handleResetTectonics(): void {
+  // Nothing to go back to on a world that was loaded from a file rather than grown
+  // here — the save carries the world as it stood, not the hand-over behind it.
+  if (!handoverSnapshot || !handoverOceanAge || !handoverMantle) return
+  stopTicking()
+  // Fresh copies each time, so a second reset restores the same state as the first
+  // rather than whatever the last run left in the buffers.
+  sim = deserializePlateSimulation(handoverSnapshot, handoverOceanAge.slice(), handoverMantle.slice())
+  lastRawElevations = null
+  preErosionElevations = null
+  lastLakeBasinElevations = null
+  hydrologyDirty = true
   pendingEvents = getInitialPlateEvents(sim)
   void renderAndPost()
 }
@@ -1140,6 +1205,7 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   serializeWorld: () => handleSerializeWorld(),
   restoreWorld: (m) => handleRestoreWorld(m as Extract<WorkerInboundMessage, { type: 'restoreWorld' }>),
   archeanInit: (m) => handleArcheanInit(m as Extract<WorkerInboundMessage, { type: 'archeanInit' }>),
+  resetTectonics: () => handleResetTectonics(),
   archeanStart: () => handleArcheanStart(),
   archeanStop: () => handleArcheanStop(),
   archeanFinalize: () => handleArcheanFinalize(),

@@ -6,7 +6,7 @@ import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../worldgen/core/mapConfig'
 import JSZip from 'jszip'
-import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
+import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/render/continentLabelRenderer'
 import { elevationToMeters, metersToElevation, waterSliderToOffsetM } from '../../worldgen/elevation/elevationScale'
@@ -381,6 +381,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <span class="field-label">Drainage: <span><span data-value="erosion-refresh-label">5</span>×</span></span>
         <input type="range" class="erosion-refresh-input" min="1" max="5" step="1" value="5" aria-label="Drainage network refreshes per round" />
       </label>
+      <label class="field">
+        <span class="field-label">Mark deltas</span>
+        <input type="checkbox" class="delta-debug-input" aria-label="Mark cells the erosion pass raised from the sea floor" />
+      </label>
       <label class="field field--icon-row">
         <span class="field-row">
           <button type="button" class="icon-button" data-action="erode" aria-label="Run erosion">
@@ -490,6 +494,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const strengthInput = root.querySelector<HTMLInputElement>('.erosion-strength-input')!
   const strengthLabel = root.querySelector<HTMLElement>('[data-value="erosion-strength-label"]')!
   const refreshInput = root.querySelector<HTMLInputElement>('.erosion-refresh-input')!
+  const deltaDebugInput = root.querySelector<HTMLInputElement>('.delta-debug-input')!
+  // Driven straight off the checkbox rather than through OVERLAY_DEFS/toggleOverlay:
+  // it is a debug marker, not a data layer of a pipeline stage, so it has no place in
+  // the overlay bar's grouping — and staying out of applyOverlays means its state
+  // survives every other overlay change untouched.
+  deltaDebugInput.addEventListener('change', () => {
+    overlay.setLayerEnabled('deltas', deltaDebugInput.checked)
+    overlay.composite()
+  })
   const refreshLabel = root.querySelector<HTMLElement>('[data-value="erosion-refresh-label"]')!
   strengthInput.addEventListener('input', () => { strengthLabel.textContent = strengthInput.value })
   refreshInput.addEventListener('input', () => { refreshLabel.textContent = refreshInput.value })
@@ -696,6 +709,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const HYDROLOGY_PANEL_INDEX = 4
   let lastRiverData: { points: Float32Array; lengths: Uint32Array } | null = null
   let lastLakeDepth: Float32Array | null = null
+  // Debug only: sea-floor cells the last erosion pass raised (see the erosion panel's
+  // "Mark deltas" box and the worker's postDeltaMask).
+  let lastDeltaMask: Uint8Array | null = null
   // Ecology (resource/suitability) panel — its own step after hydrology. Phase 1:
   // the carrying-capacity field only. null until computed / invalidated.
   const ECOLOGY_PANEL_INDEX = 5
@@ -1088,6 +1104,21 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // Debug marker, not a map layer: flat magenta on every cell the erosion pass lifted
+  // from below sea level. Deliberately garish and unshaded — the job is "where did the
+  // sediment go", and a tasteful tint would disappear against the ocean blue at the
+  // very sizes (a handful of cells) that matter most here.
+  function paintDeltas(data: Uint8ClampedArray): void {
+    if (!lastDeltaMask) return
+    for (let i = 0; i < lastDeltaMask.length; i++) {
+      if (!lastDeltaMask[i]) continue
+      const p = i * 4
+      data[p] = 255
+      data[p + 1] = 0
+      data[p + 2] = 200
+    }
+  }
+
   // Layer draw/list order: temperature first (a base tint), names last so labels
   // stay on top (always readable); the climate layers (temperature, wind) are
   // hidden from the overlay bar — toggled from the climate panel instead. The
@@ -1247,6 +1278,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Events are always on — a persistent notification-coupled marker layer,
     // not a user toggle.
     { id: 'events', label: 'Events', enabled: true },
+    { id: 'deltas', label: 'Deltas (debug)', enabled: false, hidden: true, paintPixels: paintDeltas },
     { id: 'names', label: 'Names', enabled: false, paint: (c) => paintWrapped(c, (cc) => drawContinentLabels(cc, lastRaftLabels)) },
   ])
 
@@ -1934,6 +1966,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function invalidateHydrology(): void {
     lastRiverData = null
     lastLakeDepth = null
+    // The delta marks describe one specific erosion pass. Any topography change
+    // stales them exactly as it stales the rivers, and a mask left over from the
+    // previous terrain would mark cells that are no longer sea floor at all.
+    lastDeltaMask = null
+    overlay.setLayerEnabled('deltas', false)
     riverLayer?.setPolylines(new Float32Array(0), new Uint32Array(0))
     riverLayer?.setEnabled(false)
     overlay.setLayerEnabled('lakes', false)
@@ -2110,7 +2147,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     URL.revokeObjectURL(url)
   }
 
-  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerEcologyDataMessage | WorkerMigrationDataMessage | WorkerWorldDataMessage | WorkerArcheanStatusMessage>) => {
+  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerEcologyDataMessage | WorkerMigrationDataMessage | WorkerWorldDataMessage | WorkerArcheanStatusMessage | WorkerDeltaMaskMessage>) => {
     const message = event.data
 
     if (message.type === 'archeanStatus') {
@@ -2134,6 +2171,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       return
     }
 
+    if (message.type === 'deltaMask') {
+      lastDeltaMask = new Uint8Array(message.mask)
+      // Only repaints when the marker is actually showing — the mask arrives after
+      // every erode whether or not anyone asked to see it.
+      if (deltaDebugInput.checked) { overlay.setLayerEnabled('deltas', true); overlay.composite() }
+      return
+    }
     if (message.type === 'hydrologyData') {
       handleHydrologyData(message)
       return
@@ -3003,7 +3047,28 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       regenerate()
     }, 150)
   }
-  resetButton.addEventListener('click', regenerate)
+  // A reset inside a panel undoes THAT panel's work and returns its own input —
+  // here, the world exactly as the Archean handed it over. It used to call
+  // `regenerate`, which restarts the Archean at an epoch that has no crust yet, so
+  // pressing reset in the tectonics panel deleted every continent.
+  resetButton.addEventListener('click', () => {
+    // A world opened from a file has no hand-over behind it — the save carries the
+    // world as it stood, not the state tectonics started from. Say so rather than
+    // letting the button look broken; a control that silently does nothing is the
+    // same defect the Genesis save button had.
+    if (!archeanFinalised) {
+      ctx.notifications.show({ message: 'Nothing to reset to — this world was loaded, not generated here', icon: '/icons/reset.png', durationMs: 5000 })
+      return
+    }
+    stopSim()
+    ctx.notifications.clearAll()
+    overlay.clearMarkers()
+    invalidateClimate()
+    migrationOrigins = []
+    erosionRunCount = 0
+    postToWorker({ type: 'resetTectonics' })
+    updateNavState() // topography is back to the hand-over → re-lock erosion onwards
+  })
   seedInput.addEventListener('input', regenerateDebounced)
   randomizeButton.addEventListener('click', () => {
     seedInput.value = randomSeed()

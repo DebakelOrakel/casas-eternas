@@ -4,6 +4,7 @@ import { domainWarpDelta } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
 import { sampleOceanAge } from '../tectonics/oceanAge'
 import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './elevationScale'
+import { continentalHypsometry } from './hypsometry'
 import { wrapValue } from '../core/field'
 import { raftField } from '../crust/raftField'
 import type { Raft } from '../crust/raftTypes'
@@ -240,7 +241,10 @@ export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, rende
       // The water knob: the whole solid surface sits lower relative to a sea level
       // that stays at zero. Applied here rather than to the anchors because the two
       // are identical and this is one subtraction — see WATER_OFFSET_MAX_M.
-      result[py * renderWidth + px] = marginProfile(t, oceanicBaseline) - seaLevelOffset
+      // Interior relief on top of the margin profile — see hypsometry.ts. Without it
+      // the inside of a continent is one flat height, which is what made the water
+      // control a switch rather than a slider.
+      result[py * renderWidth + px] = marginProfile(t, oceanicBaseline) + continentalHypsometry(wx, wy, t, worldWidth, worldHeight, warpSeed) - seaLevelOffset
     }
   }
   return result
