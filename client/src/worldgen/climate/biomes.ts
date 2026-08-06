@@ -48,29 +48,34 @@ export function biomeColor(id: number): [number, number, number] {
   return BIOME_COLORS[id] ?? [128, 128, 128]
 }
 
-// Display names (UI language), e.g. for a hover readout.
-const BIOME_LABELS: Record<number, string> = {
-  [Biome.Ocean]: 'Ocean',
-  [Biome.Ice]: 'Ice cap',
-  [Biome.Tundra]: 'Tundra',
-  [Biome.Boreal]: 'Boreal forest',
-  [Biome.Grassland]: 'Grassland',
-  [Biome.Woodland]: 'Woodland',
-  [Biome.TemperateForest]: 'Temperate forest',
-  [Biome.TemperateRainforest]: 'Temperate rainforest',
-  [Biome.Desert]: 'Desert',
-  [Biome.Savanna]: 'Savanna',
-  [Biome.TropicalRainforest]: 'Tropical rainforest',
-  [Biome.Alpine]: 'Alpine tundra',
+// i18n catalog keys for the display names, NOT the names themselves
+// (2026-08-06). This module is imported by the simulation worker, so it must
+// not pull in the i18n runtime or hold UI language; the screen resolves these
+// keys through t(). The catalog side (world.biome.*) already existed — it was
+// simply never wired, so the legend and the hover readout stayed English.
+const BIOME_LABEL_KEYS: Record<number, string> = {
+  [Biome.Ocean]: 'world.biome.ocean',
+  [Biome.Ice]: 'world.biome.iceCap',
+  [Biome.Tundra]: 'world.biome.tundra',
+  [Biome.Boreal]: 'world.biome.borealForest',
+  [Biome.Grassland]: 'world.biome.grassland',
+  [Biome.Woodland]: 'world.biome.woodland',
+  [Biome.TemperateForest]: 'world.biome.temperateForest',
+  [Biome.TemperateRainforest]: 'world.biome.temperateRainforest',
+  [Biome.Desert]: 'world.biome.desert',
+  [Biome.Savanna]: 'world.biome.savanna',
+  [Biome.TropicalRainforest]: 'world.biome.tropicalRainforest',
+  [Biome.Alpine]: 'world.biome.alpine',
 }
 
-export function biomeLabel(id: number): string {
-  return BIOME_LABELS[id] ?? 'Unknown'
+export function biomeLabelKey(id: number): string {
+  return BIOME_LABEL_KEYS[id] ?? 'world.biome.unknown'
 }
 
-// Land biomes (excludes Ocean) as {label, rgb} for the overlay legend, in a
-// rough cold→hot / dry→wet reading order.
-export function biomeLegend(): { label: string; rgb: [number, number, number] }[] {
+// Land biomes (excludes Ocean) as {labelKey, rgb} for the overlay legend, in a
+// rough cold→hot / dry→wet reading order. Keys, not labels — see
+// BIOME_LABEL_KEYS.
+export function biomeLegend(): { labelKey: string; rgb: [number, number, number] }[] {
   const order = [
     Biome.Ice,
     Biome.Tundra,
@@ -84,7 +89,7 @@ export function biomeLegend(): { label: string; rgb: [number, number, number] }[
     Biome.Savanna,
     Biome.TropicalRainforest,
   ]
-  return order.map((id) => ({ label: biomeLabel(id), rgb: biomeColor(id) }))
+  return order.map((id) => ({ labelKey: biomeLabelKey(id), rgb: biomeColor(id) }))
 }
 
 // The alpine override, promised by docs/decisions/climate-biomes.md ("plus ...

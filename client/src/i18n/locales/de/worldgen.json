@@ -6,7 +6,6 @@
   "worldgen.panel.hydrology.title": "Hydrologie",
   "worldgen.panel.ecology.title": "Ökologie",
   "worldgen.panel.migration.title": "Migration",
-
   "worldgen.panel.genesis.seed.placeholder": "Seed",
   "worldgen.action.randomizeSeed.label": "Seed würfeln",
   "worldgen.action.randomizeSeed.help": "Einen neuen Zufalls-Seed für die Welt würfeln.",
@@ -23,7 +22,9 @@
   "worldgen.panel.genesis.stat.cratons": "Kratone",
   "worldgen.panel.genesis.stat.stabilised": "Stabilisiert",
   "worldgen.panel.genesis.stat.age": "Alter",
-
+  "worldgen.panel.genesis.stage.early": "Neue Kruste entsteht und vergeht noch — weiterlaufen lassen.",
+  "worldgen.panel.genesis.stage.window": "Noch in Drift — jetzt stoppen für eine Inselwelt.",
+  "worldgen.panel.genesis.stage.late": "Die Kontinente verschmelzen zu einem Superkontinent.",
   "worldgen.action.resetSim.label": "Simulation zurücksetzen",
   "worldgen.action.resetSim.help": "Die tektonische Simulation auf den Anfangszustand zurücksetzen.",
   "worldgen.action.runTectonics.label": "Tektonik starten",
@@ -34,7 +35,6 @@
   "worldgen.panel.tectonics.stat.plates": "Platten",
   "worldgen.panel.tectonics.stat.continents": "Kontinente",
   "worldgen.panel.tectonics.stat.land": "Land",
-
   "worldgen.action.resetErosion.label": "Auf Tektonik-Ergebnis zurücksetzen",
   "worldgen.action.resetErosion.help": "Die Erosion rückgängig machen und zum rohen tektonischen Gelände zurückkehren.",
   "worldgen.panel.erosion.strength.label": "Stärke",
@@ -44,7 +44,6 @@
   "worldgen.action.runErosion.label": "Erosion starten",
   "worldgen.action.runErosion.labelActive": "Erosion stoppen",
   "worldgen.action.runErosion.help": "Das Gelände verwittern — Täler schneiden und Becken füllen.",
-
   "worldgen.action.resetClimate.label": "Klima auf Standard zurücksetzen",
   "worldgen.action.resetClimate.help": "Alle Klimaregler auf ihren Standard zurücksetzen.",
   "worldgen.panel.climate.temperature.label": "Temperatur",
@@ -57,10 +56,8 @@
   "worldgen.panel.climate.contrast.help": "Wie stark die Temperatur vom Äquator zu den Polen abfällt.",
   "worldgen.panel.climate.readout.min": "Min",
   "worldgen.panel.climate.readout.max": "Max",
-
   "worldgen.panel.hydrology.riverDensity.label": "Flussdichte",
   "worldgen.panel.hydrology.riverDensity.help": "Wie viele Flüsse gezeichnet werden — von nur den größten bis zu einem feinen Netz.",
-
   "worldgen.action.resetEcology.label": "Ökologie auf Standard zurücksetzen",
   "worldgen.action.resetEcology.help": "Alle Ökologieregler auf ihren Standard zurücksetzen.",
   "worldgen.panel.ecology.carryingCapacity.label": "Tragfähigkeit",
@@ -78,7 +75,6 @@
   "worldgen.ecology.cat.prestige.label": "Prestige",
   "worldgen.ecology.cat.prestige.help": "Prestigegüter: Gold, Silber, Edelsteine.",
   "worldgen.ecology.fieldAbundance": "{label}-Vorkommen",
-
   "worldgen.action.resetMigration.label": "Migration auf Standard zurücksetzen",
   "worldgen.action.resetMigration.help": "Alle Migrationsregler auf ihren Standard zurücksetzen.",
   "worldgen.panel.migration.spread.label": "Ausbreitung",
@@ -87,7 +83,6 @@
   "worldgen.panel.migration.arrows.help": "Schwache Migrationspfeile unter dieser Schwelle ausblenden.",
   "worldgen.panel.migration.seaCrossing.label": "Seequerung",
   "worldgen.panel.migration.seaCrossing.help": "Wie bereitwillig Völker flache Meere und Landbrücken überqueren.",
-
   "worldgen.notify.needsTectonics": "Erst die Tektonik bis mindestens Epoche {min} laufen lassen (jetzt {current}).",
   "worldgen.notify.needsErosion": "Erst mindestens einmal Erosion laufen lassen — Klima, Flüsse, Ökologie und Migration brauchen das erodierte Gelände."
 }

@@ -17,7 +17,7 @@ import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops } from '../../worldgen/climate/climateColors'
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
-import { biomeColor, biomeLabel, biomeLegend, Biome } from '../../worldgen/climate/biomes'
+import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../worldgen/climate/biomes'
 import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '../../worldgen/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
 import { WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave/worldLayers'
@@ -297,15 +297,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   root.className = 'worldgen-flat-screen'
   root.innerHTML = `
     <div class="file-actions">
-      <button type="button" class="file-button" data-action="load-world" aria-label="Load world">
+      <button type="button" class="file-button" data-action="load-world" aria-label="${t('common.action.loadWorld.label')}" data-help="common.action.loadWorld">
         <img src="/icons/folder.png" alt="" />
       </button>
-      <button type="button" class="file-button" data-action="save-world" aria-label="Save world">
+      <button type="button" class="file-button" data-action="save-world" aria-label="${t('common.action.saveWorld.label')}" data-help="common.action.saveWorld">
         <img src="/icons/floppy.png" alt="" />
       </button>
     </div>
-    <button type="button" class="nav-arrow nav-arrow--back" data-action="back" aria-label="Back">‹</button>
-    <button type="button" class="nav-arrow nav-arrow--next" data-action="next" aria-label="Next">›</button>
+    <button type="button" class="nav-arrow nav-arrow--back" data-action="back" aria-label="${t('common.action.back.label')}">‹</button>
+    <button type="button" class="nav-arrow nav-arrow--next" data-action="next" aria-label="${t('common.action.next.label')}">›</button>
     <span class="panel-title" data-value="panel-title"></span>
     <div class="compute-progress" data-value="compute-progress" hidden>
       <span class="compute-progress-fill" data-value="compute-progress-fill"></span>
@@ -313,19 +313,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     <div class="panel" data-panel="0">
       <label class="field field--seed">
         <span class="field-row">
-          <input type="text" class="seed-input" placeholder="Seed" value="${initialSeed}" />
-          <button type="button" class="icon-button" data-action="randomize-seed" aria-label="Randomize seed">
+          <input type="text" class="seed-input" placeholder="${t('worldgen.panel.genesis.seed.placeholder')}" value="${initialSeed}" />
+          <button type="button" class="icon-button" data-action="randomize-seed" aria-label="${t('worldgen.action.randomizeSeed.label')}" data-help="worldgen.action.randomizeSeed">
             <img src="/icons/dice.png" alt="" />
           </button>
         </span>
       </label>
       <label class="field field--icon-row">
         <span class="field-row">
-          <button type="button" class="icon-button" data-action="reset-archean" aria-label="Restart the Archean">
+          <button type="button" class="icon-button" data-action="reset-archean" aria-label="${t('worldgen.action.resetArchean.label')}" data-help="worldgen.action.resetArchean">
             <img src="/icons/reset.png" alt="" />
           </button>
-          <span class="field field--inline">
-            <span class="field-label">Mantle vigour: <span data-value="mantle-vigour-label">${MANTLE_VIGOUR_DEFAULT}</span></span>
+          <span class="field field--inline" data-help="worldgen.panel.genesis.mantleVigour">
+            <span class="field-label">${t('worldgen.panel.genesis.mantleVigour.label')}: <span data-value="mantle-vigour-label">${MANTLE_VIGOUR_DEFAULT}</span></span>
             <input
               type="range"
               class="mantle-vigour-input"
@@ -333,20 +333,21 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
               max="${MANTLE_VIGOUR_MAX}"
               step="1"
               value="${MANTLE_VIGOUR_DEFAULT}"
+              aria-label="${t('worldgen.panel.genesis.mantleVigour.label')}"
             />
           </span>
-          <span class="field field--inline">
-            <span class="field-label">Water: <span data-value="water-label">${WATER_DEFAULT}</span></span>
-            <input type="range" class="water-input" min="0" max="100" step="1" value="${WATER_DEFAULT}" />
+          <span class="field field--inline" data-help="worldgen.panel.genesis.water">
+            <span class="field-label">${t('worldgen.panel.genesis.water.label')}: <span data-value="water-label">${WATER_DEFAULT}</span></span>
+            <input type="range" class="water-input" min="0" max="100" step="1" value="${WATER_DEFAULT}" aria-label="${t('worldgen.panel.genesis.water.label')}" />
           </span>
-          <button type="button" class="icon-button" data-action="toggle-archean" aria-label="Run the Archean">
+          <button type="button" class="icon-button" data-action="toggle-archean" aria-label="${t('worldgen.action.runArchean.label')}" data-help="worldgen.action.runArchean">
             <img src="/icons/mantle.png" alt="" />
           </button>
           <span class="tectonics-stats">
-            <span class="stat"><span class="stat-num"><span data-value="stat-crust">–</span><span class="stat-unit">%</span></span><span class="stat-label">Crust</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-cratons">–</span><span class="stat-label">Cratons</span></span>
-            <span class="stat"><span class="stat-num"><span data-value="stat-stabilised">–</span><span class="stat-unit">%</span></span><span class="stat-label">Stabilised</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-world-age">–</span><span class="stat-label">Age</span></span>
+            <span class="stat"><span class="stat-num"><span data-value="stat-crust">–</span><span class="stat-unit">${t('common.unit.percent')}</span></span><span class="stat-label">${t('worldgen.panel.genesis.stat.crust')}</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-cratons">–</span><span class="stat-label">${t('worldgen.panel.genesis.stat.cratons')}</span></span>
+            <span class="stat"><span class="stat-num"><span data-value="stat-stabilised">–</span><span class="stat-unit">${t('common.unit.percent')}</span></span><span class="stat-label">${t('worldgen.panel.genesis.stat.stabilised')}</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-world-age">–</span><span class="stat-label">${t('worldgen.panel.genesis.stat.age')}</span></span>
           </span>
         </span>
       </label>
@@ -354,32 +355,32 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     <div class="panel" data-panel="1">
       <label class="field field--icon-row">
         <span class="field-row">
-          <button type="button" class="icon-button" data-action="reset-sim" aria-label="Reset simulation">
+          <button type="button" class="icon-button" data-action="reset-sim" aria-label="${t('worldgen.action.resetSim.label')}" data-help="worldgen.action.resetSim">
             <img src="/icons/reset.png" alt="" />
           </button>
-          <button type="button" class="icon-button" data-action="toggle-sim" aria-label="Run tectonics">
+          <button type="button" class="icon-button" data-action="toggle-sim" aria-label="${t('worldgen.action.runTectonics.label')}" data-help="worldgen.action.runTectonics">
             <img src="/icons/tectonics.png" alt="" />
           </button>
           <span class="tectonics-stats">
-            <span class="stat"><span class="stat-num"><span data-value="stat-land">–</span><span class="stat-unit">%</span></span><span class="stat-label">Land</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-continents">–</span><span class="stat-label">Continents</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-plates">–</span><span class="stat-label">Plates</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-tect-age">–</span><span class="stat-label">Age</span></span>
+            <span class="stat"><span class="stat-num"><span data-value="stat-land">–</span><span class="stat-unit">${t('common.unit.percent')}</span></span><span class="stat-label">${t('worldgen.panel.tectonics.stat.land')}</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-continents">–</span><span class="stat-label">${t('worldgen.panel.tectonics.stat.continents')}</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-plates">–</span><span class="stat-label">${t('worldgen.panel.tectonics.stat.plates')}</span></span>
+            <span class="stat"><span class="stat-num" data-value="stat-tect-age">–</span><span class="stat-label">${t('worldgen.panel.tectonics.stat.age')}</span></span>
           </span>
         </span>
       </label>
     </div>
     <div class="panel" data-panel="2">
-      <button type="button" class="icon-button panel-reset" data-action="reset-erosion" aria-label="Revert to tectonics result">
+      <button type="button" class="icon-button panel-reset" data-action="reset-erosion" aria-label="${t('worldgen.action.resetErosion.label')}" data-help="worldgen.action.resetErosion">
         <img src="/icons/reset.png" alt="" />
       </button>
-      <label class="field">
-        <span class="field-label">Strength: <span><span data-value="erosion-strength-label">2</span>×</span></span>
-        <input type="range" class="erosion-strength-input" min="1" max="5" step="1" value="2" aria-label="Erosion strength multiplier" />
+      <label class="field" data-help="worldgen.panel.erosion.strength">
+        <span class="field-label">${t('worldgen.panel.erosion.strength.label')}: <span><span data-value="erosion-strength-label">2</span>${t('common.unit.times')}</span></span>
+        <input type="range" class="erosion-strength-input" min="1" max="5" step="1" value="2" aria-label="${t('worldgen.panel.erosion.strength.label')}" />
       </label>
-      <label class="field">
-        <span class="field-label">Drainage: <span><span data-value="erosion-refresh-label">3</span>×</span></span>
-        <input type="range" class="erosion-refresh-input" min="1" max="5" step="1" value="3" aria-label="Drainage network refreshes per round" />
+      <label class="field" data-help="worldgen.panel.erosion.drainage">
+        <span class="field-label">${t('worldgen.panel.erosion.drainage.label')}: <span><span data-value="erosion-refresh-label">3</span>${t('common.unit.times')}</span></span>
+        <input type="range" class="erosion-refresh-input" min="1" max="5" step="1" value="3" aria-label="${t('worldgen.panel.erosion.drainage.label')}" />
       </label>
       <label class="field">
         <span class="field-label">Mark deltas</span>
@@ -387,7 +388,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
       <label class="field field--icon-row">
         <span class="field-row">
-          <button type="button" class="icon-button" data-action="erode" aria-label="Run erosion">
+          <button type="button" class="icon-button" data-action="erode" aria-label="${t('worldgen.action.runErosion.label')}" data-help="worldgen.action.runErosion">
             <img src="/icons/erosion.png" alt="" />
           </button>
           <button type="button" class="icon-button" data-action="micro-tile" aria-label="Micro tile: re-simulate the largest river mouth at fine resolution (debug)">
@@ -397,79 +398,79 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
     </div>
     <div class="panel" data-panel="3">
-      <button type="button" class="icon-button panel-reset" data-action="reset-climate" aria-label="Reset climate to defaults">
+      <button type="button" class="icon-button panel-reset" data-action="reset-climate" aria-label="${t('worldgen.action.resetClimate.label')}" data-help="worldgen.action.resetClimate">
         <img src="/icons/reset.png" alt="" />
       </button>
       <label class="field">
-        <span class="field-label">Temperature: <span><span data-value="temp-band-label">0</span>°C</span></span>
-        <input type="range" class="temp-band-input" min="-20" max="20" step="1" value="0" aria-label="Temperature offset (°C)" />
+        <span class="field-label">${t('worldgen.panel.climate.temperature.label')}: <span><span data-value="temp-band-label">0</span>${t('common.unit.celsius')}</span></span>
+        <input type="range" class="temp-band-input" min="-20" max="20" step="1" value="0" aria-label="${t('worldgen.panel.climate.temperature.label')}" />
       </label>
       <label class="field">
-        <span class="field-label">Equator: <span><span data-value="equator-offset-label">0</span>%</span></span>
-        <input type="range" class="equator-offset-input" min="-50" max="50" step="5" value="0" aria-label="Equator latitudinal shift (% of map height)" />
+        <span class="field-label">${t('worldgen.panel.climate.equator.label')}: <span><span data-value="equator-offset-label">0</span>${t('common.unit.percent')}</span></span>
+        <input type="range" class="equator-offset-input" min="-50" max="50" step="5" value="0" aria-label="${t('worldgen.panel.climate.equator.label')}" />
       </label>
       <label class="field">
-        <span class="field-label">Humidity: <span><span data-value="humidity-label">100</span>%</span></span>
-        <input type="range" class="humidity-input" min="40" max="200" step="5" value="100" aria-label="Global humidity (%)" />
+        <span class="field-label">${t('worldgen.panel.climate.humidity.label')}: <span><span data-value="humidity-label">100</span>${t('common.unit.percent')}</span></span>
+        <input type="range" class="humidity-input" min="40" max="200" step="5" value="100" aria-label="${t('worldgen.panel.climate.humidity.label')}" />
       </label>
       <label class="field">
-        <span class="field-label">Contrast: <span><span data-value="contrast-label">100</span>%</span></span>
-        <input type="range" class="contrast-input" min="30" max="170" step="5" value="100" aria-label="Equator–pole temperature contrast (%)" />
+        <span class="field-label">${t('worldgen.panel.climate.contrast.label')}: <span><span data-value="contrast-label">100</span>${t('common.unit.percent')}</span></span>
+        <input type="range" class="contrast-input" min="30" max="170" step="5" value="100" aria-label="${t('worldgen.panel.climate.contrast.label')}" />
       </label>
       <label class="field field--icon-row">
         <span class="field-row">
           <span class="climate-readout">
-            <span>Min: <span data-value="temp-min">–</span>°C</span>
-            <span>Max: <span data-value="temp-max">–</span>°C</span>
+            <span>${t('worldgen.panel.climate.readout.min')}: <span data-value="temp-min">–</span>${t('common.unit.celsius')}</span>
+            <span>${t('worldgen.panel.climate.readout.max')}: <span data-value="temp-max">–</span>${t('common.unit.celsius')}</span>
           </span>
           <span class="erosion-status" data-value="climate-status"></span>
         </span>
       </label>
     </div>
     <div class="panel" data-panel="4">
-      <label class="field">
-        <span class="field-label">River density: <span data-value="river-density-label">55</span></span>
-        <input type="range" class="river-density-input" min="0" max="100" step="1" value="55" aria-label="River density" />
+      <label class="field" data-help="worldgen.panel.hydrology.riverDensity">
+        <span class="field-label">${t('worldgen.panel.hydrology.riverDensity.label')}: <span data-value="river-density-label">55</span></span>
+        <input type="range" class="river-density-input" min="0" max="100" step="1" value="55" aria-label="${t('worldgen.panel.hydrology.riverDensity.label')}" />
       </label>
     </div>
     <div class="panel" data-panel="5">
-      <button type="button" class="icon-button panel-reset" data-action="reset-ecology" aria-label="Reset ecology to defaults">
+      <button type="button" class="icon-button panel-reset" data-action="reset-ecology" aria-label="${t('worldgen.action.resetEcology.label')}" data-help="worldgen.action.resetEcology">
         <img src="/icons/reset.png" alt="" />
       </button>
-      <label class="field" data-ecofield="carryingCapacity">
-        <span class="field-label">Carrying capacity: <span><span data-value="carrying-capacity-label">100</span>%</span></span>
-        <input type="range" class="carrying-capacity-input" min="50" max="200" step="5" value="100" aria-label="Carrying capacity (%)" />
+      <label class="field" data-ecofield="carryingCapacity" data-help="worldgen.panel.ecology.carryingCapacity">
+        <span class="field-label">${t('worldgen.panel.ecology.carryingCapacity.label')}: <span><span data-value="carrying-capacity-label">100</span>${t('common.unit.percent')}</span></span>
+        <input type="range" class="carrying-capacity-input" min="50" max="200" step="5" value="100" aria-label="${t('worldgen.panel.ecology.carryingCapacity.label')}" />
       </label>
-      <label class="field" data-ecofield="carryingCapacity">
-        <span class="field-label">Concentration: <span data-value="concentration-label">0</span></span>
-        <input type="range" class="concentration-input" min="-100" max="100" step="5" value="0" aria-label="Resource concentration (even ↔ clumped)" />
+      <label class="field" data-ecofield="carryingCapacity" data-help="worldgen.panel.ecology.concentration">
+        <span class="field-label">${t('worldgen.panel.ecology.concentration.label')}: <span data-value="concentration-label">0</span></span>
+        <input type="range" class="concentration-input" min="-100" max="100" step="5" value="0" aria-label="${t('worldgen.panel.ecology.concentration.label')}" />
       </label>
-      <label class="field" data-ecofield="carryingCapacity">
-        <span class="field-label">Provinces: <span data-value="province-label">45</span></span>
-        <input type="range" class="province-input" min="0" max="100" step="5" value="45" aria-label="Province strength" />
+      <label class="field" data-ecofield="carryingCapacity" data-help="worldgen.panel.ecology.provinces">
+        <span class="field-label">${t('worldgen.panel.ecology.provinces.label')}: <span data-value="province-label">45</span></span>
+        <input type="range" class="province-input" min="0" max="100" step="5" value="45" aria-label="${t('worldgen.panel.ecology.provinces.label')}" />
       </label>
       <!-- Generated from ECOLOGY_CATEGORIES so the ids here cannot drift from the
            ones the fold-out and world.yaml use; they already had once. -->
       <span class="ecology-cat-buttons">${ECOLOGY_CATEGORIES.map((c) => `
-        <button type="button" class="icon-button ecology-cat" data-eco-cat="${c.id}" aria-label="${c.id}"><img src="/icons/${c.icon}.png" alt="" /></button>`).join('')}
+        <button type="button" class="icon-button ecology-cat" data-eco-cat="${c.id}" aria-label="${t(`worldgen.ecology.cat.${c.id}.label` as TKey)}" data-help="worldgen.ecology.cat.${c.id}"><img src="/icons/${c.icon}.png" alt="" /></button>`).join('')}
       </span>
       <div class="ecology-foldout" data-value="ecology-foldout" hidden></div>
     </div>
     <div class="panel" data-panel="6">
-      <button type="button" class="icon-button panel-reset" data-action="reset-migration" aria-label="Reset migration to defaults">
+      <button type="button" class="icon-button panel-reset" data-action="reset-migration" aria-label="${t('worldgen.action.resetMigration.label')}" data-help="worldgen.action.resetMigration">
         <img src="/icons/reset.png" alt="" />
       </button>
-      <label class="field">
-        <span class="field-label">Spread: <span data-value="migration-spread-label">120</span></span>
-        <input type="range" class="migration-spread-input" min="20" max="400" step="10" value="120" aria-label="Migration spread extent" />
+      <label class="field" data-help="worldgen.panel.migration.spread">
+        <span class="field-label">${t('worldgen.panel.migration.spread.label')}: <span data-value="migration-spread-label">120</span></span>
+        <input type="range" class="migration-spread-input" min="20" max="400" step="10" value="120" aria-label="${t('worldgen.panel.migration.spread.label')}" />
       </label>
-      <label class="field">
-        <span class="field-label">Arrows: <span data-value="migration-threshold-label">50</span></span>
-        <input type="range" class="migration-threshold-input" min="0" max="100" step="5" value="50" aria-label="Arrow prune threshold" />
+      <label class="field" data-help="worldgen.panel.migration.arrows">
+        <span class="field-label">${t('worldgen.panel.migration.arrows.label')}: <span data-value="migration-threshold-label">50</span></span>
+        <input type="range" class="migration-threshold-input" min="0" max="100" step="5" value="50" aria-label="${t('worldgen.panel.migration.arrows.label')}" />
       </label>
-      <label class="field">
-        <span class="field-label">Sea crossing: <span data-value="migration-sea-label">30</span>%</span>
-        <input type="range" class="migration-sea-input" min="0" max="100" step="5" value="30" aria-label="Sea crossing" />
+      <label class="field" data-help="worldgen.panel.migration.seaCrossing">
+        <span class="field-label">${t('worldgen.panel.migration.seaCrossing.label')}: <span data-value="migration-sea-label">30</span>${t('common.unit.percent')}</span>
+        <input type="range" class="migration-sea-input" min="0" max="100" step="5" value="30" aria-label="${t('worldgen.panel.migration.seaCrossing.label')}" />
       </label>
       <span class="ecology-cat-buttons" data-value="migration-races"></span>
     </div>
@@ -1449,7 +1450,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'currents', icon: '/icons/gyres.png', labelKey: 'world.overlay.currents', available: () => lastCurrents !== null },
     { id: 'precipitation', icon: '/icons/rain.png', labelKey: 'world.overlay.precipitation', available: () => lastPrecipitation !== null, legend: { type: 'gradient', title: 'Precipitation', unit: 'mm/yr', stops: precipitationLegendStops } },
     { id: 'monsoon', icon: '/icons/weather.png', labelKey: 'world.overlay.monsoon', available: () => lastMonsoonIndex !== null, legend: { type: 'gradient', title: 'Monsoon index', unit: '', stops: monsoonLegendStops } },
-    { id: 'biomes', icon: '/icons/biomes.png', labelKey: 'world.overlay.biomes', available: () => lastBiomes !== null, legend: { type: 'swatches', title: 'Biomes', items: biomeLegend() } },
+    { id: 'biomes', icon: '/icons/biomes.png', labelKey: 'world.overlay.biomes', available: () => lastBiomes !== null, legend: { type: 'swatches', title: t('world.overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) } },
     { id: 'rivers', icon: '/icons/river.png', labelKey: 'world.overlay.rivers', available: () => lastRiverData !== null },
     {
       id: 'ecology', icon: '/icons/ecology.png', labelKey: 'world.overlay.resources', available: hasEcologyData,
@@ -1479,10 +1480,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // A stage with a single overlay does NOT fold out — its button toggles that overlay
   // directly. Otherwise opening a category would reveal one identical button, which is
   // a click that buys nothing.
-  const OVERLAY_GROUPS: { id: string; icon: string; labelKey: string; members: string[]; ecologyFields?: EcologyFieldId[] }[] = [
-    { id: 'genesis', icon: '/icons/mantle.png', labelKey: 'worldgen.panel.genesis.title', members: ['mantle', 'cratonAge', 'volcanoes', 'hotspots'] },
-    { id: 'tectonics', icon: '/icons/tectonics.png', labelKey: 'worldgen.panel.tectonics.title', members: ['boundaries', 'names'] },
-    { id: 'climate', icon: '/icons/temperature.png', labelKey: 'worldgen.panel.climate.title', members: ['temperature', 'seasonality', 'wind', 'currents', 'precipitation', 'monsoon', 'biomes'] },
+  // `helpBase` is the hover-card key pair for the category button itself. The three
+  // fold-out categories whose label borrows a `…title` key (no `.help` sibling) carry
+  // their own `world.overlay.group.*` pair; the rest resolve from their labelKey
+  // below, so only the ones that genuinely need it spend keys.
+  const OVERLAY_GROUPS: { id: string; icon: string; labelKey: string; helpBase?: string; members: string[]; ecologyFields?: EcologyFieldId[] }[] = [
+    { id: 'genesis', icon: '/icons/mantle.png', labelKey: 'worldgen.panel.genesis.title', helpBase: 'world.overlay.group.genesis', members: ['mantle', 'cratonAge', 'volcanoes', 'hotspots'] },
+    { id: 'tectonics', icon: '/icons/tectonics.png', labelKey: 'worldgen.panel.tectonics.title', helpBase: 'world.overlay.group.tectonics', members: ['boundaries', 'names'] },
+    { id: 'climate', icon: '/icons/temperature.png', labelKey: 'worldgen.panel.climate.title', helpBase: 'world.overlay.group.climate', members: ['temperature', 'seasonality', 'wind', 'currents', 'precipitation', 'monsoon', 'biomes'] },
     { id: 'hydrology', icon: '/icons/river.png', labelKey: 'world.overlay.rivers.label', members: ['rivers'] },
     // Ecology carries the aggregate plus every resource field. The fields duplicate
     // the panel's own fold-out at the bottom, deliberately: down there they set
@@ -1501,9 +1506,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let openGroup: string | null = null
 
   // `label` is the finished string; `helpBase` is the catalog prefix the hover help
-  // card reads its label+sentence from (null = no card). Split because the category
-  // buttons borrow the panel titles, which are `…title` keys with no `.help` sibling —
-  // reusing them costs those three buttons their help card and saves six keys.
+  // card reads its label+sentence from (null = no card). Split because a button's
+  // visible label and its help entry do not always live under the same key — see
+  // OVERLAY_GROUPS.helpBase, where the fold-out categories borrow a panel title for
+  // the label but need their own `.label`/`.help` pair for the card.
   function makeIconButton(icon: string, label: string, helpBase: string | null, onClick: () => void): HTMLButtonElement {
     const btn = document.createElement('button')
     btn.type = 'button'
@@ -1589,7 +1595,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   for (const group of OVERLAY_GROUPS) {
     const single = group.members.length === 1 && !group.ecologyFields ? group.members[0] : null
-    const btn = makeIconButton(group.icon, t(group.labelKey as TKey), single ? group.labelKey.replace(/\.label$/, '') : null, () => {
+    // Own pair if it has one, else the labelKey's own base (which single-member and
+    // ecology categories do have, since theirs is a `world.overlay.*.label`).
+    const helpBase = group.helpBase ?? (group.labelKey.endsWith('.label') ? group.labelKey.replace(/\.label$/, '') : null)
+    const btn = makeIconButton(group.icon, t(group.labelKey as TKey), helpBase, () => {
       if (single) toggleOverlay(single)
       else setOpenGroup(openGroup === group.id ? null : group.id)
     })
@@ -1891,7 +1900,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const v = lastEcologyFields[selectedEcologyField]![i]
       lines.push(v === ECOLOGY_OCEAN ? 'Ocean' : `${ECOLOGY_FIELD_META[selectedEcologyField].label} ${Math.round(v * 100)}%`)
     }
-    if (overlaysOn.biomes && lastBiomes) lines.push(biomeLabel(lastBiomes[i]))
+    if (overlaysOn.biomes && lastBiomes) lines.push(t(biomeLabelKey(lastBiomes[i]) as TKey))
     if (overlaysOn.temperature && lastTemperature) lines.push(`${Math.round(lastTemperature[i])} °C`)
     if (overlaysOn.precipitation && lastPrecipitation) {
       const p = lastPrecipitation[i]
@@ -2297,7 +2306,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (!message.intermediate) {
       erosionOpInFlight = false
       erodeIcon.src = '/icons/erosion.png' // back from the stop icon
-      erodeButton.setAttribute('aria-label', 'Run erosion')
+      erodeButton.setAttribute('aria-label', t('worldgen.action.runErosion.label'))
       updateControlsDisabled()
       updateProgress()
     }
@@ -2325,7 +2334,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const setArcheanRunning = (running: boolean): void => {
     archeanRunning = running
     toggleArcheanButton.querySelector('img')!.src = running ? '/icons/stop.png' : '/icons/mantle.png'
-    toggleArcheanButton.setAttribute('aria-label', running ? 'Pause the Archean' : 'Run the Archean')
+    toggleArcheanButton.setAttribute('aria-label', t(running ? 'worldgen.action.runArchean.labelActive' : 'worldgen.action.runArchean.label'))
   }
 
   toggleArcheanButton.addEventListener('click', () => {
@@ -2385,9 +2394,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // table above predates that re-verification; its numbers are stale but its
   // three-band judgement still holds.
   const archeanStage = (stabilised: number): { hint: string; stage: 'early' | 'window' | 'late' } => {
-    if (stabilised < 0.2) return { stage: 'early', hint: 'New crust is still forming and dissolving — keep running.' }
-    if (stabilised < 0.7) return { stage: 'window', hint: 'Still drifting — stop now for an archipelago world.' }
-    return { stage: 'late', hint: 'Continents are merging into a supercontinent.' }
+    if (stabilised < 0.2) return { stage: 'early', hint: t('worldgen.panel.genesis.stage.early') }
+    if (stabilised < 0.7) return { stage: 'window', hint: t('worldgen.panel.genesis.stage.window') }
+    return { stage: 'late', hint: t('worldgen.panel.genesis.stage.late') }
   }
 
   function handleArcheanStatus(message: WorkerArcheanStatusMessage): void {
@@ -2417,7 +2426,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     postToWorker({ type: 'stop' })
     updateOverlays()
     toggleSimIcon.src = '/icons/tectonics.png'
-    toggleSimButton.setAttribute('aria-label', 'Run tectonics')
+    toggleSimButton.setAttribute('aria-label', t('worldgen.action.runTectonics.label'))
     updateControlsDisabled()
     updateProgress()
   }
@@ -2436,7 +2445,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     erosionRunCount = 0
     postToWorker({ type: 'start' })
     toggleSimIcon.src = '/icons/stop.png'
-    toggleSimButton.setAttribute('aria-label', 'Stop tectonics')
+    toggleSimButton.setAttribute('aria-label', t('worldgen.action.runTectonics.labelActive'))
     updateControlsDisabled()
     updateProgress()
   }
@@ -2460,7 +2469,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     erosionRunCount += 1
     invalidateClimate()
     erodeIcon.src = '/icons/stop.png'
-    erodeButton.setAttribute('aria-label', 'Stop erosion')
+    erodeButton.setAttribute('aria-label', t('worldgen.action.runErosion.labelActive'))
     updateControlsDisabled()
     updateProgress()
     updateNavState() // first erosion unlocks Climate/Rivers
@@ -2771,7 +2780,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           : undefined
       }
     } catch {
-      ctx.notifications.show({ message: 'Invalid world file', icon: '/icons/folder.png', durationMs: 6000 })
+      ctx.notifications.show({ message: t('common.notify.invalidWorldFile'), icon: '/icons/folder.png', durationMs: 6000 })
       return
     }
 
@@ -2925,7 +2934,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const label = document.createElement('span')
       label.className = 'field-label'
       const name = document.createElement('span')
-      name.textContent = `${ECOLOGY_FIELD_META[field].label}: `
+      const fieldLabel = t(`world.resource.${field}.label` as TKey)
+      name.textContent = `${fieldLabel}: `
       const val = document.createElement('span')
       val.textContent = '100'
       label.append(name, val)
@@ -2935,7 +2945,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       input.max = '200'
       input.step = '5'
       input.value = '100'
-      input.setAttribute('aria-label', `${ECOLOGY_FIELD_META[field].label} abundance`)
+      input.setAttribute('aria-label', t('worldgen.ecology.fieldAbundance', { label: fieldLabel }))
+      row.dataset.help = `world.resource.${field}`
       input.addEventListener('input', () => { val.textContent = input.value; scheduleEcology() })
       const body = document.createElement('span')
       body.className = 'ecology-nudge-body'
@@ -2978,8 +2989,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const btn = document.createElement('button')
     btn.type = 'button'
     btn.className = 'icon-button ecology-cat is-active'
-    btn.title = race.label
-    btn.setAttribute('aria-label', race.label)
+    // Species name + help from the catalog (world.species.*), and data-help so
+    // the shared hover card explains what clicking one does.
+    btn.setAttribute('aria-label', t(`world.species.${race.id}.label` as TKey))
+    btn.dataset.help = `world.species.${race.id}`
     const img = document.createElement('img')
     img.src = `/icons/${race.icon}.png`
     img.alt = ''
@@ -3172,8 +3185,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // next steps forward and is a no-op past the last panel. Generation
   // parameters (seed, plate counts) live on panel 0, tectonics on panel
   // 1, erosion on panel 2 — future panels slot in the same way via the
-  // data-panel pattern, with one more entry in PANEL_TITLES to match.
-  const PANEL_TITLES = ['Genesis', 'Tectonics', 'Erosion', 'Climate', 'Hydrology', 'Ecology', 'Migration']
+  // data-panel pattern, with one more entry in PANEL_TITLE_KEYS to match.
+  const PANEL_TITLE_KEYS: TKey[] = [
+    'worldgen.panel.genesis.title',
+    'worldgen.panel.tectonics.title',
+    'worldgen.panel.erosion.title',
+    'worldgen.panel.climate.title',
+    'worldgen.panel.hydrology.title',
+    'worldgen.panel.ecology.title',
+    'worldgen.panel.migration.title',
+  ]
   const panelTitle = root.querySelector<HTMLElement>('[data-value="panel-title"]')!
   const nextArrow = root.querySelector<HTMLButtonElement>('[data-action="next"]')!
   const panels = Array.from(root.querySelectorAll<HTMLElement>('.panel'))
@@ -3187,8 +3208,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // null if allowed. Values are tunable.
   const MIN_TECTONIC_EPOCHS = 30
   const entryRequirementUnmet = (index: number): string | null => {
-    if (index === 2 && lastEpoch < MIN_TECTONIC_EPOCHS) return `First run tectonics to at least epoch ${MIN_TECTONIC_EPOCHS} (now ${lastEpoch}).`
-    if ((index === CLIMATE_PANEL_INDEX || index === HYDROLOGY_PANEL_INDEX || index === ECOLOGY_PANEL_INDEX || index === MIGRATION_PANEL_INDEX) && erosionRunCount < 1) return 'First run erosion at least once — climate, rivers, ecology and migration need the eroded terrain.'
+    if (index === 2 && lastEpoch < MIN_TECTONIC_EPOCHS) return t('worldgen.notify.needsTectonics', { min: MIN_TECTONIC_EPOCHS, current: lastEpoch })
+    if ((index === CLIMATE_PANEL_INDEX || index === HYDROLOGY_PANEL_INDEX || index === ECOLOGY_PANEL_INDEX || index === MIGRATION_PANEL_INDEX) && erosionRunCount < 1) return t('worldgen.notify.needsErosion')
     return null
   }
   // Grey out (but keep clickable, so a click can explain why) the next arrow when
@@ -3204,7 +3225,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     panels.forEach((panel, i) => {
       panel.hidden = i !== index
     })
-    panelTitle.textContent = PANEL_TITLES[index]
+    panelTitle.textContent = t(PANEL_TITLE_KEYS[index])
     // Overlays are toggled from the persistent top bar, not the panel — but the
     // Climate / Rivers panels are still where their data gets computed. Entering
     // Climate computes it if stale; entering Rivers ensures a climate first (the

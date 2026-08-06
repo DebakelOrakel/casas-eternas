@@ -6,7 +6,6 @@
   "worldgen.panel.hydrology.title": "Hydrology",
   "worldgen.panel.ecology.title": "Ecology",
   "worldgen.panel.migration.title": "Migration",
-
   "worldgen.panel.genesis.seed.placeholder": "Seed",
   "worldgen.action.randomizeSeed.label": "Randomize seed",
   "worldgen.action.randomizeSeed.help": "Roll a new random seed for the world.",
@@ -23,7 +22,9 @@
   "worldgen.panel.genesis.stat.cratons": "Cratons",
   "worldgen.panel.genesis.stat.stabilised": "Stabilised",
   "worldgen.panel.genesis.stat.age": "Age",
-
+  "worldgen.panel.genesis.stage.early": "New crust is still forming and dissolving — keep running.",
+  "worldgen.panel.genesis.stage.window": "Still drifting — stop now for an archipelago world.",
+  "worldgen.panel.genesis.stage.late": "Continents are merging into a supercontinent.",
   "worldgen.action.resetSim.label": "Reset simulation",
   "worldgen.action.resetSim.help": "Reset the tectonic simulation to its starting state.",
   "worldgen.action.runTectonics.label": "Run tectonics",
@@ -34,7 +35,6 @@
   "worldgen.panel.tectonics.stat.plates": "Plates",
   "worldgen.panel.tectonics.stat.continents": "Continents",
   "worldgen.panel.tectonics.stat.land": "Land",
-
   "worldgen.action.resetErosion.label": "Revert to tectonics result",
   "worldgen.action.resetErosion.help": "Undo erosion and return to the raw tectonic terrain.",
   "worldgen.panel.erosion.strength.label": "Strength",
@@ -44,7 +44,6 @@
   "worldgen.action.runErosion.label": "Run erosion",
   "worldgen.action.runErosion.labelActive": "Stop erosion",
   "worldgen.action.runErosion.help": "Weather the terrain — cut valleys and fill basins.",
-
   "worldgen.action.resetClimate.label": "Reset climate to defaults",
   "worldgen.action.resetClimate.help": "Return every climate lever to its default.",
   "worldgen.panel.climate.temperature.label": "Temperature",
@@ -57,10 +56,8 @@
   "worldgen.panel.climate.contrast.help": "How sharply temperature falls from equator to poles.",
   "worldgen.panel.climate.readout.min": "Min",
   "worldgen.panel.climate.readout.max": "Max",
-
   "worldgen.panel.hydrology.riverDensity.label": "River density",
   "worldgen.panel.hydrology.riverDensity.help": "How many rivers are drawn — from only the largest to a fine network.",
-
   "worldgen.action.resetEcology.label": "Reset ecology to defaults",
   "worldgen.action.resetEcology.help": "Return every ecology lever to its default.",
   "worldgen.panel.ecology.carryingCapacity.label": "Carrying capacity",
@@ -78,7 +75,6 @@
   "worldgen.ecology.cat.prestige.label": "Prestige",
   "worldgen.ecology.cat.prestige.help": "Prestige goods: gold, silver, gems.",
   "worldgen.ecology.fieldAbundance": "{label} abundance",
-
   "worldgen.action.resetMigration.label": "Reset migration to defaults",
   "worldgen.action.resetMigration.help": "Return every migration lever to its default.",
   "worldgen.panel.migration.spread.label": "Spread",
@@ -87,7 +83,6 @@
   "worldgen.panel.migration.arrows.help": "Prune faint migration arrows below this threshold.",
   "worldgen.panel.migration.seaCrossing.label": "Sea crossing",
   "worldgen.panel.migration.seaCrossing.help": "How readily peoples cross shallow seas and land bridges.",
-
   "worldgen.notify.needsTectonics": "First run tectonics to at least epoch {min} (now {current}).",
   "worldgen.notify.needsErosion": "First run erosion at least once — climate, rivers, ecology and migration need the eroded terrain."
 }

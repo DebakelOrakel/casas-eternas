@@ -3,6 +3,11 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-08-06
+- **changed** Localization: every worldgen panel control now follows the language switch and carries a hover help card. `worldgen.panel`
+- **new** Overlays: the category buttons explain which layers they hold. `world.overlay.group`
+- **changed** Localization: biome names in the legend and the map readout follow the language switch. `world.biome`
+
 ## 2026-07-31
 - **fixed** Save/Load: a world can be saved while it is still in the Archean; the button did nothing there. `common.action.saveWorld`
 
