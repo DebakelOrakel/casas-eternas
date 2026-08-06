@@ -214,7 +214,9 @@ const DELTA_FREEBOARD_FAR = metersToElevation(0.5)
 // at shelf-break depth (the deepest a delta may build, see belowShelf) → FAR.
 const DELTA_FREEBOARD_DEPTH_RANGE = SEA_LEVEL - SHELF_BREAK
 
-function gradedSeaCap(tectonic: Float32Array, cell: number): number {
+// Exported for the micro tile's delta-growth model (deltaGrowth.ts), which
+// caps its deposits at the same graded freeboard as depositSediment here.
+export function gradedSeaCap(tectonic: Float32Array, cell: number): number {
   const depth = SEA_LEVEL - tectonic[cell]
   const t = depth <= 0 ? 0 : depth >= DELTA_FREEBOARD_DEPTH_RANGE ? 1 : depth / DELTA_FREEBOARD_DEPTH_RANGE
   return SEA_LEVEL + DELTA_FREEBOARD_NEAR - (DELTA_FREEBOARD_NEAR - DELTA_FREEBOARD_FAR) * t

@@ -17,6 +17,7 @@ import { stabilisedFraction } from './crust/raftField'
 import { worldAgeMa } from './core/worldTime'
 import { accumulateFlow, fillDepressionsAndRouteFlow } from './surface/flowRouting'
 import { MICRO_TILE_EXTENT_MACRO, MICRO_TILE_FACTOR, buildTileElevation, buildTileInflow, burnMacroTrunks, pickLargestRiverMouth, runTileErosion, scaleErosionParamsForTile } from './surface/tileErosion'
+import { growDelta, pickDeltaEntry } from './surface/deltaGrowth'
 import { renderMicroTileImage } from './render/microTileImage'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './tectonics/oceanAge'
 import type { ErosionPhase, ErosionPassParams } from './surface/erosion'
@@ -923,10 +924,22 @@ function handleComputeMicroTile(): void {
     burnMacroTrunks(envelope, spec, macroElevations, macroAccumulation, width, height)
     const inflow = buildTileInflow(spec, macroRouting.flowTarget, macroAccumulation, width, height)
     const params = scaleErosionParamsForTile(DEFAULT_EROSION_PASS_PARAMS, spec.factor)
-    const tile = await runTileErosion(envelope, n, params, inflow, (round, rounds) => postProgress(0.2 + 0.75 * (round / rounds)))
+    const tile = await runTileErosion(envelope, n, params, inflow, (round, rounds) => postProgress(0.2 + 0.7 * (round / rounds)))
+    // Delta growth (deltaGrowth.ts): the fan-building pass on top of the
+    // eroded tile, then a routing re-derivation so the river tint traces the
+    // channels the walkers kept open between the grown bars. Seed fixed per
+    // world — same tile, same fan.
+    const entry = pickDeltaEntry(tile.elevations, tile.accumulation, n)
+    let tileAccumulation = tile.accumulation
+    if (entry) {
+      growDelta(tile.elevations, envelope, n, { x: entry.x, y: entry.y }, { x: entry.headingX, y: entry.headingY }, (currentSim.warpSeed ^ 0x5eedde17) >>> 0)
+      postProgress(0.95)
+      const grownRouting = await fillDepressionsAndRouteFlow(tile.elevations, n, n, SEA_LEVEL, undefined, true)
+      tileAccumulation = accumulateFlow(grownRouting, inflow)
+    }
     // River tint threshold: the same 60-macro-cell drainage the map's own
     // river extraction regards as a stream, in fine-cell units.
-    const rgba = renderMicroTileImage(tile.elevations, tile.accumulation, n, spec.factor, 60 * spec.factor * spec.factor)
+    const rgba = renderMicroTileImage(tile.elevations, tileAccumulation, n, spec.factor, 60 * spec.factor * spec.factor)
     const message: WorkerMicroTileDataMessage = {
       type: 'microTileData',
       buffer: rgba.buffer as ArrayBuffer,
