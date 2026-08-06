@@ -100,17 +100,32 @@ export interface LakeFields {
   // Water depth per cell (0 = dry) — land lakes at their spill, terminal seas
   // at their climate balance level.
   depth: Float32Array
-  // 1 where a terminal basin's floor lies exposed: sub-sea-level ground the
-  // balance level does not reach. The SaltFlat biome override's source.
+  // 1 in the EVAPORITE BAND: dry terminal-basin floor within SALT_BAND_M above
+  // the balance level (or above the basin floor when bone dry) — where the
+  // last water stood and everything it carried crystallised. The SaltFlat
+  // biome override's source. A subset of dryBasin.
   saltFlat: Uint8Array
+  // 1 on EVERY dry sub-sea-level terminal-basin cell — the land-override mask
+  // the climate refinement pass (climate v2) consumes: these cells are land
+  // despite the sign test, classify by their own (hot, deep) local climate.
+  // Above the salt band that naturally comes out as desert rock.
+  dryBasin: Uint8Array
 }
 
-export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = MIN_LAKE_BASIN_RELIEF_M): LakeFields {
+// Evaporites concentrate where the last water stood — the salt flat is a BAND
+// above the waterline, not the whole exposed floor (a fully-dry 2800 m deep
+// basin is a salt PAN at the bottom and hot desert rock on the slopes, not a
+// kilometres-tall salt wall). Thickness is a starting value for the usual
+// by-eye pass.
+const SALT_BAND_M = 75
+
+export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = MIN_LAKE_BASIN_RELIEF_M): LakeFields {
   const { width, height, filled } = routing
   const n = width * height
   const EPS = 1e-5
   const depth = new Float32Array(n)
   const saltFlat = new Uint8Array(n)
+  const dryBasin = new Uint8Array(n)
   const flooded = new Uint8Array(n)
   for (let cell = 0; cell < n; cell++) {
     // Sub-sea-level cells count too now: with the flood seeded from the world
@@ -152,6 +167,18 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
     for (const c of region) if (elevation[c] < basinFloor) basinFloor = elevation[c]
     const pet = evaporationPotential(tempSum / region.length)
     if (basinFloor < SEA_LEVEL) {
+      // Direct precipitation ON the basin is part of its water budget — the
+      // Volga is not the Caspian's only source, and without this every deep
+      // basin that happens to lack a river inlet came out bone dry (rivers'
+      // discharge never seeds water cells, see accumulateDischarge). Summed
+      // over the whole region: rain on the wet surface feeds the balance,
+      // rain on the dry floor runs down to it.
+      let basinRain = 0
+      for (const c of region) {
+        const cx = c % width
+        basinRain += precipRunoffAt(precip, cx, (c - cx) / width, width, height, climateResX, climateResY)
+      }
+      inflow += basinRain
       // TERMINAL SEA (the Caspian/Chad class): an enclosed basin whose floor
       // lies below sea level — a landlocked ocean remnant or deep rift graben.
       // These are the legitimate river ENDPOINTS without an outflow, so the
@@ -172,9 +199,13 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
           }
         }
       }
+      const saltBandTop = level + metersToElevation(SALT_BAND_M)
       for (const c of region) {
         if (elevation[c] <= level) depth[c] = level - elevation[c]
-        else if (elevation[c] <= SEA_LEVEL) saltFlat[c] = 1
+        else if (elevation[c] <= SEA_LEVEL) {
+          dryBasin[c] = 1
+          if (elevation[c] <= saltBandTop) saltFlat[c] = 1
+        }
       }
       continue
     }
@@ -189,7 +220,7 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
       if (elevation[c] <= spill) depth[c] = spill - elevation[c]
     }
   }
-  return { depth, saltFlat }
+  return { depth, saltFlat, dryBasin }
 }
 
 // Precipitation-weighted discharge (relative water volume) per full-res cell,
@@ -347,6 +378,40 @@ export function extractRiverPolylines(routing: FlowRouting, discharge: Float32Ar
   return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) }
 }
 
+// Watershed labels: every land cell tagged with the id of the river system
+// that drains it — the classic each-catchment-its-own-colour map. Walks
+// popOrder FORWARD (downstream before upstream, the flood's own guarantee),
+// so a cell can inherit its target's label in one pass; a land cell whose
+// target is water (or nothing) is a system's mouth and roots a new basin.
+// Only basins of at least `minAreaCells` keep a label (id 1.., largest
+// first); the coastal fringe of micro-catchments stays 0 — colouring tens of
+// thousands of one-cell "systems" reads as noise, not as a map. Uint16: the
+// filter keeps the id space tiny.
+export function computeWatersheds(routing: FlowRouting, elevation: Float32Array, minAreaCells = 200): Uint16Array {
+  const { width, height, flowTarget, popOrder, poppedCount } = routing
+  const n = width * height
+  const label = new Int32Array(n).fill(-1)
+  let nextId = 0
+  for (let k = 0; k < poppedCount; k++) {
+    const cell = popOrder[k]
+    if (elevation[cell] <= SEA_LEVEL) continue
+    const t = flowTarget[cell]
+    if (t >= 0 && elevation[t] > SEA_LEVEL && label[t] >= 0) label[cell] = label[t]
+    else label[cell] = nextId++
+  }
+  const areas = new Uint32Array(nextId)
+  for (let i = 0; i < n; i++) if (label[i] >= 0) areas[label[i]]++
+  const order = Array.from({ length: nextId }, (_, i) => i)
+    .filter((id) => areas[id] >= minAreaCells)
+    .sort((a2, b2) => areas[b2] - areas[a2])
+    .slice(0, 65535)
+  const remap = new Int32Array(nextId).fill(0)
+  order.forEach((id, rank) => { remap[id] = rank + 1 })
+  const out = new Uint16Array(n)
+  for (let i = 0; i < n; i++) if (label[i] >= 0) out[i] = remap[label[i]]
+  return out
+}
+
 // --- Phase 3: riparian zones (rivers/lakes moisten nearby land → wetter biomes) ---
 
 // Peak precipitation bonus (mm/yr) a cell gets right at a full-strength river/lake
@@ -365,7 +430,7 @@ const RIPARIAN_DECAY = 0.45
 // greens its surroundings — a desert with a big river through it becomes a
 // vegetated corridor. `elevation` is the display terrain (land/ocean + biome
 // substrate); discharge/lakeDepth share its grid. Coarse (climate-grid) output.
-export function computeRiparianBiomes(elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array): Uint8Array {
+export function computeRiparianBiomes(elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array): Uint8Array {
   const scale = maxDischarge > 0 ? maxDischarge : 1
   const strength = new Float32Array(climateResX * climateResY)
   for (let cell = 0; cell < elevation.length; cell++) {
@@ -403,7 +468,7 @@ export function computeRiparianBiomes(elevation: Float32Array, discharge: Float3
     if (precipEff[i] === OCEAN_PRECIP) continue
     precipEff[i] = precipEff[i] + field[i] * MAX_RIPARIAN_MM
   }
-  const biomes = computeBiomes(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, worldW, worldH)
+  const biomes = computeBiomes(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, worldW, worldH, dryLand)
   // Salt-flat override (see computeLakes' LakeFields.saltFlat): a terminal
   // basin's exposed floor is a hydrology state, not a climate — it wins over
   // whatever the Whittaker mapping said. Full-res mask onto the coarse biome

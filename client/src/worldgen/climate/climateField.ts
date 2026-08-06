@@ -31,6 +31,22 @@ export function latitudeAt(gridY: number, equatorOffset = 0): number {
 // climate grid maps linearly onto the world; a single center sample is enough
 // for a smooth field like temperature (orographic precip will sample the fine
 // gradient itself in a later phase).
+// Samples the dry-basin land-override mask (see hydrology's LakeFields.dryBasin)
+// at the same full-res point sampleElevationAtCell reads, so the two can never
+// disagree about which pixel represents a coarse cell. Null mask = no override.
+export function sampleDryLandAtCell(
+  dryLand: Uint8Array | null | undefined,
+  gridX: number,
+  gridY: number,
+  worldWidth: number,
+  worldHeight: number,
+): boolean {
+  if (!dryLand) return false
+  const worldX = Math.min(worldWidth - 1, Math.floor(((gridX + 0.5) / CLIMATE_RES_X) * worldWidth))
+  const worldY = Math.min(worldHeight - 1, Math.floor(((gridY + 0.5) / CLIMATE_RES_Y) * worldHeight))
+  return dryLand[worldY * worldWidth + worldX] === 1
+}
+
 export function sampleElevationAtCell(
   elevation: Float32Array,
   gridX: number,

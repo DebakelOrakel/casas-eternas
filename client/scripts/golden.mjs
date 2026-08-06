@@ -138,13 +138,27 @@ async function stageHashes(seed) {
   const routing = await M.routing.fillDepressionsAndRouteFlow(el, W, H, 0)
   const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y
   const meanRunoff = M.hydro.meanLandRunoff(precipitation, el, W, H, CRX, CRY)
-  const discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
+  let discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
   const maxDis = M.hydro.maxDischargeOverLand(discharge, el)
-  const lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, temperature, CRX, CRY)
+  // Terminal-basin refinement, mirroring the worker (k=1): lakes v1 -> if any
+  // dry basin floor, climate v2 with the land override -> discharge/lakes v2.
+  let lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, temperature, precipitation, CRX, CRY)
+  if (lakes.dryBasin.some((v) => v === 1)) {
+    const t2 = M.temperature.computeTemperature(el, W, H, 0, 1, 0, lakes.dryBasin)
+    const c2 = M.currents.computeOceanCurrents(el, wind, W, H, lakes.dryBasin)
+    M.currents.applyOceanSST(t2, c2, el, W, H, lakes.dryBasin)
+    const s2 = M.seasonality.computeSeasonalAmplitude(el, W, H, 0, lakes.dryBasin)
+    const sp2 = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, W, H, 1, 0, lakes.dryBasin)
+    discharge = M.hydro.accumulateDischarge(routing, el, sp2.annual, CRX, CRY)
+    lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, t2, sp2.annual, CRX, CRY)
+    out.temperatureV2 = hashBytes(t2)
+    out.precipitationV2 = hashBytes(sp2.annual)
+  }
   const lakeDepth = lakes.depth
   out.discharge = hashBytes(discharge)
   out.lakeDepth = hashBytes(lakeDepth)
   out.saltFlat = hashBytes(lakes.saltFlat)
+  out.dryBasin = hashBytes(lakes.dryBasin)
   out.hydroScalars = `${meanRunoff.toFixed(9)}/${maxDis.toFixed(6)}`
   let lakeCells = 0
   for (const v of lakeDepth) if (v > 0) lakeCells++

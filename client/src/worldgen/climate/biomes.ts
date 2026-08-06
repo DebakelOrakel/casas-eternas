@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell } from './climateField'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 
 const RX = CLIMATE_RES_X
@@ -154,13 +154,13 @@ function classify(tempC: number, precipMm: number, amplitude: number, season: nu
 // Biome id per climate cell (Uint8). Land only is classified; ocean → Biome.Ocean.
 // Consumes the current-adjusted temperature, annual precipitation, and seasonal
 // amplitude (all already on the climate grid).
-export function computeBiomes(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number): Uint8Array {
+export function computeBiomes(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Uint8Array {
   const biomes = new Uint8Array(RX * RY)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       const cellElevation = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
-      if (cellElevation <= SEA_LEVEL) {
+      if (cellElevation <= SEA_LEVEL && !sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight)) {
         biomes[i] = Biome.Ocean
         continue
       }

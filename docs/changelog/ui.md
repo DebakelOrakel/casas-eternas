@@ -4,6 +4,9 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-08-06
+- **new** Overlays: water balance — rainfall minus evaporation, arid to humid. `world.overlay.waterBalance`
+- **new** Overlays: watersheds — each river system's catchment in its own colour. `world.overlay.watersheds`
+- **new** Map hover: rivers report their flow in m³/s. `world.hover.discharge`
 - **changed** Localization: every worldgen panel control now follows the language switch and carries a hover help card. `worldgen.panel`
 - **new** Overlays: the category buttons explain which layers they hold. `world.overlay.group`
 - **changed** Localization: biome names in the legend and the map readout follow the language switch. `world.biome`

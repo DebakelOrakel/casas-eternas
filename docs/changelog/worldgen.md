@@ -15,6 +15,9 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **dropped** Hydrology: endorheic (closed) lakes — every lake overflows into a river now; basins too dry to overflow stay dry. `world.overlay.rivers`
 - **new** Hydrology: landlocked seas are terminal basins — rivers end in them, and the climate sets their water level. `world.overlay.rivers`
 - **new** Biomes: salt flats — the exposed floor of a shrunken terminal sea. `world.biome`
+- **changed** Climate: refines once after hydrology — exposed basin floors join as land, deep ones with the heat of their depth. `worldgen.panel.climate`
+- **changed** Hydrology: terminal seas count the rain that falls on them as inflow. `world.overlay.rivers`
+- **changed** Biomes: the salt crust narrows to the band where the water last stood; the slopes above are hot desert rock. `world.biome`
 - **fixed** Hydrology: rivers draw as one continuous line through the lakes and hollows they cross. `world.overlay.rivers`
 - **changed** Erosion: lowlands carry real micro-relief now, so plains rivers branch into dendritic networks instead of running as a few straight trunks. `worldgen.panel.erosion`
 - **changed** Erosion: delta plains slope gently seaward and their lobes grow rounded instead of as one-cell staircase arms. `worldgen.panel.erosion`

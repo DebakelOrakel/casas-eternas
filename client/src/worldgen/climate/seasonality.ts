@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell, shiftedYNorm } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell, shiftedYNorm } from './climateField'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { wrapValue } from '../core/field'
 
@@ -27,14 +27,14 @@ function wrapIndex(x: number, y: number): number {
 // (multi-source BFS, 4-connected, toroidally wrapped). 0 at the coast/ocean,
 // saturating to 1 deep inland. A fully-land or fully-ocean world degenerates
 // gracefully (all 1 / all 0).
-function computeContinentality(elevation: Float32Array, worldWidth: number, worldHeight: number): Float32Array {
+function computeContinentality(elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Float32Array {
   const n = RX * RY
   const dist = new Float32Array(n).fill(Infinity)
   const queue: number[] = []
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      if (sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) <= SEA_LEVEL) {
+      if (sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) <= SEA_LEVEL && !sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight)) {
         dist[i] = 0
         queue.push(i)
       }
@@ -67,8 +67,8 @@ function computeContinentality(elevation: Float32Array, worldWidth: number, worl
 // than maritime coasts); ocean cells stay low (thermal inertia). Biome
 // classification later reads T_mean ± amplitude/2 for cold-winter / growing-
 // season distinctions. See docs/decisions/climate-biomes.md.
-export function computeSeasonalAmplitude(elevation: Float32Array, worldWidth: number, worldHeight: number, equatorOffset = 0): Float32Array {
-  const continentality = computeContinentality(elevation, worldWidth, worldHeight)
+export function computeSeasonalAmplitude(elevation: Float32Array, worldWidth: number, worldHeight: number, equatorOffset = 0, dryLand?: Uint8Array): Float32Array {
+  const continentality = computeContinentality(elevation, worldWidth, worldHeight, dryLand)
   const amplitude = new Float32Array(RX * RY)
   for (let gy = 0; gy < RY; gy++) {
     const yNorm = shiftedYNorm(gy, RY, equatorOffset)
@@ -76,7 +76,7 @@ export function computeSeasonalAmplitude(elevation: Float32Array, worldWidth: nu
     const ampLat = MAX_AMPLITUDE * phi
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      const ocean = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) <= SEA_LEVEL
+      const ocean = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) <= SEA_LEVEL && !sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight)
       amplitude[i] = ocean ? OCEAN_AMPLITUDE : ampLat * (COAST_DAMP + (1 - COAST_DAMP) * continentality[i])
     }
   }

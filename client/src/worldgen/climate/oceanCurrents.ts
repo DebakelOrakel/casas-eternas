@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell } from './climateField'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { sampleBilinearGrid } from '../core/field'
 import { wrapValue } from '../core/field'
@@ -39,12 +39,12 @@ function wrapIndex(x: number, y: number): number {
 // ocean boundaries (mild eastern continental coasts) and COLD water equatorward
 // along eastern ocean boundaries (cool, upwelling western continental coasts) —
 // validated against that pattern. See docs/decisions/climate-biomes.md.
-export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array, worldWidth: number, worldHeight: number): Float32Array {
+export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Float32Array {
   const n = RX * RY
   const land = new Uint8Array(n)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
-      land[gy * RX + gx] = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) > SEA_LEVEL ? 1 : 0
+      land[gy * RX + gx] = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) > SEA_LEVEL || sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight) ? 1 : 0
     }
   }
 
@@ -96,12 +96,12 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
 // coastal land cell toward the anomaly of its adjacent ocean (a cold current
 // cools the coast, a warm one mildens it). `current` is the normalized field
 // from computeOceanCurrents.
-export function applyOceanSST(temperature: Float32Array, current: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number): void {
+export function applyOceanSST(temperature: Float32Array, current: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): void {
   const n = RX * RY
   const land = new Uint8Array(n)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
-      land[gy * RX + gx] = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) > SEA_LEVEL ? 1 : 0
+      land[gy * RX + gx] = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) > SEA_LEVEL || sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight) ? 1 : 0
     }
   }
 

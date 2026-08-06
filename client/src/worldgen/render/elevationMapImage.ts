@@ -87,7 +87,21 @@ export interface RenderSimulationOptions {
   // precomputedElevations is supplied (that array is already the final
   // full-res field).
   elevationScale?: number
+  // Terminal-basin truth from the hydrology (LakeFields.dryBasin/saltFlat):
+  // dry sub-sea basin floor renders as LAND — salt-crust colour inside the
+  // evaporite band, pale basin rock above it — shaded by the same hillshade
+  // as everything else, so the exposed bathymetry keeps its real relief. Set
+  // by the worker's post-hydrology re-render; cleared whenever topography
+  // changes (the masks describe a hydrology that no longer exists then).
+  dryBasin?: Uint8Array
+  saltFlat?: Uint8Array
 }
+
+// Dry terminal-basin floor colours (see RenderSimulationOptions.dryBasin).
+// Salt matches the SaltFlat biome swatch; the rock above the evaporite band
+// is a darker desert tone so the band reads as a bright shoreline ring.
+const SALT_CRUST_COLOR: [number, number, number] = [236, 230, 218]
+const BASIN_ROCK_COLOR: [number, number, number] = [196, 178, 148]
 
 // Renders the simulation's current state into an RGBA buffer: elevation
 // (from the stateless distance-field query) determines every pixel's
@@ -230,13 +244,16 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
       const plateIndex = cellIds[idx]
       if (plateIndex !== cellIds[y * width + rightCol] || plateIndex !== cellIds[downRow * width + x]) boundaryMask[idx] = 1
       const elevation = elevations[idx]
-      if (elevation > 0) landPixelCount++
+      const dryFloor = options.dryBasin !== undefined && options.dryBasin[idx] === 1
+      if (elevation > 0 || dryFloor) landPixelCount++
       const dzdx = (elevations[y * width + rightCol] - elevation) * RELIEF_EXAGGERATION
       const dzdy = (elevations[downRow * width + x] - elevation) * RELIEF_EXAGGERATION
       const ndotl = (-dzdx * LX - dzdy * LY + LZ) / Math.hypot(dzdx, dzdy, 1)
       const shade = ndotl < 0 ? 0 : ndotl > 1 ? 1 : ndotl
-      relief[idx] = (elevation > 0 ? 128 : 0) | Math.round(shade * 127)
-      const color = elevationToColor(elevation)
+      relief[idx] = (elevation > 0 || dryFloor ? 128 : 0) | Math.round(shade * 127)
+      const color = dryFloor
+        ? (options.saltFlat !== undefined && options.saltFlat[idx] === 1 ? SALT_CRUST_COLOR : BASIN_ROCK_COLOR)
+        : elevationToColor(elevation)
       const pixelIndex = idx * 4
       buffer[pixelIndex] = color[0]
       buffer[pixelIndex + 1] = color[1]

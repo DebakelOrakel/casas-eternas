@@ -5,6 +5,15 @@ import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../worldgen/core/mapConfig'
+
+// Discharge display conversion: the hydrology's unit is mm/yr summed over
+// contributing cells; × cell area × 1e-3 m/mm ÷ seconds-per-year gives m³/s,
+// and a nominal runoff coefficient (real basins deliver roughly a third of
+// their rainfall to the channel — the rest evaporates or seeps) keeps the
+// number in the range real rivers of this catchment size actually carry.
+// Display-grade realism, not a water-budget model.
+const RUNOFF_COEFFICIENT = 0.35
+const DISCHARGE_TO_M3S = ((METERS_PER_CELL * METERS_PER_CELL * 1e-3) / 3.156e7) * RUNOFF_COEFFICIENT
 import JSZip from 'jszip'
 import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
@@ -18,10 +27,11 @@ import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, tem
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
 import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../worldgen/climate/biomes'
+import { evaporationPotential } from '../../worldgen/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '../../worldgen/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
 import { WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave/worldLayers'
-import { t, type TKey } from '../../i18n/i18n'
+import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import './worldgen.css'
 
@@ -736,6 +746,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // come from the worker's computeHydrology; null until computed / invalidated.
   const HYDROLOGY_PANEL_INDEX = 4
   let lastRiverData: { points: Float32Array; lengths: Uint32Array } | null = null
+  let lastWatersheds: Uint16Array | null = null
+  let lastDischargeField: Float32Array | null = null
+  let lastMaxDischarge = 0
   let lastLakeDepth: Float32Array | null = null
   // Debug only: sea-floor cells the last erosion pass raised (see the erosion panel's
   // "Mark deltas" box and the worker's postDeltaMask).
@@ -879,6 +892,54 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // so both show. Samples the coarse climate grid (nearest cell) per map pixel.
   // No-op until climate is computed. Drawn before boundaries/names so those
   // stay legible on top.
+  // Climatic water balance: rainfall minus potential evaporation, the map of
+  // where the land gains water and where it loses it. Diverging ramp — arid
+  // rust below zero, paper-white at balance, deep blue-green surplus. Coarse
+  // climate grid, land only (ocean keeps the base map).
+  function paintWaterBalance(data: Uint8ClampedArray): void {
+    if (!lastTemperature || !lastPrecipitation) return
+    const alpha = 0.55
+    const clampAbs = 1500
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
+        const i = gy * climateResX + gx
+        const p0 = lastPrecipitation[i]
+        if (p0 === OCEAN_PRECIP) continue
+        const balance = Math.max(-clampAbs, Math.min(clampAbs, p0 - evaporationPotential(lastTemperature[i])))
+        const t2 = balance / clampAbs // -1..1
+        const r = t2 < 0 ? 245 + (170 - 245) * -t2 : 245 + (30 - 245) * t2
+        const g = t2 < 0 ? 243 + (60 - 243) * -t2 : 243 + (110 - 243) * t2
+        const b = t2 < 0 ? 238 + (40 - 238) * -t2 : 238 + (150 - 238) * t2
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - alpha) + r * alpha
+        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
+        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
+      }
+    }
+  }
+
+  // Watersheds: each labelled catchment in its own colour, golden-angle hue
+  // walk over the id so neighbouring ids land far apart on the wheel.
+  function paintWatersheds(data: Uint8ClampedArray): void {
+    if (!lastWatersheds) return
+    const alpha = 0.5
+    for (let i = 0; i < lastWatersheds.length; i++) {
+      const id = lastWatersheds[i]
+      if (id === 0) continue
+      const hue = (id * 137.508) % 360
+      const c = 0.45, m = 0.35 // fixed chroma/lightness floor -> readable pastels
+      const hp = hue / 60
+      const xw = c * (1 - Math.abs((hp % 2) - 1))
+      const [r1, g1, b1] = hp < 1 ? [c, xw, 0] : hp < 2 ? [xw, c, 0] : hp < 3 ? [0, c, xw] : hp < 4 ? [0, xw, c] : hp < 5 ? [xw, 0, c] : [c, 0, xw]
+      const p = i * 4
+      data[p] = data[p] * (1 - alpha) + (r1 + m) * 255 * alpha
+      data[p + 1] = data[p + 1] * (1 - alpha) + (g1 + m) * 255 * alpha
+      data[p + 2] = data[p + 2] * (1 - alpha) + (b1 + m) * 255 * alpha
+    }
+  }
+
   function paintTemperature(data: Uint8ClampedArray): void {
     if (!lastTemperature) return
     const alpha = 0.55
@@ -1303,6 +1364,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
     { id: 'currents', label: 'Currents', enabled: false, hidden: true, paint: drawCurrents },
     { id: 'lakes', label: 'Lakes', enabled: false, hidden: true, paintPixels: paintLakes },
+    { id: 'waterBalance', label: 'Water balance', enabled: false, hidden: true, paintPixels: paintWaterBalance },
+    { id: 'watersheds', label: 'Watersheds', enabled: false, hidden: true, paintPixels: paintWatersheds },
     // Events are always on — a persistent notification-coupled marker layer,
     // not a user toggle.
     { id: 'events', label: 'Events', enabled: true },
@@ -1453,6 +1516,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'biomes', icon: '/icons/biomes.png', labelKey: 'world.overlay.biomes', available: () => lastBiomes !== null, legend: { type: 'swatches', title: t('world.overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) } },
     { id: 'rivers', icon: '/icons/river.png', labelKey: 'world.overlay.rivers', available: () => lastRiverData !== null },
     {
+      id: 'waterBalance', icon: '/icons/waterbilance.png', labelKey: 'world.overlay.waterBalance', available: () => lastTemperature !== null && lastPrecipitation !== null,
+      legend: { type: 'swatches', title: t('world.overlay.waterBalance.label'), items: [
+        { label: t('world.overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
+        { label: t('world.overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
+      ] },
+    },
+    { id: 'watersheds', icon: '/icons/watersheds.png', labelKey: 'world.overlay.watersheds', available: () => lastWatersheds !== null },
+    {
       id: 'ecology', icon: '/icons/ecology.png', labelKey: 'world.overlay.resources', available: hasEcologyData,
       legend: () => ({ type: 'gradient', title: ECOLOGY_FIELD_META[selectedEcologyField].label, unit: '', stops: ecologyFieldLegendStops(selectedEcologyField) }),
     },
@@ -1488,7 +1559,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'genesis', icon: '/icons/mantle.png', labelKey: 'worldgen.panel.genesis.title', helpBase: 'world.overlay.group.genesis', members: ['mantle', 'cratonAge', 'volcanoes', 'hotspots'] },
     { id: 'tectonics', icon: '/icons/tectonics.png', labelKey: 'worldgen.panel.tectonics.title', helpBase: 'world.overlay.group.tectonics', members: ['boundaries', 'names'] },
     { id: 'climate', icon: '/icons/temperature.png', labelKey: 'worldgen.panel.climate.title', helpBase: 'world.overlay.group.climate', members: ['temperature', 'seasonality', 'wind', 'currents', 'precipitation', 'monsoon', 'biomes'] },
-    { id: 'hydrology', icon: '/icons/river.png', labelKey: 'world.overlay.rivers.label', members: ['rivers'] },
+    { id: 'hydrology', icon: '/icons/lake.png', labelKey: 'world.overlay.group.hydrology.label', helpBase: 'world.overlay.group.hydrology', members: ['rivers', 'waterBalance', 'watersheds'] },
     // Ecology carries the aggregate plus every resource field. The fields duplicate
     // the panel's own fold-out at the bottom, deliberately: down there they set
     // ABUNDANCE, up here they choose what the map paints — same list, different job.
@@ -1901,6 +1972,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       lines.push(v === ECOLOGY_OCEAN ? 'Ocean' : `${ECOLOGY_FIELD_META[selectedEcologyField].label} ${Math.round(v * 100)}%`)
     }
     if (overlaysOn.biomes && lastBiomes) lines.push(t(biomeLabelKey(lastBiomes[i]) as TKey))
+    if (overlaysOn.rivers && lastDischargeField && lastMaxDischarge > 0) {
+      const fi = Math.min(MAP_HEIGHT - 1, Math.floor(mapY)) * MAP_WIDTH + Math.min(MAP_WIDTH - 1, Math.floor(mapX))
+      // Only where there is a river worth reading — below 1% of the largest
+      // stream it is distributed rain, not a channel.
+      if (lastDischargeField[fi] / lastMaxDischarge >= 0.01) {
+        const m3s = lastDischargeField[fi] * DISCHARGE_TO_M3S
+        const value = m3s >= 100 ? `${Math.round(m3s).toLocaleString(getLocale())} m³/s` : `${m3s.toFixed(1)} m³/s`
+        lines.push(t('world.hover.discharge', { value }))
+      }
+    }
     if (overlaysOn.temperature && lastTemperature) lines.push(`${Math.round(lastTemperature[i])} °C`)
     if (overlaysOn.precipitation && lastPrecipitation) {
       const p = lastPrecipitation[i]
@@ -1985,6 +2066,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverLayer?.setPolylines(lastRiverData.points, lastRiverData.lengths)
     // Lakes only arrive on a re-route (empty buffer = unchanged, keep the last).
     if (message.lakeDepth.byteLength > 0) lastLakeDepth = new Float32Array(message.lakeDepth)
+    if (message.watersheds.byteLength > 0) lastWatersheds = new Uint16Array(message.watersheds)
+    if (message.discharge.byteLength > 0) lastDischargeField = new Float32Array(message.discharge)
+    if (message.maxDischarge > 0) lastMaxDischarge = message.maxDischarge
     // Riparian-refined biomes replace the climate step's water-free ones.
     if (message.biomes.byteLength > 0) lastBiomes = new Uint8Array(message.biomes)
     hydrologyInFlight = false

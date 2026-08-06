@@ -92,6 +92,7 @@ export function computeSeasonalPrecipitation(
   worldH: number,
   humidity: number,
   equatorOffset: number,
+  dryLand?: Uint8Array,
 ): SeasonalPrecipitation {
   const tempN = seasonalTemperature(annualTemp, amplitude, equatorOffset, true) // top hemisphere summer
   const tempS = seasonalTemperature(annualTemp, amplitude, equatorOffset, false)
@@ -99,8 +100,8 @@ export function computeSeasonalPrecipitation(
   const windS = computeMonsoonWind(baseWind, tempS)
   // ITCZ migrates toward the summer hemisphere. +equatorOffset moves the equator toward
   // the bottom, so a top-hemisphere summer (belt shifts up) uses a SMALLER offset.
-  const precipN = computePrecipitation(elevation, tempN, windN, worldW, worldH, humidity, equatorOffset - ITCZ_SEASONAL_SHIFT)
-  const precipS = computePrecipitation(elevation, tempS, windS, worldW, worldH, humidity, equatorOffset + ITCZ_SEASONAL_SHIFT)
+  const precipN = computePrecipitation(elevation, tempN, windN, worldW, worldH, humidity, equatorOffset - ITCZ_SEASONAL_SHIFT, dryLand)
+  const precipS = computePrecipitation(elevation, tempS, windS, worldW, worldH, humidity, equatorOffset + ITCZ_SEASONAL_SHIFT, dryLand)
 
   const n = precipN.length
   const annual = new Float32Array(n)

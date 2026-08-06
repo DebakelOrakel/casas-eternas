@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell, shiftedYNorm } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell, shiftedYNorm } from './climateField'
 import { SEA_LEVEL, SLOPE_RECALIBRATION } from '../elevation/elevationScale'
 import { sampleBilinearGrid } from '../core/field'
 import { wrapValue } from '../core/field'
@@ -120,7 +120,7 @@ function elevationAtWorld(elevation: Float32Array, wx: number, wy: number, world
 // default; <1 = a drier world with expanding deserts, >1 = a wetter, greener
 // one — the user's humidity slider). It scales the mm/yr directly, sliding every
 // cell along the Whittaker precipitation axis; ocean sentinels are untouched.
-export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number, humidity = 1, equatorOffset = 0): Float32Array {
+export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number, humidity = 1, equatorOffset = 0, dryLand?: Uint8Array): Float32Array {
   const n = RX * RY
   const ocean = new Uint8Array(n)
   const evap = new Float32Array(n)
@@ -129,7 +129,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       const e = sampleElevationAtCell(elevation, gx, gy, worldW, worldH)
-      ocean[i] = e <= SEA_LEVEL ? 1 : 0
+      ocean[i] = e <= SEA_LEVEL && !sampleDryLandAtCell(dryLand, gx, gy, worldW, worldH) ? 1 : 0
       evap[i] = evaporation(temperature[i])
       if (ocean[i]) {
         rainFrac[i] = BASE_RAINOUT

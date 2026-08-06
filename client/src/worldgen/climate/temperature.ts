@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt, sampleElevationAtCell } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt, sampleDryLandAtCell, sampleElevationAtCell } from './climateField'
 import { ELEVATION_METERS, SEA_LEVEL } from '../elevation/elevationScale'
 
 // Real-ish units (°C), so the later Whittaker biome thresholds are directly
@@ -35,7 +35,12 @@ const LAPSE_C_PER_ELEVATION = LAPSE_C_PER_KM * (ELEVATION_METERS / 1000)
 // sea-surface temperature from ocean currents is a later phase. Coarse climate
 // grid; elevation sampled from the full-res field so mountain cooling isn't
 // averaged away. Values in °C.
-export function computeTemperature(elevation: Float32Array, worldWidth: number, worldHeight: number, offsetC = 0, contrast = 1, equatorOffset = 0): Float32Array {
+// `dryLand` (optional): the terminal-basin dry-floor override — those cells are
+// LAND despite sub-sea elevation, and their lapse term runs UNCLAMPED below
+// sea level: a basin floor at −2800 m is ~18 °C hotter than its rim, the
+// Dead-Sea/Death-Valley effect. Ocean keeps the clamp (its surface is at 0
+// regardless of the bathymetry below).
+export function computeTemperature(elevation: Float32Array, worldWidth: number, worldHeight: number, offsetC = 0, contrast = 1, equatorOffset = 0, dryLand?: Uint8Array): Float32Array {
   const temperature = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   const meanC = (T_EQUATOR_C + T_POLE_C) / 2
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
@@ -46,7 +51,8 @@ export function computeTemperature(elevation: Float32Array, worldWidth: number, 
     const base = meanC + contrast * deviation
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const e = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
-      const value = base - LAPSE_C_PER_ELEVATION * Math.max(0, e - SEA_LEVEL)
+      const dry = sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight)
+      const value = base - LAPSE_C_PER_ELEVATION * (dry ? e - SEA_LEVEL : Math.max(0, e - SEA_LEVEL))
       temperature[gy * CLIMATE_RES_X + gx] = value + offsetC
     }
   }
