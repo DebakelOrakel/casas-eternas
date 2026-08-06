@@ -6,7 +6,7 @@ import { raftMembership } from '../../crust/raftField'
 import { accreteToNearestRaft } from '../../crust/raftLifecycle'
 import { resetOceanAgeAround } from '../oceanAge'
 import { classifyBoundaryMotion } from '../plateVelocityDecomposition'
-import { ACCRETION_BLOB_RADIUS, ACCRETION_EPOCH_INTERVAL, ACCRETION_INSET, ACCRETION_MAX_ATTACH_SQ, ACCRETION_MIN_GAP_SQ, AGE_MULTIPLIER_FLOOR, AGE_MULTIPLIER_HALF_LIFE_EPOCHS, AGE_MULTIPLIER_RANGE, CONT_RIFT_LOCK_EPOCHS, CONT_RIFT_THRESHOLD_FACTOR, LOCK_EPOCHS_REQUIRED, MERGE_ACCUMULATOR_THRESHOLD, PLATE_COUNT_PRESSURE_CLAMP, PLATE_COUNT_PRESSURE_STRENGTH, RIDGE_FRESH_CRUST_RADIUS, RIFT_ACCUMULATOR_THRESHOLD, RIFT_BASIN_FLOOR_THICKNESS, TRENCH_DEPTH_FRACTION, TRENCH_OFFSET, UPLIFT_EPOCH_SCALE } from '../tectonicsParams'
+import { ACCRETION_BLOB_RADIUS, ACCRETION_EPOCH_INTERVAL, ACCRETION_INSET, ACCRETION_MAX_ATTACH_SQ, ACCRETION_MIN_GAP_SQ, AGE_MULTIPLIER_FLOOR, AGE_MULTIPLIER_HALF_LIFE_EPOCHS, AGE_MULTIPLIER_RANGE, CONT_RIFT_LOCK_EPOCHS, CONT_RIFT_THRESHOLD_FACTOR, LOCK_EPOCHS_REQUIRED, MERGE_ACCUMULATOR_THRESHOLD, MIN_PLATE_COUNT, PLATE_COUNT_PRESSURE_CLAMP, PLATE_COUNT_PRESSURE_STRENGTH, RIDGE_FRESH_CRUST_RADIUS, RIFT_ACCUMULATOR_THRESHOLD, RIFT_BASIN_FLOOR_THICKNESS, TRENCH_DEPTH_FRACTION, TRENCH_OFFSET, UPLIFT_EPOCH_SCALE } from '../tectonicsParams'
 import { findOrCreateFeatureIndex } from '../terrainFeatures'
 import type { MergeEvent, PlateSimulation, RiftEvent } from '../plateSimulationTypes'
 
@@ -203,7 +203,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
     if (sim.latticeLockedEpochs[index] < LOCK_EPOCHS_REQUIRED) continue
     if (!riftEvent && convergence.motionClass === 'divergent' && sim.latticeAccumulated[index] <= effectiveRiftThreshold) {
       riftEvent = { x: boundary.x, y: boundary.y, plateA: boundary.plateA, plateB: boundary.plateB }
-    } else if (!mergeEvent && sim.latticeAccumulated[index] >= effectiveMergeThreshold) {
+    } else if (!mergeEvent && sim.seeds.length > MIN_PLATE_COUNT && sim.latticeAccumulated[index] >= effectiveMergeThreshold) {
       // Continent-continent collision (foldMountains) merges the two
       // into one — doesn't matter which index survives, both are
       // continental. Subduction (subductionArc, islandArc) instead

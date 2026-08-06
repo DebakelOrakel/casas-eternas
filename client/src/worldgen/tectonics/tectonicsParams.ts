@@ -79,6 +79,23 @@ export const MERGE_ACCUMULATOR_THRESHOLD = 60
 // whatever PLATE_COUNT the UI is actually configured to.
 export const PLATE_COUNT_PRESSURE_STRENGTH = 0.03
 export const PLATE_COUNT_PRESSURE_CLAMP = 0.6
+// A hard floor the soft pressure above cannot provide, because it only ever
+// makes merging HARDER, never impossible — a boundary whose accumulator
+// happens to sail past even the maximally-widened threshold still merges.
+// Re-verified 2026-08-06 (headless, 5 seeds x 800 epochs, current code): the
+// pressure alone does not stop a slow merge-dominated seed from reaching 1
+// plate (one seed went 13 -> 1 and stayed there for the rest of the run).
+// That specific outcome is a trap, not just an extreme: detectBoundaries has
+// nothing to detect with a single Voronoi seed, so a boundary-triggered rift
+// can never fire again, and the continental-rift path (runBoundaryPass's
+// other rift source) ALSO reads convergence off a detected boundary — so at
+// 1 plate the simulation is kinematically frozen for the rest of the run,
+// permanently, not just until the pressure term catches up. Below this floor
+// a merge is refused outright regardless of its accumulator, independent of
+// PLATE_COUNT_PRESSURE_*. 3 (not 2) leaves at least two boundaries standing
+// so a stalled one has a second chance elsewhere, rather than the single
+// boundary two plates would leave.
+export const MIN_PLATE_COUNT = 3
 // Thickness decays a little every epoch even without erosion actually
 // being built yet (explicitly out of scope for this feature per the
 // decision doc) — a real forcing/response model still needs *some*
