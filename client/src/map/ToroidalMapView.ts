@@ -1,6 +1,7 @@
 import { Color3, DirectionalLight, HemisphericLight, MeshBuilder, RawTexture, Scene, StandardMaterial, Vector3, VertexBuffer } from '@babylonjs/core'
 import type { InstancedMesh, Mesh } from '@babylonjs/core'
 import type { ElevationSurface } from './elevationSurface'
+import { HexGridMaterialPlugin } from './hexGridMaterialPlugin'
 
 // Which representation the map should wear this frame — decided by the
 // caller (it owns the camera/zoom semantics):
@@ -40,6 +41,11 @@ export interface ToroidalMapViewOptions {
   // stable world (fixed lit/shadow sides while rotating) is the natural
   // look. The worldmap screen feeds its near-regime blend here.
   getSunWorldBlend?: () => number
+  // The 300 m hex grid drawn into the relief material's fragments (see
+  // hexGridMaterialPlugin). Spacings must tile the toroidal period exactly
+  // (mapSceneSettings' snapped values); strength and the view-distance fade
+  // band are polled per frame — the screen keys both off altitude.
+  hexGrid?: { spacingX: number; spacingY: number; getStrength: () => number; getFadeDistances: () => { start: number; end: number } }
   // Called each frame with the recenter block's center, so a screen can tile
   // extra meshes in lockstep (e.g. the river ribbon overlay).
   onRecenter?: (centerX: number, centerZ: number) => void
@@ -111,7 +117,7 @@ interface ReliefLevel {
 // sun — which is what keeps slopes crisp when the texture itself has run out
 // of resolution.
 export function createToroidalMapView(options: ToroidalMapViewOptions): ToroidalMapView {
-  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, getSunWorldBlend, onRecenter } = options
+  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, getSunWorldBlend, hexGrid, onRecenter } = options
 
   // Starts as a flat white placeholder (the caller's clear color) until the
   // first composited frame is uploaded, so there's no flash.
@@ -127,6 +133,11 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   const reliefMaterial = new StandardMaterial('mapReliefMaterial', scene)
   reliefMaterial.diffuseTexture = reliefTexture
   reliefMaterial.specularColor = new Color3(0, 0, 0)
+  let hexGridPlugin: HexGridMaterialPlugin | null = null
+  if (hexGrid) {
+    hexGridPlugin = new HexGridMaterialPlugin(reliefMaterial)
+    hexGridPlugin.configure(hexGrid.spacingX, hexGrid.spacingY)
+  }
 
   // The relief lights touch ONLY the relief meshes (includedOnlyMeshes,
   // maintained as levels are built) — everything else in the scene keeps its
@@ -298,6 +309,11 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     }
     applyVisibility()
     if (shown.coarse || shown.fine) updateSunDirection()
+    if (hexGrid && hexGridPlugin) {
+      hexGridPlugin.setStrength(shown.coarse || shown.fine ? hexGrid.getStrength() : 0)
+      const fade = hexGrid.getFadeDistances()
+      hexGridPlugin.setFade(fade.start, fade.end)
+    }
     onRecenter?.(centerX, centerZ)
   })
 

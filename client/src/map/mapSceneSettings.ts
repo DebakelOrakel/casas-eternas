@@ -1,5 +1,5 @@
 import { ELEVATION_METERS } from '../worldgen/elevation/elevationScale'
-import { MAP_WIDTH, METERS_PER_CELL } from '../worldgen/core/mapConfig'
+import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../worldgen/core/mapConfig'
 
 // Shared scene scale + relief-preview settings for the flat map screens
 // (worldgen, worldmap). One module on purpose: both screens render the same
@@ -46,3 +46,24 @@ export const UNITS_PER_METER = MAP_WORLD_WIDTH / (METERS_PER_CELL * MAP_WIDTH)
 // 300 m hex grid (docs/design/hex-world-view.md) will be comfortably
 // readable once it exists.
 export const NEAR_MIN_ALTITUDE = 2500 * UNITS_PER_METER
+
+// --- The 300 m hex grid (docs/design/hex-world-view.md: one hex ≈ one
+// Hufe). Pointy-top: flat-to-flat runs HORIZONTALLY, so the column spacing
+// is the decided 300 m and the row spacing is the hex geometry's
+// √3/2 · width. Both spacings are then SNAPPED so an integer number of
+// columns / an EVEN number of rows (the pattern repeats every two rows)
+// tiles one toroidal period exactly — otherwise the grid would seam at the
+// wrap. The snap distorts the hexes by ~0.003%: invisible.
+const HEX_WIDTH_M = 300
+const WORLD_WIDTH_M = METERS_PER_CELL * MAP_WIDTH
+const WORLD_HEIGHT_M = METERS_PER_CELL * MAP_HEIGHT
+const HEX_COLUMNS = Math.round(WORLD_WIDTH_M / HEX_WIDTH_M)
+const HEX_ROWS = 2 * Math.round(WORLD_HEIGHT_M / (HEX_WIDTH_M * (Math.sqrt(3) / 2)) / 2)
+export const HEX_COL_SPACING = MAP_WORLD_WIDTH / HEX_COLUMNS
+export const HEX_ROW_SPACING = MAP_WORLD_HEIGHT / HEX_ROWS
+
+// Altitude band (world units) over which the grid fades in during the near
+// descent: invisible above ~40 km (hexes would be subpixel moiré), fully
+// drawn below ~16 km (a hex is ≥ ~10 px there).
+export const HEXGRID_FADE_HIGH_ALTITUDE = 0.05
+export const HEXGRID_FADE_LOW_ALTITUDE = 0.02

@@ -9,7 +9,7 @@ import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
 import { computeReliefBytes } from '../../worldgen/render/reliefShade'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/paperBase'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
-import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
+import { HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
 import { decodeLayer } from '../../worldgen/worldSave/worldLayers'
 import type { Dtype } from '../../worldgen/worldSave/worldLayers'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
@@ -58,6 +58,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     getZoom: getCameraZoom,
     getYaw: getCameraYaw,
     getNearBlend: getCameraNearBlend,
+    getAltitude: getCameraAltitude,
   } = createWorldgenCamera({
     scene,
     canvas: ctx.canvas,
@@ -230,6 +231,27 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       getFocus: getCameraFocus,
       getYaw: getCameraYaw,
       getSunWorldBlend: getCameraNearBlend,
+      hexGrid: {
+        spacingX: HEX_COL_SPACING,
+        spacingY: HEX_ROW_SPACING,
+        // Fade the 300 m grid in over the descent: subpixel moiré above,
+        // full strength once hexes are comfortably readable. In the map
+        // regime the altitude is the fixed rig height, far above the band —
+        // strength 0 without a special case.
+        getStrength: () => {
+          const altitude = getCameraAltitude()
+          if (altitude >= HEXGRID_FADE_HIGH_ALTITUDE) return 0
+          if (altitude <= HEXGRID_FADE_LOW_ALTITUDE) return 1
+          return (HEXGRID_FADE_HIGH_ALTITUDE - altitude) / (HEXGRID_FADE_HIGH_ALTITUDE - HEXGRID_FADE_LOW_ALTITUDE)
+        },
+        // A near-field disk around the camera, scaled with altitude: hexes
+        // reach a comfortable working radius and are gone long before the
+        // haze — they are a foreground instrument, not a horizon pattern.
+        getFadeDistances: () => {
+          const altitude = getCameraAltitude()
+          return { start: altitude * 8, end: altitude * 18 }
+        },
+      },
       reliefDetail: () => {
         const zoom = getCameraZoom()
         return zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
