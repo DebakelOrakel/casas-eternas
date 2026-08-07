@@ -76,6 +76,10 @@ export interface ToroidalMapView {
   // paying for while nobody deep-zooms). Re-call whenever the terrain
   // changes (e.g. after an erosion pass).
   setReliefSurfaces(coarse: ElevationSurface | null, fine?: ElevationSurface | null): void
+  // Swap the near-detail patch's surfaces (see options.nearDetail) and force
+  // an immediate rebuild — for a screen whose height data is replaced under
+  // it, e.g. when the worldmap's amplification bake finishes.
+  setNearDetailSurfaces(detail: ElevationSurface, base: ElevationSurface): void
   // Hide/show the whole map view (all layers).
   setEnabled(enabled: boolean): void
   dispose(): void
@@ -292,6 +296,10 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   let patchLastCenterX = 0
   let patchLastCenterZ = 0
   let patchLastSpacing = 0
+  // Live surfaces for the patch — start at whatever the options carried and
+  // can be replaced later (setNearDetailSurfaces).
+  let patchDetailSurface: ElevationSurface | null = nearDetail?.detailSurface ?? null
+  let patchBaseSurface: ElevationSurface | null = nearDetail?.baseSurface ?? null
 
   // The ground meshes' own uv↔world mapping (derived from vertex data, same
   // trick as displaceLevel) so the patch samples and textures in exactly
@@ -319,7 +327,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   }
 
   function rebuildPatch(centerX: number, centerZ: number, spacing: number, altitude: number): void {
-    if (!nearDetail || !coarseLevel || !patchMesh) return
+    if (!nearDetail || !coarseLevel || !patchMesh || !patchDetailSurface || !patchBaseSurface) return
     const n = PATCH_SUBDIVISIONS + 1
     if (!patchPositions) {
       patchPositions = new Float32Array(n * n * 3)
@@ -343,8 +351,8 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
         // Blend back into the plain base surface toward the rim.
         const rim = Math.max(Math.abs(lx), Math.abs(lz)) / half
         const edge = rim <= 0.75 ? 0 : Math.min(1, (rim - 0.75) / 0.23)
-        const detail = nearDetail.detailSurface.heightAtUV(u, v)
-        const base = nearDetail.baseSurface.heightAtUV(u, v)
+        const detail = patchDetailSurface.heightAtUV(u, v)
+        const base = patchBaseSurface.heightAtUV(u, v)
         const y = detail + (base - detail) * edge + lift * (1 - edge)
         const idx = j * n + i
         patchHeights![idx] = y
@@ -494,6 +502,11 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
         }
       }
       applyVisibility()
+    },
+    setNearDetailSurfaces(detail: ElevationSurface, base: ElevationSurface): void {
+      patchDetailSurface = detail
+      patchBaseSurface = base
+      patchLastSpacing = 0 // force a rebuild on the next frame
     },
     setEnabled(next: boolean): void {
       enabled = next

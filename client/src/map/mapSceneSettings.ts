@@ -62,6 +62,13 @@ const HEX_ROWS = 2 * Math.round(WORLD_HEIGHT_M / (HEX_WIDTH_M * (Math.sqrt(3) / 
 export const HEX_COL_SPACING = MAP_WORLD_WIDTH / HEX_COLUMNS
 export const HEX_ROW_SPACING = MAP_WORLD_HEIGHT / HEX_ROWS
 
+// Linear refinement of the worldmap's amplification bake (see
+// docs/decisions/worldmap-amplification.md): 2 → 4096x2048 (~3.9 km/cell),
+// 4 → 8192x4096 (~1.95 km/cell, the decided target). Phase 1 ships at 2
+// deliberately — the plumbing is verified at a quarter of the memory and
+// time before the target resolution is switched on in phase 4.
+export const AMPLIFY_FACTOR = 2
+
 // Altitude band (world units) over which the grid fades in during the near
 // descent: invisible above ~40 km (hexes would be subpixel moiré), fully
 // drawn below ~16 km (a hex is ≥ ~10 px there).

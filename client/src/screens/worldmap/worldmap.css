@@ -9,6 +9,15 @@
   opacity: 0.3;
 }
 
+/* Amplification-bake status (progress, then the baked size + duration). */
+.worldmap-screen .bake-readout {
+  align-self: center;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: #1a1a1a;
+  opacity: 0.55;
+}
+
 .worldmap-screen .altitude-readout {
   align-self: center;
   min-width: 5.5rem;

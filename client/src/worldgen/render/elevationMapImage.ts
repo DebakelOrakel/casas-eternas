@@ -5,7 +5,7 @@ import { rasterizeVoronoiPlates } from './voronoiRaster'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
 import type { ElevationRenderPool } from './elevationRenderPool'
-import { wrapValue } from '../core/field'
+import { upscaleBilinearToroidal } from '../core/field'
 import { computeOwnerField } from '../crust/raftField'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
 import { applyErosionDetailTexture } from './erosionDetailTexture'
@@ -115,34 +115,6 @@ const BASIN_ROCK_COLOR: [number, number, number] = [196, 178, 148]
 // to expand a downscaled live-preview elevation field (see
 // RenderSimulationOptions.elevationScale) to the full raster the coloring
 // pass and everything downstream expect.
-function upscaleBilinearToroidal(src: Float32Array, srcWidth: number, srcHeight: number, dstWidth: number, dstHeight: number): Float32Array {
-  const dst = new Float32Array(dstWidth * dstHeight)
-  const fx = srcWidth / dstWidth
-  const fy = srcHeight / dstHeight
-  for (let y = 0; y < dstHeight; y++) {
-    const sy = y * fy
-    const y0 = Math.floor(sy)
-    const ty = sy - y0
-    const y0m = wrapValue(y0, srcHeight)
-    const y1m = (y0m + 1) % srcHeight
-    for (let x = 0; x < dstWidth; x++) {
-      const sx = x * fx
-      const x0 = Math.floor(sx)
-      const tx = sx - x0
-      const x0m = wrapValue(x0, srcWidth)
-      const x1m = (x0m + 1) % srcWidth
-      const v00 = src[y0m * srcWidth + x0m]
-      const v10 = src[y0m * srcWidth + x1m]
-      const v01 = src[y1m * srcWidth + x0m]
-      const v11 = src[y1m * srcWidth + x1m]
-      const top = v00 + (v10 - v00) * tx
-      const bottom = v01 + (v11 - v01) * tx
-      dst[y * dstWidth + x] = top + (bottom - top) * ty
-    }
-  }
-  return dst
-}
-
 // Async, and takes a render pool, because the actual per-pixel elevation
 // query — profiled at ~88% of total render time — is farmed out across
 // a pool of nested workers (see elevationRenderPool.ts) rather than

@@ -16,6 +16,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **new** World map: the 300 m hex grid fades in during the descent — drawn in the terrain shader, welded to the ground, seamless across the world wrap.
 - **new** Controls: R/F adjust the view pitch during the descent (40–80° band); zooming back out returns to the standard curve.
 - **new** World map: near-field terrain detail — a camera-following patch synthesizes deterministic sub-cell relief from the saved raster, so low flight stops being silky-smooth.
+- **new** World map: the amplification bake starts — a loaded world is upsampled and seeded with roughness in its own worker, then swapped in under the running map. `world`
 
 ## 2026-08-06
 - **new** Overlays: water balance — rainfall minus evaporation, arid to humid. `world.overlay.waterBalance`

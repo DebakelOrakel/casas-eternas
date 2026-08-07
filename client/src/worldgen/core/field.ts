@@ -73,6 +73,42 @@ export function sampleBilinearWorld(
   return top + (bottom - top) * fy
 }
 
+// A whole raster resampled UP onto a finer grid, bilinear and torus-wrapped.
+// Lives here rather than in its original home (elevationMapImage's preview
+// upscale) because the amplification bake needs the identical operation —
+// see docs/decisions/worldmap-amplification.md. Note what upscaling alone
+// does NOT do: it adds no information, so the result is smooth at every
+// scale below the source grid (the "compositing caveat" in
+// docs/design/resolution-strategy.md). Whatever needs detail down there has
+// to come from a finer PROCESS on top, not from this function.
+export function upscaleBilinearToroidal(src: Float32Array, srcWidth: number, srcHeight: number, dstWidth: number, dstHeight: number): Float32Array {
+  const dst = new Float32Array(dstWidth * dstHeight)
+  const fx = srcWidth / dstWidth
+  const fy = srcHeight / dstHeight
+  for (let y = 0; y < dstHeight; y++) {
+    const sy = y * fy
+    const y0 = Math.floor(sy)
+    const ty = sy - y0
+    const y0m = wrapValue(y0, srcHeight)
+    const y1m = (y0m + 1) % srcHeight
+    for (let x = 0; x < dstWidth; x++) {
+      const sx = x * fx
+      const x0 = Math.floor(sx)
+      const tx = sx - x0
+      const x0m = wrapValue(x0, srcWidth)
+      const x1m = (x0m + 1) % srcWidth
+      const v00 = src[y0m * srcWidth + x0m]
+      const v10 = src[y0m * srcWidth + x1m]
+      const v01 = src[y1m * srcWidth + x0m]
+      const v11 = src[y1m * srcWidth + x1m]
+      const top = v00 + (v10 - v00) * tx
+      const bottom = v01 + (v11 - v01) * tx
+      dst[y * dstWidth + x] = top + (bottom - top) * ty
+    }
+  }
+  return dst
+}
+
 // Nearest-cell sample at world coordinates, torus-wrapped. For consumers that
 // threshold the result rather than using its magnitude, where interpolation would
 // only cost time.

@@ -10,7 +10,8 @@ import { computeReliefBytes } from '../../worldgen/render/reliefShade'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/paperBase'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
 import { createFineElevationSurface } from '../../map/fineElevationSurface'
-import { HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
+import { AMPLIFY_FACTOR, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
+import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '../../worldgen/amplificationWorker'
 import { decodeLayer } from '../../worldgen/worldSave/worldLayers'
 import type { Dtype } from '../../worldgen/worldSave/worldLayers'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
@@ -157,6 +158,15 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // wholesale on the next load.
   let mapView: ToroidalMapView | null = null
   let hoverTooltip: MapHoverTooltip | null = null
+  // The height raster currently in force: the save's macro field until the
+  // amplification bake returns a finer one (see startAmplification).
+  let heightField: { data: Float32Array; width: number; height: number } | null = null
+  let amplifyWorker: Worker | null = null
+  let bakeEl: HTMLElement | null = null
+  const setBakeText = (text: string): void => {
+    bakeEl ??= root.querySelector<HTMLElement>('[data-value="bake"]')
+    if (bakeEl) bakeEl.textContent = text
+  }
 
   const root = document.createElement('div')
   root.className = 'worldmap-screen map-chrome'
@@ -173,6 +183,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <img src="/icons/voronoi.png" alt="" />
       </button>
       <span class="altitude-readout" data-value="altitude"></span>
+      <span class="bake-readout" data-value="bake"></span>
     </div>
   `
   ctx.overlay.appendChild(root)
@@ -258,14 +269,31 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // Build the three surfaces from a height raster and hand them to the map
+  // view. Called for the macro raster at load, then again when the
+  // amplification bake returns a finer one — the bake swaps the world's
+  // GEOMETRY under a map that is already on screen (the paper texture stays
+  // at macro resolution; texture res is its own decision, see the doc).
+  function applyHeightField(field: Float32Array, fieldWidth: number, fieldHeight: number, detailSeed: number): void {
+    if (!mapView) return
+    const decimated = downsampleElevation(field, fieldWidth, fieldHeight, RELIEF_DECIMATION)
+    const coarseSurface = createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE)
+    const fineSurface = createElevationSurface(field, fieldWidth, fieldHeight, RELIEF_HEIGHT_SCALE)
+    // The synthetic cascade rides ON TOP of whatever raster is current: its
+    // scales are relative to the raster's resolution, so after the bake it
+    // automatically retreats to the band below the amplified cells instead
+    // of competing with them. (What survives of it once erosion lands is a
+    // later question — see the decision doc's ladder.)
+    const detailSurface = createFineElevationSurface(field, fieldWidth, fieldHeight, RELIEF_HEIGHT_SCALE, detailSeed, 0.6)
+    mapView.setReliefSurfaces(coarseSurface, fineSurface)
+    mapView.setNearDetailSurfaces(detailSurface, fineSurface)
+  }
+
   function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number): void {
     hoverTooltip?.dispose()
     mapView?.dispose()
-    // The two canonical relief surfaces (decimated → coarse mesh, full
-    // raster → fine mesh) + the near-field FINE sampler on top of the same
-    // raster — created before the map view so it can own the detail patch.
-    const decimated = downsampleElevation(elevations, width, height, RELIEF_DECIMATION)
-    const coarseSurface = createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE)
+    // Seed surfaces for construction; applyHeightField replaces them right
+    // after (and again when the bake finishes).
     const fineSurface = createElevationSurface(elevations, width, height, RELIEF_HEIGHT_SCALE)
     const detailSurface = createFineElevationSurface(elevations, width, height, RELIEF_HEIGHT_SCALE, detailSeed, 0.6)
     mapView = createToroidalMapView({
@@ -321,19 +349,27 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // The unshaded paper for the LIT relief meshes — no compositor here,
     // there are no overlays to stack yet.
     mapView.reliefTexture.update(new Uint8Array(buildUnshadedPaperBase(relief).buffer))
-    mapView.setReliefSurfaces(coarseSurface, fineSurface)
+    applyHeightField(elevations, width, height, detailSeed)
     // A loaded world is finished by definition — no erosion gate; deep zoom
     // and the tilt/yaw envelope unlock with the first successful load.
     setCameraDeepZoom(true)
 
+    // The height raster the readout samples — replaced by the bake. The
+    // tooltip's own cell resolution stays the texture's (macro), so a
+    // hovered cell maps proportionally into whatever raster is current.
+    heightField = { data: elevations, width, height }
     hoverTooltip = createMapHoverTooltip({
       scene,
       host: root,
       textureWidth: width,
       textureHeight: height,
       describe: (cellX, cellY) => {
-        const lines = [`${Math.round(elevationToMeters(elevations[cellY * width + cellX]))} m`]
-        if (biome && elevations[cellY * width + cellX] > 0) {
+        if (!heightField) return null
+        const fx = Math.min(heightField.width - 1, Math.floor((cellX / width) * heightField.width))
+        const fy = Math.min(heightField.height - 1, Math.floor((cellY / height) * heightField.height))
+        const elevation = heightField.data[fy * heightField.width + fx]
+        const lines = [`${Math.round(elevationToMeters(elevation))} m`]
+        if (biome && elevation > 0) {
           const bx = Math.min(biome.resX - 1, Math.floor((cellX / width) * biome.resX))
           const by = Math.min(biome.resY - 1, Math.floor((cellY / height) * biome.resY))
           lines.push(t(biomeLabelKey(Math.round(biome.data[by * biome.resX + bx])) as TKey))
@@ -341,11 +377,52 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         return lines.join('\n')
       },
     })
+
+    startAmplification(elevations, width, height, detailSeed)
+  }
+
+  // --- Amplification bake (docs/decisions/worldmap-amplification.md) ---
+  // Runs in its own worker after the macro map is already on screen, then
+  // swaps the geometry. Deliberately fire-and-forget from the load path: a
+  // failed or slow bake leaves a perfectly usable macro world behind.
+  function startAmplification(macro: Float32Array, macroWidth: number, macroHeight: number, detailSeed: number): void {
+    amplifyWorker?.terminate() // a new world supersedes any bake in flight
+    if (AMPLIFY_FACTOR <= 1) return
+    const worker = new Worker(new URL('../../worldgen/amplificationWorker.ts', import.meta.url), { type: 'module' })
+    amplifyWorker = worker
+    worker.onmessage = (event: MessageEvent<AmplificationOutboundMessage>) => {
+      const message = event.data
+      if (message.type === 'amplifyProgress') {
+        setBakeText(`${macroWidth * AMPLIFY_FACTOR}px ${Math.round(message.fraction * 100)}%`)
+        return
+      }
+      const amplified = new Float32Array(message.elevation)
+      heightField = { data: amplified, width: message.width, height: message.height }
+      applyHeightField(amplified, message.width, message.height, detailSeed)
+      hoverTooltip?.refresh()
+      setBakeText(`${message.width}×${message.height} · ${(message.durationMs / 1000).toFixed(1)}s`)
+      worker.terminate()
+      if (amplifyWorker === worker) amplifyWorker = null
+    }
+    // A copy: the macro raster stays live here (the readout and a future
+    // re-bake read it), so only the copy is transferred.
+    const copy = macro.slice()
+    const request: AmplificationInboundMessage = {
+      type: 'amplify',
+      elevation: copy.buffer as ArrayBuffer,
+      macroWidth,
+      macroHeight,
+      factor: AMPLIFY_FACTOR,
+      seed: detailSeed,
+    }
+    setBakeText('…')
+    worker.postMessage(request, [request.elevation])
   }
 
   return {
     scene,
     dispose() {
+      amplifyWorker?.terminate()
       scene.onBeforeRenderObservable.remove(skyObserver)
       skyDome.dispose()
       skyMaterial.dispose()
