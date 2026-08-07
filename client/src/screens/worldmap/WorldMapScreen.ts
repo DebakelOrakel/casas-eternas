@@ -9,7 +9,8 @@ import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
 import { computeReliefBytes } from '../../worldgen/render/reliefShade'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/paperBase'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
-import { HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
+import { createFineElevationSurface } from '../../map/fineElevationSurface'
+import { HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
 import { decodeLayer } from '../../worldgen/worldSave/worldLayers'
 import type { Dtype } from '../../worldgen/worldSave/worldLayers'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
@@ -123,6 +124,17 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   skyDome.setEnabled(false)
 
   scene.fogColor = SKY_HORIZON
+  // Altitude readout in the bottom panel — value + unit only (language-
+  // neutral, no catalog key needed). Shown during the near descent, where
+  // the number means something; the map regime's rig height is a fiction.
+  let altitudeEl: HTMLElement | null = null
+  let lastAltitudeText = ''
+  const formatAltitude = (meters: number): string => {
+    if (meters >= 100000) return `${Math.round(meters / 1000)} km`
+    if (meters >= 10000) return `${(meters / 1000).toFixed(1)} km`
+    if (meters >= 1000) return `${(meters / 1000).toFixed(2)} km`
+    return `${Math.round(meters)} m`
+  }
   const skyObserver = scene.onBeforeRenderObservable.add(() => {
     const blend = getCameraNearBlend()
     const nearActive = blend > 0.001
@@ -132,6 +144,12 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       skyDome.scaling.setAll(camera.maxZ * 0.9)
       scene.fogStart = camera.maxZ * 0.3
       scene.fogEnd = camera.maxZ * 0.85
+    }
+    const altitudeText = nearActive ? formatAltitude(getCameraAltitude() / UNITS_PER_METER) : ''
+    if (altitudeText !== lastAltitudeText) {
+      lastAltitudeText = altitudeText
+      altitudeEl ??= root.querySelector<HTMLElement>('[data-value="altitude"]')
+      if (altitudeEl) altitudeEl.textContent = altitudeText
     }
   })
 
@@ -151,12 +169,25 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     <h2 class="panel-title">Herederos del Mundo</h2>
     <div class="panel">
       <button type="button" class="text-button" data-action="back">Back to Title</button>
+      <button type="button" class="icon-button" data-action="toggle-hexgrid" aria-label="Toggle hex grid">
+        <img src="/icons/voronoi.png" alt="" />
+      </button>
+      <span class="altitude-readout" data-value="altitude"></span>
     </div>
   `
   ctx.overlay.appendChild(root)
   const helpTooltip = createHelpTooltip(root)
   root.querySelector('[data-action="back"]')!.addEventListener('click', () => {
     ctx.goTo('title')
+  })
+
+  // Hex grid on/off (button deliberately un-localized for now — pending an
+  // approved game.* key set). Feeds the grid's strength closure below.
+  let hexGridEnabled = true
+  const hexGridButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-hexgrid"]')!
+  hexGridButton.addEventListener('click', () => {
+    hexGridEnabled = !hexGridEnabled
+    hexGridButton.classList.toggle('is-off', !hexGridEnabled)
   })
 
   // Same load affordance as the generator: folder button → file picker.
@@ -213,15 +244,30 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         }
       }
 
-      presentWorld(elevations, width, height, biome)
+      // Seed for the deterministic near-field detail: hashed from the
+      // recipe's seed string so the same world always grows the same
+      // bumps. (Not the generator's warpSeed — see fineElevationSurface.)
+      const yamlText = await zip.file('world.yaml')?.async('string')
+      const seedText = yamlText?.match(/^seed:\s*['"]?([^'"\n]+)['"]?\s*$/m)?.[1] ?? 'casas-eternas'
+      let detailSeed = 5381
+      for (let i = 0; i < seedText.length; i++) detailSeed = ((detailSeed * 33) ^ seedText.charCodeAt(i)) >>> 0
+
+      presentWorld(elevations, width, height, biome, detailSeed)
     } catch {
       notifyLoadFailed()
     }
   }
 
-  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null): void {
+  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number): void {
     hoverTooltip?.dispose()
     mapView?.dispose()
+    // The two canonical relief surfaces (decimated → coarse mesh, full
+    // raster → fine mesh) + the near-field FINE sampler on top of the same
+    // raster — created before the map view so it can own the detail patch.
+    const decimated = downsampleElevation(elevations, width, height, RELIEF_DECIMATION)
+    const coarseSurface = createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE)
+    const fineSurface = createElevationSurface(elevations, width, height, RELIEF_HEIGHT_SCALE)
+    const detailSurface = createFineElevationSurface(elevations, width, height, RELIEF_HEIGHT_SCALE, detailSeed, 0.6)
     mapView = createToroidalMapView({
       scene,
       worldWidth: WORLD_WIDTH,
@@ -231,6 +277,12 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       getFocus: getCameraFocus,
       getYaw: getCameraYaw,
       getSunWorldBlend: getCameraNearBlend,
+      nearDetail: {
+        detailSurface,
+        baseSurface: fineSurface,
+        getActive: () => getCameraNearBlend() > 0.02,
+        getAltitude: getCameraAltitude,
+      },
       hexGrid: {
         spacingX: HEX_COL_SPACING,
         spacingY: HEX_ROW_SPACING,
@@ -239,6 +291,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         // regime the altitude is the fixed rig height, far above the band —
         // strength 0 without a special case.
         getStrength: () => {
+          if (!hexGridEnabled) return 0
           const altitude = getCameraAltitude()
           if (altitude >= HEXGRID_FADE_HIGH_ALTITUDE) return 0
           if (altitude <= HEXGRID_FADE_LOW_ALTITUDE) return 1
@@ -265,16 +318,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const paper = buildPaperBase(relief)
     mapView.texture.update(new Uint8Array(paper.buffer))
 
-    // 3D relief: the same two canonical surfaces as the generator's preview
-    // (decimated → coarse mesh, full raster → fine mesh at deep zoom), and
-    // the unshaded paper for the LIT relief meshes — no compositor here,
+    // The unshaded paper for the LIT relief meshes — no compositor here,
     // there are no overlays to stack yet.
     mapView.reliefTexture.update(new Uint8Array(buildUnshadedPaperBase(relief).buffer))
-    const decimated = downsampleElevation(elevations, width, height, RELIEF_DECIMATION)
-    mapView.setReliefSurfaces(
-      createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE),
-      createElevationSurface(elevations, width, height, RELIEF_HEIGHT_SCALE),
-    )
+    mapView.setReliefSurfaces(coarseSurface, fineSurface)
     // A loaded world is finished by definition — no erosion gate; deep zoom
     // and the tilt/yaw envelope unlock with the first successful load.
     setCameraDeepZoom(true)

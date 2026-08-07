@@ -1,7 +1,7 @@
 ---
-summary: Idea sketch for the 3D world view — a zoomable camera over the map, hex tiles only where land is developed, and edge "ports" as the contract between hexes and everything linear (rivers, roads, shorelines).
+summary: Design for the 3D world view — a zoomable camera over the map, hex tiles only where land is developed, and edge "ports" as the contract between hexes and everything linear (rivers, roads, shorelines). The camera ladder down to the hex-scale descent view is BUILT (see the status section); tiles/ports/settlements remain design.
 date: 2026-08-06
-status: idea — direction from a design discussion, nothing decided or built
+status: partially built (worldmap screen through the descent view, 2026-08-07) — hex/port/settlement layers still design-only
 ---
 
 # Hex World View — Idea Sketch
@@ -171,6 +171,9 @@ on chunk coordinates.
 
 ## First milestone: a wilderness cutout viewer
 
+*(Built and then some — see "Status 2026-08-07" below. Kept as the
+reasoning that shaped it.)*
+
 Follow-up from the same discussion: is the above roughly enough to render
 a small cutout of a saved world in 3D? Yes — and the first milestone is
 *smaller* than the doc suggests:
@@ -286,6 +289,46 @@ ribbon, depth tint, foam at banks) is the right scale. From the mostly
 top-down camera, reflections are barely visible anyway — cheap
 animated-normal-map water is a fine v1. Depth-based shore tinting
 (shallow → deep) can read scene depth instead of touching geometry.
+
+## Status 2026-08-07: what exists now
+
+The camera/terrain ladder is built, in the WORLDMAP screen ("Herederos del
+Mundo", `screens/worldmap/` — the renamed game screen, reachable from the
+title). It loads a saved world through the QUERYABLE side of the save
+(manifest + baked layers, no generator worker), and one continuous zoom
+axis now runs:
+
+1. **Flat paper map** (ortho, exponential zoom) — identical rendering to
+   the generator via shared modules (`reliefShade`, `paperBase`,
+   `mapSceneSettings`, chrome CSS under `.map-chrome`).
+2. **Lit 3D relief** (two mesh LODs, camera-relative sun on an unshaded
+   texture, tilt/yaw envelopes, WASD/Q-E) — shared with the generator's
+   preview; 2× vertical exaggeration in this map register (the 1:1
+   decision holds for the eventual ground-level game view).
+3. **Perspective descent** past the deepest map zoom: same camera flips
+   projection with framing matched at the focus, wheel steers altitude
+   down to ~2.5 km, pitch curve 60→76° with R/F freedom (40–80°),
+   gradient sky (compact deep-blue horizon band), fog = horizon color,
+   sun blends to world-fixed, altitude readout in the panel.
+4. **300 m hex grid** fading in below ~40 km altitude — a fragment-shader
+   material plugin (Voronoi of two interleaved lattices, spacings snapped
+   to tile the torus exactly), near-field distance fade against moiré,
+   toggle button in the panel. This is the LOGICAL grid made visible;
+   tiles still have no identity or contents.
+5. **Near-field detail patch** — one camera-following high-res grid fed by
+   `fineElevationSurface`: raster bilinear + a fractal cascade of
+   worldgen's own periodic detail noise down to ~300 m wavelengths,
+   slope-conditioned amplitude (≤240 m), slope-darkening vertex-color
+   micro-albedo. First cut of the shared fine-height seam; cosmetic
+   synthesis, not hydrology-true refinement (rivers don't carve yet), and
+   seeded from the save's seed string rather than the generator's
+   warpSeed until the manifest carries it.
+
+Still design-only from the sections above: everything hex-as-*tiles* —
+development/flattening, ports, shorelines-as-contract, settlements — plus
+river ribbons in the worldmap, biome-based coloring (the planned real
+answer to terrain readability), and the eventual ground-level game camera
+(a later MODE of the same rig, not a second camera object).
 
 ## Open questions
 

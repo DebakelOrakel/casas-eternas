@@ -46,6 +46,14 @@ export interface ToroidalMapViewOptions {
   // (mapSceneSettings' snapped values); strength and the view-distance fade
   // band are polled per frame — the screen keys both off altitude.
   hexGrid?: { spacingX: number; spacingY: number; getStrength: () => number; getFadeDistances: () => { start: number; end: number } }
+  // Near-field detail patch (the near regime's answer to the silky 7.8 km
+  // ground): one camera-following high-res grid whose heights come from
+  // `detailSurface` (the fine sampler — see fineElevationSurface.ts) and
+  // blend back into `baseSurface` (the plain raster surface the relief
+  // meshes use) toward the patch rim, so the patch rim meets the base mesh
+  // instead of cliffing over it. Patch extent scales with altitude, so its
+  // resolution sharpens exactly as the camera descends.
+  nearDetail?: { detailSurface: ElevationSurface; baseSurface: ElevationSurface; getActive: () => boolean; getAltitude: () => number }
   // Called each frame with the recenter block's center, so a screen can tile
   // extra meshes in lockstep (e.g. the river ribbon overlay).
   onRecenter?: (centerX: number, centerZ: number) => void
@@ -117,7 +125,7 @@ interface ReliefLevel {
 // sun — which is what keeps slopes crisp when the texture itself has run out
 // of resolution.
 export function createToroidalMapView(options: ToroidalMapViewOptions): ToroidalMapView {
-  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, getSunWorldBlend, hexGrid, onRecenter } = options
+  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, getSunWorldBlend, hexGrid, nearDetail, onRecenter } = options
 
   // Starts as a flat white placeholder (the caller's clear color) until the
   // first composited frame is uploaded, so there's no flash.
@@ -269,6 +277,145 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     setLevelShown('fine', fineLevel?.base ?? null, fineLevel?.instances ?? [], enabled && detail === 'fine')
   }
 
+  // --- Near-field detail patch (see options.nearDetail) ---
+  const PATCH_SUBDIVISIONS = 192
+  // Patch width as a multiple of camera altitude — matches the hex grid's
+  // near-field disk, so detail exists wherever the grid invites close
+  // reading.
+  const PATCH_COVERAGE = 16
+  let patchMesh: Mesh | null = null
+  let patchPositions: Float32Array | null = null
+  let patchUvs: Float32Array | null = null
+  let patchNormals: Float32Array | null = null
+  let patchHeights: Float32Array | null = null
+  let patchColors: Float32Array | null = null
+  let patchLastCenterX = 0
+  let patchLastCenterZ = 0
+  let patchLastSpacing = 0
+
+  // The ground meshes' own uv↔world mapping (derived from vertex data, same
+  // trick as displaceLevel) so the patch samples and textures in exactly
+  // the space everything else uses.
+  function deriveUvMapping(level: ReliefLevel): { u0: number; x0: number; dxdu: number; v0: number; z0: number; dzdv: number } {
+    const positions = level.base.getVerticesData(VertexBuffer.PositionKind)!
+    const uvs = level.base.getVerticesData(VertexBuffer.UVKind)!
+    let dxdu = worldWidth
+    let dzdv = -worldHeight
+    for (let vi = 2, pi = 3; vi < uvs.length; vi += 2, pi += 3) {
+      const du = uvs[vi] - uvs[0]
+      if (Math.abs(du) > 0.5) {
+        dxdu = (positions[pi] - positions[0]) / du
+        break
+      }
+    }
+    for (let vi = 2, pi = 3; vi < uvs.length; vi += 2, pi += 3) {
+      const dv = uvs[vi + 1] - uvs[1]
+      if (Math.abs(dv) > 0.5) {
+        dzdv = (positions[pi + 2] - positions[2]) / dv
+        break
+      }
+    }
+    return { u0: uvs[0], x0: positions[0], dxdu, v0: uvs[1], z0: positions[2], dzdv }
+  }
+
+  function rebuildPatch(centerX: number, centerZ: number, spacing: number, altitude: number): void {
+    if (!nearDetail || !coarseLevel || !patchMesh) return
+    const n = PATCH_SUBDIVISIONS + 1
+    if (!patchPositions) {
+      patchPositions = new Float32Array(n * n * 3)
+      patchUvs = new Float32Array(n * n * 2)
+      patchNormals = new Float32Array(n * n * 3)
+      patchHeights = new Float32Array(n * n)
+      patchColors = new Float32Array(n * n * 4)
+    }
+    const mapping = deriveUvMapping(coarseLevel)
+    const half = (spacing * PATCH_SUBDIVISIONS) / 2
+    // A whisker of lift over the base mesh where detail and base coincide,
+    // scaled with altitude so it stays subpixel — without it the rim area
+    // z-fights the relief mesh underneath.
+    const lift = altitude * 0.0015
+    for (let j = 0; j < n; j++) {
+      const lz = j * spacing - half
+      const v = mapping.v0 + (centerZ + lz - mapping.z0) / mapping.dzdv
+      for (let i = 0; i < n; i++) {
+        const lx = i * spacing - half
+        const u = mapping.u0 + (centerX + lx - mapping.x0) / mapping.dxdu
+        // Blend back into the plain base surface toward the rim.
+        const rim = Math.max(Math.abs(lx), Math.abs(lz)) / half
+        const edge = rim <= 0.75 ? 0 : Math.min(1, (rim - 0.75) / 0.23)
+        const detail = nearDetail.detailSurface.heightAtUV(u, v)
+        const base = nearDetail.baseSurface.heightAtUV(u, v)
+        const y = detail + (base - detail) * edge + lift * (1 - edge)
+        const idx = j * n + i
+        patchHeights![idx] = y
+        patchPositions![idx * 3] = lx
+        patchPositions![idx * 3 + 1] = y
+        patchPositions![idx * 3 + 2] = lz
+        patchUvs![idx * 2] = u
+        patchUvs![idx * 2 + 1] = v
+      }
+    }
+    // Normals + micro-albedo from the height grid (matches the mesh
+    // exactly; borders clamp). The vertex color darkens with local slope —
+    // rock-shadow reading independent of the light angle, so fine structure
+    // stays legible on the near-white paper even where N·L barely varies.
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const idx = j * n + i
+        const hl = patchHeights![j * n + Math.max(0, i - 1)]
+        const hr = patchHeights![j * n + Math.min(n - 1, i + 1)]
+        const hu = patchHeights![Math.max(0, j - 1) * n + i]
+        const hd = patchHeights![Math.min(n - 1, j + 1) * n + i]
+        const dhdx = (hr - hl) / (2 * spacing)
+        const dhdz = (hd - hu) / (2 * spacing)
+        const inv = 1 / Math.hypot(dhdx, 1, dhdz)
+        patchNormals![idx * 3] = -dhdx * inv
+        patchNormals![idx * 3 + 1] = inv
+        patchNormals![idx * 3 + 2] = -dhdz * inv
+        const brightness = 1 - Math.min(0.4, Math.hypot(dhdx, dhdz) * 0.8)
+        patchColors![idx * 4] = brightness
+        patchColors![idx * 4 + 1] = brightness
+        patchColors![idx * 4 + 2] = brightness
+        patchColors![idx * 4 + 3] = 1
+      }
+    }
+    patchMesh.updateVerticesData(VertexBuffer.PositionKind, patchPositions!)
+    patchMesh.updateVerticesData(VertexBuffer.UVKind, patchUvs!)
+    patchMesh.updateVerticesData(VertexBuffer.NormalKind, patchNormals!)
+    patchMesh.setVerticesData(VertexBuffer.ColorKind, patchColors!, true)
+    patchMesh.refreshBoundingInfo()
+    patchLastCenterX = centerX
+    patchLastCenterZ = centerZ
+    patchLastSpacing = spacing
+  }
+
+  function updateNearDetail(focusX: number, focusZ: number): void {
+    if (!nearDetail) return
+    const active = nearDetail.getActive() && coarseLevel !== null
+    if (!active) {
+      patchMesh?.setEnabled(false)
+      return
+    }
+    if (!patchMesh) {
+      patchMesh = MeshBuilder.CreateGround('mapNearDetail', { width: 1, height: 1, subdivisions: PATCH_SUBDIVISIONS, updatable: true }, scene)
+      patchMesh.material = reliefMaterial
+      sun.includedOnlyMeshes.push(patchMesh)
+      fill.includedOnlyMeshes.push(patchMesh)
+      patchLastSpacing = 0
+    }
+    patchMesh.setEnabled(true)
+    const altitude = nearDetail.getAltitude()
+    const spacing = (altitude * PATCH_COVERAGE) / PATCH_SUBDIVISIONS
+    const centerX = Math.round(focusX / spacing) * spacing
+    const centerZ = Math.round(focusZ / spacing) * spacing
+    const moved = Math.hypot(centerX - patchLastCenterX, centerZ - patchLastCenterZ)
+    const spacingChanged = patchLastSpacing === 0 || Math.abs(spacing / patchLastSpacing - 1) > 0.15
+    // Rebuild only on real movement — the fill is a few ms of CPU, not a
+    // per-frame cost.
+    if (spacingChanged || moved > spacing * 2) rebuildPatch(centerX, centerZ, spacing, altitude)
+    patchMesh.position.set(patchLastCenterX, 0, patchLastCenterZ)
+  }
+
   // Keep the sun top-left in SCREEN space (see getYaw above): rotate the
   // fixed screen-space direction by the camera's yaw each frame. As the
   // world-blend rises the yaw's influence fades out — at 1 the sun is
@@ -314,6 +461,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       const fade = hexGrid.getFadeDistances()
       hexGridPlugin.setFade(fade.start, fade.end)
     }
+    updateNearDetail(focus.x, focus.z)
     onRecenter?.(centerX, centerZ)
   })
 
@@ -353,6 +501,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     },
     dispose(): void {
       scene.onBeforeRenderObservable.remove(observer)
+      patchMesh?.dispose()
       disposeLevel(coarseLevel)
       disposeLevel(fineLevel)
       for (const inst of wrapInstances) inst.dispose()

@@ -1,3 +1,19 @@
 /* Worldmap-specific styles. The screen frame (panel bar, file buttons,
    title, fields) comes from ui/chrome/chrome.css via the shared map-chrome
    root class — only what differs from the generator belongs here. */
+
+/* Flight-altitude readout in the bottom panel (near descent only).
+   Tabular digits so the number doesn't wobble while it counts. */
+/* Hex grid toggle: dimmed when the grid is off. */
+.worldmap-screen .icon-button.is-off {
+  opacity: 0.3;
+}
+
+.worldmap-screen .altitude-readout {
+  align-self: center;
+  min-width: 5.5rem;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  color: #1a1a1a;
+  opacity: 0.8;
+}

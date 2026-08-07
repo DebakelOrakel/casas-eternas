@@ -89,6 +89,14 @@ export interface WorldgenCameraOptions {
   // Pitch from vertical at the deepest zoom. 76° puts the horizon around
   // the top fifth of the frame at the default fov.
   horizonPitchDeg?: number
+  // The near regime's pitch FREEDOM band (R/F keys): the zoom curve only
+  // provides the default; the user may tilt between these limits. The
+  // offset resets when leaving the near regime — zooming out always
+  // returns to the standard orientation, same philosophy as tilt/yaw.
+  nearPitchMinDeg?: number
+  nearPitchMaxDeg?: number
+  // R/F pitch adjust speed in radians per second.
+  pitchRatePerSecond?: number
 }
 
 export interface WorldgenCamera {
@@ -156,10 +164,15 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
     fovRad = 0.8,
     nearMinAltitude = 0.003,
     horizonPitchDeg = 76,
+    nearPitchMinDeg = 40,
+    nearPitchMaxDeg = 80,
+    pitchRatePerSecond = (35 * Math.PI) / 180,
   } = options
 
   const maxTilt = (maxTiltDeg * Math.PI) / 180
   const horizonPitch = (horizonPitchDeg * Math.PI) / 180
+  const nearPitchMin = (nearPitchMinDeg * Math.PI) / 180
+  const nearPitchMax = (nearPitchMaxDeg * Math.PI) / 180
 
   const camera = new FreeCamera('worldgenCamera', new Vector3(0, cameraHeight, 0), scene)
   camera.mode = Camera.ORTHOGRAPHIC_CAMERA
@@ -221,6 +234,9 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
   let desiredTilt = 0
   let yawAngle = 0
   let desiredYaw = 0
+  // User pitch adjustment (R/F) relative to the near regime's zoom-default
+  // pitch curve; cleared whenever the view is back in the map regime.
+  let nearPitchOffset = 0
   // Camera height above the ground plane: the fixed rig height in the map
   // regime (orthographic — height doesn't affect apparent size), the LIVE
   // altitude in the near regime.
@@ -309,7 +325,7 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
   // the usual guards: never while typing in a form control, never with a
   // modifier held (cmd+W must stay "close tab", not "pan and close").
   const pressedKeys = new Set<string>()
-  const HANDLED_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e'])
+  const HANDLED_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e', 'r', 'f'])
   const isTypingTarget = (target: EventTarget | null): boolean => {
     if (!(target instanceof HTMLElement)) return false
     return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target.isContentEditable
@@ -358,6 +374,7 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
       updateOrthoExtents(Math.min(1, currentZoom))
       viewWidthAtFocus = camera.orthoRight! - camera.orthoLeft!
       tiltTarget = Math.min(desiredTilt, envelopeTilt(currentZoom))
+      nearPitchOffset = 0 // back on the map: the next descent starts on the curve
     } else {
       // NEAR regime: perspective, altitude-driven. The handover altitude is
       // re-derived from the map's z = 1 framing every frame (it depends on
@@ -373,7 +390,14 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
       const handoverAltitude = handoverDistance * Math.cos(maxTilt)
       const altitude = handoverAltitude * Math.pow(nearMinAltitude / handoverAltitude, nearU)
       viewHeight = altitude
-      tiltTarget = Scalar.Lerp(maxTilt, horizonPitch, nearU)
+      // The zoom curve provides the DEFAULT pitch; the user's R/F offset
+      // moves within [nearPitchMin, nearPitchMax]. Re-deriving the offset
+      // from the clamped result keeps it from accumulating past the band.
+      const defaultPitch = Scalar.Lerp(maxTilt, horizonPitch, nearU)
+      if (pressedKeys.has('r')) nearPitchOffset += pitchRatePerSecond * dt
+      if (pressedKeys.has('f')) nearPitchOffset -= pitchRatePerSecond * dt
+      tiltTarget = Scalar.Clamp(defaultPitch + nearPitchOffset, nearPitchMin, nearPitchMax)
+      nearPitchOffset = tiltTarget - defaultPitch
       // Clip planes follow the altitude; the far plane doubles as the
       // visibility budget the screen's fog should sit just inside (it also
       // hard-culls the wrap copies beyond the haze).

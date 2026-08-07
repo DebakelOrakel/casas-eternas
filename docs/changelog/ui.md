@@ -14,6 +14,8 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **new** World map: the lit 3D relief with deep zoom, tilt and rotation works here too, driven by the saved elevation raster.
 - **new** World map: zooming past the deepest map view hands over seamlessly to a perspective descent — altitude-driven zoom down to ~2.5 km with a horizon, gradient sky and distance haze; the sun settles into a world-fixed position near the ground.
 - **new** World map: the 300 m hex grid fades in during the descent — drawn in the terrain shader, welded to the ground, seamless across the world wrap.
+- **new** Controls: R/F adjust the view pitch during the descent (40–80° band); zooming back out returns to the standard curve.
+- **new** World map: near-field terrain detail — a camera-following patch synthesizes deterministic sub-cell relief from the saved raster, so low flight stops being silky-smooth.
 
 ## 2026-08-06
 - **new** Overlays: water balance — rainfall minus evaporation, arid to humid. `world.overlay.waterBalance`
