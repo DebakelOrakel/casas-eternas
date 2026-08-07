@@ -3,6 +3,7 @@ import JSZip from 'jszip'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { createWorldgenCamera } from '../../camera/worldgenCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
+import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { ToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
@@ -41,12 +42,31 @@ interface ManifestLayer {
   dtype?: Dtype
   encoding?: { scale: number; offset: number }
 }
-// The world's own erosion slider settings, read back out of its recipe —
+// The world's own pipeline settings, read back out of its recipe —
 // undefined where a save doesn't record them (then the bake uses defaults).
 interface ErosionControls {
   strength?: number
   refresh?: number
+  riverDensity?: number
 }
+
+// Precipitation for the bake's hydrology re-run, decoded from the save's
+// baked climate layer (absent on a world saved before climate was computed).
+interface ClimateInput {
+  precipitation: Float32Array
+  resX: number
+  resY: number
+}
+
+// River ribbon widths per relief level — the same reasoning as the
+// generator's: the stored per-point widths are cartographic, and at relief
+// zoom a literal reading turns a line into a flood while the D8 staircase's
+// mitered joints degenerate into sawteeth.
+const RIBBON_WIDTH_PROFILES = {
+  flat: { factor: 1, maxWidthPx: Number.POSITIVE_INFINITY },
+  coarse: { factor: 0.5, maxWidthPx: 4 },
+  fine: { factor: 0.3, maxWidthPx: 2 },
+} as const
 
 interface WorldManifest {
   formatVersion: number
@@ -169,6 +189,13 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // amplification bake returns a finer one (see startAmplification).
   let heightField: { data: Float32Array; width: number; height: number } | null = null
   let amplifyWorker: Worker | null = null
+  // Scene-space river ribbons + the relief surfaces they drape on (set when
+  // the bake's height field arrives), and which relief level they are
+  // currently styled for.
+  let riverLayer: ReturnType<typeof createToroidalRibbonOverlay> | null = null
+  let reliefCoarseSurface: ReturnType<typeof createElevationSurface> | null = null
+  let reliefFineSurface: ReturnType<typeof createElevationSurface> | null = null
+  let ribbonLevel: keyof typeof RIBBON_WIDTH_PROFILES = 'flat'
   let bakeEl: HTMLElement | null = null
   const setBakeText = (text: string): void => {
     bakeEl ??= root.querySelector<HTMLElement>('[data-value="bake"]')
@@ -278,9 +305,27 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         const value = raw === undefined ? NaN : Number(raw)
         return Number.isFinite(value) ? value : undefined
       }
-      const erosionControls = { strength: readNumber('erosionStrength'), refresh: readNumber('drainageRefresh') }
+      const erosionControls: ErosionControls = {
+        strength: readNumber('erosionStrength'),
+        refresh: readNumber('drainageRefresh'),
+        riverDensity: readNumber('riverDensity'),
+      }
 
-      presentWorld(elevations, width, height, biome, detailSeed, erosionControls)
+      // Precipitation drives the discharge in the bake's hydrology re-run.
+      let climate: ClimateInput | null = null
+      const precipEntry = manifest.layers.find((l) => l.name === 'precipitation' && l.kind === 'raster')
+      if (precipEntry?.dtype && precipEntry.encoding && precipEntry.resX && precipEntry.resY) {
+        const precipBuffer = await zip.file(precipEntry.file)?.async('arraybuffer')
+        if (precipBuffer) {
+          climate = {
+            precipitation: decodeLayer(precipBuffer, { name: 'precipitation', dtype: precipEntry.dtype, scale: precipEntry.encoding.scale, offset: precipEntry.encoding.offset, unit: '', landOnly: true }),
+            resX: precipEntry.resX,
+            resY: precipEntry.resY,
+          }
+        }
+      }
+
+      presentWorld(elevations, width, height, biome, detailSeed, erosionControls, climate)
     } catch {
       notifyLoadFailed()
     }
@@ -304,10 +349,15 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const detailSurface = createFineElevationSurface(field, fieldWidth, fieldHeight, RELIEF_HEIGHT_SCALE, detailSeed, 0.6)
     mapView.setReliefSurfaces(coarseSurface, fineSurface)
     mapView.setNearDetailSurfaces(detailSurface, fineSurface)
+    reliefCoarseSurface = coarseSurface
+    reliefFineSurface = fineSurface
+    syncRibbonLevel(true) // the ribbons drape on these same surfaces
   }
 
-  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number, erosionControls: ErosionControls): void {
+  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number, erosionControls: ErosionControls, climate: ClimateInput | null): void {
     hoverTooltip?.dispose()
+    riverLayer?.dispose()
+    riverLayer = null
     mapView?.dispose()
     // Seed surfaces for construction; applyHeightField replaces them right
     // after (and again when the bake finishes).
@@ -354,6 +404,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         const zoom = getCameraZoom()
         return zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
       },
+      onRecenter: (centerX, centerZ) => {
+        riverLayer?.recenter(centerX, centerZ)
+        syncRibbonLevel()
+      },
     })
     // The paper look, derived from the elevation raster with the same
     // shade + palette the generator uses (reliefShade + paperBase) — not
@@ -395,14 +449,65 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       },
     })
 
-    startAmplification(elevations, width, height, detailSeed, erosionControls)
+    startAmplification(elevations, width, height, detailSeed, erosionControls, climate)
+  }
+
+  // River ribbons for the re-derived network. Built on arrival (a world only
+  // gets rivers once the bake's hydrology has run) in the AMPLIFIED texel
+  // space — that is what extractRiverPolylines emitted, and the overlay's
+  // texel→world mapping must agree with it or every river lands at half
+  // scale in the wrong place.
+  function applyRivers(points: Float32Array, lengths: Uint32Array, fieldWidth: number, fieldHeight: number): void {
+    riverLayer?.dispose()
+    riverLayer = null
+    if (lengths.length === 0) return
+    riverLayer = createToroidalRibbonOverlay({
+      scene,
+      worldWidth: WORLD_WIDTH,
+      worldHeight: WORLD_HEIGHT,
+      textureWidth: fieldWidth,
+      textureHeight: fieldHeight,
+      // The stored widths are in the SOURCE grid's texels, so on a finer
+      // grid the same river would draw physically thinner. Scaling by the
+      // amplification factor keeps a river the size its discharge earns,
+      // independent of what resolution it was extracted at.
+      widthScale: 1.5 * AMPLIFY_FACTOR,
+      // The amplified grid packs several times as many D8 direction changes
+      // (and discharge wiggles) into the same world distance, which the
+      // interpolating spline would faithfully render as a wobble — average
+      // the control points first. Measured on a synthetic D8 staircase: the
+      // mean turn between steps drops from 30° to 0.1° after two passes,
+      // and the path's displacement CONVERGES at ~0.22 cells however many
+      // more are run (once the zigzag is gone, averaging a straight line
+      // changes nothing) — i.e. the smoothed line settles in the middle of
+      // the staircase, which is where the river actually runs. Scaled with
+      // the refinement because a finer grid spreads the same zigzag over
+      // more points, making it lower-frequency.
+      smoothingPasses: 2 * AMPLIFY_FACTOR,
+    })
+    riverLayer.setPolylines(points, lengths)
+    ribbonLevel = 'flat'
+    syncRibbonLevel(true)
+  }
+
+  // Keep the ribbons styled for whichever relief level is on screen —
+  // surface AND width profile, swapped only on an actual level change.
+  function syncRibbonLevel(force = false): void {
+    if (!riverLayer) return
+    const zoom = getCameraZoom()
+    const level: keyof typeof RIBBON_WIDTH_PROFILES = !reliefCoarseSurface ? 'flat' : zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
+    if (level === ribbonLevel && !force) return
+    ribbonLevel = level
+    const profile = RIBBON_WIDTH_PROFILES[level]
+    riverLayer.setWidthProfile(profile.factor, profile.maxWidthPx)
+    riverLayer.setHeightSurface(level === 'flat' ? null : level === 'fine' && reliefFineSurface ? reliefFineSurface : reliefCoarseSurface)
   }
 
   // --- Amplification bake (docs/decisions/worldmap-amplification.md) ---
   // Runs in its own worker after the macro map is already on screen, then
   // swaps the geometry. Deliberately fire-and-forget from the load path: a
   // failed or slow bake leaves a perfectly usable macro world behind.
-  function startAmplification(macro: Float32Array, macroWidth: number, macroHeight: number, detailSeed: number, erosionControls: ErosionControls): void {
+  function startAmplification(macro: Float32Array, macroWidth: number, macroHeight: number, detailSeed: number, erosionControls: ErosionControls, climate: ClimateInput | null): void {
     amplifyWorker?.terminate() // a new world supersedes any bake in flight
     if (AMPLIFY_FACTOR <= 1) return
     const worker = new Worker(new URL('../../worldgen/amplificationWorker.ts', import.meta.url), { type: 'module' })
@@ -416,6 +521,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const amplified = new Float32Array(message.elevation)
       heightField = { data: amplified, width: message.width, height: message.height }
       applyHeightField(amplified, message.width, message.height, detailSeed)
+      applyRivers(new Float32Array(message.riverPoints), new Uint32Array(message.riverLengths), message.width, message.height)
       hoverTooltip?.refresh()
       setBakeText(`${message.width}×${message.height} · ${(message.durationMs / 1000).toFixed(1)}s`)
       worker.terminate()
@@ -434,6 +540,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       erosionRounds: AMPLIFY_EROSION_ROUNDS,
       erosionStrength: erosionControls.strength,
       drainageRefresh: erosionControls.refresh,
+      riverDensity: erosionControls.riverDensity,
+      precipitation: climate ? (climate.precipitation.slice().buffer as ArrayBuffer) : undefined,
+      climateResX: climate?.resX,
+      climateResY: climate?.resY,
     }
     setBakeText('…')
     worker.postMessage(request, [request.elevation])
@@ -443,6 +553,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scene,
     dispose() {
       amplifyWorker?.terminate()
+      riverLayer?.dispose()
       scene.onBeforeRenderObservable.remove(skyObserver)
       skyDome.dispose()
       skyMaterial.dispose()

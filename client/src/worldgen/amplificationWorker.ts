@@ -1,5 +1,8 @@
-import { amplifyElevation, erosionParamsForCellSize } from './surface/amplify'
+import { amplifyElevation, criticalAreaForCellSize, erosionParamsForCellSize } from './surface/amplify'
 import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass } from './surface/erosion'
+import { fillDepressionsAndRouteFlow } from './surface/flowRouting'
+import { accumulateDischarge, channelThreshold, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff } from './surface/hydrology'
+import type { RiverPolylines } from './surface/hydrology'
 
 // The amplification bake's worker (docs/decisions/worldmap-amplification.md).
 // Its own worker rather than a job on plateSimulationWorker: the bake needs
@@ -40,15 +43,22 @@ export interface AmplifyRequestMessage {
   // (older saves, or a save that never recorded them).
   erosionStrength?: number
   drainageRefresh?: number
+  // Climate inputs for the hydrology re-run, decoded from the save's baked
+  // layers. Coarse by nature (they are regional quantities) and simply
+  // sampled onto the fine grid — see the decision doc. Absent for a world
+  // saved before climate was computed; then the bake stops after erosion.
+  precipitation?: ArrayBuffer
+  climateResX?: number
+  climateResY?: number
+  // The world's own river-density setting (spec.hydrology.riverDensity).
+  riverDensity?: number
 }
 
 export type AmplificationInboundMessage = AmplifyRequestMessage
 
 export interface AmplifyProgressMessage {
   type: 'amplifyProgress'
-  // Which part of the bake is running — 'hydrology' joins as that phase
-  // lands.
-  stage: 'seed' | 'erosion'
+  stage: 'seed' | 'erosion' | 'hydrology'
   fraction: number
 }
 
@@ -57,6 +67,12 @@ export interface AmplifyDoneMessage {
   elevation: ArrayBuffer
   width: number
   height: number
+  // Rivers re-extracted from the amplified field's OWN routing (empty when
+  // the world carried no climate to route with). Texel coordinates are in
+  // the amplified grid — the same width/height above, which the renderer
+  // must use as its texel space.
+  riverPoints: ArrayBuffer
+  riverLengths: ArrayBuffer
   // Wall-clock milliseconds, so the screen (and a human) can see what the
   // bake actually costs at this resolution.
   durationMs: number
@@ -66,7 +82,7 @@ export type AmplificationOutboundMessage = AmplifyProgressMessage | AmplifyDoneM
 
 // Throttled to whole percent per stage: postMessage is cheap, but a screen
 // re-rendering its readout thousands of times is not.
-function makeProgressReporter(stage: 'seed' | 'erosion'): (fraction: number) => void {
+function makeProgressReporter(stage: AmplifyProgressMessage['stage']): (fraction: number) => void {
   let lastPercent = -1
   return (fraction: number) => {
     const percent = Math.floor(fraction * 100)
@@ -106,14 +122,38 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
     field = eroded.elevations
   }
 
+  // Hydrology RE-RUN on the amplified field (decision doc point 2): the
+  // save's rivers were routed on the 2048 raster and would now lie beside
+  // the fine valleys this bake just carved, so they are re-derived rather
+  // than carried over. Climate stays coarse and is sampled onto the fine
+  // grid — precipitation is a regional quantity, not a per-cell one.
+  let rivers: RiverPolylines = { points: new Float32Array(0), lengths: new Uint32Array(0) }
+  if (message.precipitation && message.climateResX && message.climateResY) {
+    const reportHydrology = makeProgressReporter('hydrology')
+    reportHydrology(0)
+    const precip = new Float32Array(message.precipitation)
+    const routing = await fillDepressionsAndRouteFlow(field, result.width, result.height, 0)
+    reportHydrology(0.6)
+    const discharge = accumulateDischarge(routing, field, precip, message.climateResX, message.climateResY)
+    const maxDischarge = maxDischargeOverLand(discharge, field)
+    const meanRunoff = meanLandRunoff(precip, field, result.width, result.height, message.climateResX, message.climateResY)
+    // The channel criterion is a cell COUNT, so it has to be rescaled for
+    // the finer grid exactly like the erosion constants were.
+    const criticalArea = criticalAreaForCellSize(densityToCriticalArea(message.riverDensity ?? 55), 1 / message.factor)
+    rivers = extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge)
+    reportHydrology(1)
+  }
+
   const done: AmplifyDoneMessage = {
     type: 'amplifyDone',
     elevation: field.buffer as ArrayBuffer,
     width: result.width,
     height: result.height,
+    riverPoints: rivers.points.buffer as ArrayBuffer,
+    riverLengths: rivers.lengths.buffer as ArrayBuffer,
     durationMs: performance.now() - started,
   }
-  self.postMessage(done, [done.elevation])
+  self.postMessage(done, [done.elevation, done.riverPoints, done.riverLengths])
 }
 
 self.onmessage = (event: MessageEvent<AmplificationInboundMessage>) => {

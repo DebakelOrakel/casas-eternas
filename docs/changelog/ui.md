@@ -18,6 +18,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **new** World map: near-field terrain detail — a camera-following patch synthesizes deterministic sub-cell relief from the saved raster, so low flight stops being silky-smooth.
 - **new** World map: the amplification bake starts — a loaded world is upsampled and seeded with roughness in its own worker, then swapped in under the running map. `world`
 - **new** World map: the bake now erodes the amplified world, with the erosion constants rescaled for the finer cells — carving tributary valleys the saved raster never had. `world`
+- **new** World map: rivers — re-routed on the amplified terrain so they run in the new valleys, drawn as ribbons that drape onto the relief. `world.overlay.rivers`
 
 ## 2026-08-06
 - **new** Overlays: water balance — rainfall minus evaporation, arid to humid. `world.overlay.waterBalance`

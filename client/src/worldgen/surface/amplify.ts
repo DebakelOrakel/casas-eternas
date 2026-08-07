@@ -117,6 +117,22 @@ export function erosionParamsForCellSize(base: ErosionPassParams, cellSizeRatio:
   }
 }
 
+// The river threshold's counterpart to erosionParamsForCellSize. The channel
+// criterion is a critical drainage area counted in CELLS (see
+// hydrology.densityToCriticalArea), so on a grid refined by 1/r the same
+// PHYSICAL catchment covers 1/r² times as many cells — leave the number
+// alone and every minor gully clears the bar, turning the map into a mesh of
+// parallel lines. Multiplying by 1/r² keeps "a river is a river" meaning the
+// same real thing at any resolution.
+//
+// The same conclusion arrives from the discharge side: accumulateDischarge
+// sums a per-cell runoff over upstream cells, so discharge for a fixed
+// physical catchment also grows by 1/r² — threshold and signal scale
+// together, as they must.
+export function criticalAreaForCellSize(criticalAreaCells: number, cellSizeRatio: number): number {
+  return criticalAreaCells / (cellSizeRatio * cellSizeRatio)
+}
+
 export interface AmplifiedField {
   data: Float32Array
   width: number

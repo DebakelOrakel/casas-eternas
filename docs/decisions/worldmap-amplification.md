@@ -1,7 +1,7 @@
 ---
 summary: The worldmap gets its fine terrain from a one-time, deterministic AMPLIFICATION BAKE at load — upsample the 2048 macro raster to 8192×4096, inject seed roughness, run a few real erosion passes, then RE-RUN hydrology on the amplified field. The 2048 sim raster stays the sole authority and the only thing saved; the 8k layer is derived presentation, recomputed per load, never serialized. Below ~1 km, detail remains synthesis/regional forever.
 date: 2026-08-07
-status: decided; phases 1–2 built 2026-08-07 (upsample + seed roughness + rescaled erosion, at factor 2) — hydrology re-run, the 8192 target, caching and staging still open
+status: decided; phases 1–3 built 2026-08-07 (upsample + seed roughness + rescaled erosion + re-run hydrology with river ribbons, at factor 2) — the 8192 target, caching and staging still open
 ---
 
 # Worldmap terrain amplification (the 8k bake)
@@ -29,6 +29,13 @@ has to lead somewhere.
    the whole point. Climate/biomes stay at their coarse resolution and
    are merely sampled onto the fine grid as inputs (they are regional
    quantities; precipitation feeds the discharge as before).
+   The channel criterion needs the same per-cell treatment as the erosion
+   constants: `densityToCriticalArea` returns an area in CELLS, so it is
+   multiplied by 1/r² (`amplify.criticalAreaForCellSize`). Measured
+   2026-08-07: with the rescaling the physical channel length agrees
+   within 4 % between factors 2 and 4; without it, factor 2 alone draws
+   6× the channels — the "mesh of parallel lines" the density floor
+   exists to prevent.
 3. **The bake erodes with the WORLD'S OWN erosion settings.** A save
    records `spec.erosion.erosionStrength` / `drainageRefresh` (the
    generator restores them into its sliders on load); the bake reads the

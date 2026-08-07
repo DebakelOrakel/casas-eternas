@@ -22,6 +22,19 @@ export interface ToroidalRibbonOverlayOptions {
   drapedYOffset?: number
   // Multiplies the per-point pixel width when converting to world width.
   widthScale?: number
+  // Moving-average passes applied to each polyline's control points (and
+  // their widths) BEFORE the Catmull-Rom spline. Zero keeps the input
+  // exactly.
+  //
+  // Why this exists: the spline INTERPOLATES — it passes through every
+  // control point — so it turns a D8 staircase into a smooth curve without
+  // removing the staircase's zigzag, which then reads as a wobble. At the
+  // source grid's own resolution that is invisible; on an amplified grid
+  // there are several times as many direction changes (and discharge
+  // wiggles, hence width wiggles) per unit of world distance, and it
+  // becomes a visible snake. Averaging first removes the zigzag; the spline
+  // then only has to round what is left.
+  smoothingPasses?: number
 }
 
 export interface ToroidalRibbonOverlay {
@@ -75,6 +88,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
   const yOffset = options.yOffset ?? 0.03
   const drapedYOffset = options.drapedYOffset ?? 0.0002
   const widthScale = options.widthScale ?? 1.5
+  const smoothingPasses = options.smoothingPasses ?? 0
   // Uniform texel→world scale (the map keeps texture and world aspect equal).
   const s = worldWidth / textureWidth
 
@@ -109,9 +123,27 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
   // Smooth one polyline (control points in world x/z + half-width) into a dense
   // point list, then emit a continuous ribbon (two offset vertices per point,
   // two triangles per span) into the growing geometry arrays.
+  // One 3-point moving-average pass over a control-point series, endpoints
+  // held fixed so a river keeps its source and its mouth exactly.
+  function smoothSeries(values: number[]): void {
+    const n = values.length
+    if (n < 3) return
+    let prev = values[0]
+    for (let i = 1; i < n - 1; i++) {
+      const current = values[i]
+      values[i] = (prev + current + values[i + 1]) / 3
+      prev = current
+    }
+  }
+
   function appendRibbon(cxArr: number[], czArr: number[], hwArr: number[], positions: number[], indices: number[]): void {
     const m = cxArr.length
     if (m < 2) return
+    for (let pass = 0; pass < smoothingPasses; pass++) {
+      smoothSeries(cxArr)
+      smoothSeries(czArr)
+      smoothSeries(hwArr)
+    }
     const sx: number[] = []
     const sz: number[] = []
     const sh: number[] = []
