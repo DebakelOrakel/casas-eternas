@@ -34,6 +34,12 @@ export interface ToroidalMapViewOptions {
   // world-fixed light would relief-invert (valleys become ridges) at half
   // the yaw range.
   getYaw?: () => number
+  // 0..1: how far the sun should blend from camera-relative (0, the map
+  // reading above) toward WORLD-fixed (1). Near the ground the view shows
+  // silhouettes instead of hillshade — the inversion problem is gone, and a
+  // stable world (fixed lit/shadow sides while rotating) is the natural
+  // look. The worldmap screen feeds its near-regime blend here.
+  getSunWorldBlend?: () => number
   // Called each frame with the recenter block's center, so a screen can tile
   // extra meshes in lockstep (e.g. the river ribbon overlay).
   onRecenter?: (centerX: number, centerZ: number) => void
@@ -105,7 +111,7 @@ interface ReliefLevel {
 // sun — which is what keeps slopes crisp when the texture itself has run out
 // of resolution.
 export function createToroidalMapView(options: ToroidalMapViewOptions): ToroidalMapView {
-  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, onRecenter } = options
+  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, getSunWorldBlend, onRecenter } = options
 
   // Starts as a flat white placeholder (the caller's clear color) until the
   // first composited frame is uploaded, so there's no flash.
@@ -253,9 +259,13 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   }
 
   // Keep the sun top-left in SCREEN space (see getYaw above): rotate the
-  // fixed screen-space direction by the camera's yaw each frame.
+  // fixed screen-space direction by the camera's yaw each frame. As the
+  // world-blend rises the yaw's influence fades out — at 1 the sun is
+  // world-fixed at the north-up azimuth, so rotating the view moves around
+  // a stable lit world instead of spinning the light along.
   function updateSunDirection(): void {
-    const yaw = getYaw?.() ?? 0
+    const worldBlend = getSunWorldBlend?.() ?? 0
+    const yaw = (getYaw?.() ?? 0) * (1 - worldBlend)
     const upX = Math.sin(yaw)
     const upZ = Math.cos(yaw)
     const rightX = Math.cos(yaw)

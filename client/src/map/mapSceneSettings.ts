@@ -36,3 +36,13 @@ export const RELIEF_MIN_ZOOM = 0.14
 // half-res one (silhouettes at raster sharpness). Deep enough that the
 // frustum holds at most a wrap copy or two of its ~4M triangles.
 export const RELIEF_FINE_ZOOM = 0.31
+
+// Scene units per real metre (the horizontal scale the relief height scale
+// above is built on) — for expressing real-world lengths in scene units.
+export const UNITS_PER_METER = MAP_WORLD_WIDTH / (METERS_PER_CELL * MAP_WIDTH)
+
+// The near regime's (worldmap perspective descent) deepest camera altitude.
+// ~2.5 km real: view width ends up a handful of km — the scale where the
+// 300 m hex grid (docs/design/hex-world-view.md) will be comfortably
+// readable once it exists.
+export const NEAR_MIN_ALTITUDE = 2500 * UNITS_PER_METER

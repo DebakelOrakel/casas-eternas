@@ -1,4 +1,4 @@
-import { Color4, Scene } from '@babylonjs/core'
+import { Color3, Color4, MeshBuilder, Scene, ShaderMaterial } from '@babylonjs/core'
 import JSZip from 'jszip'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { createWorldgenCamera } from '../../camera/worldgenCamera'
@@ -9,7 +9,7 @@ import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
 import { computeReliefBytes } from '../../worldgen/render/reliefShade'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/paperBase'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
-import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
+import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
 import { decodeLayer } from '../../worldgen/worldSave/worldLayers'
 import type { Dtype } from '../../worldgen/worldSave/worldLayers'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
@@ -50,23 +50,89 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   scene.clearColor = new Color4(1, 1, 1, 1)
 
   const {
+    camera,
     dispose: disposeCamera,
     getFocus: getCameraFocus,
     setDeepZoomEnabled: setCameraDeepZoom,
     setDesiredTilt: setCameraDesiredTilt,
     getZoom: getCameraZoom,
     getYaw: getCameraYaw,
+    getNearBlend: getCameraNearBlend,
   } = createWorldgenCamera({
     scene,
     canvas: ctx.canvas,
     engine: ctx.engine,
     worldWidth: WORLD_WIDTH,
     worldHeight: WORLD_HEIGHT,
+    // Past the deepest map zoom the camera hands over to the perspective
+    // NEAR regime — the descent toward the horizon view (Stage A of the
+    // world view; see worldgenCamera's header).
+    nearModeEnabled: true,
+    nearMinAltitude: NEAR_MIN_ALTITUDE,
   })
 
   // Tilt is purely zoom-driven, same as the generator: armed fully, the
   // envelope decides when it shows.
   setCameraDesiredTilt(Number.POSITIVE_INFINITY)
+
+  // Sky for the near regime: a camera-following dome whose gradient runs
+  // from a compact deep-blue band at the horizon slowly up into near-white
+  // (per design discussion 2026-08-07). Everything below the horizon stays
+  // the deep blue — the same color the distance fog uses, which is what
+  // makes terrain melt seamlessly into the sky line. Depth-write off + a
+  // radius just inside the far plane: terrain always wins the depth test,
+  // sky fills whatever remains.
+  const SKY_HORIZON = new Color3(40 / 255, 90 / 255, 140 / 255)
+  const SKY_ZENITH = new Color3(235 / 255, 245 / 255, 252 / 255)
+  const skyMaterial = new ShaderMaterial(
+    'worldmapSky',
+    scene,
+    {
+      vertexSource: `
+        precision highp float;
+        attribute vec3 position;
+        uniform mat4 worldViewProjection;
+        varying float vHeight;
+        void main() {
+          vHeight = position.y;
+          gl_Position = worldViewProjection * vec4(position, 1.0);
+        }`,
+      fragmentSource: `
+        precision highp float;
+        varying float vHeight;
+        uniform vec3 horizonColor;
+        uniform vec3 zenithColor;
+        void main() {
+          float t = clamp(vHeight, 0.0, 1.0);
+          gl_FragColor = vec4(mix(horizonColor, zenithColor, smoothstep(0.03, 0.55, t)), 1.0);
+        }`,
+    },
+    { attributes: ['position'], uniforms: ['worldViewProjection', 'horizonColor', 'zenithColor'] },
+  )
+  skyMaterial.backFaceCulling = false
+  skyMaterial.disableDepthWrite = true
+  skyMaterial.setColor3('horizonColor', SKY_HORIZON)
+  skyMaterial.setColor3('zenithColor', SKY_ZENITH)
+  // Unit sphere (local Y in -1..1, matching the shader's height ramp),
+  // scaled to the live far plane each frame.
+  const skyDome = MeshBuilder.CreateSphere('worldmapSkyDome', { diameter: 2, segments: 16 }, scene)
+  skyDome.material = skyMaterial
+  skyDome.infiniteDistance = true
+  skyDome.isPickable = false
+  skyDome.setEnabled(false)
+
+  scene.fogColor = SKY_HORIZON
+  const skyObserver = scene.onBeforeRenderObservable.add(() => {
+    const blend = getCameraNearBlend()
+    const nearActive = blend > 0.001
+    skyDome.setEnabled(nearActive)
+    scene.fogMode = nearActive ? Scene.FOGMODE_LINEAR : Scene.FOGMODE_NONE
+    if (nearActive) {
+      skyDome.scaling.setAll(camera.maxZ * 0.9)
+      scene.fogStart = camera.maxZ * 0.3
+      scene.fogEnd = camera.maxZ * 0.85
+    }
+  })
 
   // Built per loaded world (texture dims come from its manifest); replaced
   // wholesale on the next load.
@@ -163,6 +229,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       textureHeight: height,
       getFocus: getCameraFocus,
       getYaw: getCameraYaw,
+      getSunWorldBlend: getCameraNearBlend,
       reliefDetail: () => {
         const zoom = getCameraZoom()
         return zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
@@ -210,6 +277,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   return {
     scene,
     dispose() {
+      scene.onBeforeRenderObservable.remove(skyObserver)
+      skyDome.dispose()
+      skyMaterial.dispose()
       hoverTooltip?.dispose()
       mapView?.dispose()
       helpTooltip.dispose()
