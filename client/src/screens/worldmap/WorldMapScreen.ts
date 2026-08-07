@@ -22,6 +22,12 @@ import { biomeLabelKey } from '../../worldgen/climate/biomes'
 import { t } from '../../i18n/i18n'
 import type { TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
+import { createOpfsArtifactStore } from '../../storage/OpfsArtifactStore'
+import { createMemoryArtifactStore } from '../../storage/MemoryArtifactStore'
+import type { ArtifactStore } from '../../storage/ArtifactStore'
+import { deriveWorldId, derivePipelineVersion } from '../../storage/artifactKey'
+import { readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
+import { AMPLIFY_CONSTANTS } from '../../worldgen/surface/amplify'
 import '../../ui/chrome/chrome.css'
 import './worldmap.css'
 
@@ -209,6 +215,18 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Bumped on every load so a stage chain from a superseded world can't
   // swap its result in after the user has opened a different one.
   let bakeGeneration = 0
+  // The artifact cache (docs/design/server-storage.md): OPFS where it
+  // exists, an in-memory store otherwise — which still spares a re-bake
+  // when the same world is reopened within a session, and keeps the rest of
+  // the flow from having to know the difference. Resolved once, lazily.
+  let artifactStorePromise: Promise<ArtifactStore> | null = null
+  const getArtifactStore = (): Promise<ArtifactStore> => {
+    artifactStorePromise ??= createOpfsArtifactStore().then((store) => store ?? createMemoryArtifactStore())
+    return artifactStorePromise
+  }
+  // Identity of the world currently loaded, derived from what the bake
+  // actually consumes (see storage/artifactKey.ts).
+  let worldId = ''
   // Scene-space river ribbons + the relief surfaces they drape on (set when
   // the bake's height field arrives), and which relief level they are
   // currently styled for.
@@ -361,6 +379,18 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           }
         }
       }
+
+      // The world's cache identity, from what the bake actually consumes —
+      // NOT from the recipe, which cannot distinguish two worlds stopped at
+      // different tectonic epochs (see storage/artifactKey.ts). The seed
+      // string rides along only as a readable path label.
+      worldId = deriveWorldId(seedText, {
+        elevation: elevations,
+        precipitation: climate?.precipitation ?? null,
+        erosionStrength: erosionControls.strength,
+        drainageRefresh: erosionControls.refresh,
+        riverDensity: erosionControls.riverDensity,
+      })
 
       presentWorld(elevations, width, height, biome, detailSeed, erosionControls, climate)
     } catch {
@@ -578,7 +608,17 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverLayer.setHeightSurface(level === 'flat' ? null : level === 'fine' && reliefFineSurface ? reliefFineSurface : reliefCoarseSurface)
   }
 
-    // --- Amplification bake (docs/decisions/worldmap-amplification.md) ---
+    // Everything a finished bake changes on screen, whether it was computed
+  // just now or read back from the cache — one path, so the two can't drift.
+  function applyBakeResult(artifact: { elevation: Float32Array; width: number; height: number; riverPoints: Float32Array; riverLengths: Uint32Array }, factor: number, detailSeed: number): void {
+    heightField = { data: artifact.elevation, width: artifact.width, height: artifact.height }
+    applyPaper(artifact.elevation, artifact.width, artifact.height)
+    applyHeightField(artifact.elevation, artifact.width, artifact.height, detailSeed)
+    applyRivers(artifact.riverPoints, artifact.riverLengths, artifact.width, artifact.height, factor)
+    hoverTooltip?.refresh()
+  }
+
+  // --- Amplification bake (docs/decisions/worldmap-amplification.md) ---
   // Runs in its own worker after the macro map is already on screen, then
   // swaps the geometry. Deliberately fire-and-forget from the load path: a
   // failed or slow bake leaves a perfectly usable macro world behind.
@@ -594,10 +634,31 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // re-amplifying an already-amplified field would compound its invented
     // detail, and the decision doc's rule is that every derived tier comes
     // from the authoritative one.
-    const runStage = (index: number): void => {
+    const runStage = async (index: number): Promise<void> => {
       if (index >= stages.length || generation !== bakeGeneration) return
       const factor = stages[index]
       const label = `${macroWidth * factor}px`
+
+      // Cache first. The key covers the world (what the bake consumes) and
+      // the pipeline (the constants it runs with), so a hit is by
+      // construction the same field this stage would have produced —
+      // including after a constant is retuned, which yields a different key
+      // rather than stale terrain.
+      const key = {
+        worldId,
+        pipelineVersion: derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS }),
+        stage: String(factor),
+      }
+      const store = await getArtifactStore()
+      if (generation !== bakeGeneration) return
+      const hit = await readAmplificationArtifact(store, key).catch(() => null)
+      if (hit && generation === bakeGeneration) {
+        applyBakeResult(hit.artifact, factor, detailSeed)
+        setBakeText(`${hit.artifact.width}×${hit.artifact.height} · cached`)
+        void runStage(index + 1)
+        return
+      }
+
       const worker = new Worker(new URL('../../worldgen/amplificationWorker.ts', import.meta.url), { type: 'module' })
       amplifyWorker = worker
       const finish = (): void => {
@@ -611,15 +672,21 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           setBakeText(`${label} ${message.stage} ${Math.round(message.fraction * 100)}%`)
           return
         }
-        const amplified = new Float32Array(message.elevation)
-        heightField = { data: amplified, width: message.width, height: message.height }
-        applyPaper(amplified, message.width, message.height)
-        applyHeightField(amplified, message.width, message.height, detailSeed)
-        applyRivers(new Float32Array(message.riverPoints), new Uint32Array(message.riverLengths), message.width, message.height, factor)
-        hoverTooltip?.refresh()
+        const artifact = {
+          elevation: new Float32Array(message.elevation),
+          width: message.width,
+          height: message.height,
+          riverPoints: new Float32Array(message.riverPoints),
+          riverLengths: new Uint32Array(message.riverLengths),
+        }
+        applyBakeResult(artifact, factor, detailSeed)
         setBakeText(`${message.width}×${message.height} · ${(message.durationMs / 1000).toFixed(0)}s`)
         finish()
-        runStage(index + 1)
+        // Stored after the result is on screen, so the write never delays
+        // what the user is waiting for — and failing to store is not an
+        // error, only a bake that will happen again.
+        void writeAmplificationArtifact(store, key, artifact, message.durationMs).catch(() => false)
+        void runStage(index + 1)
       }
       // A stage that dies (the deepest tier needs ~3 GB — a browser may
       // simply refuse) must not take the screen with it: the last good
@@ -649,7 +716,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       setBakeText(`${label} …`)
       worker.postMessage(request, [request.elevation])
     }
-    runStage(0)
+    void runStage(0)
   }
 
   return {

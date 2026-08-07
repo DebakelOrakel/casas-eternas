@@ -1,4 +1,4 @@
-import { amplifyElevation, criticalAreaForCellSize, erosionParamsForCellSize } from './surface/amplify'
+import { AMPLIFICATION_EROSION_OVERRIDES, amplifyElevation, criticalAreaForCellSize, erosionParamsForCellSize } from './surface/amplify'
 import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass } from './surface/erosion'
 import { fillDepressionsAndRouteFlow } from './surface/flowRouting'
 import { slopeFromAngle } from './elevation/elevationScale'
@@ -117,31 +117,16 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
     const params = {
       ...erosionParamsForCellSize(withControls, 1 / message.factor),
       rounds: message.erosionRounds,
-      // Amplification is NOT landscape evolution, and these three differ
-      // from the generator's defaults for that reason (measured 2026-08-07,
-      // mean incision of channel cells below their surroundings: 84 m →
-      // 167 m at identical cost, with ridge crests and mean land height
-      // essentially unchanged — this deepens valleys, it does not lower the
-      // world).
-      //
-      // upliftRate 0: the pass reads its input as both terrain AND uplift
-      // envelope, re-lifting cells toward it every round. That is right when
-      // simulating a landscape rising while rivers cut into it — but here
-      // the envelope IS the finished macro world, so uplift actively undoes
-      // the carving this bake exists for. Pure denudation is also the safer
-      // reading of the authority rule: without uplift the pass can only cut
-      // into the macro shape, never push anything back up.
-      upliftRate: 0,
-      // The plain damping keeps 7.8 km cells from growing valleys
-      // everywhere, which would read wrong at macro scale. At half that
-      // spacing gentle drainage is exactly what should appear, so it is
-      // relaxed — not removed, or plains lose their flatness entirely.
-      plainFactor: 0.4,
-      // A finer grid resolves steeper slopes, so the "steepest sustainable
-      // slope at this grid's scale" argument behind the 3° talus angle
-      // (erosion.ts) puts the angle HIGHER here; leaving it planes the very
-      // valley walls the pass just cut.
-      thermal: { ...erosionParamsForCellSize(withControls, 1 / message.factor).thermal, talusSlope: slopeFromAngle(6) * (1 / message.factor) },
+      // Amplification is not landscape evolution; the three overrides and
+      // their reasoning live in amplify.AMPLIFICATION_EROSION_OVERRIDES,
+      // beside the rest of the bake's policy (and where the cache key can
+      // hash them).
+      upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
+      plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
+      thermal: {
+        ...erosionParamsForCellSize(withControls, 1 / message.factor).thermal,
+        talusSlope: slopeFromAngle(AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg) * (1 / message.factor),
+      },
     }
     const reportErosion = makeProgressReporter('erosion')
     const eroded = await runErosionPass(field, result.width, result.height, params, (_phase, fraction) => reportErosion(fraction))

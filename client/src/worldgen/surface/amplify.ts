@@ -133,6 +133,51 @@ export function criticalAreaForCellSize(criticalAreaCells: number, cellSizeRatio
   return criticalAreaCells / (cellSizeRatio * cellSizeRatio)
 }
 
+// How the bake's erosion differs from the generator's defaults. These are
+// AMPLIFICATION POLICY, not worker mechanics, so they live next to the rest
+// of the policy rather than inline at the one call site — which also lets
+// the artifact cache hash them (see storage/artifactKey.ts: a value change
+// must invalidate cached terrain, and a hand-maintained version number would
+// be forgotten).
+//
+// Measured 2026-08-07: mean incision of channel cells below their
+// surroundings 84 m → 167 m at identical cost, ridge crests and mean land
+// height essentially unchanged — this deepens valleys, it does not lower the
+// world.
+//
+//  - upliftRate 0: runErosionPass reads its input as both terrain AND uplift
+//    envelope, re-lifting cells toward it every round. Right when simulating
+//    a landscape rising while rivers cut into it — but here the envelope IS
+//    the finished macro world, so uplift undoes the carving this bake exists
+//    for. Pure denudation is also the safer reading of the authority rule:
+//    without it the pass can only cut into the macro shape, never push
+//    anything back up.
+//  - plainFactor 0.4: the plain damping keeps 7.8 km cells from growing
+//    valleys everywhere, which reads wrong at macro scale. At half that
+//    spacing gentle drainage is exactly what should appear — relaxed, not
+//    removed, or plains lose their flatness entirely.
+//  - talusAngleDeg 6: a finer grid resolves steeper slopes, so the "steepest
+//    sustainable slope at this grid's scale" argument behind erosion.ts's 3°
+//    puts the angle higher here; leaving it planes the valley walls the pass
+//    just cut.
+export const AMPLIFICATION_EROSION_OVERRIDES = {
+  upliftRate: 0,
+  plainFactor: 0.4,
+  talusAngleDeg: 6,
+} as const
+
+// Everything in this module whose value changes the bake's output, in one
+// place a cache key can hash. Kept beside the constants themselves so an
+// edit and its invalidation stay in the same field of view.
+export const AMPLIFY_CONSTANTS: Record<string, number> = {
+  seedRoughnessM: SEED_ROUGHNESS_M,
+  cascadeFalloff: CASCADE_FALLOFF,
+  minOctavePixels: MIN_OCTAVE_PIXELS,
+  upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
+  plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
+  talusAngleDeg: AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg,
+}
+
 export interface AmplifiedField {
   data: Float32Array
   width: number
