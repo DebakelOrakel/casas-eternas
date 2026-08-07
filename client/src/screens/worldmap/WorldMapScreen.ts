@@ -10,6 +10,7 @@ import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
 import { computeReliefBytes } from '../../worldgen/render/reliefShade'
 import { upscaleBilinearToroidal } from '../../worldgen/core/field'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/paperBase'
+import { applyBiomeWash, dilateLandBiomes, expandBiomeIds } from '../../ui/mapOverlay/biomePaper'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
 import { createFineElevationSurface } from '../../map/fineElevationSurface'
 import { AMPLIFY_EROSION_ROUNDS, AMPLIFY_STAGES, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
@@ -63,6 +64,14 @@ interface ClimateInput {
 // generator's: the stored per-point widths are cartographic, and at relief
 // zoom a literal reading turns a line into a flood while the D8 staircase's
 // mitered joints degenerate into sawteeth.
+// How much of the biome palette reaches the paper. Same two knobs, and the
+// same reasoning, as the generator's terrain wash: pull the colours toward
+// their own luminance and let them through only partly, so the paper's white
+// and its hillshade keep showing. Full-strength palette would turn the map
+// into a flat colour chart.
+const BIOME_DESATURATE = 0.45
+const BIOME_ALPHA = 0.55
+
 const RIBBON_WIDTH_PROFILES = {
   flat: { factor: 1, maxWidthPx: Number.POSITIVE_INFINITY },
   coarse: { factor: 0.5, maxWidthPx: 4 },
@@ -200,6 +209,11 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let reliefCoarseSurface: ReturnType<typeof createElevationSurface> | null = null
   let reliefFineSurface: ReturnType<typeof createElevationSurface> | null = null
   let ribbonLevel: keyof typeof RIBBON_WIDTH_PROFILES = 'flat'
+  // The paper's hillshade bytes and the per-texel biome ids, retained so the
+  // biome toggle can repaint without redoing either.
+  let lastRelief: Uint8Array | null = null
+  let biomeIds: Uint8Array | null = null
+  let biomeWashEnabled = true
   let bakeEl: HTMLElement | null = null
   const setBakeText = (text: string): void => {
     bakeEl ??= root.querySelector<HTMLElement>('[data-value="bake"]')
@@ -220,6 +234,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       <button type="button" class="icon-button" data-action="toggle-hexgrid" aria-label="Toggle hex grid">
         <img src="/icons/voronoi.png" alt="" />
       </button>
+      <button type="button" class="icon-button" data-action="toggle-biomes" aria-label="Toggle biome colouring">
+        <img src="/icons/biomes.png" alt="" />
+      </button>
       <span class="altitude-readout" data-value="altitude"></span>
       <span class="bake-readout" data-value="bake"></span>
     </div>
@@ -237,6 +254,15 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   hexGridButton.addEventListener('click', () => {
     hexGridEnabled = !hexGridEnabled
     hexGridButton.classList.toggle('is-off', !hexGridEnabled)
+  })
+
+  // Biome wash on/off, so the plain paper stays one click away for
+  // comparison (button un-localized for now, like the hex grid one).
+  const biomeToggleButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-biomes"]')!
+  biomeToggleButton.addEventListener('click', () => {
+    biomeWashEnabled = !biomeWashEnabled
+    biomeToggleButton.classList.toggle('is-off', !biomeWashEnabled)
+    repaintPaper()
   })
 
   // Same load affordance as the generator: folder button → file picker.
@@ -349,9 +375,23 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     } else if (fieldWidth !== PAPER_TEXTURE_WIDTH) {
       paperField = upscaleBilinearToroidal(field, fieldWidth, fieldHeight, PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT)
     }
-    const relief = computeReliefBytes(paperField, PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT)
-    mapView.texture.update(new Uint8Array(buildPaperBase(relief).buffer))
-    mapView.reliefTexture.update(new Uint8Array(buildUnshadedPaperBase(relief).buffer))
+    lastRelief = computeReliefBytes(paperField, PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT)
+    repaintPaper()
+  }
+
+  // Paint the retained relief bytes into both textures, with the biome wash
+  // on top when it is on. Split from applyPaper so the toggle repaints
+  // without recomputing the hillshade (the expensive half).
+  function repaintPaper(): void {
+    if (!mapView || !lastRelief) return
+    const shaded = buildPaperBase(lastRelief)
+    const unshaded = buildUnshadedPaperBase(lastRelief)
+    if (biomeWashEnabled && biomeIds) {
+      applyBiomeWash(shaded, lastRelief, biomeIds, BIOME_DESATURATE, BIOME_ALPHA)
+      applyBiomeWash(unshaded, lastRelief, biomeIds, BIOME_DESATURATE, BIOME_ALPHA)
+    }
+    mapView.texture.update(new Uint8Array(shaded.buffer))
+    mapView.reliefTexture.update(new Uint8Array(unshaded.buffer))
   }
 
   // Build the three surfaces from a height raster and hand them to the map
@@ -382,6 +422,16 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverLayer?.dispose()
     riverLayer = null
     mapView?.dispose()
+    // Per-texel biome ids for the paper wash, built once per world: dilate
+    // the land biomes over the ocean first (so coastal land can't sample
+    // "Ocean" across the grid mismatch), then expand through a warped
+    // coordinate so boundaries are organic rather than 16-pixel squares.
+    biomeIds = biome
+      ? expandBiomeIds(dilateLandBiomes(biome.data, biome.resX, biome.resY), biome.resX, biome.resY, PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT, detailSeed)
+      : null
+    biomeToggleButton.classList.toggle('is-off', !biomeWashEnabled || biomeIds === null)
+    biomeToggleButton.disabled = biomeIds === null
+
     // Seed surfaces for construction; applyHeightField replaces them right
     // after (and again when the bake finishes).
     const fineSurface = createElevationSurface(elevations, width, height, RELIEF_HEIGHT_SCALE)

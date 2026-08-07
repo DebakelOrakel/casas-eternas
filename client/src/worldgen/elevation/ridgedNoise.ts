@@ -27,7 +27,14 @@ function hashLatticePoint(ix: number, iy: number, seed: number): number {
 // Bilinear value noise over a lattice that repeats every (cellsX, cellsY)
 // integer units — coordinates are in lattice units; the caller scales
 // pixels to lattice units per octave.
-function periodicValueNoise2D(x: number, y: number, cellsX: number, cellsY: number, seed: number): number {
+//
+// Exported because the two fBm functions below fix their own octave tables
+// (512/1024 cells across the world), which is far finer than some consumers
+// need: a caller that wants ONE smooth field at a chosen wavelength — the
+// biome wash's boundary warp, say — must be able to pick the lattice
+// directly, and the alternative was a second, near-identical noise
+// implementation. Torus-periodic by construction for any integer cell count.
+export function periodicValueNoise2D(x: number, y: number, cellsX: number, cellsY: number, seed: number): number {
   const x0 = Math.floor(x)
   const y0 = Math.floor(y)
   const fx = x - x0

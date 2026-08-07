@@ -20,6 +20,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **new** World map: the bake now erodes the amplified world, with the erosion constants rescaled for the finer cells — carving tributary valleys the saved raster never had. `world`
 - **new** World map: rivers — re-routed on the amplified terrain so they run in the new valleys, drawn as ribbons that drape onto the relief. `world.overlay.rivers`
 - **changed** World map: the bake now runs in stages, each swapped in as it lands, with the map texture sharpening alongside — shipping at 4096 for now, since 8192 exhausts a browser tab's memory.
+- **new** World map: biome colouring — the saved biome layer washed over the paper map, with organic boundaries instead of climate-grid squares, and a button to compare against plain paper. `world.biome`
 
 ## 2026-08-06
 - **new** Overlays: water balance — rainfall minus evaporation, arid to humid. `world.overlay.waterBalance`
