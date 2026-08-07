@@ -172,6 +172,10 @@ someone else.
 
 ### Server-side artifact store
 
+*Worked out further in [server-storage.md](./server-storage.md) —
+including the world store beside it, the REST shape, the auth story and
+who may write. The sketch below is what that doc grew out of.*
+
 The Go server today is a Cobra skeleton (`start` prints "start called",
 no routes, empty `internal/`), so this would be greenfield.
 
@@ -227,6 +231,9 @@ artifact cache later slots into.
 
 ## Related
 
+- [server-storage.md](./server-storage.md) — the server side of the
+  caching option, worked out: world store vs. artifact store, protocol,
+  auth, and who may write.
 - [worldmap-amplification.md](../decisions/worldmap-amplification.md) —
   the bake this is about, with the measured costs.
 - [resolution-strategy.md](./resolution-strategy.md) — why the macro
