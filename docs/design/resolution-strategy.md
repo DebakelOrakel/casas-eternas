@@ -116,3 +116,13 @@ seam that makes the split cheap already exists
 (`ElevationRenderPool.renderElevations` / the analytic `computeElevation`
 query — see [world-gen.md](./world-gen.md) and
 [GPU_TECTONICS_PLAN.md](../../GPU_TECTONICS_PLAN.md)).
+
+**Update 2026-08-07:** a middle tier now exists as a decision — the
+worldmap's one-time 8192×4096 amplification bake at load (upsample +
+seed roughness + real erosion + re-run hydrology), see
+[worldmap-amplification.md](../decisions/worldmap-amplification.md).
+It does NOT touch this doc's conclusions: the 2048 grid stays the sole
+authority and the only persisted form ("going larger globally is the
+wrong direction" was and is about the sim/save grid); the bake is a
+derived, never-serialized presentation layer, and this doc's procedural
+micro tier remains the plan below the bake's ~2 km reach.

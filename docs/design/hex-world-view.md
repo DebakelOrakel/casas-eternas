@@ -330,6 +330,13 @@ river ribbons in the worldmap, biome-based coloring (the planned real
 answer to terrain readability), and the eventual ground-level game camera
 (a later MODE of the same rig, not a second camera object).
 
+The near-field patch's noise synthesis is explicitly an interim answer:
+the DECIDED path to real fine terrain is the one-time 8k amplification
+bake at load (upsample + seed roughness + real erosion + re-run
+hydrology) — see
+[worldmap-amplification.md](../decisions/worldmap-amplification.md) for
+the decision, the authority rules and the staged ladder around it.
+
 ## Open questions
 
 - Exact hex size (250–350 m band; 300 m is the sweet spot candidate).
