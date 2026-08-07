@@ -24,6 +24,7 @@ import { formatWorldAge, worldAgeMa } from '../../worldgen/core/worldTime'
 import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/tectonics/plateSimulation'
 import { eventCategory } from '../../worldgen/tectonics/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
+import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/paperBase'
 import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops } from '../../worldgen/climate/climateColors'
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
@@ -35,6 +36,7 @@ import { WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import './worldgen.css'
+import '../../ui/chrome/chrome.css'
 
 // The ecology per-field abundance weights persisted in world.yaml (keys `w_<field>`).
 // The one grouping of ecology resources — used by the panel's abundance fold-out, by
@@ -400,7 +402,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // doesn't collide with the legacy sphere screen's worldgen.css, which uses
   // the same selectors at equal specificity and was silently overriding these
   // styles depending on bundle order.
-  root.className = 'worldgen-flat-screen'
+  // map-chrome = the shared screen frame (panel bar, file buttons, nav
+  // arrows, fields) extracted to ui/chrome/chrome.css and worn by the
+  // worldmap screen too; worldgen-flat-screen scopes everything specific.
+  root.className = 'worldgen-flat-screen map-chrome'
   root.innerHTML = `
     <div class="file-actions">
       <button type="button" class="file-button" data-action="load-world" aria-label="${t('common.action.loadWorld.label')}" data-help="common.action.loadWorld">
@@ -1986,59 +1991,22 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateOverlays()
   }
 
-  // Expand the worker's packed relief bytes (top bit = land, low 7 = hillshade)
-  // into the RGBA "paper" base: land → near-white grey, ocean → light blue, each
-  // subtly modulated by the shade so relief reads on water too.
+  // Expand the worker's packed relief bytes into the RGBA "paper" bases —
+  // shared rendering with the worldmap screen, see ui/mapOverlay/paperBase.ts.
   function buildSimplifiedBase(): Uint8ClampedArray | null {
     if (!lastRelief) return null
-    if (simplifiedBaseCache) return simplifiedBaseCache
-    const out = new Uint8ClampedArray(lastRelief.length * 4)
-    for (let i = 0; i < lastRelief.length; i++) {
-      const v = lastRelief[i]
-      const shade = (v & 127) / 127
-      const p = i * 4
-      if (v & 128) {
-        // Land: near-white, subtle grey shading.
-        const b = 210 + shade * 45
-        out[p] = b
-        out[p + 1] = b
-        out[p + 2] = b
-      } else {
-        // Ocean: light blue, subtle bathymetric shading.
-        out[p] = 178 + shade * 30
-        out[p + 1] = 206 + shade * 22
-        out[p + 2] = 230 + shade * 18
-      }
-      out[p + 3] = 255
-    }
-    simplifiedBaseCache = out
-    return out
+    if (!simplifiedBaseCache) simplifiedBaseCache = buildPaperBase(lastRelief)
+    return simplifiedBaseCache
   }
 
-  // The same paper WITHOUT the hillshade modulation (shade held at its
-  // maximum) — the base for the relief compositor, whose meshes are lit for
-  // real (see ToroidalMapView.reliefTexture). Land keeps the top bit's
-  // land/ocean split so the terrain wash and overlays land identically.
+  // The paper WITHOUT the hillshade modulation — the base for the relief
+  // compositor, whose meshes are lit for real (see
+  // ToroidalMapView.reliefTexture).
   let unshadedBaseCache: Uint8ClampedArray | null = null
   function buildUnshadedBase(): Uint8ClampedArray | null {
     if (!lastRelief) return null
-    if (unshadedBaseCache) return unshadedBaseCache
-    const out = new Uint8ClampedArray(lastRelief.length * 4)
-    for (let i = 0; i < lastRelief.length; i++) {
-      const p = i * 4
-      if (lastRelief[i] & 128) {
-        out[p] = 255
-        out[p + 1] = 255
-        out[p + 2] = 255
-      } else {
-        out[p] = 208
-        out[p + 1] = 228
-        out[p + 2] = 248
-      }
-      out[p + 3] = 255
-    }
-    unshadedBaseCache = out
-    return out
+    if (!unshadedBaseCache) unshadedBaseCache = buildUnshadedPaperBase(lastRelief)
+    return unshadedBaseCache
   }
 
   // Muted "watercolour" terrain wash derived from the (never-shown) full-colour

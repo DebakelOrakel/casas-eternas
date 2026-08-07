@@ -9,6 +9,7 @@ import { wrapValue } from '../core/field'
 import { computeOwnerField } from '../crust/raftField'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
 import { applyErosionDetailTexture } from './erosionDetailTexture'
+import { reliefShadeAt } from './reliefShade'
 
 // Whether to apply the mountain-accentuating gamma redistribution curve
 // (applyMountainRedistribution) before coloring. Temporarily false
@@ -233,8 +234,6 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
   // Forward-difference hillshade lit from the top-left; exaggerated since
   // normalized elevation deltas are tiny per pixel. See WorldGenScreen.
   const relief = new Uint8Array(width * height)
-  const RELIEF_EXAGGERATION = 45
-  const LX = -0.502, LY = -0.502, LZ = 0.703 // normalized top-left light
   let landPixelCount = 0
   for (let y = 0; y < height; y++) {
     const downRow = (y + 1) % height
@@ -246,10 +245,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
       const elevation = elevations[idx]
       const dryFloor = options.dryBasin !== undefined && options.dryBasin[idx] === 1
       if (elevation > 0 || dryFloor) landPixelCount++
-      const dzdx = (elevations[y * width + rightCol] - elevation) * RELIEF_EXAGGERATION
-      const dzdy = (elevations[downRow * width + x] - elevation) * RELIEF_EXAGGERATION
-      const ndotl = (-dzdx * LX - dzdy * LY + LZ) / Math.hypot(dzdx, dzdy, 1)
-      const shade = ndotl < 0 ? 0 : ndotl > 1 ? 1 : ndotl
+      const shade = reliefShadeAt(elevations, width, height, x, y)
       relief[idx] = (elevation > 0 || dryFloor ? 128 : 0) | Math.round(shade * 127)
       const color = dryFloor
         ? (options.saltFlat !== undefined && options.saltFlat[idx] === 1 ? SALT_CRUST_COLOR : BASIN_ROCK_COLOR)

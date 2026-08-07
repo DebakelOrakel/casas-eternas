@@ -23,7 +23,7 @@ lint:
 	cd client && npx tsc --noEmit
 
 build:
-	docker build -f deploy/Dockerfile -t $(IMAGE):$(TAG) .
+	docker build --platform linux/amd64 -f deploy/Dockerfile -t $(IMAGE):$(TAG) .
 
 push: lint build
 	docker push $(IMAGE):$(TAG)

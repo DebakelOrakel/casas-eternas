@@ -1,7 +1,7 @@
 import type { Engine, Scene } from '@babylonjs/core'
 import type { NotificationManager } from '../ui/notifications/NotificationManager'
 
-export type ScreenId = 'title' | 'worldgen' | 'worldgen-sphere' | 'game' | 'mars'
+export type ScreenId = 'title' | 'worldgen' | 'worldgen-sphere' | 'worldmap' | 'mars'
 
 export interface ScreenContext {
   engine: Engine

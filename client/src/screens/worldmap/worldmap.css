@@ -1,0 +1,3 @@
+/* Worldmap-specific styles. The screen frame (panel bar, file buttons,
+   title, fields) comes from ui/chrome/chrome.css via the shared map-chrome
+   root class — only what differs from the generator belongs here. */

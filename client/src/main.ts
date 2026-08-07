@@ -5,7 +5,7 @@ import { AppStateManager } from './app/AppStateManager'
 import { createTitleScreen } from './screens/title/TitleScreen'
 import { createWorldGenScreen } from './screens/worldgen/WorldGenScreen'
 import { createWorldGenScreen as createWorldGenSphereScreen } from './screens/worldgen-sphere/WorldGenScreen'
-import { createGameScreen } from './screens/game/GameScreen'
+import { createWorldMapScreen } from './screens/worldmap/WorldMapScreen'
 import { createMarsScreen } from './screens/mars/MarsScreen'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#renderCanvas')!
@@ -18,7 +18,7 @@ const app = new AppStateManager(engine, canvas, overlay, {
   title: createTitleScreen,
   worldgen: createWorldGenScreen,
   'worldgen-sphere': createWorldGenSphereScreen,
-  game: createGameScreen,
+  worldmap: createWorldMapScreen,
   mars: createMarsScreen,
 })
 
