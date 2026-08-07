@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-08-07
+- **changed** Performance: the erosion pass stores its flow-routing edges as direction bytes and reuses its elevation buffers — same results, noticeably less memory.
+
 ## 2026-07-31
 - **fixed** Structure: the golden harness ran the ecology on empty volcanoes and NaN parameters, so six resources and all three migration stages guarded nothing.
 - **changed** Structure: `collectVolcanoes` moved out of the worker, so program and harness share one copy.

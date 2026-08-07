@@ -62,11 +62,42 @@ rather than discovered later.
 
 ## Making the bake itself cheaper
 
-**Memory audit first.** ~3 GB over 33.5M cells is roughly 22 full-size
-arrays (a Float32Array at that size is 134 MB; an Int32Array likewise).
-That smells like avoidable copies inside `runErosionPass` /
-`fillDepressionsAndRouteFlow`. This is the cheapest possible step: no
-algorithm change, no new dependency, plausibly 30–40 %.
+**Memory audit — done 2026-08-07, and the answer was sobering.** The
+guess above ("avoidable copies, plausibly 30–40 %") was mostly wrong:
+the pass is already careful — the deposition scratch arrays and thermal
+erosion's `delta` are allocated per *call*, not per iteration, so there
+is no hidden churn. What the audit found and fixed, both **bit-exact**
+(verified cell-by-cell against the pre-change modules — a shared module
+the generator depends on may get cheaper, not different):
+
+- **MFD edge targets stored as a direction byte instead of a cell
+  index.** An edge's target is always one of the eight neighbours, so
+  three bits carry it; the cell index is recomputed on read. This was
+  the single largest waste: at ~2.9 edges per cell, 97 MB of a routing's
+  327 MB at 4096², four times that at 8192².
+- **The filled surface adopted in place** instead of
+  `elevations = routing.filled.slice()` on every network refresh, with
+  enclosed-water depths stashed sparsely rather than via a second full
+  raster.
+- **The previous routing released before the next is built** — the flood
+  allocates a complete network while the variable still holds the old
+  one.
+
+Result: **939 → 832 MB at 4096²** (−11 %), and **2646 MB at 8192²**
+against the ~3 GB measured before. The rest is genuine live data,
+roughly 70 bytes per cell across a dozen arrays that are all actually in
+use at the same moment. The remaining candidates are worse trades: MFD
+weights `Float32 → Uint16` would halve another ~11 bytes per cell but is
+*not* bit-exact (it perturbs drainage accumulation), and `flowTarget` as
+a direction byte would save 3 bytes per cell across 32 call sites in
+five files, including the legacy sphere module.
+
+**Conclusion: micro-optimisation does not get 8k into a browser tab.**
+2.6 GB earns the same verdict 3 GB did — Safari reloaded the page at the
+latter and there is no reason to think the former lands differently.
+The next lever has to be structural, which is what the rest of this
+section is about: the per-cell cost is close to irreducible, so what has
+to shrink is the number of cells held at once.
 
 **Basin decomposition → parallel workers.** The same cut that makes
 tiling possible also makes parallelism possible: independent basins, one

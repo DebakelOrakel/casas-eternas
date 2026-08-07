@@ -279,14 +279,35 @@ function computeSteepestDescentFlowTargets(filled: Float32Array, width: number, 
 
 export interface MfdEdges {
   // CSR layout: cell i's outgoing (downhill) edges are
-  // outEdgeTargets[outEdgeStart[i] .. outEdgeStart[i + 1]), each paired
+  // outEdgeDirections[outEdgeStart[i] .. outEdgeStart[i + 1]), each paired
   // with the weight at the same index in outEdgeWeights. A given cell's
   // own edge weights sum to 1, except cells with zero downhill neighbors
   // (deep ocean, or a genuine local minimum in `filled`), which have zero
   // edges and contribute nothing further downstream.
   outEdgeStart: Int32Array
-  outEdgeTargets: Int32Array
+  // An edge's target as a D8 DIRECTION INDEX into D8_OFFSETS, not as a cell
+  // index — a target is always one of the eight neighbors, so it fits in a
+  // byte, and the cell index is recovered with the same d8Neighbor call
+  // that built it (see edgeTarget below). Storing absolute Int32 indices
+  // cost four bytes per edge for information three bits carry; at ~2.9
+  // edges per cell that is ~9 bytes per cell of pure overhead, which on the
+  // worldmap's amplified grids ran into hundreds of megabytes (measured
+  // 2026-08-07: 97 MB of a routing's 327 MB at 4096², four times that at
+  // 8192²). Bit-exact — the decoded target is the same index that used to
+  // be stored.
+  outEdgeDirections: Uint8Array
   outEdgeWeights: Float32Array
+  // Which neighbor rule the edges were built with, so decoding reproduces
+  // it: a bounded (micro-tile) grid must not wrap where a torus would.
+  bounded: boolean
+}
+
+// Decode one CSR edge back to its target cell index.
+export function edgeTarget(mfd: MfdEdges, cell: number, edge: number, width: number, height: number): number {
+  const x = cell % width
+  const y = (cell - x) / width
+  const [dx, dy] = D8_OFFSETS[mfd.outEdgeDirections[edge]]
+  return mfd.bounded ? d8NeighborBounded(x, y, dx, dy, width, height) : d8Neighbor(x, y, dx, dy, width, height)
 }
 
 // Multiple-flow-direction routing (Freeman 1991 / Quinn et al. 1991):
@@ -321,21 +342,22 @@ function computeMfdEdges(filled: Float32Array, width: number, height: number, bo
   const outDegree = new Uint8Array(cellCount)
   // Reused across every cell rather than allocated fresh each time — at
   // most 8 entries ever live at once (one per D8 neighbor).
-  const scratchTargets = new Int32Array(8)
+  const scratchDirections = new Uint8Array(8)
   const scratchWeights = new Float32Array(8)
 
   const collectDownhillNeighbors = (cell: number, x: number, y: number): number => {
     const ownElevation = filled[cell]
     let count = 0
     let weightSum = 0
-    for (const [dx, dy] of D8_OFFSETS) {
+    for (let dir = 0; dir < D8_OFFSETS.length; dir++) {
+      const [dx, dy] = D8_OFFSETS[dir]
       const neighbor = bounded ? d8NeighborBounded(x, y, dx, dy, width, height) : d8Neighbor(x, y, dx, dy, width, height)
       if (neighbor < 0) continue
       const drop = ownElevation - filled[neighbor]
       if (drop <= 0) continue
       const distance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1
       const weight = drop / distance
-      scratchTargets[count] = neighbor
+      scratchDirections[count] = dir
       scratchWeights[count] = weight
       weightSum += weight
       count++
@@ -353,7 +375,7 @@ function computeMfdEdges(filled: Float32Array, width: number, height: number, bo
 
   const outEdgeStart = new Int32Array(cellCount + 1)
   for (let i = 0; i < cellCount; i++) outEdgeStart[i + 1] = outEdgeStart[i] + outDegree[i]
-  const outEdgeTargets = new Int32Array(outEdgeStart[cellCount])
+  const outEdgeDirections = new Uint8Array(outEdgeStart[cellCount])
   const outEdgeWeights = new Float32Array(outEdgeStart[cellCount])
 
   for (let y = 0; y < height; y++) {
@@ -362,13 +384,13 @@ function computeMfdEdges(filled: Float32Array, width: number, height: number, bo
       const count = collectDownhillNeighbors(cell, x, y)
       const base = outEdgeStart[cell]
       for (let i = 0; i < count; i++) {
-        outEdgeTargets[base + i] = scratchTargets[i]
+        outEdgeDirections[base + i] = scratchDirections[i]
         outEdgeWeights[base + i] = scratchWeights[i]
       }
     }
   }
 
-  return { outEdgeStart, outEdgeTargets, outEdgeWeights }
+  return { outEdgeStart, outEdgeDirections, outEdgeWeights, bounded }
 }
 
 // `bounded = true` treats the grid as a plain rectangle instead of a torus —
@@ -409,7 +431,7 @@ export function accumulateFlow(routing: FlowRouting, baseAccumulation?: Float32A
     const cell = popOrder[i]
     const cellAccumulation = accumulation[cell]
     for (let e = mfd.outEdgeStart[cell]; e < mfd.outEdgeStart[cell + 1]; e++) {
-      accumulation[mfd.outEdgeTargets[e]] += cellAccumulation * mfd.outEdgeWeights[e]
+      accumulation[edgeTarget(mfd, cell, e, width, height)] += cellAccumulation * mfd.outEdgeWeights[e]
     }
   }
   return accumulation

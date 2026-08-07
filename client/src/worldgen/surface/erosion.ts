@@ -768,6 +768,10 @@ export async function runErosionPass(
   // filled for drainage, so no basins survive there). This is what a rivers/lakes
   // pass needs to place lakes: the filled terrain is basin-free by construction.
   let preFillElevations: Float32Array | undefined
+  // Enclosed-water cells as a sparse index list + a scratch for their
+  // pre-fill depths, built once on first use (see the round loop).
+  let enclosedIndices: Int32Array | null = null
+  let enclosedDepths: Float32Array | null = null
 
   // Each phase's own onProgress reports 0->1 for *itself* — without
   // weighting, naively scaling every phase's fraction by 1/rounds would
@@ -830,6 +834,14 @@ export async function runErosionPass(
     const isLand = new Uint8Array(cellCount)
     for (let i = 0; i < cellCount; i++) isLand[i] = elevations[i] > SEA_LEVEL ? 1 : 0
 
+    // Dropped BEFORE the next one is built, not after: the flood allocates a
+    // full routing (filled + popOrder + flowTarget + the MFD edges) while the
+    // variable still references the previous one, so without this the peak
+    // holds two complete networks at once — the single largest avoidable
+    // allocation in the pass, and the previous round's routing is dead by
+    // here in any case (its `filled` was already copied into `elevations`).
+    routing = undefined
+    accumulation = undefined
     routing = await fillDepressionsAndRouteFlow(elevations, width, height, SEA_LEVEL, (fraction) => roundProgress('flooding', fraction))
 
     roundProgress('accumulating', 0)
@@ -851,14 +863,30 @@ export async function runErosionPass(
     const refreshParams: StreamPowerParams = { ...params.streamPower, iterations: itersPerRefresh }
     for (let r = 0; r < refreshes; r++) {
       if (r > 0) {
+        routing = undefined // see the same release at the top of the round
+        accumulation = undefined
         routing = await fillDepressionsAndRouteFlow(elevations, width, height, SEA_LEVEL)
         accumulation = accumulateFlow(routing)
       }
-      const beforeFill = elevations
-      elevations = routing.filled.slice()
-      // Enclosed seas keep their real bathymetry — see enclosedWater above.
+      // Adopt the filled surface IN PLACE rather than `elevations =
+      // routing.filled.slice()`: that allocated a fresh full-size array on
+      // every refresh of every round, and briefly held three of them at once
+      // (the old elevations, the new copy, and routing.filled). Enclosed
+      // seas keep their real bathymetry — see enclosedWater above — so their
+      // pre-fill values are stashed sparsely first, which is a few thousand
+      // numbers rather than another full raster.
       if (enclosedWater) {
-        for (let i = 0; i < cellCount; i++) if (enclosedWater[i]) elevations[i] = beforeFill[i]
+        if (enclosedIndices === null) {
+          const indices: number[] = []
+          for (let i = 0; i < cellCount; i++) if (enclosedWater[i]) indices.push(i)
+          enclosedIndices = Int32Array.from(indices)
+          enclosedDepths = new Float32Array(enclosedIndices.length)
+        }
+        for (let k = 0; k < enclosedIndices.length; k++) enclosedDepths![k] = elevations[enclosedIndices[k]]
+        elevations.set(routing.filled)
+        for (let k = 0; k < enclosedIndices.length; k++) elevations[enclosedIndices[k]] = enclosedDepths![k]
+      } else {
+        elevations.set(routing.filled)
       }
       await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, refreshParams, erosionMask, rawElevations, (fraction) => roundProgress('streamPower', (r + fraction) / refreshes))
     }
