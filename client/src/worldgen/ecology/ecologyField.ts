@@ -262,10 +262,27 @@ const TIMBER_BY_BIOME: Record<number, number> = {
 
 // Metal / stone influence radii (world fraction). Tin is tightest → the rare,
 // clustered bottleneck; copper broader (arc belts); obsidian tight (point sources).
-const COPPER_RADIUS_FRAC = 0.04
-const TIN_RADIUS_FRAC = 0.038
-const OBSIDIAN_RADIUS_FRAC = 0.03
+// Halved 2026-08-07: since supercontinent assembly moved into the playable window
+// the feature set carries ~3.5× more volcanoes (192 vs 55 measured), and the old
+// radii (~240-320 km per point) overlapped into a carpet — copper covered 55% of
+// land at ≥5%. Radius halving plus the keep-fraction lottery below brings that
+// back to isolated deposit clusters (same-seed ≥5%-of-land coverage: copper
+// 55→18%, silver 49→7%, tin 29→6%, gems 24→5%, gold 70→13%, obsidian-driven
+// toolstone ≥20% 53→6%; flint baseline untouched by design).
+const COPPER_RADIUS_FRAC = 0.02
+const TIN_RADIUS_FRAC = 0.019
+const OBSIDIAN_RADIUS_FRAC = 0.015
 const FLINT_BASE = 0.15
+// Mineralisation lottery: only this fraction of the candidate points (arc
+// volcanoes, orogens) actually carries a given ore — not every arc is
+// mineralised. Deterministic per point position + warpSeed + per-resource salt,
+// so each resource picks a different subset and deposits stay stable per world.
+const COPPER_KEEP = 0.33
+const SILVER_KEEP = 0.25
+const OBSIDIAN_KEEP = 0.25
+const TIN_KEEP = 0.5
+const GOLD_LODE_KEEP = 0.5
+const GEM_KEEP = 0.5
 // Salt: below this precip a cell reads arid; coasts evaporate best.
 const SALT_ARID_PRECIP = 500
 const SALT_COAST_W = 1.0
@@ -284,9 +301,14 @@ const IRON_DEPOSIT_FLOOR = 0.35
 // Prestige (rare & clustered — the point). Gold = placer (rivers) + lode (orogens);
 // silver = hydrothermal near volcanic arcs; gems = metamorphic (orogens) + arid
 // weathering (turquoise near copper). None feed carrying capacity.
-const GOLD_LODE_RADIUS_FRAC = 0.03
-const SILVER_RADIUS_FRAC = 0.035
-const GEM_RADIUS_FRAC = 0.028
+const GOLD_LODE_RADIUS_FRAC = 0.015
+const SILVER_RADIUS_FRAC = 0.018
+const GEM_RADIUS_FRAC = 0.014
+// Placer gate: √(discharge/max) below this floor carries no gold — only genuinely
+// large rivers concentrate placer. The old ungated √·2 curve lit up every stream
+// (gold ≥5% on 70% of land, and 63% even before the Archean rework).
+const GOLD_PLACER_SQRT_FLOOR = 0.15
+const GOLD_PLACER_GAIN = 2
 const GOLD_PLACER_W = 0.7
 const GOLD_LODE_W = 0.9
 const SILVER_W = 0.9
@@ -359,8 +381,8 @@ function computeWetland(precipitation: Float32Array, coarseDischarge: Float32Arr
 
 // Tool-stone: obsidian (volcanic point sources) with a low flint baseline on flat
 // lowland (sedimentary proxy).
-function computeToolStone(volcanoes: Volcano[], elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number): Float32Array {
-  const obsidian = rasterisePointField(volcanoes, OBSIDIAN_RADIUS_FRAC, worldW, worldH)
+function computeToolStone(volcanoes: Volcano[], elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number, warpSeed: number): Float32Array {
+  const obsidian = rasterisePointField(thinPoints(volcanoes, OBSIDIAN_KEEP, warpSeed ^ 0x0b51d1a2), OBSIDIAN_RADIUS_FRAC, worldW, worldH)
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
@@ -396,7 +418,7 @@ function computeGold(coarseDischarge: Float32Array | null, maxDischarge: number,
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   for (let i = 0; i < out.length; i++) {
     if (!land[i]) continue
-    const placer = coarseDischarge && maxDischarge > 0 ? Math.min(1, Math.sqrt(coarseDischarge[i] / maxDischarge) * 2) : 0
+    const placer = coarseDischarge && maxDischarge > 0 ? Math.min(1, Math.max(0, Math.sqrt(coarseDischarge[i] / maxDischarge) - GOLD_PLACER_SQRT_FLOOR) * GOLD_PLACER_GAIN) : 0
     out[i] = clamp01(GOLD_PLACER_W * placer + GOLD_LODE_W * orogenLode[i])
   }
   return out
@@ -416,6 +438,22 @@ function computeGems(orogenField: Float32Array, copper: Float32Array, temperatur
     if (!land[i]) continue
     const aridity = clamp01(1 - precipitation[i] / SALT_ARID_PRECIP) * clamp01(temperature[i] / 25)
     out[i] = clamp01(GEM_OROGEN_W * orogenField[i] + GEM_ARID_W * aridity * copper[i])
+  }
+  return out
+}
+
+// Deterministic mineralisation lottery (see the *_KEEP constants): hashes each
+// point's integer position with the world seed + a per-resource salt and keeps
+// the fraction that wins. Position-based (not index-based) so the surviving
+// subset is stable as the feature list grows or reorders between epochs.
+function thinPoints<T extends { x: number; y: number }>(points: T[], keepFraction: number, salt: number): T[] {
+  if (keepFraction >= 1) return points
+  const out: T[] = []
+  for (const p of points) {
+    let h = ((Math.floor(p.x) * 374761393 + Math.floor(p.y) * 668265263) ^ salt) | 0
+    h = Math.imul(h ^ (h >>> 13), 1274126177)
+    h = (h ^ (h >>> 16)) >>> 0
+    if (h / 4294967296 < keepFraction) out.push(p)
   }
   return out
 }
@@ -587,17 +625,17 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
   // with tinRarity → tighter radius); iron = old cratons + bog iron.
   const arcVolcanoes = volcanoes.filter((v) => v.kind === 'arc')
   const timber = scaleField(computeTimber(biomes, land), 'timber')
-  const toolStone = scaleField(computeToolStone(volcanoes, elevation, land, worldWidth, worldHeight), 'toolStone')
-  const copper = scaleField(maskToLand(rasterisePointField(arcVolcanoes, COPPER_RADIUS_FRAC, worldWidth, worldHeight), land), 'copper')
+  const toolStone = scaleField(computeToolStone(volcanoes, elevation, land, worldWidth, worldHeight, warpSeed), 'toolStone')
+  const copper = scaleField(maskToLand(rasterisePointField(thinPoints(arcVolcanoes, COPPER_KEEP, warpSeed ^ 0xc0bbe401), COPPER_RADIUS_FRAC, worldWidth, worldHeight), land), 'copper')
   const tinRadius = TIN_RADIUS_FRAC * (1 - 0.6 * Math.max(0, Math.min(1, params.tinRarity ?? 0)))
-  const tin = scaleField(maskToLand(rasterisePointField(orogenPoints, tinRadius, worldWidth, worldHeight), land), 'tin')
+  const tin = scaleField(maskToLand(rasterisePointField(thinPoints(orogenPoints, TIN_KEEP, warpSeed ^ 0x71b2a903), tinRadius, worldWidth, worldHeight), land), 'tin')
   const wetland = computeWetland(precipitation, coarseDischarge, maxDischarge, coarseLake, elevation, land, worldWidth, worldHeight)
   const iron = scaleField(computeIron(cratonAge, wetland, land, warpSeed), 'iron')
 
   // Prestige (separate channel — no carrying-capacity contribution).
-  const gold = scaleField(computeGold(coarseDischarge, maxDischarge, rasterisePointField(orogenPoints, GOLD_LODE_RADIUS_FRAC, worldWidth, worldHeight), land), 'gold')
-  const silver = scaleField(computeSilver(maskToLand(rasterisePointField(arcVolcanoes, SILVER_RADIUS_FRAC, worldWidth, worldHeight), land), land), 'silver')
-  const gems = scaleField(computeGems(rasterisePointField(orogenPoints, GEM_RADIUS_FRAC, worldWidth, worldHeight), copper, temperature, precipitation, land), 'gems')
+  const gold = scaleField(computeGold(coarseDischarge, maxDischarge, rasterisePointField(thinPoints(orogenPoints, GOLD_LODE_KEEP, warpSeed ^ 0x601dfeed), GOLD_LODE_RADIUS_FRAC, worldWidth, worldHeight), land), 'gold')
+  const silver = scaleField(computeSilver(maskToLand(rasterisePointField(thinPoints(arcVolcanoes, SILVER_KEEP, warpSeed ^ 0x5117e201), SILVER_RADIUS_FRAC, worldWidth, worldHeight), land), land), 'silver')
+  const gems = scaleField(computeGems(rasterisePointField(thinPoints(orogenPoints, GEM_KEEP, warpSeed ^ 0x9e35c0de), GEM_RADIUS_FRAC, worldWidth, worldHeight), copper, temperature, precipitation, land), 'gems')
 
   // Mask every per-resource field to the ocean sentinel so overlays skip water.
   const perResource = [arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron, gold, silver, gems]

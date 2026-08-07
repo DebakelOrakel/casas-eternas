@@ -1060,13 +1060,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function paintEcology(data: Uint8ClampedArray): void {
     const field = lastEcologyFields[selectedEcologyField]
     if (!field) return
-    const alpha = 0.6
+    const baseAlpha = 0.6
+    // Deposit fields (fadeZero) blend out below this value — barren land shows
+    // terrain instead of the ramp's 0% tint, and the Gaussian deposit halos fade
+    // smoothly into it rather than ending in a hard stamp edge.
+    const fadeIn = 0.05
+    const fadeZero = ECOLOGY_FIELD_META[selectedEcologyField].fadeZero === true
     for (let y = 0; y < MAP_HEIGHT; y++) {
       const gy = Math.min(ecologyResY - 1, Math.floor((y / MAP_HEIGHT) * ecologyResY))
       for (let x = 0; x < MAP_WIDTH; x++) {
         const gx = Math.min(ecologyResX - 1, Math.floor((x / MAP_WIDTH) * ecologyResX))
         const v = field[gy * ecologyResX + gx]
         if (v === ECOLOGY_OCEAN) continue
+        const alpha = fadeZero ? baseAlpha * Math.min(1, v / fadeIn) : baseAlpha
+        if (alpha === 0) continue
         const [r, g, b] = ecologyFieldColor(selectedEcologyField, v)
         const p = (y * MAP_WIDTH + x) * 4
         data[p] = data[p] * (1 - alpha) + r * alpha

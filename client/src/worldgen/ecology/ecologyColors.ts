@@ -11,6 +11,11 @@ export interface EcologyFieldMeta {
   // visible as the whole map dimming/greening). Per-resource fields are relative
   // abundance maps → normalised to their own land-max at paint time.
   absolute: boolean
+  // Deposit-style fields (metals, gems): fade to fully transparent as the value
+  // approaches 0, so barren land shows terrain instead of the ramp's pale end.
+  // Broad gradient fields (arable, game, …) keep painting 0 — "nothing here" is
+  // the information there.
+  fadeZero?: boolean
   // Colour ramp on a 0..1 input (fraction); clamped past the ends.
   stops: { c: number; rgb: Rgb }[]
 }
@@ -63,27 +68,27 @@ export const ECOLOGY_FIELD_META: Record<EcologyFieldId, EcologyFieldMeta> = {
     stops: [{ c: 0.0, rgb: [214, 214, 218] }, { c: 0.5, rgb: [126, 126, 134] }, { c: 1.0, rgb: [52, 52, 60] }],
   },
   copper: {
-    label: 'Copper', role: 'material', absolute: false,
+    label: 'Copper', role: 'material', absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [232, 214, 194] }, { c: 0.5, rgb: [210, 140, 80] }, { c: 1.0, rgb: [176, 84, 40] }],
   },
   tin: {
-    label: 'Tin', role: 'material', absolute: false,
+    label: 'Tin', role: 'material', absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [226, 228, 232] }, { c: 0.5, rgb: [168, 178, 190] }, { c: 1.0, rgb: [104, 116, 134] }],
   },
   iron: {
-    label: 'Iron', role: 'material', absolute: false,
+    label: 'Iron', role: 'material', absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [230, 212, 202] }, { c: 0.5, rgb: [200, 118, 88] }, { c: 1.0, rgb: [148, 54, 38] }],
   },
   gold: {
-    label: 'Gold', role: 'prestige', absolute: false,
+    label: 'Gold', role: 'prestige', absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [240, 232, 198] }, { c: 0.5, rgb: [228, 196, 84] }, { c: 1.0, rgb: [198, 150, 24] }],
   },
   silver: {
-    label: 'Silver', role: 'prestige', absolute: false,
+    label: 'Silver', role: 'prestige', absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [240, 242, 245] }, { c: 0.5, rgb: [198, 204, 212] }, { c: 1.0, rgb: [150, 160, 176] }],
   },
   gems: {
-    label: 'Gems', role: 'prestige', absolute: false,
+    label: 'Gems', role: 'prestige', absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [240, 222, 236] }, { c: 0.5, rgb: [214, 108, 170] }, { c: 1.0, rgb: [166, 38, 112] }],
   },
 }
