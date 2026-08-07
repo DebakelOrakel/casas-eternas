@@ -22,11 +22,12 @@ import { biomeLabelKey } from '../../worldgen/climate/biomes'
 import { t } from '../../i18n/i18n'
 import type { TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
-import { createOpfsArtifactStore } from '../../storage/OpfsArtifactStore'
-import { createMemoryArtifactStore } from '../../storage/MemoryArtifactStore'
-import type { ArtifactStore } from '../../storage/ArtifactStore'
 import { deriveWorldId, derivePipelineVersion } from '../../storage/artifactKey'
 import { readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
+import { describeArtifactUsage } from '../../storage/artifactAdmin'
+import { getArtifactStore } from '../../storage/artifactStoreProvider'
+import { createCachePanel } from '../../ui/cachePanel/CachePanel'
+import { readRecipeNumber, readRecipeValue } from '../../worldgen/worldSave/recipeYaml'
 import { AMPLIFY_CONSTANTS } from '../../worldgen/surface/amplify'
 import '../../ui/chrome/chrome.css'
 import './worldmap.css'
@@ -215,15 +216,6 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Bumped on every load so a stage chain from a superseded world can't
   // swap its result in after the user has opened a different one.
   let bakeGeneration = 0
-  // The artifact cache (docs/design/server-storage.md): OPFS where it
-  // exists, an in-memory store otherwise — which still spares a re-bake
-  // when the same world is reopened within a session, and keeps the rest of
-  // the flow from having to know the difference. Resolved once, lazily.
-  let artifactStorePromise: Promise<ArtifactStore> | null = null
-  const getArtifactStore = (): Promise<ArtifactStore> => {
-    artifactStorePromise ??= createOpfsArtifactStore().then((store) => store ?? createMemoryArtifactStore())
-    return artifactStorePromise
-  }
   // Identity of the world currently loaded, derived from what the bake
   // actually consumes (see storage/artifactKey.ts).
   let worldId = ''
@@ -264,6 +256,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </button>
       <span class="altitude-readout" data-value="altitude"></span>
       <span class="bake-readout" data-value="bake"></span>
+      <button type="button" class="text-button cache-admin" data-action="clear-cache" title="Manage the cached baked worlds"></button>
     </div>
   `
   ctx.overlay.appendChild(root)
@@ -280,6 +273,19 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     hexGridEnabled = !hexGridEnabled
     hexGridButton.classList.toggle('is-off', !hexGridEnabled)
   })
+
+  // Cache admin: the button reports what the origin is holding and opens the
+  // manager (a centred window, shared with the generator) rather than
+  // clearing outright — with several worlds cached, "delete everything" is
+  // rarely the operation actually wanted.
+  const cachePanel = createCachePanel(root)
+  const cacheButton = root.querySelector<HTMLButtonElement>('[data-action="clear-cache"]')!
+  const refreshCacheReadout = async (): Promise<void> => {
+    const usage = await describeArtifactUsage(await getArtifactStore()).catch(() => null)
+    cacheButton.textContent = usage ? `cache ${usage}` : 'cache'
+  }
+  cacheButton.addEventListener('click', () => cachePanel.open())
+  void refreshCacheReadout()
 
   // Biome wash on/off, so the plain paper stays one click away for
   // comparison (button un-localized for now, like the hex grid one).
@@ -344,26 +350,28 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         }
       }
 
-      // Seed for the deterministic near-field detail: hashed from the
-      // recipe's seed string so the same world always grows the same
-      // bumps. (Not the generator's warpSeed — see fineElevationSurface.)
-      const yamlText = await zip.file('world.yaml')?.async('string')
-      const seedText = yamlText?.match(/^seed:\s*['"]?([^'"\n]+)['"]?\s*$/m)?.[1] ?? 'casas-eternas'
+      // Recipe values, through the shared path-aware reader. Bare-key
+      // regexes were wrong here in both directions: `seed` sits INDENTED
+      // under `spec:`, so a line-anchored pattern never matched it (every
+      // world fell back to the same default label AND the same detail
+      // seed), and a leaf name matched anywhere would collide the moment
+      // two groups share a key.
+      const yamlText = (await zip.file('world.yaml')?.async('string')) ?? ''
+      const seedText = readRecipeValue(yamlText, 'spec.seed') ?? 'casas-eternas'
+      // Seed for the deterministic near-field detail, hashed from the
+      // recipe's seed so the same world always grows the same bumps. (Not
+      // the generator's warpSeed — see fineElevationSurface.)
       let detailSeed = 5381
       for (let i = 0; i < seedText.length; i++) detailSeed = ((detailSeed * 33) ^ seedText.charCodeAt(i)) >>> 0
 
       // This world's own erosion settings, so the bake erodes the way the
       // world was eroded rather than by generic defaults (the generator
-      // restores the same two values into its sliders on load).
-      const readNumber = (key: string): number | undefined => {
-        const raw = yamlText?.match(new RegExp(`^\\s*${key}:\\s*([-\\d.]+)\\s*$`, 'm'))?.[1]
-        const value = raw === undefined ? NaN : Number(raw)
-        return Number.isFinite(value) ? value : undefined
-      }
+      // restores the same values into its sliders on load, from these very
+      // paths).
       const erosionControls: ErosionControls = {
-        strength: readNumber('erosionStrength'),
-        refresh: readNumber('drainageRefresh'),
-        riverDensity: readNumber('riverDensity'),
+        strength: readRecipeNumber(yamlText, 'spec.erosion.erosionStrength'),
+        refresh: readRecipeNumber(yamlText, 'spec.erosion.drainageRefresh'),
+        riverDensity: readRecipeNumber(yamlText, 'spec.hydrology.riverDensity'),
       }
 
       // Precipitation drives the discharge in the bake's hydrology re-run.
@@ -685,7 +693,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         // Stored after the result is on screen, so the write never delays
         // what the user is waiting for — and failing to store is not an
         // error, only a bake that will happen again.
-        void writeAmplificationArtifact(store, key, artifact, message.durationMs).catch(() => false)
+        void writeAmplificationArtifact(store, key, artifact, message.durationMs)
+          .catch(() => false)
+          .then(() => refreshCacheReadout())
         void runStage(index + 1)
       }
       // A stage that dies (the deepest tier needs ~3 GB — a browser may
@@ -730,6 +740,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       hoverTooltip?.dispose()
       mapView?.dispose()
       helpTooltip.dispose()
+      cachePanel.dispose()
       disposeCamera()
       root.remove()
       scene.dispose()

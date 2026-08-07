@@ -36,6 +36,8 @@ import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecolo
 import { WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave/worldLayers'
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
+import { createCachePanel } from '../../ui/cachePanel/CachePanel'
+import { readRecipeValue as readYamlValue } from '../../worldgen/worldSave/recipeYaml'
 import './worldgen.css'
 import '../../ui/chrome/chrome.css'
 
@@ -390,6 +392,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       <button type="button" class="file-button" data-action="save-world" aria-label="${t('common.action.saveWorld.label')}" data-help="common.action.saveWorld">
         <img src="/icons/floppy.png" alt="" />
       </button>
+      <button type="button" class="file-button cache-button" data-action="cache-manager" aria-label="Artifact cache" title="Artifact cache">
+        <img src="/icons/zoom_off.png" alt="" />
+      </button>
     </div>
     <button type="button" class="nav-arrow nav-arrow--back" data-action="back" aria-label="${t('common.action.back.label')}">‹</button>
     <button type="button" class="nav-arrow nav-arrow--next" data-action="next" aria-label="${t('common.action.next.label')}">›</button>
@@ -617,6 +622,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const resetMigrationButton = root.querySelector<HTMLButtonElement>('[data-action="reset-migration"]')!
   const loadWorldButton = root.querySelector<HTMLButtonElement>('[data-action="load-world"]')!
   const saveWorldButton = root.querySelector<HTMLButtonElement>('[data-action="save-world"]')!
+  // The artifact cache is filled by the worldmap, but inspecting it is just
+  // as wanted from here — a world tuned in this screen is what ends up
+  // costing minutes to bake over there. Same centred window, un-localized
+  // like the other debug affordances.
+  const cachePanel = createCachePanel(root)
+  root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => cachePanel.open())
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
@@ -2792,27 +2803,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
-  // Flat, single-occurrence keys → a tiny regex parser, no YAML dependency.
-  // Reads a dotted path ("ecology.metal.iron") out of the recipe by tracking
-  // indentation. It used to match the leaf name anywhere in the document, which
-  // worked only as long as no two groups ever shared a key — an invariant nothing
-  // enforced and the nesting makes easy to break.
-  function readYamlValue(text: string, path: string): string | undefined {
-    const stack: { indent: number; key: string }[] = []
-    for (const line of text.split('\n')) {
-      const match = line.match(/^(\s*)([\w-]+):\s*(.*)$/)
-      if (!match) continue
-      const [, indentText, key, rawValue] = match
-      const indent = indentText.length
-      while (stack.length > 0 && stack[stack.length - 1].indent >= indent) stack.pop()
-      stack.push({ indent, key })
-      if (rawValue !== '' && stack.map((e) => e.key).join('.') === path) {
-        return rawValue.replace(/^["']|["']$/g, '')
-      }
-    }
-    return undefined
-  }
-
   // Downscaled PNG of the current composited map, for the save's preview.png.
   async function makePreviewBlob(): Promise<Blob | null> {
     if (!lastCompositePixels) return null
@@ -3564,6 +3554,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     dispose() {
       stopSim()
       helpTooltip.dispose()
+      cachePanel.dispose()
       hoverTooltip?.dispose()
       riverLayer?.dispose()
       overlay.dispose()

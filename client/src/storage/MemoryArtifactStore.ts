@@ -33,6 +33,9 @@ export function createMemoryArtifactStore(): ArtifactStore {
     async exists(path: string): Promise<boolean> {
       return files.has(normalise(path))
     },
+    async size(path: string): Promise<number | null> {
+      return files.get(normalise(path))?.byteLength ?? null
+    },
     async remove(path: string): Promise<void> {
       const prefix = normalise(path)
       // Removes an entry or a whole subtree, matching the OPFS store's

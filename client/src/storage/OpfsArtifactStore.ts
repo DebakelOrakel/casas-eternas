@@ -92,6 +92,18 @@ export async function createOpfsArtifactStore(): Promise<ArtifactStore | null> {
       return (await resolveFile(path, false)) !== null
     },
 
+    async size(path: string): Promise<number | null> {
+      const handle = await resolveFile(path, false)
+      if (!handle) return null
+      try {
+        // getFile() hands back a lazy File; `.size` is metadata, so this
+        // does not read the bytes.
+        return (await handle.getFile()).size
+      } catch {
+        return null
+      }
+    },
+
     async remove(path: string): Promise<void> {
       const { directories, name } = splitPath(path)
       if (!name) return

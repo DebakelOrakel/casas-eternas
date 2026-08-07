@@ -1,0 +1,161 @@
+/* Centred window for the artifact cache manager. Its own overlay rather
+   than a screen's panel, because it is reachable from several screens and
+   must sit above whatever is underneath. */
+
+.cache-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 24, 30, 0.35);
+  font-family: sans-serif;
+  color: #1a1a1a;
+}
+
+.cache-panel-backdrop[hidden] {
+  display: none;
+}
+
+.cache-panel {
+  width: min(640px, calc(100vw - 3rem));
+  max-height: min(70vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: #fdfdfc;
+  border-radius: 6px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.cache-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem 0.7rem;
+  border-bottom: 1px solid rgba(26, 26, 26, 0.12);
+}
+
+.cache-panel-head h2 {
+  margin: 0;
+  font-family: 'Cinzel', serif;
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cache-panel-usage {
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}
+
+.cache-panel-close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  padding: 0 0.25rem;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: #1a1a1a;
+  opacity: 0.5;
+  cursor: pointer;
+}
+
+.cache-panel-close:hover {
+  opacity: 1;
+}
+
+.cache-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.35rem 0;
+}
+
+.cache-empty {
+  margin: 1.25rem 1rem;
+  font-size: 0.85rem;
+  opacity: 0.6;
+}
+
+.cache-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+}
+
+.cache-row + .cache-row {
+  border-top: 1px solid rgba(26, 26, 26, 0.07);
+}
+
+.cache-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+/* The seed label can be long; the resolution chips must never be pushed out
+   of the row by it. */
+.cache-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+
+.cache-row-chips {
+  display: flex;
+  gap: 0.25rem;
+  flex: none;
+}
+
+.cache-chip {
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: rgba(26, 26, 26, 0.08);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+}
+
+.cache-chip--empty {
+  opacity: 0.4;
+}
+
+.cache-row-size {
+  flex: none;
+  min-width: 5rem;
+  text-align: right;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.cache-panel-button {
+  flex: none;
+  border: 1px solid rgba(26, 26, 26, 0.35);
+  border-radius: 4px;
+  background: none;
+  padding: 0.25rem 0.6rem;
+  font-family: inherit;
+  font-size: 0.78rem;
+  color: #1a1a1a;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.cache-panel-button:hover {
+  opacity: 1;
+  border-color: rgba(26, 26, 26, 0.6);
+}
+
+.cache-panel-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.7rem 1rem;
+  border-top: 1px solid rgba(26, 26, 26, 0.12);
+}

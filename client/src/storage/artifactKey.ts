@@ -79,7 +79,22 @@ export function deriveWorldId(seedLabel: string, inputs: BakeInputs): string {
     `|s=${inputs.erosionStrength ?? 'd'}|r=${inputs.drainageRefresh ?? 'd'}|q=${inputs.riverDensity ?? 'd'}`,
   )
   const [sa, sb] = hashBytes(scalars, a, b)
-  const label = seedLabel.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24) || 'world'
+  // Sanitised by REMOVING what would break a path, not by allowing only
+  // ASCII: an allow-list turned "Ätna" into "tna", which is worse than
+  // useless as a label. Path separators, the Windows-reserved characters
+  // and control codes go; everything else — accents included — stays, and
+  // whitespace becomes dashes so the id remains one token. The trailing
+  // hash is always the last dash-separated group, so dashes inside the
+  // label are harmless.
+  const label = seedLabel
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '')
+    // A leading dot would make the segment read as "." or ".."; the
+    // trailing hash means it can never actually BE one, so this is
+    // tidiness plus defence in depth.
+    .replace(/^[.\s]+/, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .slice(0, 24) || 'world'
   return `${label}-${hex8(sa)}${hex8(sb)}`
 }
 

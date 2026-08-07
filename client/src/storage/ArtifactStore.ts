@@ -29,6 +29,11 @@ export interface ArtifactStore {
   // an expected condition; callers must carry on regardless.
   write(path: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean>
   exists(path: string): Promise<boolean>
+  // Byte length without reading the contents — what an inventory needs, and
+  // the reason it is its own method: summing a cache's size by `read`ing
+  // every entry would pull tens of megabytes through memory to learn a
+  // number the filesystem already knows.
+  size(path: string): Promise<number | null>
   // Delete one entry or a whole subtree — the unit eviction and "forget this
   // world" both work in.
   remove(path: string): Promise<void>
