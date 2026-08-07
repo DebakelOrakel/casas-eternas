@@ -11,16 +11,35 @@ import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../worldgen/core/mapConf
 export const MAP_WORLD_WIDTH = 20
 export const MAP_WORLD_HEIGHT = 10
 
-// World-Y units per display-elevation unit: 1.0 elevation = ELEVATION_METERS
-// of real height, mapped through the map's horizontal scale (METERS_PER_CELL
-// per raster cell, MAP_WIDTH cells across MAP_WORLD_WIDTH world units) —
-// times a mild exaggeration. Eyeballed 2026-08-07: at these screens'
-// 500–1500 km view widths, metre-true relief is a few pixels tall and simply
-// doesn't register. The GAME's near-ground view keeps the 1:1 decision (see
-// docs/design/hex-world-view.md); these previews are a map register, and
-// maps exaggerate.
-export const RELIEF_EXAGGERATION = 2
-export const RELIEF_HEIGHT_SCALE = (ELEVATION_METERS / (METERS_PER_CELL * MAP_WIDTH)) * MAP_WORLD_WIDTH * RELIEF_EXAGGERATION
+// World-Y units per display-elevation unit, METRE-TRUE: 1.0 elevation =
+// ELEVATION_METERS of real height, mapped through the map's horizontal scale
+// (METERS_PER_CELL per raster cell, MAP_WIDTH cells across MAP_WORLD_WIDTH
+// world units). Exaggeration deliberately does NOT live here — it is a
+// property of the VIEW (see the constants below), applied as a vertical
+// scale on the meshes, so it can change with the zoom without recomputing a
+// single height.
+export const RELIEF_HEIGHT_SCALE = (ELEVATION_METERS / (METERS_PER_CELL * MAP_WIDTH)) * MAP_WORLD_WIDTH
+
+// Vertical exaggeration per REGISTER. The map register may exaggerate and
+// has to: at its ~480 km view width a 6.4 km peak is 2.7 % of the frame —
+// about 43 pixels — and reads as a gentle bulge no matter how well the
+// terrain is eroded, because that is what a mountain looks like from 480 km
+// up. 6x puts it near 130 px, which is the difference between "there is a
+// rise here" and "there is a mountain range here". Relief and panorama maps
+// routinely use 4-10x for exactly this reason.
+//
+// Near the ground the same factor would be grotesque (that peak would stand
+// 38 km tall), and the world is supposed to be metre-true there — see the
+// 1:1 decision in docs/design/hex-world-view.md. So the two registers get
+// their own values and the descent interpolates between them: the
+// exaggeration fades out exactly where the map becomes a world.
+export const MAP_EXAGGERATION = 6
+export const NEAR_EXAGGERATION = 1
+
+// The generator's own relief preview is a map register throughout (it never
+// descends), but a gentler one — it is a working view over a world being
+// tuned, not a presentation of a finished one.
+export const WORLDGEN_EXAGGERATION = 3
 
 // Decimation of the full-res elevation raster into the canonical coarse
 // preview surface — one coarse-relief-mesh vertex per decimated cell, so

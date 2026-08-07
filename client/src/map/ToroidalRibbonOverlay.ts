@@ -56,6 +56,11 @@ export interface ToroidalRibbonOverlay {
   // sawteeth once offsets exceed segment lengths). The caller narrows the
   // profile in step with its zoom/LOD levels. Rebuilds on actual change.
   setWidthProfile(factor: number, maxWidthPx: number): void
+  // Vertical exaggeration, matching whatever the terrain the ribbons are
+  // draped on uses (see ToroidalMapView.setHeightScale) — without it the
+  // rivers would stay at true height while the ground rose around them, and
+  // vanish inside it.
+  setHeightScale(scale: number): void
   // Called every frame with the map's recenter block center (hook into
   // ToroidalMapView's onRecenter) so the ribbons tile + wrap in lockstep.
   recenter(centerX: number, centerZ: number): void
@@ -107,6 +112,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
   // without the caller having to re-supply the polylines.
   let lastPoints: Float32Array | null = null
   let lastLengths: Uint32Array | null = null
+  let heightScale = 1
 
   function disposeMeshes(): void {
     for (const inst of instances) inst.dispose()
@@ -219,6 +225,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
     if (positions.length === 0) return
 
     base = new Mesh('riverRibbon', scene)
+    base.scaling.y = heightScale
     const data = new VertexData()
     data.positions = Float32Array.from(positions)
     data.indices = Uint32Array.from(indices)
@@ -230,6 +237,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
         if (dx === 0 && dz === 0) continue
         const inst = base.createInstance(`riverRibbon_${dx}_${dz}`)
         inst.isPickable = false
+        inst.scaling.y = heightScale
         instances.push(inst)
       }
     }
@@ -256,6 +264,12 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
       if (surface === heightSurface) return
       heightSurface = surface
       if (lastPoints && lastLengths) setPolylines(lastPoints, lastLengths)
+    },
+    setHeightScale(scale: number): void {
+      if (scale === heightScale) return
+      heightScale = scale
+      if (base) base.scaling.y = scale
+      for (const inst of instances) inst.scaling.y = scale
     },
     setWidthProfile(factor: number, nextMaxWidthPx: number): void {
       if (factor === widthFactor && nextMaxWidthPx === maxWidthPx) return

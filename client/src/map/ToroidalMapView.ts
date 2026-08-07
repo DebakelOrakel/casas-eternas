@@ -80,6 +80,11 @@ export interface ToroidalMapView {
   // an immediate rebuild — for a screen whose height data is replaced under
   // it, e.g. when the worldmap's amplification bake finishes.
   setNearDetailSurfaces(detail: ElevationSurface, base: ElevationSurface): void
+  // Vertical exaggeration, applied as a scale on the relief meshes rather
+  // than baked into their heights — so a screen can change it per frame
+  // (the worldmap fades it out during the descent) without recomputing any
+  // geometry. The surfaces themselves stay metre-true.
+  setHeightScale(scale: number): void
   // Hide/show the whole map view (all layers).
   setEnabled(enabled: boolean): void
   dispose(): void
@@ -275,6 +280,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     if (detail === 'fine' && fineSurface && !fineLevel) {
       fineLevel = buildLevel('mapReliefFine', FINE_SUBDIVISIONS_X, FINE_SUBDIVISIONS_Y)
       displaceLevel(fineLevel, fineSurface)
+      applyHeightScale()
     }
     setLevelShown('flat', tile, wrapInstances, enabled && detail === 'flat')
     setLevelShown('coarse', coarseLevel?.base ?? null, coarseLevel?.instances ?? [], enabled && detail === 'coarse')
@@ -300,6 +306,18 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   // can be replaced later (setNearDetailSurfaces).
   let patchDetailSurface: ElevationSurface | null = nearDetail?.detailSurface ?? null
   let patchBaseSurface: ElevationSurface | null = nearDetail?.baseSurface ?? null
+  // Vertical exaggeration (see setHeightScale). A scale rather than baked
+  // heights, so it can follow the zoom; re-applied whenever a mesh is built.
+  let heightScale = 1
+
+  function applyHeightScale(): void {
+    for (const level of [coarseLevel, fineLevel]) {
+      if (!level) continue
+      level.base.scaling.y = heightScale
+      for (const inst of level.instances) inst.scaling.y = heightScale
+    }
+    if (patchMesh) patchMesh.scaling.y = heightScale
+  }
 
   // The ground meshes' own uv↔world mapping (derived from vertex data, same
   // trick as displaceLevel) so the patch samples and textures in exactly
@@ -407,6 +425,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     if (!patchMesh) {
       patchMesh = MeshBuilder.CreateGround('mapNearDetail', { width: 1, height: 1, subdivisions: PATCH_SUBDIVISIONS, updatable: true }, scene)
       patchMesh.material = reliefMaterial
+      patchMesh.scaling.y = heightScale
       sun.includedOnlyMeshes.push(patchMesh)
       fill.includedOnlyMeshes.push(patchMesh)
       patchLastSpacing = 0
@@ -491,6 +510,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       }
       if (!coarseLevel) coarseLevel = buildLevel('mapRelief', COARSE_SUBDIVISIONS_X, COARSE_SUBDIVISIONS_Y)
       displaceLevel(coarseLevel, coarse)
+      applyHeightScale()
       // The fine level re-displaces in place if it's already built; otherwise
       // it stays unbuilt until applyVisibility first wants it.
       if (fineLevel) {
@@ -507,6 +527,11 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       patchDetailSurface = detail
       patchBaseSurface = base
       patchLastSpacing = 0 // force a rebuild on the next frame
+    },
+    setHeightScale(scale: number): void {
+      if (scale === heightScale) return
+      heightScale = scale
+      applyHeightScale()
     },
     setEnabled(next: boolean): void {
       enabled = next

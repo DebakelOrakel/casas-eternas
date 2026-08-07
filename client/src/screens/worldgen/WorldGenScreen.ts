@@ -4,7 +4,7 @@ import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
-import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
+import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, WORLDGEN_EXAGGERATION } from '../../map/mapSceneSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../worldgen/core/mapConfig'
 
@@ -2378,6 +2378,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       reliefCoarseSurface = createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE)
       reliefFineSurface = createElevationSurface(full, message.width, message.height, RELIEF_HEIGHT_SCALE)
       mapView.setReliefSurfaces(reliefCoarseSurface, reliefFineSurface)
+      // The surfaces are metre-true now; exaggeration is a view property
+      // (see mapSceneSettings). This screen is a map register throughout.
+      mapView.setHeightScale(WORLDGEN_EXAGGERATION)
       riverLayer?.setHeightSurface(ribbonLevel === 'fine' ? reliefFineSurface : reliefCoarseSurface)
       return
     }

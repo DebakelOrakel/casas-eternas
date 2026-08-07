@@ -13,7 +13,7 @@ import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/pape
 import { applyBiomeWash, dilateLandBiomes, expandBiomeIds } from '../../ui/mapOverlay/biomePaper'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
 import { createFineElevationSurface } from '../../map/fineElevationSurface'
-import { AMPLIFY_EROSION_ROUNDS, AMPLIFY_STAGES, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
+import { AMPLIFY_EROSION_ROUNDS, AMPLIFY_STAGES, MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
 import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '../../worldgen/amplificationWorker'
 import { decodeLayer } from '../../worldgen/worldSave/worldLayers'
 import type { Dtype } from '../../worldgen/worldSave/worldLayers'
@@ -60,10 +60,6 @@ interface ClimateInput {
   resY: number
 }
 
-// River ribbon widths per relief level — the same reasoning as the
-// generator's: the stored per-point widths are cartographic, and at relief
-// zoom a literal reading turns a line into a flood while the D8 staircase's
-// mitered joints degenerate into sawteeth.
 // How much of the biome palette reaches the paper. Same two knobs, and the
 // same reasoning, as the generator's terrain wash: pull the colours toward
 // their own luminance and let them through only partly, so the paper's white
@@ -72,6 +68,10 @@ interface ClimateInput {
 const BIOME_DESATURATE = 0.45
 const BIOME_ALPHA = 0.55
 
+// River ribbon widths per relief level — the same reasoning as the
+// generator's: the stored per-point widths are cartographic, and at relief
+// zoom a literal reading turns a line into a flood while the D8 staircase's
+// mitered joints degenerate into sawteeth.
 const RIBBON_WIDTH_PROFILES = {
   flat: { factor: 1, maxWidthPx: Number.POSITIVE_INFINITY },
   coarse: { factor: 0.5, maxWidthPx: 4 },
@@ -183,6 +183,13 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       scene.fogStart = camera.maxZ * 0.3
       scene.fogEnd = camera.maxZ * 0.85
     }
+    // Vertical exaggeration follows the register: strong on the map, where
+    // a mountain is otherwise a few dozen pixels tall, fading to metre-true
+    // as the descent turns the map into a world.
+    const exaggeration = MAP_EXAGGERATION + (NEAR_EXAGGERATION - MAP_EXAGGERATION) * blend
+    mapView?.setHeightScale(exaggeration)
+    riverLayer?.setHeightScale(exaggeration)
+
     const altitudeText = nearActive ? formatAltitude(getCameraAltitude() / UNITS_PER_METER) : ''
     if (altitudeText !== lastAltitudeText) {
       lastAltitudeText = altitudeText
@@ -571,7 +578,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverLayer.setHeightSurface(level === 'flat' ? null : level === 'fine' && reliefFineSurface ? reliefFineSurface : reliefCoarseSurface)
   }
 
-  // --- Amplification bake (docs/decisions/worldmap-amplification.md) ---
+    // --- Amplification bake (docs/decisions/worldmap-amplification.md) ---
   // Runs in its own worker after the macro map is already on screen, then
   // swaps the geometry. Deliberately fire-and-forget from the load path: a
   // failed or slow bake leaves a perfectly usable macro world behind.

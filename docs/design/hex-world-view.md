@@ -223,11 +223,19 @@ The genuine gaps — what the doc above does *not* yet pin down:
    loads the whole map; the "cutout" is simply wherever the camera
    flies. No picker logic.
 5. **Vertical scale — decided (2026-08-07): 1:1, metre-true** for the
-   World screen's near-ground view. Amended same day after eyeballing:
-   the *worldgen relief preview* runs a mild 2× exaggeration
-   (`RELIEF_EXAGGERATION`) — at its 500–1500 km view widths metre-true
-   relief is a few pixels tall and doesn't register. A map register may
-   exaggerate; the game world does not.
+   World screen's near-ground view; a *map* register may exaggerate.
+   Revised twice the same day as it was actually looked at. First a flat
+   2× everywhere, then — once mountains still read as bulges — the
+   realisation that the constant was the wrong shape: at the map's
+   ~480 km view width a 6.4 km peak covers 2.7 % of the frame (~43 px)
+   whatever the terrain does, because that is how a mountain looks from
+   480 km up. So exaggeration became a property of the VIEW rather than
+   of the heights: surfaces are metre-true and the meshes carry a
+   vertical scale that follows the register — `MAP_EXAGGERATION` 6 on the
+   map, interpolating to `NEAR_EXAGGERATION` 1 through the descent, so
+   the exaggeration fades out exactly where the map becomes a world. The
+   generator's own preview sits at 3 (a working view, not a
+   presentation).
 
 ### Relief preview inside the worldgen screen?
 
