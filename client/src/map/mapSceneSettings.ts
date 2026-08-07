@@ -69,6 +69,17 @@ export const HEX_ROW_SPACING = MAP_WORLD_HEIGHT / HEX_ROWS
 // time before the target resolution is switched on in phase 4.
 export const AMPLIFY_FACTOR = 2
 
+// Erosion rounds the bake runs on the amplified field — the decision doc's
+// open "pass budget", now measured (2026-08-07, synthetic world, mean local
+// relief on land above 1 km): seeded 162 m → 197 m after ONE round, 202 /
+// 204 / 206 m after 2 / 3 / 5. The first round delivers ~80 % of the gain;
+// everything after is diminishing returns at a linear ~50 s per round at
+// 4096². Two rounds keeps the valley-widening the second round exists for
+// (thermal acting on banks the first round steepened) without paying for
+// the flat part of the curve. The goal is visible tributary structure, not
+// equilibrium.
+export const AMPLIFY_EROSION_ROUNDS = 2
+
 // Altitude band (world units) over which the grid fades in during the near
 // descent: invisible above ~40 km (hexes would be subpixel moiré), fully
 // drawn below ~16 km (a hex is ≥ ~10 px there).

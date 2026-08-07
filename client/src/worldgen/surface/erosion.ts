@@ -672,6 +672,23 @@ export const DEFAULT_EROSION_PASS_PARAMS: ErosionPassParams = {
   plainFactor: EROSION_PLAIN_FACTOR,
 }
 
+// What the erosion panel's two sliders MEAN, in one place: `strength` scales
+// the stream-power time step (more incision per step, same operation count —
+// free), `networkRefreshes` sets how often the drainage network is re-derived
+// within a round. Both travel in a save (`spec.erosion.erosionStrength` /
+// `drainageRefresh`), so both the generator's own erode request and the
+// worldmap's amplification bake have to apply them the same way — hence a
+// shared function rather than the mapping living in whichever worker
+// happened to need it first.
+export function erosionParamsWithControls(base: ErosionPassParams, controls: { strength?: number; networkRefreshes?: number }): ErosionPassParams {
+  const strength = controls.strength && controls.strength > 0 ? controls.strength : 1
+  return {
+    ...base,
+    streamPower: { ...base.streamPower, timeStep: base.streamPower.timeStep * strength },
+    networkRefreshes: controls.networkRefreshes && controls.networkRefreshes > 0 ? Math.floor(controls.networkRefreshes) : base.networkRefreshes,
+  }
+}
+
 // The one function callers actually need — chains flow-routing through
 // accumulation and the stream-power + thermal loops, repeated for
 // params.rounds (see ErosionPassParams' own comment for why a single

@@ -4,7 +4,7 @@ import { renderSimulationImage } from './render/elevationMapImage'
 import type { RenderSimulationOptions } from './render/elevationMapImage'
 import type { ContinentLabelPlacement } from './render/continentLabelRenderer'
 import { ElevationRenderPool } from './render/elevationRenderPool'
-import { DEFAULT_EROSION_PASS_PARAMS, runErosionPass } from './surface/erosion'
+import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass } from './surface/erosion'
 import type { ArcheanSimulation } from './archean/archeanState'
 import { createArcheanSimulation } from './archean/archeanState'
 import type { ArcheanSnapshot } from './archean/archeanSnapshot'
@@ -797,17 +797,9 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
   // onProgress call (~500+ for the default params) — that's plenty of
   // granularity for a UI percentage readout without flooding postMessage.
   let lastReportedPercent = -1
-  const base = DEFAULT_EROSION_PASS_PARAMS
-  const strength = opts.strength && opts.strength > 0 ? opts.strength : 1
-  const params: ErosionPassParams = {
-    ...base,
-    streamPower: {
-      ...base.streamPower,
-      // Strength scales the time step — more incision per step, same op count (free).
-      timeStep: base.streamPower.timeStep * strength,
-    },
-    networkRefreshes: opts.networkRefreshes && opts.networkRefreshes > 0 ? Math.floor(opts.networkRefreshes) : base.networkRefreshes,
-  }
+  // The slider→params mapping lives in erosion.ts so the worldmap's
+  // amplification bake applies the same world's settings identically.
+  const params: ErosionPassParams = erosionParamsWithControls(DEFAULT_EROSION_PASS_PARAMS, opts)
   const erosionResult = await runErosionPass(
     rawElevations,
     width,

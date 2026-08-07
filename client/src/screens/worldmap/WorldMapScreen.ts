@@ -10,7 +10,7 @@ import { computeReliefBytes } from '../../worldgen/render/reliefShade'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/paperBase'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
 import { createFineElevationSurface } from '../../map/fineElevationSurface'
-import { AMPLIFY_FACTOR, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
+import { AMPLIFY_EROSION_ROUNDS, AMPLIFY_FACTOR, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
 import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '../../worldgen/amplificationWorker'
 import { decodeLayer } from '../../worldgen/worldSave/worldLayers'
 import type { Dtype } from '../../worldgen/worldSave/worldLayers'
@@ -41,6 +41,13 @@ interface ManifestLayer {
   dtype?: Dtype
   encoding?: { scale: number; offset: number }
 }
+// The world's own erosion slider settings, read back out of its recipe —
+// undefined where a save doesn't record them (then the bake uses defaults).
+interface ErosionControls {
+  strength?: number
+  refresh?: number
+}
+
 interface WorldManifest {
   formatVersion: number
   world: { width: number; height: number; topology: string }
@@ -263,7 +270,17 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       let detailSeed = 5381
       for (let i = 0; i < seedText.length; i++) detailSeed = ((detailSeed * 33) ^ seedText.charCodeAt(i)) >>> 0
 
-      presentWorld(elevations, width, height, biome, detailSeed)
+      // This world's own erosion settings, so the bake erodes the way the
+      // world was eroded rather than by generic defaults (the generator
+      // restores the same two values into its sliders on load).
+      const readNumber = (key: string): number | undefined => {
+        const raw = yamlText?.match(new RegExp(`^\\s*${key}:\\s*([-\\d.]+)\\s*$`, 'm'))?.[1]
+        const value = raw === undefined ? NaN : Number(raw)
+        return Number.isFinite(value) ? value : undefined
+      }
+      const erosionControls = { strength: readNumber('erosionStrength'), refresh: readNumber('drainageRefresh') }
+
+      presentWorld(elevations, width, height, biome, detailSeed, erosionControls)
     } catch {
       notifyLoadFailed()
     }
@@ -289,7 +306,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     mapView.setNearDetailSurfaces(detailSurface, fineSurface)
   }
 
-  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number): void {
+  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number, erosionControls: ErosionControls): void {
     hoverTooltip?.dispose()
     mapView?.dispose()
     // Seed surfaces for construction; applyHeightField replaces them right
@@ -378,14 +395,14 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       },
     })
 
-    startAmplification(elevations, width, height, detailSeed)
+    startAmplification(elevations, width, height, detailSeed, erosionControls)
   }
 
   // --- Amplification bake (docs/decisions/worldmap-amplification.md) ---
   // Runs in its own worker after the macro map is already on screen, then
   // swaps the geometry. Deliberately fire-and-forget from the load path: a
   // failed or slow bake leaves a perfectly usable macro world behind.
-  function startAmplification(macro: Float32Array, macroWidth: number, macroHeight: number, detailSeed: number): void {
+  function startAmplification(macro: Float32Array, macroWidth: number, macroHeight: number, detailSeed: number, erosionControls: ErosionControls): void {
     amplifyWorker?.terminate() // a new world supersedes any bake in flight
     if (AMPLIFY_FACTOR <= 1) return
     const worker = new Worker(new URL('../../worldgen/amplificationWorker.ts', import.meta.url), { type: 'module' })
@@ -393,7 +410,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     worker.onmessage = (event: MessageEvent<AmplificationOutboundMessage>) => {
       const message = event.data
       if (message.type === 'amplifyProgress') {
-        setBakeText(`${macroWidth * AMPLIFY_FACTOR}px ${Math.round(message.fraction * 100)}%`)
+        setBakeText(`${message.stage} ${Math.round(message.fraction * 100)}%`)
         return
       }
       const amplified = new Float32Array(message.elevation)
@@ -414,6 +431,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       macroHeight,
       factor: AMPLIFY_FACTOR,
       seed: detailSeed,
+      erosionRounds: AMPLIFY_EROSION_ROUNDS,
+      erosionStrength: erosionControls.strength,
+      drainageRefresh: erosionControls.refresh,
     }
     setBakeText('…')
     worker.postMessage(request, [request.elevation])

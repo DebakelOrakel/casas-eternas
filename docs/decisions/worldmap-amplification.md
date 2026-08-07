@@ -1,7 +1,7 @@
 ---
 summary: The worldmap gets its fine terrain from a one-time, deterministic AMPLIFICATION BAKE at load — upsample the 2048 macro raster to 8192×4096, inject seed roughness, run a few real erosion passes, then RE-RUN hydrology on the amplified field. The 2048 sim raster stays the sole authority and the only thing saved; the 8k layer is derived presentation, recomputed per load, never serialized. Below ~1 km, detail remains synthesis/regional forever.
 date: 2026-08-07
-status: decided (direction + authority rules + target resolution) — not yet built; pass budget, caching and staging are implementation questions
+status: decided; phases 1–2 built 2026-08-07 (upsample + seed roughness + rescaled erosion, at factor 2) — hydrology re-run, the 8192 target, caching and staging still open
 ---
 
 # Worldmap terrain amplification (the 8k bake)
@@ -29,13 +29,20 @@ has to lead somewhere.
    the whole point. Climate/biomes stay at their coarse resolution and
    are merely sampled onto the fine grid as inputs (they are regional
    quantities; precipitation feeds the discharge as before).
-3. **The 2048 raster remains the sole authority and the only persisted
+3. **The bake erodes with the WORLD'S OWN erosion settings.** A save
+   records `spec.erosion.erosionStrength` / `drainageRefresh` (the
+   generator restores them into its sliders on load); the bake reads the
+   same two values, so a world tuned for gentle incision does not come
+   back from amplification carved like an aggressive one. The
+   slider→params mapping lives in `erosion.erosionParamsWithControls` so
+   both the generator's erode request and the bake apply it identically.
+4. **The 2048 raster remains the sole authority and the only persisted
    form.** The amplified field is a derived presentation layer: never
    written into the save, never fed back into the generator, allowed to
    *refine* the macro shapes but never to contradict them. If game rules
    ever need official fine heights, the server reproduces the same
    deterministic pipeline — that is a known, accepted consequence.
-4. **The ladder below ~1 km stays non-global.** 300 m hex-scale truth
+5. **The ladder below ~1 km stays non-global.** 300 m hex-scale truth
    globally would be a 53k×27k grid — permanently out of reach. The
    agreed staging around this bake:
    hydrology-aware synthesis (shape the fine sampler with the save's own
@@ -67,8 +74,12 @@ priority-flood + routing pass for hydrology on top. That is the price of
 "8k is a must" (user, 2026-08-07). Implementation questions left open,
 deliberately:
 
-- **Pass budget** — how few passes still carve convincing tributaries
-  (the goal is visible structure, not equilibrium).
+- ~~**Pass budget**~~ — **answered 2026-08-07 by measurement**: mean local
+  relief (land above 1 km) goes seeded 162 m → 197 m after one round, then
+  202 / 204 / 206 m after 2 / 3 / 5, at a linear ~50 s per round at 4096².
+  The first round carries ~80 % of the gain; **two rounds** ship
+  (`AMPLIFY_EROSION_ROUNDS`), keeping the valley-widening the second round
+  exists for without paying for the flat part of the curve.
 - **Staging** — possibly bake 4096 first (~4× cheaper, interactive in
   ~a minute) and refine to 8192 in the background, swapping surfaces
   when ready.
@@ -76,9 +87,17 @@ deliberately:
   correctness risk); an IndexedDB cache keyed by a world hash is the
   obvious amortization if the wait annoys. The zip stays untouched
   (30–70 MB of baked layers in every save is not worth it).
-- **Constant rescaling** — erosion constants are argued per 7.8 km cell
-  (talus, stream-power, plain thresholds); they must be rescaled for
-  1.95 km cells. `tileErosion` has the precedent.
+- ~~**Constant rescaling**~~ — **derived and verified 2026-08-07**
+  (`amplify.erosionParamsForCellSize`): with refinement 1/r, a
+  neighbour slope scales by r and a cell-counted drainage area by 1/r², so
+  **talusSlope** must be multiplied by r (it is a real angle converted
+  through the cell size — leaving it would plane the mountains) and
+  **transportCapacityKt** by r (capacity Kt·A·S grows as 1/r otherwise);
+  **stream-power incision is scale-invariant** at m = 0.5, n = 1 because
+  Aᵐ ∝ 1/r cancels Sⁿ ∝ r — which also means this stops holding if those
+  exponents are ever retuned. Checked against measurement: eroded local
+  relief 309 / 342 / 355 m at three cell sizes of the same world (a wrong
+  rescaling shows up as factors, not percent).
 - **Ocean cells** — most of the 33M cells buy nothing; masking or
   coarsening ocean is the first optimization if the budget hurts.
 

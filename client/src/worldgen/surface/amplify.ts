@@ -1,6 +1,7 @@
 import { upscaleBilinearToroidal } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { fineDetailNoise } from '../elevation/ridgedNoise'
+import type { ErosionPassParams } from './erosion'
 
 // Terrain AMPLIFICATION — the derived fine tier of
 // docs/decisions/worldmap-amplification.md. Takes the authoritative macro
@@ -74,6 +75,46 @@ export function seedCascadeScales(resX: number): number[] {
     scales.push(s)
   }
   return scales.length > 0 ? scales : [1]
+}
+
+// Erosion constants are argued per 7.8 km cell (see erosion.ts) and several
+// of them are expressed in units that hide a cell size, so running the same
+// params on a finer grid would quietly change the physics. This is the
+// rescaling, derived rather than guessed — `cellSizeRatio` is
+// fineCellMetres / macroCellMetres (1/2 at factor 2, 1/4 at factor 4).
+//
+// Under refinement by 1/r, for the SAME physical terrain:
+//   • a slope between neighbours (elevation units per cell) scales by r —
+//     the same gradient over a shorter run is a smaller rise;
+//   • a drainage area counted in CELLS scales by 1/r².
+//
+// Term by term:
+//
+//   • talusSlope — a real ANGLE converted through the cell size
+//     (slopeFromAngle multiplies by METERS_PER_CELL). Multiplying by r
+//     re-converts the same physical angle for the finer cell, so the step
+//     keeps targeting the same real-world steepness. Worth stating because
+//     it is NOT a free choice: leaving it alone would declare everything
+//     above a quarter of the old angle unstable and plane the mountains
+//     flat — the exact failure erosion.ts's own talus comment documents.
+//
+//   • stream power dh = K·Aᵐ·Sⁿ with m = 0.5, n = 1 is SCALE-INVARIANT here:
+//     Aᵐ scales by (1/r²)^0.5 = 1/r and Sⁿ by r, so the product is
+//     unchanged. Nothing to do — but only because of those exponents; if
+//     m or n is ever retuned this stops holding.
+//
+//   • transportCapacityKt — capacity Kt·A·S scales by (1/r²)·r = 1/r, so
+//     deposition would grow as the grid refines (deltas swallowing coasts).
+//     Multiplying Kt by r cancels it.
+//
+//   • iterations / rounds / upliftRate / plainFactor and the metre-denominated
+//     thresholds are counts or physical heights — scale-free by construction.
+export function erosionParamsForCellSize(base: ErosionPassParams, cellSizeRatio: number): ErosionPassParams {
+  return {
+    ...base,
+    thermal: { ...base.thermal, talusSlope: base.thermal.talusSlope * cellSizeRatio },
+    streamPower: { ...base.streamPower, transportCapacityKt: base.streamPower.transportCapacityKt * cellSizeRatio },
+  }
 }
 
 export interface AmplifiedField {
