@@ -8,10 +8,11 @@ import type { ToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
 import { computeReliefBytes } from '../../worldgen/render/reliefShade'
+import { upscaleBilinearToroidal } from '../../worldgen/core/field'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/paperBase'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
 import { createFineElevationSurface } from '../../map/fineElevationSurface'
-import { AMPLIFY_EROSION_ROUNDS, AMPLIFY_FACTOR, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
+import { AMPLIFY_EROSION_ROUNDS, AMPLIFY_STAGES, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
 import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '../../worldgen/amplificationWorker'
 import { decodeLayer } from '../../worldgen/worldSave/worldLayers'
 import type { Dtype } from '../../worldgen/worldSave/worldLayers'
@@ -189,6 +190,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // amplification bake returns a finer one (see startAmplification).
   let heightField: { data: Float32Array; width: number; height: number } | null = null
   let amplifyWorker: Worker | null = null
+  // Bumped on every load so a stage chain from a superseded world can't
+  // swap its result in after the user has opened a different one.
+  let bakeGeneration = 0
   // Scene-space river ribbons + the relief surfaces they drape on (set when
   // the bake's height field arrives), and which relief level they are
   // currently styled for.
@@ -331,6 +335,25 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // Re-derive the paper from whatever height raster is current, at the
+  // session's fixed texture resolution: a coarser field is upscaled, a finer
+  // one BOX-DOWNSAMPLED (averaging heights, so the hillshade doesn't sparkle
+  // the way point-sampling would). Called at load and again after every bake
+  // stage, so the map's texture sharpens in step with its geometry.
+  function applyPaper(field: Float32Array, fieldWidth: number, fieldHeight: number): void {
+    if (!mapView) return
+    let paperField = field
+    if (fieldWidth > PAPER_TEXTURE_WIDTH && fieldWidth % PAPER_TEXTURE_WIDTH === 0) {
+      const reduced = downsampleElevation(field, fieldWidth, fieldHeight, fieldWidth / PAPER_TEXTURE_WIDTH)
+      paperField = reduced.data
+    } else if (fieldWidth !== PAPER_TEXTURE_WIDTH) {
+      paperField = upscaleBilinearToroidal(field, fieldWidth, fieldHeight, PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT)
+    }
+    const relief = computeReliefBytes(paperField, PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT)
+    mapView.texture.update(new Uint8Array(buildPaperBase(relief).buffer))
+    mapView.reliefTexture.update(new Uint8Array(buildUnshadedPaperBase(relief).buffer))
+  }
+
   // Build the three surfaces from a height raster and hand them to the map
   // view. Called for the macro raster at load, then again when the
   // amplification bake returns a finer one — the bake swaps the world's
@@ -367,8 +390,8 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       scene,
       worldWidth: WORLD_WIDTH,
       worldHeight: WORLD_HEIGHT,
-      textureWidth: width,
-      textureHeight: height,
+      textureWidth: PAPER_TEXTURE_WIDTH,
+      textureHeight: PAPER_TEXTURE_HEIGHT,
       getFocus: getCameraFocus,
       getYaw: getCameraYaw,
       getSunWorldBlend: getCameraNearBlend,
@@ -412,14 +435,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // The paper look, derived from the elevation raster with the same
     // shade + palette the generator uses (reliefShade + paperBase) — not
     // from preview.png, which carries whatever overlays were on at save
-    // time.
-    const relief = computeReliefBytes(elevations, width, height)
-    const paper = buildPaperBase(relief)
-    mapView.texture.update(new Uint8Array(paper.buffer))
-
-    // The unshaded paper for the LIT relief meshes — no compositor here,
-    // there are no overlays to stack yet.
-    mapView.reliefTexture.update(new Uint8Array(buildUnshadedPaperBase(relief).buffer))
+    // time. The unshaded variant is for the LIT relief meshes (no
+    // compositor here — there are no overlays to stack yet).
+    applyPaper(elevations, width, height)
     applyHeightField(elevations, width, height, detailSeed)
     // A loaded world is finished by definition — no erosion gate; deep zoom
     // and the tilt/yaw envelope unlock with the first successful load.
@@ -457,7 +475,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // space — that is what extractRiverPolylines emitted, and the overlay's
   // texel→world mapping must agree with it or every river lands at half
   // scale in the wrong place.
-  function applyRivers(points: Float32Array, lengths: Uint32Array, fieldWidth: number, fieldHeight: number): void {
+  function applyRivers(points: Float32Array, lengths: Uint32Array, fieldWidth: number, fieldHeight: number, factor: number): void {
     riverLayer?.dispose()
     riverLayer = null
     if (lengths.length === 0) return
@@ -471,7 +489,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // grid the same river would draw physically thinner. Scaling by the
       // amplification factor keeps a river the size its discharge earns,
       // independent of what resolution it was extracted at.
-      widthScale: 1.5 * AMPLIFY_FACTOR,
+      widthScale: 1.5 * factor,
       // The amplified grid packs several times as many D8 direction changes
       // (and discharge wiggles) into the same world distance, which the
       // interpolating spline would faithfully render as a wobble — average
@@ -483,7 +501,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // the staircase, which is where the river actually runs. Scaled with
       // the refinement because a finer grid spreads the same zigzag over
       // more points, making it lower-frequency.
-      smoothingPasses: 2 * AMPLIFY_FACTOR,
+      smoothingPasses: 2 * factor,
     })
     riverLayer.setPolylines(points, lengths)
     ribbonLevel = 'flat'
@@ -509,44 +527,72 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // failed or slow bake leaves a perfectly usable macro world behind.
   function startAmplification(macro: Float32Array, macroWidth: number, macroHeight: number, detailSeed: number, erosionControls: ErosionControls, climate: ClimateInput | null): void {
     amplifyWorker?.terminate() // a new world supersedes any bake in flight
-    if (AMPLIFY_FACTOR <= 1) return
-    const worker = new Worker(new URL('../../worldgen/amplificationWorker.ts', import.meta.url), { type: 'module' })
-    amplifyWorker = worker
-    worker.onmessage = (event: MessageEvent<AmplificationOutboundMessage>) => {
-      const message = event.data
-      if (message.type === 'amplifyProgress') {
-        setBakeText(`${message.stage} ${Math.round(message.fraction * 100)}%`)
-        return
+    const stages = AMPLIFY_STAGES.filter((factor) => factor > 1)
+    if (stages.length === 0) return
+    const generation = ++bakeGeneration
+
+    // Stages run one after another, coarse first, each swapped in when it
+    // lands — so the map is amplified early and sharpens later. Each stage
+    // bakes from the MACRO raster (not from the previous stage's output):
+    // re-amplifying an already-amplified field would compound its invented
+    // detail, and the decision doc's rule is that every derived tier comes
+    // from the authoritative one.
+    const runStage = (index: number): void => {
+      if (index >= stages.length || generation !== bakeGeneration) return
+      const factor = stages[index]
+      const label = `${macroWidth * factor}px`
+      const worker = new Worker(new URL('../../worldgen/amplificationWorker.ts', import.meta.url), { type: 'module' })
+      amplifyWorker = worker
+      const finish = (): void => {
+        worker.terminate()
+        if (amplifyWorker === worker) amplifyWorker = null
       }
-      const amplified = new Float32Array(message.elevation)
-      heightField = { data: amplified, width: message.width, height: message.height }
-      applyHeightField(amplified, message.width, message.height, detailSeed)
-      applyRivers(new Float32Array(message.riverPoints), new Uint32Array(message.riverLengths), message.width, message.height)
-      hoverTooltip?.refresh()
-      setBakeText(`${message.width}×${message.height} · ${(message.durationMs / 1000).toFixed(1)}s`)
-      worker.terminate()
-      if (amplifyWorker === worker) amplifyWorker = null
+      worker.onmessage = (event: MessageEvent<AmplificationOutboundMessage>) => {
+        if (generation !== bakeGeneration) return
+        const message = event.data
+        if (message.type === 'amplifyProgress') {
+          setBakeText(`${label} ${message.stage} ${Math.round(message.fraction * 100)}%`)
+          return
+        }
+        const amplified = new Float32Array(message.elevation)
+        heightField = { data: amplified, width: message.width, height: message.height }
+        applyPaper(amplified, message.width, message.height)
+        applyHeightField(amplified, message.width, message.height, detailSeed)
+        applyRivers(new Float32Array(message.riverPoints), new Uint32Array(message.riverLengths), message.width, message.height, factor)
+        hoverTooltip?.refresh()
+        setBakeText(`${message.width}×${message.height} · ${(message.durationMs / 1000).toFixed(0)}s`)
+        finish()
+        runStage(index + 1)
+      }
+      // A stage that dies (the deepest tier needs ~3 GB — a browser may
+      // simply refuse) must not take the screen with it: the last good
+      // result stays up and the readout says where it stopped.
+      worker.onerror = () => {
+        if (generation !== bakeGeneration) return
+        setBakeText(`${label} failed`)
+        finish() // deliberately no next stage — a deeper one would fail harder
+      }
+      // A copy: the macro raster stays live here (later stages re-read it),
+      // so only the copy is transferred.
+      const request: AmplificationInboundMessage = {
+        type: 'amplify',
+        elevation: macro.slice().buffer as ArrayBuffer,
+        macroWidth,
+        macroHeight,
+        factor,
+        seed: detailSeed,
+        erosionRounds: AMPLIFY_EROSION_ROUNDS,
+        erosionStrength: erosionControls.strength,
+        drainageRefresh: erosionControls.refresh,
+        riverDensity: erosionControls.riverDensity,
+        precipitation: climate ? (climate.precipitation.slice().buffer as ArrayBuffer) : undefined,
+        climateResX: climate?.resX,
+        climateResY: climate?.resY,
+      }
+      setBakeText(`${label} …`)
+      worker.postMessage(request, [request.elevation])
     }
-    // A copy: the macro raster stays live here (the readout and a future
-    // re-bake read it), so only the copy is transferred.
-    const copy = macro.slice()
-    const request: AmplificationInboundMessage = {
-      type: 'amplify',
-      elevation: copy.buffer as ArrayBuffer,
-      macroWidth,
-      macroHeight,
-      factor: AMPLIFY_FACTOR,
-      seed: detailSeed,
-      erosionRounds: AMPLIFY_EROSION_ROUNDS,
-      erosionStrength: erosionControls.strength,
-      drainageRefresh: erosionControls.refresh,
-      riverDensity: erosionControls.riverDensity,
-      precipitation: climate ? (climate.precipitation.slice().buffer as ArrayBuffer) : undefined,
-      climateResX: climate?.resX,
-      climateResY: climate?.resY,
-    }
-    setBakeText('…')
-    worker.postMessage(request, [request.elevation])
+    runStage(0)
   }
 
   return {

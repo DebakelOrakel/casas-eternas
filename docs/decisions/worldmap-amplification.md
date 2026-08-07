@@ -1,7 +1,7 @@
 ---
 summary: The worldmap gets its fine terrain from a one-time, deterministic AMPLIFICATION BAKE at load — upsample the 2048 macro raster to 8192×4096, inject seed roughness, run a few real erosion passes, then RE-RUN hydrology on the amplified field. The 2048 sim raster stays the sole authority and the only thing saved; the 8k layer is derived presentation, recomputed per load, never serialized. Below ~1 km, detail remains synthesis/regional forever.
 date: 2026-08-07
-status: decided; phases 1–3 built 2026-08-07 (upsample + seed roughness + rescaled erosion + re-run hydrology with river ribbons, at factor 2) — the 8192 target, caching and staging still open
+status: decided; phases 1–4 built 2026-08-07 (upsample + seed roughness + rescaled erosion + re-run hydrology with river ribbons, staged). SHIPPING AT 4096 — the 8192 target crashed Safari (tab OOM) and waits on the memory work; caching also still open
 ---
 
 # Worldmap terrain amplification (the 8k bake)
@@ -74,12 +74,32 @@ plan below this bake's reach.
 
 ## Costs, honestly
 
-Resolution-strategy's estimate stands: ~33M cells ≈ 2.5 min per erosion
-pass (CPU) — several passes means a multi-minute one-time bake, plus
-sizeable transient memory (~1 GB across the working arrays) and a
-priority-flood + routing pass for hydrology on top. That is the price of
-"8k is a must" (user, 2026-08-07). Implementation questions left open,
-deliberately:
+Resolution-strategy's estimate stands, and the full chain has now been
+measured end to end (2 erosion rounds, synthetic world, Node/CPU):
+
+| tier | seed | erosion | hydrology | total | peak memory |
+|---|---|---|---|---|---|
+| 4096×2048 | 0.3 s | 99 s | 3 s | **~102 s** | ~0.2 GB |
+| 8192×4096 | 1.9 s | 431 s | 11 s | **~444 s** | **~3 GB** |
+
+The 8k tier is therefore real but heavy — and the browser test settled
+it: **tried in Safari (2026-08-07) the 8192 stage exhausted the tab's
+memory and the browser reloaded the page.** So three gigabytes is not a
+theoretical risk here, it is a crash.
+
+Two consequences. The bake is **staged** (4096 lands first and is
+swapped in; a deeper stage would follow), and a failed stage **degrades**
+to the last good result — but note the limit of that safety net: a stage
+that takes the whole *tab* down cannot be caught by `worker.onerror`, so
+degradation covers a dead worker, not a dead page. Shipping default is
+therefore `AMPLIFY_STAGES = [2]`; **8192 stays the target but waits on
+the memory work**, not on a flag (memory audit, then basin decomposition
+with per-basin workers — see
+[amplification-artifacts.md](../design/amplification-artifacts.md)).
+
+The measured cost also raises the value of caching considerably — a
+multi-minute recomputation per load is a different proposition from a
+one-minute one. Remaining implementation questions:
 
 - ~~**Pass budget**~~ — **answered 2026-08-07 by measurement**: mean local
   relief (land above 1 km) goes seeded 162 m → 197 m after one round, then
@@ -87,13 +107,21 @@ deliberately:
   The first round carries ~80 % of the gain; **two rounds** ship
   (`AMPLIFY_EROSION_ROUNDS`), keeping the valley-widening the second round
   exists for without paying for the flat part of the curve.
-- **Staging** — possibly bake 4096 first (~4× cheaper, interactive in
-  ~a minute) and refine to 8192 in the background, swapping surfaces
-  when ready.
+- ~~**Staging**~~ — **built 2026-08-07** (`AMPLIFY_STAGES = [2, 4]`): each
+  factor is baked in turn and swapped in when it lands, so an amplified
+  world arrives in ~100 s and sharpens later. Every stage bakes from the
+  MACRO raster, never from the previous stage's output — re-amplifying
+  invented detail would compound it, and rule 4 says derived tiers come
+  from the authoritative one. A stage that dies leaves the last good
+  result on screen (see the measured 8k cost below).
 - **Caching** — recompute per load first (determinism makes it free of
-  correctness risk); an IndexedDB cache keyed by a world hash is the
-  obvious amortization if the wait annoys. The zip stays untouched
-  (30–70 MB of baked layers in every save is not worth it).
+  correctness risk); a cache keyed by a world hash is the obvious
+  amortization, and at seven minutes per load it is a good deal more
+  attractive than it looked when this was written. The zip stays
+  untouched (30–70 MB of baked layers in every save is not worth it) —
+  but a *separate* artifact store, local or server-side, is a different
+  thing and is not excluded by that. Options and analysis:
+  [amplification-artifacts.md](../design/amplification-artifacts.md).
 - ~~**Constant rescaling**~~ — **derived and verified 2026-08-07**
   (`amplify.erosionParamsForCellSize`): with refinement 1/r, a
   neighbour slope scales by r and a cell-counted drainage area by 1/r², so
@@ -106,7 +134,10 @@ deliberately:
   relief 309 / 342 / 355 m at three cell sizes of the same world (a wrong
   rescaling shows up as factors, not percent).
 - **Ocean cells** — most of the 33M cells buy nothing; masking or
-  coarsening ocean is the first optimization if the budget hurts.
+  coarsening ocean is one of the optimizations if the budget hurts. See
+  [amplification-artifacts.md](../design/amplification-artifacts.md) for
+  the fuller set (memory audit, basin decomposition + parallel workers,
+  GPU) and what each one actually buys.
 
 ## Rejected alternatives
 

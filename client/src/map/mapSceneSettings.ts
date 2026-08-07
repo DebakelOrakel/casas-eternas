@@ -62,12 +62,36 @@ const HEX_ROWS = 2 * Math.round(WORLD_HEIGHT_M / (HEX_WIDTH_M * (Math.sqrt(3) / 
 export const HEX_COL_SPACING = MAP_WORLD_WIDTH / HEX_COLUMNS
 export const HEX_ROW_SPACING = MAP_WORLD_HEIGHT / HEX_ROWS
 
-// Linear refinement of the worldmap's amplification bake (see
-// docs/decisions/worldmap-amplification.md): 2 → 4096x2048 (~3.9 km/cell),
-// 4 → 8192x4096 (~1.95 km/cell, the decided target). Phase 1 ships at 2
-// deliberately — the plumbing is verified at a quarter of the memory and
-// time before the target resolution is switched on in phase 4.
-export const AMPLIFY_FACTOR = 2
+// The worldmap's amplification bake runs in STAGES, coarse first (see
+// docs/decisions/worldmap-amplification.md): each factor is baked in turn
+// and swapped in when it lands, so a usable amplified world arrives early
+// and sharpens later instead of the screen waiting for the deepest tier.
+//
+// Measured 2026-08-07 (2 erosion rounds, full chain incl. hydrology):
+//   factor 2 → 4096x2048, ~102 s,  ~0.2 GB peak
+//   factor 4 → 8192x4096, ~444 s,  ~3 GB peak
+//
+// The 8k tier is the decided target (docs/decisions/worldmap-amplification.md)
+// but is NOT shipped yet: tried in Safari the same day, it exhausted the tab's
+// memory and the browser reloaded the page. Note what that means for the
+// screen's own safety net — a stage that takes the whole tab down cannot be
+// caught by `worker.onerror`, so "degrade to the last good result" does not
+// cover this failure mode at all.
+//
+// 8k therefore waits on the memory work rather than on a flag: see
+// docs/design/amplification-artifacts.md (memory audit first, then basin
+// decomposition with per-basin workers). Re-adding 4 here before that lands
+// just reproduces the crash.
+export const AMPLIFY_STAGES = [2]
+
+// The map/relief texture's resolution, fixed for the session so the map view
+// never has to be rebuilt when a bake stage lands. 4096x2048 is the
+// recommendation from the decision doc's texture question: it matches the
+// first bake stage exactly, sharpens the flat map over the 2048 source, and
+// costs ~34 MB per texture (the 8k alternative is 134 MB each, for detail
+// the relief meshes already carry as geometry).
+export const PAPER_TEXTURE_WIDTH = 4096
+export const PAPER_TEXTURE_HEIGHT = 2048
 
 // Erosion rounds the bake runs on the amplified field — the decision doc's
 // open "pass budget", now measured (2026-08-07, synthetic world, mean local
