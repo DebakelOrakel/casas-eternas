@@ -219,22 +219,60 @@ The genuine gaps — what the doc above does *not* yet pin down:
 4. **Cutout selection — decided (2026-08-07): none.** The World screen
    loads the whole map; the "cutout" is simply wherever the camera
    flies. No picker logic.
-5. **Vertical scale — decided (2026-08-07): 1:1, metre-true.** No
-   exaggeration.
+5. **Vertical scale — decided (2026-08-07): 1:1, metre-true** for the
+   World screen's near-ground view. Amended same day after eyeballing:
+   the *worldgen relief preview* runs a mild 2× exaggeration
+   (`RELIEF_EXAGGERATION`) — at its 500–1500 km view widths metre-true
+   relief is a few pixels tall and doesn't register. A map register may
+   exaggerate; the game world does not.
 
 ### Relief preview inside the worldgen screen?
 
 Liked in the follow-up discussion: the mid-LOD (displaced heightmap
 from the macro raster, no fine detail, zoom capped) could ship *inside
 the worldgen screen* first, gated post-erosion like the other derived
-panels. Architecturally cheap: the map is already a Babylon ground
-plane (`subdivisions: 1`) with a `RawTexture` (`ToroidalMapView`) — the
-preview is "subdivide + displace", ideally in the vertex shader from a
-height texture so the 3×3 torus tiling stays cheap. Two things to
-watch: the hillshade baked into the map texture will fight real
-lighting at steep camera angles, and the zoom cap must keep the camera
-above fine-sampler territory. Bonus: this piece is worldgen-screen
-work, i.e. in scope for the current worldgen branch.
+panels (`erosionRunCount >= 1`). Concretised 2026-08-07 after reading
+the actual code:
+
+- **One camera per screen, no camera switch.** `orbitSwoopCamera` is
+  the sphere screen's rig; the flat screen's `hexMapCamera`
+  (orthographic, top-down) is the one to extend — tilted orthographic
+  reads as a clean axonometric strategy view, and it already has an
+  unused, focus-preserving `setTilt` (built for a since-removed debug
+  3D preview). The later World screen gets its own perspective rig;
+  worldgen never mixes projections.
+- **Tilt is zoom-coupled via an envelope, not a mode.** Applied tilt =
+  `min(desiredTilt, maxTiltForZoom(zoom))`, with the envelope 0 below
+  ~half zoom and ramping to ~50° at full zoom, eased per frame. Zooming
+  out then *automatically* presses the camera back to top-down — the
+  "rotate back on zoom-out" behaviour falls out of the clamp, no
+  special-case animation. `desiredTilt` is remembered so zooming back
+  in restores the view. Yaw stays out of v1 (would need a look at the
+  3×3 tiling margins).
+- **Deepen the zoom for 1:1 to read at all.** Scale check: the world is
+  16,000 × 8,000 km (20 × 10 scene units — 1 unit = 800 km; 9,000 m of
+  relief = 0.011 units). Today's max zoom shows 10 % of the world
+  (~1,600 km across, ~1 px/km): metre-true relief would be single-digit
+  pixels — invisible. At `maxZoomWorldFraction ≈ 0.03` (~500 km view)
+  ranges become 10–30 px silhouettes and 1:1 genuinely reads. Texture
+  side effect: ~64 macro texels across the screen at that zoom — either
+  accept the blur in v1 or enable the existing render-only
+  `erosionDetailTexture` (off by default) at deep zoom.
+- **Mesh v1 = CPU displacement of one shared geometry.** Subdivide the
+  map ground (start ~1024×512; all 3×3 torus tiles share the vertex
+  buffer, so one displacement pass updates all copies), write vertex Y
+  from the eroded elevation raster after each erosion/hydrology pass.
+  Static between passes; no shader, no chunks, no LOD, no fine sampler
+  — deliberately, since worldgen never gets close enough to need them.
+- **Known bite: draping.** River ribbons (and anything else at y ≈ 0,
+  e.g. volcano cones) float or z-fight once the ground displaces —
+  drape ribbon vertices by sampling the same raster + a small offset.
+  Lake/overlay tints live in the map texture and are unaffected.
+- The hillshade baked into the map texture doubles as fake lighting —
+  keep the material unlit; silhouettes + baked shade carry the depth.
+
+Bonus: this piece is worldgen-screen work, i.e. in scope for the
+current worldgen branch.
 
 ### Water rendering in Babylon (notes)
 

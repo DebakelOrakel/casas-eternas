@@ -1,5 +1,6 @@
 import { Color3, Mesh, StandardMaterial, VertexData } from '@babylonjs/core'
 import type { InstancedMesh, Scene } from '@babylonjs/core'
+import type { ElevationSurface } from './elevationSurface'
 
 export interface ToroidalRibbonOverlayOptions {
   scene: Scene
@@ -12,6 +13,13 @@ export interface ToroidalRibbonOverlayOptions {
   color?: Color3
   // Height above the map plane (world units) so ribbons sit on top, not z-fight.
   yOffset?: number
+  // Height above the TERRAIN when draped onto a relief surface (see
+  // setHeightSurface). Much smaller than yOffset on purpose: the flat
+  // offset is invisible from straight above, but a tilted relief view
+  // renders height literally — the default here is ~150 m of clearance,
+  // enough to stay above the mesh-vs-sampler disagreement, small enough
+  // not to read as floating.
+  drapedYOffset?: number
   // Multiplies the per-point pixel width when converting to world width.
   widthScale?: number
 }
@@ -22,6 +30,19 @@ export interface ToroidalRibbonOverlay {
   // point count. Each polyline is Catmull-Rom smoothed into a continuous curved
   // ribbon. Empty clears the mesh.
   setPolylines(points: Float32Array, lengths: Uint32Array): void
+  // Drape the ribbons onto a terrain surface (the SAME decimated surface the
+  // relief mesh displaces by — see elevationSurface.ts for why it must be the
+  // same one), or back onto the flat plane with null. Rebuilds the current
+  // geometry in place.
+  setHeightSurface(surface: ElevationSurface | null): void
+  // Rescale the per-point widths: each width is multiplied by `factor`, then
+  // capped at `maxWidthPx` (both in texel units, before widthScale). The
+  // input widths are CARTOGRAPHIC — sized to read as lines at map zoom —
+  // which translated literally at relief zoom makes a 3-texel line a 23 km
+  // flood (and the mitered joints of the D8 staircase degenerate into
+  // sawteeth once offsets exceed segment lengths). The caller narrows the
+  // profile in step with its zoom/LOD levels. Rebuilds on actual change.
+  setWidthProfile(factor: number, maxWidthPx: number): void
   // Called every frame with the map's recenter block center (hook into
   // ToroidalMapView's onRecenter) so the ribbons tile + wrap in lockstep.
   recenter(centerX: number, centerZ: number): void
@@ -52,6 +73,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
   const { scene, worldWidth, worldHeight, textureWidth, textureHeight } = options
   const color = options.color ?? new Color3(45 / 255, 95 / 255, 175 / 255)
   const yOffset = options.yOffset ?? 0.03
+  const drapedYOffset = options.drapedYOffset ?? 0.0002
   const widthScale = options.widthScale ?? 1.5
   // Uniform texel→world scale (the map keeps texture and world aspect equal).
   const s = worldWidth / textureWidth
@@ -64,6 +86,13 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
   let base: Mesh | null = null
   let instances: InstancedMesh[] = []
   let enabled = true
+  let heightSurface: ElevationSurface | null = null
+  let widthFactor = 1
+  let maxWidthPx = Number.POSITIVE_INFINITY
+  // Kept so setHeightSurface/setWidthProfile can rebuild the geometry
+  // without the caller having to re-supply the polylines.
+  let lastPoints: Float32Array | null = null
+  let lastLengths: Uint32Array | null = null
 
   function disposeMeshes(): void {
     for (const inst of instances) inst.dispose()
@@ -117,8 +146,14 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
       // Normal in the XZ plane.
       const nx = -tz * sh[i]
       const nz = tx * sh[i]
-      positions.push(sx[i] + nx, yOffset, sz[i] + nz)
-      positions.push(sx[i] - nx, yOffset, sz[i] - nz)
+      // Draped: terrain height at this point (world x/z back to the map's
+      // normalized UV space, the surface's own convention) + clearance.
+      // Flat: the constant hover offset, as before.
+      const y = heightSurface
+        ? heightSurface.heightAtUV((sx[i] / s + textureWidth / 2) / textureWidth, (sz[i] / s + textureHeight / 2) / textureHeight) + drapedYOffset
+        : yOffset
+      positions.push(sx[i] + nx, y, sz[i] + nz)
+      positions.push(sx[i] - nx, y, sz[i] - nz)
     }
     for (let i = 0; i < count - 1; i++) {
       const a = vertBase + i * 2
@@ -127,6 +162,8 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
   }
 
   function setPolylines(points: Float32Array, lengths: Uint32Array): void {
+    lastPoints = points
+    lastLengths = lengths
     disposeMeshes()
     if (lengths.length === 0) return
 
@@ -142,7 +179,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
         const b = (off + i) * 3
         cx.push(worldX(points[b]))
         cz.push(worldZ(points[b + 1]))
-        hw.push((points[b + 2] * s * widthScale) / 2)
+        hw.push((Math.min(points[b + 2] * widthFactor, maxWidthPx) * s * widthScale) / 2)
       }
       off += m
       appendRibbon(cx, cz, hw, positions, indices)
@@ -183,6 +220,17 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
 
   return {
     setPolylines,
+    setHeightSurface(surface: ElevationSurface | null): void {
+      if (surface === heightSurface) return
+      heightSurface = surface
+      if (lastPoints && lastLengths) setPolylines(lastPoints, lastLengths)
+    },
+    setWidthProfile(factor: number, nextMaxWidthPx: number): void {
+      if (factor === widthFactor && nextMaxWidthPx === maxWidthPx) return
+      widthFactor = factor
+      maxWidthPx = nextMaxWidthPx
+      if (lastPoints && lastLengths) setPolylines(lastPoints, lastLengths)
+    },
     recenter,
     setEnabled(next: boolean): void {
       enabled = next

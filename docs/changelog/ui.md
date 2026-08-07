@@ -3,6 +3,13 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-08-07
+- **new** Rendering: 3D relief preview — eroded terrain unlocks a deeper zoom and a zoom-coupled camera tilt over a metre-true displaced map plane with draped rivers.
+- **new** Controls: WASD pans the map; Q/E rotate the view while zoomed in, and zooming out returns it to north-up.
+- **changed** Rendering: river ribbons narrow toward physical widths at relief zoom instead of keeping their map-scale line widths.
+- **changed** Rendering: the relief preview is now truly lit — real vertex normals under a camera-relative sun on an unshaded texture, instead of the baked map hillshade.
+- **changed** Controls: zoom is exponential with wheel-delta-scaled steps — every step changes the view by the same percentage, and trackpads glide instead of jumping.
+
 ## 2026-08-06
 - **new** Overlays: water balance — rainfall minus evaporation, arid to humid. `world.overlay.waterBalance`
 - **new** Overlays: watersheds — each river system's catchment in its own colour. `world.overlay.watersheds`

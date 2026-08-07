@@ -197,6 +197,7 @@ export type WorkerInboundMessage =
   | WorkerResetErosionMessage
   | WorkerStopErosionMessage
   | WorkerComputeMicroTileMessage
+  | WorkerRequestElevationFieldMessage
   | WorkerComputeClimateMessage
   | WorkerComputeHydrologyMessage
   | WorkerComputeEcologyMessage
@@ -231,6 +232,22 @@ export interface WorkerArcheanInitMessage {
   seaLevelOffset?: number
 }
 export interface WorkerArcheanStartMessage { type: 'archeanStart' }
+// The screen's 3D relief preview asking for the current full-res
+// display-space elevation raster (answered with WorkerElevationFieldMessage).
+// On demand rather than piggybacked on every 'rendered' message: the raster
+// is 8 MB, and most renders happen while the preview has no use for it
+// (pre-erosion epoch stepping, the Archean).
+export interface WorkerRequestElevationFieldMessage { type: 'requestElevationField' }
+// Answer to 'requestElevationField': the full-res display-space elevation
+// raster (Float32, width*height, signed -1..1 with 0 = sea level) the current
+// map frame was colored from. Display-space (redistributed), NOT the raw
+// physical field — so a mesh displaced by it matches the 2D picture.
+export interface WorkerElevationFieldMessage {
+  type: 'elevationField'
+  elevation: ArrayBuffer
+  width: number
+  height: number
+}
 // Tectonics back to the state the Archean handed it, epoch 0 — the panel's own input,
 // not a new world. A reset inside a panel undoes that panel's work and nothing else;
 // the erosion panel's reset already worked that way, this one did not (it re-ran
@@ -493,6 +510,13 @@ let handoverSnapshot: PlateSimulationSnapshot | null = null
 let handoverOceanAge: Float32Array | null = null
 let handoverMantle: Float32Array | null = null
 let lastRawElevations: Float32Array | null = null
+// The DISPLAY-space elevations of the last render (redistributed values the
+// map colors were computed from, with their grid size) — retained for the
+// screen's 'requestElevationField' so its 3D relief displacement matches the
+// 2D picture exactly: a snow-capped pixel is also the tallest point in 3D.
+// The physical field (lastRawElevations) would disagree with the map wherever
+// applyMountainRedistribution reshaped it. See SimulationRenderResult.
+let lastDisplayElevations: { data: Float32Array; width: number; height: number } | null = null
 // A second, deliberately less-eagerly-updated snapshot: the raw
 // elevations from the last *non*-erosion render only (see renderAndPost
 // — only updated when precomputedElevations wasn't supplied). Erosion
@@ -632,6 +656,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   // discard it before it clobbers lastRawElevations or posts a stale frame.
   if (gen !== worldGeneration) return
   lastRawElevations = result.rawElevations
+  lastDisplayElevations = { data: result.elevations, width: sim.width, height: sim.height }
   if (!skipInvalidation) {
     invalidateAfterTopographyChange()
     // New topography — whatever terminal basins the last hydrology found no
@@ -699,6 +724,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   )
   if (gen !== worldGeneration || !archean) return
   lastRawElevations = result.rawElevations
+  lastDisplayElevations = { data: result.elevations, width: archean.width, height: archean.height }
   invalidateAfterTopographyChange()
 
   const message: WorkerRenderedMessage = {
@@ -1219,6 +1245,21 @@ function handleComputeMigration(message: Extract<WorkerInboundMessage, { type: '
   self.postMessage(migrationMessage, [migrationMessage.race, migrationMessage.density, migrationMessage.flow, migrationMessage.predecessor])
 }
 
+// Posts the retained display elevations of the last completed render (a
+// copy — the retained array stays live for the next request). Silently a
+// no-op before the first render; the screen only asks once terrain exists.
+function handleRequestElevationField(): void {
+  if (!lastDisplayElevations) return
+  const elevation = lastDisplayElevations.data.slice()
+  const message: WorkerElevationFieldMessage = {
+    type: 'elevationField',
+    elevation: elevation.buffer as ArrayBuffer,
+    width: lastDisplayElevations.width,
+    height: lastDisplayElevations.height,
+  }
+  self.postMessage(message, [message.elevation])
+}
+
 function handleSerializeWorld(): void {
   if (archean && !sim && lastRawElevations) {
     const snapshot = serializeArchean(archean)
@@ -1413,6 +1454,7 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   stopErosion: () => handleStopErosion(),
   resetErosion: () => handleResetErosion(),
   computeMicroTile: () => handleComputeMicroTile(),
+  requestElevationField: () => handleRequestElevationField(),
   computeClimate: (m) => handleComputeClimate(m as Extract<WorkerInboundMessage, { type: 'computeClimate' }>),
   computeHydrology: (m) => handleComputeHydrology(m as Extract<WorkerInboundMessage, { type: 'computeHydrology' }>),
   computeEcology: (m) => handleComputeEcology(m as Extract<WorkerInboundMessage, { type: 'computeEcology' }>),

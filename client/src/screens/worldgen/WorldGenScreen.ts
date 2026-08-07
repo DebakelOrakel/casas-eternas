@@ -1,8 +1,9 @@
 import { Color4, PointerEventTypes, Scene } from '@babylonjs/core'
-import { createHexMapCamera } from '../../camera/hexMapCamera'
+import { createWorldgenCamera } from '../../camera/worldgenCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
+import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../worldgen/core/mapConfig'
 
@@ -15,10 +16,10 @@ import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../worldgen/core/mapC
 const RUNOFF_COEFFICIENT = 0.35
 const DISCHARGE_TO_M3S = ((METERS_PER_CELL * METERS_PER_CELL * 1e-3) / 3.156e7) * RUNOFF_COEFFICIENT
 import JSZip from 'jszip'
-import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
+import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/render/continentLabelRenderer'
-import { elevationToMeters, metersToElevation, waterSliderToOffsetM } from '../../worldgen/elevation/elevationScale'
+import { ELEVATION_METERS, elevationToMeters, metersToElevation, waterSliderToOffsetM } from '../../worldgen/elevation/elevationScale'
 import { formatWorldAge, worldAgeMa } from '../../worldgen/core/worldTime'
 import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/tectonics/plateSimulation'
 import { eventCategory } from '../../worldgen/tectonics/plateSimulation'
@@ -96,6 +97,42 @@ const BREAKUP_COLOR = '235, 140, 30'
 // first pass.
 const WORLD_WIDTH = 20
 const WORLD_HEIGHT = 10
+
+// Relief preview (see docs/design/hex-world-view.md). World-Y units per
+// display-elevation unit: 1.0 elevation = ELEVATION_METERS of real height,
+// mapped through the map's horizontal scale (METERS_PER_CELL per raster
+// cell, MAP_WIDTH cells across WORLD_WIDTH world units) — times a mild
+// exaggeration. Eyeballed 2026-08-07: at this preview's 500–1500 km view
+// widths, metre-true relief is a few pixels tall and simply doesn't
+// register. The GAME's near-ground view keeps the 1:1 decision; this
+// preview is a map register, and maps exaggerate.
+const RELIEF_EXAGGERATION = 2
+const RELIEF_HEIGHT_SCALE = (ELEVATION_METERS / (METERS_PER_CELL * MAP_WIDTH)) * WORLD_WIDTH * RELIEF_EXAGGERATION
+// Decimation of the full-res elevation raster into the canonical preview
+// surface — one relief-mesh vertex per decimated cell, so this must stay in
+// step with ToroidalMapView's RELIEF_SUBDIVISIONS.
+const RELIEF_DECIMATION = 2
+// Eased zoom beyond which the displaced relief replaces the flat plane —
+// below it the displacement is subpixel while its triangles are at their
+// most multiplied (many wrap copies in frame). Zoom is exponential in t
+// (see worldgenCamera), so these sit earlier on the scale than their old
+// linear values: 0.14 ≈ 14 world units of visible width, 0.31 ≈ 7.5.
+const RELIEF_MIN_ZOOM = 0.14
+// Eased zoom beyond which the FULL-res relief level takes over from the
+// half-res one (silhouettes at raster sharpness). Deep enough that the
+// frustum holds at most a wrap copy or two of its ~4M triangles.
+const RELIEF_FINE_ZOOM = 0.31
+// River ribbon widths per relief level. The stored per-point widths are
+// CARTOGRAPHIC (sized to read as lines at map zoom); translated literally at
+// relief zoom a 3-texel line becomes a 23 km flood and the D8 staircase's
+// mitered joints degenerate into sawteeth — so closer levels multiply the
+// widths down and cap them near physical river scale (texel units, 1 texel
+// ≈ 7.8 km).
+const RIBBON_WIDTH_PROFILES = {
+  flat: { factor: 1, maxWidthPx: Number.POSITIVE_INFINITY },
+  coarse: { factor: 0.5, maxWidthPx: 4 },
+  fine: { factor: 0.3, maxWidthPx: 2 },
+} as const
 
 // Earth has ~7 major plates (covering ~90% of the surface) plus a tail of
 // minor/microplates. Measured against this generator's own Voronoi areas, a
@@ -250,7 +287,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const scene = new Scene(ctx.engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
 
-  const { dispose: disposeCamera, getFocus: getCameraFocus, setPanEnabled: setCameraPanEnabled } = createHexMapCamera({
+  const {
+    dispose: disposeCamera,
+    getFocus: getCameraFocus,
+    setPanEnabled: setCameraPanEnabled,
+    setDeepZoomEnabled: setCameraDeepZoom,
+    setDesiredTilt: setCameraDesiredTilt,
+    getZoom: getCameraZoom,
+    getYaw: getCameraYaw,
+  } = createWorldgenCamera({
     scene,
     canvas: ctx.canvas,
     engine: ctx.engine,
@@ -275,6 +320,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // texture). Declared before the map view so its onRecenter can tile them.
   let riverLayer: ReturnType<typeof createToroidalRibbonOverlay> | null = null
 
+  // The relief preview's two surfaces (see the 'elevationField' handler) +
+  // which relief level the ribbons are currently styled for — swapped in
+  // lockstep with the mesh LOD from the per-frame onRecenter hook below, so
+  // rivers always lie on the surface that is actually on screen, at widths
+  // that fit its scale.
+  let reliefCoarseSurface: ReturnType<typeof createElevationSurface> | null = null
+  let reliefFineSurface: ReturnType<typeof createElevationSurface> | null = null
+  let ribbonLevel: keyof typeof RIBBON_WIDTH_PROFILES = 'flat'
+
   // The flat map plane + its toroidal 3x3 recentering (see ToroidalMapView).
   const mapView = createToroidalMapView({
     scene,
@@ -283,10 +337,52 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     textureWidth: MAP_WIDTH,
     textureHeight: MAP_HEIGHT,
     getFocus: getCameraFocus,
+    getYaw: getCameraYaw,
+    reliefDetail: () => {
+      const zoom = getCameraZoom()
+      return zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
+    },
     onRecenter: (centerX, centerZ) => {
       riverLayer?.recenter(centerX, centerZ)
+      // Keep the ribbons styled for whichever relief level is on screen —
+      // surface AND width profile (rebuilds are a few ms and only happen on
+      // an actual level transition). Level is 'flat' whenever no relief
+      // exists, whatever the zoom: pre-erosion the zoom scale is shallow and
+      // the cartographic widths are the right ones.
+      if (!riverLayer) return
+      const zoom = getCameraZoom()
+      const level: keyof typeof RIBBON_WIDTH_PROFILES = !reliefCoarseSurface ? 'flat' : zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
+      if (level !== ribbonLevel) {
+        ribbonLevel = level
+        const profile = RIBBON_WIDTH_PROFILES[level]
+        riverLayer.setWidthProfile(profile.factor, profile.maxWidthPx)
+        if (reliefCoarseSurface) {
+          riverLayer.setHeightSurface(level === 'fine' && reliefFineSurface ? reliefFineSurface : reliefCoarseSurface)
+        }
+      }
     },
   })
+
+  // Relief preview gate: eroded terrain unlocks the deeper zoom ceiling and
+  // the tilt envelope; losing it (reset/regenerate/tectonics rerun) folds the
+  // view back flat and drops the stale surface. Called from the 'rendered'
+  // handler — every path that changes erosionRunCount is followed by a
+  // render, so the gate re-syncs itself without per-call-site bookkeeping.
+  // The desired tilt is armed permanently for now: tilting is purely
+  // zoom-driven (a dedicated tilt control is an open UI question).
+  setCameraDesiredTilt(Number.POSITIVE_INFINITY)
+  const syncReliefGate = (): void => {
+    const active = erosionRunCount >= 1
+    setCameraDeepZoom(active)
+    if (!active) {
+      reliefCoarseSurface = null
+      reliefFineSurface = null
+      ribbonLevel = 'flat'
+      mapView.setReliefSurfaces(null)
+      riverLayer?.setHeightSurface(null)
+      riverLayer?.setWidthProfile(1, Number.POSITIVE_INFINITY)
+    }
+  }
 
   // River ribbons live in the scene over the map plane; segments come from the
   // hydrology step, tiled for the torus wrap via the recenter hook above.
@@ -529,7 +625,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // survives every other overlay change untouched.
   deltaDebugInput.addEventListener('change', () => {
     overlay.setLayerEnabled('deltas', deltaDebugInput.checked)
-    overlay.composite()
+    compositeOverlays()
   })
   const refreshLabel = root.querySelector<HTMLElement>('[data-value="erosion-refresh-label"]')!
   strengthInput.addEventListener('input', () => { strengthLabel.textContent = strengthInput.value })
@@ -1220,6 +1316,22 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     mapView.texture.update(pixels)
   })
 
+  // Second compositor output for the relief meshes: identical layer stack
+  // (the layer OBJECTS are shared, so every toggle applies to both) over the
+  // UNSHADED base — the relief carries real normals and a real light, and
+  // feeding it the hillshaded composite would double-shade every slope. Only
+  // composited while eroded terrain exists (see compositeOverlays); transient
+  // event markers are main-compositor-only, which is fine — they belong to
+  // the map reading, not the relief look.
+  const reliefOverlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => {
+    mapView.reliefTexture.update(pixels)
+  })
+  // Every composite goes through here so the two outputs can never drift.
+  function compositeOverlays(): void {
+    overlay.composite()
+    if (erosionRunCount >= 1) reliefOverlay.composite()
+  }
+
   // Torus wrap for VECTOR overlays (labels, markers, arrows): the compositor canvas is
   // MAP_WIDTH×MAP_HEIGHT and doesn't wrap, so an element straddling the seam gets clipped
   // at the edge — a wide continent name near x=0/x=MAP_WIDTH loses half itself, then the
@@ -1372,6 +1484,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     { id: 'deltas', label: 'Deltas (debug)', enabled: false, hidden: true, paintPixels: paintDeltas },
     { id: 'names', label: 'Names', enabled: false, paint: (c) => paintWrapped(c, (cc) => drawContinentLabels(cc, lastRaftLabels)) },
   ])
+  // Same layer OBJECTS in both compositors — toggles/enabled flags are
+  // shared state, only the base differs (shaded vs. unshaded paper).
+  reliefOverlay.setLayers([...overlay.getLayers()])
 
   // Draws one tectonic event's geologic marker, faded by `alpha`: a suture band
   // (collision), a dashed rift axis (breakup), or a ring (supercontinent /
@@ -1810,7 +1925,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         overlay.setLayerEnabled(def.id, show)
       }
     }
-    overlay.composite()
+    compositeOverlays()
     hoverTooltip?.refresh()
   }
 
@@ -1893,6 +2008,32 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     return out
   }
 
+  // The same paper WITHOUT the hillshade modulation (shade held at its
+  // maximum) — the base for the relief compositor, whose meshes are lit for
+  // real (see ToroidalMapView.reliefTexture). Land keeps the top bit's
+  // land/ocean split so the terrain wash and overlays land identically.
+  let unshadedBaseCache: Uint8ClampedArray | null = null
+  function buildUnshadedBase(): Uint8ClampedArray | null {
+    if (!lastRelief) return null
+    if (unshadedBaseCache) return unshadedBaseCache
+    const out = new Uint8ClampedArray(lastRelief.length * 4)
+    for (let i = 0; i < lastRelief.length; i++) {
+      const p = i * 4
+      if (lastRelief[i] & 128) {
+        out[p] = 255
+        out[p + 1] = 255
+        out[p + 2] = 255
+      } else {
+        out[p] = 208
+        out[p + 1] = 228
+        out[p + 2] = 248
+      }
+      out[p + 3] = 255
+    }
+    unshadedBaseCache = out
+    return out
+  }
+
   // Muted "watercolour" terrain wash derived from the (never-shown) full-colour
   // render: desaturate the land colours, cache the pigment; paintTerrain then
   // alpha-blends it over the relief base so the white + hillshade show through —
@@ -1932,10 +2073,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   // The base is always the neutral relief now; the full-colour render is only a
-  // source for the muted terrain wash. Does not composite.
+  // source for the muted terrain wash. Does not composite. The relief
+  // compositor's unshaded paper is only worth building once eroded terrain
+  // exists (before that its output is never shown).
   function applyBase(): void {
     const base = buildSimplifiedBase()
     if (base) overlay.setBase(base)
+    if (erosionRunCount >= 1) {
+      const unshaded = buildUnshadedBase()
+      if (unshaded) reliefOverlay.setBase(unshaded)
+    }
   }
 
   // 8-point compass for a (u,v) field vector — u east+, v toward the bottom
@@ -2094,7 +2241,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverLayer?.setPolylines(new Float32Array(0), new Uint32Array(0))
     riverLayer?.setEnabled(false)
     overlay.setLayerEnabled('lakes', false)
-    overlay.composite()
+    compositeOverlays()
   }
 
   // Posts a hydrology compute with the current density knob. Needs a computed
@@ -2267,8 +2414,22 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     URL.revokeObjectURL(url)
   }
 
-  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerEcologyDataMessage | WorkerMigrationDataMessage | WorkerWorldDataMessage | WorkerArcheanStatusMessage | WorkerDeltaMaskMessage | WorkerMicroTileDataMessage | WorkerMicroTileProgressMessage>) => {
+  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerEcologyDataMessage | WorkerMigrationDataMessage | WorkerWorldDataMessage | WorkerArcheanStatusMessage | WorkerDeltaMaskMessage | WorkerElevationFieldMessage | WorkerMicroTileDataMessage | WorkerMicroTileProgressMessage>) => {
     const message = event.data
+
+    if (message.type === 'elevationField') {
+      // Canonical surfaces shared between the displaced map plane and the
+      // draped river ribbons, so they agree everywhere by construction (see
+      // elevationSurface.ts): the decimated one drives the half-res mesh,
+      // the full raster the fine mesh at deep zoom.
+      const full = new Float32Array(message.elevation)
+      const decimated = downsampleElevation(full, message.width, message.height, RELIEF_DECIMATION)
+      reliefCoarseSurface = createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE)
+      reliefFineSurface = createElevationSurface(full, message.width, message.height, RELIEF_HEIGHT_SCALE)
+      mapView.setReliefSurfaces(reliefCoarseSurface, reliefFineSurface)
+      riverLayer?.setHeightSurface(ribbonLevel === 'fine' ? reliefFineSurface : reliefCoarseSurface)
+      return
+    }
 
     if (message.type === 'archeanStatus') {
       handleArcheanStatus(message)
@@ -2295,7 +2456,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       lastDeltaMask = new Uint8Array(message.mask)
       // Only repaints when the marker is actually showing — the mask arrives after
       // every erode whether or not anyone asked to see it.
-      if (deltaDebugInput.checked) { overlay.setLayerEnabled('deltas', true); overlay.composite() }
+      if (deltaDebugInput.checked) { overlay.setLayerEnabled('deltas', true); compositeOverlays() }
       return
     }
 
@@ -2358,6 +2519,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastHotspots = message.hotspots
     lastVolcanoes = message.volcanoes
     simplifiedBaseCache = null // rebuilt lazily from the fresh relief
+    unshadedBaseCache = null
     terrainTintCache = null // rebuilt lazily from the fresh colour render
     applyBase()
     handleSimEvents(message.events)
@@ -2371,6 +2533,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastContinentCount = message.raftLabels.length
     updateStats()
     updateNavState() // epoch progress may unlock the Erosion panel
+
+    // Relief preview: re-sync the gate off the fresh erosion state, then pull
+    // the matching elevation raster for the frame just shown. Intermediate
+    // mid-erosion redraws are skipped — 8 MB a round for a surface the next
+    // round replaces.
+    syncReliefGate()
+    if (erosionRunCount >= 1 && !message.intermediate) {
+      postToWorker({ type: 'requestElevationField' })
+    }
 
     // Safety auto-stop once this run reaches its armed target epoch (see
     // startSim / autoStopAtEpoch) — reuses the manual-pause path (stopSim),
