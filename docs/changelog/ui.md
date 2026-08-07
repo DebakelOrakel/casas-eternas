@@ -11,6 +11,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **changed** Controls: zoom is exponential with wheel-delta-scaled steps — every step changes the view by the same percentage, and trackpads glide instead of jumping.
 - **new** Title screen: a "Herederos del Mundo" entry leads to the world-map screen (the renamed game-screen placeholder).
 - **new** World map: loads a saved world through its baked manifest layers and shows the flat paper map with an elevation/biome hover readout — no generator involved.
+- **new** World map: the lit 3D relief with deep zoom, tilt and rotation works here too, driven by the saved elevation raster.
 
 ## 2026-08-06
 - **new** Overlays: water balance — rainfall minus evaporation, arid to humid. `world.overlay.waterBalance`

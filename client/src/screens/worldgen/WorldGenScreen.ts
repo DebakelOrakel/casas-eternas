@@ -4,6 +4,7 @@ import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
+import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../worldgen/core/mapConfig'
 
@@ -19,7 +20,7 @@ import JSZip from 'jszip'
 import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/render/continentLabelRenderer'
-import { ELEVATION_METERS, elevationToMeters, metersToElevation, waterSliderToOffsetM } from '../../worldgen/elevation/elevationScale'
+import { elevationToMeters, metersToElevation, waterSliderToOffsetM } from '../../worldgen/elevation/elevationScale'
 import { formatWorldAge, worldAgeMa } from '../../worldgen/core/worldTime'
 import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/tectonics/plateSimulation'
 import { eventCategory } from '../../worldgen/tectonics/plateSimulation'
@@ -97,33 +98,8 @@ const BREAKUP_COLOR = '235, 140, 30'
 // World-space size of one toroidal period, independent of the plate
 // map's own pixel resolution — matches the map's 2:1 aspect for a simple
 // first pass.
-const WORLD_WIDTH = 20
-const WORLD_HEIGHT = 10
-
-// Relief preview (see docs/design/hex-world-view.md). World-Y units per
-// display-elevation unit: 1.0 elevation = ELEVATION_METERS of real height,
-// mapped through the map's horizontal scale (METERS_PER_CELL per raster
-// cell, MAP_WIDTH cells across WORLD_WIDTH world units) — times a mild
-// exaggeration. Eyeballed 2026-08-07: at this preview's 500–1500 km view
-// widths, metre-true relief is a few pixels tall and simply doesn't
-// register. The GAME's near-ground view keeps the 1:1 decision; this
-// preview is a map register, and maps exaggerate.
-const RELIEF_EXAGGERATION = 2
-const RELIEF_HEIGHT_SCALE = (ELEVATION_METERS / (METERS_PER_CELL * MAP_WIDTH)) * WORLD_WIDTH * RELIEF_EXAGGERATION
-// Decimation of the full-res elevation raster into the canonical preview
-// surface — one relief-mesh vertex per decimated cell, so this must stay in
-// step with ToroidalMapView's RELIEF_SUBDIVISIONS.
-const RELIEF_DECIMATION = 2
-// Eased zoom beyond which the displaced relief replaces the flat plane —
-// below it the displacement is subpixel while its triangles are at their
-// most multiplied (many wrap copies in frame). Zoom is exponential in t
-// (see worldgenCamera), so these sit earlier on the scale than their old
-// linear values: 0.14 ≈ 14 world units of visible width, 0.31 ≈ 7.5.
-const RELIEF_MIN_ZOOM = 0.14
-// Eased zoom beyond which the FULL-res relief level takes over from the
-// half-res one (silhouettes at raster sharpness). Deep enough that the
-// frustum holds at most a wrap copy or two of its ~4M triangles.
-const RELIEF_FINE_ZOOM = 0.31
+// Scene scale + relief-preview settings are shared with the worldmap screen
+// — see map/mapSceneSettings.ts.
 // River ribbon widths per relief level. The stored per-point widths are
 // CARTOGRAPHIC (sized to read as lines at map zoom); translated literally at
 // relief zoom a 3-texel line becomes a 23 km flood and the D8 staircase's

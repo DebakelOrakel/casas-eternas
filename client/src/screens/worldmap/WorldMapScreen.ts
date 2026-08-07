@@ -7,7 +7,9 @@ import type { ToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
 import { computeReliefBytes } from '../../worldgen/render/reliefShade'
-import { buildPaperBase } from '../../ui/mapOverlay/paperBase'
+import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/paperBase'
+import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
+import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
 import { decodeLayer } from '../../worldgen/worldSave/worldLayers'
 import type { Dtype } from '../../worldgen/worldSave/worldLayers'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
@@ -25,10 +27,6 @@ import './worldmap.css'
 // it doesn't continue simulating one. v1 is the flat paper map + hover
 // readout; the relief/LOD ladder from docs/design/hex-world-view.md comes
 // next, feeding off the same elevation raster.
-
-// Same world-units frame as the generator's map (one toroidal period).
-const WORLD_WIDTH = 20
-const WORLD_HEIGHT = 10
 
 // The manifest's self-describing layer entry (see WorldGenScreen's
 // bakeQueryLayers — this is the consumer side of that contract).
@@ -54,6 +52,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const {
     dispose: disposeCamera,
     getFocus: getCameraFocus,
+    setDeepZoomEnabled: setCameraDeepZoom,
+    setDesiredTilt: setCameraDesiredTilt,
+    getZoom: getCameraZoom,
+    getYaw: getCameraYaw,
   } = createWorldgenCamera({
     scene,
     canvas: ctx.canvas,
@@ -61,6 +63,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     worldWidth: WORLD_WIDTH,
     worldHeight: WORLD_HEIGHT,
   })
+
+  // Tilt is purely zoom-driven, same as the generator: armed fully, the
+  // envelope decides when it shows.
+  setCameraDesiredTilt(Number.POSITIVE_INFINITY)
 
   // Built per loaded world (texture dims come from its manifest); replaced
   // wholesale on the next load.
@@ -156,6 +162,11 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       textureWidth: width,
       textureHeight: height,
       getFocus: getCameraFocus,
+      getYaw: getCameraYaw,
+      reliefDetail: () => {
+        const zoom = getCameraZoom()
+        return zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
+      },
     })
     // The paper look, derived from the elevation raster with the same
     // shade + palette the generator uses (reliefShade + paperBase) — not
@@ -164,6 +175,20 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const relief = computeReliefBytes(elevations, width, height)
     const paper = buildPaperBase(relief)
     mapView.texture.update(new Uint8Array(paper.buffer))
+
+    // 3D relief: the same two canonical surfaces as the generator's preview
+    // (decimated → coarse mesh, full raster → fine mesh at deep zoom), and
+    // the unshaded paper for the LIT relief meshes — no compositor here,
+    // there are no overlays to stack yet.
+    mapView.reliefTexture.update(new Uint8Array(buildUnshadedPaperBase(relief).buffer))
+    const decimated = downsampleElevation(elevations, width, height, RELIEF_DECIMATION)
+    mapView.setReliefSurfaces(
+      createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE),
+      createElevationSurface(elevations, width, height, RELIEF_HEIGHT_SCALE),
+    )
+    // A loaded world is finished by definition — no erosion gate; deep zoom
+    // and the tilt/yaw envelope unlock with the first successful load.
+    setCameraDeepZoom(true)
 
     hoverTooltip = createMapHoverTooltip({
       scene,
