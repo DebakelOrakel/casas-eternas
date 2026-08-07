@@ -60,13 +60,42 @@ export function periodicValueNoise2D(x: number, y: number, cellsX: number, cells
 // gets proportionally more cells in x than y (square-ish lattice cells,
 // not stretched), and every count is an exact integer at every octave
 // (doubling from 32/16 stays integer) as periodicValueNoise2D's modulo
-// tiling requires. Range scale: tens of cells across the map, several
-// within a single range's footprint, finer than domainWarp's 8/16/32.
+// tiling requires.
+//
+// WHY THE AMPLITUDES ARE INVERTED relative to a textbook fBm (2026-08-07).
+// The map is 2048 cells at 7800 m, so these counts mean wavelengths of
+// 500 / 250 / 125 / 63 / 31 km. With the textbook halving falloff the
+// STRONGEST octave sat at 500 km — mountain-RANGE scale. But the ranges
+// themselves already come from the tectonic features; this field's only job
+// is to TEXTURE them, and a texture whose dominant wavelength is wider than
+// the thing it textures is not a texture at all, it is a slow regional
+// modulation. That is why mountains read as smooth bulges. So the weighting
+// is flipped: the crest end carries the energy, and the range-scale octaves
+// stay only as a weak modulation that makes some ranges rougher than others.
+//
+// Measured on a real world (seed "alpha", Archean + 50 epochs, after erosion;
+// crest sharpness = mean drop from a local maximum to its 8 neighbours):
+//
+//   halving falloff (shipped until now)   15.7 m,  1,732 peaks
+//   full band, mild crest weighting       77.5 m,  3,133 peaks
+//   full band, THIS weighting            117.5 m,  3,940 peaks
+//   crest octaves only (no 500/250/125)  117.8 m,  3,513 peaks
+//
+// The last row is why the wide band is kept: dropping the range octaves buys
+// no extra sharpness and costs a tenth of the ridge network. Land fraction
+// moved 8.52% -> 8.52% across every candidate, as it must — the term is gated
+// to uplift > 0, so it shapes mountains and never touches a coastline.
+//
+// 512 cells (31 km) is the floor, not a taste call: it is 4 px on this
+// raster, and an octave below ~4 px is aliasing rather than detail. Finer
+// crest scale is the amplification tier's job (surface/amplify.ts), which
+// runs on a grid that can actually carry it.
 const RIDGE_OCTAVES: ReadonlyArray<{ cellsX: number; cellsY: number; amplitude: number }> = [
-  { cellsX: 32, cellsY: 16, amplitude: 1.0 },
-  { cellsX: 64, cellsY: 32, amplitude: 0.5 },
-  { cellsX: 128, cellsY: 64, amplitude: 0.25 },
-  { cellsX: 256, cellsY: 128, amplitude: 0.125 },
+  { cellsX: 32, cellsY: 16, amplitude: 0.15 },
+  { cellsX: 64, cellsY: 32, amplitude: 0.2 },
+  { cellsX: 128, cellsY: 64, amplitude: 0.3 },
+  { cellsX: 256, cellsY: 128, amplitude: 0.7 },
+  { cellsX: 512, cellsY: 256, amplitude: 1.0 },
 ]
 
 // Mean of the ridged field, subtracted by callers to center it at ~0 so
@@ -77,7 +106,15 @@ const RIDGE_OCTAVES: ReadonlyArray<{ cellsX: number; cellsY: number; amplitude: 
 // 0.5 rather than stay uniform, which pushes the ridged mean up. Sampled
 // over the full map across several seeds at this exact octave
 // configuration → 0.47 (seed-to-seed spread only ~±0.005, negligible as a
-// residual bias). Re-measure if RIDGE_OCTAVES or the interpolation change.
+// residual bias).
+//
+// Re-measured 2026-08-07 after the octave amplitudes were reweighted:
+// 0.4709, spread ±0.0018 over six seeds — unchanged, and necessarily so.
+// Every octave is the same fold-and-square of the same value noise, so they
+// all share one mean; a weighted average of identical means is that mean, no
+// matter how the weights move. What WOULD move it is a change to the octave
+// COUNT with a different lattice character, or to the interpolation — so the
+// re-measure rule stands for those.
 export const RIDGE_MEAN = 0.47
 
 // Ridged fBm in [0, 1) with mean exactly RIDGE_MEAN. Each octave folds the

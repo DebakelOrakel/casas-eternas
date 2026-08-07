@@ -6,8 +6,8 @@ import { FINE_DETAIL_SEED_SALT, fineDetailNoise, ridgedMultifractal } from '../e
 import { wrapValue } from '../core/field'
 import { D8_OFFSETS, accumulateFlow, d8Neighbor, fillDepressionsAndRouteFlow } from './flowRouting'
 import type { FlowRouting } from './flowRouting'
-import { buildErosionMask, runStreamPowerIterations, runThermalErosion } from './erosion'
-import type { ErosionPassParams, StreamPowerParams, ThermalErosionParams } from './erosion'
+import { buildErosionMask, runStreamPowerIterations, runThermalErosion, scaleErosionParamsForCellSize } from './erosion'
+import type { ErosionPassParams, StreamPowerParams } from './erosion'
 
 // Micro-tile erosion — the PROTOTYPE for docs/design/resolution-strategy.md's
 // on-demand fine tier, built 2026-08-06 to answer one question empirically:
@@ -129,36 +129,34 @@ export function buildTileElevation(world: TileWorld, spec: TileSpec, macroDelta?
   return out
 }
 
-// Macro erosion params rescaled for a tile refined by `factor`. The
-// reasoning, term by term (code slope S halves per doubling of resolution
-// for the same physical terrain, drainage area A in cells grows as factor²):
-// - erodibilityK: dh = -K·√A·S is scale-free at the default m=0.5, n=1
-//   (√(factor²)·(1/factor) = 1) — kept as-is.
-// - transportCapacityKt: capacity Kt·A·S picks up one net power of factor
-//   (factor²·(1/factor)); divided by factor to keep delta volumes in the
-//   same regime. A starting estimate, not a calibration.
-// - deltaMinDrainageCells: an area threshold — scaled by factor², then
-//   divided by 4: MFD routing deliberately splits a trunk into several
-//   distributary strands near a flat mouth (3-5 in practice), and the gate's
-//   job — "no deltas from coastal trickles" — is a judgment about the river
-//   SYSTEM, which already passed it at macro scale. Without the allowance,
-//   every individual strand of a fully qualified river fails the per-cell
-//   test and the tile builds no delta at all (prototype run 6, measured:
-//   best strand 39k fine units against a raw factor²-gate of 128k).
-// - talusSlope: a physical angle expressed as code slope — divided by factor.
-// - Iteration/round counts kept: the tile is far smaller than the world, so
-//   generous iterations are cheap where it matters.
+// Macro erosion params rescaled for a tile refined by `factor`. The general
+// per-cell rescaling — talus angle, transport capacity, the delta area gate,
+// and why stream power needs nothing — is derived once in
+// erosion.scaleErosionParamsForCellSize and shared with the amplification
+// bake; only the tile-SPECIFIC correction lives here.
+//
+// That correction is the delta gate. The shared rule scales it by factor²,
+// which is right for the physical catchment. But at a tile's factor MFD
+// routing deliberately splits a trunk into several distributary strands near
+// a flat mouth (3-5 in practice), and the gate's job — "no deltas from
+// coastal trickles" — is a judgment about the river SYSTEM, which already
+// passed it at macro scale. Without the allowance every individual strand of
+// a fully qualified river fails the per-cell test and the tile builds no
+// delta at all (prototype run 6, measured: best strand 39k fine units
+// against a raw factor²-gate of 128k). Dividing by 4 lets a trunk that split
+// four ways still qualify.
+//
+// Iteration/round counts are deliberately NOT reduced: the tile is far
+// smaller than the world, so generous iterations are cheap where it matters.
+const TILE_DISTRIBUTARY_STRANDS = 4
+
 export function scaleErosionParamsForTile(macro: ErosionPassParams, factor: number): ErosionPassParams {
+  const scaled = scaleErosionParamsForCellSize(macro, 1 / factor)
   const streamPower: StreamPowerParams = {
-    ...macro.streamPower,
-    transportCapacityKt: macro.streamPower.transportCapacityKt / factor,
-    deltaMinDrainageCells: (macro.streamPower.deltaMinDrainageCells * factor * factor) / 4,
+    ...scaled.streamPower,
+    deltaMinDrainageCells: scaled.streamPower.deltaMinDrainageCells / TILE_DISTRIBUTARY_STRANDS,
   }
-  const thermal: ThermalErosionParams = {
-    ...macro.thermal,
-    talusSlope: macro.thermal.talusSlope / factor,
-  }
-  return { ...macro, streamPower, thermal }
+  return { ...scaled, streamPower }
 }
 
 // Default tile placement for the debug inspector: 64 macro cells (~500 km)

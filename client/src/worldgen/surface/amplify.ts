@@ -1,7 +1,6 @@
 import { upscaleBilinearToroidal } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
-import { fineDetailNoise } from '../elevation/ridgedNoise'
-import type { ErosionPassParams } from './erosion'
+import { fineDetailNoise, periodicValueNoise2D } from '../elevation/ridgedNoise'
 
 // Terrain AMPLIFICATION — the derived fine tier of
 // docs/decisions/worldmap-amplification.md. Takes the authoritative macro
@@ -77,47 +76,10 @@ export function seedCascadeScales(resX: number): number[] {
   return scales.length > 0 ? scales : [1]
 }
 
-// Erosion constants are argued per 7.8 km cell (see erosion.ts) and several
-// of them are expressed in units that hide a cell size, so running the same
-// params on a finer grid would quietly change the physics. This is the
-// rescaling, derived rather than guessed — `cellSizeRatio` is
-// fineCellMetres / macroCellMetres (1/2 at factor 2, 1/4 at factor 4).
-//
-// Under refinement by 1/r, for the SAME physical terrain:
-//   • a slope between neighbours (elevation units per cell) scales by r —
-//     the same gradient over a shorter run is a smaller rise;
-//   • a drainage area counted in CELLS scales by 1/r².
-//
-// Term by term:
-//
-//   • talusSlope — a real ANGLE converted through the cell size
-//     (slopeFromAngle multiplies by METERS_PER_CELL). Multiplying by r
-//     re-converts the same physical angle for the finer cell, so the step
-//     keeps targeting the same real-world steepness. Worth stating because
-//     it is NOT a free choice: leaving it alone would declare everything
-//     above a quarter of the old angle unstable and plane the mountains
-//     flat — the exact failure erosion.ts's own talus comment documents.
-//
-//   • stream power dh = K·Aᵐ·Sⁿ with m = 0.5, n = 1 is SCALE-INVARIANT here:
-//     Aᵐ scales by (1/r²)^0.5 = 1/r and Sⁿ by r, so the product is
-//     unchanged. Nothing to do — but only because of those exponents; if
-//     m or n is ever retuned this stops holding.
-//
-//   • transportCapacityKt — capacity Kt·A·S scales by (1/r²)·r = 1/r, so
-//     deposition would grow as the grid refines (deltas swallowing coasts).
-//     Multiplying Kt by r cancels it.
-//
-//   • iterations / rounds / upliftRate / plainFactor and the metre-denominated
-//     thresholds are counts or physical heights — scale-free by construction.
-export function erosionParamsForCellSize(base: ErosionPassParams, cellSizeRatio: number): ErosionPassParams {
-  return {
-    ...base,
-    thermal: { ...base.thermal, talusSlope: base.thermal.talusSlope * cellSizeRatio },
-    streamPower: { ...base.streamPower, transportCapacityKt: base.streamPower.transportCapacityKt * cellSizeRatio },
-  }
-}
+// The per-cell rescaling the bake runs its erosion under lives in erosion.ts,
+// next to the constants it corrects — see scaleErosionParamsForCellSize.
 
-// The river threshold's counterpart to erosionParamsForCellSize. The channel
+// The river threshold's counterpart to that rescaling. The channel
 // criterion is a critical drainage area counted in CELLS (see
 // hydrology.densityToCriticalArea), so on a grid refined by 1/r the same
 // PHYSICAL catchment covers 1/r² times as many cells — leave the number
@@ -132,6 +94,62 @@ export function erosionParamsForCellSize(base: ErosionPassParams, cellSizeRatio:
 export function criticalAreaForCellSize(criticalAreaCells: number, cellSizeRatio: number): number {
   return criticalAreaCells / (cellSizeRatio * cellSizeRatio)
 }
+
+// RIDGELINE RELIEF — why mountains read as round lumps, and what fixes it.
+//
+// The generator does add ridged-multifractal detail (elevationField's
+// `detail` term), but its octave table runs 32/64/128/256 cells across the
+// world: at 16,000 km that is wavelengths of 500/250/125/63 km, with the
+// STRONGEST octave at 500 km. That is mountain-RANGE scale. Real ridgelines
+// and arêtes sit 1–10 km apart, and there was nothing in that band at all —
+// so ranges came out as a few big bulges with smooth flanks.
+//
+// Measured 2026-08-07 on the same synthetic world, after erosion, at
+// 7.8 km/cell (crest sharpness = mean curvature at local maxima):
+//
+//   no ridging                       46 m,     19 peaks
+//   generator octaves (63–500 km)    67 m,  5,809 peaks
+//   RIDGELINE octaves (16–63 km)    122 m, 78,692 peaks
+//
+// So it was never a question of strength — it was scale. A first attempt
+// that ridged the SEED ROUGHNESS instead changed nothing measurable
+// (65 → 64 m), for the obvious reason once seen: a 60 m perturbation cannot
+// shape a 3,000 m mountain. The amplitude has to scale with the mountain's
+// own relief, exactly as the generator scales its own term by uplift.
+//
+// LATER THAT DAY the generator's own octave table was reweighted onto the
+// crest band too (ridgedNoise.RIDGE_OCTAVES), so it now supplies 63 and 31 km
+// itself — two of the three bands below, with an independent seed. That
+// raised a fair worry: two uncorrelated crest patterns at one wavelength read
+// as mush, not sharpness. Measured on the full chain (generator -> macro
+// erosion -> this bake), crest sharpness per km of ground at the baked 4096
+// grid:
+//
+//   old generator table   macro  2.0 m/km  ->  baked  9.8 m/km
+//   new generator table   macro 15.1 m/km  ->  baked 15.2 m/km
+//
+// So the layers do not compound: the macro world now carries the relief this
+// used to have to invent, and the bake's remaining contribution is the finest
+// octave plus sub-macro-cell structure (peaks 8,029 -> 9,641 over the same
+// terrain). Left as-is deliberately — narrowing it to only what the macro
+// grid cannot carry would cost two of three octaves to fix a problem the
+// measurement says does not exist.
+const RIDGE_OCTAVE_CELLS = [256, 512, 1024]
+const RIDGE_OCTAVE_AMPLITUDES = [1, 0.5, 0.25]
+// Fraction of a cell's local relief the ridging may move it by. 0.5 matches
+// the generator's own RIDGE_RELATIVE_STRENGTH; 0.8 measured sharper still
+// (146 m) but starts to fight the macro shape, which the authority rule
+// says wins.
+const RIDGE_STRENGTH = 0.5
+// Mean of the ridged field, subtracted so ridgelines add height and gullies
+// cut down with no net elevation bias — the same centring, and the same
+// measured constant, as ridgedNoise.RIDGE_MEAN.
+const RIDGE_FIELD_MEAN = 0.47
+// Neighbourhood radius for "how far does this cell stand above its
+// surroundings", as a fraction of the grid width. ~1/64 of the world is a
+// few hundred km — wide enough that a whole range counts as raised, narrow
+// enough that a plain does not.
+const RELIEF_RADIUS_FRACTION = 1 / 64
 
 // How the bake's erosion differs from the generator's defaults. These are
 // AMPLIFICATION POLICY, not worker mechanics, so they live next to the rest
@@ -173,6 +191,9 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   seedRoughnessM: SEED_ROUGHNESS_M,
   cascadeFalloff: CASCADE_FALLOFF,
   minOctavePixels: MIN_OCTAVE_PIXELS,
+  ridgeStrength: RIDGE_STRENGTH,
+  ridgeOctaveCount: RIDGE_OCTAVE_CELLS.length,
+  ridgeFinestCells: RIDGE_OCTAVE_CELLS[RIDGE_OCTAVE_CELLS.length - 1],
   upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
   plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
   talusAngleDeg: AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg,
@@ -182,6 +203,55 @@ export interface AmplifiedField {
   data: Float32Array
   width: number
   height: number
+}
+
+// Ridged fBm at an explicit octave table (the point of the exercise — see
+// RIDGE_OCTAVE_CELLS), in [0, 1). Each octave folds value noise into a ridge
+// and squares it to sharpen the crest, exactly as ridgedNoise does; the
+// table is local because the shared one is tuned for range scale.
+function ridgedAt(x: number, y: number, width: number, height: number, seed: number): number {
+  let sum = 0
+  let norm = 0
+  for (let i = 0; i < RIDGE_OCTAVE_CELLS.length; i++) {
+    const cellsX = RIDGE_OCTAVE_CELLS[i]
+    const cellsY = Math.max(2, Math.round(cellsX / 2))
+    const noise = periodicValueNoise2D((x / width) * cellsX, (y / height) * cellsY, cellsX, cellsY, (seed + i * 0x9e3779b9) >>> 0)
+    const ridge = 1 - Math.abs(2 * noise - 1)
+    sum += ridge * ridge * RIDGE_OCTAVE_AMPLITUDES[i]
+    norm += RIDGE_OCTAVE_AMPLITUDES[i]
+  }
+  return sum / norm
+}
+
+// How far each cell stands above the floor of its neighbourhood — the
+// stand-in for the generator's `uplift`, computable from a raster alone.
+// Sampled on a coarse ring rather than a full window: this only has to say
+// "is this raised ground", and a full min-filter at this radius would cost
+// more than the rest of the bake.
+function localRelief(field: Float32Array, width: number, height: number): Float32Array {
+  const radius = Math.max(1, Math.round(width * RELIEF_RADIUS_FRACTION))
+  const out = new Float32Array(field.length)
+  const wrap = (v: number, n: number): number => ((v % n) + n) % n
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let lowest = Infinity
+      for (let dy = -radius; dy <= radius; dy += radius) {
+        const ny = wrap(y + dy, height) * width
+        for (let dx = -radius; dx <= radius; dx += radius) {
+          const value = field[ny + wrap(x + dx, width)]
+          if (value < lowest) lowest = value
+        }
+      }
+      // Floored at sea level, which is not a detail: measured against the
+      // raw neighbourhood minimum, a 100 m coastal plain beside a 3,000 m
+      // deep ocean scored 3,100 m of "relief" and got ridged as hard as an
+      // alpine crest — 36,000 cells were driven below sea level and the
+      // plains moved by an average of 258 m. Relief means height above the
+      // surrounding LAND.
+      out[y * width + x] = Math.max(0, field[y * width + x] - Math.max(SEA_LEVEL, lowest))
+    }
+  }
+  return out
 }
 
 // Upsample + seed roughness. `factor` is the linear refinement (2 → 4096x2048,
@@ -204,6 +274,12 @@ export function amplifyElevation(
   const scales = seedCascadeScales(width)
   const amplitudes = scales.map((_, i) => Math.pow(CASCADE_FALLOFF, i))
   const norm = amplitudes.reduce((a, b) => a + b, 0)
+  // Relief is read from the SMOOTH upsample, before either layer perturbs
+  // it: "is this raised ground" is a property of the macro world, and
+  // letting the ridging feed back into its own amplitude would compound.
+  const relief = localRelief(data, width, height)
+  const ridgeSeed = (seed ^ 0x5f356495) >>> 0
+
   const reportEvery = Math.max(1, Math.floor(height / 50))
   for (let y = 0; y < height; y++) {
     const row = y * width
@@ -216,7 +292,13 @@ export function amplifyElevation(
         const s = scales[i]
         noise += fineDetailNoise(x, y, width / s, height / s, (seed + i * 0x9e3779b9) >>> 0) * amplitudes[i]
       }
-      data[row + x] = base + (noise / norm) * amplitude
+      // Two layers with different jobs: the seed roughness gives erosion
+      // something to bite into at cell scale, the ridging shapes the
+      // MOUNTAIN at ridgeline scale. Only the second can make a range read
+      // as crests rather than a bulge — and it scales with the terrain's own
+      // relief, so plains stay plains.
+      const ridge = (ridgedAt(x, y, width, height, ridgeSeed) - RIDGE_FIELD_MEAN) * relief[row + x] * RIDGE_STRENGTH
+      data[row + x] = base + (noise / norm) * amplitude + ridge
     }
     if (onProgress && y % reportEvery === 0) onProgress(y / height)
   }

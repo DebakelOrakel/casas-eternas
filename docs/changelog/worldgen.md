@@ -7,6 +7,8 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **changed** Ecology: metals, gems and obsidian concentrate into scattered deposits again instead of blanketing the map — only a fraction of volcanoes and orogens is mineralised, with tighter halos. `world.overlay.resources`
 - **changed** Ecology: gold placer needs a genuinely large river now, not every stream. `world.overlay.resources`
 - **fixed** Ecology: metal and gem overlays leave barren land as terrain — deposit halos fade out instead of tinting 0%. `world.overlay.resources`
+- **changed** Elevation: mountains grow ridgelines — ranges read as crests and spurs instead of smooth bulges, in every world the generator makes.
+- **fixed** Erosion: the delta threshold is now rescaled for finer grids like the constants around it, so a refined run stops building deltas from coastal trickles.
 
 ## 2026-08-06
 - **changed** Genesis: continents assemble into a supercontinent within the Archean's natural span, instead of long after it. `worldgen.panel.genesis`

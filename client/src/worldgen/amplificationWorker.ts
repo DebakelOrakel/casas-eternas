@@ -1,5 +1,5 @@
-import { AMPLIFICATION_EROSION_OVERRIDES, amplifyElevation, criticalAreaForCellSize, erosionParamsForCellSize } from './surface/amplify'
-import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass } from './surface/erosion'
+import { AMPLIFICATION_EROSION_OVERRIDES, amplifyElevation, criticalAreaForCellSize } from './surface/amplify'
+import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass, scaleErosionParamsForCellSize } from './surface/erosion'
 import { fillDepressionsAndRouteFlow } from './surface/flowRouting'
 import { slopeFromAngle } from './elevation/elevationScale'
 import { accumulateDischarge, channelThreshold, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff } from './surface/hydrology'
@@ -114,8 +114,9 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
       strength: message.erosionStrength,
       networkRefreshes: message.drainageRefresh,
     })
+    const scaled = scaleErosionParamsForCellSize(withControls, 1 / message.factor)
     const params = {
-      ...erosionParamsForCellSize(withControls, 1 / message.factor),
+      ...scaled,
       rounds: message.erosionRounds,
       // Amplification is not landscape evolution; the three overrides and
       // their reasoning live in amplify.AMPLIFICATION_EROSION_OVERRIDES,
@@ -124,7 +125,7 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
       upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
       plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
       thermal: {
-        ...erosionParamsForCellSize(withControls, 1 / message.factor).thermal,
+        ...scaled.thermal,
         talusSlope: slopeFromAngle(AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg) * (1 / message.factor),
       },
     }

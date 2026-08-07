@@ -672,6 +672,43 @@ export const DEFAULT_EROSION_PASS_PARAMS: ErosionPassParams = {
   plainFactor: EROSION_PLAIN_FACTOR,
 }
 
+// Every constant in these params is argued per 7.8 km cell, and several
+// hide a cell size in their units — so running them unchanged on a finer
+// grid quietly changes the physics. This is the rescaling, derived rather
+// than guessed. `cellSizeRatio` is fineCellMetres / macroCellMetres (1/2 at
+// a 2x refinement, 1/8 for a micro tile).
+//
+// Under refinement by 1/r, for the SAME physical terrain: a slope between
+// neighbours scales by r (the same gradient over a shorter run is a smaller
+// rise), and a drainage area counted in CELLS scales by 1/r².
+//
+//  • talusSlope — a real ANGLE converted through the cell size, so ×r
+//    re-converts it for the finer cell. Not optional: leaving it declares
+//    everything above a quarter of the old angle unstable and planes the
+//    mountains flat, the exact failure the talus comment above documents.
+//  • transportCapacityKt — capacity Kt·A·S scales by (1/r²)·r = 1/r, so
+//    deposition would grow as the grid refines (deltas swallowing coasts);
+//    ×r cancels it.
+//  • deltaMinDrainageCells — an area gate counted in cells, so ÷r² keeps
+//    "big enough river to build a delta" meaning the same physical
+//    catchment.
+//  • stream-power incision dh = K·Aᵐ·Sⁿ is SCALE-INVARIANT at m = 0.5,
+//    n = 1, because Aᵐ ∝ 1/r cancels Sⁿ ∝ r. Nothing to do — but only
+//    because of those exponents; if either is retuned this stops holding.
+//  • iterations, rounds, upliftRate, plainFactor and the metre-denominated
+//    thresholds are counts or physical heights, scale-free by construction.
+export function scaleErosionParamsForCellSize(base: ErosionPassParams, cellSizeRatio: number): ErosionPassParams {
+  return {
+    ...base,
+    thermal: { ...base.thermal, talusSlope: base.thermal.talusSlope * cellSizeRatio },
+    streamPower: {
+      ...base.streamPower,
+      transportCapacityKt: base.streamPower.transportCapacityKt * cellSizeRatio,
+      deltaMinDrainageCells: base.streamPower.deltaMinDrainageCells / (cellSizeRatio * cellSizeRatio),
+    },
+  }
+}
+
 // What the erosion panel's two sliders MEAN, in one place: `strength` scales
 // the stream-power time step (more incision per step, same operation count —
 // free), `networkRefreshes` sets how often the drainage network is re-derived

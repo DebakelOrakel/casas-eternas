@@ -110,7 +110,13 @@ export function deriveWorldId(seedLabel: string, inputs: BakeInputs): string {
 //    single afternoon (2026-08-07), and a hand-maintained version number
 //    would have been forgotten at least once — serving old terrain, which
 //    reads as a physics bug rather than a stale cache.
-export const AMPLIFICATION_ALGO_VERSION = 1
+//
+// v2 (2026-08-07): the bake's erosion now rescales deltaMinDrainageCells for
+// the finer grid along with the rest of the per-cell constants. That changes
+// baked terrain — and it is exactly the invisible kind of change this number
+// exists for, since it lives in a shared scaling function rather than in any
+// constant AMPLIFY_CONSTANTS hashes.
+export const AMPLIFICATION_ALGO_VERSION = 2
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

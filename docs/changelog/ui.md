@@ -22,6 +22,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **changed** World map: the bake now runs in stages, each swapped in as it lands, with the map texture sharpening alongside — shipping at 4096 for now, since 8192 exhausts a browser tab's memory.
 - **new** World map: baked worlds are cached on disk — reopening one skips the minutes of amplification and loads in about a second. `world`
 - **new** Cache manager: a window listing every cached world with its size and the resolutions baked for it, deleting one or all — reachable from the world map and the generator.
+- **changed** World map: mountains grow ridgelines — the bake now adds ridged relief at crest scale rather than range scale, so ranges read as crests and spurs instead of smooth bulges. `world`
 - **changed** Rendering: vertical exaggeration now follows the view — mountains rise markedly on the map and settle to true scale as you descend.
 - **changed** World map: the bake carves deeper valleys — it no longer lifts terrain back toward the shape it is carving into.
 - **new** World map: biome colouring — the saved biome layer washed over the paper map, with organic boundaries instead of climate-grid squares, and a button to compare against plain paper. `world.biome`
