@@ -1,7 +1,7 @@
 ---
 summary: Static, latitude-based climate (temperature + precipitation + wind + ocean currents) computed at world-gen time, feeding a Whittaker biome classification. No dynamic weather.
 date: 2026-07-24
-status: implemented (all 6 phases built)
+status: implemented (all 6 phases built); the "revisit if too coarse" note under Integration was revisited 2026-08-08 — the CLASSIFICATION moved to the world raster, the climate fields did not
 ---
 
 # Climate & Biomes
@@ -142,6 +142,28 @@ full-res post-erosion field where needed, for lapse + orographic).
 - Coarse climate grid (start ~256×128, like the ocean-age field); revisit if
   too coarse. Elevation sampled from the full-res field where needed (lapse,
   orographic).
+- **Revisited 2026-08-08 — and the answer was to split the question.** The
+  climate *model* stays coarse: temperature bands, winds and moisture advection
+  are genuinely regional, the advection is iterative, and 64× the cells would
+  buy little. But the biome *classification* is pointwise, and its sharpest
+  input — elevation — already exists at full resolution, so it now runs on the
+  world raster (`computeBiomesFine`) for one extra pass over an existing field.
+  A 62 km cell decided a whole massif from one sampled elevation, which is why
+  there was no treeline: `Alpine` is an elevation test, so a mountain came out
+  alpine wholesale or not at all. Measured on the calibration seed: 12.0% of
+  land cells now classify differently from the coarse cell containing them,
+  biome boundary *length* roughly doubles, and inside the coarse cells that
+  were called Alpine only 74% of the ground actually is — 915 of those cells
+  now hold a boundary against 107 that are alpine throughout, plus 7,411 fine
+  alpine cells on peaks the coarse grid missed entirely. The global biome mix
+  barely moves (largest shift: desert +2.0pp, as valley floors inside massifs
+  get their own lapse), which is the point — this buys detail, not a different
+  climate.
+- **Ecology keeps the coarse classification.** Every ecology field is a
+  climate-grid field and its ecotone term reads the 4-neighbourhood as
+  *regional* adjacency; handing it the fine array would silently redefine
+  "neighbouring biome" from 62 km to 8 km. So the worker classifies twice from
+  identical inputs — coarse for ecology, fine for display and the save.
 
 ## Pipeline placement
 

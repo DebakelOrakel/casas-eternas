@@ -22,7 +22,10 @@ const T_POLE_C = -25
 // two halves. With lowland actually at 360 m, cooling can simply be measured
 // from sea level like it is in reality, and the special case disappears.
 const LAPSE_C_PER_KM = 6.5
-const LAPSE_C_PER_ELEVATION = LAPSE_C_PER_KM * (ELEVATION_METERS / 1000)
+// Exported because the FINE biome evaluation has to undo it: the coarse
+// temperature grid already carries this correction for its cell's sampled
+// elevation, and applying it again for the local one would double-count.
+export const LAPSE_C_PER_ELEVATION = LAPSE_C_PER_KM * (ELEVATION_METERS / 1000)
 
 // Base air temperature: latitudinal insolation (cosine of latitude angle,
 // equator warm → pole cold) minus an elevation lapse on land, plus a global

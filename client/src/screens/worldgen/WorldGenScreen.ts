@@ -1233,21 +1233,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Biome tint (climate payoff): the Whittaker class per land cell, opaque so it
   // reads as a map rather than a wash. Ocean cells are skipped (the base ocean
   // shows through). No-op until computed.
+  // `lastBiomes` shares the map raster (see the worker's climateData message), so
+  // this is a straight per-pixel read — no climate-grid sampling, and no 8x8
+  // blocks. The other climate overlays around it still sample their coarse grid.
   function paintBiomes(data: Uint8ClampedArray): void {
     if (!lastBiomes) return
     const alpha = 0.85
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
-        const id = lastBiomes[gy * climateResX + gx]
-        if (id === Biome.Ocean) continue
-        const [r, g, b] = biomeColor(id)
-        const p = (y * MAP_WIDTH + x) * 4
-        data[p] = data[p] * (1 - alpha) + r * alpha
-        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
-        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
-      }
+    for (let i = 0; i < MAP_WIDTH * MAP_HEIGHT; i++) {
+      const id = lastBiomes[i]
+      if (id === Biome.Ocean) continue
+      const [r, g, b] = biomeColor(id)
+      const p = i * 4
+      data[p] = data[p] * (1 - alpha) + r * alpha
+      data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
+      data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
     }
   }
 
@@ -2138,7 +2137,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const v = lastEcologyFields[selectedEcologyField]![i]
       lines.push(v === ECOLOGY_OCEAN ? 'Ocean' : `${ECOLOGY_FIELD_META[selectedEcologyField].label} ${Math.round(v * 100)}%`)
     }
-    if (overlaysOn.biomes && lastBiomes) lines.push(t(biomeLabelKey(lastBiomes[i]) as TKey))
+    // Biomes are full-res, so they get the map texel rather than the climate
+    // cell `i` — the same index paintBiomes drew from, or the readout would name
+    // a different biome than the pixel under the cursor on every slope.
+    if (overlaysOn.biomes && lastBiomes) {
+      const bi = Math.min(MAP_HEIGHT - 1, Math.floor(mapY)) * MAP_WIDTH + Math.min(MAP_WIDTH - 1, Math.floor(mapX))
+      lines.push(t(biomeLabelKey(lastBiomes[bi]) as TKey))
+    }
     if (overlaysOn.rivers && lastDischargeField && lastMaxDischarge > 0) {
       const fi = Math.min(MAP_HEIGHT - 1, Math.floor(mapY)) * MAP_WIDTH + Math.min(MAP_WIDTH - 1, Math.floor(mapX))
       // Only where there is a river worth reading — below 1% of the largest
@@ -2928,11 +2933,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       for (const spec of WORLD_LAYERS) {
         const src = sources[spec.name]
         if (!src) continue
+        // Dimensions from the spec, not from this loop's climate rx/ry: biome is
+        // baked on the world raster (see LayerSpec.fullRes). A wrong pair here
+        // would not throw — the buffer's length is whatever the source is, and
+        // only the manifest says how to fold it into rows.
+        const [lx, ly] = spec.fullRes ? [MAP_WIDTH, MAP_HEIGHT] : [rx, ry]
         zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
-        layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: rx, resY: ry, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
+        layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: lx, resY: ly, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
       }
-      // Rivers are a DISCHARGE RASTER, not polylines — and this is the one
-      // layer baked at map resolution rather than climate resolution.
+      // Rivers are a DISCHARGE RASTER, not polylines — baked at map resolution
+      // like biome, but written here because it needs a unit conversion first.
       //
       // The polyline layer that used to sit here was written by one place and
       // read by none: the client re-derives its rivers (deterministically, from

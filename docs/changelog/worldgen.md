@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-08-08
+- **changed** Climate: biomes are classified per map cell instead of per 62 km climate cell, so mountains get a treeline and salt flats keep their real outline. `world.overlay.biomes`
 - **changed** Hydrology: channels now form on steep ground at smaller catchments, so mountains carry rivers instead of almost none. `worldgen.panel.hydrology`
 - **changed** Hydrology: amplified bakes now draw a denser river network the finer they get, instead of repeating the macro one. `worldgen.panel.hydrology`
 

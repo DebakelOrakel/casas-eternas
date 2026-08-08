@@ -509,10 +509,24 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         const fy = Math.min(heightField.height - 1, Math.floor((cellY / height) * heightField.height))
         const elevation = heightField.data[fy * heightField.width + fx]
         const lines = [`${Math.round(elevationToMeters(elevation))} m`]
-        if (biome && elevation > 0) {
-          const bx = Math.min(biome.resX - 1, Math.floor((cellX / width) * biome.resX))
-          const by = Math.min(biome.resY - 1, Math.floor((cellY / height) * biome.resY))
-          lines.push(t(biomeLabelKey(Math.round(biome.data[by * biome.resX + bx])) as TKey))
+        if (elevation > 0) {
+          // Read from the array that was actually PAINTED, not from the coarse
+          // source it came from. expandBiomeIds domain-warps the upsample so
+          // biome edges read as organic rather than blocky — which displaces a
+          // boundary by tens of kilometres. Naming the unwarped cell meant the
+          // map showed one biome and the tooltip said another, all along every
+          // border. One source, and they agree by construction.
+          if (biomeIds) {
+            const px = Math.min(PAPER_TEXTURE_WIDTH - 1, Math.floor((cellX / width) * PAPER_TEXTURE_WIDTH))
+            const py = Math.min(PAPER_TEXTURE_HEIGHT - 1, Math.floor((cellY / height) * PAPER_TEXTURE_HEIGHT))
+            lines.push(t(biomeLabelKey(biomeIds[py * PAPER_TEXTURE_WIDTH + px]) as TKey))
+          } else if (biome) {
+            // No painted layer (the wash never built): the coarse source is the
+            // only answer there is, and it is at least not contradicting one.
+            const bx = Math.min(biome.resX - 1, Math.floor((cellX / width) * biome.resX))
+            const by = Math.min(biome.resY - 1, Math.floor((cellY / height) * biome.resY))
+            lines.push(t(biomeLabelKey(Math.round(biome.data[by * biome.resX + bx])) as TKey))
+          }
         }
         return lines.join('\n')
       },

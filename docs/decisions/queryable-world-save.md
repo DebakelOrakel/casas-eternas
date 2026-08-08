@@ -72,7 +72,8 @@ baked **layer files**. A consumer needs *only* the manifest + a ~50-line sampler
 ```
 
 Per-layer metadata makes each layer readable blind: `resX/resY` (its own grid —
-climate/ecology are coarse 256×128, elevation/lakes full-res), `dtype`, `encoding`
+climate/ecology are coarse 256×128; elevation, lakes, discharge and **biome**
+are full-res), `dtype`, `encoding`
 (`value = stored·scale + offset`), `unit`, and `sentinel` (a reserved stored code
 marking "not applicable", e.g. ocean). A shared **`landMask`** raster is also
 provided for the common land/ocean test.
@@ -80,8 +81,11 @@ provided for the common land/ocean test.
 ### Baked layers (what gets stored)
 
 - **Tectonics/erosion:** elevation (full-res), oceanAge, landMask.
-- **Climate:** temperature, precipitation, biomes, seasonalAmplitude, monsoonIndex,
-  wind (u,v), currents (u,v).
+- **Climate:** temperature, precipitation, seasonalAmplitude, monsoonIndex,
+  wind (u,v), currents (u,v) — all coarse — plus **biome at full res** (2026-08-08:
+  the classification is pointwise and reads elevation, so a 62 km biome cell could
+  not place a treeline, and a game whose unit of place is a ~1.5 km hex asks
+  exactly that. See climate-biomes.md).
 - **Hydrology:** discharge, lakeDepth (raster) + **rivers** (vector polylines,
   reusing the existing `RiverPolylines` shape).
 - **Ecology:** carryingCapacity + the 13 resource fields.

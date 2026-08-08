@@ -17,6 +17,12 @@ const LAKE_DEPTH_RANGE = metersToElevation(3000)
 
 // A field layer's on-disk encoding. `value = raw * scale + offset`. `landOnly`
 // fields are only meaningful where the landMask is 1 (their ocean cells store 0).
+//
+// `fullRes` marks the layers written on the WORLD raster instead of the climate
+// grid. It is a property of the source field, not of this format — every layer
+// carries its own resX/resY in the manifest either way, so a consumer never has
+// to know which is which. It exists so the writer picks the right dimensions
+// from the spec rather than from a list of names kept in sync by hand.
 export interface LayerSpec {
   name: string
   dtype: Dtype
@@ -24,6 +30,7 @@ export interface LayerSpec {
   offset: number
   unit: string
   landOnly: boolean
+  fullRes?: boolean
 }
 
 // Ecology fields (aggregate + the 13 resources) — all 0..~2 suitability/abundance.
@@ -41,7 +48,12 @@ export const WORLD_LAYERS: LayerSpec[] = [
   { name: 'landMask', dtype: 'u8', scale: 1, offset: 0, unit: '', landOnly: false },
   { name: 'temperature', dtype: 'u8', scale: 90 / 255, offset: -35, unit: '°C', landOnly: false },
   { name: 'precipitation', dtype: 'u16', scale: 8000 / 65535, offset: 0, unit: 'mm/yr', landOnly: true },
-  { name: 'biome', dtype: 'u8', scale: 1, offset: 0, unit: 'biomeId', landOnly: false },
+  // Full-res, unlike its climate neighbours: the classification is pointwise and
+  // reads elevation, which exists at world resolution (see climate/biomes.ts's
+  // computeBiomesFine). A 62 km biome cell could not say where a treeline is —
+  // and a game whose unit of place is a ~1.5 km hex asks exactly that. 2 MB raw,
+  // and it is a mostly-flat id field, so DEFLATE takes most of it back.
+  { name: 'biome', dtype: 'u8', scale: 1, offset: 0, unit: 'biomeId', landOnly: false, fullRes: true },
   { name: 'seasonalAmplitude', dtype: 'u8', scale: 60 / 255, offset: 0, unit: '°C', landOnly: true },
   { name: 'monsoonIndex', dtype: 'u8', scale: 1 / 255, offset: 0, unit: '', landOnly: true },
   // Lake depth in elevation units. The range was 20 — off by nearly two orders
@@ -55,7 +67,8 @@ export const WORLD_LAYERS: LayerSpec[] = [
   ...ECOLOGY_LAYERS.map((name): LayerSpec => ({ name, dtype: 'u8', scale: 3 / 255, offset: 0, unit: '', landOnly: true })),
 ]
 
-// Flow accumulation, and the one baked layer that is NOT at climate resolution.
+// Flow accumulation. Full-res like biome, but kept out of WORLD_LAYERS because
+// the writer has to convert its unit first (see below).
 //
 // Rivers are the reason: at 256x128 a cell spans ~62 km, so a discharge field
 // there could not say WHERE a river is, only that the region has one. At map
@@ -81,7 +94,7 @@ export const WORLD_LAYERS: LayerSpec[] = [
 // above the Amazon's ~209,000 — so clipping needs a world unlike any measured,
 // and even then it only flattens the top of the largest river.
 export const DISCHARGE_LAYER: LayerSpec = {
-  name: 'discharge', dtype: 'u16', scale: 4, offset: 0, unit: 'm3/s', landOnly: false,
+  name: 'discharge', dtype: 'u16', scale: 4, offset: 0, unit: 'm3/s', landOnly: false, fullRes: true,
 }
 
 

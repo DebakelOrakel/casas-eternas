@@ -31,7 +31,7 @@ import { computeWind } from './climate/wind'
 import { computeOceanCurrents, applyOceanSST } from './climate/oceanCurrents'
 import { computeSeasonalAmplitude } from './climate/seasonality'
 import { computeSeasonalPrecipitation } from './climate/monsoon'
-import { computeBiomes } from './climate/biomes'
+import { computeBiomes, computeBiomesFine } from './climate/biomes'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from './climate/climateField'
 import { computeEcology } from './ecology/ecologyField'
 import { computeMigration } from './migration/migrationField'
@@ -378,6 +378,12 @@ export interface WorkerClimateDataMessage {
   // See climate/monsoon.ts.
   monsoonIndex: ArrayBuffer
   // Whittaker biome id per cell (Uint8; ocean = Biome.Ocean). See climate/biomes.ts.
+  //
+  // The one field here that is NOT on resX/resY: it is FULL-RES (world raster),
+  // like discharge and watersheds below. The classification is pointwise and its
+  // sharpest input — elevation — exists at full res, so evaluating it there costs
+  // one pass and is what gives mountains a treeline instead of an all-or-nothing
+  // 62 km alpine cell. Every field around it stays regional and coarse.
   biomes: ArrayBuffer
 }
 
@@ -396,7 +402,8 @@ export interface WorkerHydrologyDataMessage {
   // computeLakes.
   lakeDepth: ArrayBuffer
   // Biomes RE-classified with the riparian moisture bonus from rivers/lakes
-  // (Uint8, coarse climate grid — replaces the climate step's water-free biomes).
+  // (Uint8, full-res — replaces the climate step's water-free biomes, and shares
+  // its resolution so the display never switches grids mid-run).
   // Empty when no climate is available to reclassify. See computeRiparianBiomes.
   biomes: ArrayBuffer
   // Watershed labels (Uint16, full-res, 0 = unlabelled) and the raw discharge
@@ -539,6 +546,10 @@ let lastClimateTemperature: Float32Array | null = null
 let lastClimateSeasonalAmplitude: Float32Array | null = null
 let lastClimateMonsoonIndex: Float32Array | null = null
 // Water-free biomes cached for the ecology step (game/pasture read biome type).
+// Deliberately the COARSE classification, unlike the one that gets displayed and
+// saved: every ecology field is a climate-grid field, and its own ecotone term
+// reads the 4-neighbourhood as regional adjacency. Handing it the fine array
+// would silently redefine "neighbouring biome" from 62 km to 8 km.
 let lastClimateBiomes: Uint8Array | null = null
 // Ocean currents cached for the ecology step (fish upwelling reads them).
 let lastClimateCurrents: Float32Array | null = null
@@ -1029,8 +1040,15 @@ function computeClimateChain(elevation: Float32Array, width: number, height: num
   applyOceanSST(temperature, currents, elevation, width, height, dryLand)
   const seasonalAmplitude = computeSeasonalAmplitude(elevation, width, height, params.equatorOffset, dryLand)
   const seasonal = computeSeasonalPrecipitation(elevation, temperature, seasonalAmplitude, wind, width, height, params.humidity, params.equatorOffset, dryLand)
+  // Classified twice, on purpose, from identical inputs: `biomes` on the climate
+  // grid for the ecology step, `biomesFine` on the world raster for everything
+  // the user sees or saves (see climate/biomes.computeBiomesFine, and
+  // lastClimateBiomes for why ecology must not take the fine one). The second
+  // pass is a pointwise loop over an existing field — measured well under the
+  // precipitation advection it follows.
   const biomes = computeBiomes(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
-  return { temperature, wind, currents, seasonalAmplitude, seasonal, biomes }
+  const biomesFine = computeBiomesFine(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
+  return { temperature, wind, currents, seasonalAmplitude, seasonal, biomes, biomesFine }
 }
 
 // Cache copies for hydrology/ecology (the message buffers get transferred,
@@ -1052,7 +1070,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>): voi
     precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
     seasonalAmplitude: chain.seasonalAmplitude.buffer as ArrayBuffer,
     monsoonIndex: chain.seasonal.index.buffer as ArrayBuffer,
-    biomes: chain.biomes.buffer as ArrayBuffer,
+    biomes: chain.biomesFine.buffer as ArrayBuffer,
   }
   self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.biomes])
 }

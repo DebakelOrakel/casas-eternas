@@ -1,7 +1,7 @@
 import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
 import { wrapValue } from '../core/field'
 import type { FlowRouting } from './flowRouting'
-import { Biome, computeBiomes } from '../climate/biomes'
+import { Biome, computeBiomesFine } from '../climate/biomes'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 
 // Rivers & lakes on the post-erosion topography. Reuses the erosion module's
@@ -501,7 +501,11 @@ const RIPARIAN_DECAY = 0.45
 // to precipitation, and re-runs the Whittaker classification. So a river or lake
 // greens its surroundings — a desert with a big river through it becomes a
 // vegetated corridor. `elevation` is the display terrain (land/ocean + biome
-// substrate); discharge/lakeDepth share its grid. Coarse (climate-grid) output.
+// substrate); discharge/lakeDepth share its grid.
+//
+// Output is at the WORLD raster's resolution, matching the climate step's biomes
+// so the display never switches grids mid-run. The moisture model in between is
+// still regional — see the comment at the classification call.
 export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array): Uint8Array {
   const scale = maxDischarge > 0 ? maxDischarge : 1
   // Computed once here rather than per cell: the median is a whole-network
@@ -543,23 +547,22 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
     if (precipEff[i] === OCEAN_PRECIP) continue
     precipEff[i] = precipEff[i] + field[i] * MAX_RIPARIAN_MM
   }
-  const biomes = computeBiomes(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, worldW, worldH, dryLand)
+  // The moisture bleed above stays on the climate grid even though the OUTPUT is
+  // full-res: it is a regional wetting, and bleeding it at world resolution
+  // would be a different model rather than a sharper one. Only the
+  // classification moves, which is the part that reads elevation.
+  const biomes = computeBiomesFine(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, worldW, worldH, dryLand)
   // Salt-flat override (see computeLakes' LakeFields.saltFlat): a terminal
   // basin's exposed floor is a hydrology state, not a climate — it wins over
-  // whatever the Whittaker mapping said. Full-res mask onto the coarse biome
-  // grid: a coarse cell flips when a majority of its area is crust.
+  // whatever the Whittaker mapping said.
+  //
+  // The mask is full-res and so is the output, so it applies cell for cell. The
+  // coarse version of this had to vote instead — a 62 km cell flipped only when
+  // most of it was crust — which lost every basin floor smaller than about half
+  // a cell. That is a real gain from going fine, not just a sharper edge.
   if (saltFlat) {
-    const counts = new Uint16Array(climateResX * climateResY)
-    const totals = new Uint16Array(climateResX * climateResY)
     for (let cell = 0; cell < saltFlat.length; cell++) {
-      const x = cell % worldW
-      const y = (cell - x) / worldW
-      const gi = Math.min(climateResY - 1, Math.floor((y / worldH) * climateResY)) * climateResX + Math.min(climateResX - 1, Math.floor((x / worldW) * climateResX))
-      totals[gi]++
-      if (saltFlat[cell]) counts[gi]++
-    }
-    for (let gi = 0; gi < counts.length; gi++) {
-      if (totals[gi] > 0 && counts[gi] * 2 > totals[gi]) biomes[gi] = Biome.SaltFlat
+      if (saltFlat[cell]) biomes[cell] = Biome.SaltFlat
     }
   }
   return biomes

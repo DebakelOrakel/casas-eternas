@@ -4,6 +4,8 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-08-08
+- **changed** Save: the biome layer is written at map resolution, so a loaded world's biomes are as detailed as the terrain. `world.biome`
+- **fixed** World map: the biome tooltip named a different biome than the one painted under the cursor near every boundary. `world.biome`
 - **changed** Rendering: the generator previews the baked river network when one exists, instead of only its own macro one. `worldgen.panel.hydrology`
 - **new** Controls: 4K and 8K buttons in the erosion panel order an amplification bake; 8K needs a server and a saved world, and says so when it cannot. `worldgen.panel.erosion`
 - **new** Notifications: can show a progress bar and update in place, for work that runs for minutes. `common.notify`

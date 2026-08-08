@@ -1,5 +1,6 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell } from './climateField'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
+import { LAPSE_C_PER_ELEVATION } from './temperature'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -154,6 +155,57 @@ function classify(tempC: number, precipMm: number, amplitude: number, season: nu
 // Biome id per climate cell (Uint8). Land only is classified; ocean → Biome.Ocean.
 // Consumes the current-adjusted temperature, annual precipitation, and seasonal
 // amplitude (all already on the climate grid).
+// Biomes at the WORLD raster's own resolution, not the climate grid's.
+//
+// The coarse version below decides a 62 km cell from ONE sampled elevation, so
+// a massif containing a 3,000 m peak and a 400 m valley becomes whichever the
+// centre happened to be. That is why there is no treeline: `Biome.Alpine` is a
+// pure elevation test, and at 62 km a mountain is alpine wholesale or not at
+// all. The game's own unit of place — a hex tile — is ~1.5 km, so this is 40x
+// too coarse exactly where a player looks.
+//
+// The fix is NOT to run the climate model finer. Temperature bands, winds and
+// moisture advection are genuinely regional and the advection is iterative;
+// 64x the cells would buy little. But the CLASSIFICATION is pointwise, and
+// four of its five inputs are smooth regional fields while the fifth —
+// elevation — already exists at full resolution. So this costs one pass.
+//
+// Temperature is the one input that cannot simply be read from the coarse
+// grid: it already carries the lapse correction for its cell's SAMPLED
+// elevation (see temperature.ts). Reading it and applying the lapse again for
+// the local elevation would count it twice. Undoing the coarse term first is
+// exact, because the correction is additive.
+//
+// Precipitation, seasonality and monsoon are taken from the containing cell
+// without interpolation. Blending them would be defensible for their own sake,
+// but precipitation carries OCEAN_PRECIP as a sentinel and averaging across a
+// coastline would silently mix it into land values. Their boundaries therefore
+// stay as coarse as they were — this pass buys elevation-driven detail, which
+// is the part that was missing.
+export function computeBiomesFine(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Uint8Array {
+  const biomes = new Uint8Array(worldWidth * worldHeight)
+  for (let wy = 0; wy < worldHeight; wy++) {
+    const gy = Math.min(RY - 1, Math.floor((wy / worldHeight) * RY))
+    for (let wx = 0; wx < worldWidth; wx++) {
+      const world = wy * worldWidth + wx
+      const here = elevation[world]
+      if (here <= SEA_LEVEL && !(dryLand && dryLand[world])) {
+        biomes[world] = Biome.Ocean
+        continue
+      }
+      const gx = Math.min(RX - 1, Math.floor((wx / worldWidth) * RX))
+      const cell = gy * RX + gx
+      const coarse = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
+      const temp = temperature[cell]
+        + LAPSE_C_PER_ELEVATION * Math.max(0, coarse - SEA_LEVEL)
+        - LAPSE_C_PER_ELEVATION * Math.max(0, here - SEA_LEVEL)
+      const base = classify(temp, precipitation[cell], seasonalAmplitude[cell], monsoonIndex[cell])
+      biomes[world] = here > ALPINE_TREELINE_ELEVATION && base !== Biome.Ice ? Biome.Alpine : base
+    }
+  }
+  return biomes
+}
+
 export function computeBiomes(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Uint8Array {
   const biomes = new Uint8Array(RX * RY)
   for (let gy = 0; gy < RY; gy++) {

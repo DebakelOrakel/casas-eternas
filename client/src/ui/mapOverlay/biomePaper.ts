@@ -7,20 +7,25 @@ import { periodicValueNoise2D } from '../../worldgen/elevation/ridgedNoise'
 // actually tells a reader what a place IS.
 //
 // Two problems have to be solved before the palette can be used at all, both
-// caused by the biome layer being a coarse climate-grid field (256x128) drawn
-// onto a map texture sixteen times finer:
+// caused by the biome field being coarser than the texture it is drawn onto:
 //
-//  1. Nearest-neighbour upsampling would render 16x16-pixel squares — a
+//  1. Nearest-neighbour upsampling would render visible squares — a
 //     checkerboard, not a landscape. Sampling the id through a noise-warped
 //     coordinate instead keeps the palette colours pure (no muddy bilinear
 //     in-betweens between sand and rainforest) while making every boundary
 //     an irregular, organic line.
-//  2. The coastline disagrees between grids: the elevation raster resolves
-//     land at 4096, the biome field at 256, so coastal land cells sample
-//     "Ocean" and would come out as untinted white fringe around every
+//  2. The coastline disagrees between grids: the relief is resolved at the
+//     full texture width and the biome field is not, so coastal land pixels
+//     sample "Ocean" and would come out as untinted white fringe around every
 //     shore. Dilating the land biomes outward over the ocean cells FIRST
-//     (a few passes on the small grid, so it costs nothing) means a land
+//     (a few passes on the source grid, so it costs little) means a land
 //     pixel always finds a land biome, whichever grid drew the coast.
+//
+// Both are stated in SOURCE CELLS so they scale with whatever field arrives.
+// That matters now that current saves carry biomes at the world raster (2x
+// under the texture) while older ones carry the climate grid (16x under it) —
+// see worldSave/worldLayers. The one quantity that does not scale that way is
+// the warp's own wavelength; see WARP_LATTICE_MIN_PIXELS.
 
 // How far the sample coordinate may wander, in COARSE cells (peak
 // displacement, so 1.5 lets a boundary bulge by about a cell and a half
@@ -35,6 +40,14 @@ const WARP_CELLS = 1.5
 // px). At 2x the biome grid the warp has a wavelength of several blocks,
 // which is what reads as a coastline-ish, organic line.
 const WARP_LATTICE_SCALE = 2
+// …but only down to a floor, because that multiple is the one thing here that
+// must NOT follow the source grid. At the climate grid it lands on an 8-pixel
+// wavelength, which is the value the note above was measured at. Applied to a
+// world-raster biome field it would ask for one lattice cell per texture pixel:
+// not a meander but white noise, which is the exact 1-pixel ragged edge the
+// note describes as the failure. The floor pins the wavelength instead, so the
+// coarse case is unchanged and the fine case keeps a shape.
+const WARP_LATTICE_MIN_PIXELS = 8
 
 // How far the land biomes must be spread out to sea. Derived from the warp
 // rather than picked, because the two are the same quantity seen twice: the
@@ -79,8 +92,8 @@ export function expandBiomeIds(biome: Uint8Array, resX: number, resY: number, wi
   const warpX = (WARP_CELLS * width) / resX
   const warpY = (WARP_CELLS * height) / resY
   // Lattice cell counts across the whole world, and the pixel→lattice scale.
-  const latticeX = Math.max(2, Math.round(resX * WARP_LATTICE_SCALE))
-  const latticeY = Math.max(2, Math.round(resY * WARP_LATTICE_SCALE))
+  const latticeX = Math.max(2, Math.min(Math.round(width / WARP_LATTICE_MIN_PIXELS), Math.round(resX * WARP_LATTICE_SCALE)))
+  const latticeY = Math.max(2, Math.min(Math.round(height / WARP_LATTICE_MIN_PIXELS), Math.round(resY * WARP_LATTICE_SCALE)))
   const toLatticeX = latticeX / width
   const toLatticeY = latticeY / height
   const seedY = (seed ^ 0x5bf03635) >>> 0
