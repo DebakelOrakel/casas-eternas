@@ -1,6 +1,7 @@
-# Build context = repo root. Keep it small: the image needs client/ (source),
-# docs/changelog/ (the title screen's changelog viewer imports it with ?raw) and
-# deploy/nginx.conf.
+# Build context = repo root. The image needs client/ (source), docs/changelog/
+# (the title screen's changelog viewer imports it with ?raw), and the SERVER —
+# main.go, cmd/, internal/, go.mod, go.sum — since the image is now one binary
+# that serves the client rather than nginx serving files.
 **/node_modules
 client/dist
 .git
@@ -8,14 +9,25 @@ client/dist
 .claude
 .DS_Store
 **/.DS_Store
+
+# The server's own stores, if a local run created them. They are data, and a
+# 20 GB artifact directory in a build context is a slow surprise.
+worlds
+artifacts
 saves
+
+# Generated: the image builds its own from source in the web stage, and a stale
+# copy from the host would be the exact drift the single-image design avoids.
+baker.mjs
+casas-eternas
+
 docs
 *.md
-# …except the changelog, which the title screen's viewer imports at build time with
-# Vite's ?raw. Both rules above would swallow it, so it is re-included explicitly —
-# the negations must come after the patterns they undo.
+# …except the changelog, which the title screen's viewer imports at build time
+# with Vite's ?raw. Both rules above would swallow it, so it is re-included
+# explicitly — the negations must come after the patterns they undo.
 !docs/changelog
 !docs/changelog/*.md
-go.mod
+
 notes-dont-process.md
 GPU_TECTONICS_PLAN.md

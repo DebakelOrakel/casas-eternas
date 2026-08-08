@@ -8,18 +8,30 @@
 // page knows where the storage is, and says so in /config.json.
 // See docs/decisions/server-storage.md.
 //
-// Skeleton: /config.json is real. Static file serving is NOT wired yet, because
-// it needs a flag for the dist/ directory (and the config it reports needs ones
-// for apiBase and authMode) — and flags get proposed before they get built.
+// It also serves the built client itself (--dir-client), which is what makes
+// local play one command and one origin. `apiBase` and `authMode` stay
+// hardcoded to their only sensible values for now: a switch nobody moves is
+// surface, and both become flags the day a foreign-origin storage or real
+// authentication exists.
 package client
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
 )
 
 // Config is what cmd/ resolves from the flags. No viper here by design.
-type Config struct{}
+type Config struct {
+	// Dir is the built client (vite's dist/). Serving it from the same process
+	// is what makes local play one command and one origin — and therefore what
+	// makes CORS never appear.
+	Dir string
+}
 
 // Module serves the client and its runtime configuration.
 type Module struct {
@@ -48,9 +60,52 @@ type runtimeConfig struct {
 }
 
 // Mount claims the client's routes.
+//
+// /config.json is registered BEFORE the catch-all, and wins: Go's ServeMux
+// prefers the more specific pattern regardless of registration order, but
+// stating it here saves the next reader the trip to the documentation.
 func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("GET /config.json", m.serveConfig)
+	if m.Dir() == "" {
+		return nil
+	}
+	if _, err := os.Stat(m.Dir()); err != nil {
+		return fmt.Errorf("--dir-client %q: %w", m.Dir(), err)
+	}
+	mux.Handle("GET /", m.spaHandler())
 	return nil
+}
+
+// Dir is the resolved client directory.
+func (m *Module) Dir() string { return m.cfg.Dir }
+
+// spaHandler serves the built client, falling back to index.html.
+//
+// The fallback is what makes a single-page app work under a router: a deep
+// link is a path the SERVER has no file for, and answering 404 would break
+// every bookmark. It deliberately does NOT fall back for paths that look like
+// assets — a missing script answering with HTML turns a clear 404 into a
+// baffling parse error three layers down.
+func (m *Module) spaHandler() http.Handler {
+	files := http.FileServer(http.Dir(m.cfg.Dir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clean := filepath.Clean(r.URL.Path)
+		if _, err := os.Stat(filepath.Join(m.cfg.Dir, clean)); err == nil {
+			// Fingerprinted build assets are safe to cache forever; the shell
+			// never is, or a deploy would not reach anyone who has visited.
+			if strings.HasPrefix(clean, "/assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
+			files.ServeHTTP(w, r)
+			return
+		}
+		if path.Ext(clean) != "" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFile(w, r, filepath.Join(m.cfg.Dir, "index.html"))
+	})
 }
 
 func (m *Module) serveConfig(w http.ResponseWriter, r *http.Request) {

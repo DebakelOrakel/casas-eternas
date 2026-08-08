@@ -53,7 +53,7 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 	var modules []server.Module
 
 	if targets.Has(config.TargetClient) {
-		m, err := client.New(client.Config{})
+		m, err := client.New(client.Config{Dir: viper.GetString(flagDirClient)})
 		if err != nil {
 			return nil, err
 		}
