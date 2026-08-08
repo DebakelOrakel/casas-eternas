@@ -1,7 +1,7 @@
 ---
 summary: How the Go server could store things for the client — a WORLD store (named, mutable, owned) next to an ARTIFACT store (content-addressed, immutable, shared) for derived data like the amplification tiles, over plain REST, with an identity concept from day one so SSO is later a config change rather than a rewrite.
 date: 2026-08-07
-status: design discussion — architecture proposal, nothing decided
+status: design discussion — superseded in part by decisions/server-storage.md (2026-08-07), which decides the identity, configuration, storage-backend and UI forks this doc left open. The rest stands as the longer argument.
 ---
 
 # Server storage: worlds, artifacts, and who may write them
@@ -16,6 +16,18 @@ greenfield.
 
 Nothing here is decided. It is written down so a later decision has
 something to argue with.
+
+> **That decision has since been made**, on 2026-08-07:
+> [decisions/server-storage.md](../decisions/server-storage.md). It
+> settles four forks left open below — the world store's key (a stable
+> `uid` in `world.yaml`, not the recipe and not the content hash), how
+> the client is told where the storage is (a `/config.json` from
+> whoever serves the page, with a relative `apiBase`), the disk backend
+> (files, confirming the "no database" line at the end of this doc), and
+> the UI shape. It also corrects one idea that is *not* in this doc but
+> came up on the way to it: letting the API simply be the page's own
+> origin, which breaks as soon as serving and storage are separate
+> components. Everything else here stands.
 
 ## The reframing: two stores, not two caches
 
