@@ -84,5 +84,10 @@
   "worldgen.panel.migration.seaCrossing.label": "Seequerung",
   "worldgen.panel.migration.seaCrossing.help": "Wie bereitwillig Völker flache Meere und Landbrücken überqueren.",
   "worldgen.notify.needsTectonics": "Erst die Tektonik bis mindestens Epoche {min} laufen lassen (jetzt {current}).",
-  "worldgen.notify.needsErosion": "Erst mindestens einmal Erosion laufen lassen — Klima, Flüsse, Ökologie und Migration brauchen das erodierte Gelände."
+  "worldgen.notify.needsErosion": "Erst mindestens einmal Erosion laufen lassen — Klima, Flüsse, Ökologie und Migration brauchen das erodierte Gelände.",
+  "worldgen.panel.erosion.bake4k.label": "4K",
+  "worldgen.panel.erosion.bake4k.help": "Das Gelände dieser Welt mit 4096×2048 neu berechnen — feinere Täler und ein dichteres Flussnetz. Dauert einige Minuten. Läuft auf dem Server, wenn die Welt dort liegt, sonst in diesem Browser.",
+  "worldgen.panel.erosion.bake8k.label": "8K",
+  "worldgen.panel.erosion.bake8k.help": "Dasselbe mit 8192×4096. Zu gross für den Browser, braucht also einen Server — und die Welt muss dort zuerst gespeichert sein.",
+  "worldgen.panel.erosion.bake.needsServer": "Braucht einen Server, der backen kann."
 }

@@ -116,7 +116,14 @@ export function deriveWorldId(seedLabel: string, inputs: BakeInputs): string {
 // baked terrain — and it is exactly the invisible kind of change this number
 // exists for, since it lives in a shared scaling function rather than in any
 // constant AMPLIFY_CONSTANTS hashes.
-export const AMPLIFICATION_ALGO_VERSION = 2
+// v3 (2026-08-08): the river threshold is no longer rescaled to a constant
+// physical catchment, so a finer bake now yields a genuinely denser network
+// instead of the same one at more vertices (amplify.ts has the measurements).
+// The same invisible kind of change as v2 — it lives in which function gets
+// called, not in any constant AMPLIFY_CONSTANTS hashes — and without the bump
+// every cached 4k and 8k artifact, local and on the server, would keep serving
+// the old sparse rivers under a key that claims to describe the new ones.
+export const AMPLIFICATION_ALGO_VERSION = 3
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

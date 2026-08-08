@@ -79,21 +79,51 @@ export function seedCascadeScales(resX: number): number[] {
 // The per-cell rescaling the bake runs its erosion under lives in erosion.ts,
 // next to the constants it corrects — see scaleErosionParamsForCellSize.
 
-// The river threshold's counterpart to that rescaling. The channel
-// criterion is a critical drainage area counted in CELLS (see
-// hydrology.densityToCriticalArea), so on a grid refined by 1/r the same
-// PHYSICAL catchment covers 1/r² times as many cells — leave the number
-// alone and every minor gully clears the bar, turning the map into a mesh of
-// parallel lines. Multiplying by 1/r² keeps "a river is a river" meaning the
-// same real thing at any resolution.
+// THE RIVER THRESHOLD IS DELIBERATELY *NOT* RESCALED — and it used to be.
 //
-// The same conclusion arrives from the discharge side: accumulateDischarge
-// sums a per-cell runoff over upstream cells, so discharge for a fixed
-// physical catchment also grows by 1/r² — threshold and signal scale
-// together, as they must.
-export function criticalAreaForCellSize(criticalAreaCells: number, cellSizeRatio: number): number {
-  return criticalAreaCells / (cellSizeRatio * cellSizeRatio)
-}
+// The channel criterion is a critical drainage area counted in CELLS (see
+// hydrology.densityToCriticalArea). A grid refined by 1/r fits 1/r² times as
+// many cells into the same physical catchment, so dividing the threshold by
+// r² held the PHYSICAL catchment constant: "a river is a river" meant the
+// same real thing at every stage. That is coherent, and it is what shipped
+// until 2026-08-08.
+//
+// It was also self-defeating. Measured on the same world, erosionRounds 2,
+// density 55 — with the rescaling, resolution bought nothing at all:
+//
+//   stage           min basin     junctions   channel length   density
+//   macro 2048      39,991 km²        12         13,087 km      1.23
+//   4k    rescaled  39,991 km²        13         12,922 km      1.20
+//   8k    rescaled  39,991 km²        10         12,929 km      1.19
+//   4k    as now     9,998 km²       108         39,250 km      3.65
+//   8k    as now     2,499 km²       721        101,165 km      9.33
+//
+// (density = km of channel per 1,000 km² of land.)
+//
+// The top half is the whole argument: the same network, drawn with four times
+// the vertices. Every cell the amplification won was handed straight back.
+//
+// 39,991 km² is also simply too coarse to be right. The Thames drains 13,000
+// km², the Moselle 28,000 — neither would appear on the map at all. And the
+// density slider cannot fix it: AREA_MIN floors it at 150 cells, which on the
+// macro grid is still 9,126 km² at maximum. THE SLIDER IS CAPPED BY THE GRID,
+// and refining the grid is the only thing that lifts the cap.
+//
+// The obvious objection — that an unrescaled threshold lets "every minor gully
+// clear the bar", turning the map into the mesh of parallel D8 lines AREA_MIN
+// exists to prevent — does not survive measurement. That artefact is a
+// CELL-COUNT property: it appears when channels are supported by too few
+// cells. Holding the threshold at a constant cell count holds that support
+// constant too (657 cells here, against a floor of 150) at every stage, and
+// the resulting network reads as a network — mean tributary length falls from
+// 190 km to 84 km, which is tributaries rather than fragments. The rescaling
+// was protecting something that did not need protecting.
+//
+// What changes, and it is intended: the stages no longer show the same rivers.
+// A finer map shows more of them, exactly as a real map does when you zoom in.
+//
+// The counterpart rescaling for EROSION is a different question with a
+// different answer, and it stays — see erosion.scaleErosionParamsForCellSize.
 
 // RIDGELINE RELIEF — why mountains read as round lumps, and what fixes it.
 //

@@ -4,7 +4,7 @@ import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
-import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, WORLDGEN_EXAGGERATION } from '../../map/mapSceneSettings'
+import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, WORLDGEN_EXAGGERATION } from '../../map/mapSceneSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../worldgen/core/mapConfig'
 
@@ -38,13 +38,19 @@ import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
-import { getServerStatus } from '../../server/serverStatus'
-import { uploadWorld } from '../../server/worldClient'
+import { getServerStatus, refreshServerStatus } from '../../server/serverStatus'
+import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
 import { createSavePanel } from '../../ui/worldPanels/SavePanel'
 import type { SaveTarget } from '../../ui/worldPanels/SavePanel'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { readRecipeValue as readYamlValue } from '../../worldgen/worldSave/recipeYaml'
-import { deriveWorldUid, newWorldUid } from '../../storage/artifactKey'
+import { derivePipelineVersion, deriveWorldUid, newWorldUid } from '../../storage/artifactKey'
+import { getArtifactStore } from '../../storage/artifactStoreProvider'
+import { amplificationArtifactExists, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
+import { readWorldInputs } from '../../worldgen/worldSave/loadWorldInputs'
+import { AMPLIFY_CONSTANTS } from '../../worldgen/surface/amplify'
+import { amplifyPhaseFraction, bakeStageInBrowser } from '../../worldgen/surface/bakeInBrowser'
+import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../server/bakeClient'
 import './worldgen.css'
 import '../../ui/chrome/chrome.css'
 
@@ -500,6 +506,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button" data-action="micro-tile" aria-label="Micro tile: re-simulate the largest river mouth at fine resolution (debug)">
             <img src="/icons/zoom_on.png" alt="" />
           </button>
+          <button type="button" class="text-button" data-action="bake-4" data-help="worldgen.panel.erosion.bake4k">${t('worldgen.panel.erosion.bake4k.label')}</button>
+          <button type="button" class="text-button" data-action="bake-8" data-help="worldgen.panel.erosion.bake8k">${t('worldgen.panel.erosion.bake8k.label')}</button>
         </span>
       </label>
     </div>
@@ -2945,7 +2953,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // recipe that is not read off a control. A world minted here keeps its uid
     // for every later save; regenerate() is the only thing that clears it.
     if (worldUid === '') worldUid = newWorldUid()
-    worldRevision += 1
+    // A bake is NOT a save. Bumping the revision here would advance the counter
+    // the server's optimistic lock compares against, so the next real upload
+    // would collide with a write that never happened.
+    if (pendingBakeFactor === null) worldRevision += 1
     zip.file('world.yaml', buildWorldYaml())
     // A world saved during the Archean has no plate simulation yet — it carries its own
     // snapshot instead. The phase is a pause, so it has to be savable there; before this
@@ -2958,6 +2969,17 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const archeanPreview = await makePreviewBlob()
       if (archeanPreview) zip.file('preview.png', archeanPreview)
       const archeanBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
+      // An Archean save has no climate, so a bake of it would stop after
+      // erosion and yield a world with no rivers. It is still routed through
+      // bakeFromArchive rather than dropped: that path reports the reason and,
+      // more importantly, clears the "a bake is running" state. Returning here
+      // with it still set would disable both buttons until the screen reloads.
+      if (pendingBakeFactor !== null) {
+        const factor = pendingBakeFactor
+        pendingBakeFactor = null
+        await bakeFromArchive(archeanBlob, factor)
+        return
+      }
       await deliverArchive(archeanBlob, `${(seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)
       return
     }
@@ -2972,6 +2994,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const preview = await makePreviewBlob()
     if (preview) zip.file('preview.png', preview)
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
+    // The bake reads this archive back rather than being handed the rasters:
+    // see bakeFromArchive for why the save is the only representation whose
+    // artifact key the world map will actually look for.
+    if (pendingBakeFactor !== null) {
+      const factor = pendingBakeFactor
+      pendingBakeFactor = null
+      await bakeFromArchive(blob, factor)
+      return
+    }
     const safeName = (seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')
     await deliverArchive(blob, `${safeName}.zip`)
   }
@@ -3001,6 +3032,171 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   async function saveTo(target: SaveTarget): Promise<void> {
     pendingSaveTarget = target
     await saveWorld()
+    // Saving to the server is exactly what unblocks 8K, so the buttons are
+    // re-evaluated here rather than leaving a greyed-out control that has just
+    // become possible.
+    void refreshBakeButtons()
+  }
+
+  // --- Ordering an amplification bake from the erosion panel ----------------
+  //
+  // The bake IS an erosion pass at a finer grid — upsample, seed roughness,
+  // erode, re-derive hydrology — which is why it is commissioned from here
+  // rather than beside the river-density slider that reads its result.
+  //
+  // It goes through the SAVE, always, and that is the load-bearing decision.
+  // The obvious shortcut is to bake from the rasters this screen already
+  // holds, and it produces a wrong cache key: an artifact is addressed by
+  // `deriveWorldId`, which hashes the precipitation layer as STORED (u16 at
+  // 8000/65535), while the generator holds raw floats. The buildWorldYaml
+  // comment says the same thing about not writing that id into the recipe.
+  // A bake keyed off the raw floats would run correctly, write real bytes,
+  // and be invisible to the world map for ever — the same silent class of
+  // failure as a pipeline-version mismatch. Serialising and reading back
+  // through `readWorldInputs` makes the key right by construction, because
+  // it is the identical reader the map and the server's baker use.
+  let pendingBakeFactor: number | null = null
+  let bakeRunning = false
+
+  async function bakeFromArchive(archive: Blob, factor: number): Promise<void> {
+    const level = `${factor * 2}K`
+    const inputs = await readWorldInputs(await archive.arrayBuffer())
+    if (!inputs || !inputs.climate) {
+      // No climate means no discharge, so the bake would stop after erosion
+      // and produce a world with no rivers — which is the Archean case.
+      ctx.notifications.show({ message: t('common.notify.bakeFailed', { reason: '' }), icon: '/icons/warning.png', durationMs: 8000 })
+      bakeRunning = false
+      refreshBakeButtons()
+      return
+    }
+
+    const pipelineVersion = derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS })
+    const key = { worldId: inputs.worldId, pipelineVersion, stage: String(factor) }
+    const store = await getArtifactStore()
+    if (await amplificationArtifactExists(store, key).catch(() => false)) {
+      // Already made, by this machine or another. Saying so beats spending
+      // minutes to reproduce bytes that are addressed by content anyway.
+      ctx.notifications.show({ message: t('common.notify.bakeExists', { level }), icon: '/icons/ok.png', durationMs: 6000 })
+      bakeRunning = false
+      refreshBakeButtons()
+      return
+    }
+
+    const toast = ctx.notifications.show({
+      message: t('common.notify.bakeWaiting', { level }),
+      icon: '/icons/server_load.png',
+      sticky: true,
+    })
+    const settle = (message: string, icon: string, durationMs: number): void => {
+      ctx.notifications.dismiss(toast)
+      ctx.notifications.show({ message, icon, durationMs })
+      bakeRunning = false
+      refreshBakeButtons()
+    }
+
+    // The server when it can, this browser when it cannot. Measured: 78 s
+    // against 232 s for the same stage, and the tab stays responsive.
+    const onServer = inputs.worldUid !== '' && isStoredOnServer(inputs.worldUid) && (await canCommissionBakes())
+    if (onServer) {
+      const order = await commissionBake(inputs.worldUid, factor, AMPLIFY_EROSION_ROUNDS)
+      if (!order.ok) {
+        settle(order.reason === 'unknownWorld' ? t('common.notify.bakeNeedsUpload') : t('common.notify.bakeFailed', { reason: order.message ?? '' }), '/icons/warning.png', 12000)
+        return
+      }
+      const outcome = await followBake(order.job.id, pipelineVersion, (job) => {
+        ctx.notifications.update(toast, {
+          message: t(bakeIsWaiting(job) ? 'common.notify.bakeWaiting' : 'common.notify.bakeRunning', { level }),
+          progress: bakeFraction(job),
+        })
+      })
+      if (!outcome.ok) {
+        settle(
+          outcome.reason === 'mismatch'
+            ? t('common.notify.bakeMismatch', { serverVersion: outcome.serverVersion, clientVersion: outcome.clientVersion })
+            : t('common.notify.bakeFailed', { reason: outcome.message }),
+          '/icons/warning.png', 15000,
+        )
+        return
+      }
+      settle(t('common.notify.bakeDone', { level, width: outcome.result.width, height: outcome.result.height, seconds: Math.round(outcome.result.durationMs / 1000) }), '/icons/server_clean.png', 15000)
+      return
+    }
+
+    // No server: only what a tab can survive. 8K is the ~2.6 GB that kills it,
+    // and the button is disabled for exactly this reason — reaching here means
+    // the world lost its server between the check and the click.
+    if (!AMPLIFY_BAKE_STAGES.includes(factor)) {
+      settle(t('worldgen.panel.erosion.bake.needsServer'), '/icons/warning.png', 10000)
+      return
+    }
+    try {
+      const baked = await bakeStageInBrowser(
+        {
+          macro: inputs.elevations, macroWidth: inputs.width, macroHeight: inputs.height,
+          factor, detailSeed: inputs.detailSeed, erosionRounds: AMPLIFY_EROSION_ROUNDS,
+          erosionStrength: inputs.erosionControls.strength,
+          drainageRefresh: inputs.erosionControls.refresh,
+          riverDensity: inputs.erosionControls.riverDensity,
+          precipitation: inputs.climate.data,
+          climateResX: inputs.climate.resX, climateResY: inputs.climate.resY,
+        },
+        (phase, fraction) => {
+          ctx.notifications.update(toast, {
+            message: t('common.notify.bakeRunning', { level }),
+            progress: amplifyPhaseFraction(phase, fraction),
+          })
+        },
+      )
+      await writeAmplificationArtifact(store, key, baked.artifact, baked.durationMs).catch(() => false)
+      settle(t('common.notify.bakeDone', { level, width: baked.artifact.width, height: baked.artifact.height, seconds: Math.round(baked.durationMs / 1000) }), '/icons/server_clean.png', 15000)
+    } catch {
+      settle(t('common.notify.bakeFailed', { reason: '' }), '/icons/warning.png', 12000)
+    }
+  }
+
+  // "4K" is factor 2 and "8K" is factor 4 — the label is the WIDTH, the factor
+  // is the refinement. Kept explicit here rather than computed at each site,
+  // because confusing the two silently bakes the wrong tier.
+  const bake4kButton = root.querySelector<HTMLButtonElement>('[data-action="bake-4"]')!
+  const bake8kButton = root.querySelector<HTMLButtonElement>('[data-action="bake-8"]')!
+
+  // A disabled button KEEPS its help card. The first cut swapped data-help for
+  // a native `title` — exactly one of the two, since the card replaces the
+  // native tooltip and both at once shows two — and that traded the styled
+  // explanation for a plain delayed one at the very moment it was needed most.
+  // The card's text already names what 8K requires, so the disabled state says
+  // "not now" and the card says "why".
+  function setBakeAffordance(button: HTMLButtonElement, helpBase: string, available: boolean): void {
+    button.disabled = !available
+    button.setAttribute('data-help', helpBase)
+  }
+
+  async function refreshBakeButtons(): Promise<void> {
+    const saved = worldUid !== '' && isStoredOnServer(worldUid)
+    const server = await canCommissionBakes()
+    // 4K needs nothing but a world: without a server it bakes here, which is
+    // what the browser can survive at this tier.
+    setBakeAffordance(bake4kButton, 'worldgen.panel.erosion.bake4k', !bakeRunning)
+    // 8K is the ~2.6 GB that kills a tab, so it is server-only — and the server
+    // bakes from the STORED world, which is the second condition and the one
+    // more often missing while a world is still being made.
+    setBakeAffordance(bake8kButton, 'worldgen.panel.erosion.bake8k', !bakeRunning && server && saved)
+  }
+
+  bake4kButton.addEventListener('click', () => orderAmplification(2))
+  bake8kButton.addEventListener('click', () => orderAmplification(4))
+  void refreshBakeButtons()
+
+  function orderAmplification(factor: number): void {
+    if (bakeRunning) return
+    bakeRunning = true
+    refreshBakeButtons()
+    // Routed through the ordinary save request: the worker owns the world
+    // data, and asking it here is the same question the save button asks.
+    // pendingSaveTarget is forced away from 'server' so a bake never uploads.
+    pendingSaveTarget = 'download'
+    pendingBakeFactor = factor
+    void saveWorld()
   }
 
   function pickLocalWorldFile(): void {
@@ -3111,6 +3307,18 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // artifactKey.deriveWorldUid.
     worldUid = readYamlValue(yaml, 'metadata.uid') || deriveWorldUid(new Uint8Array(elevation))
     worldRevision = Number(readYamlValue(yaml, 'status.revision') ?? 0)
+    // Both 8K preconditions just changed: this world now has an identity, and
+    // one opened FROM the server is by definition stored there. Without this
+    // the buttons keep answering for the empty screen they were built on —
+    // which reads as "needs a server" while a server is plainly working.
+    //
+    // The status is RE-PROBED first rather than read from the shared cache.
+    // That cache is resolved once per page load and never expires on its own,
+    // so a probe that failed while the server was still coming up would keep
+    // reporting "no server" for the rest of the session. Opening a world is
+    // the right moment to ask again — and if it came from the server, it is
+    // also proof the answer should be yes.
+    void refreshServerStatus().then(() => refreshBakeButtons())
     mantleVigourInput.value = readYamlValue(yaml, 'spec.genesis.mantleVigour') ?? mantleVigourInput.value
     waterInput.value = readYamlValue(yaml, 'spec.genesis.water') ?? waterInput.value
     // How far the Archean got, read from whichever snapshot the file carries — the yaml

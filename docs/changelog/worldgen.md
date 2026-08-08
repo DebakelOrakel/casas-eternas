@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-08-08
+- **changed** Hydrology: amplified bakes now draw a denser river network the finer they get, instead of repeating the macro one. `worldgen.panel.hydrology`
+
 ## 2026-08-07
 - **changed** Ecology: metals, gems and obsidian concentrate into scattered deposits again instead of blanketing the map — only a fraction of volcanoes and orogens is mineralised, with tighter halos. `world.overlay.resources`
 - **changed** Ecology: gold placer needs a genuinely large river now, not every stream. `world.overlay.resources`

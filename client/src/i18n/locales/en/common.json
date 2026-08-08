@@ -44,5 +44,15 @@
   "common.panel.storage.delete": "Delete",
   "common.panel.storage.local": "On this machine",
   "common.panel.storage.server": "On the server",
-  "common.panel.storage.serverEmpty": "Nothing on the server yet."
+  "common.panel.storage.serverEmpty": "Nothing on the server yet.",
+  "common.action.orderBake.label": "Bake {level}",
+  "common.action.orderBake.help": "Ask the server to compute this resolution. It takes a few minutes, and the result is then available to everyone.",
+  "common.notify.bakeWaiting": "{level}: waiting for a machine.",
+  "common.notify.bakeRunning": "Baking {level}.",
+  "common.notify.bakeDone": "{level} baked on the server: {width}×{height} in {seconds} s.",
+  "common.notify.bakeNeedsUpload": "Save this world to the server before it can be baked there.",
+  "common.notify.bakeFailed": "The bake failed. {reason}",
+  "common.notify.bakeMismatch": "The server baked with build {serverVersion}, this client reads {clientVersion}. The result exists but cannot be found from here.",
+  "common.notify.bakeUnfetchable": "{level} was baked on the server but could not be fetched.",
+  "common.notify.bakeExists": "{level} is already baked for this world."
 }

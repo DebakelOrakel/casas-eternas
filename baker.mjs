@@ -9982,7 +9982,7 @@ function deriveWorldId(seedLabel, inputs) {
   const label = seedLabel.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").replace(/^[.\s]+/, "").trim().replace(/\s+/g, "-").slice(0, 24) || "world";
   return `${label}-${hex8(sa)}${hex8(sb)}`;
 }
-var AMPLIFICATION_ALGO_VERSION = 2;
+var AMPLIFICATION_ALGO_VERSION = 3;
 function derivePipelineVersion(constants) {
   const text = Object.keys(constants).sort().map((name) => `${name}=${constants[name]}`).join("|");
   const [a, b] = hashBytes(new TextEncoder().encode(text), 2166136261, 2654435769);
@@ -10036,7 +10036,8 @@ async function readWorldInputs(archive) {
     drainageRefresh: erosionControls.refresh,
     riverDensity: erosionControls.riverDensity
   });
-  return { elevations, width, height, seedText, detailSeed, erosionControls, climate, biome, worldId };
+  const worldUid = readRecipeValue(yamlText, "metadata.uid") ?? "";
+  return { elevations, width, height, seedText, detailSeed, erosionControls, climate, biome, worldId, worldUid };
 }
 
 // src/worldgen/elevation/ridgedNoise.ts
@@ -10099,9 +10100,6 @@ function seedCascadeScales(resX) {
     scales.push(s);
   }
   return scales.length > 0 ? scales : [1];
-}
-function criticalAreaForCellSize(criticalAreaCells, cellSizeRatio) {
-  return criticalAreaCells / (cellSizeRatio * cellSizeRatio);
 }
 var RIDGE_OCTAVE_CELLS = [256, 512, 1024];
 var RIDGE_OCTAVE_AMPLITUDES = [1, 0.5, 0.25];
@@ -10984,7 +10982,7 @@ async function runAmplification(request, onProgress = () => {
     const discharge = accumulateDischarge(routing, field, request.precipitation, request.climateResX, request.climateResY);
     const maxDischarge = maxDischargeOverLand(discharge, field);
     const meanRunoff = meanLandRunoff(request.precipitation, field, result.width, result.height, request.climateResX, request.climateResY);
-    const criticalArea = criticalAreaForCellSize(densityToCriticalArea(request.riverDensity ?? 55), 1 / request.factor);
+    const criticalArea = densityToCriticalArea(request.riverDensity ?? 55);
     rivers = extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge);
     onProgress("hydrology", 1);
   }

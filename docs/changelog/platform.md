@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-08
+- **new** World map: a resolution the browser cannot bake can now be ordered from the server, and its progress is shown as a notification. `world`
 - **new** Server: bakes amplified terrain itself — 8192×4096 finishes in under six minutes where a browser tab runs out of memory and dies. `world`
 - **new** Server: bake jobs are queued and their progress can be followed while they run.
 - **changed** Deploy: one image, one binary — it serves the client, stores worlds and artifacts and bakes, replacing the nginx-only image. `common`

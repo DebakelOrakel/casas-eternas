@@ -47,7 +47,8 @@ export interface ArtifactStore {
 // stay swappable:
 //
 //   worlds/{worldId}/amp/{pipelineVersion}/{stage}/elevation.u16
-//                                                 /rivers.json
+//                                                 /rivers.f32
+//                                                 /riverLengths.u32
 //                                                 /meta.json
 //
 // Built here rather than at call sites so the layout is stated once, and so

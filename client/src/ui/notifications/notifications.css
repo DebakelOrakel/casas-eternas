@@ -87,3 +87,27 @@
   color: #000;
   background: rgba(0, 0, 0, 0.08);
 }
+
+/* The message column: text, and under it a progress bar when there is one. */
+.notification-toast__message {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.notification-toast__progress {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+}
+
+.notification-toast__bar {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: #1a1a1a;
+  /* Eased, because progress arrives in steps of several percent — a bar that
+     jumped between them would read as stuttering rather than as working. */
+  transition: width 0.3s ease;
+}

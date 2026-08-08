@@ -20,12 +20,13 @@ import { t } from '../../i18n/i18n'
 import type { TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { derivePipelineVersion } from '../../storage/artifactKey'
-import { readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
+import { amplificationArtifactExists, readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { getServerStatus } from '../../server/serverStatus'
+import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../server/bakeClient'
 import { readWorldInputs } from '../../worldgen/worldSave/loadWorldInputs'
 import type { ErosionControls as SaveErosionControls } from '../../worldgen/worldSave/loadWorldInputs'
 import { AMPLIFY_CONSTANTS } from '../../worldgen/surface/amplify'
@@ -200,6 +201,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Identity of the world currently loaded, derived from what the bake
   // actually consumes (see storage/artifactKey.ts).
   let worldId = ''
+  // The SERVER's name for the same world — `metadata.uid`, which does not move
+  // when the terrain does. Ordering a bake needs this one; empty for a save too
+  // old to carry it, and for that case the answer is to save it again.
+  let worldUid = ''
   // Scene-space river ribbons + the relief surfaces they drape on (set when
   // the bake's height field arrives), and which relief level they are
   // currently styled for.
@@ -221,6 +226,14 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // the only level with no rivers, since those are a product of the bake.
   let availableFactors: number[] = []
   let shownFactor = 1
+  // Levels this world could SHOW but nobody has baked — either because the tab
+  // must not bake them (8k is the 2.6 GB that kills it) or because it tried and
+  // died. Exactly the set worth ordering from a server, which is why it is
+  // recorded rather than merely skipped over.
+  let missingFactors: number[] = []
+  // One order at a time. Not a lock over anything shared — it stops a second
+  // click from queueing a second run of the same six minutes.
+  let bakeOrdered = false
   let reliefCoarseSurface: ReturnType<typeof createElevationSurface> | null = null
   let reliefFineSurface: ReturnType<typeof createElevationSurface> | null = null
   let ribbonLevel: keyof typeof RIBBON_WIDTH_PROFILES = 'flat'
@@ -257,6 +270,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <img src="/icons/biomes.png" alt="" />
       </button>
       <button type="button" class="text-button resolution-cycle" data-action="cycle-resolution" title="Force a resolution (debug)" hidden></button>
+      <button type="button" class="text-button" data-action="order-bake" data-help="common.action.orderBake" hidden></button>
       <span class="altitude-readout" data-value="altitude"></span>
       <span class="bake-readout" data-value="bake"></span>
     </div>
@@ -337,6 +351,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       return
     }
     worldId = inputs.worldId
+    worldUid = inputs.worldUid
     presentWorld(
       inputs.elevations, inputs.width, inputs.height,
       inputs.biome, inputs.detailSeed, inputs.erosionControls,
@@ -626,6 +641,179 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     void showLevel(next)
   })
 
+  // --- Ordering a bake from the server -------------------------------------
+  //
+  // The counterpart to the fetch/bake split in mapSceneSettings: the client
+  // shows stages it must never bake itself, and this is how one of those comes
+  // into existence. Everything about it is explicit — the button only appears
+  // when there is genuinely something to order and somewhere to order it from,
+  // and it never fires on its own. See server/bakeClient.ts for why automatic
+  // ordering is the wrong design rather than merely a bolder one.
+  const bakeButton = root.querySelector<HTMLButtonElement>('[data-action="order-bake"]')!
+
+  // Records a level that could be shown but does not exist anywhere.
+  function noteMissing(factor: number): void {
+    if (!missingFactors.includes(factor)) {
+      missingFactors.push(factor)
+      missingFactors.sort((a, b) => a - b)
+    }
+  }
+
+  // Coarsest first: if both 4k and 8k are absent, the cheaper one is also the
+  // one that arrives sooner and improves the map more per minute spent.
+  function nextMissing(): number | undefined {
+    return missingFactors.find((factor) => !availableFactors.includes(factor))
+  }
+
+  async function refreshBakeButton(): Promise<void> {
+    const generation = bakeGeneration
+    const factor = nextMissing()
+    // Hidden for exactly two reasons: nothing to bake, or nowhere to bake it.
+    // Asking the server LAST keeps the common case free of a request.
+    //
+    // A missing worldUid is deliberately NOT one of them, though it will fail.
+    // Hiding on it made three unrelated situations produce the same silent
+    // nothing — no stage missing, no server, and a save too old to name itself
+    // — and the third is the one a user can actually fix. So the button
+    // appears and the click explains: saving the world to the server is the
+    // remedy, and it is the same remedy the 404 case already names.
+    const offerable = factor !== undefined && !bakeOrdered && (await canCommissionBakes())
+    // The world may have changed while that was in flight.
+    if (generation !== bakeGeneration) return
+    bakeButton.hidden = !offerable
+    if (offerable) bakeButton.textContent = t('common.action.orderBake.label', { level: levelLabel(factor!) })
+  }
+
+  async function orderBake(): Promise<void> {
+    const factor = nextMissing()
+    if (factor === undefined || bakeOrdered) return
+    // A save with no `metadata.uid` cannot name its world to the server, and
+    // guessing one would address a stranger's. Saying so is the whole point of
+    // still showing the button — and saving the world is the fix for this and
+    // for the 404 below alike.
+    if (worldUid === '') {
+      ctx.notifications.show({ message: t('common.notify.bakeNeedsUpload'), icon: '/icons/warning.png', durationMs: 12000 })
+      return
+    }
+    const generation = bakeGeneration
+    bakeOrdered = true
+    bakeButton.hidden = true
+    const label = levelLabel(factor)
+
+    const pipelineVersion = derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS })
+
+    // A bake runs for minutes, so the progress belongs in a notification the
+    // user can walk away from rather than in a readout on one panel. Sticky:
+    // it is dismissed when the work ENDS, not on a timer, because a toast that
+    // expired mid-bake would leave no sign that anything was still happening.
+    const toast = ctx.notifications.show({
+      message: t('common.notify.bakeWaiting', { level: label }),
+      icon: '/icons/server_load.png',
+      sticky: true,
+    })
+    // Every exit from here goes through this, so the sticky toast cannot
+    // outlive the job that justified it.
+    const settle = (message: string, icon: string, durationMs: number): void => {
+      ctx.notifications.dismiss(toast)
+      ctx.notifications.show({ message, icon, durationMs })
+    }
+
+    const order = await commissionBake(worldUid, factor, AMPLIFY_EROSION_ROUNDS)
+    if (generation !== bakeGeneration) {
+      ctx.notifications.dismiss(toast)
+      return
+    }
+    if (!order.ok) {
+      // The one outcome that is not a fault: a world that was never uploaded.
+      // Saying "save it to the server first" is actionable in a way a 404 is
+      // not, so it gets its own message rather than a generic refusal.
+      settle(
+        order.reason === 'unknownWorld'
+          ? t('common.notify.bakeNeedsUpload')
+          : t('common.notify.bakeFailed', { reason: order.message ?? '' }),
+        '/icons/warning.png',
+        12000,
+      )
+      setBakeText(`${label} ✕`)
+      bakeOrdered = false
+      void refreshBakeButton()
+      return
+    }
+
+    const outcome = await followBake(order.job.id, pipelineVersion, (job) => {
+      if (generation !== bakeGeneration) return
+      // Waiting and working are different things and are said differently: in
+      // a cluster the first state is a Job with no node yet, which with hard
+      // anti-affinity is routine rather than a fault. The bar appears only
+      // where there is a real fraction to draw — see bakeFraction.
+      ctx.notifications.update(toast, {
+        message: t(bakeIsWaiting(job) ? 'common.notify.bakeWaiting' : 'common.notify.bakeRunning', { level: label }),
+        progress: bakeFraction(job),
+      })
+    })
+    if (generation !== bakeGeneration) {
+      ctx.notifications.dismiss(toast)
+      return
+    }
+
+    if (!outcome.ok) {
+      // The mismatch case is not a failure on the server's side: the bake ran
+      // and its bytes are real, they are simply addressed by a key this client
+      // never reads. Nothing about clicking again would change that, so the
+      // button stays gone and the message names both builds.
+      settle(
+        outcome.reason === 'mismatch'
+          ? t('common.notify.bakeMismatch', { serverVersion: outcome.serverVersion, clientVersion: outcome.clientVersion })
+          : t('common.notify.bakeFailed', { reason: outcome.message }),
+        '/icons/warning.png',
+        15000,
+      )
+      setBakeText(`${label} ✕`)
+      if (outcome.reason !== 'mismatch') {
+        bakeOrdered = false
+        void refreshBakeButton()
+      }
+      return
+    }
+
+    // The artifact is on the server now. Reading through the TIERED store both
+    // fetches and backfills it locally, so the next load of this world is a
+    // local hit rather than a second download.
+    const store = await getArtifactStore()
+    const hit = await readAmplificationArtifact(store, { worldId, pipelineVersion, stage: String(factor) }).catch(() => null)
+    // bakeSource carries the detail seed the near-field bumps grow from, and a
+    // wrong one would draw a different world at the same resolution. Checked
+    // rather than defaulted: there is no sensible stand-in for it.
+    if (generation !== bakeGeneration || !bakeSource) {
+      ctx.notifications.dismiss(toast)
+      return
+    }
+    if (!hit) {
+      settle(t('common.notify.bakeUnfetchable', { level: label }), '/icons/warning.png', 12000)
+      setBakeText(`${label} ✕`)
+      bakeOrdered = false
+      void refreshBakeButton()
+      return
+    }
+    applyBakeResult(hit.artifact, factor, bakeSource.detailSeed)
+    noteLevel(factor)
+    settle(
+      t('common.notify.bakeDone', {
+        level: label,
+        width: outcome.result.width,
+        height: outcome.result.height,
+        seconds: Math.round(outcome.result.durationMs / 1000),
+      }),
+      '/icons/server_clean.png',
+      15000,
+    )
+    setBakeText(`${hit.artifact.width}×${hit.artifact.height}`)
+    bakeOrdered = false
+    void refreshBakeButton()
+  }
+
+  bakeButton.addEventListener('click', () => { void orderBake() })
+
   // --- Amplification bake (docs/decisions/worldmap-amplification.md) ---
   // Runs in its own worker after the macro map is already on screen, then
   // swaps the geometry. Deliberately fire-and-forget from the load path: a
@@ -639,11 +827,43 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     bakeSource = { macro, macroWidth, macroHeight, detailSeed, key: { worldId, pipelineVersion: derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS }) } }
     availableFactors = [1]
     shownFactor = 1
+    // A new world knows nothing about the last one's gaps, and an order placed
+    // for the previous world must not keep this one's button hidden.
+    missingFactors = []
+    bakeOrdered = false
     refreshResolutionButton()
+    void refreshBakeButton()
 
     const stages = AMPLIFY_FETCH_STAGES.filter((factor) => factor > 1)
     if (stages.length === 0) return
     const generation = ++bakeGeneration
+
+    // Which orderable stages are absent, asked UP FRONT rather than as the
+    // chain reaches them.
+    //
+    // The chain runs coarse-first and each stage waits for the last, so a
+    // browser that has to bake 4k first would not learn that 8k is missing for
+    // another minute or two — and the button to order it would appear long
+    // after the moment someone was looking for it. Nothing about that check
+    // depends on the earlier stage's result: it is a store lookup, and it can
+    // happen immediately.
+    //
+    // Self-correcting if a stage turns out to be present after all: the chain
+    // fetches it, noteLevel records it, and nextMissing filters it back out.
+    void (async () => {
+      const store = await getArtifactStore()
+      for (const factor of stages) {
+        if (AMPLIFY_BAKE_STAGES.includes(factor)) continue // this tab can make it itself
+        const key = { worldId, pipelineVersion: bakeSource!.key.pipelineVersion, stage: String(factor) }
+        // Presence only — reading it here would download and decode ~134 MB
+        // just to answer whether a button should be shown, and the chain is
+        // about to fetch it properly anyway.
+        const present = await amplificationArtifactExists(store, key).catch(() => false)
+        if (generation !== bakeGeneration) return
+        if (!present) noteMissing(factor)
+      }
+      if (generation === bakeGeneration) void refreshBakeButton()
+    })()
 
     // Stages run one after another, coarse first, each swapped in when it
     // lands — so the map is amplified early and sharpens later. Each stage
@@ -682,6 +902,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // 2.6 GB that kills the tab, and a stage the client cannot produce must
       // not be attempted just because it was allowed to be shown.
       if (!AMPLIFY_BAKE_STAGES.includes(factor)) {
+        // Not a dead end any more: this is precisely the stage a server can
+        // make and a tab cannot, so it is offered rather than merely skipped.
+        noteMissing(factor)
+        void refreshBakeButton()
         void runStage(index + 1)
         return
       }
@@ -722,6 +946,11 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       worker.onerror = () => {
         if (generation !== bakeGeneration) return
         setBakeText(`${label} failed`)
+        // A stage this machine could not manage is a good candidate for one
+        // that is not a browser tab — the failure is usually memory, and that
+        // is exactly what the server has more of.
+        noteMissing(factor)
+        void refreshBakeButton()
         finish() // deliberately no next stage — a deeper one would fail harder
       }
       // A copy: the macro raster stays live here (later stages re-read it),

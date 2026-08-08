@@ -84,5 +84,10 @@
   "worldgen.panel.migration.seaCrossing.label": "Sea crossing",
   "worldgen.panel.migration.seaCrossing.help": "How readily peoples cross shallow seas and land bridges.",
   "worldgen.notify.needsTectonics": "First run tectonics to at least epoch {min} (now {current}).",
-  "worldgen.notify.needsErosion": "First run erosion at least once — climate, rivers, ecology and migration need the eroded terrain."
+  "worldgen.notify.needsErosion": "First run erosion at least once — climate, rivers, ecology and migration need the eroded terrain.",
+  "worldgen.panel.erosion.bake4k.label": "4K",
+  "worldgen.panel.erosion.bake4k.help": "Recompute this world's terrain at 4096×2048 — finer valleys and a denser river network. Takes a few minutes. Runs on the server when this world is stored there, otherwise in this browser.",
+  "worldgen.panel.erosion.bake8k.label": "8K",
+  "worldgen.panel.erosion.bake8k.help": "The same at 8192×4096. Too large for a browser to compute, so it needs a server — and this world must be saved there first.",
+  "worldgen.panel.erosion.bake.needsServer": "Needs a server that can bake."
 }

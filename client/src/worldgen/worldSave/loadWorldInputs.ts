@@ -69,6 +69,20 @@ export interface WorldInputs {
   // What the bake actually consumes, hashed — the artifact key. Derived here
   // rather than by the caller so every reader of a save agrees on it.
   worldId: string
+  // The world's own identity in the server's store, `metadata.uid`. The OTHER
+  // half of the pair artifactKey.ts keeps deliberately side by side: worldId
+  // moves whenever the terrain does, worldUid never moves at all. Ordering a
+  // bake needs this one, because the server addresses worlds by what you named
+  // and own, not by what the terrain currently hashes to.
+  //
+  // Empty for a save written before the field existed. Deliberately NOT
+  // derived as a fallback the way the generator does when RESTORING a legacy
+  // world: there the derivation seeds an identity that is then written down,
+  // while here it would be used to address a stranger's server. A uid guessed
+  // from a different byte source than the one that was uploaded points at
+  // another world or at nothing, and both are worse than admitting the save is
+  // too old and asking for it to be saved again.
+  worldUid: string
 }
 
 function readLayer(zip: JSZip, manifest: WorldManifest, name: string, landOnly: boolean): Promise<GridLayer | null> {
@@ -137,5 +151,7 @@ export async function readWorldInputs(archive: ArrayBuffer | Uint8Array): Promis
     riverDensity: erosionControls.riverDensity,
   })
 
-  return { elevations, width, height, seedText, detailSeed, erosionControls, climate, biome, worldId }
+  const worldUid = readRecipeValue(yamlText, 'metadata.uid') ?? ''
+
+  return { elevations, width, height, seedText, detailSeed, erosionControls, climate, biome, worldId, worldUid }
 }

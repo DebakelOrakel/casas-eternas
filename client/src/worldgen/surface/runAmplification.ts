@@ -1,4 +1,4 @@
-import { AMPLIFICATION_EROSION_OVERRIDES, amplifyElevation, criticalAreaForCellSize } from './amplify'
+import { AMPLIFICATION_EROSION_OVERRIDES, amplifyElevation } from './amplify'
 import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass, scaleErosionParamsForCellSize } from './erosion'
 import { fillDepressionsAndRouteFlow } from './flowRouting'
 import { slopeFromAngle } from '../elevation/elevationScale'
@@ -108,9 +108,12 @@ export async function runAmplification(
     const discharge = accumulateDischarge(routing, field, request.precipitation, request.climateResX, request.climateResY)
     const maxDischarge = maxDischargeOverLand(discharge, field)
     const meanRunoff = meanLandRunoff(request.precipitation, field, result.width, result.height, request.climateResX, request.climateResY)
-    // The channel criterion is a cell COUNT, so it is rescaled for the finer
-    // grid exactly like the erosion constants were.
-    const criticalArea = criticalAreaForCellSize(densityToCriticalArea(request.riverDensity ?? 55), 1 / request.factor)
+    // The channel criterion is a cell COUNT and is used as one, at every
+    // stage — NOT rescaled to a constant physical catchment the way the
+    // erosion constants are. That is what makes a finer bake produce a richer
+    // river network rather than the same one with more vertices; amplify.ts
+    // carries the measurements behind the decision.
+    const criticalArea = densityToCriticalArea(request.riverDensity ?? 55)
     rivers = extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge)
     onProgress('hydrology', 1)
   }

@@ -1,7 +1,7 @@
 ---
 summary: Server-side amplification bakes become Kubernetes Jobs when — and only when — the server is running in a cluster. A job is already a value with a scope behind a Runner interface, so this is an added implementation rather than a rebuild. Decided: only a world's owner may commission one, the runner is chosen by detecting the cluster rather than by a flag, anti-affinity is hard so two 2.6 GB bakes never share a node, and each Job gets a one-shot token scoped to the artifact key it may write. Everything in that list exists ONLY in a cluster; a local server keeps the plain subprocess with no checks at all.
 date: 2026-08-08
-status: decided — architecture and the four forks below. STEPS 1–3 BUILT 2026-08-08 and verified against a real OpenShift cluster: the Job is accepted, its pod is admitted by restricted-v2 and scheduled. A real image runs as a Job and completes (pending → running → succeeded in 54 s, mostly image pull). Not yet run end to end as a BAKE, which needs the server deployed so a Job can reach it. Step 4 (commissioning from the client) not started.
+status: decided — architecture and the four forks below. STEPS 1–3 BUILT 2026-08-08 and verified against a real OpenShift cluster: the Job is accepted, its pod is admitted by restricted-v2 and scheduled. A real image runs as a Job and completes (pending → running → succeeded in 54 s, mostly image pull). Not yet run end to end as a BAKE, which needs the server deployed so a Job can reach it. STEP 4 BUILT 2026-08-08: the world map orders a bake for a stage it cannot make itself, verified end to end against a local server.
 ---
 
 # Bakes as Kubernetes Jobs
@@ -186,8 +186,48 @@ Each step is verifiable before the next, and the first two need no cluster.
    preferred, there is no CPU limit, the Job claims no PVC, and detection
    refuses to call a machine a cluster on the strength of environment variables
    alone.
-4. **Commissioning from the client** — the world map asks for a bake when a
-   stage is missing and the server says it can bake.
+4. **Commissioning from the client** — **BUILT 2026-08-08.** The world map
+   offers a bake when a stage is missing and the server says it can make one.
+
+   The gap that had to be closed first was an IDENTITY one. The bake endpoint
+   addresses worlds by `metadata.uid` — the name that does not move when the
+   terrain does — while the worldmap knew only `worldId`, the content hash the
+   artifact store is keyed by. Both are read from the save now, and
+   `loadWorldInputs` deliberately does NOT fall back to deriving a uid the way
+   the generator does when restoring a legacy world: there the derivation seeds
+   an identity that is then written down, while here it would be used to
+   address a stranger's server, where a guess points at another world or at
+   nothing. A save too old to name itself is told to be saved again.
+
+   **Explicit, never automatic**, and that is the load-bearing decision. The
+   tempting version orders a bake whenever a showable stage is absent; it
+   spends minutes of a shared machine on behalf of someone who only opened a
+   map, and — worse — a bake that fails, or that lands under a key this client
+   does not read, would be re-ordered on every single load.
+
+   The client checks the module list rather than mere reachability, because
+   `start -t client,world` answers `/v1/capabilities` while running no baker,
+   and it sends `erosionRounds` EXPLICITLY rather than letting the server
+   default: the client's artifact key is derived from its own constants
+   including that one.
+
+   The failure worth naming is `mismatch`. If the finished job reports a
+   different `pipelineVersion` than the client reads, the bake **succeeded** —
+   real bytes, real world — but under a key nobody will ever ask for. Calling
+   that a failure would be a lie and calling it success would leave someone
+   staring at an unchanged map, so it is its own outcome, it says which two
+   versions disagree, and the button does not come back. This is not
+   hypothetical: it happened once already, when the baker hashed
+   `AMPLIFY_CONSTANTS` and the worldmap hashed `{...AMPLIFY_CONSTANTS, rounds}`.
+
+   A stage the browser TRIED and died on is offered too — the failure is
+   usually memory, which is exactly what the server has more of.
+
+   Verified end to end against a local server: upload → order → poll
+   (`erosion 9% … hydrology 100%`) → artifact fetched at the path the client
+   builds. The client reads `worldUid` 7c9e6679-… and derives worldId
+   `alpha-8a2f4e5d9c3909b9` — the same id the server baked under, so the two
+   halves of the identity meet where they must.
 
 ## Flags this needs
 

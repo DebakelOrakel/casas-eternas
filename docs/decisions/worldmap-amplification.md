@@ -1,7 +1,7 @@
 ---
 summary: The worldmap gets its fine terrain from a one-time, deterministic AMPLIFICATION BAKE at load — upsample the 2048 macro raster to 8192×4096, inject seed roughness, run a few real erosion passes, then RE-RUN hydrology on the amplified field. The 2048 sim raster stays the sole authority and the only thing saved; the 8k layer is derived presentation, recomputed per load, never serialized. Below ~1 km, detail remains synthesis/regional forever.
 date: 2026-08-07
-status: decided; phases 1–4 built 2026-08-07 (upsample + seed roughness + rescaled erosion + re-run hydrology with river ribbons, staged). SHIPPING AT 4096 — the 8192 target crashed Safari (tab OOM) and waits on the memory work; caching also still open
+status: decided; river threshold reversed 2026-08-08 (see point 2 — amplification now enriches the network instead of preserving it); phases 1–4 built 2026-08-07 (upsample + seed roughness + rescaled erosion + re-run hydrology with river ribbons, staged). SHIPPING AT 4096 — the 8192 target crashed Safari (tab OOM) and waits on the memory work; caching also still open
 ---
 
 # Worldmap terrain amplification (the 8k bake)
@@ -29,13 +29,51 @@ has to lead somewhere.
    the whole point. Climate/biomes stay at their coarse resolution and
    are merely sampled onto the fine grid as inputs (they are regional
    quantities; precipitation feeds the discharge as before).
-   The channel criterion needs the same per-cell treatment as the erosion
-   constants: `densityToCriticalArea` returns an area in CELLS, so it is
-   multiplied by 1/r² (`amplify.criticalAreaForCellSize`). Measured
-   2026-08-07: with the rescaling the physical channel length agrees
-   within 4 % between factors 2 and 4; without it, factor 2 alone draws
-   6× the channels — the "mesh of parallel lines" the density floor
-   exists to prevent.
+   The channel criterion is a critical drainage area in CELLS
+   (`densityToCriticalArea`) and is **used as one at every stage**.
+
+   REVERSED 2026-08-08, having shipped the opposite for a day. The
+   original rule multiplied it by 1/r² so the physical catchment stayed
+   constant, on the strength of one measurement — channel length agreed
+   within 4 % between factors 2 and 4, while dropping the rescaling drew
+   6× the channels, read at the time as the "mesh of parallel lines" the
+   density floor exists to prevent.
+
+   The agreement was the problem, not the evidence for it. Holding the
+   physical catchment constant means amplification cannot enrich the
+   network at all — it hands back exactly what the finer grid won:
+
+   | stage          | min basin  | junctions | length      | density |
+   |----------------|-----------:|----------:|------------:|--------:|
+   | macro 2048     | 39,991 km² |        12 |  13,087 km  |    1.23 |
+   | 4k, rescaled   | 39,991 km² |        13 |  12,922 km  |    1.20 |
+   | 8k, rescaled   | 39,991 km² |        10 |  12,929 km  |    1.19 |
+   | 4k, as now     |  9,998 km² |       108 |  39,250 km  |    3.65 |
+   | 8k, as now     |  2,499 km² |       721 | 101,165 km  |    9.33 |
+
+   (density = km of channel per 1,000 km² of land; same world, 2 rounds,
+   density 55.) Four times the vertices, the same twelve junctions.
+
+   39,991 km² is too coarse to be right in the first place: the Thames
+   drains 13,000 km², the Moselle 28,000, and neither would be drawn.
+   The density slider cannot rescue it either — `AREA_MIN` floors it at
+   150 cells, still 9,126 km² on the macro grid. The slider is capped by
+   the grid, and refining the grid is the only thing that lifts the cap.
+
+   On the noise objection: the 6× reading counted channels and inferred
+   an artefact. Decomposed, it is not one. The parallel-line failure is a
+   CELL-COUNT property — too few cells supporting a channel — and a
+   constant cell threshold holds that support constant (657 cells against
+   a floor of 150) at every stage. Mean tributary length falls 190 km →
+   84 km, which is tributaries rather than fragments, and junctions rise
+   60× where mere fragmentation would not move them.
+
+   **Still unjudged: how it LOOKS.** The structural case is measured, the
+   aesthetic one is not, and the stages now deliberately differ — a finer
+   map shows more rivers, as a real map does when you zoom in.
+
+   Consequence: `AMPLIFICATION_ALGO_VERSION` → 3, so every 4k/8k artifact
+   already cached locally or on a server is stale and must be rebaked.
 3. **The bake erodes with the WORLD'S OWN erosion settings.** A save
    records `spec.erosion.erosionStrength` / `drainageRefresh` (the
    generator restores them into its sliders on load); the bake reads the

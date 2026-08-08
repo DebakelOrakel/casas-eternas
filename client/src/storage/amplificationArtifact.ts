@@ -86,6 +86,17 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
   return wrote
 }
 
+// Is this stage there, without fetching it?
+//
+// Its own function because the difference is not small: `read` on a present
+// 8192² artifact pulls and decodes ~134 MB, and a caller that only wants to
+// know whether to OFFER a bake would be paying that to learn one bit. meta.json
+// is written last (see the write order above), so its presence is also the
+// signal that the rest of the entry is complete rather than half-written.
+export async function amplificationArtifactExists(store: ArtifactStore, key: ArtifactKey): Promise<boolean> {
+  return store.exists(artifactPath(key, FILES.meta))
+}
+
 export async function readAmplificationArtifact(store: ArtifactStore, key: ArtifactKey): Promise<{ artifact: AmplificationArtifact; bakeMs: number } | null> {
   const metaBytes = await store.read(artifactPath(key, FILES.meta))
   if (!metaBytes) return null
