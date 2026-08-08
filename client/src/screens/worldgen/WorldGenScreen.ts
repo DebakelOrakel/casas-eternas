@@ -38,6 +38,7 @@ import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createCachePanel } from '../../ui/cachePanel/CachePanel'
 import { readRecipeValue as readYamlValue } from '../../worldgen/worldSave/recipeYaml'
+import { deriveWorldUid, newWorldUid } from '../../storage/artifactKey'
 import './worldgen.css'
 import '../../ui/chrome/chrome.css'
 
@@ -290,6 +291,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // .erosionRun in a save). Reset when the topography is remade (regenerate /
   // running tectonics / reset-erosion), bumped per erode, set on load.
   let erosionRunCount = 0
+  // A world's STABLE identity and how many times it has been saved — written to
+  // world.yaml's metadata/status, read back on load, and deliberately NOT
+  // derived from anything: see artifactKey.newWorldUid for why the terrain hash
+  // cannot serve here. Empty until the world is first saved or loaded.
+  let worldUid = ''
+  let worldRevision = 0
   // Epoch the safety auto-stop will fire at. Re-armed to (current epoch +
   // MAX_TECTONICS_EPOCHS) every time the sim is started (see startSim), so
   // each run halts ~MAX_TECTONICS_EPOCHS after it began: start at 0 stops
@@ -2743,6 +2750,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       'kind: FlatWorld',
       'metadata:',
       `  name: ${name}`,
+      // The world's own identity, stable across further erosion and across
+      // re-saves — the key the server's world store is addressed by. Distinct
+      // from the TERRAIN's identity (deriveWorldId), which is supposed to move
+      // whenever the terrain does; see the note under status.
+      `  uid: ${worldUid}`,
       'spec:',
       // Grouped by the pipeline stage that owns each knob, in the order the panels
       // run. `seed` stays at the top: it is the world's identity, not a setting of
@@ -2775,6 +2787,17 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // `archeanEpochs` — two sources for one fact, and nothing read the yaml copies.
       // The erosion count has no home in the snapshot, so this stays load-bearing.
       `  erosionRun: ${erosionRunCount}`,
+      // How many times this world has been written. The server's optimistic
+      // lock compares it, so two machines editing one world collide loudly
+      // instead of one silently overwriting the other.
+      `  revision: ${worldRevision}`,
+      // NOT recorded here: the terrain's content id (storage/artifactKey's
+      // deriveWorldId). It would let a listing say "the server holds different
+      // terrain" without downloading 8 MB — but it hashes the DEQUANTISED
+      // precipitation layer, and the generator holds raw floats, so a value
+      // written here would differ from the one every reader computes. A hash
+      // that is subtly wrong is worse than an absent one; readers derive it
+      // from the save, as WorldMapScreen already does.
       '',
     ].join('\n')
   }
@@ -2872,6 +2895,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // + snapshot + baked query layers + manifest + preview).
   async function handleWorldData(message: WorkerWorldDataMessage): Promise<void> {
     const zip = new JSZip()
+    // Stamp the identity BEFORE the yaml is built — it is the one thing in the
+    // recipe that is not read off a control. A world minted here keeps its uid
+    // for every later save; regenerate() is the only thing that clears it.
+    if (worldUid === '') worldUid = newWorldUid()
+    worldRevision += 1
     zip.file('world.yaml', buildWorldYaml())
     // A world saved during the Archean has no plate simulation yet — it carries its own
     // snapshot instead. The phase is a pause, so it has to be savable there; before this
@@ -2993,6 +3021,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
     const seed = readYamlValue(yaml, 'spec.seed') ?? ''
     seedInput.value = seed
+    // Identity, or a derived one for a save written before the field existed.
+    // Deriving rather than rolling a fresh id is what keeps the same legacy
+    // file opened on two machines a SINGLE world in the store — see
+    // artifactKey.deriveWorldUid.
+    worldUid = readYamlValue(yaml, 'metadata.uid') || deriveWorldUid(new Uint8Array(elevation))
+    worldRevision = Number(readYamlValue(yaml, 'status.revision') ?? 0)
     mantleVigourInput.value = readYamlValue(yaml, 'spec.genesis.mantleVigour') ?? mantleVigourInput.value
     waterInput.value = readYamlValue(yaml, 'spec.genesis.water') ?? waterInput.value
     // How far the Archean got, read from whichever snapshot the file carries — the yaml
@@ -3328,6 +3362,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     invalidateClimate()
     migrationOrigins = [] // fresh world → re-auto-place origins on the next migration open
     erosionRunCount = 0
+    // A genuinely different world, so it must not inherit the previous one's
+    // identity — otherwise saving would overwrite that world on the server.
+    // Note this is regenerate() only: running more tectonics or resetting
+    // erosion also zero erosionRunCount, but those are the SAME world evolving.
+    worldUid = ''
+    worldRevision = 0
     archeanFinalised = false
     initArchean(seedInput.value, Number(mantleVigourInput.value), Number(waterInput.value))
     updateNavState() // fresh world → re-lock downstream panels

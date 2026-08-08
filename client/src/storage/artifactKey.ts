@@ -130,3 +130,48 @@ export function derivePipelineVersion(constants: Record<string, number>): string
   const [a, b] = hashBytes(new TextEncoder().encode(text), 0x811c9dc5, 0x9e3779b9)
   return `v${AMPLIFICATION_ALGO_VERSION}-${hex8(a)}${hex8(b)}`
 }
+
+// --- a world's OWN identity, which is a different question ----------------
+//
+// `deriveWorldId` above answers "which terrain is this", and it is SUPPOSED to
+// change whenever the terrain does — erode a world once more and its artifacts
+// must be rebaked. A world also needs the opposite: an identity that survives
+// exactly that, so the thing you named and own stays one thing on the server
+// while its terrain evolves underneath. That is `metadata.uid` in world.yaml.
+//
+// The two live side by side deliberately. Reaching for the wrong one is the
+// mistake this whole design exists to prevent (see
+// docs/decisions/server-storage.md), and it is much harder to make when both
+// are on the same screen with this comment between them.
+
+// A brand-new world's identity: random, because nothing about a world's
+// content should determine it.
+export function newWorldUid(): string {
+  return crypto.randomUUID()
+}
+
+// A LEGACY save's identity, derived once from the terrain it carries.
+//
+// This is not a contradiction of the rule above: the content does not BECOME
+// the identity, it only SEEDS it. Once written into the save the uid is fixed
+// and further erosion never moves it. The reason to derive rather than roll a
+// random one is that the same pre-uid save file opened on two machines must
+// land on ONE world in the store — a random id would silently make two, with
+// no way left to merge them.
+//
+// Shaped as a UUID (version 8, the "custom" form) so a uid is one format
+// everywhere and nothing downstream has to care where it came from. The
+// elevation raster is the input rather than the zip's bytes because it is the
+// world's substance: re-exporting the same world recompresses differently but
+// does not change its terrain.
+export function deriveWorldUid(elevation: ArrayBufferView): string {
+  const [a, b] = hashBytes(elevation, 0x811c9dc5, 0x9e3779b9)
+  // A second pass under different seeds, because a UUID needs 128 bits and one
+  // pass yields 64. Chaining off the first keeps every input byte in both.
+  const [c, d] = hashBytes(elevation, (a ^ 0x85ebca6b) >>> 0, (b ^ 0xc2b2ae35) >>> 0)
+  const digits = (hex8(a) + hex8(b) + hex8(c) + hex8(d)).split('')
+  digits[12] = '8' // version
+  digits[16] = '89ab'[parseInt(digits[16], 16) & 0x3] // RFC 4122 variant
+  const hex = digits.join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}

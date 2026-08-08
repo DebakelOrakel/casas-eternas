@@ -48,9 +48,25 @@ does not.
 - `metadata.uid` is added: generated once at first save, never changed.
   A UUID rather than the name, because names collide and get renamed —
   identity and label are different jobs.
-- `status` gains a revision counter and the `contentHash` as of that
-  save, so a client can compare "the terrain I hold" against "the
-  terrain the server holds" without re-hashing eight megabytes.
+- `status` gains a revision counter, which the server's optimistic lock
+  compares so two machines editing one world collide loudly instead of
+  one silently overwriting the other.
+- `status` does **not** gain the terrain's content id, though the plan
+  first said it would. It would have let a listing say "the server holds
+  different terrain" without downloading eight megabytes — but
+  `deriveWorldId` hashes the DEQUANTISED precipitation layer, and the
+  generator holds raw floats, so a value written at save time would
+  differ from the one every reader computes. A hash that is subtly wrong
+  is worse than an absent one; readers derive it from the save, as
+  WorldMapScreen already does.
+
+**Legacy saves** — written before `uid` existed — derive one, once, from
+the elevation raster they carry, shaped as a version-8 UUID so a uid is
+one format everywhere. This does not contradict the rule above: the
+content does not *become* the identity, it only *seeds* it, and further
+erosion never moves it afterwards. Rolling a random id instead would
+silently turn the same pre-uid file opened on two machines into two
+worlds, with nothing left to merge them by.
 
 ## 2. Configuration: a file from whoever serves the page
 
@@ -357,11 +373,16 @@ client-side tiling, the same work the memory problem needs.
 
 In order:
 
-1. **`metadata.uid` and a real display name in `world.yaml`.** Pure
-   client work, needs no server, and blocks everything after it — the
-   world store has nothing to key on until a save carries an identity.
-   It also fixes a visible bug on its own: the cache panel currently
-   labels every world with its seed.
+1. **`metadata.uid` in `world.yaml`** — pure client work, needs no
+   server, and blocks everything after it: the world store has nothing
+   to key on until a save carries an identity. **BUILT 2026-08-08**
+   (`storage/artifactKey.ts` gained `newWorldUid`/`deriveWorldUid` beside
+   `deriveWorldId`, so the two identities are read side by side; the
+   generator mints on save, reads back on load, and clears only in
+   `regenerate()` — running more tectonics or resetting erosion are the
+   same world evolving). A real editable display NAME is deliberately
+   split off: it needs UI and i18n keys, and the server does not wait on
+   it.
 2. **The world store**: PUT/GET/LIST/DELETE, preview extraction,
    revisions, the optimistic lock.
 3. **The client's half**: save-to and load-from server behind the folder
