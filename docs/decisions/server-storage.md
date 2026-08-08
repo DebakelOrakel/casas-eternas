@@ -419,6 +419,10 @@ In order:
 
 ## Related
 
+- [distributed-bake.md](./distributed-bake.md) — what happens to the bake
+  module in a cluster: Jobs, who may commission one, and why every part of
+  that exists only there.
+
 - [design/server-storage.md](../design/server-storage.md) — the longer
   architectural argument this decides on top of: the two-store framing,
   the REST shape including the `present` endpoint, the auth staging, and
