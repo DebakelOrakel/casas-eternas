@@ -17,6 +17,9 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+
+	"github.com/DebakelOrakel/casas-eternas/internal/config"
+	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
 
 // uploadLimit caps an accepted save. A world zip is tens of megabytes at the
@@ -31,10 +34,15 @@ type Config struct {
 	// CONTENTS rather than for this module, because the module will grow a tile
 	// database and a loop that need directories of their own.
 	Dir string
+	// AuthMode decides whether the recorded owner means anything. Resolved by
+	// cmd/ and shared with every module, so who a caller IS has one answer in
+	// the process.
+	AuthMode config.AuthMode
 }
 
 // Module serves the world store.
 type Module struct {
+	cfg   Config
 	store *Store
 }
 
@@ -46,7 +54,7 @@ func New(cfg Config) (*Module, error) {
 	if err != nil {
 		return nil, fmt.Errorf("--dir-worlds: %w", err)
 	}
-	return &Module{store: store}, nil
+	return &Module{cfg: cfg, store: store}, nil
 }
 
 // Name identifies the module in logs and errors.
@@ -66,14 +74,6 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 
 // Close releases the store. Nothing is held open.
 func (m *Module) Close() error { return nil }
-
-// callerIdentity resolves who is asking.
-//
-// Always "local" while authMode is `none`, but routed through a function from
-// day one so that token and OIDC land HERE rather than as a refactor of every
-// handler. The design doc's point: build with a notion of identity, check it
-// later.
-func callerIdentity(r *http.Request) string { return "local" }
 
 func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 	metas, err := m.store.List()
@@ -144,7 +144,7 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meta, err := m.store.Put(uid, data, info, callerIdentity(r), expected)
+	meta, err := m.store.Put(uid, data, info, identity.Caller(r, m.cfg.AuthMode), expected)
 	if err != nil {
 		respondStoreError(w, err)
 		return

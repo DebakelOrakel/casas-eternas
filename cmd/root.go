@@ -22,6 +22,7 @@ const (
 	flagTLSCA        = "tls-ca"
 	flagBaker        = "baker"
 	flagDirClient    = "dir-client"
+	flagBakeMax      = "bake-max-concurrent"
 )
 
 const (
@@ -29,7 +30,8 @@ const (
 	textDirArtifacts = `The directory to the artifact store.`
 	textDirWorlds    = `The directory the saved worlds live in.`
 	textBaker        = `Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.`
-	textDirClient    = `The directory the built client is served from.`
+	textDirClient    = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
+	textBakeMax      = `How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.`
 
 	textListen  = `Address to listen on, as host:port. ":8080" binds every interface, "127.0.0.1:8080" keeps a local instance off the network.`
 	textTLSCert = `Path to the server certificate. Enables HTTPS together with --tls-key.`
@@ -89,7 +91,8 @@ func init() {
 	StartCmd.Flags().String(flagDirArtifacts, "./artifacts", textDirArtifacts)
 	StartCmd.Flags().String(flagDirWorlds, "./worlds", textDirWorlds)
 	StartCmd.Flags().String(flagBaker, "", textBaker)
-	StartCmd.Flags().String(flagDirClient, "./dist", textDirClient)
+	StartCmd.Flags().String(flagDirClient, "", textDirClient)
+	StartCmd.Flags().Int(flagBakeMax, 1, textBakeMax)
 
 	for _, err := range []error{
 		viper.BindPFlag(flagListen, RootCmd.PersistentFlags().Lookup(flagListen)),
@@ -101,6 +104,7 @@ func init() {
 		viper.BindPFlag(flagDirWorlds, StartCmd.Flags().Lookup(flagDirWorlds)),
 		viper.BindPFlag(flagBaker, StartCmd.Flags().Lookup(flagBaker)),
 		viper.BindPFlag(flagDirClient, StartCmd.Flags().Lookup(flagDirClient)),
+		viper.BindPFlag(flagBakeMax, StartCmd.Flags().Lookup(flagBakeMax)),
 	} {
 		if err != nil {
 			fmt.Println(err)

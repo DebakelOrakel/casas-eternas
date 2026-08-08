@@ -53,14 +53,14 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 	var modules []server.Module
 
 	if targets.Has(config.TargetClient) {
-		m, err := client.New(client.Config{Dir: viper.GetString(flagDirClient)})
+		m, err := client.New(client.Config{Dir: viper.GetString(flagDirClient), AuthMode: config.DefaultAuthMode})
 		if err != nil {
 			return nil, err
 		}
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetWorld) {
-		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorlds)})
+		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorlds), AuthMode: config.DefaultAuthMode})
 		if err != nil {
 			return nil, err
 		}
@@ -75,9 +75,11 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 	}
 	if targets.Has(config.TargetBake) {
 		m, err := bake.New(bake.Config{
-			WorldsDir:    viper.GetString(flagDirWorlds),
-			ArtifactsDir: viper.GetString(flagDirArtifacts),
-			BakerPath:    bakerPath(),
+			WorldsDir:     viper.GetString(flagDirWorlds),
+			ArtifactsDir:  viper.GetString(flagDirArtifacts),
+			BakerPath:     bakerPath(),
+			AuthMode:      config.DefaultAuthMode,
+			MaxConcurrent: viper.GetInt(flagBakeMax),
 		})
 		if err != nil {
 			return nil, err

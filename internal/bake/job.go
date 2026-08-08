@@ -130,10 +130,16 @@ func newRegistry(capacity int) *registry {
 	return &registry{jobs: make(map[string]*Job), cap: capacity}
 }
 
-func (r *registry) add(job *Job) {
+// add takes the job BY VALUE and returns a snapshot, so no caller is left
+// holding a pointer into a record the workers mutate. That was not merely
+// tidiness: the enqueue handler used to serialise the very pointer it had just
+// registered, while a worker was writing State and StartedAt through the lock
+// — a data race the tests only surfaced under `-race`.
+func (r *registry) add(job Job) Job {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.jobs[job.ID] = job
+	stored := &job
+	r.jobs[job.ID] = stored
 	r.order = append(r.order, job.ID)
 	for len(r.order) > r.cap {
 		oldest := r.order[0]
@@ -144,6 +150,7 @@ func (r *registry) add(job *Job) {
 		r.order = r.order[1:]
 		delete(r.jobs, oldest)
 	}
+	return *stored
 }
 
 func (r *registry) get(id string) (Job, bool) {

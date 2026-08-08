@@ -83,6 +83,30 @@ func validTargets() string {
 	return strings.Join(names, ", ")
 }
 
+// AuthMode is how the server establishes who is asking. The three values come
+// from the design's staging (docs/design/server-storage.md): build with a
+// notion of identity from day one, check it later.
+type AuthMode string
+
+const (
+	// AuthNone is the LOCAL mode, and that is a definition rather than a
+	// default: a synthetic identity owns everything, so nobody else can be
+	// present and there is nothing to protect anyone from.
+	AuthNone  AuthMode = "none"
+	AuthToken AuthMode = "token"
+	AuthOIDC  AuthMode = "oidc"
+)
+
+// DefaultAuthMode is what the server runs as until a flag exists to say
+// otherwise. Kept here rather than in the module that reports it, so the
+// value the client is TOLD and the value the server ENFORCES cannot differ.
+const DefaultAuthMode = AuthNone
+
+// ChecksIdentity reports whether authorisation decisions mean anything. The
+// one place callers should ask, so "is this the local mode" is never spelled
+// out as a comparison in three different files.
+func (m AuthMode) ChecksIdentity() bool { return m != AuthNone && m != "" }
+
 // Server is the process-wide transport configuration — the part that belongs to
 // the process rather than to any one module, which is why its flags are
 // persistent on the root command.

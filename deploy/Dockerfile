@@ -53,8 +53,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/casas-eternas .
 # ---- Runtime ----------------------------------------------------------------
 FROM node:22-alpine AS runtime
 
-# Layout matches the binary's own defaults: --baker and --dir-client both look
-# beside the executable, so the container needs no flags for either.
+# --baker defaults to beside the executable, so it needs no flag. --dir-client
+# is passed explicitly in CMD: its default is empty on purpose, so that a dev
+# run without a build serves only /config.json instead of refusing to start.
 WORKDIR /app
 COPY --from=server /out/casas-eternas /app/casas-eternas
 COPY --from=web    /app/baker.mjs     /app/baker.mjs
@@ -73,4 +74,4 @@ VOLUME ["/data"]
 # Every module by default. A deployment that wants only storage, or only the
 # frontend, overrides the arguments — see internal/config's target list.
 ENTRYPOINT ["/app/casas-eternas"]
-CMD ["start", "--target", "all", "--dir-worlds", "/data/worlds", "--dir-artifacts", "/data/artifacts"]
+CMD ["start", "--target", "all", "--dir-client", "/app/dist", "--dir-worlds", "/data/worlds", "--dir-artifacts", "/data/artifacts"]

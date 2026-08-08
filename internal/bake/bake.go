@@ -27,7 +27,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
+
+	"github.com/DebakelOrakel/casas-eternas/internal/config"
+	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
 
 // defaultErosionRounds mirrors the client's AMPLIFY_EROSION_ROUNDS. A request
@@ -57,15 +61,22 @@ type Config struct {
 	ArtifactsDir string
 	// The Node bundle, from `npm run build:baker`.
 	BakerPath string
+	// AuthMode decides whether the world's recorded owner means anything.
+	AuthMode config.AuthMode
+	// MaxConcurrent bakes. One by default, and that is a memory argument: two
+	// 8192² bakes want 5 GB between them. In a cluster it also interacts with
+	// the hard anti-affinity — the effective figure is min(this, nodes), and
+	// setting it higher only produces Pending jobs.
+	MaxConcurrent int
 }
 
 type Module struct {
-	cfg      Config
-	runner   Runner
-	jobs     *registry
-	queue    chan string
-	cancel   context.CancelFunc
-	finished chan struct{}
+	cfg     Config
+	runner  Runner
+	jobs    *registry
+	queue   chan string
+	cancel  context.CancelFunc
+	workers sync.WaitGroup
 }
 
 func New(cfg Config) (*Module, error) {
@@ -77,6 +88,11 @@ func New(cfg Config) (*Module, error) {
 		return nil, fmt.Errorf("--baker: %w", err)
 	}
 
+	workers := cfg.MaxConcurrent
+	if workers < 1 {
+		workers = 1
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Module{
 		cfg:    cfg,
@@ -84,15 +100,14 @@ func New(cfg Config) (*Module, error) {
 		jobs:   newRegistry(jobHistory),
 		// Buffered so a burst of requests is accepted rather than blocking the
 		// HTTP handler; full means genuinely swamped, which answers 503.
-		queue:    make(chan string, 64),
-		cancel:   cancel,
-		finished: make(chan struct{}),
+		queue:  make(chan string, 64),
+		cancel: cancel,
 	}
-	// ONE worker. Not an oversight: two concurrent 8k bakes want 5 GB, so
-	// serialising is the correct default and the queue is what makes that
-	// bearable. Raising it is a flag away once basins split the work into
-	// pieces that actually fit side by side.
-	go m.work(ctx)
+	for range workers {
+		m.workers.Add(1)
+		go m.work(ctx)
+	}
+	slog.Info("bake ready", "workers", workers, "auth", cfg.AuthMode)
 	return m, nil
 }
 
@@ -111,10 +126,15 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 func (m *Module) Close() error {
 	m.cancel()
 	close(m.queue)
+	done := make(chan struct{})
+	go func() {
+		m.workers.Wait()
+		close(done)
+	}()
 	select {
-	case <-m.finished:
+	case <-done:
 	case <-time.After(30 * time.Second):
-		slog.Warn("bake worker did not stop in time")
+		slog.Warn("bake workers did not stop in time")
 	}
 	return nil
 }
@@ -142,19 +162,29 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		clientError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Checked before queueing so a typo'd uid fails now rather than at the far
-	// end of a queue that may be minutes long.
-	if _, err := os.Stat(m.worldZip(request.WorldUID)); err != nil {
+	// Both checked before queueing, so a request that cannot succeed fails now
+	// rather than at the far end of a queue that may be minutes long.
+	owner, zip, ok := m.worldMeta(request.WorldUID)
+	if !ok {
 		clientError(w, http.StatusNotFound, "no such world, or it has no stored revision")
 		return
 	}
+	if _, err := os.Stat(zip); err != nil {
+		clientError(w, http.StatusNotFound, "no such world, or it has no stored revision")
+		return
+	}
+	if !m.canBake(identity.Caller(r, m.cfg.AuthMode), owner) {
+		// 403 and not 404: the world exists, and pretending otherwise would
+		// make a permission problem look like a missing save.
+		clientError(w, http.StatusForbidden, "only a world's owner may commission a bake for it")
+		return
+	}
 
-	job := &Job{ID: newID(), Request: request, State: StateQueued, QueuedAt: time.Now()}
-	m.jobs.add(job)
+	job := m.jobs.add(Job{ID: newID(), Request: request, State: StateQueued, QueuedAt: time.Now()})
 	select {
 	case m.queue <- job.ID:
 	default:
-		m.jobs.update(job.ID, func(j *Job) {
+		job, _ = m.jobs.update(job.ID, func(j *Job) {
 			j.State = StateFailed
 			j.Error = "bake queue is full"
 		})
@@ -180,27 +210,44 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m.jobs.list())
 }
 
-// worldZip resolves a world's current revision to a path.
+// worldMeta reads the little of a world's record this module needs.
 //
 // Reads the world store's own meta.json rather than importing the package: the
 // modules are deliberately independent, and a read-only reader of a documented
 // on-disk layout is a smaller coupling than a shared object would be.
-func (m *Module) worldZip(uid string) string {
+func (m *Module) worldMeta(uid string) (owner string, zip string, ok bool) {
 	raw, err := os.ReadFile(filepath.Join(m.cfg.WorldsDir, uid, "meta.json"))
 	if err != nil {
-		return filepath.Join(m.cfg.WorldsDir, uid, "missing")
+		return "", "", false
 	}
 	var meta struct {
-		Revision int `json:"revision"`
+		Owner    string `json:"owner"`
+		Revision int    `json:"revision"`
 	}
 	if json.Unmarshal(raw, &meta) != nil || meta.Revision < 1 {
-		return filepath.Join(m.cfg.WorldsDir, uid, "missing")
+		return "", "", false
 	}
-	return filepath.Join(m.cfg.WorldsDir, uid, "rev", fmt.Sprint(meta.Revision), "world.zip")
+	return meta.Owner, filepath.Join(m.cfg.WorldsDir, uid, "rev", fmt.Sprint(meta.Revision), "world.zip"), true
+}
+
+// canBake decides whether this caller may commission a bake of this world.
+//
+// A bake is minutes of a machine, so in a multi-user deployment it is not a
+// thing anyone may ask for on anyone's world. The rule is OWNERSHIP — it is
+// your world — matching the staging the artifact store already sets out.
+//
+// In `none` mode this passes unconditionally, because that mode IS the local
+// one: a person on their own machine, with nobody to be protected from. The
+// check still runs, which is the point of having it now rather than later.
+func (m *Module) canBake(caller, owner string) bool {
+	if !m.cfg.AuthMode.ChecksIdentity() {
+		return true
+	}
+	return caller != identity.Anonymous && caller == owner
 }
 
 func (m *Module) work(ctx context.Context) {
-	defer close(m.finished)
+	defer m.workers.Done()
 	for id := range m.queue {
 		job, ok := m.jobs.get(id)
 		if !ok {
@@ -212,8 +259,9 @@ func (m *Module) work(ctx context.Context) {
 			j.StartedAt = &started
 		})
 
+		_, zip, _ := m.worldMeta(job.Request.WorldUID)
 		spec := Spec{
-			WorldZip:      m.worldZip(job.Request.WorldUID),
+			WorldZip:      zip,
 			Stage:         job.Request.Stage,
 			ErosionRounds: job.Request.ErosionRounds,
 			ArtifactsDir:  m.cfg.ArtifactsDir,

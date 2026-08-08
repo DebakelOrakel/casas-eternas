@@ -9,20 +9,22 @@
 // See docs/decisions/server-storage.md.
 //
 // It also serves the built client itself (--dir-client), which is what makes
-// local play one command and one origin. `apiBase` and `authMode` stay
-// hardcoded to their only sensible values for now: a switch nobody moves is
-// surface, and both become flags the day a foreign-origin storage or real
-// authentication exists.
+// local play one command and one origin. `apiBase` is still the only sensible
+// value; `authMode` now comes from the server's own resolved config, so what
+// the browser is told and what the server enforces cannot differ.
 package client
 
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/DebakelOrakel/casas-eternas/internal/config"
 )
 
 // Config is what cmd/ resolves from the flags. No viper here by design.
@@ -31,6 +33,11 @@ type Config struct {
 	// is what makes local play one command and one origin — and therefore what
 	// makes CORS never appear.
 	Dir string
+	// AuthMode is reported to the browser verbatim. Taken from the same
+	// resolved value the server ENFORCES rather than written out here: a client
+	// told "none" by a server that checks would show the wrong indicator and
+	// offer affordances that then fail.
+	AuthMode config.AuthMode
 }
 
 // Module serves the client and its runtime configuration.
@@ -66,7 +73,12 @@ type runtimeConfig struct {
 // stating it here saves the next reader the trip to the documentation.
 func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("GET /config.json", m.serveConfig)
+	// No directory means "tell the client where the API is, serve no files" —
+	// exactly what a dev run wants, where vite serves the app and proxies here.
+	// A directory that was NAMED and is missing is a different thing entirely,
+	// and fails below: a default is a guess, a given value is an instruction.
 	if m.Dir() == "" {
+		slog.Info("client module serving /config.json only", "reason", "--dir-client not set")
 		return nil
 	}
 	if _, err := os.Stat(m.Dir()); err != nil {
@@ -113,7 +125,7 @@ func (m *Module) serveConfig(w http.ResponseWriter, r *http.Request) {
 	// would point a client at an address that no longer answers.
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(runtimeConfig{APIBase: "/v1", AuthMode: "none"})
+	_ = json.NewEncoder(w).Encode(runtimeConfig{APIBase: "/v1", AuthMode: string(m.cfg.AuthMode)})
 }
 
 // Close releases the module. Nothing is held open yet.
