@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-08-08
+- **changed** Rendering: the generator previews the baked river network when one exists, instead of only its own macro one. `worldgen.panel.hydrology`
 - **new** Controls: 4K and 8K buttons in the erosion panel order an amplification bake; 8K needs a server and a saved world, and says so when it cannot. `worldgen.panel.erosion`
 - **new** Notifications: can show a progress bar and update in place, for work that runs for minutes. `common.notify`
 - **new** Server: a status indicator in every screen's top-left corner says where worlds would go — no server, unreachable, local, or shared. `common.server`

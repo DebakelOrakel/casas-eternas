@@ -59,8 +59,24 @@ export interface BakeInputs {
   precipitation: Float32Array | null
   erosionStrength: number | undefined
   drainageRefresh: number | undefined
-  riverDensity: number | undefined
 }
+
+// riverDensity is DELIBERATELY absent, and it used to be here.
+//
+// The rule is "hash what the bake consumes", and the bake does read it — but
+// consuming and *costing* are not the same thing. Erosion strength and drainage
+// refresh change the terrain, so they must invalidate everything. River density
+// touches nothing before the final extraction: measured on a stage-2 bake, 70
+// of 79 seconds are erosion and the density is first read after them.
+//
+// With it in the key, nudging the slider minted a new worldId and orphaned the
+// whole artifact — 17 MB at 4k, 67 MB at 8k, per slider position, to redo a
+// step worth seconds. It made the store worse than useless: it filled up with
+// entries nothing would ever ask for again.
+//
+// Rivers are keyed BELOW this instead, per density, next to a shared elevation
+// (see amplificationArtifact). Terrain is computed once; densities are cheap
+// variations on it.
 
 // `seedLabel` is carried into the id purely so a human reading the store
 // (a directory listing now, a server path later) can tell which world an
@@ -76,7 +92,7 @@ export function deriveWorldId(seedLabel: string, inputs: BakeInputs): string {
   // The scalars go in through the same mixer, as text, so an absent value
   // and a zero cannot collapse into each other.
   const scalars = new TextEncoder().encode(
-    `|s=${inputs.erosionStrength ?? 'd'}|r=${inputs.drainageRefresh ?? 'd'}|q=${inputs.riverDensity ?? 'd'}`,
+    `|s=${inputs.erosionStrength ?? 'd'}|r=${inputs.drainageRefresh ?? 'd'}`,
   )
   const [sa, sb] = hashBytes(scalars, a, b)
   // Sanitised by REMOVING what would break a path, not by allowing only
@@ -123,7 +139,11 @@ export function deriveWorldId(seedLabel: string, inputs: BakeInputs): string {
 // called, not in any constant AMPLIFY_CONSTANTS hashes — and without the bump
 // every cached 4k and 8k artifact, local and on the server, would keep serving
 // the old sparse rivers under a key that claims to describe the new ones.
-export const AMPLIFICATION_ALGO_VERSION = 3
+// v4 (2026-08-08): the channel criterion is slope-area rather than area alone
+// (hydrology.CHANNEL_SLOPE_EXPONENT). Mountain channels roughly triple, so a
+// cached v3 artifact holds a visibly different river network under a key that
+// claims to describe this one.
+export const AMPLIFICATION_ALGO_VERSION = 4
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

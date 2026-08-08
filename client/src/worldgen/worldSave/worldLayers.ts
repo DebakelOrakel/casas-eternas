@@ -55,6 +55,36 @@ export const WORLD_LAYERS: LayerSpec[] = [
   ...ECOLOGY_LAYERS.map((name): LayerSpec => ({ name, dtype: 'u8', scale: 3 / 255, offset: 0, unit: '', landOnly: true })),
 ]
 
+// Flow accumulation, and the one baked layer that is NOT at climate resolution.
+//
+// Rivers are the reason: at 256x128 a cell spans ~62 km, so a discharge field
+// there could not say WHERE a river is, only that the region has one. At map
+// resolution it answers the question a game server actually asks — is there a
+// river at (x, y), and how big — by sampling, with no algorithm and no
+// polylines (docs/decisions/queryable-world-save.md).
+//
+// Stored in CUBIC METRES PER SECOND rather than the hydrology's own unit
+// (mm/yr summed over contributing cells). Converting costs the writer one
+// multiply and saves the reader from having to know the cell area and the
+// runoff coefficient — which is exactly the algorithm knowledge this format
+// exists to avoid. It is the same figure the generator's hover readout shows.
+//
+// Stored UNTHRESHOLDED on purpose. Zeroing everything below our channel
+// criterion would bake this generator's river-density setting into the data;
+// keeping the raw field lets a consumer pick its own threshold, which is the
+// same knob `densityToCriticalArea` turns here. Measured cost: 4 MB raw,
+// 109 KB after the zip's DEFLATE, against 303 KB for the polylines it replaces.
+//
+// Linear u16 is enough because the range that matters is narrow: measured
+// across channel cells it spans 26x (1.4 orders), not the six a naive reading
+// of "river discharge" suggests. At 4 m3/s per step the ceiling is ~262,000 —
+// above the Amazon's ~209,000 — so clipping needs a world unlike any measured,
+// and even then it only flattens the top of the largest river.
+export const DISCHARGE_LAYER: LayerSpec = {
+  name: 'discharge', dtype: 'u16', scale: 4, offset: 0, unit: 'm3/s', landOnly: false,
+}
+
+
 const maxCode = (dtype: Dtype): number => (dtype === 'u16' ? 65535 : 255)
 
 function makeArray(dtype: Dtype, n: number): Uint8Array | Uint16Array | Float32Array {

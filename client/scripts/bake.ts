@@ -225,7 +225,9 @@ async function main(): Promise<void> {
     height: result.height,
     riverPoints: result.rivers.points,
     riverLengths: result.rivers.lengths,
-  }, durationMs)
+    // Rivers are keyed by the world's own density inside the artifact, so a
+    // server bake lands where the browser will look for it.
+  }, durationMs, inputs.erosionControls.riverDensity)
   if (!stored) fail('could not write the artifact')
 
   process.stdout.write(`${JSON.stringify({

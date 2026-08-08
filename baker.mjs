@@ -9976,13 +9976,13 @@ function deriveWorldId(seedLabel, inputs) {
     b = pb;
   }
   const scalars = new TextEncoder().encode(
-    `|s=${inputs.erosionStrength ?? "d"}|r=${inputs.drainageRefresh ?? "d"}|q=${inputs.riverDensity ?? "d"}`
+    `|s=${inputs.erosionStrength ?? "d"}|r=${inputs.drainageRefresh ?? "d"}`
   );
   const [sa, sb] = hashBytes(scalars, a, b);
   const label = seedLabel.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").replace(/^[.\s]+/, "").trim().replace(/\s+/g, "-").slice(0, 24) || "world";
   return `${label}-${hex8(sa)}${hex8(sb)}`;
 }
-var AMPLIFICATION_ALGO_VERSION = 3;
+var AMPLIFICATION_ALGO_VERSION = 4;
 function derivePipelineVersion(constants) {
   const text = Object.keys(constants).sort().map((name) => `${name}=${constants[name]}`).join("|");
   const [a, b] = hashBytes(new TextEncoder().encode(text), 2166136261, 2654435769);
@@ -10033,8 +10033,7 @@ async function readWorldInputs(archive) {
     elevation: elevations,
     precipitation: climate?.data ?? null,
     erosionStrength: erosionControls.strength,
-    drainageRefresh: erosionControls.refresh,
-    riverDensity: erosionControls.riverDensity
+    drainageRefresh: erosionControls.refresh
   });
   const worldUid = readRecipeValue(yamlText, "metadata.uid") ?? "";
   return { elevations, width, height, seedText, detailSeed, erosionControls, climate, biome, worldId, worldUid };
@@ -10887,14 +10886,44 @@ function riverWidth(dischargeAtCell, maxDischarge) {
   const scale = maxDischarge > 0 ? maxDischarge : 1;
   return Math.min(RIVER_MAX_WIDTH, RIVER_MIN_WIDTH + (RIVER_MAX_WIDTH - RIVER_MIN_WIDTH) * Math.sqrt(dischargeAtCell / scale));
 }
+var CHANNEL_SLOPE_EXPONENT = 0.5;
+function receiverSlope(routing, elevation, cell) {
+  const { width, height, flowTarget } = routing;
+  const target = flowTarget[cell];
+  if (target < 0 || target >= width * height) return 0;
+  const x = cell % width;
+  const y = (cell - x) / width;
+  const tx = target % width;
+  const ty = (target - tx) / width;
+  let dx = Math.abs(tx - x);
+  if (dx > width / 2) dx = width - dx;
+  const distance = Math.hypot(dx, ty - y) || 1;
+  const drop = elevation[cell] - elevation[target];
+  return drop > 0 ? drop / distance : 0;
+}
+function channelReferenceSlope(routing, elevation, discharge, threshold) {
+  const slopes = [];
+  for (let cell = 0; cell < discharge.length; cell++) {
+    if (elevation[cell] <= SEA_LEVEL || discharge[cell] < threshold) continue;
+    slopes.push(receiverSlope(routing, elevation, cell));
+  }
+  if (slopes.length === 0) return 1;
+  slopes.sort((a, b) => a - b);
+  const median = slopes[slopes.length >> 1];
+  return median > 0 ? median : 1;
+}
+function isChannelCell(routing, elevation, discharge, cell, threshold, referenceSlope) {
+  if (elevation[cell] <= SEA_LEVEL) return false;
+  const boost = Math.pow(Math.max(receiverSlope(routing, elevation, cell), 1e-7) / referenceSlope, CHANNEL_SLOPE_EXPONENT);
+  return discharge[cell] * boost >= threshold;
+}
 function extractRiverPolylines(routing, discharge, elevation, threshold, maxDischarge) {
   const { width, height, flowTarget } = routing;
   const n = width * height;
   const channel = new Uint8Array(n);
+  const referenceSlope = channelReferenceSlope(routing, elevation, discharge, threshold);
   for (let cell = 0; cell < n; cell++) {
-    if (elevation[cell] <= SEA_LEVEL) continue;
-    if (discharge[cell] < threshold) continue;
-    channel[cell] = 1;
+    if (isChannelCell(routing, elevation, discharge, cell, threshold, referenceSlope)) channel[cell] = 1;
   }
   const adjacent = (a, b) => {
     const ax = a % width;
@@ -11004,11 +11033,19 @@ var ELEVATION_SPEC = {
 };
 var FILES = {
   elevation: "elevation.u16",
-  riverPoints: "rivers.f32",
-  riverLengths: "riverLengths.u32",
   meta: "meta.json"
 };
-async function writeAmplificationArtifact(store, key, artifact, bakeMs) {
+function riverDensityKey(density) {
+  const value = Math.round(density ?? DEFAULT_RIVER_DENSITY);
+  return String(Math.min(100, Math.max(0, value)));
+}
+var DEFAULT_RIVER_DENSITY = 55;
+var riverFiles = (density) => {
+  const key = riverDensityKey(density);
+  return { points: `rivers-${key}.f32`, lengths: `riverLengths-${key}.u32` };
+};
+async function writeAmplificationArtifact(store, key, artifact, bakeMs, riverDensity) {
+  const rivers = riverFiles(riverDensity);
   const meta = {
     width: artifact.width,
     height: artifact.height,
@@ -11017,7 +11054,7 @@ async function writeAmplificationArtifact(store, key, artifact, bakeMs) {
     bakeMs,
     createdAt: Date.now()
   };
-  const wrote = await store.write(artifactPath(key, FILES.elevation), new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_SPEC))) && await store.write(artifactPath(key, FILES.riverPoints), artifact.riverPoints) && await store.write(artifactPath(key, FILES.riverLengths), artifact.riverLengths) && await store.write(artifactPath(key, FILES.meta), new TextEncoder().encode(JSON.stringify(meta)));
+  const wrote = await store.write(artifactPath(key, FILES.elevation), new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_SPEC))) && await store.write(artifactPath(key, rivers.points), artifact.riverPoints) && await store.write(artifactPath(key, rivers.lengths), artifact.riverLengths) && await store.write(artifactPath(key, FILES.meta), new TextEncoder().encode(JSON.stringify(meta)));
   if (!wrote) {
     await store.remove(artifactPath(key, FILES.meta));
   }
@@ -11301,7 +11338,9 @@ async function main() {
     height: result.height,
     riverPoints: result.rivers.points,
     riverLengths: result.rivers.lengths
-  }, durationMs);
+    // Rivers are keyed by the world's own density inside the artifact, so a
+    // server bake lands where the browser will look for it.
+  }, durationMs, inputs.erosionControls.riverDensity);
   if (!stored) fail("could not write the artifact");
   process.stdout.write(`${JSON.stringify({
     worldId: key.worldId,

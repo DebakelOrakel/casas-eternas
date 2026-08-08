@@ -63,7 +63,9 @@ baked **layer files**. A consumer needs *only* the manifest + a ~50-line sampler
       "resX": 256, "resY": 128, "dtype": "u8",
       "encoding": { "scale": 0.294, "offset": -30 }, "unit": "°C" },
     { "name": "carryingCapacity", …, "sentinel": 255 },   // ocean = sentinel
-    { "name": "rivers", "file": "layers/rivers.json", "kind": "vector" },
+    { "name": "discharge", "file": "layers/discharge.u16", "kind": "raster",
+      "resX": 2048, "resY": 1024, "dtype": "u16",
+      "encoding": { "scale": 4, "offset": 0 }, "unit": "m3/s" },
     // …
   ]
 }
@@ -154,7 +156,43 @@ contract module `client/src/worldgen/worldSave/worldLayers.ts` (`WORLD_LAYERS`
 specs, `bakeLayer` quantiser, `decodeLayer`/`sampleAt` sampler, `downsampleMax`),
 and `bakeQueryLayers()` in WorldGenScreen writes `manifest.json` + `layers/*.{u8,u16}`
 into the save zip from the main thread's cached fields. `elevation.f32` (also the
-restore raster) is referenced as a manifest layer; rivers as `layers/rivers.json`.
+restore raster) is referenced as a manifest layer; rivers as `layers/discharge.u16`.
+
+## Rivers: a field, not polylines (revised 2026-08-08)
+
+The river layer was `layers/rivers.json` — polylines of `[x, y, widthPx]`. It
+was written by one place and read by **none**, and it served neither consumer:
+
+- The **client** draws, and it has the algorithm. It re-derives its rivers
+  deterministically from elevation + precipitation + `spec.hydrology.riverDensity`
+  — all three in this save — or fetches an amplified artifact. The world map
+  already ignored the stored polylines outright, because after a bake they lie
+  beside the fine valleys rather than in them.
+- The **game server** queries, and polylines answer nothing. Their only
+  attribute is a drawing width, `0.4 + 3.6·√(Q/Qmax)` **clamped at 4**, so every
+  large river saturates and discharge cannot be recovered.
+
+Worse, once amplified bakes existed the save and the map gave two different
+answers to "where are the rivers" — 13,000 km of channel against 101,000.
+
+So rivers are now `discharge`: one number per cell, sampled like `biome` and
+`lakeDepth`. Three choices worth recording:
+
+- **Map resolution, not climate resolution.** It is the only baked layer that
+  is. At 256×128 a cell spans ~62 km, which can say a region has a river but
+  not where it is — useless for siting a settlement or a ford.
+- **Cubic metres per second**, not the hydrology's own mm/yr-summed-over-cells.
+  Converting costs the writer one multiply and saves the reader from needing
+  the cell area and the runoff coefficient — precisely the algorithm knowledge
+  this format exists to avoid.
+- **Unthresholded.** Zeroing everything below our channel criterion would bake
+  this generator's river-density setting into the data; the raw field lets a
+  consumer choose its own.
+
+Measured on a real world: largest river 8,114 m³/s, smallest channel 318 m³/s,
+worst round-trip error 2 m³/s (half a step), nothing clipped, and **71 KB after
+DEFLATE against 303 KB for the JSON polylines it replaces**. The save got
+smaller and answers more.
 Round-trip (bake→decode→sample) verified within quantisation error.
 
 **Baked now:** landMask, temperature, precipitation, biome, seasonalAmplitude,

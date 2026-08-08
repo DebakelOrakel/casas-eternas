@@ -47,8 +47,6 @@ export interface CachedWorld {
 // tabulated so 16384 keeps working the day someone tries it.
 export const resolutionLabel = (width: number): string => `${Math.round(width / 1024)}k`
 
-const FILE_NAMES = ['elevation.u16', 'rivers.f32', 'riverLengths.u32', 'meta.json']
-
 // Walks the cache tree and reports what is in it. Sizes come from the
 // filesystem's own metadata (see ArtifactStore.size), so this stays cheap
 // even when the entries are tens of megabytes; only the tiny meta.json is
@@ -67,7 +65,10 @@ export async function listCachedWorlds(store: ArtifactStore): Promise<CachedWorl
       for (const stage of await store.listDirectory(`${ROOT}/${worldId}/amp/${version}`)) {
         const directory = `${ROOT}/${worldId}/amp/${version}/${stage}`
         let bytes = 0
-        for (const file of FILE_NAMES) bytes += (await store.size(`${directory}/${file}`)) ?? 0
+        // Listed rather than taken from a fixed set of names: rivers are keyed
+        // per density (rivers-55.f32 and friends), so a hard-coded list would
+        // under-report every stage that has been extracted at more than one.
+        for (const file of await store.listDirectory(directory)) bytes += (await store.size(`${directory}/${file}`)) ?? 0
         worldBytes += bytes
         const metaBytes = await store.read(`${directory}/meta.json`)
         if (!metaBytes) continue

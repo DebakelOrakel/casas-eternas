@@ -47,9 +47,15 @@ export interface ArtifactStore {
 // stay swappable:
 //
 //   worlds/{worldId}/amp/{pipelineVersion}/{stage}/elevation.u16
-//                                                 /rivers.f32
-//                                                 /riverLengths.u32
 //                                                 /meta.json
+//                                                 /rivers-{density}.f32
+//                                                 /riverLengths-{density}.u32
+//
+// The split is deliberate and was retrofitted: terrain is expensive (67 MB and
+// minutes at 8192²) and does not depend on the river-density slider, while the
+// rivers are cheap and do. With density folded into worldId instead, nudging
+// the slider minted a new world and orphaned the whole entry. Measured after
+// the split: a second density costs 217 KB beside a shared 16.4 MB terrain.
 //
 // Built here rather than at call sites so the layout is stated once, and so
 // the HTTP store can reuse the identical builder against its own base URL.

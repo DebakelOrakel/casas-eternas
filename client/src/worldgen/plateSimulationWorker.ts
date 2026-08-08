@@ -1153,7 +1153,7 @@ function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: '
     // Uses the display terrain (lastRawElevations) so land/ocean matches the map.
     let biomesOut: Uint8Array = new Uint8Array(0)
     if (lastRawElevations && lastClimateTemperature && lastClimateSeasonalAmplitude && lastClimateMonsoonIndex && lastHydrologyLakeDepth) {
-      biomesOut = computeRiparianBiomes(lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, lastClimatePrecip ?? precip, lastClimateTemperature, lastClimateSeasonalAmplitude, lastClimateMonsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, lastHydrologySaltFlat ?? undefined, lastHydrologyDryBasin ?? undefined)
+      biomesOut = computeRiparianBiomes(lastHydrologyRouting, lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, lastClimatePrecip ?? precip, lastClimateTemperature, lastClimateSeasonalAmplitude, lastClimateMonsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, lastHydrologySaltFlat ?? undefined, lastHydrologyDryBasin ?? undefined)
     }
     const hydrologyMessage: WorkerHydrologyDataMessage = {
       type: 'hydrologyData',

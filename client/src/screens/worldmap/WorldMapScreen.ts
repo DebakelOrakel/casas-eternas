@@ -221,6 +221,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let bakeSource: {
     macro: Float32Array; macroWidth: number; macroHeight: number; detailSeed: number
     key: { worldId: string; pipelineVersion: string }
+    // The density the world was saved with. Rivers are keyed by it inside the
+    // artifact, so a read that guessed would find the wrong set — or none.
+    riverDensity: number | undefined
   } | null = null
   // Factor 1 is the macro raster the save carries — the authoritative one, and
   // the only level with no rivers, since those are a product of the bake.
@@ -624,7 +627,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       return
     }
     const store = await getArtifactStore()
-    const hit = await readAmplificationArtifact(store, { ...bakeSource.key, stage: String(factor) }).catch(() => null)
+    const hit = await readAmplificationArtifact(store, { ...bakeSource.key, stage: String(factor) }, bakeSource.riverDensity).catch(() => null)
     if (!hit) {
       setBakeText(`${levelLabel(factor)} unavailable`)
       return
@@ -780,7 +783,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // fetches and backfills it locally, so the next load of this world is a
     // local hit rather than a second download.
     const store = await getArtifactStore()
-    const hit = await readAmplificationArtifact(store, { worldId, pipelineVersion, stage: String(factor) }).catch(() => null)
+    const hit = await readAmplificationArtifact(store, { worldId, pipelineVersion, stage: String(factor) }, bakeSource?.riverDensity).catch(() => null)
     // bakeSource carries the detail seed the near-field bumps grow from, and a
     // wrong one would draw a different world at the same resolution. Checked
     // rather than defaulted: there is no sensible stand-in for it.
@@ -824,7 +827,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // BAKE is a separate question, asked per stage below.
     // The macro raster is always a level, and it is the one the world is
     // showing right now.
-    bakeSource = { macro, macroWidth, macroHeight, detailSeed, key: { worldId, pipelineVersion: derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS }) } }
+    bakeSource = { macro, macroWidth, macroHeight, detailSeed, riverDensity: erosionControls.riverDensity, key: { worldId, pipelineVersion: derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS }) } }
     availableFactors = [1]
     shownFactor = 1
     // A new world knows nothing about the last one's gaps, and an order placed
@@ -858,7 +861,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         // Presence only — reading it here would download and decode ~134 MB
         // just to answer whether a button should be shown, and the chain is
         // about to fetch it properly anyway.
-        const present = await amplificationArtifactExists(store, key).catch(() => false)
+        const present = await amplificationArtifactExists(store, key, bakeSource?.riverDensity).catch(() => false)
         if (generation !== bakeGeneration) return
         if (!present) noteMissing(factor)
       }
@@ -888,7 +891,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       }
       const store = await getArtifactStore()
       if (generation !== bakeGeneration) return
-      const hit = await readAmplificationArtifact(store, key).catch(() => null)
+      const hit = await readAmplificationArtifact(store, key, erosionControls.riverDensity).catch(() => null)
       if (hit && generation === bakeGeneration) {
         applyBakeResult(hit.artifact, factor, detailSeed)
         noteLevel(factor)
@@ -937,7 +940,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         // Stored after the result is on screen, so the write never delays
         // what the user is waiting for — and failing to store is not an
         // error, only a bake that will happen again.
-        void writeAmplificationArtifact(store, key, artifact, message.durationMs).catch(() => false)
+        void writeAmplificationArtifact(store, key, artifact, message.durationMs, erosionControls.riverDensity).catch(() => false)
         void runStage(index + 1)
       }
       // A stage that dies (the deepest tier needs ~3 GB — a browser may

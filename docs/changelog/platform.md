@@ -4,6 +4,8 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-08
+- **fixed** Storage: changing the river density no longer throws away a world's baked terrain — rivers are cached per density beside one shared elevation. `common.panel.storage`
+- **changed** Save/Load: rivers are stored as a discharge field (m³/s per cell) instead of drawing polylines — smaller, and answerable by sampling. `worldgen.panel.hydrology`
 - **new** World map: a resolution the browser cannot bake can now be ordered from the server, and its progress is shown as a notification. `world`
 - **new** Server: bakes amplified terrain itself — 8192×4096 finishes in under six minutes where a browser tab runs out of memory and dies. `world`
 - **new** Server: bake jobs are queued and their progress can be followed while they run.

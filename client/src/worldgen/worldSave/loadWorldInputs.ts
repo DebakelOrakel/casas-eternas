@@ -148,7 +148,6 @@ export async function readWorldInputs(archive: ArrayBuffer | Uint8Array): Promis
     precipitation: climate?.data ?? null,
     erosionStrength: erosionControls.strength,
     drainageRefresh: erosionControls.refresh,
-    riverDensity: erosionControls.riverDensity,
   })
 
   const worldUid = readRecipeValue(yamlText, 'metadata.uid') ?? ''

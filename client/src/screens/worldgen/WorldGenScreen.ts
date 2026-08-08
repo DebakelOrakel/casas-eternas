@@ -33,7 +33,7 @@ import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../worldgen/cl
 import { evaporationPotential } from '../../worldgen/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '../../worldgen/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
-import { WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave/worldLayers'
+import { DISCHARGE_LAYER, WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave/worldLayers'
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
@@ -46,7 +46,7 @@ import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { readRecipeValue as readYamlValue } from '../../worldgen/worldSave/recipeYaml'
 import { derivePipelineVersion, deriveWorldUid, newWorldUid } from '../../storage/artifactKey'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
-import { amplificationArtifactExists, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
+import { amplificationArtifactExists, readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
 import { readWorldInputs } from '../../worldgen/worldSave/loadWorldInputs'
 import { AMPLIFY_CONSTANTS } from '../../worldgen/surface/amplify'
 import { amplifyPhaseFraction, bakeStageInBrowser } from '../../worldgen/surface/bakeInBrowser'
@@ -860,6 +860,38 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // come from the worker's computeHydrology; null until computed / invalidated.
   const HYDROLOGY_PANEL_INDEX = 4
   let lastRiverData: { points: Float32Array; lengths: Uint32Array } | null = null
+  // A baked river network, shown INSTEAD of the 2k one when this world has an
+  // amplified artifact. Display only, and kept apart from lastRiverData for a
+  // concrete reason: that one is written into the save as layers/rivers.json,
+  // and a save whose rivers came from an 8k bake would carry a network its own
+  // elevation raster cannot reproduce — while deriveWorldId, which hashes no
+  // rivers at all, would call the two saves identical.
+  //
+  // The 2048 raster stays the authority (docs/decisions/worldmap-amplification);
+  // this only lets the generator PREVIEW what the world map will draw.
+  let bakedRiverDisplay: { points: Float32Array; lengths: Uint32Array } | null = null
+
+  // Whichever network is current. One place, so the two sources cannot both
+  // think they are on screen.
+  function drawRivers(): void {
+    const shown = bakedRiverDisplay ?? lastRiverData
+    if (shown) riverLayer?.setPolylines(shown.points, shown.lengths)
+  }
+
+  // Adopt a baked artifact's rivers for display, rescaled from the fine grid to
+  // macro texel coordinates. Only x/y are divided: the third component is a
+  // CARTOGRAPHIC width, sized to read as a line rather than measured in cells,
+  // so scaling it would thin every river as the bake got finer.
+  function showBakedRivers(points: Float32Array, lengths: Uint32Array, factor: number): void {
+    const scaled = new Float32Array(points.length)
+    for (let i = 0; i < points.length; i += 3) {
+      scaled[i] = points[i] / factor
+      scaled[i + 1] = points[i + 1] / factor
+      scaled[i + 2] = points[i + 2]
+    }
+    bakedRiverDisplay = { points: scaled, lengths }
+    drawRivers()
+  }
   let lastWatersheds: Uint16Array | null = null
   let lastDischargeField: Float32Array | null = null
   let lastMaxDischarge = 0
@@ -2198,7 +2230,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   function handleHydrologyData(message: WorkerHydrologyDataMessage): void {
     lastRiverData = { points: new Float32Array(message.riverPoints), lengths: new Uint32Array(message.riverLengths) }
-    riverLayer?.setPolylines(lastRiverData.points, lastRiverData.lengths)
+    drawRivers()
     // Lakes only arrive on a re-route (empty buffer = unchanged, keep the last).
     if (message.lakeDepth.byteLength > 0) lastLakeDepth = new Float32Array(message.lakeDepth)
     if (message.watersheds.byteLength > 0) lastWatersheds = new Uint16Array(message.watersheds)
@@ -2220,6 +2252,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   function invalidateHydrology(): void {
     lastRiverData = null
+    // A baked network describes ONE elevation raster. Erode again and its
+    // channels sit beside the valleys they were cut for — worse than showing
+    // nothing, because it looks authoritative.
+    bakedRiverDisplay = null
     lastLakeDepth = null
     // The delta marks describe one specific erosion pass. Any topography change
     // stales them exactly as it stales the rivers, and a mask left over from the
@@ -2895,10 +2931,30 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
         layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: rx, resY: ry, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
       }
-      // Rivers as vector polylines (texel coords: [x, y, widthPx, …] per polyline).
-      if (lastRiverData) {
-        zip.file('layers/rivers.json', JSON.stringify({ points: Array.from(lastRiverData.points), lengths: Array.from(lastRiverData.lengths) }))
-        layers.push({ name: 'rivers', file: 'layers/rivers.json', kind: 'vector' })
+      // Rivers are a DISCHARGE RASTER, not polylines — and this is the one
+      // layer baked at map resolution rather than climate resolution.
+      //
+      // The polyline layer that used to sit here was written by one place and
+      // read by none: the client re-derives its rivers (deterministically, from
+      // elevation + precipitation + riverDensity, all of which are in this
+      // save) or fetches a baked artifact, and a game server cannot answer
+      // "how big is this river" from a line whose only attribute is a drawing
+      // width clamped at four pixels. It also went stale the moment an
+      // amplified bake existed, giving the save and the map two different
+      // answers to the same question.
+      //
+      // A field answers by sampling, exactly as biome and lakeDepth do, and it
+      // costs less: 109 KB compressed against 303 KB of JSON.
+      if (lastDischargeField) {
+        const m3s = new Float32Array(lastDischargeField.length)
+        for (let i = 0; i < m3s.length; i++) m3s[i] = lastDischargeField[i] * DISCHARGE_TO_M3S
+        zip.file(`layers/${DISCHARGE_LAYER.name}.${DISCHARGE_LAYER.dtype}`, bakeLayer(m3s, DISCHARGE_LAYER))
+        layers.push({
+          name: DISCHARGE_LAYER.name, file: `layers/${DISCHARGE_LAYER.name}.${DISCHARGE_LAYER.dtype}`, kind: 'raster',
+          resX: MAP_WIDTH, resY: MAP_HEIGHT, dtype: DISCHARGE_LAYER.dtype,
+          encoding: { scale: DISCHARGE_LAYER.scale, offset: DISCHARGE_LAYER.offset },
+          unit: DISCHARGE_LAYER.unit, landOnly: DISCHARGE_LAYER.landOnly,
+        })
       }
     }
     const manifest = {
@@ -3058,6 +3114,23 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let pendingBakeFactor: number | null = null
   let bakeRunning = false
 
+  // Look for the finest baked network this world already has and show it.
+  //
+  // Finest first: the whole point of the search is "best available", and 8K
+  // carries roughly seven times the channel length of 4K. Silent when there is
+  // nothing — an absent artifact is the normal state, not a failure.
+  async function adoptBestBakedRivers(worldIdForLookup: string, riverDensity: number | undefined): Promise<void> {
+    const pipelineVersion = derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS })
+    const store = await getArtifactStore()
+    for (const factor of [4, 2]) {
+      const key = { worldId: worldIdForLookup, pipelineVersion, stage: String(factor) }
+      const hit = await readAmplificationArtifact(store, key, riverDensity).catch(() => null)
+      if (!hit) continue
+      showBakedRivers(hit.artifact.riverPoints, hit.artifact.riverLengths, factor)
+      return
+    }
+  }
+
   async function bakeFromArchive(archive: Blob, factor: number): Promise<void> {
     const level = `${factor * 2}K`
     const inputs = await readWorldInputs(await archive.arrayBuffer())
@@ -3073,10 +3146,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const pipelineVersion = derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS })
     const key = { worldId: inputs.worldId, pipelineVersion, stage: String(factor) }
     const store = await getArtifactStore()
-    if (await amplificationArtifactExists(store, key).catch(() => false)) {
+    if (await amplificationArtifactExists(store, key, inputs.erosionControls.riverDensity).catch(() => false)) {
       // Already made, by this machine or another. Saying so beats spending
       // minutes to reproduce bytes that are addressed by content anyway.
       ctx.notifications.show({ message: t('common.notify.bakeExists', { level }), icon: '/icons/ok.png', durationMs: 6000 })
+      void adoptBestBakedRivers(inputs.worldId, inputs.erosionControls.riverDensity)
       bakeRunning = false
       refreshBakeButtons()
       return
@@ -3119,6 +3193,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         return
       }
       settle(t('common.notify.bakeDone', { level, width: outcome.result.width, height: outcome.result.height, seconds: Math.round(outcome.result.durationMs / 1000) }), '/icons/server_clean.png', 15000)
+      void adoptBestBakedRivers(inputs.worldId, inputs.erosionControls.riverDensity)
       return
     }
 
@@ -3147,7 +3222,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           })
         },
       )
-      await writeAmplificationArtifact(store, key, baked.artifact, baked.durationMs).catch(() => false)
+      await writeAmplificationArtifact(store, key, baked.artifact, baked.durationMs, inputs.erosionControls.riverDensity).catch(() => false)
+      showBakedRivers(baked.artifact.riverPoints, baked.artifact.riverLengths, factor)
       settle(t('common.notify.bakeDone', { level, width: baked.artifact.width, height: baked.artifact.height, seconds: Math.round(baked.durationMs / 1000) }), '/icons/server_clean.png', 15000)
     } catch {
       settle(t('common.notify.bakeFailed', { reason: '' }), '/icons/warning.png', 12000)
@@ -3319,6 +3395,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // the right moment to ask again — and if it came from the server, it is
     // also proof the answer should be yes.
     void refreshServerStatus().then(() => refreshBakeButtons())
+    // If this world already HAS a baked network, preview it rather than the
+    // 2k one. The key comes from the archive that is right here, read through
+    // the same reader the map and the baker use — deriving it from the loaded
+    // rasters instead would hash raw floats where every reader hashes the
+    // stored (quantised) precipitation, and find nothing for ever.
+    //
+    // Deliberately after everything else and unawaited: it is a nicety, the
+    // load must not wait on a zip being parsed a second time, and a world with
+    // no artifact simply keeps its own rivers.
+    void file.arrayBuffer()
+      .then((bytes) => readWorldInputs(bytes))
+      .then((loaded) => { if (loaded) return adoptBestBakedRivers(loaded.worldId, loaded.erosionControls.riverDensity) })
+      .catch(() => undefined)
     mantleVigourInput.value = readYamlValue(yaml, 'spec.genesis.mantleVigour') ?? mantleVigourInput.value
     waterInput.value = readYamlValue(yaml, 'spec.genesis.water') ?? waterInput.value
     // How far the Archean got, read from whichever snapshot the file carries — the yaml
@@ -3385,6 +3474,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let hydrologyDebounce: ReturnType<typeof setTimeout> | undefined
   riverDensityInput.addEventListener('input', () => {
     riverDensityLabel.textContent = riverDensityInput.value
+    // Drop any baked network being previewed. It masked the recomputed one, so
+    // the slider looked dead — and keeping it would be wrong rather than merely
+    // stale: `riverDensity` is hashed into deriveWorldId, so a different
+    // density is a DIFFERENT worldId, and that artifact no longer describes
+    // this world at all.
+    bakedRiverDisplay = null
+    drawRivers()
     if (tectonicsRunning) return
     clearTimeout(hydrologyDebounce)
     hydrologyDebounce = setTimeout(requestHydrology, 150)
