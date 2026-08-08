@@ -36,10 +36,13 @@ import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecolo
 import { WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave/worldLayers'
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
-import { createCachePanel } from '../../ui/cachePanel/CachePanel'
+import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { getServerStatus } from '../../server/serverStatus'
-import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
+import { uploadWorld } from '../../server/worldClient'
+import { createSavePanel } from '../../ui/worldPanels/SavePanel'
+import type { SaveTarget } from '../../ui/worldPanels/SavePanel'
+import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { readRecipeValue as readYamlValue } from '../../worldgen/worldSave/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../storage/artifactKey'
 import './worldgen.css'
@@ -400,22 +403,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       <button type="button" class="file-button" data-action="load-world" aria-label="${t('common.action.loadWorld.label')}" data-help="common.action.loadWorld">
         <img src="/icons/folder.png" alt="" />
       </button>
-      <div class="save-group">
-        <button type="button" class="file-button" data-action="save-world" aria-label="${t('common.action.saveWorld.label')}" data-help="common.action.saveWorld">
-          <img src="/icons/floppy.png" alt="" />
-        </button>
-        <button type="button" class="save-more" data-action="save-choose" aria-label="${t('common.action.saveWorld.label')}" hidden>▾</button>
-        <div class="save-foldout" data-value="save-foldout" hidden>
-          <button type="button" class="save-target" data-target="download" data-help="common.action.saveWorld.download">
-            <img src="/icons/download.png" alt="" />
-            <span>${t('common.action.saveWorld.download.label')}</span>
-          </button>
-          <button type="button" class="save-target" data-target="server" data-help="common.action.saveWorld.toServer">
-            <img src="/icons/server_clean.png" alt="" />
-            <span>${t('common.action.saveWorld.toServer.label')}</span>
-          </button>
-        </div>
-      </div>
+      <button type="button" class="file-button" data-action="save-world" aria-label="${t('common.action.saveWorld.label')}" data-help="common.action.saveWorld">
+        <img src="/icons/floppy.png" alt="" />
+      </button>
       <button type="button" class="file-button cache-button" data-action="cache-manager" aria-label="${t('common.action.storage.label')}" data-help="common.action.storage">
         <img src="/icons/server_clean.png" alt="" />
       </button>
@@ -654,8 +644,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const serverIndicator = createServerIndicator()
   root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
 
-  const cachePanel = createCachePanel(root)
-  root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => cachePanel.open())
+  const storagePanel = createStoragePanel(root)
+  root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => storagePanel.open())
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
@@ -2918,7 +2908,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // worker is asked for the data, because by the time the archive exists the
   // question is already answered — and asking afterwards would mean holding a
   // 30 MB blob while a menu is open.
-  type SaveTarget = 'download' | 'server'
   let pendingSaveTarget: SaveTarget = 'download'
 
   // Hands the finished archive to its destination. Download is the fallback for
@@ -2933,7 +2922,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const outcome = await uploadWorld(worldUid, blob)
       if (outcome.ok) {
         ctx.notifications.show({ message: t('common.notify.worldStored'), icon: '/icons/ok.png', durationMs: 4000 })
-        updateSaveAffordance()
         return
       }
       if (outcome.reason === 'conflict') {
@@ -2993,60 +2981,45 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const awaitCompute = (setResolver: (r: () => void) => void, request: () => void): Promise<void> =>
     new Promise((resolve) => { setResolver(resolve); request() })
 
-  // The save affordance has three shapes, and which one it takes is entirely a
-  // function of what is actually possible:
+  // Save and load each open their own window rather than sharing one with
+  // tabs: a panel that answers a single question at a time beats a window that
+  // first asks which question you meant (docs/decisions/server-storage.md).
   //
-  //   no server            one click, download — exactly as before. A chooser
-  //                        with one option is friction, not choice.
-  //   server, world new    the click opens the foldout: the destination is
-  //                        genuinely ambiguous, so it gets asked once.
-  //   server, world known  one click straight to the server, with the caret
-  //                        beside it for "download anyway". A world that lives
-  //                        somewhere should not ask every time.
-  //
-  // Deliberately NOT automatic syncing: a generator's world changes on every
-  // epoch and slider, so there is no "document changed" moment to sync on, and
-  // every write keeps a revision the server never deletes.
-  const saveGroup = root.querySelector<HTMLElement>('.save-group')!
-  const saveFoldout = root.querySelector<HTMLElement>('[data-value="save-foldout"]')!
-  const saveMoreButton = root.querySelector<HTMLButtonElement>('[data-action="save-choose"]')!
-
-  const closeSaveFoldout = (): void => { saveFoldout.hidden = true }
-
-  function updateSaveAffordance(): void {
-    const known = worldUid !== '' && isStoredOnServer(worldUid)
-    void getServerStatus().then((status) => {
-      const online = status.state === 'local' || status.state === 'remote'
-      saveGroup.dataset.mode = !online ? 'download' : known ? 'server' : 'ask'
-      // The caret only exists where it does something — with no server there is
-      // nothing to choose, and on a world's first save the click already asks.
-      saveMoreButton.hidden = !online || !known
-      if (!online) closeSaveFoldout()
-    })
-  }
+  // Both fall back to the plain behaviour when there is no server — a window
+  // offering a single option is friction rather than choice.
+  const savePanel = createSavePanel(root, {
+    currentUid: () => worldUid,
+    onChoose: (target) => { void saveTo(target) },
+  })
+  const loadPanel = createLoadPanel(root, {
+    // The panel chooses; the screen restores. Wrapping the archive as a File
+    // keeps loadWorldFromZip's signature — it only ever needed the bytes.
+    onOpenArchive: (archive) => { void loadWorldFromZip(new File([archive], 'world.zip')) },
+    onPickFile: () => pickLocalWorldFile(),
+  })
 
   async function saveTo(target: SaveTarget): Promise<void> {
     pendingSaveTarget = target
-    closeSaveFoldout()
     await saveWorld()
   }
 
-  saveWorldButton.addEventListener('click', () => {
-    if (saveGroup.dataset.mode === 'ask') {
-      saveFoldout.hidden = !saveFoldout.hidden
-      return
-    }
-    void saveTo(saveGroup.dataset.mode === 'server' ? 'server' : 'download')
-  })
-  saveMoreButton.addEventListener('click', () => { saveFoldout.hidden = !saveFoldout.hidden })
-  for (const button of root.querySelectorAll<HTMLButtonElement>('.save-target')) {
-    button.addEventListener('click', () => { void saveTo(button.dataset.target === 'server' ? 'server' : 'download') })
+  function pickLocalWorldFile(): void {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.zip'
+    input.addEventListener('change', () => {
+      const file = input.files?.[0]
+      if (file) void loadWorldFromZip(file)
+    })
+    input.click()
   }
-  // Clicking away closes it, matching the overlay bar's fold-outs.
-  document.addEventListener('pointerdown', (event) => {
-    if (!saveFoldout.hidden && !saveGroup.contains(event.target as Node)) closeSaveFoldout()
+
+  saveWorldButton.addEventListener('click', () => {
+    void getServerStatus().then((status) => {
+      if (status.state === 'local' || status.state === 'remote') savePanel.open()
+      else void saveTo('download')
+    })
   })
-  updateSaveAffordance()
 
   async function saveWorld(): Promise<void> {
     // Neither phase may be stepping: a snapshot taken mid-epoch would capture a world
@@ -3169,14 +3142,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   loadWorldButton.addEventListener('click', () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.zip'
-    input.addEventListener('change', () => {
-      const file = input.files?.[0]
-      if (file) void loadWorldFromZip(file)
+    void getServerStatus().then((status) => {
+      if (status.state === 'local' || status.state === 'remote') loadPanel.open()
+      else pickLocalWorldFile()
     })
-    input.click()
   })
 
   // Dragging the band slider live-recomputes the climate (debounced) once a
@@ -3705,7 +3674,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     dispose() {
       stopSim()
       helpTooltip.dispose()
-      cachePanel.dispose()
+      storagePanel.dispose()
+      savePanel.dispose()
+      loadPanel.dispose()
       hoverTooltip?.dispose()
       riverLayer?.dispose()
       overlay.dispose()

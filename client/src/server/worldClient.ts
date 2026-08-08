@@ -66,7 +66,10 @@ export function isStoredOnServer(uid: string): boolean {
   return rememberedRevision(uid) > 0
 }
 
-async function apiBase(): Promise<string | null> {
+// The API root, or null when there is no server to talk to. Exported because
+// the panels build preview URLs from it — a thumbnail is an <img src>, not a
+// fetch, so it needs the address rather than a request helper.
+export async function apiBase(): Promise<string | null> {
   const status = await getServerStatus()
   return status.state === 'local' || status.state === 'remote' ? status.apiBase : null
 }

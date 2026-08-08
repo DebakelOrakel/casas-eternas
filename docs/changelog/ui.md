@@ -7,7 +7,8 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **new** Server: a status indicator in every screen's top-left corner says where worlds would go — no server, unreachable, local, or shared. `common.server`
 - **changed** World map: the cache button moved from the bottom bar up next to the load button, matching the generator.
 - **changed** Storage: the storage button carries a real hover card instead of a debug tooltip, and is called Storage — it will hold worlds as well as the cache. `common.action.storage`
-- **new** Save: with a server present, the save button asks where a world should go — download or store on it; once a world lives on the server, later saves go there in one click. `common.action.saveWorld`
+- **new** Save: with a server present, the save button opens a window showing what the server holds for this world, and offers to update it there or download a .zip. `common.panel.save`
+- **new** Load: with a server present, the load button opens a browsable list of server worlds with thumbnails — open one, or download it; opening a local .zip stays one click away. Works in the generator and the world map. `common.panel.load`
 
 ## 2026-08-07
 - **new** Rendering: 3D relief preview — eroded terrain unlocks a deeper zoom and a zoom-coupled camera tilt over a metre-true displaced map plane with draped rivers.

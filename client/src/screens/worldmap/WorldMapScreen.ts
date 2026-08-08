@@ -25,8 +25,10 @@ import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { deriveWorldId, derivePipelineVersion } from '../../storage/artifactKey'
 import { readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
-import { createCachePanel } from '../../ui/cachePanel/CachePanel'
+import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
+import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
+import { getServerStatus } from '../../server/serverStatus'
 import { readRecipeNumber, readRecipeValue } from '../../worldgen/worldSave/recipeYaml'
 import { AMPLIFY_CONSTANTS } from '../../worldgen/surface/amplify'
 import '../../ui/chrome/chrome.css'
@@ -285,8 +287,8 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const serverIndicator = createServerIndicator()
   root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
 
-  const cachePanel = createCachePanel(root)
-  root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => cachePanel.open())
+  const storagePanel = createStoragePanel(root)
+  root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => storagePanel.open())
 
   // Biome wash on/off, so the plain paper stays one click away for
   // comparison (button un-localized for now, like the hex grid one).
@@ -303,9 +305,19 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   fileInput.accept = '.zip'
   fileInput.style.display = 'none'
   root.appendChild(fileInput)
+  // Loading from the server belongs on BOTH screens: worlds are made in the
+  // generator but opened here, and without this they could only come back via
+  // download-then-open. Uploading stays generator-only — nothing here creates
+  // a world.
+  const loadPanel = createLoadPanel(root, {
+    onOpenArchive: (archive) => { void loadWorld(new File([archive], 'world.zip')) },
+    onPickFile: () => { fileInput.value = ''; fileInput.click() },
+  })
   root.querySelector('[data-action="load-world"]')!.addEventListener('click', () => {
-    fileInput.value = ''
-    fileInput.click()
+    void getServerStatus().then((status) => {
+      if (status.state === 'local' || status.state === 'remote') loadPanel.open()
+      else { fileInput.value = ''; fileInput.click() }
+    })
   })
   fileInput.addEventListener('change', () => {
     const file = fileInput.files?.[0]
@@ -739,7 +751,8 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       hoverTooltip?.dispose()
       mapView?.dispose()
       helpTooltip.dispose()
-      cachePanel.dispose()
+      storagePanel.dispose()
+      loadPanel.dispose()
       disposeCamera()
       root.remove()
       scene.dispose()

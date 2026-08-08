@@ -1,0 +1,59 @@
+/* The storage panel's CONTENTS. The window frame around them — backdrop,
+   title bar, body, footer, buttons — lives in ui/panel/panel.css and is
+   shared with the load and save panels. */
+
+.cache-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+}
+
+.cache-row + .cache-row {
+  border-top: 1px solid rgba(26, 26, 26, 0.07);
+}
+
+.cache-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+/* The seed label can be long; the resolution chips must never be pushed out
+   of the row by it. */
+.cache-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+
+.cache-row-chips {
+  display: flex;
+  gap: 0.25rem;
+  flex: none;
+}
+
+.cache-chip {
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: rgba(26, 26, 26, 0.08);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+}
+
+.cache-chip--empty {
+  opacity: 0.4;
+}
+
+.cache-row-size {
+  flex: none;
+  min-width: 5rem;
+  text-align: right;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
