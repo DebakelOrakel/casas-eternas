@@ -20,12 +20,14 @@ const (
 	flagTLSCert      = "tls-cert"
 	flagTLSKey       = "tls-key"
 	flagTLSCA        = "tls-ca"
+	flagBaker        = "baker"
 )
 
 const (
-	textTarget       = `The target modules to start: all, client, world, artifacts. Repeatable.`
+	textTarget       = `The target modules to start: all, client, world, artifacts, bake. Repeatable.`
 	textDirArtifacts = `The directory to the artifact store.`
 	textDirWorlds    = `The directory the saved worlds live in.`
+	textBaker        = `Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.`
 
 	textListen  = `Address to listen on, as host:port. ":8080" binds every interface, "127.0.0.1:8080" keeps a local instance off the network.`
 	textTLSCert = `Path to the server certificate. Enables HTTPS together with --tls-key.`
@@ -60,6 +62,7 @@ var StartCmd = &cobra.Command{
 
   casas-eternas start --target all           everything, for local play
   casas-eternas start -t world -t artifacts  storage only, no client
+  casas-eternas start -t bake                bake worker only
   casas-eternas start -t client              frontend only`,
 	RunE: Start,
 }
@@ -83,6 +86,7 @@ func init() {
 	StartCmd.Flags().StringSliceP(flagTarget, "t", []string{}, textTarget)
 	StartCmd.Flags().String(flagDirArtifacts, "./artifacts", textDirArtifacts)
 	StartCmd.Flags().String(flagDirWorlds, "./worlds", textDirWorlds)
+	StartCmd.Flags().String(flagBaker, "", textBaker)
 
 	for _, err := range []error{
 		viper.BindPFlag(flagListen, RootCmd.PersistentFlags().Lookup(flagListen)),
@@ -92,6 +96,7 @@ func init() {
 		viper.BindPFlag(flagTarget, StartCmd.Flags().Lookup(flagTarget)),
 		viper.BindPFlag(flagDirArtifacts, StartCmd.Flags().Lookup(flagDirArtifacts)),
 		viper.BindPFlag(flagDirWorlds, StartCmd.Flags().Lookup(flagDirWorlds)),
+		viper.BindPFlag(flagBaker, StartCmd.Flags().Lookup(flagBaker)),
 	} {
 		if err != nil {
 			fmt.Println(err)

@@ -101,7 +101,30 @@ export const HEX_ROW_SPACING = MAP_WORLD_HEIGHT / HEX_ROWS
 // docs/design/amplification-artifacts.md (memory audit first, then basin
 // decomposition with per-basin workers). Re-adding 4 here before that lands
 // just reproduces the crash.
-export const AMPLIFY_STAGES = [2]
+// SPLIT 2026-08-08, when the server learned to bake. One number was answering
+// two questions with very different costs:
+//
+//   BAKE   producing a stage costs ~2.6 GB at 8192² — the tab death above.
+//   FETCH  finding one already baked costs a download and a downsample.
+//
+// So the client bakes only what it can survive baking, and DISPLAYS whatever a
+// server has already made. A stage it may fetch but not bake simply does not
+// appear when the server has nothing — the crash path stays closed, because
+// nothing falls back to baking it.
+export const AMPLIFY_BAKE_STAGES = [2]
+
+// The display ceiling, and it is a memory argument rather than a taste one.
+// Holding one amplified raster costs width × height × 4 bytes as Float32:
+//
+//   factor 2   4096×2048     33 MB
+//   factor 4   8192×4096    134 MB
+//   factor 8  16384×8192    537 MB
+//
+// 134 MB is a raster a tab can hold beside a map it is already showing; 537 MB
+// is asking for the same failure by a different route. Raising this to 8 wants
+// an actual measurement of a 16k DISPLAY first — and nothing bakes 16k today,
+// so it would only buy a failed request per world load.
+export const AMPLIFY_FETCH_STAGES = [2, 4]
 
 // The map/relief texture's resolution, fixed for the session so the map view
 // never has to be rebuilt when a bake stage lands. 4096x2048 is the

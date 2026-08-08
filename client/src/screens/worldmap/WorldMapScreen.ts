@@ -1,5 +1,4 @@
 import { Color3, Color4, MeshBuilder, Scene, ShaderMaterial } from '@babylonjs/core'
-import JSZip from 'jszip'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { createWorldgenCamera } from '../../camera/worldgenCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
@@ -13,23 +12,22 @@ import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/pape
 import { applyBiomeWash, dilateLandBiomes, expandBiomeIds } from '../../ui/mapOverlay/biomePaper'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
 import { createFineElevationSurface } from '../../map/fineElevationSurface'
-import { AMPLIFY_EROSION_ROUNDS, AMPLIFY_STAGES, MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
+import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS, AMPLIFY_FETCH_STAGES, MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
 import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '../../worldgen/amplificationWorker'
-import { decodeLayer } from '../../worldgen/worldSave/worldLayers'
-import type { Dtype } from '../../worldgen/worldSave/worldLayers'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
 import { biomeLabelKey } from '../../worldgen/climate/biomes'
 import { t } from '../../i18n/i18n'
 import type { TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
-import { deriveWorldId, derivePipelineVersion } from '../../storage/artifactKey'
+import { derivePipelineVersion } from '../../storage/artifactKey'
 import { readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { getServerStatus } from '../../server/serverStatus'
-import { readRecipeNumber, readRecipeValue } from '../../worldgen/worldSave/recipeYaml'
+import { readWorldInputs } from '../../worldgen/worldSave/loadWorldInputs'
+import type { ErosionControls as SaveErosionControls } from '../../worldgen/worldSave/loadWorldInputs'
 import { AMPLIFY_CONSTANTS } from '../../worldgen/surface/amplify'
 import '../../ui/chrome/chrome.css'
 import './worldmap.css'
@@ -42,24 +40,11 @@ import './worldmap.css'
 // readout; the relief/LOD ladder from docs/design/hex-world-view.md comes
 // next, feeding off the same elevation raster.
 
-// The manifest's self-describing layer entry (see WorldGenScreen's
-// bakeQueryLayers — this is the consumer side of that contract).
-interface ManifestLayer {
-  name: string
-  file: string
-  kind: 'raster' | 'vector'
-  resX?: number
-  resY?: number
-  dtype?: Dtype
-  encoding?: { scale: number; offset: number }
-}
-// The world's own pipeline settings, read back out of its recipe —
-// undefined where a save doesn't record them (then the bake uses defaults).
-interface ErosionControls {
-  strength?: number
-  refresh?: number
-  riverDensity?: number
-}
+// The world's own pipeline settings, read back out of its recipe — undefined
+// where a save doesn't record them (then the bake uses defaults). Shared with
+// the server's baker; see worldSave/loadWorldInputs for why there is only one
+// reader of a save.
+type ErosionControls = SaveErosionControls
 
 // Precipitation for the bake's hydrology re-run, decoded from the save's
 // baked climate layer (absent on a world saved before climate was computed).
@@ -86,12 +71,6 @@ const RIBBON_WIDTH_PROFILES = {
   coarse: { factor: 0.5, maxWidthPx: 4 },
   fine: { factor: 0.3, maxWidthPx: 2 },
 } as const
-
-interface WorldManifest {
-  formatVersion: number
-  world: { width: number; height: number; topology: string }
-  layers: ManifestLayer[]
-}
 
 export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   const scene = new Scene(ctx.engine)
@@ -225,6 +204,23 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // the bake's height field arrives), and which relief level they are
   // currently styled for.
   let riverLayer: ReturnType<typeof createToroidalRibbonOverlay> | null = null
+
+  // DEBUG: force a resolution rather than taking whatever the staging left on
+  // screen. Worth having because the stages differ in ways that are hard to
+  // judge from memory — 4k against 8k against the raw macro raster is a
+  // comparison you want side by side in time, not a fortnight apart.
+  //
+  // Re-READ from the store rather than kept in memory: holding every level at
+  // once would be 33 + 134 MB of rasters for a debug affordance, and the local
+  // tier already has them (a server hit is backfilled on the way in).
+  let bakeSource: {
+    macro: Float32Array; macroWidth: number; macroHeight: number; detailSeed: number
+    key: { worldId: string; pipelineVersion: string }
+  } | null = null
+  // Factor 1 is the macro raster the save carries — the authoritative one, and
+  // the only level with no rivers, since those are a product of the bake.
+  let availableFactors: number[] = []
+  let shownFactor = 1
   let reliefCoarseSurface: ReturnType<typeof createElevationSurface> | null = null
   let reliefFineSurface: ReturnType<typeof createElevationSurface> | null = null
   let ribbonLevel: keyof typeof RIBBON_WIDTH_PROFILES = 'flat'
@@ -260,6 +256,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       <button type="button" class="icon-button" data-action="toggle-biomes" aria-label="Toggle biome colouring">
         <img src="/icons/biomes.png" alt="" />
       </button>
+      <button type="button" class="text-button resolution-cycle" data-action="cycle-resolution" title="Force a resolution (debug)" hidden></button>
       <span class="altitude-readout" data-value="altitude"></span>
       <span class="bake-readout" data-value="bake"></span>
     </div>
@@ -329,94 +326,22 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   async function loadWorld(file: File): Promise<void> {
-    try {
-      const zip = await JSZip.loadAsync(file)
-      const manifestText = await zip.file('manifest.json')?.async('string')
-      if (!manifestText) {
-        notifyLoadFailed()
-        return
-      }
-      const manifest = JSON.parse(manifestText) as WorldManifest
-      const elevationEntry = manifest.layers.find((l) => l.name === 'elevation' && l.kind === 'raster')
-      const elevationBuffer = elevationEntry ? await zip.file(elevationEntry.file)?.async('arraybuffer') : undefined
-      if (!elevationEntry || !elevationBuffer) {
-        notifyLoadFailed()
-        return
-      }
-      const width = elevationEntry.resX ?? manifest.world.width
-      const height = elevationEntry.resY ?? manifest.world.height
-      const elevations = new Float32Array(elevationBuffer)
-
-      // Biome (coarse climate grid) for the hover readout — present once the
-      // world was saved with climate computed; older/younger saves just skip
-      // the biome line.
-      let biome: { data: Float32Array; resX: number; resY: number } | null = null
-      const biomeEntry = manifest.layers.find((l) => l.name === 'biome' && l.kind === 'raster')
-      if (biomeEntry?.dtype && biomeEntry.encoding && biomeEntry.resX && biomeEntry.resY) {
-        const biomeBuffer = await zip.file(biomeEntry.file)?.async('arraybuffer')
-        if (biomeBuffer) {
-          biome = {
-            data: decodeLayer(biomeBuffer, { name: 'biome', dtype: biomeEntry.dtype, scale: biomeEntry.encoding.scale, offset: biomeEntry.encoding.offset, unit: '', landOnly: false }),
-            resX: biomeEntry.resX,
-            resY: biomeEntry.resY,
-          }
-        }
-      }
-
-      // Recipe values, through the shared path-aware reader. Bare-key
-      // regexes were wrong here in both directions: `seed` sits INDENTED
-      // under `spec:`, so a line-anchored pattern never matched it (every
-      // world fell back to the same default label AND the same detail
-      // seed), and a leaf name matched anywhere would collide the moment
-      // two groups share a key.
-      const yamlText = (await zip.file('world.yaml')?.async('string')) ?? ''
-      const seedText = readRecipeValue(yamlText, 'spec.seed') ?? 'casas-eternas'
-      // Seed for the deterministic near-field detail, hashed from the
-      // recipe's seed so the same world always grows the same bumps. (Not
-      // the generator's warpSeed — see fineElevationSurface.)
-      let detailSeed = 5381
-      for (let i = 0; i < seedText.length; i++) detailSeed = ((detailSeed * 33) ^ seedText.charCodeAt(i)) >>> 0
-
-      // This world's own erosion settings, so the bake erodes the way the
-      // world was eroded rather than by generic defaults (the generator
-      // restores the same values into its sliders on load, from these very
-      // paths).
-      const erosionControls: ErosionControls = {
-        strength: readRecipeNumber(yamlText, 'spec.erosion.erosionStrength'),
-        refresh: readRecipeNumber(yamlText, 'spec.erosion.drainageRefresh'),
-        riverDensity: readRecipeNumber(yamlText, 'spec.hydrology.riverDensity'),
-      }
-
-      // Precipitation drives the discharge in the bake's hydrology re-run.
-      let climate: ClimateInput | null = null
-      const precipEntry = manifest.layers.find((l) => l.name === 'precipitation' && l.kind === 'raster')
-      if (precipEntry?.dtype && precipEntry.encoding && precipEntry.resX && precipEntry.resY) {
-        const precipBuffer = await zip.file(precipEntry.file)?.async('arraybuffer')
-        if (precipBuffer) {
-          climate = {
-            precipitation: decodeLayer(precipBuffer, { name: 'precipitation', dtype: precipEntry.dtype, scale: precipEntry.encoding.scale, offset: precipEntry.encoding.offset, unit: '', landOnly: true }),
-            resX: precipEntry.resX,
-            resY: precipEntry.resY,
-          }
-        }
-      }
-
-      // The world's cache identity, from what the bake actually consumes —
-      // NOT from the recipe, which cannot distinguish two worlds stopped at
-      // different tectonic epochs (see storage/artifactKey.ts). The seed
-      // string rides along only as a readable path label.
-      worldId = deriveWorldId(seedText, {
-        elevation: elevations,
-        precipitation: climate?.precipitation ?? null,
-        erosionStrength: erosionControls.strength,
-        drainageRefresh: erosionControls.refresh,
-        riverDensity: erosionControls.riverDensity,
-      })
-
-      presentWorld(elevations, width, height, biome, detailSeed, erosionControls, climate)
-    } catch {
+    // Reading the save is shared with the SERVER'S baker (worldSave/
+    // loadWorldInputs): both write artifacts under a key derived from what
+    // they read, so two readers that drifted by one decoded layer would
+    // produce two worldIds for one world and the cache would serve terrain
+    // from a world that does not exist.
+    const inputs = await readWorldInputs(await file.arrayBuffer())
+    if (!inputs) {
       notifyLoadFailed()
+      return
     }
+    worldId = inputs.worldId
+    presentWorld(
+      inputs.elevations, inputs.width, inputs.height,
+      inputs.biome, inputs.detailSeed, inputs.erosionControls,
+      inputs.climate ? { precipitation: inputs.climate.data, resX: inputs.climate.resX, resY: inputs.climate.resY } : null,
+    )
   }
 
   // Re-derive the paper from whatever height raster is current, at the
@@ -639,13 +564,84 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     hoverTooltip?.refresh()
   }
 
+  // DEBUG affordance: step through the resolutions this world actually has.
+  // Deliberately English and untranslated, like the hexgrid and biome toggles
+  // beside it — a debug control that will not outlive the investigation it
+  // serves should not also mint two catalog entries.
+  const resolutionButton = root.querySelector<HTMLButtonElement>('[data-action="cycle-resolution"]')!
+
+  const levelLabel = (factor: number): string =>
+    factor === 1 ? 'macro' : `${Math.round((bakeSource?.macroWidth ?? 2048) * factor / 1024)}k`
+
+  function refreshResolutionButton(): void {
+    // Hidden until there is a choice: a control that cycles a single value is
+    // furniture, not an affordance.
+    resolutionButton.hidden = availableFactors.length < 2
+    resolutionButton.textContent = levelLabel(shownFactor)
+  }
+
+  // Records that a level exists, so the button offers it. Called wherever a
+  // stage lands, whether it was baked here or fetched.
+  function noteLevel(factor: number): void {
+    if (!availableFactors.includes(factor)) {
+      availableFactors.push(factor)
+      availableFactors.sort((a, b) => a - b)
+    }
+    shownFactor = factor
+    refreshResolutionButton()
+  }
+
+  async function showLevel(factor: number): Promise<void> {
+    if (!bakeSource) return
+    if (factor === 1) {
+      applyBakeResult({
+        elevation: bakeSource.macro,
+        width: bakeSource.macroWidth,
+        height: bakeSource.macroHeight,
+        // The macro world has no rivers to show: they are a product of the
+        // bake's hydrology re-run, not of the save.
+        riverPoints: new Float32Array(0),
+        riverLengths: new Uint32Array(0),
+      }, 1, bakeSource.detailSeed)
+      shownFactor = 1
+      setBakeText(`${bakeSource.macroWidth}×${bakeSource.macroHeight} · macro`)
+      refreshResolutionButton()
+      return
+    }
+    const store = await getArtifactStore()
+    const hit = await readAmplificationArtifact(store, { ...bakeSource.key, stage: String(factor) }).catch(() => null)
+    if (!hit) {
+      setBakeText(`${levelLabel(factor)} unavailable`)
+      return
+    }
+    applyBakeResult(hit.artifact, factor, bakeSource.detailSeed)
+    shownFactor = factor
+    setBakeText(`${hit.artifact.width}×${hit.artifact.height} · forced`)
+    refreshResolutionButton()
+  }
+
+  resolutionButton.addEventListener('click', () => {
+    if (availableFactors.length < 2) return
+    const next = availableFactors[(availableFactors.indexOf(shownFactor) + 1) % availableFactors.length]
+    void showLevel(next)
+  })
+
   // --- Amplification bake (docs/decisions/worldmap-amplification.md) ---
   // Runs in its own worker after the macro map is already on screen, then
   // swaps the geometry. Deliberately fire-and-forget from the load path: a
   // failed or slow bake leaves a perfectly usable macro world behind.
   function startAmplification(macro: Float32Array, macroWidth: number, macroHeight: number, detailSeed: number, erosionControls: ErosionControls, climate: ClimateInput | null): void {
     amplifyWorker?.terminate() // a new world supersedes any bake in flight
-    const stages = AMPLIFY_STAGES.filter((factor) => factor > 1)
+    // Every stage worth showing, coarse first. Which of them this machine may
+    // BAKE is a separate question, asked per stage below.
+    // The macro raster is always a level, and it is the one the world is
+    // showing right now.
+    bakeSource = { macro, macroWidth, macroHeight, detailSeed, key: { worldId, pipelineVersion: derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS }) } }
+    availableFactors = [1]
+    shownFactor = 1
+    refreshResolutionButton()
+
+    const stages = AMPLIFY_FETCH_STAGES.filter((factor) => factor > 1)
     if (stages.length === 0) return
     const generation = ++bakeGeneration
 
@@ -675,7 +671,17 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const hit = await readAmplificationArtifact(store, key).catch(() => null)
       if (hit && generation === bakeGeneration) {
         applyBakeResult(hit.artifact, factor, detailSeed)
+        noteLevel(factor)
         setBakeText(`${hit.artifact.width}×${hit.artifact.height} · cached`)
+        void runStage(index + 1)
+        return
+      }
+
+      // Fetch-only stage with nothing on the server: stop here rather than
+      // bake it. This is the whole point of the split — an 8k bake is the
+      // 2.6 GB that kills the tab, and a stage the client cannot produce must
+      // not be attempted just because it was allowed to be shown.
+      if (!AMPLIFY_BAKE_STAGES.includes(factor)) {
         void runStage(index + 1)
         return
       }
@@ -701,6 +707,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           riverLengths: new Uint32Array(message.riverLengths),
         }
         applyBakeResult(artifact, factor, detailSeed)
+        noteLevel(factor)
         setBakeText(`${message.width}×${message.height} · ${(message.durationMs / 1000).toFixed(0)}s`)
         finish()
         // Stored after the result is on screen, so the write never delays

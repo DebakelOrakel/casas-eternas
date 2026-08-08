@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/artifacts"
+	"github.com/DebakelOrakel/casas-eternas/internal/bake"
 	"github.com/DebakelOrakel/casas-eternas/internal/client"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
@@ -70,5 +73,31 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 		}
 		modules = append(modules, m)
 	}
+	if targets.Has(config.TargetBake) {
+		m, err := bake.New(bake.Config{
+			WorldsDir:    viper.GetString(flagDirWorlds),
+			ArtifactsDir: viper.GetString(flagDirArtifacts),
+			BakerPath:    bakerPath(),
+		})
+		if err != nil {
+			return nil, err
+		}
+		modules = append(modules, m)
+	}
 	return modules, nil
+}
+
+// bakerPath resolves --baker, defaulting to the bundle beside the binary.
+//
+// Beside the BINARY rather than beside the working directory: a server is
+// started from wherever its data lives, and the bundle ships with the program.
+func bakerPath() string {
+	if configured := viper.GetString(flagBaker); configured != "" {
+		return configured
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return "baker.mjs"
+	}
+	return filepath.Join(filepath.Dir(executable), "baker.mjs")
 }

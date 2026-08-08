@@ -1,9 +1,5 @@
-import { AMPLIFICATION_EROSION_OVERRIDES, amplifyElevation, criticalAreaForCellSize } from './surface/amplify'
-import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass, scaleErosionParamsForCellSize } from './surface/erosion'
-import { fillDepressionsAndRouteFlow } from './surface/flowRouting'
-import { slopeFromAngle } from './elevation/elevationScale'
-import { accumulateDischarge, channelThreshold, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff } from './surface/hydrology'
-import type { RiverPolylines } from './surface/hydrology'
+import { runAmplification } from './surface/runAmplification'
+import type { AmplifyPhase } from './surface/runAmplification'
 
 // The amplification bake's worker (docs/decisions/worldmap-amplification.md).
 // Its own worker rather than a job on plateSimulationWorker: the bake needs
@@ -94,75 +90,40 @@ function makeProgressReporter(stage: AmplifyProgressMessage['stage']): (fraction
   }
 }
 
+// A thin wrapper around surface/runAmplification: the bake itself lives there
+// so the SERVER's baker runs the identical pipeline. An artifact carries a key
+// derived from its inputs, so a browser bake and a server bake of one world
+// must produce the same bytes — which two copies of the pipeline could only do
+// until someone edited one.
 async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
   const started = performance.now()
-  const macro = new Float32Array(message.elevation)
-  const result = amplifyElevation(macro, message.macroWidth, message.macroHeight, message.factor, message.seed, makeProgressReporter('seed'))
-
-  let field = result.data
-  if (message.erosionRounds > 0) {
-    // The seeded field IS the tectonic surface as far as this pass is
-    // concerned: runErosionPass reads its input both as the terrain to
-    // erode and as the uplift envelope it may not exceed, which is exactly
-    // the contract we want here — the macro world (refined) stays the
-    // ceiling, so amplification can carve INTO the authoritative shape but
-    // never inflate past it.
-    // Order matters only for readability, not arithmetic: the world's own
-    // slider settings first (what this world's erosion MEANS), then the
-    // per-cell rescaling (what the finer grid needs), then the round budget.
-    const withControls = erosionParamsWithControls(DEFAULT_EROSION_PASS_PARAMS, {
-      strength: message.erosionStrength,
-      networkRefreshes: message.drainageRefresh,
-    })
-    const scaled = scaleErosionParamsForCellSize(withControls, 1 / message.factor)
-    const params = {
-      ...scaled,
-      rounds: message.erosionRounds,
-      // Amplification is not landscape evolution; the three overrides and
-      // their reasoning live in amplify.AMPLIFICATION_EROSION_OVERRIDES,
-      // beside the rest of the bake's policy (and where the cache key can
-      // hash them).
-      upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
-      plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
-      thermal: {
-        ...scaled.thermal,
-        talusSlope: slopeFromAngle(AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg) * (1 / message.factor),
-      },
-    }
-    const reportErosion = makeProgressReporter('erosion')
-    const eroded = await runErosionPass(field, result.width, result.height, params, (_phase, fraction) => reportErosion(fraction))
-    field = eroded.elevations
+  const reporters: Record<AmplifyPhase, (fraction: number) => void> = {
+    seed: makeProgressReporter('seed'),
+    erosion: makeProgressReporter('erosion'),
+    hydrology: makeProgressReporter('hydrology'),
   }
-
-  // Hydrology RE-RUN on the amplified field (decision doc point 2): the
-  // save's rivers were routed on the 2048 raster and would now lie beside
-  // the fine valleys this bake just carved, so they are re-derived rather
-  // than carried over. Climate stays coarse and is sampled onto the fine
-  // grid — precipitation is a regional quantity, not a per-cell one.
-  let rivers: RiverPolylines = { points: new Float32Array(0), lengths: new Uint32Array(0) }
-  if (message.precipitation && message.climateResX && message.climateResY) {
-    const reportHydrology = makeProgressReporter('hydrology')
-    reportHydrology(0)
-    const precip = new Float32Array(message.precipitation)
-    const routing = await fillDepressionsAndRouteFlow(field, result.width, result.height, 0)
-    reportHydrology(0.6)
-    const discharge = accumulateDischarge(routing, field, precip, message.climateResX, message.climateResY)
-    const maxDischarge = maxDischargeOverLand(discharge, field)
-    const meanRunoff = meanLandRunoff(precip, field, result.width, result.height, message.climateResX, message.climateResY)
-    // The channel criterion is a cell COUNT, so it has to be rescaled for
-    // the finer grid exactly like the erosion constants were.
-    const criticalArea = criticalAreaForCellSize(densityToCriticalArea(message.riverDensity ?? 55), 1 / message.factor)
-    rivers = extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge)
-    reportHydrology(1)
-  }
+  const result = await runAmplification({
+    elevation: new Float32Array(message.elevation),
+    macroWidth: message.macroWidth,
+    macroHeight: message.macroHeight,
+    factor: message.factor,
+    seed: message.seed,
+    erosionRounds: message.erosionRounds,
+    erosionStrength: message.erosionStrength,
+    drainageRefresh: message.drainageRefresh,
+    precipitation: message.precipitation ? new Float32Array(message.precipitation) : undefined,
+    climateResX: message.climateResX,
+    climateResY: message.climateResY,
+    riverDensity: message.riverDensity,
+  }, (phase, fraction) => reporters[phase](fraction))
 
   const done: AmplifyDoneMessage = {
     type: 'amplifyDone',
-    elevation: field.buffer as ArrayBuffer,
+    elevation: result.elevation.buffer as ArrayBuffer,
     width: result.width,
     height: result.height,
-    riverPoints: rivers.points.buffer as ArrayBuffer,
-    riverLengths: rivers.lengths.buffer as ArrayBuffer,
+    riverPoints: result.rivers.points.buffer as ArrayBuffer,
+    riverLengths: result.rivers.lengths.buffer as ArrayBuffer,
     durationMs: performance.now() - started,
   }
   self.postMessage(done, [done.elevation, done.riverPoints, done.riverLengths])

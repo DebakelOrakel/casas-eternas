@@ -21,6 +21,8 @@ dist-ssr
 *.dylib
 *.test
 *.out
+casas
+casas-eternas
 
 # The server's own stores (casas-eternas start --dir-worlds/--dir-artifacts):
 # a world is irreplaceable but belongs to whoever ran the server, and an

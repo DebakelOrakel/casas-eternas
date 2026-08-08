@@ -3,6 +3,10 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-08-08
+- **new** Server: bakes amplified terrain itself — 8192×4096 finishes in under six minutes where a browser tab runs out of memory and dies. `world`
+- **new** Server: bake jobs are queued and their progress can be followed while they run.
+
 ## 2026-08-07
 - **changed** Performance: the erosion pass stores its flow-routing edges as direction bytes and reuses its elevation buffers — same results, noticeably less memory.
 

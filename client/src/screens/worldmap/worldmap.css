@@ -26,3 +26,20 @@
   color: #1a1a1a;
   opacity: 0.8;
 }
+
+/* Debug: forced resolution. Quiet like the readouts it sits between — it is an
+   instrument, not one of the map's real controls. */
+.worldmap-screen .resolution-cycle {
+  align-self: center;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.45;
+}
+
+.worldmap-screen .resolution-cycle:hover {
+  opacity: 0.9;
+}
+
+.worldmap-screen .resolution-cycle[hidden] {
+  display: none;
+}

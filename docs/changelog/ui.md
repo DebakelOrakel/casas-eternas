@@ -8,6 +8,8 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **changed** World map: the cache button moved from the bottom bar up next to the load button, matching the generator.
 - **changed** Storage: the storage button carries a real hover card instead of a debug tooltip, and is called Storage — it will hold worlds as well as the cache. `common.action.storage`
 - **new** Save: with a server present, the save button opens a window showing what the server holds for this world, and offers to update it there or download a .zip. `common.panel.save`
+- **new** World map: a debug control cycles between the resolutions a world actually has — macro, 4k, 8k — so they can be compared directly instead of from memory.
+- **changed** World map: an 8k world baked on the server is now shown — the client displays whatever resolution it can find, while still only baking what a browser tab survives. `world`
 - **new** Storage: baked terrain is now shared through the server — a world baked on one machine downloads on the next instead of costing minutes again. `world`
 - **changed** Storage: the window lists what this machine holds and what the server holds separately, each with its own delete. `common.panel.storage`
 - **new** Load: with a server present, the load button opens a browsable list of server worlds with thumbnails — open one, or download it; opening a local .zip stays one click away. Works in the generator and the world map. `common.panel.load`

@@ -1,0 +1,138 @@
+package bake
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+// How a job actually gets run.
+//
+// An interface with one implementation, which is usually a smell — here it is
+// the seam the whole "distribute it later" story hangs on. A pool, a queue
+// consumer or a remote worker each becomes another Runner, and the queue and
+// the routes above never learn about it.
+
+// Progress is reported as the pipeline moves, so a caller polling a job sees
+// something more useful than "running" for seven minutes.
+type Progress struct {
+	Phase   string `json:"phase"`
+	Percent int    `json:"percent"`
+}
+
+type Runner interface {
+	Run(ctx context.Context, spec Spec, onProgress func(Progress)) (Result, error)
+}
+
+// Spec is a Request resolved against the stores: the paths the runner needs,
+// rather than the ids the caller used. Keeping the resolution out of the
+// Runner is what lets a remote one receive the same struct with different
+// paths — or, later, a URL.
+type Spec struct {
+	WorldZip      string `json:"worldZip"`
+	Stage         int    `json:"stage"`
+	ErosionRounds int    `json:"erosionRounds"`
+	ArtifactsDir  string `json:"artifactsDir"`
+}
+
+// localRunner spawns the Node baker as a subprocess.
+//
+// A subprocess rather than an embedded interpreter, for three reasons that all
+// point the same way: the pipeline is the browser's own TypeScript and running
+// it under Node is the only way to keep it single-sourced; a bake that
+// exhausts memory takes the subprocess down instead of the server; and the
+// isolation means "run it elsewhere" later is a change of Runner rather than a
+// change of everything.
+type localRunner struct {
+	// Path to the esbuild bundle produced by `npm run build:baker`.
+	bakerPath string
+	// Heap ceiling handed to Node. An 8192² bake peaks near 2.6 GB, and node's
+	// own default is far below that on some builds — leaving it to chance is
+	// how a bake dies at 90% with an unhelpful message.
+	maxHeapMB int
+}
+
+// NewLocalRunner checks the bundle exists before anything is queued. A missing
+// baker is a startup problem worth naming then, not a job that fails minutes
+// later for a reason the user cannot see.
+func NewLocalRunner(bakerPath string, maxHeapMB int) (Runner, error) {
+	absolute, err := filepath.Abs(bakerPath)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(absolute); err != nil {
+		return nil, fmt.Errorf("bake bundle not found at %s (build it with `npm run build:baker`): %w", absolute, err)
+	}
+	return &localRunner{bakerPath: absolute, maxHeapMB: maxHeapMB}, nil
+}
+
+func (r *localRunner) Run(ctx context.Context, spec Spec, onProgress func(Progress)) (Result, error) {
+	payload, err := json.Marshal(spec)
+	if err != nil {
+		return Result{}, err
+	}
+
+	cmd := exec.CommandContext(ctx, "node", fmt.Sprintf("--max-old-space-size=%d", r.maxHeapMB), r.bakerPath, string(payload))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return Result{}, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return Result{}, err
+	}
+	if err := cmd.Start(); err != nil {
+		return Result{}, fmt.Errorf("starting node: %w", err)
+	}
+
+	// stderr carries progress lines AND any failure message. Both are kept:
+	// the progress goes to the callback, the tail goes into the error, because
+	// "exit status 1" on its own tells nobody anything.
+	var lastLines []string
+	stderrDone := make(chan struct{})
+	go func() {
+		defer close(stderrDone)
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			var progress Progress
+			if json.Unmarshal([]byte(line), &progress) == nil && progress.Phase != "" {
+				onProgress(progress)
+				continue
+			}
+			lastLines = append(lastLines, line)
+			if len(lastLines) > 5 {
+				lastLines = lastLines[1:]
+			}
+		}
+	}()
+
+	out, readErr := io.ReadAll(stdout)
+	<-stderrDone
+	waitErr := cmd.Wait()
+	if waitErr != nil {
+		detail := strings.TrimSpace(strings.Join(lastLines, "; "))
+		if detail == "" {
+			detail = waitErr.Error()
+		}
+		return Result{}, fmt.Errorf("bake failed: %s", detail)
+	}
+	if readErr != nil {
+		return Result{}, readErr
+	}
+
+	// The result is the LAST line of stdout: the baker writes exactly one, but
+	// taking the last means a stray print upstream cannot break the parse.
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var result Result
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &result); err != nil {
+		return Result{}, fmt.Errorf("baker produced no readable result: %w", err)
+	}
+	return result, nil
+}
