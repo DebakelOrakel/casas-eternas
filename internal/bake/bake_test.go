@@ -261,3 +261,38 @@ func TestProgressAndResultReachTheJobRecord(t *testing.T) {
 		t.Errorf("finished job = %+v", done)
 	}
 }
+
+// Spec is marshalled straight into the baker's argv, so its JSON field names
+// are a contract with client/scripts/bake.ts. A rename on either side would
+// otherwise surface as a bake that reads nothing and writes nowhere — with no
+// error, because the baker's own fields would simply be undefined.
+func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
+	local, err := json.Marshal(Spec{Stage: 2, ErosionRounds: 2, WorldZip: "/w.zip", ArtifactsDir: "/art"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"stage":2`, `"erosionRounds":2`, `"worldZip":"/w.zip"`, `"artifactsDir":"/art"`} {
+		if !strings.Contains(string(local), key) {
+			t.Errorf("local spec is missing %s: %s", key, local)
+		}
+	}
+	// The path form must not carry empty URL fields: the baker picks its store
+	// by which one is present, so an empty string would be an ambiguous job.
+	for _, key := range []string{"worldUrl", "artifactsUrl", "authToken"} {
+		if strings.Contains(string(local), key) {
+			t.Errorf("local spec should omit %s: %s", key, local)
+		}
+	}
+
+	remote, _ := json.Marshal(Spec{Stage: 4, ErosionRounds: 2, WorldURL: "http://s/v1/worlds/x", ArtifactsURL: "http://s/v1", AuthToken: "t"})
+	for _, key := range []string{`"worldUrl":"http://s/v1/worlds/x"`, `"artifactsUrl":"http://s/v1"`, `"authToken":"t"`} {
+		if !strings.Contains(string(remote), key) {
+			t.Errorf("remote spec is missing %s: %s", key, remote)
+		}
+	}
+	for _, key := range []string{"worldZip", "artifactsDir"} {
+		if strings.Contains(string(remote), key) {
+			t.Errorf("remote spec should omit %s: %s", key, remote)
+		}
+	}
+}

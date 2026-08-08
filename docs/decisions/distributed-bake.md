@@ -1,7 +1,7 @@
 ---
 summary: Server-side amplification bakes become Kubernetes Jobs when — and only when — the server is running in a cluster. A job is already a value with a scope behind a Runner interface, so this is an added implementation rather than a rebuild. Decided: only a world's owner may commission one, the runner is chosen by detecting the cluster rather than by a flag, anti-affinity is hard so two 2.6 GB bakes never share a node, and each Job gets a one-shot token scoped to the artifact key it may write. Everything in that list exists ONLY in a cluster; a local server keeps the plain subprocess with no checks at all.
 date: 2026-08-08
-status: decided — architecture and the four forks below. STEP 1 BUILT 2026-08-08 (authorisation and the concurrency cap, against the local runner). Steps 2–4 not started.
+status: decided — architecture and the four forks below. STEPS 1 AND 2 BUILT 2026-08-08 (authorisation, the concurrency cap, and a baker that works entirely over HTTP — measured byte-identical to the file-based one). Steps 3–4 not started.
 ---
 
 # Bakes as Kubernetes Jobs
@@ -149,9 +149,13 @@ Each step is verifiable before the next, and the first two need no cluster.
    that independently would eventually disagree in a way that reads as a
    permission bug. `internal/config.AuthMode` is shared with the client module
    too, so what the browser is TOLD and what the server ENFORCES cannot differ.
-2. **The baker writes over HTTP** — `artifactsDir` becomes `artifactsUrl` and
-   the store implementation is swapped. Verifiable by pointing the local runner
-   at the server's own API.
+2. **The baker works entirely over HTTP** — reads the world from
+   `/v1/worlds/{uid}`, writes artifacts to `/v1/artifacts/…`. **BUILT.** Both
+   shapes live in one `Spec` and the baker picks its store by which fields are
+   present; the bake itself knows nothing about the difference. **Measured: the
+   two produce byte-identical artifacts** under the identical key, which is
+   what makes running on a volumeless node a non-event for everyone
+   downstream.
 3. **The `kubernetesRunner`** — create, watch, clean up; anti-affinity, TTL,
    RBAC, requests, the Pending state.
 4. **Commissioning from the client** — the world map asks for a bake when a

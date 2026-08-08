@@ -500,11 +500,11 @@ var require_stream_writable = __commonJS({
       this.corkedRequestsFree = new CorkedRequest(this);
     }
     WritableState.prototype.getBuffer = function getBuffer() {
-      var current = this.bufferedRequest;
+      var current2 = this.bufferedRequest;
       var out = [];
-      while (current) {
-        out.push(current);
-        current = current.next;
+      while (current2) {
+        out.push(current2);
+        current2 = current2.next;
       }
       return out;
     };
@@ -10335,21 +10335,21 @@ async function fillDepressions(raw, width, height, seaLevel, onProgress, bounded
   const progressStep = Math.max(1, Math.floor(cellCount / 200));
   while (heap.length > 0) {
     heap.pop();
-    const current = heap.poppedIndex;
-    popOrder[poppedCount] = current;
+    const current2 = heap.poppedIndex;
+    popOrder[poppedCount] = current2;
     poppedCount++;
     if (poppedCount % progressStep === 0) {
       onProgress?.(poppedCount / cellCount);
       await maybeYield();
     }
-    const y = current / width | 0;
-    const x = current - y * width;
+    const y = current2 / width | 0;
+    const x = current2 - y * width;
     for (const [dx, dy] of D8_OFFSETS) {
       const neighbor = bounded ? d8NeighborBounded(x, y, dx, dy, width, height) : d8Neighbor(x, y, dx, dy, width, height);
       if (neighbor < 0 || visited[neighbor]) continue;
       visited[neighbor] = 1;
       const stepDistance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1;
-      filled[neighbor] = Math.max(raw[neighbor], filled[current]) + EPSILON_FLOOD_STEP * stepDistance;
+      filled[neighbor] = Math.max(raw[neighbor], filled[current2]) + EPSILON_FLOOD_STEP * stepDistance;
       heap.push(filled[neighbor], neighbor);
     }
   }
@@ -11024,6 +11024,52 @@ async function writeAmplificationArtifact(store, key, artifact, bakeMs) {
   return wrote;
 }
 
+// src/server/serverStatus.ts
+var OFFLINE = { state: "none", apiBase: "", authMode: "none", modules: [] };
+var PROBE_TIMEOUT_MS = 3e3;
+async function fetchJSON(url, timeoutMs) {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: abort.signal });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function probe() {
+  const config = await fetchJSON("/config.json", PROBE_TIMEOUT_MS);
+  if (!config || !config.apiBase) return OFFLINE;
+  const apiBase2 = config.apiBase;
+  const authMode = config.authMode ?? "none";
+  const capabilities = await fetchJSON(`${apiBase2}/capabilities`, PROBE_TIMEOUT_MS);
+  if (!capabilities) return { state: "unreachable", apiBase: apiBase2, authMode, modules: [] };
+  const modules = capabilities.modules ?? [];
+  if (!modules.includes("world")) return { state: "unreachable", apiBase: apiBase2, authMode, modules };
+  const state = authMode === "none" ? "local" : "remote";
+  return { state, apiBase: apiBase2, authMode, modules };
+}
+var pending;
+var current;
+function getServerStatus() {
+  if (!pending) {
+    pending = probe().then((status) => {
+      current = status;
+      return status;
+    });
+  }
+  return pending;
+}
+
+// src/server/worldClient.ts
+async function apiBase() {
+  const status = await getServerStatus();
+  return status.state === "local" || status.state === "remote" ? status.apiBase : null;
+}
+
 // src/storage/HttpArtifactStore.ts
 var LOCAL_PREFIX = "worlds/";
 var LOCAL_GROUP = "amp";
@@ -11033,6 +11079,85 @@ function toRemotePath(path) {
   if (segments.length < 5 || segments[1] !== LOCAL_GROUP) return null;
   const [worldId, , pipelineVersion, stage, ...rest] = segments;
   return { worldId, pipelineVersion, stage, name: rest.join("/") };
+}
+var encodePath = (p) => [p.worldId, p.pipelineVersion, p.stage, ...p.name.split("/")].map(encodeURIComponent).join("/");
+function createHttpArtifactStore(options = {}) {
+  const resolveBase = options.resolveBase ?? apiBase;
+  const authHeaders = () => options.authToken ? { Authorization: `Bearer ${options.authToken}` } : {};
+  const url = async (path) => {
+    const base = await resolveBase();
+    const remote = toRemotePath(path);
+    if (!base || !remote) return null;
+    return `${base}/artifacts/${encodePath(remote)}`;
+  };
+  return {
+    async read(path) {
+      const target = await url(path);
+      if (!target) return null;
+      try {
+        const response = await fetch(target, { cache: "no-store", headers: authHeaders() });
+        if (!response.ok) return null;
+        return await response.arrayBuffer();
+      } catch {
+        return null;
+      }
+    },
+    async write(path, bytes) {
+      const target = await url(path);
+      if (!target) return false;
+      try {
+        const response = await fetch(target, {
+          method: "PUT",
+          headers: { "Content-Type": "application/octet-stream", ...authHeaders() },
+          body: bytes
+        });
+        return response.ok;
+      } catch {
+        return false;
+      }
+    },
+    async exists(path) {
+      const target = await url(path);
+      if (!target) return false;
+      try {
+        const response = await fetch(target, { method: "HEAD", cache: "no-store", headers: authHeaders() });
+        return response.ok;
+      } catch {
+        return false;
+      }
+    },
+    async size(path) {
+      const target = await url(path);
+      if (!target) return null;
+      try {
+        const response = await fetch(target, { method: "HEAD", cache: "no-store", headers: authHeaders() });
+        if (!response.ok) return null;
+        const length = Number(response.headers.get("Content-Length"));
+        return Number.isFinite(length) ? length : null;
+      } catch {
+        return null;
+      }
+    },
+    async remove(path) {
+      const target = await url(path);
+      if (!target) return;
+      try {
+        await fetch(target, { method: "DELETE", headers: authHeaders() });
+      } catch {
+      }
+    },
+    // Deliberately unsupported rather than emulated. Both exist for the LOCAL
+    // inventory — the storage panel walks directories to total up what this
+    // machine is holding, and asks the browser for its quota. The server
+    // answers both in one request through its own listing endpoint, so
+    // pretending here would mean a slow, wrong second implementation of it.
+    async listDirectory() {
+      return [];
+    },
+    async usage() {
+      return null;
+    }
+  };
 }
 
 // scripts/bake.ts
@@ -11084,6 +11209,27 @@ function createFsArtifactStore(root) {
     }
   };
 }
+async function readWorld(job) {
+  if (job.worldZip) return readFile(job.worldZip).catch(() => null);
+  if (!job.worldUrl) return null;
+  try {
+    const response = await fetch(job.worldUrl, {
+      headers: job.authToken ? { Authorization: `Bearer ${job.authToken}` } : {}
+    });
+    if (!response.ok) return null;
+    return new Uint8Array(await response.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+function artifactStoreFor(job) {
+  if (job.artifactsDir) return createFsArtifactStore(job.artifactsDir);
+  if (job.artifactsUrl) {
+    const base = job.artifactsUrl;
+    return createHttpArtifactStore({ resolveBase: async () => base, authToken: job.authToken });
+  }
+  return null;
+}
 function fail(message) {
   process.stderr.write(`${message}
 `);
@@ -11098,8 +11244,8 @@ async function main() {
   } catch {
     return fail("job argument is not JSON");
   }
-  const archive = await readFile(job.worldZip).catch(() => null);
-  if (!archive) fail(`cannot read ${job.worldZip}`);
+  const archive = await readWorld(job);
+  if (!archive) fail(`cannot read the world (${job.worldZip ?? job.worldUrl ?? "no source given"})`);
   const inputs = await readWorldInputs(archive);
   if (!inputs) fail("not a readable world archive");
   const started = Date.now();
@@ -11125,7 +11271,8 @@ async function main() {
 `);
   });
   const durationMs = Date.now() - started;
-  const store = createFsArtifactStore(job.artifactsDir);
+  const store = artifactStoreFor(job);
+  if (!store) fail("neither artifactsDir nor artifactsUrl was given");
   const pipelineVersion = derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: job.erosionRounds });
   const key = { worldId: inputs.worldId, pipelineVersion, stage: String(job.stage) };
   const stored = await writeAmplificationArtifact(store, key, {

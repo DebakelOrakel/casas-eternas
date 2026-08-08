@@ -44,9 +44,24 @@ export function toRemotePath(path: string): RemotePath | null {
 const encodePath = (p: RemotePath): string =>
   [p.worldId, p.pipelineVersion, p.stage, ...p.name.split('/')].map(encodeURIComponent).join('/')
 
-export function createHttpArtifactStore(): ArtifactStore {
+export interface HttpArtifactStoreOptions {
+  // Where the API lives. Defaults to asking serverStatus, which resolves it
+  // against the PAGE's origin — correct in a browser and meaningless in Node,
+  // where the server-side baker runs and must be told outright.
+  resolveBase?: () => Promise<string | null>
+  // Bearer token, for callers that have one. The browser has none today; a
+  // bake Job will be handed one scoped to the single artifact key it may write
+  // (docs/decisions/distributed-bake.md).
+  authToken?: string
+}
+
+export function createHttpArtifactStore(options: HttpArtifactStoreOptions = {}): ArtifactStore {
+  const resolveBase = options.resolveBase ?? apiBase
+  const authHeaders = (): Record<string, string> =>
+    options.authToken ? { Authorization: `Bearer ${options.authToken}` } : {}
+
   const url = async (path: string): Promise<string | null> => {
-    const base = await apiBase()
+    const base = await resolveBase()
     const remote = toRemotePath(path)
     if (!base || !remote) return null
     return `${base}/artifacts/${encodePath(remote)}`
@@ -57,7 +72,7 @@ export function createHttpArtifactStore(): ArtifactStore {
       const target = await url(path)
       if (!target) return null
       try {
-        const response = await fetch(target, { cache: 'no-store' })
+        const response = await fetch(target, { cache: 'no-store', headers: authHeaders() })
         if (!response.ok) return null
         return await response.arrayBuffer()
       } catch {
@@ -79,7 +94,7 @@ export function createHttpArtifactStore(): ArtifactStore {
         // would cost a 17 MB duplicate on every upload.
         const response = await fetch(target, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/octet-stream' },
+          headers: { 'Content-Type': 'application/octet-stream', ...authHeaders() },
           body: bytes as BodyInit,
         })
         return response.ok
@@ -94,7 +109,7 @@ export function createHttpArtifactStore(): ArtifactStore {
       try {
         // HEAD rather than GET: the point of asking is to avoid pulling
         // seventeen megabytes to learn a boolean.
-        const response = await fetch(target, { method: 'HEAD', cache: 'no-store' })
+        const response = await fetch(target, { method: 'HEAD', cache: 'no-store', headers: authHeaders() })
         return response.ok
       } catch {
         return false
@@ -105,7 +120,7 @@ export function createHttpArtifactStore(): ArtifactStore {
       const target = await url(path)
       if (!target) return null
       try {
-        const response = await fetch(target, { method: 'HEAD', cache: 'no-store' })
+        const response = await fetch(target, { method: 'HEAD', cache: 'no-store', headers: authHeaders() })
         if (!response.ok) return null
         const length = Number(response.headers.get('Content-Length'))
         return Number.isFinite(length) ? length : null
@@ -118,7 +133,7 @@ export function createHttpArtifactStore(): ArtifactStore {
       const target = await url(path)
       if (!target) return
       try {
-        await fetch(target, { method: 'DELETE' })
+        await fetch(target, { method: 'DELETE', headers: authHeaders() })
       } catch {
         // Nothing to recover: the caller is dropping recomputable bytes.
       }

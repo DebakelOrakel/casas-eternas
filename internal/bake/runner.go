@@ -30,15 +30,30 @@ type Runner interface {
 	Run(ctx context.Context, spec Spec, onProgress func(Progress)) (Result, error)
 }
 
-// Spec is a Request resolved against the stores: the paths the runner needs,
-// rather than the ids the caller used. Keeping the resolution out of the
-// Runner is what lets a remote one receive the same struct with different
-// paths — or, later, a URL.
+// Spec is a Request resolved against the stores: what the runner needs to
+// actually do the work, rather than the ids the caller used.
+//
+// It carries BOTH shapes because the same bake runs in two places. A local
+// subprocess sits next to the files and gets paths. A Kubernetes Job runs on
+// some other node — anti-affinity puts it there deliberately — and cannot
+// mount the server's ReadWriteOnce volume, so it gets URLs and a token instead.
+//
+// This struct IS the wire format: it is marshalled straight into the baker's
+// argv, so these field names are a contract with client/scripts/bake.ts.
+// Measured 2026-08-08: the two shapes produce byte-identical artifacts, which
+// is the property that lets either run without anyone downstream caring.
 type Spec struct {
-	WorldZip      string `json:"worldZip"`
-	Stage         int    `json:"stage"`
-	ErosionRounds int    `json:"erosionRounds"`
-	ArtifactsDir  string `json:"artifactsDir"`
+	Stage         int `json:"stage"`
+	ErosionRounds int `json:"erosionRounds"`
+
+	// Exactly one of each pair.
+	WorldZip     string `json:"worldZip,omitempty"`
+	WorldURL     string `json:"worldUrl,omitempty"`
+	ArtifactsDir string `json:"artifactsDir,omitempty"`
+	ArtifactsURL string `json:"artifactsUrl,omitempty"`
+
+	// Bearer token for the URL form, scoped to this job's artifact key.
+	AuthToken string `json:"authToken,omitempty"`
 }
 
 // localRunner spawns the Node baker as a subprocess.

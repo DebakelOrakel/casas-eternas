@@ -29,18 +29,33 @@ import { runAmplification } from '../src/worldgen/surface/runAmplification'
 import { writeAmplificationArtifact } from '../src/storage/amplificationArtifact'
 import { derivePipelineVersion } from '../src/storage/artifactKey'
 import { AMPLIFY_CONSTANTS } from '../src/worldgen/surface/amplify'
-import { toRemotePath } from '../src/storage/HttpArtifactStore'
+import { createHttpArtifactStore, toRemotePath } from '../src/storage/HttpArtifactStore'
 import type { ArtifactStore, StorageUsage } from '../src/storage/ArtifactStore'
 
+// Where the baker reads and writes. Two shapes, because the same bake runs in
+// two places (docs/decisions/distributed-bake.md):
+//
+//   PATHS  a subprocess on the server's own machine, next to the files.
+//   URLS   a Kubernetes Job on some other node, which cannot mount the
+//          server's ReadWriteOnce volume and therefore must talk HTTP. Not a
+//          preference — anti-affinity keeps it off that node by design.
+//
+// Both go through the same bytes-at-a-path interface, so only the store
+// implementation differs; nothing about the bake itself knows which it is.
 interface Job {
-  // Path to the saved world's .zip, handed over by the Go side which already
-  // holds it in the world store.
-  worldZip: string
+  // Path to the saved world's .zip, when it is reachable as a file…
+  worldZip?: string
+  // …or its URL, when it is not. Exactly one of the two.
+  worldUrl?: string
   // Amplification factor: 2 → 4096, 4 → 8192.
   stage: number
   erosionRounds: number
-  // Root of the artifact store, the same directory the Go server serves from.
-  artifactsDir: string
+  // Root of the artifact store as a directory…
+  artifactsDir?: string
+  // …or the API base (e.g. "http://server:8080/v1") to PUT them to.
+  artifactsUrl?: string
+  // Bearer token for that API, scoped to this job's artifact key.
+  authToken?: string
 }
 
 // The artifact store's byte-level interface, backed by the filesystem.
@@ -108,6 +123,32 @@ function createFsArtifactStore(root: string): ArtifactStore {
   }
 }
 
+async function readWorld(job: Job): Promise<Uint8Array | null> {
+  if (job.worldZip) return readFile(job.worldZip).catch(() => null)
+  if (!job.worldUrl) return null
+  try {
+    const response = await fetch(job.worldUrl, {
+      headers: job.authToken ? { Authorization: `Bearer ${job.authToken}` } : {},
+    })
+    if (!response.ok) return null
+    return new Uint8Array(await response.arrayBuffer())
+  } catch {
+    return null
+  }
+}
+
+// The one line that decides where a bake's output lands. Everything above it
+// is identical in both deployments, which is the property worth protecting:
+// the artifacts must be byte-identical wherever the bake ran.
+function artifactStoreFor(job: Job): ArtifactStore | null {
+  if (job.artifactsDir) return createFsArtifactStore(job.artifactsDir)
+  if (job.artifactsUrl) {
+    const base = job.artifactsUrl
+    return createHttpArtifactStore({ resolveBase: async () => base, authToken: job.authToken })
+  }
+  return null
+}
+
 function fail(message: string): never {
   process.stderr.write(`${message}\n`)
   process.exit(1)
@@ -123,8 +164,8 @@ async function main(): Promise<void> {
     return fail('job argument is not JSON')
   }
 
-  const archive = await readFile(job.worldZip).catch(() => null)
-  if (!archive) fail(`cannot read ${job.worldZip}`)
+  const archive = await readWorld(job)
+  if (!archive) fail(`cannot read the world (${job.worldZip ?? job.worldUrl ?? 'no source given'})`)
 
   const inputs = await readWorldInputs(archive)
   if (!inputs) fail('not a readable world archive')
@@ -155,7 +196,8 @@ async function main(): Promise<void> {
   })
 
   const durationMs = Date.now() - started
-  const store = createFsArtifactStore(job.artifactsDir)
+  const store = artifactStoreFor(job)
+  if (!store) fail('neither artifactsDir nor artifactsUrl was given')
   // ROUNDS BELONGS IN THE VERSION. The client hashes
   // `{...AMPLIFY_CONSTANTS, rounds}` (see WorldMapScreen), and it must: the
   // round budget changes the terrain, so two bakes that differ only in it are
