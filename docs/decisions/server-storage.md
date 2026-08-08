@@ -1,7 +1,7 @@
 ---
 summary: The server keeps two stores with two different keys — a WORLD store keyed on a stable `metadata.uid` in world.yaml, and an ARTIFACT store keyed on the content hash of the terrain, so re-eroding a world correctly invalidates its derived data without making it a different world. The client learns where the storage is from a `/config.json` served by whoever serves the page (relative `apiBase` by default, so CORS never arises) and what it can do from the API itself. One binary with a single `start` subcommand runs whichever modules `--target` names — client, world, artifacts, where singular means a subsystem with behaviour and plural a collection without any — so local play and a split deployment are the same program. Storage on disk is files, not a database. One window with two tabs, deliberately unequal delete affordances. World store first, artifact store after.
 date: 2026-08-07
-status: decided — architecture and the forks below. CLI surface + module skeleton BUILT 2026-08-08 (flags, target selection, TLS, graceful shutdown, /config.json, routes answering 501); the stores themselves are not implemented.
+status: decided — architecture and the forks below. BUILT 2026-08-08: the CLI surface and module skeleton, world.yaml's metadata.uid (step 1), and the WORLD STORE itself (step 2 — upload/download/list/delete, revisions, optimistic locking, preview extraction). Not built: the artifact store, and the client's half of either.
 ---
 
 # Server storage: two identities, two stores, one config file
@@ -317,13 +317,26 @@ tabs:
 
 | | artifacts | world |
 |---|---|---|
-| concurrent writes | **idempotent** — same key, same bytes; last writer wins, no locking | **a real conflict** — needs `If-Match: {revision}`, else 409 |
+| concurrent writes | **idempotent** — same key, same bytes; last writer wins, no locking | **a real conflict** — needs `If-Match: {revision}` |
 | durability | no `fsync`; losing one costs a re-bake | `fsync` before `rename`; losing one is a loss |
 | eviction | a size cap applies **here** | **never** deleted automatically |
 | ownership | none (inherited from the world) | `owner` in meta.json, from day one, "local" in `none` mode |
 
 The optimistic lock on worlds is the one place convenience would be
 expensive: without it, a user on two machines silently loses a save.
+
+Two failure codes, not one — the plan first said 409 for both, which
+conflates two different mistakes:
+
+- **412 Precondition Failed** when `If-Match` names a revision that is
+  not current. This is what RFC 9110 specifies for a failed `If-Match`,
+  and it means "refetch and retry".
+- **409 Conflict** when `If-Match` is absent (i.e. "create this") and the
+  world already exists. Nothing was asked to be matched, so there is no
+  precondition to have failed; the caller simply meant a different verb.
+
+The revision doubles as the **ETag**, rather than a second token derived
+beside it — two identifiers for one fact only ever drift apart.
 
 **Writes are temp-file plus `rename`** (atomic within a filesystem), with
 `meta.json` written **last** — the rule the client already follows, and
