@@ -1,32 +1,71 @@
-// Golden-hash regression harness for the worldgen pipeline.
+// Regression harness for the worldgen pipeline — three layers, deliberately.
 //
-// Runs the real pipeline and hashes the raw bytes of every stage — tectonics state,
-// elevation, erosion, hydrology, climate, ecology, migration. A refactor that is
-// meant to preserve behaviour must produce bit-identical hashes; a difference is a
-// bug, not a judgement call. When a change is meant to alter behaviour, re-record
-// and say so — the point is that the choice becomes explicit.
+//   npm run golden          run every layer, exit non-zero on a failure
+//   npm run golden record   overwrite golden.json with the current measurements
 //
-//   npm run golden          compare against golden.json, exit 1 on any difference
-//   npm run golden record   overwrite golden.json with the current output
+// WHY THIS IS NOT A HASH HARNESS ANY MORE. It used to hash the raw bytes of
+// every stage and compare them against a recorded file. That is exactly right
+// for catching a refactor that was meant to change nothing — and exactly wrong
+// as the ONLY check, because every deliberate tuning change also breaks it. A
+// gate that goes red when you did the right thing teaches people to ignore it,
+// and that is measurably what happened: the baseline sat unchanged through
+// thirty-odd worldgen commits while the harness reported 105 of 135 hashes
+// "wrong", none of which were bugs.
 //
-// It goes through Vite's SSR pipeline rather than plain node, because the worldgen
-// modules use extensionless imports that node will not resolve.
+// What it caught in that time was never a hash. It was NaN carryingCapacity on
+// every land cell, and a migration origin that landed in the ocean on all three
+// seeds — invariants, found because someone read the code. So:
 //
-// Worlds are built the way the program builds them: an Archean run, then the handover
-// to plate tectonics. That matters — this harness used to call the old
-// createPlateSimulation with the four Genesis sliders, and so guarded a code path
-// nothing reached any more while the live one went unguarded.
+//   1. INVARIANTS   things that must hold in every world, ever. No baseline, so
+//                   they cannot go stale, and a failure is always a bug.
+//   2. DETERMINISM  one seed built twice in the same run, hashed, compared to
+//                   itself. This is where bit-exactness genuinely belongs: it
+//                   answers "is the pipeline reproducible", which is a property
+//                   of the code and needs no stored file.
+//   3. METRICS      measured magnitudes against golden.json, with tolerances,
+//                   reported as deltas ("land 8.52% -> 11.31%, +2.79pp"). A
+//                   tuning change still shows up — but as a number you can
+//                   judge and then re-record on purpose, not as a wall of
+//                   changed hex.
+//
+// It goes through Vite's SSR pipeline rather than plain node, because the
+// worldgen modules use extensionless imports that node will not resolve.
+//
+// Worlds are built the way the program builds them: an Archean run, then the
+// handover to plate tectonics. That matters — this harness used to call the old
+// createPlateSimulation with the four Genesis sliders, and so guarded a code
+// path nothing reached any more while the live one went unguarded.
 import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-// The client root, resolved from this file so the harness works from any checkout.
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const OUT = fileURLToPath(new URL('./golden.json', import.meta.url))
 const MODE = process.argv[2] ?? 'check'
 const SEEDS = ['calibration', 'alpha', 'bravo']
 const EPOCHS = 50
+const ARCHEAN_EPOCHS = 180
 const W = 2048, H = 1024
+
+// How far a measurement may drift before it is reported. 2% is tight enough
+// that a real change surfaces and loose enough that floating-point summation
+// order does not. Per-metric overrides go in TOLERANCE_OVERRIDES, keyed by
+// exact name or by prefix — counts of rare things (peaks, delta cells) swing
+// harder than field means for reasons that are not regressions.
+const TOLERANCE = 0.02
+const TOLERANCE_OVERRIDES = [
+  ['erosion.deltaCells', 0.25],
+  ['erosion.peaks', 0.10],
+  ['hydro.lakeCells', 0.10],
+  ['.rich', 0.15],
+  ['tectonics.', 0.10],
+  ['mig.', 0.10],
+]
+
+const toleranceFor = (name) => {
+  for (const [key, value] of TOLERANCE_OVERRIDES) if (name === key || name.startsWith(key) || name.endsWith(key)) return value
+  return TOLERANCE
+}
 
 const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/index.js`)
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' })
@@ -35,6 +74,7 @@ const L = (p) => server.ssrLoadModule(p)
 // Modules are loaded by PATH. If files move, this block is the only thing to update.
 const M = {
   sim: await L('/src/worldgen/tectonics/plateSimulation.ts'),
+  params: await L('/src/worldgen/tectonics/tectonicsParams.ts'),
   field: await L('/src/worldgen/elevation/elevationField.ts'),
   ridged: await L('/src/worldgen/elevation/ridgedNoise.ts'),
   erosion: await L('/src/worldgen/surface/erosion.ts'),
@@ -58,88 +98,100 @@ const M = {
   finalize: await L('/src/worldgen/archean/finalizeArchean.ts'),
 }
 
-// How many Archean epochs run before the handover. Inside the usable stopping
-// window (150-250) and short enough that the harness stays quick.
-const ARCHEAN_EPOCHS = 180
+const SEA = M.scale.SEA_LEVEL
+const METRES = M.scale.ELEVATION_METERS
 
 // Float32 hashing has to be bit-exact, so hash the raw bytes rather than any
-// rounded/stringified form — a refactor that changes the last mantissa bit is
-// still a change, and this is the only check that will catch it.
+// rounded form — a refactor that changes the last mantissa bit is still a
+// change, and the determinism layer is the only thing that will catch it.
 const hashBytes = (typed) => createHash('sha256').update(Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength)).digest('hex').slice(0, 16)
-const hashNums = (arr) => hashBytes(Float64Array.from(arr))
 
-function buildElevation(sim) {
-  const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, W, H, sim.warpSeed)
-  const bk = M.field.buildFeatureBuckets(sim.features, W, H)
-  const el = new Float32Array(W * H)
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
-      el[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, W, H, M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed), M.ridged.fineDetailNoise(s.wx, s.wy, W, H, (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0))
-    }
+// --- measurement helpers ---------------------------------------------------
+
+function stats(values) {
+  let min = Infinity, max = -Infinity, sum = 0, nonFinite = 0
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i]
+    if (!Number.isFinite(v)) { nonFinite++; continue }
+    if (v < min) min = v
+    if (v > max) max = v
+    sum += v
   }
-  return el
+  const counted = values.length - nonFinite
+  return { min, max, mean: counted > 0 ? sum / counted : 0, nonFinite }
 }
 
-async function stageHashes(seed) {
-  const out = {}
-  // Built the way the program builds worlds: an Archean run, then the handover to
-  // plate tectonics. This used to call createPlateSimulation with the four sliders
-  // that the Genesis panel no longer has — so the harness was guarding a code path
-  // nothing reached any more, and the path everything DOES reach was unguarded.
+const countWhere = (values, predicate) => {
+  let n = 0
+  for (let i = 0; i < values.length; i++) if (predicate(values[i])) n++
+  return n
+}
+
+// Mean drop from a local maximum to its eight neighbours, in metres — the
+// measure that made the ridgeline work assessable at all. A crest is sharp, a
+// dome is not, and no hash can tell you which way it moved.
+function crestMetrics(el) {
+  let peaks = 0, sharpness = 0
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x
+      const v = el[i]
+      if (v <= SEA) continue
+      let drop = 0, isMax = true
+      for (let dy = -1; dy <= 1 && isMax; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue
+          const n = el[(y + dy) * W + ((x + dx + W) % W)]
+          if (n >= v) { isMax = false; break }
+          drop += v - n
+        }
+      }
+      if (!isMax) continue
+      peaks++
+      sharpness += (drop / 8) * METRES
+    }
+  }
+  return { peaks, sharpness: peaks > 0 ? sharpness / peaks : 0 }
+}
+
+// --- building one world ----------------------------------------------------
+
+async function buildWorld(seed) {
   const archean = M.archean.createArcheanSimulation(seed, W, H)
   for (let e = 0; e < ARCHEAN_EPOCHS; e++) M.archeanStep.archeanStep(archean)
   const sim = M.finalize.finalizeArchean(archean)
   for (let e = 0; e < EPOCHS; e++) M.sim.stepEpoch(sim)
 
-  // --- tectonics state ---
-  out.oceanAge = hashBytes(sim.oceanAge)
-  out.mantle = hashBytes(sim.mantle)
-  out.seeds = hashNums(sim.seeds.flatMap((s) => [s.x, s.y]))
-  out.motions = hashNums(sim.motions.flatMap((m) => [m.driftX, m.driftY, m.spin, m.centroidX, m.centroidY]))
-  out.features = hashNums(sim.features.flatMap((f) => [f.x, f.y, f.thickness, f.tangentX, f.tangentY]))
-  out.rafts = hashNums(sim.rafts.flatMap((r) => r.blobs.flatMap((b) => [b.x, b.y, b.radius, b.birthEpoch ?? 0])))
-  out.raftNames = createHash('sha256').update(sim.rafts.map((r) => r.name).join('|')).digest('hex').slice(0, 16)
-  out.sutures = hashNums(sim.sutures.flatMap((s) => [s.x, s.y, s.tangentX, s.tangentY, s.epoch]))
-  out.counts = `${sim.seeds.length}/${sim.rafts.length}/${sim.features.length}/${sim.sutures.length}`
+  const baseline = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, W, H, sim.warpSeed)
+  const buckets = M.field.buildFeatureBuckets(sim.features, W, H)
+  const fineSalt = (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0
+  const raw = new Float32Array(W * H)
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
+      raw[y * W + x] = M.field.computeElevation(s.wx, s.wy, baseline[y * W + x], buckets, W, H,
+        M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed),
+        M.ridged.fineDetailNoise(s.wx, s.wy, W, H, fineSalt))
+    }
+  }
 
-  // --- elevation ---
-  const raw = buildElevation(sim)
-  out.elevation = hashBytes(raw)
-
-  // --- erosion ---
   const ero = await M.erosion.runErosionPass(raw, W, H, M.erosion.DEFAULT_EROSION_PASS_PARAMS)
-  out.eroded = hashBytes(ero.elevations)
-  out.filled = hashBytes(ero.routing.filled)
-  out.flowTarget = hashBytes(ero.routing.flowTarget)
-  out.accumulation = hashBytes(ero.accumulation)
   const el = ero.elevations
 
-  // --- climate (same call order as the worker's computeClimate) ---
   const temperature = M.temperature.computeTemperature(el, W, H)
   const wind = M.wind.computeWind()
   const currents = M.currents.computeOceanCurrents(el, wind, W, H)
   M.currents.applyOceanSST(temperature, currents, el, W, H)
   const seasonal = M.seasonality.computeSeasonalAmplitude(el, W, H)
   const seasonalPrecip = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, W, H, 1, 0)
-  const precipitation = seasonalPrecip.annual
+  let precipitation = seasonalPrecip.annual
   const biomes = M.biomes.computeBiomes(temperature, precipitation, seasonal, seasonalPrecip.index, el, W, H)
-  out.temperature = hashBytes(temperature)
-  out.wind = hashBytes(wind)
-  out.currents = hashBytes(currents)
-  out.precipitation = hashBytes(precipitation)
-  out.precipWet = hashBytes(seasonalPrecip.wet)
-  out.precipDry = hashBytes(seasonalPrecip.dry)
-  out.seasonality = hashBytes(seasonal)
-  out.monsoon = hashBytes(seasonalPrecip.index)
-  out.biomes = hashBytes(biomes)
 
-  // --- hydrology ---
   const routing = await M.routing.fillDepressionsAndRouteFlow(el, W, H, 0)
   const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y
   const meanRunoff = M.hydro.meanLandRunoff(precipitation, el, W, H, CRX, CRY)
   let discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
-  const maxDis = M.hydro.maxDischargeOverLand(discharge, el)
+  let maxDis = M.hydro.maxDischargeOverLand(discharge, el)
   // Terminal-basin refinement, mirroring the worker (k=1): lakes v1 -> if any
   // dry basin floor, climate v2 with the land override -> discharge/lakes v2.
   let lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, temperature, precipitation, CRX, CRY)
@@ -149,47 +201,31 @@ async function stageHashes(seed) {
     M.currents.applyOceanSST(t2, c2, el, W, H, lakes.dryBasin)
     const s2 = M.seasonality.computeSeasonalAmplitude(el, W, H, 0, lakes.dryBasin)
     const sp2 = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, W, H, 1, 0, lakes.dryBasin)
-    discharge = M.hydro.accumulateDischarge(routing, el, sp2.annual, CRX, CRY)
-    lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, t2, sp2.annual, CRX, CRY)
-    out.temperatureV2 = hashBytes(t2)
-    out.precipitationV2 = hashBytes(sp2.annual)
+    precipitation = sp2.annual
+    discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
+    maxDis = M.hydro.maxDischargeOverLand(discharge, el)
+    lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, t2, precipitation, CRX, CRY)
   }
-  const lakeDepth = lakes.depth
-  out.discharge = hashBytes(discharge)
-  out.lakeDepth = hashBytes(lakeDepth)
-  out.saltFlat = hashBytes(lakes.saltFlat)
-  out.dryBasin = hashBytes(lakes.dryBasin)
-  out.hydroScalars = `${meanRunoff.toFixed(9)}/${maxDis.toFixed(6)}`
-  let lakeCells = 0
-  for (const v of lakeDepth) if (v > 0) lakeCells++
-  out.lakeCells = String(lakeCells)
 
-  // --- ecology + migration ---
   const cratonAge = M.rafts.computeCratonOldnessField(sim.rafts, sim.epoch, CRX, CRY, W, H)
-  // Real volcanoes and sutures, and real params — through the very function the worker
-  // uses, not a copy of it. This used to pass `volcanoes: []`, `orogenPoints: []` and
-  // `{}`, which left copper, tin, obsidian, gold, silver and gems on empty inputs and
-  // made carryingCapacity NaN on every land cell (`params.carryingCapacity / 100` with
-  // no value). Being JS, nothing complained; the NaN hashed consistently, so those
-  // stages and the three migration ones below guarded nothing at all.
+  // Real volcanoes and sutures, and real params — through the very function the
+  // worker uses, not a copy of it. This used to pass empty arrays and `{}`,
+  // which made carryingCapacity NaN on every land cell. Being JS, nothing
+  // complained; the NaN hashed consistently, so those stages guarded nothing.
+  // That is the bug INVARIANTS now catch directly.
   const volcanoes = M.volcanoes.collectVolcanoes(sim.features)
   const eco = M.ecology.computeEcology({
     temperature, precipitation, biomes, currents, elevation: el,
-    discharge, maxDischarge: maxDis, lakeDepth, volcanoes,
+    discharge, maxDischarge: maxDis, lakeDepth: lakes.depth, volcanoes,
     orogenPoints: sim.sutures.map((s) => ({ x: s.x, y: s.y })),
     cratonAge, warpSeed: sim.warpSeed, worldWidth: W, worldHeight: H,
   }, { carryingCapacity: 100, concentration: 0 })
-  for (const k of Object.keys(eco.fields).sort()) out[`eco.${k}`] = hashBytes(eco.fields[k])
 
-  // The origin has to be picked FROM the world, not fixed by index. It used to be
-  // cell CRX*CRY*0.4, and at 3-11% land that cell was ocean on all three seeds — so
-  // computeMigration skipped the only origin, the heap stayed empty, and all three
-  // outputs were constants (cost all-Infinity, density all-zero, race all -1). They
-  // hashed identically no matter what the whole pipeline upstream did: nine of the
-  // 132 hashes guarded nothing. Picking the most habitable land cell keeps it
-  // deterministic while guaranteeing the spread actually runs.
-  let originCell = -1
-  let bestCapacity = -Infinity
+  // The origin has to be picked FROM the world, not fixed by index. It used to
+  // be cell CRX*CRY*0.4, and at 3-11% land that cell was ocean on all three
+  // seeds — so the spread never ran and three outputs were constants that
+  // hashed identically no matter what happened upstream.
+  let originCell = -1, bestCapacity = -Infinity
   for (let i = 0; i < CRX * CRY; i++) {
     if (precipitation[i] === M.precip.OCEAN_PRECIP) continue
     const cap = eco.fields.carryingCapacity[i]
@@ -200,58 +236,258 @@ async function stageHashes(seed) {
     [{ cell: originCell, race: 0 }], W, H,
     { spreadBudget: 400, seaCrossing: 0.3 },
   )
-  out['mig.origin'] = `${originCell}`
-  out['mig.cost'] = hashBytes(mig.cost)
-  out['mig.density'] = hashBytes(mig.density)
-  out['mig.race'] = hashBytes(mig.race)
+
+  return { sim, raw, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, routing, discharge, maxDis, meanRunoff, lakes, volcanoes, eco, mig, originCell, CRX, CRY }
+}
+
+// --- layer 1: invariants ---------------------------------------------------
+//
+// Every one of these is a statement about ANY world, so none of them has a
+// recorded value and none can go stale. A failure here is a bug, never a
+// judgement call — which is the difference from the metrics below.
+
+function invariants(w) {
+  const failures = []
+  const fail = (name, detail) => failures.push(`${name}: ${detail}`)
+
+  const rasters = {
+    'elevation.raw': w.raw,
+    'elevation.eroded': w.el,
+    temperature: w.temperature,
+    precipitation: w.precipitation,
+    discharge: w.discharge,
+    'lakes.depth': w.lakes.depth,
+    seasonality: w.seasonal,
+    ...Object.fromEntries(Object.keys(w.eco.fields).map((k) => [`eco.${k}`, w.eco.fields[k]])),
+  }
+  // NaN is the failure mode this pipeline actually has: it propagates silently
+  // through float maths, hashes consistently, and only shows up as a blank
+  // patch on a map weeks later.
+  for (const [name, raster] of Object.entries(rasters)) {
+    const s = stats(raster)
+    if (s.nonFinite > 0) fail(name, `${s.nonFinite} non-finite values`)
+  }
+
+  const land = countWhere(w.el, (v) => v > SEA) / (W * H)
+  if (!(land > 0.01 && land < 0.6)) fail('land fraction', `${(land * 100).toFixed(2)}% is outside 1–60%`)
+
+  const elev = stats(w.el)
+  if (elev.max * METRES > METRES + 1) fail('elevation', `max ${(elev.max * METRES).toFixed(0)} m exceeds the clamp`)
+  if (elev.min * METRES < -METRES - 1) fail('elevation', `min ${(elev.min * METRES).toFixed(0)} m exceeds the clamp`)
+
+  // The plate-count floor exists because a simulation that collapses to one
+  // plate is kinematically frozen for the rest of the run. The ceiling is the
+  // other direction of the same runaway, which had never been checked.
+  const plates = w.sim.seeds.length
+  if (plates < M.params.MIN_PLATE_COUNT) fail('plates', `${plates} is below MIN_PLATE_COUNT ${M.params.MIN_PLATE_COUNT}`)
+  if (plates > 40) fail('plates', `${plates} — runaway upward`)
+  if (w.sim.rafts.length === 0) fail('rafts', 'no continental crust survived')
+  if (w.sim.features.length === 0) fail('features', 'no terrain features')
+  if (w.volcanoes.length === 0) fail('volcanoes', 'none collected — the ecology inputs would be empty')
+
+  // Rivers have to exist, or hydrology, ecology and migration are all running
+  // on a world with no fresh water.
+  const channels = countWhere(w.discharge, (v) => v >= 2000)
+  if (channels === 0) fail('rivers', 'no channel cells')
+
+  // Every land cell must be classified; an unassigned biome renders as a hole.
+  let unclassified = 0
+  for (let i = 0; i < w.biomes.length; i++) if (w.biomes[i] < 0) unclassified++
+  if (unclassified > 0) fail('biomes', `${unclassified} cells unclassified`)
+
+  // Ecology writes ECOLOGY_OCEAN (-1) on open water as a documented sentinel,
+  // so "no negatives" was the wrong invariant — the first run flagged all 14
+  // fields on all 3 seeds. What must hold is that a cell is EITHER unscored or
+  // non-negative: a scored cell going negative is the actual bug class, and it
+  // would otherwise hide behind the sentinel.
+  for (const [name, field] of Object.entries(w.eco.fields)) {
+    let below = 0
+    for (let i = 0; i < field.length; i++) {
+      if (field[i] < 0 && field[i] !== M.ecology.ECOLOGY_OCEAN) below++
+    }
+    if (below > 0) fail(`eco.${name}`, `${below} scored cells are negative`)
+  }
+
+  if (w.originCell < 0) fail('migration', 'no land origin found')
+  const reached = countWhere(w.mig.density, (v) => v > 0)
+  if (reached === 0) fail('migration', 'the spread reached no cells')
+
+  return failures
+}
+
+// --- layer 3: metrics ------------------------------------------------------
+
+function metrics(w) {
+  const out = {}
+  const put = (name, value) => { out[name] = Number(value.toFixed(6)) }
+
+  put('tectonics.plates', w.sim.seeds.length)
+  put('tectonics.rafts', w.sim.rafts.length)
+  put('tectonics.features', w.sim.features.length)
+  put('tectonics.sutures', w.sim.sutures.length)
+  put('tectonics.volcanoes', w.volcanoes.length)
+
+  const rawLand = countWhere(w.raw, (v) => v > SEA) / (W * H)
+  const land = countWhere(w.el, (v) => v > SEA) / (W * H)
+  put('elevation.landFractionRaw', rawLand * 100)
+  put('elevation.landFraction', land * 100)
+  const elev = stats(w.el)
+  put('elevation.maxM', elev.max * METRES)
+  put('elevation.minM', elev.min * METRES)
+
+  const crest = crestMetrics(w.el)
+  put('erosion.peaks', crest.peaks)
+  put('erosion.crestM', crest.sharpness)
+  // Cells the pass raised from below sea level — the delta signal, and the one
+  // the delta-gate rescaling moved.
+  let deltaCells = 0
+  for (let i = 0; i < w.el.length; i++) if (w.raw[i] <= SEA && w.el[i] > w.raw[i] + 1e-6) deltaCells++
+  put('erosion.deltaCells', deltaCells)
+
+  const temp = stats(w.temperature)
+  put('climate.tempMeanC', temp.mean)
+  put('climate.tempMinC', temp.min)
+  put('climate.tempMaxC', temp.max)
+  put('climate.precipMean', stats(w.precipitation).mean)
+  // Biome mix as fractions: a shift here is a climate change with a visible
+  // consequence, which a hash could never express.
+  const biomeCounts = new Map()
+  for (let i = 0; i < w.biomes.length; i++) biomeCounts.set(w.biomes[i], (biomeCounts.get(w.biomes[i]) ?? 0) + 1)
+  for (const id of [...biomeCounts.keys()].sort((a, b) => a - b)) {
+    put(`biome.${id}`, (biomeCounts.get(id) / w.biomes.length) * 100)
+  }
+
+  put('hydro.meanRunoff', w.meanRunoff)
+  put('hydro.maxDischarge', w.maxDis)
+  put('hydro.channelCells', countWhere(w.discharge, (v) => v >= 2000))
+  put('hydro.lakeCells', countWhere(w.lakes.depth, (v) => v > 0))
+  put('hydro.saltFlatCells', countWhere(w.lakes.saltFlat, (v) => v > 0))
+  put('hydro.dryBasinCells', countWhere(w.lakes.dryBasin, (v) => v === 1))
+
+  // Measured over SCORED cells only. Averaging the ocean sentinel in made every
+  // eco mean a land-fraction proxy (all three seeds came out near -0.6…-0.9,
+  // tracking land, not ecology). And `.max` is dropped: several fields clamp at
+  // 1, so their maximum was identical on every seed — a metric that cannot vary
+  // guards nothing, which the coverage layer duly reported.
+  for (const name of Object.keys(w.eco.fields).sort()) {
+    const field = w.eco.fields[name]
+    let sum = 0, scored = 0, rich = 0
+    for (let i = 0; i < field.length; i++) {
+      if (field[i] === M.ecology.ECOLOGY_OCEAN) continue
+      scored++
+      sum += field[i]
+      if (field[i] > 0.5) rich++
+    }
+    put(`eco.${name}.mean`, scored > 0 ? sum / scored : 0)
+    put(`eco.${name}.rich`, rich)
+  }
+
+  put('mig.reached', countWhere(w.mig.density, (v) => v > 0))
+  const finiteCost = [...w.mig.cost].filter(Number.isFinite)
+  put('mig.meanCost', finiteCost.length > 0 ? finiteCost.reduce((a, b) => a + b, 0) / finiteCost.length : 0)
 
   return out
 }
 
-const result = {}
+// A hash of everything that must be reproducible, for the determinism layer.
+function fingerprint(w) {
+  return [w.raw, w.el, w.temperature, w.precipitation, w.discharge, w.lakes.depth, w.biomes,
+    ...Object.keys(w.eco.fields).sort().map((k) => w.eco.fields[k]), w.mig.density]
+    .map(hashBytes).join('/')
+}
+
+// --- run -------------------------------------------------------------------
+
+const started = Date.now()
+const worlds = {}
+const measured = {}
+let failed = 0
+
 for (const seed of SEEDS) {
   process.stderr.write(`  ${seed} … `)
-  result[seed] = await stageHashes(seed)
+  worlds[seed] = await buildWorld(seed)
+  measured[seed] = metrics(worlds[seed])
   process.stderr.write('ok\n')
 }
-await server.close()
 
-// A stage that hashes the same for three different worlds is not computing anything
-// about the world, and it will keep matching its golden value forever — it looks
-// exactly like a passing guard. That is how the three migration stages sat dead from
-// the day they were added until 2026-08-01: the origin was a fixed cell index that
-// landed in the ocean on every seed, so cost/density/race came out all-Infinity /
-// all-zero / all -1 every time. Checked on every run, in both modes, because the
-// failure is invisible in a diff-against-golden by construction.
-//
-// `wind` is the one legitimate constant: computeWind() takes no arguments — it is the
-// prescribed three-cell circulation, identical in every world.
-const SEED_INDEPENDENT = new Set(['wind'])
-const constantStages = Object.keys(result[SEEDS[0]]).filter(
-  (stage) => !SEED_INDEPENDENT.has(stage) && new Set(SEEDS.map((s) => result[s][stage])).size === 1,
-)
-if (constantStages.length > 0) {
-  console.error(`\nTOT — diese Stufen sind über alle ${SEEDS.length} Seeds identisch und bewachen nichts:`)
-  for (const stage of constantStages) console.error(`         ${stage} = ${result[SEEDS[0]][stage]}`)
-  process.exit(3)
+console.log('\n— invariants —')
+for (const seed of SEEDS) {
+  const failures = invariants(worlds[seed])
+  if (failures.length === 0) {
+    console.log(`  ok    ${seed}`)
+  } else {
+    failed += failures.length
+    for (const f of failures) console.log(`  FAIL  ${seed}  ${f}`)
+  }
 }
 
+// A measurement identical across three different worlds is not measuring the
+// world, and it would keep matching its recorded value forever — it looks
+// exactly like a passing check. That is how three migration stages sat dead
+// from the day they were added. Checked in both modes, because the failure is
+// invisible in a comparison by construction.
+const SEED_INDEPENDENT = new Set(['elevation.maxM', 'elevation.minM', 'climate.tempMaxC', 'climate.tempMinC'])
+const constant = Object.keys(measured[SEEDS[0]]).filter(
+  (name) => !SEED_INDEPENDENT.has(name) && new Set(SEEDS.map((s) => measured[s][name])).size === 1,
+)
+console.log('\n— coverage —')
+if (constant.length === 0) {
+  console.log(`  ok    all ${Object.keys(measured[SEEDS[0]]).length} metrics vary across seeds`)
+} else {
+  failed += constant.length
+  for (const name of constant) console.log(`  FAIL  ${name} is identical on all ${SEEDS.length} seeds and guards nothing`)
+}
+
+console.log('\n— determinism —')
+process.stderr.write(`  rebuilding ${SEEDS[0]} … `)
+const repeat = await buildWorld(SEEDS[0])
+process.stderr.write('ok\n')
+const before = fingerprint(worlds[SEEDS[0]]), after = fingerprint(repeat)
+if (before === after) {
+  console.log(`  ok    ${SEEDS[0]} rebuilds bit-identically`)
+} else {
+  failed++
+  console.log(`  FAIL  ${SEEDS[0]} is not reproducible\n          run 1  ${before}\n          run 2  ${after}`)
+}
+
+await server.close()
+
 if (MODE === 'record') {
-  writeFileSync(OUT, JSON.stringify(result, null, 2))
-  console.log(`recorded ${Object.keys(result).length} seeds × ${Object.keys(result[SEEDS[0]]).length} stages -> golden.json`)
+  // Refused rather than written: a baseline taken from a world that fails its
+  // own invariants bakes the breakage in as "expected", and the next person to
+  // run this would see green.
+  if (failed > 0) {
+    console.error(`\nrefusing to record — ${failed} hard failures above must be fixed first`)
+    process.exit(1)
+  }
+  writeFileSync(OUT, JSON.stringify(measured, null, 2) + '\n')
+  console.log(`\nrecorded ${SEEDS.length} seeds × ${Object.keys(measured[SEEDS[0]]).length} metrics -> golden.json`)
   process.exit(0)
 }
 
-if (!existsSync(OUT)) { console.error('no golden.json — run `node golden.mjs record` first'); process.exit(2) }
+console.log('\n— metrics —')
+if (!existsSync(OUT)) {
+  console.error('  no golden.json — run `npm run golden record` first')
+  process.exit(2)
+}
 const golden = JSON.parse(readFileSync(OUT, 'utf8'))
-let bad = 0, checked = 0
+let drifted = 0, compared = 0
 for (const seed of SEEDS) {
-  for (const [stage, val] of Object.entries(result[seed])) {
-    const want = golden[seed]?.[stage]
-    checked++
-    if (want === undefined) { console.log(`  NEW    ${seed}.${stage} = ${val}`); continue }
-    if (want !== val) { console.log(`  DIFF   ${seed}.${stage}\n           golden ${want}\n           now    ${val}`); bad++ }
+  for (const [name, value] of Object.entries(measured[seed])) {
+    const want = golden[seed]?.[name]
+    if (want === undefined) { console.log(`  NEW   ${seed}.${name} = ${value}`); continue }
+    compared++
+    const span = Math.abs(want) > 1e-9 ? Math.abs((value - want) / want) : Math.abs(value - want)
+    if (span <= toleranceFor(name)) continue
+    drifted++
+    const delta = value - want
+    console.log(`  DRIFT ${seed}.${name}: ${want} -> ${value}  (${delta >= 0 ? '+' : ''}${delta.toFixed(4)}, ${(span * 100).toFixed(1)}% > ${(toleranceFor(name) * 100).toFixed(0)}%)`)
   }
 }
-console.log(bad === 0 ? `\nOK — ${checked} Hashes identisch` : `\nFAIL — ${bad} von ${checked} abweichend`)
-process.exit(bad === 0 ? 0 : 1)
+console.log(drifted === 0
+  ? `  ok    ${compared} metrics within tolerance`
+  : `  ${drifted} of ${compared} metrics drifted — judge them, then \`npm run golden record\` if intended`)
+
+const seconds = ((Date.now() - started) / 1000).toFixed(0)
+console.log(`\n${failed + drifted === 0 ? 'PASS' : 'FAIL'} — ${failed} hard failures, ${drifted} drifted metrics, ${seconds}s`)
+process.exit(failed + drifted === 0 ? 0 : 1)
