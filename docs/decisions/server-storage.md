@@ -1,7 +1,7 @@
 ---
 summary: The server keeps two stores with two different keys — a WORLD store keyed on a stable `metadata.uid` in world.yaml, and an ARTIFACT store keyed on the content hash of the terrain, so re-eroding a world correctly invalidates its derived data without making it a different world. The client learns where the storage is from a `/config.json` served by whoever serves the page (relative `apiBase` by default, so CORS never arises) and what it can do from the API itself. One binary with a single `start` subcommand runs whichever modules `--target` names — client, world, artifacts, where singular means a subsystem with behaviour and plural a collection without any — so local play and a split deployment are the same program. Storage on disk is files, not a database. One window with two tabs, deliberately unequal delete affordances. World store first, artifact store after.
 date: 2026-08-07
-status: decided — architecture and the forks below. BUILT 2026-08-08: the CLI surface and module skeleton, world.yaml's metadata.uid (step 1), and the WORLD STORE itself (step 2 — upload/download/list/delete, revisions, optimistic locking, preview extraction). Not built: the artifact store, and the client's half of either.
+status: decided — architecture and the forks below. BUILT 2026-08-08: the CLI surface and module skeleton, world.yaml's metadata.uid, the WORLD STORE (revisions, optimistic locking, preview extraction), the client's load/save/storage panels, and the ARTIFACT STORE (get/put/present/list/delete). Not built: the client talking to the artifact store, eviction, and the client-serving flags.
 ---
 
 # Server storage: two identities, two stores, one config file

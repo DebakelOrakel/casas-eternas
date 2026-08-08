@@ -8,6 +8,8 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **changed** World map: the cache button moved from the bottom bar up next to the load button, matching the generator.
 - **changed** Storage: the storage button carries a real hover card instead of a debug tooltip, and is called Storage — it will hold worlds as well as the cache. `common.action.storage`
 - **new** Save: with a server present, the save button opens a window showing what the server holds for this world, and offers to update it there or download a .zip. `common.panel.save`
+- **new** Storage: baked terrain is now shared through the server — a world baked on one machine downloads on the next instead of costing minutes again. `world`
+- **changed** Storage: the window lists what this machine holds and what the server holds separately, each with its own delete. `common.panel.storage`
 - **new** Load: with a server present, the load button opens a browsable list of server worlds with thumbnails — open one, or download it; opening a local .zip stays one click away. Works in the generator and the world map. `common.panel.load`
 
 ## 2026-08-07

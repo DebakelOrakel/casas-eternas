@@ -57,3 +57,27 @@
   font-variant-numeric: tabular-nums;
   opacity: 0.75;
 }
+
+/* Section heads: the local and server halves are visually separated because
+   their delete buttons have different consequences — see StoragePanel. */
+.cache-section {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.7rem 1rem 0.3rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.cache-section + .cache-row {
+  border-top: none;
+}
+
+.cache-section-usage {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+}

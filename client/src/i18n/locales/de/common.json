@@ -40,6 +40,9 @@
   "common.panel.save.action.create": "Auf Server speichern",
   "common.panel.save.action.download": "Als .zip herunterladen",
   "common.panel.storage.empty": "Noch nichts zwischengespeichert — eine Welt landet hier, sobald ihr Bake fertig ist.",
-  "common.panel.storage.clearAll": "Alles löschen",
-  "common.panel.storage.delete": "Löschen"
+  "common.panel.storage.clearAll": "Hier alles löschen",
+  "common.panel.storage.delete": "Löschen",
+  "common.panel.storage.local": "Auf diesem Rechner",
+  "common.panel.storage.server": "Auf dem Server",
+  "common.panel.storage.serverEmpty": "Noch nichts auf dem Server."
 }

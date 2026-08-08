@@ -40,6 +40,9 @@
   "common.panel.save.action.create": "Store on server",
   "common.panel.save.action.download": "Download as .zip",
   "common.panel.storage.empty": "Nothing cached yet — a world is stored once its bake finishes.",
-  "common.panel.storage.clearAll": "Delete everything",
-  "common.panel.storage.delete": "Delete"
+  "common.panel.storage.clearAll": "Delete everything here",
+  "common.panel.storage.delete": "Delete",
+  "common.panel.storage.local": "On this machine",
+  "common.panel.storage.server": "On the server",
+  "common.panel.storage.serverEmpty": "Nothing on the server yet."
 }
