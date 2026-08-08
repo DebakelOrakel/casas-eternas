@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
+.vite/
 
 # Go
 *.exe
@@ -21,10 +22,14 @@ dist-ssr
 *.test
 *.out
 
-# Exported world data (see saves/README.md) — large, regeneratable from
-# a seed, not worth tracking in git.
-saves/*.json
-saves/*.f32
+# The server's own stores (casas-eternas start --dir-worlds/--dir-artifacts):
+# a world is irreplaceable but belongs to whoever ran the server, and an
+# artifact is recomputable — neither belongs in the repository.
+worlds/*
+artifacts/*
+
+# Worlds exported by hand from the client's save button.
+saves/*
 
 # Editor directories and files
 .claude/*

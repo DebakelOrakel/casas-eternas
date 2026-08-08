@@ -37,6 +37,9 @@ import { WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createCachePanel } from '../../ui/cachePanel/CachePanel'
+import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
+import { getServerStatus } from '../../server/serverStatus'
+import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
 import { readRecipeValue as readYamlValue } from '../../worldgen/worldSave/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../storage/artifactKey'
 import './worldgen.css'
@@ -393,14 +396,28 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   root.className = 'worldgen-flat-screen map-chrome'
   root.innerHTML = `
     <div class="file-actions">
+      <span data-slot="server-indicator"></span>
       <button type="button" class="file-button" data-action="load-world" aria-label="${t('common.action.loadWorld.label')}" data-help="common.action.loadWorld">
         <img src="/icons/folder.png" alt="" />
       </button>
-      <button type="button" class="file-button" data-action="save-world" aria-label="${t('common.action.saveWorld.label')}" data-help="common.action.saveWorld">
-        <img src="/icons/floppy.png" alt="" />
-      </button>
-      <button type="button" class="file-button cache-button" data-action="cache-manager" aria-label="Artifact cache" title="Artifact cache">
-        <img src="/icons/zoom_off.png" alt="" />
+      <div class="save-group">
+        <button type="button" class="file-button" data-action="save-world" aria-label="${t('common.action.saveWorld.label')}" data-help="common.action.saveWorld">
+          <img src="/icons/floppy.png" alt="" />
+        </button>
+        <button type="button" class="save-more" data-action="save-choose" aria-label="${t('common.action.saveWorld.label')}" hidden>▾</button>
+        <div class="save-foldout" data-value="save-foldout" hidden>
+          <button type="button" class="save-target" data-target="download" data-help="common.action.saveWorld.download">
+            <img src="/icons/download.png" alt="" />
+            <span>${t('common.action.saveWorld.download.label')}</span>
+          </button>
+          <button type="button" class="save-target" data-target="server" data-help="common.action.saveWorld.toServer">
+            <img src="/icons/server_clean.png" alt="" />
+            <span>${t('common.action.saveWorld.toServer.label')}</span>
+          </button>
+        </div>
+      </div>
+      <button type="button" class="file-button cache-button" data-action="cache-manager" aria-label="${t('common.action.storage.label')}" data-help="common.action.storage">
+        <img src="/icons/server_clean.png" alt="" />
       </button>
     </div>
     <button type="button" class="nav-arrow nav-arrow--back" data-action="back" aria-label="${t('common.action.back.label')}">‹</button>
@@ -633,6 +650,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // as wanted from here — a world tuned in this screen is what ends up
   // costing minutes to bake over there. Same centred window, un-localized
   // like the other debug affordances.
+  // Where a world would go, shown on every screen (see ui/serverIndicator).
+  const serverIndicator = createServerIndicator()
+  root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
+
   const cachePanel = createCachePanel(root)
   root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => cachePanel.open())
   const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
@@ -2893,6 +2914,43 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   // Save flow: worker replies with the sim snapshot + rasters → zip it up (recipe
   // + snapshot + baked query layers + manifest + preview).
+  // Where the next serialized world goes. Set by the save affordance before the
+  // worker is asked for the data, because by the time the archive exists the
+  // question is already answered — and asking afterwards would mean holding a
+  // 30 MB blob while a menu is open.
+  type SaveTarget = 'download' | 'server'
+  let pendingSaveTarget: SaveTarget = 'download'
+
+  // Hands the finished archive to its destination. Download is the fallback for
+  // everything: a world that could not be uploaded must still not be lost.
+  async function deliverArchive(blob: Blob, filename: string): Promise<void> {
+    if (pendingSaveTarget !== 'server') {
+      downloadBlob(blob, filename)
+      return
+    }
+    const endTransfer = serverIndicator.beginTransfer()
+    try {
+      const outcome = await uploadWorld(worldUid, blob)
+      if (outcome.ok) {
+        ctx.notifications.show({ message: t('common.notify.worldStored'), icon: '/icons/ok.png', durationMs: 4000 })
+        updateSaveAffordance()
+        return
+      }
+      if (outcome.reason === 'conflict') {
+        // Deliberately no automatic retry: overwriting is exactly what the
+        // server's lock exists to prevent, and a world is the one thing here
+        // that cannot be recomputed. The archive still reaches the user.
+        ctx.notifications.show({ message: t('common.notify.worldConflict'), icon: '/icons/warning.png', durationMs: 8000 })
+      } else {
+        ctx.notifications.show({ message: t('common.notify.worldUploadFailed'), icon: '/icons/warning.png', durationMs: 8000 })
+        void serverIndicator.refresh()
+      }
+      downloadBlob(blob, filename)
+    } finally {
+      endTransfer()
+    }
+  }
+
   async function handleWorldData(message: WorkerWorldDataMessage): Promise<void> {
     const zip = new JSZip()
     // Stamp the identity BEFORE the yaml is built — it is the one thing in the
@@ -2912,7 +2970,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const archeanPreview = await makePreviewBlob()
       if (archeanPreview) zip.file('preview.png', archeanPreview)
       const archeanBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
-      downloadBlob(archeanBlob, `${(seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)
+      await deliverArchive(archeanBlob, `${(seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)
       return
     }
     zip.file('state.json', JSON.stringify(message.snapshot))
@@ -2927,7 +2985,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (preview) zip.file('preview.png', preview)
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
     const safeName = (seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')
-    downloadBlob(blob, `${safeName}.zip`)
+    await deliverArchive(blob, `${safeName}.zip`)
   }
 
   // Await one compute step: set its resolver, request it; the data handler
@@ -2935,7 +2993,60 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const awaitCompute = (setResolver: (r: () => void) => void, request: () => void): Promise<void> =>
     new Promise((resolve) => { setResolver(resolve); request() })
 
-  saveWorldButton.addEventListener('click', () => { void saveWorld() })
+  // The save affordance has three shapes, and which one it takes is entirely a
+  // function of what is actually possible:
+  //
+  //   no server            one click, download — exactly as before. A chooser
+  //                        with one option is friction, not choice.
+  //   server, world new    the click opens the foldout: the destination is
+  //                        genuinely ambiguous, so it gets asked once.
+  //   server, world known  one click straight to the server, with the caret
+  //                        beside it for "download anyway". A world that lives
+  //                        somewhere should not ask every time.
+  //
+  // Deliberately NOT automatic syncing: a generator's world changes on every
+  // epoch and slider, so there is no "document changed" moment to sync on, and
+  // every write keeps a revision the server never deletes.
+  const saveGroup = root.querySelector<HTMLElement>('.save-group')!
+  const saveFoldout = root.querySelector<HTMLElement>('[data-value="save-foldout"]')!
+  const saveMoreButton = root.querySelector<HTMLButtonElement>('[data-action="save-choose"]')!
+
+  const closeSaveFoldout = (): void => { saveFoldout.hidden = true }
+
+  function updateSaveAffordance(): void {
+    const known = worldUid !== '' && isStoredOnServer(worldUid)
+    void getServerStatus().then((status) => {
+      const online = status.state === 'local' || status.state === 'remote'
+      saveGroup.dataset.mode = !online ? 'download' : known ? 'server' : 'ask'
+      // The caret only exists where it does something — with no server there is
+      // nothing to choose, and on a world's first save the click already asks.
+      saveMoreButton.hidden = !online || !known
+      if (!online) closeSaveFoldout()
+    })
+  }
+
+  async function saveTo(target: SaveTarget): Promise<void> {
+    pendingSaveTarget = target
+    closeSaveFoldout()
+    await saveWorld()
+  }
+
+  saveWorldButton.addEventListener('click', () => {
+    if (saveGroup.dataset.mode === 'ask') {
+      saveFoldout.hidden = !saveFoldout.hidden
+      return
+    }
+    void saveTo(saveGroup.dataset.mode === 'server' ? 'server' : 'download')
+  })
+  saveMoreButton.addEventListener('click', () => { saveFoldout.hidden = !saveFoldout.hidden })
+  for (const button of root.querySelectorAll<HTMLButtonElement>('.save-target')) {
+    button.addEventListener('click', () => { void saveTo(button.dataset.target === 'server' ? 'server' : 'download') })
+  }
+  // Clicking away closes it, matching the overlay bar's fold-outs.
+  document.addEventListener('pointerdown', (event) => {
+    if (!saveFoldout.hidden && !saveGroup.contains(event.target as Node)) closeSaveFoldout()
+  })
+  updateSaveAffordance()
 
   async function saveWorld(): Promise<void> {
     // Neither phase may be stepping: a snapshot taken mid-epoch would capture a world

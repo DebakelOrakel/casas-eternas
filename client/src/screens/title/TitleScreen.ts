@@ -3,6 +3,8 @@ import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { getLocale, setLocale, type Locale } from '../../i18n/i18n'
 import { CHANGELOG_CATEGORIES } from '../../ui/changelog/categories'
 import { renderChangelog } from '../../ui/changelog/renderChangelog'
+import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
+import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import './title.css'
 
 export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
@@ -13,6 +15,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
   const root = document.createElement('div')
   root.className = 'title-screen'
   root.innerHTML = `
+    <span data-slot="server-indicator"></span>
     <div class="lang-actions">
       <button type="button" class="lang-button" data-lang="en" aria-label="English">
         <img src="/icons/lang_en.png" alt="" />
@@ -89,11 +92,22 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
     })
   })
 
+  // Where a world would go, on every screen — including this one, so the state
+  // is visible before any work is started, not only when saving.
+  const serverIndicator = createServerIndicator()
+  root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
+
   ctx.overlay.appendChild(root)
+
+  // The title screen had no help tooltip, so any `data-help` on it was inert —
+  // which is why the server indicator showed nothing here while working on the
+  // other two screens.
+  const helpTooltip = createHelpTooltip(root)
 
   return {
     scene,
     dispose() {
+      helpTooltip.dispose()
       scene.dispose()
     },
   }

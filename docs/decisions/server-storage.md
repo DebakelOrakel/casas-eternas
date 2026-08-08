@@ -138,11 +138,11 @@ casas-eternas start -t client                         # frontend only, storage l
 ```
 
 **Selection and configuration are separate flags.** `--target` picks the
-modules; `--dir-world` and `--dir-artifacts` say where each keeps its files,
+modules; `--dir-worlds` and `--dir-artifacts` say where each keeps its files,
 independently, with defaults.
 
 This is deliberately *not* the tempting alternative of making a path
-flag's presence its own enable switch (`--dir-world ./saves` meaning
+flag's presence its own enable switch (`--dir-worlds ./saves` meaning
 "and therefore run the world module"). That was proposed here first and
 is wrong for two reasons that only show up on contact:
 
@@ -185,7 +185,21 @@ subcommand that starts it.
 | `--tls-cert`, `--tls-key` | root, persistent | empty (HTTP) |
 | `--tls-ca` | root, persistent | empty; setting it turns on **mutual** TLS |
 | `--target` / `-t` | `start` | none — required |
-| `--dir-world`, `--dir-artifacts` | `start` | `./world`, `./artifacts` |
+| `--dir-worlds`, `--dir-artifacts` | `start` | `./worlds`, `./artifacts` |
+
+Both `--dir-*` flags are named for what the directory HOLDS, not for the
+module that reads it — the same rule as the module names themselves.
+That matters most for `world`, which is a subsystem rather than a store
+and will grow a tile database and a loop, each wanting a directory of
+its own; `--dir-worlds` beside a future `--dir-tiles` stays unambiguous
+where `--dir-world` would not. It also keeps disk and URL reading the
+same way, `worlds/{uid}` under `/v1/worlds/{uid}`.
+
+`./saves` was considered and rejected for the default: the directory is
+a STRUCTURE (`{uid}/meta.json`, `{uid}/rev/{n}/world.zip`), not a folder
+of files, and a name like "saves" invites dropping a downloaded
+`alpha.zip` into it — which the server would never see, while looking
+exactly as though it should.
 
 `--listen` takes a full `host:port` rather than a bare port, because
 `127.0.0.1:8080` is how a local instance stays off the network — a port

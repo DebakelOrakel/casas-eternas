@@ -1,3 +1,4 @@
+import { t } from '../../i18n/i18n'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { clearArtifacts, describeArtifactUsage, formatBytes, listCachedWorlds, removeCachedWorld, resolutionLabel } from '../../storage/artifactAdmin'
 import type { CachedWorld } from '../../storage/artifactAdmin'
@@ -24,7 +25,7 @@ export function createCachePanel(host: HTMLElement): CachePanel {
   root.className = 'cache-panel-backdrop'
   root.hidden = true
   root.innerHTML = `
-    <div class="cache-panel" role="dialog" aria-label="Artifact cache">
+    <div class="cache-panel" role="dialog" aria-label="${t('common.action.storage.label')}">
       <header class="cache-panel-head">
         <h2>Artifact cache</h2>
         <span class="cache-panel-usage" data-value="usage"></span>

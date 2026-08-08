@@ -15,7 +15,7 @@ import (
 const (
 	flagTarget       = "target"
 	flagDirArtifacts = "dir-artifacts"
-	flagDirWorld     = "dir-world"
+	flagDirWorlds    = "dir-worlds"
 	flagListen       = "listen"
 	flagTLSCert      = "tls-cert"
 	flagTLSKey       = "tls-key"
@@ -25,7 +25,7 @@ const (
 const (
 	textTarget       = `The target modules to start: all, client, world, artifacts. Repeatable.`
 	textDirArtifacts = `The directory to the artifact store.`
-	textDirWorld     = `The directory to the world files.`
+	textDirWorlds    = `The directory the saved worlds live in.`
 
 	textListen  = `Address to listen on, as host:port. ":8080" binds every interface, "127.0.0.1:8080" keeps a local instance off the network.`
 	textTLSCert = `Path to the server certificate. Enables HTTPS together with --tls-key.`
@@ -82,7 +82,7 @@ func init() {
 	// directory would need a second mechanism anyway.
 	StartCmd.Flags().StringSliceP(flagTarget, "t", []string{}, textTarget)
 	StartCmd.Flags().String(flagDirArtifacts, "./artifacts", textDirArtifacts)
-	StartCmd.Flags().String(flagDirWorld, "./world", textDirWorld)
+	StartCmd.Flags().String(flagDirWorlds, "./worlds", textDirWorlds)
 
 	for _, err := range []error{
 		viper.BindPFlag(flagListen, RootCmd.PersistentFlags().Lookup(flagListen)),
@@ -91,7 +91,7 @@ func init() {
 		viper.BindPFlag(flagTLSCA, RootCmd.PersistentFlags().Lookup(flagTLSCA)),
 		viper.BindPFlag(flagTarget, StartCmd.Flags().Lookup(flagTarget)),
 		viper.BindPFlag(flagDirArtifacts, StartCmd.Flags().Lookup(flagDirArtifacts)),
-		viper.BindPFlag(flagDirWorld, StartCmd.Flags().Lookup(flagDirWorld)),
+		viper.BindPFlag(flagDirWorlds, StartCmd.Flags().Lookup(flagDirWorlds)),
 	} {
 		if err != nil {
 			fmt.Println(err)

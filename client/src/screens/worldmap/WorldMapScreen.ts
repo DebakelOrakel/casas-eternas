@@ -24,9 +24,9 @@ import type { TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { deriveWorldId, derivePipelineVersion } from '../../storage/artifactKey'
 import { readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
-import { describeArtifactUsage } from '../../storage/artifactAdmin'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { createCachePanel } from '../../ui/cachePanel/CachePanel'
+import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { readRecipeNumber, readRecipeValue } from '../../worldgen/worldSave/recipeYaml'
 import { AMPLIFY_CONSTANTS } from '../../worldgen/surface/amplify'
 import '../../ui/chrome/chrome.css'
@@ -241,8 +241,12 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   root.className = 'worldmap-screen map-chrome'
   root.innerHTML = `
     <div class="file-actions">
+      <span data-slot="server-indicator"></span>
       <button type="button" class="file-button" data-action="load-world" aria-label="${t('common.action.loadWorld.label')}" data-help="common.action.loadWorld">
         <img src="/icons/folder.png" alt="" />
+      </button>
+      <button type="button" class="file-button cache-button" data-action="cache-manager" aria-label="${t('common.action.storage.label')}" data-help="common.action.storage">
+        <img src="/icons/server_clean.png" alt="" />
       </button>
     </div>
     <h2 class="panel-title">Herederos del Mundo</h2>
@@ -256,7 +260,6 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </button>
       <span class="altitude-readout" data-value="altitude"></span>
       <span class="bake-readout" data-value="bake"></span>
-      <button type="button" class="text-button cache-admin" data-action="clear-cache" title="Manage the cached baked worlds"></button>
     </div>
   `
   ctx.overlay.appendChild(root)
@@ -278,14 +281,12 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // manager (a centred window, shared with the generator) rather than
   // clearing outright — with several worlds cached, "delete everything" is
   // rarely the operation actually wanted.
+  // Where a world would go, shown on every screen (see ui/serverIndicator).
+  const serverIndicator = createServerIndicator()
+  root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
+
   const cachePanel = createCachePanel(root)
-  const cacheButton = root.querySelector<HTMLButtonElement>('[data-action="clear-cache"]')!
-  const refreshCacheReadout = async (): Promise<void> => {
-    const usage = await describeArtifactUsage(await getArtifactStore()).catch(() => null)
-    cacheButton.textContent = usage ? `cache ${usage}` : 'cache'
-  }
-  cacheButton.addEventListener('click', () => cachePanel.open())
-  void refreshCacheReadout()
+  root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => cachePanel.open())
 
   // Biome wash on/off, so the plain paper stays one click away for
   // comparison (button un-localized for now, like the hex grid one).
@@ -693,9 +694,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         // Stored after the result is on screen, so the write never delays
         // what the user is waiting for — and failing to store is not an
         // error, only a bake that will happen again.
-        void writeAmplificationArtifact(store, key, artifact, message.durationMs)
-          .catch(() => false)
-          .then(() => refreshCacheReadout())
+        void writeAmplificationArtifact(store, key, artifact, message.durationMs).catch(() => false)
         void runStage(index + 1)
       }
       // A stage that dies (the deepest tier needs ~3 GB — a browser may

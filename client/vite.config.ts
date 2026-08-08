@@ -1,5 +1,10 @@
 import { defineConfig } from 'vite'
 
+// Where the Go server lives during development. Overridable so a dev client can
+// point at a real deployment without touching this file; the default matches
+// `casas-eternas start`'s own default listen address.
+const API = process.env.CASAS_API ?? 'http://localhost:8080'
+
 // The dev server's port is PINNED, and that is not cosmetic: browser storage
 // (OPFS, IndexedDB, caches) is scoped to the ORIGIN, port included. Vite's
 // default behaviour is to take 5173 and silently increment when it is busy —
@@ -12,5 +17,18 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // Development runs the SAME code path as production rather than a special
+    // case: the client always asks its own origin for /config.json and /v1,
+    // and here vite forwards both to the Go server. Nothing in the app knows
+    // whether it is being developed or deployed, and CORS never enters the
+    // picture in either.
+    //
+    // With no server running these simply fail, which is a first-class state —
+    // worldgen work must not require a backend, so the client falls back to
+    // browser-local storage exactly as it did before any of this existed.
+    proxy: {
+      '/config.json': { target: API, changeOrigin: true },
+      '/v1': { target: API, changeOrigin: true },
+    },
   },
 })

@@ -3,6 +3,12 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-08-08
+- **new** Server: a status indicator in every screen's top-left corner says where worlds would go — no server, unreachable, local, or shared. `common.server`
+- **changed** World map: the cache button moved from the bottom bar up next to the load button, matching the generator.
+- **changed** Storage: the storage button carries a real hover card instead of a debug tooltip, and is called Storage — it will hold worlds as well as the cache. `common.action.storage`
+- **new** Save: with a server present, the save button asks where a world should go — download or store on it; once a world lives on the server, later saves go there in one click. `common.action.saveWorld`
+
 ## 2026-08-07
 - **new** Rendering: 3D relief preview — eroded terrain unlocks a deeper zoom and a zoom-coupled camera tilt over a metre-true displaced map plane with draped rivers.
 - **new** Controls: WASD pans the map; Q/E rotate the view while zoomed in, and zooming out returns it to north-up.

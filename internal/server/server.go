@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -56,12 +57,24 @@ func Run(ctx context.Context, cfg config.Server, modules []Module) (err error) {
 		}
 	}()
 
+	names := make([]string, 0, len(modules))
 	for _, m := range modules {
 		if mountErr := m.Mount(mux); mountErr != nil {
 			return fmt.Errorf("mounting %s: %w", m.Name(), mountErr)
 		}
+		names = append(names, m.Name())
 		slog.Info("module mounted", "module", m.Name())
 	}
+	// Mounted by the server rather than by a module, because it describes the
+	// PROCESS: which modules this one runs. It is also what the client probes
+	// to decide whether a configured server is actually answering — config.json
+	// says where the storage is, this says what it can do, and only the storage
+	// itself knows the latter.
+	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]any{"modules": names})
+	})
 
 	tlsConfig, err := buildTLS(cfg)
 	if err != nil {

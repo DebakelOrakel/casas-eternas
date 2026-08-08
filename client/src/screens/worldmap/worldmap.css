@@ -9,19 +9,6 @@
   opacity: 0.3;
 }
 
-/* Cache admin — a debug affordance, so it sits quieter than the real
-   controls and only asserts itself on hover. */
-.worldmap-screen .cache-admin {
-  align-self: center;
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.45;
-}
-
-.worldmap-screen .cache-admin:hover {
-  opacity: 0.9;
-}
-
 /* Amplification-bake status (progress, then the baked size + duration). */
 .worldmap-screen .bake-readout {
   align-self: center;

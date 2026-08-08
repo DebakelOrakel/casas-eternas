@@ -88,7 +88,7 @@ type Store struct {
 // NewStore prepares the store, creating the root if it is absent.
 func NewStore(dir string) (*Store, error) {
 	if dir == "" {
-		return nil, fmt.Errorf("world directory must not be empty")
+		return nil, fmt.Errorf("worlds directory must not be empty")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("preparing %q: %w", dir, err)

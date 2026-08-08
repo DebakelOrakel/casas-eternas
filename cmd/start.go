@@ -57,7 +57,7 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetWorld) {
-		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorld)})
+		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorlds)})
 		if err != nil {
 			return nil, err
 		}

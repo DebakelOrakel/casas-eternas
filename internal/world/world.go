@@ -27,7 +27,9 @@ const uploadLimit = 512 << 20 // 512 MiB
 
 // Config is what cmd/ resolves from the flags. No viper here by design.
 type Config struct {
-	// Dir is where saved worlds live, one directory per world.
+	// Dir is where saved worlds live, one directory per world. Named for its
+	// CONTENTS rather than for this module, because the module will grow a tile
+	// database and a loop that need directories of their own.
 	Dir string
 }
 
@@ -36,13 +38,13 @@ type Module struct {
 	store *Store
 }
 
-// New prepares the store. The directory is created eagerly so a bad --dir-world
-// fails at startup, naming the flag, rather than on the first upload hours
-// later.
+// New prepares the store. The directory is created eagerly so a bad
+// --dir-worlds fails at startup, naming the flag, rather than on the first
+// upload hours later.
 func New(cfg Config) (*Module, error) {
 	store, err := NewStore(cfg.Dir)
 	if err != nil {
-		return nil, fmt.Errorf("--dir-world: %w", err)
+		return nil, fmt.Errorf("--dir-worlds: %w", err)
 	}
 	return &Module{store: store}, nil
 }
