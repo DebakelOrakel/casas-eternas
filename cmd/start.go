@@ -79,6 +79,7 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 			ArtifactsDir:  viper.GetString(flagDirArtifacts),
 			BakerPath:     bakerPath(),
 			AuthMode:      config.DefaultAuthMode,
+			Listen:        viper.GetString(flagListen),
 			MaxConcurrent: viper.GetInt(flagBakeMax),
 		})
 		if err != nil {

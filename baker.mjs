@@ -9774,6 +9774,8 @@ import { join, dirname } from "node:path";
 var import_jszip = __toESM(require_lib3(), 1);
 
 // src/worldgen/core/mapConfig.ts
+var MAP_WIDTH = 2048;
+var MAP_HEIGHT = 1024;
 var METERS_PER_CELL = 7800;
 
 // src/worldgen/core/interpolation.ts
@@ -11024,6 +11026,21 @@ async function writeAmplificationArtifact(store, key, artifact, bakeMs) {
   return wrote;
 }
 
+// src/map/mapSceneSettings.ts
+var MAP_WORLD_WIDTH = 20;
+var MAP_WORLD_HEIGHT = 10;
+var RELIEF_HEIGHT_SCALE = ELEVATION_METERS / (METERS_PER_CELL * MAP_WIDTH) * MAP_WORLD_WIDTH;
+var UNITS_PER_METER = MAP_WORLD_WIDTH / (METERS_PER_CELL * MAP_WIDTH);
+var NEAR_MIN_ALTITUDE = 2500 * UNITS_PER_METER;
+var HEX_WIDTH_M = 300;
+var WORLD_WIDTH_M = METERS_PER_CELL * MAP_WIDTH;
+var WORLD_HEIGHT_M = METERS_PER_CELL * MAP_HEIGHT;
+var HEX_COLUMNS = Math.round(WORLD_WIDTH_M / HEX_WIDTH_M);
+var HEX_ROWS = 2 * Math.round(WORLD_HEIGHT_M / (HEX_WIDTH_M * (Math.sqrt(3) / 2)) / 2);
+var HEX_COL_SPACING = MAP_WORLD_WIDTH / HEX_COLUMNS;
+var HEX_ROW_SPACING = MAP_WORLD_HEIGHT / HEX_ROWS;
+var AMPLIFY_EROSION_ROUNDS = 2;
+
 // src/server/serverStatus.ts
 var OFFLINE = { state: "none", apiBase: "", authMode: "none", modules: [] };
 var PROBE_TIMEOUT_MS = 3e3;
@@ -11237,7 +11254,12 @@ function fail(message) {
 }
 async function main() {
   const raw = process.argv[2];
-  if (!raw) fail("usage: baker.mjs '<job JSON>'");
+  if (raw === "--version") {
+    process.stdout.write(`${JSON.stringify({ pipelineVersion: derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS }) })}
+`);
+    return;
+  }
+  if (!raw) fail("usage: baker.mjs '<job JSON>'  |  baker.mjs --version");
   let job;
   try {
     job = JSON.parse(raw);

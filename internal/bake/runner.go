@@ -54,6 +54,11 @@ type Spec struct {
 
 	// Bearer token for the URL form, scoped to this job's artifact key.
 	AuthToken string `json:"authToken,omitempty"`
+
+	// The bake job's id. Never sent to the baker — it has no use for it — but
+	// the cluster runner names its Job object after it, which is what makes a
+	// stray Job traceable back to the request that made it.
+	JobID string `json:"-"`
 }
 
 // localRunner spawns the Node baker as a subprocess.

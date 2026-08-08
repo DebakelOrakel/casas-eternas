@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +64,9 @@ type Config struct {
 	BakerPath string
 	// AuthMode decides whether the world's recorded owner means anything.
 	AuthMode config.AuthMode
+	// Listen is the server's own bind address, used only to work out the port a
+	// bake Job should reach it on.
+	Listen string
 	// MaxConcurrent bakes. One by default, and that is a memory argument: two
 	// 8192² bakes want 5 GB between them. In a cluster it also interacts with
 	// the hard anti-affinity — the effective figure is min(this, nodes), and
@@ -71,21 +75,40 @@ type Config struct {
 }
 
 type Module struct {
-	cfg     Config
-	runner  Runner
-	jobs    *registry
-	queue   chan string
-	cancel  context.CancelFunc
-	workers sync.WaitGroup
+	cfg Config
+	// Whether jobs run as Kubernetes Jobs. Captured once at construction —
+	// a process does not move in or out of a cluster while it runs.
+	clusterMode bool
+	serverURL   string
+	runner      Runner
+	jobs        *registry
+	queue       chan string
+	cancel      context.CancelFunc
+	workers     sync.WaitGroup
 }
 
 func New(cfg Config) (*Module, error) {
 	if cfg.WorldsDir == "" || cfg.ArtifactsDir == "" {
 		return nil, fmt.Errorf("--dir-worlds and --dir-artifacts are both required for bakes")
 	}
-	runner, err := NewLocalRunner(cfg.BakerPath, nodeHeapMB)
-	if err != nil {
-		return nil, fmt.Errorf("--baker: %w", err)
+	// The runner is chosen by DETECTING the cluster and by nothing else. There
+	// is deliberately no flag: both of its settings would be a behaviour the
+	// design rules out — forcing cluster mode off-cluster contradicts the rule
+	// that this exists only there, and forcing local mode inside one would run
+	// 2.6 GB bakes in the server's own pod, under the server's own memory
+	// limit. See docs/decisions/distributed-bake.md.
+	var runner Runner
+	var err error
+	if InCluster() {
+		runner, err = NewKubernetesRunner(bakeImage(), serverBaseURL(cfg.Listen))
+		if err != nil {
+			return nil, fmt.Errorf("cluster bake runner: %w", err)
+		}
+	} else {
+		runner, err = NewLocalRunner(cfg.BakerPath, nodeHeapMB)
+		if err != nil {
+			return nil, fmt.Errorf("--baker: %w", err)
+		}
 	}
 
 	workers := cfg.MaxConcurrent
@@ -95,9 +118,11 @@ func New(cfg Config) (*Module, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Module{
-		cfg:    cfg,
-		runner: runner,
-		jobs:   newRegistry(jobHistory),
+		cfg:         cfg,
+		clusterMode: InCluster(),
+		serverURL:   serverBaseURL(cfg.Listen),
+		runner:      runner,
+		jobs:        newRegistry(jobHistory),
 		// Buffered so a burst of requests is accepted rather than blocking the
 		// HTTP handler; full means genuinely swamped, which answers 503.
 		queue:  make(chan string, 64),
@@ -107,7 +132,7 @@ func New(cfg Config) (*Module, error) {
 		m.workers.Add(1)
 		go m.work(ctx)
 	}
-	slog.Info("bake ready", "workers", workers, "auth", cfg.AuthMode)
+	slog.Info("bake ready", "workers", workers, "auth", cfg.AuthMode, "cluster", InCluster())
 	return m, nil
 }
 
@@ -137,6 +162,32 @@ func (m *Module) Close() error {
 		slog.Warn("bake workers did not stop in time")
 	}
 	return nil
+}
+
+// bakeImage is the image a Job runs. Taken from the environment rather than a
+// flag because it is meaningless outside a cluster: the deployment sets it to
+// its OWN image, so the bake pipeline is the same commit as the server that
+// commissioned it — a mismatch there fails silently (the artifact key carries
+// a pipeline version, and a client would simply never look for what was made).
+func bakeImage() string { return os.Getenv("CASAS_BAKE_IMAGE") }
+
+// serverBaseURL is the address a bake Job uses to fetch its world and PUT its
+// artifacts. The pod's own IP, injected by the downward API — a Job on another
+// node cannot mount this pod's ReadWriteOnce volume, so HTTP is the only way
+// back, and the pod IP needs no Service to exist first.
+//
+// If the server pod is replaced mid-bake the address dies with it; so does the
+// bake's reason to exist, since nobody is waiting for it any more.
+func serverBaseURL(listen string) string {
+	ip := os.Getenv("CASAS_POD_IP")
+	if ip == "" {
+		return ""
+	}
+	port := "8080"
+	if index := strings.LastIndex(listen, ":"); index >= 0 && index+1 < len(listen) {
+		port = listen[index+1:]
+	}
+	return fmt.Sprintf("http://%s:%s/v1", ip, port)
 }
 
 func newID() string {
@@ -261,10 +312,19 @@ func (m *Module) work(ctx context.Context) {
 
 		_, zip, _ := m.worldMeta(job.Request.WorldUID)
 		spec := Spec{
-			WorldZip:      zip,
+			JobID:         id,
 			Stage:         job.Request.Stage,
 			ErosionRounds: job.Request.ErosionRounds,
-			ArtifactsDir:  m.cfg.ArtifactsDir,
+		}
+		// Files when the work happens here, URLs when it happens on another
+		// node. Both produce byte-identical artifacts under the identical key
+		// (measured), so nothing downstream can tell which ran.
+		if m.clusterMode {
+			spec.WorldURL = fmt.Sprintf("%s/worlds/%s", m.serverURL, job.Request.WorldUID)
+			spec.ArtifactsURL = m.serverURL
+		} else {
+			spec.WorldZip = zip
+			spec.ArtifactsDir = m.cfg.ArtifactsDir
 		}
 		result, err := m.runner.Run(ctx, spec, func(p Progress) {
 			m.jobs.update(id, func(j *Job) {

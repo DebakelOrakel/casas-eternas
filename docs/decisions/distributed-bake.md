@@ -1,7 +1,7 @@
 ---
 summary: Server-side amplification bakes become Kubernetes Jobs when — and only when — the server is running in a cluster. A job is already a value with a scope behind a Runner interface, so this is an added implementation rather than a rebuild. Decided: only a world's owner may commission one, the runner is chosen by detecting the cluster rather than by a flag, anti-affinity is hard so two 2.6 GB bakes never share a node, and each Job gets a one-shot token scoped to the artifact key it may write. Everything in that list exists ONLY in a cluster; a local server keeps the plain subprocess with no checks at all.
 date: 2026-08-08
-status: decided — architecture and the four forks below. STEPS 1 AND 2 BUILT 2026-08-08 (authorisation, the concurrency cap, and a baker that works entirely over HTTP — measured byte-identical to the file-based one). Steps 3–4 not started.
+status: decided — architecture and the four forks below. STEPS 1–3 BUILT 2026-08-08 and verified against a real OpenShift cluster: the Job is accepted, its pod is admitted by restricted-v2 and scheduled. A real image runs as a Job and completes (pending → running → succeeded in 54 s, mostly image pull). Not yet run end to end as a BAKE, which needs the server deployed so a Job can reach it. Step 4 (commissioning from the client) not started.
 ---
 
 # Bakes as Kubernetes Jobs
@@ -156,8 +156,36 @@ Each step is verifiable before the next, and the first two need no cluster.
    two produce byte-identical artifacts** under the identical key, which is
    what makes running on a volumeless node a non-event for everyone
    downstream.
-3. **The `kubernetesRunner`** — create, watch, clean up; anti-affinity, TTL,
-   RBAC, requests, the Pending state.
+3. **The `kubernetesRunner`** — **BUILT, cluster-untested.** Talks to the API
+   over plain REST rather than through client-go: the surface needed is three
+   verbs on one resource, and client-go would turn a module with two
+   dependencies into one with dozens. It POLLS rather than watches, since a
+   watch stream's reconnect and resource-version handling is the fiddliest
+   part of the API and a job running for minutes cannot tell the difference.
+   The Job manifest is `internal/bake/bake-job.yaml` — an editable file, not
+   Go strings, so what a reader sees is what the cluster is asked for. It sits
+   beside the code only because `go:embed` cannot reach out of its package.
+
+   Two things a cluster bake does NOT do, both deliberate: it reports no
+   per-phase progress (a Job's output is its pod's log, and streaming that back
+   would be a second connection and a second failure mode for a number nobody
+   acts on), and it returns no `Result` beyond the stage — the artifact IS the
+   result, and every client finds it by key.
+
+   **Verified on a real cluster** (APPUiO/OpenShift): the API server accepts
+   the rendered manifest, and — the separate question that Job creation does
+   not answer — its POD is admitted by `restricted-v2` and scheduled. Two
+   fixes came out of that run: an empty CA now means the system trust store
+   (a cluster with a public API certificate has none to hand out), and a Job
+   that starts no pod within ten minutes is given up on, because admission
+   failures do NOT increment the `failed` counter and the runner would
+   otherwise poll a stuck object forever.
+
+   Verified without a cluster: the template renders to a valid Job, the payload
+   survives as exactly one argument, the anti-affinity is required rather than
+   preferred, there is no CPU limit, the Job claims no PVC, and detection
+   refuses to call a machine a cluster on the strength of environment variables
+   alone.
 4. **Commissioning from the client** — the world map asks for a bake when a
    stage is missing and the server says it can bake.
 

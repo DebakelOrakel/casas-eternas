@@ -1,0 +1,103 @@
+# The Job the server creates for one amplification bake.
+#
+# EDIT THIS FILE to change how bakes are scheduled — it is a Go text/template
+# rendered by internal/bake/kubernetes.go and embedded into the binary, so what
+# you read here is exactly what the cluster is asked for. Later it can be
+# mounted from a ConfigMap instead; nothing about the shape has to change for
+# that, only where it is read from.
+#
+# Values in scope:
+#   .Name          the Job's name, derived from the job id
+#   .Namespace     the server's own namespace
+#   .Image         the server's own image, so the baker is the same commit
+#   .Args          the baker's argv, already JSON-quoted
+#   .JobID         the bake job id, for labels and for finding stragglers
+#   .MemoryRequest / .MemoryLimit
+#   .TTLSeconds    how long a finished Job object sticks around
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+  labels:
+    app: casas-eternas
+    # The selector everything else keys off: the anti-affinity below matches
+    # it, and so does the sweep that finds Jobs from a previous server process.
+    casas-eternas/component: bake
+    casas-eternas/job-id: {{ .JobID }}
+spec:
+  # Retries are the server's business, not the cluster's. A bake that failed
+  # for a real reason (a corrupt save, an unreadable world) would fail again
+  # identically, and six wasted minutes per attempt is a poor way to find that
+  # out. The server sees the failure and can say so.
+  backoffLimit: 0
+  # Finished Jobs disappear on their own. The RESULT is the artifact in the
+  # store; a Job object is only the story of how it got there.
+  ttlSecondsAfterFinished: {{ .TTLSeconds }}
+  template:
+    metadata:
+      labels:
+        app: casas-eternas
+        casas-eternas/component: bake
+        casas-eternas/job-id: {{ .JobID }}
+    spec:
+      restartPolicy: Never
+      # Never two bakes on one node. Each peaks near 2.6 GB, and two sharing a
+      # node is how both get slow and one gets killed. HARD rather than
+      # preferred: with a cap above the node count the extra Jobs sit Pending,
+      # which is honest backpressure — the server reports that state rather
+      # than pretending they are running.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  casas-eternas/component: bake
+      containers:
+        - name: bake
+          # The server's own image: the bake pipeline must be the same commit
+          # as the server that commissioned it, because the artifact key
+          # includes a pipeline version and a mismatch fails SILENTLY.
+          image: {{ .Image }}
+          imagePullPolicy: IfNotPresent
+          command: ["node", "--max-old-space-size=6144", "/app/baker.mjs"]
+          args: {{ .Args }}
+          resources:
+            requests:
+              # The measured 8192² peak is ~2.6 GB; the request is what the
+              # scheduler reserves, so it has to be honest or two bakes end up
+              # on one node despite the rule above.
+              memory: {{ .MemoryRequest }}
+              # 1m is a DEVELOPMENT value, not a considered one: the test
+              # cluster is full of requests while its actual utilisation is
+              # low, so an honest CPU request would simply fail to schedule.
+              # A bake saturates whatever cores it gets — under real
+              # contention this reservation buys nothing, and the pod would be
+              # first in line when the node runs short. Raise it before this
+              # matters to anyone.
+              cpu: 1m
+            limits:
+              # Memory is limited, CPU deliberately is not: CFS throttling is
+              # exactly wrong for a six-minute burst that should take whatever
+              # the node has free.
+              memory: {{ .MemoryLimit }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            # The bake needs scratch space and nothing else — it reads the
+            # world and writes the artifacts over HTTP, so it mounts no PVC.
+            # That is what lets it be scheduled on any node at all.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi

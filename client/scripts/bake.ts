@@ -29,6 +29,7 @@ import { runAmplification } from '../src/worldgen/surface/runAmplification'
 import { writeAmplificationArtifact } from '../src/storage/amplificationArtifact'
 import { derivePipelineVersion } from '../src/storage/artifactKey'
 import { AMPLIFY_CONSTANTS } from '../src/worldgen/surface/amplify'
+import { AMPLIFY_EROSION_ROUNDS as AMPLIFY_EROSION_ROUNDS_HINT } from '../src/map/mapSceneSettings'
 import { createHttpArtifactStore, toRemotePath } from '../src/storage/HttpArtifactStore'
 import type { ArtifactStore, StorageUsage } from '../src/storage/ArtifactStore'
 
@@ -156,7 +157,19 @@ function fail(message: string): never {
 
 async function main(): Promise<void> {
   const raw = process.argv[2]
-  if (!raw) fail('usage: baker.mjs \'<job JSON>\'')
+
+  // `--version` reports which pipeline this bundle IS, without running one.
+  //
+  // Not a courtesy: the artifact key carries a pipeline version, and a baker
+  // built from a different commit than the client expecting its output fails
+  // SILENTLY — bakes succeed, artifacts appear, and nobody ever looks for
+  // them. That happened once. This makes an image's pipeline version something
+  // you can read off it in a second rather than infer from a missing cache hit.
+  if (raw === '--version') {
+    process.stdout.write(`${JSON.stringify({ pipelineVersion: derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS_HINT }) })}\n`)
+    return
+  }
+  if (!raw) fail('usage: baker.mjs \'<job JSON>\'  |  baker.mjs --version')
   let job: Job
   try {
     job = JSON.parse(raw) as Job
