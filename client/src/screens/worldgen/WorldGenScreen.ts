@@ -19,7 +19,7 @@ const RUNOFF_COEFFICIENT = 0.35
 const DISCHARGE_TO_M3S = ((METERS_PER_CELL * METERS_PER_CELL * 1e-3) / 3.156e7) * RUNOFF_COEFFICIENT
 import JSZip from 'jszip'
 import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage } from '../../worldgen/pipeline/messages'
-import { downstreamOf, stage } from '../../worldgen/pipeline/stages'
+import { STAGES, downstreamOf, stage } from '../../worldgen/pipeline/stages'
 import type { StageId } from '../../worldgen/pipeline/stages'
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/render/continentLabelRenderer'
@@ -438,7 +438,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     <div class="compute-progress" data-value="compute-progress" hidden>
       <span class="compute-progress-fill" data-value="compute-progress-fill"></span>
     </div>
-    <div class="panel" data-panel="0">
+    <div class="panel" data-stage="genesis">
       <label class="field field--seed">
         <span class="field-row">
           <input type="text" class="seed-input" placeholder="${t('worldgen.panel.genesis.seed.placeholder')}" value="${initialSeed}" />
@@ -466,7 +466,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </span>
       </label>
     </div>
-    <div class="panel" data-panel="1">
+    <div class="panel" data-stage="tectonics">
       <label class="field field--icon-row">
         <span class="field-row">
           <button type="button" class="icon-button" data-action="reset-sim" aria-label="${t('worldgen.action.resetSim.label')}" data-help="worldgen.action.resetSim">
@@ -484,7 +484,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </span>
       </label>
     </div>
-    <div class="panel" data-panel="2">
+    <div class="panel" data-stage="erosion">
       <button type="button" class="icon-button panel-reset" data-action="reset-erosion" aria-label="${t('worldgen.action.resetErosion.label')}" data-help="worldgen.action.resetErosion">
         <img src="/icons/reset.png" alt="" />
       </button>
@@ -507,7 +507,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </span>
       </label>
     </div>
-    <div class="panel" data-panel="3">
+    <div class="panel" data-stage="climate">
       <button type="button" class="icon-button panel-reset" data-action="reset-climate" aria-label="${t('worldgen.action.resetClimate.label')}" data-help="worldgen.action.resetClimate">
         <img src="/icons/reset.png" alt="" />
       </button>
@@ -525,10 +525,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </span>
       </label>
     </div>
-    <div class="panel" data-panel="4">
+    <div class="panel" data-stage="hydrology">
       ${sliderField(SURFACE_INPUTS.riverDensity, 'river-density-input', 'river-density-label')}
     </div>
-    <div class="panel" data-panel="5">
+    <div class="panel" data-stage="ecology">
       <button type="button" class="icon-button panel-reset" data-action="reset-ecology" aria-label="${t('worldgen.action.resetEcology.label')}" data-help="worldgen.action.resetEcology">
         <img src="/icons/reset.png" alt="" />
       </button>
@@ -542,7 +542,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </span>
       <div class="ecology-foldout" data-value="ecology-foldout" hidden></div>
     </div>
-    <div class="panel" data-panel="6">
+    <div class="panel" data-stage="migration">
       <button type="button" class="icon-button panel-reset" data-action="reset-migration" aria-label="${t('worldgen.action.resetMigration.label')}" data-help="worldgen.action.resetMigration">
         <img src="/icons/reset.png" alt="" />
       </button>
@@ -841,9 +841,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Coarse climate rasters (from the worker's computeClimate step). Sampled up
   // to full map resolution in the overlay paint fns. null until computed / when
   // invalidated by an upstream reset.
-  // Entering this panel commits the Archean — see showPanel.
-  const TECTONICS_PANEL_INDEX = 1
-  const CLIMATE_PANEL_INDEX = 3
+  // Panel order IS the pipeline chain — see PANEL_TITLES further down for the rest
+  // of that argument. Hoisted here because the panel constants below derive from it.
+  const PANEL_STAGES: readonly StageId[] = STAGES.map((s) => s.id)
+  // Throws rather than returning -1: a stage with no panel would otherwise read as
+  // "panel before the first one" and quietly change every comparison that uses it.
+  const panelIndexOf = (id: StageId): number => {
+    const i = PANEL_STAGES.indexOf(id)
+    if (i < 0) throw new Error(`no panel for stage ${id}`)
+    return i
+  }
+
+  // Entering this panel is what commits the Archean — see commitGenesis.
+  const TECTONICS_PANEL_INDEX = panelIndexOf('tectonics')
+  const CLIMATE_PANEL_INDEX = panelIndexOf('climate')
   let lastTemperature: Float32Array | null = null
   let lastWind: Float32Array | null = null
   let lastPrecipitation: Float32Array | null = null
@@ -855,7 +866,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let climateResY = 0
   // Rivers/lakes (hydrology) panel — its own step after climate. River segments
   // come from the worker's computeHydrology; null until computed / invalidated.
-  const HYDROLOGY_PANEL_INDEX = 4
+  const HYDROLOGY_PANEL_INDEX = panelIndexOf('hydrology')
   let lastRiverData: { points: Float32Array; lengths: Uint32Array } | null = null
   // A baked river network, shown INSTEAD of the 2k one when this world has an
   // amplified artifact. Display only, and kept apart from lastRiverData for a
@@ -902,7 +913,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastDeltaMask: Uint8Array | null = null
   // Ecology (resource/suitability) panel — its own step after hydrology. Phase 1:
   // the carrying-capacity field only. null until computed / invalidated.
-  const ECOLOGY_PANEL_INDEX = 5
+  const ECOLOGY_PANEL_INDEX = panelIndexOf('ecology')
   // All computed ecology fields, keyed by id (see ecology/ecologyField). The
   // single ecology overlay paints whichever `selectedEcologyField` is chosen in
   // the panel selector, on an absolute 0..1 scale.
@@ -918,7 +929,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const hasEcologyData = (): boolean => lastEcologyFields.carryingCapacity != null
   // Initial-migration panel — its own step after ecology. Three races (icon toggles),
   // origins auto-placed at good cradles, least-cost dispersal → density + arrow tree.
-  const MIGRATION_PANEL_INDEX = 6
+  const MIGRATION_PANEL_INDEX = panelIndexOf('migration')
   let lastMigration: { race: Int8Array; density: Float32Array; flow: Float32Array; predecessor: Int32Array; resX: number; resY: number } | null = null
   const migrationRaceEnabled = MIGRATION_RACES.map(() => true)
   let migrationOrigins: { cell: number; race: number }[] = [] // one per race index (by MIGRATION_RACES order)
@@ -2805,7 +2816,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // two messages.
     worldBanner.hidden = panelIndex !== 0
     // The backdrop grows to carry the line and shrinks back when there is none.
-    panels[0].classList.toggle('has-banner', !worldBanner.hidden)
+    panels[panelIndexOf('genesis')].classList.toggle('has-banner', !worldBanner.hidden)
     updateProgress()
   }
 
@@ -3755,7 +3766,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     root.querySelector<HTMLButtonElement>(`[data-eco-cat="${cat.id}"]`)!.addEventListener('click', () => setActiveCat(activeCat === cat.id ? null : cat.id))
   }
   // Main sliders (direct children of the panel) preview the aggregate on hover.
-  const ecologyPanel = root.querySelector<HTMLElement>('.panel[data-panel="5"]')!
+  const ecologyPanel = root.querySelector<HTMLElement>('.panel[data-stage="ecology"]')!
   for (const el of ecologyPanel.querySelectorAll<HTMLElement>(':scope > .field[data-ecofield]')) {
     el.addEventListener('mouseenter', () => previewField(el.dataset.ecofield as EcologyFieldId))
   }
@@ -3969,24 +3980,33 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     waterLabel.textContent = waterInput.value
     regenerateDebounced()
   })
-  // Same back/next convention as the sphere screen: back steps to the
-  // previous panel, or exits to the title screen from the first one;
-  // next steps forward and is a no-op past the last panel. Generation
-  // parameters (seed, plate counts) live on panel 0, tectonics on panel
-  // 1, erosion on panel 2 — future panels slot in the same way via the
-  // data-panel pattern, with one more entry in PANEL_TITLE_KEYS to match.
-  const PANEL_TITLE_KEYS: TKey[] = [
-    'worldgen.panel.genesis.title',
-    'worldgen.panel.tectonics.title',
-    'worldgen.panel.erosion.title',
-    'worldgen.panel.climate.title',
-    'worldgen.panel.hydrology.title',
-    'worldgen.panel.ecology.title',
-    'worldgen.panel.migration.title',
-  ]
+  // THE PANELS ARE THE STAGES. Back steps to the previous one or leaves for the
+  // title screen; next steps forward and stops at the last.
+  //
+  // That correspondence was always true and was expressed as arithmetic on panel
+  // numbers — `index === 2`, `index < CLIMATE_PANEL_INDEX`, a title list whose
+  // order had to be kept in step by hand. Declared instead: the ORDER comes from
+  // the pipeline chain (STAGES), each panel says which stage it is in the markup
+  // (`data-stage`), and the titles are a Record over StageId, so a stage added to
+  // the chain is a compile error here rather than a panel that silently shifts.
+  const PANEL_TITLES: Record<StageId, TKey> = {
+    genesis: 'worldgen.panel.genesis.title',
+    tectonics: 'worldgen.panel.tectonics.title',
+    erosion: 'worldgen.panel.erosion.title',
+    climate: 'worldgen.panel.climate.title',
+    hydrology: 'worldgen.panel.hydrology.title',
+    ecology: 'worldgen.panel.ecology.title',
+    migration: 'worldgen.panel.migration.title',
+  }
   const panelTitle = root.querySelector<HTMLElement>('[data-value="panel-title"]')!
   const nextArrow = root.querySelector<HTMLButtonElement>('[data-action="next"]')!
-  const panels = Array.from(root.querySelectorAll<HTMLElement>('.panel'))
+  // Looked up BY STAGE rather than taken in document order, so the markup and the
+  // chain have to agree about which panel is which instead of merely happening to.
+  const panels = PANEL_STAGES.map((id) => {
+    const el = root.querySelector<HTMLElement>(`.panel[data-stage="${id}"]`)
+    if (!el) throw new Error(`no panel markup for stage ${id}`)
+    return el
+  })
   let panelIndex = 0
 
   // Each more-detailed panel needs its upstream step settled, else it operates on
@@ -3997,8 +4017,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // null if allowed. Values are tunable.
   const MIN_TECTONIC_EPOCHS = 30
   const entryRequirementUnmet = (index: number): string | null => {
-    if (index === 2 && lastEpoch < MIN_TECTONIC_EPOCHS) return t('worldgen.notify.needsTectonics', { min: MIN_TECTONIC_EPOCHS, current: lastEpoch })
-    if ((index === CLIMATE_PANEL_INDEX || index === HYDROLOGY_PANEL_INDEX || index === ECOLOGY_PANEL_INDEX || index === MIGRATION_PANEL_INDEX) && erosionRunCount < 1) return t('worldgen.notify.needsErosion')
+    const erosionPanel = panelIndexOf('erosion')
+    if (index === erosionPanel && lastEpoch < MIN_TECTONIC_EPOCHS) return t('worldgen.notify.needsTectonics', { min: MIN_TECTONIC_EPOCHS, current: lastEpoch })
+    // Everything past Erosion, rather than the four panels named one by one: the
+    // gate is about the two stages the user has to run for themselves. The rest
+    // compute on entry, so they gate on what they are all derived from — and a
+    // panel added after this one is covered without anyone remembering to.
+    if (index > erosionPanel && erosionRunCount < 1) return t('worldgen.notify.needsErosion')
     return null
   }
   // Grey out (but keep clickable, so a click can explain why) the next arrow when
@@ -4009,74 +4034,66 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     nextArrow.classList.toggle('is-disabled', blocked)
     nextArrow.setAttribute('aria-disabled', String(blocked))
   }
-  const showPanel = (index: number): void => {
-    panelIndex = index
-    panels.forEach((panel, i) => {
-      panel.hidden = i !== index
-    })
-    panelTitle.textContent = t(PANEL_TITLE_KEYS[index])
-    // Overlays are toggled from the persistent top bar, not the panel — but the
-    // Climate / Rivers panels are still where their data gets computed. Entering
-    // Climate computes it if stale; entering Rivers ensures a climate first (the
-    // worker caches its precipitation as the river source — posting climate then
-    // hydrology keeps that order), then computes rivers if stale.
-    // Leaving Genesis for Tectonics is what ENDS the Archean: plate tectonics
-    // begins, seeds are placed on the convection cells, and the rafts/ages/mantle
-    // carry over (finalizeArchean). Stopping the Archean is only ever a pause; this
-    // is the commit, and the Genesis panel's reset button is the way back.
-    if (index === TECTONICS_PANEL_INDEX && lastArcheanEpochs > 0 && !archeanFinalised) {
-      archeanFinalised = true
-      // This IS the hand-over: the worker keeps a snapshot of it, so from here on
-      // tectonics can be rewound to this moment.
-      hasHandover = true
-      postToWorker({ type: 'genesisStop' })
-      postToWorker({ type: 'genesisFinalize' })
-      setArcheanRunning(false)
-      // Plate outlines and continent names unblock here — this is where plates and
-      // continents start existing.
-      updateOverlays()
-    }
+  // The data panels are where their own step gets computed, so entering one asks
+  // for whatever is missing. Deliberately NOT derived from the chain's dependsOn,
+  // even though it looks like it should be: the order matters (the pipeline caches
+  // precipitation as the river source, so climate must be posted before hydrology)
+  // and Ecology's branch is a continuation rather than a request — when hydrology
+  // has to be recomputed, ecology follows once it lands (see handleHydrologyData)
+  // instead of being asked for twice. A generic loop would lose both, and there is
+  // no harness on this side to notice. See docs/design/generator-pipeline.md.
+  const ensureDataFor = (index: number): void => {
     if (index === CLIMATE_PANEL_INDEX && lastTemperature === null) requestClimate()
     if (index === HYDROLOGY_PANEL_INDEX) {
       if (lastTemperature === null) requestClimate()
       if (lastRiverData === null) requestHydrology()
     }
-    // Entering Ecology ensures climate + hydrology first (its fields read both —
-    // productivity/biomes from climate, fish freshwater from rivers/lakes). If
-    // hydrology is stale it's posted here and ecology is triggered once it lands
-    // (see handleHydrologyData); otherwise ecology is computed directly.
+    // Ecology reads both — productivity/biomes from climate, fish freshwater from
+    // rivers and lakes.
     if (index === ECOLOGY_PANEL_INDEX) {
       if (lastTemperature === null) requestClimate()
       if (lastRiverData === null) requestHydrology()
       else if (!hasEcologyData()) requestEcology()
     }
-    // Entering Migration ensures the whole upstream chain (climate → hydrology →
-    // ecology), auto-places origins the first time, then computes the migration.
+    // Migration ensures the whole upstream chain, auto-places origins the first
+    // time, then computes.
     if (index === MIGRATION_PANEL_INDEX && lastMigration === null) void ensureMigration()
+  }
+
+  // Show a panel. It navigates, asks for the data that panel needs, and sets the
+  // overlay defaults for it — and since 2026-08-09 it does NOT commit anything:
+  // the Archean hand-over moved to the gesture that means it (see commitGenesis).
+  const showPanel = (index: number): void => {
+    panelIndex = index
+    panels.forEach((panel, i) => {
+      panel.hidden = i !== index
+    })
+    panelTitle.textContent = t(PANEL_TITLES[PANEL_STAGES[index]])
+    ensureDataFor(index)
     // The terrain colour wash is panel-contextual: on for the shaping panels
     // (Genesis/Tectonics/Erosion), off for the neutral data panels (Climate/
     // Rivers). Still toggleable in the bar within a panel; resets on switch.
     overlaysOn.terrain = index < CLIMATE_PANEL_INDEX
     // The mantle overlay is on for Genesis/Tectonics (where you watch the plates
     // drive), off from the Erosion panel (index 2) onward. Same per-panel reset.
-    overlaysOn.mantle = index < 2
+    overlaysOn.mantle = index < panelIndexOf('erosion')
     // Volcanism follows the mantle: both are the tectonic phase's story, and neither
     // exists during Genesis (the Archean produces no features and no plumes).
     overlaysOn.volcanoes = index === TECTONICS_PANEL_INDEX
     // Plumes follow the mantle field into Genesis, because the Archean now has them
     // too — and there they are worth more than in the tectonic phase: they mark where
     // crust is about to nucleate, before anything is visible on the map.
-    overlaysOn.hotspots = index < 2
+    overlaysOn.hotspots = index < panelIndexOf('erosion')
     // Craton age is on in Genesis only. There it is the point of the phase — the
     // coastline alone cannot show that a continent grew by welding young crust onto
     // an old core. From the Tectonics panel on, the same map has to carry plates,
     // boundaries and names, so this stays available in the bar but off by default.
-    overlaysOn.cratonAge = index === 0
+    overlaysOn.cratonAge = index === panelIndexOf('genesis')
     // The narration band belongs to Genesis. It describes what the Archean is doing
     // right now ("cratons are forming and still moving"), which stops being true the
     // moment the phase is handed over — and it was previously only ever shown, never
     // hidden, so the last Archean sentence stayed on screen for the rest of the run.
-    const genesis = index === 0
+    const genesis = index === panelIndexOf('genesis')
     worldBanner.hidden = !genesis || worldHintEl.textContent === ''
     panels[0].classList.toggle('has-banner', !worldBanner.hidden)
     // Temperature comes on when you enter the Climate panel — the same reasoning as
@@ -4129,6 +4146,33 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
     ctx.goTo('title')
   })
+  // LEAVING GENESIS FORWARD IS WHAT ENDS THE ARCHEAN: plate tectonics begins, seeds
+  // are placed on the convection cells, and the rafts/ages/mantle carry over
+  // (finalizeArchean). Stopping the Archean is only ever a pause; this is the
+  // commit, and the Genesis panel's reset button is the way back.
+  //
+  // It used to live inside showPanel, which made a VIEW function the thing that
+  // performed an irreversible step — so every path that merely displayed the
+  // Tectonics panel ran it, including stepping BACK to it from Erosion and any
+  // future caller that just wanted to show a panel. It ran on those paths only
+  // harmlessly, and only because a flag happened to be set by then; that flag
+  // carrying two meanings is what broke loading a world earlier today.
+  //
+  // Now it hangs off the gesture that means it: pressing forward out of Genesis.
+  const commitGenesis = (): void => {
+    if (lastArcheanEpochs <= 0 || archeanFinalised) return
+    archeanFinalised = true
+    // This IS the hand-over: the worker keeps a snapshot of it, so from here on
+    // tectonics can be rewound to this moment.
+    hasHandover = true
+    postToWorker({ type: 'genesisStop' })
+    postToWorker({ type: 'genesisFinalize' })
+    setArcheanRunning(false)
+    // Plate outlines and continent names unblock here — this is where plates and
+    // continents start existing.
+    updateOverlays()
+  }
+
   nextArrow.addEventListener('click', () => {
     if (panelIndex >= panels.length - 1) return
     const target = panelIndex + 1
@@ -4137,6 +4181,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       ctx.notifications.show({ message: reason, icon: '/icons/erosion.png', durationMs: 4000 })
       return
     }
+    if (PANEL_STAGES[panelIndex] === 'genesis') commitGenesis()
     showPanel(target)
   })
 

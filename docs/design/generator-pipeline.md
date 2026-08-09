@@ -3,7 +3,7 @@ summary: The generator's runtime pipeline — its state is already stage-shaped 
   declared, which is why invalidation is a set of hand-written rules. The target is the
   chain as data; this records the design, the reset taxonomy and the staged path there.
 date: 2026-08-09
-status: direction agreed, implementation staged — steps 1-4 built 2026-08-09; step 5 open
+status: implemented — all five steps built 2026-08-09
 ---
 
 # The generator pipeline: the chain as data
@@ -186,7 +186,7 @@ order, not thoroughness.
 | 3c | **Derive invalidation from the chain. BUILT 2026-08-09.** Both sides — the pipeline and WorldGenScreen — read `downstreamOf()`; the hand-written cascades are gone, and a stage that cannot run says so. | step 2, extended with the refusal contract |
 | 3d | **`resetStage(id)` in both gestures. BUILT 2026-08-09.** One reset message for all seven stages, one table-driven input reset on the screen, and every message named after its stage. | step 2, plus a coverage check over the message contract |
 | 4 | **The unsaved-changes indicator. BUILT 2026-08-09.** A badge on the save button, driven by a derived world signature; `readSpec` lost its third copy of the control↔declaration map. Full spec ownership (one-way flow) turned out not to be needed for it. | `tsc`, a click-through |
-| 5 | **Untangle `showPanel`** — navigation must not commit. | step 2 |
+| 5 | **Untangle `showPanel`. BUILT 2026-08-09.** The Archean hand-over moved out of the view function onto the gesture that means it; panels declare their stage and the chain gives their order. | `tsc`, a click-through |
 
 Steps 1 and 3a–3c change no behaviour by construction. Step 3d does (that is the
 point), and step 4 needs an i18n key for the indicator, to be proposed before it is
@@ -415,6 +415,38 @@ path to input element — the control↔declaration correspondence written out f
 third time, after the markup and the reset. `WORLD_SPEC_FIELDS` already names the
 `InputParam`, and 3d's binding knows the element that param produced, so the map
 is gone.
+
+### 5: the panels were the stages all along
+
+`showPanel` did four things: navigate, **commit**, request data, and set overlay
+defaults. The commit was the one that did not belong — leaving Genesis forward ends
+the Archean irreversibly, and that was performed by a *view* function, so every
+path that merely displayed the Tectonics panel ran it. Stepping back to Tectonics
+from Erosion ran it too, and was harmless only because a flag happened to be set by
+then; that flag carrying two meanings is what broke loading a world earlier the
+same day. It now hangs off pressing forward out of Genesis, named `commitGenesis`.
+
+**The panel order was arithmetic.** `index === 2`, `index < CLIMATE_PANEL_INDEX`,
+five hand-set index constants and a title list whose order had to be kept in step
+by hand. The panels ARE the stages, in the chain's order — so the order comes from
+`STAGES`, each panel names its stage in the markup (`data-stage`), the panels are
+looked up by that rather than taken in document order, and the titles are a
+`Record<StageId, TKey>`, which makes a stage added to the chain a compile error
+here instead of a panel that silently shifts by one.
+
+**The entry gate got shorter and more general.** "Climate or hydrology or ecology
+or migration needs an erosion pass" became "anything past Erosion needs one" — the
+gate is about the two stages the user has to run for themselves, and a panel added
+after Erosion is covered without anyone remembering.
+
+**What was deliberately NOT derived:** the ensure-on-entry chain. It looks like
+`dependsOn` and is not: the order is load-bearing (the pipeline caches
+precipitation as the river source, so climate must be posted before hydrology) and
+Ecology's branch is a continuation rather than a request — when hydrology has to be
+recomputed, ecology follows once it lands rather than being asked for twice. A
+generic loop would lose both, and there is no harness on this side to notice. It is
+extracted and named (`ensureDataFor`) so the three remaining jobs of `showPanel`
+read as three, but the knowledge stays written out.
 
 ## Parked, deliberately
 
