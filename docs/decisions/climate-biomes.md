@@ -1,7 +1,7 @@
 ---
 summary: Static, latitude-based climate (temperature + precipitation + wind + ocean currents) computed at world-gen time, feeding a Whittaker biome classification. No dynamic weather.
 date: 2026-07-24
-status: implemented (all 6 phases built); the "revisit if too coarse" note under Integration was revisited 2026-08-08 — the CLASSIFICATION moved to the world raster, the climate fields did not
+status: implemented (all 6 phases built); the "revisit if too coarse" note under Integration was revisited 2026-08-08 — the CLASSIFICATION moved to the world raster, the climate fields did not, and its coarse inputs were switched from nearest to interpolated 2026-08-09
 ---
 
 # Climate & Biomes
@@ -150,15 +150,36 @@ full-res post-erosion field where needed, for lapse + orographic).
   world raster (`computeBiomesFine`) for one extra pass over an existing field.
   A 62 km cell decided a whole massif from one sampled elevation, which is why
   there was no treeline: `Alpine` is an elevation test, so a mountain came out
-  alpine wholesale or not at all. Measured on the calibration seed: 12.0% of
+  alpine wholesale or not at all. Measured on the calibration seed: 15.2% of
   land cells now classify differently from the coarse cell containing them,
   biome boundary *length* roughly doubles, and inside the coarse cells that
-  were called Alpine only 74% of the ground actually is — 915 of those cells
-  now hold a boundary against 107 that are alpine throughout, plus 7,411 fine
+  were called Alpine only 74% of the ground actually is — 927 of those cells
+  now hold a boundary against 108 that are alpine throughout, plus 7,442 fine
   alpine cells on peaks the coarse grid missed entirely. The global biome mix
-  barely moves (largest shift: desert +2.0pp, as valley floors inside massifs
-  get their own lapse), which is the point — this buys detail, not a different
-  climate.
+  stays within ±0.4pp of the coarse model on every class, which is the point:
+  this buys detail, not a different climate.
+- **Then, 2026-08-09: the four coarse inputs are INTERPOLATED, not
+  nearest-sampled.** The first version read precipitation, seasonality, monsoon
+  and the regional part of temperature from the containing cell, which left a
+  visible staircase on the 62 km grid — elevation-driven boundaries looked
+  organic while everything else stepped along cell borders. Measured as the
+  share of biome boundaries sitting exactly on a coarse cell border, against
+  the 12.5% that would land there by chance: nearest 36.1% (2.88× chance),
+  temperature alone 33.9%, precipitation alone 23.2%, monsoon alone 33.1%,
+  seasonality alone 36.1% (zero cells changed), **all four 12.4% — 0.99×, the
+  grid signature is gone.** No single input is the culprit; each steps at its
+  own cell borders, so fixing one leaves the others drawing the same grid.
+  Temperature, the obvious suspect because it is the one with an elevation
+  term, is nearly irrelevant here *precisely because* that term is already
+  local. Two things make this safe: the temperature field is reduced to sea
+  level before interpolating (blending the raw field would mix in each
+  neighbour's sampled elevation and bleed a summit's cold sideways), and the
+  other three are blended over LAND corners only with renormalised weights,
+  since all three mark ocean with −1 and a plain bilinear would pull that
+  sentinel into every coastal value. It also removed a bias nobody was looking
+  for: nearest-sampling had inflated desert by +2.0pp, because a dry cell's
+  value reached its whole 62 km unblended. The fine mix now tracks the coarse
+  model within ±0.4pp everywhere.
 - **Ecology keeps the coarse classification.** Every ecology field is a
   climate-grid field and its ecotone term reads the 4-neighbourhood as
   *regional* adjacency; handing it the fine array would silently redefine

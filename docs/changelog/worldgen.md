@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-08-09
+- **fixed** Climate: biome boundaries no longer step along the 62 km climate grid — the classification interpolates its climate inputs instead of taking the containing cell's. `world.overlay.biomes`
+
 ## 2026-08-08
 - **changed** Climate: biomes are classified per map cell instead of per 62 km climate cell, so mountains get a treeline and salt flats keep their real outline. `world.overlay.biomes`
 - **changed** Hydrology: channels now form on steep ground at smaller catchments, so mountains carry rivers instead of almost none. `worldgen.panel.hydrology`

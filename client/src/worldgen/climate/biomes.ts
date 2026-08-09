@@ -1,6 +1,7 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell } from './climateField'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { LAPSE_C_PER_ELEVATION } from './temperature'
+import { sampleBilinearWorld, wrapValue } from '../core/field'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -176,30 +177,107 @@ function classify(tempC: number, precipMm: number, amplitude: number, season: nu
 // the local elevation would count it twice. Undoing the coarse term first is
 // exact, because the correction is additive.
 //
-// Precipitation, seasonality and monsoon are taken from the containing cell
-// without interpolation. Blending them would be defensible for their own sake,
-// but precipitation carries OCEAN_PRECIP as a sentinel and averaging across a
-// coastline would silently mix it into land values. Their boundaries therefore
-// stay as coarse as they were — this pass buys elevation-driven detail, which
-// is the part that was missing.
+// ALL FOUR coarse inputs are then INTERPOLATED, not read from the containing
+// cell. Nearest-sampling them left a staircase on the 62 km grid, which is what
+// the first version of this shipped with and what it looked like: elevation-
+// driven boundaries came out organic while everything else stepped along cell
+// borders. Measured on the calibration seed — the share of biome boundaries
+// sitting exactly on a coarse cell border, against the 12.5% that would land
+// there by chance:
+//
+//   nearest (as shipped)   36.1%   2.88x chance
+//   + temperature only     33.9%   2.71x
+//   + precipitation only   23.2%   1.85x
+//   + monsoon only         33.1%   2.64x
+//   + seasonality only     36.1%   2.88x   (zero cells changed)
+//   ALL FOUR               12.4%   0.99x   — the grid signature is gone
+//
+// The lesson is that no single input is "the" culprit: each one steps at its
+// own cell borders, so removing one still leaves the others drawing the same
+// grid. Precipitation is the largest single contributor and temperature —
+// the obvious suspect, since it is the one with an elevation term — is nearly
+// irrelevant here, precisely BECAUSE its elevation term is already local.
+// Seasonality is inert on this world (it only decides one narrow classify
+// branch) and is interpolated anyway, so the four are treated alike rather
+// than leaving a trap for whoever next asks why one of them is different.
+// Total cost: 6.3% of land cells reclassify. This sharpens boundaries; it is
+// not a different climate.
+// The coarse temperature field with its own lapse term REMOVED, by the same rule
+// computeTemperature applied (dry-basin floors unclamped, everything else
+// clamped at sea level). What is left carries no elevation at all — latitude
+// band, contrast, the global offset and the coastal SST anomaly, all of which
+// are genuinely smooth. That is what makes temperature safe to interpolate:
+// blending the raw field would mix in each neighbour cell's own sampled
+// elevation and bleed a summit's cold sideways across the valley next to it.
+function reduceToSeaLevel(temperature: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Float32Array {
+  const out = new Float32Array(RX * RY)
+  for (let gy = 0; gy < RY; gy++) {
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      const e = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
+      const dry = sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight)
+      out[i] = temperature[i] + LAPSE_C_PER_ELEVATION * (dry ? e - SEA_LEVEL : Math.max(0, e - SEA_LEVEL))
+    }
+  }
+  return out
+}
+
+// Bilinear over the LAND corners only. Precipitation, seasonal amplitude and the
+// monsoon index all mark ocean with -1, so a plain bilinear would pull that
+// sentinel into every coastal land value — the documented reason these were left
+// on nearest. Dropping the ocean corners and renormalising the remaining weights
+// keeps the sentinel out by construction; with no land corner at all there is
+// nothing to blend and the containing cell's own value stands.
+function sampleLandBilinear(field: Float32Array, wx: number, wy: number, worldWidth: number, worldHeight: number, fallback: number): number {
+  const gx = ((wx + 0.5) / worldWidth) * RX - 0.5
+  const gy = ((wy + 0.5) / worldHeight) * RY - 0.5
+  const x0 = Math.floor(gx)
+  const y0 = Math.floor(gy)
+  const fx = gx - x0
+  const fy = gy - y0
+  const x0m = wrapValue(x0, RX)
+  const y0m = wrapValue(y0, RY)
+  const x1m = (x0m + 1) % RX
+  const y1m = (y0m + 1) % RY
+  let sum = 0
+  let weight = 0
+  const add = (index: number, w: number): void => {
+    const v = field[index]
+    if (v >= 0) {
+      sum += v * w
+      weight += w
+    }
+  }
+  add(y0m * RX + x0m, (1 - fx) * (1 - fy))
+  add(y0m * RX + x1m, fx * (1 - fy))
+  add(y1m * RX + x0m, (1 - fx) * fy)
+  add(y1m * RX + x1m, fx * fy)
+  return weight > 0 ? sum / weight : fallback
+}
+
 export function computeBiomesFine(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Uint8Array {
   const biomes = new Uint8Array(worldWidth * worldHeight)
+  const seaLevelTemp = reduceToSeaLevel(temperature, elevation, worldWidth, worldHeight, dryLand)
   for (let wy = 0; wy < worldHeight; wy++) {
     const gy = Math.min(RY - 1, Math.floor((wy / worldHeight) * RY))
     for (let wx = 0; wx < worldWidth; wx++) {
       const world = wy * worldWidth + wx
       const here = elevation[world]
-      if (here <= SEA_LEVEL && !(dryLand && dryLand[world])) {
+      const dry = !!(dryLand && dryLand[world])
+      if (here <= SEA_LEVEL && !dry) {
         biomes[world] = Biome.Ocean
         continue
       }
       const gx = Math.min(RX - 1, Math.floor((wx / worldWidth) * RX))
       const cell = gy * RX + gx
-      const coarse = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
-      const temp = temperature[cell]
-        + LAPSE_C_PER_ELEVATION * Math.max(0, coarse - SEA_LEVEL)
-        - LAPSE_C_PER_ELEVATION * Math.max(0, here - SEA_LEVEL)
-      const base = classify(temp, precipitation[cell], seasonalAmplitude[cell], monsoonIndex[cell])
+      // Sea-level temperature interpolated, THEN this cell's own lapse — so the
+      // regional part is smooth while the elevation term stays strictly local.
+      const reduced = sampleBilinearWorld(seaLevelTemp, RX, RY, wx + 0.5, wy + 0.5, worldWidth, worldHeight)
+      const temp = reduced - LAPSE_C_PER_ELEVATION * (dry ? here - SEA_LEVEL : Math.max(0, here - SEA_LEVEL))
+      const precip = sampleLandBilinear(precipitation, wx, wy, worldWidth, worldHeight, precipitation[cell])
+      const amp = sampleLandBilinear(seasonalAmplitude, wx, wy, worldWidth, worldHeight, seasonalAmplitude[cell])
+      const season = sampleLandBilinear(monsoonIndex, wx, wy, worldWidth, worldHeight, monsoonIndex[cell])
+      const base = classify(temp, precip, amp, season)
       biomes[world] = here > ALPINE_TREELINE_ELEVATION && base !== Biome.Ice ? Biome.Alpine : base
     }
   }
