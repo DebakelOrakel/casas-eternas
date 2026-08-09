@@ -660,6 +660,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // doesn't finalise a world that is already past that point. Cleared by a
   // regenerate or an Archean reset.
   let archeanFinalised = false
+  // Whether a HAND-OVER exists to go back to — mirrors the worker's
+  // `handoverSnapshot`. Kept apart from `archeanFinalised` because that flag was
+  // carrying two meanings at once: "the Archean is over, plates exist" (which the
+  // overlays and the commit guard ask) and "this world was grown here, so
+  // tectonics can be rewound" (which only the reset button asks). A loaded
+  // tectonic world answers YES to the first and NO to the second, so one boolean
+  // could not be right for both.
+  let hasHandover = false
   // Any worker computation in flight: tectonics ticking, an erosion pass, or a
   // climate/hydrology compute. While busy, ALL bottom-panel controls are disabled
   // except the ACTIVE process's stop button (the only allowed action).
@@ -2597,6 +2605,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     setArcheanRunning(false)
     lastArcheanEpochs = 0
     archeanFinalised = false
+    hasHandover = false
   })
 
   // The three-stage progress indicator. The stabilised fraction is the one quantity
@@ -3398,7 +3407,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // used to hold a second copy of this under spec. An Archean save reopens IN the
     // Archean, so the tectonics panel must still be able to finalise it.
     lastArcheanEpochs = archeanPayload ? (archeanPayload.snapshot as { epoch: number }).epoch : (snapshot?.archeanEpochs ?? 0)
-    if (archeanPayload) archeanFinalised = false
+    // A save WITH an Archean payload reopens inside the Archean, so the Tectonics
+    // panel must still be able to commit it. A save without one is already past
+    // that point — and saying so is what stops the panel from trying to commit an
+    // Archean that ended before this file was written.
+    archeanFinalised = !archeanPayload
+    // A file carries the world as it stood, never the hand-over behind it — so
+    // there is nothing for the tectonics reset to rewind to, whichever phase the
+    // save is in.
+    hasHandover = false
     setArcheanRunning(false)
     tempBandInput.value = String(spec.values['climate.tempOffset'])
     humidityInput.value = String(spec.values['climate.humidity'])
@@ -3741,6 +3758,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     worldUid = ''
     worldRevision = 0
     archeanFinalised = false
+    hasHandover = false
     initArchean(seedInput.value, Number(mantleVigourInput.value), Number(waterInput.value))
     updateNavState() // fresh world → re-lock downstream panels
   }
@@ -3765,7 +3783,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // world as it stood, not the state tectonics started from. Say so rather than
     // letting the button look broken; a control that silently does nothing is the
     // same defect the Genesis save button had.
-    if (!archeanFinalised) {
+    if (!hasHandover) {
       ctx.notifications.show({ message: 'Nothing to reset to — this world was loaded, not generated here', icon: '/icons/reset.png', durationMs: 5000 })
       return
     }
@@ -3848,6 +3866,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // is the commit, and the Genesis panel's reset button is the way back.
     if (index === TECTONICS_PANEL_INDEX && lastArcheanEpochs > 0 && !archeanFinalised) {
       archeanFinalised = true
+      // This IS the hand-over: the worker keeps a snapshot of it, so from here on
+      // tectonics can be rewound to this moment.
+      hasHandover = true
       postToWorker({ type: 'archeanStop' })
       postToWorker({ type: 'archeanFinalize' })
       setArcheanRunning(false)

@@ -1343,6 +1343,14 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
     void renderArcheanAndPost()
     return
   }
+  // A restored TECTONIC world has no Archean any more — and leaving the previous
+  // one standing was a real fault, not tidiness. The Archean branch above clears
+  // `sim`; this branch did not clear `archean`, so a session that had run a
+  // Genesis before loading kept it. Entering the Tectonics panel then sent
+  // `archeanFinalize`, which found that leftover and replaced the world the user
+  // had just opened with it. It only ever happened after a Genesis run in the
+  // same session, which is why it looked intermittent.
+  archean = null
   sim = deserializePlateSimulation(message.snapshot, new Float32Array(message.oceanAge), message.mantle ? new Float32Array(message.mantle) : undefined)
   // Restored after construction rather than through the constructor: the arrays are
   // sized from the lattice the deserializer just built, so a save from a different
