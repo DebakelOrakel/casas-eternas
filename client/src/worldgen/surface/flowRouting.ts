@@ -395,7 +395,7 @@ function computeMfdEdges(filled: Float32Array, width: number, height: number, bo
 
 // `bounded = true` treats the grid as a plain rectangle instead of a torus —
 // neighbors clamp at the edges and the border ring is seeded as a drain. Used
-// by the micro-tile prototype (tileErosion.ts); every existing global caller
+// by the micro-tile prototype (removed 2026-08-09); every existing global caller
 // keeps the torus default and identical behavior.
 export async function fillDepressionsAndRouteFlow(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void, bounded = false): Promise<FlowRouting> {
   const { filled, popOrder, poppedCount } = await fillDepressions(raw, width, height, seaLevel, onProgress, bounded)

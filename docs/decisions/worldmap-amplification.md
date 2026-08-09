@@ -20,7 +20,7 @@ has to lead somewhere.
    save, upsample the 2048×1024 elevation raster to **8192×4096**
    (~1.95 km/cell), inject deterministic seed roughness (bilinear
    upsampling alone is too smooth for erosion to carve — the
-   `tileErosion` micro-tile learned this first), and run a small number
+   micro-tile prototype learned this first, before it was removed), and run a small number
    of real erosion passes in a worker. One-time per load, fully
    deterministic (same world + params → identical result every time).
 2. **Hydrology re-runs on the amplified field.** Rivers and lakes are

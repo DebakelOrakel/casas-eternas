@@ -7,6 +7,7 @@ import type { ElevationRenderer } from '../render/elevationRenderPool'
 import { downstreamOf } from './stages'
 import type { StageId } from './stages'
 import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass } from '../surface/erosion'
+import { fillDepressionsAndRouteFlow } from '../surface/flowRouting'
 import type { ArcheanSimulation } from '../archean/archeanState'
 import { createArcheanSimulation } from '../archean/archeanState'
 import { deserializeArchean, serializeArchean } from '../archean/archeanSnapshot'
@@ -16,16 +17,11 @@ import { convectionCellSeeds, finalizeArchean } from '../archean/finalizeArchean
 import { findPlumeSites } from '../tectonics/plumes'
 import { stabilisedFraction } from '../crust/raftField'
 import { worldAgeMa } from '../core/worldTime'
-import { accumulateFlow, fillDepressionsAndRouteFlow } from '../surface/flowRouting'
-import { MICRO_TILE_EXTENT_MACRO, MICRO_TILE_FACTOR, buildTileElevation, buildTileInflow, burnMacroTrunks, pickLargestRiverMouth, runTileErosion, scaleErosionParamsForTile } from '../surface/tileErosion'
-import { growDelta, pickDeltaEntry } from '../surface/deltaGrowth'
-import { renderMicroTileImage } from '../render/microTileImage'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from '../tectonics/oceanAge'
 import type { ErosionPassParams } from '../surface/erosion'
 import type { FlowRouting } from '../surface/flowRouting'
 import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
-import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeTemperature } from '../climate/temperature'
 import { computeWind } from '../climate/wind'
@@ -39,7 +35,7 @@ import { computeEcology } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
-import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerErosionProgressMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from './messages'
+import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerErosionProgressMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
 // tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
@@ -491,23 +487,6 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
   // Keep the pre-fill (basins-intact) terrain for the hydrology's lakes — set
   // after renderAndPost, which clears it. See lastLakeBasinElevations.
   lastLakeBasinElevations = erosionResult.preFillElevations
-  postDeltaMask(rawElevations, erosionResult.elevations)
-}
-
-// Was under water before this pass and is measurably higher after it. The 10 m floor
-// keeps out numerical dust (it also used to filter runThermalErosion's coastal talus
-// spill, but thermal is land-only since 2026-08-06 — see its own comment), so what
-// remains is deposition. rawElevations is safe to read: runErosionPass copies it
-// before touching anything.
-const DELTA_MARK_MIN_M = 10
-function postDeltaMask(raw: Float32Array, eroded: Float32Array): void {
-  const threshold = metersToElevation(DELTA_MARK_MIN_M)
-  const mask = new Uint8Array(raw.length)
-  for (let i = 0; i < raw.length; i++) {
-    if (raw[i] <= SEA_LEVEL && eroded[i] - raw[i] > threshold) mask[i] = 1
-  }
-  const message: WorkerDeltaMaskMessage = { type: 'deltaMask', mask: mask.buffer as ArrayBuffer }
-  emit(message, [message.mask])
 }
 
 function stopTicking(): void {
@@ -584,87 +563,6 @@ function handleErosionStart(message: Extract<WorkerInboundMessage, { type: 'eros
 function handleErosionStop(): void {
   // The in-flight runErosionPass polls this and returns its partial result.
   erosionStopRequested = true
-}
-
-// The micro-tile debug inspector (see WorkerComputeMicroTileMessage). Runs on
-// whatever terrain is currently shown (lastRawElevations — post-erosion if an
-// erode ran), inherits the macro erosion's carving as a correction against
-// preErosionElevations, and guards with renderInFlight like 'erosionStart' so the two
-// long-running requests can't interleave. Purely derived output: no worker
-// state changes, nothing invalidated.
-function handleComputeMicroTile(): void {
-  const postProgress = (fraction: number): void => {
-    const progress: WorkerMicroTileProgressMessage = { type: 'microTileProgress', fraction }
-    emit(progress)
-  }
-  if (!sim || !lastRawElevations || renderInFlight) {
-    postProgress(-1)
-    return
-  }
-  const currentSim = sim
-  const macroElevations = lastRawElevations
-  renderInFlight = true
-  ;(async () => {
-    const { width, height } = currentSim
-    postProgress(0)
-    // Fresh macro routing on the current terrain — plain cell-count
-    // accumulation (what the erosion thresholds are calibrated in), NOT the
-    // hydrology cache's precipitation-weighted discharge.
-    const macroRouting = await fillDepressionsAndRouteFlow(macroElevations, width, height, SEA_LEVEL)
-    const macroAccumulation = accumulateFlow(macroRouting)
-    postProgress(0.2)
-    const mouth = pickLargestRiverMouth(macroElevations, macroAccumulation, width, height)
-    if (!mouth) {
-      postProgress(-1)
-      return
-    }
-    const spec = { x0: mouth.x - MICRO_TILE_EXTENT_MACRO / 2, y0: mouth.y - MICRO_TILE_EXTENT_MACRO / 2, extentMacro: MICRO_TILE_EXTENT_MACRO, factor: MICRO_TILE_FACTOR }
-    const n = spec.extentMacro * spec.factor
-    // Macro erosion's carving, inherited as a low-frequency correction. Same
-    // object means no erosion has run yet — the correction is simply zero.
-    const macroDelta = preErosionElevations && preErosionElevations !== macroElevations
-      ? (() => {
-          const diff = new Float32Array(width * height)
-          for (let i = 0; i < diff.length; i++) diff[i] = macroElevations[i] - preErosionElevations![i]
-          return { field: diff, width, height }
-        })()
-      : undefined
-    const world = { width, height, rafts: currentSim.rafts, features: currentSim.features, oceanAge: currentSim.oceanAge, warpSeed: currentSim.warpSeed, seaLevelOffset: currentSim.seaLevelOffset }
-    const envelope = buildTileElevation(world, spec, macroDelta)
-    burnMacroTrunks(envelope, spec, macroElevations, macroAccumulation, width, height)
-    const inflow = buildTileInflow(spec, macroRouting.flowTarget, macroAccumulation, width, height)
-    const params = scaleErosionParamsForTile(DEFAULT_EROSION_PASS_PARAMS, spec.factor)
-    const tile = await runTileErosion(envelope, n, params, inflow, (round, rounds) => postProgress(0.2 + 0.7 * (round / rounds)))
-    // Delta growth (deltaGrowth.ts): the fan-building pass on top of the
-    // eroded tile, then a routing re-derivation so the river tint traces the
-    // channels the walkers kept open between the grown bars. Seed fixed per
-    // world — same tile, same fan.
-    const entry = pickDeltaEntry(tile.elevations, tile.accumulation, n)
-    let tileAccumulation = tile.accumulation
-    if (entry) {
-      growDelta(tile.elevations, envelope, n, { x: entry.x, y: entry.y }, { x: entry.headingX, y: entry.headingY }, (currentSim.warpSeed ^ 0x5eedde17) >>> 0)
-      postProgress(0.95)
-      const grownRouting = await fillDepressionsAndRouteFlow(tile.elevations, n, n, SEA_LEVEL, undefined, true)
-      tileAccumulation = accumulateFlow(grownRouting, inflow)
-    }
-    // River tint threshold: the same 60-macro-cell drainage the map's own
-    // river extraction regards as a stream, in fine-cell units.
-    const rgba = renderMicroTileImage(tile.elevations, tileAccumulation, n, spec.factor, 60 * spec.factor * spec.factor)
-    const message: WorkerMicroTileDataMessage = {
-      type: 'microTileData',
-      buffer: rgba.buffer as ArrayBuffer,
-      n,
-      x0: spec.x0,
-      y0: spec.y0,
-      extentMacro: spec.extentMacro,
-      factor: spec.factor,
-      mouthX: mouth.x,
-      mouthY: mouth.y,
-    }
-    emit(message, [message.buffer])
-  })().finally(() => {
-    renderInFlight = false
-  })
 }
 
 function resetErosion(): void {
@@ -1173,7 +1071,6 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   erosionStart: (m) => handleErosionStart(m as Extract<WorkerInboundMessage, { type: 'erosionStart' }>),
   erosionStop: () => handleErosionStop(),
   resetStage: (m) => handleResetStage(m as Extract<WorkerInboundMessage, { type: 'resetStage' }>),
-  computeMicroTile: () => handleComputeMicroTile(),
   requestElevationField: () => handleRequestElevationField(),
   climateRun: (m) => handleClimateRun(m as Extract<WorkerInboundMessage, { type: 'climateRun' }>),
   hydrologyRun: (m) => handleHydrologyRun(m as Extract<WorkerInboundMessage, { type: 'hydrologyRun' }>),

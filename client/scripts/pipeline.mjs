@@ -102,6 +102,11 @@ async function freshPipeline() {
     },
     messages,
     count: (type) => messages.filter((m) => m.type === type).length,
+    // An erosion pass redraws once per round (those carry `intermediate`) and once
+    // at the end (that one does not) — so a settled render is how a pass says it is
+    // done. This used to watch for the `deltaMask` debug message, which was removed
+    // with the delta marker on 2026-08-09.
+    settledRenders: () => messages.filter((m) => m.type === 'rendered' && !m.intermediate).length,
     last: (type) => messages.filter((m) => m.type === type).at(-1),
     types: () => messages.map((m) => m.type),
   }
@@ -385,8 +390,9 @@ test('REGRESSION: resetTectonics on a loaded world is a no-op', async () => {
 test('the stages compute, in order, on one world', async () => {
   const p = await freshPipeline()
   await growWorld(p)
+  const settledBefore = p.settledRenders()
   p.dispatch({ type: 'erosionStart', strength: 1, networkRefreshes: 1 })
-  await until(() => p.count('deltaMask') >= 1, { label: 'the erosion pass to finish', timeout: 180000 })
+  await until(() => p.settledRenders() > settledBefore, { label: 'the erosion pass to finish', timeout: 180000 })
 
   p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
@@ -420,8 +426,9 @@ test('INVALIDATION: eroding stales everything downstream, per the declared chain
   const beforeDischarge = hash(p.last('hydrologyData').discharge)
 
   const climateRuns = p.count('climateData')
+  const settledBefore = p.settledRenders()
   p.dispatch({ type: 'erosionStart', strength: 2, networkRefreshes: 1 })
-  await until(() => p.count('deltaMask') >= 1, { label: 'the erosion pass to finish', timeout: 180000 })
+  await until(() => p.settledRenders() > settledBefore, { label: 'the erosion pass to finish', timeout: 180000 })
   check('erosion does not silently recompute the climate', p.count('climateData') === climateRuns)
 
   // The eroded terrain is not the one that climate was computed on, so asking for
@@ -491,10 +498,11 @@ test('erosion can be stopped mid-pass', async () => {
   const p = await freshPipeline()
   await growWorld(p)
   const unEroded = hash(p.last('rendered').elevation)
+  const settledBefore = p.settledRenders()
   p.dispatch({ type: 'erosionStart', strength: 1, networkRefreshes: 1 })
   await until(() => p.count('erosionProgress') >= 1, { label: 'erosion to start', timeout: 180000 })
   p.dispatch({ type: 'erosionStop' })
-  await until(() => p.count('deltaMask') >= 1, { label: 'the partial result', timeout: 180000 })
+  await until(() => p.settledRenders() > settledBefore, { label: 'the partial result', timeout: 180000 })
   check('a stopped pass still delivers what it had', hash(p.last('rendered').elevation) !== unEroded)
 
   const partial = hash(p.last('rendered').elevation)
@@ -514,7 +522,7 @@ test('every message type is dispatchable from a cold start', async () => {
   const cold = [
     { type: 'tectonicsStop' }, { type: 'tectonicsStart' }, { type: 'erosionStop' }, { type: 'resetStage', stage: 'erosion' },
     { type: 'erosionStart', strength: 1, networkRefreshes: 1 },
-    { type: 'computeMicroTile' }, { type: 'requestElevationField' },
+    { type: 'requestElevationField' },
     { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 },
     { type: 'hydrologyRun', riverDensity: RIVER_DENSITY },
     { type: 'ecologyRun' }, { type: 'migrationRun', origins: [] },

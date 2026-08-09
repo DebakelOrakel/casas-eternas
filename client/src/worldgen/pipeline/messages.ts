@@ -59,13 +59,6 @@ export interface WorkerResetStageMessage {
 export interface WorkerErosionStopMessage {
   type: 'erosionStop'
 }
-// Debug inspector: re-simulate a small window around the largest river mouth
-// at fine resolution (surface/tileErosion.ts — the resolution-strategy micro
-// tier's prototype) and reply with a WorkerMicroTileDataMessage. Derived
-// display detail only — nothing about the macro world changes.
-export interface WorkerComputeMicroTileMessage {
-  type: 'computeMicroTile'
-}
 // Requests the climate step (temperature so far) be computed on the current,
 // possibly-eroded elevation — see docs/decisions/climate-biomes.md. Replies
 // with a WorkerClimateDataMessage.
@@ -151,7 +144,6 @@ export type WorkerInboundMessage =
   | WorkerErosionStartMessage
   | WorkerResetStageMessage
   | WorkerErosionStopMessage
-  | WorkerComputeMicroTileMessage
   | WorkerRequestElevationFieldMessage
   | WorkerClimateRunMessage
   | WorkerHydrologyRunMessage
@@ -398,38 +390,6 @@ export interface WorkerHydrologyDataMessage {
   maxDischarge: number
 }
 
-// Debug aid for the erosion panel: which sea-floor cells the erosion pass raised,
-// i.e. where rivers dropped their sediment. Sent after every erode so the map can
-// mark them, because the deltas are ~0.24% of the grid and finding them by eye on a
-// 2048×1024 map is not realistic. Uint8, full-res, 1 = raised.
-export interface WorkerDeltaMaskMessage {
-  type: 'deltaMask'
-  mask: ArrayBuffer
-}
-
-// The finished micro tile: a baked RGBA image (n×n — hypsometric ramp,
-// hillshade, river tint; see render/microTileImage.ts) plus where the window
-// sits in world coordinates, so the viewer can caption it.
-export interface WorkerMicroTileDataMessage {
-  type: 'microTileData'
-  buffer: ArrayBuffer
-  n: number
-  x0: number
-  y0: number
-  extentMacro: number
-  factor: number
-  mouthX: number
-  mouthY: number
-}
-// Coarse progress for the viewer's label — macro routing, then one tick per
-// tile-erosion round. fraction -1 signals an aborted request (another
-// long-running render holds the worker, or the world has no river mouth) so
-// the screen can release its busy state instead of waiting forever.
-export interface WorkerMicroTileProgressMessage {
-  type: 'microTileProgress'
-  fraction: number
-}
-
 // The computed ecology fields (coarse climate grid), keyed by field id so the
 // set can grow per sub-step without changing the message shape. Each is Float32,
 // resX*resY, land only (ECOLOGY_OCEAN sentinel on water). See ecology/ecologyField.ts.
@@ -483,9 +443,6 @@ export type WorkerOutboundMessage =
   | WorkerErosionProgressMessage
   | WorkerClimateDataMessage
   | WorkerHydrologyDataMessage
-  | WorkerDeltaMaskMessage
-  | WorkerMicroTileDataMessage
-  | WorkerMicroTileProgressMessage
   | WorkerEcologyDataMessage
   | WorkerMigrationDataMessage
   | WorkerWorldDataMessage

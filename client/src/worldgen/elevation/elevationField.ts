@@ -91,7 +91,7 @@ export function oceanFloorAtAge(age: number): number {
 
 // The baseline at ONE world point — the per-point body computeRaftBaseline
 // always ran, extracted (2026-08-06) so the micro-tile prototype
-// (surface/tileErosion.ts) can query the baseline at arbitrary FRACTIONAL
+// (removed 2026-08-09) could query the baseline at arbitrary FRACTIONAL
 // world coordinates: the whole pre-erosion pipeline is analytic/vector, so a
 // tile sampled at sub-cell spacing gets genuinely finer terrain, not an
 // upscaled raster. Takes UNWARPED world coords and applies the domain warp

@@ -490,17 +490,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </button>
       ${sliderField(SURFACE_INPUTS.erosionStrength, 'erosion-strength-input', 'erosion-strength-label')}
       ${sliderField(SURFACE_INPUTS.drainageRefresh, 'erosion-refresh-input', 'erosion-refresh-label')}
-      <label class="field">
-        <span class="field-label">Mark deltas</span>
-        <input type="checkbox" class="delta-debug-input" aria-label="Mark cells the erosion pass raised from the sea floor" />
-      </label>
       <label class="field field--icon-row">
         <span class="field-row">
           <button type="button" class="icon-button" data-action="erode" aria-label="${t('worldgen.action.runErosion.label')}" data-help="worldgen.action.runErosion">
             <img src="/icons/erosion_heavy.png" alt="" />
-          </button>
-          <button type="button" class="icon-button" data-action="micro-tile" aria-label="Micro tile: re-simulate the largest river mouth at fine resolution (debug)">
-            <img src="/icons/zoom_on.png" alt="" />
           </button>
           <button type="button" class="text-button" data-action="bake-4" data-help="worldgen.panel.erosion.bake4k">${t('worldgen.panel.erosion.bake4k.label')}</button>
           <button type="button" class="text-button" data-action="bake-8" data-help="worldgen.panel.erosion.bake8k">${t('worldgen.panel.erosion.bake8k.label')}</button>
@@ -551,14 +544,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       ${sliderField(MIGRATION_INPUTS.seaCrossing, 'migration-sea-input', 'migration-sea-label')}
       <span class="ecology-cat-buttons" data-value="migration-races"></span>
     </div>
-    <div class="micro-tile-viewer" data-value="micro-tile-viewer" hidden>
-      <div class="micro-tile-header">
-        <span data-value="micro-tile-title">Micro tile</span>
-        <button type="button" class="icon-button" data-action="micro-tile-close" aria-label="Close micro tile viewer">✕</button>
-      </div>
-      <canvas class="micro-tile-canvas" width="512" height="512"></canvas>
-      <span class="micro-tile-status" data-value="micro-tile-status"></span>
-    </div>
   `
 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
@@ -602,12 +587,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const resetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-sim"]')!
   const toggleSimButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-sim"]')!
   const erodeButton = root.querySelector<HTMLButtonElement>('[data-action="erode"]')!
-  const microTileButton = root.querySelector<HTMLButtonElement>('[data-action="micro-tile"]')!
-  const microTileViewer = root.querySelector<HTMLElement>('[data-value="micro-tile-viewer"]')!
-  const microTileCloseButton = root.querySelector<HTMLButtonElement>('[data-action="micro-tile-close"]')!
-  const microTileCanvas = root.querySelector<HTMLCanvasElement>('.micro-tile-canvas')!
-  const microTileTitle = root.querySelector<HTMLElement>('[data-value="micro-tile-title"]')!
-  const microTileStatus = root.querySelector<HTMLElement>('[data-value="micro-tile-status"]')!
   // Erosion-strength multiplier (scales the fluvial time step — essentially free
   // compute-wise, it just erodes more per step) and drainage-network refresh count
   // (re-derives the river network within a round so channels migrate/capture — costs
@@ -615,15 +594,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const strengthInput = root.querySelector<HTMLInputElement>('.erosion-strength-input')!
   const strengthLabel = root.querySelector<HTMLElement>('[data-value="erosion-strength-label"]')!
   const refreshInput = root.querySelector<HTMLInputElement>('.erosion-refresh-input')!
-  const deltaDebugInput = root.querySelector<HTMLInputElement>('.delta-debug-input')!
-  // Driven straight off the checkbox rather than through OVERLAY_DEFS/toggleOverlay:
-  // it is a debug marker, not a data layer of a pipeline stage, so it has no place in
-  // the overlay bar's grouping — and staying out of applyOverlays means its state
-  // survives every other overlay change untouched.
-  deltaDebugInput.addEventListener('change', () => {
-    overlay.setLayerEnabled('deltas', deltaDebugInput.checked)
-    compositeOverlays()
-  })
   const refreshLabel = root.querySelector<HTMLElement>('[data-value="erosion-refresh-label"]')!
   strengthInput.addEventListener('input', () => { strengthLabel.textContent = strengthInput.value })
   refreshInput.addEventListener('input', () => { refreshLabel.textContent = refreshInput.value })
@@ -727,12 +697,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // panel's own auto-recompute so it doesn't double-fire.
   let saveChainActive = false
   let erosionProgressFraction = 0
-  // The micro-tile inspector shares the worker's renderInFlight mutex with
-  // 'erosionStart' — a request sent while the other runs would be silently dropped
-  // by the worker's guard and this screen would wait forever, so it counts
-  // as busy here too.
-  let microTileInFlight = false
-  const isBusy = (): boolean => tectonicsRunning || erosionOpInFlight || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight || microTileInFlight
+  const isBusy = (): boolean => tectonicsRunning || erosionOpInFlight || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight
 
   // Disable every panel control while a compute runs; the running process keeps its
   // stop button live (tectonics = toggle-sim, erosion = erode, which becomes a stop).
@@ -749,7 +714,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Stop buttons of the active process stay enabled.
     toggleSimButton.disabled = busy && !tectonicsRunning
     erodeButton.disabled = busy && !erosionOpInFlight
-    microTileButton.disabled = busy
     // Genesis inputs (debounced-)regenerate the whole world, so lock them while busy;
     // the erosion/climate/river sliders are left live for tuning (they only affect the
     // next pass, not the one in flight).
@@ -908,9 +872,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // classified from, and the only extra a consumer needs to reclassify them at
   // its own resolution (see the precipitationEffective layer).
   let lastPrecipitationEffective: Float32Array | null = null
-  // Debug only: sea-floor cells the last erosion pass raised (see the erosion panel's
-  // "Mark deltas" box and the worker's postDeltaMask).
-  let lastDeltaMask: Uint8Array | null = null
   // Ecology (resource/suitability) panel — its own step after hydrology. Phase 1:
   // the carrying-capacity field only. null until computed / invalidated.
   const ECOLOGY_PANEL_INDEX = panelIndexOf('ecology')
@@ -1361,17 +1322,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // from below sea level. Deliberately garish and unshaded — the job is "where did the
   // sediment go", and a tasteful tint would disappear against the ocean blue at the
   // very sizes (a handful of cells) that matter most here.
-  function paintDeltas(data: Uint8ClampedArray): void {
-    if (!lastDeltaMask) return
-    for (let i = 0; i < lastDeltaMask.length; i++) {
-      if (!lastDeltaMask[i]) continue
-      const p = i * 4
-      data[p] = 255
-      data[p + 1] = 0
-      data[p + 2] = 200
-    }
-  }
-
   // Layer draw/list order: temperature first (a base tint), names last so labels
   // stay on top (always readable); the climate layers (temperature, wind) are
   // hidden from the overlay bar — toggled from the climate panel instead. The
@@ -1549,7 +1499,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Events are always on — a persistent notification-coupled marker layer,
     // not a user toggle.
     { id: 'events', label: 'Events', enabled: true },
-    { id: 'deltas', label: 'Deltas (debug)', enabled: false, hidden: true, paintPixels: paintDeltas },
     { id: 'names', label: 'Names', enabled: false, paint: (c) => paintWrapped(c, (cc) => drawContinentLabels(cc, lastRaftLabels)) },
   ])
   // Same layer OBJECTS in both compositors — toggles/enabled flags are
@@ -2358,11 +2307,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastLakeDepth = null
     // Derived from the channel set, so it stales with it.
     lastPrecipitationEffective = null
-    // The delta marks describe one specific erosion pass. Any topography change
-    // stales them exactly as it stales the rivers, and a mask left over from the
-    // previous terrain would mark cells that are no longer sea floor at all.
-    lastDeltaMask = null
-    overlay.setLayerEnabled('deltas', false)
     riverLayer?.setPolylines(new Float32Array(0), new Uint32Array(0))
     riverLayer?.setEnabled(false)
     overlay.setLayerEnabled('lakes', false)
@@ -2582,40 +2526,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       return
     }
 
-    if (message.type === 'deltaMask') {
-      lastDeltaMask = new Uint8Array(message.mask)
-      // Only repaints when the marker is actually showing — the mask arrives after
-      // every erode whether or not anyone asked to see it.
-      if (deltaDebugInput.checked) { overlay.setLayerEnabled('deltas', true); compositeOverlays() }
-      return
-    }
-
-    if (message.type === 'microTileProgress') {
-      if (message.fraction < 0) {
-        // Aborted (worker busy with another render, or no river mouth) —
-        // release the busy state rather than waiting for data forever.
-        microTileInFlight = false
-        updateControlsDisabled()
-        microTileTitle.textContent = 'Micro tile'
-        microTileStatus.textContent = 'Unavailable right now — try again in a moment.'
-        return
-      }
-      microTileStatus.textContent = message.fraction < 0.2 ? 'Routing the macro drainage…' : `Eroding the tile… ${Math.round(message.fraction * 100)}%`
-      return
-    }
-
-    if (message.type === 'microTileData') {
-      microTileInFlight = false
-      updateControlsDisabled()
-      microTileCanvas.width = message.n
-      microTileCanvas.height = message.n
-      const ctx = microTileCanvas.getContext('2d')!
-      ctx.putImageData(new ImageData(new Uint8ClampedArray(message.buffer), message.n, message.n), 0, 0)
-      const kmPerFinePx = METERS_PER_CELL / 1000 / message.factor
-      microTileTitle.textContent = `Micro tile — largest river mouth (${message.extentMacro}×${message.extentMacro} cells at ${message.factor}× refinement)`
-      microTileStatus.textContent = `~${kmPerFinePx.toFixed(2)} km per pixel — mouth at (${message.mouthX}, ${message.mouthY})`
-      return
-    }
     if (message.type === 'hydrologyData') {
       handleHydrologyData(message)
       return
@@ -2892,20 +2802,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // in a floating viewer. Derived detail only — the macro world is untouched,
   // so nothing needs invalidating and the result needs no persistence: closing
   // the viewer discards it, clicking again recomputes deterministically.
-  microTileButton.addEventListener('click', () => {
-    if (isBusy()) return
-    microTileInFlight = true
-    updateControlsDisabled()
-    microTileViewer.hidden = false
-    microTileTitle.textContent = 'Micro tile — computing…'
-    microTileStatus.textContent = 'Routing the macro drainage…'
-    postToWorker({ type: 'computeMicroTile' })
-  })
-
-  microTileCloseButton.addEventListener('click', () => {
-    microTileViewer.hidden = true
-  })
-
   // Load a previously-saved world (top-left folder button). Intended handler:
   // open a file picker for a saved snapshot (the export format — world_*.json
   // metadata + the .f32 elevation + .oceanage.f32 rasters), parse it, and

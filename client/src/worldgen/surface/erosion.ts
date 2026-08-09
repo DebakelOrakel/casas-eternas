@@ -117,9 +117,10 @@ export const DEFAULT_STREAM_POWER_PARAMS: StreamPowerParams = {
 // (The doc block above belongs to runStreamPowerIterations, which follows
 // depositSediment below — the helper is defined first because the loop calls it.)
 
-// Exported for the micro tile's delta-growth model (deltaGrowth.ts), which
-// caps its deposits at the same graded freeboard as depositSediment here.
-export function gradedSeaCap(tectonic: Float32Array, cell: number): number {
+// The graded freeboard depositSediment caps its deposits at. Was exported for the
+// micro tile's delta-growth model, which was removed 2026-08-09 along with the rest
+// of that prototype; nothing outside this file asks for it now.
+function gradedSeaCap(tectonic: Float32Array, cell: number): number {
   const depth = SEA_LEVEL - tectonic[cell]
   const t = depth <= 0 ? 0 : depth >= SURFACE_TUNING.deltaFreeboardDepthRange ? 1 : depth / SURFACE_TUNING.deltaFreeboardDepthRange
   return SEA_LEVEL + SURFACE_TUNING.deltaFreeboardNear - (SURFACE_TUNING.deltaFreeboardNear - SURFACE_TUNING.deltaFreeboardFar) * t
@@ -274,9 +275,10 @@ function depositSediment(
 // roughness moved 27.2 -> 27.5 m.
 export const EROSION_PLAIN_FACTOR = 0.3
 
-// Exported for tileErosion.ts — the thresholds are METRES on the tectonic
-// envelope, so the same mask logic is valid at any grid resolution.
-export function buildErosionMask(tectonic: Float32Array, plainFactor = EROSION_PLAIN_FACTOR): Float32Array {
+// The thresholds are METRES on the tectonic envelope, so the same mask logic is
+// valid at any grid resolution — which is why this used to be exported, for the
+// micro tile. That went 2026-08-09; it is local again.
+function buildErosionMask(tectonic: Float32Array, plainFactor = EROSION_PLAIN_FACTOR): Float32Array {
   const lo = metersToElevation(SURFACE_TUNING.erosionPlainTopM)
   const hi = metersToElevation(SURFACE_TUNING.erosionMountainFullM)
   const mask = new Float32Array(tectonic.length)

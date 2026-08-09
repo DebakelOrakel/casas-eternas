@@ -3,13 +3,13 @@ import { SEA_LEVEL, SHELF_BREAK, metersToElevation } from '../elevation/elevatio
 // Algorithm tuning grouped into one object so it can be hashed — see the module
 // contract in client/src/worldgen/CLAUDE.md.
 //
-// Out of scope for this pass: the DEFAULT_*_PARAMS objects in erosion.ts and
-// deltaGrowth.ts. They are function ARGUMENTS with defaults, not module constants —
+// Out of scope for this pass: the DEFAULT_*_PARAMS objects in erosion.ts. They are
+// function ARGUMENTS with defaults, not module constants —
 // callers already pass them explicitly and the amplification bake overrides three of
 // them per call. They are also nested three deep and carry two booleans, so they do not
 // fit a Record<string, number> without being flattened at the hash, not here.
 //
-// Also out: EROSION_PLAIN_FACTOR, CHANNEL_SLOPE_EXPONENT and MICRO_TILE_* (exported =
+// Also out: EROSION_PLAIN_FACTOR and CHANNEL_SLOPE_EXPONENT (exported =
 // contract), RIVER_MIN/MAX_WIDTH (drawn width, presentation), EPSILON_FLOOD_STEP (a
 // numerical epsilon), and AMPLIFY_CONSTANTS, which already exists as its own hashed set
 // and MIRRORS amplify.ts's constants instead of owning them — the drift that let three
@@ -190,89 +190,6 @@ export const SURFACE_TUNING = {
   // transportRate = 0.3 and iterations = 50 are unchanged, but note they now apply
   // to a far smaller set of pairs, which is the point.
   talusAngleDegrees: 3,
-
-  // --- from deltaGrowth.ts ---
-  // Depth exponent for the routing weights (Freeman-style): higher concentrates
-  // flow into the deepest channel, lower lets it spread. And the inertia floor
-  // keeps a parcel from ever weighting a full reversal.
-  //
-  // The depth entering the weight is CAPPED (see weightDepthCap below) — the
-  // bug that silently defeated every deposition variant: uncapped depth^1.5
-  // across three orders of magnitude made the open ocean ~25× more attractive
-  // than the 12 m platform, so parcels dived straight off the shelf edge into
-  // the abyss and wrote their load off (measured: ~0.2% of the budget ever
-  // deposited, identical across three deposition designs). DeltaRCM's depth
-  // preference is about CHANNEL depths on the delta top — metres — not about
-  // basins; capping reproduces that: below the cap, deeper still wins (keeps
-  // channels), beyond it all water is equally attractive and inertia takes
-  // over, so the flow spreads as a plume across the platform instead of
-  // racing downslope.
-  depthExponent: 1.5,
-
-  backwardWeight: 0.05,
-
-  // --- from tileErosion.ts ---
-  // Sub-macro-cell starting roughness, in elevation units at amplitude 1 —
-  // the analytic field is smooth below the ridged noise's finest octave
-  // (~8 macro px), so a freshly-sampled tile is glass at fine scale and the
-  // priority flood would route its rivers on numerical noise. The same
-  // reasoning as EROSION_PLAIN_FACTOR's "not zero": drainage needs texture to
-  // pick a side. fineDetailNoise is torus-periodic and world-anchored, so the
-  // same tile always regenerates the same roughness, and adjacent tiles agree.
-  //
-  // HEIGHT-SCALED, fading out toward sea level (prototype run 6's lesson): on a
-  // low coastal plain everything that should guide the trunk river — the
-  // inherited macro valley (only metres deep there, EROSION_PLAIN_FACTOR damps
-  // plain incision on purpose) and the stream-burnt groove (scaled to the same
-  // small headroom) — is smaller than a full ±30 m of noise, so the noise won,
-  // the river wandered off its macro course and shattered below the delta gate.
-  // Full roughness stays in the highlands, where competing micro-valleys are
-  // exactly what we want. Ocean cells get none (nothing routes on the seabed
-  // and deltas read cleaner against a smooth floor).
-  // ~30 m peak amplitude,
-  tileSeedRoughness: metersToElevation(30),
-
-  // Macro erosion params rescaled for a tile refined by `factor`. The general
-  // per-cell rescaling — talus angle, transport capacity, the delta area gate,
-  // and why stream power needs nothing — is derived once in
-  // erosion.scaleErosionParamsForCellSize and shared with the amplification
-  // bake; only the tile-SPECIFIC correction lives here.
-  //
-  // That correction is the delta gate. The shared rule scales it by factor²,
-  // which is right for the physical catchment. But at a tile's factor MFD
-  // routing deliberately splits a trunk into several distributary strands near
-  // a flat mouth (3-5 in practice), and the gate's job — "no deltas from
-  // coastal trickles" — is a judgment about the river SYSTEM, which already
-  // passed it at macro scale. Without the allowance every individual strand of
-  // a fully qualified river fails the per-cell test and the tile builds no
-  // delta at all (prototype run 6, measured: best strand 39k fine units
-  // against a raw factor²-gate of 128k). Dividing by 4 lets a trunk that split
-  // four ways still qualify.
-  //
-  // Iteration/round counts are deliberately NOT reduced: the tile is far
-  // smaller than the world, so generous iterations are cheap where it matters.
-  tileDistributaryStrands: 4,
-
-  // The macro river course is authoritative, but near the tile rim and on low
-  // coastal plains its real gradient is metres — smaller than the seed
-  // roughness and the rim drain's pull — so without conditioning the fine
-  // drainage loses the macro course (prototype runs 2-6, each constant below
-  // is one measured failure):
-  // - trunk rivers only (>= 500 macro cells): burning the whole acc>=60
-  //   dendritic net flattened low plains into competing corridors.
-  // - narrow V-grooves: a wide flat-bottomed groove makes MFD fan the river
-  //   into strands below every downstream threshold.
-  // - depth SCALED into the headroom above the floor, not clamped: clamping
-  //   made dead-flat corridors at exactly the floor height.
-  burnMinMacroDrainage: 500,
-
-  burnRadiusFine: 5,
-
-  burnBaseDepthM: 25,
-
-  burnDepthLogGainM: 10,
-
-  burnFloorM: 0.5,
 
   // --- from hydrology.ts ---
   // A modest per-cell runoff floor so even a bone-dry landmass still develops

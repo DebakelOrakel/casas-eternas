@@ -16,7 +16,7 @@ import { SURFACE_TUNING } from './surfaceTuneParams'
 // upscaled raster is glass below the macro cell — and erosion on glass does
 // nothing interesting, because the priority flood has no texture to pick a
 // drainage side with and every micro-catchment is a tie. The micro-tile
-// prototype learned this first (tileErosion.ts's TILE_SEED_ROUGHNESS): fine
+// prototype learned this first (the micro tile's seed roughness, removed with it): fine
 // erosion needs something to bite into. This is the same idea at global
 // scale.
 //
