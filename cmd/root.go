@@ -40,7 +40,7 @@ const (
 	textDirClient    = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
 	textBakeMax      = `How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.`
 	textAuthMode     = `How the server establishes who is asking: none (local, one synthetic owner), password (this server holds the users), oidc (a foreign provider does). See docs/decisions/server-auth.md.`
-	textAuthHtpasswd = `Path to the htpasswd file holding the users, bcrypt only (htpasswd -B). Required by --auth-mode password. Put it where the server may WRITE if a user administration should ever add to it.`
+	textAuthHtpasswd = `Path to the htpasswd file holding the users, bcrypt cost 10 or above (htpasswd -B -C 12). Required by --auth-mode password. Re-read on every sign-in, so changing it needs no restart.`
 	textAuthKey      = `Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.`
 	textAuthTokenTTL = `How long an issued token is valid.`
 	textAuthSessTTL  = `How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then --auth-token-ttl is the one that matters.`

@@ -70,6 +70,34 @@ spec:
       # looks — artifacts are droppable, so a size cap is the eventual answer.
       storage: 20Gi
 ---
+# What authentication needs that must not be in git: the users and the key their
+# session tokens are signed with. Applied EMPTY on purpose — the resource exists
+# so the Deployment can mount it and nobody has to remember its name, and the
+# values are put in afterwards (see deploy/README.md).
+#
+#   oc create secret generic casas-eternas-auth \
+#     --from-file=htpasswd=./htpasswd \
+#     --from-literal=session.key="$(openssl rand -base64 48)" \
+#     --dry-run=client -o yaml | oc apply -f -
+#
+# Without session.key a restart ends every session, and two replicas reject each
+# other's tokens. Without htpasswd the pod does not start at all, which is the
+# intended failure for a server told to check identity that cannot.
+#
+# Note what this costs, decided 2026-08-09: a Secret mount is READ-ONLY, so the
+# planned user administration cannot add a user by writing this file. It would
+# have to write the Secret through the Kubernetes API instead — a few lines of
+# RBAC on the ServiceAccount that already exists.
+# (docs/decisions/server-auth.md, "Where the file lives")
+apiVersion: v1
+kind: Secret
+metadata:
+  name: casas-eternas-auth
+  labels:
+    app: casas-eternas
+type: Opaque
+stringData: {}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -106,6 +134,21 @@ spec:
             # ever look for — a failure that looks exactly like success.
             - name: CASAS_BAKE_IMAGE
               value: ghcr.io/debakelorakel/casas-eternas:latest
+            # Authentication. Environment rather than args because CMD already
+            # carries the flag list and repeating it here to append three would
+            # be two places to keep in step; viper binds every flag to
+            # CASAS_<FLAG> (see cmd/root.go's initConfig).
+            #
+            # THE POD WILL NOT START until both files below exist. That is the
+            # intended failure: a server told to check identity that cannot is
+            # worse than one that refuses to run, because it looks healthy while
+            # rejecting everybody. See deploy/README.md for the bootstrap.
+            - name: CASAS_AUTH_MODE
+              value: password
+            - name: CASAS_AUTH_HTPASSWD
+              value: /etc/casas-eternas/auth/htpasswd
+            - name: CASAS_AUTH_SESSION_KEY
+              value: /etc/casas-eternas/auth/session.key
           ports:
             - name: http
               containerPort: 8080
@@ -159,6 +202,11 @@ spec:
             # of the same budget the bake is already straining.
             - name: tmp
               mountPath: /tmp
+            # Read-only, which is what the user administration will have to work
+            # around later — see the Secret's own note.
+            - name: auth
+              mountPath: /etc/casas-eternas/auth
+              readOnly: true
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -166,6 +214,15 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 1Gi
+        - name: auth
+          secret:
+            secretName: casas-eternas-auth
+            # optional, so a Secret that is still empty lets the pod SCHEDULE and
+            # fail with the server's own message about the missing key — rather
+            # than hanging in ContainerCreating, where the reason is a kubelet
+            # event nobody thinks to read.
+            optional: true
+            defaultMode: 0400
 ---
 apiVersion: v1
 kind: Service

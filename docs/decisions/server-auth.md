@@ -1,5 +1,5 @@
 ---
-summary: How the server establishes who is asking. Three modes stay — but `token` becomes `password`, because the axis that matters is WHERE the users live, not what the header looks like. Credentials are an htpasswd file mounted from a Secret; logging in exchanges them for a JWT the server issues itself; OIDC later is a second login method feeding the same token, not a second token. Four paths stay public so a logged-out client can find out where to log in. Revocation is decided (short TTL plus refresh, revoked by a per-user stamp) but not yet built. The user file lives in the writable data directory rather than the Secret, because the planned admin screen has to be able to add users.
+summary: How the server establishes who is asking. Three modes stay — but `token` becomes `password`, because the axis that matters is WHERE the users live, not what the header looks like. Credentials are an htpasswd file mounted from a Secret; logging in exchanges them for a JWT the server issues itself; OIDC later is a second login method feeding the same token, not a second token. Four paths stay public so a logged-out client can find out where to log in. Revocation is decided (short TTL plus refresh, revoked by a per-user stamp) but not yet built. Both files live in the Secret; the cost — an admin screen cannot write users through a read-only mount, and would go through the Kubernetes API — is recorded rather than discovered later.
 date: 2026-08-09
 status: decided, sequenced in seven steps. ALL SEVEN BUILT 2026-08-09 — the server authenticates and enforces, the client signs in and behaves like a serverless one when it has not. Refresh (step 8) remains unscheduled
 ---
@@ -73,18 +73,25 @@ format, a hashing convention and the tools to edit it.
 
 `golang.org/x/crypto/bcrypt` is the only new dependency this half needs.
 
-**Where the file lives, decided by what comes after it.** A persistent user
-administration with a small admin screen is planned (2026-08-09), and that
-settles a question the format alone does not: an htpasswd mounted from a Secret
-is **read-only** — in Kubernetes, unavoidably so — and a screen that creates
-users cannot write there.
+**Where the file lives: the Secret, with its consequence stated.** Decided
+2026-08-09, and it reverses an earlier answer in the same session, so both are
+recorded rather than only the winner.
 
-So the user file belongs in the **writable data directory**, beside the worlds,
-and the Secret carries only `session.key`. `--auth-htpasswd` still names a file,
-so mounting a read-only one remains possible for a deployment that manages users
-by hand; the admin screen then simply cannot add any. The constraint is expressed
-by the filesystem rather than by a second config value, and `htpasswd -B` works
-on both.
+The first answer was the writable data directory, reasoning from what comes
+after: a persistent user administration is planned, an htpasswd mounted from a
+Secret is **read-only** — in Kubernetes, unavoidably so — and a screen that
+creates users cannot write there.
+
+The decision is the Secret anyway, because credentials belong with the other
+things that must not be in git, and one place to look beats one place to write.
+What that costs is exactly the thing the first answer was protecting: the admin
+screen cannot add a user by writing the file. It would write the **Secret through
+the Kubernetes API** instead, which the ServiceAccount already exists for and
+which needs a few lines of RBAC. That is a different mechanism, not a dead end,
+and knowing it now is why this paragraph is here.
+
+`--auth-htpasswd` still names a file, so a local server points it anywhere it
+likes; only the cluster deployment mounts it read-only.
 
 ## The token: JWT, self-issued, in every mode
 
@@ -181,11 +188,8 @@ volumeMounts:
 volumes:
   - name: auth
     secret:
-      secretName: casas-eternas-auth   # key: session.key
+      secretName: casas-eternas-auth   # keys: htpasswd, session.key
 ```
-
-Only the session key. The user file lives in the writable data volume — see
-"Where the file lives" above.
 
 **Not an environment variable**, because this process *starts Kubernetes Jobs*
 ([distributed-bake.md](./distributed-bake.md)). Environment is inherited by child
