@@ -3,7 +3,7 @@ summary: The generator's runtime pipeline — its state is already stage-shaped 
   declared, which is why invalidation is a set of hand-written rules. The target is the
   chain as data; this records the design, the reset taxonomy and the staged path there.
 date: 2026-08-09
-status: direction agreed, implementation staged — step 3 complete 2026-08-09; steps 4 and 5 open
+status: direction agreed, implementation staged — steps 1-4 built 2026-08-09; step 5 open
 ---
 
 # The generator pipeline: the chain as data
@@ -185,7 +185,7 @@ order, not thoroughness.
 | 3b | **Result per stage. BUILT 2026-08-09.** Climate, hydrology and ecology: sixteen `let`s became three nullable result objects, 39 pieces of module state down to 28. | step 2, plus a new check on the cached hydrology path |
 | 3c | **Derive invalidation from the chain. BUILT 2026-08-09.** Both sides — the pipeline and WorldGenScreen — read `downstreamOf()`; the hand-written cascades are gone, and a stage that cannot run says so. | step 2, extended with the refusal contract |
 | 3d | **`resetStage(id)` in both gestures. BUILT 2026-08-09.** One reset message for all seven stages, one table-driven input reset on the screen, and every message named after its stage. | step 2, plus a coverage check over the message contract |
-| 4 | **Spec ownership** — the DOM stays the input and stops being the store; the unsaved-changes indicator is the first consumer. | step 2, `tsc` |
+| 4 | **The unsaved-changes indicator. BUILT 2026-08-09.** A badge on the save button, driven by a derived world signature; `readSpec` lost its third copy of the control↔declaration map. Full spec ownership (one-way flow) turned out not to be needed for it. | `tsc`, a click-through |
 | 5 | **Untangle `showPanel`** — navigation must not commit. | step 2 |
 
 Steps 1 and 3a–3c change no behaviour by construction. Step 3d does (that is the
@@ -383,6 +383,54 @@ registry relisted the fourteen ids of `EcologyFieldId`, in the same order — an
 that order is the save's layer order, so the two had to agree with nothing making
 them. The ids are now an array in `ecology/ecologyField.ts` with the union derived
 from it, and the registry takes them from there.
+
+### 4: what the indicator needed, and what it did not
+
+It did **not** need one-way data flow. The plan had spec ownership as the
+prerequisite — the DOM stops being the store, a spec object owns the values — and
+the indicator as its first consumer. Building the consumer first showed the
+premise was too strong: what "unsaved" needs is a single authoritative *reader* and
+a baseline to compare against, and `readSpec()` was already the reader. The DOM can
+go on being the store for now; when a second consumer wants to *write* the spec,
+that is when ownership earns itself.
+
+**The signature is derived, not flagged.** `worldSignature()` is the recipe plus
+how far the world was taken (`lastArcheanEpochs`, `lastEpoch`, `erosionRunCount`),
+compared against the reading at the last save, load or regenerate. A dirty flag
+would have to be set at every mutation and cleared at every save, and the one that
+gets forgotten is the one that makes the badge lie — worse than no badge, because
+it is believed. Both halves are in it deliberately: "the sliders are where they
+were" would call a world with forty more epochs on it unchanged.
+
+**A baseline has to wait for the round trip.** Loading and regenerating both take
+their reading on the next render rather than at the gesture, because the epoch
+counters the signature is made of arrive with it — before that, `lastEpoch` still
+belongs to the previous world.
+
+**One listener, not fifteen.** `input` bubbles, so a single delegated listener on
+the panel root covers every slider including the thirteen ecology fold-outs.
+
+**And a third copy fell out.** `readSpec()` carried a twelve-entry map from spec
+path to input element — the control↔declaration correspondence written out for the
+third time, after the markup and the reset. `WORLD_SPEC_FIELDS` already names the
+`InputParam`, and 3d's binding knows the element that param produced, so the map
+is gone.
+
+## Parked, deliberately
+
+**A warning at the moment of loss.** Loading another world, regenerating or
+resetting while something is unsaved destroys it silently. That IS an event, so a
+notification — or more honestly a confirmation — is the right shape there, unlike
+the persistent indicator (see step 4). Agreed 2026-08-09 to leave it alone for now
+and keep the note.
+
+Worth recording why the indicator is *not* a notification, since it was considered:
+`ctx.notifications.clearAll()` is called at exactly three sites — loading,
+regenerating, reset-sim — which are precisely the moments the world becomes unsaved
+again. A sticky toast would be wiped exactly when it should appear, and re-showing
+it would put the state in two places (the flag and the toast id) that can disagree.
+Toasts are events; this is a condition, and conditions get indicators — the same
+split `ui/serverIndicator` already makes.
 
 ## Open questions
 

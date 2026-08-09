@@ -7,6 +7,8 @@
   "common.action.loadWorld.help": "Eine zuvor gespeicherte Welt aus einer .zip-Datei öffnen.",
   "common.action.saveWorld.label": "Welt speichern",
   "common.action.saveWorld.help": "Wähle, wo diese Welt bleiben soll.",
+  "common.action.saveWorld.unsaved.label": "Welt speichern — ungespeichert",
+  "common.action.saveWorld.unsaved.help": "Diese Welt hat sich seit dem letzten Speichern, Laden oder Neuerzeugen verändert.",
   "common.action.dismiss.label": "Schließen",
   "common.action.dismiss.help": "Diese Benachrichtigung schließen.",
   "common.unit.celsius": "°C",

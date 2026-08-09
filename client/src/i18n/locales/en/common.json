@@ -7,6 +7,8 @@
   "common.action.loadWorld.help": "Open a previously saved world from a .zip file.",
   "common.action.saveWorld.label": "Save world",
   "common.action.saveWorld.help": "Choose where to keep this world.",
+  "common.action.saveWorld.unsaved.label": "Save world — unsaved changes",
+  "common.action.saveWorld.unsaved.help": "This world has changed since it was last saved, loaded or regenerated.",
   "common.action.dismiss.label": "Dismiss",
   "common.action.dismiss.help": "Close this notification.",
   "common.unit.celsius": "°C",

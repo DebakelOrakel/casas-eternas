@@ -280,6 +280,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // .erosionRun in a save). Reset when the topography is remade (regenerate /
   // running tectonics / reset-erosion), bumped per erode, set on load.
   let erosionRunCount = 0
+  // The world as it was last ESTABLISHED — saved, loaded, or freshly regenerated.
+  // Growing it from there (stepping the Archean, running tectonics, eroding, moving
+  // a slider) is work that would be lost, so it counts as unsaved. See
+  // worldSignature() for what goes into the comparison.
+  let savedSignature = ''
+  let markCleanOnNextRender = false
   // A world's STABLE identity and how many times it has been saved — written to
   // world.yaml's metadata/status, read back on load, and deliberately NOT
   // derived from anything: see artifactKey.newWorldUid for why the terrain hash
@@ -420,6 +426,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </button>
       <button type="button" class="file-button" data-action="save-world" aria-label="${t('common.action.saveWorld.label')}" data-help="common.action.saveWorld">
         <img src="/icons/floppy.png" alt="" />
+        <img class="file-button__badge" src="/icons/warning.png" alt="" />
       </button>
       <button type="button" class="file-button cache-button" data-action="cache-manager" aria-label="${t('common.action.storage.label')}" data-help="common.action.storage">
         <img src="/icons/server_clean.png" alt="" />
@@ -2645,6 +2652,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastContinentCount = message.raftLabels.length
     updateStats()
     updateNavState() // epoch progress may unlock the Erosion panel
+    // The counters this render just reported are what the baseline is made of, so
+    // a load or a regenerate takes its reading here rather than before the round
+    // trip, when lastEpoch still belonged to the previous world.
+    if (markCleanOnNextRender) {
+      markCleanOnNextRender = false
+      markWorldEstablished()
+    } else {
+      updateSaveIndicator()
+    }
 
     // Relief preview: re-sync the gate off the fresh erosion state, then pull
     // the matching elevation raster for the frame just shown. Intermediate
@@ -2695,6 +2711,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       renderOptions: {},
     })
   }
+  // The world the screen opens on counts as established too — otherwise the badge
+  // is lit from the first frame of every session, which is exactly how a warning
+  // stops being read.
+  markCleanOnNextRender = true
   initArchean(initialSeed, ARCHEAN_INPUTS.mantleVigour.default, ARCHEAN_INPUTS.water.default)
 
   // --- Archean controls -----------------------------------------------------
@@ -2769,6 +2789,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   function handleGenesisStatus(message: WorkerGenesisStatusMessage): void {
     lastArcheanEpochs = message.epoch
+    updateSaveIndicator()
     statCrust.textContent = String(Math.round(message.crustFraction * 100))
     statCratons.textContent = String(message.cratonCount)
     statStabilised.textContent = String(Math.round(message.stabilisedFraction * 100))
@@ -2884,31 +2905,54 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // loads instantly and survives generator changes.
 
   // The world.yaml recipe (spec) + how far it was taken (status).
-  // The DOM read into a typed recipe. One place names which control feeds which
-  // spec key; worldSpec.ts owns the order and the nesting.
+  // The DOM read into a typed recipe. worldSpec.ts owns the order and the nesting;
+  // which control feeds which key needs no table here at all — WORLD_SPEC_FIELDS
+  // names the InputParam, and sliderBindings knows the element that param produced.
+  // That correspondence used to be written out a THIRD time, as a twelve-entry map
+  // from spec path to input; it is now the same one the markup already recorded.
   function readSpec(): WorldSpec {
-    const byPath: Record<string, HTMLInputElement | undefined> = {
-      'genesis.mantleVigour': mantleVigourInput,
-      'genesis.water': waterInput,
-      'erosion.erosionStrength': strengthInput,
-      'erosion.drainageRefresh': refreshInput,
-      'climate.tempOffset': tempBandInput,
-      'climate.humidity': humidityInput,
-      'climate.contrast': contrastInput,
-      'climate.equatorOffset': equatorOffsetInput,
-      'hydrology.riverDensity': riverDensityInput,
-      'ecology.carryingCapacity': carryingCapacityInput,
-      'ecology.concentration': concentrationInput,
-      'ecology.provinceStrength': provinceInput,
-    }
     const values: Record<string, number> = {}
     for (const field of WORLD_SPEC_FIELDS) {
       const leaf = field.path.split('.').pop() as EcologyFieldId
-      const input = byPath[field.path] ?? foldoutInputs[leaf]
+      // The thirteen ecology abundance nudges share one declaration, so they have
+      // no binding of their own and are found by their field id.
+      const input = sliderBindings.get(field.input)?.input ?? foldoutInputs[leaf]
       values[field.path] = Number(input?.value ?? field.input.default)
     }
     return { seed: seedInput.value, values }
   }
+
+  // --- unsaved changes ---------------------------------------------------------
+
+  // What a save would capture, as one comparable string: the recipe AND how far
+  // the world was taken. Both halves, because a save holds both — "the sliders are
+  // where they were" would call a world with forty more epochs on it unchanged.
+  //
+  // Derived on demand rather than a dirty flag someone sets. A flag has to be set
+  // at every mutation and cleared at every save, and the one that gets forgotten is
+  // the one that makes the icon lie — which is worse than no icon, because it is
+  // believed.
+  function worldSignature(): string {
+    const spec = readSpec()
+    return JSON.stringify([spec.seed, spec.values, lastArcheanEpochs, lastEpoch, erosionRunCount])
+  }
+
+  function markWorldEstablished(): void {
+    savedSignature = worldSignature()
+    updateSaveIndicator()
+  }
+
+  function updateSaveIndicator(): void {
+    const unsaved = worldSignature() !== savedSignature
+    saveWorldButton.classList.toggle('has-unsaved', unsaved)
+    // Same trick the server indicator uses: the hover card follows the state, so
+    // the badge is never a symbol with no explanation.
+    saveWorldButton.setAttribute('data-help', unsaved ? 'common.action.saveWorld.unsaved' : 'common.action.saveWorld')
+  }
+
+  // One delegated listener instead of one per control: every slider, including the
+  // thirteen ecology fold-outs, sits under root, and `input` bubbles.
+  root.addEventListener('input', () => updateSaveIndicator())
 
   function buildWorldYaml(): string {
     const name = seedInput.value || 'world'
@@ -3073,6 +3117,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   async function deliverArchive(blob: Blob, filename: string): Promise<void> {
     if (pendingSaveTarget !== 'server') {
       downloadBlob(blob, filename)
+      markWorldEstablished()
       return
     }
     const endTransfer = serverIndicator.beginTransfer()
@@ -3080,6 +3125,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const outcome = await uploadWorld(worldUid, blob)
       if (outcome.ok) {
         ctx.notifications.show({ message: t('common.notify.worldStored'), icon: '/icons/ok.png', durationMs: 4000 })
+        markWorldEstablished()
         return
       }
       if (outcome.reason === 'conflict') {
@@ -3553,6 +3599,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // lastEpoch is set from the restore render's reported epoch (status
     // .tectonicsRun == the snapshot's epoch), so no need to set it here.
 
+    markCleanOnNextRender = true
     postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, archean: archeanPayload as never })
   }
 
@@ -3871,6 +3918,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     worldRevision = 0
     archeanFinalised = false
     hasHandover = false
+    markCleanOnNextRender = true
     initArchean(seedInput.value, Number(mantleVigourInput.value), Number(waterInput.value))
     updateNavState() // fresh world → re-lock downstream panels
   }
