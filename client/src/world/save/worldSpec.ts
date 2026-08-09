@@ -1,8 +1,8 @@
-import type { InputParam } from '../core/inputParams'
-import { ARCHEAN_INPUTS } from '../archean/archeanInputParams'
-import { CLIMATE_INPUTS } from '../climate/climateInputParams'
-import { SURFACE_INPUTS } from '../surface/surfaceInputParams'
-import { ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS, ECOLOGY_INPUTS } from '../ecology/ecologyInputParams'
+import type { InputParam } from '../../worldgen/core/inputParams'
+import { ARCHEAN_INPUTS } from '../../worldgen/archean/archeanInputParams'
+import { CLIMATE_INPUTS } from '../../worldgen/climate/climateInputParams'
+import { SURFACE_INPUTS } from '../../worldgen/surface/surfaceInputParams'
+import { ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS, ECOLOGY_INPUTS } from '../../worldgen/ecology/ecologyInputParams'
 import { readRecipeNumber } from './recipeYaml'
 
 // The RECIPE half of a world save — `spec:` in world.yaml — as one ordered table

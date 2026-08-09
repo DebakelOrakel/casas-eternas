@@ -25,7 +25,7 @@ const M = {
   currents: await L('/src/worldgen/climate/oceanCurrents.ts'),
   seasonality: await L('/src/worldgen/climate/seasonality.ts'),
   monsoon: await L('/src/worldgen/climate/monsoon.ts'),
-  layers: await L('/src/worldgen/worldSave/worldLayers.ts'),
+  layers: await L('/src/world/save/worldLayers.ts'),
   archean: await L('/src/worldgen/archean/archeanState.ts'),
   archeanStep: await L('/src/worldgen/archean/archeanStep.ts'),
   finalize: await L('/src/worldgen/archean/finalizeArchean.ts'),

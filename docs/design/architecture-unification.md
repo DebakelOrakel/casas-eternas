@@ -464,7 +464,35 @@ registry describes the fields, but the worker's `last*` mirrors are not yet
 registered against it and consumers still do open-coded index arithmetic. That is
 C3's work — the facade is what gives a source something to describe itself *to*.
 
-**C3. The `world` module.** Per aspect, not monolithic. Covers finished worlds —
+**C3. The `world` module. EXTRACTION BUILT 2026-08-09**, verified: round-trip
+green, golden 38 of 38 stages byte-identical, the baker's key unchanged at
+`v4-879edcdd25f5add7`.
+
+Moved in one step, as decided: `worldgen/worldSave/*` → `world/save/*`,
+`storage/artifactKey.ts` → `world/identity.ts`,
+`storage/amplificationArtifact.ts` → `world/artifacts.ts`,
+`server/bakeClient.ts` → `world/bakeClient.ts`, and the three `AMPLIFY_*`
+constants out of `map/mapSceneSettings.ts` into `world/bakeSettings.ts`.
+
+`bakeClient` moved on the criterion rather than by feel: it commissions a bake for
+a **particular** world (`worldUid`) and follows it, so it must know which world is
+meant. From `server/` it had been drawing an edge back into the generator.
+
+Two edges turned out to point the wrong way and were reversed rather than carried
+along:
+
+- The worker imported `downsampleMax` from `worldLayers` — which only
+  **re-exported** it from `core/field`. A dependency on the save format that was
+  never real, existing because one file passed another's function through.
+- `AmplificationArtifact` lived in the artifact store and `bakeInBrowser`
+  imported the type back, so the generator depended on storage to learn the shape
+  of its own output. The shape now lives with what produces it.
+
+Result: `worldgen ↔ storage`, `storage → map` and `server → worldgen` are all
+gone. `storage → server` remains, knowingly — an HTTP store needs the API base,
+and handing it one as configuration is the fix. Deferred to part D.
+
+**Still to do in C3.** Per aspect, not monolithic. Covers finished worlds —
 save, artifact cache, server — and NOT the generator's live fields (see above;
 this reverses the first sketch). The core is `acquire(aspect, purpose)` → a
 samplable view plus provenance. It also owns writing saves, delegating to

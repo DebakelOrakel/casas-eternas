@@ -26,7 +26,7 @@ export const SURFACE_INPUTS = {
   // River density 0..100. NOT converted here: the worker takes the raw slider
   // value and `densityToCriticalArea` maps it to a critical drainage area, a
   // curve rather than a scale factor. Deliberately absent from the artifact
-  // cache key even though the bake reads it — see storage/artifactKey.ts.
+  // cache key even though the bake reads it — see world/identity.ts.
   riverDensity: {
     min: 0, max: 100, step: 1, default: 55,
     i18n: 'worldgen.panel.hydrology.riverDensity',

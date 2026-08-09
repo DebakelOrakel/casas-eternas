@@ -24,9 +24,9 @@
 // needs no framing beyond "read the last line".
 import { readFile, mkdir, writeFile, rename } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
-import { readWorldInputs } from '../src/worldgen/worldSave/loadWorldInputs'
+import { readWorldInputs } from '../src/world/save/loadWorldInputs'
 import { runAmplification } from '../src/worldgen/surface/runAmplification'
-import { amplificationPipelineVersion, writeAmplificationArtifact } from '../src/storage/amplificationArtifact'
+import { amplificationPipelineVersion, writeAmplificationArtifact } from '../src/world/artifacts'
 import { createHttpArtifactStore, toRemotePath } from '../src/storage/HttpArtifactStore'
 import type { ArtifactStore, StorageUsage } from '../src/storage/ArtifactStore'
 

@@ -114,7 +114,7 @@ const M = {
   archeanStep: await L('/src/worldgen/archean/archeanStep.ts'),
   finalize: await L('/src/worldgen/archean/finalizeArchean.ts'),
   // Not part of building a world — see PIPELINE_VERSION below.
-  artifact: await L('/src/storage/amplificationArtifact.ts'),
+  artifact: await L('/src/world/artifacts.ts'),
 }
 
 const SEA = M.scale.SEA_LEVEL

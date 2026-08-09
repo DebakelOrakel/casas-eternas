@@ -26,11 +26,11 @@ const server = await createServer({ root: CLIENT, server: { middlewareMode: true
 const L = (p) => server.ssrLoadModule(p)
 
 const M = {
-  layers: await L('/src/worldgen/worldSave/worldLayers.ts'),
-  spec: await L('/src/worldgen/worldSave/worldSpec.ts'),
-  inputs: await L('/src/worldgen/worldSave/loadWorldInputs.ts'),
-  key: await L('/src/storage/artifactKey.ts'),
-  artifact: await L('/src/storage/amplificationArtifact.ts'),
+  layers: await L('/src/world/save/worldLayers.ts'),
+  spec: await L('/src/world/save/worldSpec.ts'),
+  inputs: await L('/src/world/save/loadWorldInputs.ts'),
+  key: await L('/src/world/identity.ts'),
+  artifact: await L('/src/world/artifacts.ts'),
   memory: await L('/src/storage/MemoryArtifactStore.ts'),
   amplify: await L('/src/worldgen/surface/amplify.ts'),
 }

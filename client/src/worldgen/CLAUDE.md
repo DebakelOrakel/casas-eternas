@@ -123,7 +123,7 @@ never invalidate an artifact. Slider endpoints are a third thing again: they are
 the input's schema, so they belong with `xyInputParams`.
 
 **A hash belongs to the consumer, not to the module.** Do not add a canonical
-`hashParams()` anywhere. `storage/artifactKey.ts` explains why in detail, and it
+`hashParams()` anywhere. `world/identity.ts` explains why in detail, and it
 was learned expensively: `deriveWorldId` hashes the output *rasters* rather than
 the recipe, because the recipe cannot distinguish two worlds stopped at different
 tectonic epochs; and `riverDensity` is deliberately excluded from the key even

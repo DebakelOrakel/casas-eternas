@@ -4,7 +4,8 @@ import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
-import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, WORLDGEN_EXAGGERATION } from '../../map/mapSceneSettings'
+import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, WORLDGEN_EXAGGERATION } from '../../map/mapSceneSettings'
+import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../worldgen/core/mapConfig'
 
@@ -33,7 +34,7 @@ import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../worldgen/cl
 import { evaporationPotential } from '../../worldgen/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '../../worldgen/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
-import { DISCHARGE_LAYER, WORLD_LAYERS, bakeLayer } from '../../worldgen/worldSave/worldLayers'
+import { DISCHARGE_LAYER, WORLD_LAYERS, bakeLayer } from '../../world/save/worldLayers'
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
@@ -43,20 +44,20 @@ import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
 import { createSavePanel } from '../../ui/worldPanels/SavePanel'
 import type { SaveTarget } from '../../ui/worldPanels/SavePanel'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
-import { readRecipeValue as readYamlValue } from '../../worldgen/worldSave/recipeYaml'
-import { deriveWorldUid, newWorldUid } from '../../storage/artifactKey'
+import { readRecipeValue as readYamlValue } from '../../world/save/recipeYaml'
+import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
-import { amplificationArtifactExists, amplificationPipelineVersion, readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
-import { readWorldInputs } from '../../worldgen/worldSave/loadWorldInputs'
+import { amplificationArtifactExists, amplificationPipelineVersion, readAmplificationArtifact, writeAmplificationArtifact } from '../../world/artifacts'
+import { readWorldInputs } from '../../world/save/loadWorldInputs'
 import { amplifyPhaseFraction, bakeStageInBrowser } from '../../worldgen/surface/bakeInBrowser'
-import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../server/bakeClient'
+import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../world/bakeClient'
 import { MIGRATION_INPUTS } from '../../worldgen/migration/migrationInputParams'
 import { ARCHEAN_INPUTS } from '../../worldgen/archean/archeanInputParams'
 import { CLIMATE_INPUTS } from '../../worldgen/climate/climateInputParams'
 import { SURFACE_INPUTS } from '../../worldgen/surface/surfaceInputParams'
 import { ECOLOGY_INPUTS, ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS } from '../../worldgen/ecology/ecologyInputParams'
-import { WORLD_SPEC_FIELDS, specFromYaml, specToYamlLines } from '../../worldgen/worldSave/worldSpec'
-import type { WorldSpec } from '../../worldgen/worldSave/worldSpec'
+import { WORLD_SPEC_FIELDS, specFromYaml, specToYamlLines } from '../../world/save/worldSpec'
+import type { WorldSpec } from '../../world/save/worldSpec'
 import type { InputParam } from '../../worldgen/core/inputParams'
 import './worldgen.css'
 import '../../ui/chrome/chrome.css'
@@ -2806,7 +2807,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // lock compares it, so two machines editing one world collide loudly
       // instead of one silently overwriting the other.
       `  revision: ${worldRevision}`,
-      // NOT recorded here: the terrain's content id (storage/artifactKey's
+      // NOT recorded here: the terrain's content id (world/identity's
       // deriveWorldId). It would let a listing say "the server holds different
       // terrain" without downloading 8 MB — but it hashes the DEQUANTISED
       // precipitation layer, and the generator holds raw floats, so a value

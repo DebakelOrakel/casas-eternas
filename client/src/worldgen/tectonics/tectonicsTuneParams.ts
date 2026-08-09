@@ -14,7 +14,7 @@
 // constants that share a comment block still sit together.
 //
 // ONE OBJECT rather than 45 loose exports, which is what changed in 2026-08-09's
-// part B: `derivePipelineVersion` (storage/artifactKey.ts) hashes a
+// part B: `derivePipelineVersion` (world/identity.ts) hashes a
 // `Record<string, number>`, so a module whose constants are an object can get an
 // automatic "my tuning changed" signal and one whose constants are scattered
 // never can. Read it directly as `TECTONICS_TUNING.x` — no local aliases, so each

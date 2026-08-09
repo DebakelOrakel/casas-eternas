@@ -13,8 +13,10 @@ doc rather than trusting a summary here.
 ```
 client/src/
   worldgen/       the generator — has its own CLAUDE.md, read it before working there
+  world/          a world's identity, spec, save format and artifacts — the layer that
+                  knows WHICH world; everything below it does not
   screens/        worldgen (the editor), worldmap, title
-  storage/        artifact stores (OPFS / HTTP / tiered) and the identity hashes
+  storage/        artifact stores (OPFS / HTTP / tiered), bytes at paths
   server/         client-side HTTP clients for the Go server
   map/ ui/ camera/ app/ i18n/
   worldgen-sphere/ + screens/worldgen-sphere/, screens/mars/   ← see "parallel approaches"
@@ -29,16 +31,20 @@ live one. `client/src/worldgen-sphere/`, `screens/worldgen-sphere/` and
 `screens/mars/` are the user's separate concerns — do not edit them, and do not
 treat their problems as the current task's problems.
 
-**Module layering, and a cycle to stop feeding.** The intended direction is:
-`worldgen/` computes (params in, fields out), `storage/` moves bytes at paths,
-`server/` talks HTTP, `map/` draws, and a `world/` module — planned, not yet
-built — owns world identity, the spec, the save format and the artifact keys.
+**Module layering — keep it acyclic.** `worldgen/` computes (params in, fields
+out), `storage/` moves bytes at paths, `server/` talks HTTP, `map/` draws. Those
+four are PEERS and should not import each other. Above them sits `world/`, which
+owns identity, the spec, the save format and the artifact keys, and may depend on
+all four. `screens/` sits above everything.
 
-Today `worldgen ↔ storage ↔ server` is a **cycle**, and every file in it is about
-identity, saving, artifacts or commissioning a bake. Extracting `world/` is what
-resolves it (see docs/design/architecture-unification.md, part C). Until then:
-do not add edges between those three. If something needs both a generator and a
-store, that is the `world/` layer asking to exist.
+`worldgen ↔ storage ↔ server` used to be a cycle; extracting `world/` resolved it
+(2026-08-09, see docs/design/architecture-unification.md part C). Do not
+reintroduce it. If something needs both a generator and a store, that is
+`world/`'s job, not a new edge.
+
+One peer edge is knowingly left: `storage → server`, because `HttpArtifactStore`
+asks the server module for the API base. Giving the store its base URL as
+configuration would remove it.
 
 The test for where a thing belongs: **if a function does not need to know *which*
 world is meant, it is not world-layer code.** `runErosionPass` does not;

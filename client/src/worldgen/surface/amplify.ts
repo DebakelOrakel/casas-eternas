@@ -184,7 +184,7 @@ const RELIEF_RADIUS_FRACTION = 1 / 64
 // How the bake's erosion differs from the generator's defaults. These are
 // AMPLIFICATION POLICY, not worker mechanics, so they live next to the rest
 // of the policy rather than inline at the one call site — which also lets
-// the artifact cache hash them (see storage/artifactKey.ts: a value change
+// the artifact cache hash them (see world/identity.ts: a value change
 // must invalidate cached terrain, and a hand-maintained version number would
 // be forgotten).
 //
@@ -226,7 +226,7 @@ export const AMPLIFICATION_EROSION_OVERRIDES = {
 // Editing any of them produced different terrain under an unchanged key: the
 // cache would serve the old bake as current, which reads as a physics bug
 // rather than a cache fault. That is the one failure this key exists to
-// prevent (see storage/artifactKey.ts), and the list drifted from the module
+// prevent (see world/identity.ts), and the list drifted from the module
 // anyway because it MIRRORS the constants instead of being their only home —
 // worth remembering when surface/ gets its tuning object.
 //

@@ -12,7 +12,8 @@ import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/pape
 import { applyBiomeWash, dilateLandBiomes, expandBiomeIds } from '../../ui/mapOverlay/biomePaper'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
 import { createFineElevationSurface } from '../../map/fineElevationSurface'
-import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS, AMPLIFY_FETCH_STAGES, MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
+import { MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
+import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS, AMPLIFY_FETCH_STAGES } from '../../world/bakeSettings'
 import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '../../worldgen/amplificationWorker'
 import { SEA_LEVEL, elevationToMeters } from '../../worldgen/elevation/elevationScale'
 import { Biome, biomeLabelKey, computeBiomesFine, reduceTemperatureToSeaLevel } from '../../worldgen/climate/biomes'
@@ -20,15 +21,15 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../../worldgen/climate/climateFiel
 import { t } from '../../i18n/i18n'
 import type { TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
-import { amplificationArtifactExists, amplificationPipelineVersion, readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
+import { amplificationArtifactExists, amplificationPipelineVersion, readAmplificationArtifact, writeAmplificationArtifact } from '../../world/artifacts'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { getServerStatus } from '../../server/serverStatus'
-import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../server/bakeClient'
-import { readWorldInputs } from '../../worldgen/worldSave/loadWorldInputs'
-import type { ErosionControls as SaveErosionControls } from '../../worldgen/worldSave/loadWorldInputs'
+import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../world/bakeClient'
+import { readWorldInputs } from '../../world/save/loadWorldInputs'
+import type { ErosionControls as SaveErosionControls } from '../../world/save/loadWorldInputs'
 import '../../ui/chrome/chrome.css'
 import './worldmap.css'
 
@@ -198,7 +199,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // swap its result in after the user has opened a different one.
   let bakeGeneration = 0
   // Identity of the world currently loaded, derived from what the bake
-  // actually consumes (see storage/artifactKey.ts).
+  // actually consumes (see world/identity.ts).
   let worldId = ''
   // The SERVER's name for the same world — `metadata.uid`, which does not move
   // when the terrain does. Ordering a bake needs this one; empty for a save too
@@ -762,7 +763,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // shows stages it must never bake itself, and this is how one of those comes
   // into existence. Everything about it is explicit — the button only appears
   // when there is genuinely something to order and somewhere to order it from,
-  // and it never fires on its own. See server/bakeClient.ts for why automatic
+  // and it never fires on its own. See world/bakeClient.ts for why automatic
   // ordering is the wrong design rather than merely a bolder one.
   const bakeButton = root.querySelector<HTMLButtonElement>('[data-action="order-bake"]')!
 

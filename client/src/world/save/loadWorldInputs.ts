@@ -2,7 +2,7 @@ import JSZip from 'jszip'
 import { decodeLayer } from './worldLayers'
 import type { Dtype } from './worldLayers'
 import { readRecipeNumber, readRecipeValue } from './recipeYaml'
-import { deriveWorldId } from '../../storage/artifactKey'
+import { deriveWorldId } from '../identity'
 
 // Reading a saved world through the QUERYABLE side of its .zip — manifest.json
 // plus the baked layers (docs/decisions/queryable-world-save.md), deliberately

@@ -1,5 +1,4 @@
 import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '../amplificationWorker'
-import type { AmplificationArtifact } from '../../storage/amplificationArtifact'
 
 // Running one amplification stage in a worker, as a promise.
 //
@@ -51,6 +50,18 @@ export interface BrowserBakeRequest {
   precipitation?: Float32Array
   climateResX?: number
   climateResY?: number
+}
+
+// WHAT A BAKE PRODUCES. It lives here, with the thing that produces it, rather
+// than in the artifact store that happens to persist it — a store is a consumer
+// of this shape, and having the generator import it back from storage was the
+// last edge pointing the wrong way up the layering.
+export interface AmplificationArtifact {
+  elevation: Float32Array
+  width: number
+  height: number
+  riverPoints: Float32Array
+  riverLengths: Uint32Array
 }
 
 export interface BrowserBakeResult {

@@ -1,10 +1,13 @@
-import { artifactPath } from './ArtifactStore'
-import type { ArtifactKey, ArtifactStore } from './ArtifactStore'
-import { derivePipelineVersion } from './artifactKey'
-import { bakeLayer, decodeLayer } from '../worldgen/worldSave/worldLayers'
-import type { Encoding } from '../worldgen/worldSave/worldLayers'
+import { artifactPath } from '../storage/ArtifactStore'
+import type { ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
+import { derivePipelineVersion } from './identity'
+import { bakeLayer, decodeLayer } from './save/worldLayers'
+import type { AmplificationArtifact } from '../worldgen/surface/bakeInBrowser'
+
+export type { AmplificationArtifact }
+import type { Encoding } from './save/worldLayers'
 import { AMPLIFY_CONSTANTS } from '../worldgen/surface/amplify'
-import { AMPLIFY_EROSION_ROUNDS } from '../map/mapSceneSettings'
+import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
 
 // The PIPELINE half of an artifact's key, assembled in one place.
 //
@@ -27,14 +30,6 @@ export function amplificationPipelineVersion(rounds: number = AMPLIFY_EROSION_RO
 // back from) an ArtifactStore. The store deals in bytes at paths; this is
 // the layer that knows what the bytes mean, so the same encoding serves the
 // local store today and the server store later.
-
-export interface AmplificationArtifact {
-  elevation: Float32Array
-  width: number
-  height: number
-  riverPoints: Float32Array
-  riverLengths: Uint32Array
-}
 
 interface ArtifactMeta {
   width: number

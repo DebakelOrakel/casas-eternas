@@ -1,5 +1,5 @@
-import { apiBase } from './worldClient'
-import { getServerStatus } from './serverStatus'
+import { apiBase } from '../server/worldClient'
+import { getServerStatus } from '../server/serverStatus'
 import { amplifyPhaseFraction } from '../worldgen/surface/bakeInBrowser'
 
 // Commissioning a bake on the server, and following it until it lands.

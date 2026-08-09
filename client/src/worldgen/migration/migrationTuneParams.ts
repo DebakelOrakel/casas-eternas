@@ -6,7 +6,7 @@ import { SLOPE_RECALIBRATION, metersToElevation } from '../elevation/elevationSc
 // you get, a tuning constant defines how this generator computes it.
 //
 // Grouped into ONE object rather than exported as loose consts, and that is the
-// whole point of the file. `derivePipelineVersion` (storage/artifactKey.ts)
+// whole point of the file. `derivePipelineVersion` (world/identity.ts)
 // takes a `Record<string, number>` and hashes it, so a module whose constants
 // are an object gets an automatic "my tuning changed" signal, while a module
 // whose constants are scattered `export const`s can never have one. Today only

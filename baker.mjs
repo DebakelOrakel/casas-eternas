@@ -9770,12 +9770,10 @@ var require_lib3 = __commonJS({
 import { readFile, mkdir, writeFile, rename } from "node:fs/promises";
 import { join, dirname } from "node:path";
 
-// src/worldgen/worldSave/loadWorldInputs.ts
+// src/world/save/loadWorldInputs.ts
 var import_jszip = __toESM(require_lib3(), 1);
 
 // src/worldgen/core/mapConfig.ts
-var MAP_WIDTH = 2048;
-var MAP_HEIGHT = 1024;
 var METERS_PER_CELL = 7800;
 
 // src/worldgen/core/interpolation.ts
@@ -9864,9 +9862,10 @@ function upscaleBilinearToroidal(src, srcWidth, srcHeight, dstWidth, dstHeight) 
   return dst;
 }
 
-// src/worldgen/worldSave/worldLayers.ts
-var LAKE_DEPTH_RANGE = metersToElevation(3e3);
-var ECOLOGY_LAYERS = [
+// src/world/save/fieldSpec.ts
+var world = (name, unit, landOnly) => ({ name, grid: "world", unit, landOnly });
+var climate = (name, unit, landOnly) => ({ name, grid: "climate", unit, landOnly });
+var ECOLOGY_FIELD_NAMES = [
   "carryingCapacity",
   "arable",
   "fish",
@@ -9882,12 +9881,38 @@ var ECOLOGY_LAYERS = [
   "silver",
   "gems"
 ];
+var WORLD_FIELDS = [
+  // Not a quantised layer — carried as raw f32 because it doubles as the
+  // restore raster — but a queryable field like any other, and the manifest
+  // lists it as one.
+  world("elevation", "relative", false),
+  climate("landMask", "", false),
+  climate("temperature", "\xB0C", false),
+  climate("precipitation", "mm/yr", true),
+  climate("precipitationEffective", "mm/yr", true),
+  world("biome", "biomeId", false),
+  climate("seasonalAmplitude", "\xB0C", true),
+  climate("monsoonIndex", "", true),
+  world("lakeDepth", "depth", true),
+  ...ECOLOGY_FIELD_NAMES.map((name) => climate(name, "", true)),
+  world("discharge", "m3/s", false)
+];
+var BY_NAME = new Map(WORLD_FIELDS.map((f) => [f.name, f]));
+function fieldSpec(name) {
+  const spec = BY_NAME.get(name);
+  if (!spec) throw new Error(`unknown world field: ${name}`);
+  return spec;
+}
+
+// src/world/save/worldLayers.ts
+var LAKE_DEPTH_RANGE = metersToElevation(3e3);
+var layer = (name, dtype, scale, offset) => ({ ...fieldSpec(name), dtype, scale, offset });
 var WORLD_LAYERS = [
   // Ranges are generous so real extremes never clip (greenhouse heat, Siberian
   // seasonality, very wet rainforest, gain/province-boosted ecology).
-  { name: "landMask", dtype: "u8", scale: 1, offset: 0, unit: "", landOnly: false },
-  { name: "temperature", dtype: "u8", scale: 90 / 255, offset: -35, unit: "\xB0C", landOnly: false },
-  { name: "precipitation", dtype: "u16", scale: 8e3 / 65535, offset: 0, unit: "mm/yr", landOnly: true },
+  layer("landMask", "u8", 1, 0),
+  layer("temperature", "u8", 90 / 255, -35),
+  layer("precipitation", "u16", 8e3 / 65535, 0),
   // The same field plus the riparian bonus — rivers and lakes moistening their
   // surroundings (see hydrology.computeRiparianBiomes). Stored beside the
   // climate's own precipitation rather than replacing it, because they answer
@@ -9899,15 +9924,15 @@ var WORLD_LAYERS = [
   // riparian effect there would mean routing and accumulating flow over an
   // 8-million-cell raster on every load, to recover a field that is regional
   // anyway. 64 KB instead.
-  { name: "precipitationEffective", dtype: "u16", scale: 8e3 / 65535, offset: 0, unit: "mm/yr", landOnly: true },
+  layer("precipitationEffective", "u16", 8e3 / 65535, 0),
   // Full-res, unlike its climate neighbours: the classification is pointwise and
   // reads elevation, which exists at world resolution (see climate/biomes.ts's
   // computeBiomesFine). A 62 km biome cell could not say where a treeline is —
   // and a game whose unit of place is a ~1.5 km hex asks exactly that. 2 MB raw,
   // and it is a mostly-flat id field, so DEFLATE takes most of it back.
-  { name: "biome", dtype: "u8", scale: 1, offset: 0, unit: "biomeId", landOnly: false, fullRes: true },
-  { name: "seasonalAmplitude", dtype: "u8", scale: 60 / 255, offset: 0, unit: "\xB0C", landOnly: true },
-  { name: "monsoonIndex", dtype: "u8", scale: 1 / 255, offset: 0, unit: "", landOnly: true },
+  layer("biome", "u8", 1, 0),
+  layer("seasonalAmplitude", "u8", 60 / 255, 0),
+  layer("monsoonIndex", "u8", 1 / 255, 0),
   // Lake depth in elevation units. The range was 20 — off by nearly two orders
   // of magnitude, since a lake's depth is `filled - elevation` and the whole
   // elevation field only spans ±1. Measured over a real run: p50 0.004, p99
@@ -9924,9 +9949,10 @@ var WORLD_LAYERS = [
   // inflated to at least one coarse cell across. We were also throwing away
   // resolution we already had, for a field that is zero almost everywhere and
   // therefore nearly free once deflated.
-  { name: "lakeDepth", dtype: "u8", scale: LAKE_DEPTH_RANGE / 255, offset: 0, unit: "depth", landOnly: true, fullRes: true },
-  ...ECOLOGY_LAYERS.map((name) => ({ name, dtype: "u8", scale: 3 / 255, offset: 0, unit: "", landOnly: true }))
+  layer("lakeDepth", "u8", LAKE_DEPTH_RANGE / 255, 0),
+  ...ECOLOGY_FIELD_NAMES.map((name) => layer(name, "u8", 3 / 255, 0))
 ];
+var DISCHARGE_LAYER = layer("discharge", "u16", 4, 0);
 var maxCode = (dtype) => dtype === "u16" ? 65535 : 255;
 function makeArray(dtype, n) {
   return dtype === "f32" ? new Float32Array(n) : dtype === "u16" ? new Uint16Array(n) : new Uint8Array(n);
@@ -9949,7 +9975,7 @@ function decodeLayer(buffer, spec) {
   return out;
 }
 
-// src/worldgen/worldSave/recipeYaml.ts
+// src/world/save/recipeYaml.ts
 function readRecipeValue(text, path) {
   const stack = [];
   for (const line of text.split("\n")) {
@@ -9972,7 +9998,7 @@ function readRecipeNumber(text, path) {
   return Number.isFinite(value) ? value : void 0;
 }
 
-// src/storage/artifactKey.ts
+// src/world/identity.ts
 function fnv1a32(words, offsetBasis, prime) {
   let hash = offsetBasis >>> 0;
   for (let i = 0; i < words.length; i++) {
@@ -10015,14 +10041,14 @@ function derivePipelineVersion(constants) {
   return `v${AMPLIFICATION_ALGO_VERSION}-${hex8(a)}${hex8(b)}`;
 }
 
-// src/worldgen/worldSave/loadWorldInputs.ts
-function readLayer(zip, manifest, name, landOnly) {
-  const entry = manifest.layers.find((layer) => layer.name === name && layer.kind === "raster");
+// src/world/save/loadWorldInputs.ts
+function readLayer(zip, manifest, name) {
+  const entry = manifest.layers.find((layer2) => layer2.name === name && layer2.kind === "raster");
   if (!entry?.dtype || !entry.encoding || !entry.resX || !entry.resY) return Promise.resolve(null);
   const file = zip.file(entry.file);
   if (!file) return Promise.resolve(null);
   return file.async("arraybuffer").then((buffer) => ({
-    data: decodeLayer(buffer, { name, dtype: entry.dtype, scale: entry.encoding.scale, offset: entry.encoding.offset, unit: "", landOnly }),
+    data: decodeLayer(buffer, { dtype: entry.dtype, scale: entry.encoding.scale, offset: entry.encoding.offset }),
     resX: entry.resX,
     resY: entry.resY
   }));
@@ -10038,7 +10064,7 @@ async function readWorldInputs(archive) {
   } catch {
     return null;
   }
-  const elevationEntry = manifest.layers.find((layer) => layer.name === "elevation" && layer.kind === "raster");
+  const elevationEntry = manifest.layers.find((layer2) => layer2.name === "elevation" && layer2.kind === "raster");
   const elevationBuffer = elevationEntry ? await zip.file(elevationEntry.file)?.async("arraybuffer") : void 0;
   if (!elevationEntry || !elevationBuffer) return null;
   const elevations = new Float32Array(elevationBuffer);
@@ -10053,21 +10079,21 @@ async function readWorldInputs(archive) {
     refresh: readRecipeNumber(yamlText, "spec.erosion.drainageRefresh"),
     riverDensity: readRecipeNumber(yamlText, "spec.hydrology.riverDensity")
   };
-  const climate = await readLayer(zip, manifest, "precipitation", true);
-  const biome = await readLayer(zip, manifest, "biome", false);
-  const temperature = await readLayer(zip, manifest, "temperature", false);
-  const precipitationEffective = await readLayer(zip, manifest, "precipitationEffective", true);
-  const seasonalAmplitude = await readLayer(zip, manifest, "seasonalAmplitude", true);
-  const monsoonIndex = await readLayer(zip, manifest, "monsoonIndex", true);
+  const climate2 = await readLayer(zip, manifest, "precipitation");
+  const biome = await readLayer(zip, manifest, "biome");
+  const temperature = await readLayer(zip, manifest, "temperature");
+  const precipitationEffective = await readLayer(zip, manifest, "precipitationEffective");
+  const seasonalAmplitude = await readLayer(zip, manifest, "seasonalAmplitude");
+  const monsoonIndex = await readLayer(zip, manifest, "monsoonIndex");
   const biomeInputs = temperature && precipitationEffective && seasonalAmplitude && monsoonIndex ? { temperature, precipitationEffective, seasonalAmplitude, monsoonIndex } : null;
   const worldId = deriveWorldId(seedText, {
     elevation: elevations,
-    precipitation: climate?.data ?? null,
+    precipitation: climate2?.data ?? null,
     erosionStrength: erosionControls.strength,
     drainageRefresh: erosionControls.refresh
   });
   const worldUid = readRecipeValue(yamlText, "metadata.uid") ?? "";
-  return { elevations, width, height, seedText, detailSeed, erosionControls, climate, biome, biomeInputs, worldId, worldUid };
+  return { elevations, width, height, seedText, detailSeed, erosionControls, climate: climate2, biome, biomeInputs, worldId, worldUid };
 }
 
 // src/worldgen/elevation/ridgedNoise.ts
@@ -10223,6 +10249,303 @@ function wrappedDelta(a, b, period) {
   delta -= period * Math.round(delta / period);
   return delta;
 }
+
+// src/worldgen/surface/surfaceTuneParams.ts
+var SURFACE_TUNING = {
+  // --- from erosion.ts ---
+  // Routes the material the erosion pass just excavated downstream and lets rivers
+  // drop part of it again, so lowlands aggrade instead of being incised forever.
+  // Without this the model deletes every cubic metre it cuts — `dh` in the loop below
+  // is always negative and nothing ever receives it — which is why the map is valleys
+  // all the way down with no plains, and why river mouths are drowned estuaries rather
+  // than deltas (drainage area, and therefore incision, peaks exactly where a delta
+  // should build). runThermalErosion already conserves its material; this pass was the
+  // only sink in the model.
+  //
+  // Walks popOrder in REVERSE — the order in which every cell is visited only after
+  // all of its own upstream contributors (the same property accumulateFlow relies on),
+  // so `load[cell]` is complete before the cell spends it.
+  //
+  // The one invariant that matters, and the one the 2026-07-27 attempt was missing on
+  // land: **a cell may never be raised above the lowest cell that drains into it.**
+  // That is what `donorFloor` tracks. Aggradation on land was unbounded upward last
+  // time, so a deposit at a valley mouth grew taller than the valley behind it and
+  // dammed it — which is where the huge lakes, the coast-only rivers and the softened
+  // mountains all came from (a lake cell carries no river, and material cut off a peak
+  // landed back in the valley a few cells down). With the ceiling in place a deposit
+  // cannot close a basin by construction: every cell stays at or below each of its
+  // donors, so the downstream profile keeps decreasing and no depression can form.
+  //
+  // The law is transport capacity, NOT the Davy-Lague `G·load/area` form that was
+  // tried first. That form has no slope dependence, so it drops material where the
+  // drainage area is small — i.e. high in the catchment. Measured over G = 0.25…5 it
+  // softened mountain relief 10% while flattening lowlands only 6%: it dissolved the
+  // mountains instead of building the plains, and turning it up made the ratio worse,
+  // which is the signature of a wrong shape rather than a wrong constant.
+  //
+  // Capacity ∝ drainage area × slope is the classic transport-limited form and puts
+  // the deposition where it belongs: wherever a river loses gradient. That is the
+  // mountain front, the lowland plain, and — since slope goes to zero there — the
+  // river mouth, so the same equation that builds plains also builds deltas once
+  // deposition below the waterline is allowed.
+  //
+  // Land and sea are separate switches, and measurement says they are worth very
+  // different things:
+  //
+  //   depositOnLand      MEASURED, NOT RECOMMENDED. Retains mass, but the flat-area
+  //                      share moved +22% on one seed and −14% on another — an effect
+  //                      that changes sign between seeds is not an effect — while
+  //                      costing 15-18% of mountain relief and doubling to septupling
+  //                      lake area.
+  //
+  // A bedrock/alluvial regime gate was tried on top of that (2026-08-01) and REMOVED:
+  // deposit only where the along-flow slope is under 1°, so that steep channels carry
+  // their load through and mountains cannot be softened. It did neither. Mountain
+  // relief still fell to 890 m against 882 m ungated and 1009 m with deposition off —
+  // nothing changed — for two reasons. Channel slope is not relief: a high valley has
+  // a gentle long profile, so its floor passes the gate and gets filled, which is
+  // exactly what closes the peak-to-floor gap the metric measures. And the gate was
+  // already satisfied, because the capacity law only deposits where slope is low. A
+  // gate that would really protect mountains has to be on ELEVATION.
+  //
+  // Why the plains do not appear is still open. "Below this grid's resolution" is the
+  // obvious guess and it is weaker than it sounds: the Mississippi and Amazon
+  // floodplains are 50-125 km wide, i.e. 6-16 cells here, so the big ones ought to
+  // resolve. The better suspect is that there is no accommodation space to begin with
+  // — the raw terrain is smooth metaball rafts, erosion cuts valleys into it and
+  // deposition fills them back, netting out at the smooth original.
+  //   depositBelowSeaLevel  WORKS. Delta bodies at Kt=0.016 come out at 12 800 /
+  //                      12 300 / 9 800 km² (Danube ~4 000, Nile ~22 000, Mississippi
+  //                      ~28 000), ~760 of them, with ~73 000 km² of new delta plain.
+  //                      Lake area and mountain relief are unchanged (1.82→1.81%,
+  //                      1009→1008 m).
+  //
+  // Note that marine deposition is NOT confined to the sea in its effects: it lifts
+  // base level at the mouths, and runErosionPass re-derives routing and the land mask
+  // from the current terrain every round, so land elevations do shift (57% of land
+  // cells, up to ~280 m). That feedback is physically right — a prograding delta
+  // really does raise base level — but "land stays bit-identical" is false, and was
+  // asserted before it was checked.
+  //
+  // The two switches stay separate because the 2026-07-27 attempt shipped both halves
+  // together and had to revert the working half along with the broken one.
+  // Real delta plains stand a metre or two above the sea, not level with it — and here
+  // that is also load-bearing: every land test in the pipeline is `elevation > SEA_LEVEL`,
+  // so a deposit capped exactly at sea level would still be ocean everywhere.
+  //
+  // The freeboard is GRADED seaward (2026-08-06), not uniform: a delta plain caps
+  // near NEAR where the original seabed was shallow (the old shoreline) and decays
+  // to FAR where it approached the shelf break. The old single 2 m cap put every
+  // delta cell at literally identical elevation — a dead-flat plate with one hard
+  // rim. Keying the gradient on the ORIGINAL (tectonic) bathymetry needs no notion
+  // of "distance to the mouth": seaward simply is where the water was deeper, and
+  // the tectonic field holds still while the delta builds. Honest caveat: a few
+  // metres of tilt across a fan is invisible in the colour ramp (0..200 m is one
+  // sand→green blend) and in the 45× hillshade — this is for the 3D preview, the
+  // detail texture's headroom, and downstream hydrology. What the EYE gets from
+  // this change is the lobe-shape fix below (DELTA_SPREAD_FRACTION), which ships
+  // together with it.
+  deltaFreeboardNear: metersToElevation(4),
+  deltaFreeboardFar: metersToElevation(0.5),
+  // Depth range the freeboard grades across: original seabed at 0 depth → NEAR,
+  // at shelf-break depth (the deepest a delta may build, see belowShelf) → FAR.
+  deltaFreeboardDepthRange: SEA_LEVEL - SHELF_BREAK,
+  // Fraction of each marine surplus that settles onto the surrounding D8 ring
+  // instead of the flow-path cell itself. Pure D8 deposition builds a delta one
+  // cell-wide arm at a time — the fans came out as ragged staircase lobes ("noch
+  // ein wenig roh", 2026-08-06). Physically, a sediment plume leaving a mouth
+  // spreads laterally as it decelerates; splitting each deposit 60/40 between the
+  // path cell and its underwater neighbours (each capped by its own graded
+  // ceiling, anything that doesn't fit carried on downstream like any other
+  // uncarried load) rounds the lobes without changing how much material a river
+  // delivers. Raise for wider, gentler fans; 0 restores pure-D8 deposition.
+  deltaSpreadFraction: 0.4,
+  // Fluvial incision is scaled by the cell's TECTONIC height, not its current one.
+  //
+  // The reason is a coupling that no single global setting can break: the same incision
+  // that makes mountains striking — deep valleys between peaks — also furrows the
+  // lowlands. Measured over the erosion-strength slider, mountain relief and flat-area
+  // share move together in opposite directions every time (strength 4: relief 1895 m but
+  // only 4.7% of land flat; strength 1: relief 1009 m and 9.6% flat). Raising the slope
+  // exponent instead was tried and does the same thing more expensively.
+  //
+  // So the zoning is deliberate and frankly unphysical: erode the highlands hard, leave
+  // the plains nearly alone, and the two stop fighting. Rivers are unaffected either way
+  // — the network is drawn from flow accumulation, not from incision — so a trunk stream
+  // still crosses a plain it is no longer allowed to carve.
+  //
+  // Keyed on the TECTONIC field so the zones hold still. Using the live elevation would
+  // let a valley cut into a mountain drop below the threshold and freeze mid-incision,
+  // and a plain that happened to sit high would erode forever.
+  // at or below this: plains, essentially left alone,
+  erosionPlainTopM: 600,
+  // at or above this: full incision,
+  erosionMountainFullM: 1500,
+  // The critical slope is stated as a real ANGLE, not a bare number. It used to be
+  // 0.006, set at the 90th percentile of the then-measured slope distribution — a
+  // sound-looking calibration that turned out to describe the wrong thing, and the
+  // metre anchor (elevationScale.ts) is what made that visible. In real units 0.006
+  // is 0.40°, so the model was declaring anything steeper than a fifth of a degree
+  // to be unstable scree.
+  //
+  // A talus threshold is an ATTRACTOR, not a filter: whatever starts above it is
+  // ground down toward it, and with 50 iterations a round over 5 rounds the whole
+  // map converges on it. At 0.40° that planed the mountains. Measured over a full
+  // pass, mean local relief above 2 km: 693 m on the tectonic surface, 365 m after
+  // erosion — the stream-power step carved it up to 748 m and this step then took
+  // more than half of that back off. Which is exactly the "valleys everywhere on
+  // the plains, none in the mountains" the terrain was showing.
+  //
+  // So the question is what the steepest SUSTAINABLE slope is at this grid's scale,
+  // and the answer is not the angle of repose. Repose is ~33°, but at 7.8 km per
+  // cell no such slope can exist — averaged over 8 km, even the Himalayan front is
+  // only ~5.7°, and this world's tectonic surface measures p99 = 2.25° with an
+  // absolute maximum of 7.97°. 3° sits just above the p99.9 of 4.13°... deliberately
+  // below it: it fires on the steepest ~0.5% of downhill pairs, which are real range
+  // fronts and freshly-incised channel banks, and leaves ordinary mountain slope
+  // alone.
+  //
+  // Swept against the alternatives (mean local relief above 2 km after a full pass):
+  //   0.40° (old) 365 m, fires on 10.1% of pairs
+  //   1°          542 m,  3.7%
+  //   2°          731 m,  1.3%
+  //   3°          831 m,  0.5%   <- chosen
+  //   5°          901 m,  0.03%  — effectively disabled
+  //   8°+         915 m,  0%     — fully disabled, the no-thermal-erosion value
+  // Above ~5° the step stops doing anything at all, which would leave the
+  // valley-widening it exists for unimplemented; 3° keeps it working on the terrain
+  // it was meant for while erosion now ADDS relief in the mountains (831 m against
+  // the tectonic surface's 693 m) instead of removing it.
+  //
+  // transportRate = 0.3 and iterations = 50 are unchanged, but note they now apply
+  // to a far smaller set of pairs, which is the point.
+  talusAngleDegrees: 3,
+  // --- from deltaGrowth.ts ---
+  // Depth exponent for the routing weights (Freeman-style): higher concentrates
+  // flow into the deepest channel, lower lets it spread. And the inertia floor
+  // keeps a parcel from ever weighting a full reversal.
+  //
+  // The depth entering the weight is CAPPED (see weightDepthCap below) — the
+  // bug that silently defeated every deposition variant: uncapped depth^1.5
+  // across three orders of magnitude made the open ocean ~25× more attractive
+  // than the 12 m platform, so parcels dived straight off the shelf edge into
+  // the abyss and wrote their load off (measured: ~0.2% of the budget ever
+  // deposited, identical across three deposition designs). DeltaRCM's depth
+  // preference is about CHANNEL depths on the delta top — metres — not about
+  // basins; capping reproduces that: below the cap, deeper still wins (keeps
+  // channels), beyond it all water is equally attractive and inertia takes
+  // over, so the flow spreads as a plume across the platform instead of
+  // racing downslope.
+  depthExponent: 1.5,
+  backwardWeight: 0.05,
+  // --- from tileErosion.ts ---
+  // Sub-macro-cell starting roughness, in elevation units at amplitude 1 —
+  // the analytic field is smooth below the ridged noise's finest octave
+  // (~8 macro px), so a freshly-sampled tile is glass at fine scale and the
+  // priority flood would route its rivers on numerical noise. The same
+  // reasoning as EROSION_PLAIN_FACTOR's "not zero": drainage needs texture to
+  // pick a side. fineDetailNoise is torus-periodic and world-anchored, so the
+  // same tile always regenerates the same roughness, and adjacent tiles agree.
+  //
+  // HEIGHT-SCALED, fading out toward sea level (prototype run 6's lesson): on a
+  // low coastal plain everything that should guide the trunk river — the
+  // inherited macro valley (only metres deep there, EROSION_PLAIN_FACTOR damps
+  // plain incision on purpose) and the stream-burnt groove (scaled to the same
+  // small headroom) — is smaller than a full ±30 m of noise, so the noise won,
+  // the river wandered off its macro course and shattered below the delta gate.
+  // Full roughness stays in the highlands, where competing micro-valleys are
+  // exactly what we want. Ocean cells get none (nothing routes on the seabed
+  // and deltas read cleaner against a smooth floor).
+  // ~30 m peak amplitude,
+  tileSeedRoughness: 30 / 9e3,
+  // Macro erosion params rescaled for a tile refined by `factor`. The general
+  // per-cell rescaling — talus angle, transport capacity, the delta area gate,
+  // and why stream power needs nothing — is derived once in
+  // erosion.scaleErosionParamsForCellSize and shared with the amplification
+  // bake; only the tile-SPECIFIC correction lives here.
+  //
+  // That correction is the delta gate. The shared rule scales it by factor²,
+  // which is right for the physical catchment. But at a tile's factor MFD
+  // routing deliberately splits a trunk into several distributary strands near
+  // a flat mouth (3-5 in practice), and the gate's job — "no deltas from
+  // coastal trickles" — is a judgment about the river SYSTEM, which already
+  // passed it at macro scale. Without the allowance every individual strand of
+  // a fully qualified river fails the per-cell test and the tile builds no
+  // delta at all (prototype run 6, measured: best strand 39k fine units
+  // against a raw factor²-gate of 128k). Dividing by 4 lets a trunk that split
+  // four ways still qualify.
+  //
+  // Iteration/round counts are deliberately NOT reduced: the tile is far
+  // smaller than the world, so generous iterations are cheap where it matters.
+  tileDistributaryStrands: 4,
+  // The macro river course is authoritative, but near the tile rim and on low
+  // coastal plains its real gradient is metres — smaller than the seed
+  // roughness and the rim drain's pull — so without conditioning the fine
+  // drainage loses the macro course (prototype runs 2-6, each constant below
+  // is one measured failure):
+  // - trunk rivers only (>= 500 macro cells): burning the whole acc>=60
+  //   dendritic net flattened low plains into competing corridors.
+  // - narrow V-grooves: a wide flat-bottomed groove makes MFD fan the river
+  //   into strands below every downstream threshold.
+  // - depth SCALED into the headroom above the floor, not clamped: clamping
+  //   made dead-flat corridors at exactly the floor height.
+  burnMinMacroDrainage: 500,
+  burnRadiusFine: 5,
+  burnBaseDepthM: 25,
+  burnDepthLogGainM: 10,
+  burnFloorM: 0.5,
+  // --- from hydrology.ts ---
+  // A modest per-cell runoff floor so even a bone-dry landmass still develops
+  // channels from drainage area alone (precip only MODULATES density, it doesn't
+  // gate rivers entirely) — the user disliked rivers vanishing outside the wettest
+  // regions. Wet cells sit far above this, so precip still dominates where it's high.
+  runoffFloor: 200,
+  // Lake water depth per full-res cell (0 = dry). Climate-aware / endorheic:
+  // priority-flood `filled` marks every depression's cells (filled > raw) and its
+  // spill level; for each basin (a connected flooded region) we weigh the water
+  // arriving (max discharge through it) against evaporation from the lake surface
+  // (evaporationPotential × area). If inflow ≥ evaporation at the spill-full area,
+  // the basin brims to its spill and overflows (an open lake feeding the river
+  // below); otherwise it's ENDORHEIC — the level settles where inflow balances
+  // evaporation, a shrunken closed lake (a hot dry basin becomes a small salt lake,
+  // or nothing). Depth = level − raw for cells under the level. 4-connected,
+  // toroidally wrapped. See docs/decisions/climate-biomes.md.
+  // Basins shallower than this (spill level minus the basin's lowest point)
+  // are not lakes — they are terrain texture. Became necessary 2026-08-06 when
+  // computeElevation gained the plains micro-relief seed (PLAIN_DETAIL_MAX,
+  // ±10 m typical): every noise dimple with any inflow classified as a lake and
+  // the plains drowned in puddles. Re-swept under the overflow-only rule
+  // (one seed; "plains" = bodies whose basin sits below 600 m tectonic):
+  //
+  //     gate    lakes   on plains
+  //      0 m     816       740      <- every dimple on a river overflows
+  //      4 m     199       139
+  //      8 m      88        35      <- chosen: plains keep a visible lake
+  //     12 m      71        22         population without the puddle flood
+  //     15 m      66        20      <- at 15 (under the older endorheic
+  //                                    model) the plains read as lakeless
+  //
+  // The 135k km² shallow mega-pan (a genuine Lake-Chad-style feature, present
+  // without the noise too) survives every gate under the overflow rule — the
+  // spill-brimming level keeps it a throughflow lake. Genuine deep lakes sit
+  // far above the gate either way (rift grabens are depth-capped in the
+  // hundreds of metres).
+  minLakeBasinReliefM: 8,
+  // Evaporites concentrate where the last water stood — the salt flat is a BAND
+  // above the waterline, not the whole exposed floor (a fully-dry 2800 m deep
+  // basin is a salt PAN at the bottom and hot desert rock on the slopes, not a
+  // kilometres-tall salt wall). Thickness is a starting value for the usual
+  // by-eye pass.
+  saltBandM: 75,
+  // Peak precipitation bonus (mm/yr) a cell gets right at a full-strength river/lake
+  // — enough to lift a hot desert (P<250) into savanna/forest (the Nile effect).
+  maxRiparianMm: 900,
+  // How far the moisture bleeds into neighbouring coarse cells, and its per-step
+  // falloff. Coarse cells are large (~60 km), so 1 step already reads as a green
+  // valley band without washing out the whole continent.
+  riparianSpread: 1,
+  riparianDecay: 0.45
+};
 
 // src/worldgen/core/minHeap.ts
 var MinHeap = class {
@@ -10511,15 +10834,11 @@ var DEFAULT_STREAM_POWER_PARAMS = {
   // are simply small. 2000 leaves roughly fifteen mouths building deltas.
   deltaMinDrainageCells: 2e3
 };
-var DELTA_FREEBOARD_NEAR = metersToElevation(4);
-var DELTA_FREEBOARD_FAR = metersToElevation(0.5);
-var DELTA_FREEBOARD_DEPTH_RANGE = SEA_LEVEL - SHELF_BREAK;
 function gradedSeaCap(tectonic, cell) {
   const depth = SEA_LEVEL - tectonic[cell];
-  const t = depth <= 0 ? 0 : depth >= DELTA_FREEBOARD_DEPTH_RANGE ? 1 : depth / DELTA_FREEBOARD_DEPTH_RANGE;
-  return SEA_LEVEL + DELTA_FREEBOARD_NEAR - (DELTA_FREEBOARD_NEAR - DELTA_FREEBOARD_FAR) * t;
+  const t = depth <= 0 ? 0 : depth >= SURFACE_TUNING.deltaFreeboardDepthRange ? 1 : depth / SURFACE_TUNING.deltaFreeboardDepthRange;
+  return SEA_LEVEL + SURFACE_TUNING.deltaFreeboardNear - (SURFACE_TUNING.deltaFreeboardNear - SURFACE_TUNING.deltaFreeboardFar) * t;
 }
-var DELTA_SPREAD_FRACTION = 0.4;
 function depositSediment(elevations, routing, accumulation, isLand, excavated, load, donorFloor, tectonic, width, height, transportCapacityKt, depositBelowSeaLevel, depositOnLand, deltaMinDrainageCells) {
   const { flowTarget, popOrder, poppedCount } = routing;
   load.fill(0);
@@ -10552,7 +10871,7 @@ function depositSediment(elevations, routing, accumulation, isLand, excavated, l
       const capacity = transportCapacityKt * accumulation[cell] * slope;
       if (flux > capacity) {
         const surplus = flux - capacity;
-        const centerShare = isLand[cell] ? surplus : surplus * (1 - DELTA_SPREAD_FRACTION);
+        const centerShare = isLand[cell] ? surplus : surplus * (1 - SURFACE_TUNING.deltaSpreadFraction);
         let deposit = centerShare;
         const room = ceiling - elevations[cell];
         if (deposit > room) deposit = room;
@@ -10563,7 +10882,7 @@ function depositSediment(elevations, routing, accumulation, isLand, excavated, l
         if (!isLand[cell]) {
           const y = cell / width | 0;
           const x = cell - y * width;
-          const slice = surplus * DELTA_SPREAD_FRACTION / D8_OFFSETS.length;
+          const slice = surplus * SURFACE_TUNING.deltaSpreadFraction / D8_OFFSETS.length;
           for (const [dx, dy] of D8_OFFSETS) {
             const neighbor = d8Neighbor(x, y, dx, dy, width, height);
             if (isLand[neighbor] || elevations[neighbor] < SHELF_BREAK) continue;
@@ -10583,12 +10902,10 @@ function depositSediment(elevations, routing, accumulation, isLand, excavated, l
     }
   }
 }
-var EROSION_PLAIN_TOP_M = 600;
-var EROSION_MOUNTAIN_FULL_M = 1500;
 var EROSION_PLAIN_FACTOR = 0.3;
 function buildErosionMask(tectonic, plainFactor = EROSION_PLAIN_FACTOR) {
-  const lo = metersToElevation(EROSION_PLAIN_TOP_M);
-  const hi = metersToElevation(EROSION_MOUNTAIN_FULL_M);
+  const lo = metersToElevation(SURFACE_TUNING.erosionPlainTopM);
+  const hi = metersToElevation(SURFACE_TUNING.erosionMountainFullM);
   const mask = new Float32Array(tectonic.length);
   for (let i = 0; i < tectonic.length; i++) {
     const e = tectonic[i];
@@ -10634,10 +10951,9 @@ async function runStreamPowerIterations(elevations, routing, accumulation, isLan
     await maybeYield();
   }
 }
-var TALUS_ANGLE_DEGREES = 3;
 var DEFAULT_THERMAL_EROSION_PARAMS = {
   iterations: 50,
-  talusSlope: slopeFromAngle(TALUS_ANGLE_DEGREES),
+  talusSlope: slopeFromAngle(SURFACE_TUNING.talusAngleDegrees),
   transportRate: 0.3
 };
 async function runThermalErosion(elevations, isLand, width, height, params, onProgress) {
@@ -10796,9 +11112,188 @@ async function runErosionPass(rawElevations, width, height, params = DEFAULT_ERO
   return { elevations, routing, accumulation, preFillElevations: preFillElevations ?? elevations };
 }
 
-// src/worldgen/climate/temperature.ts
-var LAPSE_C_PER_KM = 6.5;
-var LAPSE_C_PER_ELEVATION = LAPSE_C_PER_KM * (ELEVATION_METERS / 1e3);
+// src/worldgen/climate/climateTuneParams.ts
+var lapseCPerKm = 6.5;
+var CLIMATE_TUNING = {
+  // --- from temperature.ts ---
+  // Real-ish units (°C), so the later Whittaker biome thresholds are directly
+  // usable. Tune by eye — these set the equator-to-pole span.
+  tempEquatorC: 30,
+  tempPoleC: -25,
+  // The environmental lapse rate — °C lost per unit of elevation. Now a derived
+  // quantity rather than a tuned one: the real atmosphere loses ~6.5 °C/km, and
+  // elevationScale says a full unit is ELEVATION_METERS, so this is simply the two
+  // multiplied. A 1681 m peak (the measured 90th percentile of land) comes out
+  // 10.9 °C cooler than its lowland, which is what 6.5 °C/km gives.
+  //
+  // This replaces a hand-tuned 35 paired with a LAND_LAPSE_REF = 0.35 offset, and
+  // getting rid of that offset is the point. It existed because the old land
+  // baseline of 0.35 was not physically a height at all — continental lowland was
+  // SUPPOSED to read as sea-level-warm, but the scale placed it at what the lapse
+  // rate had to treat as 3 km up, cooling every land cell on the planet by ~12 °C
+  // and dragging the whole climate too cold (a ~18 °C equator, tundra across the
+  // mid-latitudes, and a drier world via the suppressed evaporation). The offset
+  // was the correct local fix for a scale that meant two different things in its
+  // two halves. With lowland actually at 360 m, cooling can simply be measured
+  // from sea level like it is in reality, and the special case disappears.
+  lapseCPerKm,
+  // The same lapse in ELEVATION units, which is what every consumer actually
+  // multiplies by. Derived rather than restated so it follows both the rate and
+  // the metre anchor; biomes.ts reads it too.
+  lapseCPerElevation: lapseCPerKm * (ELEVATION_METERS / 1e3),
+  // --- from wind.ts ---
+  // Relative strengths — zonal (east/west) dominates the surface pattern, the
+  // meridional (toward/away from the equator) component is weaker. Dimensionless;
+  // the wind is used as a direction + relative-magnitude field (overlay arrows,
+  // and later moisture/current advection), not in physical m/s.
+  windZonalStrength: 1,
+  windMeridionalStrength: 0.4,
+  // --- from seasonality.ts ---
+  // Peak annual temperature range (°C, summer − winter) — reached by a
+  // continental interior at high latitude. The equator sits near 0 (sun always
+  // high), a coast/ocean stays low (thermal inertia). Tune by eye.
+  seasonMaxAmplitude: 42,
+  // Cells this many grid cells from the nearest ocean count as fully
+  // continental; nearer ones interpolate. A big continent's core sits deep
+  // enough to saturate.
+  seasonContinentalityScale: 45,
+  // Coastal land floor (continentality 0): even a coast swings a bit.
+  seasonCoastDamp: 0.3,
+  // --- from monsoon.ts ---
+  // How far (fraction of map height) the ITCZ belt migrates toward the summer hemisphere.
+  // Real seasonal swing is ~10-15° of latitude (bigger over monsoon land); 0.12 of the
+  // map's pole-to-pole span is in that range on this 2:1 torus.
+  monsoonItczSeasonalShift: 0.07,
+  // Strength of the monsoon surface wind — a component up the seasonal-temperature
+  // gradient (∇T points from cool sea toward hot summer land), added to the prescribed
+  // zonal wind. Tuned so it reshapes moisture advection near coasts without swamping the
+  // base three-cell circulation (base zonal strength ~1). See computeMonsoonWind.
+  monsoonWindStrength: 0.05,
+  // Wetness floor (mm/yr) added to the monsoon-index denominator so ARID cells don't read
+  // as monsoonal: a desert with 50 mm wet / 5 mm dry is dry, not seasonal, yet a raw
+  // (wet−dry)/(wet+dry) would call it 0.82. The floor damps the index where absolute
+  // precipitation is small, so a high index means genuinely wet-in-one-season-dry-in-the-
+  // other (a real monsoon), not just marginal noise. ~ a semi-arid annual total.
+  monsoonSeasonalityFloor: 500,
+  // --- from precipitation.ts ---
+  // Iterations of moisture transport, and how far (in grid cells, per unit wind)
+  // moisture advects each one. Needs enough to reach a steady state deep inland
+  // — the flow is diagonal (zonal + meridional), so the path in is longer than
+  // the straight-line distance; too few left continental interiors stuck at
+  // their transient (empty) starting value.
+  precipIters: 120,
+  precipAdvectStep: 2,
+  // Moisture is advected mostly ZONALLY (it penetrates inland from the nearest
+  // east/west coast). The meridional wind is damped for transport, because at
+  // full strength a backward streamline from a deep mid-latitude interior curves
+  // down into the neighbouring cell where the zonal wind REVERSES (Hadley vs
+  // Ferrel) — it then never traces back to an ocean, starving that cell to a
+  // hard zero. A gentle meridional tilt keeps streamlines within their own band.
+  precipAdvectMeridionalScale: 0.3,
+  // Fraction of airborne moisture that rains out per iteration on flat land, and
+  // the extra fraction per unit of upslope elevation along the wind (orographic
+  // lift). The orographic term also creates rain shadows: moisture rains out
+  // climbing the windward slope, so little is left for the lee side downwind.
+  precipBaseRainout: 0.03,
+  // Scaled by SLOPE_RECALIBRATION: land slopes halved when the continental
+  // interior stopped being a flat plateau, so the same terrain now produces half
+  // the measured upslope. Without this, orographic rain and its rain shadows both
+  // collapse toward the BASE_RAINOUT floor.
+  precipOrographicRate: 0.9 * SLOPE_RECALIBRATION,
+  // Land moisture recycling (evapotranspiration): the fraction of rained-out water that
+  // re-evaporates from soil/vegetation back into the airborne pool, feeding downwind rain.
+  // This is a MAJOR real process — ~a third to a half of continental precipitation is
+  // recycled from land ET, which is what keeps deep interiors (Amazon, Congo, monsoon
+  // Asia) wet far from any coast rather than the near-zero our pure-depletion advection
+  // gave. It sustains ALREADY-fed interiors (so rainforests/forests reach inland) without
+  // rescuing genuine rain-shadow deserts (nothing rains → nothing recycles), so aridity
+  // stays where it belongs. Net land depletion per step becomes rain·(1 − this).
+  precipLandRecycleFrac: 0.5,
+  // World px upwind to sample for the along-wind slope (needs the fine elevation,
+  // not the coarse climate grid — the point of sampling full-res here).
+  precipOrogSamplePx: 40,
+  // Raw rainout → mm/yr. Tunes overall wetness; a wet windward mountain lands
+  // around a few thousand mm, deserts/rain-shadow near zero.
+  //
+  // Known deviation, measured 2026-07-31 and deliberately left alone: the wettest
+  // cells reach ~22500 mm/yr and ~1.3% of land exceeds Earth's all-time record of
+  // 11900 — unphysical as a DISTRIBUTION (our cells are 62 km means, which should
+  // sit below a point record, not above it). Do not reach for this constant to fix
+  // it: the median is 813 mm/yr against Earth's ~700, so the overall calibration is
+  // right and lowering it would drag the sound body down with the tail.
+  //
+  // The cause is the shape of the model, not a constant. `rainFrac` is a fraction
+  // per iteration with no saturation, and one iteration advects 62 km — so at a p99
+  // upslope roughly half the moisture column may rain out over that single step.
+  // The 0.85 clamp below binds far too late to stop it (it needs a 4100 m rise over
+  // the 312 km sample, and catches only 0.04-1.4% of land cells). The physical fix
+  // is a soft saturation on rainFrac, not a lower ceiling here.
+  //
+  // Left as is because it costs nothing downstream: capping precipitation at 4000
+  // changed ZERO biome cells on both test seeds (Whittaker's thresholds stop at
+  // 1500 mm, and ecology's productivity is 1 − exp(−0.000664·P), already 0.98 at
+  // 6000). It survives only into hydrology, which is linear in precip: mean runoff
+  // +29% and maxDischarge +72%, i.e. rivers drawn about a quarter narrower. Those
+  // are aesthetic knobs. A saturation would shift mean runoff ~30%, so it would cost
+  // a re-tuned river-density default and a golden re-record — not worth it for a
+  // number nothing reads. Three other suspects were ruled out first: the scale
+  // (median is right), erosion's missing deposition (pre/post distributions are
+  // identical), and ridged noise in the slope sample (the tail survives without
+  // noise, and the wettest cells cluster 70-93%, so it is real orography).
+  precipScale: 6e4,
+  // Zonal wet/dry from the general circulation: rising (wet) air at the equator
+  // ITCZ (φ=0) and the subpolar front (φ≈2/3), sinking (dry) air at the
+  // subtropical highs (φ≈1/3 — the great deserts) and the poles (φ=1).
+  // Floor for the zonal band multiplier — the subtropical-high / polar dry minimum. At
+  // 0.1 the subtropics got a 15× dry penalty vs the equator, which (with interior
+  // depletion) turned nearly all subtropical land into extreme desert. A higher floor
+  // keeps those belts the driest zones without erasing all vegetation there (semi-arid
+  // grassland/savanna rather than bare desert).
+  precipBandFloor: 0.13,
+  // --- from oceanCurrents.ts ---
+  // Streamfunction solve iterations (Gauss-Seidel, in place — converges roughly
+  // twice as fast as Jacobi). One-shot per climate compute; the gyre structure
+  // doesn't need a fully-converged ψ.
+  currentsSolveIters: 700,
+  // SST transport: how far (grid cells) it advects along the normalized current
+  // per iteration, how many iterations, and the per-iteration relaxation back
+  // toward the latitudinal base (anchors the SST to latitude so anomalies stay
+  // bounded — a few °C, like real boundary currents on this coarse grid).
+  currentsAdvectStep: 2.5,
+  currentsAdvectIters: 80,
+  currentsBaseRelax: 0.15,
+  // How strongly a coastal land cell is pulled toward the adjacent ocean's SST
+  // anomaly (warm current → milder coast, cold current/upwelling → cooler coast),
+  // and how far inland that influence reaches, decaying per cell (a maritime band
+  // a few cells wide rather than a single-cell edge).
+  currentsCoastalFactor: 0.9,
+  currentsCoastalSteps: 4,
+  currentsCoastalDecay: 0.8,
+  // --- from biomes.ts ---
+  // The alpine override, promised by docs/decisions/climate-biomes.md ("plus ...
+  // an alpine override above the treeline") but never built until 2026-08-06: a
+  // mountain's cold-elevation biome used to fall out of the lapse rate alone —
+  // which classifies it as Tundra, exactly the same id/color/label as arctic
+  // lowland tundra. That is not wrong ecologically (a real snowline zone reads
+  // similarly whether it got cold from latitude or elevation), but it meant an
+  // equatorial snow-capped peak and a polar plain were visually and
+  // mechanically indistinguishable — the elevation was invisible to gameplay.
+  //
+  // A single global elevation threshold (not latitude-dependent) is the whole
+  // point of the override: real treeline elevation DOES fall with latitude, but
+  // reproducing that here would just re-derive what the lapse-rate-driven T/P
+  // classification already gives — the useful, DIFFERENT signal is "is this
+  // high ground, regardless of where on the planet it is", so a fixed metres
+  // threshold is what actually answers that. 2800 m sits within the commonly
+  // cited real-world treeline range (roughly 2500-3800 m depending on
+  // latitude/region) as a single representative value.
+  //
+  // A cell that would already classify as Ice (T < -10°C — a true glaciated
+  // summit) is left alone: Alpine means "bare rock / sparse cold-adapted
+  // vegetation above the treeline", not "less ice than Ice" — a permanently
+  // glaciated peak should still read as ice, elevation or not.
+  alpineTreelineElevation: metersToElevation(2800)
+};
 
 // src/worldgen/climate/biomes.ts
 var Biome = {
@@ -10859,18 +11354,13 @@ var BIOME_LABEL_KEYS = {
   [Biome.Alpine]: "world.biome.alpine",
   [Biome.SaltFlat]: "world.biome.saltFlat"
 };
-var ALPINE_TREELINE_ELEVATION = metersToElevation(2800);
-
-// src/worldgen/climate/precipitation.ts
-var OROGRAPHIC_RATE = 0.9 * SLOPE_RECALIBRATION;
 
 // src/worldgen/surface/hydrology.ts
-var RUNOFF_FLOOR = 200;
 function precipRunoffAt(precip, cx, cy, worldW, worldH, climateResX, climateResY) {
   const gx = Math.min(climateResX - 1, Math.floor(cx / worldW * climateResX));
   const gy = Math.min(climateResY - 1, Math.floor(cy / worldH * climateResY));
   const p = precip[gy * climateResX + gx];
-  return p > RUNOFF_FLOOR ? p : RUNOFF_FLOOR;
+  return p > SURFACE_TUNING.runoffFloor ? p : SURFACE_TUNING.runoffFloor;
 }
 function meanLandRunoff(precip, elevation, worldW, worldH, climateResX, climateResY) {
   let sum = 0;
@@ -10882,7 +11372,7 @@ function meanLandRunoff(precip, elevation, worldW, worldH, climateResX, climateR
     sum += precipRunoffAt(precip, cx, cy, worldW, worldH, climateResX, climateResY);
     count++;
   }
-  return count > 0 ? sum / count : RUNOFF_FLOOR;
+  return count > 0 ? sum / count : SURFACE_TUNING.runoffFloor;
 }
 function accumulateDischarge(routing, elevation, precip, climateResX, climateResY) {
   const { width, height, flowTarget, popOrder, poppedCount } = routing;
@@ -11059,33 +11549,14 @@ async function runAmplification(request, onProgress = () => {
 var artifactDirectory = (key) => `worlds/${key.worldId}/amp/${key.pipelineVersion}/${key.stage}`;
 var artifactPath = (key, file) => `${artifactDirectory(key)}/${file}`;
 
-// src/map/mapSceneSettings.ts
-var MAP_WORLD_WIDTH = 20;
-var MAP_WORLD_HEIGHT = 10;
-var RELIEF_HEIGHT_SCALE = ELEVATION_METERS / (METERS_PER_CELL * MAP_WIDTH) * MAP_WORLD_WIDTH;
-var UNITS_PER_METER = MAP_WORLD_WIDTH / (METERS_PER_CELL * MAP_WIDTH);
-var NEAR_MIN_ALTITUDE = 2500 * UNITS_PER_METER;
-var HEX_WIDTH_M = 300;
-var WORLD_WIDTH_M = METERS_PER_CELL * MAP_WIDTH;
-var WORLD_HEIGHT_M = METERS_PER_CELL * MAP_HEIGHT;
-var HEX_COLUMNS = Math.round(WORLD_WIDTH_M / HEX_WIDTH_M);
-var HEX_ROWS = 2 * Math.round(WORLD_HEIGHT_M / (HEX_WIDTH_M * (Math.sqrt(3) / 2)) / 2);
-var HEX_COL_SPACING = MAP_WORLD_WIDTH / HEX_COLUMNS;
-var HEX_ROW_SPACING = MAP_WORLD_HEIGHT / HEX_ROWS;
+// src/world/bakeSettings.ts
 var AMPLIFY_EROSION_ROUNDS = 2;
 
-// src/storage/amplificationArtifact.ts
+// src/world/artifacts.ts
 function amplificationPipelineVersion(rounds = AMPLIFY_EROSION_ROUNDS) {
   return derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds });
 }
-var ELEVATION_SPEC = {
-  name: "elevation",
-  dtype: "u16",
-  scale: 2 / 65535,
-  offset: -1,
-  unit: "relative",
-  landOnly: false
-};
+var ELEVATION_ENCODING = { dtype: "u16", scale: 2 / 65535, offset: -1 };
 var FILES = {
   elevation: "elevation.u16",
   meta: "meta.json"
@@ -11109,7 +11580,7 @@ async function writeAmplificationArtifact(store, key, artifact, bakeMs, riverDen
     bakeMs,
     createdAt: Date.now()
   };
-  const wrote = await store.write(artifactPath(key, FILES.elevation), new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_SPEC))) && await store.write(artifactPath(key, rivers.points), artifact.riverPoints) && await store.write(artifactPath(key, rivers.lengths), artifact.riverLengths) && await store.write(artifactPath(key, FILES.meta), new TextEncoder().encode(JSON.stringify(meta)));
+  const wrote = await store.write(artifactPath(key, FILES.elevation), new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING))) && await store.write(artifactPath(key, rivers.points), artifact.riverPoints) && await store.write(artifactPath(key, rivers.lengths), artifact.riverLengths) && await store.write(artifactPath(key, FILES.meta), new TextEncoder().encode(JSON.stringify(meta)));
   if (!wrote) {
     await store.remove(artifactPath(key, FILES.meta));
   }
