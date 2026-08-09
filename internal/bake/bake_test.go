@@ -121,16 +121,19 @@ func TestLocalModeLetsEveryoneBake(t *testing.T) {
 // The rule the whole check exists for, and the one that would be silently
 // inverted by a wrong comparison.
 func TestOwnershipIsEnforcedWhenIdentityIsChecked(t *testing.T) {
-	m, _, dir := newTestModule(t, config.AuthToken, 1)
+	m, _, dir := newTestModule(t, config.AuthPassword, 1)
 	writeWorld(t, dir, testUID, "ada")
 
-	// Nobody is authenticated yet — token auth is not implemented, so the
-	// resolver yields Anonymous, and Anonymous must never own anything.
+	// Nobody can authenticate yet — password mode has no verifier, so the
+	// resolver yields Anonymous for everyone, and Anonymous must never own
+	// anything. The second case is the one worth keeping once it does: a token
+	// the server cannot verify must be worth exactly as much as none at all,
+	// never a fallback to some weaker identity.
 	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusForbidden {
-		t.Errorf("anonymous request = %d, want 403", got)
+		t.Errorf("no credentials = %d, want 403", got)
 	}
-	if got := post(m, testUID, `{"stage":2}`, "some-token").Code; got != http.StatusForbidden {
-		t.Errorf("unrecognised token = %d, want 403", got)
+	if got := post(m, testUID, `{"stage":2}`, "not-a-valid-token").Code; got != http.StatusForbidden {
+		t.Errorf("unverifiable token = %d, want 403", got)
 	}
 
 	// The unit underneath, where the decision actually lives: a wrong operator
@@ -154,7 +157,7 @@ func TestOwnershipIsEnforcedWhenIdentityIsChecked(t *testing.T) {
 
 // A refusal must not double as a denial that the world exists.
 func TestRefusalDistinguishesMissingFromForbidden(t *testing.T) {
-	m, _, dir := newTestModule(t, config.AuthToken, 1)
+	m, _, dir := newTestModule(t, config.AuthPassword, 1)
 	writeWorld(t, dir, testUID, "ada")
 
 	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusForbidden {

@@ -83,24 +83,63 @@ func validTargets() string {
 	return strings.Join(names, ", ")
 }
 
-// AuthMode is how the server establishes who is asking. The three values come
-// from the design's staging (docs/design/server-storage.md): build with a
-// notion of identity from day one, check it later.
+// AuthMode is how the server establishes who is asking. The values are
+// user-facing surface — they are what --auth-mode takes and what the client is
+// told in /config.json — so renaming one breaks deployments, not just code.
+//
+// The axis is WHERE THE USERS LIVE, not what the request header looks like:
+// `password` and `oidc` both arrive as `Authorization: Bearer`, and the
+// difference that matters is who issued the token and who can verify it. The
+// middle value was called `token` until 2026-08-09, which named the header
+// instead of the question. See docs/decisions/server-auth.md.
 type AuthMode string
 
 const (
 	// AuthNone is the LOCAL mode, and that is a definition rather than a
 	// default: a synthetic identity owns everything, so nobody else can be
 	// present and there is nothing to protect anyone from.
-	AuthNone  AuthMode = "none"
-	AuthToken AuthMode = "token"
-	AuthOIDC  AuthMode = "oidc"
+	AuthNone AuthMode = "none"
+	// AuthPassword: this server holds the user database (an htpasswd file),
+	// and logging in exchanges credentials for a token it issues itself.
+	AuthPassword AuthMode = "password"
+	// AuthOIDC: a foreign identity provider holds the users. It is a second
+	// LOGIN METHOD rather than a second token — the session it produces is
+	// still issued here, so the API only ever sees one kind.
+	AuthOIDC AuthMode = "oidc"
 )
 
-// DefaultAuthMode is what the server runs as until a flag exists to say
-// otherwise. Kept here rather than in the module that reports it, so the
-// value the client is TOLD and the value the server ENFORCES cannot differ.
+// authModes lists them in the order they are reported to the user, which is
+// also least to most machinery.
+var authModes = []AuthMode{AuthNone, AuthPassword, AuthOIDC}
+
+// DefaultAuthMode is what the server runs as unless --auth-mode says otherwise.
+// Kept here rather than in the module that reports it, so the value the client
+// is TOLD and the value the server ENFORCES cannot differ.
 const DefaultAuthMode = AuthNone
+
+// ParseAuthMode resolves the raw --auth-mode value.
+//
+// Unknown values FAIL rather than falling back to the default, and that is the
+// whole point of the function: ChecksIdentity treats anything that is not
+// `none` as a mode that checks, so a typo would not start an unprotected
+// server — it would start one that refuses everybody, which looks like a
+// permission bug rather than a misconfiguration. Loud beats either.
+func ParseAuthMode(raw string) (AuthMode, error) {
+	switch mode := AuthMode(strings.TrimSpace(raw)); mode {
+	case AuthNone, AuthPassword, AuthOIDC:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unknown auth mode %q; valid modes: %s", raw, validAuthModes())
+	}
+}
+
+func validAuthModes() string {
+	names := make([]string, 0, len(authModes))
+	for _, m := range authModes {
+		names = append(names, string(m))
+	}
+	return strings.Join(names, ", ")
+}
 
 // ChecksIdentity reports whether authorisation decisions mean anything. The
 // one place callers should ask, so "is this the local mode" is never spelled

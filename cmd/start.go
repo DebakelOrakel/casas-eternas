@@ -52,15 +52,23 @@ func Start(cmd *cobra.Command, args []string) error {
 func buildModules(targets config.Targets) ([]server.Module, error) {
 	var modules []server.Module
 
+	// Resolved ONCE and handed to every module that needs it. Three modules
+	// deciding independently what the flag said is how the value the client is
+	// told drifts from the value the server enforces.
+	authMode, err := config.ParseAuthMode(viper.GetString(flagAuthMode))
+	if err != nil {
+		return nil, err
+	}
+
 	if targets.Has(config.TargetClient) {
-		m, err := client.New(client.Config{Dir: viper.GetString(flagDirClient), AuthMode: config.DefaultAuthMode})
+		m, err := client.New(client.Config{Dir: viper.GetString(flagDirClient), AuthMode: authMode})
 		if err != nil {
 			return nil, err
 		}
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetWorld) {
-		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorlds), AuthMode: config.DefaultAuthMode})
+		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorlds), AuthMode: authMode})
 		if err != nil {
 			return nil, err
 		}
@@ -78,7 +86,7 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 			WorldsDir:     viper.GetString(flagDirWorlds),
 			ArtifactsDir:  viper.GetString(flagDirArtifacts),
 			BakerPath:     bakerPath(),
-			AuthMode:      config.DefaultAuthMode,
+			AuthMode:      authMode,
 			Listen:        viper.GetString(flagListen),
 			MaxConcurrent: viper.GetInt(flagBakeMax),
 		})

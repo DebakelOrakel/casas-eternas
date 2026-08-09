@@ -1,7 +1,7 @@
 ---
 summary: How the server establishes who is asking. Three modes stay — but `token` becomes `password`, because the axis that matters is WHERE the users live, not what the header looks like. Credentials are an htpasswd file mounted from a Secret; logging in exchanges them for a JWT the server issues itself; OIDC later is a second login method feeding the same token, not a second token. Four paths stay public so a logged-out client can find out where to log in. Revocation is decided (short TTL plus refresh, revoked by a per-user stamp) but not yet built. The user file lives in the writable data directory rather than the Secret, because the planned admin screen has to be able to add users.
 date: 2026-08-09
-status: decided, sequenced in seven steps — nothing built yet. `identity.Caller` and the mode enum exist and run; this decides what fills them
+status: decided, sequenced in seven steps. STEP 1 BUILT 2026-08-09 (the mode renamed, `--auth-mode` with validation, resolved once and handed to every module). Nothing authenticates yet
 ---
 
 # Server authentication
@@ -243,12 +243,24 @@ Each step ends green on `go test ./internal/...` and `make lint`, and each is
 useful on its own. The default stays `none` throughout, so nothing changes for a
 local server until someone passes `--auth-mode`.
 
-**1. The mode, renamed.** `config.AuthToken` → `AuthPassword`, and `--auth-mode`
-exists for the first time (there is no flag for it today at all). Nothing
-authenticates yet; `password` still resolves every caller to Anonymous, which is
-what `identity.Caller` already does for a mode that claims to check. The one
-test that asserts today's behaviour (`bake_test.go`, "unrecognised token = 403")
-describes something else afterwards and is restated.
+**1. The mode, renamed. BUILT 2026-08-09.** `config.AuthToken` → `AuthPassword`,
+and `--auth-mode` exists for the first time. Nothing authenticates yet;
+`password` still resolves every caller to Anonymous, which is what
+`identity.Caller` already does for a mode that claims to check.
+
+`ParseAuthMode` came with it, and it is the part worth having: `ChecksIdentity`
+counts everything that is not `none` as a mode that checks, so `--auth-mode
+passwrod` would have started a server that refuses every request while looking
+healthy — a misconfiguration wearing a permission bug's clothes. It now refuses
+to start. The mode is resolved ONCE in `buildModules` and handed to all three
+modules that take one, so the value the client is told cannot drift from the one
+the server enforces.
+
+Two consequences landed as predicted: `bake_test.go`'s "unrecognised token = 403"
+now reads "unverifiable token", stating the rule that will matter once there is a
+verifier — a token the server cannot verify is worth exactly as much as none at
+all, never a fallback to a weaker identity. And the client's `/config.json`
+comment stopped saying `token`.
 
 **2. Credentials, as a package with no HTTP in it.** Read an htpasswd file,
 compare with bcrypt, re-read per attempt (no cache — see the Kubernetes section).

@@ -61,8 +61,10 @@ type runtimeConfig struct {
 	// only when the storage genuinely should be a foreign origin.
 	APIBase string `json:"apiBase"`
 
-	// AuthMode is none | token | oidc. Every code path exists from the start
-	// so that SSO later is a config value rather than a refactor.
+	// AuthMode is none | password | oidc, verbatim from --auth-mode. It tells
+	// the client which login FLOW to run — a form for `password`, a redirect
+	// for `oidc` — which is why the value names where the users live rather
+	// than what the header looks like. See docs/decisions/server-auth.md.
 	AuthMode string `json:"authMode"`
 }
 
