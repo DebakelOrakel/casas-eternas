@@ -230,7 +230,7 @@ export const SURFACE_TUNING = {
   // exactly what we want. Ocean cells get none (nothing routes on the seabed
   // and deltas read cleaner against a smooth floor).
   // ~30 m peak amplitude,
-  tileSeedRoughness: 30 / 9000,
+  tileSeedRoughness: metersToElevation(30),
 
   // Macro erosion params rescaled for a tile refined by `factor`. The general
   // per-cell rescaling — talus angle, transport capacity, the delta area gate,
@@ -330,4 +330,17 @@ export const SURFACE_TUNING = {
   riparianSpread: 1,
 
   riparianDecay: 0.45,
+
+  // --- the river-density curve's endpoints ---------------------------------
+  //
+  // These were FUNCTION-LOCAL inside `densityToCriticalArea`, which put them
+  // beyond the reach of any grouping and, more to the point, beyond the artifact
+  // key: the bake re-extracts rivers on the amplified field, so changing either
+  // one changes the baked network under an unchanged key.
+  channelAreaMax: 4000,
+  // Floored well above 1 cell: on smooth (un-eroded) terrain a too-low threshold
+  // draws a channel from nearly every cell, and D8 picks the same steepest
+  // direction for whole neighbourhoods → a mess of parallel lines. Keeping even
+  // max density at a few hundred cells of support suppresses that noise.
+  channelAreaMin: 150,
 } as const

@@ -578,6 +578,21 @@ Split by audience, not by topic:
 5. **`world.yaml` gains the migration sliders.** Old saves read defaults; whether
    that warrants a format version is undecided.
 
+## Closed after the plan (2026-08-09)
+
+- **The artifact key's second hole.** `CHANNEL_SLOPE_EXPONENT` plus
+  `densityToCriticalArea`'s `AREA_MAX`/`AREA_MIN` all shape the rivers the bake
+  re-extracts, and none were hashed — the latter two were function-local, and the
+  first is *named in identity.ts's own comment* justifying the hand-set v4 bump.
+  Known to move the output, and still left to a human to remember. Now in
+  `SURFACE_TUNING` and in the key, which moved to `v4-666118e3ebaafda5`.
+- **The metre anchor hardcodings.** `20 / 9000` and `30 / 9000` became
+  `metersToElevation(…)`. Bit-identical today; they follow the anchor from now on.
+- **A consumer asking its actual question.** The baked-river adoption path needed
+  a worldId and a slider value, and was decoding seven layers — including the
+  full-res biome raster — to get them. It opens the world and asks for its
+  identity instead.
+
 ## Related
 
 - [queryable-world-save.md](../decisions/queryable-world-save.md) — the manifest

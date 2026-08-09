@@ -1,6 +1,8 @@
 import { upscaleBilinearToroidal } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { fineDetailNoise, periodicValueNoise2D } from '../elevation/ridgedNoise'
+import { CHANNEL_SLOPE_EXPONENT } from './hydrology'
+import { SURFACE_TUNING } from './surfaceTuneParams'
 
 // Terrain AMPLIFICATION — the derived fine tier of
 // docs/decisions/worldmap-amplification.md. Takes the authoritative macro
@@ -244,6 +246,15 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
   plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
   talusAngleDeg: AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg,
+  // The bake RE-EXTRACTS rivers on the amplified field, so hydrology's channel
+  // criterion is part of what it produces — and none of these three were in the
+  // key. `CHANNEL_SLOPE_EXPONENT` was worse than merely absent: identity.ts
+  // names it in the comment justifying the hand-set v4 bump, so it was known to
+  // move the output and still left to a human to remember. The other two shape
+  // the density curve and were function-local until now.
+  channelSlopeExponent: CHANNEL_SLOPE_EXPONENT,
+  channelAreaMax: SURFACE_TUNING.channelAreaMax,
+  channelAreaMin: SURFACE_TUNING.channelAreaMin,
 }
 
 export interface AmplifiedField {

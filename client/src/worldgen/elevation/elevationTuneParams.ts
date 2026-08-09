@@ -1,3 +1,4 @@
+import { metersToElevation } from './elevationScale'
 
 // Algorithm tuning grouped into one object so it can be hashed — see the module
 // contract in client/src/worldgen/CLAUDE.md.
@@ -184,7 +185,7 @@ export const ELEVATION_TUNING = {
   // Passed in precomputed (like ridgeValue) so the render pool can cache it
   // per world; default 0 keeps old callers' fields bit-identical.
   // 20 m, in elevation units,
-  plainDetailMax: 20 / 9000,
+  plainDetailMax: metersToElevation(20),
 
   // Redistribution exponent (a standard procedural-terrain technique — e.g.
   // Sebastian Lague's terrain series applies the same curve to raw Perlin

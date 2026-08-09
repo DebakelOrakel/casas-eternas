@@ -49,6 +49,7 @@ import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { amplificationArtifactExists, amplificationPipelineVersion, readAmplificationArtifact, writeAmplificationArtifact } from '../../world/artifacts'
 import { readWorldInputs } from '../../world/save/loadWorldInputs'
+import { openWorld } from '../../world/query'
 import { amplifyPhaseFraction, bakeStageInBrowser } from '../../worldgen/surface/bakeInBrowser'
 import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../world/bakeClient'
 import { MIGRATION_INPUTS } from '../../worldgen/migration/migrationInputParams'
@@ -3381,9 +3382,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Deliberately after everything else and unawaited: it is a nicety, the
     // load must not wait on a zip being parsed a second time, and a world with
     // no artifact simply keeps its own rivers.
+    // Asked as the narrow question it is. `readWorldInputs` would decode seven
+    // layers — including the full-res biome raster — to hand back an id and a
+    // slider value; opening the world and asking for its identity touches
+    // elevation and precipitation and stops there.
     void file.arrayBuffer()
-      .then((bytes) => readWorldInputs(bytes))
-      .then((loaded) => { if (loaded) return adoptBestBakedRivers(loaded.worldId, loaded.erosionControls.riverDensity) })
+      .then((bytes) => openWorld(bytes))
+      .then(async (loaded) => {
+        if (loaded) return adoptBestBakedRivers(await loaded.worldId(), loaded.recipe.erosionControls.riverDensity)
+      })
       .catch(() => undefined)
     mantleVigourInput.value = String(spec.values['genesis.mantleVigour'])
     waterInput.value = String(spec.values['genesis.water'])

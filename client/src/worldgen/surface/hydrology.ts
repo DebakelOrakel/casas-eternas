@@ -233,13 +233,7 @@ export function maxDischargeOverLand(discharge: Float32Array, elevation: Float32
 // own dendritic tree wherever that much area converges.
 export function densityToCriticalArea(density: number): number {
   const d = Math.min(100, Math.max(0, density)) / 100
-  const AREA_MAX = 4000
-  // Floored well above 1 cell: on smooth (un-eroded) terrain a too-low threshold
-  // draws a channel from nearly every cell, and D8 picks the same steepest
-  // direction for whole neighbourhoods → a mess of parallel lines. Keeping even
-  // max density at a few hundred cells of support suppresses that noise.
-  const AREA_MIN = 150
-  return AREA_MAX * Math.pow(AREA_MIN / AREA_MAX, d)
+  return SURFACE_TUNING.channelAreaMax * Math.pow(SURFACE_TUNING.channelAreaMin / SURFACE_TUNING.channelAreaMax, d)
 }
 
 // The discharge threshold for a given critical area: that many average-runoff

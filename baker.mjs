@@ -500,11 +500,11 @@ var require_stream_writable = __commonJS({
       this.corkedRequestsFree = new CorkedRequest(this);
     }
     WritableState.prototype.getBuffer = function getBuffer() {
-      var current2 = this.bufferedRequest;
+      var current = this.bufferedRequest;
       var out = [];
-      while (current2) {
-        out.push(current2);
-        current2 = current2.next;
+      while (current) {
+        out.push(current);
+        current = current.next;
       }
       return out;
     };
@@ -10136,7 +10136,9 @@ async function openWorld(archive) {
 // src/world/save/loadWorldInputs.ts
 async function readWorldInputs(archive) {
   const world2 = await openWorld(archive);
-  if (!world2) return null;
+  return world2 ? worldInputsFrom(world2) : null;
+}
+async function worldInputsFrom(world2) {
   const elevation = await world2.acquire("elevation");
   if (!elevation) return null;
   const climate2 = await world2.acquire("precipitation");
@@ -10204,115 +10206,6 @@ function fineDetailNoise(x, y, width, height, seed) {
     octaveSeed = octaveSeed * 1664525 + 1013904223 >>> 0;
   }
   return sum / amplitudeSum;
-}
-
-// src/worldgen/surface/amplify.ts
-var SEED_ROUGHNESS_M = 60;
-function seedRoughnessAmplitude(elevation) {
-  if (elevation <= SEA_LEVEL) return 0;
-  return Math.min(metersToElevation(SEED_ROUGHNESS_M), elevation * 0.5);
-}
-var MIN_OCTAVE_PIXELS = 3;
-var CASCADE_FALLOFF = 0.55;
-function seedCascadeScales(resX) {
-  const scales = [];
-  for (let s = 1; s <= 64; s *= 2) {
-    if (resX / (s * 1024) < MIN_OCTAVE_PIXELS) break;
-    scales.push(s);
-  }
-  return scales.length > 0 ? scales : [1];
-}
-var RIDGE_OCTAVE_CELLS = [256, 512, 1024];
-var RIDGE_OCTAVE_AMPLITUDES = [1, 0.5, 0.25];
-var RIDGE_STRENGTH = 0.5;
-var RIDGE_FIELD_MEAN = 0.47;
-var RELIEF_RADIUS_FRACTION = 1 / 64;
-var AMPLIFICATION_EROSION_OVERRIDES = {
-  upliftRate: 0,
-  plainFactor: 0.4,
-  talusAngleDeg: 6
-};
-var AMPLIFY_CONSTANTS = {
-  seedRoughnessM: SEED_ROUGHNESS_M,
-  cascadeFalloff: CASCADE_FALLOFF,
-  minOctavePixels: MIN_OCTAVE_PIXELS,
-  ridgeStrength: RIDGE_STRENGTH,
-  ridgeFieldMean: RIDGE_FIELD_MEAN,
-  reliefRadiusFraction: RELIEF_RADIUS_FRACTION,
-  ...Object.fromEntries(RIDGE_OCTAVE_CELLS.map((cells, i) => [`ridgeOctaveCells${i}`, cells])),
-  ...Object.fromEntries(RIDGE_OCTAVE_AMPLITUDES.map((amp, i) => [`ridgeOctaveAmp${i}`, amp])),
-  upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
-  plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
-  talusAngleDeg: AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg
-};
-function ridgedAt(x, y, width, height, seed) {
-  let sum = 0;
-  let norm = 0;
-  for (let i = 0; i < RIDGE_OCTAVE_CELLS.length; i++) {
-    const cellsX = RIDGE_OCTAVE_CELLS[i];
-    const cellsY = Math.max(2, Math.round(cellsX / 2));
-    const noise = periodicValueNoise2D(x / width * cellsX, y / height * cellsY, cellsX, cellsY, seed + i * 2654435769 >>> 0);
-    const ridge = 1 - Math.abs(2 * noise - 1);
-    sum += ridge * ridge * RIDGE_OCTAVE_AMPLITUDES[i];
-    norm += RIDGE_OCTAVE_AMPLITUDES[i];
-  }
-  return sum / norm;
-}
-function localRelief(field, width, height) {
-  const radius = Math.max(1, Math.round(width * RELIEF_RADIUS_FRACTION));
-  const out = new Float32Array(field.length);
-  const wrap = (v, n) => (v % n + n) % n;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      let lowest = Infinity;
-      for (let dy = -radius; dy <= radius; dy += radius) {
-        const ny = wrap(y + dy, height) * width;
-        for (let dx = -radius; dx <= radius; dx += radius) {
-          const value = field[ny + wrap(x + dx, width)];
-          if (value < lowest) lowest = value;
-        }
-      }
-      out[y * width + x] = Math.max(0, field[y * width + x] - Math.max(SEA_LEVEL, lowest));
-    }
-  }
-  return out;
-}
-function amplifyElevation(macro, macroWidth, macroHeight, factor, seed, onProgress) {
-  const width = macroWidth * factor;
-  const height = macroHeight * factor;
-  const data = upscaleBilinearToroidal(macro, macroWidth, macroHeight, width, height);
-  if (factor <= 1) return { data, width, height };
-  const scales = seedCascadeScales(width);
-  const amplitudes = scales.map((_, i) => Math.pow(CASCADE_FALLOFF, i));
-  const norm = amplitudes.reduce((a, b) => a + b, 0);
-  const relief = localRelief(data, width, height);
-  const ridgeSeed = (seed ^ 1597334677) >>> 0;
-  const reportEvery = Math.max(1, Math.floor(height / 50));
-  for (let y = 0; y < height; y++) {
-    const row = y * width;
-    for (let x = 0; x < width; x++) {
-      const base = data[row + x];
-      const amplitude = seedRoughnessAmplitude(base);
-      if (amplitude === 0) continue;
-      let noise = 0;
-      for (let i = 0; i < scales.length; i++) {
-        const s = scales[i];
-        noise += fineDetailNoise(x, y, width / s, height / s, seed + i * 2654435769 >>> 0) * amplitudes[i];
-      }
-      const ridge = (ridgedAt(x, y, width, height, ridgeSeed) - RIDGE_FIELD_MEAN) * relief[row + x] * RIDGE_STRENGTH;
-      data[row + x] = base + noise / norm * amplitude + ridge;
-    }
-    if (onProgress && y % reportEvery === 0) onProgress(y / height);
-  }
-  onProgress?.(1);
-  return { data, width, height };
-}
-
-// src/worldgen/core/toroidal.ts
-function wrappedDelta(a, b, period) {
-  let delta = a - b;
-  delta -= period * Math.round(delta / period);
-  return delta;
 }
 
 // src/worldgen/surface/surfaceTuneParams.ts
@@ -10522,7 +10415,7 @@ var SURFACE_TUNING = {
   // exactly what we want. Ocean cells get none (nothing routes on the seabed
   // and deltas read cleaner against a smooth floor).
   // ~30 m peak amplitude,
-  tileSeedRoughness: 30 / 9e3,
+  tileSeedRoughness: metersToElevation(30),
   // Macro erosion params rescaled for a tile refined by `factor`. The general
   // per-cell rescaling — talus angle, transport capacity, the delta area gate,
   // and why stream power needs nothing — is derived once in
@@ -10609,8 +10502,555 @@ var SURFACE_TUNING = {
   // falloff. Coarse cells are large (~60 km), so 1 step already reads as a green
   // valley band without washing out the whole continent.
   riparianSpread: 1,
-  riparianDecay: 0.45
+  riparianDecay: 0.45,
+  // --- the river-density curve's endpoints ---------------------------------
+  //
+  // These were FUNCTION-LOCAL inside `densityToCriticalArea`, which put them
+  // beyond the reach of any grouping and, more to the point, beyond the artifact
+  // key: the bake re-extracts rivers on the amplified field, so changing either
+  // one changes the baked network under an unchanged key.
+  channelAreaMax: 4e3,
+  // Floored well above 1 cell: on smooth (un-eroded) terrain a too-low threshold
+  // draws a channel from nearly every cell, and D8 picks the same steepest
+  // direction for whole neighbourhoods → a mess of parallel lines. Keeping even
+  // max density at a few hundred cells of support suppresses that noise.
+  channelAreaMin: 150
 };
+
+// src/worldgen/climate/climateTuneParams.ts
+var lapseCPerKm = 6.5;
+var CLIMATE_TUNING = {
+  // --- from temperature.ts ---
+  // Real-ish units (°C), so the later Whittaker biome thresholds are directly
+  // usable. Tune by eye — these set the equator-to-pole span.
+  tempEquatorC: 30,
+  tempPoleC: -25,
+  // The environmental lapse rate — °C lost per unit of elevation. Now a derived
+  // quantity rather than a tuned one: the real atmosphere loses ~6.5 °C/km, and
+  // elevationScale says a full unit is ELEVATION_METERS, so this is simply the two
+  // multiplied. A 1681 m peak (the measured 90th percentile of land) comes out
+  // 10.9 °C cooler than its lowland, which is what 6.5 °C/km gives.
+  //
+  // This replaces a hand-tuned 35 paired with a LAND_LAPSE_REF = 0.35 offset, and
+  // getting rid of that offset is the point. It existed because the old land
+  // baseline of 0.35 was not physically a height at all — continental lowland was
+  // SUPPOSED to read as sea-level-warm, but the scale placed it at what the lapse
+  // rate had to treat as 3 km up, cooling every land cell on the planet by ~12 °C
+  // and dragging the whole climate too cold (a ~18 °C equator, tundra across the
+  // mid-latitudes, and a drier world via the suppressed evaporation). The offset
+  // was the correct local fix for a scale that meant two different things in its
+  // two halves. With lowland actually at 360 m, cooling can simply be measured
+  // from sea level like it is in reality, and the special case disappears.
+  lapseCPerKm,
+  // The same lapse in ELEVATION units, which is what every consumer actually
+  // multiplies by. Derived rather than restated so it follows both the rate and
+  // the metre anchor; biomes.ts reads it too.
+  lapseCPerElevation: lapseCPerKm * (ELEVATION_METERS / 1e3),
+  // --- from wind.ts ---
+  // Relative strengths — zonal (east/west) dominates the surface pattern, the
+  // meridional (toward/away from the equator) component is weaker. Dimensionless;
+  // the wind is used as a direction + relative-magnitude field (overlay arrows,
+  // and later moisture/current advection), not in physical m/s.
+  windZonalStrength: 1,
+  windMeridionalStrength: 0.4,
+  // --- from seasonality.ts ---
+  // Peak annual temperature range (°C, summer − winter) — reached by a
+  // continental interior at high latitude. The equator sits near 0 (sun always
+  // high), a coast/ocean stays low (thermal inertia). Tune by eye.
+  seasonMaxAmplitude: 42,
+  // Cells this many grid cells from the nearest ocean count as fully
+  // continental; nearer ones interpolate. A big continent's core sits deep
+  // enough to saturate.
+  seasonContinentalityScale: 45,
+  // Coastal land floor (continentality 0): even a coast swings a bit.
+  seasonCoastDamp: 0.3,
+  // --- from monsoon.ts ---
+  // How far (fraction of map height) the ITCZ belt migrates toward the summer hemisphere.
+  // Real seasonal swing is ~10-15° of latitude (bigger over monsoon land); 0.12 of the
+  // map's pole-to-pole span is in that range on this 2:1 torus.
+  monsoonItczSeasonalShift: 0.07,
+  // Strength of the monsoon surface wind — a component up the seasonal-temperature
+  // gradient (∇T points from cool sea toward hot summer land), added to the prescribed
+  // zonal wind. Tuned so it reshapes moisture advection near coasts without swamping the
+  // base three-cell circulation (base zonal strength ~1). See computeMonsoonWind.
+  monsoonWindStrength: 0.05,
+  // Wetness floor (mm/yr) added to the monsoon-index denominator so ARID cells don't read
+  // as monsoonal: a desert with 50 mm wet / 5 mm dry is dry, not seasonal, yet a raw
+  // (wet−dry)/(wet+dry) would call it 0.82. The floor damps the index where absolute
+  // precipitation is small, so a high index means genuinely wet-in-one-season-dry-in-the-
+  // other (a real monsoon), not just marginal noise. ~ a semi-arid annual total.
+  monsoonSeasonalityFloor: 500,
+  // --- from precipitation.ts ---
+  // Iterations of moisture transport, and how far (in grid cells, per unit wind)
+  // moisture advects each one. Needs enough to reach a steady state deep inland
+  // — the flow is diagonal (zonal + meridional), so the path in is longer than
+  // the straight-line distance; too few left continental interiors stuck at
+  // their transient (empty) starting value.
+  precipIters: 120,
+  precipAdvectStep: 2,
+  // Moisture is advected mostly ZONALLY (it penetrates inland from the nearest
+  // east/west coast). The meridional wind is damped for transport, because at
+  // full strength a backward streamline from a deep mid-latitude interior curves
+  // down into the neighbouring cell where the zonal wind REVERSES (Hadley vs
+  // Ferrel) — it then never traces back to an ocean, starving that cell to a
+  // hard zero. A gentle meridional tilt keeps streamlines within their own band.
+  precipAdvectMeridionalScale: 0.3,
+  // Fraction of airborne moisture that rains out per iteration on flat land, and
+  // the extra fraction per unit of upslope elevation along the wind (orographic
+  // lift). The orographic term also creates rain shadows: moisture rains out
+  // climbing the windward slope, so little is left for the lee side downwind.
+  precipBaseRainout: 0.03,
+  // Scaled by SLOPE_RECALIBRATION: land slopes halved when the continental
+  // interior stopped being a flat plateau, so the same terrain now produces half
+  // the measured upslope. Without this, orographic rain and its rain shadows both
+  // collapse toward the BASE_RAINOUT floor.
+  precipOrographicRate: 0.9 * SLOPE_RECALIBRATION,
+  // Land moisture recycling (evapotranspiration): the fraction of rained-out water that
+  // re-evaporates from soil/vegetation back into the airborne pool, feeding downwind rain.
+  // This is a MAJOR real process — ~a third to a half of continental precipitation is
+  // recycled from land ET, which is what keeps deep interiors (Amazon, Congo, monsoon
+  // Asia) wet far from any coast rather than the near-zero our pure-depletion advection
+  // gave. It sustains ALREADY-fed interiors (so rainforests/forests reach inland) without
+  // rescuing genuine rain-shadow deserts (nothing rains → nothing recycles), so aridity
+  // stays where it belongs. Net land depletion per step becomes rain·(1 − this).
+  precipLandRecycleFrac: 0.5,
+  // World px upwind to sample for the along-wind slope (needs the fine elevation,
+  // not the coarse climate grid — the point of sampling full-res here).
+  precipOrogSamplePx: 40,
+  // Raw rainout → mm/yr. Tunes overall wetness; a wet windward mountain lands
+  // around a few thousand mm, deserts/rain-shadow near zero.
+  //
+  // Known deviation, measured 2026-07-31 and deliberately left alone: the wettest
+  // cells reach ~22500 mm/yr and ~1.3% of land exceeds Earth's all-time record of
+  // 11900 — unphysical as a DISTRIBUTION (our cells are 62 km means, which should
+  // sit below a point record, not above it). Do not reach for this constant to fix
+  // it: the median is 813 mm/yr against Earth's ~700, so the overall calibration is
+  // right and lowering it would drag the sound body down with the tail.
+  //
+  // The cause is the shape of the model, not a constant. `rainFrac` is a fraction
+  // per iteration with no saturation, and one iteration advects 62 km — so at a p99
+  // upslope roughly half the moisture column may rain out over that single step.
+  // The 0.85 clamp below binds far too late to stop it (it needs a 4100 m rise over
+  // the 312 km sample, and catches only 0.04-1.4% of land cells). The physical fix
+  // is a soft saturation on rainFrac, not a lower ceiling here.
+  //
+  // Left as is because it costs nothing downstream: capping precipitation at 4000
+  // changed ZERO biome cells on both test seeds (Whittaker's thresholds stop at
+  // 1500 mm, and ecology's productivity is 1 − exp(−0.000664·P), already 0.98 at
+  // 6000). It survives only into hydrology, which is linear in precip: mean runoff
+  // +29% and maxDischarge +72%, i.e. rivers drawn about a quarter narrower. Those
+  // are aesthetic knobs. A saturation would shift mean runoff ~30%, so it would cost
+  // a re-tuned river-density default and a golden re-record — not worth it for a
+  // number nothing reads. Three other suspects were ruled out first: the scale
+  // (median is right), erosion's missing deposition (pre/post distributions are
+  // identical), and ridged noise in the slope sample (the tail survives without
+  // noise, and the wettest cells cluster 70-93%, so it is real orography).
+  precipScale: 6e4,
+  // Zonal wet/dry from the general circulation: rising (wet) air at the equator
+  // ITCZ (φ=0) and the subpolar front (φ≈2/3), sinking (dry) air at the
+  // subtropical highs (φ≈1/3 — the great deserts) and the poles (φ=1).
+  // Floor for the zonal band multiplier — the subtropical-high / polar dry minimum. At
+  // 0.1 the subtropics got a 15× dry penalty vs the equator, which (with interior
+  // depletion) turned nearly all subtropical land into extreme desert. A higher floor
+  // keeps those belts the driest zones without erasing all vegetation there (semi-arid
+  // grassland/savanna rather than bare desert).
+  precipBandFloor: 0.13,
+  // --- from oceanCurrents.ts ---
+  // Streamfunction solve iterations (Gauss-Seidel, in place — converges roughly
+  // twice as fast as Jacobi). One-shot per climate compute; the gyre structure
+  // doesn't need a fully-converged ψ.
+  currentsSolveIters: 700,
+  // SST transport: how far (grid cells) it advects along the normalized current
+  // per iteration, how many iterations, and the per-iteration relaxation back
+  // toward the latitudinal base (anchors the SST to latitude so anomalies stay
+  // bounded — a few °C, like real boundary currents on this coarse grid).
+  currentsAdvectStep: 2.5,
+  currentsAdvectIters: 80,
+  currentsBaseRelax: 0.15,
+  // How strongly a coastal land cell is pulled toward the adjacent ocean's SST
+  // anomaly (warm current → milder coast, cold current/upwelling → cooler coast),
+  // and how far inland that influence reaches, decaying per cell (a maritime band
+  // a few cells wide rather than a single-cell edge).
+  currentsCoastalFactor: 0.9,
+  currentsCoastalSteps: 4,
+  currentsCoastalDecay: 0.8,
+  // --- from biomes.ts ---
+  // The alpine override, promised by docs/decisions/climate-biomes.md ("plus ...
+  // an alpine override above the treeline") but never built until 2026-08-06: a
+  // mountain's cold-elevation biome used to fall out of the lapse rate alone —
+  // which classifies it as Tundra, exactly the same id/color/label as arctic
+  // lowland tundra. That is not wrong ecologically (a real snowline zone reads
+  // similarly whether it got cold from latitude or elevation), but it meant an
+  // equatorial snow-capped peak and a polar plain were visually and
+  // mechanically indistinguishable — the elevation was invisible to gameplay.
+  //
+  // A single global elevation threshold (not latitude-dependent) is the whole
+  // point of the override: real treeline elevation DOES fall with latitude, but
+  // reproducing that here would just re-derive what the lapse-rate-driven T/P
+  // classification already gives — the useful, DIFFERENT signal is "is this
+  // high ground, regardless of where on the planet it is", so a fixed metres
+  // threshold is what actually answers that. 2800 m sits within the commonly
+  // cited real-world treeline range (roughly 2500-3800 m depending on
+  // latitude/region) as a single representative value.
+  //
+  // A cell that would already classify as Ice (T < -10°C — a true glaciated
+  // summit) is left alone: Alpine means "bare rock / sparse cold-adapted
+  // vegetation above the treeline", not "less ice than Ice" — a permanently
+  // glaciated peak should still read as ice, elevation or not.
+  alpineTreelineElevation: metersToElevation(2800),
+  // --- the Whittaker classifier's own thresholds ---------------------------
+  //
+  // These were INLINE LITERALS inside `classify`, which made the largest block
+  // of climate tuning in the repo invisible to every grouping — including the
+  // one this file exists to be. Naming them changes nothing and makes them
+  // findable, comparable and hashable.
+  //
+  // Two values appear twice (250 and 600 mm, once per temperature band) and stay
+  // SEPARATE — asked and answered 2026-08-09: the agreement is coincidence, not
+  // a shared threshold. The temperate 600 splits grassland from woodland, the hot
+  // 600 marks the savanna edge; they are different statements that happen to land
+  // on one number. Sharing a constant would couple them, so moving the tropical
+  // desert edge would drag the temperate one along with it.
+  // Temperature band edges (°C), coldest first.
+  iceMaxC: -10,
+  tundraMaxC: 0,
+  borealMaxC: 7,
+  temperateMaxC: 20,
+  // In the cold band, dryness gives tundra rather than boreal forest.
+  borealMinPrecipMm: 200,
+  // Temperate / subtropical precipitation edges (mm/yr).
+  temperateDesertMaxPrecipMm: 250,
+  temperateGrasslandMaxPrecipMm: 600,
+  temperateForestMaxPrecipMm: 1500,
+  // Strong precipitation seasonality opens the canopy: a marginal forest with a
+  // pronounced dry season reads as woodland or grassland, not closed forest.
+  temperateOpenCanopyAmplitudeC: 20,
+  temperateOpenCanopySeason: 0.3,
+  temperateWoodlandSeason: 0.4,
+  // Hot band (T >= temperateMaxC). The rainforest/savanna split is driven by
+  // SEASONALITY rather than the annual total: evergreen rainforest needs rain
+  // most of the year, while a strong wet-dry rhythm gives savanna even when the
+  // total is high.
+  hotDesertMaxPrecipMm: 250,
+  hotSavannaMaxPrecipMm: 600,
+  tropicalSavannaSeason: 0.45
+};
+
+// src/worldgen/climate/biomes.ts
+var Biome = {
+  Ocean: 0,
+  Ice: 1,
+  Tundra: 2,
+  Boreal: 3,
+  Grassland: 4,
+  Woodland: 5,
+  TemperateForest: 6,
+  TemperateRainforest: 7,
+  Desert: 8,
+  Savanna: 9,
+  TropicalRainforest: 10,
+  Alpine: 11,
+  // Hydrology override, not a Whittaker class (like Ocean): the exposed dry
+  // floor of a terminal basin — see computeLakes' salt-flat mask.
+  SaltFlat: 12
+};
+var BIOME_COLORS = {
+  [Biome.Ocean]: [40, 90, 140],
+  [Biome.Ice]: [240, 244, 249],
+  [Biome.Tundra]: [178, 176, 164],
+  // warm light grey
+  [Biome.Boreal]: [60, 98, 86],
+  // dark muted conifer green
+  [Biome.Grassland]: [214, 202, 122],
+  // pale yellow
+  [Biome.Woodland]: [150, 162, 88],
+  // olive green
+  [Biome.TemperateForest]: [96, 162, 78],
+  // bright green
+  [Biome.TemperateRainforest]: [42, 130, 100],
+  // teal-green (wet)
+  [Biome.Desert]: [236, 218, 170],
+  // pale sand (lightest)
+  [Biome.Savanna]: [208, 166, 78],
+  // gold / ochre
+  [Biome.TropicalRainforest]: [22, 106, 50],
+  // deep saturated green
+  [Biome.Alpine]: [158, 154, 168],
+  // cool slate/lavender-grey — bare rock, distinct from Tundra's warm grey and Ice's near-white
+  [Biome.SaltFlat]: [236, 230, 218]
+  // warm off-white salt crust — real pans aren't snow-white, and Ice keeps the cold near-white
+};
+var BIOME_LABEL_KEYS = {
+  [Biome.Ocean]: "world.biome.ocean",
+  [Biome.Ice]: "world.biome.iceCap",
+  [Biome.Tundra]: "world.biome.tundra",
+  [Biome.Boreal]: "world.biome.borealForest",
+  [Biome.Grassland]: "world.biome.grassland",
+  [Biome.Woodland]: "world.biome.woodland",
+  [Biome.TemperateForest]: "world.biome.temperateForest",
+  [Biome.TemperateRainforest]: "world.biome.temperateRainforest",
+  [Biome.Desert]: "world.biome.desert",
+  [Biome.Savanna]: "world.biome.savanna",
+  [Biome.TropicalRainforest]: "world.biome.tropicalRainforest",
+  [Biome.Alpine]: "world.biome.alpine",
+  [Biome.SaltFlat]: "world.biome.saltFlat"
+};
+
+// src/worldgen/surface/hydrology.ts
+function precipRunoffAt(precip, cx, cy, worldW, worldH, climateResX, climateResY) {
+  const gx = Math.min(climateResX - 1, Math.floor(cx / worldW * climateResX));
+  const gy = Math.min(climateResY - 1, Math.floor(cy / worldH * climateResY));
+  const p = precip[gy * climateResX + gx];
+  return p > SURFACE_TUNING.runoffFloor ? p : SURFACE_TUNING.runoffFloor;
+}
+function meanLandRunoff(precip, elevation, worldW, worldH, climateResX, climateResY) {
+  let sum = 0;
+  let count = 0;
+  for (let cell = 0; cell < elevation.length; cell++) {
+    if (elevation[cell] <= SEA_LEVEL) continue;
+    const cx = cell % worldW;
+    const cy = (cell - cx) / worldW;
+    sum += precipRunoffAt(precip, cx, cy, worldW, worldH, climateResX, climateResY);
+    count++;
+  }
+  return count > 0 ? sum / count : SURFACE_TUNING.runoffFloor;
+}
+function accumulateDischarge(routing, elevation, precip, climateResX, climateResY) {
+  const { width, height, flowTarget, popOrder, poppedCount } = routing;
+  const discharge = new Float32Array(width * height);
+  for (let cell = 0; cell < width * height; cell++) {
+    if (elevation[cell] <= SEA_LEVEL) continue;
+    const cx = cell % width;
+    const cy = (cell - cx) / width;
+    discharge[cell] = precipRunoffAt(precip, cx, cy, width, height, climateResX, climateResY);
+  }
+  for (let i = poppedCount - 1; i >= 0; i--) {
+    const cell = popOrder[i];
+    if (elevation[cell] <= SEA_LEVEL) continue;
+    const target = flowTarget[cell];
+    if (target >= 0) discharge[target] += discharge[cell];
+  }
+  return discharge;
+}
+function maxDischargeOverLand(discharge, elevation) {
+  let max = 0;
+  for (let i = 0; i < discharge.length; i++) {
+    if (elevation[i] > SEA_LEVEL && discharge[i] > max) max = discharge[i];
+  }
+  return max;
+}
+function densityToCriticalArea(density) {
+  const d = Math.min(100, Math.max(0, density)) / 100;
+  return SURFACE_TUNING.channelAreaMax * Math.pow(SURFACE_TUNING.channelAreaMin / SURFACE_TUNING.channelAreaMax, d);
+}
+function channelThreshold(criticalArea, meanRunoff) {
+  return criticalArea * meanRunoff;
+}
+var RIVER_MIN_WIDTH = 0.4;
+var RIVER_MAX_WIDTH = 4;
+function riverWidth(dischargeAtCell, maxDischarge) {
+  const scale = maxDischarge > 0 ? maxDischarge : 1;
+  return Math.min(RIVER_MAX_WIDTH, RIVER_MIN_WIDTH + (RIVER_MAX_WIDTH - RIVER_MIN_WIDTH) * Math.sqrt(dischargeAtCell / scale));
+}
+var CHANNEL_SLOPE_EXPONENT = 0.5;
+function receiverSlope(routing, elevation, cell) {
+  const { width, height, flowTarget } = routing;
+  const target = flowTarget[cell];
+  if (target < 0 || target >= width * height) return 0;
+  const x = cell % width;
+  const y = (cell - x) / width;
+  const tx = target % width;
+  const ty = (target - tx) / width;
+  let dx = Math.abs(tx - x);
+  if (dx > width / 2) dx = width - dx;
+  const distance = Math.hypot(dx, ty - y) || 1;
+  const drop = elevation[cell] - elevation[target];
+  return drop > 0 ? drop / distance : 0;
+}
+function channelReferenceSlope(routing, elevation, discharge, threshold) {
+  const slopes = [];
+  for (let cell = 0; cell < discharge.length; cell++) {
+    if (elevation[cell] <= SEA_LEVEL || discharge[cell] < threshold) continue;
+    slopes.push(receiverSlope(routing, elevation, cell));
+  }
+  if (slopes.length === 0) return 1;
+  slopes.sort((a, b) => a - b);
+  const median = slopes[slopes.length >> 1];
+  return median > 0 ? median : 1;
+}
+function isChannelCell(routing, elevation, discharge, cell, threshold, referenceSlope) {
+  if (elevation[cell] <= SEA_LEVEL) return false;
+  const boost = Math.pow(Math.max(receiverSlope(routing, elevation, cell), 1e-7) / referenceSlope, CHANNEL_SLOPE_EXPONENT);
+  return discharge[cell] * boost >= threshold;
+}
+function extractRiverPolylines(routing, discharge, elevation, threshold, maxDischarge) {
+  const { width, height, flowTarget } = routing;
+  const n = width * height;
+  const channel = new Uint8Array(n);
+  const referenceSlope = channelReferenceSlope(routing, elevation, discharge, threshold);
+  for (let cell = 0; cell < n; cell++) {
+    if (isChannelCell(routing, elevation, discharge, cell, threshold, referenceSlope)) channel[cell] = 1;
+  }
+  const adjacent = (a, b) => {
+    const ax = a % width;
+    const ay = (a - ax) / width;
+    const bx = b % width;
+    const by = (b - bx) / width;
+    return Math.abs(bx - ax) <= 1 && Math.abs(by - ay) <= 1;
+  };
+  const inDeg = new Uint8Array(n);
+  for (let cell = 0; cell < n; cell++) {
+    if (!channel[cell]) continue;
+    const t = flowTarget[cell];
+    if (t >= 0 && channel[t] && adjacent(cell, t) && inDeg[t] < 255) inDeg[t]++;
+  }
+  const visited = new Uint8Array(n);
+  const points = [];
+  const lengths = [];
+  for (let start = 0; start < n; start++) {
+    if (!channel[start] || inDeg[start] !== 0 || visited[start]) continue;
+    let cur = start;
+    let len = 0;
+    for (; ; ) {
+      const cx = cur % width;
+      const cy = (cur - cx) / width;
+      points.push(cx + 0.5, cy + 0.5, riverWidth(discharge[cur], maxDischarge));
+      len++;
+      visited[cur] = 1;
+      const t = flowTarget[cur];
+      if (t < 0 || !channel[t] || !adjacent(cur, t)) break;
+      if (visited[t]) {
+        const tx = t % width;
+        const ty = (t - tx) / width;
+        points.push(tx + 0.5, ty + 0.5, riverWidth(discharge[t], maxDischarge));
+        len++;
+        break;
+      }
+      cur = t;
+    }
+    if (len >= 2) lengths.push(len);
+    else points.length -= len * 3;
+  }
+  return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) };
+}
+
+// src/worldgen/surface/amplify.ts
+var SEED_ROUGHNESS_M = 60;
+function seedRoughnessAmplitude(elevation) {
+  if (elevation <= SEA_LEVEL) return 0;
+  return Math.min(metersToElevation(SEED_ROUGHNESS_M), elevation * 0.5);
+}
+var MIN_OCTAVE_PIXELS = 3;
+var CASCADE_FALLOFF = 0.55;
+function seedCascadeScales(resX) {
+  const scales = [];
+  for (let s = 1; s <= 64; s *= 2) {
+    if (resX / (s * 1024) < MIN_OCTAVE_PIXELS) break;
+    scales.push(s);
+  }
+  return scales.length > 0 ? scales : [1];
+}
+var RIDGE_OCTAVE_CELLS = [256, 512, 1024];
+var RIDGE_OCTAVE_AMPLITUDES = [1, 0.5, 0.25];
+var RIDGE_STRENGTH = 0.5;
+var RIDGE_FIELD_MEAN = 0.47;
+var RELIEF_RADIUS_FRACTION = 1 / 64;
+var AMPLIFICATION_EROSION_OVERRIDES = {
+  upliftRate: 0,
+  plainFactor: 0.4,
+  talusAngleDeg: 6
+};
+var AMPLIFY_CONSTANTS = {
+  seedRoughnessM: SEED_ROUGHNESS_M,
+  cascadeFalloff: CASCADE_FALLOFF,
+  minOctavePixels: MIN_OCTAVE_PIXELS,
+  ridgeStrength: RIDGE_STRENGTH,
+  ridgeFieldMean: RIDGE_FIELD_MEAN,
+  reliefRadiusFraction: RELIEF_RADIUS_FRACTION,
+  ...Object.fromEntries(RIDGE_OCTAVE_CELLS.map((cells, i) => [`ridgeOctaveCells${i}`, cells])),
+  ...Object.fromEntries(RIDGE_OCTAVE_AMPLITUDES.map((amp, i) => [`ridgeOctaveAmp${i}`, amp])),
+  upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
+  plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
+  talusAngleDeg: AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg,
+  // The bake RE-EXTRACTS rivers on the amplified field, so hydrology's channel
+  // criterion is part of what it produces — and none of these three were in the
+  // key. `CHANNEL_SLOPE_EXPONENT` was worse than merely absent: identity.ts
+  // names it in the comment justifying the hand-set v4 bump, so it was known to
+  // move the output and still left to a human to remember. The other two shape
+  // the density curve and were function-local until now.
+  channelSlopeExponent: CHANNEL_SLOPE_EXPONENT,
+  channelAreaMax: SURFACE_TUNING.channelAreaMax,
+  channelAreaMin: SURFACE_TUNING.channelAreaMin
+};
+function ridgedAt(x, y, width, height, seed) {
+  let sum = 0;
+  let norm = 0;
+  for (let i = 0; i < RIDGE_OCTAVE_CELLS.length; i++) {
+    const cellsX = RIDGE_OCTAVE_CELLS[i];
+    const cellsY = Math.max(2, Math.round(cellsX / 2));
+    const noise = periodicValueNoise2D(x / width * cellsX, y / height * cellsY, cellsX, cellsY, seed + i * 2654435769 >>> 0);
+    const ridge = 1 - Math.abs(2 * noise - 1);
+    sum += ridge * ridge * RIDGE_OCTAVE_AMPLITUDES[i];
+    norm += RIDGE_OCTAVE_AMPLITUDES[i];
+  }
+  return sum / norm;
+}
+function localRelief(field, width, height) {
+  const radius = Math.max(1, Math.round(width * RELIEF_RADIUS_FRACTION));
+  const out = new Float32Array(field.length);
+  const wrap = (v, n) => (v % n + n) % n;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let lowest = Infinity;
+      for (let dy = -radius; dy <= radius; dy += radius) {
+        const ny = wrap(y + dy, height) * width;
+        for (let dx = -radius; dx <= radius; dx += radius) {
+          const value = field[ny + wrap(x + dx, width)];
+          if (value < lowest) lowest = value;
+        }
+      }
+      out[y * width + x] = Math.max(0, field[y * width + x] - Math.max(SEA_LEVEL, lowest));
+    }
+  }
+  return out;
+}
+function amplifyElevation(macro, macroWidth, macroHeight, factor, seed, onProgress) {
+  const width = macroWidth * factor;
+  const height = macroHeight * factor;
+  const data = upscaleBilinearToroidal(macro, macroWidth, macroHeight, width, height);
+  if (factor <= 1) return { data, width, height };
+  const scales = seedCascadeScales(width);
+  const amplitudes = scales.map((_, i) => Math.pow(CASCADE_FALLOFF, i));
+  const norm = amplitudes.reduce((a, b) => a + b, 0);
+  const relief = localRelief(data, width, height);
+  const ridgeSeed = (seed ^ 1597334677) >>> 0;
+  const reportEvery = Math.max(1, Math.floor(height / 50));
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      const base = data[row + x];
+      const amplitude = seedRoughnessAmplitude(base);
+      if (amplitude === 0) continue;
+      let noise = 0;
+      for (let i = 0; i < scales.length; i++) {
+        const s = scales[i];
+        noise += fineDetailNoise(x, y, width / s, height / s, seed + i * 2654435769 >>> 0) * amplitudes[i];
+      }
+      const ridge = (ridgedAt(x, y, width, height, ridgeSeed) - RIDGE_FIELD_MEAN) * relief[row + x] * RIDGE_STRENGTH;
+      data[row + x] = base + noise / norm * amplitude + ridge;
+    }
+    if (onProgress && y % reportEvery === 0) onProgress(y / height);
+  }
+  onProgress?.(1);
+  return { data, width, height };
+}
+
+// src/worldgen/core/toroidal.ts
+function wrappedDelta(a, b, period) {
+  let delta = a - b;
+  delta -= period * Math.round(delta / period);
+  return delta;
+}
 
 // src/worldgen/core/minHeap.ts
 var MinHeap = class {
@@ -10755,21 +11195,21 @@ async function fillDepressions(raw, width, height, seaLevel, onProgress, bounded
   const progressStep = Math.max(1, Math.floor(cellCount / 200));
   while (heap.length > 0) {
     heap.pop();
-    const current2 = heap.poppedIndex;
-    popOrder[poppedCount] = current2;
+    const current = heap.poppedIndex;
+    popOrder[poppedCount] = current;
     poppedCount++;
     if (poppedCount % progressStep === 0) {
       onProgress?.(poppedCount / cellCount);
       await maybeYield();
     }
-    const y = current2 / width | 0;
-    const x = current2 - y * width;
+    const y = current / width | 0;
+    const x = current - y * width;
     for (const [dx, dy] of D8_OFFSETS) {
       const neighbor = bounded ? d8NeighborBounded(x, y, dx, dy, width, height) : d8Neighbor(x, y, dx, dy, width, height);
       if (neighbor < 0 || visited[neighbor]) continue;
       visited[neighbor] = 1;
       const stepDistance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1;
-      filled[neighbor] = Math.max(raw[neighbor], filled[current2]) + EPSILON_FLOOD_STEP * stepDistance;
+      filled[neighbor] = Math.max(raw[neighbor], filled[current]) + EPSILON_FLOOD_STEP * stepDistance;
       heap.push(filled[neighbor], neighbor);
     }
   }
@@ -11177,389 +11617,6 @@ async function runErosionPass(rawElevations, width, height, params = DEFAULT_ERO
   return { elevations, routing, accumulation, preFillElevations: preFillElevations ?? elevations };
 }
 
-// src/worldgen/climate/climateTuneParams.ts
-var lapseCPerKm = 6.5;
-var CLIMATE_TUNING = {
-  // --- from temperature.ts ---
-  // Real-ish units (°C), so the later Whittaker biome thresholds are directly
-  // usable. Tune by eye — these set the equator-to-pole span.
-  tempEquatorC: 30,
-  tempPoleC: -25,
-  // The environmental lapse rate — °C lost per unit of elevation. Now a derived
-  // quantity rather than a tuned one: the real atmosphere loses ~6.5 °C/km, and
-  // elevationScale says a full unit is ELEVATION_METERS, so this is simply the two
-  // multiplied. A 1681 m peak (the measured 90th percentile of land) comes out
-  // 10.9 °C cooler than its lowland, which is what 6.5 °C/km gives.
-  //
-  // This replaces a hand-tuned 35 paired with a LAND_LAPSE_REF = 0.35 offset, and
-  // getting rid of that offset is the point. It existed because the old land
-  // baseline of 0.35 was not physically a height at all — continental lowland was
-  // SUPPOSED to read as sea-level-warm, but the scale placed it at what the lapse
-  // rate had to treat as 3 km up, cooling every land cell on the planet by ~12 °C
-  // and dragging the whole climate too cold (a ~18 °C equator, tundra across the
-  // mid-latitudes, and a drier world via the suppressed evaporation). The offset
-  // was the correct local fix for a scale that meant two different things in its
-  // two halves. With lowland actually at 360 m, cooling can simply be measured
-  // from sea level like it is in reality, and the special case disappears.
-  lapseCPerKm,
-  // The same lapse in ELEVATION units, which is what every consumer actually
-  // multiplies by. Derived rather than restated so it follows both the rate and
-  // the metre anchor; biomes.ts reads it too.
-  lapseCPerElevation: lapseCPerKm * (ELEVATION_METERS / 1e3),
-  // --- from wind.ts ---
-  // Relative strengths — zonal (east/west) dominates the surface pattern, the
-  // meridional (toward/away from the equator) component is weaker. Dimensionless;
-  // the wind is used as a direction + relative-magnitude field (overlay arrows,
-  // and later moisture/current advection), not in physical m/s.
-  windZonalStrength: 1,
-  windMeridionalStrength: 0.4,
-  // --- from seasonality.ts ---
-  // Peak annual temperature range (°C, summer − winter) — reached by a
-  // continental interior at high latitude. The equator sits near 0 (sun always
-  // high), a coast/ocean stays low (thermal inertia). Tune by eye.
-  seasonMaxAmplitude: 42,
-  // Cells this many grid cells from the nearest ocean count as fully
-  // continental; nearer ones interpolate. A big continent's core sits deep
-  // enough to saturate.
-  seasonContinentalityScale: 45,
-  // Coastal land floor (continentality 0): even a coast swings a bit.
-  seasonCoastDamp: 0.3,
-  // --- from monsoon.ts ---
-  // How far (fraction of map height) the ITCZ belt migrates toward the summer hemisphere.
-  // Real seasonal swing is ~10-15° of latitude (bigger over monsoon land); 0.12 of the
-  // map's pole-to-pole span is in that range on this 2:1 torus.
-  monsoonItczSeasonalShift: 0.07,
-  // Strength of the monsoon surface wind — a component up the seasonal-temperature
-  // gradient (∇T points from cool sea toward hot summer land), added to the prescribed
-  // zonal wind. Tuned so it reshapes moisture advection near coasts without swamping the
-  // base three-cell circulation (base zonal strength ~1). See computeMonsoonWind.
-  monsoonWindStrength: 0.05,
-  // Wetness floor (mm/yr) added to the monsoon-index denominator so ARID cells don't read
-  // as monsoonal: a desert with 50 mm wet / 5 mm dry is dry, not seasonal, yet a raw
-  // (wet−dry)/(wet+dry) would call it 0.82. The floor damps the index where absolute
-  // precipitation is small, so a high index means genuinely wet-in-one-season-dry-in-the-
-  // other (a real monsoon), not just marginal noise. ~ a semi-arid annual total.
-  monsoonSeasonalityFloor: 500,
-  // --- from precipitation.ts ---
-  // Iterations of moisture transport, and how far (in grid cells, per unit wind)
-  // moisture advects each one. Needs enough to reach a steady state deep inland
-  // — the flow is diagonal (zonal + meridional), so the path in is longer than
-  // the straight-line distance; too few left continental interiors stuck at
-  // their transient (empty) starting value.
-  precipIters: 120,
-  precipAdvectStep: 2,
-  // Moisture is advected mostly ZONALLY (it penetrates inland from the nearest
-  // east/west coast). The meridional wind is damped for transport, because at
-  // full strength a backward streamline from a deep mid-latitude interior curves
-  // down into the neighbouring cell where the zonal wind REVERSES (Hadley vs
-  // Ferrel) — it then never traces back to an ocean, starving that cell to a
-  // hard zero. A gentle meridional tilt keeps streamlines within their own band.
-  precipAdvectMeridionalScale: 0.3,
-  // Fraction of airborne moisture that rains out per iteration on flat land, and
-  // the extra fraction per unit of upslope elevation along the wind (orographic
-  // lift). The orographic term also creates rain shadows: moisture rains out
-  // climbing the windward slope, so little is left for the lee side downwind.
-  precipBaseRainout: 0.03,
-  // Scaled by SLOPE_RECALIBRATION: land slopes halved when the continental
-  // interior stopped being a flat plateau, so the same terrain now produces half
-  // the measured upslope. Without this, orographic rain and its rain shadows both
-  // collapse toward the BASE_RAINOUT floor.
-  precipOrographicRate: 0.9 * SLOPE_RECALIBRATION,
-  // Land moisture recycling (evapotranspiration): the fraction of rained-out water that
-  // re-evaporates from soil/vegetation back into the airborne pool, feeding downwind rain.
-  // This is a MAJOR real process — ~a third to a half of continental precipitation is
-  // recycled from land ET, which is what keeps deep interiors (Amazon, Congo, monsoon
-  // Asia) wet far from any coast rather than the near-zero our pure-depletion advection
-  // gave. It sustains ALREADY-fed interiors (so rainforests/forests reach inland) without
-  // rescuing genuine rain-shadow deserts (nothing rains → nothing recycles), so aridity
-  // stays where it belongs. Net land depletion per step becomes rain·(1 − this).
-  precipLandRecycleFrac: 0.5,
-  // World px upwind to sample for the along-wind slope (needs the fine elevation,
-  // not the coarse climate grid — the point of sampling full-res here).
-  precipOrogSamplePx: 40,
-  // Raw rainout → mm/yr. Tunes overall wetness; a wet windward mountain lands
-  // around a few thousand mm, deserts/rain-shadow near zero.
-  //
-  // Known deviation, measured 2026-07-31 and deliberately left alone: the wettest
-  // cells reach ~22500 mm/yr and ~1.3% of land exceeds Earth's all-time record of
-  // 11900 — unphysical as a DISTRIBUTION (our cells are 62 km means, which should
-  // sit below a point record, not above it). Do not reach for this constant to fix
-  // it: the median is 813 mm/yr against Earth's ~700, so the overall calibration is
-  // right and lowering it would drag the sound body down with the tail.
-  //
-  // The cause is the shape of the model, not a constant. `rainFrac` is a fraction
-  // per iteration with no saturation, and one iteration advects 62 km — so at a p99
-  // upslope roughly half the moisture column may rain out over that single step.
-  // The 0.85 clamp below binds far too late to stop it (it needs a 4100 m rise over
-  // the 312 km sample, and catches only 0.04-1.4% of land cells). The physical fix
-  // is a soft saturation on rainFrac, not a lower ceiling here.
-  //
-  // Left as is because it costs nothing downstream: capping precipitation at 4000
-  // changed ZERO biome cells on both test seeds (Whittaker's thresholds stop at
-  // 1500 mm, and ecology's productivity is 1 − exp(−0.000664·P), already 0.98 at
-  // 6000). It survives only into hydrology, which is linear in precip: mean runoff
-  // +29% and maxDischarge +72%, i.e. rivers drawn about a quarter narrower. Those
-  // are aesthetic knobs. A saturation would shift mean runoff ~30%, so it would cost
-  // a re-tuned river-density default and a golden re-record — not worth it for a
-  // number nothing reads. Three other suspects were ruled out first: the scale
-  // (median is right), erosion's missing deposition (pre/post distributions are
-  // identical), and ridged noise in the slope sample (the tail survives without
-  // noise, and the wettest cells cluster 70-93%, so it is real orography).
-  precipScale: 6e4,
-  // Zonal wet/dry from the general circulation: rising (wet) air at the equator
-  // ITCZ (φ=0) and the subpolar front (φ≈2/3), sinking (dry) air at the
-  // subtropical highs (φ≈1/3 — the great deserts) and the poles (φ=1).
-  // Floor for the zonal band multiplier — the subtropical-high / polar dry minimum. At
-  // 0.1 the subtropics got a 15× dry penalty vs the equator, which (with interior
-  // depletion) turned nearly all subtropical land into extreme desert. A higher floor
-  // keeps those belts the driest zones without erasing all vegetation there (semi-arid
-  // grassland/savanna rather than bare desert).
-  precipBandFloor: 0.13,
-  // --- from oceanCurrents.ts ---
-  // Streamfunction solve iterations (Gauss-Seidel, in place — converges roughly
-  // twice as fast as Jacobi). One-shot per climate compute; the gyre structure
-  // doesn't need a fully-converged ψ.
-  currentsSolveIters: 700,
-  // SST transport: how far (grid cells) it advects along the normalized current
-  // per iteration, how many iterations, and the per-iteration relaxation back
-  // toward the latitudinal base (anchors the SST to latitude so anomalies stay
-  // bounded — a few °C, like real boundary currents on this coarse grid).
-  currentsAdvectStep: 2.5,
-  currentsAdvectIters: 80,
-  currentsBaseRelax: 0.15,
-  // How strongly a coastal land cell is pulled toward the adjacent ocean's SST
-  // anomaly (warm current → milder coast, cold current/upwelling → cooler coast),
-  // and how far inland that influence reaches, decaying per cell (a maritime band
-  // a few cells wide rather than a single-cell edge).
-  currentsCoastalFactor: 0.9,
-  currentsCoastalSteps: 4,
-  currentsCoastalDecay: 0.8,
-  // --- from biomes.ts ---
-  // The alpine override, promised by docs/decisions/climate-biomes.md ("plus ...
-  // an alpine override above the treeline") but never built until 2026-08-06: a
-  // mountain's cold-elevation biome used to fall out of the lapse rate alone —
-  // which classifies it as Tundra, exactly the same id/color/label as arctic
-  // lowland tundra. That is not wrong ecologically (a real snowline zone reads
-  // similarly whether it got cold from latitude or elevation), but it meant an
-  // equatorial snow-capped peak and a polar plain were visually and
-  // mechanically indistinguishable — the elevation was invisible to gameplay.
-  //
-  // A single global elevation threshold (not latitude-dependent) is the whole
-  // point of the override: real treeline elevation DOES fall with latitude, but
-  // reproducing that here would just re-derive what the lapse-rate-driven T/P
-  // classification already gives — the useful, DIFFERENT signal is "is this
-  // high ground, regardless of where on the planet it is", so a fixed metres
-  // threshold is what actually answers that. 2800 m sits within the commonly
-  // cited real-world treeline range (roughly 2500-3800 m depending on
-  // latitude/region) as a single representative value.
-  //
-  // A cell that would already classify as Ice (T < -10°C — a true glaciated
-  // summit) is left alone: Alpine means "bare rock / sparse cold-adapted
-  // vegetation above the treeline", not "less ice than Ice" — a permanently
-  // glaciated peak should still read as ice, elevation or not.
-  alpineTreelineElevation: metersToElevation(2800)
-};
-
-// src/worldgen/climate/biomes.ts
-var Biome = {
-  Ocean: 0,
-  Ice: 1,
-  Tundra: 2,
-  Boreal: 3,
-  Grassland: 4,
-  Woodland: 5,
-  TemperateForest: 6,
-  TemperateRainforest: 7,
-  Desert: 8,
-  Savanna: 9,
-  TropicalRainforest: 10,
-  Alpine: 11,
-  // Hydrology override, not a Whittaker class (like Ocean): the exposed dry
-  // floor of a terminal basin — see computeLakes' salt-flat mask.
-  SaltFlat: 12
-};
-var BIOME_COLORS = {
-  [Biome.Ocean]: [40, 90, 140],
-  [Biome.Ice]: [240, 244, 249],
-  [Biome.Tundra]: [178, 176, 164],
-  // warm light grey
-  [Biome.Boreal]: [60, 98, 86],
-  // dark muted conifer green
-  [Biome.Grassland]: [214, 202, 122],
-  // pale yellow
-  [Biome.Woodland]: [150, 162, 88],
-  // olive green
-  [Biome.TemperateForest]: [96, 162, 78],
-  // bright green
-  [Biome.TemperateRainforest]: [42, 130, 100],
-  // teal-green (wet)
-  [Biome.Desert]: [236, 218, 170],
-  // pale sand (lightest)
-  [Biome.Savanna]: [208, 166, 78],
-  // gold / ochre
-  [Biome.TropicalRainforest]: [22, 106, 50],
-  // deep saturated green
-  [Biome.Alpine]: [158, 154, 168],
-  // cool slate/lavender-grey — bare rock, distinct from Tundra's warm grey and Ice's near-white
-  [Biome.SaltFlat]: [236, 230, 218]
-  // warm off-white salt crust — real pans aren't snow-white, and Ice keeps the cold near-white
-};
-var BIOME_LABEL_KEYS = {
-  [Biome.Ocean]: "world.biome.ocean",
-  [Biome.Ice]: "world.biome.iceCap",
-  [Biome.Tundra]: "world.biome.tundra",
-  [Biome.Boreal]: "world.biome.borealForest",
-  [Biome.Grassland]: "world.biome.grassland",
-  [Biome.Woodland]: "world.biome.woodland",
-  [Biome.TemperateForest]: "world.biome.temperateForest",
-  [Biome.TemperateRainforest]: "world.biome.temperateRainforest",
-  [Biome.Desert]: "world.biome.desert",
-  [Biome.Savanna]: "world.biome.savanna",
-  [Biome.TropicalRainforest]: "world.biome.tropicalRainforest",
-  [Biome.Alpine]: "world.biome.alpine",
-  [Biome.SaltFlat]: "world.biome.saltFlat"
-};
-
-// src/worldgen/surface/hydrology.ts
-function precipRunoffAt(precip, cx, cy, worldW, worldH, climateResX, climateResY) {
-  const gx = Math.min(climateResX - 1, Math.floor(cx / worldW * climateResX));
-  const gy = Math.min(climateResY - 1, Math.floor(cy / worldH * climateResY));
-  const p = precip[gy * climateResX + gx];
-  return p > SURFACE_TUNING.runoffFloor ? p : SURFACE_TUNING.runoffFloor;
-}
-function meanLandRunoff(precip, elevation, worldW, worldH, climateResX, climateResY) {
-  let sum = 0;
-  let count = 0;
-  for (let cell = 0; cell < elevation.length; cell++) {
-    if (elevation[cell] <= SEA_LEVEL) continue;
-    const cx = cell % worldW;
-    const cy = (cell - cx) / worldW;
-    sum += precipRunoffAt(precip, cx, cy, worldW, worldH, climateResX, climateResY);
-    count++;
-  }
-  return count > 0 ? sum / count : SURFACE_TUNING.runoffFloor;
-}
-function accumulateDischarge(routing, elevation, precip, climateResX, climateResY) {
-  const { width, height, flowTarget, popOrder, poppedCount } = routing;
-  const discharge = new Float32Array(width * height);
-  for (let cell = 0; cell < width * height; cell++) {
-    if (elevation[cell] <= SEA_LEVEL) continue;
-    const cx = cell % width;
-    const cy = (cell - cx) / width;
-    discharge[cell] = precipRunoffAt(precip, cx, cy, width, height, climateResX, climateResY);
-  }
-  for (let i = poppedCount - 1; i >= 0; i--) {
-    const cell = popOrder[i];
-    if (elevation[cell] <= SEA_LEVEL) continue;
-    const target = flowTarget[cell];
-    if (target >= 0) discharge[target] += discharge[cell];
-  }
-  return discharge;
-}
-function maxDischargeOverLand(discharge, elevation) {
-  let max = 0;
-  for (let i = 0; i < discharge.length; i++) {
-    if (elevation[i] > SEA_LEVEL && discharge[i] > max) max = discharge[i];
-  }
-  return max;
-}
-function densityToCriticalArea(density) {
-  const d = Math.min(100, Math.max(0, density)) / 100;
-  const AREA_MAX = 4e3;
-  const AREA_MIN = 150;
-  return AREA_MAX * Math.pow(AREA_MIN / AREA_MAX, d);
-}
-function channelThreshold(criticalArea, meanRunoff) {
-  return criticalArea * meanRunoff;
-}
-var RIVER_MIN_WIDTH = 0.4;
-var RIVER_MAX_WIDTH = 4;
-function riverWidth(dischargeAtCell, maxDischarge) {
-  const scale = maxDischarge > 0 ? maxDischarge : 1;
-  return Math.min(RIVER_MAX_WIDTH, RIVER_MIN_WIDTH + (RIVER_MAX_WIDTH - RIVER_MIN_WIDTH) * Math.sqrt(dischargeAtCell / scale));
-}
-var CHANNEL_SLOPE_EXPONENT = 0.5;
-function receiverSlope(routing, elevation, cell) {
-  const { width, height, flowTarget } = routing;
-  const target = flowTarget[cell];
-  if (target < 0 || target >= width * height) return 0;
-  const x = cell % width;
-  const y = (cell - x) / width;
-  const tx = target % width;
-  const ty = (target - tx) / width;
-  let dx = Math.abs(tx - x);
-  if (dx > width / 2) dx = width - dx;
-  const distance = Math.hypot(dx, ty - y) || 1;
-  const drop = elevation[cell] - elevation[target];
-  return drop > 0 ? drop / distance : 0;
-}
-function channelReferenceSlope(routing, elevation, discharge, threshold) {
-  const slopes = [];
-  for (let cell = 0; cell < discharge.length; cell++) {
-    if (elevation[cell] <= SEA_LEVEL || discharge[cell] < threshold) continue;
-    slopes.push(receiverSlope(routing, elevation, cell));
-  }
-  if (slopes.length === 0) return 1;
-  slopes.sort((a, b) => a - b);
-  const median = slopes[slopes.length >> 1];
-  return median > 0 ? median : 1;
-}
-function isChannelCell(routing, elevation, discharge, cell, threshold, referenceSlope) {
-  if (elevation[cell] <= SEA_LEVEL) return false;
-  const boost = Math.pow(Math.max(receiverSlope(routing, elevation, cell), 1e-7) / referenceSlope, CHANNEL_SLOPE_EXPONENT);
-  return discharge[cell] * boost >= threshold;
-}
-function extractRiverPolylines(routing, discharge, elevation, threshold, maxDischarge) {
-  const { width, height, flowTarget } = routing;
-  const n = width * height;
-  const channel = new Uint8Array(n);
-  const referenceSlope = channelReferenceSlope(routing, elevation, discharge, threshold);
-  for (let cell = 0; cell < n; cell++) {
-    if (isChannelCell(routing, elevation, discharge, cell, threshold, referenceSlope)) channel[cell] = 1;
-  }
-  const adjacent = (a, b) => {
-    const ax = a % width;
-    const ay = (a - ax) / width;
-    const bx = b % width;
-    const by = (b - bx) / width;
-    return Math.abs(bx - ax) <= 1 && Math.abs(by - ay) <= 1;
-  };
-  const inDeg = new Uint8Array(n);
-  for (let cell = 0; cell < n; cell++) {
-    if (!channel[cell]) continue;
-    const t = flowTarget[cell];
-    if (t >= 0 && channel[t] && adjacent(cell, t) && inDeg[t] < 255) inDeg[t]++;
-  }
-  const visited = new Uint8Array(n);
-  const points = [];
-  const lengths = [];
-  for (let start = 0; start < n; start++) {
-    if (!channel[start] || inDeg[start] !== 0 || visited[start]) continue;
-    let cur = start;
-    let len = 0;
-    for (; ; ) {
-      const cx = cur % width;
-      const cy = (cur - cx) / width;
-      points.push(cx + 0.5, cy + 0.5, riverWidth(discharge[cur], maxDischarge));
-      len++;
-      visited[cur] = 1;
-      const t = flowTarget[cur];
-      if (t < 0 || !channel[t] || !adjacent(cur, t)) break;
-      if (visited[t]) {
-        const tx = t % width;
-        const ty = (t - tx) / width;
-        points.push(tx + 0.5, ty + 0.5, riverWidth(discharge[t], maxDischarge));
-        len++;
-        break;
-      }
-      cur = t;
-    }
-    if (len >= 2) lengths.push(len);
-    else points.length -= len * 3;
-  }
-  return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) };
-}
-
 // src/worldgen/surface/runAmplification.ts
 async function runAmplification(request, onProgress = () => {
 }) {
@@ -11652,52 +11709,6 @@ async function writeAmplificationArtifact(store, key, artifact, bakeMs, riverDen
   return wrote;
 }
 
-// src/server/serverStatus.ts
-var OFFLINE = { state: "none", apiBase: "", authMode: "none", modules: [] };
-var PROBE_TIMEOUT_MS = 3e3;
-async function fetchJSON(url, timeoutMs) {
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { cache: "no-store", signal: abort.signal });
-    if (!response.ok) return null;
-    return await response.json();
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-async function probe() {
-  const config = await fetchJSON("/config.json", PROBE_TIMEOUT_MS);
-  if (!config || !config.apiBase) return OFFLINE;
-  const apiBase2 = config.apiBase;
-  const authMode = config.authMode ?? "none";
-  const capabilities = await fetchJSON(`${apiBase2}/capabilities`, PROBE_TIMEOUT_MS);
-  if (!capabilities) return { state: "unreachable", apiBase: apiBase2, authMode, modules: [] };
-  const modules = capabilities.modules ?? [];
-  if (!modules.includes("world")) return { state: "unreachable", apiBase: apiBase2, authMode, modules };
-  const state = authMode === "none" ? "local" : "remote";
-  return { state, apiBase: apiBase2, authMode, modules };
-}
-var pending;
-var current;
-function getServerStatus() {
-  if (!pending) {
-    pending = probe().then((status) => {
-      current = status;
-      return status;
-    });
-  }
-  return pending;
-}
-
-// src/server/worldClient.ts
-async function apiBase() {
-  const status = await getServerStatus();
-  return status.state === "local" || status.state === "remote" ? status.apiBase : null;
-}
-
 // src/storage/HttpArtifactStore.ts
 var LOCAL_PREFIX = "worlds/";
 var LOCAL_GROUP = "amp";
@@ -11709,8 +11720,8 @@ function toRemotePath(path) {
   return { worldId, pipelineVersion, stage, name: rest.join("/") };
 }
 var encodePath = (p) => [p.worldId, p.pipelineVersion, p.stage, ...p.name.split("/")].map(encodeURIComponent).join("/");
-function createHttpArtifactStore(options = {}) {
-  const resolveBase = options.resolveBase ?? apiBase;
+function createHttpArtifactStore(options) {
+  const resolveBase = options.resolveBase;
   const authHeaders = () => options.authToken ? { Authorization: `Bearer ${options.authToken}` } : {};
   const url = async (path) => {
     const base = await resolveBase();
