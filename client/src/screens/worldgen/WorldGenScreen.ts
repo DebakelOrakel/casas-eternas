@@ -438,7 +438,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           ${sliderField(ARCHEAN_INPUTS.mantleVigour, 'mantle-vigour-input', 'mantle-vigour-label', { tag: 'span', extraClass: 'field--inline' })}
           ${sliderField(ARCHEAN_INPUTS.water, 'water-input', 'water-label', { tag: 'span', extraClass: 'field--inline' })}
           <button type="button" class="icon-button" data-action="toggle-archean" aria-label="${t('worldgen.action.runArchean.label')}" data-help="worldgen.action.runArchean">
-            <img src="/icons/mantle.png" alt="" />
+            <img src="/icons/mantle_heavy.png" alt="" />
           </button>
           <span class="tectonics-stats">
             <span class="stat"><span class="stat-num"><span data-value="stat-crust">–</span><span class="stat-unit">${t('common.unit.percent')}</span></span><span class="stat-label">${t('worldgen.panel.genesis.stat.crust')}</span></span>
@@ -456,7 +456,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
             <img src="/icons/reset.png" alt="" />
           </button>
           <button type="button" class="icon-button" data-action="toggle-sim" aria-label="${t('worldgen.action.runTectonics.label')}" data-help="worldgen.action.runTectonics">
-            <img src="/icons/tectonics.png" alt="" />
+            <img src="/icons/tectonics_heavy.png" alt="" />
           </button>
           <span class="tectonics-stats">
             <span class="stat"><span class="stat-num"><span data-value="stat-land">–</span><span class="stat-unit">${t('common.unit.percent')}</span></span><span class="stat-label">${t('worldgen.panel.tectonics.stat.land')}</span></span>
@@ -480,7 +480,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       <label class="field field--icon-row">
         <span class="field-row">
           <button type="button" class="icon-button" data-action="erode" aria-label="${t('worldgen.action.runErosion.label')}" data-help="worldgen.action.runErosion">
-            <img src="/icons/erosion.png" alt="" />
+            <img src="/icons/erosion_heavy.png" alt="" />
           </button>
           <button type="button" class="icon-button" data-action="micro-tile" aria-label="Micro tile: re-simulate the largest river mouth at fine resolution (debug)">
             <img src="/icons/zoom_on.png" alt="" />
@@ -2546,7 +2546,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // they are until the actual final render arrives.
     if (!message.intermediate) {
       erosionOpInFlight = false
-      erodeIcon.src = '/icons/erosion.png' // back from the stop icon
+      erodeIcon.src = '/icons/erosion_heavy.png' // back from the stop icon
       erodeButton.setAttribute('aria-label', t('worldgen.action.runErosion.label'))
       updateControlsDisabled()
       updateProgress()
@@ -2574,7 +2574,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // --- Archean controls -----------------------------------------------------
   const setArcheanRunning = (running: boolean): void => {
     archeanRunning = running
-    toggleArcheanButton.querySelector('img')!.src = running ? '/icons/stop.png' : '/icons/mantle.png'
+    toggleArcheanButton.querySelector('img')!.src = running ? '/icons/stop.png' : '/icons/mantle_heavy.png'
     toggleArcheanButton.setAttribute('aria-label', t(running ? 'worldgen.action.runArchean.labelActive' : 'worldgen.action.runArchean.label'))
   }
 
@@ -2666,7 +2666,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     tectonicsRunning = false
     postToWorker({ type: 'stop' })
     updateOverlays()
-    toggleSimIcon.src = '/icons/tectonics.png'
+    toggleSimIcon.src = '/icons/tectonics_heavy.png'
     toggleSimButton.setAttribute('aria-label', t('worldgen.action.runTectonics.label'))
     updateControlsDisabled()
     updateProgress()
