@@ -1,7 +1,7 @@
 ---
 summary: Plan for two connected rebuilds — a `world` module as the single, provenance-carrying place world data is queried, and a shared module architecture in the generator (separated tuning and input parameters, declared slider ranges, a real WorldSpec type). Includes the order of work, the safety net it needs first, and what is deliberately excluded.
 date: 2026-08-09
-status: plan — nothing built; order and boundaries decided, detail questions listed at the end
+status: Part 0 (the safety net) BUILT 2026-08-09; parts A–D not started. Order and boundaries decided, detail questions listed at the end
 ---
 
 # Architecture unification: world-data access and module contracts
@@ -105,11 +105,42 @@ you did the right thing teaches people to ignore it") applies to *tuning*
 changes. For a refactor that must be bit-exact by definition, a hash is exactly
 the right shape.
 
-- Add a temporary mode that records and checks a hash baseline, alongside the
-  three existing layers rather than replacing them.
-- Remove it again in part D. It is scaffolding, not structure.
-- **Known gap:** the harness does not cover the fine path (2048 biomes,
-  amplification). Changes there need their own check.
+**BUILT 2026-08-09.** `npm run golden hash-record` freezes a per-stage byte hash
+into `golden-hashes.json`; every later `npm run golden` reports the stages that
+moved. The layer exists only while the file does, so it cannot go red for anyone
+who did not arm it, and part D's "remove it" is a deletion. The baseline is
+machine-local and gitignored — determinism holds within a process, but Math
+results can move between V8 versions.
+
+Two choices worth recording. Recording refuses on **non-reproducibility only**,
+not on a failed invariant: `golden.json` claims "this is correct", so a broken
+world recorded there bakes the breakage in, while this file claims only "this is
+what the code does today" — exactly what you want to hold fixed while refactoring
+something already wrong. And the determinism layer now reads the *same* stage
+list, so the two cannot drift apart, and it names the stage that moved instead of
+comparing two opaque blobs.
+
+Verified end to end: record, then check in a **separate process**, gave 36 of 36
+stages byte-identical on all three seeds. Cross-process reproducibility had never
+been measured before — the determinism layer only ever compared a run against
+itself.
+
+Two gaps in the net turned up while building it, both now closed:
+
+- The harness guarded only `computeBiomes` (coarse, 256×128). Since the split,
+  `computeBiomesFine` is what the screen draws and the save bakes — the path with
+  the consequences was unwatched. Now hashed as its own stage.
+- The invariant "every land cell must be classified" read `biomes[i] < 0` on a
+  `Uint8Array` and **could never fire**. It is the dead-check class the coverage
+  layer exists to expose, and it survived because coverage compares metrics
+  across seeds, not invariants. Replaced with the live form: `Biome.Ocean` on a
+  cell above sea level.
+
+- **Remaining gap:** the amplification bake is still unguarded. `AMPLIFY_CONSTANTS`
+  and `derivePipelineVersion` feed no check, so part B2's regrouping of those
+  constants could change the artifact key and silently orphan every cached bake.
+  Cheap fix if wanted: carry the derived pipeline-version string as one more
+  stage in the baseline.
 
 ## Part A — correct the module boundaries
 
@@ -242,9 +273,13 @@ Split by audience, not by topic:
 
 ## Open questions
 
-1. **`lakeDepth` is downsampled to 256×128 on save** while the overlay draws at
-   2048. Size optimisation or oversight? A round trip through the save loses
-   small lakes.
+1. ~~**`lakeDepth` is downsampled to 256×128 on save**~~ — **answered 2026-08-09**:
+   an oversight, and a measurable one. The reduction used `downsampleMax`, which
+   let a single lake cell claim its whole 62 km cell and inflated saved lake area
+   4×. The layer is now `fullRes`. The general lesson outlives the fix: a coarse
+   save layer for a finely computed field is a *choice*, and the reduction
+   function is part of the layer's contract — C2 should make it declarable
+   instead of implicit at the call site.
 2. **`oceanAge` is in the zip but in no manifest** — invisible to a query
    consumer. `queryable-world-save.md` lists it as open; C2 forces the decision.
 3. **Which tier is authoritative once the hex game arrives.** Rule 4 says 2048;

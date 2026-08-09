@@ -3,6 +3,10 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-08-09
+- **new** Structure: the golden harness can freeze per-stage byte hashes for the length of a refactor.
+- **fixed** Structure: the harness guarded only the coarse biome field, and its land-classification check could never fire.
+
 ## 2026-08-08
 - **fixed** Storage: changing the river density no longer throws away a world's baked terrain — rivers are cached per density beside one shared elevation. `common.panel.storage`
 - **changed** Save/Load: rivers are stored as a discharge field (m³/s per cell) instead of drawing polylines — smaller, and answerable by sampling. `worldgen.panel.hydrology`

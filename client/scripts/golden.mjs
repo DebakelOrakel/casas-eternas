@@ -1,7 +1,9 @@
-// Regression harness for the worldgen pipeline — three layers, deliberately.
+// Regression harness for the worldgen pipeline — three layers, deliberately,
+// plus a fourth that only exists while someone is refactoring.
 //
-//   npm run golden          run every layer, exit non-zero on a failure
-//   npm run golden record   overwrite golden.json with the current measurements
+//   npm run golden               run every layer, exit non-zero on a failure
+//   npm run golden record        overwrite golden.json with the current measurements
+//   npm run golden hash-record   write golden-hashes.json — the refactor guard (layer 4)
 //
 // WHY THIS IS NOT A HASH HARNESS ANY MORE. It used to hash the raw bytes of
 // every stage and compare them against a recorded file. That is exactly right
@@ -27,6 +29,15 @@
 //                   tuning change still shows up — but as a number you can
 //                   judge and then re-record on purpose, not as a wall of
 //                   changed hex.
+//   4. BYTE HASHES  the wall above, back — but OPT-IN and temporary. It does
+//                   not exist unless someone records a baseline, so it cannot
+//                   go stale on anyone who did not ask for it, and deleting
+//                   golden-hashes.json removes the layer entirely. Its one job
+//                   is a refactor that is supposed to change NOTHING, which the
+//                   other three cannot check: metrics carry a 2% tolerance, so a
+//                   sub-percent shift passes green, and determinism only ever
+//                   compares a run against itself inside one process, never
+//                   against a previous version of the code.
 //
 // It goes through Vite's SSR pipeline rather than plain node, because the
 // worldgen modules use extensionless imports that node will not resolve.
@@ -41,6 +52,12 @@ import { fileURLToPath } from 'node:url'
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const OUT = fileURLToPath(new URL('./golden.json', import.meta.url))
+// Layer 4's baseline, kept in its OWN file rather than as a section of
+// golden.json: the two have opposite lifetimes. golden.json is permanent and
+// re-recorded on purpose whenever tuning moves; this one is scaffolding that
+// gets deleted when a refactor lands, and deleting a file is a cleaner way to
+// end a layer than editing a shared one.
+const HASHES = fileURLToPath(new URL('./golden-hashes.json', import.meta.url))
 const MODE = process.argv[2] ?? 'check'
 const SEEDS = ['calibration', 'alpha', 'bravo']
 const EPOCHS = 50
@@ -96,10 +113,31 @@ const M = {
   archean: await L('/src/worldgen/archean/archeanState.ts'),
   archeanStep: await L('/src/worldgen/archean/archeanStep.ts'),
   finalize: await L('/src/worldgen/archean/finalizeArchean.ts'),
+  // Not part of building a world — see PIPELINE_VERSION below.
+  amplify: await L('/src/worldgen/surface/amplify.ts'),
+  artifactKey: await L('/src/storage/artifactKey.ts'),
+  mapSettings: await L('/src/map/mapSceneSettings.ts'),
 }
 
 const SEA = M.scale.SEA_LEVEL
 const METRES = M.scale.ELEVATION_METERS
+
+// The key every cached 4k/8k bake is addressed by, local and on the server.
+//
+// It is not a world property and nothing here builds one — it is in the guard
+// because it is a PRODUCT OF CONSTANTS, and those constants are exactly what
+// part B regroups into objects. Rename one key in AMPLIFY_CONSTANTS and this
+// string moves; every stored artifact is then orphaned under a key that still
+// claims to describe it, which reads as a physics bug rather than a cache
+// fault. That is the failure the artifact design exists to prevent, and until
+// now nothing checked it.
+//
+// Assembled the way the five real call sites assemble it. If they ever stop
+// agreeing with this line, that is itself the bug (see part B3).
+const PIPELINE_VERSION = M.artifactKey.derivePipelineVersion({
+  ...M.amplify.AMPLIFY_CONSTANTS,
+  rounds: M.mapSettings.AMPLIFY_EROSION_ROUNDS,
+})
 
 // Float32 hashing has to be bit-exact, so hash the raw bytes rather than any
 // rounded form — a refactor that changes the last mantissa bit is still a
@@ -186,6 +224,12 @@ async function buildWorld(seed) {
   const seasonalPrecip = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, W, H, 1, 0)
   let precipitation = seasonalPrecip.annual
   const biomes = M.biomes.computeBiomes(temperature, precipitation, seasonal, seasonalPrecip.index, el, W, H)
+  // The worker computes BOTH, and only the coarse one was guarded here. The
+  // fine one is what the user sees and what the save bakes (worldLayers marks
+  // `biome` fullRes), so leaving it out meant the harness watched the path with
+  // the fewer consequences. Same arguments as above, deliberately — a
+  // divergence between the two calls would be the harness's own bug.
+  const biomesFine = M.biomes.computeBiomesFine(temperature, precipitation, seasonal, seasonalPrecip.index, el, W, H)
 
   const routing = await M.routing.fillDepressionsAndRouteFlow(el, W, H, 0)
   const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y
@@ -237,7 +281,7 @@ async function buildWorld(seed) {
     { spreadBudget: 400, seaCrossing: 0.3 },
   )
 
-  return { sim, raw, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, routing, discharge, maxDis, meanRunoff, lakes, volcanoes, eco, mig, originCell, CRX, CRY }
+  return { sim, raw, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, lakes, volcanoes, eco, mig, originCell, CRX, CRY }
 }
 
 // --- layer 1: invariants ---------------------------------------------------
@@ -290,10 +334,21 @@ function invariants(w) {
   const channels = countWhere(w.discharge, (v) => v >= 2000)
   if (channels === 0) fail('rivers', 'no channel cells')
 
-  // Every land cell must be classified; an unassigned biome renders as a hole.
+  // Every land cell must be classified, or the map renders a hole.
+  //
+  // This check used to read `w.biomes[i] < 0` and could never fire: the field
+  // is a Uint8Array, so it has no negative values to find. It is the same dead
+  // guard the coverage layer exists to expose, and it survived because nothing
+  // compares invariants across seeds the way metrics are compared.
+  //
+  // The live form uses the FINE field, where a biome cell and an elevation cell
+  // are the same cell, so "land" needs no resampling: `Biome.Ocean` on a cell
+  // above sea level means classify() returned nothing usable.
   let unclassified = 0
-  for (let i = 0; i < w.biomes.length; i++) if (w.biomes[i] < 0) unclassified++
-  if (unclassified > 0) fail('biomes', `${unclassified} cells unclassified`)
+  for (let i = 0; i < w.el.length; i++) {
+    if (w.el[i] > SEA && w.biomesFine[i] === M.biomes.Biome.Ocean) unclassified++
+  }
+  if (unclassified > 0) fail('biomes', `${unclassified} land cells are unclassified (Ocean above sea level)`)
 
   // Ecology writes ECOLOGY_OCEAN (-1) on open water as a documented sentinel,
   // so "no negatives" was the wrong invariant — the first run flagged all 14
@@ -389,24 +444,73 @@ function metrics(w) {
   return out
 }
 
-// A hash of everything that must be reproducible, for the determinism layer.
-function fingerprint(w) {
-  return [w.raw, w.el, w.temperature, w.precipitation, w.discharge, w.lakes.depth, w.biomes,
-    ...Object.keys(w.eco.fields).sort().map((k) => w.eco.fields[k]), w.mig.density]
-    .map(hashBytes).join('/')
+// Per-stage byte hashes, named so a difference points at a stage instead of at
+// the whole pipeline. TWO layers read this — determinism (a run against another
+// run in the same process) and the opt-in refactor guard — from one list, so
+// the two cannot drift apart.
+function fingerprints(w) {
+  const out = {}
+  const put = (name, typed) => { out[name] = hashBytes(typed) }
+
+  // Tectonic state. Elevation depends on rafts, oceanAge and features, so it
+  // covers most of this transitively — but the lattice accumulators are the
+  // rift/merge TRIGGERS, and a change there can take many epochs to reach a
+  // height, or never reach one on a given seed.
+  put('tectonics.oceanAge', w.sim.oceanAge)
+  put('tectonics.mantle', w.sim.mantle)
+  put('tectonics.latticeAccum', w.sim.latticeAccumulated)
+  put('tectonics.latticeLocked', w.sim.latticeLockedEpochs)
+  put('tectonics.latticeClass', w.sim.latticeLastClassCode)
+
+  put('elevation.raw', w.raw)
+  put('elevation.eroded', w.el)
+  put('elevation.preFill', w.ero.preFillElevations)
+  put('erosion.accumulation', w.ero.accumulation)
+
+  put('climate.wind', w.wind)
+  put('climate.currents', w.currents)
+  put('climate.temperature', w.temperature)
+  put('climate.seasonal', w.seasonal)
+  // The PRE-refinement monsoon index: when a world has dry basins the chain
+  // above re-runs climate and keeps only the second precipitation, leaving this
+  // one from the first pass. Hashing it still guards the monsoon code; it just
+  // is not the same generation as `climate.precipitation` below.
+  put('climate.monsoonIndex', w.seasonalPrecip.index)
+  put('climate.precipitation', w.precipitation)
+  put('climate.biomes', w.biomes)
+  put('climate.biomesFine', w.biomesFine)
+
+  put('hydro.discharge', w.discharge)
+  put('hydro.lakeDepth', w.lakes.depth)
+  put('hydro.saltFlat', w.lakes.saltFlat)
+  put('hydro.dryBasin', w.lakes.dryBasin)
+
+  for (const k of Object.keys(w.eco.fields).sort()) put(`eco.${k}`, w.eco.fields[k])
+
+  put('mig.cost', w.mig.cost)
+  put('mig.density', w.mig.density)
+
+  // Stored as the STRING, not a hash of it — every other entry here is opaque
+  // by necessity, but this one is short and a diff that reads
+  // `v4-5fadfe0c… -> v4-91b3ac…` says immediately what happened.
+  out['artifact.pipelineVersion'] = PIPELINE_VERSION
+  return out
 }
 
 // --- run -------------------------------------------------------------------
 
 const started = Date.now()
+process.stderr.write(`golden: mode=${MODE}, guard=${existsSync(HASHES) ? 'on' : 'off'}\n`)
 const worlds = {}
 const measured = {}
+const hashed = {}
 let failed = 0
 
 for (const seed of SEEDS) {
   process.stderr.write(`  ${seed} … `)
   worlds[seed] = await buildWorld(seed)
   measured[seed] = metrics(worlds[seed])
+  hashed[seed] = fingerprints(worlds[seed])
   process.stderr.write('ok\n')
 }
 
@@ -442,12 +546,14 @@ console.log('\n— determinism —')
 process.stderr.write(`  rebuilding ${SEEDS[0]} … `)
 const repeat = await buildWorld(SEEDS[0])
 process.stderr.write('ok\n')
-const before = fingerprint(worlds[SEEDS[0]]), after = fingerprint(repeat)
-if (before === after) {
-  console.log(`  ok    ${SEEDS[0]} rebuilds bit-identically`)
+const before = hashed[SEEDS[0]], after = fingerprints(repeat)
+const unstable = Object.keys(before).filter((name) => before[name] !== after[name])
+if (unstable.length === 0) {
+  console.log(`  ok    ${SEEDS[0]} rebuilds bit-identically across ${Object.keys(before).length} stages`)
 } else {
-  failed++
-  console.log(`  FAIL  ${SEEDS[0]} is not reproducible\n          run 1  ${before}\n          run 2  ${after}`)
+  failed += unstable.length
+  console.log(`  FAIL  ${SEEDS[0]} is not reproducible — ${unstable.length} of ${Object.keys(before).length} stages differ`)
+  for (const name of unstable) console.log(`          ${name}  ${before[name]} -> ${after[name]}`)
 }
 
 await server.close()
@@ -462,6 +568,25 @@ if (MODE === 'record') {
   }
   writeFileSync(OUT, JSON.stringify(measured, null, 2) + '\n')
   console.log(`\nrecorded ${SEEDS.length} seeds × ${Object.keys(measured[SEEDS[0]]).length} metrics -> golden.json`)
+  process.exit(0)
+}
+
+if (MODE === 'hash-record') {
+  // Refused only on NON-REPRODUCIBILITY, and deliberately not on a failed
+  // invariant — the two records make different claims. golden.json says "this
+  // is correct", so recording a broken world there bakes the breakage in as
+  // expected. This file only says "this is what the code does today", which is
+  // exactly what you want to hold fixed while refactoring something that is
+  // already wrong. But if the pipeline does not rebuild identically, the
+  // baseline is noise and every later run would go red at random.
+  if (unstable.length > 0) {
+    console.error(`\nrefusing to record — the pipeline is not reproducible (${unstable.length} stages), so a hash baseline would be meaningless`)
+    process.exit(1)
+  }
+  if (failed > 0) console.error(`\nwarning: recording despite ${failed} hard failures — the baseline freezes current behaviour, correct or not`)
+  writeFileSync(HASHES, JSON.stringify(hashed, null, 2) + '\n')
+  console.log(`\nrecorded ${SEEDS.length} seeds × ${Object.keys(hashed[SEEDS[0]]).length} stage hashes -> golden-hashes.json`)
+  console.log('refactor now; every `npm run golden` compares against this. delete the file when you are done.')
   process.exit(0)
 }
 
@@ -488,6 +613,35 @@ console.log(drifted === 0
   ? `  ok    ${compared} metrics within tolerance`
   : `  ${drifted} of ${compared} metrics drifted — judge them, then \`npm run golden record\` if intended`)
 
+// --- layer 4: byte hashes (opt-in refactor guard) --------------------------
+//
+// The baseline is MACHINE-LOCAL, so it is not committed. Determinism holds
+// within a process, but Math results can move between V8 versions, and a
+// baseline recorded on another machine would go red for reasons that are not
+// your change. Record it where you are refactoring.
+let movedStages = 0
+if (existsSync(HASHES)) {
+  console.log('\n— byte hashes (refactor guard) —')
+  const baseline = JSON.parse(readFileSync(HASHES, 'utf8'))
+  for (const seed of SEEDS) {
+    const want = baseline[seed]
+    if (!want) { console.log(`  NEW   ${seed} is not in the baseline`); continue }
+    const moved = Object.keys(hashed[seed]).filter((name) => want[name] !== undefined && want[name] !== hashed[seed][name])
+    const added = Object.keys(hashed[seed]).filter((name) => want[name] === undefined)
+    const gone = Object.keys(want).filter((name) => hashed[seed][name] === undefined)
+    for (const name of added) console.log(`  NEW   ${seed}.${name}`)
+    for (const name of gone) console.log(`  GONE  ${seed}.${name} was in the baseline and is no longer produced`)
+    if (moved.length === 0 && gone.length === 0) {
+      console.log(`  ok    ${seed}  ${Object.keys(hashed[seed]).length - added.length} stages byte-identical`)
+      continue
+    }
+    movedStages += moved.length + gone.length
+    for (const name of moved) console.log(`  MOVED ${seed}.${name}  ${want[name]} -> ${hashed[seed][name]}`)
+  }
+  if (movedStages > 0) console.log('  a refactor should move nothing. if the change was intended, `npm run golden hash-record` to re-freeze — or delete golden-hashes.json to end the guard.')
+}
+
 const seconds = ((Date.now() - started) / 1000).toFixed(0)
-console.log(`\n${failed + drifted === 0 ? 'PASS' : 'FAIL'} — ${failed} hard failures, ${drifted} drifted metrics, ${seconds}s`)
-process.exit(failed + drifted === 0 ? 0 : 1)
+const total = failed + drifted + movedStages
+console.log(`\n${total === 0 ? 'PASS' : 'FAIL'} — ${failed} hard failures, ${drifted} drifted metrics, ${movedStages} moved stages, ${seconds}s`)
+process.exit(total === 0 ? 0 : 1)

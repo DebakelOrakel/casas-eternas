@@ -33,6 +33,12 @@ artifacts/*
 # Worlds exported by hand from the client's save button.
 saves/*
 
+# The golden harness's opt-in refactor guard (layer 4). Machine-local by
+# nature — Math results can move between V8 versions — and it exists only for
+# the length of one refactor, so it is recorded and deleted, never shared.
+# golden.json, the permanent metric baseline, IS committed.
+client/scripts/golden-hashes.json
+
 # Editor directories and files
 .claude/*
 .vscode/*

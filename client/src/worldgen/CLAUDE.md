@@ -55,27 +55,34 @@ not assume; look up which one the field you touched uses.
 ## Before touching anything: the golden harness
 
 ```
-cd client && npm run golden          # check; ~13 min (4 world builds at 2048×1024)
-cd client && npm run golden record   # re-record the metric baseline, on purpose
+cd client && npm run golden               # check; ~13 min (4 world builds at 2048×1024)
+cd client && npm run golden record        # re-record the metric baseline, on purpose
+cd client && npm run golden hash-record   # arm the refactor guard (layer 4)
 ```
 
-Three layers, deliberately: **invariants** (no baseline, so a failure is always a
+Three permanent layers: **invariants** (no baseline, so a failure is always a
 bug), **determinism** (one seed built twice in the same run, hashed against
 itself), and **metrics** (magnitudes against `golden.json` with per-metric
 tolerances, default 2 %, reported as deltas). It loads the real modules through
 Vite's SSR pipeline because these modules use extensionless imports.
 
+**Refactoring? Arm layer 4 first.** `npm run golden hash-record` freezes a
+per-stage byte hash into `golden-hashes.json`, and every later `npm run golden`
+reports any stage that moved. Delete the file when the refactor lands — the
+layer exists only while the file does. It is needed because the other three
+cannot make this check: metrics carry a 2 % tolerance, so a sub-percent shift
+passes green, and determinism only ever compares a run against itself inside one
+process. The baseline is machine-local and gitignored; record it where you work.
+
 **Know its blind spots:**
 
-- It is *not* a hash-vs-baseline harness. A refactor meant to change nothing that
-  introduces a sub-2 % drift passes green, and the determinism layer cannot catch
-  it — it compares a run against itself, never against a previous version. For a
-  refactor that must be bit-exact, add a temporary hash baseline for the duration.
 - It does **not** cover `plateSimulationWorker.ts`. Message ordering and cache
   invalidation are invisible to a field check; that needs a manual click-through
   (tectonics, erode and stop mid-pass, reset erosion, climate → rivers → ecology →
   migration, save and load).
-- It does **not** cover the amplified/fine path.
+- It does **not** cover the amplification bake. `AMPLIFY_CONSTANTS` and
+  `derivePipelineVersion` are unguarded, so a change there can silently orphan
+  every cached artifact.
 - Before blaming a golden failure on your change, `git stash` and re-run to see
   whether it already fails on `HEAD`.
 
