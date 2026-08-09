@@ -23,6 +23,8 @@
 // registry is where it would land if it does.
 export type FieldGrid = 'world' | 'climate'
 
+import { ECOLOGY_FIELD_IDS } from '../../worldgen/ecology/ecologyField'
+
 export interface FieldSpec {
   name: string
   grid: FieldGrid
@@ -39,12 +41,10 @@ const world = (name: string, unit: string, landOnly: boolean): FieldSpec => ({ n
 const climate = (name: string, unit: string, landOnly: boolean): FieldSpec => ({ name, grid: 'climate', unit, landOnly })
 
 // The ecology aggregate plus the 13 resources — all coarse, all land-only, all
-// dimensionless suitability/abundance.
-export const ECOLOGY_FIELD_NAMES: readonly string[] = [
-  'carryingCapacity', 'arable', 'fish', 'game', 'pasture',
-  'timber', 'salt', 'toolStone', 'copper', 'tin', 'iron',
-  'gold', 'silver', 'gems',
-]
+// dimensionless suitability/abundance. Taken from the producer rather than
+// relisted here: this order is the save's layer order, and the two lists had to
+// agree with nothing making them.
+export const ECOLOGY_FIELD_NAMES: readonly string[] = ECOLOGY_FIELD_IDS
 
 // Every field a consumer can ask a world for. Order is the save's write order for
 // the ones that are baked; the rest follow.

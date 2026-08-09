@@ -22,11 +22,19 @@ export const ECOLOGY_OCEAN = -1
 
 // The field ids the ecology step produces. Grows per sub-step; the worker sends
 // every field, the screen's selector lists them (see ecologyColors' metadata).
-export type EcologyFieldId =
-  | 'carryingCapacity'
-  | 'arable' | 'fish' | 'game' | 'pasture'
-  | 'timber' | 'salt' | 'toolStone' | 'copper' | 'tin' | 'iron'
-  | 'gold' | 'silver' | 'gems'
+//
+// An array with the type derived from it, rather than a union with the names
+// retyped wherever a list is needed. The save's field registry had the second
+// copy, in the same order — and the order is the save's layer order, so the two
+// had to agree without anything making them. Adding a field is one edit now.
+export const ECOLOGY_FIELD_IDS = [
+  'carryingCapacity',
+  'arable', 'fish', 'game', 'pasture',
+  'timber', 'salt', 'toolStone', 'copper', 'tin', 'iron',
+  'gold', 'silver', 'gems',
+] as const
+
+export type EcologyFieldId = (typeof ECOLOGY_FIELD_IDS)[number]
 
 export interface EcologyParams {
   // Global carrying-capacity gain (%). 100 = neutral; scales the LEVEL only.
