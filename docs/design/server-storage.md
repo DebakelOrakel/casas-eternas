@@ -121,10 +121,17 @@ GET             /v1/worlds                the caller's list
 
 The mistake would be to build with no notion of identity and retrofit
 one. Instead: every request *may* carry `Authorization: Bearer <token>`,
-and the server knows three modes — `none`, `token`, `oidc`. In the local
-`none` mode a synthetic identity ("local") carries ownership and quota.
-Every code path then exists from the start, and SSO later is a config
-value plus a token validator rather than a refactor.
+and the server knows three modes. In the local mode a synthetic identity
+("local") carries ownership and quota. Every code path then exists from
+the start, and SSO later is a config value plus a token validator rather
+than a refactor.
+
+**The modes hardened into a decision 2026-08-09 —
+[server-auth.md](../decisions/server-auth.md).** `token` became `password`
+(the axis is where the users live, not what the header looks like), the
+credentials are an htpasswd file mounted from a Secret, and logging in
+exchanges them for a JWT the server issues itself — including under `oidc`,
+which is a second login method rather than a second token.
 
 ## Who may write
 
