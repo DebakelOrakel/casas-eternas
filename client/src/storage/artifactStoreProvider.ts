@@ -3,6 +3,7 @@ import { createMemoryArtifactStore } from './MemoryArtifactStore'
 import { createHttpArtifactStore } from './HttpArtifactStore'
 import { createTieredArtifactStore } from './TieredArtifactStore'
 import { getServerStatus } from '../server/serverStatus'
+import { apiBase } from '../server/worldClient'
 import type { ArtifactStore } from './ArtifactStore'
 
 // One artifact store per page, resolved lazily and shared.
@@ -32,9 +33,14 @@ export function getLocalArtifactStore(): Promise<ArtifactStore> {
 }
 
 // The store the BAKE should use: local, then the server, then compute.
+//
+// This is the COMPOSITION ROOT for artifact storage, and the one place in
+// `storage/` that may know about `server/`: deciding local-versus-remote and
+// supplying the base URL is precisely its job. The stores themselves stay
+// ignorant of both.
 export function getArtifactStore(): Promise<ArtifactStore> {
   tieredPending ??= getLocalArtifactStore().then((local) =>
-    createTieredArtifactStore(local, createHttpArtifactStore(), {
+    createTieredArtifactStore(local, createHttpArtifactStore({ resolveBase: apiBase }), {
       // Asked per call rather than captured once. getServerStatus resolves a
       // single shared probe, so this is a promise lookup rather than a request
       // — but it still reflects a refresh after a failure, which a value

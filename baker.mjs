@@ -9770,7 +9770,7 @@ var require_lib3 = __commonJS({
 import { readFile, mkdir, writeFile, rename } from "node:fs/promises";
 import { join, dirname } from "node:path";
 
-// src/world/save/loadWorldInputs.ts
+// src/world/query.ts
 var import_jszip = __toESM(require_lib3(), 1);
 
 // src/worldgen/core/mapConfig.ts
@@ -9860,6 +9860,11 @@ function upscaleBilinearToroidal(src, srcWidth, srcHeight, dstWidth, dstHeight) 
     }
   }
   return dst;
+}
+function sampleNearestWorld(field, resX, resY, x, y, worldWidth, worldHeight) {
+  const gx = Math.min(resX - 1, Math.floor(wrapValue(x, worldWidth) / worldWidth * resX));
+  const gy = Math.min(resY - 1, Math.floor(wrapValue(y, worldHeight) / worldHeight * resY));
+  return field[gy * resX + gx];
 }
 
 // src/world/save/fieldSpec.ts
@@ -9974,6 +9979,9 @@ function decodeLayer(buffer, spec) {
   for (let i = 0; i < raw.length; i++) out[i] = spec.dtype === "f32" ? raw[i] : raw[i] * spec.scale + spec.offset;
   return out;
 }
+function sampleAt(decoded, resX, resY, worldWidth, worldHeight, x, y) {
+  return sampleNearestWorld(decoded, resX, resY, x, y, worldWidth, worldHeight);
+}
 
 // src/world/save/recipeYaml.ts
 function readRecipeValue(text, path) {
@@ -10041,59 +10049,116 @@ function derivePipelineVersion(constants) {
   return `v${AMPLIFICATION_ALGO_VERSION}-${hex8(a)}${hex8(b)}`;
 }
 
-// src/world/save/loadWorldInputs.ts
-function readLayer(zip, manifest, name) {
-  const entry = manifest.layers.find((layer2) => layer2.name === name && layer2.kind === "raster");
-  if (!entry?.dtype || !entry.encoding || !entry.resX || !entry.resY) return Promise.resolve(null);
-  const file = zip.file(entry.file);
-  if (!file) return Promise.resolve(null);
-  return file.async("arraybuffer").then((buffer) => ({
-    data: decodeLayer(buffer, { dtype: entry.dtype, scale: entry.encoding.scale, offset: entry.encoding.offset }),
-    resX: entry.resX,
-    resY: entry.resY
-  }));
-}
-async function readWorldInputs(archive) {
+// src/world/query.ts
+async function openWorld(archive) {
   let zip;
   let manifest;
   try {
     zip = await import_jszip.default.loadAsync(archive);
-    const manifestText = await zip.file("manifest.json")?.async("string");
-    if (!manifestText) return null;
-    manifest = JSON.parse(manifestText);
+    const text = await zip.file("manifest.json")?.async("string");
+    if (!text) return null;
+    manifest = JSON.parse(text);
   } catch {
     return null;
   }
-  const elevationEntry = manifest.layers.find((layer2) => layer2.name === "elevation" && layer2.kind === "raster");
-  const elevationBuffer = elevationEntry ? await zip.file(elevationEntry.file)?.async("arraybuffer") : void 0;
-  if (!elevationEntry || !elevationBuffer) return null;
-  const elevations = new Float32Array(elevationBuffer);
+  const elevationEntry = manifest.layers.find((l) => l.name === "elevation" && l.kind === "raster");
+  if (!elevationEntry) return null;
   const width = elevationEntry.resX ?? manifest.world.width;
   const height = elevationEntry.resY ?? manifest.world.height;
   const yamlText = await zip.file("world.yaml")?.async("string") ?? "";
   const seedText = readRecipeValue(yamlText, "spec.seed") ?? "casas-eternas";
   let detailSeed = 5381;
   for (let i = 0; i < seedText.length; i++) detailSeed = (detailSeed * 33 ^ seedText.charCodeAt(i)) >>> 0;
-  const erosionControls = {
-    strength: readRecipeNumber(yamlText, "spec.erosion.erosionStrength"),
-    refresh: readRecipeNumber(yamlText, "spec.erosion.drainageRefresh"),
-    riverDensity: readRecipeNumber(yamlText, "spec.hydrology.riverDensity")
+  const recipe = {
+    seedText,
+    detailSeed,
+    erosionControls: {
+      strength: readRecipeNumber(yamlText, "spec.erosion.erosionStrength"),
+      refresh: readRecipeNumber(yamlText, "spec.erosion.drainageRefresh"),
+      riverDensity: readRecipeNumber(yamlText, "spec.hydrology.riverDensity")
+    },
+    worldUid: readRecipeValue(yamlText, "metadata.uid") ?? ""
   };
-  const climate2 = await readLayer(zip, manifest, "precipitation");
-  const biome = await readLayer(zip, manifest, "biome");
-  const temperature = await readLayer(zip, manifest, "temperature");
-  const precipitationEffective = await readLayer(zip, manifest, "precipitationEffective");
-  const seasonalAmplitude = await readLayer(zip, manifest, "seasonalAmplitude");
-  const monsoonIndex = await readLayer(zip, manifest, "monsoonIndex");
-  const biomeInputs = temperature && precipitationEffective && seasonalAmplitude && monsoonIndex ? { temperature, precipitationEffective, seasonalAmplitude, monsoonIndex } : null;
-  const worldId = deriveWorldId(seedText, {
-    elevation: elevations,
-    precipitation: climate2?.data ?? null,
-    erosionStrength: erosionControls.strength,
-    drainageRefresh: erosionControls.refresh
+  const byName = /* @__PURE__ */ new Map();
+  for (const layer2 of manifest.layers) if (layer2.kind === "raster") byName.set(layer2.name, layer2);
+  const cache = /* @__PURE__ */ new Map();
+  const amplified = [];
+  const view = (spec, source, data, resX, resY) => ({
+    spec,
+    source,
+    resX,
+    resY,
+    data,
+    sample: (x, y) => sampleAt(data, resX, resY, width, height, x, y)
   });
-  const worldUid = readRecipeValue(yamlText, "metadata.uid") ?? "";
-  return { elevations, width, height, seedText, detailSeed, erosionControls, climate: climate2, biome, biomeInputs, worldId, worldUid };
+  async function fromSave(name) {
+    const cached = cache.get(name);
+    if (cached) return cached;
+    const entry = byName.get(name);
+    if (!entry?.dtype || !entry.encoding || !entry.resX || !entry.resY) return null;
+    const buffer = await zip.file(entry.file)?.async("arraybuffer");
+    if (!buffer) return null;
+    const decoded = decodeLayer(buffer, { dtype: entry.dtype, scale: entry.encoding.scale, offset: entry.encoding.offset });
+    const built = view(fieldSpec(name), "save", decoded, entry.resX, entry.resY);
+    cache.set(name, built);
+    return built;
+  }
+  const world2 = {
+    width,
+    height,
+    recipe,
+    has: (name) => byName.has(name),
+    async worldId() {
+      const elevation = await fromSave("elevation");
+      if (!elevation) throw new Error("a world without elevation has no identity");
+      const precipitation = await fromSave("precipitation");
+      return deriveWorldId(seedText, {
+        elevation: elevation.data,
+        precipitation: precipitation?.data ?? null,
+        erosionStrength: recipe.erosionControls.strength,
+        drainageRefresh: recipe.erosionControls.refresh
+      });
+    },
+    async acquire(name, purpose = "authoritative") {
+      if (name === "elevation" && purpose === "presentation" && amplified.length > 0) {
+        const finest = amplified.reduce((a, b) => b.resX > a.resX ? b : a);
+        return view(fieldSpec("elevation"), "amplified", finest.data, finest.resX, finest.resY);
+      }
+      return fromSave(name);
+    },
+    addAmplifiedElevation(data, resX, resY) {
+      amplified.push({ data, resX, resY });
+    }
+  };
+  return await world2.acquire("elevation") ? world2 : null;
+}
+
+// src/world/save/loadWorldInputs.ts
+async function readWorldInputs(archive) {
+  const world2 = await openWorld(archive);
+  if (!world2) return null;
+  const elevation = await world2.acquire("elevation");
+  if (!elevation) return null;
+  const climate2 = await world2.acquire("precipitation");
+  const biome = await world2.acquire("biome");
+  const temperature = await world2.acquire("temperature");
+  const precipitationEffective = await world2.acquire("precipitationEffective");
+  const seasonalAmplitude = await world2.acquire("seasonalAmplitude");
+  const monsoonIndex = await world2.acquire("monsoonIndex");
+  const biomeInputs = temperature && precipitationEffective && seasonalAmplitude && monsoonIndex ? { temperature, precipitationEffective, seasonalAmplitude, monsoonIndex } : null;
+  return {
+    elevations: elevation.data,
+    width: world2.width,
+    height: world2.height,
+    seedText: world2.recipe.seedText,
+    detailSeed: world2.recipe.detailSeed,
+    erosionControls: world2.recipe.erosionControls,
+    climate: climate2,
+    biome,
+    biomeInputs,
+    worldId: await world2.worldId(),
+    worldUid: world2.recipe.worldUid
+  };
 }
 
 // src/worldgen/elevation/ridgedNoise.ts

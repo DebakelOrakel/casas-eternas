@@ -1,7 +1,7 @@
 ---
 summary: Plan for two connected rebuilds — a `world` module as the single, provenance-carrying place world data is queried, and a shared module architecture in the generator (separated tuning and input parameters, declared slider ranges, a real WorldSpec type). Includes the order of work, the safety net it needs first, and what is deliberately excluded.
 date: 2026-08-09
-status: Parts 0, A, B (all of B1-B6) and C0 (the save round-trip net) BUILT 2026-08-09, each verified; C1-C5 and D not started. Order and boundaries decided, detail questions listed at the end
+status: COMPLETE 2026-08-09 — parts 0, A, B, C and D all built and verified. Follow-ups and the questions the work opened are listed at the end
 ---
 
 # Architecture unification: world-data access and module contracts

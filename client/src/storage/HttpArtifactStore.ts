@@ -1,4 +1,3 @@
-import { apiBase } from '../server/worldClient'
 import type { ArtifactStore, StorageUsage } from './ArtifactStore'
 
 // The server's artifact store, behind the same bytes-at-a-path interface as
@@ -48,15 +47,22 @@ export interface HttpArtifactStoreOptions {
   // Where the API lives. Defaults to asking serverStatus, which resolves it
   // against the PAGE's origin — correct in a browser and meaningless in Node,
   // where the server-side baker runs and must be told outright.
-  resolveBase?: () => Promise<string | null>
+  //
+  // REQUIRED, deliberately. This used to default to importing `apiBase` from the
+  // server module, which made a byte store — a thing that knows how to speak
+  // HTTP — also know where this application's server lives. That is the
+  // composition root's business, and `artifactStoreProvider` is where it now
+  // happens. A store that has to be told its base can also be pointed at a test
+  // server, or at none.
+  resolveBase: () => Promise<string | null>
   // Bearer token, for callers that have one. The browser has none today; a
   // bake Job will be handed one scoped to the single artifact key it may write
   // (docs/decisions/distributed-bake.md).
   authToken?: string
 }
 
-export function createHttpArtifactStore(options: HttpArtifactStoreOptions = {}): ArtifactStore {
-  const resolveBase = options.resolveBase ?? apiBase
+export function createHttpArtifactStore(options: HttpArtifactStoreOptions): ArtifactStore {
+  const resolveBase = options.resolveBase
   const authHeaders = (): Record<string, string> =>
     options.authToken ? { Authorization: `Bearer ${options.authToken}` } : {}
 

@@ -1,7 +1,7 @@
 ---
 summary: Design for the 3D world view — a zoomable camera over the map, hex tiles only where land is developed, and edge "ports" as the contract between hexes and everything linear (rivers, roads, shorelines). The camera ladder down to the hex-scale descent view is BUILT (see the status section); tiles/ports/settlements remain design.
 date: 2026-08-06
-status: partially built (worldmap screen through the descent view, 2026-08-07) — hex/port/settlement layers still design-only
+status: partially built (worldmap screen through the descent view, 2026-08-07) — hex/port/settlement layers still design-only; unifying the two screens' map decided 2026-08-09, not built
 ---
 
 # Hex World View — Idea Sketch
@@ -354,3 +354,47 @@ the decision, the authority rules and the staged ladder around it.
 - Thresholds/costs for the developability grades, and rewilding pace.
 - Where exactly the "path organic vs. road geometric" upgrade boundary
   sits.
+
+## One map, two screens (decided 2026-08-09, not built)
+
+The generator's preview and the world map are to become the SAME view with
+different limits, not two views that resemble each other.
+
+They are already closer than they look: both build a `ToroidalMapView`, both use
+`createWorldgenCamera`, both share the hover tooltip, the ribbon overlays, the
+relief surface, the paper base and the `RELIEF_MIN_ZOOM` / `RELIEF_FINE_ZOOM`
+thresholds. The two camera calls differ in exactly two fields —
+`nearModeEnabled` and `nearMinAltitude` — which is already the shape wanted:
+same behaviour, different reach.
+
+What actually diverges is three things, and only one of them is defensible.
+
+**Vertical exaggeration is the problem.** `WORLDGEN_EXAGGERATION = 3` against
+`MAP_EXAGGERATION = 6`, fading to `NEAR_EXAGGERATION = 1` in the descent: one
+world at three vertical scales. The reason on record — the generator is "a
+working view over a world being tuned, not a presentation of a finished one" —
+is an aesthetic claim, and it costs the thing the workbench is FOR: a range that
+reads right at 3× reads differently at 6×, so you tune against a scale you never
+see. To unify, with the same fade toward 1:1 on descent.
+
+**The fine elevation surface** should be in both. It is deterministic and cheap;
+there is no reason the workbench goes without it.
+
+**The amplification bake stays map-only**, and that is NOT a concession. It costs
+~100 s at 4k while the workbench re-renders as sliders move — but more
+importantly the 2048 macro raster is the sole authority and the amplified tier is
+derived presentation (worldmap-amplification.md, rule 4). A workbench showing the
+macro tier is showing what the save actually contains; the surprise belongs to
+the map view, not to the workbench.
+
+That distinction now has vocabulary rather than being accidental: the workbench
+is the `authoritative` view and the map the `presentation` one, in the sense
+`world/query.ts` gives those words. Both should be able to say which they are
+showing.
+
+**Deliberately unresolved:** the generator's data overlays (temperature,
+precipitation, plates, arrows) read worse over strongly shaded relief, so raising
+its exaggeration trades against them. Coupling exaggeration to overlay visibility
+was considered and rejected as a hidden dependency. The overlays are being
+rethought separately, so this waits for that rather than being designed around.
+
