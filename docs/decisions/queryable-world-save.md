@@ -200,8 +200,18 @@ smaller and answers more.
 Round-trip (bake→decode→sample) verified within quantisation error.
 
 **Baked now:** landMask, temperature, precipitation, biome, seasonalAmplitude,
-monsoonIndex, lakeDepth (downsampled), the 14 ecology fields, elevation (f32),
-rivers (vector).
+monsoonIndex, lakeDepth, the 14 ecology fields, elevation (f32), discharge.
+
+**lakeDepth stopped being downsampled 2026-08-09.** It was `downsampleMax`'d to
+climate resolution on the way out, which is the right reduction for "is there a
+lake in this region" and the wrong one for a layer that gets *sampled per point*:
+taking the maximum lets one lake cell claim its whole 62 km cell. Measured on the
+calibration seed — the saved layer reported lakes covering **14.98% of the world
+against a true 3.70%, a 4× inflation**, with 85% of the cells it called lake less
+than half water, and an implied lake volume four times the real one. Costs 93.7 KB
+deflated against 5.8 KB (2 MB raw, but the field is zero almost everywhere), which
+is the same order as the discharge layer and ~1% of a save. This was pure loss:
+the field is computed at 2048×1024 and was being thrown away at the door.
 
 **Compute-on-save ✅ (2026-07-26):** the save button now runs the full derivation
 chain first (climate → hydrology → ecology, awaited via one-shot resolvers on the

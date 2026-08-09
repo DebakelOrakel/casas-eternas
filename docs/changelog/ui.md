@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-08-09
+- **fixed** Save: the lake layer is written at map resolution — it used to report every lake as at least 62 km across, four times their real area. `world.overlay.rivers`
+
 ## 2026-08-08
 - **changed** Save: the biome layer is written at map resolution, so a loaded world's biomes are as detailed as the terrain. `world.biome`
 - **fixed** World map: the biome tooltip named a different biome than the one painted under the cursor near every boundary. `world.biome`

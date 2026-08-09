@@ -33,7 +33,7 @@ import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../worldgen/cl
 import { evaporationPotential } from '../../worldgen/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '../../worldgen/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
-import { DISCHARGE_LAYER, WORLD_LAYERS, bakeLayer, downsampleMax } from '../../worldgen/worldSave/worldLayers'
+import { DISCHARGE_LAYER, WORLD_LAYERS, bakeLayer } from '../../worldgen/worldSave/worldLayers'
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
@@ -2927,7 +2927,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         biome: lastBiomes ?? undefined,
         seasonalAmplitude: lastSeasonality ?? undefined,
         monsoonIndex: lastMonsoonIndex ?? undefined,
-        lakeDepth: lastLakeDepth ? downsampleMax(lastLakeDepth, MAP_WIDTH, MAP_HEIGHT, rx, ry) : undefined,
+        lakeDepth: lastLakeDepth ?? undefined,
       }
       for (const f of Object.keys(lastEcologyFields) as EcologyFieldId[]) sources[f] = lastEcologyFields[f]
       for (const spec of WORLD_LAYERS) {

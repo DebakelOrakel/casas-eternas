@@ -27,15 +27,19 @@ answers here.
 
 | Grid | Size | Holds |
 |---|---|---|
-| World / macro raster | 2048×1024, 7800 m per cell | elevation, discharge, lakeDepth (live), biome (live) |
+| World / macro raster | 2048×1024, 7800 m per cell | elevation, discharge, lakeDepth, biome |
 | Climate | 256×128 (~62 km per cell) | temperature, precipitation, seasonality, monsoon, all ecology |
 | Ocean age | 256×128 | oceanAge |
 | Mantle | 128×64 | mantle buoyancy and flow |
 
 In the baked save (`worldSave/worldLayers.ts`) only the layers marked `fullRes`
-are on the world raster — today `biome`, `discharge` and `elevation`. Everything
-else is written at climate resolution, **including `lakeDepth`**, which is live at
-2048 and downsampled on the way out.
+are on the world raster — today `biome`, `lakeDepth`, `discharge` and `elevation`.
+Everything else is written at climate resolution.
+
+Note what a coarse save layer means for a field that is computed finely: the
+reduction is a *choice*, and `downsampleMax` is the wrong one for anything
+sampled per point. `lakeDepth` used to take it, which let a single lake cell
+claim its whole 62 km cell and inflated saved lake area 4× (2026-08-09).
 
 **The 2048 macro raster is the sole authority and the only persisted form.** The
 4k/8k amplification bake is derived presentation: it may refine the macro shapes,

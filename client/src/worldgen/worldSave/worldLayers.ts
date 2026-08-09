@@ -63,7 +63,16 @@ export const WORLD_LAYERS: LayerSpec[] = [
   // every lake on the map into three u8 steps. 0.333 (3000 m) keeps generous
   // headroom over the measured maximum at ~12 m per step. The encoding is
   // self-describing via the manifest, so this changes precision, not format.
-  { name: 'lakeDepth', dtype: 'u8', scale: LAKE_DEPTH_RANGE / 255, offset: 0, unit: 'depth', landOnly: true },
+  //
+  // Full-res, and this one is not about precision but about EXTENT. It is
+  // computed at 2048x1024 and used to be `downsampleMax`'d on the way out —
+  // which is the right reduction for "is there a lake in this region" and the
+  // wrong one for a layer that gets sampled per point: taking the maximum makes
+  // a single lake cell claim its whole 62 km cell, so every lake in the save was
+  // inflated to at least one coarse cell across. We were also throwing away
+  // resolution we already had, for a field that is zero almost everywhere and
+  // therefore nearly free once deflated.
+  { name: 'lakeDepth', dtype: 'u8', scale: LAKE_DEPTH_RANGE / 255, offset: 0, unit: 'depth', landOnly: true, fullRes: true },
   ...ECOLOGY_LAYERS.map((name): LayerSpec => ({ name, dtype: 'u8', scale: 3 / 255, offset: 0, unit: '', landOnly: true })),
 ]
 
