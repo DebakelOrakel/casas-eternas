@@ -33,6 +33,12 @@ type Config struct {
 	// is what makes local play one command and one origin — and therefore what
 	// makes CORS never appear.
 	Dir string
+	// LoginPath is where the browser logs in, when there is anywhere to. Passed
+	// in rather than imported from the session module: cmd/ is where modules are
+	// composed, and a module reaching into another for a constant would make the
+	// two impossible to mount apart.
+	LoginPath string
+
 	// AuthMode is reported to the browser verbatim. Taken from the same
 	// resolved value the server ENFORCES rather than written out here: a client
 	// told "none" by a server that checks would show the wrong indicator and
@@ -66,6 +72,21 @@ type runtimeConfig struct {
 	// for `oidc` — which is why the value names where the users live rather
 	// than what the header looks like. See docs/decisions/server-auth.md.
 	AuthMode string `json:"authMode"`
+
+	// Login says WHERE to authenticate, which authMode alone does not: it states
+	// that a login is required, never how to reach one. Absent when there is
+	// nothing to log in to.
+	//
+	// Spelled out even under `password`, where the client could derive it from
+	// apiBase — because the client has no business knowing this server's route
+	// layout, and because `oidc` will put a FOREIGN url here that cannot be
+	// derived at all.
+	Login *login `json:"login,omitempty"`
+}
+
+// login is the discovery half of authentication.
+type login struct {
+	Path string `json:"path"`
 }
 
 // ConfigPath is the discovery document, and it must answer before anyone has
@@ -132,7 +153,11 @@ func (m *Module) serveConfig(w http.ResponseWriter, r *http.Request) {
 	// would point a client at an address that no longer answers.
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(runtimeConfig{APIBase: "/v1", AuthMode: string(m.cfg.AuthMode)})
+	document := runtimeConfig{APIBase: "/v1", AuthMode: string(m.cfg.AuthMode)}
+	if m.cfg.LoginPath != "" {
+		document.Login = &login{Path: m.cfg.LoginPath}
+	}
+	_ = json.NewEncoder(w).Encode(document)
 }
 
 // Close releases the module. Nothing is held open yet.

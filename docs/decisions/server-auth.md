@@ -1,7 +1,7 @@
 ---
 summary: How the server establishes who is asking. Three modes stay — but `token` becomes `password`, because the axis that matters is WHERE the users live, not what the header looks like. Credentials are an htpasswd file mounted from a Secret; logging in exchanges them for a JWT the server issues itself; OIDC later is a second login method feeding the same token, not a second token. Four paths stay public so a logged-out client can find out where to log in. Revocation is decided (short TTL plus refresh, revoked by a per-user stamp) but not yet built. The user file lives in the writable data directory rather than the Secret, because the planned admin screen has to be able to add users.
 date: 2026-08-09
-status: decided, sequenced in seven steps. STEPS 1–5 BUILT 2026-08-09 — the server authenticates and enforces. What is left is the client: telling it where to log in, and a form to do it with
+status: decided, sequenced in seven steps. STEPS 1–6 BUILT 2026-08-09 — the server authenticates and enforces, and says where to log in. What is left is step 7: the client's form and its logged-out state
 ---
 
 # Server authentication
@@ -388,9 +388,21 @@ answer 200 while logged out, `/v1/worlds` answers 401 with no credentials and
 with an unverifiable token, and 200 with a session from `curl -u`. In `none` mode
 `/v1/worlds` answers 200 with nothing at all, and `/v1/session` does not exist.
 
-**6. `config.json` gains `login`.** Server side, plus the client's
-`serverStatus.ts` reading it. Still no form — the client can now say *that* it
-would need to log in.
+**6. `config.json` gains `login`. BUILT 2026-08-09.**
+
+```json
+{"apiBase":"/v1","authMode":"password","login":{"path":"/v1/session"}}
+```
+
+Absent under `none`, because there is nothing to log in to and an empty object
+would invite the client to decide what that means.
+
+The client module is TOLD the path rather than importing it from the session
+module. cmd/ composes, so cmd/ names `session.Path` — the same reasoning as the
+gate's exempt list in step 5, and it keeps two modules mountable apart.
+
+`ServerStatus` on the client side gains `loginPath` beside `authMode`. Still no
+form: the client can now say *that* it would need to log in, and *where*.
 
 **7. The client's login form**, and a fifth state for the server indicator
 ("logged out" as distinct from "unreachable" — the whole reason `capabilities`
@@ -398,6 +410,47 @@ stays public). Needs new i18n keys, to be proposed before they are added.
 
 Refresh (the two-token split and the per-user stamp) is a step 8 that is not
 scheduled: `--auth-token-ttl` carries the session length until it exists.
+
+## The logged-out client
+
+Decided 2026-08-09, while planning step 7.
+
+**Logged out behaves like "no server", not like a fault.** Everything local —
+generating, the OPFS cache, saving a `.zip` to disk — depends on no server at
+all, and the client already has `none` and `unreachable` states for exactly that
+situation. Being logged out joins that family rather than becoming its own kind
+of breakage.
+
+That turns out to be nearly free, because the fallback already exists. A 4K bake
+reads `canCommissionBakes()` and falls through to `bakeStageInBrowser` when the
+answer is no — the comment there carries the measurement: 78 s on the server
+against 232 s in the tab. The one change authentication needs is that a
+logged-out client answers "cannot", so the bake falls back instead of attempting
+it, collecting a 401 and reporting a failure. 8K stays server-only: that is the
+~2.6 GB a tab does not survive, and no login changes it.
+
+**The indicator becomes a control, on purpose.** It documents itself today as
+"a status readout rather than a control: it never opens anything". That stops
+being true once it is the way back IN, and the comment changes with it rather
+than being quietly contradicted. Clicking opens the login — but only when logging
+in would change something: under `none`, or with no server at all, there is
+nothing to open, and a window saying "you cannot log in here" is worse than an
+indicator that stays quiet.
+
+**Logged out never blocks.** No dialog at startup, no overlay over the map — just
+the badge. Someone who wants to bake 4K locally and save a file should be able to
+without ever seeing a password prompt.
+
+**A badge, not a fifth state.** The four states answer WHERE a world would go;
+being logged out answers WHETHER YOU MAY PUT ONE THERE, and the two are
+orthogonal — one can be logged out of a local server or a shared one. A fifth
+state would multiplex two independent facts into one symbol and lose the first.
+
+The glyph is `no.png`, the same one the "no server at all" state uses as its main
+icon. That is deliberate rather than a shortage of icons: it means the same thing
+in both slots — not available — and the SLOT says what it is about. Main icon: no
+server. Badge: there is one, but not for you. The single nonsensical combination
+cannot arise, since no server means nothing to log in to and therefore no badge.
 
 ## Flags
 

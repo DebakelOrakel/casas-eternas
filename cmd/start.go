@@ -71,12 +71,15 @@ func buildModules(targets config.Targets) ([]server.Module, func(http.Handler) h
 	// Mounted whenever there is something to log in to, regardless of --target:
 	// a deployment serving only the artifact store still has to let its callers
 	// authenticate, and there is nowhere else to do it.
+	// The client is told where to log in only when something is listening there.
+	loginPath := ""
 	if login != nil {
 		modules = append(modules, login)
+		loginPath = session.Path
 	}
 
 	if targets.Has(config.TargetClient) {
-		m, err := client.New(client.Config{Dir: viper.GetString(flagDirClient), AuthMode: authMode})
+		m, err := client.New(client.Config{Dir: viper.GetString(flagDirClient), AuthMode: authMode, LoginPath: loginPath})
 		if err != nil {
 			return nil, nil, err
 		}

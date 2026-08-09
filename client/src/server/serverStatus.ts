@@ -28,6 +28,13 @@ export interface ServerStatus {
   // Base path for the API, e.g. "/v1". Empty when there is no server.
   apiBase: string
   authMode: string
+  // Where to log in, from /config.json. Empty when there is nothing to log in
+  // to — `none` mode, or no server at all.
+  //
+  // Read rather than derived from apiBase on purpose: the client has no
+  // business knowing the server's route layout, and `oidc` will name a FOREIGN
+  // url here that cannot be derived. See docs/decisions/server-auth.md.
+  loginPath: string
   // Which modules the server runs, from /v1/capabilities. A frontend-only
   // deployment whose ingress does not route /v1 will simply be 'unreachable'.
   modules: string[]
@@ -36,13 +43,14 @@ export interface ServerStatus {
 interface RuntimeConfig {
   apiBase?: string
   authMode?: string
+  login?: { path?: string }
 }
 
 interface Capabilities {
   modules?: string[]
 }
 
-const OFFLINE: ServerStatus = { state: 'none', apiBase: '', authMode: 'none', modules: [] }
+const OFFLINE: ServerStatus = { state: 'none', apiBase: '', authMode: 'none', loginPath: '', modules: [] }
 
 // How long a probe may take before the server counts as unreachable. Short on
 // purpose: this gates the indicator on every screen, and a user staring at a
@@ -73,8 +81,9 @@ async function probe(): Promise<ServerStatus> {
 
   const apiBase = config.apiBase
   const authMode = config.authMode ?? 'none'
+  const loginPath = config.login?.path ?? ''
   const capabilities = await fetchJSON<Capabilities>(`${apiBase}/capabilities`, PROBE_TIMEOUT_MS)
-  if (!capabilities) return { state: 'unreachable', apiBase, authMode, modules: [] }
+  if (!capabilities) return { state: 'unreachable', apiBase, authMode, loginPath, modules: [] }
 
   // Answering is not enough — the WORLD module has to be there.
   //
@@ -88,7 +97,7 @@ async function probe(): Promise<ServerStatus> {
   // deployment, where the ingress routes /v1 to the storage service and the
   // answer comes from there, listing `world`.
   const modules = capabilities.modules ?? []
-  if (!modules.includes('world')) return { state: 'unreachable', apiBase, authMode, modules }
+  if (!modules.includes('world')) return { state: 'unreachable', apiBase, authMode, loginPath, modules }
 
   // LOCAL vs SHARED comes from authMode, not from the hostname.
   //
@@ -102,7 +111,7 @@ async function probe(): Promise<ServerStatus> {
   // everything, so nobody else can be present. Anything else means real
   // identities, which means other people.
   const state: ServerState = authMode === 'none' ? 'local' : 'remote'
-  return { state, apiBase, authMode, modules }
+  return { state, apiBase, authMode, loginPath, modules }
 }
 
 // Resolved once per page load and shared. A screen that mounts later gets the
