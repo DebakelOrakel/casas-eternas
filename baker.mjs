@@ -11774,7 +11774,7 @@ function toRemotePath(path) {
 var encodePath = (p) => [p.worldId, p.pipelineVersion, p.stage, ...p.name.split("/")].map(encodeURIComponent).join("/");
 function createHttpArtifactStore(options) {
   const resolveBase = options.resolveBase;
-  const authHeaders = () => options.authToken ? { Authorization: `Bearer ${options.authToken}` } : {};
+  const send = options.fetch ?? ((input, init) => fetch(input, init));
   const url = async (path) => {
     const base = await resolveBase();
     const remote = toRemotePath(path);
@@ -11786,7 +11786,7 @@ function createHttpArtifactStore(options) {
       const target = await url(path);
       if (!target) return null;
       try {
-        const response = await fetch(target, { cache: "no-store", headers: authHeaders() });
+        const response = await send(target, { cache: "no-store" });
         if (!response.ok) return null;
         return await response.arrayBuffer();
       } catch {
@@ -11797,9 +11797,9 @@ function createHttpArtifactStore(options) {
       const target = await url(path);
       if (!target) return false;
       try {
-        const response = await fetch(target, {
+        const response = await send(target, {
           method: "PUT",
-          headers: { "Content-Type": "application/octet-stream", ...authHeaders() },
+          headers: { "Content-Type": "application/octet-stream" },
           body: bytes
         });
         return response.ok;
@@ -11811,7 +11811,7 @@ function createHttpArtifactStore(options) {
       const target = await url(path);
       if (!target) return false;
       try {
-        const response = await fetch(target, { method: "HEAD", cache: "no-store", headers: authHeaders() });
+        const response = await send(target, { method: "HEAD", cache: "no-store" });
         return response.ok;
       } catch {
         return false;
@@ -11821,7 +11821,7 @@ function createHttpArtifactStore(options) {
       const target = await url(path);
       if (!target) return null;
       try {
-        const response = await fetch(target, { method: "HEAD", cache: "no-store", headers: authHeaders() });
+        const response = await send(target, { method: "HEAD", cache: "no-store" });
         if (!response.ok) return null;
         const length = Number(response.headers.get("Content-Length"));
         return Number.isFinite(length) ? length : null;
@@ -11833,7 +11833,7 @@ function createHttpArtifactStore(options) {
       const target = await url(path);
       if (!target) return;
       try {
-        await fetch(target, { method: "DELETE", headers: authHeaders() });
+        await send(target, { method: "DELETE" });
       } catch {
       }
     },
@@ -11904,20 +11904,25 @@ async function readWorld(job) {
   if (job.worldZip) return readFile(job.worldZip).catch(() => null);
   if (!job.worldUrl) return null;
   try {
-    const response = await fetch(job.worldUrl, {
-      headers: job.authToken ? { Authorization: `Bearer ${job.authToken}` } : {}
-    });
+    const response = await authorizedFetch(job)(job.worldUrl);
     if (!response.ok) return null;
     return new Uint8Array(await response.arrayBuffer());
   } catch {
     return null;
   }
 }
+function authorizedFetch(job) {
+  return (input, init = {}) => {
+    if (!job.authToken) return fetch(input, init);
+    const headers = { ...init.headers, Authorization: `Bearer ${job.authToken}` };
+    return fetch(input, { ...init, headers });
+  };
+}
 function artifactStoreFor(job) {
   if (job.artifactsDir) return createFsArtifactStore(job.artifactsDir);
   if (job.artifactsUrl) {
     const base = job.artifactsUrl;
-    return createHttpArtifactStore({ resolveBase: async () => base, authToken: job.authToken });
+    return createHttpArtifactStore({ resolveBase: async () => base, fetch: authorizedFetch(job) });
   }
   return null;
 }

@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-09
+- **fixed** Build: the server-side baker is type-checked — it shares code with the browser and was outside every check, so a changed signature compiled cleanly and would have run the bake without credentials.
 - **new** Server: with `--auth-mode password` the API requires a login — `POST /v1/session` exchanges a user and password for a token, and everything under `/v1/` refuses without one.
 - **new** Server: `--auth-mode none|password|oidc` chooses how the server establishes who is asking; an unknown value refuses to start rather than starting one that rejects everybody.
 - **fixed** Storage: the artifact key now covers the bake's channel criterion, so retuning river density no longer serves the old network under an unchanged key.

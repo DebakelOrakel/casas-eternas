@@ -27,6 +27,9 @@ TAG   ?= latest
 
 lint:
 	cd client && npx tsc --noEmit
+	# The Node side separately: scripts/bake.ts needs @types/node and the browser
+	# code must not have it. Two configs, both checked — see tsconfig.node.json.
+	cd client && npx tsc --noEmit -p tsconfig.node.json
 	gofmt -l . | tee /dev/stderr | (! read)
 	go vet ./...
 

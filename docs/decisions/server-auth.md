@@ -512,6 +512,27 @@ in both slots — not available — and the SLOT says what it is about. Main ico
 server. Badge: there is one, but not for you. The single nonsensical combination
 cannot arise, since no server means nothing to log in to and therefore no badge.
 
+## Open before a cluster bake works again
+
+Found 2026-08-09, while costing progress reporting for bake Jobs. Both block the
+`password` deployment for SERVER-side bakes; nothing in the browser is affected,
+and a 4K bake still falls back to it.
+
+**The bake Job carries no token.** `Spec.AuthToken` is declared, rendered into
+the Job and read by the baker — and set by nobody. Harmless while the server ran
+`none`; with the deployment in `password` mode the Job's `GET /v1/worlds/{uid}`
+is a 401 and the bake cannot start. Whoever fills it in should mint with
+`auth.BakeAudience(...)`, which exists for exactly this and which the gate
+already refuses as a session.
+
+**The baker was outside every check.** `tsconfig.json` included only `src`, so
+`scripts/bake.ts` — the server-side baker, which shares code with the browser —
+was type-checked by nothing. It went on passing a store option that had been
+removed hours earlier, and compiled. Fixed the same day: `tsconfig.node.json`
+covers `scripts/` with `@types/node` (kept apart so browser code cannot reach
+`process`), and `make lint` runs both configs. Verified by putting the break back
+and watching it go red.
+
 ## Flags
 
 ```

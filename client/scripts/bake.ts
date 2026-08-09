@@ -125,13 +125,25 @@ async function readWorld(job: Job): Promise<Uint8Array | null> {
   if (job.worldZip) return readFile(job.worldZip).catch(() => null)
   if (!job.worldUrl) return null
   try {
-    const response = await fetch(job.worldUrl, {
-      headers: job.authToken ? { Authorization: `Bearer ${job.authToken}` } : {},
-    })
+    const response = await authorizedFetch(job)(job.worldUrl)
     if (!response.ok) return null
     return new Uint8Array(await response.arrayBuffer())
   } catch {
     return null
+  }
+}
+
+// This job's credentials, attached to every request it makes.
+//
+// A fixed token, unlike the browser's, which changes at sign-in and at expiry —
+// so where the browser passes a fetch that ends its session on a 401, this one
+// simply always adds the same header. Absent when the server checks nobody, in
+// which case the header is omitted rather than sent empty.
+function authorizedFetch(job: Job): (input: string, init?: RequestInit) => Promise<Response> {
+  return (input, init = {}) => {
+    if (!job.authToken) return fetch(input, init)
+    const headers = { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${job.authToken}` }
+    return fetch(input, { ...init, headers })
   }
 }
 
@@ -142,7 +154,7 @@ function artifactStoreFor(job: Job): ArtifactStore | null {
   if (job.artifactsDir) return createFsArtifactStore(job.artifactsDir)
   if (job.artifactsUrl) {
     const base = job.artifactsUrl
-    return createHttpArtifactStore({ resolveBase: async () => base, authToken: job.authToken })
+    return createHttpArtifactStore({ resolveBase: async () => base, fetch: authorizedFetch(job) })
   }
   return null
 }
