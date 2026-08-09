@@ -28,7 +28,9 @@ import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { getServerStatus } from '../../server/serverStatus'
 import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../world/bakeClient'
-import { readWorldInputs } from '../../world/save/loadWorldInputs'
+import { worldInputsFrom } from '../../world/save/loadWorldInputs'
+import { openWorld } from '../../world/query'
+import type { FieldView, World } from '../../world/query'
 import type { ErosionControls as SaveErosionControls } from '../../world/save/loadWorldInputs'
 import '../../ui/chrome/chrome.css'
 import './worldmap.css'
@@ -193,7 +195,19 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let hoverTooltip: MapHoverTooltip | null = null
   // The height raster currently in force: the save's macro field until the
   // amplification bake returns a finer one (see startAmplification).
-  let heightField: { data: Float32Array; width: number; height: number } | null = null
+  // The world this screen is showing, and the elevation view it reads.
+  //
+  // `heightField` used to be a plain variable that `applyBakeResult` OVERWROTE
+  // when a bake landed — which is why the hover readout silently changed
+  // resolution mid-session. Now the amplified tier is REGISTERED with the world
+  // and the view is re-acquired, so the answer still sharpens but the source it
+  // came from is a property of the view rather than of whatever ran last.
+  //
+  // `presentation` is the honest purpose here: the readout answers "how high is
+  // the ground I am looking at", and after a bake that ground IS the amplified
+  // tier. A rule would ask for `authoritative` and get the macro raster.
+  let world: World | null = null
+  let elevationView: FieldView | null = null
   let amplifyWorker: Worker | null = null
   // Bumped on every load so a stage chain from a superseded world can't
   // swap its result in after the user has opened a different one.
@@ -249,7 +263,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // ids — that is what makes the amplification bake's ridges carry a treeline.
   // Null for a save written before those layers existed; the legacy upsample
   // path in presentWorld then stands.
-  let biomeInputs: NonNullable<Awaited<ReturnType<typeof readWorldInputs>>>['biomeInputs'] = null
+  let biomeInputs: NonNullable<Awaited<ReturnType<typeof worldInputsFrom>>>['biomeInputs'] = null
   // The MACRO biome ids, nearest-sampled to texture resolution. Two things the
   // classification cannot re-derive on its own live in here, and the macro
   // raster is their authority: salt flats (a hydrology state, not a climate)
@@ -364,11 +378,13 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // they read, so two readers that drifted by one decoded layer would
     // produce two worldIds for one world and the cache would serve terrain
     // from a world that does not exist.
-    const inputs = await readWorldInputs(await file.arrayBuffer())
-    if (!inputs) {
+    const opened = await openWorld(await file.arrayBuffer())
+    const inputs = opened && (await worldInputsFrom(opened))
+    if (!opened || !inputs) {
       notifyLoadFailed()
       return
     }
+    world = opened
     worldId = inputs.worldId
     worldUid = inputs.worldUid
     presentWorld(
@@ -596,17 +612,21 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // The height raster the readout samples — replaced by the bake. The
     // tooltip's own cell resolution stays the texture's (macro), so a
     // hovered cell maps proportionally into whatever raster is current.
-    heightField = { data: elevations, width, height }
+    // Acquired once, sampled freely — the two stages the facade exists for: the
+    // sources are asynchronous, the readout fires per pointer move.
+    void world?.acquire('elevation', 'presentation').then((view) => { elevationView = view })
     hoverTooltip = createMapHoverTooltip({
       scene,
       host: root,
       textureWidth: width,
       textureHeight: height,
       describe: (cellX, cellY) => {
-        if (!heightField) return null
-        const fx = Math.min(heightField.width - 1, Math.floor((cellX / width) * heightField.width))
-        const fy = Math.min(heightField.height - 1, Math.floor((cellY / height) * heightField.height))
-        const elevation = heightField.data[fy * heightField.width + fx]
+        if (!elevationView) return null
+        // World coordinates in, so the readout never has to know which grid
+        // answered — that is the view's business, and it says so in `.source`.
+        // The tooltip's cell grid IS the world raster, so a cell centre is
+        // already a world coordinate.
+        const elevation = elevationView.sample(cellX + 0.5, cellY + 0.5)
         const lines = [`${Math.round(elevationToMeters(elevation))} m`]
         if (elevation > 0) {
           // Read from the array that was actually PAINTED, not from the coarse
@@ -688,7 +708,11 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Everything a finished bake changes on screen, whether it was computed
   // just now or read back from the cache — one path, so the two can't drift.
   function applyBakeResult(artifact: { elevation: Float32Array; width: number; height: number; riverPoints: Float32Array; riverLengths: Uint32Array }, factor: number, detailSeed: number): void {
-    heightField = { data: artifact.elevation, width: artifact.width, height: artifact.height }
+    // Registered, not overwritten: the world gains a tier and the view is
+    // re-acquired from it, so what the readout answers with stays a stated
+    // property rather than a side effect of whichever bake finished last.
+    world?.addAmplifiedElevation(artifact.elevation, artifact.width, artifact.height)
+    void world?.acquire('elevation', 'presentation').then((view) => { elevationView = view; hoverTooltip?.refresh() })
     applyPaper(artifact.elevation, artifact.width, artifact.height)
     applyHeightField(artifact.elevation, artifact.width, artifact.height, detailSeed)
     applyRivers(artifact.riverPoints, artifact.riverLengths, artifact.width, artifact.height, factor)

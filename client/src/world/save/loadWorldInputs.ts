@@ -1,8 +1,6 @@
-import JSZip from 'jszip'
-import { decodeLayer } from './worldLayers'
 import type { Dtype } from './worldLayers'
-import { readRecipeNumber, readRecipeValue } from './recipeYaml'
-import { deriveWorldId } from '../identity'
+import { openWorld } from '../query'
+import type { World } from '../query'
 
 // Reading a saved world through the QUERYABLE side of its .zip — manifest.json
 // plus the baked layers (docs/decisions/queryable-world-save.md), deliberately
@@ -100,80 +98,44 @@ export interface WorldInputs {
   worldUid: string
 }
 
-function readLayer(zip: JSZip, manifest: WorldManifest, name: string): Promise<GridLayer | null> {
-  const entry = manifest.layers.find((layer) => layer.name === name && layer.kind === 'raster')
-  if (!entry?.dtype || !entry.encoding || !entry.resX || !entry.resY) return Promise.resolve(null)
-  const file = zip.file(entry.file)
-  if (!file) return Promise.resolve(null)
-  return file.async('arraybuffer').then((buffer) => ({
-    data: decodeLayer(buffer, { dtype: entry.dtype!, scale: entry.encoding!.scale, offset: entry.encoding!.offset }),
-    resX: entry.resX!,
-    resY: entry.resY!,
-  }))
+// Kept as the shape the bake pipeline and both screens already speak. It is now
+// a PROJECTION over `world/query.openWorld` rather than a second reader of the
+// same archive — one open, one parse, one derivation of the id. Two readers of
+// one file is exactly the drift this module's own header warns about.
+export async function readWorldInputs(archive: ArrayBuffer | Uint8Array): Promise<WorldInputs | null> {
+  const world = await openWorld(archive)
+  return world ? worldInputsFrom(world) : null
 }
 
-// Null when the archive is not a readable world — a missing manifest or
-// elevation layer. Callers report that in their own idiom (a notification in
-// the browser, a non-zero exit in the baker), which is why this does not.
-export async function readWorldInputs(archive: ArrayBuffer | Uint8Array): Promise<WorldInputs | null> {
-  let zip: JSZip
-  let manifest: WorldManifest
-  try {
-    zip = await JSZip.loadAsync(archive)
-    const manifestText = await zip.file('manifest.json')?.async('string')
-    if (!manifestText) return null
-    manifest = JSON.parse(manifestText) as WorldManifest
-  } catch {
-    return null
-  }
+// The projection itself, for a caller that has already opened the world and
+// wants to KEEP it — the world map registers amplified tiers against it and
+// acquires fields from it, and opening the same archive twice to get both would
+// be the double parse this whole layer exists to remove.
+export async function worldInputsFrom(world: World): Promise<WorldInputs | null> {
+  const elevation = await world.acquire('elevation')
+  if (!elevation) return null
 
-  const elevationEntry = manifest.layers.find((layer) => layer.name === 'elevation' && layer.kind === 'raster')
-  const elevationBuffer = elevationEntry ? await zip.file(elevationEntry.file)?.async('arraybuffer') : undefined
-  if (!elevationEntry || !elevationBuffer) return null
-
-  const elevations = new Float32Array(elevationBuffer)
-  const width = elevationEntry.resX ?? manifest.world.width
-  const height = elevationEntry.resY ?? manifest.world.height
-
-  // Recipe values through the shared path-aware reader. Bare-key regexes were
-  // wrong here in both directions: `seed` sits INDENTED under `spec:`, so a
-  // line-anchored pattern never matched it (every world fell back to one
-  // default label AND one detail seed), and a leaf name matched anywhere would
-  // collide the moment two groups share a key.
-  const yamlText = (await zip.file('world.yaml')?.async('string')) ?? ''
-  const seedText = readRecipeValue(yamlText, 'spec.seed') ?? 'casas-eternas'
-  let detailSeed = 5381
-  for (let i = 0; i < seedText.length; i++) detailSeed = ((detailSeed * 33) ^ seedText.charCodeAt(i)) >>> 0
-
-  const erosionControls: ErosionControls = {
-    strength: readRecipeNumber(yamlText, 'spec.erosion.erosionStrength'),
-    refresh: readRecipeNumber(yamlText, 'spec.erosion.drainageRefresh'),
-    riverDensity: readRecipeNumber(yamlText, 'spec.hydrology.riverDensity'),
-  }
-
-  const climate = await readLayer(zip, manifest, 'precipitation')
-  const biome = await readLayer(zip, manifest, 'biome')
-
-  const temperature = await readLayer(zip, manifest, 'temperature')
-  const precipitationEffective = await readLayer(zip, manifest, 'precipitationEffective')
-  const seasonalAmplitude = await readLayer(zip, manifest, 'seasonalAmplitude')
-  const monsoonIndex = await readLayer(zip, manifest, 'monsoonIndex')
+  const climate = await world.acquire('precipitation')
+  const biome = await world.acquire('biome')
+  const temperature = await world.acquire('temperature')
+  const precipitationEffective = await world.acquire('precipitationEffective')
+  const seasonalAmplitude = await world.acquire('seasonalAmplitude')
+  const monsoonIndex = await world.acquire('monsoonIndex')
   const biomeInputs = temperature && precipitationEffective && seasonalAmplitude && monsoonIndex
     ? { temperature, precipitationEffective, seasonalAmplitude, monsoonIndex }
     : null
 
-  // The artifact identity, from what the bake actually consumes — NOT from the
-  // recipe, which cannot distinguish two worlds stopped at different tectonic
-  // epochs (see storage/artifactKey.ts). The seed string rides along only as a
-  // readable path label.
-  const worldId = deriveWorldId(seedText, {
-    elevation: elevations,
-    precipitation: climate?.data ?? null,
-    erosionStrength: erosionControls.strength,
-    drainageRefresh: erosionControls.refresh,
-  })
-
-  const worldUid = readRecipeValue(yamlText, 'metadata.uid') ?? ''
-
-  return { elevations, width, height, seedText, detailSeed, erosionControls, climate, biome, biomeInputs, worldId, worldUid }
+  return {
+    elevations: elevation.data,
+    width: world.width,
+    height: world.height,
+    seedText: world.recipe.seedText,
+    detailSeed: world.recipe.detailSeed,
+    erosionControls: world.recipe.erosionControls,
+    climate,
+    biome,
+    biomeInputs,
+    worldId: await world.worldId(),
+    worldUid: world.recipe.worldUid,
+  }
 }
