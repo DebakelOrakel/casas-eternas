@@ -39,7 +39,7 @@ import { computeEcology } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
-import type { WorkerStageDeclinedMessage, WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerErosionProgressMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from './messages'
+import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerErosionProgressMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
 // tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
@@ -86,7 +86,7 @@ let epochIntervalMs = 400
 let intervalId: ReturnType<typeof setInterval> | undefined
 let pendingEvents: SimEvent[] = []
 // The last render's pre-redistribution elevation field — physical input
-// an 'erode' request needs (see WorkerErodeMessage). Kept up to date by
+// an 'erosionStart' request needs (see WorkerErosionStartMessage). Kept up to date by
 // every renderAndPost call, not just ones that happen while stopped, so
 // erosion always has *something* to act on the first time it's used
 // without needing a dedicated "prepare for erosion" render first.
@@ -113,7 +113,7 @@ let lastDisplayElevations: { data: Float32Array; width: number; height: number }
 // re-running the whole live epoch-stepping loop again, not an instant
 // revert. WorkerResetErosionMessage re-renders from this instead.
 let preErosionElevations: Float32Array | null = null
-// Set by a 'stopErosion' message; the in-flight runErosionPass polls it at each round
+// Set by a 'erosionStop' message; the in-flight runErosionPass polls it at each round
 // boundary and returns its partial result (which then becomes lastRawElevations).
 let erosionStopRequested = false
 
@@ -290,7 +290,7 @@ let renderInFlight = false
 let worldGeneration = 0
 
 // precomputedElevations, when passed, is an erosion pass's output (see
-// the 'erode' handler below) — always explicitly set (even to undefined)
+// the 'erosionStart' handler below) — always explicitly set (even to undefined)
 // rather than left alone, since renderOptions is a shared, reused-every-
 // call object and an erosion-triggered call's value would otherwise leak
 // into the next ordinary epoch-driven render. intermediate marks a
@@ -420,8 +420,8 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   }
   emit(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
 
-  const status: WorkerArcheanStatusMessage = {
-    type: 'archeanStatus',
+  const status: WorkerGenesisStatusMessage = {
+    type: 'genesisStatus',
     epoch: archean.epoch,
     worldAgeMa: worldAgeMa(archean.epoch, 0),
     crustFraction: result.landFraction,
@@ -451,7 +451,7 @@ function coarseElevation(elevations: Float32Array, worldWidth: number, worldHeig
   return out
 }
 
-// Runs one 'erode' request end to end — extracted out of the onmessage
+// Runs one 'erosionStart' request end to end — extracted out of the onmessage
 // dispatcher (which stays a plain sync function) since runErosionPass is
 // itself async now (see erosion.ts's maybeYield: it periodically yields
 // to a real macrotask boundary during its long loops, which is what lets
@@ -522,7 +522,7 @@ function stopTicking(): void {
 // temperature → wind → currents → precipitation → biomes, which is real domain
 // knowledge that was invisible inside a chain of `else if`s.
 
-function handleStart(): void {
+function handleTectonicsStart(): void {
   if (intervalId !== undefined) return
   intervalId = setInterval(() => {
     if (!sim || renderInFlight) return
@@ -539,7 +539,7 @@ function handleStart(): void {
   }, epochIntervalMs)
 }
 
-function handleStop(): void {
+function handleTectonicsStop(): void {
   stopTicking()
   // Re-render once at full resolution so the paused view is crisp (the
   // live preview above renders coarser) and lastRawElevations is refreshed
@@ -553,7 +553,7 @@ function handleStop(): void {
   }
 }
 
-function handleErode(message: Extract<WorkerInboundMessage, { type: 'erode' }>): void {
+function handleErosionStart(message: Extract<WorkerInboundMessage, { type: 'erosionStart' }>): void {
   if (!sim || !lastRawElevations) { decline('erosion', 'tectonics'); return }
   // Busy rather than unsatisfied — no upstream stage is missing, so `needs` stays
   // absent and the screen simply stops waiting.
@@ -581,7 +581,7 @@ function handleErode(message: Extract<WorkerInboundMessage, { type: 'erode' }>):
   })
 }
 
-function handleStopErosion(): void {
+function handleErosionStop(): void {
   // The in-flight runErosionPass polls this and returns its partial result.
   erosionStopRequested = true
 }
@@ -589,7 +589,7 @@ function handleStopErosion(): void {
 // The micro-tile debug inspector (see WorkerComputeMicroTileMessage). Runs on
 // whatever terrain is currently shown (lastRawElevations — post-erosion if an
 // erode ran), inherits the macro erosion's carving as a correction against
-// preErosionElevations, and guards with renderInFlight like 'erode' so the two
+// preErosionElevations, and guards with renderInFlight like 'erosionStart' so the two
 // long-running requests can't interleave. Purely derived output: no worker
 // state changes, nothing invalidated.
 function handleComputeMicroTile(): void {
@@ -667,7 +667,7 @@ function handleComputeMicroTile(): void {
   })
 }
 
-function handleResetErosion(): void {
+function resetErosion(): void {
   if (!sim || !preErosionElevations || renderInFlight) return
   renderInFlight = true
   renderAndPost(preErosionElevations).finally(() => {
@@ -676,7 +676,7 @@ function handleResetErosion(): void {
 }
 
 // The climate levers of the last computeClimate — kept so the hydrology
-// handler's climate REFINEMENT pass (see handleComputeHydrology) can re-run
+// handler's climate REFINEMENT pass (see handleHydrologyRun) can re-run
 // the identical chain with the terminal-basin land override.
 interface ClimateParams {
   temperatureOffset: number
@@ -740,7 +740,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
   return climate
 }
 
-function handleComputeClimate(message: Extract<WorkerInboundMessage, { type: 'computeClimate' }>): void {
+function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climateRun' }>): void {
   // Runs on the current, possibly-eroded elevation (lastRawElevations). This
   // is climate v1 — the optimistic mask where every sub-sea cell is water.
   // The hydrology handler refines it (v2) once the terminal basins are known.
@@ -755,7 +755,7 @@ function handleComputeClimate(message: Extract<WorkerInboundMessage, { type: 'co
   invalidateAfter('climate')
 }
 
-function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: 'computeHydrology' }>): void {
+function handleHydrologyRun(message: Extract<WorkerInboundMessage, { type: 'hydrologyRun' }>): void {
   // Needs the current topography + a computed climate (rivers' water source).
   if (!sim || !lastRawElevations) { decline('hydrology', 'tectonics'); return }
   if (!climate) { decline('hydrology', 'climate'); return }
@@ -852,7 +852,7 @@ function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: '
   })()
 }
 
-function handleComputeEcology(message: Extract<WorkerInboundMessage, { type: 'computeEcology' }>): void {
+function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecologyRun' }>): void {
   // Needs a computed climate (cached temperature/precipitation/biomes feed
   // productivity + pasture) plus the current elevation (arable slope) and the
   // sim's volcanoes (province layer). Noise seeded from warpSeed. Fresh arrays,
@@ -900,7 +900,7 @@ function handleComputeEcology(message: Extract<WorkerInboundMessage, { type: 'co
   emit(ecologyMessage, fields.map((f) => f.data))
 }
 
-function handleComputeMigration(message: Extract<WorkerInboundMessage, { type: 'computeMigration' }>): void {
+function handleMigrationRun(message: Extract<WorkerInboundMessage, { type: 'migrationRun' }>): void {
   // Needs ecology's carrying capacity (density) + the current climate/hydrology
   // for the cost field. Discharge is downsampled to the coarse grid for river corridors.
   if (!sim || !lastRawElevations) { decline('migration', 'tectonics'); return }
@@ -1038,7 +1038,7 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
 // renderInFlight guard, same coarse-while-running / full-res-when-paused split.
 // What differs is only which state is being advanced.
 
-function handleArcheanInit(message: Extract<WorkerInboundMessage, { type: 'archeanInit' }>): void {
+function handleGenesisInit(message: Extract<WorkerInboundMessage, { type: 'genesisInit' }>): void {
   stopTicking()
   worldGeneration += 1
   sim = null
@@ -1055,7 +1055,7 @@ function handleArcheanInit(message: Extract<WorkerInboundMessage, { type: 'arche
   void renderArcheanAndPost()
 }
 
-function handleArcheanStart(): void {
+function handleGenesisStart(): void {
   if (intervalId !== undefined) return
   intervalId = setInterval(() => {
     if (!archean || renderInFlight) return
@@ -1067,7 +1067,7 @@ function handleArcheanStart(): void {
 
 // A pause, not an ending — the phase is resumable, and only becomes final when
 // archeanFinalize starts the tectonic phase.
-function handleArcheanStop(): void {
+function handleGenesisStop(): void {
   stopTicking()
   if (archean && !renderInFlight) {
     renderInFlight = true
@@ -1078,7 +1078,7 @@ function handleArcheanStop(): void {
 // Plate tectonics begins. The Archean state is dropped: everything worth keeping
 // (the rafts, their ages, the mantle field, the epoch count for the world clock)
 // is carried into the PlateSimulation by finalizeArchean.
-function handleArcheanFinalize(): void {
+function handleGenesisFinalize(): void {
   if (!archean) return
   stopTicking()
   sim = finalizeArchean(archean)
@@ -1100,7 +1100,7 @@ function handleArcheanFinalize(): void {
   void renderAndPost()
 }
 
-function handleResetTectonics(): void {
+function resetTectonics(): void {
   // Nothing to go back to on a world that was loaded from a file rather than grown
   // here — the save carries the world as it stood, not the hand-over behind it.
   if (!handoverSnapshot || !handoverOceanAge || !handoverMantle) return
@@ -1123,7 +1123,7 @@ function handleResetTectonics(): void {
   void renderAndPost()
 }
 
-function handleArcheanReset(): void {
+function resetGenesis(): void {
   stopTicking()
   worldGeneration += 1
   sim = null
@@ -1137,27 +1137,59 @@ function handleArcheanReset(): void {
 // worker understands is a list you can read, and so a new one cannot silently
 // land in the wrong branch.
 
+// One gesture, seven stages. The stage-specific half is "what does this stage go
+// back to"; the generic half — discard everything downstream — comes from the
+// chain, so the four stages that never had a reset get one for free.
+//
+// Exhaustive over StageId: a new stage cannot be added without deciding what
+// resetting it means.
+function handleResetStage(message: Extract<WorkerInboundMessage, { type: 'resetStage' }>): void {
+  switch (message.stage) {
+    case 'genesis':
+      resetGenesis()
+      return
+    case 'tectonics':
+      resetTectonics()
+      return
+    case 'erosion':
+      resetErosion()
+      return
+    case 'climate':
+    case 'hydrology':
+    case 'ecology':
+    case 'migration':
+      // Nothing to go back to: these stages have no state of their own beyond
+      // their result, so dropping it IS the reset. Re-running them is the screen's
+      // business — it holds the settings.
+      clearResult(message.stage)
+      invalidateAfter(message.stage)
+      return
+  }
+}
+
 const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMessage) => void } = {
-  start: () => handleStart(),
-  stop: () => handleStop(),
-  erode: (m) => handleErode(m as Extract<WorkerInboundMessage, { type: 'erode' }>),
-  stopErosion: () => handleStopErosion(),
-  resetErosion: () => handleResetErosion(),
+  tectonicsStart: () => handleTectonicsStart(),
+  tectonicsStop: () => handleTectonicsStop(),
+  erosionStart: (m) => handleErosionStart(m as Extract<WorkerInboundMessage, { type: 'erosionStart' }>),
+  erosionStop: () => handleErosionStop(),
+  resetStage: (m) => handleResetStage(m as Extract<WorkerInboundMessage, { type: 'resetStage' }>),
   computeMicroTile: () => handleComputeMicroTile(),
   requestElevationField: () => handleRequestElevationField(),
-  computeClimate: (m) => handleComputeClimate(m as Extract<WorkerInboundMessage, { type: 'computeClimate' }>),
-  computeHydrology: (m) => handleComputeHydrology(m as Extract<WorkerInboundMessage, { type: 'computeHydrology' }>),
-  computeEcology: (m) => handleComputeEcology(m as Extract<WorkerInboundMessage, { type: 'computeEcology' }>),
-  computeMigration: (m) => handleComputeMigration(m as Extract<WorkerInboundMessage, { type: 'computeMigration' }>),
+  climateRun: (m) => handleClimateRun(m as Extract<WorkerInboundMessage, { type: 'climateRun' }>),
+  hydrologyRun: (m) => handleHydrologyRun(m as Extract<WorkerInboundMessage, { type: 'hydrologyRun' }>),
+  ecologyRun: (m) => handleEcologyRun(m as Extract<WorkerInboundMessage, { type: 'ecologyRun' }>),
+  migrationRun: (m) => handleMigrationRun(m as Extract<WorkerInboundMessage, { type: 'migrationRun' }>),
   serializeWorld: () => handleSerializeWorld(),
   restoreWorld: (m) => handleRestoreWorld(m as Extract<WorkerInboundMessage, { type: 'restoreWorld' }>),
-  archeanInit: (m) => handleArcheanInit(m as Extract<WorkerInboundMessage, { type: 'archeanInit' }>),
-  resetTectonics: () => handleResetTectonics(),
-  archeanStart: () => handleArcheanStart(),
-  archeanStop: () => handleArcheanStop(),
-  archeanFinalize: () => handleArcheanFinalize(),
-  archeanReset: () => handleArcheanReset(),
+  genesisInit: (m) => handleGenesisInit(m as Extract<WorkerInboundMessage, { type: 'genesisInit' }>),
+  genesisStart: () => handleGenesisStart(),
+  genesisStop: () => handleGenesisStop(),
+  genesisFinalize: () => handleGenesisFinalize(),
 }
+
+// Every message type the pipeline answers to. Exported so a test can assert it
+// covers all of them rather than listing them by hand and quietly falling behind.
+export const HANDLED_MESSAGE_TYPES: readonly string[] = Object.keys(HANDLERS)
 
 export function dispatch(message: WorkerInboundMessage): void {
   HANDLERS[message.type](message)

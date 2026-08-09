@@ -12,11 +12,11 @@ import type { ErosionPhase } from '../surface/erosion'
 import type { MigrationOrigin } from '../migration/migrationField'
 import type { StageId } from './stages'
 
-export interface WorkerStartMessage {
-  type: 'start'
+export interface WorkerTectonicsStartMessage {
+  type: 'tectonicsStart'
 }
-export interface WorkerStopMessage {
-  type: 'stop'
+export interface WorkerTectonicsStopMessage {
+  type: 'tectonicsStop'
 }
 // Runs a stream-power erosion pass (erosion.ts) once against the most
 // recently rendered raw elevation field and re-renders — a one-shot
@@ -27,8 +27,8 @@ export interface WorkerStopMessage {
 // denudation pass over that settled shape, not a coupled per-epoch
 // process — WorldGenScreen.ts only enables the button while the sim is
 // stopped.
-export interface WorkerErodeMessage {
-  type: 'erode'
+export interface WorkerErosionStartMessage {
+  type: 'erosionStart'
   // Multiplier on the fluvial time step — dials erosion strength up (deeper valleys,
   // more drainage rearrangement) at essentially no extra compute (it scales dh per
   // step, not the step count). Default 1.
@@ -38,18 +38,26 @@ export interface WorkerErodeMessage {
   // at one extra priority-flood each. Default = DEFAULT_EROSION_PASS_PARAMS'.
   networkRefreshes?: number
 }
-// Discards whatever erosion has done and re-renders from the elevations
-// last seen right when tectonics stopped producing new ones (see
-// preErosionElevations below) — a no-op if erosion hasn't touched
-// anything since then, since that snapshot only ever updates from a
-// non-erosion render.
-export interface WorkerResetErosionMessage {
-  type: 'resetErosion'
+// PUT A STAGE BACK WHERE IT STARTED. One gesture for what used to be three
+// unrelated messages (resetErosion, resetTectonics, archeanReset), because they
+// were three spellings of one idea and the fourth, fifth and sixth stage had no
+// spelling at all.
+//
+// What "back where it started" means is stage-specific — the Archean rebuilds from
+// its seed, tectonics returns to the hand-over, erosion re-renders the terrain it
+// was handed — but what follows is not: everything downstream is discarded, from
+// the declared chain. See docs/design/generator-pipeline.md, "Reset: the taxonomy".
+//
+// This is the STATE reset. The input reset (sliders back to their declared
+// defaults) is a screen-side gesture: the pipeline never held the inputs.
+export interface WorkerResetStageMessage {
+  type: 'resetStage'
+  stage: StageId
 }
 // Requests the in-flight erosion pass stop at the next round boundary. The partial
-// result is kept (lastRawElevations), so a later 'erode' continues from there.
-export interface WorkerStopErosionMessage {
-  type: 'stopErosion'
+// result is kept (lastRawElevations), so a later 'erosionStart' continues from there.
+export interface WorkerErosionStopMessage {
+  type: 'erosionStop'
 }
 // Debug inspector: re-simulate a small window around the largest river mouth
 // at fine resolution (surface/tileErosion.ts — the resolution-strategy micro
@@ -61,8 +69,8 @@ export interface WorkerComputeMicroTileMessage {
 // Requests the climate step (temperature so far) be computed on the current,
 // possibly-eroded elevation — see docs/decisions/climate-biomes.md. Replies
 // with a WorkerClimateDataMessage.
-export interface WorkerComputeClimateMessage {
-  type: 'computeClimate'
+export interface WorkerClimateRunMessage {
+  type: 'climateRun'
   // Global temperature offset in °C (greenhouse) — see computeTemperature.
   temperatureOffset: number
   // Equator↔pole spread multiplier (1 = default) — see computeTemperature.
@@ -82,16 +90,16 @@ export interface WorkerComputeClimateMessage {
 // threshold = more/smaller rivers). Routing + discharge are cached in the
 // worker, so a density-only change re-extracts cheaply without re-routing.
 // Replies with WorkerHydrologyDataMessage.
-export interface WorkerComputeHydrologyMessage {
-  type: 'computeHydrology'
+export interface WorkerHydrologyRunMessage {
+  type: 'hydrologyRun'
   riverDensity: number
 }
 // Requests an ecology (resource/suitability) compute on the current climate. Uses
 // the cached climate temperature+precipitation as the productivity inputs and the
 // sim's volcanoes for the province layer. PHASE 1: the carrying-capacity field
 // only. Replies with WorkerEcologyDataMessage. See docs/decisions/ecology.md.
-export interface WorkerComputeEcologyMessage {
-  type: 'computeEcology'
+export interface WorkerEcologyRunMessage {
+  type: 'ecologyRun'
   // Global carrying-capacity gain (%, 100 = neutral) — level knob.
   carryingCapacity: number
   // Spatial concentration (-100..100, 0 = physics as-is) — shape knob.
@@ -105,8 +113,8 @@ export interface WorkerComputeEcologyMessage {
 // Requests an initial-migration compute: multi-source least-cost dispersal from the
 // given origins over the physical cost field, using the cached carrying capacity for
 // density. Replies with WorkerMigrationDataMessage. See anthropology-initial-migration.md.
-export interface WorkerComputeMigrationMessage {
-  type: 'computeMigration'
+export interface WorkerMigrationRunMessage {
+  type: 'migrationRun'
   origins: MigrationOrigin[]
   spreadBudget: number
   seaCrossing: number
@@ -138,31 +146,29 @@ export interface WorkerRestoreWorldMessage {
   lattice?: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer }
 }
 export type WorkerInboundMessage =
-  | WorkerStartMessage
-  | WorkerStopMessage
-  | WorkerErodeMessage
-  | WorkerResetErosionMessage
-  | WorkerStopErosionMessage
+  | WorkerTectonicsStartMessage
+  | WorkerTectonicsStopMessage
+  | WorkerErosionStartMessage
+  | WorkerResetStageMessage
+  | WorkerErosionStopMessage
   | WorkerComputeMicroTileMessage
   | WorkerRequestElevationFieldMessage
-  | WorkerComputeClimateMessage
-  | WorkerComputeHydrologyMessage
-  | WorkerComputeEcologyMessage
-  | WorkerComputeMigrationMessage
+  | WorkerClimateRunMessage
+  | WorkerHydrologyRunMessage
+  | WorkerEcologyRunMessage
+  | WorkerMigrationRunMessage
   | WorkerSerializeWorldMessage
   | WorkerRestoreWorldMessage
-  | WorkerArcheanInitMessage
-  | WorkerArcheanStartMessage
-  | WorkerResetTectonicsMessage
-  | WorkerArcheanStopMessage
-  | WorkerArcheanFinalizeMessage
-  | WorkerArcheanResetMessage
+  | WorkerGenesisInitMessage
+  | WorkerGenesisStartMessage
+  | WorkerGenesisStopMessage
+  | WorkerGenesisFinalizeMessage
 
 // --- Archean phase (see docs/decisions/archean-genesis.md) ---
 // Its own message family rather than reusing init/start/stop, because the Archean
 // runs on a different state type (no plates exist yet) and a different clock.
-export interface WorkerArcheanInitMessage {
-  type: 'archeanInit'
+export interface WorkerGenesisInitMessage {
+  type: 'genesisInit'
   seed: string
   width: number
   height: number
@@ -178,7 +184,7 @@ export interface WorkerArcheanInitMessage {
   // Water offset in elevation units (see elevationScale.WATER_OFFSET_MAX_M).
   seaLevelOffset?: number
 }
-export interface WorkerArcheanStartMessage { type: 'archeanStart' }
+export interface WorkerGenesisStartMessage { type: 'genesisStart' }
 // The screen's 3D relief preview asking for the current full-res
 // display-space elevation raster (answered with WorkerElevationFieldMessage).
 // On demand rather than piggybacked on every 'rendered' message: the raster
@@ -200,17 +206,15 @@ export interface WorkerElevationFieldMessage {
 // the erosion panel's reset already worked that way, this one did not (it re-ran
 // `regenerate`, which restarts the Archean from an epoch with no crust at all, so
 // every continent vanished).
-export interface WorkerResetTectonicsMessage { type: 'resetTectonics' }
-export interface WorkerArcheanStopMessage { type: 'archeanStop' }
+export interface WorkerGenesisStopMessage { type: 'genesisStop' }
 // Ends the Archean and hands the world to the tectonic phase. Not reachable by
 // accident: the panel only sends it when the next phase is started.
-export interface WorkerArcheanFinalizeMessage { type: 'archeanFinalize' }
+export interface WorkerGenesisFinalizeMessage { type: 'genesisFinalize' }
 // Back to a fresh Archean with the same seed, discarding any tectonic state.
-export interface WorkerArcheanResetMessage { type: 'archeanReset' }
 
 // Sent with every Archean render: the readouts the Genesis panel shows.
-export interface WorkerArcheanStatusMessage {
-  type: 'archeanStatus'
+export interface WorkerGenesisStatusMessage {
+  type: 'genesisStatus'
   epoch: number
   worldAgeMa: number
   crustFraction: number
@@ -278,7 +282,7 @@ export interface WorkerRenderedMessage {
   // Sim events this render batch — the screen turns continent-scale ones
   // into notifications + geologic map markers (see the event overlay).
   events: SimEvent[]
-  // True for the once-per-round redraws an 'erode' request posts while
+  // True for the once-per-round redraws an 'erosionStart' request posts while
   // it's still running (see runErodeRequest) — everything about the
   // message is otherwise a normal full render (map texture, stats), but
   // WorldGenScreen.ts needs to know NOT to treat this one as "the
@@ -292,7 +296,7 @@ export interface WorkerRenderedMessage {
 
 // Sent repeatedly (throttled to once per whole-percent change, not once
 // per runErosionPass onProgress call — that's ~500+ calls for the
-// default params) while an 'erode' request is in flight; nothing is sent
+// default params) while an 'erosionStart' request is in flight; nothing is sent
 // for 'resetErosion', since that's a single already-computed render with
 // no meaningful sub-progress of its own.
 // A stage was asked to run and DECLINED, because something it reads is not there.
@@ -485,6 +489,6 @@ export type WorkerOutboundMessage =
   | WorkerEcologyDataMessage
   | WorkerMigrationDataMessage
   | WorkerWorldDataMessage
-  | WorkerArcheanStatusMessage
+  | WorkerGenesisStatusMessage
   | WorkerElevationFieldMessage
   | WorkerStageDeclinedMessage

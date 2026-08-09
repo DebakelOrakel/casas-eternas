@@ -18,8 +18,8 @@ import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../worldgen/core/mapC
 const RUNOFF_COEFFICIENT = 0.35
 const DISCHARGE_TO_M3S = ((METERS_PER_CELL * METERS_PER_CELL * 1e-3) / 3.156e7) * RUNOFF_COEFFICIENT
 import JSZip from 'jszip'
-import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage } from '../../worldgen/pipeline/messages'
-import { downstreamOf } from '../../worldgen/pipeline/stages'
+import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage } from '../../worldgen/pipeline/messages'
+import { downstreamOf, stage } from '../../worldgen/pipeline/stages'
 import type { StageId } from '../../worldgen/pipeline/stages'
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/render/continentLabelRenderer'
@@ -394,8 +394,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // layout requirement, not tidiness: `.field-label` is `justify-content:
   // space-between`, so an unwrapped "30" + "%" would be two flex items and the
   // percent sign would be pushed to the far edge, away from its number.
+  // Every control the markup below declares, so the DOM elements can be found again
+  // from the InputParam that produced them. Recorded here rather than assembled by
+  // hand afterwards: a control that exists has exactly one place it was written.
+  const declaredSliders: { param: InputParam; cls: string; valueKey: string }[] = []
+  const sliderBindings = new Map<InputParam, { input: HTMLInputElement; label: HTMLElement }>()
+
   const sliderField = (p: InputParam, cls: string, valueKey: string,
     opts: { tag?: 'label' | 'span'; extraClass?: string; attrs?: string } = {}): string => {
+    declaredSliders.push({ param: p, cls, valueKey })
     const tag = opts.tag ?? 'label'
     const label = t(`${p.i18n}.label` as TKey)
     return `<${tag} class="field${opts.extraClass ? ` ${opts.extraClass}` : ''}" data-help="${p.i18n}"${opts.attrs ?? ''}>
@@ -553,6 +560,32 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const waterInput = root.querySelector<HTMLInputElement>('.water-input')!
   const waterLabel = root.querySelector<HTMLElement>('[data-value="water-label"]')!
   const resetArcheanButton = root.querySelector<HTMLButtonElement>('[data-action="reset-archean"]')!
+  for (const { param, cls, valueKey } of declaredSliders) {
+    const input = root.querySelector<HTMLInputElement>(`.${cls}`)
+    const label = root.querySelector<HTMLElement>(`[data-value="${valueKey}"]`)
+    if (input && label) sliderBindings.set(param, { input, label })
+  }
+
+  // THE INPUT RESET: one stage's controls back to their declared defaults.
+  //
+  // Was three hand-written lists, one per panel, each naming its sliders again —
+  // and the climate one wrote its LABELS as literals ('0', '100') beside values it
+  // took from the declaration, so changing a default would have left the panel
+  // showing a number the slider was not on. The stage table already knows which
+  // controls belong to which stage; this reads them from there.
+  //
+  // Note what it does NOT touch: anything downstream. A later stage's settings are
+  // stated intent, and dropping them because an earlier panel was reset would be
+  // data loss rather than cleanup — see docs/design/generator-pipeline.md.
+  function resetInputs(id: StageId): void {
+    for (const param of Object.values(stage(id).inputs)) {
+      const bound = sliderBindings.get(param)
+      if (!bound) continue
+      bound.input.value = String(param.default)
+      bound.label.textContent = String(param.default)
+    }
+  }
+
   const toggleArcheanButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-archean"]')!
   const statCrust = root.querySelector<HTMLElement>('[data-value="stat-crust"]')!
   const statCratons = root.querySelector<HTMLElement>('[data-value="stat-cratons"]')!
@@ -688,7 +721,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let saveChainActive = false
   let erosionProgressFraction = 0
   // The micro-tile inspector shares the worker's renderInFlight mutex with
-  // 'erode' — a request sent while the other runs would be silently dropped
+  // 'erosionStart' — a request sent while the other runs would be silently dropped
   // by the worker's guard and this screen would wait forever, so it counts
   // as busy here too.
   let microTileInFlight = false
@@ -2326,7 +2359,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     hydrologyInFlight = true
     updateControlsDisabled()
     updateProgress()
-    postToWorker({ type: 'computeHydrology', riverDensity: Number(riverDensityInput.value) })
+    postToWorker({ type: 'hydrologyRun', riverDensity: Number(riverDensityInput.value) })
   }
 
   // Posts a climate compute with the current band-slider offset. Fired on
@@ -2338,7 +2371,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateControlsDisabled()
     updateProgress()
     postToWorker({
-      type: 'computeClimate',
+      type: 'climateRun',
       temperatureOffset: Number(tempBandInput.value),
       temperatureContrast: Number(contrastInput.value) / 100,
       humidity: Number(humidityInput.value) / 100,
@@ -2435,7 +2468,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     migrationInFlight = true
     updateControlsDisabled()
     updateProgress()
-    postToWorker({ type: 'computeMigration', origins, spreadBudget: Number(migrationSpreadInput.value), seaCrossing: MIGRATION_INPUTS.seaCrossing.toModel(Number(migrationSeaInput.value)) })
+    postToWorker({ type: 'migrationRun', origins, spreadBudget: Number(migrationSpreadInput.value), seaCrossing: MIGRATION_INPUTS.seaCrossing.toModel(Number(migrationSeaInput.value)) })
   }
 
   // Ensures the upstream chain (climate → hydrology → ecology) is computed, then
@@ -2462,7 +2495,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateProgress()
     const w = (f: EcologyFieldId): number => (foldoutInputs[f] ? Number(foldoutInputs[f]!.value) / 100 : 1)
     postToWorker({
-      type: 'computeEcology',
+      type: 'ecologyRun',
       carryingCapacity: Number(carryingCapacityInput.value),
       concentration: Number(concentrationInput.value),
       provinceStrength: Number(provinceInput.value) / 100,
@@ -2505,8 +2538,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       return
     }
 
-    if (message.type === 'archeanStatus') {
-      handleArcheanStatus(message)
+    if (message.type === 'genesisStatus') {
+      handleGenesisStatus(message)
       return
     }
 
@@ -2633,7 +2666,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
 
     // Intermediate renders (see WorkerRenderedMessage.intermediate) are
-    // one of 5 in-progress redraws an 'erode' request posts mid-flight —
+    // one of 5 in-progress redraws an 'erosionStart' request posts mid-flight —
     // the map/stats above should still reflect them live, but they're
     // not the operation finishing, so the buttons/status readout stay as
     // they are until the actual final render arrives.
@@ -2652,7 +2685,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastEpoch = 0
     archeanRunning = false
     postToWorker({
-      type: 'archeanInit',
+      type: 'genesisInit',
       seed,
       width: MAP_WIDTH,
       height: MAP_HEIGHT,
@@ -2673,19 +2706,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   toggleArcheanButton.addEventListener('click', () => {
     if (archeanRunning) {
-      postToWorker({ type: 'archeanStop' })
+      postToWorker({ type: 'genesisStop' })
       setArcheanRunning(false)
       updateOverlays()
       updateProgress()
       return
     }
-    postToWorker({ type: 'archeanStart' })
+    postToWorker({ type: 'genesisStart' })
     setArcheanRunning(true)
     updateOverlays()
   })
 
   resetArcheanButton.addEventListener('click', () => {
-    postToWorker({ type: 'archeanReset' })
+    postToWorker({ type: 'resetStage', stage: 'genesis' })
     setArcheanRunning(false)
     lastArcheanEpochs = 0
     archeanFinalised = false
@@ -2734,7 +2767,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     return { stage: 'late', hint: t('worldgen.panel.genesis.stage.late') }
   }
 
-  function handleArcheanStatus(message: WorkerArcheanStatusMessage): void {
+  function handleGenesisStatus(message: WorkerGenesisStatusMessage): void {
     lastArcheanEpochs = message.epoch
     statCrust.textContent = String(Math.round(message.crustFraction * 100))
     statCratons.textContent = String(message.cratonCount)
@@ -2758,7 +2791,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const stopSim = (): void => {
     if (!tectonicsRunning) return
     tectonicsRunning = false
-    postToWorker({ type: 'stop' })
+    postToWorker({ type: 'tectonicsStop' })
     updateOverlays()
     toggleSimIcon.src = '/icons/tectonics_heavy.png'
     toggleSimButton.setAttribute('aria-label', t('worldgen.action.runTectonics.label'))
@@ -2778,7 +2811,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // stale, and prior erosion no longer applies.
     invalidateAfter('tectonics')
     erosionRunCount = 0
-    postToWorker({ type: 'start' })
+    postToWorker({ type: 'tectonicsStart' })
     toggleSimIcon.src = '/icons/stop.png'
     toggleSimButton.setAttribute('aria-label', t('worldgen.action.runTectonics.labelActive'))
     updateControlsDisabled()
@@ -2795,7 +2828,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // below); clicking it cancels — the worker keeps the partial result so a later
     // click continues from there.
     if (erosionOpInFlight) {
-      postToWorker({ type: 'stopErosion' })
+      postToWorker({ type: 'erosionStop' })
       return
     }
     if (isBusy()) return
@@ -2808,7 +2841,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateControlsDisabled()
     updateProgress()
     updateNavState() // first erosion unlocks Climate/Rivers
-    postToWorker({ type: 'erode', strength: Number(strengthInput.value), networkRefreshes: Number(refreshInput.value) })
+    postToWorker({ type: 'erosionStart', strength: Number(strengthInput.value), networkRefreshes: Number(refreshInput.value) })
   })
 
   resetErosionButton.addEventListener('click', () => {
@@ -2819,7 +2852,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateControlsDisabled()
     updateProgress()
     updateNavState() // reverting erosion re-locks Climate/Rivers
-    postToWorker({ type: 'resetErosion' })
+    postToWorker({ type: 'resetStage', stage: 'erosion' })
   })
 
   // Micro-tile debug inspector: re-simulates a window around the largest river
@@ -3716,16 +3749,17 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   migrationSeaInput.addEventListener('input', () => { migrationSeaLabel.textContent = migrationSeaInput.value; scheduleMigration() })
   migrationThresholdInput.addEventListener('input', () => { migrationThresholdLabel.textContent = migrationThresholdInput.value; updateOverlays() })
 
-  // Per-panel reset: restore that panel's sliders to their defaults + recompute.
+  // Per-panel reset: that stage's controls back to their declared defaults, then
+  // recompute. Which controls those are comes from the stage table — see resetInputs.
   resetClimateButton.addEventListener('click', () => {
-    tempBandInput.value = String(CLIMATE_INPUTS.tempOffset.default); equatorOffsetInput.value = String(CLIMATE_INPUTS.equatorOffset.default); humidityInput.value = String(CLIMATE_INPUTS.humidity.default); contrastInput.value = String(CLIMATE_INPUTS.contrast.default)
-    tempBandLabel.textContent = '0'; equatorOffsetLabel.textContent = '0'; humidityLabel.textContent = '100'; contrastLabel.textContent = '100'
+    resetInputs('climate')
     requestClimate()
   })
   resetEcologyButton.addEventListener('click', () => {
-    carryingCapacityInput.value = String(ECOLOGY_INPUTS.carryingCapacity.default); carryingCapacityLabel.textContent = String(ECOLOGY_INPUTS.carryingCapacity.default)
-    concentrationInput.value = String(ECOLOGY_INPUTS.concentration.default); concentrationLabel.textContent = String(ECOLOGY_INPUTS.concentration.default)
-    provinceInput.value = String(ECOLOGY_INPUTS.provinceStrength.default); provinceLabel.textContent = String(ECOLOGY_INPUTS.provinceStrength.default)
+    resetInputs('ecology')
+    // The thirteen abundance nudges are not named controls — they share one range
+    // and reach the save as a group (ECOLOGY_ABUNDANCE_GROUPS), so they are not in
+    // the stage's `inputs` and get their own loop.
     for (const f of ECOLOGY_WEIGHT_FIELDS) {
       const inp = foldoutInputs[f]
       const lbl = foldoutLabels[f]
@@ -3735,13 +3769,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     requestEcology()
   })
   resetMigrationButton.addEventListener('click', () => {
-    const resetSlider = (p: InputParam, input: HTMLInputElement, label: HTMLElement): void => {
-      input.value = String(p.default)
-      label.textContent = String(p.default)
-    }
-    resetSlider(MIGRATION_INPUTS.spreadBudget, migrationSpreadInput, migrationSpreadLabel)
-    resetSlider(MIGRATION_INPUTS.arrowThreshold, migrationThresholdInput, migrationThresholdLabel)
-    resetSlider(MIGRATION_INPUTS.seaCrossing, migrationSeaInput, migrationSeaLabel)
+    resetInputs('migration')
     migrationRaceEnabled.fill(true)
     for (const btn of migrationRacesContainer.querySelectorAll('.ecology-cat')) btn.classList.add('is-active')
     migrationOrigins = [] // re-auto-place at the default cradles
@@ -3877,7 +3905,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     invalidateAfter('tectonics')
     migrationOrigins = []
     erosionRunCount = 0
-    postToWorker({ type: 'resetTectonics' })
+    postToWorker({ type: 'resetStage', stage: 'tectonics' })
     updateNavState() // topography is back to the hand-over → re-lock erosion onwards
   })
   seedInput.addEventListener('input', regenerateDebounced)
@@ -3953,8 +3981,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // This IS the hand-over: the worker keeps a snapshot of it, so from here on
       // tectonics can be rewound to this moment.
       hasHandover = true
-      postToWorker({ type: 'archeanStop' })
-      postToWorker({ type: 'archeanFinalize' })
+      postToWorker({ type: 'genesisStop' })
+      postToWorker({ type: 'genesisFinalize' })
       setArcheanRunning(false)
       // Plate outlines and continent names unblock here — this is where plates and
       // continents start existing.

@@ -79,6 +79,9 @@ async function syntheticElevations(renderWidth, renderHeight, _worldWidth, _worl
 // reproduce. A query suffix gives Vite a distinct module id while the (stateless)
 // dependency graph underneath stays cached; reloading everything costs seconds.
 let instanceCount = 0
+// Every message type this file exercises, checked against the pipeline's own list
+// at the end — so a message added to the contract cannot go untested unnoticed.
+const dispatchedTypes = new Set()
 async function freshPipeline() {
   const rt = await server.ssrLoadModule(`/src/worldgen/pipeline/runtime.ts?instance=${instanceCount++}`)
   const messages = []
@@ -93,7 +96,10 @@ async function freshPipeline() {
   })
   rt.setElevationRenderer({ renderElevations: syntheticElevations })
   return {
-    dispatch: rt.dispatch,
+    dispatch: (message) => {
+      dispatchedTypes.add(message.type)
+      rt.dispatch(message)
+    },
     messages,
     count: (type) => messages.filter((m) => m.type === type).length,
     last: (type) => messages.filter((m) => m.type === type).at(-1),
@@ -130,18 +136,18 @@ async function quiet(p, ms = 250) {
   }
 }
 
-const ARCHEAN_INIT = { type: 'archeanInit', seed: 'harness', width: W, height: H, renderOptions: {}, epochIntervalMs: 10, mantleDiffusion: 2, seaLevelOffset: 0 }
+const ARCHEAN_INIT = { type: 'genesisInit', seed: 'harness', width: W, height: H, renderOptions: {}, epochIntervalMs: 10, mantleDiffusion: 2, seaLevelOffset: 0 }
 
 // A world the way the program makes one: an Archean run, then the hand-over.
 async function growWorld(p, { epochs = ARCHEAN_EPOCHS } = {}) {
   p.dispatch({ ...ARCHEAN_INIT })
   await until(() => p.count('rendered') >= 1, { label: 'the first Archean render' })
-  p.dispatch({ type: 'archeanStart' })
-  await until(() => p.count('archeanStatus') >= epochs, { label: `${epochs} Archean epochs` })
-  p.dispatch({ type: 'archeanStop' })
+  p.dispatch({ type: 'genesisStart' })
+  await until(() => p.count('genesisStatus') >= epochs, { label: `${epochs} Archean epochs` })
+  p.dispatch({ type: 'genesisStop' })
   await quiet(p)
   const before = p.count('rendered')
-  p.dispatch({ type: 'archeanFinalize' })
+  p.dispatch({ type: 'genesisFinalize' })
   await until(() => p.count('rendered') > before, { label: 'the hand-over render' })
   await quiet(p)
 }
@@ -230,15 +236,15 @@ test('the Archean runs, reports and stops', async () => {
   const p = await freshPipeline()
   p.dispatch({ ...ARCHEAN_INIT })
   await until(() => p.count('rendered') >= 1, { label: 'the first render' })
-  check('archeanInit renders and reports status', p.count('rendered') >= 1 && p.count('archeanStatus') >= 1)
+  check('archeanInit renders and reports status', p.count('rendered') >= 1 && p.count('genesisStatus') >= 1)
 
-  p.dispatch({ type: 'archeanStart' })
-  await until(() => p.count('archeanStatus') >= 5, { label: 'five epochs' })
-  p.dispatch({ type: 'archeanStop' })
+  p.dispatch({ type: 'genesisStart' })
+  await until(() => p.count('genesisStatus') >= 5, { label: 'five epochs' })
+  p.dispatch({ type: 'genesisStop' })
   await settle(150)
-  const settled = p.count('archeanStatus')
+  const settled = p.count('genesisStatus')
   await settle(300)
-  check('archeanStop actually stops the clock', p.count('archeanStatus') === settled, `${settled} -> ${p.count('archeanStatus')}`)
+  check('archeanStop actually stops the clock', p.count('genesisStatus') === settled, `${settled} -> ${p.count('genesisStatus')}`)
 })
 
 test('archeanReset rebuilds the same world from the same seed', async () => {
@@ -247,16 +253,16 @@ test('archeanReset rebuilds the same world from the same seed', async () => {
   await until(() => a.count('rendered') >= 1, { label: 'the first render' })
   const first = hash(a.last('rendered').elevation)
 
-  a.dispatch({ type: 'archeanStart' })
-  await until(() => a.count('archeanStatus') >= ARCHEAN_EPOCHS, { label: `${ARCHEAN_EPOCHS} epochs` })
-  a.dispatch({ type: 'archeanStop' })
+  a.dispatch({ type: 'genesisStart' })
+  await until(() => a.count('genesisStatus') >= ARCHEAN_EPOCHS, { label: `${ARCHEAN_EPOCHS} epochs` })
+  a.dispatch({ type: 'genesisStop' })
   await quiet(a)
 
   const drifted = hash(a.last('rendered').elevation)
   check('stepping the Archean changes the world', drifted !== first)
 
   const before = a.count('rendered')
-  a.dispatch({ type: 'archeanReset' })
+  a.dispatch({ type: 'resetStage', stage: 'genesis' })
   await until(() => a.count('rendered') > before, { label: 'the reset render' })
   await quiet(a)
   check('archeanReset returns to epoch 0 exactly', hash(a.last('rendered').elevation) === first)
@@ -270,14 +276,14 @@ test('the hand-over is what resetTectonics goes back to', async () => {
   const handover = hash(p.last('rendered').elevation)
 
   let base = p.count('rendered')
-  p.dispatch({ type: 'start' })
+  p.dispatch({ type: 'tectonicsStart' })
   await until(() => p.count('rendered') >= base + 4, { label: 'a few tectonic epochs' })
-  p.dispatch({ type: 'stop' })
+  p.dispatch({ type: 'tectonicsStop' })
   await quiet(p)
   check('tectonics moves the world off the hand-over', hash(p.last('rendered').elevation) !== handover)
 
   base = p.count('rendered')
-  p.dispatch({ type: 'resetTectonics' })
+  p.dispatch({ type: 'resetStage', stage: 'tectonics' })
   await until(() => p.count('rendered') > base, { label: 'the reset render' })
   await quiet(p)
   check('resetTectonics restores the hand-over exactly', hash(p.last('rendered').elevation) === handover)
@@ -285,12 +291,12 @@ test('the hand-over is what resetTectonics goes back to', async () => {
   // The snapshot is deep-copied at hand-over precisely so a SECOND reset lands in
   // the same place — an uncopied one drifts along with the world it preserves.
   base = p.count('rendered')
-  p.dispatch({ type: 'start' })
+  p.dispatch({ type: 'tectonicsStart' })
   await until(() => p.count('rendered') >= base + 4, { label: 'more epochs' })
-  p.dispatch({ type: 'stop' })
+  p.dispatch({ type: 'tectonicsStop' })
   await quiet(p)
   const second = p.count('rendered')
-  p.dispatch({ type: 'resetTectonics' })
+  p.dispatch({ type: 'resetStage', stage: 'tectonics' })
   await until(() => p.count('rendered') > second, { label: 'the second reset render' })
   await quiet(p)
   check('a second resetTectonics lands in the same place', hash(p.last('rendered').elevation) === handover)
@@ -302,9 +308,9 @@ test('a world survives serialize -> restore unchanged', async () => {
   const p = await freshPipeline()
   await growWorld(p)
   const base = p.count('rendered')
-  p.dispatch({ type: 'start' })
+  p.dispatch({ type: 'tectonicsStart' })
   await until(() => p.count('rendered') >= base + 4, { label: 'some tectonics' })
-  p.dispatch({ type: 'stop' })
+  p.dispatch({ type: 'tectonicsStop' })
   await quiet(p)
   const saved = hash(p.last('rendered').elevation)
 
@@ -333,9 +339,9 @@ test('REGRESSION: a loaded world is not replaced by a leftover Archean', async (
   const p = await freshPipeline()
   p.dispatch({ ...ARCHEAN_INIT, seed: 'eine-andere-welt' })
   await until(() => p.count('rendered') >= 1, { label: 'the Genesis run' })
-  p.dispatch({ type: 'archeanStart' })
-  await until(() => p.count('archeanStatus') >= ARCHEAN_EPOCHS, { label: 'a Genesis run' })
-  p.dispatch({ type: 'archeanStop' })
+  p.dispatch({ type: 'genesisStart' })
+  await until(() => p.count('genesisStatus') >= ARCHEAN_EPOCHS, { label: 'a Genesis run' })
+  p.dispatch({ type: 'genesisStop' })
   await quiet(p)
 
   const before = p.count('rendered')
@@ -346,7 +352,7 @@ test('REGRESSION: a loaded world is not replaced by a leftover Archean', async (
 
   // What entering the Tectonics panel does.
   const afterLoad = p.count('rendered')
-  p.dispatch({ type: 'archeanFinalize' })
+  p.dispatch({ type: 'genesisFinalize' })
   await settle(300)
   check('archeanFinalize after a load does nothing at all', p.count('rendered') === afterLoad, `${afterLoad} -> ${p.count('rendered')}`)
   check('the loaded world is still the one on the map', hash(p.last('rendered').elevation) === loaded)
@@ -368,7 +374,7 @@ test('REGRESSION: resetTectonics on a loaded world is a no-op', async () => {
   const loaded = hash(p.last('rendered').elevation)
 
   const before = p.count('rendered')
-  p.dispatch({ type: 'resetTectonics' })
+  p.dispatch({ type: 'resetStage', stage: 'tectonics' })
   await settle(300)
   check('resetTectonics declines when there is no hand-over', p.count('rendered') === before)
   check('the loaded world is untouched', hash(p.last('rendered').elevation) === loaded)
@@ -379,16 +385,16 @@ test('REGRESSION: resetTectonics on a loaded world is a no-op', async () => {
 test('the stages compute, in order, on one world', async () => {
   const p = await freshPipeline()
   await growWorld(p)
-  p.dispatch({ type: 'erode', strength: 1, networkRefreshes: 1 })
+  p.dispatch({ type: 'erosionStart', strength: 1, networkRefreshes: 1 })
   await until(() => p.count('deltaMask') >= 1, { label: 'the erosion pass to finish', timeout: 180000 })
 
-  p.dispatch({ type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+  p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
-  p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
+  p.dispatch({ type: 'hydrologyRun', riverDensity: RIVER_DENSITY })
   await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
-  p.dispatch({ type: 'computeEcology' })
+  p.dispatch({ type: 'ecologyRun' })
   await until(() => p.count('ecologyData') >= 1, { label: 'ecology' })
-  p.dispatch({ type: 'computeMigration', origins: [] })
+  p.dispatch({ type: 'migrationRun', origins: [] })
   await until(() => p.count('migrationData') >= 1, { label: 'migration' })
 
   check('every stage produced its result', true)
@@ -406,22 +412,22 @@ test('INVALIDATION: eroding stales everything downstream, per the declared chain
   // what the world currently was.
   const p = await freshPipeline()
   await growWorld(p)
-  const climateMessage = { type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 }
+  const climateMessage = { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 }
   p.dispatch(climateMessage)
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
-  p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
+  p.dispatch({ type: 'hydrologyRun', riverDensity: RIVER_DENSITY })
   await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
   const beforeDischarge = hash(p.last('hydrologyData').discharge)
 
   const climateRuns = p.count('climateData')
-  p.dispatch({ type: 'erode', strength: 2, networkRefreshes: 1 })
+  p.dispatch({ type: 'erosionStart', strength: 2, networkRefreshes: 1 })
   await until(() => p.count('deltaMask') >= 1, { label: 'the erosion pass to finish', timeout: 180000 })
   check('erosion does not silently recompute the climate', p.count('climateData') === climateRuns)
 
   // The eroded terrain is not the one that climate was computed on, so asking for
   // rivers now must refuse rather than route over a climate that describes a world
   // one erosion pass ago.
-  p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
+  p.dispatch({ type: 'hydrologyRun', riverDensity: RIVER_DENSITY })
   await until(() => p.count('stageDeclined') >= 1, { label: 'the refusal' })
   const declined = p.last('stageDeclined')
   check('hydrology refuses on eroded terrain, naming what it needs', declined.stage === 'hydrology' && declined.needs === 'climate', JSON.stringify(declined))
@@ -429,7 +435,7 @@ test('INVALIDATION: eroding stales everything downstream, per the declared chain
 
   p.dispatch(climateMessage)
   await until(() => p.count('climateData') >= climateRuns + 1, { label: 'the recomputed climate' })
-  p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
+  p.dispatch({ type: 'hydrologyRun', riverDensity: RIVER_DENSITY })
   await until(() => p.count('hydrologyData') >= 2, { label: 'hydrology again' })
   check('with the climate back, the rivers follow the new terrain', hash(p.last('hydrologyData').discharge) !== beforeDischarge)
 })
@@ -438,11 +444,11 @@ test('a stage that cannot run says so instead of going quiet', async () => {
   // The failure this removes: the screen sets its in-flight flag, disables the
   // controls and waits for a result the worker already decided not to produce.
   const p = await freshPipeline()
-  p.dispatch({ type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
-  p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
-  p.dispatch({ type: 'computeEcology' })
-  p.dispatch({ type: 'computeMigration', origins: [] })
-  p.dispatch({ type: 'erode', strength: 1, networkRefreshes: 1 })
+  p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+  p.dispatch({ type: 'hydrologyRun', riverDensity: RIVER_DENSITY })
+  p.dispatch({ type: 'ecologyRun' })
+  p.dispatch({ type: 'migrationRun', origins: [] })
+  p.dispatch({ type: 'erosionStart', strength: 1, networkRefreshes: 1 })
   await settle(200)
   const declined = p.messages.filter((m) => m.type === 'stageDeclined')
   check('all five refuse on a world that does not exist yet', declined.length === 5, declined.map((d) => d.stage).join(', '))
@@ -452,7 +458,7 @@ test('a stage that cannot run says so instead of going quiet', async () => {
   // hydrology is short of, not the terrain.
   const q = await freshPipeline()
   await growWorld(q)
-  q.dispatch({ type: 'computeEcology' })
+  q.dispatch({ type: 'ecologyRun' })
   await until(() => q.count('stageDeclined') >= 1, { label: 'the ecology refusal' })
   check('ecology names the climate once a world exists', q.last('stageDeclined').needs === 'climate', JSON.stringify(q.last('stageDeclined')))
 })
@@ -464,14 +470,14 @@ test('a density-only change reuses the routing instead of re-flooding', async ()
   // pass sends those three empty and only new river polylines.
   const p = await freshPipeline()
   await growWorld(p)
-  p.dispatch({ type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+  p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
-  p.dispatch({ type: 'computeHydrology', riverDensity: 30 })
+  p.dispatch({ type: 'hydrologyRun', riverDensity: 30 })
   await until(() => p.count('hydrologyData') >= 1, { label: 'the first routing' })
   const routed = p.last('hydrologyData')
   check('a re-route sends lakes, watersheds and discharge', routed.lakeDepth.byteLength > 0 && routed.watersheds.byteLength > 0 && routed.discharge.byteLength > 0)
 
-  p.dispatch({ type: 'computeHydrology', riverDensity: 80 })
+  p.dispatch({ type: 'hydrologyRun', riverDensity: 80 })
   await until(() => p.count('hydrologyData') >= 2, { label: 'the density-only pass' })
   const rethresholded = p.last('hydrologyData')
   check('a density-only change does not re-flood', rethresholded.lakeDepth.byteLength === 0 && rethresholded.watersheds.byteLength === 0 && rethresholded.discharge.byteLength === 0)
@@ -485,15 +491,15 @@ test('erosion can be stopped mid-pass', async () => {
   const p = await freshPipeline()
   await growWorld(p)
   const unEroded = hash(p.last('rendered').elevation)
-  p.dispatch({ type: 'erode', strength: 1, networkRefreshes: 1 })
+  p.dispatch({ type: 'erosionStart', strength: 1, networkRefreshes: 1 })
   await until(() => p.count('erosionProgress') >= 1, { label: 'erosion to start', timeout: 180000 })
-  p.dispatch({ type: 'stopErosion' })
+  p.dispatch({ type: 'erosionStop' })
   await until(() => p.count('deltaMask') >= 1, { label: 'the partial result', timeout: 180000 })
   check('a stopped pass still delivers what it had', hash(p.last('rendered').elevation) !== unEroded)
 
   const partial = hash(p.last('rendered').elevation)
   const afterStop = p.count('rendered')
-  p.dispatch({ type: 'resetErosion' })
+  p.dispatch({ type: 'resetStage', stage: 'erosion' })
   await until(() => p.count('rendered') > afterStop, { label: 'the revert render' })
   check('resetErosion reverts what the partial pass carved', hash(p.last('rendered').elevation) !== partial)
 })
@@ -506,14 +512,15 @@ test('every message type is dispatchable from a cold start', async () => {
   // when the state it expects is not there. A cold pipeline is the state every
   // one of them can actually meet, since the screen sends on user gestures.
   const cold = [
-    { type: 'stop' }, { type: 'start' }, { type: 'stopErosion' }, { type: 'resetErosion' },
-    { type: 'erode', strength: 1, networkRefreshes: 1 },
+    { type: 'tectonicsStop' }, { type: 'tectonicsStart' }, { type: 'erosionStop' }, { type: 'resetStage', stage: 'erosion' },
+    { type: 'erosionStart', strength: 1, networkRefreshes: 1 },
     { type: 'computeMicroTile' }, { type: 'requestElevationField' },
-    { type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 },
-    { type: 'computeHydrology', riverDensity: RIVER_DENSITY },
-    { type: 'computeEcology' }, { type: 'computeMigration', origins: [] },
-    { type: 'serializeWorld' }, { type: 'resetTectonics' },
-    { type: 'archeanStart' }, { type: 'archeanStop' }, { type: 'archeanFinalize' }, { type: 'archeanReset' },
+    { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 },
+    { type: 'hydrologyRun', riverDensity: RIVER_DENSITY },
+    { type: 'ecologyRun' }, { type: 'migrationRun', origins: [] },
+    { type: 'serializeWorld' },
+    ...['genesis', 'tectonics', 'erosion', 'climate', 'hydrology', 'ecology', 'migration'].map((stage) => ({ type: 'resetStage', stage })),
+    { type: 'genesisStart' }, { type: 'genesisStop' }, { type: 'genesisFinalize' },
   ]
   const p = await freshPipeline()
   const threw = []
@@ -525,8 +532,8 @@ test('every message type is dispatchable from a cold start', async () => {
     }
   }
   await settle(200)
-  p.dispatch({ type: 'archeanStop' })
-  check(`all ${cold.length} handlers survive a cold start`, threw.length === 0, threw.join('; '))
+  p.dispatch({ type: 'genesisStop' })
+  check(`all ${cold.length} messages survive a cold start`, threw.length === 0, threw.join('; '))
 })
 
 // ------------------------------------------------------------------- determinism
@@ -552,6 +559,11 @@ for (const { name, run } of TESTS) {
     console.log(`  FAIL  ${error.message}`)
   }
 }
+
+console.log('— coverage')
+const handled = (await server.ssrLoadModule('/src/worldgen/pipeline/runtime.ts')).HANDLED_MESSAGE_TYPES
+const untested = handled.filter((t) => !dispatchedTypes.has(t))
+check(`every one of the ${handled.length} message types is exercised somewhere above`, untested.length === 0, untested.join(', '))
 
 await server.close()
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'} — ${failures} failed, ${Math.round((Date.now() - started) / 1000)}s`)

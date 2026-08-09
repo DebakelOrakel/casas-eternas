@@ -3,7 +3,7 @@ summary: The generator's runtime pipeline — its state is already stage-shaped 
   declared, which is why invalidation is a set of hand-written rules. The target is the
   chain as data; this records the design, the reset taxonomy and the staged path there.
 date: 2026-08-09
-status: direction agreed, implementation staged — steps 1, 2, 3a, 3b and 3c built 2026-08-09
+status: direction agreed, implementation staged — step 3 complete 2026-08-09; steps 4 and 5 open
 ---
 
 # The generator pipeline: the chain as data
@@ -184,7 +184,7 @@ order, not thoroughness.
 | 3a | **Declare the chain. BUILT 2026-08-09.** `pipeline/stages.ts` — seven stages with `dependsOn`, `kind`, inputs and outputs, plus `downstreamOf(id)`. Nothing reads it yet. | nine checks in the harness, tying it to `fieldSpec` and `WORLD_SPEC_FIELDS` |
 | 3b | **Result per stage. BUILT 2026-08-09.** Climate, hydrology and ecology: sixteen `let`s became three nullable result objects, 39 pieces of module state down to 28. | step 2, plus a new check on the cached hydrology path |
 | 3c | **Derive invalidation from the chain. BUILT 2026-08-09.** Both sides — the pipeline and WorldGenScreen — read `downstreamOf()`; the hand-written cascades are gone, and a stage that cannot run says so. | step 2, extended with the refusal contract |
-| 3d | **`resetStage(id)` in both gestures**, on the worker and the screen side; message names follow the stage ids. | step 2 |
+| 3d | **`resetStage(id)` in both gestures. BUILT 2026-08-09.** One reset message for all seven stages, one table-driven input reset on the screen, and every message named after its stage. | step 2, plus a coverage check over the message contract |
 | 4 | **Spec ownership** — the DOM stays the input and stops being the store; the unsaved-changes indicator is the first consumer. | step 2, `tsc` |
 | 5 | **Untangle `showPanel`** — navigation must not commit. | step 2 |
 
@@ -302,6 +302,38 @@ WorldGenScreen listed the twelve result types by hand in its `onmessage`
 signature, so adding a thirteenth compiled cleanly and simply never reached a
 handler — the inbound direction has had an exhaustive table all along. The union
 now exists and the screen takes it.
+
+### 3d: both gestures, named
+
+**The state reset was three messages for one idea.** `resetErosion`,
+`resetTectonics` and `archeanReset` — and the other four stages had no reset at
+all. Now one `resetStage(stage)`: what "back where it started" means stays
+stage-specific (the Archean rebuilds from its seed, tectonics returns to the
+hand-over, erosion re-renders the terrain it was handed), but what follows is
+generic and comes from the chain. The four stages that had no reset got one for
+free, and the switch is exhaustive over `StageId`, so a new stage cannot be added
+without deciding what resetting it means.
+
+**The input reset already existed, unnamed, three times.** The climate, ecology and
+migration panels each restored their own sliders with a hand-written list. The
+climate one wrote its *labels* as literals (`'0'`, `'100'`) beside values it took
+from the declaration — so a changed default would have left the panel showing a
+number the slider was not on. `resetInputs(stage)` reads the controls from the
+stage table instead, via a binding that `sliderField` records as it emits the
+markup. The thirteen ecology abundance nudges keep their own loop: they share one
+range and reach the save as a group, so they are deliberately not named controls.
+
+**The messages say which stage they belong to.** `start` → `tectonicsStart`,
+`erode` → `erosionStart`, `computeClimate` → `climateRun`, `archeanInit` →
+`genesisInit`, and so on. The Archean stage is `genesis` in the pipeline — the
+panel and every save on disk already said so — while the module stays `archean/`,
+which models the geological era. Two names, each with a domain: Genesis is the
+phase in the editor, the Archean is what it simulates.
+
+**A gap closed on the way:** the harness listed message types by hand to check they
+all dispatch, which could silently fall behind the contract. The pipeline now
+exports `HANDLED_MESSAGE_TYPES` and the harness asserts every one of them is
+exercised somewhere in the file.
 
 ## Deliberately not doing
 
