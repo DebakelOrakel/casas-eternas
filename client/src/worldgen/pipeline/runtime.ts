@@ -1,498 +1,71 @@
-import { stepEpoch, serializePlateSimulation, deserializePlateSimulation } from './tectonics/plateSimulation'
-import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from './tectonics/plateSimulation'
-import { renderSimulationImage } from './render/elevationMapImage'
-import type { RenderSimulationOptions } from './render/elevationMapImage'
-import type { ContinentLabelPlacement } from './render/continentLabelRenderer'
-import { ElevationRenderPool } from './render/elevationRenderPool'
-import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass } from './surface/erosion'
-import type { ArcheanSimulation } from './archean/archeanState'
-import { createArcheanSimulation } from './archean/archeanState'
-import type { ArcheanSnapshot } from './archean/archeanSnapshot'
-import { deserializeArchean, serializeArchean } from './archean/archeanSnapshot'
-import type { ArcheanParams } from './archean/archeanStep'
-import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from './archean/archeanStep'
-import { convectionCellSeeds, finalizeArchean } from './archean/finalizeArchean'
-import { findPlumeSites } from './tectonics/plumes'
-import { stabilisedFraction } from './crust/raftField'
-import { worldAgeMa } from './core/worldTime'
-import { accumulateFlow, fillDepressionsAndRouteFlow } from './surface/flowRouting'
-import { MICRO_TILE_EXTENT_MACRO, MICRO_TILE_FACTOR, buildTileElevation, buildTileInflow, burnMacroTrunks, pickLargestRiverMouth, runTileErosion, scaleErosionParamsForTile } from './surface/tileErosion'
-import { growDelta, pickDeltaEntry } from './surface/deltaGrowth'
-import { renderMicroTileImage } from './render/microTileImage'
-import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from './tectonics/oceanAge'
-import type { ErosionPhase, ErosionPassParams } from './surface/erosion'
-import type { FlowRouting } from './surface/flowRouting'
-import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from './surface/hydrology'
-import { MANTLE_RES_X, MANTLE_RES_Y } from './mantle/mantleField'
-import { SEA_LEVEL, metersToElevation } from './elevation/elevationScale'
-import type { TerrainFeature } from './tectonics/terrainFeatures'
-import { computeTemperature } from './climate/temperature'
-import { computeWind } from './climate/wind'
-import { computeOceanCurrents, applyOceanSST } from './climate/oceanCurrents'
-import { computeSeasonalAmplitude } from './climate/seasonality'
-import { computeSeasonalPrecipitation } from './climate/monsoon'
-import { computeBiomes, computeBiomesFine } from './climate/biomes'
-import { downsampleMax } from './core/field'
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from './climate/climateField'
-import { computeEcology } from './ecology/ecologyField'
-import { computeMigration } from './migration/migrationField'
-import type { MigrationOrigin } from './migration/migrationField'
-import { collectVolcanoes } from './tectonics/volcanoes'
-import { computeCratonOldnessField } from './crust/raftField'
+import { stepEpoch, serializePlateSimulation, deserializePlateSimulation } from '../tectonics/plateSimulation'
+import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulation'
+import { renderSimulationImage } from '../render/elevationMapImage'
+import type { RenderSimulationOptions } from '../render/elevationMapImage'
+import { ElevationRenderPool } from '../render/elevationRenderPool'
+import type { ElevationRenderer } from '../render/elevationRenderPool'
+import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass } from '../surface/erosion'
+import type { ArcheanSimulation } from '../archean/archeanState'
+import { createArcheanSimulation } from '../archean/archeanState'
+import { deserializeArchean, serializeArchean } from '../archean/archeanSnapshot'
+import type { ArcheanParams } from '../archean/archeanStep'
+import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from '../archean/archeanStep'
+import { convectionCellSeeds, finalizeArchean } from '../archean/finalizeArchean'
+import { findPlumeSites } from '../tectonics/plumes'
+import { stabilisedFraction } from '../crust/raftField'
+import { worldAgeMa } from '../core/worldTime'
+import { accumulateFlow, fillDepressionsAndRouteFlow } from '../surface/flowRouting'
+import { MICRO_TILE_EXTENT_MACRO, MICRO_TILE_FACTOR, buildTileElevation, buildTileInflow, burnMacroTrunks, pickLargestRiverMouth, runTileErosion, scaleErosionParamsForTile } from '../surface/tileErosion'
+import { growDelta, pickDeltaEntry } from '../surface/deltaGrowth'
+import { renderMicroTileImage } from '../render/microTileImage'
+import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from '../tectonics/oceanAge'
+import type { ErosionPassParams } from '../surface/erosion'
+import type { FlowRouting } from '../surface/flowRouting'
+import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from '../surface/hydrology'
+import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
+import type { TerrainFeature } from '../tectonics/terrainFeatures'
+import { computeTemperature } from '../climate/temperature'
+import { computeWind } from '../climate/wind'
+import { computeOceanCurrents, applyOceanSST } from '../climate/oceanCurrents'
+import { computeSeasonalAmplitude } from '../climate/seasonality'
+import { computeSeasonalPrecipitation } from '../climate/monsoon'
+import { computeBiomes, computeBiomesFine } from '../climate/biomes'
+import { downsampleMax } from '../core/field'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
+import { computeEcology } from '../ecology/ecologyField'
+import { computeMigration } from '../migration/migrationField'
+import { collectVolcanoes } from '../tectonics/volcanoes'
+import { computeCratonOldnessField } from '../crust/raftField'
+import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerErosionProgressMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from './messages'
 
-// Runs the whole simulation off the main thread: stepping an epoch and
-// rendering the full 2048x1024 raster (a per-pixel query against every
-// plate and every terrain feature — see elevationField.ts) is heavy
-// enough that doing it synchronously on the main thread stalls camera
-// panning/input for the duration of every tick. The worker owns the
-// PlateSimulation instance entirely — only the rendered RGBA buffer (and
-// the couple of numbers the UI displays) cross back over.
+// The generator pipeline: it holds the live state of every stage — archean,
+// tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
+// demand. It owns the PlateSimulation instance entirely; only the rendered RGBA
+// buffer and the handful of numbers the UI displays ever leave.
 //
-// This worker is itself a coordinator, not the one doing the expensive
-// per-pixel work anymore — it owns a pool of further-nested workers (see
-// elevationRenderPool.ts) that the actual elevation query gets farmed
-// out to, since profiling showed that single loop is ~88% of render
-// time and is trivially parallel (every pixel's elevation is independent
-// of every other pixel, given the current seeds/features state).
-// stepEpoch itself stays right here, sequential — it has real epoch-to-
-// epoch dependencies (boundary detection depends on current seeds,
-// deposits depend on boundary detection, rift/merge depend on deposits)
-// that can't be farmed out the same way.
+// It is itself a coordinator, not the thing doing the expensive per-pixel work:
+// it owns a pool of nested workers (see render/elevationRenderPool.ts) that the
+// elevation query is farmed out to, since profiling showed that single loop is
+// ~88% of render time and is trivially parallel (every pixel's elevation is
+// independent of every other, given the current seeds/features state). stepEpoch
+// stays here, sequential — it has real epoch-to-epoch dependencies (boundary
+// detection depends on current seeds, deposits depend on boundary detection,
+// rift/merge depend on deposits) that cannot be farmed out the same way.
 //
-// `self` is typed loosely rather than via `/// <reference lib="webworker" />`
-// — that lib's ambient globals (self, postMessage, MessageEvent, ...)
-// conflict with the project tsconfig's "DOM" lib, which this same file
-// also picks up since it's under the single `src` tsconfig include.
-declare const self: any
+// **This module does not know it is in a worker.** Results leave through an
+// injected emitter rather than `self.postMessage`, and messages arrive through
+// `dispatch` rather than `self.onmessage`; worldgenWorker.ts supplies both. That
+// is what lets the whole pipeline be driven from Node in a test — the one part of
+// the generator the golden harness cannot reach. See
+// docs/design/generator-pipeline.md.
+type Emit = (message: unknown, transfer?: Transferable[]) => void
+let emit: Emit = () => {}
 
-export interface WorkerStartMessage {
-  type: 'start'
-}
-export interface WorkerStopMessage {
-  type: 'stop'
-}
-// Runs a stream-power erosion pass (erosion.ts) once against the most
-// recently rendered raw elevation field and re-renders — a one-shot
-// action like 'reset', not a toggle, so there's only ever one message
-// type for it. Deliberately not something that keeps running alongside
-// live epoch-stepping: per docs/design/world-gen.md, geography is meant
-// to settle into a frozen shape once tectonics stops, and erosion is a
-// denudation pass over that settled shape, not a coupled per-epoch
-// process — WorldGenScreen.ts only enables the button while the sim is
-// stopped.
-export interface WorkerErodeMessage {
-  type: 'erode'
-  // Multiplier on the fluvial time step — dials erosion strength up (deeper valleys,
-  // more drainage rearrangement) at essentially no extra compute (it scales dh per
-  // step, not the step count). Default 1.
-  strength?: number
-  // How many times to re-derive the drainage network per round (see
-  // ErosionPassParams.networkRefreshes) — the lever that lets rivers migrate/capture,
-  // at one extra priority-flood each. Default = DEFAULT_EROSION_PASS_PARAMS'.
-  networkRefreshes?: number
-}
-// Discards whatever erosion has done and re-renders from the elevations
-// last seen right when tectonics stopped producing new ones (see
-// preErosionElevations below) — a no-op if erosion hasn't touched
-// anything since then, since that snapshot only ever updates from a
-// non-erosion render.
-export interface WorkerResetErosionMessage {
-  type: 'resetErosion'
-}
-// Requests the in-flight erosion pass stop at the next round boundary. The partial
-// result is kept (lastRawElevations), so a later 'erode' continues from there.
-export interface WorkerStopErosionMessage {
-  type: 'stopErosion'
-}
-// Debug inspector: re-simulate a small window around the largest river mouth
-// at fine resolution (surface/tileErosion.ts — the resolution-strategy micro
-// tier's prototype) and reply with a WorkerMicroTileDataMessage. Derived
-// display detail only — nothing about the macro world changes.
-export interface WorkerComputeMicroTileMessage {
-  type: 'computeMicroTile'
-}
-// Requests the climate step (temperature so far) be computed on the current,
-// possibly-eroded elevation — see docs/decisions/climate-biomes.md. Replies
-// with a WorkerClimateDataMessage.
-export interface WorkerComputeClimateMessage {
-  type: 'computeClimate'
-  // Global temperature offset in °C (greenhouse) — see computeTemperature.
-  temperatureOffset: number
-  // Equator↔pole spread multiplier (1 = default) — see computeTemperature.
-  temperatureContrast: number
-  // Global precipitation multiplier (1 = default) — see computePrecipitation.
-  humidity: number
-  // Latitudinal shift of the whole zonal climate band (equator + poles), as a
-  // fraction of map height (0 = default; +ve moves the equator toward the bottom).
-  // Lets a continent stuck at the cold pole seam be brought under the warm equator.
-  // See climateField.shiftedYNorm.
-  equatorOffset: number
-}
-// Requests a rivers/lakes (hydrology) compute on the current topography, using
-// the precipitation cached from the last computeClimate as the water source.
-// `riverDensity` (0–100) is an intuitive knob the worker maps to an actual
-// discharge threshold against the computed maximum (higher density = lower
-// threshold = more/smaller rivers). Routing + discharge are cached in the
-// worker, so a density-only change re-extracts cheaply without re-routing.
-// Replies with WorkerHydrologyDataMessage.
-export interface WorkerComputeHydrologyMessage {
-  type: 'computeHydrology'
-  riverDensity: number
-}
-// Requests an ecology (resource/suitability) compute on the current climate. Uses
-// the cached climate temperature+precipitation as the productivity inputs and the
-// sim's volcanoes for the province layer. PHASE 1: the carrying-capacity field
-// only. Replies with WorkerEcologyDataMessage. See docs/decisions/ecology.md.
-export interface WorkerComputeEcologyMessage {
-  type: 'computeEcology'
-  // Global carrying-capacity gain (%, 100 = neutral) — level knob.
-  carryingCapacity: number
-  // Spatial concentration (-100..100, 0 = physics as-is) — shape knob.
-  concentration: number
-  // Fold-out knobs. provinceStrength 0..1 (L2 volcanic-soil provinces); tinRarity
-  // 0..1 (tighter tin radius); weights = per-field abundance multipliers.
-  provinceStrength: number
-  tinRarity: number
-  weights: Record<string, number>
-}
-// Requests an initial-migration compute: multi-source least-cost dispersal from the
-// given origins over the physical cost field, using the cached carrying capacity for
-// density. Replies with WorkerMigrationDataMessage. See anthropology-initial-migration.md.
-export interface WorkerComputeMigrationMessage {
-  type: 'computeMigration'
-  origins: MigrationOrigin[]
-  spreadBudget: number
-  seaCrossing: number
-}
-// Requests the full sim snapshot (+ ocean-age + current elevation) for saving —
-// replies with a WorkerWorldDataMessage.
-export interface WorkerSerializeWorldMessage {
-  type: 'serializeWorld'
-}
-// Restores a saved world: rebuild the sim from the snapshot + ocean-age raster,
-// inject the stored (post-erosion) elevation, and render it — no replay, no
-// re-erosion. `seed` is the original seed string, carried in the save format
-// (currently unused by the worker on restore, kept for forward compatibility).
-export interface WorkerRestoreWorldMessage {
-  type: 'restoreWorld'
-  seed: string
-  snapshot: PlateSimulationSnapshot
-  oceanAge: ArrayBuffer
-  elevation: ArrayBuffer
-  // Absent in saves written before the mantle was persisted — deserializePlateSimulation
-  // then falls back to regenerating one, which is what every save used to do.
-  mantle?: ArrayBuffer
-  // Set when the saved world was still in the Archean; `snapshot` is then unused.
-  archean?: { snapshot: ArcheanSnapshot; mantle: ArrayBuffer; streak: ArrayBuffer }
-  // The boundary-detection lattice's accumulated history, likewise optional for older
-  // saves. Measured: mantle and lattice TOGETHER are exactly what a bit-identical
-  // continuation needs — with only one of them restored, a loaded world drifts off
-  // the trajectory it was saved on.
-  lattice?: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer }
-}
-export type WorkerInboundMessage =
-  | WorkerStartMessage
-  | WorkerStopMessage
-  | WorkerErodeMessage
-  | WorkerResetErosionMessage
-  | WorkerStopErosionMessage
-  | WorkerComputeMicroTileMessage
-  | WorkerRequestElevationFieldMessage
-  | WorkerComputeClimateMessage
-  | WorkerComputeHydrologyMessage
-  | WorkerComputeEcologyMessage
-  | WorkerComputeMigrationMessage
-  | WorkerSerializeWorldMessage
-  | WorkerRestoreWorldMessage
-  | WorkerArcheanInitMessage
-  | WorkerArcheanStartMessage
-  | WorkerResetTectonicsMessage
-  | WorkerArcheanStopMessage
-  | WorkerArcheanFinalizeMessage
-  | WorkerArcheanResetMessage
-
-// --- Archean phase (see docs/decisions/archean-genesis.md) ---
-// Its own message family rather than reusing init/start/stop, because the Archean
-// runs on a different state type (no plates exist yet) and a different clock.
-export interface WorkerArcheanInitMessage {
-  type: 'archeanInit'
-  seed: string
-  width: number
-  height: number
-  renderOptions: RenderSimulationOptions
-  epochIntervalMs: number
-  // Mantle mixing per epoch — the "mantle vigour" knob (ArcheanParams.diffusion).
-  // Less stirring leaves a finer-grained field, so more and smaller cratons and
-  // plates; more stirring collects crust into fewer, larger continents.
-  //
-  // This used to be createMantleField's INITIAL smoothing, which measurement showed
-  // washes out long before the phase is stopped. See DEFAULT_INITIAL_SMOOTHING.
-  mantleDiffusion?: number
-  // Water offset in elevation units (see elevationScale.WATER_OFFSET_MAX_M).
-  seaLevelOffset?: number
-}
-export interface WorkerArcheanStartMessage { type: 'archeanStart' }
-// The screen's 3D relief preview asking for the current full-res
-// display-space elevation raster (answered with WorkerElevationFieldMessage).
-// On demand rather than piggybacked on every 'rendered' message: the raster
-// is 8 MB, and most renders happen while the preview has no use for it
-// (pre-erosion epoch stepping, the Archean).
-export interface WorkerRequestElevationFieldMessage { type: 'requestElevationField' }
-// Answer to 'requestElevationField': the full-res display-space elevation
-// raster (Float32, width*height, signed -1..1 with 0 = sea level) the current
-// map frame was colored from. Display-space (redistributed), NOT the raw
-// physical field — so a mesh displaced by it matches the 2D picture.
-export interface WorkerElevationFieldMessage {
-  type: 'elevationField'
-  elevation: ArrayBuffer
-  width: number
-  height: number
-}
-// Tectonics back to the state the Archean handed it, epoch 0 — the panel's own input,
-// not a new world. A reset inside a panel undoes that panel's work and nothing else;
-// the erosion panel's reset already worked that way, this one did not (it re-ran
-// `regenerate`, which restarts the Archean from an epoch with no crust at all, so
-// every continent vanished).
-export interface WorkerResetTectonicsMessage { type: 'resetTectonics' }
-export interface WorkerArcheanStopMessage { type: 'archeanStop' }
-// Ends the Archean and hands the world to the tectonic phase. Not reachable by
-// accident: the panel only sends it when the next phase is started.
-export interface WorkerArcheanFinalizeMessage { type: 'archeanFinalize' }
-// Back to a fresh Archean with the same seed, discarding any tectonic state.
-export interface WorkerArcheanResetMessage { type: 'archeanReset' }
-
-// Sent with every Archean render: the readouts the Genesis panel shows.
-export interface WorkerArcheanStatusMessage {
-  type: 'archeanStatus'
-  epoch: number
-  worldAgeMa: number
-  crustFraction: number
-  // Share of crust past the stabilisation age — the phase's progress indicator.
-  // Below ~0.2 nothing has settled; 0.4-0.7 is the window where separate cratons
-  // exist and still move; above ~0.85 the world only accumulates land.
-  stabilisedFraction: number
-  cratonCount: number
+export function setEmitter(next: Emit): void {
+  emit = next
 }
 
-export interface WorkerRenderedMessage {
-  type: 'rendered'
-  buffer: ArrayBuffer
-  // Neutral relief base (Uint8, 0 = ocean) for the climate/rivers panels — the
-  // screen expands it to a light-blue-water / white-shaded-land RGBA. See
-  // SimulationRenderResult.relief.
-  relief: ArrayBuffer
-  // Coarse mantle buoyancy field (Float32, mantleResX*mantleResY) + the fixed
-  // hotspot plume points — for the tectonics "Mantle" overlay (hot=upwelling red,
-  // cold=downwelling blue + plume markers). See mantleField.ts.
-  mantle: ArrayBuffer
-  mantleResX: number
-  mantleResY: number
-  // Coarse crust-age field (Float32, mantleResX*mantleResY; -1 = ocean, else 0..1
-  // with 1 = formed at epoch 0) for the "Craton age" overlay. See
-  // computeCratonOldnessField, which the Ecology layer also reads for iron.
-  //
-  // Deliberately on the MANTLE grid rather than the finer climate one: this is the
-  // Archean's per-epoch layer, and the crust it describes is made of blobs 70 world
-  // pixels across — about 4.4 cells here — so a finer grid would resolve nothing the
-  // eye can use while costing four times the work and transfer every epoch.
-  cratonAge: ArrayBuffer
-  // Coarse elevation (Float32, CLIMATE_RES_X*CLIMATE_RES_Y) purely so the hover
-  // readout can report a height in metres for the cell under the cursor. Center-
-  // sampled off the full-res field at the climate grid, which is the same
-  // resolution — and the same sampler — every climate module already reads
-  // elevation at, so a hovered value matches what temperature/precipitation
-  // actually saw. Coarse deliberately: the full-res f32 raster is 8 MB, and
-  // re-slicing that every epoch to keep a live tooltip fed is not worth it, while
-  // regional heights (is this plateau really ~360 m? is that basin at -5700?) are
-  // exactly what the readout is for. Per-pixel peak heights belong in a dump
-  // script, not a tooltip.
-  elevation: ArrayBuffer
-  elevationResX: number
-  elevationResY: number
-  hotspots: { x: number; y: number }[]
-  // Volcanic features for distinct markers: hotspot cones (plateB = -1), flood-basalt
-  // provinces (plateB = -2), and volcanic arcs (the `volcanic` range features — Andes/
-  // island-arc chains). `kind` picks the marker style; `thickness` sizes it. See
-  // plateSimulation.ts.
-  volcanoes: { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[]
-  width: number
-  height: number
-  landFraction: number
-  epoch: number
-  // Overlay source data for the toggleable main-thread layers (no font or
-  // Canvas2D in the worker, so nothing is drawn here — the screen composites
-  // boundaries, names, and event markers on top of `buffer`).
-  // Full-res plate-boundary mask (1 = on a Voronoi edge), as raw bytes.
-  boundaryMask: ArrayBuffer
-  // Per-raft continent-name label geometry for the names overlay.
-  raftLabels: ContinentLabelPlacement[]
-  // Current plate (Voronoi seed) count — for the tectonics panel stats.
-  plateCount: number
-  // Sim events this render batch — the screen turns continent-scale ones
-  // into notifications + geologic map markers (see the event overlay).
-  events: SimEvent[]
-  // True for the once-per-round redraws an 'erode' request posts while
-  // it's still running (see runErodeRequest) — everything about the
-  // message is otherwise a normal full render (map texture, stats), but
-  // WorldGenScreen.ts needs to know NOT to treat this one as "the
-  // erosion operation is done" the way it would a plain render, or the
-  // erode/reset-erosion buttons would re-enable and the status readout
-  // would clear partway through. Always false/omitted for every other
-  // render (init, epoch-driven, resetErosion, and the actual final
-  // render an erode request ends with).
-  intermediate?: boolean
-}
-
-// Sent repeatedly (throttled to once per whole-percent change, not once
-// per runErosionPass onProgress call — that's ~500+ calls for the
-// default params) while an 'erode' request is in flight; nothing is sent
-// for 'resetErosion', since that's a single already-computed render with
-// no meaningful sub-progress of its own.
-export interface WorkerErosionProgressMessage {
-  type: 'erosionProgress'
-  phase: ErosionPhase
-  fraction: number
-}
-
-// The computed climate rasters (coarse grid — see climate/climateField.ts).
-// Grows per phase.
-export interface WorkerClimateDataMessage {
-  type: 'climateData'
-  resX: number
-  resY: number
-  // Temperature in °C, Float32, resX*resY row-major.
-  temperature: ArrayBuffer
-  // Prevailing wind, Float32 interleaved [u0,v0,…], resX*resY cells
-  // (u = eastward, v = toward the bottom/"south"). See climate/wind.ts.
-  wind: ArrayBuffer
-  // Ocean surface currents, Float32 interleaved [u0,v0,…], normalized to max 1,
-  // zero on land. See climate/oceanCurrents.ts.
-  currents: ArrayBuffer
-  // Annual precipitation mm/yr, Float32, resX*resY row-major; land only (ocean
-  // cells carry OCEAN_PRECIP). See climate/precipitation.ts.
-  precipitation: ArrayBuffer
-  // Annual temperature amplitude °C (summer−winter range), Float32. See
-  // climate/seasonality.ts.
-  seasonalAmplitude: ArrayBuffer
-  // Monsoon / precipitation-seasonality index (Float32, 0..1; OCEAN_PRECIP on ocean).
-  // See climate/monsoon.ts.
-  monsoonIndex: ArrayBuffer
-  // Whittaker biome id per cell (Uint8; ocean = Biome.Ocean). See climate/biomes.ts.
-  //
-  // The one field here that is NOT on resX/resY: it is FULL-RES (world raster),
-  // like discharge and watersheds below. The classification is pointwise and its
-  // sharpest input — elevation — exists at full res, so evaluating it there costs
-  // one pass and is what gives mountains a treeline instead of an all-or-nothing
-  // 62 km alpine cell. Every field around it stays regional and coarse.
-  biomes: ArrayBuffer
-}
-
-// Rivers/lakes result for the hydrology overlay. Phase 1: river segments only
-// (lakes + riparian biome feedback come in later phases). See worldgen/hydrology.ts.
-export interface WorkerHydrologyDataMessage {
-  type: 'hydrologyData'
-  // Connected river polylines for the scene-space ribbon overlay: `riverPoints`
-  // is Float32 [x, y, widthPx, …] (texel coords) with all polylines concatenated,
-  // `riverLengths` is Uint32 point-counts per polyline. See extractRiverPolylines.
-  riverPoints: ArrayBuffer
-  riverLengths: ArrayBuffer
-  // Lake water depth per full-res cell (Float32, 0 = dry). Only populated when the
-  // hydrology was re-routed (lakes don't depend on the river-density knob); a
-  // density-only re-extract sends an empty buffer, meaning "lakes unchanged". See
-  // computeLakes.
-  lakeDepth: ArrayBuffer
-  // Biomes RE-classified with the riparian moisture bonus from rivers/lakes
-  // (Uint8, full-res — replaces the climate step's water-free biomes, and shares
-  // its resolution so the display never switches grids mid-run).
-  // Empty when no climate is available to reclassify. See computeRiparianBiomes.
-  biomes: ArrayBuffer
-  // The precipitation those biomes were classified FROM: the climate grid's
-  // annual total plus the riparian bonus (Float32, coarse, OCEAN_PRECIP on
-  // ocean). Saved so a consumer can reproduce the classification at its own
-  // resolution without owning a drainage network — see computeRiparianBiomes.
-  precipitationEffective: ArrayBuffer
-  // Watershed labels (Uint16, full-res, 0 = unlabelled) and the raw discharge
-  // field (Float32, full-res) + its land maximum — the watershed overlay and
-  // the map hover's flow readout. Re-route only, like lakeDepth.
-  watersheds: ArrayBuffer
-  discharge: ArrayBuffer
-  maxDischarge: number
-}
-
-// Debug aid for the erosion panel: which sea-floor cells the erosion pass raised,
-// i.e. where rivers dropped their sediment. Sent after every erode so the map can
-// mark them, because the deltas are ~0.24% of the grid and finding them by eye on a
-// 2048×1024 map is not realistic. Uint8, full-res, 1 = raised.
-export interface WorkerDeltaMaskMessage {
-  type: 'deltaMask'
-  mask: ArrayBuffer
-}
-
-// The finished micro tile: a baked RGBA image (n×n — hypsometric ramp,
-// hillshade, river tint; see render/microTileImage.ts) plus where the window
-// sits in world coordinates, so the viewer can caption it.
-export interface WorkerMicroTileDataMessage {
-  type: 'microTileData'
-  buffer: ArrayBuffer
-  n: number
-  x0: number
-  y0: number
-  extentMacro: number
-  factor: number
-  mouthX: number
-  mouthY: number
-}
-// Coarse progress for the viewer's label — macro routing, then one tick per
-// tile-erosion round. fraction -1 signals an aborted request (another
-// long-running render holds the worker, or the world has no river mouth) so
-// the screen can release its busy state instead of waiting forever.
-export interface WorkerMicroTileProgressMessage {
-  type: 'microTileProgress'
-  fraction: number
-}
-
-// The computed ecology fields (coarse climate grid), keyed by field id so the
-// set can grow per sub-step without changing the message shape. Each is Float32,
-// resX*resY, land only (ECOLOGY_OCEAN sentinel on water). See ecology/ecologyField.ts.
-export interface WorkerEcologyDataMessage {
-  type: 'ecologyData'
-  resX: number
-  resY: number
-  fields: { id: string; data: ArrayBuffer }[]
-}
-
-// The initial-migration result (coarse climate grid). See migration/migrationField.ts.
-export interface WorkerMigrationDataMessage {
-  type: 'migrationData'
-  resX: number
-  resY: number
-  race: ArrayBuffer // Int8 owning race per cell (-1 = unreached)
-  density: ArrayBuffer // Float32 population per cell
-  flow: ArrayBuffer // Float32 accumulated population up the tree (arrow width)
-  predecessor: ArrayBuffer // Int32 parent cell toward the origin (-1 = root/unreached)
-}
-
-// The data a world SAVE needs (see the save/load feature): the JSON-able sim
-// snapshot plus the two large float rasters carried as binary buffers. The
-// caller (WorldGenScreen) packages these into the zip alongside world.yaml.
-export interface WorkerWorldDataMessage {
-  type: 'worldData'
-  // Present instead of `snapshot` when the world is still in the Archean — the phase is
-  // a pause, so it has to be savable, and there is no PlateSimulation yet to snapshot.
-  archean?: { snapshot: ArcheanSnapshot; mantle: ArrayBuffer; streak: ArrayBuffer }
-  snapshot: PlateSimulationSnapshot
-  // The mantle field, saved rather than regenerated: it is what the plate motions
-  // were fitted to, and what finalizeArchean read to place the plates in the first
-  // place. Restoring a world with a fresh random field left the plates drifting
-  // against a mantle that never produced them.
-  mantle: ArrayBuffer
-  // See WorkerRestoreWorldMessage.lattice — the other half of a faithful continuation.
-  latticeAccumulated: ArrayBuffer
-  latticeLockedEpochs: ArrayBuffer
-  latticeLastClassCode: ArrayBuffer
-  oceanAge: ArrayBuffer
-  elevation: ArrayBuffer
-}
 
 let sim: PlateSimulation | null = null
 // The Archean world, while that phase is the active one. Exactly one of `archean`
@@ -617,9 +190,22 @@ function collectOrogens(features: TerrainFeature[]): { x: number; y: number }[] 
   return out
 }
 
-// Created once and reused for the lifetime of this worker — pool workers
-// have their own startup cost, not worth paying every epoch.
-const renderPool = new ElevationRenderPool()
+// Created on first use and reused for the lifetime of this pipeline — pool
+// workers have their own startup cost, not worth paying every epoch.
+//
+// Lazy rather than eager: constructing it spawns eight nested workers and reads
+// `self.navigator.hardwareConcurrency`, which was this module's last hard tie to
+// a browser and made it unimportable anywhere else. Deferring it costs nothing —
+// the first render pays a startup it used to pay at worker boot — and a run that
+// never renders (a test) never pays it at all.
+let renderer: ElevationRenderer | null = null
+const renderPool = (): ElevationRenderer => (renderer ??= new ElevationRenderPool())
+
+// The second half of the host seam, alongside setEmitter: supply an elevation
+// renderer and nothing here touches a browser at all.
+export function setElevationRenderer(next: ElevationRenderer): void {
+  renderer = next
+}
 // Renders are now async (they await the pool) — without this guard, a
 // render that takes longer than epochIntervalMs would still be in
 // flight when the next interval tick fires, and that tick's stepEpoch
@@ -667,7 +253,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   renderOptions.dryBasin = renderDryBasin ?? undefined
   renderOptions.saltFlat = renderSaltFlat ?? undefined
 
-  const result = await renderSimulationImage(sim, renderPool, renderOptions)
+  const result = await renderSimulationImage(sim, renderPool(), renderOptions)
   // A newer init/restore replaced the world while this render was in flight —
   // discard it before it clobbers lastRawElevations or posts a stale frame.
   if (gen !== worldGeneration) return
@@ -714,7 +300,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   // because renderSimulationImage (buffer + boundaryMask) allocates fresh
   // arrays every call, so there's no reference to any now-neutered buffer
   // left to reuse.
-  self.postMessage(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
+  emit(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
 }
 
 // Renders the Archean world and posts its status. Reuses renderSimulationImage
@@ -735,7 +321,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     // Seeds only drive the Voronoi mask; the elevation raster reads rafts, ocean age
     // and features, so previewing cannot disturb the terrain.
     { width: archean.width, height: archean.height, seeds: previewSeeds, rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset },
-    renderPool,
+    renderPool(),
     renderOptions,
   )
   if (gen !== worldGeneration || !archean) return
@@ -768,7 +354,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     plateCount: 0,
     events: [],
   }
-  self.postMessage(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
+  emit(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
 
   const status: WorkerArcheanStatusMessage = {
     type: 'archeanStatus',
@@ -778,7 +364,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     stabilisedFraction: stabilisedFraction(archean.rafts, archean.epoch, DEFAULT_ARCHEAN_PARAMS.stabilisationEpochs),
     cratonCount: archean.rafts.length,
   }
-  self.postMessage(status)
+  emit(status)
 }
 
 // The Archean has no ocean-age field (nothing creates or destroys seafloor yet), and
@@ -826,7 +412,7 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
       if (percent === lastReportedPercent) return
       lastReportedPercent = percent
       const progressMessage: WorkerErosionProgressMessage = { type: 'erosionProgress', phase, fraction }
-      self.postMessage(progressMessage)
+      emit(progressMessage)
     },
     // Redraws once per round rather than on every fine-grained progress
     // tick — a full redraw (Voronoi rasterization, boundary/highlight
@@ -857,7 +443,7 @@ function postDeltaMask(raw: Float32Array, eroded: Float32Array): void {
     if (raw[i] <= SEA_LEVEL && eroded[i] - raw[i] > threshold) mask[i] = 1
   }
   const message: WorkerDeltaMaskMessage = { type: 'deltaMask', mask: mask.buffer as ArrayBuffer }
-  self.postMessage(message, [message.mask])
+  emit(message, [message.mask])
 }
 
 function stopTicking(): void {
@@ -942,7 +528,7 @@ function handleStopErosion(): void {
 function handleComputeMicroTile(): void {
   const postProgress = (fraction: number): void => {
     const progress: WorkerMicroTileProgressMessage = { type: 'microTileProgress', fraction }
-    self.postMessage(progress)
+    emit(progress)
   }
   if (!sim || !lastRawElevations || renderInFlight) {
     postProgress(-1)
@@ -1008,7 +594,7 @@ function handleComputeMicroTile(): void {
       mouthX: mouth.x,
       mouthY: mouth.y,
     }
-    self.postMessage(message, [message.buffer])
+    emit(message, [message.buffer])
   })().finally(() => {
     renderInFlight = false
   })
@@ -1077,7 +663,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>): voi
     monsoonIndex: chain.seasonal.index.buffer as ArrayBuffer,
     biomes: chain.biomesFine.buffer as ArrayBuffer,
   }
-  self.postMessage(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.biomes])
+  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.biomes])
 }
 
 function handleComputeClimate(message: Extract<WorkerInboundMessage, { type: 'computeClimate' }>): void {
@@ -1194,7 +780,7 @@ function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: '
       discharge: dischargeOut.buffer as ArrayBuffer,
       maxDischarge: lastHydrologyMaxDischarge,
     }
-    self.postMessage(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge])
+    emit(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge])
   })()
 }
 
@@ -1242,7 +828,7 @@ function handleComputeEcology(message: Extract<WorkerInboundMessage, { type: 'co
     resY: eco.resY,
     fields,
   }
-  self.postMessage(ecologyMessage, fields.map((f) => f.data))
+  emit(ecologyMessage, fields.map((f) => f.data))
 }
 
 function handleComputeMigration(message: Extract<WorkerInboundMessage, { type: 'computeMigration' }>): void {
@@ -1263,7 +849,7 @@ function handleComputeMigration(message: Extract<WorkerInboundMessage, { type: '
     flow: mig.flow.buffer as ArrayBuffer,
     predecessor: mig.predecessor.buffer as ArrayBuffer,
   }
-  self.postMessage(migrationMessage, [migrationMessage.race, migrationMessage.density, migrationMessage.flow, migrationMessage.predecessor])
+  emit(migrationMessage, [migrationMessage.race, migrationMessage.density, migrationMessage.flow, migrationMessage.predecessor])
 }
 
 // Posts the retained display elevations of the last completed render (a
@@ -1278,7 +864,7 @@ function handleRequestElevationField(): void {
     width: lastDisplayElevations.width,
     height: lastDisplayElevations.height,
   }
-  self.postMessage(message, [message.elevation])
+  emit(message, [message.elevation])
 }
 
 function handleSerializeWorld(): void {
@@ -1303,7 +889,7 @@ function handleSerializeWorld(): void {
       oceanAge: EMPTY_OCEAN_AGE.slice().buffer as ArrayBuffer,
       elevation: elevation.buffer as ArrayBuffer,
     }
-    self.postMessage(message, [message.archean!.mantle, message.archean!.streak, message.elevation])
+    emit(message, [message.archean!.mantle, message.archean!.streak, message.elevation])
     return
   }
   if (!sim || !lastRawElevations) return
@@ -1325,7 +911,7 @@ function handleSerializeWorld(): void {
     oceanAge: oceanAge.buffer as ArrayBuffer,
     elevation: elevation.buffer as ArrayBuffer,
   }
-  self.postMessage(worldMessage, [worldMessage.mantle, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge, worldMessage.elevation])
+  emit(worldMessage, [worldMessage.mantle, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge, worldMessage.elevation])
 }
 
 function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'restoreWorld' }>): void {
@@ -1476,6 +1062,7 @@ function handleArcheanReset(): void {
 // The dispatch table. A record rather than a chain so the set of messages this
 // worker understands is a list you can read, and so a new one cannot silently
 // land in the wrong branch.
+
 const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMessage) => void } = {
   start: () => handleStart(),
   stop: () => handleStop(),
@@ -1498,6 +1085,6 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   archeanReset: () => handleArcheanReset(),
 }
 
-self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
-  HANDLERS[event.data.type](event.data)
+export function dispatch(message: WorkerInboundMessage): void {
+  HANDLERS[message.type](message)
 }

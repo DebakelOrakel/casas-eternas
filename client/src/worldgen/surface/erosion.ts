@@ -590,7 +590,7 @@ export async function runErosionPass(
   params: ErosionPassParams = DEFAULT_EROSION_PASS_PARAMS,
   onProgress?: (phase: ErosionPhase, fraction: number) => void,
   // Awaited after every round, given a *copy* of that round's own
-  // elevations — lets a caller (plateSimulationWorker.ts) redraw the map
+  // elevations — lets a caller (pipeline/runtime.ts) redraw the map
   // once per round instead of only once at the very end, without this
   // module needing to know anything about rendering. Awaited (not fired
   // and forgotten) deliberately, so a slow redraw can't overlap with the

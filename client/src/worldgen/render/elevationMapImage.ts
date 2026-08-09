@@ -4,7 +4,7 @@ import type { PlateSimulation } from '../tectonics/plateSimulation'
 import { rasterizeVoronoiPlates } from './voronoiRaster'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
-import type { ElevationRenderPool } from './elevationRenderPool'
+import type { ElevationRenderer } from './elevationRenderPool'
 import { upscaleBilinearToroidal } from '../core/field'
 import { computeOwnerField } from '../crust/raftField'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
@@ -137,7 +137,7 @@ export interface RenderableWorld {
   seaLevelOffset: number
 }
 
-export async function renderSimulationImage(sim: RenderableWorld, pool: ElevationRenderPool, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
+export async function renderSimulationImage(sim: RenderableWorld, pool: ElevationRenderer, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
   const { precomputedElevations } = options
   const { width, height } = sim
   // The Archean phase runs with no plates at all — plate tectonics has not started

@@ -595,6 +595,8 @@ Split by audience, not by topic:
 
 ## Related
 
+- [generator-pipeline.md](./generator-pipeline.md) — the runtime counterpart: where
+  these contracts get sequenced, and why part C's spec ownership falls out of it
 - [queryable-world-save.md](../decisions/queryable-world-save.md) — the manifest
   and sampler part C builds on
 - [worldmap-amplification.md](../decisions/worldmap-amplification.md) — rule 4,

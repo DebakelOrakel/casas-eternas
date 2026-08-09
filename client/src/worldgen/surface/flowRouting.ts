@@ -27,8 +27,8 @@ import { MinHeap } from '../core/minHeap'
 // long loops (fillDepressions' pop count, and one per outer iteration in
 // runStreamPowerIterations/runThermalErosion) — always
 // awaits a real macrotask boundary (a zero-delay setTimeout), not just
-// every Nth call. This exists entirely for plateSimulationWorker.ts's
-// 'erode' handler: postMessage calls made during a long, uninterrupted
+// every Nth call. This exists entirely for the generator pipeline's 'erode'
+// handler (pipeline/runtime.ts): postMessage calls made during a long, uninterrupted
 // synchronous stretch get queued for delivery, but browsers commonly
 // don't actually flush that delivery to the main thread until the
 // sending side yields back to its own event loop — without yielding

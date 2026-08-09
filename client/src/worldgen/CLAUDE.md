@@ -4,24 +4,32 @@ The world **wraps in both X and Y**. Every distance, sample and neighbour lookup
 must go through the toroidal helpers in `core/`; a plain `dx = a - b` is a bug
 near the seam. See `docs/decisions/world-topology-torus.md`.
 
-`plateSimulationWorker.ts` is the entry point and stays at this root. It holds
-the pipeline's live state as module-level `let`s and orchestrates everything
-below.
+`worldgenWorker.ts` is the entry point and stays at this root, but it is **only
+transport** — twenty-odd lines wiring `self` to the pipeline. The pipeline is
+`pipeline/runtime.ts`: it holds every stage's live state as module-level `let`s
+and orchestrates everything below. It takes its emitter and its elevation
+renderer from the host (`setEmitter`, `setElevationRenderer`) and touches no
+browser API itself, so it can be driven directly from Node — which is the only
+way this part of the generator can be tested at all, since the golden harness
+does not reach it. `pipeline/messages.ts` is the message contract.
+
+Where this is going: [docs/design/generator-pipeline.md](../../../docs/design/generator-pipeline.md).
 
 ```
+pipeline/   messages (the worker contract), runtime (stage state + handlers)
 core/       mapConfig, toroidal, rng, field (the shared samplers), minHeap, interpolation
 mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends only
             on core/ and crust/ and never on tectonics/
 archean/    the Archean era; hands over to tectonics via finalizeArchean.ts, which
             is the ONLY archean file that may import from tectonics/
 tectonics/  plate*, boundary*, oceanAge, terrainFeatures, volcanoes,
-            tectonicsParams (tuning constants), epoch/ (the per-epoch phases)
+            tectonicsTuneParams (tuning constants), epoch/ (the per-epoch phases)
 crust/      continental crust as rafts — deliberately decoupled from the plates
             (docs/decisions/continental-crust-rafts.md); crustTuneParams holds the
             raft rules both eras pass in
 elevation/  elevationScale (what a height MEANS), elevationField, domainWarp, ridgedNoise
 surface/    flowRouting, erosion, hydrology, amplify, deltaGrowth, tileErosion
-climate/ ecology/ migration/ render/ worldSave/
+climate/ ecology/ migration/ render/
 ```
 
 ## Resolutions — check before you sample
@@ -36,7 +44,7 @@ answers here.
 | Ocean age | 256×128 | oceanAge |
 | Mantle | 128×64 | mantle buoyancy and flow |
 
-In the baked save (`worldSave/worldLayers.ts`) only the layers marked `fullRes`
+In the baked save (`world/save/worldLayers.ts`) only the layers marked `fullRes`
 are on the world raster — today `biome`, `lakeDepth`, `discharge` and `elevation`.
 Everything else is written at climate resolution.
 
@@ -80,10 +88,11 @@ process. The baseline is machine-local and gitignored; record it where you work.
 
 **Know its blind spots:**
 
-- It does **not** cover `plateSimulationWorker.ts`. Message ordering and cache
-  invalidation are invisible to a field check; that needs a manual click-through
-  (tectonics, erode and stop mid-pass, reset erosion, climate → rivers → ecology →
-  migration, save and load).
+- It does **not** cover `pipeline/runtime.ts`. Message ordering and cache
+  invalidation are invisible to a field check. Today that needs a manual
+  click-through (tectonics, erode and stop mid-pass, reset erosion, climate →
+  rivers → ecology → migration, save and load); the pipeline is now importable
+  headless so it can be covered properly.
 - It does **not** cover the amplification bake's terrain. The artifact KEY is
   guarded (the pipeline version is a stage in layer 4, and `npm run roundtrip`
   checks that every constant it lists actually moves it), but the baked heights
@@ -91,7 +100,7 @@ process. The baseline is machine-local and gitignored; record it where you work.
 - It does **not** cover the save format. That is `npm run roundtrip`'s job —
   quantisation, the recipe's layout, the identity hashes, the artifact bytes and
   the shared zip reader, in 0.2 s. Run it after touching anything under
-  `worldSave/` or `storage/`.
+  `world/save/` or `storage/`.
 - Before blaming a golden failure on your change, `git stash` and re-run to see
   whether it already fails on `HEAD`.
 
@@ -99,7 +108,7 @@ process. The baseline is machine-local and gitignored; record it where you work.
 
 Every module with tuning has an `xyTuneParams.ts` holding ONE object; genesis,
 erosion, climate, hydrology, ecology and migration also declare their sliders in
-an `xyInputParams.ts` (min/max/step/default/unit/i18n key), and `worldSave/worldSpec.ts`
+an `xyInputParams.ts` (min/max/step/default/unit/i18n key), and `world/save/worldSpec.ts`
 turns those declarations into the save's recipe. The reasoning is in
 `docs/design/architecture-unification.md`.
 
@@ -152,9 +161,9 @@ copy. Any new vector paint layer drawing at specific map coordinates goes throug
 
 **Workers spawned from inside a worker use the `?worker` import form**, not
 `new URL(..., import.meta.url)` — `import.meta.url` is empty in a nested worker in
-Firefox, and the worker is created but never runs. The render pool inside
-`plateSimulationWorker` is exactly this case. (The Firefox failure is dev-server
-only; production builds are fine.)
+Firefox, and the worker is created but never runs. The render pool that
+`pipeline/runtime.ts` constructs is exactly this case. (The Firefox failure is
+dev-server only; production builds are fine.)
 
 **Erosion deletes the material it removes** — there is no excavation budget. That
 is a deliberate, documented unrealism; marine deltas are a separate shipped

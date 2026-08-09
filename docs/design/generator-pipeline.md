@@ -1,0 +1,234 @@
+---
+summary: The generator's runtime pipeline — its state is already stage-shaped but never
+  declared, which is why invalidation is a set of hand-written rules. The target is the
+  chain as data; this records the design, the reset taxonomy and the staged path there.
+date: 2026-08-09
+status: direction agreed, implementation staged — step 1 built 2026-08-09
+---
+
+# The generator pipeline: the chain as data
+
+One module runs the whole generator — archean, tectonics, erosion, climate,
+hydrology, ecology, migration, the micro-tile inspector, save and restore.
+Nineteen inbound message types, 1503 lines, 39 module-level `let`s, and the one
+part of the generator the golden harness explicitly does not cover. Until
+2026-08-09 it was a single file called `plateSimulationWorker.ts`; step 1 below
+split it, and the measurements in this document are from before that split.
+
+This document is about its *runtime* structure. Module boundaries, parameter
+contracts and world-data access are
+[architecture-unification.md](./architecture-unification.md); the pipeline is the
+place where those contracts are actually sequenced, and the last one still written
+as imperative prose.
+
+## The finding
+
+The 39 `let`s are not disorder. They group cleanly by pipeline stage:
+
+| Group | Count | Examples |
+|---|---|---|
+| Archean | 6 | `archean`, `archeanSeed`, `archeanParams`, `archeanWater` |
+| Tectonics | 4 | `sim`, `pendingEvents`, `epochIntervalMs`, `intervalId` |
+| Handover | 3 | `handoverSnapshot`, `handoverOceanAge`, `handoverMantle` |
+| Erosion | 3 | `lastRawElevations`, `preErosionElevations`, `erosionStopRequested` |
+| Climate | 8 | `lastClimatePrecip`, `lastClimateBiomes`, `lastClimateParams` |
+| Hydrology | 9 | `lastHydrologyDischarge`, `hydrologyDirty` |
+| Ecology | 1 | `lastEcologyCarryingCapacity` |
+| Presentation | 5 | `renderOptions`, `lastDisplayElevations`, `renderInFlight` |
+
+**The state is already stage-shaped — it was simply never declared.** The prefix
+`lastHydrology*` *is* a struct, written as a naming convention instead of a type.
+
+Two asymmetries say the rest. Exactly one stage carries an explicit freshness flag
+(`hydrologyDirty`) and exactly one stores the inputs that produced it
+(`lastClimateParams` — declared on line 1034, 470 lines from the rest of its
+family, so already adrift). Every other stage encodes "stale" as "the field is
+`null`". Nulling fields out *is* the invalidation mechanism, which is why the
+rules have to exist as hand-written helpers:
+
+```ts
+function invalidateAfterTopographyChange(): void {
+  hydrologyDirty = true
+  lastLakeBasinElevations = null
+}
+```
+
+Their own header comment calls the module state "the single riskiest thing about
+this file" and names the fix correctly — *"makes a caller state its intent rather
+than its mechanism"*. That was the right move for loose assignments. It is still a
+list of rules a human maintains, and both worker bugs found on 2026-08-09 were
+exactly this class: an archean leftover that reset a loaded world, and
+`archeanFinalised` carrying two meanings so that repairing one broke the other.
+(The comment also says "~24 pieces of module state". There are 39.)
+
+## The target design
+
+Four layers, and the notable thing is how much of it already exists.
+
+**1. The chain as data.** One table, one entry per stage:
+
+```
+{ id: 'climate',
+  dependsOn: ['erosion'],
+  inputs:  CLIMATE_INPUT_PARAMS,                 // built, part B
+  outputs: ['temperature', 'precipitation', …],  // built, FieldSpec / part C2
+  kind:    'oneShot' | 'steppable',
+  run(inputs, upstream) → ClimateResult }
+```
+
+Three of those five fields are already built and living in the stage modules. What
+is missing is **the edge** — `dependsOn` — and a runner over the table. The worker
+is the last place where the pipeline is expressed as prose rather than as data.
+
+**2. One result object per stage, not nine nullable fields.** A stage's outputs
+exist or do not exist, together. Freshness becomes structural rather than
+conventional, and reset becomes dropping one object instead of a correct sequence
+of assignments.
+
+**3. The result carries the inputs that produced it.** Generalising what
+`lastClimateParams` already does for one stage. Then "is this stale?" is a
+comparison rather than a flag, and the same record answers three questions we had
+been treating as separate work: cache invalidation, the save's recipe, and the
+unsaved-changes indicator in the editor. Spec ownership (architecture-unification,
+part C) is a consequence of this rather than a parallel task.
+
+**4. Pipeline separated from transport.** The file was both the state machine and
+the `postMessage` adapter: 14 `self.postMessage` sites and one `self.onmessage`.
+Split, the pipeline is plain TypeScript that runs anywhere — including in Node,
+directly, without a `globalThis.self` stub. That is the difference between a test
+net that needs scaffolding and one that does not, and it is why this came first.
+
+The transport turned out to be only half the tie. Splitting it revealed the other
+half: the render pool, constructed at module level, spawns eight nested workers and
+reads `self.navigator.hardwareConcurrency`, so merely importing the pipeline in Node
+threw. The rest of the render path uses no browser API at all — it produces raw
+buffers, which is why the golden harness can build worlds — so the pool was the
+whole of it. It is now built lazily and the renderer is injectable
+(`ElevationRenderer`, one method), which makes the host seam two functions:
+`setEmitter` and `setElevationRenderer`. A pipeline that never renders now also
+never spawns a worker.
+
+### What a redesign would keep
+
+The `HANDLERS` table, typed as `{ [K in WorkerInboundMessage['type']]: … }`, so an
+unhandled message type is a compile error. It would be reinvented as-is.
+
+The distinction between **steppable** stages (archean and tectonics run
+interactively with start/stop; erosion runs progressively with a progress bar) and
+**one-shot** stages (climate, hydrology, ecology, migration). That is a real
+difference in kind, not an accident of history, and a runner has to carry it.
+
+## Reset: the taxonomy
+
+Agreed 2026-08-09, before any of this is built.
+
+Two distinct gestures, which the current UI conflates:
+
+- **State reset** — discard a stage's *derivation*, keep its inputs. "Run it again."
+- **Input reset** — discard the *intent* for one stage as well, returning its
+  sliders to defaults, and with it the derivation.
+
+Two rules govern both:
+
+1. **Invalidation flows downstream only.** A reset in ecology leaves tectonics,
+   erosion, climate and hydrology untouched; a reset in tectonics invalidates
+   everything after it. This falls directly out of `dependsOn` once the chain is
+   data — it stops being a rule someone remembers.
+2. **Downstream *inputs* are never reset.** Invalidation discards derived state.
+   The user's sliders in a later stage are stated intent, and losing them because
+   an earlier stage was re-run would be a data-loss bug, not a cleanup.
+
+So `resetStage(id)` discards that stage's result and every result downstream of it;
+the input-reset gesture additionally restores that one stage's inputs to their
+declared defaults. Both are derived from the same table.
+
+## What this means for the names
+
+Recorded here rather than acted on separately, because a rename with no other
+reason to touch the file is churn.
+
+**The file name was stale — renamed in step 1.** `plateSimulationWorker.ts`
+described what it was on the first day; plate simulation is one stage of seven. It
+also collided with `tectonics/plateSimulation.ts`, which *is* the plate simulation,
+making the worker read like that module's concurrency wrapper. It cost two real code
+sites (the `import type` and the `new Worker(new URL(…))` in `WorldGenScreen.ts`)
+plus seven comment references, two of which pointed at the wrong half afterwards —
+the `self`-typing note belongs to the transport, not to the pipeline.
+
+**The message names carry three conventions at once** — unprefixed (`start`, `stop`,
+`erode`, `resetErosion`), stage-prefixed (`archeanStart`, `archeanFinalize`,
+`archeanReset`) and verb-prefixed (`computeClimate`, `computeHydrology`). `start`
+means "start tectonics" only by convention, and sits next to `handleArcheanStart`.
+The stage table forces a stage identifier per message anyway, so
+`start → tectonicsStart` and `erode → erosionStart` fall out of that step instead of
+being a rename for its own sake.
+
+**`sustainMantleVigour` is two quantities under one word.** It renormalises the
+mantle field's *amplitude* (`targetRms`), while the `mantleVigour` slider becomes
+the per-epoch *stirring rate* via `vigourToDiffusion`. `mantleField.ts` says so
+itself — "This *was* the mantle-vigour knob" — so the name is a fossil of an earlier
+design. `sustainMantleRms` matches the parameter its caller already passes. The
+i18n key `worldgen.panel.genesis.mantleVigour` is unaffected: the slider carries the
+name rightfully. This closes the open half of the naming audit note.
+
+## The staged path
+
+The golden harness does not run the worker and neither does layer 4's hash guard,
+so nothing below has a net until step 2 builds one. That is the reason for the
+order, not thoroughness.
+
+| Step | What | Verified by |
+|---|---|---|
+| 1 | **Transport seam + rename. BUILT 2026-08-09.** `pipeline/messages.ts` (the contract), `pipeline/runtime.ts` (state + handlers, `self`-free), `worldgenWorker.ts` (transport only, 24 lines). | `tsc`, a headless run in Node, a manual click-through |
+| 2 | **The test net.** Message sequences driven against the core in Node, asserting emitted messages and stage state — including the two bugs of 2026-08-09 as regression cases. | itself |
+| 3a | **Declare the chain.** The stage table with `dependsOn`, inputs and outputs. Pure addition, nothing reads it yet. | `tsc` |
+| 3b | **Result per stage.** The `last*` families become one object each. | step 2 |
+| 3c | **Derive invalidation from the chain.** The hand-written helpers are deleted, not rewritten. | step 2 |
+| 3d | **`resetStage(id)` in both gestures**, on the worker and the screen side; message names follow the stage ids. | step 2 |
+| 4 | **Spec ownership** — the DOM stays the input and stops being the store; the unsaved-changes indicator is the first consumer. | step 2, `tsc` |
+| 5 | **Untangle `showPanel`** — navigation must not commit. | step 2 |
+
+Steps 1 and 3a–3c change no behaviour by construction. Step 3d does (that is the
+point), and step 4 needs an i18n key for the indicator, to be proposed before it is
+added.
+
+## Deliberately not doing
+
+**Splitting per stage into `archeanStage.ts`, `climateStage.ts`, …** The handlers
+are thin — gather inputs, call the real module in `climate/`, store, post — because
+the work already lives in the stage modules. Per-stage files would mostly be 30-line
+adapters, and once the runner is generic several of them collapse into one shared
+one-shot path. Splitting first would freeze exactly the adapters the generic path
+should delete. This is the trigger rule from `CLAUDE.md`, and the erosion/deposition
+split is the local precedent for getting it wrong.
+
+Make it data first; then see how much file is left. A 1500-line file of which 400
+lines are a declaration table is not a problem.
+
+**A from-scratch rewrite.** The design above and the staged plan converge — the
+steps are the incremental path to it. The thought experiment earned two
+sharpenings, not a rebuild: declare the *contract* table rather than a reset-only
+dependency list, and do the per-stage result structs in the same step as the chain,
+since reset over nine separate `let`s stays fragile however well the chain is
+declared.
+
+## Open questions
+
+1. **Where the stage table lives.** With the pipeline (it describes runtime
+   sequencing) or in `world/` (it is close to the save's recipe). The criterion from
+   `CLAUDE.md` argues for the pipeline: running a stage does not need to know *which*
+   world is meant.
+2. **Whether the micro-tile inspector is a stage at all.** It consumes the pipeline
+   but produces nothing downstream — closer to a query than to a stage.
+3. **Whether `restoreWorld` sets stage results or replaces the chain's state
+   wholesale.** It currently writes state directly, which is how the archean leftover
+   bug survived.
+
+## Related
+
+- [architecture-unification.md](./architecture-unification.md) — module contracts,
+  the input/tune parameter split, and part C's spec-ownership sequence
+- [archean-genesis.md](../decisions/archean-genesis.md) — the handover this pipeline
+  sequences
+- [world-save-format.md](../decisions/world-save-format.md) — where a stage's
+  recorded inputs end up

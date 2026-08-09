@@ -2,7 +2,7 @@ import { runAmplification } from './surface/runAmplification'
 import type { AmplifyPhase } from './surface/runAmplification'
 
 // The amplification bake's worker (docs/decisions/worldmap-amplification.md).
-// Its own worker rather than a job on plateSimulationWorker: the bake needs
+// Its own worker rather than a job on the generator pipeline: the bake needs
 // no simulation state at all — a raster and a few numbers in, a raster out —
 // so coupling it to the generator's worker would only entangle two
 // lifecycles. It is also spawned from a SCREEN, never from another worker,
@@ -13,7 +13,7 @@ import type { AmplifyPhase } from './surface/runAmplification'
 // stage in its progress reports.
 //
 // `self` is typed loosely rather than via `/// <reference lib="webworker" />`
-// — same reason as plateSimulationWorker: that lib's ambient globals clash
+// — same reason as worldgenWorker.ts: that lib's ambient globals clash
 // with the project tsconfig's "DOM" lib, which this file also picks up.
 declare const self: any
 

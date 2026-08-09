@@ -4,7 +4,7 @@ import type { TerrainFeature } from '../tectonics/terrainFeatures'
 
 // Computes raw (unshaped, unclamped-differently, uncolored) elevation for
 // one horizontal band [startY, endY) of the map — spawned and owned by
-// elevationRenderPool.ts, itself running inside plateSimulationWorker.ts
+// elevationRenderPool.ts, itself running inside the generator pipeline
 // (a worker nested inside a worker). This is the one piece of a render
 // actually worth distributing: profiling showed the per-pixel feature-
 // uplift query is ~88% of total render time, with everything else
@@ -13,7 +13,7 @@ import type { TerrainFeature } from '../tectonics/terrainFeatures'
 // coordinated and composited back together on the calling worker.
 //
 // `self` typed loosely rather than via `/// <reference lib="webworker" />`
-// — same lib conflict reasoning as plateSimulationWorker.ts.
+// — same lib conflict reasoning as worldgenWorker.ts.
 declare const self: any
 
 interface RenderSliceRequest {

@@ -18,7 +18,7 @@ import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../worldgen/core/mapC
 const RUNOFF_COEFFICIENT = 0.35
 const DISCHARGE_TO_M3S = ((METERS_PER_CELL * METERS_PER_CELL * 1e-3) / 3.156e7) * RUNOFF_COEFFICIENT
 import JSZip from 'jszip'
-import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/plateSimulationWorker'
+import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/pipeline/messages'
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/render/continentLabelRenderer'
 import { elevationToMeters, metersToElevation, waterSliderToOffsetM } from '../../worldgen/elevation/elevationScale'
@@ -636,10 +636,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const computeProgressFill = root.querySelector<HTMLElement>('[data-value="compute-progress-fill"]')!
 
   // Simulation and rendering both happen inside this worker (see
-  // plateSimulationWorker.ts) — stepping an epoch and rendering the full
+  // worldgen/pipeline/runtime.ts) — stepping an epoch and rendering the full
   // raster are heavy enough that doing them on the main thread stalled
   // camera panning/input for the duration of every tick.
-  const worker = new Worker(new URL('../../worldgen/plateSimulationWorker.ts', import.meta.url), { type: 'module' })
+  const worker = new Worker(new URL('../../worldgen/worldgenWorker.ts', import.meta.url), { type: 'module' })
   const postToWorker = (message: WorkerInboundMessage): void => worker.postMessage(message)
 
   // Named for the PHASE, not "the sim": the Archean is a simulation too, and its own

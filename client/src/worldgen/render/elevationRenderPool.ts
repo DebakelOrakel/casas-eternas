@@ -2,7 +2,7 @@ import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import type { RenderSliceResponse } from './elevationRenderWorker'
 // Imported via Vite's `?worker` suffix rather than `new Worker(new URL(...,
 // import.meta.url))`: this pool is itself constructed *inside*
-// plateSimulationWorker (a worker), and Firefox leaves `import.meta.url`
+// the generator pipeline, which runs in a worker, and Firefox leaves `import.meta.url`
 // empty in a nested worker context, so the URL form resolved to an empty
 // source there — the workers were created but never ran, so renderElevations
 // hung forever and the map stayed on its blank placeholder (Firefox-only
@@ -27,6 +27,23 @@ function resolvePoolSize(): number {
   return Math.max(MIN_POOL_SIZE, Math.min(MAX_POOL_SIZE, cores))
 }
 
+// What renderSimulationImage actually demands: one call that fills an elevation
+// grid. Named separately from the class because the pool is a browser thing (it
+// spawns nested workers and reads navigator.hardwareConcurrency) while the
+// demand is not — which is what lets the pipeline be driven headlessly with
+// something else supplied here. See docs/design/generator-pipeline.md.
+export interface ElevationRenderer {
+  renderElevations(
+    renderWidth: number,
+    renderHeight: number,
+    worldWidth: number,
+    worldHeight: number,
+    blendedBaselines: Float32Array,
+    features: TerrainFeature[],
+    warpSeed: number,
+  ): Promise<Float32Array>
+}
+
 // Owns a pool of elevationRenderWorker.ts instances and fans the one
 // genuinely expensive part of a render (the per-pixel feature-uplift
 // query — see that file's own comment) out across them by horizontal
@@ -35,7 +52,7 @@ function resolvePoolSize(): number {
 // stays on the calling worker, single-threaded — profiling showed all
 // of that combined is under 15% of total render time, not worth the
 // complexity of distributing too.
-export class ElevationRenderPool {
+export class ElevationRenderPool implements ElevationRenderer {
   private workers: Worker[]
   private nextRequestId = 0
 
