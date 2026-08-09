@@ -34,6 +34,20 @@ export const elevationToMeters = (e: number): number => e * ELEVATION_METERS
 // of the scale, not of the erosion model.
 export const SEA_LEVEL = 0
 
+// IS THIS CELL LAND — the one definition, next to the datum it tests against.
+//
+// It was written out six times across the climate producers, in two polarities
+// (`e <= SEA_LEVEL && !dry` for ocean, `e > SEA_LEVEL || dry` for land), which is
+// exactly how a definition drifts: the copies agreed, but nothing made them.
+//
+// The `dryLand` term is what makes it more than a sign test. A terminal basin
+// whose floor lies below sea level but holds no water IS land — the Caspian
+// problem — and every field that skips ocean must skip it the same way, or the
+// biome map and the ecology mask disagree about the same cell.
+export function isLandAt(elevation: number, dryLand = false): boolean {
+  return elevation > SEA_LEVEL || dryLand
+}
+
 // Why 9000 m and not, say, 6000: the field is clamped to ±1, so the anchor sets
 // what fits. At 9000 m Everest (8848 m) lands at 0.98 — the clamp is spent
 // almost exactly on the tallest thing that can exist, wasting no range and

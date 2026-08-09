@@ -397,9 +397,35 @@ describing it.
 
 ### C1 onwards
 
-**C1. One land mask.** Four mechanisms down to one. Cheap, immediately
-verifiable, and every other query depends on it ("does this field apply here at
-all?").
+**C1. One land mask. BUILT 2026-08-09**, verified 38 of 38 stages byte-identical.
+
+The "four mechanisms" turned out to be three different things, and only one was a
+problem. The many `SEA_LEVEL` comparisons in erosion, delta growth and tile
+erosion are **geometry** — depths, flow blocking, coast finding — and use the
+datum rather than testing land; they stay. `ECOLOGY_OCEAN`, `OCEAN_AMPLITUDE` and
+`OCEAN_PRECIP` are **output sentinels** marking "this field has no value here",
+a property of each output; they stay too.
+
+The actual predicate was written out six times in two polarities — `e <= SEA_LEVEL
+&& !dry` in seasonality, precipitation and biomes, its negation `e > SEA_LEVEL ||
+dry` in ocean currents. Logically identical with the same short-circuit, so
+extracting it was bit-exact.
+
+`isLandAt(elevation, dryLand)` now lives in `elevationScale.ts`, beside
+`SEA_LEVEL`, because that file is by its own account the one place that says what
+a height means. `isLandAtCell(...)` in `climateField.ts` samples the coarse grid
+and applies it — definition with the datum, sampling with the samplers, and
+`elevation/` still must not import `climate/`.
+
+What makes it more than a sign test is the `dryLand` term: a terminal basin below
+sea level holding no water IS land, and every field that skips ocean has to skip
+it the same way or the biome map and the ecology mask disagree about one cell.
+
+**Deliberately unchanged:** ecology, migration and hydrology still derive land
+from `precipitation !== OCEAN_PRECIP`. That is the same mask propagated through a
+field, not a second definition — precipitation writes the sentinel exactly where
+the ocean test says ocean. Passing the mask explicitly instead is a signature
+change and belongs to C2, where the field contracts are drawn.
 
 **C2. Field contracts for the live path too.** `LayerSpec`/`WORLD_LAYERS`
 describe only the save side today. The live path has **no contract at all** —

@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell, shiftedYNorm } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { sampleBilinearGrid } from '../core/field'
@@ -54,8 +54,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      const e = sampleElevationAtCell(elevation, gx, gy, worldW, worldH)
-      ocean[i] = e <= SEA_LEVEL && !sampleDryLandAtCell(dryLand, gx, gy, worldW, worldH) ? 1 : 0
+      ocean[i] = isLandAtCell(elevation, dryLand, gx, gy, worldW, worldH) ? 0 : 1
       evap[i] = evaporation(temperature[i])
       if (ocean[i]) {
         rainFrac[i] = CLIMATE_TUNING.precipBaseRainout

@@ -1,6 +1,5 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { SEA_LEVEL } from '../elevation/elevationScale'
 import { sampleBilinearGrid } from '../core/field'
 import { wrapValue } from '../core/field'
 
@@ -25,7 +24,7 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
   const land = new Uint8Array(n)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
-      land[gy * RX + gx] = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) > SEA_LEVEL || sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight) ? 1 : 0
+      land[gy * RX + gx] = isLandAtCell(elevation, dryLand, gx, gy, worldWidth, worldHeight) ? 1 : 0
     }
   }
 
@@ -82,7 +81,7 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
   const land = new Uint8Array(n)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
-      land[gy * RX + gx] = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) > SEA_LEVEL || sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight) ? 1 : 0
+      land[gy * RX + gx] = isLandAtCell(elevation, dryLand, gx, gy, worldWidth, worldHeight) ? 1 : 0
     }
   }
 

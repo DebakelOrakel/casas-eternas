@@ -2,6 +2,8 @@
 // large-scale and smooth, so a small raster + sampling is plenty (see
 // docs/decisions/climate-biomes.md). Elevation is read from the full-res field
 // where fine detail matters (lapse, and later orographic rain shadow).
+import { isLandAt } from '../elevation/elevationScale'
+
 export const CLIMATE_RES_X = 256
 export const CLIMATE_RES_Y = 128
 
@@ -57,4 +59,21 @@ export function sampleElevationAtCell(
   const worldX = Math.min(worldWidth - 1, Math.floor(((gridX + 0.5) / CLIMATE_RES_X) * worldWidth))
   const worldY = Math.min(worldHeight - 1, Math.floor(((gridY + 0.5) / CLIMATE_RES_Y) * worldHeight))
   return elevation[worldY * worldWidth + worldX]
+}
+
+// The land test on the CLIMATE grid: sample the full-res elevation and the
+// dry-basin mask at this coarse cell, then apply the one definition. Callers
+// used to inline both samples and the comparison; six copies, two polarities.
+export function isLandAtCell(
+  elevation: Float32Array,
+  dryLand: Uint8Array | null | undefined,
+  gridX: number,
+  gridY: number,
+  worldWidth: number,
+  worldHeight: number,
+): boolean {
+  return isLandAt(
+    sampleElevationAtCell(elevation, gridX, gridY, worldWidth, worldHeight),
+    sampleDryLandAtCell(dryLand, gridX, gridY, worldWidth, worldHeight),
+  )
 }

@@ -1,6 +1,5 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell, shiftedYNorm } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { SEA_LEVEL } from '../elevation/elevationScale'
 import { wrapValue } from '../core/field'
 
 const RX = CLIMATE_RES_X
@@ -25,7 +24,7 @@ function computeContinentality(elevation: Float32Array, worldWidth: number, worl
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      if (sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) <= SEA_LEVEL && !sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight)) {
+      if (!isLandAtCell(elevation, dryLand, gx, gy, worldWidth, worldHeight)) {
         dist[i] = 0
         queue.push(i)
       }
@@ -67,7 +66,7 @@ export function computeSeasonalAmplitude(elevation: Float32Array, worldWidth: nu
     const ampLat = CLIMATE_TUNING.seasonMaxAmplitude * phi
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      const ocean = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) <= SEA_LEVEL && !sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight)
+      const ocean = !isLandAtCell(elevation, dryLand, gx, gy, worldWidth, worldHeight)
       amplitude[i] = ocean ? OCEAN_AMPLITUDE : ampLat * (CLIMATE_TUNING.seasonCoastDamp + (1 - CLIMATE_TUNING.seasonCoastDamp) * continentality[i])
     }
   }

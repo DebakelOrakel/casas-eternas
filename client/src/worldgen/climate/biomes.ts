@@ -1,6 +1,6 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, sampleDryLandAtCell, sampleElevationAtCell } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { SEA_LEVEL } from '../elevation/elevationScale'
+import { SEA_LEVEL, isLandAt } from '../elevation/elevationScale'
 import { sampleBilinearWorld, wrapValue } from '../core/field'
 
 const RX = CLIMATE_RES_X
@@ -253,7 +253,7 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
       const world = wy * worldWidth + wx
       const here = elevation[world]
       const dry = !!(dryLand && dryLand[world])
-      if (here <= SEA_LEVEL && !dry) {
+      if (!isLandAt(here, dry)) {
         biomes[world] = Biome.Ocean
         continue
       }
@@ -279,7 +279,7 @@ export function computeBiomes(temperature: Float32Array, precipitation: Float32A
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       const cellElevation = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
-      if (cellElevation <= SEA_LEVEL && !sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight)) {
+      if (!isLandAtCell(elevation, dryLand, gx, gy, worldWidth, worldHeight)) {
         biomes[i] = Biome.Ocean
         continue
       }

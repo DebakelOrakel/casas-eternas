@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-09
+- **changed** Structure: "is this cell land" is one function instead of six inlined copies in two polarities.
 - **new** Structure: a save-format round-trip check guards quantisation, the recipe layout and the identity hashes.
 - **changed** Structure: every generator slider's range and default is declared once instead of retyped in the markup, the label and the load path.
 - **changed** Structure: the worldgen modules keep their tuning constants in one hashable object each.
