@@ -34,6 +34,12 @@ type Module interface {
 	Close() error
 }
 
+// CapabilitiesPath says which modules this process runs. Public, and that is a
+// decision rather than an oversight: it is what the client probes to tell a
+// server that is down from one it is merely not logged in to, and answering 401
+// here would report every logged-out user as "server unreachable".
+const CapabilitiesPath = "/v1/capabilities"
+
 // shutdownGrace bounds how long in-flight requests may finish after a signal.
 // Uploading a world is the long pole here, hence seconds rather than the
 // millisecond-scale value a pure API would use.
@@ -41,7 +47,13 @@ const shutdownGrace = 15 * time.Second
 
 // Run mounts every module, serves until interrupted, then shuts down cleanly.
 // It closes the modules on the way out regardless of how it leaves.
-func Run(ctx context.Context, cfg config.Server, modules []Module) (err error) {
+//
+// `gate` wraps the finished mux — see Gate. It is a parameter rather than
+// something built here because the exempt paths belong to the MODULES, and this
+// package deliberately knows about none of them: a module only has to have the
+// three methods above to be mountable, and importing one here to read a path
+// constant would trade that away. cmd/ composes, so cmd/ names them.
+func Run(ctx context.Context, cfg config.Server, modules []Module, gate func(http.Handler) http.Handler) (err error) {
 	if validateErr := cfg.Validate(); validateErr != nil {
 		return validateErr
 	}
@@ -70,7 +82,7 @@ func Run(ctx context.Context, cfg config.Server, modules []Module) (err error) {
 	// to decide whether a configured server is actually answering — config.json
 	// says where the storage is, this says what it can do, and only the storage
 	// itself knows the latter.
-	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET "+CapabilitiesPath, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(map[string]any{"modules": names})
@@ -81,9 +93,16 @@ func Run(ctx context.Context, cfg config.Server, modules []Module) (err error) {
 		return err
 	}
 
+	// Wrapped AFTER every module has mounted, so the gate covers routes it was
+	// never told about — including any added later.
+	var handler http.Handler = mux
+	if gate != nil {
+		handler = gate(mux)
+	}
+
 	srv := &http.Server{
 		Addr:      cfg.Listen,
-		Handler:   mux,
+		Handler:   handler,
 		TLSConfig: tlsConfig,
 		// A world upload is large and a bake request is slow, so no
 		// write timeout; the read header timeout still fends off a

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -42,18 +43,18 @@ func Start(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	modules, err := buildModules(targets)
+	modules, gate, err := buildModules(targets)
 	if err != nil {
 		return err
 	}
 
 	slog.Info("starting", "targets", targets.Names())
-	return server.Run(cmd.Context(), srv, modules)
+	return server.Run(cmd.Context(), srv, modules, gate)
 }
 
 // buildModules constructs exactly the selected modules, in a fixed order so
 // mounting and shutdown are reproducible rather than map-order dependent.
-func buildModules(targets config.Targets) ([]server.Module, error) {
+func buildModules(targets config.Targets) ([]server.Module, func(http.Handler) http.Handler, error) {
 	var modules []server.Module
 
 	// Resolved ONCE and handed to every module that needs it. Three modules
@@ -61,11 +62,11 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 	// told drifts from the value the server enforces.
 	authMode, err := config.ParseAuthMode(viper.GetString(flagAuthMode))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	caller, login, err := buildAuth(authMode)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Mounted whenever there is something to log in to, regardless of --target:
 	// a deployment serving only the artifact store still has to let its callers
@@ -77,21 +78,21 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 	if targets.Has(config.TargetClient) {
 		m, err := client.New(client.Config{Dir: viper.GetString(flagDirClient), AuthMode: authMode})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetWorld) {
 		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorlds), Identity: caller})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetArtifacts) {
 		m, err := artifacts.New(artifacts.Config{Dir: viper.GetString(flagDirArtifacts)})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		modules = append(modules, m)
 	}
@@ -105,11 +106,20 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 			MaxConcurrent: viper.GetInt(flagBakeMax),
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		modules = append(modules, m)
 	}
-	return modules, nil
+	// THE PUBLIC SURFACE, in one readable list. Everything else under /v1/ needs
+	// a caller (see server.Gate). Named here because this is where every module
+	// is already known — the server package deliberately knows about none of
+	// them, and the alternative of repeating three string literals is how a path
+	// stops being exempt without anyone deciding that it should.
+	return modules, server.Gate(caller, []string{
+		client.ConfigPath,       // where the API is and how to log in
+		server.CapabilitiesPath, // "is this server answering", asked while logged out
+		session.Path,            // the login endpoint itself
+	}), nil
 }
 
 // bakerPath resolves --baker, defaulting to the bundle beside the binary.

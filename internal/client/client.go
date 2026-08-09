@@ -68,13 +68,18 @@ type runtimeConfig struct {
 	AuthMode string `json:"authMode"`
 }
 
+// ConfigPath is the discovery document, and it must answer before anyone has
+// authenticated: a client that cannot read it cannot learn where to log in.
+// Named here so the gate can exempt it without repeating the literal.
+const ConfigPath = "/config.json"
+
 // Mount claims the client's routes.
 //
 // /config.json is registered BEFORE the catch-all, and wins: Go's ServeMux
 // prefers the more specific pattern regardless of registration order, but
 // stating it here saves the next reader the trip to the documentation.
 func (m *Module) Mount(mux *http.ServeMux) error {
-	mux.HandleFunc("GET /config.json", m.serveConfig)
+	mux.HandleFunc("GET "+ConfigPath, m.serveConfig)
 	// No directory means "tell the client where the API is, serve no files" —
 	// exactly what a dev run wants, where vite serves the app and proxies here.
 	// A directory that was NAMED and is missing is a different thing entirely,

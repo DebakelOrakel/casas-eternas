@@ -1,7 +1,7 @@
 ---
 summary: How the server establishes who is asking. Three modes stay — but `token` becomes `password`, because the axis that matters is WHERE the users live, not what the header looks like. Credentials are an htpasswd file mounted from a Secret; logging in exchanges them for a JWT the server issues itself; OIDC later is a second login method feeding the same token, not a second token. Four paths stay public so a logged-out client can find out where to log in. Revocation is decided (short TTL plus refresh, revoked by a per-user stamp) but not yet built. The user file lives in the writable data directory rather than the Secret, because the planned admin screen has to be able to add users.
 date: 2026-08-09
-status: decided, sequenced in seven steps. STEPS 1–4 BUILT 2026-08-09 — mode, htpasswd, tokens, and `POST /v1/session`. The server is usable with `curl -u`; nothing is PROTECTED yet, which is step 5
+status: decided, sequenced in seven steps. STEPS 1–5 BUILT 2026-08-09 — the server authenticates and enforces. What is left is the client: telling it where to log in, and a form to do it with
 ---
 
 # Server authentication
@@ -359,11 +359,34 @@ Two things the wiring taught:
   and nonsense are all refused identically — while the owner's own session is
   not. The audience split earns itself there, from the enforcement side.
 
-**5. 401 for everything else.** The four public paths are declared as **data** in
-one place, not as conditions scattered across handlers — a public path is a
-decision, and a decision spread over five files is one somebody will make
-differently. The regression to guard: `none` mode must still let everything
-through.
+**5. 401 for everything else. BUILT 2026-08-09.**
+
+The rule came out shorter than the plan assumed, because reading the actual route
+table showed it was already true: **everything under `/v1/` needs a caller,
+except the paths named exempt.** Everything outside `/v1/` is the browser
+application, which has to load before anyone can log in. So there is no list of
+protected paths to maintain — a route added tomorrow is protected by default,
+which is the direction a mistake should fall in.
+
+The exempt list lives at the **composition root** (`cmd/`), not in the server
+package. `server` deliberately knows about no module — a module is mountable
+purely by having three methods — and importing one to read a path constant would
+trade that away. cmd/ already imports every module, so it can name
+`client.ConfigPath`, `server.CapabilitiesPath` and `session.Path` rather than
+repeat three string literals, which is how a path stops being exempt without
+anyone deciding it should.
+
+**The gate does not know about auth modes**, and that is worth more than it
+looks. In `none` mode every caller resolves to `identity.Local`, which is not
+Anonymous, so the gate passes everyone with no special case: the mode is
+expressed once, in the resolver. The test that matters guards the other
+direction — a single-user local server locked out of its own worlds would be the
+worst regression this step could cause.
+
+Verified end to end as well as in tests: `/config.json` and `/v1/capabilities`
+answer 200 while logged out, `/v1/worlds` answers 401 with no credentials and
+with an unverifiable token, and 200 with a session from `curl -u`. In `none` mode
+`/v1/worlds` answers 200 with nothing at all, and `/v1/session` does not exist.
 
 **6. `config.json` gains `login`.** Server side, plus the client's
 `serverStatus.ts` reading it. Still no form — the client can now say *that* it
