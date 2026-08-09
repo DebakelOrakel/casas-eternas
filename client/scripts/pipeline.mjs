@@ -45,6 +45,11 @@ const H = 128
 // silently passes on a world that cannot change. Measured at this size: 0% crust
 // at epoch 5, 68% by epoch 41, ~5 ms per epoch.
 const ARCHEAN_EPOCHS = 20
+// The slider's own default. Worth stating rather than picking a round number:
+// riverDensity runs 0..100, and a first draft of this file fed it 0.5 — which is
+// not "half" but the sparsest network the control can ask for, so two very
+// different requests came back identical.
+const RIVER_DENSITY = 55
 
 let failures = 0
 const check = (name, ok, detail = '') => {
@@ -379,7 +384,7 @@ test('the stages compute, in order, on one world', async () => {
 
   p.dispatch({ type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
-  p.dispatch({ type: 'computeHydrology', riverDensity: 0.5 })
+  p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
   await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
   p.dispatch({ type: 'computeEcology' })
   await until(() => p.count('ecologyData') >= 1, { label: 'ecology' })
@@ -399,7 +404,7 @@ test('INVALIDATION: hydrology follows the terrain, climate does not recompute it
   await growWorld(p)
   p.dispatch({ type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
-  p.dispatch({ type: 'computeHydrology', riverDensity: 0.5 })
+  p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
   await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
   const beforeDischarge = hash(p.last('hydrologyData').discharge)
 
@@ -409,9 +414,33 @@ test('INVALIDATION: hydrology follows the terrain, climate does not recompute it
 
   check('erosion does not silently recompute the climate', p.count('climateData') === climateRuns)
 
-  p.dispatch({ type: 'computeHydrology', riverDensity: 0.5 })
+  p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
   await until(() => p.count('hydrologyData') >= 2, { label: 'hydrology again' })
   check('the same request after erosion re-routes on the new terrain', hash(p.last('hydrologyData').discharge) !== beforeDischarge)
+})
+
+test('a density-only change reuses the routing instead of re-flooding', async () => {
+  // The expensive half (priority-flood routing, discharge, lakes) is cached and
+  // only the channel threshold is re-applied. The contract is visible from
+  // outside: a re-route sends lakes, watersheds and discharge, a density-only
+  // pass sends those three empty and only new river polylines.
+  const p = await freshPipeline()
+  await growWorld(p)
+  p.dispatch({ type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+  await until(() => p.count('climateData') >= 1, { label: 'climate' })
+  p.dispatch({ type: 'computeHydrology', riverDensity: 30 })
+  await until(() => p.count('hydrologyData') >= 1, { label: 'the first routing' })
+  const routed = p.last('hydrologyData')
+  check('a re-route sends lakes, watersheds and discharge', routed.lakeDepth.byteLength > 0 && routed.watersheds.byteLength > 0 && routed.discharge.byteLength > 0)
+
+  p.dispatch({ type: 'computeHydrology', riverDensity: 80 })
+  await until(() => p.count('hydrologyData') >= 2, { label: 'the density-only pass' })
+  const rethresholded = p.last('hydrologyData')
+  check('a density-only change does not re-flood', rethresholded.lakeDepth.byteLength === 0 && rethresholded.watersheds.byteLength === 0 && rethresholded.discharge.byteLength === 0)
+  check('but the river network does change', hash(rethresholded.riverPoints) !== hash(routed.riverPoints))
+  // Riparian reclassification follows the channel set, so it is recomputed every
+  // call rather than cached with the routing.
+  check('the riparian biomes are re-derived anyway', rethresholded.biomes.byteLength > 0)
 })
 
 test('erosion can be stopped mid-pass', async () => {
@@ -443,7 +472,7 @@ test('every message type is dispatchable from a cold start', async () => {
     { type: 'erode', strength: 1, networkRefreshes: 1 },
     { type: 'computeMicroTile' }, { type: 'requestElevationField' },
     { type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 },
-    { type: 'computeHydrology', riverDensity: 0.5 },
+    { type: 'computeHydrology', riverDensity: RIVER_DENSITY },
     { type: 'computeEcology' }, { type: 'computeMigration', origins: [] },
     { type: 'serializeWorld' }, { type: 'resetTectonics' },
     { type: 'archeanStart' }, { type: 'archeanStop' }, { type: 'archeanFinalize' }, { type: 'archeanReset' },

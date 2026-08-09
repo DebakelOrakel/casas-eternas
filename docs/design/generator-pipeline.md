@@ -3,7 +3,7 @@ summary: The generator's runtime pipeline — its state is already stage-shaped 
   declared, which is why invalidation is a set of hand-written rules. The target is the
   chain as data; this records the design, the reset taxonomy and the staged path there.
 date: 2026-08-09
-status: direction agreed, implementation staged — steps 1, 2 and 3a built 2026-08-09
+status: direction agreed, implementation staged — steps 1, 2, 3a and 3b built 2026-08-09
 ---
 
 # The generator pipeline: the chain as data
@@ -182,7 +182,7 @@ order, not thoroughness.
 | 1 | **Transport seam + rename. BUILT 2026-08-09.** `pipeline/messages.ts` (the contract), `pipeline/runtime.ts` (state + handlers, `self`-free), `worldgenWorker.ts` (transport only, 24 lines). | `tsc`, a headless run in Node, a manual click-through |
 | 2 | **The test net. BUILT 2026-08-09.** `client/scripts/pipeline.mjs`, `npm run harness:pipeline`, in `make test`: 21 checks in ~50 s driving the real pipeline headless, both bugs of 2026-08-09 among them as named regression cases. | itself |
 | 3a | **Declare the chain. BUILT 2026-08-09.** `pipeline/stages.ts` — seven stages with `dependsOn`, `kind`, inputs and outputs, plus `downstreamOf(id)`. Nothing reads it yet. | nine checks in the harness, tying it to `fieldSpec` and `WORLD_SPEC_FIELDS` |
-| 3b | **Result per stage.** The `last*` families become one object each. | step 2 |
+| 3b | **Result per stage. BUILT 2026-08-09.** Climate, hydrology and ecology: sixteen `let`s became three nullable result objects, 39 pieces of module state down to 28. | step 2, plus a new check on the cached hydrology path |
 | 3c | **Derive invalidation from the chain.** The hand-written helpers are deleted, not rewritten. | step 2 |
 | 3d | **`resetStage(id)` in both gestures**, on the worker and the screen side; message names follow the stage ids. | step 2 |
 | 4 | **Spec ownership** — the DOM stays the input and stops being the store; the unsaved-changes indicator is the first consumer. | step 2, `tsc` |
@@ -215,6 +215,46 @@ half had been closed. The read half now copies too, so no caller has to remember
 Worth noting for how the net is judged: this was found by a check nobody would
 write from suspicion — "do it twice" — and it is invisible to golden, which never
 sends a message and never deserializes anything.
+
+### What the result objects changed, beyond tidiness
+
+**A flag and two null checks became one question.** The hydrology's re-route
+condition was `hydrologyDirty || !lastHydrologyRouting || !lastHydrologyDischarge`
+— three expressions for "is the cache usable", which could disagree with each
+other. It is now `!hydrology`. The state "dirty, but the arrays are still there"
+stopped being representable.
+
+**Two non-null assertions and a dead branch went with it.** The climate refinement
+inside the hydrology pass re-read `lastClimatePrecip!` after replacing the cache;
+`cacheAndPostClimate` now returns what it cached, so the pass rebinds instead of
+asserting. And the branch guarded by `lastClimateTemperature && lastClimatePrecip`
+was already unreachable — the handler's own entry check required the second, and
+the first is only ever set together with it.
+
+**One invalidation rule was found written out by hand.** `handleResetTectonics`
+set `lastLakeBasinElevations = null` and `hydrologyDirty = true` inline: the exact
+body of `invalidateAfterTopographyChange`, which exists so that rule lives in one
+place. It calls the helper now.
+
+**A gap the chain makes visible, left for 3c.** Going back to the hand-over drops
+the hydrology and nothing else — a computed climate and ecology stay standing on a
+world that no longer exists. `stages.ts` says every stage after tectonics is
+downstream. The rules are still hand-written, so this is exactly what deriving
+them from the edges fixes; changing it now would be a behaviour change inside a
+restructuring step.
+
+**Deliberately not converted:** the terrain. `lastRawElevations` is written by
+genesis, tectonics *and* erosion, so it is the chain's shared substrate rather
+than any one stage's result, and it belongs with the runner. Likewise the live
+Archean and plate simulations, and the presentation state
+(`renderOptions`, `renderInFlight`, the dry-basin/salt-flat render mirrors), which
+is a different concern from stage results and was never part of the `last*`
+families.
+
+One harness bug found while writing the check for the cached path: the tests fed
+`riverDensity: 0.5` into a control that runs 0..100, so "half" was in fact the
+sparsest network it can ask for and two very different requests came back
+identical. The harness now uses the slider's own default and says why.
 
 ## Deliberately not doing
 

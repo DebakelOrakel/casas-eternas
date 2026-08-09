@@ -115,59 +115,92 @@ let preErosionElevations: Float32Array | null = null
 // boundary and returns its partial result (which then becomes lastRawElevations).
 let erosionStopRequested = false
 
-// Hydrology (rivers/lakes) cache. Precipitation from the last computeClimate is
-// the river water source; routing + discharge are the expensive parts, cached
-// so a threshold-only re-extract is cheap. `hydrologyDirty` forces a rebuild
-// after any topography or climate change (set wherever those happen).
-let lastClimatePrecip: Float32Array | null = null
-let lastClimateTemperature: Float32Array | null = null
-let lastClimateSeasonalAmplitude: Float32Array | null = null
-let lastClimateMonsoonIndex: Float32Array | null = null
-// Water-free biomes cached for the ecology step (game/pasture read biome type).
-// Deliberately the COARSE classification, unlike the one that gets displayed and
-// saved: every ecology field is a climate-grid field, and its own ecotone term
-// reads the 4-neighbourhood as regional adjacency. Handing it the fine array
-// would silently redefine "neighbouring biome" from 62 km to 8 km.
-let lastClimateBiomes: Uint8Array | null = null
-// Ocean currents cached for the ecology step (fish upwelling reads them).
-let lastClimateCurrents: Float32Array | null = null
+// A STAGE'S RESULT IS ONE OBJECT — it exists or it does not, never half of it.
+//
+// These were eighteen separate `let`s in three `last<Stage>*` families, which is
+// a struct written as a naming convention. The cost was not the names: it was
+// that "stale" had to be expressed by nulling the right subset, so every
+// invalidation was a hand-written list of assignments to keep correct, and states
+// like "dirty, but the arrays are still there" were representable and meaningless.
+// One object per stage makes freshness structural — see
+// docs/design/generator-pipeline.md and the declared chain in stages.ts.
+//
+// The terrain is deliberately NOT one of these yet: `lastRawElevations` is
+// written by genesis, tectonics AND erosion, so it is the chain's shared
+// substrate rather than one stage's result, and it converts with the runner.
+
+interface ClimateResult {
+  // The inputs that produced it. Kept WITH the result, so "is this stale" can
+  // become a comparison instead of a flag — and so the hydrology's climate
+  // refinement can re-run the chain with the same settings it was given.
+  params: ClimateParams
+  temperature: Float32Array
+  precipitation: Float32Array
+  seasonalAmplitude: Float32Array
+  monsoonIndex: Float32Array
+  // Water-free biomes for the ecology step (game/pasture read biome type).
+  // Deliberately the COARSE classification, unlike the one displayed and saved:
+  // every ecology field is a climate-grid field, and its own ecotone term reads
+  // the 4-neighbourhood as regional adjacency. Handing it the fine array would
+  // silently redefine "neighbouring biome" from 62 km to 8 km.
+  biomes: Uint8Array
+  // Ocean currents for the ecology step (fish upwelling reads them).
+  currents: Float32Array
+}
+let climate: ClimateResult | null = null
+
+// Rivers and lakes. Routing and discharge are the expensive parts, so a
+// density-only re-request reuses this and just re-thresholds the channels; the
+// object being absent IS "re-route needed", which is what `hydrologyDirty` used
+// to say alongside two null checks that could disagree with it.
+interface HydrologyResult {
+  routing: FlowRouting
+  discharge: Float32Array
+  lakeDepth: Float32Array
+  // Terminal basins' exposed floor (computeLakes' LakeFields.saltFlat) — the
+  // SaltFlat biome override's source, carried with the lake depths it came with.
+  saltFlat: Uint8Array | null
+  dryBasin: Uint8Array | null
+  maxDischarge: number
+  meanRunoff: number
+}
+let hydrology: HydrologyResult | null = null
+
+interface EcologyResult {
+  // Cached from the last computeEcology — the initial-migration step reads it as
+  // the population/density driver.
+  carryingCapacity: Float32Array
+}
+let ecology: EcologyResult | null = null
+
 // The last erosion's pre-fill elevations (basins still intact) — the terrain the
 // hydrology runs on, so lakes have depressions to fill. null when the current
 // terrain wasn't produced by erosion (fresh tectonics / restore), in which case
 // hydrology falls back to the final elevations (few lakes — erosion drains them).
 let lastLakeBasinElevations: Float32Array | null = null
-let lastHydrologyRouting: FlowRouting | null = null
-let lastHydrologyDischarge: Float32Array | null = null
-let lastHydrologyLakeDepth: Float32Array | null = null
-// Terminal basins' exposed floor (computeLakes' LakeFields.saltFlat) — the
-// SaltFlat biome override's source, cached with the lake depths it came with.
-let lastHydrologySaltFlat: Uint8Array | null = null
-let lastHydrologyDryBasin: Uint8Array | null = null
-let lastHydrologyMaxDischarge = 0
-let lastHydrologyMeanRunoff = 0
-let hydrologyDirty = true
 
 // The cache-invalidation rules, named. They used to be loose assignments spread
 // across the render path and the message branches, which meant the rules only
-// existed as "whatever those lines happen to do" — the single riskiest thing
-// about this file's ~24 pieces of module state. Naming them puts each rule in one
-// place and makes a caller state its intent rather than its mechanism.
+// existed as "whatever those lines happen to do" — the riskiest thing about this
+// file's module state. Naming them puts each rule in one place and makes a caller
+// state its intent rather than its mechanism.
+//
+// They are still hand-written, and still the thing to be suspicious of: the same
+// rules are already declared as edges in stages.ts, and deriving them from there
+// is the next step.
 
 // New terrain: the drainage network has to be re-routed, and the last erosion's
 // basin snapshot no longer describes it.
 function invalidateAfterTopographyChange(): void {
-  hydrologyDirty = true
+  hydrology = null
   lastLakeBasinElevations = null
 }
 
 // New climate: rivers take their water from precipitation, so the discharge is
 // stale even though the terrain hasn't moved.
 function invalidateAfterClimateChange(): void {
-  hydrologyDirty = true
+  hydrology = null
 }
-// Carrying-capacity field cached from the last computeEcology — the initial-
-// migration step reads it as the population/density driver.
-let lastEcologyCarryingCapacity: Float32Array | null = null
 
 // Event markers no longer live here — they moved to the main thread as
 // wall-clock-faded overlay markers driven by the forwarded sim events (see
@@ -617,7 +650,6 @@ interface ClimateParams {
   humidity: number
   equatorOffset: number
 }
-let lastClimateParams: ClimateParams | null = null
 
 // One climate pass, v1 or v2: the full chain in its load-bearing order — base
 // temperature → wind → ocean currents (SST adjusts temperature) → seasonal
@@ -644,13 +676,19 @@ function computeClimateChain(elevation: Float32Array, width: number, height: num
 
 // Cache copies for hydrology/ecology (the message buffers get transferred,
 // which would neuter retained references), then hand the fields to the screen.
-function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>): void {
-  lastClimatePrecip = chain.seasonal.annual.slice()
-  lastClimateTemperature = chain.temperature.slice()
-  lastClimateSeasonalAmplitude = chain.seasonalAmplitude.slice()
-  lastClimateMonsoonIndex = chain.seasonal.index.slice()
-  lastClimateBiomes = chain.biomes.slice()
-  lastClimateCurrents = chain.currents.slice()
+// Returns what it cached: the hydrology's climate refinement needs the new result
+// immediately, and taking it from the return value rather than reading the module
+// variable back is what removes the non-null assertions that used to follow.
+function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, params: ClimateParams): ClimateResult {
+  climate = {
+    params,
+    temperature: chain.temperature.slice(),
+    precipitation: chain.seasonal.annual.slice(),
+    seasonalAmplitude: chain.seasonalAmplitude.slice(),
+    monsoonIndex: chain.seasonal.index.slice(),
+    biomes: chain.biomes.slice(),
+    currents: chain.currents.slice(),
+  }
   const climateMessage: WorkerClimateDataMessage = {
     type: 'climateData',
     resX: CLIMATE_RES_X,
@@ -664,6 +702,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>): voi
     biomes: chain.biomesFine.buffer as ArrayBuffer,
   }
   emit(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.biomes])
+  return climate
 }
 
 function handleComputeClimate(message: Extract<WorkerInboundMessage, { type: 'computeClimate' }>): void {
@@ -671,43 +710,46 @@ function handleComputeClimate(message: Extract<WorkerInboundMessage, { type: 'co
   // is climate v1 — the optimistic mask where every sub-sea cell is water.
   // The hydrology handler refines it (v2) once the terminal basins are known.
   if (!sim || !lastRawElevations) return
-  lastClimateParams = {
+  const params: ClimateParams = {
     temperatureOffset: message.temperatureOffset,
     temperatureContrast: message.temperatureContrast,
     humidity: message.humidity,
     equatorOffset: message.equatorOffset,
   }
-  const chain = computeClimateChain(lastRawElevations, sim.width, sim.height, lastClimateParams)
-  cacheAndPostClimate(chain)
+  cacheAndPostClimate(computeClimateChain(lastRawElevations, sim.width, sim.height, params), params)
   invalidateAfterClimateChange()
 }
 
 function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: 'computeHydrology' }>): void {
-  // Needs the current topography + a climate precip (rivers' water source).
-  if (!sim || !lastRawElevations || !lastClimatePrecip) return
+  // Needs the current topography + a computed climate (rivers' water source).
+  if (!sim || !lastRawElevations || !climate) return
   const { riverDensity } = message
+  const terrain = lastRawElevations
   const width = sim.width
   const height = sim.height
   // Run hydrology on the basins-intact (pre-fill) terrain when erosion produced
   // it, so lakes have depressions to fill and rivers flow into them; otherwise
   // the final drained terrain (few lakes). Same grid, so river/lake coords still
   // line up with the displayed map.
-  const elevation = lastLakeBasinElevations ?? lastRawElevations
-  const precip = lastClimatePrecip
+  const elevation = lastLakeBasinElevations ?? terrain
+  // Bound now: the refinement below replaces the module's climate, and the rest
+  // of this pass must keep reading the one it started from unless it rebinds.
+  let weather = climate
   // Async (the priority-flood routing is a Promise); the onmessage handler is
   // sync, so run it in an IIFE like the erode branch does.
   ;(async () => {
     // Re-route only when topography/climate changed; a density-only tweak
     // reuses the cached routing + discharge + lakes (the expensive parts) and
-    // just re-thresholds the rivers.
+    // just re-thresholds the rivers. An absent result IS "re-route needed".
     let rerouted = false
-    if (hydrologyDirty || !lastHydrologyRouting || !lastHydrologyDischarge) {
-      lastHydrologyRouting = await fillDepressionsAndRouteFlow(elevation, width, height, 0)
-      lastHydrologyDischarge = accumulateDischarge(lastHydrologyRouting, elevation, precip, CLIMATE_RES_X, CLIMATE_RES_Y)
-      lastHydrologyMaxDischarge = maxDischargeOverLand(lastHydrologyDischarge, elevation)
-      lastHydrologyMeanRunoff = meanLandRunoff(precip, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
-      if (lastClimateTemperature && lastClimatePrecip) {
-        let lakes = computeLakes(lastHydrologyRouting, lastHydrologyDischarge, elevation, lastClimateTemperature, lastClimatePrecip, CLIMATE_RES_X, CLIMATE_RES_Y)
+    let result = hydrology
+    if (!result) {
+      const routing = await fillDepressionsAndRouteFlow(elevation, width, height, 0)
+      let discharge = accumulateDischarge(routing, elevation, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
+      let maxDischarge = maxDischargeOverLand(discharge, elevation)
+      let meanRunoff = meanLandRunoff(weather.precipitation, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+      {
+        let lakes = computeLakes(routing, discharge, elevation, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
         // CLIMATE REFINEMENT (v2, k=1): the balance levels above were computed
         // against climate v1's optimistic mask (every sub-sea cell = water).
         // If any terminal basin exposed dry floor, that floor is LAND — rerun
@@ -720,55 +762,45 @@ function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: '
         // second-decimal correction nobody can see.
         let hasDry = false
         for (let i = 0; i < lakes.dryBasin.length; i++) if (lakes.dryBasin[i]) { hasDry = true; break }
-        if (hasDry && lastClimateParams && lastRawElevations) {
-          const chain = computeClimateChain(lastRawElevations, width, height, lastClimateParams, lakes.dryBasin)
+        if (hasDry) {
+          const chain = computeClimateChain(terrain, width, height, weather.params, lakes.dryBasin)
           // Update the caches + screen WITHOUT invalidateAfterClimateChange():
           // the very next lines recompute the dependent hydrology themselves,
-          // and flagging hydrologyDirty here would force a needless full
+          // and dropping the hydrology result here would force a needless full
           // re-route on the next call.
-          cacheAndPostClimate(chain)
-          lastHydrologyDischarge = accumulateDischarge(lastHydrologyRouting, elevation, lastClimatePrecip!, CLIMATE_RES_X, CLIMATE_RES_Y)
-          lastHydrologyMaxDischarge = maxDischargeOverLand(lastHydrologyDischarge, elevation)
-          lastHydrologyMeanRunoff = meanLandRunoff(lastClimatePrecip!, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
-          lakes = computeLakes(lastHydrologyRouting, lastHydrologyDischarge, elevation, lastClimateTemperature!, lastClimatePrecip!, CLIMATE_RES_X, CLIMATE_RES_Y)
+          weather = cacheAndPostClimate(chain, weather.params)
+          discharge = accumulateDischarge(routing, elevation, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
+          maxDischarge = maxDischargeOverLand(discharge, elevation)
+          meanRunoff = meanLandRunoff(weather.precipitation, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+          lakes = computeLakes(routing, discharge, elevation, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
         }
-        lastHydrologyLakeDepth = lakes.depth
-        lastHydrologySaltFlat = lakes.saltFlat
-        lastHydrologyDryBasin = lakes.dryBasin
         // Terrain truth: repaint the map with the dry basin floors as land
         // (salt band + basin rock, real hillshade). skipInvalidation — this
-        // render shows the hydrology we JUST computed; flagging the caches
-        // dirty would force a pointless full re-route on the next call.
+        // render shows the hydrology we JUST computed; dropping the result here
+        // would force a pointless full re-route on the next call.
         renderDryBasin = lakes.dryBasin
         renderSaltFlat = lakes.saltFlat
-        if (lastRawElevations) await renderAndPost(lastRawElevations, false, 1, true)
-      } else {
-        lastHydrologyLakeDepth = new Float32Array(width * height)
-        lastHydrologySaltFlat = null
-        lastHydrologyDryBasin = null
+        await renderAndPost(terrain, false, 1, true)
+        result = { routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, maxDischarge, meanRunoff }
       }
-      hydrologyDirty = false
+      hydrology = result
       rerouted = true
     }
-    const threshold = channelThreshold(densityToCriticalArea(riverDensity), lastHydrologyMeanRunoff)
-    const rivers = extractRiverPolylines(lastHydrologyRouting, lastHydrologyDischarge, elevation, threshold, lastHydrologyMaxDischarge)
+    const threshold = channelThreshold(densityToCriticalArea(riverDensity), result.meanRunoff)
+    const rivers = extractRiverPolylines(result.routing, result.discharge, elevation, threshold, result.maxDischarge)
     // Lakes only change on a re-route; a density-only call sends an empty buffer.
-    const lakeOut = rerouted && lastHydrologyLakeDepth ? lastHydrologyLakeDepth.slice() : new Float32Array(0)
+    const lakeOut = rerouted ? result.lakeDepth.slice() : new Float32Array(0)
     // Watersheds + the raw discharge field: re-route only, same contract.
-    const watershedsOut = rerouted && lastHydrologyRouting ? computeWatersheds(lastHydrologyRouting, elevation) : new Uint16Array(0)
-    const dischargeOut = rerouted && lastHydrologyDischarge ? lastHydrologyDischarge.slice() : new Float32Array(0)
+    const watershedsOut = rerouted ? computeWatersheds(result.routing, elevation) : new Uint16Array(0)
+    const dischargeOut = rerouted ? result.discharge.slice() : new Float32Array(0)
     // Riparian biome reclassification depends on the channel set (so it moves
     // with the density knob) — recompute every call when climate is available.
     // Uses the display terrain (lastRawElevations) so land/ocean matches the map.
-    let biomesOut: Uint8Array = new Uint8Array(0)
+    const riparian = computeRiparianBiomes(result.routing, terrain, result.discharge, threshold, result.maxDischarge, result.lakeDepth, weather.precipitation, weather.temperature, weather.seasonalAmplitude, weather.monsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, result.saltFlat ?? undefined, result.dryBasin ?? undefined)
     // The riparian-effective precipitation rides along: it is what lets the
     // worldmap reclassify at bake resolution without re-running hydrology.
-    let precipEffOut: Float32Array = new Float32Array(0)
-    if (lastRawElevations && lastClimateTemperature && lastClimateSeasonalAmplitude && lastClimateMonsoonIndex && lastHydrologyLakeDepth) {
-      const riparian = computeRiparianBiomes(lastHydrologyRouting, lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, lastClimatePrecip ?? precip, lastClimateTemperature, lastClimateSeasonalAmplitude, lastClimateMonsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, lastHydrologySaltFlat ?? undefined, lastHydrologyDryBasin ?? undefined)
-      biomesOut = riparian.biomes
-      precipEffOut = riparian.precipEff
-    }
+    const biomesOut = riparian.biomes
+    const precipEffOut = riparian.precipEff
     const hydrologyMessage: WorkerHydrologyDataMessage = {
       type: 'hydrologyData',
       riverPoints: rivers.points.buffer as ArrayBuffer,
@@ -778,7 +810,7 @@ function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: '
       precipitationEffective: precipEffOut.buffer as ArrayBuffer,
       watersheds: watershedsOut.buffer as ArrayBuffer,
       discharge: dischargeOut.buffer as ArrayBuffer,
-      maxDischarge: lastHydrologyMaxDischarge,
+      maxDischarge: result.maxDischarge,
     }
     emit(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge])
   })()
@@ -789,20 +821,20 @@ function handleComputeEcology(message: Extract<WorkerInboundMessage, { type: 'co
   // productivity + pasture) plus the current elevation (arable slope) and the
   // sim's volcanoes (province layer). Noise seeded from warpSeed. Fresh arrays,
   // so every field buffer transfers.
-  if (!sim || !lastRawElevations || !lastClimateTemperature || !lastClimatePrecip || !lastClimateBiomes || !lastClimateCurrents) return
+  if (!sim || !lastRawElevations || !climate) return
   // Hydrology (discharge/lakes) is optional here — if it hasn't been computed
   // yet, fish falls back to its marine component; the ecology panel re-triggers
   // this once hydrology lands (see WorldGenScreen's chaining).
   const cratonAge = computeCratonOldnessField(sim.rafts, sim.epoch, CLIMATE_RES_X, CLIMATE_RES_Y, sim.width, sim.height)
   const eco = computeEcology({
-    temperature: lastClimateTemperature,
-    precipitation: lastClimatePrecip,
-    biomes: lastClimateBiomes,
-    currents: lastClimateCurrents,
+    temperature: climate.temperature,
+    precipitation: climate.precipitation,
+    biomes: climate.biomes,
+    currents: climate.currents,
     elevation: lastRawElevations,
-    discharge: lastHydrologyDischarge,
-    maxDischarge: lastHydrologyMaxDischarge,
-    lakeDepth: lastHydrologyLakeDepth,
+    discharge: hydrology?.discharge ?? null,
+    maxDischarge: hydrology?.maxDischarge ?? 0,
+    lakeDepth: hydrology?.lakeDepth ?? null,
     volcanoes: collectVolcanoes(sim.features),
     // Collision belts for tin/lode-gold/gems: current fold mountains (on-crust)
     // + the accumulated (advected) deep-time sutures.
@@ -820,7 +852,7 @@ function handleComputeEcology(message: Extract<WorkerInboundMessage, { type: 'co
   })
   // Cache a copy of carrying capacity BEFORE the buffers below are transferred
   // (transfer neuters them) — the migration step reads it.
-  lastEcologyCarryingCapacity = eco.fields.carryingCapacity.slice()
+  ecology = { carryingCapacity: eco.fields.carryingCapacity.slice() }
   const fields = Object.entries(eco.fields).map(([id, data]) => ({ id, data: data.buffer as ArrayBuffer }))
   const ecologyMessage: WorkerEcologyDataMessage = {
     type: 'ecologyData',
@@ -834,9 +866,9 @@ function handleComputeEcology(message: Extract<WorkerInboundMessage, { type: 'co
 function handleComputeMigration(message: Extract<WorkerInboundMessage, { type: 'computeMigration' }>): void {
   // Needs ecology's carrying capacity (density) + the current climate/hydrology
   // for the cost field. Discharge is downsampled to the coarse grid for river corridors.
-  if (!sim || !lastRawElevations || !lastClimatePrecip || !lastEcologyCarryingCapacity) return
-  const coarseDischarge = lastHydrologyDischarge ? downsampleMax(lastHydrologyDischarge, sim.width, sim.height, CLIMATE_RES_X, CLIMATE_RES_Y) : null
-  const mig = computeMigration(lastEcologyCarryingCapacity, lastClimatePrecip, lastRawElevations, coarseDischarge, lastHydrologyMaxDischarge, message.origins, sim.width, sim.height, {
+  if (!sim || !lastRawElevations || !climate || !ecology) return
+  const coarseDischarge = hydrology ? downsampleMax(hydrology.discharge, sim.width, sim.height, CLIMATE_RES_X, CLIMATE_RES_Y) : null
+  const mig = computeMigration(ecology.carryingCapacity, climate.precipitation, lastRawElevations, coarseDischarge, hydrology?.maxDischarge ?? 0, message.origins, sim.width, sim.height, {
     spreadBudget: message.spreadBudget,
     seaCrossing: message.seaCrossing,
   })
@@ -1039,8 +1071,11 @@ function handleResetTectonics(): void {
   sim = deserializePlateSimulation(handoverSnapshot, handoverOceanAge.slice(), handoverMantle.slice())
   lastRawElevations = null
   preErosionElevations = null
-  lastLakeBasinElevations = null
-  hydrologyDirty = true
+  // Was these two rules written out by hand, which is what the named helper
+  // exists to prevent. It still only reaches the hydrology: going back to the
+  // hand-over leaves a computed climate and ecology standing, which the declared
+  // chain says it should not. That is step 3c's to fix, not a move's.
+  invalidateAfterTopographyChange()
   // No initial events under the raft model — a continent is a raft spanning
   // several plates, so there's no per-plate "continent created" moment to
   // announce at handover/reset; real continent events (collision/breakup/
