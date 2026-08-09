@@ -10,11 +10,15 @@ below.
 
 ```
 core/       mapConfig, toroidal, rng, field (the shared samplers), minHeap, interpolation
-archean/    the Archean era; hands over to tectonics via finalizeArchean.ts
-tectonics/  plate*, boundary*, mantleField, oceanAge, terrainFeatures, volcanoes,
-            tectonicsParams (all tuning constants), epoch/ (the per-epoch phases)
+mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends only
+            on core/ and crust/ and never on tectonics/
+archean/    the Archean era; hands over to tectonics via finalizeArchean.ts, which
+            is the ONLY archean file that may import from tectonics/
+tectonics/  plate*, boundary*, oceanAge, terrainFeatures, volcanoes,
+            tectonicsParams (tuning constants), epoch/ (the per-epoch phases)
 crust/      continental crust as rafts — deliberately decoupled from the plates
-            (docs/decisions/continental-crust-rafts.md)
+            (docs/decisions/continental-crust-rafts.md); crustTuneParams holds the
+            raft rules both eras pass in
 elevation/  elevationScale (what a height MEANS), elevationField, domainWarp, ridgedNoise
 surface/    flowRouting, erosion, hydrology, amplify, deltaGrowth, tileErosion
 climate/ ecology/ migration/ render/ worldSave/

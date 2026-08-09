@@ -1,6 +1,4 @@
-import type { PlateSeed } from './plateSeeds'
-import type { PlateMotion } from './plateMotion'
-import { toroidalDistanceSq, wrappedDelta } from '../core/toroidal'
+import { toroidalDistanceSq } from '../core/toroidal'
 import { wrapValue } from '../core/field'
 import { sampleMembershipField } from '../crust/raftField'
 
@@ -15,6 +13,16 @@ import { sampleMembershipField } from '../crust/raftField'
 // resulting flow (a bounded function of a bounded field), avoiding force-
 // integration runaway. Reuses the ocean-current streamfunction pattern
 // (Gauss-Seidel Poisson).
+//
+// LIVES IN ITS OWN MODULE because BOTH eras run on it: five files in `archean/`
+// and five in `tectonics/` read this field, so filing it under either one made
+// the other import across a boundary for its own substrate. It sat in
+// `tectonics/` for historical reasons only.
+//
+// The fit itself — `fitMotionsToFlow` — deliberately does NOT live here. It
+// takes plate seeds and returns plate motions, so keeping it would have made
+// the substrate depend on the thing riding on it. It is in
+// `tectonics/plateMotion.ts` with the types it speaks in.
 
 export const MANTLE_RES_X = 128
 export const MANTLE_RES_Y = 64
@@ -217,49 +225,4 @@ export function computeMantleFlow(field: Float32Array): Float32Array {
     }
   }
   return flow
-}
-
-// Fits each plate's rigid motion {drift, spin} to the mantle flow under its
-// footprint (every coarse mantle cell assigned to its nearest plate seed →
-// least-squares rigid fit about that seed). This is the TARGET motion; the caller
-// blends it with the previous motion for inertia. centroid = current seed.
-export function fitMotionsToFlow(seeds: PlateSeed[], flow: Float32Array, worldWidth: number, worldHeight: number): PlateMotion[] {
-  const n = seeds.length
-  const sumUx = new Float64Array(n)
-  const sumUy = new Float64Array(n)
-  const sumCross = new Float64Array(n)
-  const sumRsq = new Float64Array(n)
-  const count = new Int32Array(n)
-  for (let gy = 0; gy < RY; gy++) {
-    const wy = ((gy + 0.5) / RY) * worldHeight
-    for (let gx = 0; gx < RX; gx++) {
-      const wx = ((gx + 0.5) / RX) * worldWidth
-      let best = 0
-      let bestSq = Infinity
-      for (let p = 0; p < n; p++) {
-        const d = toroidalDistanceSq(wx, wy, seeds[p].x, seeds[p].y, worldWidth, worldHeight)
-        if (d < bestSq) {
-          bestSq = d
-          best = p
-        }
-      }
-      const i = gy * RX + gx
-      const ux = flow[i * 2]
-      const uy = flow[i * 2 + 1]
-      const rx = wrappedDelta(wx, seeds[best].x, worldWidth)
-      const ry = wrappedDelta(wy, seeds[best].y, worldHeight)
-      sumUx[best] += ux
-      sumUy[best] += uy
-      sumCross[best] += rx * uy - ry * ux
-      sumRsq[best] += rx * rx + ry * ry
-      count[best] += 1
-    }
-  }
-  return seeds.map((seed, p) => ({
-    driftX: count[p] ? sumUx[p] / count[p] : 0,
-    driftY: count[p] ? sumUy[p] / count[p] : 0,
-    spin: sumRsq[p] > 1e-6 ? sumCross[p] / sumRsq[p] : 0,
-    centroidX: seed.x,
-    centroidY: seed.y,
-  }))
 }

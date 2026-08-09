@@ -1,5 +1,6 @@
 import { computeMembershipField } from '../../crust/raftField'
-import { MANTLE_RES_X, MANTLE_RES_Y, computeMantleFlow, evolveMantleField, fitMotionsToFlow } from '../mantleField'
+import { MANTLE_RES_X, MANTLE_RES_Y, computeMantleFlow, evolveMantleField } from '../../mantle/mantleField'
+import { fitMotionsToFlow } from '../plateMotion'
 import { MANTLE_COUPLING_RATE } from '../tectonicsParams'
 import type { PlateSimulation } from '../plateSimulationTypes'
 

@@ -1,6 +1,6 @@
 import type { Raft, RaftBlob } from '../crust/raftTypes'
 import { raftField } from '../crust/raftField'
-import { MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
+import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { toroidalDistanceSq } from '../core/toroidal'
 import { SHORELINE_FIELD } from '../elevation/elevationScale'
 

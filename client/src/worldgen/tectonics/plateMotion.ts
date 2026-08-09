@@ -1,6 +1,7 @@
 import type { PlateSeed } from './plateSeeds'
-import { rotateAroundCenter, wrappedDelta } from '../core/toroidal'
+import { rotateAroundCenter, toroidalDistanceSq, wrappedDelta } from '../core/toroidal'
 import { wrapValue } from '../core/field'
+import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 
 // Flat-torus analog of a real tectonic plate's Euler-pole rotation, stored in a
 // RIGID-BODY form: a drift (translation) plus a spin (rotation about the plate's
@@ -88,4 +89,53 @@ export function reversePointByMotion(x: number, y: number, motion: PlateMotion, 
   const untranslatedX = x - motion.driftX * step
   const untranslatedY = y - motion.driftY * step
   return rotateAroundCenter(untranslatedX, untranslatedY, motion.centroidX, motion.centroidY, -motion.spin * step, width, height)
+}
+
+// Fits each plate's rigid motion {drift, spin} to the mantle flow under its
+// footprint (every coarse mantle cell assigned to its nearest plate seed →
+// least-squares rigid fit about that seed). This is the TARGET motion; the caller
+// blends it with the previous motion for inertia. centroid = current seed.
+//
+// Lives here rather than beside the field it reads: it speaks PlateSeed in and
+// PlateMotion out, so keeping it in `mantle/` would have made the substrate
+// depend on what rides on it. It iterates the MANTLE grid, hence the import.
+export function fitMotionsToFlow(seeds: PlateSeed[], flow: Float32Array, worldWidth: number, worldHeight: number): PlateMotion[] {
+  const n = seeds.length
+  const sumUx = new Float64Array(n)
+  const sumUy = new Float64Array(n)
+  const sumCross = new Float64Array(n)
+  const sumRsq = new Float64Array(n)
+  const count = new Int32Array(n)
+  for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
+    const wy = ((gy + 0.5) / MANTLE_RES_Y) * worldHeight
+    for (let gx = 0; gx < MANTLE_RES_X; gx++) {
+      const wx = ((gx + 0.5) / MANTLE_RES_X) * worldWidth
+      let best = 0
+      let bestSq = Infinity
+      for (let p = 0; p < n; p++) {
+        const d = toroidalDistanceSq(wx, wy, seeds[p].x, seeds[p].y, worldWidth, worldHeight)
+        if (d < bestSq) {
+          bestSq = d
+          best = p
+        }
+      }
+      const i = gy * MANTLE_RES_X + gx
+      const ux = flow[i * 2]
+      const uy = flow[i * 2 + 1]
+      const rx = wrappedDelta(wx, seeds[best].x, worldWidth)
+      const ry = wrappedDelta(wy, seeds[best].y, worldHeight)
+      sumUx[best] += ux
+      sumUy[best] += uy
+      sumCross[best] += rx * uy - ry * ux
+      sumRsq[best] += rx * rx + ry * ry
+      count[best] += 1
+    }
+  }
+  return seeds.map((seed, p) => ({
+    driftX: count[p] ? sumUx[p] / count[p] : 0,
+    driftY: count[p] ? sumUy[p] / count[p] : 0,
+    spin: sumRsq[p] > 1e-6 ? sumCross[p] / sumRsq[p] : 0,
+    centroidX: seed.x,
+    centroidY: seed.y,
+  }))
 }

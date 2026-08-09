@@ -7,7 +7,7 @@ import { computeRaftLabelPlacements } from './raftLabelLayout'
 import type { ElevationRenderPool } from './elevationRenderPool'
 import { upscaleBilinearToroidal } from '../core/field'
 import { computeOwnerField } from '../crust/raftField'
-import { MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
+import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { applyErosionDetailTexture } from './erosionDetailTexture'
 import { reliefShadeAt } from './reliefShade'
 

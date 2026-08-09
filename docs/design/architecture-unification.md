@@ -1,7 +1,7 @@
 ---
 summary: Plan for two connected rebuilds — a `world` module as the single, provenance-carrying place world data is queried, and a shared module architecture in the generator (separated tuning and input parameters, declared slider ranges, a real WorldSpec type). Includes the order of work, the safety net it needs first, and what is deliberately excluded.
 date: 2026-08-09
-status: Part 0 (the safety net) BUILT 2026-08-09; parts A–D not started. Order and boundaries decided, detail questions listed at the end
+status: Parts 0 (safety net) and A (module boundaries) BUILT 2026-08-09, both verified byte-identical; B–D not started. Order and boundaries decided, detail questions listed at the end
 ---
 
 # Architecture unification: world-data access and module contracts
@@ -148,14 +148,34 @@ Before the parameters, because it is cheap and because it defines *what a module
 is* before we start adding files per module. Pure moves, no logic change — the
 hash baseline must come back identical.
 
-**A1. Extract `mantle/`.** `tectonics/mantleField.ts` is used by **five archean
+**BUILT 2026-08-09**, and verified the way this part demanded: 38 of 38 stages
+byte-identical on all three seeds, `tsc` green, no import cycle introduced.
+
+**A1. Extract `mantle/`.** `tectonics/mantleField.ts` was used by **five archean
 files and five tectonics files**, plus the worker and the renderer. It is not a
-tectonics concern but the substrate both eras run on. It sits in `tectonics/` for
-historical reasons.
+tectonics concern but the substrate both eras run on, and it sat in `tectonics/`
+for historical reasons.
+
+It could not move as one file, which the plan had assumed. `fitMotionsToFlow`
+takes plate seeds and returns plate motions, so carrying it along would have made
+the substrate depend on what rides on it — the exact inversion the extraction
+exists to remove. It was the *only* thing pulling those types in, and its only
+caller is `epoch/mantleCoupling.ts`, so it moved to `tectonics/plateMotion.ts`
+where both types live. `mantle/` now imports `core/` and `crust/raftField` and
+nothing else.
 
 **A2. Move the raft constants to `crust/`.** `MERGE_OVERLAP_FACTOR` and
-`RAFT_CONNECT_FACTOR` live in `tectonicsParams.ts` but are used by archean, crust
-and tectonics. They are raft constants.
+`RAFT_CONNECT_FACTOR` now live in `crust/crustTuneParams.ts`.
+
+The plan's reasoning was wrong in one detail worth recording, because it changes
+what the file is. `crust/` does **not** import them — it takes them as function
+parameters (`mergeOverlappingRafts(rafts, overlapFactor, …)`), which is what lets
+the Archean pass its own values where it deliberately differs. So this is not a
+hidden dependency being relocated to its owner; it is the shared *default* that
+both callers agree on, given a home neither era owns.
+
+**Result:** of the five files in `archean/`, only `finalizeArchean.ts` still
+imports from `tectonics/` — the handover itself, one file, one direction.
 
 **Not: merging archean and tectonics.** The coupling decomposes cleanly. After
 A1/A2, exactly **one** of the five archean files still imports from `tectonics/`:

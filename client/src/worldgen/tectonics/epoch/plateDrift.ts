@@ -1,7 +1,7 @@
 import { toroidalDistanceSq } from '../../core/toroidal'
 import { derivePlateTypes } from '../../crust/raftField'
 import { advanceRafts, recycleUnstabilisedCrust } from '../../crust/raftLifecycle'
-import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantleField'
+import { MANTLE_RES_X, MANTLE_RES_Y } from '../../mantle/mantleField'
 import { advectOceanAge } from '../oceanAge'
 import { advancePointByMotion, getVelocityAt } from '../plateMotion'
 import { advancePlumes } from '../plumes'

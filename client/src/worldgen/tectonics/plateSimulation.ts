@@ -1,5 +1,5 @@
 import { generateDetectionLattice } from './boundaryLattice'
-import { createMantleField } from './mantleField'
+import { createMantleField } from '../mantle/mantleField'
 import { mulberry32 } from '../core/rng'
 import { derivePlateTypes } from '../crust/raftField'
 import { DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y } from './tectonicsParams'

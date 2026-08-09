@@ -1,7 +1,7 @@
 import type { ArcheanSimulation } from './archeanState'
 import type { Raft } from '../crust/raftTypes'
 import { mulberry32 } from '../core/rng'
-import { MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
+import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 
 // Saving a world that is still in the Archean.
 //

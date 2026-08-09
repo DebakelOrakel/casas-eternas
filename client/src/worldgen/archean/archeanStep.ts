@@ -3,8 +3,8 @@ import type { NucleationParams } from './crustNucleation'
 import { DEFAULT_NUCLEATION_PARAMS, findNucleationSites, nucleateCrust } from './crustNucleation'
 import { computeMembershipField } from '../crust/raftField'
 import { advanceRaftsOnFlow, compactRafts, consolidateRaftBlobs, mergeOverlappingRafts, recycleUnstabilisedCrust, splitDisconnectedRafts } from '../crust/raftLifecycle'
-import { evolveMantleField, computeMantleFlow, sustainMantleVigour, MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
-import { MERGE_OVERLAP_FACTOR, RAFT_CONNECT_FACTOR } from '../tectonics/tectonicsParams'
+import { evolveMantleField, computeMantleFlow, sustainMantleVigour, MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { MERGE_OVERLAP_FACTOR, RAFT_CONNECT_FACTOR } from '../crust/crustTuneParams'
 
 export interface ArcheanParams {
   nucleation: NucleationParams

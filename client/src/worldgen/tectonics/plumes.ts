@@ -1,6 +1,6 @@
 import { toroidalDistanceSq } from '../core/toroidal'
 import { sampleNearestWorld } from '../core/field'
-import { MANTLE_RES_X, MANTLE_RES_Y } from './mantleField'
+import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 
 // Mantle plumes, derived from the mantle field rather than scattered at random.
 //

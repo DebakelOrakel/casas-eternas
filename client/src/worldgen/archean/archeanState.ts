@@ -1,7 +1,7 @@
 import type { Raft } from '../crust/raftTypes'
 import type { SeededRandom } from '../core/rng'
 import { mulberry32, hashSeedString } from '../core/rng'
-import { createMantleField, MANTLE_RES_X, MANTLE_RES_Y } from '../tectonics/mantleField'
+import { createMantleField, MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 
 // The Archean world state — see docs/decisions/archean-genesis.md.
 //

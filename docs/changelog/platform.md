@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-09
+- **changed** Structure: the mantle field and the shared raft constants left `tectonics/`, so only the handover file still crosses that boundary.
 - **new** Structure: the golden harness can freeze per-stage byte hashes for the length of a refactor.
 - **fixed** Structure: the harness guarded only the coarse biome field, and its land-classification check could never fire.
 
