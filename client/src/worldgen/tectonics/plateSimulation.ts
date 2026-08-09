@@ -56,16 +56,39 @@ export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationS
 
 export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: Float32Array, mantle?: Float32Array): PlateSimulation {
   const lattice = generateDetectionLattice(snap.width, snap.height, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
+  // COPIED out of the snapshot, not adopted from it. serializePlateSimulation
+  // hands back the sim's own arrays and says so; this is the mirror half, and it
+  // was missing. A snapshot read from a file is usually thrown away immediately,
+  // which is why it went unnoticed — but the tectonics reset keeps ONE snapshot in
+  // memory and restores from it repeatedly, so the sim built by the first reset
+  // went on writing its own drift into the state it was meant to be able to return
+  // to. Measured 2026-08-09: the first resetTectonics landed on the hand-over
+  // exactly, every later one on a world drifted by however far tectonics had run
+  // since the previous reset — and differently each time.
+  //
+  // One structuredClone rather than a hand-written field list: a copy list is a
+  // second place to remember when a field is added, and the field that gets
+  // forgotten is the one that reintroduces this.
+  const owned = structuredClone({
+    seeds: snap.seeds,
+    motions: snap.motions,
+    ages: snap.ages,
+    rafts: snap.rafts,
+    features: snap.features,
+    // Old saves predate these two — see the notes at their use below.
+    hotspots: snap.hotspots ?? [],
+    sutures: snap.sutures ?? [],
+  })
   return {
     width: snap.width,
     height: snap.height,
     initialPlateCount: snap.initialPlateCount,
-    seeds: snap.seeds,
-    rafts: snap.rafts,
-    types: derivePlateTypes(snap.seeds, snap.rafts, snap.width, snap.height),
-    motions: snap.motions,
-    ages: snap.ages,
-    features: snap.features,
+    seeds: owned.seeds,
+    rafts: owned.rafts,
+    types: derivePlateTypes(owned.seeds, owned.rafts, snap.width, snap.height),
+    motions: owned.motions,
+    ages: owned.ages,
+    features: owned.features,
     epoch: snap.epoch,
     archeanEpochs: snap.archeanEpochs ?? 0,
     seaLevelOffset: snap.seaLevelOffset ?? 0,
@@ -89,11 +112,11 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
     // regenerated one. The fallback RNG is independent of `random` so it cannot
     // disturb the bit-identical continuation.
     mantle: mantle ?? createMantleField(mulberry32((snap.warpSeed ^ 0x5bd1e995) >>> 0)),
-    hotspots: snap.hotspots ?? [],
+    hotspots: owned.hotspots,
     // Old saves predate the suture cache — start empty; sutures re-accumulate as
     // the restored world keeps colliding continents (deep-time record is lost for
     // pre-existing saves, but never crashes). See P1.
-    sutures: snap.sutures ?? [],
+    sutures: owned.sutures,
   }
 }
 
