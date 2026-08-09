@@ -267,24 +267,100 @@ needs already exists — it reports over `POST /v1/bakes/{id}/progress` as of
 returns no `Result` today on the grounds that fetching the pod's log back would
 be a second connection; that objection is spent.
 
-## What comes first: proving equivalence
+## A split bake is not the whole bake. Measured 2026-08-09
+
+Before writing any region-limited erosion, the physics was tested without it: a
+job that owns one catchment was simulated by drowning everything outside its
+region and halo to abyssal depth — which makes those cells not-land and makes
+them the outlet the flood drains to, exactly a job's view — and the result
+compared against the same catchment eroded as part of the whole world. Same
+`runErosionPass`, same params, both sides.
+
+The three largest catchments of the harness world, at 512×256 over two rounds,
+differences in metres on a 9000 m scale:
+
+| halo | mean \|Δ\| | cells over 10 m | worst |
+|---|---|---|---|
+| 0 | 211–260 m | 43–60 % | 2570 m |
+| 2 | 18–36 m | 18–25 % | 794 m |
+| 4 | 0.7–1.2 m | 0.7–3.1 % | 146 m |
+| 8 | 0.05–0.27 m | 0.0–0.7 % | 59 m |
+| 16 | 0.00–0.21 m | 0.0–0.7 % | 58 m |
+
+**The halo works, and then it stops.** The mean falls by three orders of
+magnitude and a halo of 8 is plainly enough for it. The worst case does not
+follow: between halo 8 and halo 16 it moves from 49.4 m to 49.4 m and from 58.6 m
+to 58.4 m. A boundary effect would keep shrinking; this does not, so it is not
+one.
+
+What is left is 12 cells out of 3650 differing by more than 10 m. Their cause is
+structural rather than marginal: **the partition is derived from the MACRO
+drainage while the erosion runs on the FINE one.** A cell just inside a macro
+divide can, on the amplified terrain, drain the other way — so computed alone it
+never receives water the whole world gave it. Closed basins straddling the divide
+are one instance of this and, checked directly, not the main one: the worst cell
+in the largest catchment sits in no basin at all.
+
+Chasing exactness is a dead end, and cheaply shown to be: a partition faithful to
+the fine grid needs a flood over the fine grid, which is the global pass the whole
+split exists to avoid.
+
+### What that costs: the artifact key
+
+This is the part that matters more than the numbers. Step 1 was written expecting
+to "bake it whole, bake it decomposed, compare byte for byte". That comparison
+will never come out equal, so it cannot be the gate — and if both ways of baking
+stay available, two machines produce different bytes under one key, which is the
+exact failure the cache cannot survive.
+
+The way out is not to close the gap but to remove the choice: **the split IS the
+bake, at every tier.** A single machine runs the same N regions in sequence and
+gets the same bytes as N machines running them at once, because the partition is
+a deterministic function of the macro raster and nothing in it depends on who
+executes it. Determinism — the property the cache actually needs — is kept in
+full. Equivalence to an undivided bake is given up knowingly, and it is a thing
+no reader ever asks for.
+
+"At every tier" sounds like it costs the small bakes something, and it does not,
+because **N = 1 is today's bake exactly.** Give `planBake` a budget larger than
+the world and it returns one group holding every catchment; a region-limited pass
+over a region that covers all the land has nothing to limit, no halo to speak of,
+and everything outside it is already ocean. The masking is a no-op and the
+arithmetic is unchanged, byte for byte.
+
+So there is no mode, no threshold and no second code path — the tier chooses a
+budget, and the budget chooses N. A 4K bake in the browser can keep running as
+one region and still be the same function the cluster runs at 16K with thirty.
+That is worth more than the megabytes: two erosion paths, where the tested one is
+the small one and the cluster runs the other, is the failure this design should
+be least willing to buy.
+
+Which turns the harness check around. It cannot be "the same as whole"; it is
+"the same however it is scheduled", and `npm run harness:amplify` can make it: run
+one world region by region in one process, twice, in different orders.
+
+## What comes first: proving reproducibility
 
 The bake's terrain is an explicitly documented blind spot — the golden harness
-does not cover it. A decomposed bake that produces *almost* the same field is
-exactly the failure nobody sees, and it would poison every cached artifact under
-a key that claims to describe the undecomposed one.
+did not cover it, which is why step 1 exists. The instinct was to gate the split
+on producing the same field as an undivided bake. **The measurement above
+retired that**: it produces almost the same field, and "almost" was exactly the
+failure this section was written to prevent.
 
-So before any of the above: bake a small world whole, bake it decomposed, compare
-byte for byte. Everything after that is cheap to verify; without it, none of it
-is verifiable at all.
+So the gate is the other property, and it is the one the artifact cache actually
+rests on: **a split bake must be reproducible, not equivalent.** Same world, same
+plan, same bytes — whoever runs the regions, in whatever order, on however many
+machines. That is checkable in one process and does not need a cluster to fail
+honestly.
 
 ## Order of work
 
-1. **The equivalence check. BUILT 2026-08-09** as `npm run harness:amplify`:
+1. **The whole-bake check. BUILT 2026-08-09** as `npm run harness:amplify`:
    invariants, determinism and an opt-in byte baseline over a 256×128 macro baked
    at factor 2, in 13 s. It is the "whole bake" half of the comparison, and it
    closes a gap that existed regardless of splitting — the bake's terrain was
-   covered by nothing at all. The decomposed half plugs in beside it at step 3.
+   covered by nothing at all. What it can NOT become is the decomposed half of a
+   byte-for-byte comparison; see the measurement above.
 2. **Catchment labelling in the macro pre-pass. BUILT 2026-08-09** as
    `worldgen/surface/bakePlan.ts`: one deterministic pass over the macro raster
    producing the labels, the two world-wide scalars and the packed job list, in
@@ -304,9 +380,25 @@ is verifiable at all.
    `fillDepressionsAndRouteFlow` still carries the `bounded` parameter from the
    micro-tile prototype, which is what a region needs.
 
-   **Enter this one knowing a job is a cell set and not a rectangle** — see the
-   measurement above. This is also the step that supplies the budget the packing
-   should become locality-aware against.
+   **Enter this one knowing three things measured before it was written:** a job
+   is a cell set and not a rectangle; a halo of 8 fine cells is enough and 16 buys
+   nothing; and N = 1 must come out byte-identical to today's pass, which is both
+   the compatibility guarantee and the easiest possible first test of the new
+   code.
+
+   It splits in two, and the first half is the one carrying the risk:
+
+   - **3a — the region-limited pass over full-size arrays.** Buys TIME only:
+     N machines each doing 1/N of the per-cell work, every one still holding the
+     raster. Verifiable in one process, and the place the physics either works or
+     does not.
+   - **3b — sparse tile storage, so a job holds only the tiles it touches.**
+     Buys MEMORY, which is the half 16K actually needs (a 16384² Float32 layer is
+     537 MB and the pass holds a dozen). Pure engineering, entered with 3a's
+     checks already standing.
+
+   This step also supplies the budget the packing should become locality-aware
+   against.
 4. **Fan-out into N jobs plus a completion barrier.** The job model gains parents
    and children, and progress becomes a weighted sum of theirs — the reporting
    built 2026-08-09 is what makes that possible.
