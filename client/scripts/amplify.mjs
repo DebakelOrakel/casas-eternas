@@ -50,6 +50,7 @@ const L = (p) => server.ssrLoadModule(p)
 const M = {
   amplify: await L('/src/worldgen/surface/runAmplification.ts'),
   scale: await L('/src/worldgen/elevation/elevationScale.ts'),
+  plan: await L('/src/worldgen/surface/bakePlan.ts'),
 }
 
 let failures = 0
@@ -95,6 +96,28 @@ function precipitation(resX, resY) {
     }
   }
   return field
+}
+
+// A world that genuinely WRAPS, for the one check that needs it. Integer
+// harmonics only, so the field is continuous across both seams — which is what
+// makes a catchment straddle x = 0 and a toroidal bounding box mean something.
+// Deliberately not the shared macroWorld: see the check that uses it.
+function wrappingWorld() {
+  const { SEA_LEVEL, LAND_BASE, SHELF_BREAK, ABYSSAL_FLOOR } = M.scale
+  const elevation = new Float32Array(MACRO_W * MACRO_H)
+  for (let y = 0; y < MACRO_H; y++) {
+    for (let x = 0; x < MACRO_W; x++) {
+      const u = (x / MACRO_W) * Math.PI * 2
+      const v = (y / MACRO_H) * Math.PI * 2
+      // A single continent centred on x = 0, so the seam runs through its middle
+      // rather than round its edge.
+      const height = 0.9 * Math.cos(u) * Math.cos(v) + 0.35 * Math.cos(u * 2) * Math.sin(v * 3) - 0.1
+      elevation[y * MACRO_W + x] = height > 0
+        ? SEA_LEVEL + LAND_BASE * height * 3
+        : SEA_LEVEL + Math.max(ABYSSAL_FLOOR, SHELF_BREAK + height * 2)
+    }
+  }
+  return elevation
 }
 
 const CLIMATE_RES_X = 64
@@ -199,6 +222,123 @@ console.log('— invariants')
   // Deltas are the one mechanism meant to raise sea floor, and they are capped
   // by a depth-graded freeboard — so this stays small even when it is not zero.
   check('nothing below sea level rises far', overM(worstBelowSea) < 150, `${overM(worstBelowSea).toFixed(1)} m`)
+}
+
+// --- 1b. the bake plan -------------------------------------------------------
+//
+// `planBake` is the cut a split bake is made along
+// (docs/design/splitting-the-bake.md, step 2), and the property it must have is
+// the one its name claims: a PARTITION. Every land cell in exactly one job, no
+// job holding a cell twice, ocean in none. Get that wrong in either direction
+// and the failure is invisible in a rendered map — a cell in two jobs is eroded
+// twice and a cell in none keeps its seeded height, and both look like terrain.
+console.log('\n— the bake plan')
+{
+  const { SEA_LEVEL } = M.scale
+  const elevation = macroWorld()
+  const precip = precipitation(CLIMATE_RES_X, CLIMATE_RES_Y)
+  const args = {
+    elevation, width: MACRO_W, height: MACRO_H,
+    precipitation: precip, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
+  }
+  let land = 0
+  for (let i = 0; i < elevation.length; i++) if (elevation[i] > SEA_LEVEL) land++
+
+  // A budget that forces several jobs, because a plan of one is a partition
+  // trivially and would prove nothing about the packing.
+  const budgetCells = Math.ceil(land / 6)
+  const plan = await M.plan.planBake({ ...args, budgetCells })
+
+  check('the plan splits the world into jobs', plan.groups.length > 1, `${plan.groups.length} jobs, ${land} land cells`)
+
+  const owner = new Int32Array(65536).fill(-1)
+  let claimedTwice = 0
+  plan.groups.forEach((group, g) => {
+    for (const label of group.catchments) {
+      if (owner[label] >= 0) claimedTwice++
+      owner[label] = g
+    }
+  })
+  check('no catchment is in two jobs', claimedTwice === 0, `${claimedTwice} are`)
+
+  let unowned = 0
+  let oceanLabelled = 0
+  let counted = 0
+  const perGroup = new Uint32Array(plan.groups.length)
+  for (let i = 0; i < elevation.length; i++) {
+    const label = plan.labels[i]
+    if (elevation[i] <= SEA_LEVEL) {
+      if (label !== M.plan.NO_CATCHMENT) oceanLabelled++
+      continue
+    }
+    const g = owner[label]
+    if (g < 0) { unowned++; continue }
+    perGroup[g]++
+    counted++
+  }
+  check('every land cell belongs to a job', unowned === 0, `${unowned} do not`)
+  check('no ocean cell carries a catchment', oceanLabelled === 0, `${oceanLabelled} do`)
+  check('the jobs together cover the land exactly once', counted === land, `${counted} of ${land}`)
+
+  const mismatched = plan.groups.filter((group, g) => group.cells !== perGroup[g])
+  check('each job knows its own size', mismatched.length === 0, `${mismatched.length} disagree with the raster`)
+
+  // Deterministic, and not incidentally: the packing decides which bytes each
+  // job writes, so a plan that depended on iteration order would make the bake
+  // depend on it too — the one thing the artifact cache cannot survive.
+  const again = await M.plan.planBake({ ...args, budgetCells })
+  const shape = (p) => JSON.stringify(p.groups)
+  check('the same world plans the same way twice', shape(plan) === shape(again))
+
+  // The two scalars every job is handed, so nobody derives a different river
+  // density from their own slice.
+  check('the world-wide thresholds are real numbers', plan.maxDischarge > 0 && plan.meanRunoff > 0,
+    `maxDischarge ${plan.maxDischarge.toFixed(0)}, meanRunoff ${plan.meanRunoff.toFixed(1)}`)
+
+  // Merging small catchments is what keeps the job count sane; the budget is the
+  // only thing stopping it, so a job may exceed it only by being ONE catchment
+  // that is itself too big. Measured on a real world: the largest catchment is
+  // 4.9% of land, so this is not expected to fire at all.
+  const oversized = plan.groups.filter((g) => g.cells > budgetCells && g.catchments.length > 1)
+  check('no job is over budget through packing', oversized.length === 0, `${oversized.length} are`)
+
+  // The box is a diagnostic (see BakeJobGroup), and the only way to get it wrong
+  // is the toroidal one: a min/max box round a catchment straddling the seam
+  // grows to the whole world. So it is checked as containment — on a DIFFERENT
+  // world, for a reason worth writing down.
+  //
+  // `macroWorld` does not wrap. Its `sin(u * 1.5)` is one and a half cycles
+  // across the map, so the field jumps at x = 0 and no catchment ever crosses
+  // it — a naive min/max span passes every check above. Verified by writing one
+  // and watching it stay green. That makes the shared world unable to see this
+  // class of bug at all, so the check brings its own world rather than the
+  // shared one being changed, which would move every number and hash already
+  // recorded against it.
+  const wrapped = await M.plan.planBake({ ...args, elevation: wrappingWorld(), budgetCells })
+  let outside = 0
+  let crossing = 0
+  const inSpan = (v, start, len, size) => len === size || (v - start + size) % size < len
+  const wrapOwner = new Int32Array(65536).fill(-1)
+  wrapped.groups.forEach((group, g) => { for (const label of group.catchments) wrapOwner[label] = g })
+  for (const group of wrapped.groups) if (group.box.x + group.box.w > MACRO_W) crossing++
+  const wrappedElevation = wrappingWorld()
+  for (let y = 0; y < MACRO_H; y++) {
+    for (let x = 0; x < MACRO_W; x++) {
+      const i = y * MACRO_W + x
+      if (wrappedElevation[i] <= SEA_LEVEL) continue
+      const g = wrapOwner[wrapped.labels[i]]
+      if (g < 0) continue
+      const box = wrapped.groups[g].box
+      if (!inSpan(x, box.x, box.w, MACRO_W) || !inSpan(y, box.y, box.h, MACRO_H)) outside++
+    }
+  }
+  // This line is the one that catches the bug, and containment is not — verified
+  // by replacing the wrapping span with a min/max one: a box that has grown to
+  // the whole world CONTAINS everything, so the check below stayed green while
+  // this one went to 0 of 5. Containment proves the box is not too small;
+  // nothing but this proves it is not uselessly large.
+  check('the seam world actually has a job crossing the seam', crossing > 0, `${crossing} of ${wrapped.groups.length}`)
+  check('every job box contains that job, wrapping included', outside === 0, `${outside} cells outside`)
 }
 
 // --- 2. determinism ----------------------------------------------------------

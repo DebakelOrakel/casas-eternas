@@ -2,10 +2,11 @@
 summary: How an amplification bake could be split across machines, and what it would
   cost. The unit is the CATCHMENT, not a rectangle, because nothing flows across a
   divide — which is also why the compute decomposition and the tile decomposition are
-  two different things that must not be conflated. Includes the ocean skip, which pays
-  off with no decomposition at all.
+  two different things that must not be conflated. Measurement removed the one cheap
+  step this plan thought it had: the ocean is already skipped where it costs anything,
+  so 95% of a bake is genuine land work and decomposition is the only lever left.
 date: 2026-08-09
-status: direction agreed. STEP 1 BUILT 2026-08-09 (`npm run harness:amplify`); nothing decomposed yet
+status: direction agreed. STEPS 1-2 BUILT 2026-08-09 (`npm run harness:amplify`, `surface/bakePlan.ts`); nothing decomposed yet. Measurement retired the plan's hardest open question and killed the obvious implementation of step 3
 ---
 
 # Splitting the bake
@@ -56,9 +57,22 @@ This is where 16k comes in, and where the design is easy to get wrong.
 - **Store and serve by tile**, because a viewer wants a rectangle.
 
 The bridge is better than it sounds: **every pixel belongs to exactly one
-catchment**, so two jobs never write the same pixel. There is no merge step and
-no conflict rule — only a completion barrier. A tile is finished when every
-catchment overlapping it is.
+catchment**, so two jobs never write the same pixel. There is no arithmetic at
+the seams — no blending, no averaging, no conflict rule.
+
+**There is still an assembly step, though**, and an earlier draft of this section
+glossed over it. Disjoint PIXELS are not disjoint FILES: a tile is touched by
+several catchments, and the artifact store writes whole blobs (`write(path,
+bytes)` — no random access, by design). So jobs deposit their own pieces, and the
+server composes tiles at the completion barrier: for each tile, read the pieces
+overlapping it, paint them in, write the tile.
+
+That is byte copying rather than a second computation, and it streams — memory is
+one tile, not the whole raster. At 16384×8192 the assembled raster is ~268 MB in
+total and ~2 MB per 1024² tile.
+
+It is also why the server, and not a job, writes the completeness marker: it is
+the one doing the assembling. See below.
 
 ## Sizes: merging is free, splitting is not
 
@@ -77,6 +91,26 @@ So: do not build it until it is needed. Measure whether the largest catchment of
 a quarter-Earth at 16k actually exceeds the budget. If it does not, the hard part
 never has to exist.
 
+### It does not. Measured 2026-08-09, two real worlds
+
+Two 2048×1024 worlds built through the real generator (seeds `alpha` and
+`bravo`, 8.6 % and 14.3 % land), planned by `surface/bakePlan.ts`:
+
+| | alpha | bravo |
+|---|---|---|
+| catchments | 9 327 | 13 760 |
+| largest, as a share of land | **4.9 %** | **6.3 %** |
+| largest, amplified at factor 8 (16 384 px) | 0.56 M cells | 1.2 M cells |
+
+A whole world's land at factor 8 is 11–27 M amplified cells. The largest single
+catchment is a twentieth of that — nowhere near any budget a machine would have.
+**The hard part does not have to exist**, and this is the measurement that says
+so rather than an expectation that it probably would not.
+
+The shape is the expected one for drainage on a random landmass — no dominant
+basin, a long tail — and it held across two worlds with very different land
+fractions, which is why one seed was not left to carry the conclusion.
+
 ## Two numbers that belong to nobody
 
 `maxDischargeOverLand` and `meanLandRunoff` set the channel threshold, and both
@@ -87,6 +121,75 @@ boundary.
 They come from a **macro pre-pass** on the saved raster, which is cheap and needs
 no amplification, and are handed to every job as constants.
 
+## A job is a set of cells, never a rectangle
+
+The obvious way to write step 3 is to hand each job the bounding box of its
+catchments and let it work on that. **Measured 2026-08-09, that is hopeless**,
+and it is worth stating before the code exists rather than after.
+
+A single catchment fills about half of its own toroidal box (median 0.50 and 0.47
+on the two worlds) — a river system reaching from a range to the sea is long and
+bent, not blobby. Pack several catchments into one job and the fill collapses:
+
+| jobs | box fill | boxes together | the land itself |
+|---|---|---|---|
+| 8 | 0.02–0.03 | 4.0–5.8× the world | 0.09–0.14× |
+| 16 | 0.02 | 6.2–8.7× | " |
+| 32 | 0.01 | 9.6–14.8× | " |
+
+A job allocating its box would allocate fifty to a hundred times what it touches,
+and the jobs together would allocate several times the raster the split exists to
+avoid holding.
+
+**Tiles are the better cover, and not a cure.** Counting instead the tiles a
+job's catchments actually touch:
+
+| tile (macro cells) | 8 jobs | 16 jobs | 32 jobs |
+|---|---|---|---|
+| 64 | 0.9× the world | 1.4× | 2.3× |
+| 128 | 1.6× | 2.6× | 4.4× |
+| 256 | 2.7× | 5.0× | 8.8× |
+
+Two to five times tighter than the boxes, and at eight jobs with small tiles it
+is finally *under* one world. But it still grows with the job count, because the
+packing here is by SIZE alone: first-fit-decreasing happily puts two catchments
+on opposite sides of the map in one job. Making the packing locality-aware —
+choosing, among the groups a catchment fits in, the one whose cover grows least —
+is the obvious answer, and it is deliberately not built yet: step 3 is what
+supplies the real budget to tune it against, and a packer tuned against a guessed
+budget is a packer tuned against nothing.
+
+What this settles for now: **the plan's `box` is a diagnostic, not an
+allocation.** It is kept because it makes the locality problem visible in one
+number — a job whose box is most of the map is a job whose catchments have
+nothing to do with each other.
+
+## Label everything: the minimum catchment size is not the overlay's
+
+`computeWatersheds` keeps only basins of at least 200 cells, because colouring
+tens of thousands of one-cell systems reads as noise rather than as a map. For a
+partition that default is actively wrong: everything below it stays unlabelled,
+and unlabelled land has to go somewhere.
+
+Measured on the same two worlds, as a share of all land:
+
+| minimum | alpha | bravo |
+|---|---|---|
+| 200 (the overlay's) | 36.7 % | 35.7 % |
+| 32 | 19.1 % | 18.4 % |
+| 8 | 9.4 % | 8.7 % |
+| **1** | **none** | **none** |
+
+At 200 more than a third of the work lands in one group of scattered coastal
+fragments — the largest job in the plan, and the one spanning the whole map. At 1
+it disappears entirely and costs only labels: 9 327 and 13 760 catchments, both
+comfortably inside the 65 535 the label type allows.
+
+So the plan asks for 1. The fragment group still exists in the code, because a
+world with far more coastline could cross that cap and the overflow would land
+there again — rare, and handled, rather than a partition that quietly stops being
+one.
+
 ## The macro pass is the gate
 
 That pre-pass is not only the two scalars. It is also where the catchments are
@@ -96,26 +199,45 @@ step.
 Which means the ordering needs no new mechanism: without its output there are no
 jobs to start too early. A gate by construction rather than by state.
 
-## The ocean skip, which needs no decomposition at all
+## The ocean skip: already done, measured 2026-08-09
 
-Most of the map is ocean, and it is the cheapest saving available — worth doing
-on its own, and it applies to the 4K browser bake too, which is the measured
-232-second case.
+This section proposed skipping the ocean as the cheapest saving available, worth
+doing before any decomposition. **That was wrong, and the measurement says so.**
 
-But "skip the ocean" must not mean "skip below sea level", and there are **two
-different thresholds** because two different stages care about different things:
+Where a bake actually spends itself, at 1024×512 with two rounds:
 
-- **Erosion and deposition** stop below `SHELF_BREAK` (−140 m). Marine deposition
-  is ON (`depositBelowSeaLevel: true`) and builds the deltas at river mouths, on
-  the shelf, with a depth-graded freeboard. Skipping at sea level would silently
-  remove a shipped feature.
-- **Seeding** — the ridged detail — stops below `SLOPE_FOOT` (−3000 m). Between
-  the two lies the continental slope: three kilometres of relief, a real
-  landform, and visible when descending near a coast. Flattening it to save time
-  on the abyssal plain would be a poor trade.
+| | |
+|---|---|
+| seeding (`amplifyElevation`) | **1 %** |
+| erosion (`runErosionPass`) | **95 %** |
+| hydrology re-run | 4 % |
 
-Both are already named constants in `elevationScale`, which is the module that by
-its own account says what a height MEANS.
+And inside erosion:
+
+| | |
+|---|---|
+| stream power | 70 % |
+| thermal | 22 % |
+| priority flood | 7 % |
+| accumulation | 1 % |
+
+Both hot loops already carry `if (!isLand[cell]) continue`. The ocean is skipped
+where it costs something, and has been since thermal went land-only on
+2026-08-06. What remains over deep water is the seeding — one percent of the
+whole bake, so skipping the abyssal plain would save a quarter of a percent.
+
+The priority flood necessarily covers everything: the ocean is the outlet every
+river drains to, so it is not skippable in principle.
+
+**What this changes.** There is no cheap warm-up step, and the plan is shorter
+for it: the 95 % is genuine land work, so the only levers left are doing less per
+land cell — a tuning question, not an architectural one — or spreading that work
+across machines, which is what the rest of this document is about. The
+decomposition is not an optimisation among several; it is the one available.
+
+The thresholds worked out above (`SHELF_BREAK` for deposition, `SLOPE_FOOT` for
+seeding) are kept here because they remain right for anything that DOES touch the
+sea floor — they simply have nothing to earn today.
 
 ## Who declares an artifact complete
 
@@ -162,21 +284,38 @@ is verifiable at all.
    invariants, determinism and an opt-in byte baseline over a 256×128 macro baked
    at factor 2, in 13 s. It is the "whole bake" half of the comparison, and it
    closes a gap that existed regardless of splitting — the bake's terrain was
-   covered by nothing at all. The decomposed half plugs in beside it at step 4.
-2. **The ocean skip** — value immediately, no decomposition, both bake sizes.
-3. **Catchment labelling in the macro pre-pass**, as an artifact.
-4. **Region-limited erosion and routing.** This is where nearly all the real work
-   is. `fillDepressionsAndRouteFlow` still carries the `bounded` parameter from
-   the micro-tile prototype, which is what a region needs.
-5. **Fan-out into N jobs plus a completion barrier.** The job model gains parents
+   covered by nothing at all. The decomposed half plugs in beside it at step 3.
+2. **Catchment labelling in the macro pre-pass. BUILT 2026-08-09** as
+   `worldgen/surface/bakePlan.ts`: one deterministic pass over the macro raster
+   producing the labels, the two world-wide scalars and the packed job list, in
+   about a second at 2048×1024. Covered by `npm run harness:amplify`, which
+   checks the one property the name claims — that it is a PARTITION: every land
+   cell in exactly one job, no cell twice, no ocean labelled. Both failure modes
+   are invisible in a rendered map (a cell in two jobs is eroded twice, a cell in
+   none keeps its seeded height, and both look like terrain).
+
+   Not yet an artifact. Nothing reads it — the plan is the input to step 3, and
+   giving it a cache key and a store before there is a consumer would fix its
+   format before its shape is known. It is a pure function of the macro raster,
+   so it can be recomputed for the price of a second whenever that changes.
+3. **Region-limited erosion and routing.** This is where nearly all the real work
+   is — 95 % of a bake, and 92 % of that in stream power and thermal, both of
+   which are per-cell over land and therefore exactly what a catchment bounds.
+   `fillDepressionsAndRouteFlow` still carries the `bounded` parameter from the
+   micro-tile prototype, which is what a region needs.
+
+   **Enter this one knowing a job is a cell set and not a rectangle** — see the
+   measurement above. This is also the step that supplies the budget the packing
+   should become locality-aware against.
+4. **Fan-out into N jobs plus a completion barrier.** The job model gains parents
    and children, and progress becomes a weighted sum of theirs — the reporting
    built 2026-08-09 is what makes that possible.
-6. **The server writes the meta**, and the jobs stop doing it — a one-line rule
+5. **The server writes the meta**, and the jobs stop doing it — a one-line rule
    with a fan-out barrier behind it.
-7. **Tiled artifacts.** After which 16k is a question of budget rather than of
+6. **Tiled artifacts.** After which 16k is a question of budget rather than of
    architecture.
 
-Steps 1–3 are small. Step 4 is the project. Steps 5–7 are bookkeeping.
+Steps 1–2 are small. Step 3 is the project. Steps 4–6 are bookkeeping.
 
 ## Related
 
