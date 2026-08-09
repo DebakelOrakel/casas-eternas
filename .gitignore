@@ -54,3 +54,4 @@ client/scripts/golden-hashes.json
 *.crt
 *.ca
 .htpasswd
+client/scripts/amplify-hashes.json

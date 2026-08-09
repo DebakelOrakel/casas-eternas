@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "harness:roundtrip": "node scripts/roundtrip.mjs",
     "harness:pipeline": "node scripts/pipeline.mjs",
+    "harness:amplify": "node scripts/amplify.mjs",
     "harness:golden": "node --max-old-space-size=8192 scripts/golden.mjs",
     "harness:golden:record": "node --max-old-space-size=8192 scripts/golden.mjs record",
     "harness:golden:hash": "node --max-old-space-size=8192 scripts/golden.mjs hash-record",

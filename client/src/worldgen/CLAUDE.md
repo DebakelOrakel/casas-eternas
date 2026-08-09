@@ -69,6 +69,7 @@ not assume; look up which one the field you touched uses.
 ```
 cd client && npm run harness:roundtrip       # the save format; 0.2 s
 cd client && npm run harness:pipeline        # the pipeline's behaviour; ~50 s
+cd client && npm run harness:amplify         # the amplification bake; ~13 s
 cd client && npm run harness:golden          # the generator; ~13 min (4 world builds at 2048×1024)
 cd client && npm run harness:golden:record   # re-record the metric baseline, on purpose
 cd client && npm run harness:golden:hash     # arm the refactor guard (layer 4)
@@ -97,10 +98,13 @@ process. The baseline is machine-local and gitignored; record it where you work.
   mid-flight. Run it after touching anything under `pipeline/`. What it still does
   NOT reach is the screen — panel switching, button state and the DOM half of a
   reset are unguarded.
-- It does **not** cover the amplification bake's terrain. The artifact KEY is
-  guarded (the pipeline version is a stage in layer 4, and `npm run harness:roundtrip`
-  checks that every constant it lists actually moves it), but the baked heights
-  themselves are not.
+- It does **not** cover the amplification bake's terrain — that is
+  `npm run harness:amplify`'s job since 2026-08-09. It bakes a small world
+  through the real `runAmplification` and checks invariants, determinism (which
+  the artifact cache depends on absolutely: two machines baking one world must
+  agree byte for byte) and, opt-in, a byte baseline. The artifact KEY is guarded
+  separately — `npm run harness:roundtrip` checks that every constant
+  AMPLIFY_CONSTANTS lists actually moves the pipeline version.
 - It does **not** cover the save format. That is `npm run harness:roundtrip`'s job —
   quantisation, the recipe's layout, the identity hashes, the artifact bytes and
   the shared zip reader, in 0.2 s. Run it after touching anything under

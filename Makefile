@@ -37,6 +37,7 @@ test:
 	go test ./internal/...
 	cd client && npm run harness:roundtrip
 	cd client && npm run harness:pipeline
+	cd client && npm run harness:amplify
 	cd client && npm run harness:golden
 
 # The bake pipeline, bundled for Node. Lands beside the binary because that is

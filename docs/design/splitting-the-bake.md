@@ -5,7 +5,7 @@ summary: How an amplification bake could be split across machines, and what it w
   two different things that must not be conflated. Includes the ocean skip, which pays
   off with no decomposition at all.
 date: 2026-08-09
-status: direction agreed, nothing built. The equivalence check comes before any of it
+status: direction agreed. STEP 1 BUILT 2026-08-09 (`npm run harness:amplify`); nothing decomposed yet
 ---
 
 # Splitting the bake
@@ -158,7 +158,11 @@ is verifiable at all.
 
 ## Order of work
 
-1. **The equivalence check.**
+1. **The equivalence check. BUILT 2026-08-09** as `npm run harness:amplify`:
+   invariants, determinism and an opt-in byte baseline over a 256×128 macro baked
+   at factor 2, in 13 s. It is the "whole bake" half of the comparison, and it
+   closes a gap that existed regardless of splitting — the bake's terrain was
+   covered by nothing at all. The decomposed half plugs in beside it at step 4.
 2. **The ocean skip** — value immediately, no decomposition, both bake sizes.
 3. **Catchment labelling in the macro pre-pass**, as an artifact.
 4. **Region-limited erosion and routing.** This is where nearly all the real work
