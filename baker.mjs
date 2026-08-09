@@ -11852,6 +11852,7 @@ function createHttpArtifactStore(options) {
 }
 
 // scripts/bake.ts
+var progressIntervalMs = 3e3;
 function createFsArtifactStore(root) {
   const resolve = (path) => {
     const remote = toRemotePath(path);
@@ -11918,6 +11919,34 @@ function authorizedFetch(job) {
     return fetch(input, { ...init, headers });
   };
 }
+function progressReporter(job) {
+  if (!job.artifactsUrl || !job.jobId) return () => {
+  };
+  const url = `${job.artifactsUrl}/bakes/${encodeURIComponent(job.jobId)}/progress`;
+  const send = authorizedFetch(job);
+  let lastSentAt = 0;
+  let lastPhase = "";
+  let complained = false;
+  const complain = (reason) => {
+    if (complained) return;
+    complained = true;
+    process.stderr.write(`progress reporting failed (${reason}); the bake continues without a bar
+`);
+  };
+  return (phase, percent) => {
+    const now = Date.now();
+    if (phase === lastPhase && now - lastSentAt < progressIntervalMs) return;
+    lastPhase = phase;
+    lastSentAt = now;
+    void send(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phase, percent })
+    }).then((response) => {
+      if (!response.ok) complain(`${url} answered ${response.status}`);
+    }).catch((error) => complain(`${url}: ${String(error)}`));
+  };
+}
 function artifactStoreFor(job) {
   if (job.artifactsDir) return createFsArtifactStore(job.artifactsDir);
   if (job.artifactsUrl) {
@@ -11951,6 +11980,7 @@ async function main() {
   if (!inputs) fail("not a readable world archive");
   const started = Date.now();
   let lastPercent = -1;
+  const report = progressReporter(job);
   const result = await runAmplification({
     elevation: inputs.elevations,
     macroWidth: inputs.width,
@@ -11970,6 +12000,7 @@ async function main() {
     lastPercent = percent;
     process.stderr.write(`${JSON.stringify({ phase, percent })}
 `);
+    report(phase, percent);
   });
   const durationMs = Date.now() - started;
   const store = artifactStoreFor(job);

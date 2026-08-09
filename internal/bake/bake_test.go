@@ -28,8 +28,11 @@ type fakeRunner struct {
 	started int32
 	release chan struct{}
 	// The last spec handed over, so a test can inspect what the module decided
-	// to send rather than only what came back.
+	// to send rather than only what came back. `gotSpec` is separate because no
+	// FIELD of a spec is reliably non-empty — JobID was, until a local spec
+	// stopped carrying one, and awaitSpec then waited for ever.
 	lastSpec Spec
+	gotSpec  bool
 }
 
 func newFakeRunner() *fakeRunner { return &fakeRunner{release: make(chan struct{})} }
@@ -40,9 +43,9 @@ func (f *fakeRunner) awaitSpec(t *testing.T) Spec {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		f.mu.Lock()
-		spec := f.lastSpec
+		spec, got := f.lastSpec, f.gotSpec
 		f.mu.Unlock()
-		if spec.JobID != "" {
+		if got {
 			return spec
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -53,7 +56,7 @@ func (f *fakeRunner) awaitSpec(t *testing.T) Spec {
 
 func (f *fakeRunner) Run(ctx context.Context, spec Spec, onProgress func(Progress)) (Result, error) {
 	f.mu.Lock()
-	f.lastSpec = spec
+	f.lastSpec, f.gotSpec = spec, true
 	f.mu.Unlock()
 	atomic.AddInt32(&f.started, 1)
 	now := atomic.AddInt32(&f.running, 1)
@@ -232,6 +235,109 @@ func TestABakeJobCannotOrderBakes(t *testing.T) {
 	// this, so the name itself is the refusal.
 	if m.canBake(auth.SubjectBakeJob, auth.SubjectBakeJob) {
 		t.Error("canBake accepted a job as its own owner — the subject must not be ownable")
+	}
+}
+
+// The endpoint a Kubernetes Job reports through, and the one place the audience
+// pays for itself: the token names a job, so "may this caller report for this
+// job" is one comparison.
+func TestProgressAcceptsOnlyTheJobItBelongsTo(t *testing.T) {
+	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	if err != nil {
+		t.Fatalf("NewTokens: %v", err)
+	}
+	m, runner, dir := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
+	writeWorld(t, dir, testUID, "ada")
+
+	session, _, err := tokens.Issue("ada", auth.AudienceSession, time.Hour)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	accepted := post(m, testUID, `{"stage":2}`, session)
+	if accepted.Code != http.StatusAccepted {
+		t.Fatalf("bake request = %d, want 202", accepted.Code)
+	}
+	// From the response, the way a real client learns it — the spec no longer
+	// carries an id for a local run.
+	var enqueued Job
+	if err := json.NewDecoder(accepted.Body).Decode(&enqueued); err != nil {
+		t.Fatalf("decoding the accepted job: %v", err)
+	}
+	id := enqueued.ID
+	runner.awaitSpec(t)
+
+	report := func(jobID, token, body string) int {
+		request := httptest.NewRequest(http.MethodPost, "/v1/bakes/"+jobID+"/progress", strings.NewReader(body))
+		request.SetPathValue("id", jobID)
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		recorder := httptest.NewRecorder()
+		m.handleProgress(recorder, request)
+		return recorder.Code
+	}
+	own, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience(id), time.Hour)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	other, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("some-other-job"), time.Hour)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	// Everything that is not THIS job is refused — including a perfectly good
+	// user session, which is the point: reporting progress is not something a
+	// person does.
+	for _, c := range []struct{ name, token string }{
+		{"no credentials", ""},
+		{"nonsense", "not-a-token"},
+		{"another job's token", other},
+		{"a user's session", session},
+	} {
+		if code := report(id, c.token, `{"phase":"erosion","percent":50}`); code != http.StatusForbidden {
+			t.Errorf("%s = %d, want 403", c.name, code)
+		}
+	}
+
+	if code := report(id, own, `{"phase":"erosion","percent":50}`); code != http.StatusNoContent {
+		t.Fatalf("the job's own report = %d, want 204", code)
+	}
+	if job, _ := m.jobs.get(id); job.Phase != "erosion" || job.Percent != 50 {
+		t.Errorf("progress not recorded: %+v", job)
+	}
+
+	// Out of range is clamped rather than refused: losing the phase over a
+	// rounding error would be the worse trade.
+	if code := report(id, own, `{"phase":"rivers","percent":140}`); code != http.StatusNoContent {
+		t.Errorf("clamped report = %d, want 204", code)
+	}
+	if job, _ := m.jobs.get(id); job.Percent != 100 {
+		t.Errorf("percent = %d, want it clamped to 100", job.Percent)
+	}
+
+	for _, c := range []struct{ name, body string }{
+		{"not json", "{"},
+		{"no phase", `{"percent":50}`},
+	} {
+		if code := report(id, own, c.body); code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", c.name, code)
+		}
+	}
+
+	// A job that has ended must not be reopened by a late report.
+	close(runner.release)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if done, _ := m.jobs.get(id); done.State != StateRunning {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if code := report(id, own, `{"phase":"erosion","percent":10}`); code != http.StatusNotFound {
+		t.Errorf("a report for a finished job = %d, want 404", code)
+	}
+	if job, _ := m.jobs.get(id); job.State == StateRunning {
+		t.Error("a late report moved a finished job back to running")
 	}
 }
 
@@ -421,14 +527,16 @@ func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
 	}
 	// The path form must not carry empty URL fields: the baker picks its store
 	// by which one is present, so an empty string would be an ambiguous job.
-	for _, key := range []string{"worldUrl", "artifactsUrl", "authToken"} {
+	// jobId is in that list too — a local baker that had one would post progress
+	// to a server it is running inside.
+	for _, key := range []string{"worldUrl", "artifactsUrl", "authToken", "jobId"} {
 		if strings.Contains(string(local), key) {
 			t.Errorf("local spec should omit %s: %s", key, local)
 		}
 	}
 
-	remote, _ := json.Marshal(Spec{Stage: 4, ErosionRounds: 2, WorldURL: "http://s/v1/worlds/x", ArtifactsURL: "http://s/v1", AuthToken: "t"})
-	for _, key := range []string{`"worldUrl":"http://s/v1/worlds/x"`, `"artifactsUrl":"http://s/v1"`, `"authToken":"t"`} {
+	remote, _ := json.Marshal(Spec{Stage: 4, ErosionRounds: 2, WorldURL: "http://s/v1/worlds/x", ArtifactsURL: "http://s/v1", AuthToken: "t", JobID: "j1"})
+	for _, key := range []string{`"worldUrl":"http://s/v1/worlds/x"`, `"artifactsUrl":"http://s/v1"`, `"authToken":"t"`, `"jobId":"j1"`} {
 		if !strings.Contains(string(remote), key) {
 			t.Errorf("remote spec is missing %s: %s", key, remote)
 		}

@@ -52,13 +52,18 @@ type Spec struct {
 	ArtifactsDir string `json:"artifactsDir,omitempty"`
 	ArtifactsURL string `json:"artifactsUrl,omitempty"`
 
-	// Bearer token for the URL form, scoped to this job's artifact key.
+	// Bearer token for the URL form, naming this one job.
 	AuthToken string `json:"authToken,omitempty"`
 
-	// The bake job's id. Never sent to the baker — it has no use for it — but
-	// the cluster runner names its Job object after it, which is what makes a
-	// stray Job traceable back to the request that made it.
-	JobID string `json:"-"`
+	// The bake job's id.
+	//
+	// The cluster runner names its Job object after it, which is what makes a
+	// stray Job traceable back to the request that made it — and since
+	// 2026-08-09 the baker gets it too, because a Job on another node reports
+	// its progress to /v1/bakes/{id}/progress and has to know which id that is.
+	// omitempty, so a local run's spec still carries neither this nor a URL: it
+	// reports over the pipe.
+	JobID string `json:"jobId,omitempty"`
 }
 
 // localRunner spawns the Node baker as a subprocess.

@@ -4,6 +4,8 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-09
+- **fixed** Bake: a cluster bake always pulls the server's current image — a node that already held one kept running an older baker, which files its artifact under a key nobody looks for and reports success.
+- **new** Bake: a bake running in the cluster reports its phase and percentage back, so the progress bar moves for a server-side bake instead of sitting at "working".
 - **fixed** Bake: a bake running as a Kubernetes Job now carries its own credential, scoped to that one job — without it a server that requires a sign-in refused the Job the world it was created to bake.
 - **fixed** Build: the server-side baker is type-checked — it shares code with the browser and was outside every check, so a changed signature compiled cleanly and would have run the bake without credentials.
 - **new** Server: with `--auth-mode password` the API requires a login — `POST /v1/session` exchanges a user and password for a token, and everything under `/v1/` refuses without one.

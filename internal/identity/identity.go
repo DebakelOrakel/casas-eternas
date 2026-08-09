@@ -101,6 +101,32 @@ func (r *Resolver) Caller(req *http.Request) string {
 	return Anonymous
 }
 
+// BakeJob answers WHICH bake job is asking, if one is.
+//
+// The same question Caller answers, at the resolution the progress endpoint
+// needs: a job's token names one job, so this is what turns "may this caller
+// report for this job" into a comparison. It lives here rather than in the bake
+// module for the reason the package exists — a second place resolving a caller
+// would eventually disagree with this one, and a disagreement about identity
+// reads as a permission bug.
+//
+// In the local mode this returns false: nothing is verified there, and the
+// endpoint it serves is unreachable anyway (that runner reports over a pipe).
+func (r *Resolver) BakeJob(req *http.Request) (jobID string, ok bool) {
+	if !r.ChecksIdentity() || r.tokens == nil {
+		return "", false
+	}
+	raw := bearer(req)
+	if raw == "" {
+		return "", false
+	}
+	_, id, err := r.tokens.VerifyBakeJob(raw)
+	if err != nil {
+		return "", false
+	}
+	return id, true
+}
+
 // bearer pulls the credential out of the Authorization header, case-insensitively
 // on the scheme because RFC 7235 says the scheme is not case sensitive and some
 // clients send "bearer".

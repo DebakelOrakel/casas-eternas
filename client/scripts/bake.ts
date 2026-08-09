@@ -40,6 +40,10 @@ import type { ArtifactStore, StorageUsage } from '../src/storage/ArtifactStore'
 //
 // Both go through the same bytes-at-a-path interface, so only the store
 // implementation differs; nothing about the bake itself knows which it is.
+// How often progress may be reported while a phase runs. A bake takes minutes,
+// so seconds are plenty — this is a progress bar, not telemetry.
+const progressIntervalMs = 3000
+
 interface Job {
   // Path to the saved world's .zip, when it is reachable as a file…
   worldZip?: string
@@ -52,8 +56,11 @@ interface Job {
   artifactsDir?: string
   // …or the API base (e.g. "http://server:8080/v1") to PUT them to.
   artifactsUrl?: string
-  // Bearer token for that API, scoped to this job's artifact key.
+  // Bearer token for that API, naming this one job.
   authToken?: string
+  // This job's id, for reporting progress back. Absent for a local run, whose
+  // progress reaches the server over the pipe instead.
+  jobId?: string
 }
 
 // The artifact store's byte-level interface, backed by the filesystem.
@@ -147,6 +154,58 @@ function authorizedFetch(job: Job): (input: string, init?: RequestInit) => Promi
   }
 }
 
+// Reports progress to the server, for a bake that runs somewhere the server
+// cannot watch.
+//
+// A LOCAL run needs none of this: its progress reaches the server over the pipe
+// this same callback already writes to. A Kubernetes Job has no pipe — the API
+// says only pending, running or gone — so it says so itself, over the connection
+// it already uses for the world and the artifacts. See
+// docs/decisions/server-auth.md.
+//
+// Throttled by TIME, not by percent. The stderr line above is one per whole
+// percent, which is right for a log and would be a hundred requests per phase
+// here. A phase CHANGE always goes through: that is the part a reader acts on,
+// and it is worth a request of its own.
+//
+// Fire and forget, deliberately: a bake must not fail because a status update
+// did. A lost report is a stale number for a few seconds.
+//
+// But not SILENT. The first version swallowed every failure, and the symptom of
+// that — a progress bar that never moves — is indistinguishable from an old
+// image, a wrong URL and a refused token. It says so on stderr instead, which is
+// the pod's log and the first place anyone looks; only ONCE, because a report
+// that fails usually fails every time and a log full of the same line is a log
+// nobody reads.
+function progressReporter(job: Job): (phase: string, percent: number) => void {
+  if (!job.artifactsUrl || !job.jobId) return () => {}
+  const url = `${job.artifactsUrl}/bakes/${encodeURIComponent(job.jobId)}/progress`
+  const send = authorizedFetch(job)
+  let lastSentAt = 0
+  let lastPhase = ''
+  let complained = false
+  const complain = (reason: string): void => {
+    if (complained) return
+    complained = true
+    process.stderr.write(`progress reporting failed (${reason}); the bake continues without a bar\n`)
+  }
+  return (phase, percent) => {
+    const now = Date.now()
+    if (phase === lastPhase && now - lastSentAt < progressIntervalMs) return
+    lastPhase = phase
+    lastSentAt = now
+    void send(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phase, percent }),
+    })
+      .then((response) => {
+        if (!response.ok) complain(`${url} answered ${response.status}`)
+      })
+      .catch((error: unknown) => complain(`${url}: ${String(error)}`))
+  }
+}
+
 // The one line that decides where a bake's output lands. Everything above it
 // is identical in both deployments, which is the property worth protecting:
 // the artifacts must be byte-identical wherever the bake ran.
@@ -197,6 +256,7 @@ async function main(): Promise<void> {
   // job status, and keeping stdout clean means the result stays one parseable
   // line no matter how chatty the pipeline gets.
   let lastPercent = -1
+  const report = progressReporter(job)
   const result = await runAmplification({
     elevation: inputs.elevations,
     macroWidth: inputs.width,
@@ -215,6 +275,7 @@ async function main(): Promise<void> {
     if (percent === lastPercent) return
     lastPercent = percent
     process.stderr.write(`${JSON.stringify({ phase, percent })}\n`)
+    report(phase, percent)
   })
 
   const durationMs = Date.now() - started

@@ -58,9 +58,25 @@ spec:
         - name: bake
           # The server's own image: the bake pipeline must be the same commit
           # as the server that commissioned it, because the artifact key
-          # includes a pipeline version and a mismatch fails SILENTLY.
+          # includes a pipeline version and a mismatch fails SILENTLY — the Job
+          # writes its artifact under a key nobody will look for, reports
+          # success, and nothing appears.
           image: {{ .Image }}
-          imagePullPolicy: IfNotPresent
+          # Always, and that is the sentence above enforced rather than hoped
+          # for. With a moving tag like :latest, IfNotPresent means a node that
+          # already holds SOME :latest never fetches another — so the server
+          # updates and the baker does not, which is exactly the mismatch. Found
+          # in the field 2026-08-09: a cluster bake ran an old baker and reported
+          # no progress, because progress reporting was in the newer one.
+          #
+          # The cost is a registry check per bake, against a job that runs for
+          # minutes; cached layers are not re-fetched. The failure it trades for
+          # — an unreachable registry stopping a bake that would have worked —
+          # is loud, and loud beats an artifact filed under the wrong key.
+          #
+          # With an immutable tag or a digest this becomes free, and pinning one
+          # is the better answer whenever the deployment can name it.
+          imagePullPolicy: Always
           command: ["node", "--max-old-space-size=6144", "/app/baker.mjs"]
           args: {{ .Args }}
           resources:

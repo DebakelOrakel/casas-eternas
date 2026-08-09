@@ -240,6 +240,52 @@ One, and only one:
 
 No runner flag, for the reason given under the cluster-only rule.
 
+## The Job must pull, not reuse
+
+Fixed 2026-08-09, found because a cluster bake reported no progress after the
+feature that reports it had shipped.
+
+The template said `imagePullPolicy: IfNotPresent` directly beneath the comment
+explaining that the baker must be the SAME COMMIT as the server, "because the
+artifact key includes a pipeline version and a mismatch fails SILENTLY". With a
+moving tag like `:latest`, IfNotPresent is what makes that mismatch likely: a
+node already holding some `:latest` never fetches another, so the server updates
+and the baker does not. The Job then writes its artifact under a key nobody looks
+for, reports success, and nothing appears.
+
+`Always` now, and a test asserts it. The cost is a registry check per bake — a
+job that runs for minutes, with cached layers not re-fetched — and the failure it
+trades for, an unreachable registry stopping a bake that would have worked, is
+loud. Loud beats an artifact filed under the wrong key.
+
+With an immutable tag or a digest this becomes free, and pinning one is the
+better answer whenever a deployment can name it.
+
+## Saying where it runs
+
+Added 2026-08-09, with progress reporting.
+
+A bake takes minutes, and where it is happening is worth seeing: a Job on another
+node is a different thing to wait for than a subprocess beside the server. The
+client cannot infer it — the same API answers either way — so the bake module
+says so in `/v1/capabilities` (`bakeRunner: kubernetes | subprocess`) through an
+optional `Describe()` that the server merges. Optional and structural, like
+`Module` itself, so the server package still knows about no module in particular.
+
+**Two notifications, not one with a changing icon.** Waiting wears the server's
+mark whatever the deployment is, because that is what is true — the server holds
+the request until something is free to take it, and where it will run is not yet
+a fact. When it starts, the first notification is dismissed and a second appears
+carrying the cluster's mark or the server's.
+
+That is the rule rather than a way around it: `NotificationPatch` allows only the
+message and the bar to change, on the stated grounds that a moved icon "would
+read as a second event". Here it IS one.
+
+The icon is resolved BEFORE the poll loop, so the swap is synchronous. Awaiting
+inside the loop reassigned the notification after that same tick had already
+written to the old one — a race whose only symptom is a progress bar that skips.
+
 ## Related
 
 - [server-storage.md](./server-storage.md) — the two stores, the artifact key,

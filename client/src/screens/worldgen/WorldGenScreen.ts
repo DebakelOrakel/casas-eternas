@@ -3204,7 +3204,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       return
     }
 
-    const toast = ctx.notifications.show({
+    // Waiting wears the SERVER's icon whatever the deployment is, because that
+    // is what is true: the server holds the request until something is free to
+    // take it, and where it will run is not yet a fact about the world.
+    let toast = ctx.notifications.show({
       message: t('common.notify.bakeWaiting', { level }),
       icon: '/icons/server_load.png',
       sticky: true,
@@ -3214,6 +3217,33 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       ctx.notifications.show({ message, icon, durationMs })
       bakeRunning = false
       refreshBakeButtons()
+    }
+
+    // Once it IS running, the icon says where — a Kubernetes Job on another node
+    // looks different from a subprocess beside the server, and that is worth
+    // seeing while you wait seven minutes.
+    //
+    // A second notification rather than a patched one, and that follows the rule
+    // rather than working around it: NotificationPatch allows only the message
+    // and the bar to change, on the grounds that a moved icon "would read as a
+    // second event" — and here it is one. Waiting for a machine and running on
+    // it are two different things.
+    //
+    // Resolved BEFORE the poll loop so the swap is synchronous. Awaiting inside
+    // it would reassign `toast` after the same tick had already written to the
+    // old one, which is a race with no symptom except a progress bar that skips.
+    const status = await getServerStatus()
+    const runningIcon = status.bakeRunner === 'kubernetes' ? '/icons/kubernetes.png' : '/icons/server_load.png'
+    let announcedRunning = false
+    const announceRunning = (): void => {
+      if (announcedRunning) return
+      announcedRunning = true
+      ctx.notifications.dismiss(toast)
+      toast = ctx.notifications.show({
+        message: t('common.notify.bakeRunning', { level }),
+        icon: runningIcon,
+        sticky: true,
+      })
     }
 
     // The server when it can, this browser when it cannot. Measured: 78 s
@@ -3226,6 +3256,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         return
       }
       const outcome = await followBake(order.job.id, pipelineVersion, (job) => {
+        if (!bakeIsWaiting(job)) announceRunning()
         ctx.notifications.update(toast, {
           message: t(bakeIsWaiting(job) ? 'common.notify.bakeWaiting' : 'common.notify.bakeRunning', { level }),
           progress: bakeFraction(job),

@@ -143,10 +143,24 @@ func New(cfg Config) (*Module, error) {
 
 func (m *Module) Name() string { return "bake" }
 
+// Describe tells the client HOW bakes run here, which is not something it can
+// infer: the same API answers whether the work happens in a subprocess beside
+// the server or as a Job on another node. The client uses it to say which, while
+// it waits — and it has to choose that wording and its icon before the job
+// exists, because a notification cannot change either once it is on screen.
+func (m *Module) Describe() map[string]any {
+	runner := "subprocess"
+	if m.clusterMode {
+		runner = "kubernetes"
+	}
+	return map[string]any{"bakeRunner": runner}
+}
+
 func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST /v1/worlds/{uid}/bake", m.handleEnqueue)
 	mux.HandleFunc("GET /v1/bakes", m.handleList)
 	mux.HandleFunc("GET /v1/bakes/{id}", m.handleGet)
+	mux.HandleFunc("POST /v1/bakes/{id}/progress", m.handleProgress)
 	return nil
 }
 
@@ -262,6 +276,77 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, job)
 }
 
+// handleProgress takes a running job's own report of where it has got to.
+//
+// A Job on another node has no other way to say: the Kubernetes API tells this
+// server whether a pod is pending, running or gone, and nothing in between. The
+// alternative was reading the pod's log, which is a second connection with its
+// own failure modes; this is the connection the Job already uses for the world
+// and the artifacts. See docs/decisions/server-auth.md.
+//
+// THE TOKEN IS THE AUTHORISATION, and this is where the audience earns itself:
+// a job's token names one job, so verifying it against the id in the path
+// answers "may this caller report for this job" in a single comparison. No
+// ownership lookup, no caller-to-job table.
+func (m *Module) handleProgress(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !m.mayReportFor(r, id) {
+		// Deliberately not 401: the caller may be perfectly well authenticated,
+		// just not as this job. 403 says "not you" rather than "who are you".
+		clientError(w, http.StatusForbidden, "not this job")
+		return
+	}
+	var report Progress
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, progressBodyLimit)).Decode(&report); err != nil {
+		clientError(w, http.StatusBadRequest, "malformed progress")
+		return
+	}
+	if report.Phase == "" {
+		clientError(w, http.StatusBadRequest, "phase is required")
+		return
+	}
+	// Clamped rather than rejected: a percent slightly out of range is a rounding
+	// error in a progress bar, and failing the report would lose the phase too.
+	report.Percent = min(100, max(0, report.Percent))
+
+	updated := false
+	m.jobs.update(id, func(j *Job) {
+		// Only while it is running. A report that arrives after the job ended —
+		// a retry, or a pod that outlived its own result — must not reopen a
+		// finished record or move a failed one back to 50%.
+		if j.State != StateRunning {
+			return
+		}
+		j.Phase = report.Phase
+		j.Percent = report.Percent
+		updated = true
+	})
+	if !updated {
+		// 404 for both "no such job" and "not running any more": the reporter
+		// cannot act on the difference, and saying which would let anyone
+		// holding one job's token probe for the state of others.
+		clientError(w, http.StatusNotFound, "no such running job")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// mayReportFor answers whether this request is THIS job reporting.
+//
+// Asked of the resolver rather than verified here: the module MINTS job tokens
+// (cfg.Tokens) and that is a different capability from checking one. Verifying
+// with its own copy worked and was wrong — two answers to "who is asking" in one
+// process is exactly what the identity package exists to prevent.
+func (m *Module) mayReportFor(r *http.Request, id string) bool {
+	// The local mode checks nobody, and its runner reports over a pipe anyway —
+	// so this endpoint is unused there rather than open.
+	if !m.cfg.Identity.ChecksIdentity() {
+		return true
+	}
+	jobID, ok := m.cfg.Identity.BakeJob(r)
+	return ok && jobID == id
+}
+
 func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m.jobs.list())
 }
@@ -308,6 +393,11 @@ func (m *Module) canBake(caller, owner string) bool {
 	}
 	return caller != identity.Anonymous && caller == owner
 }
+
+// progressBodyLimit bounds what a progress report may be. It is two small
+// fields; anything larger is a mistake or an attempt, and reading it into memory
+// first would be the wrong way to find out.
+const progressBodyLimit = 1 << 10
 
 // jobTokenTTL bounds a Job's credential.
 //
@@ -368,6 +458,10 @@ func (m *Module) work(ctx context.Context) {
 		} else {
 			spec.WorldZip = zip
 			spec.ArtifactsDir = m.cfg.ArtifactsDir
+			// The local baker reports over its stderr pipe, which this process
+			// is already reading. Telling it its own id would invite it to post
+			// progress to a server it is running inside.
+			spec.JobID = ""
 		}
 		result, err := m.runner.Run(ctx, spec, func(p Progress) {
 			m.jobs.update(id, func(j *Job) {

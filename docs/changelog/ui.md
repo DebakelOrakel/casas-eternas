@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-08-09
+- **changed** Bake: waiting for a machine and running on one are now two notifications — the second says where the work is happening, with the cluster's own mark when it is a Kubernetes Job.
 - **new** Server: a badge on the server indicator when a sign-in is missing; clicking it opens the sign-in window, which also says who is signed in. `common.panel.signIn`
 - **fixed** Load: a world list that could not be read no longer claims the server is empty, and an open that fails says so instead of looking like a click that did not register. `common.panel.load.unavailable`
 - **fixed** Load: world previews appear again on a server that requires a sign-in — an image the browser fetches on its own carries no credentials. `common.panel.load`

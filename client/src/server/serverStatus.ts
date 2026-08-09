@@ -38,6 +38,13 @@ export interface ServerStatus {
   // Which modules the server runs, from /v1/capabilities. A frontend-only
   // deployment whose ingress does not route /v1 will simply be 'unreachable'.
   modules: string[]
+  // How the server runs bakes: 'kubernetes' when each is a Job on another node,
+  // 'subprocess' when it happens beside the server, '' when it does not bake.
+  //
+  // The client cannot infer this — the same API answers either way — and it
+  // needs it BEFORE a bake starts, because the notification that announces one
+  // picks its icon at creation and a notification's icon may not change.
+  bakeRunner: string
 }
 
 interface RuntimeConfig {
@@ -48,9 +55,10 @@ interface RuntimeConfig {
 
 interface Capabilities {
   modules?: string[]
+  bakeRunner?: string
 }
 
-const OFFLINE: ServerStatus = { state: 'none', apiBase: '', authMode: 'none', loginPath: '', modules: [] }
+const OFFLINE: ServerStatus = { state: 'none', apiBase: '', authMode: 'none', loginPath: '', modules: [], bakeRunner: '' }
 
 // How long a probe may take before the server counts as unreachable. Short on
 // purpose: this gates the indicator on every screen, and a user staring at a
@@ -83,7 +91,7 @@ async function probe(): Promise<ServerStatus> {
   const authMode = config.authMode ?? 'none'
   const loginPath = config.login?.path ?? ''
   const capabilities = await fetchJSON<Capabilities>(`${apiBase}/capabilities`, PROBE_TIMEOUT_MS)
-  if (!capabilities) return { state: 'unreachable', apiBase, authMode, loginPath, modules: [] }
+  if (!capabilities) return { state: 'unreachable', apiBase, authMode, loginPath, modules: [], bakeRunner: '' }
 
   // Answering is not enough — the WORLD module has to be there.
   //
@@ -97,7 +105,8 @@ async function probe(): Promise<ServerStatus> {
   // deployment, where the ingress routes /v1 to the storage service and the
   // answer comes from there, listing `world`.
   const modules = capabilities.modules ?? []
-  if (!modules.includes('world')) return { state: 'unreachable', apiBase, authMode, loginPath, modules }
+  const bakeRunner = capabilities.bakeRunner ?? ''
+  if (!modules.includes('world')) return { state: 'unreachable', apiBase, authMode, loginPath, modules, bakeRunner }
 
   // LOCAL vs SHARED comes from authMode, not from the hostname.
   //
@@ -111,7 +120,7 @@ async function probe(): Promise<ServerStatus> {
   // everything, so nobody else can be present. Anything else means real
   // identities, which means other people.
   const state: ServerState = authMode === 'none' ? 'local' : 'remote'
-  return { state, apiBase, authMode, loginPath, modules }
+  return { state, apiBase, authMode, loginPath, modules, bakeRunner }
 }
 
 // Resolved once per page load and shared. A screen that mounts later gets the

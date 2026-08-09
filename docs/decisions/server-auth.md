@@ -588,6 +588,42 @@ cheap once the progress endpoint exists (it already looks a job up by id) and is
 the natural next step when artifact writes get owner checks — stage 2 of "Who may
 write" in the storage design.
 
+## Progress from a Kubernetes Job
+
+Built 2026-08-09, and it is what the audience was for.
+
+A Job on another node has no pipe to report through: the Kubernetes API says
+pending, running or gone, and nothing between. The alternative considered and
+rejected was reading the pod's log — a second connection with its own failure
+modes, which is what the earlier note in NotificationOptions argued against.
+
+`POST /v1/bakes/{id}/progress` uses the connection the Job already has for the
+world and the artifacts, and **the token is the authorisation**: a job's token
+names one job, so the check is `jobID == id` and nothing else. No ownership
+lookup, no caller-to-job table.
+
+Four decisions inside it:
+
+- **403, not 401**, for a caller that is not this job — including a perfectly
+  good user session. They are authenticated; they are just not this job.
+- **Only while the job is RUNNING.** A late report, from a retry or a pod that
+  outlived its result, must not reopen a finished record or move a failed one
+  back to 50%.
+- **404 for both "no such job" and "not running".** The reporter cannot act on
+  the difference, and answering it would let anyone holding one job's token
+  probe the state of others.
+- **Clamped, not rejected**, for a percent out of range: losing the phase over a
+  rounding error is the worse trade.
+
+The baker throttles by TIME rather than by percent — one line per whole percent
+is right for a log and would be a hundred requests per phase here — and always
+sends a phase CHANGE, which is the part a reader acts on. It is fire and forget:
+a bake must not fail because a status update did.
+
+**And the local runner gets no job id at all.** Its progress reaches the server
+over the pipe this process is already reading; handing it an id would invite it
+to post progress to a server it is running inside.
+
 ## Flags
 
 ```

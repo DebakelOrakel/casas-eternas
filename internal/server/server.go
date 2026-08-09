@@ -34,6 +34,19 @@ type Module interface {
 	Close() error
 }
 
+// Describer is an OPTIONAL second interface: a module that has something to say
+// about how it works says it here, and it lands in /v1/capabilities.
+//
+// Optional and structural, like Module itself, so this package still knows about
+// no module in particular. The client needs it because some of its own choices
+// depend on how the server is deployed — a bake that runs as a Kubernetes Job is
+// a different thing to watch than one that runs as a subprocess, and the
+// notification announcing it has to pick its icon BEFORE the job exists, since a
+// notification's icon may not change once shown.
+type Describer interface {
+	Describe() map[string]any
+}
+
 // CapabilitiesPath says which modules this process runs. Public, and that is a
 // decision rather than an oversight: it is what the client probes to tell a
 // server that is down from one it is merely not logged in to, and answering 401
@@ -82,10 +95,25 @@ func Run(ctx context.Context, cfg config.Server, modules []Module, gate func(htt
 	// to decide whether a configured server is actually answering — config.json
 	// says where the storage is, this says what it can do, and only the storage
 	// itself knows the latter.
+	// Collected once at mount rather than per request: what a module has to say
+	// about itself does not change while it runs, and a probe on every screen is
+	// not the place to find that out again.
+	described := map[string]any{}
+	for _, m := range modules {
+		if d, ok := m.(Describer); ok {
+			for key, value := range d.Describe() {
+				described[key] = value
+			}
+		}
+	}
 	mux.HandleFunc("GET "+CapabilitiesPath, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]any{"modules": names})
+		body := map[string]any{"modules": names}
+		for key, value := range described {
+			body[key] = value
+		}
+		_ = json.NewEncoder(w).Encode(body)
 	})
 
 	tlsConfig, err := buildTLS(cfg)

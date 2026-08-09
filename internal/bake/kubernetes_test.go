@@ -127,6 +127,18 @@ func TestTemplateKeepsTheRulesThatMatter(t *testing.T) {
 	}
 
 	container := podSpec["containers"].([]any)[0].(map[string]any)
+
+	// The baker MUST be the same commit as the server that commissioned it: the
+	// artifact key carries a pipeline version, so an older baker files its work
+	// under a key nobody looks for, reports success, and nothing appears.
+	//
+	// IfNotPresent defeats that with a moving tag — a node holding some :latest
+	// never fetches another — which is how a cluster bake ran an old baker on
+	// 2026-08-09 and reported no progress.
+	if container["imagePullPolicy"] != "Always" {
+		t.Errorf("imagePullPolicy = %v, want Always — a stale baker fails silently", container["imagePullPolicy"])
+	}
+
 	resources := container["resources"].(map[string]any)
 	requests := resources["requests"].(map[string]any)
 	if requests["memory"] != "3Gi" {
