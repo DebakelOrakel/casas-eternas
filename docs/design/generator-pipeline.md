@@ -3,7 +3,7 @@ summary: The generator's runtime pipeline — its state is already stage-shaped 
   declared, which is why invalidation is a set of hand-written rules. The target is the
   chain as data; this records the design, the reset taxonomy and the staged path there.
 date: 2026-08-09
-status: direction agreed, implementation staged — steps 1 and 2 built 2026-08-09
+status: direction agreed, implementation staged — steps 1, 2 and 3a built 2026-08-09
 ---
 
 # The generator pipeline: the chain as data
@@ -181,7 +181,7 @@ order, not thoroughness.
 |---|---|---|
 | 1 | **Transport seam + rename. BUILT 2026-08-09.** `pipeline/messages.ts` (the contract), `pipeline/runtime.ts` (state + handlers, `self`-free), `worldgenWorker.ts` (transport only, 24 lines). | `tsc`, a headless run in Node, a manual click-through |
 | 2 | **The test net. BUILT 2026-08-09.** `client/scripts/pipeline.mjs`, `npm run harness:pipeline`, in `make test`: 21 checks in ~50 s driving the real pipeline headless, both bugs of 2026-08-09 among them as named regression cases. | itself |
-| 3a | **Declare the chain.** The stage table with `dependsOn`, inputs and outputs. Pure addition, nothing reads it yet. | `tsc` |
+| 3a | **Declare the chain. BUILT 2026-08-09.** `pipeline/stages.ts` — seven stages with `dependsOn`, `kind`, inputs and outputs, plus `downstreamOf(id)`. Nothing reads it yet. | nine checks in the harness, tying it to `fieldSpec` and `WORLD_SPEC_FIELDS` |
 | 3b | **Result per stage.** The `last*` families become one object each. | step 2 |
 | 3c | **Derive invalidation from the chain.** The hand-written helpers are deleted, not rewritten. | step 2 |
 | 3d | **`resetStage(id)` in both gestures**, on the worker and the screen side; message names follow the stage ids. | step 2 |
@@ -236,15 +236,49 @@ dependency list, and do the per-stage result structs in the same step as the cha
 since reset over nine separate `let`s stays fragile however well the chain is
 declared.
 
+### What declaring it settled, and what it exposed
+
+Three things the table had to get right, each of which would have been a plausible
+guess and each of which the code answered differently:
+
+- **`landMask` is not a climate output.** It is a climate-grid field, and the
+  climate stage looks like its producer — but the save derives it from
+  precipitation's ocean sentinel at write time. Listing it would have been a lie
+  the harness now catches.
+- **A module's controls are not a stage's controls.** `surface/` declares three,
+  belonging to two different stages: `erosionStrength` and `drainageRefresh` to
+  erosion, `riverDensity` to hydrology. The table is keyed by stage, so it says so.
+- **Three stages write `elevation`, two write `biome`.** Overlapping outputs are
+  real — genesis, tectonics and erosion each refine the same field, and hydrology
+  overrides the climate's biome for riparian and salt-flat cells. This is why
+  `outputs` cannot be a partition.
+
+The spec table turned out to already agree: every path in `WORLD_SPEC_FIELDS` is
+exactly `<stage>.<control>`, for all twelve. The stage grouping existed implicitly
+in the save format before it existed anywhere in the code, which is a good sign for
+the ids being the right ones — and the harness now asserts the two tables reference
+the *same* `InputParam` objects, so they cannot drift.
+
+One duplication fell out on the way: `ECOLOGY_FIELD_NAMES` in the save's field
+registry relisted the fourteen ids of `EcologyFieldId`, in the same order — and
+that order is the save's layer order, so the two had to agree with nothing making
+them. The ids are now an array in `ecology/ecologyField.ts` with the union derived
+from it, and the registry takes them from there.
+
 ## Open questions
 
-1. **Where the stage table lives.** With the pipeline (it describes runtime
+1. **What the Archean stage is called.** Three names for one thing: the module is
+   `archean/`, the panel and every save on disk say `genesis`, the messages say
+   `archeanInit`/`archeanStart`. The table picked `genesis` because that is what
+   the two user-facing surfaces already committed to, but step 3d renames the
+   messages and is the moment to decide whether the module follows.
+2. **Where the stage table lives.** With the pipeline (it describes runtime
    sequencing) or in `world/` (it is close to the save's recipe). The criterion from
    `CLAUDE.md` argues for the pipeline: running a stage does not need to know *which*
    world is meant.
-2. **Whether the micro-tile inspector is a stage at all.** It consumes the pipeline
+3. **Whether the micro-tile inspector is a stage at all.** It consumes the pipeline
    but produces nothing downstream — closer to a query than to a stage.
-3. **Whether `restoreWorld` sets stage results or replaces the chain's state
+4. **Whether `restoreWorld` sets stage results or replaces the chain's state
    wholesale.** It currently writes state directly, which is how the archean leftover
    bug survived.
 

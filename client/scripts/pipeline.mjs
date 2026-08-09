@@ -161,6 +161,64 @@ const asRestore = (worldData, seed = 'harness') => {
 const TESTS = []
 const test = (name, run) => TESTS.push({ name, run })
 
+// ------------------------------------------------------------- the stage table
+
+test('the stage table agrees with the code around it', async () => {
+  // The table (pipeline/stages.ts) is declared before anything reads it, so these
+  // are what keep it honest in the meantime: every edge, every field name and
+  // every control checked against the modules that already exist. A declaration
+  // nobody reads and nobody checks is a comment with syntax highlighting.
+  const [stages, fields, spec] = await Promise.all([
+    server.ssrLoadModule('/src/worldgen/pipeline/stages.ts'),
+    server.ssrLoadModule('/src/world/save/fieldSpec.ts'),
+    server.ssrLoadModule('/src/world/save/worldSpec.ts'),
+  ])
+  const ids = stages.STAGES.map((s) => s.id)
+
+  const unknownEdges = stages.STAGES.flatMap((s) => s.dependsOn.filter((d) => !ids.includes(d)).map((d) => `${s.id} -> ${d}`))
+  check('every dependency names a stage', unknownEdges.length === 0, unknownEdges.join(', '))
+
+  const cyclic = ids.filter((id) => stages.downstreamOf(id).includes(id))
+  check('the chain is acyclic', cyclic.length === 0, cyclic.join(', '))
+
+  // Declaration order must be a topological order, so that "downstream of" and
+  // "further down the table" are the same thing — the panel order assumes it.
+  const outOfOrder = stages.STAGES.flatMap((s, i) => s.dependsOn.filter((d) => ids.indexOf(d) >= i).map((d) => `${s.id} before ${d}`))
+  check('the table is in dependency order', outOfOrder.length === 0, outOfOrder.join(', '))
+
+  const badOutputs = []
+  for (const s of stages.STAGES) {
+    for (const name of s.outputs) {
+      try {
+        fields.fieldSpec(name)
+      } catch {
+        badOutputs.push(`${s.id}: ${name}`)
+      }
+    }
+  }
+  check('every declared output is a registered world field', badOutputs.length === 0, badOutputs.join(', '))
+
+  // Identity, not equality: the table must reference the SAME InputParam object
+  // the save's spec does. A copy would satisfy a value comparison and then drift.
+  const byPath = new Map(spec.WORLD_SPEC_FIELDS.map((f) => [f.path, f.input]))
+  const adrift = []
+  for (const s of stages.STAGES) {
+    for (const [key, input] of Object.entries(s.inputs)) {
+      if (!input.inSpec) continue
+      if (byPath.get(`${s.id}.${key}`) !== input) adrift.push(`${s.id}.${key}`)
+    }
+  }
+  check('every saved control sits in the spec under its own stage', adrift.length === 0, adrift.join(', '))
+
+  const orphanGroups = [...new Set(spec.WORLD_SPEC_FIELDS.map((f) => f.path.split('.')[0]))].filter((g) => !ids.includes(g))
+  check('every spec group names a stage', orphanGroups.length === 0, orphanGroups.join(', '))
+
+  // The reset taxonomy, asserted on the real table rather than in prose.
+  check('resetting ecology reaches only migration', String(stages.downstreamOf('ecology')) === 'migration', String(stages.downstreamOf('ecology')))
+  check('resetting tectonics reaches every later stage', String(stages.downstreamOf('tectonics')) === 'erosion,climate,hydrology,ecology,migration', String(stages.downstreamOf('tectonics')))
+  check('nothing is downstream of migration', stages.downstreamOf('migration').length === 0)
+})
+
 // ---------------------------------------------------------------- the Archean
 
 test('the Archean runs, reports and stops', async () => {
