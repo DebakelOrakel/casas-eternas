@@ -506,7 +506,15 @@ const RIPARIAN_DECAY = 0.45
 // Output is at the WORLD raster's resolution, matching the climate step's biomes
 // so the display never switches grids mid-run. The moisture model in between is
 // still regional — see the comment at the classification call.
-export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array): Uint8Array {
+//
+// `precipEff` comes back alongside the biomes, and that is the more reusable
+// half: it is the whole riparian effect, expressed as a climate-grid
+// precipitation field. Anyone holding it can reproduce this classification at
+// ANY resolution with no hydrology at all — which is exactly what the worldmap's
+// amplification bake needs, since re-deriving routing and discharge there just
+// to learn that a river passes by would cost seconds per load to recompute
+// something regional (see docs/decisions/worldmap-amplification.md).
+export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array): { biomes: Uint8Array; precipEff: Float32Array } {
   const scale = maxDischarge > 0 ? maxDischarge : 1
   // Computed once here rather than per cell: the median is a whole-network
   // property, and recomputing it inside the loop would be quadratic.
@@ -565,5 +573,5 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
       if (saltFlat[cell]) biomes[cell] = Biome.SaltFlat
     }
   }
-  return biomes
+  return { biomes, precipEff }
 }

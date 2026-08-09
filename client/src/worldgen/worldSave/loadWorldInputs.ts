@@ -66,6 +66,21 @@ export interface WorldInputs {
   // erosion.
   climate: GridLayer | null
   biome: GridLayer | null
+  // Everything the Whittaker classification consumes, so a consumer can redo it
+  // on ITS OWN terrain instead of upsampling the saved biome ids — which is how
+  // the worldmap gets biomes that follow the amplification bake's ridges (see
+  // climate/biomes.computeBiomesFine). All four or none: a partial set cannot
+  // classify, and older saves predate `precipitationEffective` entirely.
+  //
+  // `precipitationEffective` rather than `climate` is the one that belongs here:
+  // it carries the riparian bonus, so river corridors survive the reclassification
+  // without the consumer owning a drainage network.
+  biomeInputs: {
+    temperature: GridLayer
+    precipitationEffective: GridLayer
+    seasonalAmplitude: GridLayer
+    monsoonIndex: GridLayer
+  } | null
   // What the bake actually consumes, hashed — the artifact key. Derived here
   // rather than by the caller so every reader of a save agrees on it.
   worldId: string
@@ -139,6 +154,14 @@ export async function readWorldInputs(archive: ArrayBuffer | Uint8Array): Promis
   const climate = await readLayer(zip, manifest, 'precipitation', true)
   const biome = await readLayer(zip, manifest, 'biome', false)
 
+  const temperature = await readLayer(zip, manifest, 'temperature', false)
+  const precipitationEffective = await readLayer(zip, manifest, 'precipitationEffective', true)
+  const seasonalAmplitude = await readLayer(zip, manifest, 'seasonalAmplitude', true)
+  const monsoonIndex = await readLayer(zip, manifest, 'monsoonIndex', true)
+  const biomeInputs = temperature && precipitationEffective && seasonalAmplitude && monsoonIndex
+    ? { temperature, precipitationEffective, seasonalAmplitude, monsoonIndex }
+    : null
+
   // The artifact identity, from what the bake actually consumes — NOT from the
   // recipe, which cannot distinguish two worlds stopped at different tectonic
   // epochs (see storage/artifactKey.ts). The seed string rides along only as a
@@ -152,5 +175,5 @@ export async function readWorldInputs(archive: ArrayBuffer | Uint8Array): Promis
 
   const worldUid = readRecipeValue(yamlText, 'metadata.uid') ?? ''
 
-  return { elevations, width, height, seedText, detailSeed, erosionControls, climate, biome, worldId, worldUid }
+  return { elevations, width, height, seedText, detailSeed, erosionControls, climate, biome, biomeInputs, worldId, worldUid }
 }

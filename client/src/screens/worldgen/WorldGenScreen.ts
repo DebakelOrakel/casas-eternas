@@ -896,6 +896,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastDischargeField: Float32Array | null = null
   let lastMaxDischarge = 0
   let lastLakeDepth: Float32Array | null = null
+  // Precipitation INCLUDING the riparian bonus — what the biomes were actually
+  // classified from, and the only extra a consumer needs to reclassify them at
+  // its own resolution (see the precipitationEffective layer).
+  let lastPrecipitationEffective: Float32Array | null = null
   // Debug only: sea-floor cells the last erosion pass raised (see the erosion panel's
   // "Mark deltas" box and the worker's postDeltaMask).
   let lastDeltaMask: Uint8Array | null = null
@@ -2241,8 +2245,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (message.watersheds.byteLength > 0) lastWatersheds = new Uint16Array(message.watersheds)
     if (message.discharge.byteLength > 0) lastDischargeField = new Float32Array(message.discharge)
     if (message.maxDischarge > 0) lastMaxDischarge = message.maxDischarge
-    // Riparian-refined biomes replace the climate step's water-free ones.
+    // Riparian-refined biomes replace the climate step's water-free ones, and
+    // the precipitation they came from rides along for the save.
     if (message.biomes.byteLength > 0) lastBiomes = new Uint8Array(message.biomes)
+    if (message.precipitationEffective.byteLength > 0) lastPrecipitationEffective = new Float32Array(message.precipitationEffective)
     hydrologyInFlight = false
     updateControlsDisabled()
     updateProgress()
@@ -2262,6 +2268,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // nothing, because it looks authoritative.
     bakedRiverDisplay = null
     lastLakeDepth = null
+    // Derived from the channel set, so it stales with it.
+    lastPrecipitationEffective = null
     // The delta marks describe one specific erosion pass. Any topography change
     // stales them exactly as it stales the rivers, and a mask left over from the
     // previous terrain would mark cells that are no longer sea floor at all.
@@ -2924,6 +2932,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         landMask,
         temperature: lastTemperature ?? undefined,
         precipitation: lastPrecipitation ?? undefined,
+        precipitationEffective: lastPrecipitationEffective ?? undefined,
         biome: lastBiomes ?? undefined,
         seasonalAmplitude: lastSeasonality ?? undefined,
         monsoonIndex: lastMonsoonIndex ?? undefined,

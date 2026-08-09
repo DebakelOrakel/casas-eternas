@@ -406,6 +406,11 @@ export interface WorkerHydrologyDataMessage {
   // its resolution so the display never switches grids mid-run).
   // Empty when no climate is available to reclassify. See computeRiparianBiomes.
   biomes: ArrayBuffer
+  // The precipitation those biomes were classified FROM: the climate grid's
+  // annual total plus the riparian bonus (Float32, coarse, OCEAN_PRECIP on
+  // ocean). Saved so a consumer can reproduce the classification at its own
+  // resolution without owning a drainage network — see computeRiparianBiomes.
+  precipitationEffective: ArrayBuffer
   // Watershed labels (Uint16, full-res, 0 = unlabelled) and the raw discharge
   // field (Float32, full-res) + its land maximum — the watershed overlay and
   // the map hover's flow readout. Re-route only, like lakeDepth.
@@ -1170,8 +1175,13 @@ function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: '
     // with the density knob) — recompute every call when climate is available.
     // Uses the display terrain (lastRawElevations) so land/ocean matches the map.
     let biomesOut: Uint8Array = new Uint8Array(0)
+    // The riparian-effective precipitation rides along: it is what lets the
+    // worldmap reclassify at bake resolution without re-running hydrology.
+    let precipEffOut: Float32Array = new Float32Array(0)
     if (lastRawElevations && lastClimateTemperature && lastClimateSeasonalAmplitude && lastClimateMonsoonIndex && lastHydrologyLakeDepth) {
-      biomesOut = computeRiparianBiomes(lastHydrologyRouting, lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, lastClimatePrecip ?? precip, lastClimateTemperature, lastClimateSeasonalAmplitude, lastClimateMonsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, lastHydrologySaltFlat ?? undefined, lastHydrologyDryBasin ?? undefined)
+      const riparian = computeRiparianBiomes(lastHydrologyRouting, lastRawElevations, lastHydrologyDischarge, threshold, lastHydrologyMaxDischarge, lastHydrologyLakeDepth, lastClimatePrecip ?? precip, lastClimateTemperature, lastClimateSeasonalAmplitude, lastClimateMonsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, lastHydrologySaltFlat ?? undefined, lastHydrologyDryBasin ?? undefined)
+      biomesOut = riparian.biomes
+      precipEffOut = riparian.precipEff
     }
     const hydrologyMessage: WorkerHydrologyDataMessage = {
       type: 'hydrologyData',
@@ -1179,11 +1189,12 @@ function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: '
       riverLengths: rivers.lengths.buffer as ArrayBuffer,
       lakeDepth: lakeOut.buffer as ArrayBuffer,
       biomes: biomesOut.buffer as ArrayBuffer,
+      precipitationEffective: precipEffOut.buffer as ArrayBuffer,
       watersheds: watershedsOut.buffer as ArrayBuffer,
       discharge: dischargeOut.buffer as ArrayBuffer,
       maxDischarge: lastHydrologyMaxDischarge,
     }
-    self.postMessage(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.watersheds, hydrologyMessage.discharge])
+    self.postMessage(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge])
   })()
 }
 

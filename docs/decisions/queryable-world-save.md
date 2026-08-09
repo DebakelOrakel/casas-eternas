@@ -202,6 +202,17 @@ Round-trip (bake→decode→sample) verified within quantisation error.
 **Baked now:** landMask, temperature, precipitation, biome, seasonalAmplitude,
 monsoonIndex, lakeDepth, the 14 ecology fields, elevation (f32), discharge.
 
+**`precipitationEffective` added 2026-08-09.** The climate's precipitation plus
+the riparian bonus — rivers and lakes moistening their surroundings — i.e. the
+field the biomes were actually classified from, at climate resolution (64 KB).
+It is here for one reason: **so biomes can be reclassified without a drainage
+network.** The worldmap re-derives biomes on its amplified terrain, and deriving
+the riparian effect there would mean routing and accumulating flow over an
+8-million-cell raster on every load, to recover something that is regional
+anyway. Stored beside `precipitation` rather than replacing it, because the two
+answer different questions: one is what falls, the other is what the ground
+effectively gets, and only the second classifies biomes.
+
 **lakeDepth stopped being downsampled 2026-08-09.** It was `downsampleMax`'d to
 climate resolution on the way out, which is the right reduction for "is there a
 lake in this region" and the wrong one for a layer that gets *sampled per point*:

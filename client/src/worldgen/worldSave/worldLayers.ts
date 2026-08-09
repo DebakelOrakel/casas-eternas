@@ -48,6 +48,18 @@ export const WORLD_LAYERS: LayerSpec[] = [
   { name: 'landMask', dtype: 'u8', scale: 1, offset: 0, unit: '', landOnly: false },
   { name: 'temperature', dtype: 'u8', scale: 90 / 255, offset: -35, unit: '°C', landOnly: false },
   { name: 'precipitation', dtype: 'u16', scale: 8000 / 65535, offset: 0, unit: 'mm/yr', landOnly: true },
+  // The same field plus the riparian bonus — rivers and lakes moistening their
+  // surroundings (see hydrology.computeRiparianBiomes). Stored beside the
+  // climate's own precipitation rather than replacing it, because they answer
+  // different questions: `precipitation` is what falls, this is what the ground
+  // effectively gets, and only the second one classifies biomes.
+  //
+  // It is here so that BIOMES CAN BE RECLASSIFIED WITHOUT A DRAINAGE NETWORK.
+  // The worldmap re-derives biomes on its amplified terrain; deriving the
+  // riparian effect there would mean routing and accumulating flow over an
+  // 8-million-cell raster on every load, to recover a field that is regional
+  // anyway. 64 KB instead.
+  { name: 'precipitationEffective', dtype: 'u16', scale: 8000 / 65535, offset: 0, unit: 'mm/yr', landOnly: true },
   // Full-res, unlike its climate neighbours: the classification is pointwise and
   // reads elevation, which exists at world resolution (see climate/biomes.ts's
   // computeBiomesFine). A 62 km biome cell could not say where a treeline is —

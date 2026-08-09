@@ -209,7 +209,14 @@ function classify(tempC: number, precipMm: number, amplitude: number, season: nu
 // are genuinely smooth. That is what makes temperature safe to interpolate:
 // blending the raw field would mix in each neighbour cell's own sampled
 // elevation and bleed a summit's cold sideways across the valley next to it.
-function reduceToSeaLevel(temperature: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Float32Array {
+// `elevation` here must be the field computeTemperature ACTUALLY ran on, which
+// is not always the field being classified: the worldmap reclassifies on
+// amplified terrain that the generator's climate never saw. Undoing the lapse
+// against carved elevation would add back more than was subtracted — the bake
+// lowers land by ~57 m on average and over 1000 m at worst, so a whole 62 km
+// cell would come out a few tenths of a degree, and locally several degrees,
+// too warm. Hence the separate parameter on computeBiomesFine.
+export function reduceTemperatureToSeaLevel(temperature: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Float32Array {
   const out = new Float32Array(RX * RY)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
@@ -255,9 +262,15 @@ function sampleLandBilinear(field: Float32Array, wx: number, wy: number, worldWi
   return weight > 0 ? sum / weight : fallback
 }
 
-export function computeBiomesFine(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Uint8Array {
+export function computeBiomesFine(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array,
+  // The sea-level reduction of `temperature`, when the caller classifies a
+  // DIFFERENT terrain than the climate was computed on (see
+  // reduceTemperatureToSeaLevel). Omitted where the two are the same field,
+  // which is the generator's case.
+  seaLevelTemperature?: Float32Array,
+): Uint8Array {
   const biomes = new Uint8Array(worldWidth * worldHeight)
-  const seaLevelTemp = reduceToSeaLevel(temperature, elevation, worldWidth, worldHeight, dryLand)
+  const seaLevelTemp = seaLevelTemperature ?? reduceTemperatureToSeaLevel(temperature, elevation, worldWidth, worldHeight, dryLand)
   for (let wy = 0; wy < worldHeight; wy++) {
     const gy = Math.min(RY - 1, Math.floor((wy / worldHeight) * RY))
     for (let wx = 0; wx < worldWidth; wx++) {

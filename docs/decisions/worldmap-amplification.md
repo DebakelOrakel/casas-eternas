@@ -97,6 +97,52 @@ has to lead somewhere.
    detail than geometry) → regional micro-tile refinement in the hex
    era.
 
+## Biomes on the amplified terrain (2026-08-09)
+
+The Whittaker classification is **pointwise**, so it rides along for one pass
+rather than needing a model. The worldmap now re-derives biomes from whatever
+raster is current — macro at load, amplified after each bake stage — at the
+paper texture's own resolution. That replaces upscaling the saved ids through a
+domain-warped coordinate: a guess at what lies between two macro cells, where
+the elevation at every texel is in fact already known.
+
+**Recomputed, never stored.** One pointwise pass over an elevation raster that
+has to be loaded anyway, against +8.4 MB at 4k / +33.6 MB at 8k in the artifact
+store. The store exists to avoid the bake's *minutes*, not seconds.
+
+**Two things had to come from elsewhere, and both follow rule 4** — the bake may
+refine macro shapes, never contradict them:
+
+- **The riparian effect** (rivers greening their surroundings) is now saved as
+  `precipitationEffective`, a climate-resolution field (64 KB). Re-deriving it
+  at bake resolution would mean routing and accumulating flow over 8 million
+  cells per load to recover something regional. See queryable-world-save.md.
+- **Salt flats and dry basin floors** are hydrology states the classification
+  cannot reach; they are carried over from the saved macro biome ids.
+
+**The one real trap, found before it shipped:** the coarse temperature field
+carries a lapse correction for the elevation *the generator sampled*, so
+reclassifying elsewhere has to undo it against **that** raster, not the one
+being classified. Undoing it against carved terrain adds back more than was
+subtracted. Measured at factor 2 with one erosion round: mean error only
+−0.05 °C, but **−9.7 °C at the worst cell and 2.16% of land texels
+misclassified** — small in the average, large exactly in the mountains this
+feature exists for. Hence `computeBiomesFine`'s separate `seaLevelTemperature`
+parameter.
+
+**Honest gain at factor 2** (which is what ships): 5.7% of land texels differ
+from the macro answer and biome boundary length rises 14%. Modest, because 4096
+is only twice the macro grid — the mechanism scales with the bake factor, so 8k
+would show more. Alpine area *shrinks* 4.7%, which is correct rather than a
+regression: erosion runs with `upliftRate 0` and can only cut, so the carved
+ridges hold slightly less ground above the treeline.
+
+**What does NOT get finer, and must be said every time:** precipitation,
+seasonality and monsoon stay at 62 km. The classification interpolates them, but
+interpolation is not information. So this sharpens the elevation-driven
+boundaries — treeline, alpine, valley warmth — and leaves rain-driven ones where
+they were. In mountains that is the visible half; on a plain nothing changes.
+
 ## Why this does NOT overturn resolution-strategy.md
 
 That doc argues 8192 is "the wrong direction" — for the **authoritative

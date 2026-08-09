@@ -14,8 +14,9 @@ import { createElevationSurface, downsampleElevation } from '../../map/elevation
 import { createFineElevationSurface } from '../../map/fineElevationSurface'
 import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS, AMPLIFY_FETCH_STAGES, MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM, UNITS_PER_METER } from '../../map/mapSceneSettings'
 import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '../../worldgen/amplificationWorker'
-import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
-import { biomeLabelKey } from '../../worldgen/climate/biomes'
+import { SEA_LEVEL, elevationToMeters } from '../../worldgen/elevation/elevationScale'
+import { Biome, biomeLabelKey, computeBiomesFine, reduceTemperatureToSeaLevel } from '../../worldgen/climate/biomes'
+import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../../worldgen/climate/climateField'
 import { t } from '../../i18n/i18n'
 import type { TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
@@ -244,6 +245,22 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // biome toggle can repaint without redoing either.
   let lastRelief: Uint8Array | null = null
   let biomeIds: Uint8Array | null = null
+  // The save's climate inputs, kept so the biome wash can be RECLASSIFIED
+  // against whatever terrain is current instead of upsampled from the saved
+  // ids — that is what makes the amplification bake's ridges carry a treeline.
+  // Null for a save written before those layers existed; the legacy upsample
+  // path in presentWorld then stands.
+  let biomeInputs: NonNullable<Awaited<ReturnType<typeof readWorldInputs>>>['biomeInputs'] = null
+  // The MACRO biome ids, nearest-sampled to texture resolution. Two things the
+  // classification cannot re-derive on its own live in here, and the macro
+  // raster is their authority: salt flats (a hydrology state, not a climate)
+  // and dry basin floors (below sea level yet land).
+  let macroBiomeAtTexel: Uint8Array | null = null
+  // The saved temperature with its lapse term removed, computed ONCE against
+  // the macro raster the generator's climate actually ran on. It has to be
+  // built here rather than inside the classification, because after a bake the
+  // terrain being classified is no longer that raster.
+  let seaLevelTemperature: Float32Array | null = null
   let biomeWashEnabled = true
   let bakeEl: HTMLElement | null = null
   const setBakeText = (text: string): void => {
@@ -359,6 +376,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       inputs.elevations, inputs.width, inputs.height,
       inputs.biome, inputs.detailSeed, inputs.erosionControls,
       inputs.climate ? { precipitation: inputs.climate.data, resX: inputs.climate.resX, resY: inputs.climate.resY } : null,
+      inputs.biomeInputs,
     )
   }
 
@@ -377,7 +395,56 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       paperField = upscaleBilinearToroidal(field, fieldWidth, fieldHeight, PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT)
     }
     lastRelief = computeReliefBytes(paperField, PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT)
+    reclassifyBiomes(paperField)
     repaintPaper()
+  }
+
+  // Biomes re-derived from THIS raster, at texture resolution.
+  //
+  // The wash used to be the saved 2048 ids upsampled through a domain-warped
+  // coordinate — a guess at what lies between two macro cells. Here the
+  // elevation at every texel is already known (it is the field the hillshade
+  // was just built from), and the Whittaker classification is pointwise, so the
+  // answer can simply be computed instead. Called from applyPaper, which means
+  // it re-runs after every bake stage: the biome boundaries sharpen in step
+  // with the terrain, and a treeline follows the ridges the bake actually
+  // carved rather than the 62 km cell they sit in.
+  //
+  // What does NOT get finer: precipitation, seasonality and monsoon stay
+  // regional (the classification interpolates them, but interpolation is not
+  // information). So this sharpens the elevation-driven boundaries — treeline,
+  // alpine, valley warmth — and leaves rain-driven ones where they were. In
+  // mountains that is the visible half; on a plain nothing changes.
+  function reclassifyBiomes(paperField: Float32Array): void {
+    // Legacy save, or a climate grid this build does not index the same way:
+    // keep whatever presentWorld built. computeBiomesFine reads the grid through
+    // the shared constants, so a mismatch would be misindexed rather than
+    // rejected, and the upsample path is a working fallback.
+    if (!biomeInputs || !seaLevelTemperature) return
+    const { temperature, precipitationEffective, seasonalAmplitude, monsoonIndex } = biomeInputs
+
+    // Dry basin floors: below sea level in THIS raster, yet land according to
+    // the macro authority. Rebuilt per call because it depends on the field.
+    let dryLand: Uint8Array | undefined
+    if (macroBiomeAtTexel) {
+      dryLand = new Uint8Array(paperField.length)
+      for (let i = 0; i < paperField.length; i++) {
+        if (paperField[i] <= SEA_LEVEL && macroBiomeAtTexel[i] !== Biome.Ocean) dryLand[i] = 1
+      }
+    }
+    const ids = computeBiomesFine(
+      temperature.data, precipitationEffective.data, seasonalAmplitude.data, monsoonIndex.data,
+      paperField, PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT, dryLand, seaLevelTemperature,
+    )
+    // Salt flats are a hydrology state and the classification has no way to
+    // reach them — they come from the terminal-basin pass that ran on the macro
+    // world. Carried over rather than re-derived, per the authority rule.
+    if (macroBiomeAtTexel) {
+      for (let i = 0; i < ids.length; i++) if (macroBiomeAtTexel[i] === Biome.SaltFlat) ids[i] = Biome.SaltFlat
+    }
+    biomeIds = ids
+    biomeToggleButton.classList.toggle('is-off', !biomeWashEnabled)
+    biomeToggleButton.disabled = false
   }
 
   // Paint the retained relief bytes into both textures, with the biome wash
@@ -418,15 +485,48 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     syncRibbonLevel(true) // the ribbons drape on these same surfaces
   }
 
-  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number, erosionControls: ErosionControls, climate: ClimateInput | null): void {
+  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number, erosionControls: ErosionControls, climate: ClimateInput | null, savedBiomeInputs: typeof biomeInputs = null): void {
     hoverTooltip?.dispose()
     riverLayer?.dispose()
     riverLayer = null
     mapView?.dispose()
-    // Per-texel biome ids for the paper wash, built once per world: dilate
-    // the land biomes over the ocean first (so coastal land can't sample
+    biomeInputs = savedBiomeInputs
+    // The macro ids at texture resolution, nearest — this is a lookup table for
+    // two facts the classification cannot reach (salt flats, dry basin floors),
+    // so nearest is right: they are categorical and the macro raster is their
+    // authority. Blending them would invent states that exist nowhere.
+    macroBiomeAtTexel = null
+    if (biome) {
+      const table = new Uint8Array(PAPER_TEXTURE_WIDTH * PAPER_TEXTURE_HEIGHT)
+      for (let y = 0; y < PAPER_TEXTURE_HEIGHT; y++) {
+        const sy = Math.min(biome.resY - 1, Math.floor((y / PAPER_TEXTURE_HEIGHT) * biome.resY))
+        for (let x = 0; x < PAPER_TEXTURE_WIDTH; x++) {
+          const sx = Math.min(biome.resX - 1, Math.floor((x / PAPER_TEXTURE_WIDTH) * biome.resX))
+          table[y * PAPER_TEXTURE_WIDTH + x] = Math.round(biome.data[sy * biome.resX + sx])
+        }
+      }
+      macroBiomeAtTexel = table
+    }
+    // Sea-level temperature, against the MACRO raster and its own dry-basin
+    // floors (below sea level yet land) — the same pair computeTemperature saw.
+    seaLevelTemperature = null
+    if (savedBiomeInputs && savedBiomeInputs.temperature.resX === CLIMATE_RES_X && savedBiomeInputs.temperature.resY === CLIMATE_RES_Y) {
+      let macroDry: Uint8Array | undefined
+      if (biome) {
+        macroDry = new Uint8Array(elevations.length)
+        for (let i = 0; i < elevations.length; i++) {
+          const by = Math.min(biome.resY - 1, Math.floor((Math.floor(i / width) / height) * biome.resY))
+          const bx = Math.min(biome.resX - 1, Math.floor(((i % width) / width) * biome.resX))
+          if (elevations[i] <= SEA_LEVEL && Math.round(biome.data[by * biome.resX + bx]) !== Biome.Ocean) macroDry[i] = 1
+        }
+      }
+      seaLevelTemperature = reduceTemperatureToSeaLevel(savedBiomeInputs.temperature.data, elevations, width, height, macroDry)
+    }
+    // Fallback ids for a save too old to carry the classification's inputs:
+    // dilate the land biomes over the ocean first (so coastal land can't sample
     // "Ocean" across the grid mismatch), then expand through a warped
-    // coordinate so boundaries are organic rather than 16-pixel squares.
+    // coordinate so boundaries are organic rather than blocks. When the inputs
+    // ARE present, applyPaper replaces this with a real classification below.
     biomeIds = biome
       ? expandBiomeIds(dilateLandBiomes(biome.data, biome.resX, biome.resY), biome.resX, biome.resY, PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT, detailSeed)
       : null
