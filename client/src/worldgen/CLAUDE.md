@@ -64,22 +64,24 @@ Ocean is marked by a different sentinel per aspect — `OCEAN_PRECIP`,
 invariant for ecology fields) — plus plain `elevation > 0` in other places. Do
 not assume; look up which one the field you touched uses.
 
-## Before touching anything: the golden harness
+## Before touching anything: the harnesses
 
 ```
-cd client && npm run golden               # check; ~13 min (4 world builds at 2048×1024)
-cd client && npm run golden record        # re-record the metric baseline, on purpose
-cd client && npm run golden hash-record   # arm the refactor guard (layer 4)
+cd client && npm run harness:roundtrip       # the save format; 0.2 s
+cd client && npm run harness:pipeline        # the pipeline's behaviour; ~50 s
+cd client && npm run harness:golden          # the generator; ~13 min (4 world builds at 2048×1024)
+cd client && npm run harness:golden:record   # re-record the metric baseline, on purpose
+cd client && npm run harness:golden:hash     # arm the refactor guard (layer 4)
 ```
 
-Three permanent layers: **invariants** (no baseline, so a failure is always a
+`golden` has three permanent layers: **invariants** (no baseline, so a failure is always a
 bug), **determinism** (one seed built twice in the same run, hashed against
 itself), and **metrics** (magnitudes against `golden.json` with per-metric
 tolerances, default 2 %, reported as deltas). It loads the real modules through
 Vite's SSR pipeline because these modules use extensionless imports.
 
-**Refactoring? Arm layer 4 first.** `npm run golden hash-record` freezes a
-per-stage byte hash into `golden-hashes.json`, and every later `npm run golden`
+**Refactoring? Arm layer 4 first.** `npm run harness:golden:hash` freezes a
+per-stage byte hash into `golden-hashes.json`, and every later `npm run harness:golden`
 reports any stage that moved. Delete the file when the refactor lands — the
 layer exists only while the file does. It is needed because the other three
 cannot make this check: metrics carry a 2 % tolerance, so a sub-percent shift
@@ -89,15 +91,17 @@ process. The baseline is machine-local and gitignored; record it where you work.
 **Know its blind spots:**
 
 - It does **not** cover `pipeline/runtime.ts`. Message ordering and cache
-  invalidation are invisible to a field check. Today that needs a manual
-  click-through (tectonics, erode and stop mid-pass, reset erosion, climate →
-  rivers → ecology → migration, save and load); the pipeline is now importable
-  headless so it can be covered properly.
+  invalidation are invisible to a field check — that is `npm run harness:pipeline`'s job
+  (see its own header). It drives the real pipeline headless on a small world:
+  hand-over, resets, save→restore, the stage chain, invalidation, stopping a pass
+  mid-flight. Run it after touching anything under `pipeline/`. What it still does
+  NOT reach is the screen — panel switching, button state and the DOM half of a
+  reset are unguarded.
 - It does **not** cover the amplification bake's terrain. The artifact KEY is
-  guarded (the pipeline version is a stage in layer 4, and `npm run roundtrip`
+  guarded (the pipeline version is a stage in layer 4, and `npm run harness:roundtrip`
   checks that every constant it lists actually moves it), but the baked heights
   themselves are not.
-- It does **not** cover the save format. That is `npm run roundtrip`'s job —
+- It does **not** cover the save format. That is `npm run harness:roundtrip`'s job —
   quantisation, the recipe's layout, the identity hashes, the artifact bytes and
   the shared zip reader, in 0.2 s. Run it after touching anything under
   `world/save/` or `storage/`.

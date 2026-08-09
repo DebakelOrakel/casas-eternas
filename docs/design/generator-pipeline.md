@@ -3,7 +3,7 @@ summary: The generator's runtime pipeline — its state is already stage-shaped 
   declared, which is why invalidation is a set of hand-written rules. The target is the
   chain as data; this records the design, the reset taxonomy and the staged path there.
 date: 2026-08-09
-status: direction agreed, implementation staged — step 1 built 2026-08-09
+status: direction agreed, implementation staged — steps 1 and 2 built 2026-08-09
 ---
 
 # The generator pipeline: the chain as data
@@ -180,7 +180,7 @@ order, not thoroughness.
 | Step | What | Verified by |
 |---|---|---|
 | 1 | **Transport seam + rename. BUILT 2026-08-09.** `pipeline/messages.ts` (the contract), `pipeline/runtime.ts` (state + handlers, `self`-free), `worldgenWorker.ts` (transport only, 24 lines). | `tsc`, a headless run in Node, a manual click-through |
-| 2 | **The test net.** Message sequences driven against the core in Node, asserting emitted messages and stage state — including the two bugs of 2026-08-09 as regression cases. | itself |
+| 2 | **The test net. BUILT 2026-08-09.** `client/scripts/pipeline.mjs`, `npm run harness:pipeline`, in `make test`: 21 checks in ~50 s driving the real pipeline headless, both bugs of 2026-08-09 among them as named regression cases. | itself |
 | 3a | **Declare the chain.** The stage table with `dependsOn`, inputs and outputs. Pure addition, nothing reads it yet. | `tsc` |
 | 3b | **Result per stage.** The `last*` families become one object each. | step 2 |
 | 3c | **Derive invalidation from the chain.** The hand-written helpers are deleted, not rewritten. | step 2 |
@@ -191,6 +191,30 @@ order, not thoroughness.
 Steps 1 and 3a–3c change no behaviour by construction. Step 3d does (that is the
 point), and step 4 needs an i18n key for the indicator, to be proposed before it is
 added.
+
+### What the net found immediately
+
+`resetTectonics` returned to the hand-over **only the first time**. Every later
+reset landed on a world drifted by however far tectonics had run since the previous
+one, and differently each time.
+
+`deserializePlateSimulation` adopted the snapshot's arrays rather than copying them
+— `seeds`, `motions`, `ages`, `rafts`, `features`, `hotspots`, `sutures`. That is
+harmless for a snapshot read from a file and thrown away, which is every other
+caller; the tectonics reset is the one place that keeps a snapshot alive and
+restores from it repeatedly, so the sim built by the first reset wrote its own
+drift back into the state it was meant to be able to return to. The epoch counter
+is a number and reset correctly, which is why it looked fine.
+
+It is the exact mirror of a problem the code already knew about: `finalizeArchean`'s
+hand-over does a `structuredClone` because `serializePlateSimulation` hands back the
+sim's OWN arrays, and its comment records the measurement (after 60 epochs a reset
+restored epoch 0 but 20 rafts and 386 features instead of 13 and 0). Only the write
+half had been closed. The read half now copies too, so no caller has to remember.
+
+Worth noting for how the net is judged: this was found by a check nobody would
+write from suspicion — "do it twice" — and it is invisible to golden, which never
+sends a message and never deserializes anything.
 
 ## Deliberately not doing
 
