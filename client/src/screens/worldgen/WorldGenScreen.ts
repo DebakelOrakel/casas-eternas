@@ -18,7 +18,9 @@ import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../worldgen/core/mapC
 const RUNOFF_COEFFICIENT = 0.35
 const DISCHARGE_TO_M3S = ((METERS_PER_CELL * METERS_PER_CELL * 1e-3) / 3.156e7) * RUNOFF_COEFFICIENT
 import JSZip from 'jszip'
-import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerErosionProgressMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from '../../worldgen/pipeline/messages'
+import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage } from '../../worldgen/pipeline/messages'
+import { downstreamOf } from '../../worldgen/pipeline/stages'
+import type { StageId } from '../../worldgen/pipeline/stages'
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/render/continentLabelRenderer'
 import { elevationToMeters, metersToElevation, waterSliderToOffsetM } from '../../worldgen/elevation/elevationScale'
@@ -2166,6 +2168,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     tempMaxLabel.textContent = String(Math.round(max))
     // Climate data now exists → its overlay buttons become available.
     updateOverlays()
+    // A fresh climate stales the rivers and the ecology that were derived from
+    // the previous one. Retuning a climate slider used to leave both standing,
+    // so the ecology overlay went on showing values computed from a climate that
+    // no longer existed. The hydrology's own refinement is exempt: it carries
+    // `refinement`, and the pass that sent it is recomputing that work itself.
+    if (!message.refinement) invalidateAfter('climate')
     climateResolve?.()
     climateResolve = null
   }
@@ -2173,7 +2181,86 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Invalidate the (now stale) climate when an upstream step changes the
   // topography — the rasters no longer match. Recomputed on the next climate-
   // panel open.
-  function invalidateClimate(): void {
+  // WHAT A CHANGE STALES, from the one declaration both sides read.
+  //
+  // This cascade used to be written out here (invalidateClimate called hydrology
+  // and ecology, ecology called migration) AND again in the worker — two copies of
+  // one rule, which had already drifted apart: this side dropped the climate on
+  // every topography change while the worker kept it, so the two disagreed about
+  // what the world currently was. Both now derive it from worldgen/pipeline/stages.ts.
+  //
+  // Exhaustive over StageId, so a stage added to the table is a compile error here
+  // rather than a mirror nobody remembered to clear.
+  // A stage was asked to run and could not. Release whatever was waiting for it:
+  // the in-flight flag that disabled the controls, and any promise the save chain
+  // is holding. Before this existed the worker simply returned, so the spinner ran
+  // for ever and a save begun in that state never finished — silently, because
+  // nothing had gone wrong loudly.
+  function handleStageDeclined(message: WorkerStageDeclinedMessage): void {
+    switch (message.stage) {
+      case 'erosion':
+        erosionOpInFlight = false
+        erosionProgressFraction = 0
+        erodeIcon.src = '/icons/erode.png'
+        break
+      case 'climate':
+        climateInFlight = false
+        climateStatus.textContent = ''
+        climateResolve?.()
+        climateResolve = null
+        break
+      case 'hydrology':
+        hydrologyInFlight = false
+        hydrologyResolve?.()
+        hydrologyResolve = null
+        break
+      case 'ecology':
+        ecologyInFlight = false
+        ecologyResolve?.()
+        ecologyResolve = null
+        break
+      case 'migration':
+        migrationInFlight = false
+        break
+      default:
+        break
+    }
+    updateControlsDisabled()
+    updateProgress()
+  }
+
+  function clearStage(id: StageId): void {
+    switch (id) {
+      case 'genesis':
+      case 'tectonics':
+      case 'erosion':
+        // No mirror of their own on this side — the map IS their output, and it is
+        // replaced by the next render rather than cleared.
+        return
+      case 'climate':
+        clearClimate()
+        return
+      case 'hydrology':
+        clearHydrology()
+        return
+      case 'ecology':
+        clearEcology()
+        return
+      case 'migration':
+        clearMigration()
+        return
+    }
+  }
+
+  // `id` produced something new, so everything reading it is stale. Not `id`'s own
+  // mirror — the caller says whether that survives.
+  function invalidateAfter(id: StageId): void {
+    for (const downstream of downstreamOf(id)) clearStage(downstream)
+  }
+
+  // Clears ONE stage's mirrors. The cascade is not here any more — it comes from
+  // the declared chain, via invalidateAfter below.
+  function clearClimate(): void {
     lastTemperature = null
     lastWind = null
     lastCurrents = null
@@ -2184,11 +2271,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     climateStatus.textContent = ''
     tempMinLabel.textContent = '–'
     tempMaxLabel.textContent = '–'
-    // Rivers depend on both topography and climate, so any climate invalidation
-    // (which fires on every topography change too) also stales the hydrology.
-    invalidateHydrology()
-    // Ecology reads the climate (productivity) too, so it stales alongside.
-    invalidateEcology()
     updateOverlays() // climate overlays no longer available
   }
 
@@ -2216,7 +2298,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (panelIndex === ECOLOGY_PANEL_INDEX && !saveChainActive) requestEcology()
   }
 
-  function invalidateHydrology(): void {
+  function clearHydrology(): void {
     lastRiverData = null
     // A baked network describes ONE elevation raster. Erode again and its
     // channels sit beside the valleys they were cut for — worse than showing
@@ -2277,17 +2359,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     ecologyResolve = null
   }
 
-  // Ecology depends on climate (+ the sim's volcanoes), so any climate change
-  // stales it — recomputed on the next ecology-panel open / slider tweak.
-  function invalidateEcology(): void {
+  function clearEcology(): void {
     lastEcologyFields = {}
-    invalidateMigration() // migration reads ecology's carrying capacity
     updateOverlays()
   }
 
   // --- initial migration ---
 
-  function invalidateMigration(): void {
+  function clearMigration(): void {
     lastMigration = null
     migrationMaxDensity = 0
     migrationMaxFlow = 0
@@ -2352,7 +2431,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function requestMigration(): void {
     if (tectonicsRunning || !hasEcologyData() || migrationOrigins.length === 0) return
     const origins = migrationOrigins.filter((o) => migrationRaceEnabled[o.race])
-    if (origins.length === 0) { invalidateMigration(); return } // all races off → nothing
+    if (origins.length === 0) { clearMigration(); return } // all races off → nothing
     migrationInFlight = true
     updateControlsDisabled()
     updateProgress()
@@ -2406,7 +2485,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     URL.revokeObjectURL(url)
   }
 
-  worker.onmessage = (event: MessageEvent<WorkerRenderedMessage | WorkerErosionProgressMessage | WorkerClimateDataMessage | WorkerHydrologyDataMessage | WorkerEcologyDataMessage | WorkerMigrationDataMessage | WorkerWorldDataMessage | WorkerArcheanStatusMessage | WorkerDeltaMaskMessage | WorkerElevationFieldMessage | WorkerMicroTileDataMessage | WorkerMicroTileProgressMessage>) => {
+  worker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
     const message = event.data
 
     if (message.type === 'elevationField') {
@@ -2428,6 +2507,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
     if (message.type === 'archeanStatus') {
       handleArcheanStatus(message)
+      return
+    }
+
+    if (message.type === 'stageDeclined') {
+      handleStageDeclined(message)
       return
     }
 
@@ -2692,7 +2776,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     autoStopAtEpoch = lastEpoch + MAX_TECTONICS_EPOCHS
     // Running tectonics will change the topography → any computed climate is
     // stale, and prior erosion no longer applies.
-    invalidateClimate()
+    invalidateAfter('tectonics')
     erosionRunCount = 0
     postToWorker({ type: 'start' })
     toggleSimIcon.src = '/icons/stop.png'
@@ -2718,7 +2802,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     erosionOpInFlight = true
     erosionProgressFraction = 0
     erosionRunCount += 1
-    invalidateClimate()
+    invalidateAfter('tectonics')
     erodeIcon.src = '/icons/stop.png'
     erodeButton.setAttribute('aria-label', t('worldgen.action.runErosion.labelActive'))
     updateControlsDisabled()
@@ -2731,7 +2815,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (isBusy()) return
     erosionOpInFlight = true
     erosionRunCount = 0
-    invalidateClimate()
+    invalidateAfter('tectonics')
     updateControlsDisabled()
     updateProgress()
     updateNavState() // reverting erosion re-locks Climate/Rivers
@@ -3350,7 +3434,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (regenerateTimer !== undefined) clearTimeout(regenerateTimer)
     ctx.notifications.clearAll()
     overlay.clearMarkers()
-    invalidateClimate()
+    invalidateAfter('tectonics')
 
     const seed = readYamlValue(yaml, 'spec.seed') ?? ''
     // One read of the recipe instead of a regex per key, with every gap filled by
@@ -3748,7 +3832,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     stopSim()
     ctx.notifications.clearAll()
     overlay.clearMarkers()
-    invalidateClimate()
+    invalidateAfter('tectonics')
     migrationOrigins = [] // fresh world → re-auto-place origins on the next migration open
     erosionRunCount = 0
     // A genuinely different world, so it must not inherit the previous one's
@@ -3790,7 +3874,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     stopSim()
     ctx.notifications.clearAll()
     overlay.clearMarkers()
-    invalidateClimate()
+    invalidateAfter('tectonics')
     migrationOrigins = []
     erosionRunCount = 0
     postToWorker({ type: 'resetTectonics' })

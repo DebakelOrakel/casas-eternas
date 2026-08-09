@@ -3,7 +3,7 @@ summary: The generator's runtime pipeline — its state is already stage-shaped 
   declared, which is why invalidation is a set of hand-written rules. The target is the
   chain as data; this records the design, the reset taxonomy and the staged path there.
 date: 2026-08-09
-status: direction agreed, implementation staged — steps 1, 2, 3a and 3b built 2026-08-09
+status: direction agreed, implementation staged — steps 1, 2, 3a, 3b and 3c built 2026-08-09
 ---
 
 # The generator pipeline: the chain as data
@@ -183,7 +183,7 @@ order, not thoroughness.
 | 2 | **The test net. BUILT 2026-08-09.** `client/scripts/pipeline.mjs`, `npm run harness:pipeline`, in `make test`: 21 checks in ~50 s driving the real pipeline headless, both bugs of 2026-08-09 among them as named regression cases. | itself |
 | 3a | **Declare the chain. BUILT 2026-08-09.** `pipeline/stages.ts` — seven stages with `dependsOn`, `kind`, inputs and outputs, plus `downstreamOf(id)`. Nothing reads it yet. | nine checks in the harness, tying it to `fieldSpec` and `WORLD_SPEC_FIELDS` |
 | 3b | **Result per stage. BUILT 2026-08-09.** Climate, hydrology and ecology: sixteen `let`s became three nullable result objects, 39 pieces of module state down to 28. | step 2, plus a new check on the cached hydrology path |
-| 3c | **Derive invalidation from the chain.** The hand-written helpers are deleted, not rewritten. | step 2 |
+| 3c | **Derive invalidation from the chain. BUILT 2026-08-09.** Both sides — the pipeline and WorldGenScreen — read `downstreamOf()`; the hand-written cascades are gone, and a stage that cannot run says so. | step 2, extended with the refusal contract |
 | 3d | **`resetStage(id)` in both gestures**, on the worker and the screen side; message names follow the stage ids. | step 2 |
 | 4 | **Spec ownership** — the DOM stays the input and stops being the store; the unsaved-changes indicator is the first consumer. | step 2, `tsc` |
 | 5 | **Untangle `showPanel`** — navigation must not commit. | step 2 |
@@ -255,6 +255,53 @@ One harness bug found while writing the check for the cached path: the tests fed
 `riverDensity: 0.5` into a control that runs 0..100, so "half" was in fact the
 sparsest network it can ask for and two very different requests came back
 identical. The harness now uses the slider's own default and says why.
+
+### 3c found the rule written twice, and drifted
+
+The cascade existed in two places. In the screen:
+`invalidateClimate()` called hydrology and ecology, `invalidateEcology()` called
+migration — which is exactly `downstreamOf('climate')` and `downstreamOf('ecology')`.
+In the pipeline: two named helpers doing a smaller version of the same thing.
+
+They disagreed. The screen dropped the climate on every topography change (six
+sites: starting tectonics, starting erosion, resetting erosion, loading,
+regenerating, resetting tectonics); the pipeline kept it and dropped only the
+hydrology. So after an erosion the two halves of one pipeline held different
+answers to "what is this world now", and the rivers could be routed over a climate
+computed for the terrain of one pass ago.
+
+A real bug fell out of the same gap: retuning a **climate slider** recomputed the
+climate but staled nothing, so the ecology overlay went on showing values derived
+from a climate that no longer existed. Both sides now derive the cascade from
+`stages.ts`, and the screen stales downstream when a fresh climate lands.
+
+**One exemption, and it needs the message to carry it.** The hydrology pass
+refines the climate mid-flight (v2, for terminal basins that turn out to be dry
+land) and emits a second `climateData`. Cascading on that would have torn down the
+river display in the middle of building it, so the message says `refinement: true`
+and the screen skips the cascade — the pass that sent it is redoing that work
+itself.
+
+### Silence was the other half of the problem
+
+Deriving invalidation on the pipeline side alone would have introduced a hang.
+Every compute handler has an early return for a missing upstream result, and those
+returns were silent: the screen had already set its in-flight flag, disabled the
+controls and begun waiting. WorldGenScreen carried a comment about precisely this
+("the worker no-ops without it, which would leave ecologyInFlight stuck") and
+guarded one of the five cases by mirroring the pipeline's state — a guard that
+holds only while both copies agree, which is what 3c set out to stop relying on.
+
+So a stage that declines now says so, naming itself and what it is short of
+(`stageDeclined`), and the screen releases the flag and any promise the save chain
+is holding. That removes the class, not the instance: it also covers the four
+cases nobody had guarded, and a save begun in that state used to never finish.
+
+**A gap the change exposed:** there was no `WorkerOutboundMessage` union.
+WorldGenScreen listed the twelve result types by hand in its `onmessage`
+signature, so adding a thirteenth compiled cleanly and simply never reached a
+handler — the inbound direction has had an exhaustive table all along. The union
+now exists and the screen takes it.
 
 ## Deliberately not doing
 

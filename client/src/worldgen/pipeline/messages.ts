@@ -10,6 +10,7 @@ import type { ContinentLabelPlacement } from '../render/continentLabelRenderer'
 import type { ArcheanSnapshot } from '../archean/archeanSnapshot'
 import type { ErosionPhase } from '../surface/erosion'
 import type { MigrationOrigin } from '../migration/migrationField'
+import type { StageId } from './stages'
 
 export interface WorkerStartMessage {
   type: 'start'
@@ -294,6 +295,27 @@ export interface WorkerRenderedMessage {
 // default params) while an 'erode' request is in flight; nothing is sent
 // for 'resetErosion', since that's a single already-computed render with
 // no meaningful sub-progress of its own.
+// A stage was asked to run and DECLINED, because something it reads is not there.
+//
+// Every compute handler has an early return for a missing upstream result, and
+// until now those returns were silent: the screen had set its in-flight flag,
+// disabled the controls and started waiting for a result that would never come.
+// WorldGenScreen carried a comment about exactly this ("the worker no-ops without
+// it, which would leave ecologyInFlight stuck") and guarded ONE of the five cases
+// by mirroring the worker's state — which is the kind of guard that only holds
+// while both copies agree.
+//
+// Saying so instead makes the whole class go away: the screen releases whatever
+// it was waiting for, and the reason is a stage id rather than a string to parse.
+export interface WorkerStageDeclinedMessage {
+  type: 'stageDeclined'
+  stage: StageId
+  // The upstream stage whose result is missing, when that is what stopped it.
+  // Absent when the reason is not a missing result — the pipeline being busy, or
+  // there being no world at all yet.
+  needs?: StageId
+}
+
 export interface WorkerErosionProgressMessage {
   type: 'erosionProgress'
   phase: ErosionPhase
@@ -304,6 +326,13 @@ export interface WorkerErosionProgressMessage {
 // Grows per phase.
 export interface WorkerClimateDataMessage {
   type: 'climateData'
+  // Set when this is the hydrology's climate REFINEMENT (v2) rather than a fresh
+  // compute: same world, same settings, corrected for the terminal basins that
+  // turned out to be dry land. A fresh climate stales everything downstream of it;
+  // this one does not, because the pass that produced it is recomputing that
+  // downstream work itself, right now. Without the distinction the screen would
+  // tear down its own river display in the middle of building it.
+  refinement?: boolean
   resX: number
   resY: number
   // Temperature in °C, Float32, resX*resY row-major.
@@ -439,3 +468,23 @@ export interface WorkerWorldDataMessage {
   oceanAge: ArrayBuffer
   elevation: ArrayBuffer
 }
+
+// The other direction, which had no union at all: WorldGenScreen listed the twelve
+// types by hand in its `onmessage` signature, so adding a thirteenth changed
+// nothing and compiled — the new message simply never reached a handler. The
+// inbound side has had `WorkerInboundMessage` and its exhaustive HANDLERS table
+// all along; this is the same guarantee for results.
+export type WorkerOutboundMessage =
+  | WorkerRenderedMessage
+  | WorkerErosionProgressMessage
+  | WorkerClimateDataMessage
+  | WorkerHydrologyDataMessage
+  | WorkerDeltaMaskMessage
+  | WorkerMicroTileDataMessage
+  | WorkerMicroTileProgressMessage
+  | WorkerEcologyDataMessage
+  | WorkerMigrationDataMessage
+  | WorkerWorldDataMessage
+  | WorkerArcheanStatusMessage
+  | WorkerElevationFieldMessage
+  | WorkerStageDeclinedMessage

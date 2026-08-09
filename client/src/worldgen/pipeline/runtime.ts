@@ -4,6 +4,8 @@ import { renderSimulationImage } from '../render/elevationMapImage'
 import type { RenderSimulationOptions } from '../render/elevationMapImage'
 import { ElevationRenderPool } from '../render/elevationRenderPool'
 import type { ElevationRenderer } from '../render/elevationRenderPool'
+import { downstreamOf } from './stages'
+import type { StageId } from './stages'
 import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass } from '../surface/erosion'
 import type { ArcheanSimulation } from '../archean/archeanState'
 import { createArcheanSimulation } from '../archean/archeanState'
@@ -37,7 +39,7 @@ import { computeEcology } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
-import type { WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerErosionProgressMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from './messages'
+import type { WorkerStageDeclinedMessage, WorkerArcheanStatusMessage, WorkerClimateDataMessage, WorkerDeltaMaskMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerErosionProgressMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMicroTileDataMessage, WorkerMicroTileProgressMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
 // tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
@@ -179,27 +181,56 @@ let ecology: EcologyResult | null = null
 // hydrology falls back to the final elevations (few lakes — erosion drains them).
 let lastLakeBasinElevations: Float32Array | null = null
 
-// The cache-invalidation rules, named. They used to be loose assignments spread
-// across the render path and the message branches, which meant the rules only
-// existed as "whatever those lines happen to do" — the riskiest thing about this
-// file's module state. Naming them puts each rule in one place and makes a caller
-// state its intent rather than its mechanism.
-//
-// They are still hand-written, and still the thing to be suspicious of: the same
-// rules are already declared as edges in stages.ts, and deriving them from there
-// is the next step.
-
-// New terrain: the drainage network has to be re-routed, and the last erosion's
-// basin snapshot no longer describes it.
-function invalidateAfterTopographyChange(): void {
-  hydrology = null
-  lastLakeBasinElevations = null
+// Where a stage's result is kept, and nowhere else. Exhaustive over StageId on
+// purpose: adding a stage to the table makes this a compile error, which is the
+// only reliable way to be told that a new result needs somewhere to be dropped.
+function clearResult(id: StageId): void {
+  switch (id) {
+    case 'genesis':
+    case 'tectonics':
+      // Live simulations, not cached results — they are replaced, never dropped.
+      return
+    case 'erosion':
+      lastLakeBasinElevations = null
+      return
+    case 'climate':
+      climate = null
+      return
+    case 'hydrology':
+      hydrology = null
+      return
+    case 'ecology':
+      ecology = null
+      return
+    case 'migration':
+      // Nothing retained: its four rasters go straight to the screen.
+      return
+  }
 }
 
-// New climate: rivers take their water from precipitation, so the discharge is
-// stale even though the terrain hasn't moved.
-function invalidateAfterClimateChange(): void {
-  hydrology = null
+// INVALIDATION IS DERIVED, not written down. `id` produced something new, so
+// every result that reads it — transitively — no longer describes this world.
+//
+// This used to be two hand-written helpers, and the same cascade was ALSO written
+// out in WorldGenScreen. Two copies of one rule, and they had drifted: the screen
+// dropped the climate and the ecology on every topography change while this side
+// kept them, so the two disagreed about what a world currently was. Both now read
+// downstreamOf() from stages.ts.
+//
+// Note what is NOT dropped: `id`'s own result. Whether the stage that just ran
+// keeps its result is the caller's business — re-running replaces it, resetting
+// drops it — and folding that in here would leave no way to say the other.
+function invalidateAfter(id: StageId): void {
+  for (const downstream of downstreamOf(id)) clearResult(downstream)
+}
+
+// Say no out loud. Returns true when the stage cannot run, having told the screen
+// why — so a caller reads `if (decline(...)) return` and cannot forget the
+// message. See WorkerStageDeclinedMessage for what silence used to cost.
+function decline(stage: StageId, needs?: StageId): true {
+  const message: WorkerStageDeclinedMessage = { type: 'stageDeclined', stage, needs }
+  emit(message)
+  return true
 }
 
 // Event markers no longer live here — they moved to the main thread as
@@ -293,7 +324,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
   lastRawElevations = result.rawElevations
   lastDisplayElevations = { data: result.elevations, width: sim.width, height: sim.height }
   if (!skipInvalidation) {
-    invalidateAfterTopographyChange()
+    invalidateAfter('tectonics')
     // New topography — whatever terminal basins the last hydrology found no
     // longer describe it.
     renderDryBasin = null
@@ -360,7 +391,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   if (gen !== worldGeneration || !archean) return
   lastRawElevations = result.rawElevations
   lastDisplayElevations = { data: result.elevations, width: archean.width, height: archean.height }
-  invalidateAfterTopographyChange()
+  invalidateAfter('tectonics')
 
   const message: WorkerRenderedMessage = {
     type: 'rendered',
@@ -523,7 +554,10 @@ function handleStop(): void {
 }
 
 function handleErode(message: Extract<WorkerInboundMessage, { type: 'erode' }>): void {
-  if (!sim || !lastRawElevations || renderInFlight) return
+  if (!sim || !lastRawElevations) { decline('erosion', 'tectonics'); return }
+  // Busy rather than unsatisfied — no upstream stage is missing, so `needs` stays
+  // absent and the screen simply stops waiting.
+  if (renderInFlight) { decline('erosion'); return }
   // Multi-second at this grid size (a 2048x1024 priority-flood plus up
   // to 100 stream-power iterations, repeated for
   // DEFAULT_EROSION_PASS_PARAMS.rounds) — doesn't block the main UI
@@ -679,7 +713,7 @@ function computeClimateChain(elevation: Float32Array, width: number, height: num
 // Returns what it cached: the hydrology's climate refinement needs the new result
 // immediately, and taking it from the return value rather than reading the module
 // variable back is what removes the non-null assertions that used to follow.
-function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, params: ClimateParams): ClimateResult {
+function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, params: ClimateParams, refinement = false): ClimateResult {
   climate = {
     params,
     temperature: chain.temperature.slice(),
@@ -691,6 +725,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
   }
   const climateMessage: WorkerClimateDataMessage = {
     type: 'climateData',
+    refinement,
     resX: CLIMATE_RES_X,
     resY: CLIMATE_RES_Y,
     temperature: chain.temperature.buffer as ArrayBuffer,
@@ -709,7 +744,7 @@ function handleComputeClimate(message: Extract<WorkerInboundMessage, { type: 'co
   // Runs on the current, possibly-eroded elevation (lastRawElevations). This
   // is climate v1 — the optimistic mask where every sub-sea cell is water.
   // The hydrology handler refines it (v2) once the terminal basins are known.
-  if (!sim || !lastRawElevations) return
+  if (!sim || !lastRawElevations) { decline('climate', 'tectonics'); return }
   const params: ClimateParams = {
     temperatureOffset: message.temperatureOffset,
     temperatureContrast: message.temperatureContrast,
@@ -717,12 +752,13 @@ function handleComputeClimate(message: Extract<WorkerInboundMessage, { type: 'co
     equatorOffset: message.equatorOffset,
   }
   cacheAndPostClimate(computeClimateChain(lastRawElevations, sim.width, sim.height, params), params)
-  invalidateAfterClimateChange()
+  invalidateAfter('climate')
 }
 
 function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: 'computeHydrology' }>): void {
   // Needs the current topography + a computed climate (rivers' water source).
-  if (!sim || !lastRawElevations || !climate) return
+  if (!sim || !lastRawElevations) { decline('hydrology', 'tectonics'); return }
+  if (!climate) { decline('hydrology', 'climate'); return }
   const { riverDensity } = message
   const terrain = lastRawElevations
   const width = sim.width
@@ -764,11 +800,11 @@ function handleComputeHydrology(message: Extract<WorkerInboundMessage, { type: '
         for (let i = 0; i < lakes.dryBasin.length; i++) if (lakes.dryBasin[i]) { hasDry = true; break }
         if (hasDry) {
           const chain = computeClimateChain(terrain, width, height, weather.params, lakes.dryBasin)
-          // Update the caches + screen WITHOUT invalidateAfterClimateChange():
+          // Update the caches + screen WITHOUT invalidateAfter('climate'):
           // the very next lines recompute the dependent hydrology themselves,
           // and dropping the hydrology result here would force a needless full
           // re-route on the next call.
-          weather = cacheAndPostClimate(chain, weather.params)
+          weather = cacheAndPostClimate(chain, weather.params, true)
           discharge = accumulateDischarge(routing, elevation, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
           maxDischarge = maxDischargeOverLand(discharge, elevation)
           meanRunoff = meanLandRunoff(weather.precipitation, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
@@ -821,7 +857,8 @@ function handleComputeEcology(message: Extract<WorkerInboundMessage, { type: 'co
   // productivity + pasture) plus the current elevation (arable slope) and the
   // sim's volcanoes (province layer). Noise seeded from warpSeed. Fresh arrays,
   // so every field buffer transfers.
-  if (!sim || !lastRawElevations || !climate) return
+  if (!sim || !lastRawElevations) { decline('ecology', 'tectonics'); return }
+  if (!climate) { decline('ecology', 'climate'); return }
   // Hydrology (discharge/lakes) is optional here — if it hasn't been computed
   // yet, fish falls back to its marine component; the ecology panel re-triggers
   // this once hydrology lands (see WorldGenScreen's chaining).
@@ -866,7 +903,9 @@ function handleComputeEcology(message: Extract<WorkerInboundMessage, { type: 'co
 function handleComputeMigration(message: Extract<WorkerInboundMessage, { type: 'computeMigration' }>): void {
   // Needs ecology's carrying capacity (density) + the current climate/hydrology
   // for the cost field. Discharge is downsampled to the coarse grid for river corridors.
-  if (!sim || !lastRawElevations || !climate || !ecology) return
+  if (!sim || !lastRawElevations) { decline('migration', 'tectonics'); return }
+  if (!climate) { decline('migration', 'climate'); return }
+  if (!ecology) { decline('migration', 'ecology'); return }
   const coarseDischarge = hydrology ? downsampleMax(hydrology.discharge, sim.width, sim.height, CLIMATE_RES_X, CLIMATE_RES_Y) : null
   const mig = computeMigration(ecology.carryingCapacity, climate.precipitation, lastRawElevations, coarseDischarge, hydrology?.maxDischarge ?? 0, message.origins, sim.width, sim.height, {
     spreadBudget: message.spreadBudget,
@@ -1075,7 +1114,7 @@ function handleResetTectonics(): void {
   // exists to prevent. It still only reaches the hydrology: going back to the
   // hand-over leaves a computed climate and ecology standing, which the declared
   // chain says it should not. That is step 3c's to fix, not a move's.
-  invalidateAfterTopographyChange()
+  invalidateAfter('tectonics')
   // No initial events under the raft model — a continent is a raft spanning
   // several plates, so there's no per-plate "continent created" moment to
   // announce at handover/reset; real continent events (collision/breakup/

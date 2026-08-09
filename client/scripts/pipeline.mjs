@@ -399,10 +399,15 @@ test('the stages compute, in order, on one world', async () => {
   check('migration ran off the ecology it was handed', p.count('migrationData') >= 1)
 })
 
-test('INVALIDATION: hydrology follows the terrain, climate does not recompute itself', async () => {
+test('INVALIDATION: eroding stales everything downstream, per the declared chain', async () => {
+  // stages.ts says climate, hydrology, ecology and migration all sit downstream of
+  // erosion. Before 3c this side dropped only the hydrology while WorldGenScreen
+  // dropped the climate too, so the two halves of one pipeline disagreed about
+  // what the world currently was.
   const p = await freshPipeline()
   await growWorld(p)
-  p.dispatch({ type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+  const climateMessage = { type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 }
+  p.dispatch(climateMessage)
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
   p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
   await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
@@ -411,12 +416,45 @@ test('INVALIDATION: hydrology follows the terrain, climate does not recompute it
   const climateRuns = p.count('climateData')
   p.dispatch({ type: 'erode', strength: 2, networkRefreshes: 1 })
   await until(() => p.count('deltaMask') >= 1, { label: 'the erosion pass to finish', timeout: 180000 })
-
   check('erosion does not silently recompute the climate', p.count('climateData') === climateRuns)
 
+  // The eroded terrain is not the one that climate was computed on, so asking for
+  // rivers now must refuse rather than route over a climate that describes a world
+  // one erosion pass ago.
+  p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
+  await until(() => p.count('stageDeclined') >= 1, { label: 'the refusal' })
+  const declined = p.last('stageDeclined')
+  check('hydrology refuses on eroded terrain, naming what it needs', declined.stage === 'hydrology' && declined.needs === 'climate', JSON.stringify(declined))
+  check('and it produced no river data', p.count('hydrologyData') === 1)
+
+  p.dispatch(climateMessage)
+  await until(() => p.count('climateData') >= climateRuns + 1, { label: 'the recomputed climate' })
   p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
   await until(() => p.count('hydrologyData') >= 2, { label: 'hydrology again' })
-  check('the same request after erosion re-routes on the new terrain', hash(p.last('hydrologyData').discharge) !== beforeDischarge)
+  check('with the climate back, the rivers follow the new terrain', hash(p.last('hydrologyData').discharge) !== beforeDischarge)
+})
+
+test('a stage that cannot run says so instead of going quiet', async () => {
+  // The failure this removes: the screen sets its in-flight flag, disables the
+  // controls and waits for a result the worker already decided not to produce.
+  const p = await freshPipeline()
+  p.dispatch({ type: 'computeClimate', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+  p.dispatch({ type: 'computeHydrology', riverDensity: RIVER_DENSITY })
+  p.dispatch({ type: 'computeEcology' })
+  p.dispatch({ type: 'computeMigration', origins: [] })
+  p.dispatch({ type: 'erode', strength: 1, networkRefreshes: 1 })
+  await settle(200)
+  const declined = p.messages.filter((m) => m.type === 'stageDeclined')
+  check('all five refuse on a world that does not exist yet', declined.length === 5, declined.map((d) => d.stage).join(', '))
+  check('each names the world itself as what is missing', declined.every((d) => d.needs === 'tectonics'), JSON.stringify(declined.map((d) => d.needs)))
+
+  // And once there IS a world, the refusal is specific: the climate is what
+  // hydrology is short of, not the terrain.
+  const q = await freshPipeline()
+  await growWorld(q)
+  q.dispatch({ type: 'computeEcology' })
+  await until(() => q.count('stageDeclined') >= 1, { label: 'the ecology refusal' })
+  check('ecology names the climate once a world exists', q.last('stageDeclined').needs === 'climate', JSON.stringify(q.last('stageDeclined')))
 })
 
 test('a density-only change reuses the routing instead of re-flooding', async () => {

@@ -4,6 +4,8 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-08-09
+- **fixed** Panels: a step that cannot run yet releases the controls and names what it is waiting for, instead of leaving the spinner turning. `worldgen.panel`
+- **changed** Climate: retuning a climate slider stales the rivers and ecology derived from the old one, instead of leaving them on the map. `worldgen.panel.climate`
 - **fixed** Tectonics: the reset button returns to the hand-over every time — only the first one used to, later ones landed on a drifted world. `worldgen.panel.tectonics`
 - **fixed** Save/Load: opening a world no longer loses it when you step to the Tectonics panel, if a Genesis had been run earlier in the same session. `worldgen.panel.tectonics`
 - **changed** World map: biomes are re-derived from the amplified terrain after every bake stage, so the wash follows the ridges and valleys the bake carved instead of being upscaled from the macro map. `world.biome`
