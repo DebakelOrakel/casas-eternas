@@ -7,8 +7,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "golden": "node --max-old-space-size=8192 scripts/golden.mjs",
-    "roundtrip": "node scripts/roundtrip.mjs",
+    "harness:roundtrip": "node scripts/roundtrip.mjs",
+    "harness:pipeline": "node scripts/pipeline.mjs",
+    "harness:golden": "node --max-old-space-size=8192 scripts/golden.mjs",
+    "harness:golden:record": "node --max-old-space-size=8192 scripts/golden.mjs record",
+    "harness:golden:hash": "node --max-old-space-size=8192 scripts/golden.mjs hash-record",
     "build:baker": "npx esbuild scripts/bake.ts --bundle --platform=node --format=esm --target=node20 --outfile=../baker.mjs --log-level=warning"
   },
   "devDependencies": {

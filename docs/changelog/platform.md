@@ -37,7 +37,7 @@ the format.
 
 ## 2026-07-28
 - **changed** Structure: worldgen restructured into modules (core / elevation / tectonics / crust / surface / render); golden-hash harness gates refactors.
-- **changed** Structure: golden-hash harness moved into the repo (`npm run golden`), now building worlds through the Archean.
+- **changed** Structure: golden-hash harness moved into the repo (`npm run harness:golden`), now building worlds through the Archean.
 - **dropped** Structure: the pre-Archean world builder (`createPlateSimulation`, initial raft generator, worker `init`) — replaced by the Archean.
 - **changed** Performance: craton-age field scatters per blob instead of per cell — 92 ms → 1 ms per epoch.
 

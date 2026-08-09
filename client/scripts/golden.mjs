@@ -1,9 +1,9 @@
 // Regression harness for the worldgen pipeline — three layers, deliberately,
 // plus a fourth that only exists while someone is refactoring.
 //
-//   npm run golden               run every layer, exit non-zero on a failure
-//   npm run golden record        overwrite golden.json with the current measurements
-//   npm run golden hash-record   write golden-hashes.json — the refactor guard (layer 4)
+//   npm run harness:golden          run every layer, exit non-zero on a failure
+//   npm run harness:golden:record   overwrite golden.json with the current measurements
+//   npm run harness:golden:hash     write golden-hashes.json — the refactor guard (layer 4)
 //
 // WHY THIS IS NOT A HASH HARNESS ANY MORE. It used to hash the raw bytes of
 // every stage and compare them against a recorded file. That is exactly right
@@ -583,13 +583,13 @@ if (MODE === 'hash-record') {
   if (failed > 0) console.error(`\nwarning: recording despite ${failed} hard failures — the baseline freezes current behaviour, correct or not`)
   writeFileSync(HASHES, JSON.stringify(hashed, null, 2) + '\n')
   console.log(`\nrecorded ${SEEDS.length} seeds × ${Object.keys(hashed[SEEDS[0]]).length} stage hashes -> golden-hashes.json`)
-  console.log('refactor now; every `npm run golden` compares against this. delete the file when you are done.')
+  console.log('refactor now; every `npm run harness:golden` compares against this. delete the file when you are done.')
   process.exit(0)
 }
 
 console.log('\n— metrics —')
 if (!existsSync(OUT)) {
-  console.error('  no golden.json — run `npm run golden record` first')
+  console.error('  no golden.json — run `npm run harness:golden:record` first')
   process.exit(2)
 }
 const golden = JSON.parse(readFileSync(OUT, 'utf8'))
@@ -608,7 +608,7 @@ for (const seed of SEEDS) {
 }
 console.log(drifted === 0
   ? `  ok    ${compared} metrics within tolerance`
-  : `  ${drifted} of ${compared} metrics drifted — judge them, then \`npm run golden record\` if intended`)
+  : `  ${drifted} of ${compared} metrics drifted — judge them, then \`npm run harness:golden:record\` if intended`)
 
 // --- layer 4: byte hashes (opt-in refactor guard) --------------------------
 //
@@ -640,7 +640,7 @@ if (existsSync(HASHES)) {
     // it off the length of a list is exactly the arithmetic nobody does at 2am.
     console.log(`        ${seed}: ${Object.keys(want).length - moved.length - gone.length} of ${Object.keys(want).length} stages unchanged`)
   }
-  if (movedStages > 0) console.log('  a refactor should move nothing. if the change was intended, `npm run golden hash-record` to re-freeze — or delete golden-hashes.json to end the guard.')
+  if (movedStages > 0) console.log('  a refactor should move nothing. if the change was intended, `npm run harness:golden:hash` to re-freeze — or delete golden-hashes.json to end the guard.')
 }
 
 const seconds = ((Date.now() - started) / 1000).toFixed(0)

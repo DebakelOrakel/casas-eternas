@@ -54,11 +54,15 @@ world is meant, it is not world-layer code.** `runErosionPass` does not;
 
 ```
 make lint      # tsc --noEmit, gofmt, go vet
-make test      # go test, the save round-trip (0.2 s) and the golden harness (~13 min)
+make test      # go test plus all three harnesses (~14 min, nearly all of it golden)
 make run       # build baker + client, then start the server locally
-cd client && npm run dev        # the usual loop
-cd client && npm run golden     # harness alone; `golden record` re-records the baseline
-cd client && npm run roundtrip  # save-format round-trip — 0.2 s, run it freely
+cd client && npm run dev   # the usual loop
+
+# The three harnesses, cheapest first — each guards what the others cannot.
+cd client && npm run harness:roundtrip   # the save format; 0.2 s, run it freely
+cd client && npm run harness:pipeline    # the generator pipeline's behaviour; ~50 s
+cd client && npm run harness:golden      # the generator's fields; ~13 min
+
 ```
 
 ## Standing rules

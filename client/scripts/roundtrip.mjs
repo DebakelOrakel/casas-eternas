@@ -1,6 +1,6 @@
 // Round-trip check for the SAVE FORMAT — what golden.mjs does not reach.
 //
-//   npm run roundtrip
+//   npm run harness:roundtrip
 //
 // The golden harness guards the generator: given params, are the fields the same
 // bytes. It says nothing about what happens to those fields on the way to disk

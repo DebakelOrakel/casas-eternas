@@ -32,8 +32,9 @@ lint:
 
 test:
 	go test ./internal/...
-	cd client && npm run roundtrip
-	cd client && npm run golden
+	cd client && npm run harness:roundtrip
+	cd client && npm run harness:pipeline
+	cd client && npm run harness:golden
 
 # The bake pipeline, bundled for Node. Lands beside the binary because that is
 # where --baker looks by default.

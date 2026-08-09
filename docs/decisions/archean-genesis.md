@@ -241,7 +241,7 @@ as an animation because it is nice to watch, not because it needs the time.
 6. Retire the plate-count / land-fraction / craton-count / clustering sliders.
 
 Every step is covered by the golden-hash harness — `client/scripts/golden.mjs`, run
-with `npm run golden` (and `npm run golden record` to re-baseline) — except the panel
+with `npm run harness:golden` (and `npm run harness:golden:record` to re-baseline) — except the panel
 wiring, which is the same gap, and the same manual check, as the worker refactor.
 
 The harness builds its worlds through the Archean and the handover, i.e. the way the

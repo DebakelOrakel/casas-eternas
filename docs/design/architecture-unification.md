@@ -105,8 +105,8 @@ you did the right thing teaches people to ignore it") applies to *tuning*
 changes. For a refactor that must be bit-exact by definition, a hash is exactly
 the right shape.
 
-**BUILT 2026-08-09.** `npm run golden hash-record` freezes a per-stage byte hash
-into `golden-hashes.json`; every later `npm run golden` reports the stages that
+**BUILT 2026-08-09.** `npm run harness:golden:hash` freezes a per-stage byte hash
+into `golden-hashes.json`; every later `npm run harness:golden` reports the stages that
 moved. The layer exists only while the file does, so it cannot go red for anyone
 who did not arm it, and part D's "remove it" is a deletion. The baseline is
 machine-local and gitignored — determinism holds within a process, but Math
@@ -375,7 +375,7 @@ pipeline version — but `loadWorldInputs`, `worldLayers`' quantisation, the zip
 assembly and the artifact path are **unguarded**. The move would happen precisely
 where nothing goes red.
 
-So C0 is `client/scripts/roundtrip.mjs` (`npm run roundtrip`, in `make test`):
+So C0 is `client/scripts/roundtrip.mjs` (`npm run harness:roundtrip`, in `make test`):
 41 checks in **0.2 s**, on synthetic rasters. It covers layer quantisation across
 each spec's full declared range (a wrong scale clips at the ends, which a
 mid-range spot check misses), the recipe's write→read round trip plus a layout
