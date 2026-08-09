@@ -57,10 +57,22 @@ func (r *Resolver) ChecksIdentity() bool { return r != nil && r.mode.ChecksIdent
 // In `none` mode everybody is Local — including a request carrying a token,
 // because a server that is not checking has no basis to believe one.
 //
-// Everywhere else the answer comes from a token this server issued, verified
-// for the session audience. Anything else is Anonymous: an absent token, an
-// expired one, a forged one and one minted for a bake job all mean the same
-// thing here, and none of them is a reason to fall back to a weaker identity.
+// Everywhere else the answer comes from a token this server issued. TWO KINDS
+// are accepted, and they are deliberately different identities:
+//
+//   - a person's session, whose subject is the user
+//   - a bake Job, whose subject is auth.SubjectBakeJob
+//
+// The second was missing until the first real cluster run, and its absence was
+// written down as a FEATURE: a test asserted that a job token must not open the
+// API. That was half right. A job must not be a LOGIN — it must not order bakes
+// or pass an ownership check, and it does not, because its subject is not any
+// user's. But it does have to read the world it was created to bake and write
+// the artifacts it produces, both over this same API, so refusing it outright
+// left the token it carries good for nothing.
+//
+// Anything else is Anonymous: absent, expired, forged, or issued elsewhere.
+// None of them is a reason to fall back to a weaker identity.
 func (r *Resolver) Caller(req *http.Request) string {
 	if !r.ChecksIdentity() {
 		return Local
@@ -72,11 +84,21 @@ func (r *Resolver) Caller(req *http.Request) string {
 	if raw == "" {
 		return Anonymous
 	}
-	subject, err := r.tokens.Verify(raw, auth.AudienceSession)
-	if err != nil {
-		return Anonymous
+	if subject, err := r.tokens.Verify(raw, auth.AudienceSession); err == nil {
+		return subject
 	}
-	return subject
+	// A job's token, which names one job by audience.
+	//
+	// The subject CLAIM is deliberately ignored: a job is a job whatever it says
+	// it is. Returning the claim let a token minted for "ada" with a bake
+	// audience pass an ownership check as ada — caught by an existing test the
+	// moment job tokens became callers at all. Relying on the one place that
+	// mints them to always write the right subject is not a guarantee, it is a
+	// habit; this makes impersonation impossible instead of unlikely.
+	if _, _, err := r.tokens.VerifyBakeJob(raw); err == nil {
+		return auth.SubjectBakeJob
+	}
+	return Anonymous
 }
 
 // bearer pulls the credential out of the Authorization header, case-insensitively

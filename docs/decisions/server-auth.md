@@ -512,18 +512,35 @@ in both slots — not available — and the SLOT says what it is about. Main ico
 server. Badge: there is one, but not for you. The single nonsensical combination
 cannot arise, since no server means nothing to log in to and therefore no badge.
 
-## Open before a cluster bake works again
+## What a cluster bake needed before it worked again
 
-Found 2026-08-09, while costing progress reporting for bake Jobs. Both block the
-`password` deployment for SERVER-side bakes; nothing in the browser is affected,
-and a 4K bake still falls back to it.
+Two things, found 2026-08-09 while costing progress reporting for bake Jobs, both
+blocking the `password` deployment for SERVER-side bakes. Both fixed the same
+day; nothing in the browser was ever affected, and a 4K bake fell back to it
+throughout.
 
-**The bake Job carries no token.** `Spec.AuthToken` is declared, rendered into
-the Job and read by the baker — and set by nobody. Harmless while the server ran
-`none`; with the deployment in `password` mode the Job's `GET /v1/worlds/{uid}`
-is a 401 and the bake cannot start. Whoever fills it in should mint with
-`auth.BakeAudience(...)`, which exists for exactly this and which the gate
-already refuses as a session.
+**The bake Job carried no token — FIXED 2026-08-09.** `Spec.AuthToken` was
+declared, rendered into the Job and read by the baker, and set by nobody.
+Harmless while the server ran `none`; with the deployment in `password` mode the
+Job's `GET /v1/worlds/{uid}` was a 401 and the bake could not start.
+
+The module now mints one per cluster job, and three choices came with it:
+
+- **The audience names the JOB**, not the artifact key it writes. Decided while
+  planning progress reporting: a job reports against one order, so the token has
+  to identify which. The artifact key is in the spec anyway.
+- **The subject is `bake-job`, not the person who ordered it.** A job may write
+  the artifacts of one world; borrowing its orderer's identity would hand it
+  everything that person may do, and would make a log line about a misbehaving
+  job name the wrong party.
+- **One hour.** The token travels in a Job spec, readable by anyone who can read
+  Jobs in the namespace, so its lifetime is how long that exposure lasts. Long
+  enough for the scheduling deadline plus the longest bake, short enough that a
+  leaked spec is stale the same morning.
+
+A job that cannot be given a token FAILS rather than going out without one: it
+would start, read the world, collect a 401 and report a bake failure whose cause
+was entirely on this side.
 
 **The baker was outside every check.** `tsconfig.json` included only `src`, so
 `scripts/bake.ts` — the server-side baker, which shares code with the browser —
@@ -532,6 +549,44 @@ removed hours earlier, and compiled. Fixed the same day: `tsconfig.node.json`
 covers `scripts/` with `@types/node` (kept apart so browser code cannot reach
 `process`), and `make lint` runs both configs. Verified by putting the break back
 and watching it go red.
+
+## A bake Job is a caller, and not a user
+
+Found on the first real cluster run, 2026-08-09: `cannot read the world`.
+
+The Job had its token by then, and the gate refused it — **by design**. A test
+asserted, approvingly, that "a bake token must not open the API". That was half
+right and wholly blocking: a Job reads the world it was created to bake over that
+very API, so a token the gate rejects is a token good for nothing. The audience
+split had been built to keep a job from being a LOGIN, and had quietly been
+implemented as keeping it from being a caller at all.
+
+`identity.Caller` now accepts both kinds, and the distinction moved to where it
+belongs — the subject:
+
+- a session's subject is the user
+- a job's is `auth.SubjectBakeJob`, which no ownership comparison accepts
+
+**Two holes surfaced while closing it, both caught by tests rather than by
+reading.**
+
+The first: `Caller` returned the job token's subject CLAIM, so a token minted for
+"ada" with a bake audience passed an ownership check as ada. The claim is ignored
+now and the constant returned — a job is a job whatever it says it is. Relying on
+the one place that mints them to always write the right subject is a habit, not a
+guarantee.
+
+The second: `canBake(caller, owner)` was true when both were the job subject,
+which is reachable — a job is a caller, so a world it wrote would record it as
+the owner. A machine identity now owns nothing, stated as its own rule rather
+than left to the absence of such a world.
+
+**What is still coarse, and knowingly.** A job token is accepted for the whole
+API for its hour, not narrowed to the one world and the one artifact key it
+should touch. Narrowing wants the handlers to consult the job's spec, which is
+cheap once the progress endpoint exists (it already looks a job up by id) and is
+the natural next step when artifact writes get owner checks — stage 2 of "Who may
+write" in the storage design.
 
 ## Flags
 

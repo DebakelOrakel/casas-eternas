@@ -89,16 +89,6 @@ func TestApiRequiresACaller(t *testing.T) {
 		}
 	}
 
-	// A bake token is not a session, and the gate is where that stops being an
-	// abstract claim about audiences.
-	job, _, err := tokens.Issue("ada", auth.BakeAudience("v4-abc"), time.Hour)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	if code, ran := request(t, gate, "/v1/worlds", job); code != http.StatusUnauthorized || ran {
-		t.Errorf("a bake token opened the API: %d (reached: %v)", code, ran)
-	}
-
 	expired, _, err := tokens.Issue("ada", auth.AudienceSession, -time.Minute)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
@@ -117,6 +107,48 @@ func TestApiRequiresACaller(t *testing.T) {
 		if code, ran := request(t, gate, path, session); !ran || code != http.StatusOK {
 			t.Errorf("%s with a session = %d (reached: %v), want 200", path, code, ran)
 		}
+	}
+}
+
+// A bake Job is a caller too, and this test used to assert the opposite.
+//
+// It read "a bake token must not open the API", which sounded like the audience
+// split doing its job and was in fact a contradiction: a Job reads the world it
+// was created to bake over this very API, so a token the gate refuses is a token
+// good for nothing. The first real cluster run said so — "cannot read the world".
+//
+// What must remain true is the narrower thing: a job is not a LOGIN. Its subject
+// is nobody's, so no ownership comparison accepts it — which is tested where
+// ownership lives, in the bake module.
+func TestABakeJobIsACallerButNotAUser(t *testing.T) {
+	gate, tokens := newGate(t, config.AuthPassword)
+	job, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), time.Hour)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if code, ran := request(t, gate, "/v1/worlds/abc", job); !ran || code != http.StatusOK {
+		t.Errorf("a bake job could not read a world: %d (reached: %v)", code, ran)
+	}
+
+	// Still refused: expired, and issued somewhere else. A job token is not a
+	// skeleton key, it is one more thing this server signed.
+	expired, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), -time.Minute)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if code, ran := request(t, gate, "/v1/worlds/abc", expired); code != http.StatusUnauthorized || ran {
+		t.Errorf("an expired job token was accepted: %d (reached: %v)", code, ran)
+	}
+	stranger, err := auth.NewTokens([]byte("a different key, also long enough ok"))
+	if err != nil {
+		t.Fatalf("NewTokens: %v", err)
+	}
+	foreign, _, err := stranger.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), time.Hour)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if code, ran := request(t, gate, "/v1/worlds/abc", foreign); code != http.StatusUnauthorized || ran {
+		t.Errorf("a job token signed elsewhere was accepted: %d (reached: %v)", code, ran)
 	}
 }
 

@@ -27,11 +27,34 @@ type fakeRunner struct {
 	peak    int32
 	started int32
 	release chan struct{}
+	// The last spec handed over, so a test can inspect what the module decided
+	// to send rather than only what came back.
+	lastSpec Spec
 }
 
 func newFakeRunner() *fakeRunner { return &fakeRunner{release: make(chan struct{})} }
 
+// awaitSpec waits for the queue to hand the runner a job, and returns it.
+func (f *fakeRunner) awaitSpec(t *testing.T) Spec {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		f.mu.Lock()
+		spec := f.lastSpec
+		f.mu.Unlock()
+		if spec.JobID != "" {
+			return spec
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the runner was never given a job")
+	return Spec{}
+}
+
 func (f *fakeRunner) Run(ctx context.Context, spec Spec, onProgress func(Progress)) (Result, error) {
+	f.mu.Lock()
+	f.lastSpec = spec
+	f.mu.Unlock()
 	atomic.AddInt32(&f.started, 1)
 	now := atomic.AddInt32(&f.running, 1)
 	f.mu.Lock()
@@ -187,6 +210,31 @@ func TestOwnershipIsEnforcedWhenIdentityIsChecked(t *testing.T) {
 	}
 }
 
+// The other half of "a job is a caller": it must never be a USER. Its token
+// identifies it, so the gate lets it read and write — but ownership is compared
+// against a name no person has, so a leaked job token cannot order more bakes.
+func TestABakeJobCannotOrderBakes(t *testing.T) {
+	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	if err != nil {
+		t.Fatalf("NewTokens: %v", err)
+	}
+	m, _, dir := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
+	writeWorld(t, dir, testUID, "ada")
+
+	job, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), time.Hour)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if got := post(m, testUID, `{"stage":2}`, job).Code; got != http.StatusForbidden {
+		t.Errorf("a bake job ordered a bake = %d, want 403", got)
+	}
+	// And the comparison underneath, stated directly: no owner is ever called
+	// this, so the name itself is the refusal.
+	if m.canBake(auth.SubjectBakeJob, auth.SubjectBakeJob) {
+		t.Error("canBake accepted a job as its own owner — the subject must not be ownable")
+	}
+}
+
 // A refusal must not double as a denial that the world exists.
 func TestRefusalDistinguishesMissingFromForbidden(t *testing.T) {
 	m, _, dir := newTestModule(t, config.AuthPassword, 1)
@@ -294,6 +342,66 @@ func TestProgressAndResultReachTheJobRecord(t *testing.T) {
 	done, _ := m.jobs.get(job.ID)
 	if done.State != StateDone || done.Result == nil || done.Percent != 100 {
 		t.Errorf("finished job = %+v", done)
+	}
+}
+
+// A cluster bake reaches the server over HTTP like any other client, so on a
+// server that checks identity it must carry credentials — without them it gets a
+// 401 reading the world it was created to bake. That was true and unnoticed
+// until 2026-08-09: the field existed and nobody filled it.
+func TestClusterJobCarriesAScopedToken(t *testing.T) {
+	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	if err != nil {
+		t.Fatalf("NewTokens: %v", err)
+	}
+	m, runner, dir := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
+	m.cfg.Tokens = tokens
+	m.clusterMode = true
+	m.serverURL = "http://server:8080/v1"
+	writeWorld(t, dir, testUID, identity.Local)
+
+	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
+		t.Fatalf("bake request = %d, want 202", code)
+	}
+	spec := runner.awaitSpec(t)
+
+	if spec.AuthToken == "" {
+		t.Fatal("a cluster job was sent out with no token")
+	}
+	// The audience names the JOB, not the person who ordered it and not the
+	// artifact key: it is what lets the job report progress against one order,
+	// and what stops the token being usable as a login.
+	subject, err := tokens.Verify(spec.AuthToken, auth.BakeAudience(spec.JobID))
+	if err != nil {
+		t.Fatalf("the job's token does not verify for its own job: %v", err)
+	}
+	if subject != auth.SubjectBakeJob {
+		t.Errorf("token subject = %q, want %q — a job must not borrow its orderer's identity", subject, auth.SubjectBakeJob)
+	}
+	if _, err := tokens.Verify(spec.AuthToken, auth.AudienceSession); err == nil {
+		t.Error("a job token was accepted as a session")
+	}
+	if _, err := tokens.Verify(spec.AuthToken, auth.BakeAudience("some-other-job")); err == nil {
+		t.Error("a job token was accepted for another job")
+	}
+}
+
+// The local runner reads files directly, so a token would be a credential handed
+// out for nothing.
+func TestLocalJobCarriesNoToken(t *testing.T) {
+	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	if err != nil {
+		t.Fatalf("NewTokens: %v", err)
+	}
+	m, runner, dir := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
+	m.cfg.Tokens = tokens
+	writeWorld(t, dir, testUID, identity.Local)
+
+	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
+		t.Fatalf("bake request = %d, want 202", code)
+	}
+	if spec := runner.awaitSpec(t); spec.AuthToken != "" {
+		t.Error("a local job was given a token it has no use for")
 	}
 }
 

@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
 
@@ -64,6 +65,10 @@ type Config struct {
 	// Identity answers who a request comes from — the same resolver every other
 	// module holds, so ownership is compared against one notion of "caller".
 	Identity *identity.Resolver
+	// Tokens mints the credential a CLUSTER bake carries. Nil when the server
+	// checks nobody, in which case a Job needs none: it is talking to a server
+	// that lets everyone in.
+	Tokens *auth.Tokens
 	// Listen is the server's own bind address, used only to work out the port a
 	// bake Job should reach it on.
 	Listen string
@@ -294,8 +299,24 @@ func (m *Module) canBake(caller, owner string) bool {
 	if !m.cfg.Identity.ChecksIdentity() {
 		return true
 	}
+	// A machine identity owns nothing, ever. Without this the comparison below
+	// is true when caller and owner are BOTH the job subject — reachable, since
+	// a job is a caller and a world it wrote would record it as the owner. The
+	// rule is worth stating rather than relying on no such world existing.
+	if caller == auth.SubjectBakeJob || owner == auth.SubjectBakeJob {
+		return false
+	}
 	return caller != identity.Anonymous && caller == owner
 }
+
+// jobTokenTTL bounds a Job's credential.
+//
+// Longer than schedulingDeadline plus a bake, and no longer: the token travels
+// in a Job spec, which is readable by anyone who can read Jobs in the namespace,
+// so its value is how long that exposure lasts. An 8192² bake runs in minutes;
+// an hour is generous for the worst case and short enough that a leaked spec
+// goes stale the same morning.
+const jobTokenTTL = time.Hour
 
 func (m *Module) work(ctx context.Context) {
 	defer m.workers.Done()
@@ -322,6 +343,28 @@ func (m *Module) work(ctx context.Context) {
 		if m.clusterMode {
 			spec.WorldURL = fmt.Sprintf("%s/worlds/%s", m.serverURL, job.Request.WorldUID)
 			spec.ArtifactsURL = m.serverURL
+			// A Job on another node reaches the server over HTTP like any other
+			// client, so on a server that checks identity it needs credentials —
+			// without them it gets a 401 reading the world it was created to
+			// bake. Scoped to this one job by audience, so it is not a login:
+			// the gate refuses it everywhere a session is expected.
+			if m.cfg.Tokens != nil {
+				token, _, tokenErr := m.cfg.Tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience(id), jobTokenTTL)
+				if tokenErr != nil {
+					// Failing here rather than sending the Job out without one:
+					// it would start, read the world, get a 401 and report a
+					// bake failure whose cause is on this side entirely.
+					failed := time.Now()
+					m.jobs.update(id, func(j *Job) {
+						j.State = StateFailed
+						j.Error = fmt.Sprintf("cannot issue a token for the bake job: %v", tokenErr)
+						j.EndedAt = &failed
+					})
+					slog.Error("bake not started", "job", id, "err", tokenErr)
+					continue
+				}
+				spec.AuthToken = token
+			}
 		} else {
 			spec.WorldZip = zip
 			spec.ArtifactsDir = m.cfg.ArtifactsDir

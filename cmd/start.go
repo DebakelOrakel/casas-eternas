@@ -64,7 +64,7 @@ func buildModules(targets config.Targets) ([]server.Module, func(http.Handler) h
 	if err != nil {
 		return nil, nil, err
 	}
-	caller, login, err := buildAuth(authMode)
+	caller, tokens, login, err := buildAuth(authMode)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -105,6 +105,7 @@ func buildModules(targets config.Targets) ([]server.Module, func(http.Handler) h
 			ArtifactsDir:  viper.GetString(flagDirArtifacts),
 			BakerPath:     bakerPath(),
 			Identity:      caller,
+			Tokens:        tokens,
 			Listen:        viper.GetString(flagListen),
 			MaxConcurrent: viper.GetInt(flagBakeMax),
 		})
@@ -148,15 +149,17 @@ func bakerPath() string {
 // request to nobody, which looks exactly like a permission bug from the outside.
 // So every ingredient it needs is required here, at startup, where the message
 // can name the missing flag.
-func buildAuth(mode config.AuthMode) (*identity.Resolver, server.Module, error) {
+func buildAuth(mode config.AuthMode) (*identity.Resolver, *auth.Tokens, server.Module, error) {
 	if !mode.ChecksIdentity() {
-		return identity.NewResolver(mode, nil), nil, nil
+		// No issuer either: a Job talking to a server that checks nobody needs
+		// no credential, and handing it one would be a token nothing verifies.
+		return identity.NewResolver(mode, nil), nil, nil, nil
 	}
 
 	if mode == config.AuthOIDC {
 		// The declared, empty path: the mode parses and the resolver would
 		// verify the tokens this server issues, but nothing issues them yet.
-		return nil, nil, fmt.Errorf("--auth-mode %s is not implemented yet", mode)
+		return nil, nil, nil, fmt.Errorf("--auth-mode %s is not implemented yet", mode)
 	}
 
 	// Users before the key, so a start that is going to fail fails BEFORE
@@ -165,16 +168,16 @@ func buildAuth(mode config.AuthMode) (*identity.Resolver, server.Module, error) 
 	// wrong problem.
 	users, err := auth.NewUsers(viper.GetString(flagAuthHtpasswd))
 	if err != nil {
-		return nil, nil, fmt.Errorf("--%s: %w", flagAuthHtpasswd, err)
+		return nil, nil, nil, fmt.Errorf("--%s: %w", flagAuthHtpasswd, err)
 	}
 
 	key, err := signingKey()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	tokens, err := auth.NewTokens(key)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	resolver := identity.NewResolver(mode, tokens)
 	login, err := session.New(session.Config{
@@ -183,10 +186,10 @@ func buildAuth(mode config.AuthMode) (*identity.Resolver, server.Module, error) 
 		TTL:    viper.GetDuration(flagAuthTokenTTL),
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	slog.Info("authentication ready", "mode", mode, "users", users.Path(), "token ttl", viper.GetDuration(flagAuthTokenTTL))
-	return resolver, login, nil
+	return resolver, tokens, login, nil
 }
 
 // signingKey reads the configured key, or makes an ephemeral one and says so.

@@ -34,10 +34,24 @@ const Issuer = "casas-eternas"
 const (
 	// AudienceSession is a logged-in person.
 	AudienceSession = "session"
-	// AudienceBakePrefix builds the audience of a job token, which is scoped to
-	// the one artifact key that job may write: "bake:<key>".
+	// AudienceBakePrefix builds the audience of a bake job's token, which names
+	// the ONE job it belongs to: "bake:<jobID>".
+	//
+	// The job rather than the artifact key it writes, decided 2026-08-09: a job
+	// reports its progress to an endpoint keyed by job id, and the artifact key
+	// is in its spec anyway. Keying the audience by artifact would have meant
+	// the token could not identify which job was talking.
 	AudienceBakePrefix = "bake:"
 )
+
+// SubjectBakeJob is who a bake Job is, as a caller.
+//
+// Not the person who ordered it: a Job may write the artifacts of the one world
+// it was given, and borrowing its orderer's identity would hand it everything
+// that person may do — including ordering more bakes. A name of its own keeps
+// "may bake" and "may act as ada" separate, and it is what a log line names when
+// a Job misbehaves.
+const SubjectBakeJob = "bake-job"
 
 // MinKeyBytes is the shortest signing key accepted.
 //
@@ -145,5 +159,37 @@ func (t *Tokens) Verify(raw, audience string) (string, error) {
 	return claims.Subject, nil
 }
 
-// BakeAudience is the audience of a token scoped to one artifact key.
-func BakeAudience(artifactKey string) string { return AudienceBakePrefix + artifactKey }
+// BakeAudience is the audience of the token belonging to one bake job.
+func BakeAudience(jobID string) string { return AudienceBakePrefix + jobID }
+
+// VerifyBakeJob accepts a token belonging to SOME bake job, and says which.
+//
+// Separate from Verify because the caller does not know the audience in advance
+// — that is the thing being asked. Everything else is identical: the same
+// pinned method, the same required expiry, the same issuer. Only the audience is
+// matched by shape rather than by value, and it must still BE one: a token with
+// no `bake:` audience is refused here exactly as a session token is.
+//
+// It exists because a Job reaches the API like any other client and would
+// otherwise be refused by the gate — which is what happened on the first real
+// cluster run after job tokens were introduced.
+func (t *Tokens) VerifyBakeJob(raw string) (subject, jobID string, err error) {
+	claims := &jwt.RegisteredClaims{}
+	if _, parseErr := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) { return t.key, nil },
+		jwt.WithValidMethods([]string{signingMethod}),
+		jwt.WithIssuer(Issuer),
+		jwt.WithExpirationRequired(),
+	); parseErr != nil {
+		return "", "", fmt.Errorf("token rejected: %w", parseErr)
+	}
+	// Exactly one, so a token carrying both a session and a job audience cannot
+	// be minted into something that is quietly both.
+	if len(claims.Audience) != 1 || !strings.HasPrefix(claims.Audience[0], AudienceBakePrefix) {
+		return "", "", fmt.Errorf("token rejected: not a bake job token")
+	}
+	id := strings.TrimPrefix(claims.Audience[0], AudienceBakePrefix)
+	if id == "" || claims.Subject == "" {
+		return "", "", fmt.Errorf("token rejected: incomplete bake job token")
+	}
+	return claims.Subject, id, nil
+}
