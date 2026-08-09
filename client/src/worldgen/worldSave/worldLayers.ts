@@ -7,6 +7,8 @@
 
 import { metersToElevation } from '../elevation/elevationScale'
 import { sampleNearestWorld, downsampleMax } from '../core/field'
+import { ECOLOGY_FIELD_NAMES, fieldSpec } from './fieldSpec'
+import type { FieldSpec } from './fieldSpec'
 
 export { downsampleMax }
 
@@ -15,39 +17,37 @@ export type Dtype = 'u8' | 'u16' | 'f32'
 // Deepest lake the u8 lakeDepth layer needs to represent, in elevation units.
 const LAKE_DEPTH_RANGE = metersToElevation(3000)
 
-// A field layer's on-disk encoding. `value = raw * scale + offset`. `landOnly`
-// fields are only meaningful where the landMask is 1 (their ocean cells store 0).
+// A field layer's ON-DISK ENCODING, on top of what the field already is.
+// `value = raw * scale + offset`.
 //
-// `fullRes` marks the layers written on the WORLD raster instead of the climate
-// grid. It is a property of the source field, not of this format — every layer
-// carries its own resX/resY in the manifest either way, so a consumer never has
-// to know which is which. It exists so the writer picks the right dimensions
-// from the spec rather than from a list of names kept in sync by hand.
-export interface LayerSpec {
-  name: string
+// The name, grid, unit and land-only flag come from `fieldSpec.ts` rather than
+// being restated here, so the save cannot describe a field differently from the
+// way the rest of the program does. What is left in this file is exactly the
+// part that belongs to storage.
+// Just the storage part — what the quantiser needs and nothing more. Kept
+// separate because two callers legitimately have an encoding without a world
+// field behind it: the amplification artifact quantises its own elevation, and
+// the save reader rebuilds an encoding from the manifest it just parsed.
+export interface Encoding {
   dtype: Dtype
   scale: number
   offset: number
-  unit: string
-  landOnly: boolean
-  fullRes?: boolean
 }
 
-// Ecology fields (aggregate + the 13 resources) — all 0..~2 suitability/abundance.
-const ECOLOGY_LAYERS: string[] = [
-  'carryingCapacity', 'arable', 'fish', 'game', 'pasture',
-  'timber', 'salt', 'toolStone', 'copper', 'tin', 'iron',
-  'gold', 'silver', 'gems',
-]
+export interface LayerSpec extends FieldSpec, Encoding {}
+
+// One layer: the field's own truth plus how this format stores it.
+const layer = (name: string, dtype: Dtype, scale: number, offset: number): LayerSpec =>
+  ({ ...fieldSpec(name), dtype, scale, offset })
 
 // The coarse (climate-grid) quantised layers. Elevation + oceanAge are carried
 // separately as raw f32 (they double as the restore rasters — see the save doc).
 export const WORLD_LAYERS: LayerSpec[] = [
   // Ranges are generous so real extremes never clip (greenhouse heat, Siberian
   // seasonality, very wet rainforest, gain/province-boosted ecology).
-  { name: 'landMask', dtype: 'u8', scale: 1, offset: 0, unit: '', landOnly: false },
-  { name: 'temperature', dtype: 'u8', scale: 90 / 255, offset: -35, unit: '°C', landOnly: false },
-  { name: 'precipitation', dtype: 'u16', scale: 8000 / 65535, offset: 0, unit: 'mm/yr', landOnly: true },
+  layer('landMask', 'u8', 1, 0),
+  layer('temperature', 'u8', 90 / 255, -35),
+  layer('precipitation', 'u16', 8000 / 65535, 0),
   // The same field plus the riparian bonus — rivers and lakes moistening their
   // surroundings (see hydrology.computeRiparianBiomes). Stored beside the
   // climate's own precipitation rather than replacing it, because they answer
@@ -59,15 +59,15 @@ export const WORLD_LAYERS: LayerSpec[] = [
   // riparian effect there would mean routing and accumulating flow over an
   // 8-million-cell raster on every load, to recover a field that is regional
   // anyway. 64 KB instead.
-  { name: 'precipitationEffective', dtype: 'u16', scale: 8000 / 65535, offset: 0, unit: 'mm/yr', landOnly: true },
+  layer('precipitationEffective', 'u16', 8000 / 65535, 0),
   // Full-res, unlike its climate neighbours: the classification is pointwise and
   // reads elevation, which exists at world resolution (see climate/biomes.ts's
   // computeBiomesFine). A 62 km biome cell could not say where a treeline is —
   // and a game whose unit of place is a ~1.5 km hex asks exactly that. 2 MB raw,
   // and it is a mostly-flat id field, so DEFLATE takes most of it back.
-  { name: 'biome', dtype: 'u8', scale: 1, offset: 0, unit: 'biomeId', landOnly: false, fullRes: true },
-  { name: 'seasonalAmplitude', dtype: 'u8', scale: 60 / 255, offset: 0, unit: '°C', landOnly: true },
-  { name: 'monsoonIndex', dtype: 'u8', scale: 1 / 255, offset: 0, unit: '', landOnly: true },
+  layer('biome', 'u8', 1, 0),
+  layer('seasonalAmplitude', 'u8', 60 / 255, 0),
+  layer('monsoonIndex', 'u8', 1 / 255, 0),
   // Lake depth in elevation units. The range was 20 — off by nearly two orders
   // of magnitude, since a lake's depth is `filled - elevation` and the whole
   // elevation field only spans ±1. Measured over a real run: p50 0.004, p99
@@ -84,8 +84,8 @@ export const WORLD_LAYERS: LayerSpec[] = [
   // inflated to at least one coarse cell across. We were also throwing away
   // resolution we already had, for a field that is zero almost everywhere and
   // therefore nearly free once deflated.
-  { name: 'lakeDepth', dtype: 'u8', scale: LAKE_DEPTH_RANGE / 255, offset: 0, unit: 'depth', landOnly: true, fullRes: true },
-  ...ECOLOGY_LAYERS.map((name): LayerSpec => ({ name, dtype: 'u8', scale: 3 / 255, offset: 0, unit: '', landOnly: true })),
+  layer('lakeDepth', 'u8', LAKE_DEPTH_RANGE / 255, 0),
+  ...ECOLOGY_FIELD_NAMES.map((name) => layer(name, 'u8', 3 / 255, 0)),
 ]
 
 // Flow accumulation. Full-res like biome, but kept out of WORLD_LAYERS because
@@ -114,9 +114,7 @@ export const WORLD_LAYERS: LayerSpec[] = [
 // of "river discharge" suggests. At 4 m3/s per step the ceiling is ~262,000 —
 // above the Amazon's ~209,000 — so clipping needs a world unlike any measured,
 // and even then it only flattens the top of the largest river.
-export const DISCHARGE_LAYER: LayerSpec = {
-  name: 'discharge', dtype: 'u16', scale: 4, offset: 0, unit: 'm3/s', landOnly: false, fullRes: true,
-}
+export const DISCHARGE_LAYER: LayerSpec = layer('discharge', 'u16', 4, 0)
 
 
 const maxCode = (dtype: Dtype): number => (dtype === 'u16' ? 65535 : 255)
@@ -128,7 +126,7 @@ function makeArray(dtype: Dtype, n: number): Uint8Array | Uint16Array | Float32A
 // Quantise a source field into its layer's dtype (`value → raw`). Negative
 // sentinels (ocean: OCEAN_PRECIP, OCEAN_AMPLITUDE, ECOLOGY_OCEAN, …) and
 // out-of-range values clamp into range — consumers mask with landMask.
-export function bakeLayer(field: Float32Array | Uint8Array, spec: LayerSpec): ArrayBuffer {
+export function bakeLayer(field: Float32Array | Uint8Array, spec: Encoding): ArrayBuffer {
   const n = field.length
   if (spec.dtype === 'f32') return Float32Array.from(field).buffer as ArrayBuffer
   const out = makeArray(spec.dtype, n) as Uint8Array | Uint16Array
@@ -141,7 +139,7 @@ export function bakeLayer(field: Float32Array | Uint8Array, spec: LayerSpec): Ar
 }
 
 // Read a typed layer buffer as its numeric field (raw → value). Used to sample.
-export function decodeLayer(buffer: ArrayBuffer, spec: LayerSpec): Float32Array {
+export function decodeLayer(buffer: ArrayBuffer, spec: Encoding): Float32Array {
   const raw = spec.dtype === 'f32' ? new Float32Array(buffer) : spec.dtype === 'u16' ? new Uint16Array(buffer) : new Uint8Array(buffer)
   const out = new Float32Array(raw.length)
   for (let i = 0; i < raw.length; i++) out[i] = spec.dtype === 'f32' ? raw[i] : raw[i] * spec.scale + spec.offset

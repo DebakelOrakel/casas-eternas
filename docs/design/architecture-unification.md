@@ -427,12 +427,42 @@ field, not a second definition — precipitation writes the sentinel exactly whe
 the ocean test says ocean. Passing the mask explicitly instead is a signature
 change and belongs to C2, where the field contracts are drawn.
 
-**C2. Field contracts for the live path too.** `LayerSpec`/`WORLD_LAYERS`
-describe only the save side today. The live path has **no contract at all** —
-each of ~14 fields is read by open-coded index arithmetic at every call site,
-against whichever resolution that field happens to use. The manifest concept
-becomes the universal description: every source describes itself as a set of
-layer specs.
+**C2. Field contracts. BUILT 2026-08-09**, verified 38 of 38 stages
+byte-identical and the round-trip green.
+
+`LayerSpec` carried two kinds of truth at once, and its own comment on `fullRes`
+had already named the problem — "a property of the source field, not of this
+format". Split:
+
+- **`FieldSpec`** (`worldSave/fieldSpec.ts`) — name, grid, unit, land-only. True
+  of a field *wherever* it lives: worker memory, a save, an artifact.
+- **`Encoding`** — dtype, scale, offset. True of one storage form.
+
+`LayerSpec` is now simply both, and `WORLD_LAYERS` composes itself from the
+registry, so the save can no longer describe a field differently from the rest of
+the program. `fullRes?: boolean` became `grid: 'world' | 'climate'` — a statement
+instead of a flag with an implied opposite.
+
+The split paid immediately. Two callers were **fabricating a LayerSpec** purely
+to reach the quantiser — the amplification artifact for its own elevation, and
+the save reader rebuilding a spec from the manifest it had just parsed, complete
+with an invented `unit: ''`. Neither has a world field behind it. `bakeLayer` and
+`decodeLayer` now take an `Encoding`, so the quantiser stops claiming it needs to
+know what a field *is*. A dead parameter fell out with it: `readLayer(…, landOnly)`
+passed a value `decodeLayer` never read, at seven call sites.
+
+The registry also makes two absences visible. `elevation` is listed even though
+it is not a quantised layer — it rides as raw f32 because it doubles as the
+restore raster, but the manifest lists it as a field and nothing said so before.
+And `oceanAge` and the mantle field are documented as deliberately *out*: they
+have their own grids and are restore rasters, not queryable layers. Whether
+oceanAge should become one is the open question in queryable-world-save.md, and
+this registry is now the place the answer would land.
+
+**Still open, and deferred on purpose:** the live path has no contract yet. The
+registry describes the fields, but the worker's `last*` mirrors are not yet
+registered against it and consumers still do open-coded index arithmetic. That is
+C3's work — the facade is what gives a source something to describe itself *to*.
 
 **C3. The `world` module.** Per aspect, not monolithic. Covers finished worlds —
 save, artifact cache, server — and NOT the generator's live fields (see above;

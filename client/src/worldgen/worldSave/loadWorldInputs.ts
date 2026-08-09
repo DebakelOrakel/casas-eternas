@@ -100,13 +100,13 @@ export interface WorldInputs {
   worldUid: string
 }
 
-function readLayer(zip: JSZip, manifest: WorldManifest, name: string, landOnly: boolean): Promise<GridLayer | null> {
+function readLayer(zip: JSZip, manifest: WorldManifest, name: string): Promise<GridLayer | null> {
   const entry = manifest.layers.find((layer) => layer.name === name && layer.kind === 'raster')
   if (!entry?.dtype || !entry.encoding || !entry.resX || !entry.resY) return Promise.resolve(null)
   const file = zip.file(entry.file)
   if (!file) return Promise.resolve(null)
   return file.async('arraybuffer').then((buffer) => ({
-    data: decodeLayer(buffer, { name, dtype: entry.dtype!, scale: entry.encoding!.scale, offset: entry.encoding!.offset, unit: '', landOnly }),
+    data: decodeLayer(buffer, { dtype: entry.dtype!, scale: entry.encoding!.scale, offset: entry.encoding!.offset }),
     resX: entry.resX!,
     resY: entry.resY!,
   }))
@@ -151,13 +151,13 @@ export async function readWorldInputs(archive: ArrayBuffer | Uint8Array): Promis
     riverDensity: readRecipeNumber(yamlText, 'spec.hydrology.riverDensity'),
   }
 
-  const climate = await readLayer(zip, manifest, 'precipitation', true)
-  const biome = await readLayer(zip, manifest, 'biome', false)
+  const climate = await readLayer(zip, manifest, 'precipitation')
+  const biome = await readLayer(zip, manifest, 'biome')
 
-  const temperature = await readLayer(zip, manifest, 'temperature', false)
-  const precipitationEffective = await readLayer(zip, manifest, 'precipitationEffective', true)
-  const seasonalAmplitude = await readLayer(zip, manifest, 'seasonalAmplitude', true)
-  const monsoonIndex = await readLayer(zip, manifest, 'monsoonIndex', true)
+  const temperature = await readLayer(zip, manifest, 'temperature')
+  const precipitationEffective = await readLayer(zip, manifest, 'precipitationEffective')
+  const seasonalAmplitude = await readLayer(zip, manifest, 'seasonalAmplitude')
+  const monsoonIndex = await readLayer(zip, manifest, 'monsoonIndex')
   const biomeInputs = temperature && precipitationEffective && seasonalAmplitude && monsoonIndex
     ? { temperature, precipitationEffective, seasonalAmplitude, monsoonIndex }
     : null

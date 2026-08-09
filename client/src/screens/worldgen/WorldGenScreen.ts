@@ -2893,7 +2893,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         // baked on the world raster (see LayerSpec.fullRes). A wrong pair here
         // would not throw — the buffer's length is whatever the source is, and
         // only the manifest says how to fold it into rows.
-        const [lx, ly] = spec.fullRes ? [MAP_WIDTH, MAP_HEIGHT] : [rx, ry]
+        const [lx, ly] = spec.grid === 'world' ? [MAP_WIDTH, MAP_HEIGHT] : [rx, ry]
         zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
         layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: lx, resY: ly, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
       }

@@ -2,7 +2,7 @@ import { artifactPath } from './ArtifactStore'
 import type { ArtifactKey, ArtifactStore } from './ArtifactStore'
 import { derivePipelineVersion } from './artifactKey'
 import { bakeLayer, decodeLayer } from '../worldgen/worldSave/worldLayers'
-import type { LayerSpec } from '../worldgen/worldSave/worldLayers'
+import type { Encoding } from '../worldgen/worldSave/worldLayers'
 import { AMPLIFY_CONSTANTS } from '../worldgen/surface/amplify'
 import { AMPLIFY_EROSION_ROUNDS } from '../map/mapSceneSettings'
 
@@ -60,14 +60,10 @@ interface ArtifactMeta {
 // The cost is 2/65535 of the elevation range ≈ 0.27 m of height precision,
 // far below anything the renderer or the hover readout can show. Reuses the
 // save format's own quantiser so the conventions stay in one place.
-const ELEVATION_SPEC: LayerSpec = {
-  name: 'elevation',
-  dtype: 'u16',
-  scale: 2 / 65535,
-  offset: -1,
-  unit: 'relative',
-  landOnly: false,
-}
+// An ENCODING, not a world field: this is the amplified 4k/8k raster, which is
+// derived presentation and never a queryable layer (worldmap-amplification.md,
+// rule 4). It borrows the save's quantiser, not its field registry.
+const ELEVATION_ENCODING: Encoding = { dtype: 'u16', scale: 2 / 65535, offset: -1 }
 
 // Rivers travel as raw binary rather than the save's JSON form: a baked
 // world's network runs to six figures of points, and JSON would be an order
@@ -119,7 +115,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
   // write interrupted half way leaves an entry that reads as absent rather
   // than as present-but-truncated.
   const wrote =
-    (await store.write(artifactPath(key, FILES.elevation), new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_SPEC)))) &&
+    (await store.write(artifactPath(key, FILES.elevation), new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING)))) &&
     (await store.write(artifactPath(key, rivers.points), artifact.riverPoints)) &&
     (await store.write(artifactPath(key, rivers.lengths), artifact.riverLengths)) &&
     (await store.write(artifactPath(key, FILES.meta), new TextEncoder().encode(JSON.stringify(meta))))
@@ -178,7 +174,7 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
   const lengthBytes = await store.read(artifactPath(key, rivers.lengths))
   return {
     artifact: {
-      elevation: decodeLayer(elevationBytes, ELEVATION_SPEC),
+      elevation: decodeLayer(elevationBytes, ELEVATION_ENCODING),
       width: meta.width,
       height: meta.height,
       riverPoints: pointBytes ? new Float32Array(pointBytes) : new Float32Array(0),
