@@ -108,25 +108,26 @@ export function biomeLegend(): { labelKey: string; rgb: [number, number, number]
 // vegetation (savanna, seasonal woodland) at the SAME annual total — the classic
 // monsoon boundary. Thresholds are the tunable part of the Whittaker mapping.
 function classify(tempC: number, precipMm: number, amplitude: number, season: number): BiomeId {
-  if (tempC < -10) return Biome.Ice
-  if (tempC < 0) return Biome.Tundra
-  if (tempC < 7) {
-    return precipMm < 200 ? Biome.Tundra : Biome.Boreal
+  if (tempC < CLIMATE_TUNING.iceMaxC) return Biome.Ice
+  if (tempC < CLIMATE_TUNING.tundraMaxC) return Biome.Tundra
+  if (tempC < CLIMATE_TUNING.borealMaxC) {
+    return precipMm < CLIMATE_TUNING.borealMinPrecipMm ? Biome.Tundra : Biome.Boreal
   }
-  if (tempC < 20) {
-    // Temperate / subtropical. Strong precip seasonality opens the canopy: a marginal
-    // forest with a pronounced dry season reads as woodland/grassland, not closed forest.
-    if (precipMm < 250) return Biome.Desert
-    if (precipMm < 600) return amplitude > 20 || season > 0.3 ? Biome.Grassland : Biome.Woodland
-    if (precipMm < 1500) return season > 0.4 ? Biome.Woodland : Biome.TemperateForest
+  if (tempC < CLIMATE_TUNING.temperateMaxC) {
+    if (precipMm < CLIMATE_TUNING.temperateDesertMaxPrecipMm) return Biome.Desert
+    if (precipMm < CLIMATE_TUNING.temperateGrasslandMaxPrecipMm) {
+      return amplitude > CLIMATE_TUNING.temperateOpenCanopyAmplitudeC || season > CLIMATE_TUNING.temperateOpenCanopySeason
+        ? Biome.Grassland
+        : Biome.Woodland
+    }
+    if (precipMm < CLIMATE_TUNING.temperateForestMaxPrecipMm) {
+      return season > CLIMATE_TUNING.temperateWoodlandSeason ? Biome.Woodland : Biome.TemperateForest
+    }
     return Biome.TemperateRainforest
   }
-  // Hot (T ≥ 20). The tropical rainforest↔savanna split is driven by SEASONALITY, not
-  // just the annual total: evergreen rainforest needs rain most of the year; a strong
-  // wet-dry rhythm (monsoon) gives savanna even when the annual total is high.
-  if (precipMm < 250) return Biome.Desert
-  if (precipMm < 600) return Biome.Savanna
-  return season > 0.45 ? Biome.Savanna : Biome.TropicalRainforest
+  if (precipMm < CLIMATE_TUNING.hotDesertMaxPrecipMm) return Biome.Desert
+  if (precipMm < CLIMATE_TUNING.hotSavannaMaxPrecipMm) return Biome.Savanna
+  return season > CLIMATE_TUNING.tropicalSavannaSeason ? Biome.Savanna : Biome.TropicalRainforest
 }
 
 // Biome id per climate cell (Uint8). Land only is classified; ocean → Biome.Ocean.

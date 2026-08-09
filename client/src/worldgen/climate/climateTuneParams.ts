@@ -225,4 +225,46 @@ export const CLIMATE_TUNING = {
   // vegetation above the treeline", not "less ice than Ice" — a permanently
   // glaciated peak should still read as ice, elevation or not.
   alpineTreelineElevation: metersToElevation(2800),
+
+  // --- the Whittaker classifier's own thresholds ---------------------------
+  //
+  // These were INLINE LITERALS inside `classify`, which made the largest block
+  // of climate tuning in the repo invisible to every grouping — including the
+  // one this file exists to be. Naming them changes nothing and makes them
+  // findable, comparable and hashable.
+  //
+  // Two values appear twice (250 and 600 mm, once per temperature band) and stay
+  // SEPARATE — asked and answered 2026-08-09: the agreement is coincidence, not
+  // a shared threshold. The temperate 600 splits grassland from woodland, the hot
+  // 600 marks the savanna edge; they are different statements that happen to land
+  // on one number. Sharing a constant would couple them, so moving the tropical
+  // desert edge would drag the temperate one along with it.
+
+  // Temperature band edges (°C), coldest first.
+  iceMaxC: -10,
+  tundraMaxC: 0,
+  borealMaxC: 7,
+  temperateMaxC: 20,
+
+  // In the cold band, dryness gives tundra rather than boreal forest.
+  borealMinPrecipMm: 200,
+
+  // Temperate / subtropical precipitation edges (mm/yr).
+  temperateDesertMaxPrecipMm: 250,
+  temperateGrasslandMaxPrecipMm: 600,
+  temperateForestMaxPrecipMm: 1500,
+
+  // Strong precipitation seasonality opens the canopy: a marginal forest with a
+  // pronounced dry season reads as woodland or grassland, not closed forest.
+  temperateOpenCanopyAmplitudeC: 20,
+  temperateOpenCanopySeason: 0.3,
+  temperateWoodlandSeason: 0.4,
+
+  // Hot band (T >= temperateMaxC). The rainforest/savanna split is driven by
+  // SEASONALITY rather than the annual total: evergreen rainforest needs rain
+  // most of the year, while a strong wet-dry rhythm gives savanna even when the
+  // total is high.
+  hotDesertMaxPrecipMm: 250,
+  hotSavannaMaxPrecipMm: 600,
+  tropicalSavannaSeason: 0.45,
 } as const

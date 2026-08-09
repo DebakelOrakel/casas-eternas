@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-09
+- **changed** Structure: the biome classifier's fourteen thresholds are named constants instead of literals buried in its branches.
 - **new** Structure: a world's fields, recipe and identity are read through one facade instead of each consumer opening the save its own way.
 - **changed** Structure: world identity, the save format and the artifact keys moved into their own `world/` module, ending the worldgen/storage cycle.
 - **changed** Structure: an artifact store no longer knows where the server is — it is told.
