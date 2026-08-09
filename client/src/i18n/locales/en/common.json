@@ -34,6 +34,7 @@
   "common.action.storage.help": "Worlds kept on the server, and the baked terrain cached on this machine.",
   "common.panel.load.title": "Open a world",
   "common.panel.load.empty": "No worlds on the server yet.",
+  "common.panel.load.unavailable": "The world list could not be read. Sign in, or open a .zip file.",
   "common.panel.load.fromFile": "Open a .zip file…",
   "common.panel.load.action.open": "Open",
   "common.panel.load.action.download": "Download",
@@ -63,8 +64,6 @@
   "common.panel.signIn.user": "User",
   "common.panel.signIn.password": "Password",
   "common.panel.signIn.action.submit": "Sign in",
-  "common.panel.signIn.action.signOut": "Sign out",
-  "common.panel.signIn.signedInAs": "Signed in as {user}",
   "common.panel.signIn.failed": "Wrong user or password.",
   "common.panel.signIn.unreachable": "The server did not answer.",
   "common.notify.signedOut": "Signed out — the server no longer accepts this session."

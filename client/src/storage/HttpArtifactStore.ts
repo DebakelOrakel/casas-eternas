@@ -55,22 +55,25 @@ export interface HttpArtifactStoreOptions {
   // happens. A store that has to be told its base can also be pointed at a test
   // server, or at none.
   resolveBase: () => Promise<string | null>
-  // The Authorization header to send, asked for at CALL time.
+  // The fetch to use, defaulting to the global one.
   //
-  // A function rather than a token, because a token changes: the browser's
-  // arrives at sign-in and dies at expiry, and a value captured when the store
-  // was built would go on sending a dead one. A bake Job, whose token is fixed
-  // and scoped to the single artifact key it may write, simply returns the same
-  // thing every time (docs/decisions/distributed-bake.md).
+  // Injected for the same reason resolveBase is — a byte store has no business
+  // knowing how this application authenticates — and as a FETCH rather than a
+  // set of headers, because attaching credentials is only half of it. The other
+  // half is noticing when they stop being accepted: the browser passes the
+  // session's fetch, which ends the session on a 401 so the whole application
+  // learns of it at once. Handing over headers alone made this store the one
+  // place a dead session failed silently.
   //
-  // Passed in for the same reason resolveBase is: a byte store has no business
-  // knowing how this application authenticates.
-  authHeaders?: () => Record<string, string>
+  // A bake Job, whose token is fixed and scoped to the single artifact key it
+  // may write, can pass a fetch that simply always adds it
+  // (docs/decisions/distributed-bake.md).
+  fetch?: (input: string, init?: RequestInit) => Promise<Response>
 }
 
 export function createHttpArtifactStore(options: HttpArtifactStoreOptions): ArtifactStore {
   const resolveBase = options.resolveBase
-  const authHeaders = (): Record<string, string> => options.authHeaders?.() ?? {}
+  const send = options.fetch ?? ((input: string, init?: RequestInit) => fetch(input, init))
 
   const url = async (path: string): Promise<string | null> => {
     const base = await resolveBase()
@@ -84,7 +87,7 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
       const target = await url(path)
       if (!target) return null
       try {
-        const response = await fetch(target, { cache: 'no-store', headers: authHeaders() })
+        const response = await send(target, { cache: 'no-store' })
         if (!response.ok) return null
         return await response.arrayBuffer()
       } catch {
@@ -104,9 +107,9 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
         // cannot reach here — every raster in this pipeline comes from a
         // worker transfer or a plain allocation. Copying to satisfy the type
         // would cost a 17 MB duplicate on every upload.
-        const response = await fetch(target, {
+        const response = await send(target, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/octet-stream', ...authHeaders() },
+          headers: { 'Content-Type': 'application/octet-stream' },
           body: bytes as BodyInit,
         })
         return response.ok
@@ -121,7 +124,7 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
       try {
         // HEAD rather than GET: the point of asking is to avoid pulling
         // seventeen megabytes to learn a boolean.
-        const response = await fetch(target, { method: 'HEAD', cache: 'no-store', headers: authHeaders() })
+        const response = await send(target, { method: 'HEAD', cache: 'no-store' })
         return response.ok
       } catch {
         return false
@@ -132,7 +135,7 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
       const target = await url(path)
       if (!target) return null
       try {
-        const response = await fetch(target, { method: 'HEAD', cache: 'no-store', headers: authHeaders() })
+        const response = await send(target, { method: 'HEAD', cache: 'no-store' })
         if (!response.ok) return null
         const length = Number(response.headers.get('Content-Length'))
         return Number.isFinite(length) ? length : null
@@ -145,7 +148,7 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
       const target = await url(path)
       if (!target) return
       try {
-        await fetch(target, { method: 'DELETE', headers: authHeaders() })
+        await send(target, { method: 'DELETE' })
       } catch {
         // Nothing to recover: the caller is dropping recomputable bytes.
       }

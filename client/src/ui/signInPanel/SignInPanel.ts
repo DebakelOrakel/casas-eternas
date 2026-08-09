@@ -1,16 +1,22 @@
 import { createPanel } from '../panel/Panel'
 import type { Panel } from '../panel/Panel'
 import { t } from '../../i18n/i18n'
-import { signIn, signOut, signedInUser, hasSession } from '../../server/session'
+import { signIn } from '../../server/session'
 import './signInPanel.css'
 
 // The sign-in window.
 //
-// Opened from the server indicator, which is the one place that says a sign-in
-// is missing — and nowhere else. Deliberately NOT shown on startup and never
-// over the map: everything local works without a server at all, so someone who
-// wants to generate a world, bake 4K in this browser and save it to a file
-// should never meet a password prompt. See docs/decisions/server-auth.md.
+// Opened from the server indicator's badge and nowhere else — the one place that
+// says a sign-in is missing. Deliberately NOT shown on startup and never over
+// the map: everything local works without a server and without a session, so
+// someone who wants to generate a world, bake 4K in this browser and save it to
+// a file should never meet a password prompt.
+// See docs/decisions/server-auth.md.
+//
+// A sign-in form and nothing else. It briefly also showed who was signed in,
+// with a sign-out button, which could not be reached: the indicator is clickable
+// only WHILE the sign-in is missing, so by the time there was a name to show,
+// there was no way in here. Signing out deliberately has no home yet.
 
 export interface SignInPanel {
   open(): void
@@ -23,6 +29,10 @@ export function createSignInPanel(host: HTMLElement, onChange: () => void): Sign
 
   const form = document.createElement('form')
   form.className = 'signin-form'
+  // The form's id ties the footer's submit button to it: the action belongs in
+  // the panel frame's footer, where every other window puts its actions, and a
+  // button outside its form needs to say which one it submits.
+  form.id = 'signin-form'
   form.innerHTML = `
     <label class="signin-field">
       <span>${t('common.panel.signIn.user')}</span>
@@ -33,43 +43,31 @@ export function createSignInPanel(host: HTMLElement, onChange: () => void): Sign
       <input type="password" name="password" autocomplete="current-password" required />
     </label>
     <p class="signin-error" role="alert" hidden></p>
-    <button type="submit" class="text-button">${t('common.panel.signIn.action.submit')}</button>
   `
   const userInput = form.querySelector<HTMLInputElement>('input[name="user"]')!
   const passwordInput = form.querySelector<HTMLInputElement>('input[name="password"]')!
   const error = form.querySelector<HTMLElement>('.signin-error')!
-  const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')!
+  panel.body.appendChild(form)
 
-  // Shown instead of the form once there IS a session, so the window answers
-  // "who am I" as well as "let me in" — the two questions arrive from the same
-  // click on the indicator.
-  const signedIn = document.createElement('div')
-  signedIn.className = 'signin-current'
-  const who = document.createElement('p')
-  const out = document.createElement('button')
-  out.type = 'button'
-  out.className = 'text-button'
-  out.textContent = t('common.panel.signIn.action.signOut')
-  signedIn.append(who, out)
-
-  panel.body.append(form, signedIn)
-
-  const render = (): void => {
-    const session = hasSession()
-    form.hidden = session
-    signedIn.hidden = !session
-    who.textContent = t('common.panel.signIn.signedInAs', { user: signedInUser() })
-    error.hidden = true
-    // Never left behind in the DOM: a password sitting in a detached form is a
-    // password a later screenshot or a memory dump still has.
-    passwordInput.value = ''
-  }
+  // app-panel-button, not a class of its own: the frame states that the panels
+  // share one button style so three windows cannot drift into three slightly
+  // different ones. (The first version used `.text-button`, which is scoped to
+  // `.map-chrome` and therefore did not apply at all.)
+  const submit = document.createElement('button')
+  submit.type = 'submit'
+  submit.setAttribute('form', form.id)
+  submit.className = 'app-panel-button'
+  submit.textContent = t('common.panel.signIn.action.submit')
+  panel.footer.appendChild(submit)
 
   panel.onOpen(() => {
-    render()
-    // Focus what is actually missing — the user field for a fresh sign-in, so
-    // the window can be used without touching the mouse.
-    if (!hasSession()) queueMicrotask(() => userInput.focus())
+    error.hidden = true
+    // Never left behind: a password sitting in a detached form is a password a
+    // later screenshot or a memory dump still has.
+    passwordInput.value = ''
+    submit.disabled = false
+    // So the window can be used without touching the mouse.
+    queueMicrotask(() => userInput.focus())
   })
 
   form.addEventListener('submit', (event) => {
@@ -80,7 +78,6 @@ export function createSignInPanel(host: HTMLElement, onChange: () => void): Sign
       submit.disabled = false
       passwordInput.value = ''
       if (outcome === 'ok') {
-        render()
         onChange()
         panel.close()
         return
@@ -92,13 +89,6 @@ export function createSignInPanel(host: HTMLElement, onChange: () => void): Sign
       error.hidden = false
       passwordInput.focus()
     })
-  })
-
-  out.addEventListener('click', () => {
-    signOut()
-    render()
-    onChange()
-    panel.close()
   })
 
   return {

@@ -1,44 +1,59 @@
-/* The sign-in window's contents. The frame, backdrop and close button come from
-   the shared panel (ui/panel), so only the form is styled here. */
+/* The sign-in window's contents. The frame, backdrop, title bar and the button
+   style all come from the shared panel (ui/panel), so only the two fields are
+   here. */
 
-.signin-form,
-.signin-current {
+/* Narrower than the shared 640px, which is sized for lists of worlds: two
+   fields in a box that wide read as a form somebody forgot to finish. */
+.app-panel--signin {
+  width: min(23rem, calc(100vw - 3rem));
+}
+
+/* The body has no horizontal padding — panels whose contents are lists want to
+   run edge to edge — so a form supplies its own, matching the title bar's. */
+.signin-form {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  min-width: 16rem;
+  gap: 0.85rem;
+  padding: 0.9rem 1rem 0.6rem;
 }
 
 .signin-field {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.85rem;
+  gap: 0.3rem;
+  font-size: 0.8rem;
 }
 
+.signin-field > span {
+  opacity: 0.7;
+}
+
+/* Borrowed from the panel button's vocabulary — same border colour, same
+   radius, same restraint — so the window reads as one thing rather than as a
+   frame with a form pasted into it. */
 .signin-field input {
   font: inherit;
-  padding: 0.4rem 0.5rem;
-  border: 1px solid rgba(26, 26, 26, 0.3);
+  font-size: 0.9rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid rgba(26, 26, 26, 0.35);
   border-radius: 4px;
   background: #fff;
   color: #1a1a1a;
 }
 
 .signin-field input:focus-visible {
-  outline: 2px solid rgba(26, 26, 26, 0.6);
-  outline-offset: 1px;
+  outline: none;
+  border-color: rgba(26, 26, 26, 0.7);
 }
 
-/* role="alert", so it is announced when it appears; the colour is the same
-   red the rest of the interface uses for a refusal rather than a new one. */
+/* role="alert" in the markup, so it is announced when it appears. The colour is
+   the destructive-button red the panels already use, not a second one. */
 .signin-error {
   margin: 0;
-  font-size: 0.8rem;
-  color: #a11;
+  font-size: 0.78rem;
+  color: #962819;
 }
 
-.signin-current p {
-  margin: 0;
-  font-size: 0.85rem;
+.signin-error[hidden] {
+  display: none;
 }

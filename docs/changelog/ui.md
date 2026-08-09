@@ -5,6 +5,9 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 
 ## 2026-08-09
 - **new** Server: a badge on the server indicator when a sign-in is missing; clicking it opens the sign-in window, which also says who is signed in. `common.panel.signIn`
+- **fixed** Load: a world list that could not be read no longer claims the server is empty, and an open that fails says so instead of looking like a click that did not register. `common.panel.load.unavailable`
+- **fixed** Load: world previews appear again on a server that requires a sign-in — an image the browser fetches on its own carries no credentials. `common.panel.load`
+- **fixed** Server: losing a session mid-work now says so once, instead of surfacing as a save that failed and a list that came back empty. `common.notify.signedOut`
 - **changed** Storage: with no sign-in the client works exactly as it does with no server — worlds stay local and a 4K bake runs in this browser instead of failing. `common.server.loggedOut`
 - **new** Save: a warning badge on the save button while the world differs from the last one saved, loaded or generated; its hover card says so. `common.action.saveWorld.unsaved`
 - **fixed** Panels: a step that cannot run yet releases the controls and names what it is waiting for, instead of leaving the spinner turning. `worldgen.panel`

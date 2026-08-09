@@ -104,6 +104,31 @@ export async function fetchWorld(uid: string): Promise<Blob | null> {
   }
 }
 
+/**
+ * A world's preview image, as an object URL the caller must revoke.
+ *
+ * Fetched rather than handed to `<img src>`, which is how it was done until the
+ * API needed authentication: an image request the browser makes on its own
+ * carries no Authorization header, so every thumbnail 401'd and the rows showed
+ * empty squares. Nothing said why — the image element's error event is silent by
+ * design.
+ *
+ * Null when there is none, or when it could not be fetched; a missing thumbnail
+ * must never cost the row, since the world is the point and the picture is a
+ * convenience.
+ */
+export async function fetchWorldPreview(uid: string): Promise<string | null> {
+  const base = await apiBase()
+  if (!base) return null
+  try {
+    const response = await authFetch(`${base}/worlds/${encodeURIComponent(uid)}/preview.png`, { cache: 'no-store' })
+    if (!response.ok) return null
+    return URL.createObjectURL(await response.blob())
+  } catch {
+    return null
+  }
+}
+
 export async function uploadWorld(uid: string, archive: Blob): Promise<UploadOutcome> {
   const base = await apiBase()
   if (!base) return { ok: false, reason: 'offline' }

@@ -34,6 +34,7 @@
   "common.action.storage.help": "Welten auf dem Server und das auf diesem Rechner zwischengespeicherte Gelände.",
   "common.panel.load.title": "Welt öffnen",
   "common.panel.load.empty": "Noch keine Welten auf dem Server.",
+  "common.panel.load.unavailable": "Die Weltenliste konnte nicht gelesen werden. Melde dich an, oder öffne eine .zip-Datei.",
   "common.panel.load.fromFile": ".zip-Datei öffnen…",
   "common.panel.load.action.open": "Öffnen",
   "common.panel.load.action.download": "Herunterladen",
@@ -63,8 +64,6 @@
   "common.panel.signIn.user": "Benutzer",
   "common.panel.signIn.password": "Passwort",
   "common.panel.signIn.action.submit": "Anmelden",
-  "common.panel.signIn.action.signOut": "Abmelden",
-  "common.panel.signIn.signedInAs": "Angemeldet als {user}",
   "common.panel.signIn.failed": "Benutzer oder Passwort stimmt nicht.",
   "common.panel.signIn.unreachable": "Der Server hat nicht geantwortet.",
   "common.notify.signedOut": "Abgemeldet — der Server nimmt diese Sitzung nicht mehr an."

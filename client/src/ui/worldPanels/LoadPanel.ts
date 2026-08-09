@@ -1,5 +1,5 @@
 import { getLocale, t } from '../../i18n/i18n'
-import { apiBase, fetchWorld, listWorlds } from '../../server/worldClient'
+import { apiBase, fetchWorld, fetchWorldPreview, listWorlds } from '../../server/worldClient'
 import type { WorldSummary } from '../../server/worldClient'
 import { createPanel } from '../panel/Panel'
 import './worldPanels.css'
@@ -52,20 +52,31 @@ export function createLoadPanel(host: HTMLElement, options: LoadPanelOptions): L
   })
   panel.footer.appendChild(pickFile)
 
-  function renderRow(world: WorldSummary, base: string): HTMLElement {
+  function renderRow(world: WorldSummary): HTMLElement {
     const row = document.createElement('div')
     row.className = 'world-row'
 
     const thumb = document.createElement('div')
     thumb.className = 'world-thumb'
     if (world.hasPreview) {
-      const image = document.createElement('img')
-      image.src = `${base}/worlds/${encodeURIComponent(world.uid)}/preview.png`
-      image.alt = ''
-      // A world whose preview will not load must still show its row: the
-      // thumbnail is a convenience, the world is the point.
-      image.addEventListener('error', () => image.remove())
-      thumb.appendChild(image)
+      // Fetched, not linked: an `<img src>` the browser resolves itself carries
+      // no Authorization header, so against an authenticating server every
+      // thumbnail came back 401 and the rows showed empty squares — silently,
+      // because an image error event says nothing. See fetchWorldPreview.
+      void fetchWorldPreview(world.uid).then((url) => {
+        if (!url) return
+        const image = document.createElement('img')
+        image.src = url
+        image.alt = ''
+        // Revoked once the browser has decoded it, so a list opened repeatedly
+        // does not accumulate blobs for the lifetime of the page.
+        image.addEventListener('load', () => URL.revokeObjectURL(url), { once: true })
+        image.addEventListener('error', () => {
+          URL.revokeObjectURL(url)
+          image.remove()
+        }, { once: true })
+        thumb.appendChild(image)
+      })
     }
 
     const main = document.createElement('div')
@@ -92,7 +103,13 @@ export function createLoadPanel(host: HTMLElement, options: LoadPanelOptions): L
         open.disabled = true
         const archive = await fetchWorld(world.uid)
         open.disabled = false
-        if (!archive) return
+        if (!archive) {
+          // Was a bare `return`: the button re-enabled itself and nothing else
+          // happened, which reads as a click that did not register. The title
+          // bar's status line is where this frame puts such things.
+          panel.status.textContent = t('common.panel.load.unavailable')
+          return
+        }
         panel.close()
         options.onOpenArchive(archive)
       })()
@@ -123,14 +140,27 @@ export function createLoadPanel(host: HTMLElement, options: LoadPanelOptions): L
     panel.body.textContent = '…'
     const [worlds, base] = await Promise.all([listWorlds(), apiBase()])
     panel.body.replaceChildren()
-    if (!worlds || !base || worlds.length === 0) {
+    panel.status.textContent = ''
+    // "Could not be read" and "there are none" collapsed into one message until
+    // authentication existed, because before it the first case could only mean
+    // no server — and then this window does not open at all. A signed-out client
+    // reaches here and was told the server was empty, which is a lie that sends
+    // someone looking in the wrong place.
+    if (!worlds || !base) {
+      const failed = document.createElement('p')
+      failed.className = 'app-panel-empty'
+      failed.textContent = t('common.panel.load.unavailable')
+      panel.body.appendChild(failed)
+      return
+    }
+    if (worlds.length === 0) {
       const empty = document.createElement('p')
       empty.className = 'app-panel-empty'
       empty.textContent = t('common.panel.load.empty')
       panel.body.appendChild(empty)
       return
     }
-    for (const world of worlds) panel.body.appendChild(renderRow(world, base))
+    for (const world of worlds) panel.body.appendChild(renderRow(world))
   }
 
   panel.onOpen(() => { void refresh() })

@@ -49,6 +49,11 @@ function write(session: Session | null): void {
 let current: Session | null = read()
 
 const listeners = new Set<() => void>()
+// Separate from the above, because the two are different events with different
+// audiences: everything redraws on any change, but only a session TAKEN AWAY is
+// worth interrupting someone about. Signing in and signing out are things they
+// just did and can see for themselves.
+const lostListeners = new Set<() => void>()
 
 // Subscribe to sign-in and sign-out. The indicator and every screen that shows
 // server state redraw from this rather than polling.
@@ -59,6 +64,20 @@ export function onSessionChange(listener: () => void): () => void {
 
 function announce(): void {
   for (const listener of listeners) listener()
+}
+
+/**
+ * Fired when the server stops accepting a session we believed we had — an
+ * expired token, or a server restarted with a fresh signing key.
+ *
+ * It exists because that failure is otherwise invisible: the request that
+ * discovered it usually belongs to something the user did NOT initiate, or to
+ * something that fails by returning nothing. Being signed out without being told
+ * looks like the application quietly breaking.
+ */
+export function onSessionLost(listener: () => void): () => void {
+  lostListeners.add(listener)
+  return () => lostListeners.delete(listener)
 }
 
 /** The signed-in user, or '' when there is no session. */
@@ -156,6 +175,7 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
   const response = await fetch(input, { ...init, headers })
   if (response.status === 401 && current) {
     signOut()
+    for (const listener of lostListeners) listener()
   }
   return response
 }

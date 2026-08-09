@@ -431,6 +431,22 @@ falls through to `bakeStageInBrowser` when the server cannot be used. 8K still
 cannot, and now says WHICH of the two problems it is — "needs a server" would
 send someone to check a deployment that is fine.
 
+**What the first run through it caught**, all one root: a failure that could not
+happen before authentication is one nothing was written to report.
+
+- The artifact store sent the header but used a plain `fetch`, so a dead session
+  failed silently THERE while everywhere else noticed. Injecting headers was half
+  the job; it takes the session's fetch, and the option is a fetch now.
+- Previews were `<img src>`, which the browser resolves itself and therefore
+  without credentials — every thumbnail 401'd, and an image's error event says
+  nothing. Fetched into an object URL instead.
+- "The world list could not be read" and "the server has no worlds" shared one
+  message, because before authentication the first could only mean no server —
+  in which case the window does not open at all.
+- And nothing announced the loss itself. `onSessionLost` fires only from the 401
+  branch — signing in and out are things someone just did and can see — and the
+  app root says it once, rather than every caller reporting its own symptom.
+
 **localStorage, stated as a trade.** The token is readable by any script on the
 origin, which is true of anything a single-page app can send on its own requests;
 the alternative that is not is an HttpOnly cookie, ruled out because the CLI and
@@ -438,10 +454,19 @@ the bake job need the same door. What it buys is the thing the long lifetime is
 for: closing the tab is not signing out.
 
 **The window never appears uninvited.** Not at startup, never over the map. It
-opens from the indicator's badge and nowhere else, and it shows who is signed in
-when there is a session, because both questions arrive from the same click. The
-password field is cleared on every render — a password left in a detached form is
-one a screenshot still has.
+opens from the indicator's badge and nowhere else. The password field is cleared
+on every open — a password left in a detached form is one a screenshot still has.
+
+It briefly also showed who was signed in, with a sign-out button, and that was
+**unreachable**: the indicator is clickable only WHILE the sign-in is missing, so
+by the time there was a name to show there was no way into the window. Removed,
+along with the two catalog keys it needed.
+
+**So a deliberate sign-out has no home**, and that is a gap rather than a
+decision. `signOut()` exists and is called when a request comes back 401; what is
+missing is a way to say "not me any more" on a shared machine. The storage panel
+is the natural place — it is already the window about server things — but it is
+not built.
 
 Refresh (the two-token split and the per-user stamp) is a step 8 that is not
 scheduled: `--auth-token-ttl` carries the session length until it exists.
