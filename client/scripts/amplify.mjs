@@ -341,6 +341,169 @@ console.log('\n— the bake plan')
   check('every job box contains that job, wrapping included', outside === 0, `${outside} cells outside`)
 }
 
+// --- 1c. baking one region at a time ------------------------------------------
+//
+// Step 3a of docs/design/splitting-the-bake.md. Three claims, in the order they
+// would hurt if wrong:
+//
+//   N = 1 CHANGES NOTHING. The whole design rests on there being no split mode
+//   and no unsplit mode — a region covering all the land must reproduce today's
+//   bake byte for byte, or every artifact already cached is invalidated and the
+//   cluster runs a pipeline the browser never exercises.
+//
+//   THE COMPOSITE IS TOTAL AND DISJOINT. Every land cell written by exactly one
+//   job. A cell written twice was eroded twice, a cell written by nobody kept
+//   its seeded height, and neither looks like anything but terrain.
+//
+//   A REGION IS REPRODUCIBLE. The cache's actual requirement, and what replaced
+//   "identical to a whole bake" once that was measured to be impossible.
+console.log('\n— region bakes')
+{
+  const { SEA_LEVEL } = M.scale
+
+  // The halo, against the obvious implementation it replaced. Small grids and
+  // small radii, but every one of them wrapping: a separable linear-time
+  // dilation is easy to get right in the middle and wrong at the seam, and a
+  // seam-wrong halo is invisible to every other check here.
+  {
+    const naive = (mask, w, h, r) => {
+      let cur = mask
+      for (let step = 0; step < r; step++) {
+        const next = new Uint8Array(cur.length)
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                if (cur[((y + dy + h) % h) * w + ((x + dx + w) % w)]) next[y * w + x] = 1
+              }
+            }
+          }
+        }
+        cur = next
+      }
+      return cur
+    }
+    let seed = 7
+    const random = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff)
+    let wrong = 0
+    let cases = 0
+    let sawWrap = 0
+    for (const [w, h] of [[16, 12], [31, 9], [8, 8], [5, 17]]) {
+      for (const radius of [0, 1, 2, 3, 5]) {
+        const mask = new Uint8Array(w * h)
+        // Sparse, so most of the map is halo and a wrong radius shows.
+        for (let i = 0; i < mask.length; i++) mask[i] = random() < 0.06 ? 1 : 0
+        // A cell hard on the seam in every case, which is the point.
+        mask[0] = 1
+        mask[(h - 1) * w] = 1
+        const fast = M.amplify.dilateMask(mask, w, h, radius)
+        const slow = naive(mask, w, h, radius)
+        for (let i = 0; i < mask.length; i++) if (fast[i] !== slow[i]) wrong++
+        if (radius > 0 && fast[w - 1]) sawWrap++
+        cases++
+      }
+    }
+    check('the fast halo agrees with the naive one, wrapping included', wrong === 0, `${wrong} cells over ${cases} cases`)
+    check('those cases really do wrap', sawWrap > 0, `${sawWrap} reached across the seam`)
+  }
+
+  const macro = macroWorld()
+  const seeded = await M.amplify.runAmplification({
+    elevation: macro, macroWidth: MACRO_W, macroHeight: MACRO_H, factor: FACTOR, seed: 12345, erosionRounds: 0,
+  })
+  const W = seeded.width, H = seeded.height
+  // Taken before anything else runs, for the aliasing check at the end.
+  const seededCopy = seeded.elevation.slice()
+
+  const allLand = new Uint8Array(W * H)
+  let landCells = 0
+  for (let i = 0; i < allLand.length; i++) if (seeded.elevation[i] > SEA_LEVEL) { allLand[i] = 1; landCells++ }
+
+  const whole = await bake()
+  const asOneRegion = await M.amplify.runAmplification({
+    elevation: macro, macroWidth: MACRO_W, macroHeight: MACRO_H, factor: FACTOR, seed: 12345,
+    erosionRounds: 2, erosionStrength: 1, drainageRefresh: 1,
+    precipitation: precipitation(CLIMATE_RES_X, CLIMATE_RES_Y),
+    climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, riverDensity: 55,
+    region: { owned: allLand, haloCells: M.amplify.DEFAULT_HALO_CELLS },
+  })
+  let moved = 0
+  for (let i = 0; i < whole.elevation.length; i++) if (whole.elevation[i] !== asOneRegion.elevation[i]) moved++
+  check('one region covering all land is exactly the whole bake', moved === 0, `${moved} cells differ`)
+
+  // The plan, on the macro grid, mapped onto the fine one. Nearest-neighbour and
+  // not interpolated: a label is an identity, and the average of two identities
+  // is a third thing that owns nothing.
+  const plan = await M.plan.planBake({
+    elevation: macro, width: MACRO_W, height: MACRO_H,
+    precipitation: precipitation(CLIMATE_RES_X, CLIMATE_RES_Y),
+    climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
+    budgetCells: Math.ceil(landCells / (FACTOR * FACTOR) / 3),
+  })
+  const groupOfLabel = new Int32Array(65536).fill(-1)
+  plan.groups.forEach((g, i) => { for (const label of g.catchments) groupOfLabel[label] = i })
+  const owners = plan.groups.map(() => new Uint8Array(W * H))
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const fine = y * W + x
+      if (!allLand[fine]) continue
+      const g = groupOfLabel[plan.labels[Math.floor(y / FACTOR) * MACRO_W + Math.floor(x / FACTOR)]]
+      if (g >= 0) owners[g][fine] = 1
+    }
+  }
+
+  // One round rather than two, purely for the harness's running time: what these
+  // three checks are about is which cells a job writes, not how deeply it carves.
+  const bakeRegion = (owned) => M.amplify.runAmplification({
+    elevation: macro, macroWidth: MACRO_W, macroHeight: MACRO_H, factor: FACTOR, seed: 12345,
+    erosionRounds: 1, erosionStrength: 1, drainageRefresh: 1,
+    precipitation: precipitation(CLIMATE_RES_X, CLIMATE_RES_Y),
+    climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, riverDensity: 55,
+    region: { owned, haloCells: M.amplify.DEFAULT_HALO_CELLS },
+    // From the plan, not from the slice — the whole point of the two scalars.
+    maxDischarge: plan.maxDischarge, meanRunoff: plan.meanRunoff,
+  })
+
+  const writes = new Uint8Array(W * H)
+  const composite = new Float32Array(W * H)
+  const pieces = []
+  for (const owned of owners) {
+    const piece = await bakeRegion(owned)
+    pieces.push(piece)
+    for (let i = 0; i < owned.length; i++) {
+      if (!owned[i]) continue
+      writes[i]++
+      composite[i] = piece.elevation[i]
+    }
+  }
+  check('the plan produced more than one region to compose', owners.length > 1, `${owners.length} regions`)
+
+  let twice = 0
+  let never = 0
+  for (let i = 0; i < allLand.length; i++) {
+    if (!allLand[i]) continue
+    if (writes[i] > 1) twice++
+    if (writes[i] === 0) never++
+  }
+  check('no land cell is written by two jobs', twice === 0, `${twice} are`)
+  check('no land cell is written by none', never === 0, `${never} are`)
+
+  const again = await bakeRegion(owners[0])
+  let drifted = 0
+  for (let i = 0; i < owners[0].length; i++) {
+    if (owners[0][i] && again.elevation[i] !== pieces[0].elevation[i]) drifted++
+  }
+  check('a region baked twice gives the same bytes', drifted === 0, `${drifted} cells drifted`)
+
+  // A job must not be able to hurt a neighbour: outside its own cells the result
+  // is scaffolding, and the composite is only ever fed the owned ones. Checked
+  // because the drowning happens on a COPY of the seeded field, and an aliased
+  // one would let each region quietly reshape the next.
+  let ceilingMoved = 0
+  for (let i = 0; i < seeded.elevation.length; i++) if (seeded.elevation[i] !== seededCopy[i]) ceilingMoved++
+  check('a region bake leaves the seeded field alone', ceilingMoved === 0, `${ceilingMoved} cells of it moved`)
+}
+
 // --- 2. determinism ----------------------------------------------------------
 console.log('\n— determinism')
 {

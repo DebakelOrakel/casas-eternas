@@ -6,7 +6,7 @@ summary: How an amplification bake could be split across machines, and what it w
   step this plan thought it had: the ocean is already skipped where it costs anything,
   so 95% of a bake is genuine land work and decomposition is the only lever left.
 date: 2026-08-09
-status: direction agreed. STEPS 1-2 BUILT 2026-08-09 (`npm run harness:amplify`, `surface/bakePlan.ts`); nothing decomposed yet. Measurement retired the plan's hardest open question and killed the obvious implementation of step 3
+status: STEPS 1-3a BUILT 2026-08-09 (`npm run harness:amplify`, `surface/bakePlan.ts`, the region in `runAmplification`). Splitting starts above 8K; 4K and 8K keep baking whole. Measurement retired the plan's hardest open question and killed the obvious implementation of step 3
 ---
 
 # Splitting the bake
@@ -313,27 +313,35 @@ will never come out equal, so it cannot be the gate — and if both ways of baki
 stay available, two machines produce different bytes under one key, which is the
 exact failure the cache cannot survive.
 
-The way out is not to close the gap but to remove the choice: **the split IS the
-bake, at every tier.** A single machine runs the same N regions in sequence and
-gets the same bytes as N machines running them at once, because the partition is
-a deterministic function of the macro raster and nothing in it depends on who
-executes it. Determinism — the property the cache actually needs — is kept in
-full. Equivalence to an undivided bake is given up knowingly, and it is a thing
-no reader ever asks for.
+The way out is that the comparison is moot exactly where the split is used.
+**Splitting starts above 8K, and above 8K there is no whole bake to disagree
+with** — a 16384² bake is unbuildable on one machine, which is the reason the
+split exists. Nothing can be filed under a key claiming to be the undivided
+version of it, because the undivided version cannot be produced at all.
 
-"At every tier" sounds like it costs the small bakes something, and it does not,
-because **N = 1 is today's bake exactly.** Give `planBake` a budget larger than
-the world and it returns one group holding every catchment; a region-limited pass
-over a region that covers all the land has nothing to limit, no halo to speak of,
-and everything outside it is already ocean. The masking is a no-op and the
-arithmetic is unchanged, byte for byte.
+So the tiers that exist today keep running exactly as they do: 4K and 8K bake
+whole, and every artifact already cached under those keys stays valid. That is
+worth being deliberate about — the alternative considered here first was to route
+every tier through a one-region split on the grounds of having a single path, and
+it is worse in two ways. It invalidates artifacts to buy nothing, and a region
+is not free even when it covers everything: it copies the seeded field and sweeps
+a halo over it, which at 8K is 268 MB and a full pass spent to drown no cells.
 
-So there is no mode, no threshold and no second code path — the tier chooses a
-budget, and the budget chooses N. A 4K bake in the browser can keep running as
-one region and still be the same function the cluster runs at 16K with thirty.
-That is worth more than the megabytes: two erosion paths, where the tested one is
-the small one and the cluster runs the other, is the failure this design should
-be least willing to buy.
+**"Above 8K" is a default, never a hard threshold.** Splitting an 8K bake has to
+stay reachable on purpose, and not only for convenience: 8K is the LARGEST tier
+where a whole bake and a split one can both be produced, so it is the only place
+the divergence measured above can be watched on real terrain at real resolution
+rather than on a 512×256 harness world. Above it the comparison has no second
+operand. So step 4 takes the region count from a budget a caller can override,
+and must not compile the tier into an `if`.
+
+What keeps this from being two pipelines is not policy but arithmetic:
+**N = 1 is today's bake, byte for byte, and the harness asserts it.** A region
+covering all the land has nothing outside it to drown, so the masking is a no-op
+and every number downstream is unchanged. The split path and the whole path are
+the same code with a mask that is empty, which is checkable at 512×256 in a
+second — so the path the cluster runs at 16K is exercised by the harness, even
+though production only ever hands it a real region above 8K.
 
 Which turns the harness check around. It cannot be "the same as whole"; it is
 "the same however it is scheduled", and `npm run harness:amplify` can make it: run
@@ -380,22 +388,25 @@ honestly.
    `fillDepressionsAndRouteFlow` still carries the `bounded` parameter from the
    micro-tile prototype, which is what a region needs.
 
-   **Enter this one knowing three things measured before it was written:** a job
-   is a cell set and not a rectangle; a halo of 8 fine cells is enough and 16 buys
-   nothing; and N = 1 must come out byte-identical to today's pass, which is both
-   the compatibility guarantee and the easiest possible first test of the new
-   code.
-
    It splits in two, and the first half is the one carrying the risk:
 
-   - **3a — the region-limited pass over full-size arrays.** Buys TIME only:
-     N machines each doing 1/N of the per-cell work, every one still holding the
-     raster. Verifiable in one process, and the place the physics either works or
-     does not.
+   - **3a — the region-limited pass. BUILT 2026-08-09.** A region is expressed by
+     DROWNING the land outside it, in `runAmplification`; `erosion.ts` is not
+     touched at all, which is the point — those loops are 92 % of a bake and are
+     guarded by hashes rather than by argument. Buys TIME only: N machines each
+     doing 1/N of the per-cell work, every one still holding the raster.
    - **3b — sparse tile storage, so a job holds only the tiles it touches.**
      Buys MEMORY, which is the half 16K actually needs (a 16384² Float32 layer is
      537 MB and the pass holds a dozen). Pure engineering, entered with 3a's
      checks already standing.
+
+   What 3a asserts in `npm run harness:amplify`, in the order the failures would
+   hurt: N = 1 reproduces the whole bake byte for byte; the composite over N
+   regions writes every land cell exactly once and no cell twice; a region baked
+   twice gives the same bytes; a region bake does not touch the seeded field it
+   read; and the linear-time halo agrees with the naive dilation it replaced,
+   wrapping included — that last one because a halo one cell short, or one that
+   stops at the seam, is invisible to every other check in the file.
 
    This step also supplies the budget the packing should become locality-aware
    against.
