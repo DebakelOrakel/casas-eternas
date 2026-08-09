@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-09
+- **new** Structure: a save-format round-trip check guards quantisation, the recipe layout and the identity hashes.
 - **changed** Structure: every generator slider's range and default is declared once instead of retyped in the markup, the label and the load path.
 - **changed** Structure: the worldgen modules keep their tuning constants in one hashable object each.
 - **new** Structure: migration declares its tuning constants and its slider ranges in one place each, as the pattern for the other modules.

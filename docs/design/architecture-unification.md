@@ -1,7 +1,7 @@
 ---
 summary: Plan for two connected rebuilds — a `world` module as the single, provenance-carrying place world data is queried, and a shared module architecture in the generator (separated tuning and input parameters, declared slider ranges, a real WorldSpec type). Includes the order of work, the safety net it needs first, and what is deliberately excluded.
 date: 2026-08-09
-status: Parts 0, A and B1-B4 BUILT 2026-08-09, each verified byte-identical; B5 (WorldSpec), B6 (generic slider rendering), C and D not started. Order and boundaries decided, detail questions listed at the end
+status: Parts 0, A, B (all of B1-B6) and C0 (the save round-trip net) BUILT 2026-08-09, each verified; C1-C5 and D not started. Order and boundaries decided, detail questions listed at the end
 ---
 
 # Architecture unification: world-data access and module contracts
@@ -278,6 +278,125 @@ hand-written template lines. Side effect: `WorldGenScreen.ts` (4006 lines, one
 
 ## Part C — world-data access
 
+Shape settled in discussion 2026-08-09; nothing built. The decisions below are
+the ones that are expensive to reverse, so they are recorded before any code.
+
+### Where `world/` goes, and why it is not a taste question
+
+**Top level, a peer of `worldgen/`, `map/`, `storage/` and `server/`** — because
+a module that depends on all four cannot live inside any of them. Putting it
+under `worldgen/` would make the generator import `storage` and `server`.
+
+The decisive evidence is that **a dependency cycle already exists**:
+
+```
+worldgen ──2──▶ storage   (bakeInBrowser→amplificationArtifact, loadWorldInputs→artifactKey)
+storage  ──3──▶ worldgen  (amplificationArtifact→worldLayers, →amplify)
+storage  ──2──▶ server
+server   ──1──▶ worldgen  (bakeClient→bakeInBrowser)
+```
+
+Every file in that tangle is about world identity, the save format, artifacts or
+commissioning a bake — which is exactly what `world/` is for. So the module is
+not an addition, it is an **extraction**: it already exists, smeared across three
+directories, and the cycle is the symptom. Afterwards the layering is acyclic:
+`worldgen/` computes, `storage/` moves bytes, `server/` talks HTTP, `world/`
+identifies and answers, `map/` draws.
+
+**`map/` is the parallel, and it holds.** `map/` is the presentation vocabulary
+of a world, `world/` the data vocabulary; both sit below the screens and neither
+should depend on the other. That `map → worldgen` is only four edges, all reading
+*units* (`elevationScale`, `mapConfig`, `ridgedNoise`) rather than data, is what
+confirms `map/` is genuinely presentation.
+
+One edge to delete on the way: `storage → map`, introduced in B3 when
+`amplificationPipelineVersion` reached for `AMPLIFY_EROSION_ROUNDS`.
+`AMPLIFY_BAKE_STAGES`, `AMPLIFY_FETCH_STAGES` and `AMPLIFY_EROSION_ROUNDS` are
+**bake parameters filed under "map scene settings"** because the map screen
+happens to trigger the bake. They belong in `world/`.
+
+### What it owns — and the test that keeps it honest
+
+`world/` **owns the answers, not the work**: identity, the spec, the save format,
+artifacts, and "what is true at this location". It does not own computing
+(`worldgen`), drawing (`map`), byte transport (`storage`/`server`) or UI state.
+
+> **If a function does not need to know *which* world is meant, it does not
+> belong in `world/`.**
+
+`runErosionPass` does not (it is handed an array); `deriveWorldId` does;
+`computeBiomes` does not; `readWorldInputs` does. Sharp enough to decide with
+while building, instead of re-arguing each time.
+
+Against the monolith the phrase "central point of contact for everything" invites:
+one entry point **per aspect** over a small shared core — identity, spec, the
+layer contract, source resolution. Everything else is an aspect.
+
+### `world/` deals in IMMUTABLE worlds — the live state stays put
+
+Decided 2026-08-09, and it follows from the identity model rather than from
+convenience: `deriveWorldId` moves whenever the terrain moves, so one more
+erosion pass *is* formally a different world; only `worldUid` persists.
+
+So the generator produces a result and **hands it over**: `world.from(result)`,
+never `world.readLiveField()`. The worker stays in `worldgen/` because it
+computes. That removes cache invalidation, the "is this field still current"
+question and any worker handle from `world/` entirely.
+
+**The price, stated rather than glossed:** the *editor's* own inconsistencies
+survive this. The worldgen tooltip keeps reading elevation at 256×128 under a
+2048 map, and biome keeps three representations. Part C answers the question for
+finished worlds — the ones the server and the game consume — not for the
+workbench.
+
+### Spec ownership: read facade first, one-way data flow later
+
+The DOM being the store has one genuine advantage, which is why it survives: there
+is exactly **one copy** of each value, so a synchronisation bug is impossible.
+The costs are the ones B4/B5 measured — values are strings every reader parses,
+nothing headless can obtain a spec, and a change is observable only as a DOM
+event.
+
+The resolution keeps the advantage: the DOM stays the **input** and stops being
+the **store**. A small spec object owns the values, inputs write into it on
+`input`, the panel renders from it. One-way (spec → view) plus an explicit event
+path back, so there is still exactly one authority — it is just no longer the DOM.
+The wiring for 28 sliders would have been handwork before B4/B6; now the
+declarations know every control, so it can be generated the way the markup now is.
+
+Sequence: **the read facade first**, spec ownership after.
+
+### C0. The net, first — BUILT 2026-08-09
+
+The extraction is done **in one move** (decided 2026-08-09) so the cycle is never
+a maintained intermediate state. That makes a safety net a precondition, exactly
+as in part 0: the golden harness covers the generator and, since 2026-08-09, the
+pipeline version — but `loadWorldInputs`, `worldLayers`' quantisation, the zip
+assembly and the artifact path are **unguarded**. The move would happen precisely
+where nothing goes red.
+
+So C0 is `client/scripts/roundtrip.mjs` (`npm run roundtrip`, in `make test`):
+41 checks in **0.2 s**, on synthetic rasters. It covers layer quantisation across
+each spec's full declared range (a wrong scale clips at the ends, which a
+mid-range spot check misses), the recipe's write→read round trip plus a layout
+lock, `deriveWorldId` frozen against fixed bytes, that every constant
+`AMPLIFY_CONSTANTS` lists actually moves the pipeline version, the artifact
+store's encoding, and the shared zip reader — including the property that
+`readWorldInputs` reaches the same worldId as deriving it by hand, since a drift
+there files bakes under a key nothing will ask for.
+
+Speed is a feature, not a detail: the golden harness costs thirteen minutes and
+is therefore run at milestones, which is the wrong cadence for a format you touch
+while moving files.
+
+**Known gap, stated rather than implied:** the zip ASSEMBLY still lives in
+WorldGenScreen and needs a DOM, so the check builds its test zip from
+`WORLD_LAYERS` itself rather than calling the real writer. That closes when C3
+extracts the writer — at which point roundtrip.mjs should call it instead of
+describing it.
+
+### C1 onwards
+
 **C1. One land mask.** Four mechanisms down to one. Cheap, immediately
 verifiable, and every other query depends on it ("does this field apply here at
 all?").
@@ -289,10 +408,19 @@ against whichever resolution that field happens to use. The manifest concept
 becomes the universal description: every source describes itself as a set of
 layer specs.
 
-**C3. The `world` module.** Per aspect, not monolithic. Covers finished worlds
-(save, artifact cache, server) *and* the generator's live fields. The core is
-`acquire(aspect, purpose)` → a samplable view plus provenance. It also owns
-writing saves, delegating to `worldgen/`.
+**C3. The `world` module.** Per aspect, not monolithic. Covers finished worlds —
+save, artifact cache, server — and NOT the generator's live fields (see above;
+this reverses the first sketch). The core is `acquire(aspect, purpose)` → a
+samplable view plus provenance. It also owns writing saves, delegating to
+`worldgen/`.
+
+Saving is where the payoff lands first. Today it is spread across
+`buildWorldYaml` and `bakeQueryLayers` in a 4000-line screen, the zip assembly,
+the restore half and `loadWorldInputs` for the query half — and `loadWorldFromZip`
+**parses the same zip twice**, once raw for `elevation.f32` and once through
+`readWorldInputs` merely to obtain the `worldId`. Two readers, one file, which is
+the drift `loadWorldInputs` warns about in its own header ("one reader cannot
+drift from itself").
 
 **C4. Migrate the consumers.** Worldgen tooltip and overlays, world-map tooltip,
 save writer, bake path. A facade is only proven once a consumer goes through it.

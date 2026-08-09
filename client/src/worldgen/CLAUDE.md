@@ -84,20 +84,29 @@ process. The baseline is machine-local and gitignored; record it where you work.
   invalidation are invisible to a field check; that needs a manual click-through
   (tectonics, erode and stop mid-pass, reset erosion, climate → rivers → ecology →
   migration, save and load).
-- It does **not** cover the amplification bake. `AMPLIFY_CONSTANTS` and
-  `derivePipelineVersion` are unguarded, so a change there can silently orphan
-  every cached artifact.
+- It does **not** cover the amplification bake's terrain. The artifact KEY is
+  guarded (the pipeline version is a stage in layer 4, and `npm run roundtrip`
+  checks that every constant it lists actually moves it), but the baked heights
+  themselves are not.
+- It does **not** cover the save format. That is `npm run roundtrip`'s job —
+  quantisation, the recipe's layout, the identity hashes, the artifact bytes and
+  the shared zip reader, in 0.2 s. Run it after touching anything under
+  `worldSave/` or `storage/`.
 - Before blaming a golden failure on your change, `git stash` and re-run to see
   whether it already fails on `HEAD`.
 
 ## Parameters and identity
 
-`migration/`, `tectonics/` and `crust/` have `xyTuneParams.ts`; climate, ecology,
-elevation and surface still keep their constants as file-local `const`s. The
-direction (per-module `xyTuneParams.ts` / `xyInputParams.ts`, a `WorldSpec` type,
-declared slider ranges) is written up in
-`docs/design/architecture-unification.md`. Follow it for new work rather than
-adding to the current spread.
+Every module with tuning has an `xyTuneParams.ts` holding ONE object; genesis,
+erosion, climate, hydrology, ecology and migration also declare their sliders in
+an `xyInputParams.ts` (min/max/step/default/unit/i18n key), and `worldSave/worldSpec.ts`
+turns those declarations into the save's recipe. The reasoning is in
+`docs/design/architecture-unification.md`.
+
+Deliberately still outside a tuning object: `elevationScale.ts` (a definition
+module and a fifteen-file contract), each module's EXPORTED constants (an export
+is a cross-module contract and moves separately), and `surface/`'s
+`DEFAULT_*_PARAMS` (function arguments with defaults, not module constants).
 
 **A tuning file exports ONE object, and callers read it under its full name** —
 `TECTONICS_TUNING.splitGap`, never a destructured local and never an

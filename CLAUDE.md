@@ -18,7 +18,7 @@ client/src/
   server/         client-side HTTP clients for the Go server
   map/ ui/ camera/ app/ i18n/
   worldgen-sphere/ + screens/worldgen-sphere/, screens/mars/   ← see "parallel approaches"
-client/scripts/   golden.mjs (regression harness), bake.ts (bundled to baker.mjs)
+client/scripts/   golden.mjs (generator harness), roundtrip.mjs (save format), bake.ts → baker.mjs
 internal/ cmd/    the Go server
 docs/             see docs/README.md for the taxonomy
 ```
@@ -29,14 +29,30 @@ live one. `client/src/worldgen-sphere/`, `screens/worldgen-sphere/` and
 `screens/mars/` are the user's separate concerns — do not edit them, and do not
 treat their problems as the current task's problems.
 
+**Module layering, and a cycle to stop feeding.** The intended direction is:
+`worldgen/` computes (params in, fields out), `storage/` moves bytes at paths,
+`server/` talks HTTP, `map/` draws, and a `world/` module — planned, not yet
+built — owns world identity, the spec, the save format and the artifact keys.
+
+Today `worldgen ↔ storage ↔ server` is a **cycle**, and every file in it is about
+identity, saving, artifacts or commissioning a bake. Extracting `world/` is what
+resolves it (see docs/design/architecture-unification.md, part C). Until then:
+do not add edges between those three. If something needs both a generator and a
+store, that is the `world/` layer asking to exist.
+
+The test for where a thing belongs: **if a function does not need to know *which*
+world is meant, it is not world-layer code.** `runErosionPass` does not;
+`deriveWorldId` does.
+
 ## Commands
 
 ```
 make lint      # tsc --noEmit, gofmt, go vet
-make test      # go test ./internal/... and the golden harness (~13 min)
+make test      # go test, the save round-trip (0.2 s) and the golden harness (~13 min)
 make run       # build baker + client, then start the server locally
 cd client && npm run dev        # the usual loop
 cd client && npm run golden     # harness alone; `golden record` re-records the baseline
+cd client && npm run roundtrip  # save-format round-trip — 0.2 s, run it freely
 ```
 
 ## Standing rules
