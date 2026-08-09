@@ -357,6 +357,18 @@ console.log('\n— the bake plan')
 //
 //   A REGION IS REPRODUCIBLE. The cache's actual requirement, and what replaced
 //   "identical to a whole bake" once that was measured to be impossible.
+//
+// WHAT THESE CHECKS DO NOT SAY — and the distinction is not academic, because it
+// has already misled once. Every claim below is STRUCTURAL: who owns what, who
+// writes what, whether a rerun agrees with itself. None of them is about how
+// close a split bake's terrain is to a whole one, and this world cannot answer
+// that: it is half land with a handful of large catchments, and the real thing
+// is 9 % land with nine thousand mostly tiny ones. Measured side by side, the
+// same code gives a mean error of 0.27 m here and 13.4 m there.
+//
+// So green here means the bookkeeping holds. Accuracy is a measurement on a real
+// world, it lives in docs/design/splitting-the-bake.md, and as of 2026-08-09 it
+// says the split does not yet reproduce a whole bake well enough to ship.
 console.log('\n— region bakes')
 {
   const { SEA_LEVEL } = M.scale
@@ -431,26 +443,15 @@ console.log('\n— region bakes')
   for (let i = 0; i < whole.elevation.length; i++) if (whole.elevation[i] !== asOneRegion.elevation[i]) moved++
   check('one region covering all land is exactly the whole bake', moved === 0, `${moved} cells differ`)
 
-  // The plan, on the macro grid, mapped onto the fine one. Nearest-neighbour and
-  // not interpolated: a label is an identity, and the average of two identities
-  // is a third thing that owns nothing.
   const plan = await M.plan.planBake({
     elevation: macro, width: MACRO_W, height: MACRO_H,
     precipitation: precipitation(CLIMATE_RES_X, CLIMATE_RES_Y),
     climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
     budgetCells: Math.ceil(landCells / (FACTOR * FACTOR) / 3),
   })
-  const groupOfLabel = new Int32Array(65536).fill(-1)
-  plan.groups.forEach((g, i) => { for (const label of g.catchments) groupOfLabel[label] = i })
+  const ownership = M.plan.fineOwnership(plan, MACRO_W, MACRO_H, seeded.elevation, FACTOR)
   const owners = plan.groups.map(() => new Uint8Array(W * H))
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const fine = y * W + x
-      if (!allLand[fine]) continue
-      const g = groupOfLabel[plan.labels[Math.floor(y / FACTOR) * MACRO_W + Math.floor(x / FACTOR)]]
-      if (g >= 0) owners[g][fine] = 1
-    }
-  }
+  for (let i = 0; i < ownership.length; i++) if (ownership[i] >= 0) owners[ownership[i]][i] = 1
 
   // One round rather than two, purely for the harness's running time: what these
   // three checks are about is which cells a job writes, not how deeply it carves.
@@ -467,13 +468,21 @@ console.log('\n— region bakes')
   const writes = new Uint8Array(W * H)
   const composite = new Float32Array(W * H)
   const pieces = []
-  for (const owned of owners) {
+  const riverHeads = new Map()
+  for (let g = 0; g < owners.length; g++) {
+    const owned = owners[g]
     const piece = await bakeRegion(owned)
     pieces.push(piece)
     for (let i = 0; i < owned.length; i++) {
       if (!owned[i]) continue
       writes[i]++
       composite[i] = piece.elevation[i]
+    }
+    let read = 0
+    for (const length of piece.rivers.lengths) {
+      const head = Math.floor(piece.rivers.points[read + 1]) * W + Math.floor(piece.rivers.points[read])
+      riverHeads.set(head, (riverHeads.get(head) ?? []).concat(g))
+      read += length * 3
     }
   }
   check('the plan produced more than one region to compose', owners.length > 1, `${owners.length} regions`)
@@ -487,6 +496,17 @@ console.log('\n— region bakes')
   }
   check('no land cell is written by two jobs', twice === 0, `${twice} are`)
   check('no land cell is written by none', never === 0, `${never} are`)
+
+  // Rivers compose the way elevation does, and they do not get it for free:
+  // every job extracts channels over its halo too, so without clipping, each
+  // river along a boundary comes back from both neighbours. Drawn twice it just
+  // looks thicker, which is why this is checked rather than eyeballed.
+  const shared = [...riverHeads.values()].filter((gs) => gs.length > 1)
+  check('no river is emitted by two jobs', shared.length === 0, `${shared.length} of ${riverHeads.size} are`)
+  let foreign = 0
+  for (const [head, gs] of riverHeads) if (!owners[gs[0]][head]) foreign++
+  check('every river a job emits starts in its own cells', foreign === 0, `${foreign} do not`)
+  check('the regions produced rivers at all', riverHeads.size > 0, `${riverHeads.size} polylines`)
 
   const again = await bakeRegion(owners[0])
   let drifted = 0

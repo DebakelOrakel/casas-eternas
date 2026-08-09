@@ -198,6 +198,79 @@ export async function planBake(request: BakePlanRequest): Promise<BakePlan> {
   return { labels, groups, fragmentCells, maxDischarge, meanRunoff }
 }
 
+// Which job owns each cell of the AMPLIFIED grid: the group's index, or -1 for
+// a cell no job computes.
+//
+// The plan is macro and the bake is fine, so somebody has to bridge them, and
+// the obvious bridge — read the macro label under each fine cell — LOSES LAND.
+// Measured on a real world at 4K: 7542 fine land cells of 723140 sit over a
+// macro cell that is ocean, because amplification adds relief and a coastline
+// gains islands and headlands the 2048 raster never had. Under the obvious rule
+// those cells carry no label, so no job owns them, and they come out of a split
+// bake at their seeded height while everything around them is eroded.
+//
+// So a fine land cell over unlabelled macro takes the nearest labelled macro
+// cell's job, searched in growing rings and settled by the lowest group index on
+// a tie — deterministic, because ownership decides which bytes each job writes.
+//
+// Lives here rather than in each caller for the ordinary reason: it was written
+// twice within an hour (the harness and a measurement script) before it was
+// written once.
+export function fineOwnership(plan: BakePlan, macroWidth: number, macroHeight: number, fineElevation: Float32Array, factor: number): Int32Array {
+  const fineWidth = macroWidth * factor
+  const fineHeight = macroHeight * factor
+  const groupOfLabel = new Int32Array(65536).fill(-1)
+  plan.groups.forEach((group, index) => { for (const label of group.catchments) groupOfLabel[label] = index })
+
+  // Per macro cell, once — a fine cell's neighbours resolve to the same answer
+  // as any other fine cell in the same macro cell, and the ring search is the
+  // expensive part.
+  const groupOfMacro = new Int32Array(macroWidth * macroHeight)
+  for (let i = 0; i < groupOfMacro.length; i++) groupOfMacro[i] = groupOfLabel[plan.labels[i]]
+
+  const owners = new Int32Array(fineWidth * fineHeight).fill(-1)
+  const resolved = new Map<number, number>()
+  for (let y = 0; y < fineHeight; y++) {
+    const macroY = (y / factor) | 0
+    for (let x = 0; x < fineWidth; x++) {
+      const fine = y * fineWidth + x
+      if (fineElevation[fine] <= SEA_LEVEL) continue
+      const macro = macroY * macroWidth + ((x / factor) | 0)
+      const direct = groupOfMacro[macro]
+      if (direct >= 0) { owners[fine] = direct; continue }
+      let nearest = resolved.get(macro)
+      if (nearest === undefined) {
+        nearest = nearestGroup(groupOfMacro, macroWidth, macroHeight, macro)
+        resolved.set(macro, nearest)
+      }
+      owners[fine] = nearest
+    }
+  }
+  return owners
+}
+
+// The nearest owning macro cell, in Chebyshev rings. Returns -1 only for a world
+// where no macro cell is owned at all, which is a world with no land.
+function nearestGroup(groupOfMacro: Int32Array, width: number, height: number, from: number): number {
+  const x0 = from % width
+  const y0 = (from - x0) / width
+  const limit = Math.max(width, height)
+  for (let radius = 1; radius <= limit; radius++) {
+    let best = -1
+    for (let dy = -radius; dy <= radius; dy++) {
+      const onHorizontalEdge = dy === -radius || dy === radius
+      for (let dx = -radius; dx <= radius; dx++) {
+        // Only the ring, not the filled square — the inside was searched already.
+        if (!onHorizontalEdge && dx !== -radius && dx !== radius) continue
+        const group = groupOfMacro[(((y0 + dy) % height + height) % height) * width + (((x0 + dx) % width + width) % width)]
+        if (group >= 0 && (best < 0 || group < best)) best = group
+      }
+    }
+    if (best >= 0) return best
+  }
+  return -1
+}
+
 // The toroidal box each group occupies, in one pass over the raster.
 //
 // Per group a column and a row occupancy mask, then the smallest wrapping span

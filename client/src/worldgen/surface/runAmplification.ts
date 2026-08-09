@@ -165,10 +165,41 @@ export async function runAmplification(
     // carries the measurements behind the decision.
     const criticalArea = densityToCriticalArea(request.riverDensity ?? 55)
     rivers = extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge)
+    if (request.region) rivers = ownedRivers(rivers, request.region.owned, result.width)
     onProgress('hydrology', 1)
   }
 
   return { elevation: field, width: result.width, height: result.height, rivers }
+}
+
+// The rivers this region owns, by the HEAD of each polyline.
+//
+// Elevation composes disjointly because a cell belongs to one job. Rivers do
+// not, and it is easy to miss: a job extracts channels over its whole drowned
+// field, halo included, so two neighbours each emit the stretch of the other's
+// river that fell inside their margin. The composite would then carry every
+// boundary river twice, drawn twice, which reads as a thicker river rather than
+// as a bug.
+//
+// The head decides, and can: `extractRiverPolylines` starts each line at a
+// headwater and walks downstream, and a river never leaves its catchment. So a
+// line whose head is not ours belongs to whoever owns that head — exactly one
+// job, since every land cell is owned by exactly one. A line of ours that runs
+// out over the sea near its mouth is still ours; ownership is decided once, at
+// the top, not per vertex.
+function ownedRivers(rivers: RiverPolylines, owned: Uint8Array, width: number): RiverPolylines {
+  const points: number[] = []
+  const lengths: number[] = []
+  let read = 0
+  for (const length of rivers.lengths) {
+    const head = Math.floor(rivers.points[read + 1]) * width + Math.floor(rivers.points[read])
+    if (owned[head]) {
+      for (let i = 0; i < length * 3; i++) points.push(rivers.points[read + i])
+      lengths.push(length)
+    }
+    read += length * 3
+  }
+  return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) }
 }
 
 // Everything the region does: land outside it is replaced by deep sea.

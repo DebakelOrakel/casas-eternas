@@ -2,11 +2,12 @@
 summary: How an amplification bake could be split across machines, and what it would
   cost. The unit is the CATCHMENT, not a rectangle, because nothing flows across a
   divide — which is also why the compute decomposition and the tile decomposition are
-  two different things that must not be conflated. Measurement removed the one cheap
-  step this plan thought it had: the ocean is already skipped where it costs anything,
-  so 95% of a bake is genuine land work and decomposition is the only lever left.
+  two different things that must not be conflated. Measuring the split on a real world
+  found the opposite of what this doc first concluded: a bake is not mostly land work,
+  it is ~85% depositSediment walking every cell of the raster to throw 90% of them
+  away. So splitting cannot pay until that is fixed, and fixing it helps every bake.
 date: 2026-08-09
-status: STEPS 1-3a BUILT 2026-08-09 (`npm run harness:amplify`, `surface/bakePlan.ts`, the region in `runAmplification`). Splitting starts above 8K; 4K and 8K keep baking whole. Measurement retired the plan's hardest open question and killed the obvious implementation of step 3
+status: STEPS 1-2 BUILT 2026-08-09. Step 3a is BUILT AND DOES NOT PAY YET: on a real world it is 0.7x the speed of a whole bake and differs from it on 3.5% of cells. The speed half is explained and belongs elsewhere - ~85% of a bake is depositSediment, whose cost is per-cell over the whole raster; walking only the shelf and above is 7x faster with zero cells changed. Fix that before returning here
 ---
 
 # Splitting the bake
@@ -235,6 +236,52 @@ land cell — a tuning question, not an architectural one — or spreading that 
 across machines, which is what the rest of this document is about. The
 decomposition is not an optimisation among several; it is the one available.
 
+### That conclusion was wrong. Measured again 2026-08-09, on a real world
+
+The paragraph above says the 95 % is "genuine land work". It is not, and the
+error was in the resolution of the measurement rather than in its arithmetic:
+`streamPower` was timed as one thing, and most of it is `depositSediment`, which
+runs once per iteration inside it.
+
+At 4096×2048 on a real world, 100 iterations of the fluvial phase:
+
+| | |
+|---|---|
+| stream power with deposition off | **3.5 s** |
+| stream power with deposition on | **68.0 s** |
+
+So deposition is 95 % of the fluvial phase, which is 89 % of a bake — **roughly
+85 % of the whole thing**, in one function.
+
+And its cost does not come from land. Two controls:
+
+- A world with **every land cell drowned** — nothing to erode at all — still
+  costs 150 s against the full world's 168 s.
+- One region owning 32 % of the land costs 155 s against the whole world's 168 s.
+
+The reason is that `depositSediment` walks the entire popOrder. It must reach the
+sea (a delta is a marine feature), so it cannot key on `isLand` the way the other
+loops do — and it bails out below the shelf break, but only after visiting the
+cell and reading five arrays at a random index to decide. On this world **9.6 %
+of cells are at or above the shelf break**; the loop visits the other 90.4 % to
+throw them away.
+
+Walking only those 9.6 % instead: **67.9 s → 9.8 s, and zero cells differ.** A
+below-shelf cell writes its load off and is downstream of everything above the
+shelf, so leaving it out of the walk changes nothing above it. (One caveat kept
+honestly: the shelf test reads the LIVE elevation, and a delta could in principle
+lift a cell across the line mid-pass. It did not happen on this world with these
+settings; a real implementation should either re-derive the set per round or
+prove it cannot.)
+
+**What this changes, again.** The ocean is not skipped where it costs something —
+it is skipped where it costs arithmetic and visited where it costs time. There IS
+a cheap step, it is worth about 7× on 85 % of a bake, and it belongs to every
+bake rather than to splitting. It is also a PREREQUISITE for splitting: while the
+dominant cost is proportional to total cells, a region bake cannot be faster than
+a whole one no matter how the map is cut — which is exactly what step 3a measured
+when it was tried.
+
 The thresholds worked out above (`SHELF_BREAK` for deposition, `SLOPE_FOOT` for
 seeding) are kept here because they remain right for anything that DOES touch the
 sea floor — they simply have nothing to earn today.
@@ -402,11 +449,136 @@ honestly.
 
    What 3a asserts in `npm run harness:amplify`, in the order the failures would
    hurt: N = 1 reproduces the whole bake byte for byte; the composite over N
-   regions writes every land cell exactly once and no cell twice; a region baked
-   twice gives the same bytes; a region bake does not touch the seeded field it
-   read; and the linear-time halo agrees with the naive dilation it replaced,
-   wrapping included — that last one because a halo one cell short, or one that
-   stops at the seam, is invisible to every other check in the file.
+   regions writes every land cell exactly once and no cell twice; no river is
+   emitted by two jobs and every river a job emits starts in its own cells; a
+   region baked twice gives the same bytes; a region bake does not touch the
+   seeded field it read; and the linear-time halo agrees with the naive dilation
+   it replaced, wrapping included — that last one because a halo one cell short,
+   or one that stops at the seam, is invisible to every other check in the file.
+
+   **3a does not work yet, and the harness could not have told us.** Run against
+   a real world at 4K it fails on both counts it exists for, and the two failures
+   have different characters:
+
+   | | harness world (256×128, synthetic) | real world (2048×1024, 4K) |
+   |---|---|---|
+   | mean \|Δ\| vs whole | 0.27 m | **13.4 m** |
+   | cells over 10 m | 0.7 % | **8.7 %** |
+   | cells over 50 m | — | **3.5 %** |
+   | worst | 59 m | **2977 m** |
+   | wall clock vs whole | — | **0.7× — slower** |
+
+   The median is 0.003 m, so the great majority of the map is exact and a few
+   percent of it is genuinely different terrain.
+
+   - **The speed failure is understood and is not 3a's to fix**: ~85 % of a bake
+     is `depositSediment` and its cost is per-cell over the whole raster, so no
+     cut of the map makes a region cheaper. See the second ocean measurement
+     above. Until that is fixed, 3a cannot pay.
+   - **The accuracy failure is explained, and not the way it was guessed.** The
+     suspicion was the packing — thousands of catchments scattered into four
+     jobs, each a leopard skin with an enormous perimeter for the halo to get
+     wrong, which the harness world does not have. Bucketing the error by the
+     size of the catchment each cell belongs to refutes that outright:
+
+     | catchment (macro cells) | share of land | mean \|Δ\| | worst |
+     |---|---|---|---|
+     | 1–3 | 4.9 % | **0.73 m** | 214 m |
+     | 4–15 | 9.3 % | 4.07 m | 1354 m |
+     | 16–63 | 9.1 % | 5.88 m | 1203 m |
+     | 64–255 | 14.9 % | 13.30 m | 2242 m |
+     | 256–1023 | 18.8 % | 17.84 m | 2866 m |
+     | 1024+ | 27.5 % | **18.42 m** | 2964 m |
+
+     The error is SMALLEST in the smallest catchments and grows monotonically
+     with size — the exact opposite of a boundary effect, which would hurt the
+     tiny ones most because they are almost entirely boundary.
+
+     What it tracks instead is how much erosion happens at all. A three-cell
+     catchment has no drainage area, so it barely incises and there is little to
+     disagree about; a large one carves deeply, and a small difference in routing
+     at a divide is then amplified downstream by the feedback between incision
+     and flow direction. **The divergence is chaotic, not marginal.**
+
+     That closes the door the halo was holding open: no width fixes it, which is
+     what the earlier plateau between halo 8 and 16 was already saying. Any
+     decomposition that changes what a catchment's neighbours look like buys a
+     divergence proportional to how hard the landscape is working.
+
+   **Put together, those two say the mechanism is wrong, not the tuning.**
+   Drowning exists to make a job cheaper. It does not (0.92× — measured), and it
+   costs accuracy (3.5 % of cells over 50 m — measured). A region bake as built
+   is therefore strictly worse than not splitting at all: the same cost, a worse
+   field. No halo width and no packing rule can move that, because neither
+   touches the reason it is not cheaper.
+
+   It is also easy to see WHY drowning should hurt, once one stops thinking of it
+   as "removing" the neighbour. It replaces a mountain with a six-kilometre
+   trench one cell away. The slope at that boundary is not a perturbation of the
+   real one, it is the largest slope on the map, and eight cells of halo is
+   nothing against it.
+
+   And it does not only change slopes — it changes the world's TOPOLOGY. One
+   region's kept land happens to band across the torus, cutting the world ocean
+   into 105 components; `largestWaterComponent` keeps the biggest and the
+   erosion pass then treats the other 398 139 cells — real ocean, to the cell —
+   as landlocked seas under basin protection. Verified by counting the
+   components of the drowned field: everything but the largest sums to exactly
+   the enclosed-water figure. Harmless in the measured runs (protection mostly
+   preserves what was there anyway), but a second, independent way the drowned
+   world is a different world.
+
+   **The constructive version is the same measurement read forwards.** The
+   traversal IS reducible — the shelf experiment cuts it 6.9× with zero cells
+   changed — so a region can be expressed as a SHORTER CELL LIST rather than as
+   fake terrain. That removes the accuracy cost and delivers the time saving in
+   one move, and it is what 3b was going to have to build anyway. Drowning was
+   the trick that avoided touching `erosion.ts`; the price of not touching it
+   turns out to be the whole benefit.
+
+   So the order changes: **compact the loops first** (which every bake wants,
+   split or not), then express a region as a subset of that compaction. `3a` as
+   built stays in the tree as the thing that proved this, and as the harness
+   scaffolding — the partition, the ownership, the river clipping and the
+   composition checks all survive the change of mechanism.
+
+   **The first half of that is done. BUILT 2026-08-09**: `depositSediment` walks
+   only the shelf and above. On a real 4K bake, **205 s → 79 s with zero cells
+   and zero river vertices changed** — 2.6× on the whole bake, since the function
+   was most of it (the generator's own pass at 2048², separately verified
+   byte-identical: 61 s → 20 s). It is exactly equivalent rather than
+   equivalent-in-practice: the set is rebuilt each call because stream power and
+   deposition move it between iterations, and within one call it cannot move,
+   because deposition only ever raises a cell and its one write to a neighbour
+   already refuses anything below the shelf break.
+
+   Re-profiled afterwards, the erosion pass at 4K is 68 s: stream power 51 s
+   (74 %, of which the incision walk over the full popOrder is ~13 s and the
+   compacted deposition the rest), thermal 10 s (land-only already), flooding
+   6 s, accumulation 2 s. A region owning 32 % of the land now costs 0.74× a
+   whole pass (was 0.92× before compaction — drowned foreign land is abyssal, so
+   it drops out of `shelfOrder` too). The remaining gap to proportionality is
+   named and bounded: the flood must cover the ocean in principle, and the
+   incision and accumulation walks still visit every cell. That ~15 s is the
+   irreducible floor of holding the whole raster, about a fifth of a pass —
+   worth knowing, not worth chasing.
+
+   **And it sharpens the trade rather than removing it.** Compaction cuts the
+   time without touching the terrain the physics sees, so at 4K and 8K it gives
+   the whole speed-up with none of the divergence — a job could walk only its own
+   cells over a shared full raster and be exact. That is not available at 16K,
+   where the point is precisely NOT to hold the raster. So:
+
+   - **time** is now bought exactly, and splitting is not needed for it below 16K
+   - **memory** still needs a job to be ignorant of its neighbours, and the table
+     above prices that ignorance: a divergence proportional to how hard erosion
+     is working, which is largest exactly on the big river systems a viewer looks
+     at.
+
+   A gap 3a DID have and no longer does: fine land cells lying over macro ocean
+   belonged to no job (7542 of 723140 at 4K), because amplification gives a
+   coastline islands and headlands the macro raster never had.
+   `bakePlan.fineOwnership` is the one place that mapping now lives.
 
    This step also supplies the budget the packing should become locality-aware
    against.

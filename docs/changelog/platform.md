@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-09
+- **changed** Erosion: an erosion pass runs about three times faster and a 4K bake about two and a half — sediment deposition no longer walks the deep ocean floor it discards. `worldgen.panel.erosion`
 - **new** Build: a fourth harness checks the amplification bake — invariants, determinism and an opt-in byte baseline — closing the one pipeline no check reached.
 - **fixed** Bake: a cluster bake always pulls the server's current image — a node that already held one kept running an older baker, which files its artifact under a key nobody looks for and reports success.
 - **new** Bake: a bake running in the cluster reports its phase and percentage back, so the progress bar moves for a server-side bake instead of sitting at "working".
