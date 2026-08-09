@@ -91,7 +91,7 @@ const L = (p) => server.ssrLoadModule(p)
 // Modules are loaded by PATH. If files move, this block is the only thing to update.
 const M = {
   sim: await L('/src/worldgen/tectonics/plateSimulation.ts'),
-  params: await L('/src/worldgen/tectonics/tectonicsParams.ts'),
+  params: await L('/src/worldgen/tectonics/tectonicsTuneParams.ts'),
   field: await L('/src/worldgen/elevation/elevationField.ts'),
   ridged: await L('/src/worldgen/elevation/ridgedNoise.ts'),
   erosion: await L('/src/worldgen/surface/erosion.ts'),
@@ -114,9 +114,7 @@ const M = {
   archeanStep: await L('/src/worldgen/archean/archeanStep.ts'),
   finalize: await L('/src/worldgen/archean/finalizeArchean.ts'),
   // Not part of building a world — see PIPELINE_VERSION below.
-  amplify: await L('/src/worldgen/surface/amplify.ts'),
-  artifactKey: await L('/src/storage/artifactKey.ts'),
-  mapSettings: await L('/src/map/mapSceneSettings.ts'),
+  artifact: await L('/src/storage/amplificationArtifact.ts'),
 }
 
 const SEA = M.scale.SEA_LEVEL
@@ -132,12 +130,11 @@ const METRES = M.scale.ELEVATION_METERS
 // fault. That is the failure the artifact design exists to prevent, and until
 // now nothing checked it.
 //
-// Assembled the way the five real call sites assemble it. If they ever stop
-// agreeing with this line, that is itself the bug (see part B3).
-const PIPELINE_VERSION = M.artifactKey.derivePipelineVersion({
-  ...M.amplify.AMPLIFY_CONSTANTS,
-  rounds: M.mapSettings.AMPLIFY_EROSION_ROUNDS,
-})
+// Calls the REAL function rather than reassembling the spread, which this line
+// used to do — a guard that rebuilds what it is guarding cannot notice the two
+// drifting apart. Every caller now goes through `amplificationPipelineVersion`
+// (part B3), so this checks the same thing the screens and the baker do.
+const PIPELINE_VERSION = M.artifact.amplificationPipelineVersion()
 
 // Float32 hashing has to be bit-exact, so hash the raw bytes rather than any
 // rounded form — a refactor that changes the last mantissa bit is still a
@@ -323,7 +320,7 @@ function invariants(w) {
   // plate is kinematically frozen for the rest of the run. The ceiling is the
   // other direction of the same runaway, which had never been checked.
   const plates = w.sim.seeds.length
-  if (plates < M.params.MIN_PLATE_COUNT) fail('plates', `${plates} is below MIN_PLATE_COUNT ${M.params.MIN_PLATE_COUNT}`)
+  if (plates < M.params.TECTONICS_TUNING.minPlateCount) fail('plates', `${plates} is below minPlateCount ${M.params.TECTONICS_TUNING.minPlateCount}`)
   if (plates > 40) fail('plates', `${plates} — runaway upward`)
   if (w.sim.rafts.length === 0) fail('rafts', 'no continental crust survived')
   if (w.sim.features.length === 0) fail('features', 'no terrain features')
@@ -637,6 +634,11 @@ if (existsSync(HASHES)) {
     }
     movedStages += moved.length + gone.length
     for (const name of moved) console.log(`  MOVED ${seed}.${name}  ${want[name]} -> ${hashed[seed][name]}`)
+    // How many held still, which the list of what moved does not tell you. The
+    // difference between "one stage moved" and "everything moved" is the
+    // difference between a deliberate change and a broken refactor, and reading
+    // it off the length of a list is exactly the arithmetic nobody does at 2am.
+    console.log(`        ${seed}: ${Object.keys(want).length - moved.length - gone.length} of ${Object.keys(want).length} stages unchanged`)
   }
   if (movedStages > 0) console.log('  a refactor should move nothing. if the change was intended, `npm run golden hash-record` to re-freeze — or delete golden-hashes.json to end the guard.')
 }

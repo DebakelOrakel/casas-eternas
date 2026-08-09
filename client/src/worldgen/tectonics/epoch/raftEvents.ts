@@ -6,7 +6,7 @@ import { coolMantleAt } from '../../mantle/mantleField'
 import { resetOceanAgeAround } from '../oceanAge'
 import { getVelocityAt } from '../plateMotion'
 import type { PlateMotion } from '../plateMotion'
-import { BREAKUP_FRESH_CRUST_RADIUS, CONT_RIFT_COOLDOWN_EPOCHS, FLOOD_BASALT_DEPOSIT, RIFT_COOL_AMOUNT, RIFT_COOL_RADIUS, RIFT_MARGIN_RECOVERY_EPOCHS, RIFT_RESET_RADIUS, SPLIT_GAP, SPLIT_MAX_DIST_SQ, SPLIT_MERGE_IMMUNITY_EPOCHS } from '../tectonicsParams'
+import { TECTONICS_TUNING } from '../tectonicsTuneParams'
 import { MERGE_OVERLAP_FACTOR, RAFT_CONNECT_FACTOR } from '../../crust/crustTuneParams'
 import { findOrCreateFeatureIndex } from '../terrainFeatures'
 import type { PlateSimulation } from '../plateSimulationTypes'
@@ -76,32 +76,32 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
     const cny = wrappedDelta(cSeedA.y, cSeedB.y, height)
     const cnl = Math.sqrt(cnx * cnx + cny * cny) || 1
     const newRaftId = sim.rafts.reduce((max, raft) => Math.max(max, raft.id), -1) + 1
-    raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, SPLIT_MAX_DIST_SQ, SPLIT_GAP, sim.epoch, SPLIT_MERGE_IMMUNITY_EPOCHS, width, height)
+    raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, TECTONICS_TUNING.splitMaxDistSq, TECTONICS_TUNING.splitGap, sim.epoch, TECTONICS_TUNING.splitMergeImmunityEpochs, width, height)
     // Reset that point's divergence accumulator so it doesn't immediately
     // re-split the fresh halves next epoch.
     if (raftSplit) {
       // Relieve the accumulated strain across the whole rifted ZONE, not just the
       // one fired point: the rupture reset the region's stress state, so every
       // boundary point near the rift must re-establish sustained divergence (re-lock
-      // over CONT_RIFT_LOCK_EPOCHS) before it can rift again. This is the local,
+      // over TECTONICS_TUNING.contRiftLockEpochs) before it can rift again. This is the local,
       // physical replacement for the old global cooldown timer — together with the
       // mantle release below (which removes the FORCING that would re-lock them), it
       // stops the broad hot dome under a supercontinent from strobing a breakup every
-      // epoch. See the RIFT_RESET_RADIUS const.
-      const rr2 = RIFT_RESET_RADIUS * RIFT_RESET_RADIUS
+      // epoch. See the TECTONICS_TUNING.riftResetRadius const.
+      const rr2 = TECTONICS_TUNING.riftResetRadius * TECTONICS_TUNING.riftResetRadius
       for (const b of boundaries) {
         if (toroidalDistanceSq(b.x, b.y, continentalRift.x, continentalRift.y, width, height) <= rr2) {
           // Negative lock = a passive-margin recovery delay: needs
-          // RIFT_MARGIN_RECOVERY_EPOCHS + CONT_RIFT_LOCK_EPOCHS of sustained
+          // TECTONICS_TUNING.riftMarginRecoveryEpochs + TECTONICS_TUNING.contRiftLockEpochs of sustained
           // divergence to rift again. Local, so a separate supercontinent is unaffected.
-          sim.latticeLockedEpochs[b.latticeIndex] = -RIFT_MARGIN_RECOVERY_EPOCHS
+          sim.latticeLockedEpochs[b.latticeIndex] = -TECTONICS_TUNING.riftMarginRecoveryEpochs
           sim.latticeAccumulated[b.latticeIndex] = 0
         }
       }
       // Global breakup-staging interval (halved to 20; the zone reset + mantle release
       // above cut the local strobing, but a coherent supercontinent still needs a global
-      // rate-limit — see CONT_RIFT_COOLDOWN_EPOCHS).
-      sim.continentalRiftCooldownUntil = sim.epoch + CONT_RIFT_COOLDOWN_EPOCHS
+      // rate-limit — see TECTONICS_TUNING.contRiftCooldownEpochs).
+      sim.continentalRiftCooldownUntil = sim.epoch + TECTONICS_TUNING.contRiftCooldownEpochs
       // The far half is a brand-new continent — give it its own name (the near half
       // keeps the parent's), so split-born continents aren't left unnamed on the map.
       // Unless it is a splinter: the same size rule the hand-off applies, or a rift
@@ -118,7 +118,7 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
       const fbTangentX = -cny / cnl
       const fbTangentY = cnx / cnl
       const fbIdx = findOrCreateFeatureIndex(sim.features, continentalRift.x, continentalRift.y, continentalRift.plateA, -2, continentalRift.plateA, fbTangentX, fbTangentY, 'range', false, width, height)
-      sim.features[fbIdx].thickness += FLOOD_BASALT_DEPOSIT
+      sim.features[fbIdx].thickness += TECTONICS_TUNING.floodBasaltDeposit
       sim.features[fbIdx].epochsSinceDeposit = 0
       // Open a real ocean basin in the gap: a young oceanic plate (mid-ocean
       // ridge) is born between the two halves (Option C, the rift lifecycle).
@@ -128,11 +128,11 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
       // too narrow to cover a breakup's gap on its own, and without this the new
       // basin inherits the age that kept ticking under the continent and renders at
       // full abyssal depth: a newborn Atlantic as deep as the oldest Pacific.
-      resetOceanAgeAround(sim.oceanAge, continentalRift.x, continentalRift.y, BREAKUP_FRESH_CRUST_RADIUS, width, height)
+      resetOceanAgeAround(sim.oceanAge, continentalRift.x, continentalRift.y, TECTONICS_TUNING.breakupFreshCrustRadius, width, height)
       // Release the thermal doming that drove the breakup — this is what actually
       // retires the global cooldown: it collapses the broad divergent forcing under
       // the (former) supercontinent so neighbouring points stop re-qualifying.
-      coolMantleAt(sim.mantle, continentalRift.x, continentalRift.y, width, height, RIFT_COOL_RADIUS, RIFT_COOL_AMOUNT)
+      coolMantleAt(sim.mantle, continentalRift.x, continentalRift.y, width, height, TECTONICS_TUNING.riftCoolRadius, TECTONICS_TUNING.riftCoolAmount)
     }
   }
 

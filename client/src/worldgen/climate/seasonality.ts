@@ -1,20 +1,11 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell, shiftedYNorm } from './climateField'
+import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { wrapValue } from '../core/field'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
 
-// Peak annual temperature range (°C, summer − winter) — reached by a
-// continental interior at high latitude. The equator sits near 0 (sun always
-// high), a coast/ocean stays low (thermal inertia). Tune by eye.
-const MAX_AMPLITUDE = 42
-// Cells this many grid cells from the nearest ocean count as fully
-// continental; nearer ones interpolate. A big continent's core sits deep
-// enough to saturate.
-const CONTINENTALITY_SCALE = 45
-// Coastal land floor (continentality 0): even a coast swings a bit.
-const COAST_DAMP = 0.3
 // Ocean cells carry this sentinel — seasonality is a land field (biomes are
 // land; the ocean's near-nil swing would just flood the overlay with one color).
 export const OCEAN_AMPLITUDE = -1
@@ -56,7 +47,7 @@ function computeContinentality(elevation: Float32Array, worldWidth: number, worl
   }
   const continentality = new Float32Array(n)
   for (let i = 0; i < n; i++) {
-    continentality[i] = dist[i] === Infinity ? 1 : Math.min(1, dist[i] / CONTINENTALITY_SCALE)
+    continentality[i] = dist[i] === Infinity ? 1 : Math.min(1, dist[i] / CLIMATE_TUNING.seasonContinentalityScale)
   }
   return continentality
 }
@@ -73,11 +64,11 @@ export function computeSeasonalAmplitude(elevation: Float32Array, worldWidth: nu
   for (let gy = 0; gy < RY; gy++) {
     const yNorm = shiftedYNorm(gy, RY, equatorOffset)
     const phi = Math.abs(yNorm - 0.5) * 2
-    const ampLat = MAX_AMPLITUDE * phi
+    const ampLat = CLIMATE_TUNING.seasonMaxAmplitude * phi
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       const ocean = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight) <= SEA_LEVEL && !sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight)
-      amplitude[i] = ocean ? OCEAN_AMPLITUDE : ampLat * (COAST_DAMP + (1 - COAST_DAMP) * continentality[i])
+      amplitude[i] = ocean ? OCEAN_AMPLITUDE : ampLat * (CLIMATE_TUNING.seasonCoastDamp + (1 - CLIMATE_TUNING.seasonCoastDamp) * continentality[i])
     }
   }
   return amplitude

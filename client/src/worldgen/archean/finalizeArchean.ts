@@ -12,7 +12,7 @@ import { solveSeaLevelOffset } from '../elevation/landTarget'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { toroidalDistanceSq } from '../core/toroidal'
 import { assignRaftNames } from '../crust/raftNames'
-import { DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y, OCEAN_AGE_INIT } from '../tectonics/tectonicsParams'
+import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
 
 // Plate tectonics begins: the Archean world becomes a PlateSimulation.
 //
@@ -121,12 +121,12 @@ export function finalizeArchean(archean: ArcheanSimulation, landTarget?: number)
   // things that dissolve a few epochs later. A continent gets its name when it
   // becomes a continent, which is now.
   const named = assignRaftNames(archean.rafts, random, measureRaftLandAreas(archean.rafts, width, height))
-  const oceanAge = createOceanAgeField(OCEAN_AGE_INIT)
+  const oceanAge = createOceanAgeField(TECTONICS_TUNING.oceanAgeInit)
   const seaLevelOffset = landTarget === undefined
     ? archean.seaLevelOffset
     : solveSeaLevelOffset(named, oceanAge, archean.warpSeed, landTarget, width, height).offset
   const seeds = convectionCellSeeds(archean.mantle, width, height)
-  const lattice = generateDetectionLattice(width, height, DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y)
+  const lattice = generateDetectionLattice(width, height, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
 
   return {
     width,

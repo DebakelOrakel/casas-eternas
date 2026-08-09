@@ -1,4 +1,5 @@
 import { smoothstep } from '../core/interpolation'
+import { ELEVATION_TUNING } from './elevationTuneParams'
 import { wrapValue } from '../core/field'
 // Every contour the elevation field produces (elevationField.ts) is a sum
 // of smooth radial falloffs — baseline blend, feature uplift — so it's
@@ -28,7 +29,6 @@ function hashLatticePoint(ix: number, iy: number, warpSeed: number, axisSalt: nu
   h = (h ^ (h >>> 16)) >>> 0
   return h / 4294967296 // [0, 1)
 }
-
 
 // Bilinear-interpolated value noise over a lattice that repeats every
 // (periodX, periodY) integer units — periods are in *lattice* units, not
@@ -68,21 +68,6 @@ const WARP_OCTAVES: ReadonlyArray<{ cellsX: number; cellsY: number; amplitude: n
   { cellsX: 32, cellsY: 16, amplitude: 0.25 },
 ]
 
-// How far, in pixels, a query point can be displaced — deliberately
-// modest relative to FEATURE_FALLOFF_RADIUS (160) and
-// BASELINE_BLEND_RADIUS (220) in elevationField.ts: this should read as
-// "coastlines and ridgelines are a little ragged," not "the tectonic
-// shapes are dissolved into noise." Tune by eye — this is a visual call,
-// not something with a formula to derive it from.
-const WARP_AMPLITUDE_PX = 26
-
-// axisSalt values for the two offset axes — arbitrary distinct constants,
-// just need to decorrelate the x-offset and y-offset noise fields from
-// each other (using the same salt for both would displace every point
-// along the line y=x instead of in an independent 2D direction).
-const AXIS_SALT_X = 0
-const AXIS_SALT_Y = 97
-
 function fbmNoise(x: number, y: number, width: number, height: number, warpSeed: number, axisSalt: number): number {
   let sum = 0
   let amplitudeSum = 0
@@ -104,6 +89,6 @@ function fbmNoise(x: number, y: number, width: number, height: number, warpSeed:
 // so avoiding a per-pixel object allocation here matters the same way it
 // does for erosion.ts's MinHeap pop.
 export function domainWarpDelta(x: number, y: number, width: number, height: number, warpSeed: number, axis: 'x' | 'y'): number {
-  const axisSalt = axis === 'x' ? AXIS_SALT_X : AXIS_SALT_Y
-  return fbmNoise(x, y, width, height, warpSeed, axisSalt) * WARP_AMPLITUDE_PX
+  const axisSalt = axis === 'x' ? ELEVATION_TUNING.axisSaltX : ELEVATION_TUNING.axisSaltY
+  return fbmNoise(x, y, width, height, warpSeed, axisSalt) * ELEVATION_TUNING.warpAmplitudePx
 }

@@ -1,4 +1,5 @@
 import { SEA_LEVEL, SHELF_BREAK, metersToElevation } from '../elevation/elevationScale'
+import { SURFACE_TUNING } from './surfaceTuneParams'
 import { gradedSeaCap } from './erosion'
 
 // Reduced-complexity delta growth for the micro tile — the missing mechanism
@@ -86,24 +87,6 @@ export const DEFAULT_DELTA_GROWTH_PARAMS: DeltaGrowthParams = {
   channelVisitFraction: 0.05,
 }
 
-// Depth exponent for the routing weights (Freeman-style): higher concentrates
-// flow into the deepest channel, lower lets it spread. And the inertia floor
-// keeps a parcel from ever weighting a full reversal.
-//
-// The depth entering the weight is CAPPED (see weightDepthCap below) — the
-// bug that silently defeated every deposition variant: uncapped depth^1.5
-// across three orders of magnitude made the open ocean ~25× more attractive
-// than the 12 m platform, so parcels dived straight off the shelf edge into
-// the abyss and wrote their load off (measured: ~0.2% of the budget ever
-// deposited, identical across three deposition designs). DeltaRCM's depth
-// preference is about CHANNEL depths on the delta top — metres — not about
-// basins; capping reproduces that: below the cap, deeper still wins (keeps
-// channels), beyond it all water is equally attractive and inertia takes
-// over, so the flow spreads as a plume across the platform instead of
-// racing downslope.
-const DEPTH_EXPONENT = 1.5
-const BACKWARD_WEIGHT = 0.05
-
 function makeRng(seed: number): () => number {
   let s = seed >>> 0
   if (s === 0) s = 0x9e3779b9
@@ -174,13 +157,13 @@ export function growDelta(
         const depth = Math.min(SEA_LEVEL - e, weightDepthCap)
         const len = Math.hypot(OFFSETS[k][0], OFFSETS[k][1])
         const forward = (hx * OFFSETS[k][0] + hy * OFFSETS[k][1]) / len
-        const inertiaBase = forward > 0 ? BACKWARD_WEIGHT + forward : BACKWARD_WEIGHT * Math.max(0, 1 + forward)
+        const inertiaBase = forward > 0 ? SURFACE_TUNING.backwardWeight + forward : SURFACE_TUNING.backwardWeight * Math.max(0, 1 + forward)
         // Squared: the mouth JET must persist — with linear inertia the walk
         // diffused within ~5 steps and every walker drifted alongshore into
         // the shallow fringe, building a coast-parallel strand plain instead
         // of a seaward fan (measured run: 818 new-land cells, all hugging the
         // old shoreline).
-        const w = Math.pow(depth + metersToElevation(0.5), DEPTH_EXPONENT) * inertiaBase * inertiaBase
+        const w = Math.pow(depth + metersToElevation(0.5), SURFACE_TUNING.depthExponent) * inertiaBase * inertiaBase
         weights[k] = w
         total += w
       }

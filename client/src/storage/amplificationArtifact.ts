@@ -1,7 +1,27 @@
 import { artifactPath } from './ArtifactStore'
 import type { ArtifactKey, ArtifactStore } from './ArtifactStore'
+import { derivePipelineVersion } from './artifactKey'
 import { bakeLayer, decodeLayer } from '../worldgen/worldSave/worldLayers'
 import type { LayerSpec } from '../worldgen/worldSave/worldLayers'
+import { AMPLIFY_CONSTANTS } from '../worldgen/surface/amplify'
+import { AMPLIFY_EROSION_ROUNDS } from '../map/mapSceneSettings'
+
+// The PIPELINE half of an artifact's key, assembled in one place.
+//
+// This spread used to be written out at every call site — five in two screens,
+// two in the Node baker, one in the harness — each rebuilding
+// `{...AMPLIFY_CONSTANTS, rounds}` by hand. They agreed, but nothing made them:
+// adding a constant at one site and not the others mints two keys for one
+// artifact, and the reader would find terrain filed under a key that does not
+// describe it. `artifactKey.derivePipelineVersion` deliberately takes the
+// constants as an argument so it has no opinion on where they live — this is
+// that opinion, held once.
+//
+// `rounds` is a parameter because the server's baker takes it per job, not from
+// the shipped default.
+export function amplificationPipelineVersion(rounds: number = AMPLIFY_EROSION_ROUNDS): string {
+  return derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds })
+}
 
 // What one amplification bake produces, and how it is written to (and read
 // back from) an ArtifactStore. The store deals in bytes at paths; this is

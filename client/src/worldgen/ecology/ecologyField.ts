@@ -11,10 +11,10 @@
 
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { OCEAN_PRECIP } from '../climate/precipitation'
-import { Biome } from '../climate/biomes'
 import { clamp01, smoothstep } from '../core/interpolation'
 import { downsampleMax, wrapValue } from '../core/field'
-import { SLOPE_RECALIBRATION } from '../elevation/elevationScale'
+import { ECOLOGY_TUNING, PASTURE_BY_BIOME, TIMBER_BY_BIOME } from './ecologyTuneParams'
+import type { LandBiomeId } from './ecologyTuneParams'
 
 // Ocean sentinel for the output fields (matches the climate fields' convention):
 // a cell the ecology layer doesn't score (open water) reads -1.
@@ -96,54 +96,6 @@ function productivity(tempC: number, precipMm: number): number {
   return Math.min(nppTemp, nppPrecip)
 }
 
-// How suitable each biome is for grazing (pasture). Open grassland/savanna best;
-// dense forest and ice worst; tundra/steppe support thin herding.
-const PASTURE_BY_BIOME: Record<number, number> = {
-  [Biome.Grassland]: 1.0,
-  [Biome.Savanna]: 0.9,
-  [Biome.Woodland]: 0.55,
-  [Biome.Tundra]: 0.35,
-  [Biome.TemperateForest]: 0.2,
-  [Biome.TemperateRainforest]: 0.12,
-  [Biome.Boreal]: 0.15,
-  [Biome.Desert]: 0.12,
-  [Biome.TropicalRainforest]: 0.06,
-  [Biome.Ice]: 0.0,
-  // Alpine meadows above the treeline support real (seasonal/transhumance)
-  // grazing — comparable to tundra, not to bare ice.
-  [Biome.Alpine]: 0.3,
-  // A salt crust grows nothing.
-  [Biome.SaltFlat]: 0.0,
-}
-
-// Weights of each subsistence source in the saturating carrying-capacity combine
-// (arable dominant — farming supports the densest populations). Kept LOW enough
-// that the combine (1 - e^-Σw·x) doesn't saturate near 1 for ordinary land — so
-// carrying capacity spreads across the whole ramp (desert ~0.1 … rich coast
-// ~0.8) instead of everything reading as lush green, which was hiding both the
-// level knob and the province mottling. Recalibrated 2026-07-26.
-const W_ARABLE = 1.1
-const W_FISH = 0.6
-const W_GAME = 0.45
-const W_PASTURE = 0.35
-
-// Fish tuning. Marine = coastal shelf base + upwelling (adjacent-ocean current
-// strength); freshwater = big rivers + lake presence.
-const FISH_SHELF_BASE = 0.35
-const FISH_UPWELLING_W = 0.65
-const FISH_RIVER_W = 0.6
-const FISH_LAKE_W = 0.5
-
-// Arable flatness sensitivity: steeper ground is progressively harder to farm.
-// Scaled by SLOPE_RECALIBRATION (see elevationScale.ts): flatness reads raw
-// elevation differences, which halved, so without this every slope on the map
-// would suddenly count as farmable. Used here and in flatnessAt (wetland, tool
-// stone).
-const SLOPE_K = 8 * SLOPE_RECALIBRATION
-// Ecotone (biome-boundary) game bonus and its cap.
-const ECOTONE_BONUS = 0.18
-
-
 // --- subsistence fields (climate grid) --------------------------------------
 
 // Arable land: productivity modulated by terrain flatness (steep = poor). Slope
@@ -159,7 +111,7 @@ function computeArable(temperature: Float32Array, precipitation: Float32Array, e
       const eE = sampleElevationAtCell(elevation, (gx + 1) % CLIMATE_RES_X, gy, worldW, worldH)
       const eS = sampleElevationAtCell(elevation, gx, (gy + 1) % CLIMATE_RES_Y, worldW, worldH)
       const slope = Math.hypot(eE - eC, eS - eC)
-      const flatness = 1 / (1 + SLOPE_K * slope)
+      const flatness = 1 / (1 + ECOLOGY_TUNING.slopeK * slope)
       out[i] = npp * flatness
     }
   }
@@ -183,7 +135,7 @@ function computeGame(temperature: Float32Array, precipitation: Float32Array, bio
       const up = biomes[((gy - 1 + CLIMATE_RES_Y) % CLIMATE_RES_Y) * CLIMATE_RES_X + gx]
       const down = biomes[((gy + 1) % CLIMATE_RES_Y) * CLIMATE_RES_X + gx]
       const ecotone = here !== left || here !== right || here !== up || here !== down
-      out[i] = npp * (1 + (ecotone ? ECOTONE_BONUS : 0))
+      out[i] = npp * (1 + (ecotone ? ECOLOGY_TUNING.ecotoneBonus : 0))
     }
   }
   return out
@@ -194,7 +146,14 @@ function computePasture(biomes: Uint8Array, land: Uint8Array): Float32Array {
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   for (let i = 0; i < out.length; i++) {
     if (!land[i]) continue
-    out[i] = PASTURE_BY_BIOME[biomes[i]] ?? 0.1
+    // The table is exhaustive over land biomes, so the `??` is not covering a
+    // forgotten entry — it covers the two modules disagreeing about what land
+    // IS. `land` here comes from `precipitation !== OCEAN_PRECIP`; the biome id
+    // comes from `elevation <= SEA_LEVEL` in climate/biomes.ts. They normally
+    // agree, nothing enforces it, and without the fallback a disagreement would
+    // write `undefined` into a Float32Array — a NaN, not a wrong number.
+    // Removable once part C1 leaves one land mask.
+    out[i] = PASTURE_BY_BIOME[biomes[i] as LandBiomeId] ?? 0.1
   }
   return out
 }
@@ -230,10 +189,10 @@ function computeFish(land: Uint8Array, currents: Float32Array, coarseDischarge: 
         }
       }
       const coastalness = oceanN / 8
-      const marine = coastalness * (FISH_SHELF_BASE + FISH_UPWELLING_W * upwelling)
+      const marine = coastalness * (ECOLOGY_TUNING.fishShelfBase + ECOLOGY_TUNING.fishUpwellingW * upwelling)
       let freshwater = 0
-      if (coarseDischarge && maxDischarge > 0) freshwater += FISH_RIVER_W * Math.min(1, Math.sqrt(coarseDischarge[i] / maxDischarge) * 2)
-      if (coarseLake && coarseLake[i] > 0) freshwater += FISH_LAKE_W
+      if (coarseDischarge && maxDischarge > 0) freshwater += ECOLOGY_TUNING.fishRiverW * Math.min(1, Math.sqrt(coarseDischarge[i] / maxDischarge) * 2)
+      if (coarseLake && coarseLake[i] > 0) freshwater += ECOLOGY_TUNING.fishLakeW
       freshwater = Math.min(1, freshwater)
       out[i] = 1 - Math.exp(-(marine + freshwater))
     }
@@ -242,79 +201,6 @@ function computeFish(land: Uint8Array, currents: Float32Array, coarseDischarge: 
 }
 
 // --- material fields (separate channel; salt also lightly feeds carrying cap) --
-
-// How much usable timber each biome yields (forests high, open/cold low).
-const TIMBER_BY_BIOME: Record<number, number> = {
-  [Biome.TropicalRainforest]: 1.0,
-  [Biome.TemperateRainforest]: 0.9,
-  [Biome.TemperateForest]: 0.85,
-  [Biome.Boreal]: 0.8,
-  [Biome.Woodland]: 0.5,
-  [Biome.Savanna]: 0.2,
-  [Biome.Grassland]: 0.1,
-  [Biome.Tundra]: 0.05,
-  [Biome.Desert]: 0.02,
-  [Biome.Ice]: 0.0,
-  // Above the treeline by definition — no timber.
-  [Biome.Alpine]: 0.0,
-  [Biome.SaltFlat]: 0.0,
-}
-
-// Metal / stone influence radii (world fraction). Tin is tightest → the rare,
-// clustered bottleneck; copper broader (arc belts); obsidian tight (point sources).
-// Halved 2026-08-07: since supercontinent assembly moved into the playable window
-// the feature set carries ~3.5× more volcanoes (192 vs 55 measured), and the old
-// radii (~240-320 km per point) overlapped into a carpet — copper covered 55% of
-// land at ≥5%. Radius halving plus the keep-fraction lottery below brings that
-// back to isolated deposit clusters (same-seed ≥5%-of-land coverage: copper
-// 55→18%, silver 49→7%, tin 29→6%, gems 24→5%, gold 70→13%, obsidian-driven
-// toolstone ≥20% 53→6%; flint baseline untouched by design).
-const COPPER_RADIUS_FRAC = 0.02
-const TIN_RADIUS_FRAC = 0.019
-const OBSIDIAN_RADIUS_FRAC = 0.015
-const FLINT_BASE = 0.15
-// Mineralisation lottery: only this fraction of the candidate points (arc
-// volcanoes, orogens) actually carries a given ore — not every arc is
-// mineralised. Deterministic per point position + warpSeed + per-resource salt,
-// so each resource picks a different subset and deposits stay stable per world.
-const COPPER_KEEP = 0.33
-const SILVER_KEEP = 0.25
-const OBSIDIAN_KEEP = 0.25
-const TIN_KEEP = 0.5
-const GOLD_LODE_KEEP = 0.5
-const GEM_KEEP = 0.5
-// Salt: below this precip a cell reads arid; coasts evaporate best.
-const SALT_ARID_PRECIP = 500
-const SALT_COAST_W = 1.0
-const SALT_INTERIOR_W = 0.35
-// Salt's small bonus to carrying capacity (preservation → denser settlement).
-const W_SALT_CC = 0.15
-// Iron: broad craton signal + bog-iron in wetlands. Deposit noise breaks the
-// (nearly uniform) craton signal into banded-iron-style deposits, so iron stays
-// common but fluctuates rather than reading as a flat 100%.
-const IRON_CRATON_W = 0.9
-const IRON_BOG_W = 0.7
-const IRON_DEPOSIT_FREQ_X = 13
-const IRON_DEPOSIT_FREQ_Y = 7
-const IRON_DEPOSIT_FLOOR = 0.35
-
-// Prestige (rare & clustered — the point). Gold = placer (rivers) + lode (orogens);
-// silver = hydrothermal near volcanic arcs; gems = metamorphic (orogens) + arid
-// weathering (turquoise near copper). None feed carrying capacity.
-const GOLD_LODE_RADIUS_FRAC = 0.015
-const SILVER_RADIUS_FRAC = 0.018
-const GEM_RADIUS_FRAC = 0.014
-// Placer gate: √(discharge/max) below this floor carries no gold — only genuinely
-// large rivers concentrate placer. The old ungated √·2 curve lit up every stream
-// (gold ≥5% on 70% of land, and 63% even before the Archean rework).
-const GOLD_PLACER_SQRT_FLOOR = 0.15
-const GOLD_PLACER_GAIN = 2
-const GOLD_PLACER_W = 0.7
-const GOLD_LODE_W = 0.9
-const SILVER_W = 0.9
-const GEM_OROGEN_W = 0.85
-const GEM_ARID_W = 0.6
-
 
 // Fraction of a land cell's 8 neighbours that are ocean.
 function coastalnessAt(land: Uint8Array, gx: number, gy: number): number {
@@ -334,12 +220,12 @@ function flatnessAt(elevation: Float32Array, gx: number, gy: number, worldW: num
   const eC = sampleElevationAtCell(elevation, gx, gy, worldW, worldH)
   const eE = sampleElevationAtCell(elevation, (gx + 1) % CLIMATE_RES_X, gy, worldW, worldH)
   const eS = sampleElevationAtCell(elevation, gx, (gy + 1) % CLIMATE_RES_Y, worldW, worldH)
-  return 1 / (1 + SLOPE_K * Math.hypot(eE - eC, eS - eC))
+  return 1 / (1 + ECOLOGY_TUNING.slopeK * Math.hypot(eE - eC, eS - eC))
 }
 
 function computeTimber(biomes: Uint8Array, land: Uint8Array): Float32Array {
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  for (let i = 0; i < out.length; i++) if (land[i]) out[i] = TIMBER_BY_BIOME[biomes[i]] ?? 0.05
+  for (let i = 0; i < out.length; i++) if (land[i]) out[i] = TIMBER_BY_BIOME[biomes[i] as LandBiomeId] ?? 0.05  // fallback: see computePasture
   return out
 }
 
@@ -351,11 +237,11 @@ function computeSalt(temperature: Float32Array, precipitation: Float32Array, lan
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const i = gy * CLIMATE_RES_X + gx
       if (!land[i]) continue
-      const dryness = clamp01(1 - precipitation[i] / SALT_ARID_PRECIP)
+      const dryness = clamp01(1 - precipitation[i] / ECOLOGY_TUNING.saltAridPrecip)
       const warmth = clamp01(temperature[i] / 25)
       const arid = dryness * warmth
       const coast = coastalnessAt(land, gx, gy)
-      out[i] = clamp01(arid * (SALT_INTERIOR_W + (SALT_COAST_W - SALT_INTERIOR_W) * coast))
+      out[i] = clamp01(arid * (ECOLOGY_TUNING.saltInteriorW + (ECOLOGY_TUNING.saltCoastW - ECOLOGY_TUNING.saltInteriorW) * coast))
     }
   }
   return out
@@ -382,13 +268,13 @@ function computeWetland(precipitation: Float32Array, coarseDischarge: Float32Arr
 // Tool-stone: obsidian (volcanic point sources) with a low flint baseline on flat
 // lowland (sedimentary proxy).
 function computeToolStone(volcanoes: Volcano[], elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number, warpSeed: number): Float32Array {
-  const obsidian = rasterisePointField(thinPoints(volcanoes, OBSIDIAN_KEEP, warpSeed ^ 0x0b51d1a2), OBSIDIAN_RADIUS_FRAC, worldW, worldH)
+  const obsidian = rasterisePointField(thinPoints(volcanoes, ECOLOGY_TUNING.obsidianKeep, warpSeed ^ 0x0b51d1a2), ECOLOGY_TUNING.obsidianRadiusFrac, worldW, worldH)
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const i = gy * CLIMATE_RES_X + gx
       if (!land[i]) continue
-      out[i] = Math.max(obsidian[i], FLINT_BASE * flatnessAt(elevation, gx, gy, worldW, worldH))
+      out[i] = Math.max(obsidian[i], ECOLOGY_TUNING.flintBase * flatnessAt(elevation, gx, gy, worldW, worldH))
     }
   }
   return out
@@ -405,9 +291,9 @@ function computeIron(cratonAge: Float32Array, wetland: Float32Array, land: Uint8
       const i = gy * CLIMATE_RES_X + gx
       if (!land[i]) continue
       const craton = Math.max(0, cratonAge[i])
-      const noise01 = (provinceNoise((gx + 0.5) / CLIMATE_RES_X, (gy + 0.5) / CLIMATE_RES_Y, IRON_DEPOSIT_FREQ_X, IRON_DEPOSIT_FREQ_Y, seed) + 1) / 2
-      const deposit = IRON_DEPOSIT_FLOOR + (1 - IRON_DEPOSIT_FLOOR) * noise01
-      out[i] = clamp01(Math.max(IRON_CRATON_W * craton * deposit, IRON_BOG_W * wetland[i]))
+      const noise01 = (provinceNoise((gx + 0.5) / CLIMATE_RES_X, (gy + 0.5) / CLIMATE_RES_Y, ECOLOGY_TUNING.ironDepositFreqX, ECOLOGY_TUNING.ironDepositFreqY, seed) + 1) / 2
+      const deposit = ECOLOGY_TUNING.ironDepositFloor + (1 - ECOLOGY_TUNING.ironDepositFloor) * noise01
+      out[i] = clamp01(Math.max(ECOLOGY_TUNING.ironCratonW * craton * deposit, ECOLOGY_TUNING.ironBogW * wetland[i]))
     }
   }
   return out
@@ -418,8 +304,8 @@ function computeGold(coarseDischarge: Float32Array | null, maxDischarge: number,
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   for (let i = 0; i < out.length; i++) {
     if (!land[i]) continue
-    const placer = coarseDischarge && maxDischarge > 0 ? Math.min(1, Math.max(0, Math.sqrt(coarseDischarge[i] / maxDischarge) - GOLD_PLACER_SQRT_FLOOR) * GOLD_PLACER_GAIN) : 0
-    out[i] = clamp01(GOLD_PLACER_W * placer + GOLD_LODE_W * orogenLode[i])
+    const placer = coarseDischarge && maxDischarge > 0 ? Math.min(1, Math.max(0, Math.sqrt(coarseDischarge[i] / maxDischarge) - ECOLOGY_TUNING.goldPlacerSqrtFloor) * ECOLOGY_TUNING.goldPlacerGain) : 0
+    out[i] = clamp01(ECOLOGY_TUNING.goldPlacerW * placer + ECOLOGY_TUNING.goldLodeW * orogenLode[i])
   }
   return out
 }
@@ -427,7 +313,7 @@ function computeGold(coarseDischarge: Float32Array | null, maxDischarge: number,
 // Silver: hydrothermal, near volcanic arcs.
 function computeSilver(arcField: Float32Array, land: Uint8Array): Float32Array {
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  for (let i = 0; i < out.length; i++) if (land[i]) out[i] = clamp01(SILVER_W * arcField[i])
+  for (let i = 0; i < out.length; i++) if (land[i]) out[i] = clamp01(ECOLOGY_TUNING.silverW * arcField[i])
   return out
 }
 
@@ -436,8 +322,8 @@ function computeGems(orogenField: Float32Array, copper: Float32Array, temperatur
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   for (let i = 0; i < out.length; i++) {
     if (!land[i]) continue
-    const aridity = clamp01(1 - precipitation[i] / SALT_ARID_PRECIP) * clamp01(temperature[i] / 25)
-    out[i] = clamp01(GEM_OROGEN_W * orogenField[i] + GEM_ARID_W * aridity * copper[i])
+    const aridity = clamp01(1 - precipitation[i] / ECOLOGY_TUNING.saltAridPrecip) * clamp01(temperature[i] / 25)
+    out[i] = clamp01(ECOLOGY_TUNING.gemOrogenW * orogenField[i] + ECOLOGY_TUNING.gemAridW * aridity * copper[i])
   }
   return out
 }
@@ -497,17 +383,12 @@ function provinceNoise(u: number, v: number, freqX: number, freqY: number, seed:
   return (top + (bottom - top) * fy) * 2 - 1
 }
 
-const VOLCANIC_PROVINCE_RADIUS_FRAC = 0.05
+// Deliberately NOT in ecologyTuneParams: this is the default of a USER slider
+// (the province-strength fold-out), not a tuning constant. It is the input's
+// schema, so it belongs in an ecologyInputParams declaration once part B4 builds
+// one — and it must never enter a tuning hash, or moving a slider would look
+// like the algorithm changed.
 const DEFAULT_PROVINCE_STRENGTH = 0.45
-// Higher frequency → more mottling (broad smooth gradients read as "no variation").
-// Weights are large because smooth value-noise has LOW variance (interpolation
-// pulls values toward the mean), so it needs a big multiplier to produce visible
-// deviation; the strength knob (0..1) then scales this. Volcanic provinces punch
-// harder than the organic noise.
-const PROVINCE_NOISE_FREQ_X = 11
-const PROVINCE_NOISE_FREQ_Y = 6
-const VOLCANIC_WEIGHT = 1.6
-const NOISE_WEIGHT = 1.5
 
 // Rasterises a soft Gaussian "influence" field (0..1, union-max) around a set of
 // world-space points into the climate grid — reused for volcanic-soil provinces,
@@ -559,14 +440,14 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: 
   for (let i = 0; i < n; i++) if (land[i]) shaped[i] *= l1Scale
 
   const strength = params.provinceStrength ?? DEFAULT_PROVINCE_STRENGTH
-  const volcanic = rasterisePointField(volcanoes, VOLCANIC_PROVINCE_RADIUS_FRAC, worldWidth, worldHeight)
+  const volcanic = rasterisePointField(volcanoes, ECOLOGY_TUNING.volcanicProvinceRadiusFrac, worldWidth, worldHeight)
   const dev = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     if (!land[i]) continue
     const gy = Math.floor(i / CLIMATE_RES_X)
     const gx = i - gy * CLIMATE_RES_X
-    const noise = provinceNoise((gx + 0.5) / CLIMATE_RES_X, (gy + 0.5) / CLIMATE_RES_Y, PROVINCE_NOISE_FREQ_X, PROVINCE_NOISE_FREQ_Y, warpSeed)
-    dev[i] = VOLCANIC_WEIGHT * volcanic[i] + NOISE_WEIGHT * noise
+    const noise = provinceNoise((gx + 0.5) / CLIMATE_RES_X, (gy + 0.5) / CLIMATE_RES_Y, ECOLOGY_TUNING.provinceNoiseFreqX, ECOLOGY_TUNING.provinceNoiseFreqY, warpSeed)
+    dev[i] = ECOLOGY_TUNING.volcanicWeight * volcanic[i] + ECOLOGY_TUNING.noiseWeight * noise
   }
   const meanDev = landMean(dev, land)
   const provincal = new Float32Array(n)
@@ -617,7 +498,7 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
   const base = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     if (!land[i]) continue
-    base[i] = 1 - Math.exp(-(W_ARABLE * arable[i] + W_FISH * fish[i] + W_GAME * game[i] + W_PASTURE * pasture[i] + W_SALT_CC * salt[i]))
+    base[i] = 1 - Math.exp(-(ECOLOGY_TUNING.wArable * arable[i] + ECOLOGY_TUNING.wFish * fish[i] + ECOLOGY_TUNING.wGame * game[i] + ECOLOGY_TUNING.wPasture * pasture[i] + ECOLOGY_TUNING.wSaltCc * salt[i]))
   }
   const carryingCapacity = concentrationPipeline(base, land, volcanoes, warpSeed, worldWidth, worldHeight, params)
 
@@ -626,16 +507,16 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
   const arcVolcanoes = volcanoes.filter((v) => v.kind === 'arc')
   const timber = scaleField(computeTimber(biomes, land), 'timber')
   const toolStone = scaleField(computeToolStone(volcanoes, elevation, land, worldWidth, worldHeight, warpSeed), 'toolStone')
-  const copper = scaleField(maskToLand(rasterisePointField(thinPoints(arcVolcanoes, COPPER_KEEP, warpSeed ^ 0xc0bbe401), COPPER_RADIUS_FRAC, worldWidth, worldHeight), land), 'copper')
-  const tinRadius = TIN_RADIUS_FRAC * (1 - 0.6 * Math.max(0, Math.min(1, params.tinRarity ?? 0)))
-  const tin = scaleField(maskToLand(rasterisePointField(thinPoints(orogenPoints, TIN_KEEP, warpSeed ^ 0x71b2a903), tinRadius, worldWidth, worldHeight), land), 'tin')
+  const copper = scaleField(maskToLand(rasterisePointField(thinPoints(arcVolcanoes, ECOLOGY_TUNING.copperKeep, warpSeed ^ 0xc0bbe401), ECOLOGY_TUNING.copperRadiusFrac, worldWidth, worldHeight), land), 'copper')
+  const tinRadius = ECOLOGY_TUNING.tinRadiusFrac * (1 - 0.6 * Math.max(0, Math.min(1, params.tinRarity ?? 0)))
+  const tin = scaleField(maskToLand(rasterisePointField(thinPoints(orogenPoints, ECOLOGY_TUNING.tinKeep, warpSeed ^ 0x71b2a903), tinRadius, worldWidth, worldHeight), land), 'tin')
   const wetland = computeWetland(precipitation, coarseDischarge, maxDischarge, coarseLake, elevation, land, worldWidth, worldHeight)
   const iron = scaleField(computeIron(cratonAge, wetland, land, warpSeed), 'iron')
 
   // Prestige (separate channel — no carrying-capacity contribution).
-  const gold = scaleField(computeGold(coarseDischarge, maxDischarge, rasterisePointField(thinPoints(orogenPoints, GOLD_LODE_KEEP, warpSeed ^ 0x601dfeed), GOLD_LODE_RADIUS_FRAC, worldWidth, worldHeight), land), 'gold')
-  const silver = scaleField(computeSilver(maskToLand(rasterisePointField(thinPoints(arcVolcanoes, SILVER_KEEP, warpSeed ^ 0x5117e201), SILVER_RADIUS_FRAC, worldWidth, worldHeight), land), land), 'silver')
-  const gems = scaleField(computeGems(rasterisePointField(thinPoints(orogenPoints, GEM_KEEP, warpSeed ^ 0x9e35c0de), GEM_RADIUS_FRAC, worldWidth, worldHeight), copper, temperature, precipitation, land), 'gems')
+  const gold = scaleField(computeGold(coarseDischarge, maxDischarge, rasterisePointField(thinPoints(orogenPoints, ECOLOGY_TUNING.goldLodeKeep, warpSeed ^ 0x601dfeed), ECOLOGY_TUNING.goldLodeRadiusFrac, worldWidth, worldHeight), land), 'gold')
+  const silver = scaleField(computeSilver(maskToLand(rasterisePointField(thinPoints(arcVolcanoes, ECOLOGY_TUNING.silverKeep, warpSeed ^ 0x5117e201), ECOLOGY_TUNING.silverRadiusFrac, worldWidth, worldHeight), land), land), 'silver')
+  const gems = scaleField(computeGems(rasterisePointField(thinPoints(orogenPoints, ECOLOGY_TUNING.gemKeep, warpSeed ^ 0x9e35c0de), ECOLOGY_TUNING.gemRadiusFrac, worldWidth, worldHeight), copper, temperature, precipitation, land), 'gems')
 
   // Mask every per-resource field to the ocean sentinel so overlays skip water.
   const perResource = [arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron, gold, silver, gems]

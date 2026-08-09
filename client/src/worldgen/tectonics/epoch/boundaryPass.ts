@@ -6,7 +6,7 @@ import { raftMembership } from '../../crust/raftField'
 import { accreteToNearestRaft } from '../../crust/raftLifecycle'
 import { resetOceanAgeAround } from '../oceanAge'
 import { classifyBoundaryMotion } from '../plateVelocityDecomposition'
-import { ACCRETION_BLOB_RADIUS, ACCRETION_EPOCH_INTERVAL, ACCRETION_INSET, ACCRETION_MAX_ATTACH_SQ, ACCRETION_MIN_GAP_SQ, AGE_MULTIPLIER_FLOOR, AGE_MULTIPLIER_HALF_LIFE_EPOCHS, AGE_MULTIPLIER_RANGE, CONT_RIFT_LOCK_EPOCHS, CONT_RIFT_THRESHOLD_FACTOR, LOCK_EPOCHS_REQUIRED, MERGE_ACCUMULATOR_THRESHOLD, MIN_PLATE_COUNT, PLATE_COUNT_PRESSURE_CLAMP, PLATE_COUNT_PRESSURE_STRENGTH, RIDGE_FRESH_CRUST_RADIUS, RIFT_ACCUMULATOR_THRESHOLD, RIFT_BASIN_FLOOR_THICKNESS, TRENCH_DEPTH_FRACTION, TRENCH_OFFSET, UPLIFT_EPOCH_SCALE } from '../tectonicsParams'
+import { TECTONICS_TUNING } from '../tectonicsTuneParams'
 import { findOrCreateFeatureIndex } from '../terrainFeatures'
 import type { MergeEvent, PlateSimulation, RiftEvent } from '../plateSimulationTypes'
 
@@ -40,15 +40,15 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
   const boundaries = detectBoundaries(sim.lattice, sim.seeds, width, height)
 
   // Scales the rift/merge thresholds toward whichever makes the currently-
-  // scarce event easier — see PLATE_COUNT_PRESSURE_STRENGTH's own comment.
+  // scarce event easier — see TECTONICS_TUNING.plateCountPressureStrength's own comment.
   // Positive pressure means too few plates (rifting should get easier,
   // merging harder); negative means too many (the reverse).
   const plateCountPressure = Math.max(
-    -PLATE_COUNT_PRESSURE_CLAMP,
-    Math.min(PLATE_COUNT_PRESSURE_CLAMP, (sim.initialPlateCount - sim.seeds.length) * PLATE_COUNT_PRESSURE_STRENGTH),
+    -TECTONICS_TUNING.plateCountPressureClamp,
+    Math.min(TECTONICS_TUNING.plateCountPressureClamp, (sim.initialPlateCount - sim.seeds.length) * TECTONICS_TUNING.plateCountPressureStrength),
   )
-  const effectiveRiftThreshold = RIFT_ACCUMULATOR_THRESHOLD * (1 - plateCountPressure)
-  const effectiveMergeThreshold = MERGE_ACCUMULATOR_THRESHOLD * (1 + plateCountPressure)
+  const effectiveRiftThreshold = TECTONICS_TUNING.riftAccumulatorThreshold * (1 - plateCountPressure)
+  const effectiveMergeThreshold = TECTONICS_TUNING.mergeAccumulatorThreshold * (1 + plateCountPressure)
 
   let riftEvent: RiftEvent | null = null
   let mergeEvent: MergeEvent | null = null
@@ -100,7 +100,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
     // opening rift) — reset its floor age to 0 so age-depth reads it as young
     // and shallow (Phase 3).
     if (convergence.motionClass === 'divergent') {
-      resetOceanAgeAround(sim.oceanAge, boundary.x, boundary.y, RIDGE_FRESH_CRUST_RADIUS, width, height)
+      resetOceanAgeAround(sim.oceanAge, boundary.x, boundary.y, TECTONICS_TUNING.ridgeFreshCrustRadius, width, height)
     }
 
     const classCode = motionClassCode(convergence.motionClass)
@@ -114,16 +114,16 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
     // getVelocityAt (inside classifyBoundaryMotion) returns velocity
     // scaled by the plate's full angularSpeed, i.e. "per unit of the
     // abstract time getVelocityAt's own unit represents" — deposited
-    // as-is, this would accumulate uplift ~1/UPLIFT_EPOCH_SCALE times
+    // as-is, this would accumulate uplift ~1/TECTONICS_TUNING.upliftEpochScale times
     // faster than intended (this is what originally blew straight through
     // the elevation clamp). Uses its own scale rather than
-    // EPOCH_ANGLE_STEP specifically so plate movement speed and
+    // TECTONICS_TUNING.epochAngleStep specifically so plate movement speed and
     // mountain-building pace can be tuned independently.
-    const epochConvergence = convergence.normal * UPLIFT_EPOCH_SCALE
+    const epochConvergence = convergence.normal * TECTONICS_TUNING.upliftEpochScale
     sim.latticeAccumulated[index] += epochConvergence * classification.rate
 
     if (classification.elevationSign !== 0) {
-      const ageMultiplier = AGE_MULTIPLIER_FLOOR + AGE_MULTIPLIER_RANGE * Math.pow(2, -sim.latticeLockedEpochs[index] / AGE_MULTIPLIER_HALF_LIFE_EPOCHS)
+      const ageMultiplier = TECTONICS_TUNING.ageMultiplierFloor + TECTONICS_TUNING.ageMultiplierRange * Math.pow(2, -sim.latticeLockedEpochs[index] / TECTONICS_TUNING.ageMultiplierHalfLifeEpochs)
       const amount = Math.abs(epochConvergence) * classification.rate * ageMultiplier * classification.elevationSign
       // Boundary tangent (the ridge's own long axis): perpendicular to the
       // seed-to-seed normal, so a feature can be laid down as an oriented
@@ -161,12 +161,12 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
         const offsetLen = Math.sqrt(offsetX * offsetX + offsetY * offsetY) || 1
         offsetX /= offsetLen
         offsetY /= offsetLen
-        const trenchX = wrapValue((boundary.x + offsetX * TRENCH_OFFSET), width)
-        const trenchY = wrapValue((boundary.y + offsetY * TRENCH_OFFSET), height)
+        const trenchX = wrapValue((boundary.x + offsetX * TECTONICS_TUNING.trenchOffset), width)
+        const trenchY = wrapValue((boundary.y + offsetY * TECTONICS_TUNING.trenchOffset), height)
         addDeposit(
           // Trenches are always oceanic (the subducting slab), so they subside.
           findOrCreateFeatureIndex(sim.features, trenchX, trenchY, boundary.plateA, boundary.plateB, subductingPlate, tangentX, tangentY, 'trench', true, width, height),
-          -Math.abs(amount) * TRENCH_DEPTH_FRACTION,
+          -Math.abs(amount) * TECTONICS_TUNING.trenchDepthFraction,
         )
       }
 
@@ -174,14 +174,14 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       // inside the overriding (continental) side, growing that continent
       // toward the trench (see the ACCRETION_* constants / accreteToNearestRaft).
       // Throttled to every Nth epoch so continents grow at a measured pace.
-      if (classification.character === 'subductionArc' && sim.epoch % ACCRETION_EPOCH_INTERVAL === 0) {
+      if (classification.character === 'subductionArc' && sim.epoch % TECTONICS_TUNING.accretionEpochInterval === 0) {
         const continentalSeed = classification.upliftSide === 'a' ? seedA : seedB
         const inX = wrappedDelta(continentalSeed.x, boundary.x, width)
         const inY = wrappedDelta(continentalSeed.y, boundary.y, height)
         const inLen = Math.sqrt(inX * inX + inY * inY) || 1
-        const accreteX = (((boundary.x + (inX / inLen) * ACCRETION_INSET) % width) + width) % width
-        const accreteY = (((boundary.y + (inY / inLen) * ACCRETION_INSET) % height) + height) % height
-        accreteToNearestRaft(sim.rafts, accreteX, accreteY, ACCRETION_BLOB_RADIUS, sim.epoch, ACCRETION_MIN_GAP_SQ, ACCRETION_MAX_ATTACH_SQ, width, height)
+        const accreteX = (((boundary.x + (inX / inLen) * TECTONICS_TUNING.accretionInset) % width) + width) % width
+        const accreteY = (((boundary.y + (inY / inLen) * TECTONICS_TUNING.accretionInset) % height) + height) % height
+        accreteToNearestRaft(sim.rafts, accreteX, accreteY, TECTONICS_TUNING.accretionBlobRadius, sim.epoch, TECTONICS_TUNING.accretionMinGapSq, TECTONICS_TUNING.accretionMaxAttachSq, width, height)
       }
     }
 
@@ -193,17 +193,17 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       !continentalRift &&
       sim.epoch >= sim.continentalRiftCooldownUntil &&
       convergence.motionClass === 'divergent' &&
-      sim.latticeLockedEpochs[index] >= CONT_RIFT_LOCK_EPOCHS &&
-      sim.latticeAccumulated[index] <= effectiveRiftThreshold * CONT_RIFT_THRESHOLD_FACTOR &&
+      sim.latticeLockedEpochs[index] >= TECTONICS_TUNING.contRiftLockEpochs &&
+      sim.latticeAccumulated[index] <= effectiveRiftThreshold * TECTONICS_TUNING.contRiftThresholdFactor &&
       raftMembership(boundary.x, boundary.y, sim.rafts, width, height) > 0.5
     ) {
       continentalRift = { x: boundary.x, y: boundary.y, plateA: boundary.plateA, plateB: boundary.plateB, index }
     }
 
-    if (sim.latticeLockedEpochs[index] < LOCK_EPOCHS_REQUIRED) continue
+    if (sim.latticeLockedEpochs[index] < TECTONICS_TUNING.lockEpochsRequired) continue
     if (!riftEvent && convergence.motionClass === 'divergent' && sim.latticeAccumulated[index] <= effectiveRiftThreshold) {
       riftEvent = { x: boundary.x, y: boundary.y, plateA: boundary.plateA, plateB: boundary.plateB }
-    } else if (!mergeEvent && sim.seeds.length > MIN_PLATE_COUNT && sim.latticeAccumulated[index] >= effectiveMergeThreshold) {
+    } else if (!mergeEvent && sim.seeds.length > TECTONICS_TUNING.minPlateCount && sim.latticeAccumulated[index] >= effectiveMergeThreshold) {
       // Continent-continent collision (foldMountains) merges the two
       // into one — doesn't matter which index survives, both are
       // continental. Subduction (subductionArc, islandArc) instead
@@ -231,7 +231,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
   // summed — see featureDeposits' own comment above. No floor at zero:
   // thickness is signed now (rift valleys deposit negative amounts to
   // sink, not just mountains depositing positive ones to rise) — see
-  // boundaryClassification's elevationSign. THICKNESS_DECAY_PER_EPOCH
+  // boundaryClassification's elevationSign. TECTONICS_TUNING.thicknessDecayPerEpoch
   // above already relaxes either sign back toward zero on its own.
   for (const [featureIndex, { sum, count }] of featureDeposits) {
     const feature = sim.features[featureIndex]
@@ -245,8 +245,8 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
     // lake (Baikal/Tanganyika-scale). It stays a LAKE, not an ocean, until the rift
     // actually breaks up — then birthRidgePlate drops the whole area to the oceanic
     // baseline and the lake floods to sea (transient, Red-Sea-style). See the tectonic-
-    // rift-lakes work in docs/decisions and RIFT_BASIN_FLOOR_THICKNESS.
-    if (feature.kind === 'range' && feature.thickness < RIFT_BASIN_FLOOR_THICKNESS) feature.thickness = RIFT_BASIN_FLOOR_THICKNESS
+    // rift-lakes work in docs/decisions and TECTONICS_TUNING.riftBasinFloorThickness.
+    if (feature.kind === 'range' && feature.thickness < TECTONICS_TUNING.riftBasinFloorThickness) feature.thickness = TECTONICS_TUNING.riftBasinFloorThickness
   }
   return { boundaries, riftEvent, mergeEvent, continentalRift }
 }

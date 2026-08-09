@@ -1,4 +1,5 @@
 import { smoothstep } from '../core/interpolation'
+import { ELEVATION_TUNING } from './elevationTuneParams'
 import { metersToElevation } from './elevationScale'
 
 // Relief across the continental interior — the thing the margin profile does not have.
@@ -59,26 +60,11 @@ const HYPSOMETRY_OCTAVES: readonly (readonly [cellsX: number, cellsY: number, am
   [23, 12, 0.2],
 ]
 
-// Peak-to-trough swing around LAND_BASE. At ±320 m the interior spans roughly 40 m to
-// 680 m, which keeps nearly all of it inside the 0-600 m band the erosion zoning
-// treats as plains while still giving the coastline somewhere to move to. Larger, and
-// interior ground starts dropping below sea level as inland seas — interesting, but a
-// change to how much land a world has, so it is not a knob to turn by accident.
-const HYPSOMETRY_RANGE_M = 320
-
-// Where the relief fades in, in margin-parameter units. The shelf and the continental
-// slope (t below ~0.45) must stay exactly as tuned — the shelf profile is what fixed
-// the 99 m/km coastline gradient — so this starts inland of the shelf break and is at
-// full strength by the coastal plain. Fading it in rather than switching it on keeps
-// the join free of a crease, the same reason marginProfile smoothsteps its segments.
-const HYPSOMETRY_T_IN = 0.5
-const HYPSOMETRY_T_FULL = 0.85
-
 // Signed elevation offset to add to the margin profile at a warped world point.
 // `t` is marginParameter's output: 0 = open ocean, 1 = continental interior.
 export function continentalHypsometry(wx: number, wy: number, t: number, worldWidth: number, worldHeight: number, seed: number): number {
-  if (t <= HYPSOMETRY_T_IN) return 0
-  const weight = smoothstep(Math.min(1, (t - HYPSOMETRY_T_IN) / (HYPSOMETRY_T_FULL - HYPSOMETRY_T_IN)))
+  if (t <= ELEVATION_TUNING.hypsometryTIn) return 0
+  const weight = smoothstep(Math.min(1, (t - ELEVATION_TUNING.hypsometryTIn) / (ELEVATION_TUNING.hypsometryTFull - ELEVATION_TUNING.hypsometryTIn)))
   let sum = 0
   let amplitudeSum = 0
   let octaveSeed = seed ^ 0x5f3759df // salted off warpSeed so it does not echo the warp
@@ -88,5 +74,5 @@ export function continentalHypsometry(wx: number, wy: number, t: number, worldWi
     amplitudeSum += amplitude
     octaveSeed = (octaveSeed * 1664525 + 1013904223) >>> 0
   }
-  return metersToElevation((sum / amplitudeSum) * (HYPSOMETRY_RANGE_M / 2)) * weight
+  return metersToElevation((sum / amplitudeSum) * (ELEVATION_TUNING.hypsometryRangeM / 2)) * weight
 }

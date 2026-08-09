@@ -92,12 +92,26 @@ process. The baseline is machine-local and gitignored; record it where you work.
 
 ## Parameters and identity
 
-Only `tectonics/tectonicsParams.ts` currently exists as a dedicated tuning file —
-every other module keeps its constants as file-local `const`s. The agreed
+`migration/`, `tectonics/` and `crust/` have `xyTuneParams.ts`; climate, ecology,
+elevation and surface still keep their constants as file-local `const`s. The
 direction (per-module `xyTuneParams.ts` / `xyInputParams.ts`, a `WorldSpec` type,
 declared slider ranges) is written up in
 `docs/design/architecture-unification.md`. Follow it for new work rather than
 adding to the current spread.
+
+**A tuning file exports ONE object, and callers read it under its full name** —
+`TECTONICS_TUNING.splitGap`, never a destructured local and never an
+`as TUNE` import. The object is what makes the constants hashable at all
+(`derivePipelineVersion` takes a `Record<string, number>`); the full name is what
+keeps every use site findable by grep. Both shortcuts were tried and removed the
+same day.
+
+**Not every constant belongs in a tuning object.** Only those whose change alters
+the generated world. Grid sizes, unit anchors (`elevationScale` calls itself the
+place that says what a height MEANS), enum ids and sentinels are structural;
+colours, decimation and exaggeration are presentation — a colour change must
+never invalidate an artifact. Slider endpoints are a third thing again: they are
+the input's schema, so they belong with `xyInputParams`.
 
 **A hash belongs to the consumer, not to the module.** Do not add a canonical
 `hashParams()` anywhere. `storage/artifactKey.ts` explains why in detail, and it

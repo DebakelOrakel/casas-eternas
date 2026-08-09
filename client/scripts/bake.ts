@@ -26,10 +26,7 @@ import { readFile, mkdir, writeFile, rename } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { readWorldInputs } from '../src/worldgen/worldSave/loadWorldInputs'
 import { runAmplification } from '../src/worldgen/surface/runAmplification'
-import { writeAmplificationArtifact } from '../src/storage/amplificationArtifact'
-import { derivePipelineVersion } from '../src/storage/artifactKey'
-import { AMPLIFY_CONSTANTS } from '../src/worldgen/surface/amplify'
-import { AMPLIFY_EROSION_ROUNDS as AMPLIFY_EROSION_ROUNDS_HINT } from '../src/map/mapSceneSettings'
+import { amplificationPipelineVersion, writeAmplificationArtifact } from '../src/storage/amplificationArtifact'
 import { createHttpArtifactStore, toRemotePath } from '../src/storage/HttpArtifactStore'
 import type { ArtifactStore, StorageUsage } from '../src/storage/ArtifactStore'
 
@@ -166,7 +163,7 @@ async function main(): Promise<void> {
   // them. That happened once. This makes an image's pipeline version something
   // you can read off it in a second rather than infer from a missing cache hit.
   if (raw === '--version') {
-    process.stdout.write(`${JSON.stringify({ pipelineVersion: derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS_HINT }) })}\n`)
+    process.stdout.write(`${JSON.stringify({ pipelineVersion: amplificationPipelineVersion() })}\n`)
     return
   }
   if (!raw) fail('usage: baker.mjs \'<job JSON>\'  |  baker.mjs --version')
@@ -217,7 +214,7 @@ async function main(): Promise<void> {
   // different artifacts. Leaving it out here produced a version the client
   // would never look for — bakes succeeded, artifacts appeared, and not one
   // was ever used.
-  const pipelineVersion = derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: job.erosionRounds })
+  const pipelineVersion = amplificationPipelineVersion(job.erosionRounds)
   const key = { worldId: inputs.worldId, pipelineVersion, stage: String(job.stage) }
   const stored = await writeAmplificationArtifact(store, key, {
     elevation: result.elevation,

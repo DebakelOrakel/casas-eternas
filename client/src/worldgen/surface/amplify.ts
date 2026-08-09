@@ -217,13 +217,30 @@ export const AMPLIFICATION_EROSION_OVERRIDES = {
 // Everything in this module whose value changes the bake's output, in one
 // place a cache key can hash. Kept beside the constants themselves so an
 // edit and its invalidation stay in the same field of view.
+// THREE VALUES WERE MISSING, and each of them moves the baked geometry:
+// RIDGE_FIELD_MEAN offsets every ridge sample (line ~330), RELIEF_RADIUS_FRACTION
+// sizes the relief blur (~262), and RIDGE_OCTAVE_AMPLITUDES weights the whole
+// ridge sum (~250). The octave CELLS were only half covered too — length plus
+// the finest entry, so changing a middle octave was invisible.
+//
+// Editing any of them produced different terrain under an unchanged key: the
+// cache would serve the old bake as current, which reads as a physics bug
+// rather than a cache fault. That is the one failure this key exists to
+// prevent (see storage/artifactKey.ts), and the list drifted from the module
+// anyway because it MIRRORS the constants instead of being their only home —
+// worth remembering when surface/ gets its tuning object.
+//
+// The arrays are flattened per index rather than summarised, so adding,
+// removing or editing any octave moves the key.
 export const AMPLIFY_CONSTANTS: Record<string, number> = {
   seedRoughnessM: SEED_ROUGHNESS_M,
   cascadeFalloff: CASCADE_FALLOFF,
   minOctavePixels: MIN_OCTAVE_PIXELS,
   ridgeStrength: RIDGE_STRENGTH,
-  ridgeOctaveCount: RIDGE_OCTAVE_CELLS.length,
-  ridgeFinestCells: RIDGE_OCTAVE_CELLS[RIDGE_OCTAVE_CELLS.length - 1],
+  ridgeFieldMean: RIDGE_FIELD_MEAN,
+  reliefRadiusFraction: RELIEF_RADIUS_FRACTION,
+  ...Object.fromEntries(RIDGE_OCTAVE_CELLS.map((cells, i) => [`ridgeOctaveCells${i}`, cells])),
+  ...Object.fromEntries(RIDGE_OCTAVE_AMPLITUDES.map((amp, i) => [`ridgeOctaveAmp${i}`, amp])),
   upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
   plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
   talusAngleDeg: AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg,

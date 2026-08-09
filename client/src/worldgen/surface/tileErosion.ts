@@ -1,4 +1,5 @@
 import type { Raft } from '../crust/raftTypes'
+import { SURFACE_TUNING } from './surfaceTuneParams'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { buildFeatureBuckets, computeElevation, raftBaselineAt, warpedSamplePoint } from '../elevation/elevationField'
@@ -54,27 +55,9 @@ export interface TileWorld {
   seaLevelOffset: number
 }
 
-// Sub-macro-cell starting roughness, in elevation units at amplitude 1 —
-// the analytic field is smooth below the ridged noise's finest octave
-// (~8 macro px), so a freshly-sampled tile is glass at fine scale and the
-// priority flood would route its rivers on numerical noise. The same
-// reasoning as EROSION_PLAIN_FACTOR's "not zero": drainage needs texture to
-// pick a side. fineDetailNoise is torus-periodic and world-anchored, so the
-// same tile always regenerates the same roughness, and adjacent tiles agree.
-//
-// HEIGHT-SCALED, fading out toward sea level (prototype run 6's lesson): on a
-// low coastal plain everything that should guide the trunk river — the
-// inherited macro valley (only metres deep there, EROSION_PLAIN_FACTOR damps
-// plain incision on purpose) and the stream-burnt groove (scaled to the same
-// small headroom) — is smaller than a full ±30 m of noise, so the noise won,
-// the river wandered off its macro course and shattered below the delta gate.
-// Full roughness stays in the highlands, where competing micro-valleys are
-// exactly what we want. Ocean cells get none (nothing routes on the seabed
-// and deltas read cleaner against a smooth floor).
-const TILE_SEED_ROUGHNESS = 30 / 9000 // ~30 m peak amplitude
 function tileSeedRoughnessAmplitude(elevation: number): number {
   if (elevation <= SEA_LEVEL) return 0
-  return Math.min(TILE_SEED_ROUGHNESS, elevation * 0.5)
+  return Math.min(SURFACE_TUNING.tileSeedRoughness, elevation * 0.5)
 }
 
 // The macro EROSION's own result, inherited as a low-frequency correction:
@@ -129,32 +112,11 @@ export function buildTileElevation(world: TileWorld, spec: TileSpec, macroDelta?
   return out
 }
 
-// Macro erosion params rescaled for a tile refined by `factor`. The general
-// per-cell rescaling — talus angle, transport capacity, the delta area gate,
-// and why stream power needs nothing — is derived once in
-// erosion.scaleErosionParamsForCellSize and shared with the amplification
-// bake; only the tile-SPECIFIC correction lives here.
-//
-// That correction is the delta gate. The shared rule scales it by factor²,
-// which is right for the physical catchment. But at a tile's factor MFD
-// routing deliberately splits a trunk into several distributary strands near
-// a flat mouth (3-5 in practice), and the gate's job — "no deltas from
-// coastal trickles" — is a judgment about the river SYSTEM, which already
-// passed it at macro scale. Without the allowance every individual strand of
-// a fully qualified river fails the per-cell test and the tile builds no
-// delta at all (prototype run 6, measured: best strand 39k fine units
-// against a raw factor²-gate of 128k). Dividing by 4 lets a trunk that split
-// four ways still qualify.
-//
-// Iteration/round counts are deliberately NOT reduced: the tile is far
-// smaller than the world, so generous iterations are cheap where it matters.
-const TILE_DISTRIBUTARY_STRANDS = 4
-
 export function scaleErosionParamsForTile(macro: ErosionPassParams, factor: number): ErosionPassParams {
   const scaled = scaleErosionParamsForCellSize(macro, 1 / factor)
   const streamPower: StreamPowerParams = {
     ...scaled.streamPower,
-    deltaMinDrainageCells: scaled.streamPower.deltaMinDrainageCells / TILE_DISTRIBUTARY_STRANDS,
+    deltaMinDrainageCells: scaled.streamPower.deltaMinDrainageCells / SURFACE_TUNING.tileDistributaryStrands,
   }
   return { ...scaled, streamPower }
 }
@@ -185,52 +147,34 @@ export function pickLargestRiverMouth(elevations: Float32Array, accumulation: Fl
   return { x: best % width, y: (best / width) | 0 }
 }
 
-// --- Stream burning (DEM conditioning) -------------------------------------
-// The macro river course is authoritative, but near the tile rim and on low
-// coastal plains its real gradient is metres — smaller than the seed
-// roughness and the rim drain's pull — so without conditioning the fine
-// drainage loses the macro course (prototype runs 2-6, each constant below
-// is one measured failure):
-// - trunk rivers only (>= 500 macro cells): burning the whole acc>=60
-//   dendritic net flattened low plains into competing corridors.
-// - narrow V-grooves: a wide flat-bottomed groove makes MFD fan the river
-//   into strands below every downstream threshold.
-// - depth SCALED into the headroom above the floor, not clamped: clamping
-//   made dead-flat corridors at exactly the floor height.
-const BURN_MIN_MACRO_DRAINAGE = 500
-const BURN_RADIUS_FINE = 5
-const BURN_BASE_DEPTH_M = 25
-const BURN_DEPTH_LOG_GAIN_M = 10
-const BURN_FLOOR_M = 0.5
-
 export function burnMacroTrunks(envelope: Float32Array, spec: TileSpec, macroElevations: Float32Array, macroAccumulation: Float32Array, worldWidth: number, worldHeight: number): void {
   const n = spec.extentMacro * spec.factor
-  const floor = SEA_LEVEL + metersToElevation(BURN_FLOOR_M)
+  const floor = SEA_LEVEL + metersToElevation(SURFACE_TUNING.burnFloorM)
   const rel = (v: number, v0: number, size: number) => (((v - v0) % size) + size) % size
   const depthAt = new Float32Array(n * n)
   for (let my = 0; my < worldHeight; my++) {
     for (let mx = 0; mx < worldWidth; mx++) {
       const i = my * worldWidth + mx
-      if (macroElevations[i] <= SEA_LEVEL || macroAccumulation[i] < BURN_MIN_MACRO_DRAINAGE) continue
+      if (macroElevations[i] <= SEA_LEVEL || macroAccumulation[i] < SURFACE_TUNING.burnMinMacroDrainage) continue
       const rx = rel(mx, spec.x0, worldWidth)
       const ry = rel(my, spec.y0, worldHeight)
       if (rx >= spec.extentMacro || ry >= spec.extentMacro) continue
-      const fullDepth = metersToElevation(BURN_BASE_DEPTH_M + BURN_DEPTH_LOG_GAIN_M * Math.log10(macroAccumulation[i] / BURN_MIN_MACRO_DRAINAGE))
+      const fullDepth = metersToElevation(SURFACE_TUNING.burnBaseDepthM + SURFACE_TUNING.burnDepthLogGainM * Math.log10(macroAccumulation[i] / SURFACE_TUNING.burnMinMacroDrainage))
       const cx = (rx + 0.5) * spec.factor
       const cy = (ry + 0.5) * spec.factor
       const centerIdx = Math.min(n - 1, Math.round(cy)) * n + Math.min(n - 1, Math.round(cx))
       const headroom = envelope[centerIdx] - floor
       if (headroom <= 0) continue
       const depth = Math.min(fullDepth, headroom)
-      for (let dy = -BURN_RADIUS_FINE; dy <= BURN_RADIUS_FINE; dy++) {
+      for (let dy = -SURFACE_TUNING.burnRadiusFine; dy <= SURFACE_TUNING.burnRadiusFine; dy++) {
         const fy = Math.round(cy + dy)
         if (fy < 0 || fy >= n) continue
-        for (let dx = -BURN_RADIUS_FINE; dx <= BURN_RADIUS_FINE; dx++) {
+        for (let dx = -SURFACE_TUNING.burnRadiusFine; dx <= SURFACE_TUNING.burnRadiusFine; dx++) {
           const fx = Math.round(cx + dx)
           if (fx < 0 || fx >= n) continue
           const dist = Math.hypot(dx, dy)
-          if (dist > BURN_RADIUS_FINE) continue
-          const d = depth * (1 - dist / BURN_RADIUS_FINE)
+          if (dist > SURFACE_TUNING.burnRadiusFine) continue
+          const d = depth * (1 - dist / SURFACE_TUNING.burnRadiusFine)
           const fi = fy * n + fx
           if (d > depthAt[fi]) depthAt[fi] = d
         }

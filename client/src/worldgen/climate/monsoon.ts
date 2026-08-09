@@ -1,4 +1,5 @@
 import { wrapValue } from '../core/field'
+import { CLIMATE_TUNING } from './climateTuneParams'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
 import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
 
@@ -16,22 +17,6 @@ import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
-
-// How far (fraction of map height) the ITCZ belt migrates toward the summer hemisphere.
-// Real seasonal swing is ~10-15° of latitude (bigger over monsoon land); 0.12 of the
-// map's pole-to-pole span is in that range on this 2:1 torus.
-const ITCZ_SEASONAL_SHIFT = 0.07
-// Strength of the monsoon surface wind — a component up the seasonal-temperature
-// gradient (∇T points from cool sea toward hot summer land), added to the prescribed
-// zonal wind. Tuned so it reshapes moisture advection near coasts without swamping the
-// base three-cell circulation (base zonal strength ~1). See computeMonsoonWind.
-const MONSOON_WIND_STRENGTH = 0.05
-// Wetness floor (mm/yr) added to the monsoon-index denominator so ARID cells don't read
-// as monsoonal: a desert with 50 mm wet / 5 mm dry is dry, not seasonal, yet a raw
-// (wet−dry)/(wet+dry) would call it 0.82. The floor damps the index where absolute
-// precipitation is small, so a high index means genuinely wet-in-one-season-dry-in-the-
-// other (a real monsoon), not just marginal noise. ~ a semi-arid annual total.
-const SEASONALITY_FLOOR = 500
 
 // Seasonal air temperature = annual mean ± half the seasonal amplitude, signed so the
 // summer hemisphere warms and the winter one cools. Amplitude is large over continental
@@ -62,8 +47,8 @@ function computeMonsoonWind(base: Float32Array, seasonalTemp: Float32Array): Flo
       const i = gy * RX + gx
       const dTdx = (seasonalTemp[wrap(gx + 1, gy)] - seasonalTemp[wrap(gx - 1, gy)]) / 2
       const dTdy = (seasonalTemp[wrap(gx, gy + 1)] - seasonalTemp[wrap(gx, gy - 1)]) / 2
-      out[i * 2] = base[i * 2] + MONSOON_WIND_STRENGTH * dTdx
-      out[i * 2 + 1] = base[i * 2 + 1] + MONSOON_WIND_STRENGTH * dTdy
+      out[i * 2] = base[i * 2] + CLIMATE_TUNING.monsoonWindStrength * dTdx
+      out[i * 2 + 1] = base[i * 2 + 1] + CLIMATE_TUNING.monsoonWindStrength * dTdy
     }
   }
   return out
@@ -100,8 +85,8 @@ export function computeSeasonalPrecipitation(
   const windS = computeMonsoonWind(baseWind, tempS)
   // ITCZ migrates toward the summer hemisphere. +equatorOffset moves the equator toward
   // the bottom, so a top-hemisphere summer (belt shifts up) uses a SMALLER offset.
-  const precipN = computePrecipitation(elevation, tempN, windN, worldW, worldH, humidity, equatorOffset - ITCZ_SEASONAL_SHIFT, dryLand)
-  const precipS = computePrecipitation(elevation, tempS, windS, worldW, worldH, humidity, equatorOffset + ITCZ_SEASONAL_SHIFT, dryLand)
+  const precipN = computePrecipitation(elevation, tempN, windN, worldW, worldH, humidity, equatorOffset - CLIMATE_TUNING.monsoonItczSeasonalShift, dryLand)
+  const precipS = computePrecipitation(elevation, tempS, windS, worldW, worldH, humidity, equatorOffset + CLIMATE_TUNING.monsoonItczSeasonalShift, dryLand)
 
   const n = precipN.length
   const annual = new Float32Array(n)
@@ -121,7 +106,7 @@ export function computeSeasonalPrecipitation(
     annual[i] = (a + b) / 2
     wet[i] = Math.max(a, b)
     dry[i] = Math.min(a, b)
-    index[i] = (wet[i] - dry[i]) / (wet[i] + dry[i] + SEASONALITY_FLOOR)
+    index[i] = (wet[i] - dry[i]) / (wet[i] + dry[i] + CLIMATE_TUNING.monsoonSeasonalityFloor)
   }
   return { annual, wet, dry, index }
 }

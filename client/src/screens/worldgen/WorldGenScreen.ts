@@ -44,13 +44,20 @@ import { createSavePanel } from '../../ui/worldPanels/SavePanel'
 import type { SaveTarget } from '../../ui/worldPanels/SavePanel'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { readRecipeValue as readYamlValue } from '../../worldgen/worldSave/recipeYaml'
-import { derivePipelineVersion, deriveWorldUid, newWorldUid } from '../../storage/artifactKey'
+import { deriveWorldUid, newWorldUid } from '../../storage/artifactKey'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
-import { amplificationArtifactExists, readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
+import { amplificationArtifactExists, amplificationPipelineVersion, readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
 import { readWorldInputs } from '../../worldgen/worldSave/loadWorldInputs'
-import { AMPLIFY_CONSTANTS } from '../../worldgen/surface/amplify'
 import { amplifyPhaseFraction, bakeStageInBrowser } from '../../worldgen/surface/bakeInBrowser'
 import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../server/bakeClient'
+import { MIGRATION_INPUTS } from '../../worldgen/migration/migrationInputParams'
+import { ARCHEAN_INPUTS } from '../../worldgen/archean/archeanInputParams'
+import { CLIMATE_INPUTS } from '../../worldgen/climate/climateInputParams'
+import { SURFACE_INPUTS } from '../../worldgen/surface/surfaceInputParams'
+import { ECOLOGY_INPUTS, ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS } from '../../worldgen/ecology/ecologyInputParams'
+import { WORLD_SPEC_FIELDS, specFromYaml, specToYamlLines } from '../../worldgen/worldSave/worldSpec'
+import type { WorldSpec } from '../../worldgen/worldSave/worldSpec'
+import type { InputParam } from '../../worldgen/core/inputParams'
 import './worldgen.css'
 import '../../ui/chrome/chrome.css'
 
@@ -62,12 +69,14 @@ import '../../ui/chrome/chrome.css'
 // group `metals` and ordered prestige silver-gold-gems, the save called it `metal` and
 // ordered it gold-silver-gems. One of them names a key in the save format, so a
 // divergence here is not cosmetic.
-const ECOLOGY_CATEGORIES: readonly { readonly id: string; readonly icon: string; readonly fields: readonly EcologyFieldId[] }[] = [
-  { id: 'subsistence', icon: 'wheat', fields: ['arable', 'fish', 'game', 'pasture'] },
-  { id: 'material', icon: 'stone_axe', fields: ['timber', 'salt', 'toolStone'] },
-  { id: 'metal', icon: 'ecology', fields: ['copper', 'tin', 'iron'] },
-  { id: 'prestige', icon: 'crown', fields: ['gold', 'silver', 'gems'] },
-]
+// Icons only; the grouping itself (and therefore the save path of every field)
+// lives in ecology/ecologyInputParams.ts, joined on `id`. A save-format decision
+// has no business sitting next to a panel's artwork.
+const ECOLOGY_CATEGORY_ICONS: Record<string, string> = {
+  subsistence: 'wheat', material: 'stone_axe', metal: 'ecology', prestige: 'crown',
+}
+const ECOLOGY_CATEGORIES: readonly { readonly id: string; readonly icon: string; readonly fields: readonly EcologyFieldId[] }[] =
+  ECOLOGY_ABUNDANCE_GROUPS.map((g) => ({ id: g.id, icon: ECOLOGY_CATEGORY_ICONS[g.id], fields: g.fields }))
 // Flat list DERIVED from the grouping, so a field can never be in the save under one
 // group and in the UI under none.
 const ECOLOGY_WEIGHT_FIELDS: EcologyFieldId[] = ECOLOGY_CATEGORIES.flatMap((c) => [...c.fields])
@@ -127,42 +136,6 @@ const RIBBON_WIDTH_PROFILES = {
   fine: { factor: 0.3, maxWidthPx: 2 },
 } as const
 
-// Earth has ~7 major plates (covering ~90% of the surface) plus a tail of
-// minor/microplates. Measured against this generator's own Voronoi areas, a
-// default of 8 reproduces that major-plate structure closely: largest plate
-// ~15-18% of the surface (Pacific is ~20%), ~7 plates covering 90%. Fewer =
-// bigger, more dominant plates; more = a busier, more uniform patchwork.
-// Mantle vigour — the one Genesis knob besides the seed and water.
-//
-// It sets how hard the Archean mantle stirs each epoch (ArcheanParams.diffusion),
-// inverted for the UI so the slider reads "more vigorous → higher": less stirring
-// leaves a finer-grained buoyancy field, so more and smaller convection cells, so
-// more and smaller cratons and, after the handover, more and smaller plates. Turn it
-// down and crust collects into fewer, larger continents instead.
-//
-// It used to set createMantleField's INITIAL smoothing, on the reasoning that this
-// left the tuned epoch dynamics alone. Measurement showed the per-epoch diffusion
-// erases that initial smoothing within a few dozen epochs — nine tenths of the
-// difference gone by epoch 40, against a phase nobody stops before epoch 150 — and a
-// full sweep confirmed the slider moved craton count, plate count and land fraction
-// no more than two seeds at the same setting differed. See DEFAULT_INITIAL_SMOOTHING.
-//
-// This replaced four sliders — plate count, land fraction, craton count and
-// clustering — that all specified an OUTCOME. Those are now emergent: plate count
-// falls out of the convection cells (finalizeArchean), and land fraction out of
-// crust production against recycling. See docs/decisions/archean-genesis.md.
-const MANTLE_VIGOUR_MIN = 1
-const MANTLE_VIGOUR_MAX = 10
-// 4, not the middle of the range: it is the setting vigourToDiffusion maps to exactly
-// 1.0, which is what the Archean ran at before this knob existed and what the tectonic
-// phase still uses. "Default" therefore means "unchanged behaviour" rather than
-// "halfway along a slider". It sits below centre because the response curve is
-// quadratic, so most of the useful travel lies above it.
-const MANTLE_VIGOUR_DEFAULT = 4
-// Water delivered to the planet, 0..100 with 50 = Earth-like. Together with crust
-// production this is what sets the land fraction — but as a RESULT of two physical
-// quantities rather than as a number you dial. See elevationScale.WATER_OFFSET_MAX_M.
-const WATER_DEFAULT = 50
 // Slider value → mantle mixing per epoch. Higher vigour = less stirring = finer
 // field = more, smaller plates.
 //
@@ -180,7 +153,7 @@ const WATER_DEFAULT = 50
 const MANTLE_DIFFUSION_MAX = 2.25
 const MANTLE_DIFFUSION_CURVE = 2
 const vigourToDiffusion = (vigour: number): number =>
-  MANTLE_DIFFUSION_MAX * ((MANTLE_VIGOUR_MAX - vigour) / (MANTLE_VIGOUR_MAX - MANTLE_VIGOUR_MIN)) ** MANTLE_DIFFUSION_CURVE
+  MANTLE_DIFFUSION_MAX * ((ARCHEAN_INPUTS.mantleVigour.max - vigour) / (ARCHEAN_INPUTS.mantleVigour.max - ARCHEAN_INPUTS.mantleVigour.min)) ** MANTLE_DIFFUSION_CURVE
 
 // How often, while running, the sim advances one epoch and re-renders —
 // paced deliberately (not "as fast as possible") so a run reads as gradual
@@ -403,6 +376,31 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // arrows, fields) extracted to ui/chrome/chrome.css and worn by the
   // worldmap screen too; worldgen-flat-screen scopes everything specific.
   root.className = 'worldgen-flat-screen map-chrome'
+
+  // One slider field, rendered from its declaration instead of from four
+  // hand-typed copies of the same numbers (the range, the shown default, the
+  // input's default, and the reset handler's). The migration panel below is the
+  // first to use it; the remaining panels follow in part B6.
+  // One slider field, rendered from its declaration. The variants are real, not
+  // decoration: genesis sits INSIDE a <label>, so it must be a <span> (nested
+  // labels are invalid HTML), and the ecology fields carry a data-ecofield the
+  // overlay selector reads.
+  //
+  // The value and its unit are always wrapped together in one <span>. That is a
+  // layout requirement, not tidiness: `.field-label` is `justify-content:
+  // space-between`, so an unwrapped "30" + "%" would be two flex items and the
+  // percent sign would be pushed to the far edge, away from its number.
+  const sliderField = (p: InputParam, cls: string, valueKey: string,
+    opts: { tag?: 'label' | 'span'; extraClass?: string; attrs?: string } = {}): string => {
+    const tag = opts.tag ?? 'label'
+    const label = t(`${p.i18n}.label` as TKey)
+    return `<${tag} class="field${opts.extraClass ? ` ${opts.extraClass}` : ''}" data-help="${p.i18n}"${opts.attrs ?? ''}>
+        <span class="field-label">${label}: <span><span data-value="${valueKey}">${p.default}</span>${p.unit ? t(p.unit as TKey) : ''}</span></span>
+        <input type="range" class="${cls}" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.default}" aria-label="${label}" />
+      </${tag}>`
+  }
+
+
   root.innerHTML = `
     <div class="file-actions">
       <span data-slot="server-indicator"></span>
@@ -436,22 +434,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button" data-action="reset-archean" aria-label="${t('worldgen.action.resetArchean.label')}" data-help="worldgen.action.resetArchean">
             <img src="/icons/reset.png" alt="" />
           </button>
-          <span class="field field--inline" data-help="worldgen.panel.genesis.mantleVigour">
-            <span class="field-label">${t('worldgen.panel.genesis.mantleVigour.label')}: <span data-value="mantle-vigour-label">${MANTLE_VIGOUR_DEFAULT}</span></span>
-            <input
-              type="range"
-              class="mantle-vigour-input"
-              min="${MANTLE_VIGOUR_MIN}"
-              max="${MANTLE_VIGOUR_MAX}"
-              step="1"
-              value="${MANTLE_VIGOUR_DEFAULT}"
-              aria-label="${t('worldgen.panel.genesis.mantleVigour.label')}"
-            />
-          </span>
-          <span class="field field--inline" data-help="worldgen.panel.genesis.water">
-            <span class="field-label">${t('worldgen.panel.genesis.water.label')}: <span data-value="water-label">${WATER_DEFAULT}</span></span>
-            <input type="range" class="water-input" min="0" max="100" step="1" value="${WATER_DEFAULT}" aria-label="${t('worldgen.panel.genesis.water.label')}" />
-          </span>
+          ${sliderField(ARCHEAN_INPUTS.mantleVigour, 'mantle-vigour-input', 'mantle-vigour-label', { tag: 'span', extraClass: 'field--inline' })}
+          ${sliderField(ARCHEAN_INPUTS.water, 'water-input', 'water-label', { tag: 'span', extraClass: 'field--inline' })}
           <button type="button" class="icon-button" data-action="toggle-archean" aria-label="${t('worldgen.action.runArchean.label')}" data-help="worldgen.action.runArchean">
             <img src="/icons/mantle.png" alt="" />
           </button>
@@ -486,14 +470,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       <button type="button" class="icon-button panel-reset" data-action="reset-erosion" aria-label="${t('worldgen.action.resetErosion.label')}" data-help="worldgen.action.resetErosion">
         <img src="/icons/reset.png" alt="" />
       </button>
-      <label class="field" data-help="worldgen.panel.erosion.strength">
-        <span class="field-label">${t('worldgen.panel.erosion.strength.label')}: <span><span data-value="erosion-strength-label">2</span>${t('common.unit.times')}</span></span>
-        <input type="range" class="erosion-strength-input" min="1" max="5" step="1" value="2" aria-label="${t('worldgen.panel.erosion.strength.label')}" />
-      </label>
-      <label class="field" data-help="worldgen.panel.erosion.drainage">
-        <span class="field-label">${t('worldgen.panel.erosion.drainage.label')}: <span><span data-value="erosion-refresh-label">3</span>${t('common.unit.times')}</span></span>
-        <input type="range" class="erosion-refresh-input" min="1" max="5" step="1" value="3" aria-label="${t('worldgen.panel.erosion.drainage.label')}" />
-      </label>
+      ${sliderField(SURFACE_INPUTS.erosionStrength, 'erosion-strength-input', 'erosion-strength-label')}
+      ${sliderField(SURFACE_INPUTS.drainageRefresh, 'erosion-refresh-input', 'erosion-refresh-label')}
       <label class="field">
         <span class="field-label">Mark deltas</span>
         <input type="checkbox" class="delta-debug-input" aria-label="Mark cells the erosion pass raised from the sea floor" />
@@ -515,22 +493,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       <button type="button" class="icon-button panel-reset" data-action="reset-climate" aria-label="${t('worldgen.action.resetClimate.label')}" data-help="worldgen.action.resetClimate">
         <img src="/icons/reset.png" alt="" />
       </button>
-      <label class="field">
-        <span class="field-label">${t('worldgen.panel.climate.temperature.label')}: <span><span data-value="temp-band-label">0</span>${t('common.unit.celsius')}</span></span>
-        <input type="range" class="temp-band-input" min="-20" max="20" step="1" value="0" aria-label="${t('worldgen.panel.climate.temperature.label')}" />
-      </label>
-      <label class="field">
-        <span class="field-label">${t('worldgen.panel.climate.equator.label')}: <span><span data-value="equator-offset-label">0</span>${t('common.unit.percent')}</span></span>
-        <input type="range" class="equator-offset-input" min="-50" max="50" step="5" value="0" aria-label="${t('worldgen.panel.climate.equator.label')}" />
-      </label>
-      <label class="field">
-        <span class="field-label">${t('worldgen.panel.climate.humidity.label')}: <span><span data-value="humidity-label">100</span>${t('common.unit.percent')}</span></span>
-        <input type="range" class="humidity-input" min="40" max="200" step="5" value="100" aria-label="${t('worldgen.panel.climate.humidity.label')}" />
-      </label>
-      <label class="field">
-        <span class="field-label">${t('worldgen.panel.climate.contrast.label')}: <span><span data-value="contrast-label">100</span>${t('common.unit.percent')}</span></span>
-        <input type="range" class="contrast-input" min="30" max="170" step="5" value="100" aria-label="${t('worldgen.panel.climate.contrast.label')}" />
-      </label>
+      ${sliderField(CLIMATE_INPUTS.tempOffset, 'temp-band-input', 'temp-band-label')}
+      ${sliderField(CLIMATE_INPUTS.equatorOffset, 'equator-offset-input', 'equator-offset-label')}
+      ${sliderField(CLIMATE_INPUTS.humidity, 'humidity-input', 'humidity-label')}
+      ${sliderField(CLIMATE_INPUTS.contrast, 'contrast-input', 'contrast-label')}
       <label class="field field--icon-row">
         <span class="field-row">
           <span class="climate-readout">
@@ -542,27 +508,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </label>
     </div>
     <div class="panel" data-panel="4">
-      <label class="field" data-help="worldgen.panel.hydrology.riverDensity">
-        <span class="field-label">${t('worldgen.panel.hydrology.riverDensity.label')}: <span data-value="river-density-label">55</span></span>
-        <input type="range" class="river-density-input" min="0" max="100" step="1" value="55" aria-label="${t('worldgen.panel.hydrology.riverDensity.label')}" />
-      </label>
+      ${sliderField(SURFACE_INPUTS.riverDensity, 'river-density-input', 'river-density-label')}
     </div>
     <div class="panel" data-panel="5">
       <button type="button" class="icon-button panel-reset" data-action="reset-ecology" aria-label="${t('worldgen.action.resetEcology.label')}" data-help="worldgen.action.resetEcology">
         <img src="/icons/reset.png" alt="" />
       </button>
-      <label class="field" data-ecofield="carryingCapacity" data-help="worldgen.panel.ecology.carryingCapacity">
-        <span class="field-label">${t('worldgen.panel.ecology.carryingCapacity.label')}: <span><span data-value="carrying-capacity-label">100</span>${t('common.unit.percent')}</span></span>
-        <input type="range" class="carrying-capacity-input" min="50" max="200" step="5" value="100" aria-label="${t('worldgen.panel.ecology.carryingCapacity.label')}" />
-      </label>
-      <label class="field" data-ecofield="carryingCapacity" data-help="worldgen.panel.ecology.concentration">
-        <span class="field-label">${t('worldgen.panel.ecology.concentration.label')}: <span data-value="concentration-label">0</span></span>
-        <input type="range" class="concentration-input" min="-100" max="100" step="5" value="0" aria-label="${t('worldgen.panel.ecology.concentration.label')}" />
-      </label>
-      <label class="field" data-ecofield="carryingCapacity" data-help="worldgen.panel.ecology.provinces">
-        <span class="field-label">${t('worldgen.panel.ecology.provinces.label')}: <span data-value="province-label">45</span></span>
-        <input type="range" class="province-input" min="0" max="100" step="5" value="45" aria-label="${t('worldgen.panel.ecology.provinces.label')}" />
-      </label>
+      ${sliderField(ECOLOGY_INPUTS.carryingCapacity, 'carrying-capacity-input', 'carrying-capacity-label', { attrs: ' data-ecofield="carryingCapacity"' })}
+      ${sliderField(ECOLOGY_INPUTS.concentration, 'concentration-input', 'concentration-label', { attrs: ' data-ecofield="carryingCapacity"' })}
+      ${sliderField(ECOLOGY_INPUTS.provinceStrength, 'province-input', 'province-label', { attrs: ' data-ecofield="carryingCapacity"' })}
       <!-- Generated from ECOLOGY_CATEGORIES so the ids here cannot drift from the
            ones the fold-out and world.yaml use; they already had once. -->
       <span class="ecology-cat-buttons">${ECOLOGY_CATEGORIES.map((c) => `
@@ -574,18 +528,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       <button type="button" class="icon-button panel-reset" data-action="reset-migration" aria-label="${t('worldgen.action.resetMigration.label')}" data-help="worldgen.action.resetMigration">
         <img src="/icons/reset.png" alt="" />
       </button>
-      <label class="field" data-help="worldgen.panel.migration.spread">
-        <span class="field-label">${t('worldgen.panel.migration.spread.label')}: <span data-value="migration-spread-label">120</span></span>
-        <input type="range" class="migration-spread-input" min="20" max="400" step="10" value="120" aria-label="${t('worldgen.panel.migration.spread.label')}" />
-      </label>
-      <label class="field" data-help="worldgen.panel.migration.arrows">
-        <span class="field-label">${t('worldgen.panel.migration.arrows.label')}: <span data-value="migration-threshold-label">50</span></span>
-        <input type="range" class="migration-threshold-input" min="0" max="100" step="5" value="50" aria-label="${t('worldgen.panel.migration.arrows.label')}" />
-      </label>
-      <label class="field" data-help="worldgen.panel.migration.seaCrossing">
-        <span class="field-label">${t('worldgen.panel.migration.seaCrossing.label')}: <span data-value="migration-sea-label">30</span>${t('common.unit.percent')}</span>
-        <input type="range" class="migration-sea-input" min="0" max="100" step="5" value="30" aria-label="${t('worldgen.panel.migration.seaCrossing.label')}" />
-      </label>
+      ${sliderField(MIGRATION_INPUTS.spreadBudget, 'migration-spread-input', 'migration-spread-label')}
+      ${sliderField(MIGRATION_INPUTS.arrowThreshold, 'migration-threshold-input', 'migration-threshold-label')}
+      ${sliderField(MIGRATION_INPUTS.seaCrossing, 'migration-sea-input', 'migration-sea-label')}
       <span class="ecology-cat-buttons" data-value="migration-races"></span>
     </div>
     <div class="micro-tile-viewer" data-value="micro-tile-viewer" hidden>
@@ -1448,7 +1393,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Flow spans orders of magnitude (trunk ≈ whole population, leaf ≈ one cell),
     // so the slider maps EXPONENTIALLY onto the flow cut: s=0 → only the fattest
     // trunks (0.12·max), s=1 → fine branches (0.0004·max). Higher slider = more arrows.
-    const s = Math.max(0, Math.min(1, Number(migrationThresholdInput.value) / 100))
+    const s = Math.max(0, Math.min(1, MIGRATION_INPUTS.arrowThreshold.toModel(Number(migrationThresholdInput.value))))
     const threshold = migrationMaxFlow * Math.exp(Math.log(0.12) + s * (Math.log(0.0004) - Math.log(0.12))) + 1e-9
     const cellWX = (cell: number): number => (((cell % resX) + 0.5) / resX) * MAP_WIDTH
     const cellWY = (cell: number): number => ((Math.floor(cell / resX) + 0.5) / resY) * MAP_HEIGHT
@@ -2401,7 +2346,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     migrationInFlight = true
     updateControlsDisabled()
     updateProgress()
-    postToWorker({ type: 'computeMigration', origins, spreadBudget: Number(migrationSpreadInput.value), seaCrossing: Number(migrationSeaInput.value) / 100 })
+    postToWorker({ type: 'computeMigration', origins, spreadBudget: Number(migrationSpreadInput.value), seaCrossing: MIGRATION_INPUTS.seaCrossing.toModel(Number(migrationSeaInput.value)) })
   }
 
   // Ensures the upstream chain (climate → hydrology → ecology) is computed, then
@@ -2623,7 +2568,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       renderOptions: {},
     })
   }
-  initArchean(initialSeed, MANTLE_VIGOUR_DEFAULT, WATER_DEFAULT)
+  initArchean(initialSeed, ARCHEAN_INPUTS.mantleVigour.default, ARCHEAN_INPUTS.water.default)
 
   // --- Archean controls -----------------------------------------------------
   const setArcheanRunning = (running: boolean): void => {
@@ -2811,6 +2756,32 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // loads instantly and survives generator changes.
 
   // The world.yaml recipe (spec) + how far it was taken (status).
+  // The DOM read into a typed recipe. One place names which control feeds which
+  // spec key; worldSpec.ts owns the order and the nesting.
+  function readSpec(): WorldSpec {
+    const byPath: Record<string, HTMLInputElement | undefined> = {
+      'genesis.mantleVigour': mantleVigourInput,
+      'genesis.water': waterInput,
+      'erosion.erosionStrength': strengthInput,
+      'erosion.drainageRefresh': refreshInput,
+      'climate.tempOffset': tempBandInput,
+      'climate.humidity': humidityInput,
+      'climate.contrast': contrastInput,
+      'climate.equatorOffset': equatorOffsetInput,
+      'hydrology.riverDensity': riverDensityInput,
+      'ecology.carryingCapacity': carryingCapacityInput,
+      'ecology.concentration': concentrationInput,
+      'ecology.provinceStrength': provinceInput,
+    }
+    const values: Record<string, number> = {}
+    for (const field of WORLD_SPEC_FIELDS) {
+      const leaf = field.path.split('.').pop() as EcologyFieldId
+      const input = byPath[field.path] ?? foldoutInputs[leaf]
+      values[field.path] = Number(input?.value ?? field.input.default)
+    }
+    return { seed: seedInput.value, values }
+  }
+
   function buildWorldYaml(): string {
     const name = seedInput.value || 'world'
     return [
@@ -2824,31 +2795,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // whenever the terrain does; see the note under status.
       `  uid: ${worldUid}`,
       'spec:',
-      // Grouped by the pipeline stage that owns each knob, in the order the panels
-      // run. `seed` stays at the top: it is the world's identity, not a setting of
-      // any one stage.
-      `  seed: "${seedInput.value}"`,
-      '  genesis:',
-      `    mantleVigour: ${Number(mantleVigourInput.value)}`,
-      `    water: ${Number(waterInput.value)}`,
-      '  erosion:',
-      `    erosionStrength: ${Number(strengthInput.value)}`,
-      `    drainageRefresh: ${Number(refreshInput.value)}`,
-      '  climate:',
-      `    tempOffset: ${Number(tempBandInput.value)}`,
-      `    humidity: ${Number(humidityInput.value)}`,
-      `    contrast: ${Number(contrastInput.value)}`,
-      `    equatorOffset: ${Number(equatorOffsetInput.value)}`,
-      '  hydrology:',
-      `    riverDensity: ${Number(riverDensityInput.value)}`,
-      '  ecology:',
-      `    carryingCapacity: ${Number(carryingCapacityInput.value)}`,
-      `    concentration: ${Number(concentrationInput.value)}`,
-      `    provinceStrength: ${Number(provinceInput.value)}`,
-      ...ECOLOGY_CATEGORIES.flatMap((c) => [
-        `    ${c.id}:`,
-        ...c.fields.map((f) => `      ${f}: ${Number(foldoutInputs[f]?.value ?? 100)}`),
-      ]),
+      ...specToYamlLines(readSpec()),
       'status:',
       // Only what state.json does NOT already carry. tectonicsRun and archeanEpochs
       // used to sit here and in spec, duplicating the snapshot's own `epoch` and
@@ -3139,7 +3086,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // carries roughly seven times the channel length of 4K. Silent when there is
   // nothing — an absent artifact is the normal state, not a failure.
   async function adoptBestBakedRivers(worldIdForLookup: string, riverDensity: number | undefined): Promise<void> {
-    const pipelineVersion = derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS })
+    const pipelineVersion = amplificationPipelineVersion()
     const store = await getArtifactStore()
     for (const factor of [4, 2]) {
       const key = { worldId: worldIdForLookup, pipelineVersion, stage: String(factor) }
@@ -3162,7 +3109,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       return
     }
 
-    const pipelineVersion = derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS })
+    const pipelineVersion = amplificationPipelineVersion()
     const key = { worldId: inputs.worldId, pipelineVersion, stage: String(factor) }
     const store = await getArtifactStore()
     if (await amplificationArtifactExists(store, key, inputs.erosionControls.riverDensity).catch(() => false)) {
@@ -3395,6 +3342,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     invalidateClimate()
 
     const seed = readYamlValue(yaml, 'spec.seed') ?? ''
+    // One read of the recipe instead of a regex per key, with every gap filled by
+    // the control's declared default.
+    //
+    // That last part is a deliberate change (2026-08-09). Genesis and erosion used
+    // to fall back to whatever the slider happened to show while the other eight
+    // fields fell back to their default — two rules for one question, with nothing
+    // saying why. A missing key means the save predates the knob, and those worlds
+    // were generated with its default; keeping the user's last slider position
+    // instead makes loading depend on what they were doing beforehand.
+    const spec = specFromYaml(yaml, seed)
     seedInput.value = seed
     // Identity, or a derived one for a save written before the field existed.
     // Deriving rather than rolling a fresh id is what keeps the same legacy
@@ -3427,27 +3384,27 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       .then((bytes) => readWorldInputs(bytes))
       .then((loaded) => { if (loaded) return adoptBestBakedRivers(loaded.worldId, loaded.erosionControls.riverDensity) })
       .catch(() => undefined)
-    mantleVigourInput.value = readYamlValue(yaml, 'spec.genesis.mantleVigour') ?? mantleVigourInput.value
-    waterInput.value = readYamlValue(yaml, 'spec.genesis.water') ?? waterInput.value
+    mantleVigourInput.value = String(spec.values['genesis.mantleVigour'])
+    waterInput.value = String(spec.values['genesis.water'])
     // How far the Archean got, read from whichever snapshot the file carries — the yaml
     // used to hold a second copy of this under spec. An Archean save reopens IN the
     // Archean, so the tectonics panel must still be able to finalise it.
     lastArcheanEpochs = archeanPayload ? (archeanPayload.snapshot as { epoch: number }).epoch : (snapshot?.archeanEpochs ?? 0)
     if (archeanPayload) archeanFinalised = false
     setArcheanRunning(false)
-    tempBandInput.value = readYamlValue(yaml, 'spec.climate.tempOffset') ?? '0'
-    humidityInput.value = readYamlValue(yaml, 'spec.climate.humidity') ?? '100'
-    contrastInput.value = readYamlValue(yaml, 'spec.climate.contrast') ?? '100'
-    equatorOffsetInput.value = readYamlValue(yaml, 'spec.climate.equatorOffset') ?? '0'
-    riverDensityInput.value = readYamlValue(yaml, 'spec.hydrology.riverDensity') ?? '55'
-    strengthInput.value = readYamlValue(yaml, 'spec.erosion.erosionStrength') ?? strengthInput.value
-    refreshInput.value = readYamlValue(yaml, 'spec.erosion.drainageRefresh') ?? refreshInput.value
-    carryingCapacityInput.value = readYamlValue(yaml, 'spec.ecology.carryingCapacity') ?? '100'
-    concentrationInput.value = readYamlValue(yaml, 'spec.ecology.concentration') ?? '0'
-    provinceInput.value = readYamlValue(yaml, 'spec.ecology.provinceStrength') ?? '45'
+    tempBandInput.value = String(spec.values['climate.tempOffset'])
+    humidityInput.value = String(spec.values['climate.humidity'])
+    contrastInput.value = String(spec.values['climate.contrast'])
+    equatorOffsetInput.value = String(spec.values['climate.equatorOffset'])
+    riverDensityInput.value = String(spec.values['hydrology.riverDensity'])
+    strengthInput.value = String(spec.values['erosion.erosionStrength'])
+    refreshInput.value = String(spec.values['erosion.drainageRefresh'])
+    carryingCapacityInput.value = String(spec.values['ecology.carryingCapacity'])
+    concentrationInput.value = String(spec.values['ecology.concentration'])
+    provinceInput.value = String(spec.values['ecology.provinceStrength'])
     for (const f of ECOLOGY_WEIGHT_FIELDS) {
       const inp = foldoutInputs[f]
-      if (inp) inp.value = readYamlValue(yaml, ecologyWeightPath(f)) ?? '100'
+      if (inp) inp.value = String(spec.values[ecologyWeightPath(f).replace('spec.', '')])
     }
     syncSliderLabels()
     erosionRunCount = Number(readYamlValue(yaml, 'status.erosionRun') ?? 0)
@@ -3577,10 +3534,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       label.append(name, val)
       const input = document.createElement('input')
       input.type = 'range'
-      input.min = '50'
-      input.max = '200'
-      input.step = '5'
-      input.value = '100'
+      input.min = String(ECOLOGY_ABUNDANCE.min)
+      input.max = String(ECOLOGY_ABUNDANCE.max)
+      input.step = String(ECOLOGY_ABUNDANCE.step)
+      input.value = String(ECOLOGY_ABUNDANCE.default)
       input.setAttribute('aria-label', t('worldgen.ecology.fieldAbundance', { label: fieldLabel }))
       row.dataset.help = `world.resource.${field}`
       input.addEventListener('input', () => { val.textContent = input.value; scheduleEcology() })
@@ -3652,14 +3609,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   // Per-panel reset: restore that panel's sliders to their defaults + recompute.
   resetClimateButton.addEventListener('click', () => {
-    tempBandInput.value = '0'; equatorOffsetInput.value = '0'; humidityInput.value = '100'; contrastInput.value = '100'
+    tempBandInput.value = String(CLIMATE_INPUTS.tempOffset.default); equatorOffsetInput.value = String(CLIMATE_INPUTS.equatorOffset.default); humidityInput.value = String(CLIMATE_INPUTS.humidity.default); contrastInput.value = String(CLIMATE_INPUTS.contrast.default)
     tempBandLabel.textContent = '0'; equatorOffsetLabel.textContent = '0'; humidityLabel.textContent = '100'; contrastLabel.textContent = '100'
     requestClimate()
   })
   resetEcologyButton.addEventListener('click', () => {
-    carryingCapacityInput.value = '100'; carryingCapacityLabel.textContent = '100'
-    concentrationInput.value = '0'; concentrationLabel.textContent = '0'
-    provinceInput.value = '45'; provinceLabel.textContent = '45'
+    carryingCapacityInput.value = String(ECOLOGY_INPUTS.carryingCapacity.default); carryingCapacityLabel.textContent = String(ECOLOGY_INPUTS.carryingCapacity.default)
+    concentrationInput.value = String(ECOLOGY_INPUTS.concentration.default); concentrationLabel.textContent = String(ECOLOGY_INPUTS.concentration.default)
+    provinceInput.value = String(ECOLOGY_INPUTS.provinceStrength.default); provinceLabel.textContent = String(ECOLOGY_INPUTS.provinceStrength.default)
     for (const f of ECOLOGY_WEIGHT_FIELDS) {
       const inp = foldoutInputs[f]
       const lbl = foldoutLabels[f]
@@ -3669,9 +3626,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     requestEcology()
   })
   resetMigrationButton.addEventListener('click', () => {
-    migrationSpreadInput.value = '120'; migrationSpreadLabel.textContent = '120'
-    migrationThresholdInput.value = '50'; migrationThresholdLabel.textContent = '50'
-    migrationSeaInput.value = '30'; migrationSeaLabel.textContent = '30'
+    const resetSlider = (p: InputParam, input: HTMLInputElement, label: HTMLElement): void => {
+      input.value = String(p.default)
+      label.textContent = String(p.default)
+    }
+    resetSlider(MIGRATION_INPUTS.spreadBudget, migrationSpreadInput, migrationSpreadLabel)
+    resetSlider(MIGRATION_INPUTS.arrowThreshold, migrationThresholdInput, migrationThresholdLabel)
+    resetSlider(MIGRATION_INPUTS.seaCrossing, migrationSeaInput, migrationSeaLabel)
     migrationRaceEnabled.fill(true)
     for (const btn of migrationRacesContainer.querySelectorAll('.ecology-cat')) btn.classList.add('is-active')
     migrationOrigins = [] // re-auto-place at the default cradles

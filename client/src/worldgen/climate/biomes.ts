@@ -1,6 +1,6 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell } from './climateField'
-import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
-import { LAPSE_C_PER_ELEVATION } from './temperature'
+import { CLIMATE_TUNING } from './climateTuneParams'
+import { SEA_LEVEL } from '../elevation/elevationScale'
 import { sampleBilinearWorld, wrapValue } from '../core/field'
 
 const RX = CLIMATE_RES_X
@@ -99,30 +99,6 @@ export function biomeLegend(): { labelKey: string; rgb: [number, number, number]
   ]
   return order.map((id) => ({ labelKey: biomeLabelKey(id), rgb: biomeColor(id) }))
 }
-
-// The alpine override, promised by docs/decisions/climate-biomes.md ("plus ...
-// an alpine override above the treeline") but never built until 2026-08-06: a
-// mountain's cold-elevation biome used to fall out of the lapse rate alone —
-// which classifies it as Tundra, exactly the same id/color/label as arctic
-// lowland tundra. That is not wrong ecologically (a real snowline zone reads
-// similarly whether it got cold from latitude or elevation), but it meant an
-// equatorial snow-capped peak and a polar plain were visually and
-// mechanically indistinguishable — the elevation was invisible to gameplay.
-//
-// A single global elevation threshold (not latitude-dependent) is the whole
-// point of the override: real treeline elevation DOES fall with latitude, but
-// reproducing that here would just re-derive what the lapse-rate-driven T/P
-// classification already gives — the useful, DIFFERENT signal is "is this
-// high ground, regardless of where on the planet it is", so a fixed metres
-// threshold is what actually answers that. 2800 m sits within the commonly
-// cited real-world treeline range (roughly 2500-3800 m depending on
-// latitude/region) as a single representative value.
-//
-// A cell that would already classify as Ice (T < -10°C — a true glaciated
-// summit) is left alone: Alpine means "bare rock / sparse cold-adapted
-// vegetation above the treeline", not "less ice than Ice" — a permanently
-// glaciated peak should still read as ice, elevation or not.
-const ALPINE_TREELINE_ELEVATION = metersToElevation(2800)
 
 // Classify one cell. T = mean annual °C, P = annual precip mm/yr, amp = seasonal
 // TEMPERATURE amplitude °C, season = monsoon / precipitation-SEASONALITY index (0 =
@@ -223,7 +199,7 @@ export function reduceTemperatureToSeaLevel(temperature: Float32Array, elevation
       const i = gy * RX + gx
       const e = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
       const dry = sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight)
-      out[i] = temperature[i] + LAPSE_C_PER_ELEVATION * (dry ? e - SEA_LEVEL : Math.max(0, e - SEA_LEVEL))
+      out[i] = temperature[i] + CLIMATE_TUNING.lapseCPerElevation * (dry ? e - SEA_LEVEL : Math.max(0, e - SEA_LEVEL))
     }
   }
   return out
@@ -286,12 +262,12 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
       // Sea-level temperature interpolated, THEN this cell's own lapse — so the
       // regional part is smooth while the elevation term stays strictly local.
       const reduced = sampleBilinearWorld(seaLevelTemp, RX, RY, wx + 0.5, wy + 0.5, worldWidth, worldHeight)
-      const temp = reduced - LAPSE_C_PER_ELEVATION * (dry ? here - SEA_LEVEL : Math.max(0, here - SEA_LEVEL))
+      const temp = reduced - CLIMATE_TUNING.lapseCPerElevation * (dry ? here - SEA_LEVEL : Math.max(0, here - SEA_LEVEL))
       const precip = sampleLandBilinear(precipitation, wx, wy, worldWidth, worldHeight, precipitation[cell])
       const amp = sampleLandBilinear(seasonalAmplitude, wx, wy, worldWidth, worldHeight, seasonalAmplitude[cell])
       const season = sampleLandBilinear(monsoonIndex, wx, wy, worldWidth, worldHeight, monsoonIndex[cell])
       const base = classify(temp, precip, amp, season)
-      biomes[world] = here > ALPINE_TREELINE_ELEVATION && base !== Biome.Ice ? Biome.Alpine : base
+      biomes[world] = here > CLIMATE_TUNING.alpineTreelineElevation && base !== Biome.Ice ? Biome.Alpine : base
     }
   }
   return biomes
@@ -308,7 +284,7 @@ export function computeBiomes(temperature: Float32Array, precipitation: Float32A
         continue
       }
       const base = classify(temperature[i], precipitation[i], seasonalAmplitude[i], monsoonIndex[i])
-      biomes[i] = cellElevation > ALPINE_TREELINE_ELEVATION && base !== Biome.Ice ? Biome.Alpine : base
+      biomes[i] = cellElevation > CLIMATE_TUNING.alpineTreelineElevation && base !== Biome.Ice ? Biome.Alpine : base
     }
   }
   return biomes

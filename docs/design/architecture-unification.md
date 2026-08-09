@@ -1,7 +1,7 @@
 ---
 summary: Plan for two connected rebuilds — a `world` module as the single, provenance-carrying place world data is queried, and a shared module architecture in the generator (separated tuning and input parameters, declared slider ranges, a real WorldSpec type). Includes the order of work, the safety net it needs first, and what is deliberately excluded.
 date: 2026-08-09
-status: Parts 0 (safety net) and A (module boundaries) BUILT 2026-08-09, both verified byte-identical; B–D not started. Order and boundaries decided, detail questions listed at the end
+status: Parts 0, A and B1-B4 BUILT 2026-08-09, each verified byte-identical; B5 (WorldSpec), B6 (generic slider rendering), C and D not started. Order and boundaries decided, detail questions listed at the end
 ---
 
 # Architecture unification: world-data access and module contracts
@@ -187,28 +187,83 @@ only a field name (`archeanEpochs`), not code — there is no real cycle.
 
 ## Part B — module contracts and parameters
 
-**B1. Reference implementation in `migration/`.** One file, 193 lines, 8
-constants, and it already has a `MigrationParams` — small enough that the pattern
-rather than the module is what one sees, and it is going to grow. Its
-`migrationTuneParams.ts` and `migrationInputParams.ts` become the template.
+**B1. Reference implementation in `migration/`. BUILT 2026-08-09**, verified
+38 of 38 stages byte-identical. One file, 193 lines, small enough that the
+pattern rather than the module is what one sees, and it is going to grow.
 
-**B2. `xyTuneParams.ts` per module, as an object.** Constants grouped rather than
+Two things the reference settled that the plan had not:
+
+- **The tuning object is read directly, under its full name — no aliases of any
+  kind.** Two attempts went the other way and both were wrong. Destructuring
+  each field back to its old `SCREAMING_CASE` name kept the diff small, but that
+  reason expires when the change lands and leaves two names per constant plus a
+  second place to edit when one is added. Importing the object `as TUNE` for
+  brevity is worse in a subtler way: it **defeats grep**. `TECTONICS_TUNING` then
+  appears only on the seven import lines, not at the 66 places the values are
+  actually used — against this repo's own rule of searching for the operation
+  before writing one. Line length is the weaker concern.
+- **`InputParam` needs an `inSpec` flag.** Not every control is a world
+  parameter. Migration's arrow threshold only changes which arrows are drawn; in
+  the spec it would make two identical worlds differ by a rendering preference,
+  and once inputs feed a cache key it would orphan every artifact whenever
+  someone nudged it. That is the mistake `artifactKey.ts` records for
+  `riverDensity`, and the declaration now carries the distinction.
+
+**B2 will not objectify every constant.** Three kinds live in these modules and
+only one belongs in a hash: **world tuning** (changes the generated world),
+**structural** (grid sizes, resolutions, the elevation unit anchor, enum ids —
+`elevationScale.ts` calls itself "the single place that says what a height value
+MEANS", which is a definition, not a knob), and **presentation** (colours,
+decimation, exaggeration — a colour change must never orphan an artifact).
+Classify before grouping.
+
+**B2. BUILT 2026-08-09** — 170 constants across seven modules, every value machine-compared against `git HEAD`, no drift, guard green at each step. Three findings the grouping forced out: the amplification key was missing three values that move baked geometry (fixed, all artifacts invalidated); `ADVECT_STEP` existed twice in climate with different values and would have collided silently; and climate's Whittaker thresholds are inline literals inside `classify`, so the largest block of climate tuning in the repo stays invisible to any grouping. Deliberately out: `elevationScale.ts` (a definition module and a fifteen-file contract), exported constants (contracts move separately), and the `x / 9000` anchor hardcodings (a coupling change does not belong in a move step).
+
+**B2 as planned. `xyTuneParams.ts` per module, as an object.** Constants grouped rather than
 flat, so `derivePipelineVersion` can take them. `tectonicsParams.ts` becomes
 `tectonicsTuneParams.ts`. Climate's 43 constants are collected from nine files;
 ecology's 46 are grouped within their one file; elevation, surface and render
 follow. Inline literals that are genuinely knobs move with them — the rest stays
 where it is, since not every number is a constant.
 
-**B3. One deriver instead of five call sites.**
-`derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS })`
-appears at five places across three files, hand-assembled each time. They are
-identical today; whoever adds a constant at one of them mints two keys for one
-artifact. This becomes an exported function.
+**B3. One deriver instead of the hand-assembled call sites. BUILT 2026-08-09.**
+`derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds })` was written out at
+**eight** places, not the five the plan counted: five in two screens, two in the
+Node baker, and one in the harness — where a guard that rebuilds what it guards
+cannot notice the two drifting apart. All of them now call
+`amplificationPipelineVersion(rounds?)` in `storage/amplificationArtifact.ts`.
 
-**B4. `xyInputParams.ts` for modules with sliders.** Per slider: min, max, step,
-default, unit, i18n key, help key. Covers genesis, erosion, climate, hydrology,
-ecology, migration. Modules without sliders (core, crust, render, worldSave) get
-none.
+That home was forced: `artifactKey.ts` states in its own header that it takes
+the constants as an argument so it has *no opinion* about where they live, and
+`amplificationArtifact.ts` already owns artifact identity and is proven
+Node-safe by the baker importing it. `rounds` stays a parameter because the
+server's baker takes it per job.
+
+Confirmed independently of the harness: `node baker.mjs --version` still prints
+`v4-5fadfe0c881a887e`, so no cached artifact was orphaned by the consolidation.
+
+**B4. BUILT 2026-08-09.** `InputParam` now lives in `core/inputParams.ts`; genesis, erosion, climate, hydrology and ecology have declarations. Ranges and defaults are read from them by the markup, the reset handlers and the load-path fallbacks — three copies down to one, verified by comparing all twelve sliders' emitted numbers against `git HEAD`. The per-panel markup shapes were left alone on purpose: unifying them is B6 and must not ride along unnoticed in a step that is supposed to change nothing visible.
+
+**B4 as planned. `xyInputParams.ts` for modules with sliders.** Per slider: min, max, step,
+default, unit, i18n key, help key. Covers genesis, erosion, climate, hydrology
+and ecology. Modules without sliders (core, crust, mantle, render, worldSave)
+get none.
+
+**Migration comes along structurally but stays out of the save and any hash**
+(decided 2026-08-09). The layer may leave the generator for a screen of its own,
+so its values must not enter `world.yaml` or a params hash yet: a format written
+now is a format to migrate later for a layer that might not live here. Its three
+controls are still declared and still render from the declaration like every
+other panel.
+
+The `inSpec` flag introduced in B1 already carries exactly this, which is the
+useful part — one boolean separates "the UI knows about this control" from "the
+world is defined by it", and the second is the commitment worth deferring.
+
+One consequence B4 handles first rather than inherits: the shared `InputParam`
+interface lives in `migration/migrationInputParams.ts`, because migration is
+where the pattern was proved. Nothing about the type is migration-specific and
+every other panel needs it, so it gets a neutral home before anything else moves.
 
 **B5. `WorldSpec` as a type, assembled from B4.** Replaces string concatenation
 and regex reading with a real round trip. The triple defaults disappear, and the

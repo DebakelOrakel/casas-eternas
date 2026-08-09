@@ -20,8 +20,7 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../../worldgen/climate/climateFiel
 import { t } from '../../i18n/i18n'
 import type { TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
-import { derivePipelineVersion } from '../../storage/artifactKey'
-import { amplificationArtifactExists, readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
+import { amplificationArtifactExists, amplificationPipelineVersion, readAmplificationArtifact, writeAmplificationArtifact } from '../../storage/amplificationArtifact'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
@@ -30,7 +29,6 @@ import { getServerStatus } from '../../server/serverStatus'
 import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../server/bakeClient'
 import { readWorldInputs } from '../../worldgen/worldSave/loadWorldInputs'
 import type { ErosionControls as SaveErosionControls } from '../../worldgen/worldSave/loadWorldInputs'
-import { AMPLIFY_CONSTANTS } from '../../worldgen/surface/amplify'
 import '../../ui/chrome/chrome.css'
 import './worldmap.css'
 
@@ -817,7 +815,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     bakeButton.hidden = true
     const label = levelLabel(factor)
 
-    const pipelineVersion = derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS })
+    const pipelineVersion = amplificationPipelineVersion()
 
     // A bake runs for minutes, so the progress belongs in a notification the
     // user can walk away from rather than in a readout on one panel. Sticky:
@@ -941,7 +939,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // BAKE is a separate question, asked per stage below.
     // The macro raster is always a level, and it is the one the world is
     // showing right now.
-    bakeSource = { macro, macroWidth, macroHeight, detailSeed, riverDensity: erosionControls.riverDensity, key: { worldId, pipelineVersion: derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS }) } }
+    bakeSource = { macro, macroWidth, macroHeight, detailSeed, riverDensity: erosionControls.riverDensity, key: { worldId, pipelineVersion: amplificationPipelineVersion() } }
     availableFactors = [1]
     shownFactor = 1
     // A new world knows nothing about the last one's gaps, and an order placed
@@ -1000,7 +998,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // rather than stale terrain.
       const key = {
         worldId,
-        pipelineVersion: derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS }),
+        pipelineVersion: amplificationPipelineVersion(),
         stage: String(factor),
       }
       const store = await getArtifactStore()

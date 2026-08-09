@@ -9,7 +9,8 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { MinHeap } from '../core/minHeap'
 import { wrapValue } from '../core/field'
-import { SEA_LEVEL, SLOPE_RECALIBRATION, metersToElevation } from '../elevation/elevationScale'
+import { SEA_LEVEL } from '../elevation/elevationScale'
+import { MIGRATION_TUNING } from './migrationTuneParams'
 
 export interface MigrationOrigin {
   cell: number // gy * resX + gx (on the climate grid)
@@ -36,31 +37,9 @@ export interface MigrationFields {
 }
 
 // --- cost field -------------------------------------------------------------
-
-const LAND_BASE = 1
-// Scaled by SLOPE_RECALIBRATION (see elevationScale.ts) — the slope this
-// multiplies halved, and mountains should stay as discouraging to cross as they
-// were tuned to be.
-const SLOPE_COST = 14 * SLOPE_RECALIBRATION // steep terrain penalty (× slope)
-const CORRIDOR_DISCOUNT = 0.5 // coast/river cells are cheap highways
-const RIVER_DISCHARGE_FRAC = 0.05 // discharge above this fraction of max = a river corridor
-const WATER_BASE = 3 // shallow water is costlier than land to cross
-// Depth thresholds, restated in metres now that the elevation scale is anchored
-// (elevationScale.ts). The old bare 0.25 would read as 2250 m of open ocean
-// "still passable at seaCrossing = 1" — never the intent; on the old scale, where
-// ocean ran -0.45 to -1.0, a quarter unit was a shallow fringe. 600 m is the real
-// limit of the water proto-humans crossed: the shelf and the straits over it, not
-// the deep basins.
 //
-// This constraint only starts to MEAN anything now. Before, there was no shelf —
-// the coast dropped from continent to abyssal plain within a few cells — so at
-// the coarse climate grid these fields run on, shallow water barely existed as a
-// sampleable thing, and island hopping was near-impossible whatever the slider
-// said. With a real shelf there is finally passable water to cross.
-const SEA_CROSSING_MAX_DEPTH = metersToElevation(600)
-// Scaled with it, so the cost at the deepest crossable water stays what it was
-// tuned to be.
-const WATER_DEPTH_COST = 25 * (0.25 / SEA_CROSSING_MAX_DEPTH) // per unit depth below sea level
+// Tuning constants come from MIGRATION_TUNING and are read straight off it, so
+// each one has exactly one name and adding another is a single edit.
 
 // Builds the per-cell movement cost (cost to ENTER the cell). Land: base × slope,
 // discounted on coast/river corridors. Water: rises with depth; beyond the
@@ -70,7 +49,7 @@ function buildCostField(precipitation: Float32Array, elevation: Float32Array, co
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const cost = new Float32Array(n)
   const land = new Uint8Array(n)
-  const maxDepth = SEA_CROSSING_MAX_DEPTH * Math.max(0, Math.min(1, seaCrossing))
+  const maxDepth = MIGRATION_TUNING.seaCrossingMaxDepth * Math.max(0, Math.min(1, seaCrossing))
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const i = gy * CLIMATE_RES_X + gx
@@ -78,22 +57,22 @@ function buildCostField(precipitation: Float32Array, elevation: Float32Array, co
       const e = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
       if (!isLand) {
         const depth = SEA_LEVEL - e
-        cost[i] = depth <= maxDepth ? WATER_BASE + WATER_DEPTH_COST * Math.max(0, depth) : Infinity
+        cost[i] = depth <= maxDepth ? MIGRATION_TUNING.waterBase + MIGRATION_TUNING.waterDepthCost * Math.max(0, depth) : Infinity
         continue
       }
       land[i] = 1
       const eE = sampleElevationAtCell(elevation, wrapValue(gx + 1, CLIMATE_RES_X), gy, worldWidth, worldHeight)
       const eS = sampleElevationAtCell(elevation, gx, wrapValue(gy + 1, CLIMATE_RES_Y), worldWidth, worldHeight)
       const slope = Math.hypot(eE - e, eS - e)
-      let c = LAND_BASE + SLOPE_COST * slope
+      let c = MIGRATION_TUNING.landBase + MIGRATION_TUNING.slopeCost * slope
       // Corridor discount: coastal (an ocean 4-neighbour) or a river cell.
       const coastal =
         precipitation[wrapValue(gy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrapValue(gx + 1, CLIMATE_RES_X)] === OCEAN_PRECIP ||
         precipitation[wrapValue(gy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrapValue(gx - 1, CLIMATE_RES_X)] === OCEAN_PRECIP ||
         precipitation[wrapValue(gy + 1, CLIMATE_RES_Y) * CLIMATE_RES_X + gx] === OCEAN_PRECIP ||
         precipitation[wrapValue(gy - 1, CLIMATE_RES_Y) * CLIMATE_RES_X + gx] === OCEAN_PRECIP
-      const river = coarseDischarge != null && maxDischarge > 0 && coarseDischarge[i] > RIVER_DISCHARGE_FRAC * maxDischarge
-      if (coastal || river) c *= CORRIDOR_DISCOUNT
+      const river = coarseDischarge != null && maxDischarge > 0 && coarseDischarge[i] > MIGRATION_TUNING.riverDischargeFrac * maxDischarge
+      if (coastal || river) c *= MIGRATION_TUNING.corridorDiscount
       cost[i] = c
     }
   }

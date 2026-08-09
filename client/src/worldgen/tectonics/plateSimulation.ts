@@ -2,7 +2,7 @@ import { generateDetectionLattice } from './boundaryLattice'
 import { createMantleField } from '../mantle/mantleField'
 import { mulberry32 } from '../core/rng'
 import { derivePlateTypes } from '../crust/raftField'
-import { DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y } from './tectonicsParams'
+import { TECTONICS_TUNING } from './tectonicsTuneParams'
 import { coupleMantleToPlates } from './epoch/mantleCoupling'
 import { advancePlatesAndCrust } from './epoch/plateDrift'
 import { runBoundaryPass } from './epoch/boundaryPass'
@@ -55,7 +55,7 @@ export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationS
 }
 
 export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: Float32Array, mantle?: Float32Array): PlateSimulation {
-  const lattice = generateDetectionLattice(snap.width, snap.height, DETECTION_LATTICE_RESOLUTION_X, DETECTION_LATTICE_RESOLUTION_Y)
+  const lattice = generateDetectionLattice(snap.width, snap.height, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
   return {
     width: snap.width,
     height: snap.height,

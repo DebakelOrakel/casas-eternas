@@ -1,4 +1,5 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleDryLandAtCell, sampleElevationAtCell } from './climateField'
+import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { sampleBilinearGrid } from '../core/field'
 import { wrapValue } from '../core/field'
@@ -6,29 +7,9 @@ import { wrapValue } from '../core/field'
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
 
-// Streamfunction solve iterations (Gauss-Seidel, in place — converges roughly
-// twice as fast as Jacobi). One-shot per climate compute; the gyre structure
-// doesn't need a fully-converged ψ.
-const SOLVE_ITERS = 700
-// SST transport: how far (grid cells) it advects along the normalized current
-// per iteration, how many iterations, and the per-iteration relaxation back
-// toward the latitudinal base (anchors the SST to latitude so anomalies stay
-// bounded — a few °C, like real boundary currents on this coarse grid).
-const ADVECT_STEP = 2.5
-const ADVECT_ITERS = 80
-const BASE_RELAX = 0.15
-// How strongly a coastal land cell is pulled toward the adjacent ocean's SST
-// anomaly (warm current → milder coast, cold current/upwelling → cooler coast),
-// and how far inland that influence reaches, decaying per cell (a maritime band
-// a few cells wide rather than a single-cell edge).
-const COASTAL_FACTOR = 0.9
-const COASTAL_STEPS = 4
-const COASTAL_DECAY = 0.8
-
 function wrapIndex(x: number, y: number): number {
   return wrapValue(y, RY) * RX + wrapValue(x, RX)
 }
-
 
 // Wind-driven ocean surface currents as gyres, on the climate grid. Solves a
 // streamfunction ψ forced by the wind-stress curl with ψ=0 on land (so the
@@ -61,7 +42,7 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
 
   // ∇²ψ = curl, ψ = 0 on land, wrapped. Gauss-Seidel in place.
   const psi = new Float32Array(n)
-  for (let iter = 0; iter < SOLVE_ITERS; iter++) {
+  for (let iter = 0; iter < CLIMATE_TUNING.currentsSolveIters; iter++) {
     for (let gy = 0; gy < RY; gy++) {
       for (let gx = 0; gx < RX; gx++) {
         const i = gy * RX + gx
@@ -108,7 +89,7 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
   // Advect SST from the base. Land cells stay at base (never updated), so a
   // sample near the coast blends in a sane value rather than garbage.
   let sst = temperature.slice()
-  for (let iter = 0; iter < ADVECT_ITERS; iter++) {
+  for (let iter = 0; iter < CLIMATE_TUNING.currentsAdvectIters; iter++) {
     const next = sst.slice()
     for (let gy = 0; gy < RY; gy++) {
       for (let gx = 0; gx < RX; gx++) {
@@ -116,8 +97,8 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
         if (land[i]) continue
         const u = current[i * 2]
         const v = current[i * 2 + 1]
-        const advected = sampleBilinearGrid(sst, RX, RY, gx - u * ADVECT_STEP, gy - v * ADVECT_STEP)
-        next[i] = advected * (1 - BASE_RELAX) + temperature[i] * BASE_RELAX
+        const advected = sampleBilinearGrid(sst, RX, RY, gx - u * CLIMATE_TUNING.currentsAdvectStep, gy - v * CLIMATE_TUNING.currentsAdvectStep)
+        next[i] = advected * (1 - CLIMATE_TUNING.currentsBaseRelax) + temperature[i] * CLIMATE_TUNING.currentsBaseRelax
       }
     }
     sst = next
@@ -129,7 +110,7 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
   // influence reaches a few cells past the shoreline instead of one.
   const anomaly = new Float32Array(n)
   for (let i = 0; i < n; i++) if (!land[i]) anomaly[i] = sst[i] - temperature[i]
-  for (let step = 0; step < COASTAL_STEPS; step++) {
+  for (let step = 0; step < CLIMATE_TUNING.currentsCoastalSteps; step++) {
     const next = anomaly.slice()
     for (let gy = 0; gy < RY; gy++) {
       for (let gx = 0; gx < RX; gx++) {
@@ -140,12 +121,12 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
           const a = anomaly[wrapIndex(gx + dx, gy + dy)]
           if (Math.abs(a) > Math.abs(best)) best = a
         }
-        next[i] = best * COASTAL_DECAY
+        next[i] = best * CLIMATE_TUNING.currentsCoastalDecay
       }
     }
     for (let i = 0; i < n; i++) if (land[i]) anomaly[i] = next[i]
   }
-  for (let i = 0; i < n; i++) if (land[i]) temperature[i] += COASTAL_FACTOR * anomaly[i]
+  for (let i = 0; i < n; i++) if (land[i]) temperature[i] += CLIMATE_TUNING.currentsCoastalFactor * anomaly[i]
 
   // Ocean cells take the sea-surface temperature (so the temperature overlay
   // shows the current structure too).

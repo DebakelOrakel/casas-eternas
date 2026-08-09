@@ -4,6 +4,10 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-09
+- **changed** Structure: every generator slider's range and default is declared once instead of retyped in the markup, the label and the load path.
+- **changed** Structure: the worldgen modules keep their tuning constants in one hashable object each.
+- **new** Structure: migration declares its tuning constants and its slider ranges in one place each, as the pattern for the other modules.
+- **changed** Structure: the amplification pipeline version is derived in one place instead of at eight hand-assembled call sites.
 - **changed** Structure: the mantle field and the shared raft constants left `tectonics/`, so only the handover file still crosses that boundary.
 - **new** Structure: the golden harness can freeze per-stage byte hashes for the length of a refactor.
 - **fixed** Structure: the harness guarded only the coarse biome field, and its land-classification check could never fire.

@@ -1,7 +1,7 @@
 // Tuning constants for continental-crust behaviour — the raft geometry both
 // eras share.
 //
-// They lived in `tectonics/tectonicsParams.ts`, which made `archean/` import
+// They lived in `tectonics/tectonicsTuneParams.ts`, which made `archean/` import
 // from `tectonics/` for something that is neither: the Archean and the tectonic
 // phase BOTH grow, merge and split the same rafts, and both hand these values
 // to the same `crust/` functions. Filing them under one era made the other

@@ -1,4 +1,5 @@
 import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
+import { SURFACE_TUNING } from './surfaceTuneParams'
 import { wrapValue } from '../core/field'
 import type { FlowRouting } from './flowRouting'
 import { Biome, computeBiomesFine } from '../climate/biomes'
@@ -17,20 +18,14 @@ import { OCEAN_PRECIP } from '../climate/precipitation'
 // a filled depression (filled > raw) are excluded — they're lake bed, not
 // channel (the radial fan D8 makes on a flat fill isn't a river).
 
-// A modest per-cell runoff floor so even a bone-dry landmass still develops
-// channels from drainage area alone (precip only MODULATES density, it doesn't
-// gate rivers entirely) — the user disliked rivers vanishing outside the wettest
-// regions. Wet cells sit far above this, so precip still dominates where it's high.
-const RUNOFF_FLOOR = 200
-
 // Nearest coarse-grid precip (mm/yr) at a full-res land cell, floored (see
-// RUNOFF_FLOOR). Called for land cells only, so an ocean-sentinel precip (coarse
+// SURFACE_TUNING.runoffFloor). Called for land cells only, so an ocean-sentinel precip (coarse
 // cell reads as ocean at the coast) just falls back to the floor.
 function precipRunoffAt(precip: Float32Array, cx: number, cy: number, worldW: number, worldH: number, climateResX: number, climateResY: number): number {
   const gx = Math.min(climateResX - 1, Math.floor((cx / worldW) * climateResX))
   const gy = Math.min(climateResY - 1, Math.floor((cy / worldH) * climateResY))
   const p = precip[gy * climateResX + gx]
-  return p > RUNOFF_FLOOR ? p : RUNOFF_FLOOR
+  return p > SURFACE_TUNING.runoffFloor ? p : SURFACE_TUNING.runoffFloor
 }
 
 // Mean per-cell runoff over land — the reference the critical-area threshold
@@ -45,7 +40,7 @@ export function meanLandRunoff(precip: Float32Array, elevation: Float32Array, wo
     sum += precipRunoffAt(precip, cx, cy, worldW, worldH, climateResX, climateResY)
     count++
   }
-  return count > 0 ? sum / count : RUNOFF_FLOOR
+  return count > 0 ? sum / count : SURFACE_TUNING.runoffFloor
 }
 
 // Potential evaporation from an open water surface (mm/yr), rising with
@@ -64,43 +59,11 @@ function tempAtCell(temperature: Float32Array, cx: number, cy: number, worldW: n
   return temperature[gy * climateResX + gx]
 }
 
-// Lake water depth per full-res cell (0 = dry). Climate-aware / endorheic:
-// priority-flood `filled` marks every depression's cells (filled > raw) and its
-// spill level; for each basin (a connected flooded region) we weigh the water
-// arriving (max discharge through it) against evaporation from the lake surface
-// (evaporationPotential × area). If inflow ≥ evaporation at the spill-full area,
-// the basin brims to its spill and overflows (an open lake feeding the river
-// below); otherwise it's ENDORHEIC — the level settles where inflow balances
-// evaporation, a shrunken closed lake (a hot dry basin becomes a small salt lake,
-// or nothing). Depth = level − raw for cells under the level. 4-connected,
-// toroidally wrapped. See docs/decisions/climate-biomes.md.
-// Basins shallower than this (spill level minus the basin's lowest point)
-// are not lakes — they are terrain texture. Became necessary 2026-08-06 when
-// computeElevation gained the plains micro-relief seed (PLAIN_DETAIL_MAX,
-// ±10 m typical): every noise dimple with any inflow classified as a lake and
-// the plains drowned in puddles. Re-swept under the overflow-only rule
-// (one seed; "plains" = bodies whose basin sits below 600 m tectonic):
-//
-//     gate    lakes   on plains
-//      0 m     816       740      <- every dimple on a river overflows
-//      4 m     199       139
-//      8 m      88        35      <- chosen: plains keep a visible lake
-//     12 m      71        22         population without the puddle flood
-//     15 m      66        20      <- at 15 (under the older endorheic
-//                                    model) the plains read as lakeless
-//
-// The 135k km² shallow mega-pan (a genuine Lake-Chad-style feature, present
-// without the noise too) survives every gate under the overflow rule — the
-// spill-brimming level keeps it a throughflow lake. Genuine deep lakes sit
-// far above the gate either way (rift grabens are depth-capped in the
-// hundreds of metres).
-const MIN_LAKE_BASIN_RELIEF_M = 8
-
 export interface LakeFields {
   // Water depth per cell (0 = dry) — land lakes at their spill, terminal seas
   // at their climate balance level.
   depth: Float32Array
-  // 1 in the EVAPORITE BAND: dry terminal-basin floor within SALT_BAND_M above
+  // 1 in the EVAPORITE BAND: dry terminal-basin floor within SURFACE_TUNING.saltBandM above
   // the balance level (or above the basin floor when bone dry) — where the
   // last water stood and everything it carried crystallised. The SaltFlat
   // biome override's source. A subset of dryBasin.
@@ -112,14 +75,7 @@ export interface LakeFields {
   dryBasin: Uint8Array
 }
 
-// Evaporites concentrate where the last water stood — the salt flat is a BAND
-// above the waterline, not the whole exposed floor (a fully-dry 2800 m deep
-// basin is a salt PAN at the bottom and hot desert rock on the slopes, not a
-// kilometres-tall salt wall). Thickness is a starting value for the usual
-// by-eye pass.
-const SALT_BAND_M = 75
-
-export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = MIN_LAKE_BASIN_RELIEF_M): LakeFields {
+export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
   const { width, height, filled } = routing
   const n = width * height
   const EPS = 1e-5
@@ -199,7 +155,7 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
           }
         }
       }
-      const saltBandTop = level + metersToElevation(SALT_BAND_M)
+      const saltBandTop = level + metersToElevation(SURFACE_TUNING.saltBandM)
       for (const c of region) {
         if (elevation[c] <= level) depth[c] = level - elevation[c]
         else if (elevation[c] <= SEA_LEVEL) {
@@ -210,7 +166,7 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
       continue
     }
     // Ordinary land basin: texture dimples are not lakes (see
-    // MIN_LAKE_BASIN_RELIEF_M), and a lake must OVERFLOW — river in, lake,
+    // SURFACE_TUNING.minLakeBasinReliefM), and a lake must OVERFLOW — river in, lake,
     // river out (user rule, 2026-08-06). A basin whose inflow cannot sustain
     // its full spill-level surface holds no lake at all; the terminal-sea
     // branch above is the one deliberate exception to that rule.
@@ -305,7 +261,6 @@ function riverWidth(dischargeAtCell: number, maxDischarge: number): number {
   return Math.min(RIVER_MAX_WIDTH, RIVER_MIN_WIDTH + (RIVER_MAX_WIDTH - RIVER_MIN_WIDTH) * Math.sqrt(dischargeAtCell / scale))
 }
 
-
 // --- the channel criterion -------------------------------------------------
 //
 // A cell is a channel when its discharge clears a threshold — but discharge
@@ -376,7 +331,6 @@ export function isChannelCell(routing: FlowRouting, elevation: Float32Array, dis
   const boost = Math.pow(Math.max(receiverSlope(routing, elevation, cell), 1e-7) / referenceSlope, CHANNEL_SLOPE_EXPONENT)
   return discharge[cell] * boost >= threshold
 }
-
 
 // Connected river polylines for smooth rendering. Each channel cell (discharge ≥
 // threshold, land — INCLUDING lake beds and filled dimples since 2026-08-06:
@@ -486,18 +440,9 @@ export function computeWatersheds(routing: FlowRouting, elevation: Float32Array,
 
 // --- Phase 3: riparian zones (rivers/lakes moisten nearby land → wetter biomes) ---
 
-// Peak precipitation bonus (mm/yr) a cell gets right at a full-strength river/lake
-// — enough to lift a hot desert (P<250) into savanna/forest (the Nile effect).
-const MAX_RIPARIAN_MM = 900
-// How far the moisture bleeds into neighbouring coarse cells, and its per-step
-// falloff. Coarse cells are large (~60 km), so 1 step already reads as a green
-// valley band without washing out the whole continent.
-const RIPARIAN_SPREAD = 1
-const RIPARIAN_DECAY = 0.45
-
 // Re-classifies biomes with a riparian moisture bonus: builds a coarse water-
 // strength field (1 at lakes, √(discharge/max) at river channels — big rivers
-// moisten more), bleeds it into neighbours with decay, adds it (× MAX_RIPARIAN_MM)
+// moisten more), bleeds it into neighbours with decay, adds it (× SURFACE_TUNING.maxRiparianMm)
 // to precipitation, and re-runs the Whittaker classification. So a river or lake
 // greens its surroundings — a desert with a big river through it becomes a
 // vegetated corridor. `elevation` is the display terrain (land/ocean + biome
@@ -535,7 +480,7 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
   }
   // Decay-bleed into neighbours (toroidal), taking the max so a band forms.
   let field = strength
-  for (let it = 0; it < RIPARIAN_SPREAD; it++) {
+  for (let it = 0; it < SURFACE_TUNING.riparianSpread; it++) {
     const next = field.slice()
     for (let gy = 0; gy < climateResY; gy++) {
       for (let gx = 0; gx < climateResX; gx++) {
@@ -543,7 +488,7 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
         for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
           const nx = wrapValue((gx + dx), climateResX)
           const ny = wrapValue((gy + dy), climateResY)
-          const v = field[ny * climateResX + nx] * RIPARIAN_DECAY
+          const v = field[ny * climateResX + nx] * SURFACE_TUNING.riparianDecay
           if (v > next[gi]) next[gi] = v
         }
       }
@@ -553,7 +498,7 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
   const precipEff = precip.slice()
   for (let i = 0; i < precipEff.length; i++) {
     if (precipEff[i] === OCEAN_PRECIP) continue
-    precipEff[i] = precipEff[i] + field[i] * MAX_RIPARIAN_MM
+    precipEff[i] = precipEff[i] + field[i] * SURFACE_TUNING.maxRiparianMm
   }
   // The moisture bleed above stays on the climate grid even though the OUTPUT is
   // full-res: it is a regional wetting, and bleeding it at world resolution

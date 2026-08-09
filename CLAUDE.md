@@ -77,6 +77,15 @@ only where a behaviour check exists. Two near-identical samplers in this repo
 differed in cell-centre convention and in key precision; merging either would
 have been a silent bug.
 
+**Never trade a durable property for writing convenience**, and treat every alias
+as that trade until proven otherwise. Destructuring a params object back into
+local `SCREAMING_CASE` names keeps a diff small, and leaves two names per
+constant plus a second place to edit when one is added. Importing it `as TUNE`
+shortens lines, and hides sixty-odd usages from a grep for the name it actually
+has — which breaks the rule directly above. Both were written here, both were
+removed within the hour. The test is whether the shortcut still pays a week
+later, when the diff is history and only the code is left.
+
 **Split a module on a trigger**, not by default — when a file holds concerns that
 change for different reasons, or a function outgrows a screen. A module boundary
 fixes an abstraction before the model is proven, which has a real cost:

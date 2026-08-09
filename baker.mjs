@@ -9888,7 +9888,24 @@ var WORLD_LAYERS = [
   { name: "landMask", dtype: "u8", scale: 1, offset: 0, unit: "", landOnly: false },
   { name: "temperature", dtype: "u8", scale: 90 / 255, offset: -35, unit: "\xB0C", landOnly: false },
   { name: "precipitation", dtype: "u16", scale: 8e3 / 65535, offset: 0, unit: "mm/yr", landOnly: true },
-  { name: "biome", dtype: "u8", scale: 1, offset: 0, unit: "biomeId", landOnly: false },
+  // The same field plus the riparian bonus — rivers and lakes moistening their
+  // surroundings (see hydrology.computeRiparianBiomes). Stored beside the
+  // climate's own precipitation rather than replacing it, because they answer
+  // different questions: `precipitation` is what falls, this is what the ground
+  // effectively gets, and only the second one classifies biomes.
+  //
+  // It is here so that BIOMES CAN BE RECLASSIFIED WITHOUT A DRAINAGE NETWORK.
+  // The worldmap re-derives biomes on its amplified terrain; deriving the
+  // riparian effect there would mean routing and accumulating flow over an
+  // 8-million-cell raster on every load, to recover a field that is regional
+  // anyway. 64 KB instead.
+  { name: "precipitationEffective", dtype: "u16", scale: 8e3 / 65535, offset: 0, unit: "mm/yr", landOnly: true },
+  // Full-res, unlike its climate neighbours: the classification is pointwise and
+  // reads elevation, which exists at world resolution (see climate/biomes.ts's
+  // computeBiomesFine). A 62 km biome cell could not say where a treeline is —
+  // and a game whose unit of place is a ~1.5 km hex asks exactly that. 2 MB raw,
+  // and it is a mostly-flat id field, so DEFLATE takes most of it back.
+  { name: "biome", dtype: "u8", scale: 1, offset: 0, unit: "biomeId", landOnly: false, fullRes: true },
   { name: "seasonalAmplitude", dtype: "u8", scale: 60 / 255, offset: 0, unit: "\xB0C", landOnly: true },
   { name: "monsoonIndex", dtype: "u8", scale: 1 / 255, offset: 0, unit: "", landOnly: true },
   // Lake depth in elevation units. The range was 20 — off by nearly two orders
@@ -9898,7 +9915,16 @@ var WORLD_LAYERS = [
   // every lake on the map into three u8 steps. 0.333 (3000 m) keeps generous
   // headroom over the measured maximum at ~12 m per step. The encoding is
   // self-describing via the manifest, so this changes precision, not format.
-  { name: "lakeDepth", dtype: "u8", scale: LAKE_DEPTH_RANGE / 255, offset: 0, unit: "depth", landOnly: true },
+  //
+  // Full-res, and this one is not about precision but about EXTENT. It is
+  // computed at 2048x1024 and used to be `downsampleMax`'d on the way out —
+  // which is the right reduction for "is there a lake in this region" and the
+  // wrong one for a layer that gets sampled per point: taking the maximum makes
+  // a single lake cell claim its whole 62 km cell, so every lake in the save was
+  // inflated to at least one coarse cell across. We were also throwing away
+  // resolution we already had, for a field that is zero almost everywhere and
+  // therefore nearly free once deflated.
+  { name: "lakeDepth", dtype: "u8", scale: LAKE_DEPTH_RANGE / 255, offset: 0, unit: "depth", landOnly: true, fullRes: true },
   ...ECOLOGY_LAYERS.map((name) => ({ name, dtype: "u8", scale: 3 / 255, offset: 0, unit: "", landOnly: true }))
 ];
 var maxCode = (dtype) => dtype === "u16" ? 65535 : 255;
@@ -10029,6 +10055,11 @@ async function readWorldInputs(archive) {
   };
   const climate = await readLayer(zip, manifest, "precipitation", true);
   const biome = await readLayer(zip, manifest, "biome", false);
+  const temperature = await readLayer(zip, manifest, "temperature", false);
+  const precipitationEffective = await readLayer(zip, manifest, "precipitationEffective", true);
+  const seasonalAmplitude = await readLayer(zip, manifest, "seasonalAmplitude", true);
+  const monsoonIndex = await readLayer(zip, manifest, "monsoonIndex", true);
+  const biomeInputs = temperature && precipitationEffective && seasonalAmplitude && monsoonIndex ? { temperature, precipitationEffective, seasonalAmplitude, monsoonIndex } : null;
   const worldId = deriveWorldId(seedText, {
     elevation: elevations,
     precipitation: climate?.data ?? null,
@@ -10036,7 +10067,7 @@ async function readWorldInputs(archive) {
     drainageRefresh: erosionControls.refresh
   });
   const worldUid = readRecipeValue(yamlText, "metadata.uid") ?? "";
-  return { elevations, width, height, seedText, detailSeed, erosionControls, climate, biome, worldId, worldUid };
+  return { elevations, width, height, seedText, detailSeed, erosionControls, climate, biome, biomeInputs, worldId, worldUid };
 }
 
 // src/worldgen/elevation/ridgedNoise.ts
@@ -10115,8 +10146,10 @@ var AMPLIFY_CONSTANTS = {
   cascadeFalloff: CASCADE_FALLOFF,
   minOctavePixels: MIN_OCTAVE_PIXELS,
   ridgeStrength: RIDGE_STRENGTH,
-  ridgeOctaveCount: RIDGE_OCTAVE_CELLS.length,
-  ridgeFinestCells: RIDGE_OCTAVE_CELLS[RIDGE_OCTAVE_CELLS.length - 1],
+  ridgeFieldMean: RIDGE_FIELD_MEAN,
+  reliefRadiusFraction: RELIEF_RADIUS_FRACTION,
+  ...Object.fromEntries(RIDGE_OCTAVE_CELLS.map((cells, i) => [`ridgeOctaveCells${i}`, cells])),
+  ...Object.fromEntries(RIDGE_OCTAVE_AMPLITUDES.map((amp, i) => [`ridgeOctaveAmp${i}`, amp])),
   upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
   plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
   talusAngleDeg: AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg
@@ -10763,6 +10796,10 @@ async function runErosionPass(rawElevations, width, height, params = DEFAULT_ERO
   return { elevations, routing, accumulation, preFillElevations: preFillElevations ?? elevations };
 }
 
+// src/worldgen/climate/temperature.ts
+var LAPSE_C_PER_KM = 6.5;
+var LAPSE_C_PER_ELEVATION = LAPSE_C_PER_KM * (ELEVATION_METERS / 1e3);
+
 // src/worldgen/climate/biomes.ts
 var Biome = {
   Ocean: 0,
@@ -11022,7 +11059,25 @@ async function runAmplification(request, onProgress = () => {
 var artifactDirectory = (key) => `worlds/${key.worldId}/amp/${key.pipelineVersion}/${key.stage}`;
 var artifactPath = (key, file) => `${artifactDirectory(key)}/${file}`;
 
+// src/map/mapSceneSettings.ts
+var MAP_WORLD_WIDTH = 20;
+var MAP_WORLD_HEIGHT = 10;
+var RELIEF_HEIGHT_SCALE = ELEVATION_METERS / (METERS_PER_CELL * MAP_WIDTH) * MAP_WORLD_WIDTH;
+var UNITS_PER_METER = MAP_WORLD_WIDTH / (METERS_PER_CELL * MAP_WIDTH);
+var NEAR_MIN_ALTITUDE = 2500 * UNITS_PER_METER;
+var HEX_WIDTH_M = 300;
+var WORLD_WIDTH_M = METERS_PER_CELL * MAP_WIDTH;
+var WORLD_HEIGHT_M = METERS_PER_CELL * MAP_HEIGHT;
+var HEX_COLUMNS = Math.round(WORLD_WIDTH_M / HEX_WIDTH_M);
+var HEX_ROWS = 2 * Math.round(WORLD_HEIGHT_M / (HEX_WIDTH_M * (Math.sqrt(3) / 2)) / 2);
+var HEX_COL_SPACING = MAP_WORLD_WIDTH / HEX_COLUMNS;
+var HEX_ROW_SPACING = MAP_WORLD_HEIGHT / HEX_ROWS;
+var AMPLIFY_EROSION_ROUNDS = 2;
+
 // src/storage/amplificationArtifact.ts
+function amplificationPipelineVersion(rounds = AMPLIFY_EROSION_ROUNDS) {
+  return derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds });
+}
 var ELEVATION_SPEC = {
   name: "elevation",
   dtype: "u16",
@@ -11060,21 +11115,6 @@ async function writeAmplificationArtifact(store, key, artifact, bakeMs, riverDen
   }
   return wrote;
 }
-
-// src/map/mapSceneSettings.ts
-var MAP_WORLD_WIDTH = 20;
-var MAP_WORLD_HEIGHT = 10;
-var RELIEF_HEIGHT_SCALE = ELEVATION_METERS / (METERS_PER_CELL * MAP_WIDTH) * MAP_WORLD_WIDTH;
-var UNITS_PER_METER = MAP_WORLD_WIDTH / (METERS_PER_CELL * MAP_WIDTH);
-var NEAR_MIN_ALTITUDE = 2500 * UNITS_PER_METER;
-var HEX_WIDTH_M = 300;
-var WORLD_WIDTH_M = METERS_PER_CELL * MAP_WIDTH;
-var WORLD_HEIGHT_M = METERS_PER_CELL * MAP_HEIGHT;
-var HEX_COLUMNS = Math.round(WORLD_WIDTH_M / HEX_WIDTH_M);
-var HEX_ROWS = 2 * Math.round(WORLD_HEIGHT_M / (HEX_WIDTH_M * (Math.sqrt(3) / 2)) / 2);
-var HEX_COL_SPACING = MAP_WORLD_WIDTH / HEX_COLUMNS;
-var HEX_ROW_SPACING = MAP_WORLD_HEIGHT / HEX_ROWS;
-var AMPLIFY_EROSION_ROUNDS = 2;
 
 // src/server/serverStatus.ts
 var OFFLINE = { state: "none", apiBase: "", authMode: "none", modules: [] };
@@ -11290,7 +11330,7 @@ function fail(message) {
 async function main() {
   const raw = process.argv[2];
   if (raw === "--version") {
-    process.stdout.write(`${JSON.stringify({ pipelineVersion: derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: AMPLIFY_EROSION_ROUNDS }) })}
+    process.stdout.write(`${JSON.stringify({ pipelineVersion: amplificationPipelineVersion() })}
 `);
     return;
   }
@@ -11330,7 +11370,7 @@ async function main() {
   const durationMs = Date.now() - started;
   const store = artifactStoreFor(job);
   if (!store) fail("neither artifactsDir nor artifactsUrl was given");
-  const pipelineVersion = derivePipelineVersion({ ...AMPLIFY_CONSTANTS, rounds: job.erosionRounds });
+  const pipelineVersion = amplificationPipelineVersion(job.erosionRounds);
   const key = { worldId: inputs.worldId, pipelineVersion, stage: String(job.stage) };
   const stored = await writeAmplificationArtifact(store, key, {
     elevation: result.elevation,

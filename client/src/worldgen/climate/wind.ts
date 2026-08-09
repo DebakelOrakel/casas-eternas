@@ -1,11 +1,5 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
-
-// Relative strengths — zonal (east/west) dominates the surface pattern, the
-// meridional (toward/away from the equator) component is weaker. Dimensionless;
-// the wind is used as a direction + relative-magnitude field (overlay arrows,
-// and later moisture/current advection), not in physical m/s.
-const ZONAL_STRENGTH = 1.0
-const MERIDIONAL_STRENGTH = 0.4
+import { CLIMATE_TUNING } from './climateTuneParams'
 
 // Prevailing surface wind as the prescribed three-cell pattern per hemisphere
 // (Hadley / Ferrel / Polar): trade EASTERLIES 0–30°, mid-latitude WESTERLIES
@@ -41,9 +35,9 @@ export function computeWind(equatorOffset = 0): Float32Array {
       local = (phi - 2 / 3) / (1 / 3)
     }
     const taper = Math.sin(Math.PI * local) // 0 at the cell edges, 1 at its center
-    const u = uSign * ZONAL_STRENGTH * taper
+    const u = uSign * CLIMATE_TUNING.windZonalStrength * taper
     // equatorward → v = −hemi·|v|; poleward → v = +hemi·|v|
-    const v = (poleward ? hemi : -hemi) * MERIDIONAL_STRENGTH * taper
+    const v = (poleward ? hemi : -hemi) * CLIMATE_TUNING.windMeridionalStrength * taper
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const idx = (gy * CLIMATE_RES_X + gx) * 2
       wind[idx] = u
