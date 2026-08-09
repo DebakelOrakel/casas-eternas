@@ -1,7 +1,7 @@
 ---
 summary: How the server establishes who is asking. Three modes stay — but `token` becomes `password`, because the axis that matters is WHERE the users live, not what the header looks like. Credentials are an htpasswd file mounted from a Secret; logging in exchanges them for a JWT the server issues itself; OIDC later is a second login method feeding the same token, not a second token. Four paths stay public so a logged-out client can find out where to log in. Revocation is decided (short TTL plus refresh, revoked by a per-user stamp) but not yet built. The user file lives in the writable data directory rather than the Secret, because the planned admin screen has to be able to add users.
 date: 2026-08-09
-status: decided, sequenced in seven steps. STEPS 1–2 BUILT 2026-08-09 — the mode renamed with a validating `--auth-mode`, and `internal/auth` verifying passwords against an htpasswd file. Nothing is wired to HTTP yet
+status: decided, sequenced in seven steps. STEPS 1–3 BUILT 2026-08-09 — the mode renamed with a validating `--auth-mode`, htpasswd verification, and token issue/verify with the method pinned. Nothing is wired to HTTP yet
 ---
 
 # Server authentication
@@ -290,11 +290,26 @@ account exist" oracle. Comparing against a fixed valid hash when the user is
 absent removes the signal for free. There is a test that MEASURES it rather than
 asserting it in a comment: a ratio, so it means the same on any machine.
 
-**3. The token, likewise standalone.** Issue and verify with the algorithm pinned
-and the header's `alg` never consulted. Tests must include the two attacks by
-name: a token with `alg: none`, and one signed with a different algorithm than
-the verifier expects. A test suite for a JWT wrapper that only tests the happy
-path is testing the library, not the wrapper.
+**3. The token, likewise standalone. BUILT 2026-08-09.** Issue and verify in one
+object — an issuer and a verifier that could be configured apart is a bug with no
+symptom until the day nothing can log in. Pinned method, required expiry, checked
+issuer and audience.
+
+**The audiences earn themselves immediately.** A bake token is
+`bake:<artifactKey>` and a session is `session`, so a job token — which travels
+to another pod and sits in a Job spec, far more exposed than a browser's — cannot
+be replayed as a login, and cannot be used against a different artifact key
+either.
+
+**On the two attacks, and what measuring them changed.** Both are in the tests.
+Then the pin was REMOVED to see which test noticed, and only one did: the
+algorithm-confusion case reported `an HS512 token was accepted as "ada"`. The
+`alg: none` case stayed green — golang-jwt refuses that unless the keyfunc hands
+back its `UnsafeAllowNoneSignatureType` sentinel, and ours hands back an HMAC
+key, so the refusal was never the pin's doing. The test is worth keeping (it pins
+that we never opt in, and that the library keeps requiring it) but its comment
+now says what it actually guards. A green test proves nothing until you know what
+turns it red.
 
 **4. `POST /v1/session`, and `identity.Caller` learns to verify.** After this the
 server is usable with `curl -u`, before any UI exists. `Caller` verifies the token
