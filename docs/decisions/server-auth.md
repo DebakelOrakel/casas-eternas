@@ -1,7 +1,7 @@
 ---
 summary: How the server establishes who is asking. Three modes stay — but `token` becomes `password`, because the axis that matters is WHERE the users live, not what the header looks like. Credentials are an htpasswd file mounted from a Secret; logging in exchanges them for a JWT the server issues itself; OIDC later is a second login method feeding the same token, not a second token. Four paths stay public so a logged-out client can find out where to log in. Revocation is decided (short TTL plus refresh, revoked by a per-user stamp) but not yet built. The user file lives in the writable data directory rather than the Secret, because the planned admin screen has to be able to add users.
 date: 2026-08-09
-status: decided, sequenced in seven steps. STEP 1 BUILT 2026-08-09 (the mode renamed, `--auth-mode` with validation, resolved once and handed to every module). Nothing authenticates yet
+status: decided, sequenced in seven steps. STEPS 1–2 BUILT 2026-08-09 — the mode renamed with a validating `--auth-mode`, and `internal/auth` verifying passwords against an htpasswd file. Nothing is wired to HTTP yet
 ---
 
 # Server authentication
@@ -262,11 +262,33 @@ verifier — a token the server cannot verify is worth exactly as much as none a
 all, never a fallback to a weaker identity. And the client's `/config.json`
 comment stopped saying `token`.
 
-**2. Credentials, as a package with no HTTP in it.** Read an htpasswd file,
-compare with bcrypt, re-read per attempt (no cache — see the Kubernetes section).
-Tests: a known hash accepts and rejects, a malformed line is skipped rather than
-crashing the file, an absent file is a configuration error rather than an empty
-user list that silently rejects everyone.
+**2. Credentials, as a package with no HTTP in it. BUILT 2026-08-09.**
+`internal/auth` holds the file's PATH, never its contents, and re-reads per
+attempt — Kubernetes rewrites a projected Secret when it changes and the admin
+screen will rewrite the file directly, so a cache would buy an invalidation bug
+in exchange for file I/O on an operation that happens once per login.
+
+Three decisions taken while building it, each against the obvious alternative:
+
+- **Strict parsing, not skip-what-you-cannot-read.** The plan said skip; that is
+  wrong. A skipped line is a user who silently cannot log in — and if it is the
+  only administrator, a lockout with no message. Errors name the file and line.
+  The price is that a HALF-WRITTEN file rejects everyone, which is why the admin
+  screen must write to a temporary file and rename over the target. Kubernetes
+  already does exactly that for projected Secrets.
+- **bcrypt only.** htpasswd also writes MD5-crypt (`$apr1$`, apache's own
+  default), SHA1 and plaintext. Accepting them would be the worse kindness: the
+  file works and its owner believes the passwords are protected. It refuses and
+  says `use htpasswd -B`.
+- **A duplicate user is an error**, because silently taking one of the two is how
+  a user somebody believes they removed goes on working.
+
+**One hardening the plan did not name.** An unknown user would be rejected in
+microseconds while a real one costs bcrypt's deliberate ~100 ms — three orders of
+magnitude, measurable by anyone, which turns the login endpoint into a "does this
+account exist" oracle. Comparing against a fixed valid hash when the user is
+absent removes the signal for free. There is a test that MEASURES it rather than
+asserting it in a comment: a ratio, so it means the same on any machine.
 
 **3. The token, likewise standalone.** Issue and verify with the algorithm pinned
 and the header's `alg` never consulted. Tests must include the two attacks by
