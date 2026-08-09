@@ -24,6 +24,8 @@
   "common.server.local.help": "Welten liegen auf diesem Rechner.",
   "common.server.remote.label": "Geteilter Server",
   "common.server.remote.help": "Welten liegen auf einem Server, den auch andere erreichen.",
+  "common.server.loggedOut.label": "Nicht angemeldet",
+  "common.server.loggedOut.help": "Dieser Server verlangt eine Anmeldung. Bis dahin bleiben Welten in diesem Browser — zum Anmelden klicken.",
   "common.server.busy.label": "Übertragung…",
   "common.notify.worldStored": "Welt auf dem Server gespeichert.",
   "common.notify.worldConflict": "Auf dem Server liegt eine neuere Fassung dieser Welt. Es wurde nichts überschrieben.",
@@ -56,5 +58,14 @@
   "common.notify.bakeFailed": "Der Bake ist fehlgeschlagen. {reason}",
   "common.notify.bakeMismatch": "Der Server hat mit Build {serverVersion} gebacken, dieser Client liest {clientVersion}. Das Ergebnis existiert, ist von hier aus aber nicht auffindbar.",
   "common.notify.bakeUnfetchable": "{level} wurde auf dem Server gebacken, konnte aber nicht geholt werden.",
-  "common.notify.bakeExists": "{level} ist für diese Welt bereits gebacken."
+  "common.notify.bakeExists": "{level} ist für diese Welt bereits gebacken.",
+  "common.panel.signIn.title": "Anmelden",
+  "common.panel.signIn.user": "Benutzer",
+  "common.panel.signIn.password": "Passwort",
+  "common.panel.signIn.action.submit": "Anmelden",
+  "common.panel.signIn.action.signOut": "Abmelden",
+  "common.panel.signIn.signedInAs": "Angemeldet als {user}",
+  "common.panel.signIn.failed": "Benutzer oder Passwort stimmt nicht.",
+  "common.panel.signIn.unreachable": "Der Server hat nicht geantwortet.",
+  "common.notify.signedOut": "Abgemeldet — der Server nimmt diese Sitzung nicht mehr an."
 }

@@ -1,7 +1,7 @@
 ---
 summary: How the server establishes who is asking. Three modes stay — but `token` becomes `password`, because the axis that matters is WHERE the users live, not what the header looks like. Credentials are an htpasswd file mounted from a Secret; logging in exchanges them for a JWT the server issues itself; OIDC later is a second login method feeding the same token, not a second token. Four paths stay public so a logged-out client can find out where to log in. Revocation is decided (short TTL plus refresh, revoked by a per-user stamp) but not yet built. The user file lives in the writable data directory rather than the Secret, because the planned admin screen has to be able to add users.
 date: 2026-08-09
-status: decided, sequenced in seven steps. STEPS 1–6 BUILT 2026-08-09 — the server authenticates and enforces, and says where to log in. What is left is step 7: the client's form and its logged-out state
+status: decided, sequenced in seven steps. ALL SEVEN BUILT 2026-08-09 — the server authenticates and enforces, the client signs in and behaves like a serverless one when it has not. Refresh (step 8) remains unscheduled
 ---
 
 # Server authentication
@@ -404,9 +404,40 @@ gate's exempt list in step 5, and it keeps two modules mountable apart.
 `ServerStatus` on the client side gains `loginPath` beside `authMode`. Still no
 form: the client can now say *that* it would need to log in, and *where*.
 
-**7. The client's login form**, and a fifth state for the server indicator
-("logged out" as distinct from "unreachable" — the whole reason `capabilities`
-stays public). Needs new i18n keys, to be proposed before they are added.
+**7. The client's sign-in. BUILT 2026-08-09.**
+
+**One place attaches the token, not twelve.** `server/session.ts` holds it and
+exposes `authFetch`, which every server client now goes through. The point is the
+401: a token expires mid-session, or the server restarts with a fresh signing
+key, and the next call is the first anyone learns of it. One wrapper turns that
+into a state change every listener sees, instead of twelve call sites each
+inventing a way to report a failure.
+
+**The artifact store's token became a function.** It had an unused
+`authToken?: string` option, captured when the store was built — the wrong shape
+for a value that changes at sign-in and at expiry. It is `authHeaders?: () =>
+Record<string, string>` now, asked at call time, and passed in from the
+composition root for the same reason `resolveBase` is: a byte store has no
+business knowing how this application authenticates. A bake Job's fixed,
+key-scoped token satisfies it by returning the same thing every time.
+
+**Signed out is a state, and the fallback was already there.** `canCommissionBakes`
+now answers no without a session, which is all it took: `bakeFromArchive` already
+falls through to `bakeStageInBrowser` when the server cannot be used. 8K still
+cannot, and now says WHICH of the two problems it is — "needs a server" would
+send someone to check a deployment that is fine.
+
+**localStorage, stated as a trade.** The token is readable by any script on the
+origin, which is true of anything a single-page app can send on its own requests;
+the alternative that is not is an HttpOnly cookie, ruled out because the CLI and
+the bake job need the same door. What it buys is the thing the long lifetime is
+for: closing the tab is not signing out.
+
+**The window never appears uninvited.** Not at startup, never over the map. It
+opens from the indicator's badge and nowhere else, and it shows who is signed in
+when there is a session, because both questions arrive from the same click. The
+password field is cleared on every render — a password left in a detached form is
+one a screenshot still has.
 
 Refresh (the two-token split and the per-user stamp) is a step 8 that is not
 scheduled: `--auth-token-ttl` carries the session length until it exists.

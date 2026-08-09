@@ -89,5 +89,6 @@
   "worldgen.panel.erosion.bake4k.help": "Recompute this world's terrain at 4096×2048 — finer valleys and a denser river network. Takes a few minutes. Runs on the server when this world is stored there, otherwise in this browser.",
   "worldgen.panel.erosion.bake8k.label": "8K",
   "worldgen.panel.erosion.bake8k.help": "The same at 8192×4096. Too large for a browser to compute, so it needs a server — and this world must be saved there first.",
-  "worldgen.panel.erosion.bake.needsServer": "Needs a server that can bake."
+  "worldgen.panel.erosion.bake.needsServer": "Needs a server that can bake.",
+  "worldgen.panel.erosion.bake.needsSignIn": "8K needs the server — sign in first."
 }

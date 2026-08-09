@@ -1,0 +1,44 @@
+/* The sign-in window's contents. The frame, backdrop and close button come from
+   the shared panel (ui/panel), so only the form is styled here. */
+
+.signin-form,
+.signin-current {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 16rem;
+}
+
+.signin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.signin-field input {
+  font: inherit;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid rgba(26, 26, 26, 0.3);
+  border-radius: 4px;
+  background: #fff;
+  color: #1a1a1a;
+}
+
+.signin-field input:focus-visible {
+  outline: 2px solid rgba(26, 26, 26, 0.6);
+  outline-offset: 1px;
+}
+
+/* role="alert", so it is announced when it appears; the colour is the same
+   red the rest of the interface uses for a refusal rather than a new one. */
+.signin-error {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #a11;
+}
+
+.signin-current p {
+  margin: 0;
+  font-size: 0.85rem;
+}

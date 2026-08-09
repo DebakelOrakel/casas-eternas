@@ -2,9 +2,12 @@
  *
  * Sized and spaced to sit in the same row as the file buttons (chrome.css's
  * .file-button is 32px) so the top-left corner reads as one strip rather than
- * as a badge parked beside one. It is NOT a button: no hover lift, no pointer
- * cursor — nothing here is clickable, and pretending otherwise would invite a
- * click that does nothing. */
+ * as a badge parked beside one.
+ *
+ * It is a button element, but usually a DISABLED one: it invites a click only
+ * when a sign-in is missing, which is the single case where clicking does
+ * something. The rest of the time it reports, and a pointer cursor over a
+ * readout would promise an action that is not there. */
 .server-indicator {
   width: 32px;
   height: 32px;
@@ -12,13 +15,40 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+.server-indicator:disabled {
+  cursor: default;
+}
+
+.server-indicator:not(:disabled) {
+  cursor: pointer;
+}
+
+/* The missing-sign-in badge, in the same corner and at the same 16px as the save
+   button's — one grammar for "something is required of you", not two. */
+.server-indicator__badge {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 16px;
+  height: 16px;
+  opacity: 1;
+}
+
+.server-indicator__badge[hidden] {
+  display: none;
 }
 
 .server-indicator[hidden] {
   display: none;
 }
 
-.server-indicator img {
+.server-indicator > img:not(.server-indicator__badge) {
   width: 100%;
   height: 100%;
   object-fit: contain;

@@ -55,16 +55,22 @@ export interface HttpArtifactStoreOptions {
   // happens. A store that has to be told its base can also be pointed at a test
   // server, or at none.
   resolveBase: () => Promise<string | null>
-  // Bearer token, for callers that have one. The browser has none today; a
-  // bake Job will be handed one scoped to the single artifact key it may write
-  // (docs/decisions/distributed-bake.md).
-  authToken?: string
+  // The Authorization header to send, asked for at CALL time.
+  //
+  // A function rather than a token, because a token changes: the browser's
+  // arrives at sign-in and dies at expiry, and a value captured when the store
+  // was built would go on sending a dead one. A bake Job, whose token is fixed
+  // and scoped to the single artifact key it may write, simply returns the same
+  // thing every time (docs/decisions/distributed-bake.md).
+  //
+  // Passed in for the same reason resolveBase is: a byte store has no business
+  // knowing how this application authenticates.
+  authHeaders?: () => Record<string, string>
 }
 
 export function createHttpArtifactStore(options: HttpArtifactStoreOptions): ArtifactStore {
   const resolveBase = options.resolveBase
-  const authHeaders = (): Record<string, string> =>
-    options.authToken ? { Authorization: `Bearer ${options.authToken}` } : {}
+  const authHeaders = (): Record<string, string> => options.authHeaders?.() ?? {}
 
   const url = async (path: string): Promise<string | null> => {
     const base = await resolveBase()

@@ -1,4 +1,5 @@
 import { getServerStatus } from './serverStatus'
+import { authFetch } from './session'
 
 // Talking to the server's world store.
 //
@@ -78,7 +79,7 @@ export async function listWorlds(): Promise<WorldSummary[] | null> {
   const base = await apiBase()
   if (!base) return null
   try {
-    const response = await fetch(`${base}/worlds`, { cache: 'no-store' })
+    const response = await authFetch(`${base}/worlds`, { cache: 'no-store' })
     if (!response.ok) return null
     return (await response.json()) as WorldSummary[]
   } catch {
@@ -90,7 +91,7 @@ export async function fetchWorld(uid: string): Promise<Blob | null> {
   const base = await apiBase()
   if (!base) return null
   try {
-    const response = await fetch(`${base}/worlds/${encodeURIComponent(uid)}`, { cache: 'no-store' })
+    const response = await authFetch(`${base}/worlds/${encodeURIComponent(uid)}`, { cache: 'no-store' })
     if (!response.ok) return null
     // The ETag is the server's revision: learning it here means a world opened
     // from the server can be saved straight back without a 409 detour.
@@ -116,7 +117,7 @@ export async function uploadWorld(uid: string, archive: Blob): Promise<UploadOut
 
   let response: Response
   try {
-    response = await fetch(`${base}/worlds/${encodeURIComponent(uid)}`, { method: 'PUT', headers, body: archive })
+    response = await authFetch(`${base}/worlds/${encodeURIComponent(uid)}`, { method: 'PUT', headers, body: archive })
   } catch {
     return { ok: false, reason: 'offline' }
   }

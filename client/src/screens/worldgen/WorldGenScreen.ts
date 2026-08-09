@@ -64,6 +64,7 @@ import type { WorldSpec } from '../../world/save/worldSpec'
 import type { InputParam } from '../../worldgen/core/inputParams'
 import './worldgen.css'
 import '../../ui/chrome/chrome.css'
+import { needsSignIn } from '../../server/session'
 
 // The ecology per-field abundance weights persisted in world.yaml (keys `w_<field>`).
 // The one grouping of ecology resources — used by the panel's abundance fold-out, by
@@ -608,7 +609,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // costing minutes to bake over there. Same centred window, un-localized
   // like the other debug affordances.
   // Where a world would go, shown on every screen (see ui/serverIndicator).
-  const serverIndicator = createServerIndicator()
+  const serverIndicator = createServerIndicator(root)
   root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
 
   const storagePanel = createStoragePanel(root)
@@ -3247,8 +3248,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // No server: only what a tab can survive. 8K is the ~2.6 GB that kills it,
     // and the button is disabled for exactly this reason — reaching here means
     // the world lost its server between the check and the click.
+    //
+    // Being signed out lands here too, and it is worth saying which of the two
+    // it is: "needs a server" sends someone to check a deployment that is fine.
     if (!AMPLIFY_BAKE_STAGES.includes(factor)) {
-      settle(t('worldgen.panel.erosion.bake.needsServer'), '/icons/warning.png', 10000)
+      const missing = await needsSignIn()
+      settle(t(missing ? 'worldgen.panel.erosion.bake.needsSignIn' : 'worldgen.panel.erosion.bake.needsServer'), '/icons/warning.png', 10000)
       return
     }
     try {
@@ -4089,6 +4094,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       stopSim()
       helpTooltip.dispose()
       storagePanel.dispose()
+      serverIndicator.dispose()
       savePanel.dispose()
       loadPanel.dispose()
       hoverTooltip?.dispose()

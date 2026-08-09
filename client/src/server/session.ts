@@ -1,0 +1,161 @@
+import { getServerStatus, refreshServerStatus } from './serverStatus'
+
+// The browser's half of a session: the token, where it is kept, and how the
+// client finds out it no longer has one.
+//
+// Being signed out is a STATE here, not an error. Everything local — generating,
+// the OPFS cache, saving a .zip — needs no server at all, so a client without a
+// session behaves like a client without a server rather than like a broken one.
+// See docs/decisions/server-auth.md, "The logged-out client".
+
+const STORAGE_KEY = 'casas-eternas.session'
+
+interface Session {
+  token: string
+  user: string
+}
+
+// localStorage rather than sessionStorage or memory, and it is a trade rather
+// than an oversight: the token is readable by any script on this origin, which
+// is true of anything a single-page app can send on its own requests — the
+// alternative that is NOT is an HttpOnly cookie, and that was ruled out because
+// the CLI and the bake job need the same door as the browser. What localStorage
+// buys is the thing the long token lifetime is for: closing the tab is not
+// signing out.
+function read(): Session | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<Session>
+    if (!parsed.token || !parsed.user) return null
+    return { token: parsed.token, user: parsed.user }
+  } catch {
+    // A storage that throws (private mode, disabled, or a value someone else
+    // wrote) means no session, never a crash on the way to the first frame.
+    return null
+  }
+}
+
+function write(session: Session | null): void {
+  try {
+    if (session) localStorage.setItem(STORAGE_KEY, JSON.stringify(session))
+    else localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    // Not being able to remember it is survivable; not being able to use it
+    // would not be, so the in-memory copy below stays authoritative for this tab.
+  }
+}
+
+let current: Session | null = read()
+
+const listeners = new Set<() => void>()
+
+// Subscribe to sign-in and sign-out. The indicator and every screen that shows
+// server state redraw from this rather than polling.
+export function onSessionChange(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+function announce(): void {
+  for (const listener of listeners) listener()
+}
+
+/** The signed-in user, or '' when there is no session. */
+export function signedInUser(): string {
+  return current?.user ?? ''
+}
+
+/** Whether this client holds a session token. Says nothing about its validity. */
+export function hasSession(): boolean {
+  return current !== null
+}
+
+/**
+ * The Authorization header, or nothing.
+ *
+ * A FUNCTION rather than a value handed out once: the token changes at sign-in,
+ * at sign-out and when the server stops accepting it, and anything that captured
+ * a string would go on sending a dead one.
+ */
+export function authHeaders(): Record<string, string> {
+  return current ? { Authorization: `Bearer ${current.token}` } : {}
+}
+
+/**
+ * Whether authentication is needed but absent.
+ *
+ * The question every server-backed action actually has — a 4K bake asks it to
+ * decide whether to fall back to this browser, and the indicator asks it to
+ * decide whether to show its badge.
+ */
+export async function needsSignIn(): Promise<boolean> {
+  const status = await getServerStatus()
+  return status.loginPath !== '' && !hasSession()
+}
+
+export type SignInOutcome = 'ok' | 'rejected' | 'unreachable'
+
+/**
+ * Exchange a user and password for a token.
+ *
+ * Basic auth, because that is the one door this server opens for credentials and
+ * it is the same one `curl -u` uses. The password is never stored — only what
+ * comes back is.
+ */
+export async function signIn(user: string, password: string): Promise<SignInOutcome> {
+  const status = await getServerStatus()
+  if (!status.loginPath) return 'unreachable'
+  try {
+    const response = await fetch(status.loginPath, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { Authorization: `Basic ${btoa(`${user}:${password}`)}` },
+    })
+    if (response.status === 401) return 'rejected'
+    if (!response.ok) return 'unreachable'
+    const body = (await response.json()) as { token?: string; user?: string }
+    if (!body.token) return 'unreachable'
+    current = { token: body.token, user: body.user ?? user }
+    write(current)
+    announce()
+    // The status carries authMode and loginPath, neither of which changed — but
+    // a client that could not reach /v1/capabilities while signed out may reach
+    // it now, so the cached verdict is worth re-taking.
+    void refreshServerStatus()
+    return 'ok'
+  } catch {
+    return 'unreachable'
+  }
+}
+
+/**
+ * Forget the session.
+ *
+ * Purely local, and that is honest rather than lazy: the token is stateless, so
+ * there is nothing on the server to delete — see the revocation section of the
+ * decision. What ends the token is its own expiry.
+ */
+export function signOut(): void {
+  if (!current) return
+  current = null
+  write(null)
+  announce()
+}
+
+/**
+ * fetch, with this session attached, that notices when the session has died.
+ *
+ * The 401 is the point. A token expires mid-session, or the server restarts with
+ * a fresh signing key, and the next call is the first anyone learns of it. One
+ * wrapper turns that into a state change every listener sees, instead of twelve
+ * call sites each inventing a way to report a failure.
+ */
+export async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const headers = { ...(init.headers as Record<string, string> | undefined), ...authHeaders() }
+  const response = await fetch(input, { ...init, headers })
+  if (response.status === 401 && current) {
+    signOut()
+  }
+  return response
+}

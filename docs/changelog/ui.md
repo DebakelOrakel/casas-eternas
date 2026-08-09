@@ -4,6 +4,8 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-08-09
+- **new** Server: a badge on the server indicator when a sign-in is missing; clicking it opens the sign-in window, which also says who is signed in. `common.panel.signIn`
+- **changed** Storage: with no sign-in the client works exactly as it does with no server — worlds stay local and a 4K bake runs in this browser instead of failing. `common.server.loggedOut`
 - **new** Save: a warning badge on the save button while the world differs from the last one saved, loaded or generated; its hover card says so. `common.action.saveWorld.unsaved`
 - **fixed** Panels: a step that cannot run yet releases the controls and names what it is waiting for, instead of leaving the spinner turning. `worldgen.panel`
 - **changed** Climate: retuning a climate slider stales the rivers and ecology derived from the old one, instead of leaving them on the map. `worldgen.panel.climate`

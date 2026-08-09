@@ -1,15 +1,26 @@
 import { getServerStatus, peekServerStatus, refreshServerStatus } from '../../server/serverStatus'
 import type { ServerState } from '../../server/serverStatus'
 import { t } from '../../i18n/i18n'
+import { needsSignIn, onSessionChange } from '../../server/session'
+import { createSignInPanel } from '../signInPanel/SignInPanel'
 import type { TKey } from '../../i18n/i18n'
 import './serverIndicator.css'
 
 // Where a world would go, shown on every screen.
 //
-// A status readout rather than a control: it never opens anything, because the
-// place to ACT on the server is the save/load affordance next to it. It exists
-// because that affordance changes shape depending on this state, and a shape
-// change with no visible cause is confusing — the icon is the cause.
+// It reports two things that look like one and are not. The ICON says where a
+// world would end up — nowhere, an unreachable server, this machine, a shared
+// one. The BADGE says that a sign-in is missing. Those are orthogonal: one can
+// be signed out of a local server or a shared one, so folding "signed out" in
+// as a fifth icon would multiplex two independent facts and lose the first.
+// Same reasoning, and the same visual grammar, as the save button's badge.
+//
+// It USED to be a status readout that never opened anything, on the grounds
+// that the place to act on the server is the save/load affordance next to it.
+// That stopped being true on 2026-08-09: when the indicator is the way back IN,
+// it is a control, and clicking it opens the sign-in. It still explains rather
+// than demands — nothing is shown at startup and nothing covers the map, because
+// everything local works with no server and no session at all.
 //
 // Deliberately not on the title screen only: the state matters at the moment
 // of saving, an hour into a session, not at launch.
@@ -28,6 +39,15 @@ const ICONS: Record<ServerState, string> = {
 // spinner elsewhere: a 30 MB upload is exactly the moment this corner of the
 // screen is what the eye is on.
 const BUSY_ICON = '/icons/server_load.png'
+
+// The badge for "a sign-in is missing".
+//
+// The same glyph the `none` state uses as its main icon, and that is deliberate
+// rather than a shortage: it means "not available" in both places, and the SLOT
+// says what it is about — as an icon, no server at all; as a badge, there is one
+// but not for you. The one nonsensical pairing cannot occur, since no server
+// means nothing to sign in to and therefore no badge.
+const SIGN_IN_BADGE = '/icons/no.png'
 
 // The hover card's key PREFIX — HelpTooltip appends .label/.help itself, so the
 // state's visible name comes from the same catalog entry as its explanation.
@@ -57,17 +77,31 @@ export interface ServerIndicator {
   // Re-probes and repaints — for after a request failed against a server that
   // was believed to be up.
   refresh(): Promise<void>
+  // Releases the session subscription and the sign-in window.
+  dispose(): void
 }
 
-export function createServerIndicator(): ServerIndicator {
-  const element = document.createElement('span')
+export function createServerIndicator(host: HTMLElement): ServerIndicator {
+  const element = document.createElement('button')
+  element.type = 'button'
   element.className = 'server-indicator'
   const image = document.createElement('img')
   image.alt = ''
-  element.appendChild(image)
+  const badge = document.createElement('img')
+  badge.alt = ''
+  badge.className = 'server-indicator__badge'
+  badge.src = SIGN_IN_BADGE
+  badge.hidden = true
+  element.append(image, badge)
+
+  // Built here rather than in each screen: three screens show this indicator,
+  // and a window they would each have to construct is a window three of them
+  // could construct differently.
+  const panel = createSignInPanel(host, () => void refresh())
 
   let state: ServerState | undefined
   let transfers = 0
+  let signInMissing = false
 
   const paint = (): void => {
     // Exactly ONE of the two, never both: HelpTooltip is documented as
@@ -91,9 +125,24 @@ export function createServerIndicator(): ServerIndicator {
     element.hidden = false
     image.src = ICONS[state]
     element.removeAttribute('title')
+    badge.hidden = !signInMissing
+    // Only a missing sign-in makes this clickable. Under `none`, or with no
+    // server at all, there is nothing to open — and a window explaining that
+    // you cannot sign in here would be worse than an indicator that stays
+    // quiet.
+    element.disabled = !signInMissing
     // The hover card explains the consequence, which is the part that is not
-    // obvious from an icon: where worlds end up, and what happens on save.
-    element.setAttribute('data-help', HELP[state])
+    // obvious from an icon: where worlds end up, and what happens on save. When
+    // a sign-in is missing that IS the consequence, so the card says so instead.
+    element.setAttribute('data-help', signInMissing ? 'common.server.loggedOut' : HELP[state])
+  }
+
+  // Asked rather than derived from `state`, because the answer needs the config
+  // (is there anywhere to sign in) and the session (do we hold one), and only
+  // one of those changes when the server state does.
+  const refresh = async (): Promise<void> => {
+    signInMissing = await needsSignIn()
+    paint()
   }
 
   const adopt = (next: ServerState): void => {
@@ -101,10 +150,19 @@ export function createServerIndicator(): ServerIndicator {
     paint()
   }
 
+  element.addEventListener('click', () => {
+    if (signInMissing) panel.open()
+  })
+  // A session can end without anyone clicking anything: a token expires, or a
+  // request comes back 401. The badge follows that rather than waiting for the
+  // next probe.
+  const stopListening = onSessionChange(() => void refresh())
+
   paint()
   const known = peekServerStatus()
   if (known) adopt(known.state)
   else void getServerStatus().then((status) => adopt(status.state))
+  void refresh()
 
   return {
     element,
@@ -123,7 +181,12 @@ export function createServerIndicator(): ServerIndicator {
     },
     async refresh(): Promise<void> {
       const status = await refreshServerStatus()
+      signInMissing = await needsSignIn()
       adopt(status.state)
+    },
+    dispose(): void {
+      stopListening()
+      panel.dispose()
     },
   }
 }

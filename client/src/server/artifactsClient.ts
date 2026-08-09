@@ -1,4 +1,5 @@
 import { apiBase } from './worldClient'
+import { authFetch } from './session'
 
 // Inspecting and pruning the SERVER's artifact store.
 //
@@ -40,7 +41,7 @@ export async function listServerArtifacts(): Promise<ServerArtifacts | null> {
   const base = await apiBase()
   if (!base) return null
   try {
-    const response = await fetch(`${base}/artifacts`, { cache: 'no-store' })
+    const response = await authFetch(`${base}/artifacts`, { cache: 'no-store' })
     if (!response.ok) return null
     return (await response.json()) as ServerArtifacts
   } catch {
@@ -52,7 +53,7 @@ export async function removeServerArtifacts(worldId: string): Promise<boolean> {
   const base = await apiBase()
   if (!base) return false
   try {
-    const response = await fetch(`${base}/artifacts/${encodeURIComponent(worldId)}`, { method: 'DELETE' })
+    const response = await authFetch(`${base}/artifacts/${encodeURIComponent(worldId)}`, { method: 'DELETE' })
     return response.ok
   } catch {
     return false

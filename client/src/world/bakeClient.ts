@@ -1,6 +1,7 @@
 import { apiBase } from '../server/worldClient'
 import { getServerStatus } from '../server/serverStatus'
 import { amplifyPhaseFraction } from '../worldgen/surface/bakeInBrowser'
+import { authFetch, hasSession } from '../server/session'
 
 // Commissioning a bake on the server, and following it until it lands.
 //
@@ -105,7 +106,12 @@ const POLL_FAILURES_ALLOWED = 5
 export async function canCommissionBakes(): Promise<boolean> {
   const status = await getServerStatus()
   const reachable = status.state === 'local' || status.state === 'remote'
-  return reachable && status.modules.includes('bake')
+  // Signed out counts as CANNOT, deliberately. Ordering a bake without a session
+  // would collect a 401 and report a failure, when the honest answer is that
+  // this browser should do the work itself — which bakeFromArchive already does
+  // when told no. Being signed out is the same kind of fact as having no server.
+  const permitted = status.loginPath === '' || hasSession()
+  return reachable && permitted && status.modules.includes('bake')
 }
 
 export async function commissionBake(
@@ -118,7 +124,7 @@ export async function commissionBake(
 
   let response: Response
   try {
-    response = await fetch(`${base}/worlds/${encodeURIComponent(worldUid)}/bake`, {
+    response = await authFetch(`${base}/worlds/${encodeURIComponent(worldUid)}/bake`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       // erosionRounds is sent EXPLICITLY rather than left to the server's
@@ -182,7 +188,7 @@ export async function followBake(
 
     let response: Response
     try {
-      response = await fetch(`${base}/bakes/${encodeURIComponent(jobId)}`, { cache: 'no-store', signal })
+      response = await authFetch(`${base}/bakes/${encodeURIComponent(jobId)}`, { cache: 'no-store', signal })
     } catch {
       // Still out there working, most likely. Only a run of failures ends it.
       if (++failures > POLL_FAILURES_ALLOWED) {

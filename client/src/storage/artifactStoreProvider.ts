@@ -5,6 +5,7 @@ import { createTieredArtifactStore } from './TieredArtifactStore'
 import { getServerStatus } from '../server/serverStatus'
 import { apiBase } from '../server/worldClient'
 import type { ArtifactStore } from './ArtifactStore'
+import { authHeaders } from '../server/session'
 
 // One artifact store per page, resolved lazily and shared.
 //
@@ -40,7 +41,7 @@ export function getLocalArtifactStore(): Promise<ArtifactStore> {
 // ignorant of both.
 export function getArtifactStore(): Promise<ArtifactStore> {
   tieredPending ??= getLocalArtifactStore().then((local) =>
-    createTieredArtifactStore(local, createHttpArtifactStore({ resolveBase: apiBase }), {
+    createTieredArtifactStore(local, createHttpArtifactStore({ resolveBase: apiBase, authHeaders }), {
       // Asked per call rather than captured once. getServerStatus resolves a
       // single shared probe, so this is a promise lookup rather than a request
       // — but it still reflects a refresh after a failure, which a value

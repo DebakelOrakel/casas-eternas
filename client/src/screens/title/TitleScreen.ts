@@ -94,7 +94,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
 
   // Where a world would go, on every screen — including this one, so the state
   // is visible before any work is started, not only when saving.
-  const serverIndicator = createServerIndicator()
+  const serverIndicator = createServerIndicator(root)
   root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
 
   ctx.overlay.appendChild(root)
@@ -108,6 +108,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
     scene,
     dispose() {
       helpTooltip.dispose()
+      serverIndicator.dispose()
       scene.dispose()
     },
   }

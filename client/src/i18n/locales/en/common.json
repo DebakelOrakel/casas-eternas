@@ -24,6 +24,8 @@
   "common.server.local.help": "Worlds are stored on this machine.",
   "common.server.remote.label": "Shared server",
   "common.server.remote.help": "Worlds are stored on a server others can reach.",
+  "common.server.loggedOut.label": "Not signed in",
+  "common.server.loggedOut.help": "This server needs a sign-in. Until then worlds stay in this browser — click to sign in.",
   "common.server.busy.label": "Transferring…",
   "common.notify.worldStored": "World stored on the server.",
   "common.notify.worldConflict": "The server holds a newer version of this world. Nothing was overwritten.",
@@ -56,5 +58,14 @@
   "common.notify.bakeFailed": "The bake failed. {reason}",
   "common.notify.bakeMismatch": "The server baked with build {serverVersion}, this client reads {clientVersion}. The result exists but cannot be found from here.",
   "common.notify.bakeUnfetchable": "{level} was baked on the server but could not be fetched.",
-  "common.notify.bakeExists": "{level} is already baked for this world."
+  "common.notify.bakeExists": "{level} is already baked for this world.",
+  "common.panel.signIn.title": "Sign in",
+  "common.panel.signIn.user": "User",
+  "common.panel.signIn.password": "Password",
+  "common.panel.signIn.action.submit": "Sign in",
+  "common.panel.signIn.action.signOut": "Sign out",
+  "common.panel.signIn.signedInAs": "Signed in as {user}",
+  "common.panel.signIn.failed": "Wrong user or password.",
+  "common.panel.signIn.unreachable": "The server did not answer.",
+  "common.notify.signedOut": "Signed out — the server no longer accepts this session."
 }

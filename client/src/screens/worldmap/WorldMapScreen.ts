@@ -328,7 +328,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // clearing outright — with several worlds cached, "delete everything" is
   // rarely the operation actually wanted.
   // Where a world would go, shown on every screen (see ui/serverIndicator).
-  const serverIndicator = createServerIndicator()
+  const serverIndicator = createServerIndicator(root)
   root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
 
   const storagePanel = createStoragePanel(root)
@@ -1128,6 +1128,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       mapView?.dispose()
       helpTooltip.dispose()
       storagePanel.dispose()
+      serverIndicator.dispose()
       loadPanel.dispose()
       disposeCamera()
       root.remove()
