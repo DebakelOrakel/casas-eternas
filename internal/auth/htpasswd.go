@@ -19,15 +19,35 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// MinBcryptCost is the weakest work factor accepted, and RecommendedBcryptCost
+// is what the error tells people to use.
+//
+// The floor exists because `htpasswd -B` defaults to cost 5 — measured, not
+// assumed — while Go's own default is 10. Five is roughly thirty times cheaper
+// to attack, and accepting it silently would contradict the whole reason
+// non-bcrypt schemes are refused: nobody should believe they are protected when
+// they are not. Rejecting rather than warning was chosen deliberately on
+// 2026-08-09, while no files exist in the wild to lock anyone out of.
+const (
+	MinBcryptCost         = 10
+	RecommendedBcryptCost = 12
+)
+
 // A syntactically valid bcrypt hash of a password nobody has, compared against
 // when the named user does not exist.
 //
 // Without it, an unknown user is rejected in microseconds while a real one costs
-// bcrypt's deliberate ~100 ms — a difference anyone can measure, which turns the
-// login endpoint into a "does this account exist" oracle. Burning the same work
-// on a hash that cannot match costs nothing anyone notices and removes the
-// signal. The value is not a secret; only its cost matters.
-const absentUserHash = "$2a$10$9eNj1HBwwmWdl/WfY.zICugL2MIWLBVdV//hJgyKAYwgNAPOMDaKC"
+// bcrypt's deliberate ~100 ms — a thousandfold difference anyone can measure,
+// which turns the login endpoint into a "does this account exist" oracle.
+// Burning the same work on a hash that cannot match removes the signal. The
+// value is not a secret; only its cost matters.
+//
+// It is cost 12, at the recommended factor rather than the floor, so it is never
+// CHEAPER than a hash in the file. What remains is small and stated rather than
+// hidden: a file using a cost above 12 makes a real user slower than an absent
+// one again — a factor of two or four, against network jitter, rather than the
+// thousandfold gap this removes.
+const absentUserHash = "$2a$12$xOFKD.DvhC/zkYbVsgzXbeT3LFKQ9B2y23eWT3NVhMwbOW/MTpHa2"
 
 // Users verifies passwords against an htpasswd file.
 //
@@ -128,15 +148,24 @@ func load(path string) (map[string]string, error) {
 	return users, nil
 }
 
-// checkBcrypt rejects every scheme htpasswd can write except bcrypt.
+// checkBcrypt rejects every scheme htpasswd can write except bcrypt, and bcrypt
+// below MinBcryptCost.
 //
 // Apache's default is MD5-crypt (`$apr1$`), and it also emits SHA1 (`{SHA}`),
-// crypt and plaintext. Accepting them would be the worse kindness: the file
-// would work, and its owner would believe the passwords were protected. Refusing
-// says exactly what to do instead — regenerate with `htpasswd -B`.
+// crypt and plaintext. Accepting any of them would be the worse kindness: the
+// file would work, and its owner would believe the passwords were protected.
+//
+// The cost floor is the same argument one level down. `htpasswd -B` writes cost
+// 5 unless told otherwise, which looks identical to a strong hash and is not.
+// Both errors say what to type instead, because "wrong format" without a remedy
+// is just an obstacle.
 func checkBcrypt(hash string) error {
-	if _, err := bcrypt.Cost([]byte(hash)); err != nil {
-		return fmt.Errorf("not a bcrypt hash (use `htpasswd -B`): %w", err)
+	cost, err := bcrypt.Cost([]byte(hash))
+	if err != nil {
+		return fmt.Errorf("not a bcrypt hash (use `htpasswd -B -C %d`): %w", RecommendedBcryptCost, err)
+	}
+	if cost < MinBcryptCost {
+		return fmt.Errorf("bcrypt cost %d is below %d — `htpasswd -B` defaults to 5; regenerate with `htpasswd -B -C %d`", cost, MinBcryptCost, RecommendedBcryptCost)
 	}
 	return nil
 }

@@ -9867,10 +9867,410 @@ function sampleNearestWorld(field, resX, resY, x, y, worldWidth, worldHeight) {
   return field[gy * resX + gx];
 }
 
-// src/world/save/fieldSpec.ts
-var world = (name, unit, landOnly) => ({ name, grid: "world", unit, landOnly });
-var climate = (name, unit, landOnly) => ({ name, grid: "climate", unit, landOnly });
-var ECOLOGY_FIELD_NAMES = [
+// src/worldgen/climate/climateTuneParams.ts
+var lapseCPerKm = 6.5;
+var CLIMATE_TUNING = {
+  // --- from temperature.ts ---
+  // Real-ish units (°C), so the later Whittaker biome thresholds are directly
+  // usable. Tune by eye — these set the equator-to-pole span.
+  tempEquatorC: 30,
+  tempPoleC: -25,
+  // The environmental lapse rate — °C lost per unit of elevation. Now a derived
+  // quantity rather than a tuned one: the real atmosphere loses ~6.5 °C/km, and
+  // elevationScale says a full unit is ELEVATION_METERS, so this is simply the two
+  // multiplied. A 1681 m peak (the measured 90th percentile of land) comes out
+  // 10.9 °C cooler than its lowland, which is what 6.5 °C/km gives.
+  //
+  // This replaces a hand-tuned 35 paired with a LAND_LAPSE_REF = 0.35 offset, and
+  // getting rid of that offset is the point. It existed because the old land
+  // baseline of 0.35 was not physically a height at all — continental lowland was
+  // SUPPOSED to read as sea-level-warm, but the scale placed it at what the lapse
+  // rate had to treat as 3 km up, cooling every land cell on the planet by ~12 °C
+  // and dragging the whole climate too cold (a ~18 °C equator, tundra across the
+  // mid-latitudes, and a drier world via the suppressed evaporation). The offset
+  // was the correct local fix for a scale that meant two different things in its
+  // two halves. With lowland actually at 360 m, cooling can simply be measured
+  // from sea level like it is in reality, and the special case disappears.
+  lapseCPerKm,
+  // The same lapse in ELEVATION units, which is what every consumer actually
+  // multiplies by. Derived rather than restated so it follows both the rate and
+  // the metre anchor; biomes.ts reads it too.
+  lapseCPerElevation: lapseCPerKm * (ELEVATION_METERS / 1e3),
+  // --- from wind.ts ---
+  // Relative strengths — zonal (east/west) dominates the surface pattern, the
+  // meridional (toward/away from the equator) component is weaker. Dimensionless;
+  // the wind is used as a direction + relative-magnitude field (overlay arrows,
+  // and later moisture/current advection), not in physical m/s.
+  windZonalStrength: 1,
+  windMeridionalStrength: 0.4,
+  // --- from seasonality.ts ---
+  // Peak annual temperature range (°C, summer − winter) — reached by a
+  // continental interior at high latitude. The equator sits near 0 (sun always
+  // high), a coast/ocean stays low (thermal inertia). Tune by eye.
+  seasonMaxAmplitude: 42,
+  // Cells this many grid cells from the nearest ocean count as fully
+  // continental; nearer ones interpolate. A big continent's core sits deep
+  // enough to saturate.
+  seasonContinentalityScale: 45,
+  // Coastal land floor (continentality 0): even a coast swings a bit.
+  seasonCoastDamp: 0.3,
+  // --- from monsoon.ts ---
+  // How far (fraction of map height) the ITCZ belt migrates toward the summer hemisphere.
+  // Real seasonal swing is ~10-15° of latitude (bigger over monsoon land); 0.12 of the
+  // map's pole-to-pole span is in that range on this 2:1 torus.
+  monsoonItczSeasonalShift: 0.07,
+  // Strength of the monsoon surface wind — a component up the seasonal-temperature
+  // gradient (∇T points from cool sea toward hot summer land), added to the prescribed
+  // zonal wind. Tuned so it reshapes moisture advection near coasts without swamping the
+  // base three-cell circulation (base zonal strength ~1). See computeMonsoonWind.
+  monsoonWindStrength: 0.05,
+  // Wetness floor (mm/yr) added to the monsoon-index denominator so ARID cells don't read
+  // as monsoonal: a desert with 50 mm wet / 5 mm dry is dry, not seasonal, yet a raw
+  // (wet−dry)/(wet+dry) would call it 0.82. The floor damps the index where absolute
+  // precipitation is small, so a high index means genuinely wet-in-one-season-dry-in-the-
+  // other (a real monsoon), not just marginal noise. ~ a semi-arid annual total.
+  monsoonSeasonalityFloor: 500,
+  // --- from precipitation.ts ---
+  // Iterations of moisture transport, and how far (in grid cells, per unit wind)
+  // moisture advects each one. Needs enough to reach a steady state deep inland
+  // — the flow is diagonal (zonal + meridional), so the path in is longer than
+  // the straight-line distance; too few left continental interiors stuck at
+  // their transient (empty) starting value.
+  precipIters: 120,
+  precipAdvectStep: 2,
+  // Moisture is advected mostly ZONALLY (it penetrates inland from the nearest
+  // east/west coast). The meridional wind is damped for transport, because at
+  // full strength a backward streamline from a deep mid-latitude interior curves
+  // down into the neighbouring cell where the zonal wind REVERSES (Hadley vs
+  // Ferrel) — it then never traces back to an ocean, starving that cell to a
+  // hard zero. A gentle meridional tilt keeps streamlines within their own band.
+  precipAdvectMeridionalScale: 0.3,
+  // Fraction of airborne moisture that rains out per iteration on flat land, and
+  // the extra fraction per unit of upslope elevation along the wind (orographic
+  // lift). The orographic term also creates rain shadows: moisture rains out
+  // climbing the windward slope, so little is left for the lee side downwind.
+  precipBaseRainout: 0.03,
+  // Scaled by SLOPE_RECALIBRATION: land slopes halved when the continental
+  // interior stopped being a flat plateau, so the same terrain now produces half
+  // the measured upslope. Without this, orographic rain and its rain shadows both
+  // collapse toward the BASE_RAINOUT floor.
+  precipOrographicRate: 0.9 * SLOPE_RECALIBRATION,
+  // Land moisture recycling (evapotranspiration): the fraction of rained-out water that
+  // re-evaporates from soil/vegetation back into the airborne pool, feeding downwind rain.
+  // This is a MAJOR real process — ~a third to a half of continental precipitation is
+  // recycled from land ET, which is what keeps deep interiors (Amazon, Congo, monsoon
+  // Asia) wet far from any coast rather than the near-zero our pure-depletion advection
+  // gave. It sustains ALREADY-fed interiors (so rainforests/forests reach inland) without
+  // rescuing genuine rain-shadow deserts (nothing rains → nothing recycles), so aridity
+  // stays where it belongs. Net land depletion per step becomes rain·(1 − this).
+  precipLandRecycleFrac: 0.5,
+  // World px upwind to sample for the along-wind slope (needs the fine elevation,
+  // not the coarse climate grid — the point of sampling full-res here).
+  precipOrogSamplePx: 40,
+  // Raw rainout → mm/yr. Tunes overall wetness; a wet windward mountain lands
+  // around a few thousand mm, deserts/rain-shadow near zero.
+  //
+  // Known deviation, measured 2026-07-31 and deliberately left alone: the wettest
+  // cells reach ~22500 mm/yr and ~1.3% of land exceeds Earth's all-time record of
+  // 11900 — unphysical as a DISTRIBUTION (our cells are 62 km means, which should
+  // sit below a point record, not above it). Do not reach for this constant to fix
+  // it: the median is 813 mm/yr against Earth's ~700, so the overall calibration is
+  // right and lowering it would drag the sound body down with the tail.
+  //
+  // The cause is the shape of the model, not a constant. `rainFrac` is a fraction
+  // per iteration with no saturation, and one iteration advects 62 km — so at a p99
+  // upslope roughly half the moisture column may rain out over that single step.
+  // The 0.85 clamp below binds far too late to stop it (it needs a 4100 m rise over
+  // the 312 km sample, and catches only 0.04-1.4% of land cells). The physical fix
+  // is a soft saturation on rainFrac, not a lower ceiling here.
+  //
+  // Left as is because it costs nothing downstream: capping precipitation at 4000
+  // changed ZERO biome cells on both test seeds (Whittaker's thresholds stop at
+  // 1500 mm, and ecology's productivity is 1 − exp(−0.000664·P), already 0.98 at
+  // 6000). It survives only into hydrology, which is linear in precip: mean runoff
+  // +29% and maxDischarge +72%, i.e. rivers drawn about a quarter narrower. Those
+  // are aesthetic knobs. A saturation would shift mean runoff ~30%, so it would cost
+  // a re-tuned river-density default and a golden re-record — not worth it for a
+  // number nothing reads. Three other suspects were ruled out first: the scale
+  // (median is right), erosion's missing deposition (pre/post distributions are
+  // identical), and ridged noise in the slope sample (the tail survives without
+  // noise, and the wettest cells cluster 70-93%, so it is real orography).
+  precipScale: 6e4,
+  // Zonal wet/dry from the general circulation: rising (wet) air at the equator
+  // ITCZ (φ=0) and the subpolar front (φ≈2/3), sinking (dry) air at the
+  // subtropical highs (φ≈1/3 — the great deserts) and the poles (φ=1).
+  // Floor for the zonal band multiplier — the subtropical-high / polar dry minimum. At
+  // 0.1 the subtropics got a 15× dry penalty vs the equator, which (with interior
+  // depletion) turned nearly all subtropical land into extreme desert. A higher floor
+  // keeps those belts the driest zones without erasing all vegetation there (semi-arid
+  // grassland/savanna rather than bare desert).
+  precipBandFloor: 0.13,
+  // --- from oceanCurrents.ts ---
+  // Streamfunction solve iterations (Gauss-Seidel, in place — converges roughly
+  // twice as fast as Jacobi). One-shot per climate compute; the gyre structure
+  // doesn't need a fully-converged ψ.
+  currentsSolveIters: 700,
+  // SST transport: how far (grid cells) it advects along the normalized current
+  // per iteration, how many iterations, and the per-iteration relaxation back
+  // toward the latitudinal base (anchors the SST to latitude so anomalies stay
+  // bounded — a few °C, like real boundary currents on this coarse grid).
+  currentsAdvectStep: 2.5,
+  currentsAdvectIters: 80,
+  currentsBaseRelax: 0.15,
+  // How strongly a coastal land cell is pulled toward the adjacent ocean's SST
+  // anomaly (warm current → milder coast, cold current/upwelling → cooler coast),
+  // and how far inland that influence reaches, decaying per cell (a maritime band
+  // a few cells wide rather than a single-cell edge).
+  currentsCoastalFactor: 0.9,
+  currentsCoastalSteps: 4,
+  currentsCoastalDecay: 0.8,
+  // --- from biomes.ts ---
+  // The alpine override, promised by docs/decisions/climate-biomes.md ("plus ...
+  // an alpine override above the treeline") but never built until 2026-08-06: a
+  // mountain's cold-elevation biome used to fall out of the lapse rate alone —
+  // which classifies it as Tundra, exactly the same id/color/label as arctic
+  // lowland tundra. That is not wrong ecologically (a real snowline zone reads
+  // similarly whether it got cold from latitude or elevation), but it meant an
+  // equatorial snow-capped peak and a polar plain were visually and
+  // mechanically indistinguishable — the elevation was invisible to gameplay.
+  //
+  // A single global elevation threshold (not latitude-dependent) is the whole
+  // point of the override: real treeline elevation DOES fall with latitude, but
+  // reproducing that here would just re-derive what the lapse-rate-driven T/P
+  // classification already gives — the useful, DIFFERENT signal is "is this
+  // high ground, regardless of where on the planet it is", so a fixed metres
+  // threshold is what actually answers that. 2800 m sits within the commonly
+  // cited real-world treeline range (roughly 2500-3800 m depending on
+  // latitude/region) as a single representative value.
+  //
+  // A cell that would already classify as Ice (T < -10°C — a true glaciated
+  // summit) is left alone: Alpine means "bare rock / sparse cold-adapted
+  // vegetation above the treeline", not "less ice than Ice" — a permanently
+  // glaciated peak should still read as ice, elevation or not.
+  alpineTreelineElevation: metersToElevation(2800),
+  // --- the Whittaker classifier's own thresholds ---------------------------
+  //
+  // These were INLINE LITERALS inside `classify`, which made the largest block
+  // of climate tuning in the repo invisible to every grouping — including the
+  // one this file exists to be. Naming them changes nothing and makes them
+  // findable, comparable and hashable.
+  //
+  // Two values appear twice (250 and 600 mm, once per temperature band) and stay
+  // SEPARATE — asked and answered 2026-08-09: the agreement is coincidence, not
+  // a shared threshold. The temperate 600 splits grassland from woodland, the hot
+  // 600 marks the savanna edge; they are different statements that happen to land
+  // on one number. Sharing a constant would couple them, so moving the tropical
+  // desert edge would drag the temperate one along with it.
+  // Temperature band edges (°C), coldest first.
+  iceMaxC: -10,
+  tundraMaxC: 0,
+  borealMaxC: 7,
+  temperateMaxC: 20,
+  // In the cold band, dryness gives tundra rather than boreal forest.
+  borealMinPrecipMm: 200,
+  // Temperate / subtropical precipitation edges (mm/yr).
+  temperateDesertMaxPrecipMm: 250,
+  temperateGrasslandMaxPrecipMm: 600,
+  temperateForestMaxPrecipMm: 1500,
+  // Strong precipitation seasonality opens the canopy: a marginal forest with a
+  // pronounced dry season reads as woodland or grassland, not closed forest.
+  temperateOpenCanopyAmplitudeC: 20,
+  temperateOpenCanopySeason: 0.3,
+  temperateWoodlandSeason: 0.4,
+  // Hot band (T >= temperateMaxC). The rainforest/savanna split is driven by
+  // SEASONALITY rather than the annual total: evergreen rainforest needs rain
+  // most of the year, while a strong wet-dry rhythm gives savanna even when the
+  // total is high.
+  hotDesertMaxPrecipMm: 250,
+  hotSavannaMaxPrecipMm: 600,
+  tropicalSavannaSeason: 0.45
+};
+
+// src/worldgen/climate/biomes.ts
+var Biome = {
+  Ocean: 0,
+  Ice: 1,
+  Tundra: 2,
+  Boreal: 3,
+  Grassland: 4,
+  Woodland: 5,
+  TemperateForest: 6,
+  TemperateRainforest: 7,
+  Desert: 8,
+  Savanna: 9,
+  TropicalRainforest: 10,
+  Alpine: 11,
+  // Hydrology override, not a Whittaker class (like Ocean): the exposed dry
+  // floor of a terminal basin — see computeLakes' salt-flat mask.
+  SaltFlat: 12
+};
+var BIOME_COLORS = {
+  [Biome.Ocean]: [40, 90, 140],
+  [Biome.Ice]: [240, 244, 249],
+  [Biome.Tundra]: [178, 176, 164],
+  // warm light grey
+  [Biome.Boreal]: [60, 98, 86],
+  // dark muted conifer green
+  [Biome.Grassland]: [214, 202, 122],
+  // pale yellow
+  [Biome.Woodland]: [150, 162, 88],
+  // olive green
+  [Biome.TemperateForest]: [96, 162, 78],
+  // bright green
+  [Biome.TemperateRainforest]: [42, 130, 100],
+  // teal-green (wet)
+  [Biome.Desert]: [236, 218, 170],
+  // pale sand (lightest)
+  [Biome.Savanna]: [208, 166, 78],
+  // gold / ochre
+  [Biome.TropicalRainforest]: [22, 106, 50],
+  // deep saturated green
+  [Biome.Alpine]: [158, 154, 168],
+  // cool slate/lavender-grey — bare rock, distinct from Tundra's warm grey and Ice's near-white
+  [Biome.SaltFlat]: [236, 230, 218]
+  // warm off-white salt crust — real pans aren't snow-white, and Ice keeps the cold near-white
+};
+var BIOME_LABEL_KEYS = {
+  [Biome.Ocean]: "world.biome.ocean",
+  [Biome.Ice]: "world.biome.iceCap",
+  [Biome.Tundra]: "world.biome.tundra",
+  [Biome.Boreal]: "world.biome.borealForest",
+  [Biome.Grassland]: "world.biome.grassland",
+  [Biome.Woodland]: "world.biome.woodland",
+  [Biome.TemperateForest]: "world.biome.temperateForest",
+  [Biome.TemperateRainforest]: "world.biome.temperateRainforest",
+  [Biome.Desert]: "world.biome.desert",
+  [Biome.Savanna]: "world.biome.savanna",
+  [Biome.TropicalRainforest]: "world.biome.tropicalRainforest",
+  [Biome.Alpine]: "world.biome.alpine",
+  [Biome.SaltFlat]: "world.biome.saltFlat"
+};
+
+// src/worldgen/ecology/ecologyTuneParams.ts
+var PASTURE_BY_BIOME = {
+  [Biome.Grassland]: 1,
+  [Biome.Savanna]: 0.9,
+  [Biome.Woodland]: 0.55,
+  [Biome.Tundra]: 0.35,
+  [Biome.TemperateForest]: 0.2,
+  [Biome.TemperateRainforest]: 0.12,
+  [Biome.Boreal]: 0.15,
+  [Biome.Desert]: 0.12,
+  [Biome.TropicalRainforest]: 0.06,
+  [Biome.Ice]: 0,
+  // Alpine meadows above the treeline support real (seasonal/transhumance)
+  // grazing — comparable to tundra, not to bare ice.
+  [Biome.Alpine]: 0.3,
+  // A salt crust grows nothing.
+  [Biome.SaltFlat]: 0
+};
+var TIMBER_BY_BIOME = {
+  [Biome.TropicalRainforest]: 1,
+  [Biome.TemperateRainforest]: 0.9,
+  [Biome.TemperateForest]: 0.85,
+  [Biome.Boreal]: 0.8,
+  [Biome.Woodland]: 0.5,
+  [Biome.Savanna]: 0.2,
+  [Biome.Grassland]: 0.1,
+  [Biome.Tundra]: 0.05,
+  [Biome.Desert]: 0.02,
+  [Biome.Ice]: 0,
+  // Above the treeline by definition — no timber.
+  [Biome.Alpine]: 0,
+  [Biome.SaltFlat]: 0
+};
+var ECOLOGY_TUNING = {
+  // Weights of each subsistence source in the saturating carrying-capacity combine
+  // (arable dominant — farming supports the densest populations). Kept LOW enough
+  // that the combine (1 - e^-Σw·x) doesn't saturate near 1 for ordinary land — so
+  // carrying capacity spreads across the whole ramp (desert ~0.1 … rich coast
+  // ~0.8) instead of everything reading as lush green, which was hiding both the
+  // level knob and the province mottling. Recalibrated 2026-07-26.
+  wArable: 1.1,
+  wFish: 0.6,
+  wGame: 0.45,
+  wPasture: 0.35,
+  // Fish tuning. Marine = coastal shelf base + upwelling (adjacent-ocean current
+  // strength); freshwater = big rivers + lake presence.
+  fishShelfBase: 0.35,
+  fishUpwellingW: 0.65,
+  fishRiverW: 0.6,
+  fishLakeW: 0.5,
+  // Arable flatness sensitivity: steeper ground is progressively harder to farm.
+  // Scaled by SLOPE_RECALIBRATION (see elevationScale.ts): flatness reads raw
+  // elevation differences, which halved, so without this every slope on the map
+  // would suddenly count as farmable. Used here and in flatnessAt (wetland, tool
+  // stone).
+  slopeK: 8 * SLOPE_RECALIBRATION,
+  // Ecotone (biome-boundary) game bonus and its cap.
+  ecotoneBonus: 0.18,
+  // Metal / stone influence radii (world fraction). Tin is tightest → the rare,
+  // clustered bottleneck; copper broader (arc belts); obsidian tight (point sources).
+  // Halved 2026-08-07: since supercontinent assembly moved into the playable window
+  // the feature set carries ~3.5× more volcanoes (192 vs 55 measured), and the old
+  // radii (~240-320 km per point) overlapped into a carpet — copper covered 55% of
+  // land at ≥5%. Radius halving plus the keep-fraction lottery below brings that
+  // back to isolated deposit clusters (same-seed ≥5%-of-land coverage: copper
+  // 55→18%, silver 49→7%, tin 29→6%, gems 24→5%, gold 70→13%, obsidian-driven
+  // toolstone ≥20% 53→6%; flint baseline untouched by design).
+  copperRadiusFrac: 0.02,
+  tinRadiusFrac: 0.019,
+  obsidianRadiusFrac: 0.015,
+  flintBase: 0.15,
+  // Mineralisation lottery: only this fraction of the candidate points (arc
+  // volcanoes, orogens) actually carries a given ore — not every arc is
+  // mineralised. Deterministic per point position + warpSeed + per-resource salt,
+  // so each resource picks a different subset and deposits stay stable per world.
+  copperKeep: 0.33,
+  silverKeep: 0.25,
+  obsidianKeep: 0.25,
+  tinKeep: 0.5,
+  goldLodeKeep: 0.5,
+  gemKeep: 0.5,
+  // Salt: below this precip a cell reads arid; coasts evaporate best.
+  saltAridPrecip: 500,
+  saltCoastW: 1,
+  saltInteriorW: 0.35,
+  // Salt's small bonus to carrying capacity (preservation → denser settlement).
+  wSaltCc: 0.15,
+  // Iron: broad craton signal + bog-iron in wetlands. Deposit noise breaks the
+  // (nearly uniform) craton signal into banded-iron-style deposits, so iron stays
+  // common but fluctuates rather than reading as a flat 100%.
+  ironCratonW: 0.9,
+  ironBogW: 0.7,
+  ironDepositFreqX: 13,
+  ironDepositFreqY: 7,
+  ironDepositFloor: 0.35,
+  // Prestige (rare & clustered — the point). Gold = placer (rivers) + lode (orogens);
+  // silver = hydrothermal near volcanic arcs; gems = metamorphic (orogens) + arid
+  // weathering (turquoise near copper). None feed carrying capacity.
+  goldLodeRadiusFrac: 0.015,
+  silverRadiusFrac: 0.018,
+  gemRadiusFrac: 0.014,
+  // Placer gate: √(discharge/max) below this floor carries no gold — only genuinely
+  // large rivers concentrate placer. The old ungated √·2 curve lit up every stream
+  // (gold ≥5% on 70% of land, and 63% even before the Archean rework).
+  goldPlacerSqrtFloor: 0.15,
+  goldPlacerGain: 2,
+  goldPlacerW: 0.7,
+  goldLodeW: 0.9,
+  silverW: 0.9,
+  gemOrogenW: 0.85,
+  gemAridW: 0.6,
+  volcanicProvinceRadiusFrac: 0.05,
+  // Higher frequency → more mottling (broad smooth gradients read as "no variation").
+  // Weights are large because smooth value-noise has LOW variance (interpolation
+  // pulls values toward the mean), so it needs a big multiplier to produce visible
+  // deviation; the strength knob (0..1) then scales this. Volcanic provinces punch
+  // harder than the organic noise.
+  provinceNoiseFreqX: 11,
+  provinceNoiseFreqY: 6,
+  volcanicWeight: 1.6,
+  noiseWeight: 1.5
+};
+
+// src/worldgen/ecology/ecologyField.ts
+var ECOLOGY_FIELD_IDS = [
   "carryingCapacity",
   "arable",
   "fish",
@@ -9886,6 +10286,11 @@ var ECOLOGY_FIELD_NAMES = [
   "silver",
   "gems"
 ];
+
+// src/world/save/fieldSpec.ts
+var world = (name, unit, landOnly) => ({ name, grid: "world", unit, landOnly });
+var climate = (name, unit, landOnly) => ({ name, grid: "climate", unit, landOnly });
+var ECOLOGY_FIELD_NAMES = ECOLOGY_FIELD_IDS;
 var WORLD_FIELDS = [
   // Not a quantised layer — carried as raw f32 because it doubles as the
   // restore raster — but a queryable field like any other, and the manifest
@@ -10378,80 +10783,6 @@ var SURFACE_TUNING = {
   // transportRate = 0.3 and iterations = 50 are unchanged, but note they now apply
   // to a far smaller set of pairs, which is the point.
   talusAngleDegrees: 3,
-  // --- from deltaGrowth.ts ---
-  // Depth exponent for the routing weights (Freeman-style): higher concentrates
-  // flow into the deepest channel, lower lets it spread. And the inertia floor
-  // keeps a parcel from ever weighting a full reversal.
-  //
-  // The depth entering the weight is CAPPED (see weightDepthCap below) — the
-  // bug that silently defeated every deposition variant: uncapped depth^1.5
-  // across three orders of magnitude made the open ocean ~25× more attractive
-  // than the 12 m platform, so parcels dived straight off the shelf edge into
-  // the abyss and wrote their load off (measured: ~0.2% of the budget ever
-  // deposited, identical across three deposition designs). DeltaRCM's depth
-  // preference is about CHANNEL depths on the delta top — metres — not about
-  // basins; capping reproduces that: below the cap, deeper still wins (keeps
-  // channels), beyond it all water is equally attractive and inertia takes
-  // over, so the flow spreads as a plume across the platform instead of
-  // racing downslope.
-  depthExponent: 1.5,
-  backwardWeight: 0.05,
-  // --- from tileErosion.ts ---
-  // Sub-macro-cell starting roughness, in elevation units at amplitude 1 —
-  // the analytic field is smooth below the ridged noise's finest octave
-  // (~8 macro px), so a freshly-sampled tile is glass at fine scale and the
-  // priority flood would route its rivers on numerical noise. The same
-  // reasoning as EROSION_PLAIN_FACTOR's "not zero": drainage needs texture to
-  // pick a side. fineDetailNoise is torus-periodic and world-anchored, so the
-  // same tile always regenerates the same roughness, and adjacent tiles agree.
-  //
-  // HEIGHT-SCALED, fading out toward sea level (prototype run 6's lesson): on a
-  // low coastal plain everything that should guide the trunk river — the
-  // inherited macro valley (only metres deep there, EROSION_PLAIN_FACTOR damps
-  // plain incision on purpose) and the stream-burnt groove (scaled to the same
-  // small headroom) — is smaller than a full ±30 m of noise, so the noise won,
-  // the river wandered off its macro course and shattered below the delta gate.
-  // Full roughness stays in the highlands, where competing micro-valleys are
-  // exactly what we want. Ocean cells get none (nothing routes on the seabed
-  // and deltas read cleaner against a smooth floor).
-  // ~30 m peak amplitude,
-  tileSeedRoughness: metersToElevation(30),
-  // Macro erosion params rescaled for a tile refined by `factor`. The general
-  // per-cell rescaling — talus angle, transport capacity, the delta area gate,
-  // and why stream power needs nothing — is derived once in
-  // erosion.scaleErosionParamsForCellSize and shared with the amplification
-  // bake; only the tile-SPECIFIC correction lives here.
-  //
-  // That correction is the delta gate. The shared rule scales it by factor²,
-  // which is right for the physical catchment. But at a tile's factor MFD
-  // routing deliberately splits a trunk into several distributary strands near
-  // a flat mouth (3-5 in practice), and the gate's job — "no deltas from
-  // coastal trickles" — is a judgment about the river SYSTEM, which already
-  // passed it at macro scale. Without the allowance every individual strand of
-  // a fully qualified river fails the per-cell test and the tile builds no
-  // delta at all (prototype run 6, measured: best strand 39k fine units
-  // against a raw factor²-gate of 128k). Dividing by 4 lets a trunk that split
-  // four ways still qualify.
-  //
-  // Iteration/round counts are deliberately NOT reduced: the tile is far
-  // smaller than the world, so generous iterations are cheap where it matters.
-  tileDistributaryStrands: 4,
-  // The macro river course is authoritative, but near the tile rim and on low
-  // coastal plains its real gradient is metres — smaller than the seed
-  // roughness and the rim drain's pull — so without conditioning the fine
-  // drainage loses the macro course (prototype runs 2-6, each constant below
-  // is one measured failure):
-  // - trunk rivers only (>= 500 macro cells): burning the whole acc>=60
-  //   dendritic net flattened low plains into competing corridors.
-  // - narrow V-grooves: a wide flat-bottomed groove makes MFD fan the river
-  //   into strands below every downstream threshold.
-  // - depth SCALED into the headroom above the floor, not clamped: clamping
-  //   made dead-flat corridors at exactly the floor height.
-  burnMinMacroDrainage: 500,
-  burnRadiusFine: 5,
-  burnBaseDepthM: 25,
-  burnDepthLogGainM: 10,
-  burnFloorM: 0.5,
   // --- from hydrology.ts ---
   // A modest per-cell runoff floor so even a bone-dry landmass still develops
   // channels from drainage area alone (precip only MODULATES density, it doesn't
@@ -10515,285 +10846,6 @@ var SURFACE_TUNING = {
   // direction for whole neighbourhoods → a mess of parallel lines. Keeping even
   // max density at a few hundred cells of support suppresses that noise.
   channelAreaMin: 150
-};
-
-// src/worldgen/climate/climateTuneParams.ts
-var lapseCPerKm = 6.5;
-var CLIMATE_TUNING = {
-  // --- from temperature.ts ---
-  // Real-ish units (°C), so the later Whittaker biome thresholds are directly
-  // usable. Tune by eye — these set the equator-to-pole span.
-  tempEquatorC: 30,
-  tempPoleC: -25,
-  // The environmental lapse rate — °C lost per unit of elevation. Now a derived
-  // quantity rather than a tuned one: the real atmosphere loses ~6.5 °C/km, and
-  // elevationScale says a full unit is ELEVATION_METERS, so this is simply the two
-  // multiplied. A 1681 m peak (the measured 90th percentile of land) comes out
-  // 10.9 °C cooler than its lowland, which is what 6.5 °C/km gives.
-  //
-  // This replaces a hand-tuned 35 paired with a LAND_LAPSE_REF = 0.35 offset, and
-  // getting rid of that offset is the point. It existed because the old land
-  // baseline of 0.35 was not physically a height at all — continental lowland was
-  // SUPPOSED to read as sea-level-warm, but the scale placed it at what the lapse
-  // rate had to treat as 3 km up, cooling every land cell on the planet by ~12 °C
-  // and dragging the whole climate too cold (a ~18 °C equator, tundra across the
-  // mid-latitudes, and a drier world via the suppressed evaporation). The offset
-  // was the correct local fix for a scale that meant two different things in its
-  // two halves. With lowland actually at 360 m, cooling can simply be measured
-  // from sea level like it is in reality, and the special case disappears.
-  lapseCPerKm,
-  // The same lapse in ELEVATION units, which is what every consumer actually
-  // multiplies by. Derived rather than restated so it follows both the rate and
-  // the metre anchor; biomes.ts reads it too.
-  lapseCPerElevation: lapseCPerKm * (ELEVATION_METERS / 1e3),
-  // --- from wind.ts ---
-  // Relative strengths — zonal (east/west) dominates the surface pattern, the
-  // meridional (toward/away from the equator) component is weaker. Dimensionless;
-  // the wind is used as a direction + relative-magnitude field (overlay arrows,
-  // and later moisture/current advection), not in physical m/s.
-  windZonalStrength: 1,
-  windMeridionalStrength: 0.4,
-  // --- from seasonality.ts ---
-  // Peak annual temperature range (°C, summer − winter) — reached by a
-  // continental interior at high latitude. The equator sits near 0 (sun always
-  // high), a coast/ocean stays low (thermal inertia). Tune by eye.
-  seasonMaxAmplitude: 42,
-  // Cells this many grid cells from the nearest ocean count as fully
-  // continental; nearer ones interpolate. A big continent's core sits deep
-  // enough to saturate.
-  seasonContinentalityScale: 45,
-  // Coastal land floor (continentality 0): even a coast swings a bit.
-  seasonCoastDamp: 0.3,
-  // --- from monsoon.ts ---
-  // How far (fraction of map height) the ITCZ belt migrates toward the summer hemisphere.
-  // Real seasonal swing is ~10-15° of latitude (bigger over monsoon land); 0.12 of the
-  // map's pole-to-pole span is in that range on this 2:1 torus.
-  monsoonItczSeasonalShift: 0.07,
-  // Strength of the monsoon surface wind — a component up the seasonal-temperature
-  // gradient (∇T points from cool sea toward hot summer land), added to the prescribed
-  // zonal wind. Tuned so it reshapes moisture advection near coasts without swamping the
-  // base three-cell circulation (base zonal strength ~1). See computeMonsoonWind.
-  monsoonWindStrength: 0.05,
-  // Wetness floor (mm/yr) added to the monsoon-index denominator so ARID cells don't read
-  // as monsoonal: a desert with 50 mm wet / 5 mm dry is dry, not seasonal, yet a raw
-  // (wet−dry)/(wet+dry) would call it 0.82. The floor damps the index where absolute
-  // precipitation is small, so a high index means genuinely wet-in-one-season-dry-in-the-
-  // other (a real monsoon), not just marginal noise. ~ a semi-arid annual total.
-  monsoonSeasonalityFloor: 500,
-  // --- from precipitation.ts ---
-  // Iterations of moisture transport, and how far (in grid cells, per unit wind)
-  // moisture advects each one. Needs enough to reach a steady state deep inland
-  // — the flow is diagonal (zonal + meridional), so the path in is longer than
-  // the straight-line distance; too few left continental interiors stuck at
-  // their transient (empty) starting value.
-  precipIters: 120,
-  precipAdvectStep: 2,
-  // Moisture is advected mostly ZONALLY (it penetrates inland from the nearest
-  // east/west coast). The meridional wind is damped for transport, because at
-  // full strength a backward streamline from a deep mid-latitude interior curves
-  // down into the neighbouring cell where the zonal wind REVERSES (Hadley vs
-  // Ferrel) — it then never traces back to an ocean, starving that cell to a
-  // hard zero. A gentle meridional tilt keeps streamlines within their own band.
-  precipAdvectMeridionalScale: 0.3,
-  // Fraction of airborne moisture that rains out per iteration on flat land, and
-  // the extra fraction per unit of upslope elevation along the wind (orographic
-  // lift). The orographic term also creates rain shadows: moisture rains out
-  // climbing the windward slope, so little is left for the lee side downwind.
-  precipBaseRainout: 0.03,
-  // Scaled by SLOPE_RECALIBRATION: land slopes halved when the continental
-  // interior stopped being a flat plateau, so the same terrain now produces half
-  // the measured upslope. Without this, orographic rain and its rain shadows both
-  // collapse toward the BASE_RAINOUT floor.
-  precipOrographicRate: 0.9 * SLOPE_RECALIBRATION,
-  // Land moisture recycling (evapotranspiration): the fraction of rained-out water that
-  // re-evaporates from soil/vegetation back into the airborne pool, feeding downwind rain.
-  // This is a MAJOR real process — ~a third to a half of continental precipitation is
-  // recycled from land ET, which is what keeps deep interiors (Amazon, Congo, monsoon
-  // Asia) wet far from any coast rather than the near-zero our pure-depletion advection
-  // gave. It sustains ALREADY-fed interiors (so rainforests/forests reach inland) without
-  // rescuing genuine rain-shadow deserts (nothing rains → nothing recycles), so aridity
-  // stays where it belongs. Net land depletion per step becomes rain·(1 − this).
-  precipLandRecycleFrac: 0.5,
-  // World px upwind to sample for the along-wind slope (needs the fine elevation,
-  // not the coarse climate grid — the point of sampling full-res here).
-  precipOrogSamplePx: 40,
-  // Raw rainout → mm/yr. Tunes overall wetness; a wet windward mountain lands
-  // around a few thousand mm, deserts/rain-shadow near zero.
-  //
-  // Known deviation, measured 2026-07-31 and deliberately left alone: the wettest
-  // cells reach ~22500 mm/yr and ~1.3% of land exceeds Earth's all-time record of
-  // 11900 — unphysical as a DISTRIBUTION (our cells are 62 km means, which should
-  // sit below a point record, not above it). Do not reach for this constant to fix
-  // it: the median is 813 mm/yr against Earth's ~700, so the overall calibration is
-  // right and lowering it would drag the sound body down with the tail.
-  //
-  // The cause is the shape of the model, not a constant. `rainFrac` is a fraction
-  // per iteration with no saturation, and one iteration advects 62 km — so at a p99
-  // upslope roughly half the moisture column may rain out over that single step.
-  // The 0.85 clamp below binds far too late to stop it (it needs a 4100 m rise over
-  // the 312 km sample, and catches only 0.04-1.4% of land cells). The physical fix
-  // is a soft saturation on rainFrac, not a lower ceiling here.
-  //
-  // Left as is because it costs nothing downstream: capping precipitation at 4000
-  // changed ZERO biome cells on both test seeds (Whittaker's thresholds stop at
-  // 1500 mm, and ecology's productivity is 1 − exp(−0.000664·P), already 0.98 at
-  // 6000). It survives only into hydrology, which is linear in precip: mean runoff
-  // +29% and maxDischarge +72%, i.e. rivers drawn about a quarter narrower. Those
-  // are aesthetic knobs. A saturation would shift mean runoff ~30%, so it would cost
-  // a re-tuned river-density default and a golden re-record — not worth it for a
-  // number nothing reads. Three other suspects were ruled out first: the scale
-  // (median is right), erosion's missing deposition (pre/post distributions are
-  // identical), and ridged noise in the slope sample (the tail survives without
-  // noise, and the wettest cells cluster 70-93%, so it is real orography).
-  precipScale: 6e4,
-  // Zonal wet/dry from the general circulation: rising (wet) air at the equator
-  // ITCZ (φ=0) and the subpolar front (φ≈2/3), sinking (dry) air at the
-  // subtropical highs (φ≈1/3 — the great deserts) and the poles (φ=1).
-  // Floor for the zonal band multiplier — the subtropical-high / polar dry minimum. At
-  // 0.1 the subtropics got a 15× dry penalty vs the equator, which (with interior
-  // depletion) turned nearly all subtropical land into extreme desert. A higher floor
-  // keeps those belts the driest zones without erasing all vegetation there (semi-arid
-  // grassland/savanna rather than bare desert).
-  precipBandFloor: 0.13,
-  // --- from oceanCurrents.ts ---
-  // Streamfunction solve iterations (Gauss-Seidel, in place — converges roughly
-  // twice as fast as Jacobi). One-shot per climate compute; the gyre structure
-  // doesn't need a fully-converged ψ.
-  currentsSolveIters: 700,
-  // SST transport: how far (grid cells) it advects along the normalized current
-  // per iteration, how many iterations, and the per-iteration relaxation back
-  // toward the latitudinal base (anchors the SST to latitude so anomalies stay
-  // bounded — a few °C, like real boundary currents on this coarse grid).
-  currentsAdvectStep: 2.5,
-  currentsAdvectIters: 80,
-  currentsBaseRelax: 0.15,
-  // How strongly a coastal land cell is pulled toward the adjacent ocean's SST
-  // anomaly (warm current → milder coast, cold current/upwelling → cooler coast),
-  // and how far inland that influence reaches, decaying per cell (a maritime band
-  // a few cells wide rather than a single-cell edge).
-  currentsCoastalFactor: 0.9,
-  currentsCoastalSteps: 4,
-  currentsCoastalDecay: 0.8,
-  // --- from biomes.ts ---
-  // The alpine override, promised by docs/decisions/climate-biomes.md ("plus ...
-  // an alpine override above the treeline") but never built until 2026-08-06: a
-  // mountain's cold-elevation biome used to fall out of the lapse rate alone —
-  // which classifies it as Tundra, exactly the same id/color/label as arctic
-  // lowland tundra. That is not wrong ecologically (a real snowline zone reads
-  // similarly whether it got cold from latitude or elevation), but it meant an
-  // equatorial snow-capped peak and a polar plain were visually and
-  // mechanically indistinguishable — the elevation was invisible to gameplay.
-  //
-  // A single global elevation threshold (not latitude-dependent) is the whole
-  // point of the override: real treeline elevation DOES fall with latitude, but
-  // reproducing that here would just re-derive what the lapse-rate-driven T/P
-  // classification already gives — the useful, DIFFERENT signal is "is this
-  // high ground, regardless of where on the planet it is", so a fixed metres
-  // threshold is what actually answers that. 2800 m sits within the commonly
-  // cited real-world treeline range (roughly 2500-3800 m depending on
-  // latitude/region) as a single representative value.
-  //
-  // A cell that would already classify as Ice (T < -10°C — a true glaciated
-  // summit) is left alone: Alpine means "bare rock / sparse cold-adapted
-  // vegetation above the treeline", not "less ice than Ice" — a permanently
-  // glaciated peak should still read as ice, elevation or not.
-  alpineTreelineElevation: metersToElevation(2800),
-  // --- the Whittaker classifier's own thresholds ---------------------------
-  //
-  // These were INLINE LITERALS inside `classify`, which made the largest block
-  // of climate tuning in the repo invisible to every grouping — including the
-  // one this file exists to be. Naming them changes nothing and makes them
-  // findable, comparable and hashable.
-  //
-  // Two values appear twice (250 and 600 mm, once per temperature band) and stay
-  // SEPARATE — asked and answered 2026-08-09: the agreement is coincidence, not
-  // a shared threshold. The temperate 600 splits grassland from woodland, the hot
-  // 600 marks the savanna edge; they are different statements that happen to land
-  // on one number. Sharing a constant would couple them, so moving the tropical
-  // desert edge would drag the temperate one along with it.
-  // Temperature band edges (°C), coldest first.
-  iceMaxC: -10,
-  tundraMaxC: 0,
-  borealMaxC: 7,
-  temperateMaxC: 20,
-  // In the cold band, dryness gives tundra rather than boreal forest.
-  borealMinPrecipMm: 200,
-  // Temperate / subtropical precipitation edges (mm/yr).
-  temperateDesertMaxPrecipMm: 250,
-  temperateGrasslandMaxPrecipMm: 600,
-  temperateForestMaxPrecipMm: 1500,
-  // Strong precipitation seasonality opens the canopy: a marginal forest with a
-  // pronounced dry season reads as woodland or grassland, not closed forest.
-  temperateOpenCanopyAmplitudeC: 20,
-  temperateOpenCanopySeason: 0.3,
-  temperateWoodlandSeason: 0.4,
-  // Hot band (T >= temperateMaxC). The rainforest/savanna split is driven by
-  // SEASONALITY rather than the annual total: evergreen rainforest needs rain
-  // most of the year, while a strong wet-dry rhythm gives savanna even when the
-  // total is high.
-  hotDesertMaxPrecipMm: 250,
-  hotSavannaMaxPrecipMm: 600,
-  tropicalSavannaSeason: 0.45
-};
-
-// src/worldgen/climate/biomes.ts
-var Biome = {
-  Ocean: 0,
-  Ice: 1,
-  Tundra: 2,
-  Boreal: 3,
-  Grassland: 4,
-  Woodland: 5,
-  TemperateForest: 6,
-  TemperateRainforest: 7,
-  Desert: 8,
-  Savanna: 9,
-  TropicalRainforest: 10,
-  Alpine: 11,
-  // Hydrology override, not a Whittaker class (like Ocean): the exposed dry
-  // floor of a terminal basin — see computeLakes' salt-flat mask.
-  SaltFlat: 12
-};
-var BIOME_COLORS = {
-  [Biome.Ocean]: [40, 90, 140],
-  [Biome.Ice]: [240, 244, 249],
-  [Biome.Tundra]: [178, 176, 164],
-  // warm light grey
-  [Biome.Boreal]: [60, 98, 86],
-  // dark muted conifer green
-  [Biome.Grassland]: [214, 202, 122],
-  // pale yellow
-  [Biome.Woodland]: [150, 162, 88],
-  // olive green
-  [Biome.TemperateForest]: [96, 162, 78],
-  // bright green
-  [Biome.TemperateRainforest]: [42, 130, 100],
-  // teal-green (wet)
-  [Biome.Desert]: [236, 218, 170],
-  // pale sand (lightest)
-  [Biome.Savanna]: [208, 166, 78],
-  // gold / ochre
-  [Biome.TropicalRainforest]: [22, 106, 50],
-  // deep saturated green
-  [Biome.Alpine]: [158, 154, 168],
-  // cool slate/lavender-grey — bare rock, distinct from Tundra's warm grey and Ice's near-white
-  [Biome.SaltFlat]: [236, 230, 218]
-  // warm off-white salt crust — real pans aren't snow-white, and Ice keeps the cold near-white
-};
-var BIOME_LABEL_KEYS = {
-  [Biome.Ocean]: "world.biome.ocean",
-  [Biome.Ice]: "world.biome.iceCap",
-  [Biome.Tundra]: "world.biome.tundra",
-  [Biome.Boreal]: "world.biome.borealForest",
-  [Biome.Grassland]: "world.biome.grassland",
-  [Biome.Woodland]: "world.biome.woodland",
-  [Biome.TemperateForest]: "world.biome.temperateForest",
-  [Biome.TemperateRainforest]: "world.biome.temperateRainforest",
-  [Biome.Desert]: "world.biome.desert",
-  [Biome.Savanna]: "world.biome.savanna",
-  [Biome.TropicalRainforest]: "world.biome.tropicalRainforest",
-  [Biome.Alpine]: "world.biome.alpine",
-  [Biome.SaltFlat]: "world.biome.saltFlat"
 };
 
 // src/worldgen/surface/hydrology.ts

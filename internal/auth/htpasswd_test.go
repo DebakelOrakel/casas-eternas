@@ -15,9 +15,10 @@ import (
 // tell which password it belongs to without running the tool.
 func hash(t *testing.T, password string) string {
 	t.Helper()
-	// MinCost, because these tests do not measure bcrypt — they measure this
-	// package. DefaultCost would add ~100 ms per hash for nothing.
-	h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	// The floor, not bcrypt.MinCost: the loader now refuses anything weaker, so a
+	// cheaper test hash would be testing a file the server would not accept. It
+	// costs ~50 ms a hash, which is the price of the fixtures being real.
+	h, err := bcrypt.GenerateFromPassword([]byte(password), MinBcryptCost)
 	if err != nil {
 		t.Fatalf("hashing: %v", err)
 	}
@@ -102,6 +103,9 @@ func TestNewUsersRejectsBadFiles(t *testing.T) {
 		{"md5-crypt", "ada:$apr1$vTBQMHqR$3.HZ4rC1U9x/w6X7YFO7z1\n"},
 		{"sha1", "ada:{SHA}qUqP5cyxm6YcTAhz05Hph5gvu9M=\n"},
 		{"plaintext", "ada:pw\n"},
+		// `htpasswd -B` without -C writes exactly this: real bcrypt, cost 5,
+		// indistinguishable from a strong hash to the eye.
+		{"bcrypt below the cost floor", "ada:$2y$05$pja5f2yAlRqS0M5ZEEEBNuKOpaee3PE37eD9ECuOzcwi8zPKfnUl6\n"},
 		{"no users at all", "# only a comment\n"},
 	}
 	for _, c := range cases {
@@ -159,10 +163,10 @@ func TestVerifyFailsClosedOnABrokenFile(t *testing.T) {
 // generous one (a quarter) because this is a leak test, not a benchmark: the
 // failure it guards against is the microseconds-versus-100ms gap of an early
 // return, which is three orders of magnitude, not a factor of two. This is the
-// one test here that uses DefaultCost — with a cheaper hash in the file the two
-// paths would not be comparable at all.
+// one test here that uses the RECOMMENDED cost, which is what absentUserHash was
+// generated at — the two paths are only comparable when their work factors match.
 func TestUnknownUserCostsTheSameAsAWrongPassword(t *testing.T) {
-	real, err := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.DefaultCost)
+	real, err := bcrypt.GenerateFromPassword([]byte("pw"), RecommendedBcryptCost)
 	if err != nil {
 		t.Fatalf("hashing: %v", err)
 	}

@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
 
@@ -34,10 +33,11 @@ type Config struct {
 	// CONTENTS rather than for this module, because the module will grow a tile
 	// database and a loop that need directories of their own.
 	Dir string
-	// AuthMode decides whether the recorded owner means anything. Resolved by
-	// cmd/ and shared with every module, so who a caller IS has one answer in
-	// the process.
-	AuthMode config.AuthMode
+	// Identity answers who a request comes from. The one resolver cmd/ builds is
+	// shared with every module, so who a caller IS has one answer in the
+	// process — this module holds the answerer, not the auth mode it was
+	// configured with.
+	Identity *identity.Resolver
 }
 
 // Module serves the world store.
@@ -144,7 +144,7 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meta, err := m.store.Put(uid, data, info, identity.Caller(r, m.cfg.AuthMode), expected)
+	meta, err := m.store.Put(uid, data, info, m.cfg.Identity.Caller(r), expected)
 	if err != nil {
 		respondStoreError(w, err)
 		return

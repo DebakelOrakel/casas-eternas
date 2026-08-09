@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/spf13/cobra"
@@ -25,6 +26,10 @@ const (
 	flagDirClient    = "dir-client"
 	flagBakeMax      = "bake-max-concurrent"
 	flagAuthMode     = "auth-mode"
+	flagAuthHtpasswd = "auth-htpasswd"
+	flagAuthKey      = "auth-session-key"
+	flagAuthTokenTTL = "auth-token-ttl"
+	flagAuthSessTTL  = "auth-session-ttl"
 )
 
 const (
@@ -35,6 +40,10 @@ const (
 	textDirClient    = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
 	textBakeMax      = `How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.`
 	textAuthMode     = `How the server establishes who is asking: none (local, one synthetic owner), password (this server holds the users), oidc (a foreign provider does). See docs/decisions/server-auth.md.`
+	textAuthHtpasswd = `Path to the htpasswd file holding the users, bcrypt only (htpasswd -B). Required by --auth-mode password. Put it where the server may WRITE if a user administration should ever add to it.`
+	textAuthKey      = `Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.`
+	textAuthTokenTTL = `How long an issued token is valid.`
+	textAuthSessTTL  = `How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then --auth-token-ttl is the one that matters.`
 
 	textListen  = `Address to listen on, as host:port. ":8080" binds every interface, "127.0.0.1:8080" keeps a local instance off the network.`
 	textTLSCert = `Path to the server certificate. Enables HTTPS together with --tls-key.`
@@ -100,6 +109,10 @@ func init() {
 	// builds, the way --dir-worlds does. The persistent flags configure the
 	// process's socket, which is a different thing (see config.Server).
 	StartCmd.Flags().String(flagAuthMode, string(config.DefaultAuthMode), textAuthMode)
+	StartCmd.Flags().String(flagAuthHtpasswd, "", textAuthHtpasswd)
+	StartCmd.Flags().String(flagAuthKey, "", textAuthKey)
+	StartCmd.Flags().Duration(flagAuthTokenTTL, 720*time.Hour, textAuthTokenTTL)
+	StartCmd.Flags().Duration(flagAuthSessTTL, 720*time.Hour, textAuthSessTTL)
 
 	for _, err := range []error{
 		viper.BindPFlag(flagListen, RootCmd.PersistentFlags().Lookup(flagListen)),
@@ -111,6 +124,10 @@ func init() {
 		viper.BindPFlag(flagDirWorlds, StartCmd.Flags().Lookup(flagDirWorlds)),
 		viper.BindPFlag(flagBaker, StartCmd.Flags().Lookup(flagBaker)),
 		viper.BindPFlag(flagAuthMode, StartCmd.Flags().Lookup(flagAuthMode)),
+		viper.BindPFlag(flagAuthHtpasswd, StartCmd.Flags().Lookup(flagAuthHtpasswd)),
+		viper.BindPFlag(flagAuthKey, StartCmd.Flags().Lookup(flagAuthKey)),
+		viper.BindPFlag(flagAuthTokenTTL, StartCmd.Flags().Lookup(flagAuthTokenTTL)),
+		viper.BindPFlag(flagAuthSessTTL, StartCmd.Flags().Lookup(flagAuthSessTTL)),
 		viper.BindPFlag(flagDirClient, StartCmd.Flags().Lookup(flagDirClient)),
 		viper.BindPFlag(flagBakeMax, StartCmd.Flags().Lookup(flagBakeMax)),
 	} {

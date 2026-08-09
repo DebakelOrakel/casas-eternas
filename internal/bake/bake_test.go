@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
@@ -53,11 +54,18 @@ func (f *fakeRunner) Run(ctx context.Context, spec Spec, onProgress func(Progres
 // insists on a real baker bundle).
 func newTestModule(t *testing.T, mode config.AuthMode, workers int) (*Module, *fakeRunner, string) {
 	t.Helper()
+	return newTestModuleWith(t, identity.NewResolver(mode, nil), workers)
+}
+
+// newTestModuleWith takes the resolver directly, for the tests that need one
+// which can actually verify a token.
+func newTestModuleWith(t *testing.T, caller *identity.Resolver, workers int) (*Module, *fakeRunner, string) {
+	t.Helper()
 	dir := t.TempDir()
 	runner := newFakeRunner()
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Module{
-		cfg:    Config{WorldsDir: dir, ArtifactsDir: t.TempDir(), AuthMode: mode, MaxConcurrent: workers},
+		cfg:    Config{WorldsDir: dir, ArtifactsDir: t.TempDir(), Identity: caller, MaxConcurrent: workers},
 		runner: runner,
 		jobs:   newRegistry(jobHistory),
 		queue:  make(chan string, 64),
@@ -121,19 +129,43 @@ func TestLocalModeLetsEveryoneBake(t *testing.T) {
 // The rule the whole check exists for, and the one that would be silently
 // inverted by a wrong comparison.
 func TestOwnershipIsEnforcedWhenIdentityIsChecked(t *testing.T) {
-	m, _, dir := newTestModule(t, config.AuthPassword, 1)
+	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	if err != nil {
+		t.Fatalf("NewTokens: %v", err)
+	}
+	m, _, dir := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
 	writeWorld(t, dir, testUID, "ada")
 
-	// Nobody can authenticate yet — password mode has no verifier, so the
-	// resolver yields Anonymous for everyone, and Anonymous must never own
-	// anything. The second case is the one worth keeping once it does: a token
-	// the server cannot verify must be worth exactly as much as none at all,
-	// never a fallback to some weaker identity.
-	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusForbidden {
-		t.Errorf("no credentials = %d, want 403", got)
+	issue := func(subject, audience string) string {
+		t.Helper()
+		token, _, issueErr := tokens.Issue(subject, audience, time.Hour)
+		if issueErr != nil {
+			t.Fatalf("Issue: %v", issueErr)
+		}
+		return token
 	}
-	if got := post(m, testUID, `{"stage":2}`, "not-a-valid-token").Code; got != http.StatusForbidden {
-		t.Errorf("unverifiable token = %d, want 403", got)
+
+	// Everything that is not a verifiable token for the OWNER must be refused,
+	// and all of it identically — an unverifiable token is worth exactly as much
+	// as none at all, never a fallback to some weaker identity.
+	for _, c := range []struct{ name, token string }{
+		{"no credentials", ""},
+		{"nonsense", "not-a-valid-token"},
+		{"someone else's session", issue("grace", auth.AudienceSession)},
+		// The audience split, from the other side: a token that this server
+		// really did issue, for the very artifact key this bake would write,
+		// still is not a login.
+		{"a bake token", issue("ada", auth.BakeAudience("v4-abc"))},
+	} {
+		if got := post(m, testUID, `{"stage":2}`, c.token).Code; got != http.StatusForbidden {
+			t.Errorf("%s = %d, want 403", c.name, got)
+		}
+	}
+
+	// And the owner's own session does open it — the case that proves the four
+	// above are refused for the right reason and not because nothing works.
+	if got := post(m, testUID, `{"stage":2}`, issue("ada", auth.AudienceSession)).Code; got == http.StatusForbidden {
+		t.Error("the owner's own session was refused")
 	}
 
 	// The unit underneath, where the decision actually lives: a wrong operator

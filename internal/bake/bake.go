@@ -31,7 +31,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
 
@@ -62,8 +61,9 @@ type Config struct {
 	ArtifactsDir string
 	// The Node bundle, from `npm run build:baker`.
 	BakerPath string
-	// AuthMode decides whether the world's recorded owner means anything.
-	AuthMode config.AuthMode
+	// Identity answers who a request comes from — the same resolver every other
+	// module holds, so ownership is compared against one notion of "caller".
+	Identity *identity.Resolver
 	// Listen is the server's own bind address, used only to work out the port a
 	// bake Job should reach it on.
 	Listen string
@@ -132,7 +132,7 @@ func New(cfg Config) (*Module, error) {
 		m.workers.Add(1)
 		go m.work(ctx)
 	}
-	slog.Info("bake ready", "workers", workers, "auth", cfg.AuthMode, "cluster", InCluster())
+	slog.Info("bake ready", "workers", workers, "checks identity", cfg.Identity.ChecksIdentity(), "cluster", InCluster())
 	return m, nil
 }
 
@@ -224,7 +224,7 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		clientError(w, http.StatusNotFound, "no such world, or it has no stored revision")
 		return
 	}
-	if !m.canBake(identity.Caller(r, m.cfg.AuthMode), owner) {
+	if !m.canBake(m.cfg.Identity.Caller(r), owner) {
 		// 403 and not 404: the world exists, and pretending otherwise would
 		// make a permission problem look like a missing save.
 		clientError(w, http.StatusForbidden, "only a world's owner may commission a bake for it")
@@ -291,7 +291,7 @@ func (m *Module) worldMeta(uid string) (owner string, zip string, ok bool) {
 // one: a person on their own machine, with nobody to be protected from. The
 // check still runs, which is the point of having it now rather than later.
 func (m *Module) canBake(caller, owner string) bool {
-	if !m.cfg.AuthMode.ChecksIdentity() {
+	if !m.cfg.Identity.ChecksIdentity() {
 		return true
 	}
 	return caller != identity.Anonymous && caller == owner

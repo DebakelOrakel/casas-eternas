@@ -1,7 +1,7 @@
 ---
 summary: How the server establishes who is asking. Three modes stay — but `token` becomes `password`, because the axis that matters is WHERE the users live, not what the header looks like. Credentials are an htpasswd file mounted from a Secret; logging in exchanges them for a JWT the server issues itself; OIDC later is a second login method feeding the same token, not a second token. Four paths stay public so a logged-out client can find out where to log in. Revocation is decided (short TTL plus refresh, revoked by a per-user stamp) but not yet built. The user file lives in the writable data directory rather than the Secret, because the planned admin screen has to be able to add users.
 date: 2026-08-09
-status: decided, sequenced in seven steps. STEPS 1–3 BUILT 2026-08-09 — the mode renamed with a validating `--auth-mode`, htpasswd verification, and token issue/verify with the method pinned. Nothing is wired to HTTP yet
+status: decided, sequenced in seven steps. STEPS 1–4 BUILT 2026-08-09 — mode, htpasswd, tokens, and `POST /v1/session`. The server is usable with `curl -u`; nothing is PROTECTED yet, which is step 5
 ---
 
 # Server authentication
@@ -276,10 +276,14 @@ Three decisions taken while building it, each against the obvious alternative:
   The price is that a HALF-WRITTEN file rejects everyone, which is why the admin
   screen must write to a temporary file and rename over the target. Kubernetes
   already does exactly that for projected Secrets.
-- **bcrypt only.** htpasswd also writes MD5-crypt (`$apr1$`, apache's own
-  default), SHA1 and plaintext. Accepting them would be the worse kindness: the
-  file works and its owner believes the passwords are protected. It refuses and
-  says `use htpasswd -B`.
+- **bcrypt only, and not below cost 10.** htpasswd also writes MD5-crypt
+  (`$apr1$`, apache's own default), SHA1 and plaintext; all are refused. The cost
+  floor was added on 2026-08-09 after measuring what `htpasswd -B` actually
+  writes: **cost 5**, where Go's own default is 10 — roughly thirty times cheaper
+  to attack, and visually identical to a strong hash. Rejecting rather than
+  warning was chosen because it is cheap to do now, while no files exist in the
+  wild to lock anyone out of. Both errors name the remedy (`htpasswd -B -C 12`),
+  because "wrong format" without one is just an obstacle.
 - **A duplicate user is an error**, because silently taking one of the two is how
   a user somebody believes they removed goes on working.
 
@@ -289,6 +293,17 @@ magnitude, measurable by anyone, which turns the login endpoint into a "does thi
 account exist" oracle. Comparing against a fixed valid hash when the user is
 absent removes the signal for free. There is a test that MEASURES it rather than
 asserting it in a comment: a ratio, so it means the same on any machine.
+
+The fixed hash is at the recommended cost (12) rather than the floor, so it is
+never cheaper than a hash in the file. The residual is stated in the code rather
+than hidden: a file using a cost above 12 makes a real user slower than an absent
+one again — a factor of two or four against network jitter, rather than the
+thousandfold gap this removes.
+
+**Documenting how to make the file** belongs with the flag, and is the first
+thing anyone needs: `htpasswd -B -C 12 -c <file> <user>` for the first user, the
+same without `-c` for every further one (with `-c` it truncates), `htpasswd -D`
+to remove one.
 
 **3. The token, likewise standalone. BUILT 2026-08-09.** Issue and verify in one
 object — an issuer and a verifier that could be configured apart is a bug with no
@@ -311,12 +326,38 @@ that we never opt in, and that the library keeps requiring it) but its comment
 now says what it actually guards. A green test proves nothing until you know what
 turns it red.
 
-**4. `POST /v1/session`, and `identity.Caller` learns to verify.** After this the
-server is usable with `curl -u`, before any UI exists. `Caller` verifies the token
-itself rather than reading a value a middleware put in the request context: its
-stated purpose is to be the ONE place that answers "who is asking", and moving
-the answer somewhere else would undo that for a signature check that costs
-microseconds.
+**4. `POST /v1/session`, and identity learns to verify. BUILT 2026-08-09.**
+
+`identity.Caller` became `identity.Resolver.Caller`, because answering now needs
+a verifier and a verifier needs a key. The consequence is a simplification the
+plan did not anticipate: `world.Config` and `bake.Config` no longer carry an
+`AuthMode` at all — they hold the one Resolver and ask it. A module that used to
+know how authentication was configured now only knows how to ask who is calling,
+which is what the package claimed to be for.
+
+The login endpoint is its own module (`internal/session`) rather than a route the
+server mounts beside `/v1/capabilities`, because "modules claim their routes" is
+this codebase's existing shape and the endpoint fits it. `internal/auth` stays
+HTTP-free, as steps 2 and 3 set it up to be. It is mounted whenever there is
+something to log in to, regardless of `--target`: a deployment serving only the
+artifact store still has to let its callers authenticate.
+
+`Caller` verifies the token itself rather than reading a value a middleware put
+in the request context — its stated purpose is to be the ONE place that answers
+"who is asking", and moving the answer elsewhere would undo that to save a
+signature check that costs microseconds.
+
+Two things the wiring taught:
+
+- **Fail before warning about something else.** The first version generated an
+  ephemeral signing key (with its warning) and then refused to start because
+  `--auth-htpasswd` was missing. Two messages about different things, the loud
+  one irrelevant. Users are checked first now.
+- **The bake test could finally say something true.** It asserted "nobody can
+  authenticate yet"; with a real verifier it now issues real tokens and checks
+  that a stranger's session, a bake token for the very artifact key in question,
+  and nonsense are all refused identically — while the owner's own session is
+  not. The audience split earns itself there, from the enforcement side.
 
 **5. 401 for everything else.** The four public paths are declared as **data** in
 one place, not as conditions scattered across handlers — a public path is a

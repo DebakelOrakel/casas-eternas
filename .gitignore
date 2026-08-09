@@ -50,3 +50,7 @@ client/scripts/golden-hashes.json
 *.njsproj
 *.sln
 *.sw?
+*.key
+*.crt
+*.ca
+.htpasswd

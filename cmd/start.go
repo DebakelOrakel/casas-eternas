@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -9,10 +10,13 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/artifacts"
+	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/bake"
 	"github.com/DebakelOrakel/casas-eternas/internal/client"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
+	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
+	"github.com/DebakelOrakel/casas-eternas/internal/session"
 	"github.com/DebakelOrakel/casas-eternas/internal/world"
 )
 
@@ -59,6 +63,16 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 	if err != nil {
 		return nil, err
 	}
+	caller, login, err := buildAuth(authMode)
+	if err != nil {
+		return nil, err
+	}
+	// Mounted whenever there is something to log in to, regardless of --target:
+	// a deployment serving only the artifact store still has to let its callers
+	// authenticate, and there is nowhere else to do it.
+	if login != nil {
+		modules = append(modules, login)
+	}
 
 	if targets.Has(config.TargetClient) {
 		m, err := client.New(client.Config{Dir: viper.GetString(flagDirClient), AuthMode: authMode})
@@ -68,7 +82,7 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetWorld) {
-		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorlds), AuthMode: authMode})
+		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorlds), Identity: caller})
 		if err != nil {
 			return nil, err
 		}
@@ -86,7 +100,7 @@ func buildModules(targets config.Targets) ([]server.Module, error) {
 			WorldsDir:     viper.GetString(flagDirWorlds),
 			ArtifactsDir:  viper.GetString(flagDirArtifacts),
 			BakerPath:     bakerPath(),
-			AuthMode:      authMode,
+			Identity:      caller,
 			Listen:        viper.GetString(flagListen),
 			MaxConcurrent: viper.GetInt(flagBakeMax),
 		})
@@ -111,4 +125,73 @@ func bakerPath() string {
 		return "baker.mjs"
 	}
 	return filepath.Join(filepath.Dir(executable), "baker.mjs")
+}
+
+// buildAuth assembles what authentication needs: the process's one identity
+// resolver, and the login module — which exists only in a mode that has
+// something to log in to.
+//
+// A mode that CHECKS identity and cannot verify a token would attribute every
+// request to nobody, which looks exactly like a permission bug from the outside.
+// So every ingredient it needs is required here, at startup, where the message
+// can name the missing flag.
+func buildAuth(mode config.AuthMode) (*identity.Resolver, server.Module, error) {
+	if !mode.ChecksIdentity() {
+		return identity.NewResolver(mode, nil), nil, nil
+	}
+
+	if mode == config.AuthOIDC {
+		// The declared, empty path: the mode parses and the resolver would
+		// verify the tokens this server issues, but nothing issues them yet.
+		return nil, nil, fmt.Errorf("--auth-mode %s is not implemented yet", mode)
+	}
+
+	// Users before the key, so a start that is going to fail fails BEFORE
+	// warning about something else. Warning about an ephemeral signing key and
+	// then refusing to start for an unrelated reason sends the reader after the
+	// wrong problem.
+	users, err := auth.NewUsers(viper.GetString(flagAuthHtpasswd))
+	if err != nil {
+		return nil, nil, fmt.Errorf("--%s: %w", flagAuthHtpasswd, err)
+	}
+
+	key, err := signingKey()
+	if err != nil {
+		return nil, nil, err
+	}
+	tokens, err := auth.NewTokens(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	resolver := identity.NewResolver(mode, tokens)
+	login, err := session.New(session.Config{
+		Users:  users,
+		Tokens: tokens,
+		TTL:    viper.GetDuration(flagAuthTokenTTL),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	slog.Info("authentication ready", "mode", mode, "users", users.Path(), "token ttl", viper.GetDuration(flagAuthTokenTTL))
+	return resolver, login, nil
+}
+
+// signingKey reads the configured key, or makes an ephemeral one and says so.
+//
+// Generating rather than refusing keeps a single local server easy to start.
+// Saying so loudly is the other half: the consequences — sessions lost on
+// restart, replicas that reject each other's tokens — are invisible until they
+// bite, and by then they look like a bug rather than a missing flag.
+func signingKey() ([]byte, error) {
+	if path := viper.GetString(flagAuthKey); path != "" {
+		return auth.ReadKey(path)
+	}
+	key, err := auth.GenerateKey()
+	if err != nil {
+		return nil, err
+	}
+	slog.Warn("no signing key configured, generated an ephemeral one",
+		"flag", "--"+flagAuthKey,
+		"consequence", "sessions end at restart, and replicas will not accept each other's tokens")
+	return key, nil
 }
