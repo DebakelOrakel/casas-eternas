@@ -524,9 +524,19 @@ honestly.
    erosion pass then treats the other 398 139 cells — real ocean, to the cell —
    as landlocked seas under basin protection. Verified by counting the
    components of the drowned field: everything but the largest sums to exactly
-   the enclosed-water figure. Harmless in the measured runs (protection mostly
-   preserves what was there anyway), but a second, independent way the drowned
-   world is a different world.
+   the enclosed-water figure. For the TERRAIN this stayed harmless in the
+   measured runs — the protection mostly preserves what was there anyway.
+
+   For the RIVERS it does not stay harmless, and `scripts/split-bake.mjs` made
+   it visible the first time it ran: the region whose land severs the ocean
+   emitted **4 571 river polylines against the whole bake's 158** (alpha, factor
+   1, 4 regions). The severed ocean is a depression to the hydrology re-run, so
+   the flood fills it to its spill and its accumulated flow drains across the
+   region's own land as discharge that does not exist — a dense fake river
+   network with every head in cells the region legitimately owns, which means
+   river clipping cannot catch it and the composite would ship it. A third
+   independent way the drowned world is a different world, and the most visible
+   one.
 
    **The constructive version is the same measurement read forwards.** The
    traversal IS reducible — the shelf experiment cuts it 6.9× with zero cells
