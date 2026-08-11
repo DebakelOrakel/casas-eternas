@@ -4,6 +4,9 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-08-11
+- **fixed** Rendering: river ribbons in the generator now rise with the exaggerated relief instead of sinking inside it at relief zoom. `worldgen`
+- **fixed** Map: thin rivers no longer drop out at middle zoom — the watercolour pass had cost the scene its antialiasing. `worldmap`
+- **changed** Rendering: the generator's relief uses the map's 6x vertical exaggeration, so terrain is tuned at the scale the map shows. `worldgen`
 - **fixed** Map: a server that missed one 3-second probe at page load no longer makes the map bake stages the server already holds — the verdict is re-checked instead of sticking for the whole session. `worldmap`
 - **fixed** Map: a bake already running on the server for this world is now followed — progress toast and all — instead of the map silently computing the same stage a second time. `worldmap`
 - **changed** Erosion: 4K/8K select instead of start — a new bake button runs every selected resolution in turn, once the world has had an erosion pass; 16K is shown as coming. `worldgen.panel.erosion`

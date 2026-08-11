@@ -271,6 +271,12 @@ export function createWatercolorPass(options: WatercolorPassOptions): Watercolor
     1,
     camera,
   )
+  // With a post-process in the chain the scene renders into this pass's input
+  // texture, not the canvas — so the engine's own antialiasing no longer
+  // applies, and sub-pixel geometry (thin river ribbons at mid zoom) misses
+  // the pixel centres of a single-sample target and drops out entirely. Ask
+  // for a multisampled input; the cap check keeps WebGL1 (max 1) valid.
+  pass.samples = Math.min(4, scene.getEngine().getCaps().maxMSAASamples)
 
   pass.onApply = (effect) => {
     // Bound even on the frames the shader returns early: an unbound sampler is

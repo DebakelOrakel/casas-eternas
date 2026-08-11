@@ -36,10 +36,11 @@ export const RELIEF_HEIGHT_SCALE = (ELEVATION_METERS / (METERS_PER_CELL * MAP_WI
 export const MAP_EXAGGERATION = 6
 export const NEAR_EXAGGERATION = 1
 
-// The generator's own relief preview is a map register throughout (it never
-// descends), but a gentler one — it is a working view over a world being
-// tuned, not a presentation of a finished one.
-export const WORLDGEN_EXAGGERATION = 3
+// The generator's preview shares MAP_EXAGGERATION. It used to run a gentler
+// 3x on the grounds that it is a working view rather than a presentation —
+// which meant tuning terrain at a vertical scale the map never shows. The
+// one-map-two-screens unification (docs/design/hex-world-view.md, decided
+// 2026-08-09) removed the difference.
 
 // Decimation of the full-res elevation raster into the canonical coarse
 // preview surface — one coarse-relief-mesh vertex per decimated cell, so

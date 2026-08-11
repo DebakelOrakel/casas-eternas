@@ -375,7 +375,9 @@ world at three vertical scales. The reason on record — the generator is "a
 working view over a world being tuned, not a presentation of a finished one" —
 is an aesthetic claim, and it costs the thing the workbench is FOR: a range that
 reads right at 3× reads differently at 6×, so you tune against a scale you never
-see. To unify, with the same fade toward 1:1 on descent.
+see. To unify, with the same fade toward 1:1 on descent. *(Unified 2026-08-11:
+`WORLDGEN_EXAGGERATION` is gone and the generator uses `MAP_EXAGGERATION`; it
+never descends, so it needs no fade.)*
 
 **The fine elevation surface** should be in both. It is deterministic and cheap;
 there is no reason the workbench goes without it.
