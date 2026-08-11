@@ -654,6 +654,14 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   return {
     scene,
     dispose() {
+      // Teardown must leave the same state a world SWITCH does, or the two
+      // drift: presentWorld bumps the generation and nulls the view, and a tier
+      // fetch still in flight is checked against exactly those two things. Left
+      // out here, a read that lands after the screen is gone passes both guards
+      // — the view is disposed but not null — and goes on to update a disposed
+      // texture, hand surfaces to a disposed view, and build a fresh ribbon
+      // overlay on a scene that no longer exists.
+      loadGeneration++
       if (knowledgeRepaintTimer !== null) clearTimeout(knowledgeRepaintTimer)
       scene.onPointerObservable.remove(brushObserver)
       debugPanel.dispose()
@@ -664,6 +672,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       skyMaterial.dispose()
       hoverTooltip?.dispose()
       mapView?.dispose()
+      mapView = null // disposed AND cleared, so the guards above mean what they say
       helpTooltip.dispose()
       storagePanel.dispose()
       serverIndicator.dispose()

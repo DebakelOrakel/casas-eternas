@@ -43,9 +43,21 @@ all four. `screens/` sits above everything.
 reintroduce it. If something needs both a generator and a store, that is
 `world/`'s job, not a new edge.
 
-One peer edge is knowingly left: `storage → server`, because `HttpArtifactStore`
-asks the server module for the API base. Giving the store its base URL as
-configuration would remove it.
+Two peer edges are knowingly left.
+
+`storage → server`, because `HttpArtifactStore` asks the server module for the
+API base. Giving the store its base URL as configuration would remove it.
+
+`map → worldgen`, with a boundary that is meant to be checkable: **`map/` may
+read worldgen's units, its vocabulary and its pure field functions — it may not
+drive a simulation.** Reading `ELEVATION_METERS`, the `Biome` enum or
+`computeBiomesFine` is fine; importing anything that advances state is the
+violation. The edge is not a cycle (nothing in `worldgen/` imports `map/`) and
+it predates the rule being written down — `mapSceneSettings` cannot express a
+metre without it. Legitimised rather than broken 2026-08-11, when
+`mapPresentation` made it conspicuous: the alternative was a units-and-vocabulary
+module existing only to satisfy the rule, plus moving the map's re-classification
+into `world/`, which the test below excludes.
 
 The test for where a thing belongs: **if a function does not need to know *which*
 world is meant, it is not world-layer code.** `runErosionPass` does not;
