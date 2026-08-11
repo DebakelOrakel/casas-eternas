@@ -1,0 +1,57 @@
+/* Debug tuning strip for the knowledge registers — deleted together with
+   knowledgeDebugPanel.ts once stage A's numbers are frozen. Deliberately plain:
+   it borrows nothing from the map chrome, so it cannot drift into looking like
+   part of the game. */
+
+.knowledge-debug {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  max-width: 34rem;
+  padding: 8px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.88);
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #1a1a1a;
+}
+
+.knowledge-debug__title {
+  width: 100%;
+  opacity: 0.5;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.knowledge-debug label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.knowledge-debug input[type='range'] {
+  width: 5.5rem;
+}
+
+.knowledge-debug button {
+  padding: 2px 7px;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  border-radius: 3px;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.knowledge-debug button:hover {
+  background: #f0f0f0;
+}
+
+.knowledge-debug button.is-on {
+  border-color: #1a5fb4;
+  background: #dbe8fb;
+}

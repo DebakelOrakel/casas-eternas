@@ -1,4 +1,4 @@
-import { Color3, Color4, MeshBuilder, Scene, ShaderMaterial } from '@babylonjs/core'
+import { Color3, Color4, MeshBuilder, PointerEventTypes, Scene, ShaderMaterial } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { createWorldgenCamera } from '../../camera/worldgenCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
@@ -6,9 +6,12 @@ import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { ToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
-import { createMapPresentation } from '../../map/mapPresentation'
-import type { MapWorldFields } from '../../map/mapPresentation'
+import { createMapPresentation, DEFAULT_KNOWLEDGE_RAMP } from '../../map/mapPresentation'
+import type { KnowledgeRamp, MapWorldFields } from '../../map/mapPresentation'
 import type { ElevationSurface } from '../../map/elevationSurface'
+import { createKnowledgeField } from './knowledgeField'
+import type { KnowledgeField } from './knowledgeField'
+import { createKnowledgeDebugPanel } from './knowledgeDebugPanel'
 import { MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_FINE_ZOOM, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
 import { AMPLIFY_FETCH_STAGES } from '../../world/bakeSettings'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
@@ -35,6 +38,11 @@ import '../../ui/chrome/chrome.css'
 // readout; the relief/LOD ladder from docs/design/hex-world-view.md comes
 // next, feeding off the same elevation raster.
 
+// How many stand-in settlements a freshly loaded world starts with — enough
+// that the three registers are all on screen at once, which is what stage A is
+// for judging. Goes away with the debug field it seeds.
+const SEED_SETTLEMENTS = 7
+
 // River ribbon widths per relief level — the same reasoning as the
 // generator's: the stored per-point widths are cartographic, and at relief
 // zoom a literal reading turns a line into a flood while the D8 staircase's
@@ -55,6 +63,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     getFocus: getCameraFocus,
     setDeepZoomEnabled: setCameraDeepZoom,
     setDesiredTilt: setCameraDesiredTilt,
+    setPanEnabled: setCameraPanEnabled,
     getZoom: getCameraZoom,
     getYaw: getCameraYaw,
     getNearBlend: getCameraNearBlend,
@@ -196,6 +205,47 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     syncRibbonLevel(true) // the ribbons drape on these same surfaces
   }
 
+  // How much of this world is known (see knowledgeField.ts — the field is a
+  // STAND-IN until exploration exists). Rebuilt per world, because its stand-in
+  // settlements are seeded from that world's own terrain.
+  let knowledge: KnowledgeField | null = null
+  const knowledgeRamp: KnowledgeRamp = { ...DEFAULT_KNOWLEDGE_RAMP }
+  // What the stand-in settlements are placed against, kept so "reseed" can run
+  // again without reloading the world.
+  let knowledgeSeedInputs: { elevations: Float32Array; width: number; height: number; biome: { data: Float32Array; resX: number; resY: number } | null; detailSeed: number } | null = null
+  // Re-seeded with a different offset each time, so pressing the button walks
+  // through arrangements instead of redrawing the same one.
+  let knowledgeSeedNonce = 0
+
+  function seedKnowledge(): void {
+    if (!knowledge || !knowledgeSeedInputs) return
+    const { elevations, width, height, biome, detailSeed } = knowledgeSeedInputs
+    knowledge.seed(elevations, width, height, biome, detailSeed + knowledgeSeedNonce++, SEED_SETTLEMENTS)
+  }
+  // The rivers as the bake extracted them, retained because the ones actually
+  // DRAWN are a subset that changes with knowledge.
+  let riverSource: { points: Float32Array; lengths: Uint32Array; width: number; height: number; factor: number } | null = null
+
+  // A repaint touches every one of the paper's 8.4 million texels twice over,
+  // so it cannot run per pointer-move. The brush writes into the field (cheap,
+  // a few hundred coarse cells) and the picture catches up on a timer — which
+  // is honest for a debug tool and is also roughly how wet paint behaves.
+  const KNOWLEDGE_REPAINT_INTERVAL_MS = 220
+  let knowledgeRepaintTimer: ReturnType<typeof setTimeout> | null = null
+
+  function refreshKnowledge(): void {
+    presentation.refreshKnowledge()
+    setRiverPolylines()
+  }
+
+  function scheduleKnowledgeRepaint(): void {
+    if (knowledgeRepaintTimer !== null) return
+    knowledgeRepaintTimer = setTimeout(() => {
+      knowledgeRepaintTimer = null
+      refreshKnowledge()
+    }, KNOWLEDGE_REPAINT_INTERVAL_MS)
+  }
+
   // How this world's fields become pixels and heights — see map/mapPresentation.
   // One instance for the screen's lifetime: the texture resolution is fixed for
   // the session, so a tier landing never rebuilds it.
@@ -238,6 +288,37 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   const storagePanel = createStoragePanel(root)
   root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => storagePanel.open())
+
+  // Stage A's tuning strip — temporary, see knowledgeDebugPanel.ts.
+  const debugPanel = createKnowledgeDebugPanel(root, {
+    ramp: knowledgeRamp,
+    onRampChange: () => { presentation.setKnowledgeRamp(knowledgeRamp); setRiverPolylines() },
+    onSeed: () => { seedKnowledge(); refreshKnowledge() },
+    onClear: () => { knowledge?.fill(0); refreshKnowledge() },
+    onReveal: () => { knowledge?.fill(1); refreshKnowledge() },
+    // The map must not slide out from under a brush stroke — the camera
+    // exposes exactly this seam (see worldgenCamera's setPanEnabled).
+    onBrushToggle: (active: boolean) => setCameraPanEnabled(!active),
+  })
+
+  // Paint knowledge where the pointer is. Babylon's pick gives the map plane's
+  // UV directly, and every wrapped tile instance shares those UVs — so a stroke
+  // over any copy of the torus lands on the one world underneath.
+  let brushDown = false
+  const brushObserver = scene.onPointerObservable.add((info) => {
+    if (!debugPanel.isBrushActive() || !knowledge) return
+    if (info.type === PointerEventTypes.POINTERUP) {
+      brushDown = false
+      refreshKnowledge() // the stroke ended: show it in full at once
+      return
+    }
+    if (info.type === PointerEventTypes.POINTERDOWN) brushDown = true
+    else if (info.type !== PointerEventTypes.POINTERMOVE || !brushDown) return
+    const uv = scene.pick(scene.pointerX, scene.pointerY)?.getTextureCoordinates()
+    if (!uv) return
+    knowledge.paint(uv.x, uv.y, debugPanel.brushRadius(), 1)
+    scheduleKnowledgeRepaint()
+  })
 
   // Same load affordance as the generator: folder button → file picker.
   const fileInput = document.createElement('input')
@@ -301,6 +382,13 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverLayer = null
     mapView?.dispose()
     mapView = null
+
+    riverSource = null
+    // The stand-in knowledge state, seeded from this world's own terrain.
+    knowledge = createKnowledgeField(PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT, detailSeed)
+    knowledgeSeedInputs = { elevations, width, height, biome, detailSeed }
+    seedKnowledge()
+    presentation.setKnowledge(knowledge)
 
     // Derived BEFORE the view exists, because the near-detail patch needs two
     // of the surfaces at construction. Both callbacks stash and find no view;
@@ -412,6 +500,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function applyRivers(points: Float32Array, lengths: Uint32Array, fieldWidth: number, fieldHeight: number, factor: number): void {
     riverLayer?.dispose()
     riverLayer = null
+    riverSource = { points, lengths, width: fieldWidth, height: fieldHeight, factor }
     if (lengths.length === 0) return
     riverLayer = createToroidalRibbonOverlay({
       scene,
@@ -437,9 +526,45 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // more points, making it lower-frequency.
       smoothingPasses: 2 * factor,
     })
-    riverLayer.setPolylines(points, lengths)
+    setRiverPolylines()
     ribbonLevel = 'flat'
     syncRibbonLevel(true)
+  }
+
+  // The ribbons a player may actually see: rivers are vector geometry drawn
+  // OVER the paper, so unlike the wash they are not dimmed by knowledge — they
+  // are simply absent where nobody has been. A polyline crossing the frontier
+  // is split rather than dropped, so a river you know the lower half of ends at
+  // the edge of what you know instead of vanishing whole.
+  function setRiverPolylines(): void {
+    if (!riverLayer || !riverSource) return
+    const { points, lengths, width, height } = riverSource
+    if (!knowledge) {
+      riverLayer.setPolylines(points, lengths)
+      return
+    }
+    const outPoints: number[] = []
+    const outLengths: number[] = []
+    let run = 0
+    let read = 0
+    for (const length of lengths) {
+      run = 0
+      for (let n = 0; n < length; n++, read += 3) {
+        const known = presentation.knowledgeAtUV(points[read] / width, points[read + 1] / height)
+        if (known >= knowledgeRamp.activeFrom) {
+          outPoints.push(points[read], points[read + 1], points[read + 2])
+          run++
+          continue
+        }
+        // A run of one is a dot, not a river.
+        if (run >= 2) outLengths.push(run)
+        else if (run === 1) outPoints.length -= 3
+        run = 0
+      }
+      if (run >= 2) outLengths.push(run)
+      else if (run === 1) outPoints.length -= 3
+    }
+    riverLayer.setPolylines(new Float32Array(outPoints), new Uint32Array(outLengths))
   }
 
   // Keep the ribbons styled for whichever relief level is on screen —
@@ -500,6 +625,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   return {
     scene,
     dispose() {
+      if (knowledgeRepaintTimer !== null) clearTimeout(knowledgeRepaintTimer)
+      scene.onPointerObservable.remove(brushObserver)
+      debugPanel.dispose()
       riverLayer?.dispose()
       scene.onBeforeRenderObservable.remove(skyObserver)
       skyDome.dispose()

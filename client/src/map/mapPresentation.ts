@@ -58,8 +58,30 @@ export interface MapWorldFields {
   } | null
 }
 
+// How much of the world is known, one value per paper texel (0..1). See
+// docs/design/watercolor-map.md: the three registers are BANDS of this, not
+// classes, so the transitions are washes rather than borders.
+export interface KnowledgeSource {
+  // k per texel, at exactly the paper's resolution.
+  readonly texels: Float32Array
+  // Changes when the field does — the presentation repaints on a new value.
+  readonly revision: number
+}
+
 export interface MapPresentation {
   setWorld(fields: MapWorldFields): void
+  // The knowledge field, or null for "everything known", which reproduces the
+  // pre-knowledge map byte for byte (see the identity note on PAPER_TONE).
+  setKnowledge(source: KnowledgeSource | null): void
+  // Retune where the three registers sit. Debug-facing: stage A exists to
+  // decide these numbers.
+  setKnowledgeRamp(ramp: KnowledgeRamp): void
+  // The knowledge field changed in place — repaint against it.
+  refreshKnowledge(): void
+  // How much is known at a UV, 0..1 (1 with no field). Callers that draw their
+  // OWN geometry over the map need it: a river through unexplored land must not
+  // be drawn either.
+  knowledgeAtUV(u: number, v: number): number
   // The height raster now in force — the save's macro field at load, then each
   // amplified tier as it arrives. Emits paper AND surfaces.
   setElevation(field: Float32Array, fieldWidth: number, fieldHeight: number, detailSeed: number): void
@@ -76,6 +98,39 @@ export interface MapPresentation {
 // into a flat colour chart.
 const BIOME_DESATURATE = 0.45
 const BIOME_ALPHA = 0.55
+
+// The sheet itself: a warm off-white, not #fff. Pure white reads as ABSENCE —
+// as though the render failed — while a paper tone reads as an unpainted sheet,
+// which is the whole point of the unexplored register.
+const PAPER_TONE = [250, 247, 240] as const
+
+// k below which nothing has been painted at all, and the k at which the flat
+// first wash sits. Between them the pigment ramps up; above the second, the map
+// works itself out toward the full-strength picture.
+//
+// These are the three registers as NUMBERS, and they are the thing stage A
+// exists to judge (docs/design/watercolor-map.md). Debug-tunable from the
+// screen for exactly that reason.
+export interface KnowledgeRamp {
+  // Pigment reaching the paper at the "explored" plateau — a pale flat wash.
+  exploredPigment: number
+  // k at which that plateau sits.
+  exploredAt: number
+  // k above which relief (and the last of the pigment) fades in.
+  activeFrom: number
+}
+
+export const DEFAULT_KNOWLEDGE_RAMP: KnowledgeRamp = {
+  exploredPigment: 0.35,
+  exploredAt: 0.5,
+  activeFrom: 0.6,
+}
+
+const smoothstep = (edge0: number, edge1: number, x: number): number => {
+  if (edge1 <= edge0) return x >= edge1 ? 1 : 0
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
+  return t * t * (3 - 2 * t)
+}
 
 export function createMapPresentation(options: MapPresentationOptions): MapPresentation {
   const { textureWidth, textureHeight, onPaper, onSurfaces } = options
@@ -98,6 +153,41 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
   // built here rather than inside the classification, because the terrain
   // being classified is no longer that raster once a tier lands.
   let seaLevelTemperature: Float32Array | null = null
+  let knowledge: KnowledgeSource | null = null
+  let ramp: KnowledgeRamp = { ...DEFAULT_KNOWLEDGE_RAMP }
+  // The raster now in force, kept so a knowledge change can re-derive without
+  // the caller handing the field in again.
+  let currentField: { data: Float32Array; width: number; height: number; detailSeed: number } | null = null
+
+  // k at an arbitrary UV, read off the same per-texel array the paper uses —
+  // one source, so the geometry can never disagree with the picture.
+  function knowledgeAtUV(u: number, v: number): number {
+    const k = knowledge?.texels
+    if (!k) return 1
+    const uw = u - Math.floor(u)
+    const vw = v - Math.floor(v)
+    const x = Math.min(textureWidth - 1, Math.floor(uw * textureWidth))
+    const y = Math.min(textureHeight - 1, Math.floor(vw * textureHeight))
+    return k[y * textureWidth + x]
+  }
+
+  // Land RISES as it becomes known. Without this an unexplored mountain range
+  // still betrays itself: the paper above it may be blank, but the mesh is real
+  // geometry, lit for real, and its silhouette and shading give the shape away
+  // the moment the camera tilts.
+  //
+  // A wrapper rather than a change to ToroidalMapView, because
+  // `setReliefSurfaces` already takes an ElevationSurface — the seam was
+  // already there. Keyed off the SAME ramp the pigment uses, so terrain and
+  // colour arrive together.
+  function sinkWithKnowledge(surface: ElevationSurface): ElevationSurface {
+    if (!knowledge) return surface
+    return {
+      heightAtUV(u: number, v: number): number {
+        return surface.heightAtUV(u, v) * smoothstep(ramp.activeFrom, 1, knowledgeAtUV(u, v))
+      },
+    }
+  }
 
   // Biomes re-derived from THIS raster, at texture resolution.
   //
@@ -148,6 +238,23 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
   // Paint the retained relief bytes into both papers, with the biome wash on
   // top wherever there are ids for it. Split from setElevation so a repaint
   // costs neither the hillshade nor the classification again.
+  //
+  // Knowledge enters LAST, as two lerps per texel over the finished picture,
+  // and that ordering is what makes it cheap AND exact: the wash and the
+  // hillshade are computed once at full strength, and k only decides how much
+  // of them survives. At k = 1 everywhere both lerps are the identity, so the
+  // output is byte-for-byte the map that existed before any of this — which is
+  // the property the extraction's spec check pins down.
+  //
+  //   flat map   = lerp(PAPER, lerp(unshaded, shaded, relief(k)), pigment(k))
+  //   relief map = lerp(PAPER, unshaded, pigment(k))
+  //
+  // The relief meshes get no baked hillshade in either case — they are lit for
+  // real, and their GEOMETRY carries how much is known (see the k-sunk surfaces
+  // below). Blending toward the paper tone rather than scaling the wash's alpha
+  // is deliberate: a pixel a third of the way from paper to its full colour IS
+  // a pale wash, and it lightens as it desaturates, which is what thin
+  // watercolour does.
   function repaintPaper(): void {
     if (!lastRelief) return
     const shaded = buildPaperBase(lastRelief)
@@ -156,7 +263,42 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       applyBiomeWash(shaded, lastRelief, biomeIds, BIOME_DESATURATE, BIOME_ALPHA)
       applyBiomeWash(unshaded, lastRelief, biomeIds, BIOME_DESATURATE, BIOME_ALPHA)
     }
+    const k = knowledge?.texels
+    if (k) {
+      for (let i = 0; i < k.length; i++) {
+        const kv = k[i]
+        const relief = smoothstep(ramp.activeFrom, 1, kv)
+        const pigment = kv <= ramp.exploredAt
+          ? smoothstep(0, ramp.exploredAt, kv) * ramp.exploredPigment
+          : ramp.exploredPigment + (1 - ramp.exploredPigment) * smoothstep(ramp.exploredAt, 1, kv)
+        const p = i * 4
+        for (let c = 0; c < 3; c++) {
+          const flat = unshaded[p + c]
+          const lit = flat + (shaded[p + c] - flat) * relief
+          const tone = PAPER_TONE[c]
+          shaded[p + c] = tone + (lit - tone) * pigment
+          unshaded[p + c] = tone + (flat - tone) * pigment
+        }
+      }
+    }
     onPaper(shaded, unshaded)
+  }
+
+  // The three surfaces derived from the current raster, each sunk by what is
+  // known of the ground it describes.
+  function emitSurfaces(): void {
+    if (!currentField) return
+    const { data: field, width, height, detailSeed } = currentField
+    const decimated = downsampleElevation(field, width, height, RELIEF_DECIMATION)
+    const coarse = createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE)
+    const fine = createElevationSurface(field, width, height, RELIEF_HEIGHT_SCALE)
+    // The synthetic cascade rides ON TOP of whatever raster is current: its
+    // scales are relative to the raster's resolution, so once a tier lands it
+    // automatically retreats to the band below the amplified cells instead of
+    // competing with them. (What survives of it once erosion lands is a later
+    // question — see the decision doc's ladder.)
+    const detail = createFineElevationSurface(field, width, height, RELIEF_HEIGHT_SCALE, detailSeed, 0.6)
+    onSurfaces(sinkWithKnowledge(coarse), sinkWithKnowledge(fine), sinkWithKnowledge(detail))
   }
 
   return {
@@ -220,18 +362,29 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       }
       lastRelief = computeReliefBytes(paperField, textureWidth, textureHeight)
       reclassifyBiomes(paperField)
+      currentField = { data: field, width: fieldWidth, height: fieldHeight, detailSeed }
       repaintPaper()
+      emitSurfaces()
+    },
 
-      const decimated = downsampleElevation(field, fieldWidth, fieldHeight, RELIEF_DECIMATION)
-      const coarse = createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE)
-      const fine = createElevationSurface(field, fieldWidth, fieldHeight, RELIEF_HEIGHT_SCALE)
-      // The synthetic cascade rides ON TOP of whatever raster is current: its
-      // scales are relative to the raster's resolution, so once a tier lands it
-      // automatically retreats to the band below the amplified cells instead of
-      // competing with them. (What survives of it once erosion lands is a later
-      // question — see the decision doc's ladder.)
-      const detail = createFineElevationSurface(field, fieldWidth, fieldHeight, RELIEF_HEIGHT_SCALE, detailSeed, 0.6)
-      onSurfaces(coarse, fine, detail)
+    setKnowledge(source: KnowledgeSource | null): void {
+      knowledge = source
+      if (lastRelief) repaintPaper()
+      emitSurfaces()
+    },
+
+    setKnowledgeRamp(next: KnowledgeRamp): void {
+      ramp = { ...next }
+      if (lastRelief) repaintPaper()
+      emitSurfaces()
+    },
+
+    // The knowledge field mutated in place (a brush stroke, a scout arriving).
+    // Separate from setKnowledge because the source object has not changed —
+    // only its contents — and the caller is the one that knows a stroke ended.
+    refreshKnowledge(): void {
+      if (lastRelief) repaintPaper()
+      emitSurfaces()
     },
 
     biomeIdAtUV(u: number, v: number): number | null {
@@ -240,5 +393,7 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       const py = Math.min(textureHeight - 1, Math.max(0, Math.floor(v * textureHeight)))
       return biomeIds[py * textureWidth + px]
     },
+
+    knowledgeAtUV,
   }
 }
