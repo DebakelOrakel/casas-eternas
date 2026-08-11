@@ -1,7 +1,7 @@
 ---
 summary: Server-side amplification bakes become Kubernetes Jobs when — and only when — the server is running in a cluster. A job is already a value with a scope behind a Runner interface, so this is an added implementation rather than a rebuild. Decided: only a world's owner may commission one, the runner is chosen by detecting the cluster rather than by a flag, anti-affinity is hard so two 2.6 GB bakes never share a node, and each Job gets a one-shot token scoped to the artifact key it may write. Everything in that list exists ONLY in a cluster; a local server keeps the plain subprocess with no checks at all.
 date: 2026-08-08
-status: decided — architecture and the four forks below. STEPS 1–3 BUILT 2026-08-08 and verified against a real OpenShift cluster: the Job is accepted, its pod is admitted by restricted-v2 and scheduled. A real image runs as a Job and completes (pending → running → succeeded in 54 s, mostly image pull). Not yet run end to end as a BAKE, which needs the server deployed so a Job can reach it. STEP 4 BUILT 2026-08-08: the world map orders a bake for a stage it cannot make itself, verified end to end against a local server.
+status: decided — architecture and the four forks below. STEPS 1–3 BUILT 2026-08-08 and verified against a real OpenShift cluster: the Job is accepted, its pod is admitted by restricted-v2 and scheduled. A real image runs as a Job and completes (pending → running → succeeded in 54 s, mostly image pull). Not yet run end to end as a BAKE, which needs the server deployed so a Job can reach it. STEP 4 BUILT 2026-08-08: the world map orders a bake for a stage it cannot make itself, verified end to end against a local server — but its CLIENT half is SUPERSEDED 2026-08-11 (see "Who triggers a bake"): the server triggers its own bakes on a read it cannot fulfil, and the world map becomes a read-only consumer. Nothing of that new shape is built yet.
 ---
 
 # Bakes as Kubernetes Jobs
@@ -228,6 +228,79 @@ Each step is verifiable before the next, and the first two need no cluster.
    builds. The client reads `worldUid` 7c9e6679-… and derives worldId
    `alpha-8a2f4e5d9c3909b9` — the same id the server baked under, so the two
    halves of the identity meet where they must.
+
+## Who triggers a bake (2026-08-11 — supersedes step 4's client half)
+
+**The server, on a read it cannot fulfil.** A client asks for tier N of world
+X; if the server does not have it, the server produces it and the client
+waits. No client ever commissions anything.
+
+This came out of two premises about the screens, which are worth stating
+because everything below follows from them:
+
+- **The workbench must be usable with no server at all**, local or remote,
+  with a ceiling on which tiers exist.
+- **The world map IS the game**, and the game does not run without at least a
+  local server anyway.
+
+So local baking stops being a client capability and becomes a *workbench*
+capability. `AMPLIFY_BAKE_STAGES = [2]` against `AMPLIFY_FETCH_STAGES = [2, 4]`
+already encoded exactly this split; it just had no owner.
+
+| | Workbench | World map (the game) |
+|---|---|---|
+| usable serverless | yes, up to 4k | no — a server is a precondition |
+| bakes locally | yes (`bakeStageInBrowser`) | never |
+| commissions | no longer | never |
+| reads | store: local → server | store: local → server |
+
+### Why this is not a reversal of "explicit, never automatic"
+
+Step 4's rule was load-bearing and its two reasons were right. Both, read
+again, say *the client is the wrong place to decide* — not *nobody may decide
+automatically*:
+
+- *It spends minutes of a shared machine for someone who only opened a map.*
+  The server applies that policy where the resources actually are, and
+  `canBake` (§1) is already the door: the same ownership check, at the read
+  handler instead of the order handler.
+- *A bake that fails, or that lands under a key this client does not read,
+  would be re-ordered on every single load.* The server can REMEMBER a
+  failure — a negative entry per artifact key and pipeline version. A client
+  cannot do that reliably, which is precisely why the rule had to exist.
+
+Two further problems dissolve rather than move:
+
+- **Deduplication becomes structural.** `findActiveBake` exists on the client
+  only because the server does not deduplicate orders. When the server owns
+  triggering, one key is one job by construction.
+- **The silent mismatch shrinks.** The request carries the pipeline version it
+  wants, so "I do not produce that" is an ANSWER. Step 4's worst failure was a
+  successful bake under a key nobody would ever ask for.
+
+### What this does not remove
+
+A read that takes six minutes is not a GET. The shape stays 202 + job handle +
+poll — which is what `followBake` already does. The client still waits; it
+stops *deciding*. And the ownership and rate policy does not disappear, it
+lands where it belongs.
+
+### What survives from step 4, and what does not
+
+Survives: the identity work (a world is addressed by `metadata.uid`, the
+artifact by content hash — both read from the save, neither guessed), and the
+reasoning about the mismatch outcome, which becomes a server-side answer.
+
+Superseded: "explicit, never automatic" as a CLIENT rule, the world map's order
+button, and the capability probe that decided whether to offer it. The
+generator's own commissioning goes the same way eventually — not because it is
+wrong there, but because nothing in a client needs the verb once the server
+owns it. That is a later step and out of the current scope.
+
+**Nothing of this is built.** The world map is being reduced to a read-only
+consumer first (miss = the macro raster, no fallback bake); speculative 202/
+polling support against a server API that does not exist yet is deliberately
+NOT being written. The seam is named, not built.
 
 ## Flags this needs
 
