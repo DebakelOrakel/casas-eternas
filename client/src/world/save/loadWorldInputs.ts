@@ -64,6 +64,11 @@ export interface WorldInputs {
   // erosion.
   climate: GridLayer | null
   biome: GridLayer | null
+  // Water depth per world cell (elevation units), 0 where there is no lake —
+  // a hydrology state the worldmap paints and cannot re-derive. Absent for a
+  // save that predates the layer. Not part of the worldId: the id hashes its
+  // own fixed set of fields, so reading one more layer moves nothing.
+  lakeDepth: GridLayer | null
   // Everything the Whittaker classification consumes, so a consumer can redo it
   // on ITS OWN terrain instead of upsampling the saved biome ids — which is how
   // the worldmap gets biomes that follow the amplification bake's ridges (see
@@ -117,6 +122,7 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
 
   const climate = await world.acquire('precipitation')
   const biome = await world.acquire('biome')
+  const lakeDepth = await world.acquire('lakeDepth')
   const temperature = await world.acquire('temperature')
   const precipitationEffective = await world.acquire('precipitationEffective')
   const seasonalAmplitude = await world.acquire('seasonalAmplitude')
@@ -134,6 +140,7 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
     erosionControls: world.recipe.erosionControls,
     climate,
     biome,
+    lakeDepth,
     biomeInputs,
     worldId: await world.worldId(),
     worldUid: world.recipe.worldUid,

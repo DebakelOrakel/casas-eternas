@@ -386,7 +386,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     presentWorld(
       inputs.elevations, inputs.width, inputs.height,
       inputs.biome, inputs.detailSeed, inputs.erosionControls.riverDensity,
-      inputs.biomeInputs, inputs.climate,
+      inputs.biomeInputs, inputs.climate, inputs.lakeDepth,
     )
   }
 
@@ -394,7 +394,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // `riverDensity` is the density the world was SAVED with. Rivers are keyed by
   // it inside an amplification artifact, so a read that guessed would find the
   // wrong set — or none.
-  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number, riverDensity: number | undefined, savedBiomeInputs: MapWorldFields['biomeInputs'] = null, climate: { data: Float32Array; resX: number; resY: number } | null = null): void {
+  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number, riverDensity: number | undefined, savedBiomeInputs: MapWorldFields['biomeInputs'] = null, climate: { data: Float32Array; resX: number; resY: number } | null = null, lakeDepth: { data: Float32Array; resX: number; resY: number } | null = null): void {
     // A new world supersedes any tier fetch still in flight for the last one.
     loadGeneration++
     hoverTooltip?.dispose()
@@ -414,7 +414,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Derived BEFORE the view exists, because the near-detail patch needs two
     // of the surfaces at construction. Both callbacks stash and find no view;
     // the two pushes below hand everything over once there is one.
-    presentation.setWorld({ elevations, width, height, biome, detailSeed, biomeInputs: savedBiomeInputs })
+    presentation.setWorld({ elevations, width, height, biome, detailSeed, biomeInputs: savedBiomeInputs, lakeDepth })
     presentation.setElevation(elevations, width, height, detailSeed)
 
     mapView = createToroidalMapView({

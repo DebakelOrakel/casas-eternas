@@ -53,6 +53,35 @@ export const DEFAULT_TERRAIN_WASH: TerrainWash = {
   strength: 0.82,
 }
 
+// Lake water, in the paper's own register: anchored on the paper base's light
+// ocean blue rather than the generator's data-view lake blue, so a lake reads
+// as the same water the ocean is, one tone deeper. The ramp saturates where
+// the generator's does — its 900 m sits just above the measured 99th-percentile
+// lake depth (859 m; see WorldGenScreen's LAKE_SHADE_SATURATION_M), so the ramp
+// spends its range on depths lakes actually have.
+const LAKE_SHALLOW: [number, number, number] = [160, 196, 226]
+const LAKE_DEEP: [number, number, number] = [95, 140, 188]
+const LAKE_DEPTH_SATURATION_M = 900
+// Blended, not multiplied: water is not a glaze over the land pigment, it
+// replaces it. Slightly under 1 so a whisper of the hillshade survives at the
+// shore, the way the worldgen screen's 0.75 does.
+const LAKE_ALPHA = 0.85
+
+// Lay the lakes over the washed paper, IN PLACE. `lakeDepthMeters` is one
+// depth per texel (0 = no lake), already in metres.
+export function applyLakeWash(paper: Uint8ClampedArray, lakeDepthMeters: Float32Array): void {
+  for (let i = 0; i < lakeDepthMeters.length; i++) {
+    const d = lakeDepthMeters[i]
+    if (d <= 0) continue
+    const t = Math.min(1, d / LAKE_DEPTH_SATURATION_M)
+    const p = i * 4
+    for (let c = 0; c < 3; c++) {
+      const water = LAKE_SHALLOW[c] + (LAKE_DEEP[c] - LAKE_SHALLOW[c]) * t
+      paper[p + c] = paper[p + c] * (1 - LAKE_ALPHA) + water * LAKE_ALPHA
+    }
+  }
+}
+
 // Lay the palette over a paper base, IN PLACE. Land only: the ocean keeps the
 // paper's own blue, which already carries bathymetric shading and reads as
 // water without competing with the terrain hues.

@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-08-11
+- **new** Map: lakes appear on the worldmap — depth-shaded in the paper's own water blue, with a drying rim like the coast's. `worldmap`
 - **new** Map: a loaded world shows its rivers right away — the macro network is derived from the save at load instead of waiting for the first bake. `worldmap`
 - **changed** Rendering: river widths now follow zoom continuously — a screen-constant map line handing over to the river's physical width on descent — instead of stepped profiles that let thin rivers vanish at middle zoom.
 - **fixed** Rendering: river ribbons in the generator now rise with the exaggerated relief instead of sinking inside it at relief zoom. `worldgen`

@@ -2,12 +2,12 @@ import { computeReliefBytes } from '../worldgen/render/reliefShade'
 import { upscaleBilinearToroidal } from '../worldgen/core/field'
 import { buildPaperBase, buildUnshadedPaperBase } from './paperBase'
 import { dilateLandBiomes, expandBiomeIds } from './biomeIds'
-import { applyTerrainWash, DEFAULT_TERRAIN_WASH } from './terrainPalette'
+import { applyLakeWash, applyTerrainWash, DEFAULT_TERRAIN_WASH } from './terrainPalette'
 import type { TerrainWash } from './terrainPalette'
 import { createElevationSurface, downsampleElevation } from './elevationSurface'
 import { createFineElevationSurface } from './fineElevationSurface'
 import { RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from './mapSceneSettings'
-import { SEA_LEVEL } from '../worldgen/elevation/elevationScale'
+import { SEA_LEVEL, elevationToMeters } from '../worldgen/elevation/elevationScale'
 import { Biome, computeBiomesFine, reduceTemperatureToSeaLevel } from '../worldgen/climate/biomes'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../worldgen/climate/climateField'
 import type { ElevationSurface } from './elevationSurface'
@@ -58,6 +58,10 @@ export interface MapWorldFields {
     seasonalAmplitude: { data: Float32Array; resX: number; resY: number }
     monsoonIndex: { data: Float32Array; resX: number; resY: number }
   } | null
+  // Water depth per world-raster cell (elevation units), 0 where there is no
+  // lake. A hydrology state like the salt flats — carried from the macro
+  // authority, never re-derived — and null for a save that predates the layer.
+  lakeDepth?: { data: Float32Array; resX: number; resY: number } | null
 }
 
 // How much of the world is known, one value per paper texel (0..1). See
@@ -173,6 +177,11 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
   // raster is their authority: salt flats (a hydrology state, not a climate)
   // and dry basin floors (below sea level yet land).
   let macroBiomeAtTexel: Uint8Array | null = null
+  // Lake depth in METRES per texel, nearest-sampled like the biome table and
+  // for the same reason: a hydrology state whose authority is the macro
+  // raster. Nearest keeps the shore categorical — blending a depth across the
+  // shore would invent shallow water on land.
+  let lakeDepthAtTexel: Float32Array | null = null
   // The saved temperature with its lapse term removed, computed ONCE against
   // the macro raster the generator's climate actually ran on. It has to be
   // built here rather than inside the classification, because the terrain
@@ -218,6 +227,13 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
           const id = biomeIds[row + x]
           if (biomeIds[row + left] !== id || biomeIds[row + right] !== id
             || biomeIds[up + x] !== id || biomeIds[down + x] !== id) edge = 1
+        }
+        // Lake shores rim like the coast does — they are the edge of a wash's
+        // water, not a transition within the land wash.
+        if (!edge && lakeDepthAtTexel) {
+          const lake = lakeDepthAtTexel[row + x] > 0
+          if ((lakeDepthAtTexel[row + left] > 0) !== lake || (lakeDepthAtTexel[row + right] > 0) !== lake
+            || (lakeDepthAtTexel[up + x] > 0) !== lake || (lakeDepthAtTexel[down + x] > 0) !== lake) edge = 1
         }
         mask[row + x] = edge
       }
@@ -358,6 +374,12 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       applyTerrainWash(shaded, lastRelief, biomeIds, terrainWash)
       applyTerrainWash(unshaded, lastRelief, biomeIds, terrainWash)
     }
+    // Lakes go over the wash and under the knowledge lerps, so they dim and
+    // fade toward paper with everything else where nobody has been.
+    if (lakeDepthAtTexel) {
+      applyLakeWash(shaded, lakeDepthAtTexel)
+      applyLakeWash(unshaded, lakeDepthAtTexel)
+    }
     const k = knowledge?.texels
     const w = textureWidth
     const h = textureHeight
@@ -421,8 +443,22 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
 
   return {
     setWorld(fields: MapWorldFields): void {
-      const { elevations, width, height, biome, detailSeed, biomeInputs: savedBiomeInputs } = fields
+      const { elevations, width, height, biome, detailSeed, biomeInputs: savedBiomeInputs, lakeDepth } = fields
       biomeInputs = savedBiomeInputs
+      // Lake depths at texture resolution, in metres — nearest, like the biome
+      // table below and for the same authority reason.
+      lakeDepthAtTexel = null
+      if (lakeDepth) {
+        const table = new Float32Array(textureWidth * textureHeight)
+        for (let y = 0; y < textureHeight; y++) {
+          const sy = Math.min(lakeDepth.resY - 1, Math.floor((y / textureHeight) * lakeDepth.resY))
+          for (let x = 0; x < textureWidth; x++) {
+            const sx = Math.min(lakeDepth.resX - 1, Math.floor((x / textureWidth) * lakeDepth.resX))
+            table[y * textureWidth + x] = elevationToMeters(lakeDepth.data[sy * lakeDepth.resX + sx])
+          }
+        }
+        lakeDepthAtTexel = table
+      }
       // The macro ids at texture resolution, nearest — this is a lookup table
       // for two facts the classification cannot reach (salt flats, dry basin
       // floors), so nearest is right: they are categorical and the macro raster
