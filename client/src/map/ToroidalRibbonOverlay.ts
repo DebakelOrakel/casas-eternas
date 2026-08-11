@@ -61,6 +61,9 @@ export interface ToroidalRibbonOverlay {
   // rivers would stay at true height while the ground rose around them, and
   // vanish inside it.
   setHeightScale(scale: number): void
+  // The ribbons' colour. Per-frame safe: writes the shared material's
+  // emissive, no rebuild — the worldmap lerps ink → water along the descent.
+  setColor(color: Color3): void
   // Called every frame with the map's recenter block center (hook into
   // ToroidalMapView's onRecenter) so the ribbons tile + wrap in lockstep.
   recenter(centerX: number, centerZ: number): void
@@ -320,6 +323,9 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
       heightScale = scale
       if (base) base.scaling.y = scale
       for (const inst of instances) inst.scaling.y = scale
+    },
+    setColor(next: Color3): void {
+      material.emissiveColor.copyFrom(next)
     },
     recenter,
     setEnabled(next: boolean): void {

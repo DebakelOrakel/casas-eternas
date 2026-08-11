@@ -148,7 +148,11 @@ export function deriveWorldId(seedLabel: string, inputs: BakeInputs): string {
 // bake stops carving shelf-deep arms into macro land — a cached v4 artifact
 // holds coastlines this pipeline no longer produces. The constant itself is
 // hashed via AMPLIFY_CONSTANTS; this bump is for the clamp-shape change.
-export const AMPLIFICATION_ALGO_VERSION = 5
+// v6 (2026-08-11): the channel mask is closed downstream
+// (hydrology.buildChannelMask) — the slope-area criterion initiates a channel,
+// it no longer ends one mid-course, so a cached v5 artifact holds rivers that
+// break into dashes on every plain this pipeline now draws through.
+export const AMPLIFICATION_ALGO_VERSION = 6
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

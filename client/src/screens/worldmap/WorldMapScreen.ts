@@ -47,6 +47,15 @@ import '../../ui/chrome/chrome.css'
 // for judging. Goes away with the debug field it seeds.
 const SEED_SETTLEMENTS = 7
 
+// The rivers' two registers (docs/design/watercolor-map.md: "coast and rivers
+// as single confident lines" — ink over paint). On the paper map a river is
+// INK, kin to the hex grid's line work rather than to the generator's
+// data-view blue; on the descent the map becomes a world and the line becomes
+// water. Lerped along the same near-blend that fades the watercolour and the
+// exaggeration, so all three register shifts arrive together.
+const RIVER_INK = new Color3(43 / 255, 64 / 255, 102 / 255)
+const RIVER_WATER = new Color3(45 / 255, 95 / 255, 175 / 255)
+
 export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   const scene = new Scene(ctx.engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
@@ -127,6 +136,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   skyDome.setEnabled(false)
 
   scene.fogColor = SKY_HORIZON
+  const riverColorScratch = new Color3()
   const skyObserver = scene.onBeforeRenderObservable.add(() => {
     const blend = getCameraNearBlend()
     const nearActive = blend > 0.001
@@ -143,6 +153,8 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const exaggeration = MAP_EXAGGERATION + (NEAR_EXAGGERATION - MAP_EXAGGERATION) * blend
     mapView?.setHeightScale(exaggeration)
     riverLayer?.setHeightScale(exaggeration)
+    Color3.LerpToRef(RIVER_INK, RIVER_WATER, blend, riverColorScratch)
+    riverLayer?.setColor(riverColorScratch)
   })
 
   // Built per loaded world (texture dims come from its manifest); replaced
@@ -174,7 +186,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // amplified tier arrives), and which relief level they are currently styled
   // for.
   let riverLayer: ReturnType<typeof createToroidalRibbonOverlay> | null = null
-  let ribbonLevel: 'flat' | 'coarse' | 'fine' = 'flat'
+  let ribbonLevel: 'flat' | 'coarse' | 'fine' | 'near' = 'flat'
 
   // What the presentation last produced. Held here rather than pushed straight
   // into the map view because the view does not exist yet the first time round:
@@ -607,13 +619,26 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Keep the ribbons draped on whichever relief surface is on screen,
   // swapped only on an actual level change (width follows zoom continuously
   // in the overlay's own shader).
+  //
+  // In the NEAR regime the ground under the camera is the detail patch —
+  // the raster plus the synthetic cascade, up to ~240 m above the raster the
+  // fine surface knows, against only ~160 m of drape clearance. Draping on
+  // the raster there tunnels rivers under the cascade's bumps, so the near
+  // level drapes on the SAME detail sampler the patch displaces by. Away
+  // from the patch that overstates the ground — but that is the far field,
+  // under the fog.
   function syncRibbonLevel(force = false): void {
     if (!riverLayer) return
     const zoom = getCameraZoom()
-    const level: typeof ribbonLevel = !reliefCoarseSurface ? 'flat' : zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
+    const level: typeof ribbonLevel = !reliefCoarseSurface ? 'flat'
+      : getCameraNearBlend() > 0.02 && reliefDetailSurface ? 'near'
+      : zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
     if (level === ribbonLevel && !force) return
     ribbonLevel = level
-    riverLayer.setHeightSurface(level === 'flat' ? null : level === 'fine' && reliefFineSurface ? reliefFineSurface : reliefCoarseSurface)
+    riverLayer.setHeightSurface(
+      level === 'flat' ? null
+        : level === 'near' ? reliefDetailSurface
+        : level === 'fine' && reliefFineSurface ? reliefFineSurface : reliefCoarseSurface)
   }
 
   // Everything an arriving amplified tier changes on screen.

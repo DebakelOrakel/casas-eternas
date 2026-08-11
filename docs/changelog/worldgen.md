@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-08-11
+- **fixed** Hydrology: rivers no longer break into dashes where they cross flat ground — the channel criterion starts a river, only the sea ends one. `worldgen.panel.hydrology`
 - **changed** Erosion: river mouths now grade to the sea surface instead of the sea bed — estuary-deep drowned mouths stay, the long carved ocean arms are gone. `worldgen.panel.erosion`
 
 ## 2026-08-09

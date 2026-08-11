@@ -328,6 +328,35 @@ export function isChannelCell(routing: FlowRouting, elevation: Float32Array, dis
   return discharge[cell] * boost >= threshold
 }
 
+// The criterion above locates channel HEADS; membership needs one more rule:
+// a channel, once begun, continues to the water it drains into. Slope-area is
+// an INITIATION criterion (Montgomery & Dietrich) — under a big river on a
+// floodplain the boost collapses with the slope and the bare criterion fails,
+// and reading it as membership cut every plains crossing into dashes: drawn
+// rivers with gaps where no lake is, riparian corridors with holes (visible
+// since the slope-area change, 2026-08-08). Closing the mask downstream
+// restores the reading the eye and the geomorphology agree on: the threshold
+// decides where a river STARTS, the sea decides where it ends.
+//
+// One pass over popOrder REVERSED (donors before receivers) is enough: each
+// channel cell marks its receiver, and the mark rides the chain to the coast.
+export function buildChannelMask(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number): Uint8Array {
+  const referenceSlope = channelReferenceSlope(routing, elevation, discharge, threshold)
+  const n = discharge.length
+  const channel = new Uint8Array(n)
+  for (let cell = 0; cell < n; cell++) {
+    if (isChannelCell(routing, elevation, discharge, cell, threshold, referenceSlope)) channel[cell] = 1
+  }
+  const { popOrder, poppedCount, flowTarget } = routing
+  for (let k = poppedCount - 1; k >= 0; k--) {
+    const cell = popOrder[k]
+    if (!channel[cell]) continue
+    const t = flowTarget[cell]
+    if (t >= 0 && t < n && elevation[t] > SEA_LEVEL) channel[t] = 1
+  }
+  return channel
+}
+
 // Connected river polylines for smooth rendering. Each channel cell (discharge ≥
 // threshold, land — INCLUDING lake beds and filled dimples since 2026-08-06:
 // excluding depression cells broke every river at every basin it crossed, and
@@ -350,11 +379,7 @@ export interface RiverPolylines {
 export function extractRiverPolylines(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, threshold: number, maxDischarge: number): RiverPolylines {
   const { width, height, flowTarget } = routing
   const n = width * height
-  const channel = new Uint8Array(n)
-  const referenceSlope = channelReferenceSlope(routing, elevation, discharge, threshold)
-  for (let cell = 0; cell < n; cell++) {
-    if (isChannelCell(routing, elevation, discharge, cell, threshold, referenceSlope)) channel[cell] = 1
-  }
+  const channel = buildChannelMask(routing, elevation, discharge, threshold)
   const adjacent = (a: number, b: number): boolean => {
     const ax = a % width
     const ay = (a - ax) / width
@@ -457,15 +482,17 @@ export function computeWatersheds(routing: FlowRouting, elevation: Float32Array,
 // something regional (see docs/decisions/worldmap-amplification.md).
 export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array): { biomes: Uint8Array; precipEff: Float32Array } {
   const scale = maxDischarge > 0 ? maxDischarge : 1
-  // Computed once here rather than per cell: the median is a whole-network
-  // property, and recomputing it inside the loop would be quadratic.
-  const riparianReferenceSlope = channelReferenceSlope(routing, elevation, discharge, threshold)
+  // The same downstream-closed mask the polyline extractor draws — the two
+  // disagreed silently once before, which drew mountain rivers with no green
+  // along them, and a criterion-only mask here would green a corridor with
+  // holes at every flat crossing.
+  const channelMask = buildChannelMask(routing, elevation, discharge, threshold)
   const strength = new Float32Array(climateResX * climateResY)
   for (let cell = 0; cell < elevation.length; cell++) {
     if (elevation[cell] <= SEA_LEVEL) continue
     let w = 0
     if (lakeDepth[cell] > 0) w = 1
-    else if (isChannelCell(routing, elevation, discharge, cell, threshold, riparianReferenceSlope)) w = Math.min(1, Math.sqrt(discharge[cell] / scale))
+    else if (channelMask[cell]) w = Math.min(1, Math.sqrt(discharge[cell] / scale))
     if (w <= 0) continue
     const x = cell % worldW
     const y = (cell - x) / worldW
