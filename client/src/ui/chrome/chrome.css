@@ -199,8 +199,21 @@
   transition: opacity 0.15s ease;
 }
 
-.map-chrome .text-button:hover {
+.map-chrome .text-button:hover:not(:disabled) {
   opacity: 1;
+}
+
+/* Toggle chips (aria-pressed) — selection is a fill, not just opacity, so the
+   chosen tiers read at a glance next to the start button that orders them. */
+.map-chrome .text-button[aria-pressed="true"] {
+  background: rgba(26, 26, 26, 0.8);
+  color: #ffffff;
+  opacity: 1;
+}
+
+.map-chrome .text-button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .map-chrome .field--icon-row {

@@ -2,7 +2,7 @@ import { createOpfsArtifactStore } from './OpfsArtifactStore'
 import { createMemoryArtifactStore } from './MemoryArtifactStore'
 import { createHttpArtifactStore } from './HttpArtifactStore'
 import { createTieredArtifactStore } from './TieredArtifactStore'
-import { getServerStatus } from '../server/serverStatus'
+import { getServerStatus, refreshServerStatus } from '../server/serverStatus'
 import { apiBase } from '../server/worldClient'
 import type { ArtifactStore } from './ArtifactStore'
 import { authFetch } from '../server/session'
@@ -24,6 +24,13 @@ import { authFetch } from '../server/session'
 
 let localPending: Promise<ArtifactStore> | null = null
 let tieredPending: Promise<ArtifactStore> | null = null
+
+// Throttle for re-probing an 'unreachable' verdict (see remoteAvailable below).
+// One read of a baked stage asks remoteAvailable several times back to back —
+// meta, elevation, rivers, lengths — and each probe costs up to 3 s against a
+// server that is genuinely down, so the retry has to be per window, not per ask.
+const UNREACHABLE_RETRY_MS = 30_000
+let lastUnreachableRetry = 0
 
 // This machine's own cache. Falls back to memory when OPFS is unavailable
 // (insecure context, older browser, storage denied): the session still gets
@@ -47,7 +54,23 @@ export function getArtifactStore(): Promise<ArtifactStore> {
       // — but it still reflects a refresh after a failure, which a value
       // captured at construction could not.
       remoteAvailable: async () => {
-        const status = await getServerStatus()
+        let status = await getServerStatus()
+        // 'unreachable' gets ONE retry per window rather than sticking for the
+        // whole page. The probe runs once at load with a 3 s timeout, and
+        // nothing between then and an artifact read re-asks — so a server that
+        // was restarting at that moment silently degraded every later read
+        // into "bake it yourself", which on a real world is minutes of
+        // duplicate work for an artifact the server is holding. Found that
+        // way, 2026-08-11.
+        //
+        // Only 'unreachable' — a CONFIGURED server that did not answer, the one
+        // verdict a moment can change. 'none' means the page's own origin
+        // served no config.json naming an API, which serverStatus calls "an
+        // unambiguous statement", and re-asking would contradict that design.
+        if (status.state === 'unreachable' && Date.now() - lastUnreachableRetry > UNREACHABLE_RETRY_MS) {
+          lastUnreachableRetry = Date.now()
+          status = await refreshServerStatus()
+        }
         return status.state === 'local' || status.state === 'remote'
       },
     }),

@@ -365,6 +365,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       riverLayer?.setHeightSurface(null)
       riverLayer?.setWidthProfile(1, Number.POSITIVE_INFINITY)
     }
+    // The bake start button shares this gate (a bake refines ERODED terrain),
+    // and this is the one place every erosionRunCount change flows through.
+    void refreshBakeButtons()
   }
 
   // River ribbons live in the scene over the map plane; segments come from the
@@ -496,8 +499,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button" data-action="erode" aria-label="${t('worldgen.action.runErosion.label')}" data-help="worldgen.action.runErosion">
             <img src="/icons/erosion_heavy.png" alt="" />
           </button>
-          <button type="button" class="text-button" data-action="bake-4" data-help="worldgen.panel.erosion.bake4k">${t('worldgen.panel.erosion.bake4k.label')}</button>
-          <button type="button" class="text-button" data-action="bake-8" data-help="worldgen.panel.erosion.bake8k">${t('worldgen.panel.erosion.bake8k.label')}</button>
+          <button type="button" class="text-button" data-bake-tier="2" aria-pressed="true" data-help="worldgen.panel.erosion.bake4k">${t('worldgen.panel.erosion.bake4k.label')}</button>
+          <button type="button" class="text-button" data-bake-tier="4" aria-pressed="false" data-help="worldgen.panel.erosion.bake8k">${t('worldgen.panel.erosion.bake8k.label')}</button>
+          <button type="button" class="text-button" data-bake-tier="8" aria-pressed="false" disabled data-help="worldgen.panel.erosion.bake16k">${t('worldgen.panel.erosion.bake16k.label')}</button>
+          <button type="button" class="icon-button" data-action="bake-detail" aria-label="${t('worldgen.action.runDetailBake.label')}" data-help="worldgen.action.runDetailBake">
+            <img src="/icons/erosion_detail.png" alt="" />
+          </button>
         </span>
       </label>
     </div>
@@ -3060,7 +3067,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // A bake is NOT a save. Bumping the revision here would advance the counter
     // the server's optimistic lock compares against, so the next real upload
     // would collide with a write that never happened.
-    if (pendingBakeFactor === null) worldRevision += 1
+    if (pendingBakeFactors.length === 0) worldRevision += 1
     zip.file('world.yaml', buildWorldYaml())
     // A world saved during the Archean has no plate simulation yet — it carries its own
     // snapshot instead. The phase is a pause, so it has to be savable there; before this
@@ -3075,13 +3082,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const archeanBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
       // An Archean save has no climate, so a bake of it would stop after
       // erosion and yield a world with no rivers. It is still routed through
-      // bakeFromArchive rather than dropped: that path reports the reason and,
+      // runBakeOrder rather than dropped: that path reports the reason and,
       // more importantly, clears the "a bake is running" state. Returning here
-      // with it still set would disable both buttons until the screen reloads.
-      if (pendingBakeFactor !== null) {
-        const factor = pendingBakeFactor
-        pendingBakeFactor = null
-        await bakeFromArchive(archeanBlob, factor)
+      // with it still set would disable the start button until the screen
+      // reloads. (The erosion gate makes this unreachable from the UI — this
+      // is the belt to that suspender.)
+      if (pendingBakeFactors.length > 0) {
+        await runBakeOrder(archeanBlob)
         return
       }
       await deliverArchive(archeanBlob, `${(seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)
@@ -3101,10 +3108,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // The bake reads this archive back rather than being handed the rasters:
     // see bakeFromArchive for why the save is the only representation whose
     // artifact key the world map will actually look for.
-    if (pendingBakeFactor !== null) {
-      const factor = pendingBakeFactor
-      pendingBakeFactor = null
-      await bakeFromArchive(blob, factor)
+    if (pendingBakeFactors.length > 0) {
+      await runBakeOrder(blob)
       return
     }
     const safeName = (seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -3159,8 +3164,18 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // failure as a pipeline-version mismatch. Serialising and reading back
   // through `readWorldInputs` makes the key right by construction, because
   // it is the identical reader the map and the server's baker use.
-  let pendingBakeFactor: number | null = null
+  // The bakes the next save cycle should run, in the order they will run.
+  // Several at once is the point: the chips SELECT tiers, the one start button
+  // orders them, and this client works through them one after the other —
+  // coarsest first, so the tier a map can already use arrives soonest.
+  let pendingBakeFactors: number[] = []
   let bakeRunning = false
+
+  // Which tiers the chips have selected, as factors (2 → 4K, 4 → 8K). A set
+  // rather than a single value because ordering 4K and 8K together is the
+  // normal way to leave a machine to work. 16K's chip exists and stays
+  // disabled — its help card says what it waits on (tiled artifacts).
+  const selectedBakeFactors = new Set<number>([2])
 
   // Look for the finest baked network this world already has and show it.
   //
@@ -3179,6 +3194,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // One tier of one archive. Deliberately does NOT own `bakeRunning`: the
+  // caller runs a whole ORDER of these in sequence, and the first tier
+  // clearing the flag would re-enable the start button with the rest of the
+  // order still to run.
   async function bakeFromArchive(archive: Blob, factor: number): Promise<void> {
     const level = `${factor * 2}K`
     const inputs = await readWorldInputs(await archive.arrayBuffer())
@@ -3186,8 +3205,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // No climate means no discharge, so the bake would stop after erosion
       // and produce a world with no rivers — which is the Archean case.
       ctx.notifications.show({ message: t('common.notify.bakeFailed', { reason: '' }), icon: '/icons/warning.png', durationMs: 8000 })
-      bakeRunning = false
-      refreshBakeButtons()
       return
     }
 
@@ -3199,8 +3216,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // minutes to reproduce bytes that are addressed by content anyway.
       ctx.notifications.show({ message: t('common.notify.bakeExists', { level }), icon: '/icons/ok.png', durationMs: 6000 })
       void adoptBestBakedRivers(inputs.worldId, inputs.erosionControls.riverDensity)
-      bakeRunning = false
-      refreshBakeButtons()
       return
     }
 
@@ -3215,8 +3230,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const settle = (message: string, icon: string, durationMs: number): void => {
       ctx.notifications.dismiss(toast)
       ctx.notifications.show({ message, icon, durationMs })
-      bakeRunning = false
-      refreshBakeButtons()
     }
 
     // Once it IS running, the icon says where — a Kubernetes Job on another node
@@ -3313,48 +3326,88 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
+  // The whole order, one tier after the other against the SAME archive — the
+  // client-side sequence the chips select. Sequential on purpose: the browser
+  // path cannot run two bakes at once, a server bake saturates the worker
+  // cap anyway, and one moving progress toast at a time is readable where two
+  // racing ones are not. A failed tier does not stop the rest — the artifacts
+  // are independent, and 4K failing for a browser reason says nothing about
+  // 8K on the server.
+  async function runBakeOrder(archive: Blob): Promise<void> {
+    const factors = pendingBakeFactors
+    pendingBakeFactors = []
+    try {
+      for (const factor of factors) await bakeFromArchive(archive, factor)
+    } finally {
+      // Owned here, not by the tiers: the first settling tier would otherwise
+      // re-enable the start button with the rest of the order still to run.
+      bakeRunning = false
+      void refreshBakeButtons()
+    }
+  }
+
   // "4K" is factor 2 and "8K" is factor 4 — the label is the WIDTH, the factor
   // is the refinement. Kept explicit here rather than computed at each site,
   // because confusing the two silently bakes the wrong tier.
-  const bake4kButton = root.querySelector<HTMLButtonElement>('[data-action="bake-4"]')!
-  const bake8kButton = root.querySelector<HTMLButtonElement>('[data-action="bake-8"]')!
+  const bakeTierChips = [...root.querySelectorAll<HTMLButtonElement>('[data-bake-tier]')]
+  const bakeStartButton = root.querySelector<HTMLButtonElement>('[data-action="bake-detail"]')!
 
-  // A disabled button KEEPS its help card. The first cut swapped data-help for
+  // A disabled control KEEPS its help card. The first cut swapped data-help for
   // a native `title` — exactly one of the two, since the card replaces the
   // native tooltip and both at once shows two — and that traded the styled
   // explanation for a plain delayed one at the very moment it was needed most.
-  // The card's text already names what 8K requires, so the disabled state says
-  // "not now" and the card says "why".
-  function setBakeAffordance(button: HTMLButtonElement, helpBase: string, available: boolean): void {
-    button.disabled = !available
-    button.setAttribute('data-help', helpBase)
-  }
-
+  // Each card's text already names what its tier requires, so the disabled
+  // state says "not now" and the card says "why".
   async function refreshBakeButtons(): Promise<void> {
     const saved = worldUid !== '' && isStoredOnServer(worldUid)
     const server = await canCommissionBakes()
-    // 4K needs nothing but a world: without a server it bakes here, which is
-    // what the browser can survive at this tier.
-    setBakeAffordance(bake4kButton, 'worldgen.panel.erosion.bake4k', !bakeRunning)
-    // 8K is the ~2.6 GB that kills a tab, so it is server-only — and the server
-    // bakes from the STORED world, which is the second condition and the one
-    // more often missing while a world is still being made.
-    setBakeAffordance(bake8kButton, 'worldgen.panel.erosion.bake8k', !bakeRunning && server && saved)
+    for (const chip of bakeTierChips) {
+      const factor = Number(chip.dataset.bakeTier)
+      // 4K needs nothing but a world: without a server it bakes here, which is
+      // what the browser can survive at this tier. 8K is the ~2.6 GB that
+      // kills a tab, so it is server-only — and the server bakes from the
+      // STORED world, which is the second condition and the one more often
+      // missing while a world is still being made. 16K does not exist yet.
+      const available =
+        factor === 2 ? !bakeRunning
+        : factor === 4 ? !bakeRunning && server && saved
+        : false
+      chip.disabled = !available
+      // Selection follows availability: a selected tier whose requirement just
+      // went away (signed out, world no longer on the server) must not stay in
+      // the order — the start button would commission it into a late failure.
+      if (!available) selectedBakeFactors.delete(factor)
+      chip.setAttribute('aria-pressed', String(selectedBakeFactors.has(factor)))
+    }
+    // The gate the tiers share: a bake refines ERODED terrain. Before the
+    // first macro pass there is no climate either (compute-on-save has the
+    // same erosionRunCount >= 1 condition), so a bake ordered earlier ran the
+    // whole save cycle only to fail with "no rivers" at the end. The card on
+    // this button names the precondition.
+    bakeStartButton.disabled = bakeRunning || erosionRunCount < 1 || selectedBakeFactors.size === 0
   }
 
-  bake4kButton.addEventListener('click', () => orderAmplification(2))
-  bake8kButton.addEventListener('click', () => orderAmplification(4))
+  for (const chip of bakeTierChips) {
+    chip.addEventListener('click', () => {
+      const factor = Number(chip.dataset.bakeTier)
+      if (selectedBakeFactors.has(factor)) selectedBakeFactors.delete(factor)
+      else selectedBakeFactors.add(factor)
+      void refreshBakeButtons()
+    })
+  }
+  bakeStartButton.addEventListener('click', () => orderAmplification())
   void refreshBakeButtons()
 
-  function orderAmplification(factor: number): void {
-    if (bakeRunning) return
+  function orderAmplification(): void {
+    if (bakeRunning || erosionRunCount < 1 || selectedBakeFactors.size === 0) return
     bakeRunning = true
-    refreshBakeButtons()
+    void refreshBakeButtons()
     // Routed through the ordinary save request: the worker owns the world
     // data, and asking it here is the same question the save button asks.
     // pendingSaveTarget is forced away from 'server' so a bake never uploads.
+    // ONE save serves the whole order — every tier bakes the same archive.
     pendingSaveTarget = 'download'
-    pendingBakeFactor = factor
+    pendingBakeFactors = [...selectedBakeFactors].sort((a, b) => a - b)
     void saveWorld()
   }
 

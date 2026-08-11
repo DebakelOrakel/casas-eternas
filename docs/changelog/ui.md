@@ -3,6 +3,11 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-08-11
+- **fixed** Map: a server that missed one 3-second probe at page load no longer makes the map bake stages the server already holds — the verdict is re-checked instead of sticking for the whole session. `worldmap`
+- **fixed** Map: a bake already running on the server for this world is now followed — progress toast and all — instead of the map silently computing the same stage a second time. `worldmap`
+- **changed** Erosion: 4K/8K select instead of start — a new bake button runs every selected resolution in turn, once the world has had an erosion pass; 16K is shown as coming. `worldgen.panel.erosion`
+
 ## 2026-08-09
 - **changed** Bake: waiting for a machine and running on one are now two notifications — the second says where the work is happening, with the cluster's own mark when it is a Kubernetes Job.
 - **new** Server: a badge on the server indicator when a sign-in is missing; clicking it opens the sign-in window, which also says who is signed in. `common.panel.signIn`

@@ -11396,22 +11396,22 @@ function gradedSeaCap(tectonic, cell) {
   const t = depth <= 0 ? 0 : depth >= SURFACE_TUNING.deltaFreeboardDepthRange ? 1 : depth / SURFACE_TUNING.deltaFreeboardDepthRange;
   return SEA_LEVEL + SURFACE_TUNING.deltaFreeboardNear - (SURFACE_TUNING.deltaFreeboardNear - SURFACE_TUNING.deltaFreeboardFar) * t;
 }
-function depositSediment(elevations, routing, accumulation, isLand, excavated, load, donorFloor, tectonic, width, height, transportCapacityKt, depositBelowSeaLevel, depositOnLand, deltaMinDrainageCells) {
+function depositSediment(elevations, routing, accumulation, isLand, excavated, load, donorFloor, tectonic, shelfOrder, width, height, transportCapacityKt, depositBelowSeaLevel, depositOnLand, deltaMinDrainageCells) {
   const { flowTarget, popOrder, poppedCount } = routing;
   load.fill(0);
   donorFloor.fill(Infinity);
+  let shelfCount = 0;
   for (let k = poppedCount - 1; k >= 0; k--) {
     const cell = popOrder[k];
+    if (elevations[cell] >= SHELF_BREAK) shelfOrder[shelfCount++] = cell;
+  }
+  for (let k = 0; k < shelfCount; k++) {
+    const cell = shelfOrder[k];
     const target = flowTarget[cell];
     let flux = load[cell];
     const seaCap = gradedSeaCap(tectonic, cell);
     const donor = donorFloor[cell];
     const ceiling = isLand[cell] ? donor : donor > SEA_LEVEL && donor < seaCap ? donor : seaCap;
-    const belowShelf = elevations[cell] < SHELF_BREAK;
-    if (belowShelf) {
-      load[cell] = 0;
-      continue;
-    }
     let slope = 0;
     if (target !== -1) {
       const y = cell / width | 0;
@@ -11479,6 +11479,7 @@ async function runStreamPowerIterations(elevations, routing, accumulation, isLan
   const excavated = depositing ? new Float32Array(elevations.length) : null;
   const load = depositing ? new Float32Array(elevations.length) : null;
   const donorFloor = depositing ? new Float32Array(elevations.length) : null;
+  const shelfOrder = depositing ? new Int32Array(routing.poppedCount) : null;
   for (let iteration = 0; iteration < params.iterations; iteration++) {
     excavated?.fill(0);
     for (let k = 0; k < poppedCount; k++) {
@@ -11501,8 +11502,8 @@ async function runStreamPowerIterations(elevations, routing, accumulation, isLan
       elevations[cell] = Math.max(elevations[target], before + dh * params.timeStep);
       if (excavated) excavated[cell] = before - elevations[cell];
     }
-    if (excavated && load && donorFloor) {
-      depositSediment(elevations, routing, accumulation, isLand, excavated, load, donorFloor, tectonic, width, height, params.transportCapacityKt, params.depositBelowSeaLevel, params.depositOnLand, params.deltaMinDrainageCells);
+    if (excavated && load && donorFloor && shelfOrder) {
+      depositSediment(elevations, routing, accumulation, isLand, excavated, load, donorFloor, tectonic, shelfOrder, width, height, params.transportCapacityKt, params.depositBelowSeaLevel, params.depositOnLand, params.deltaMinDrainageCells);
     }
     onProgress?.((iteration + 1) / params.iterations);
     await maybeYield();
@@ -11680,7 +11681,7 @@ async function runAmplification(request, onProgress = () => {
     request.seed,
     (fraction) => onProgress("seed", fraction)
   );
-  let field = result.data;
+  let field = request.region ? drownForeignLand(result.data, result.width, result.height, request.region) : result.data;
   if (request.erosionRounds > 0) {
     const withControls = erosionParamsWithControls(DEFAULT_EROSION_PASS_PARAMS, {
       strength: request.erosionStrength,
@@ -11710,13 +11711,65 @@ async function runAmplification(request, onProgress = () => {
     const routing = await fillDepressionsAndRouteFlow(field, result.width, result.height, 0);
     onProgress("hydrology", 0.6);
     const discharge = accumulateDischarge(routing, field, request.precipitation, request.climateResX, request.climateResY);
-    const maxDischarge = maxDischargeOverLand(discharge, field);
-    const meanRunoff = meanLandRunoff(request.precipitation, field, result.width, result.height, request.climateResX, request.climateResY);
+    const maxDischarge = request.maxDischarge ?? maxDischargeOverLand(discharge, field);
+    const meanRunoff = request.meanRunoff ?? meanLandRunoff(request.precipitation, field, result.width, result.height, request.climateResX, request.climateResY);
     const criticalArea = densityToCriticalArea(request.riverDensity ?? 55);
     rivers = extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge);
+    if (request.region) rivers = ownedRivers(rivers, request.region.owned, result.width);
     onProgress("hydrology", 1);
   }
   return { elevation: field, width: result.width, height: result.height, rivers };
+}
+function ownedRivers(rivers, owned, width) {
+  const points = [];
+  const lengths = [];
+  let read = 0;
+  for (const length of rivers.lengths) {
+    const head = Math.floor(rivers.points[read + 1]) * width + Math.floor(rivers.points[read]);
+    if (owned[head]) {
+      for (let i = 0; i < length * 3; i++) points.push(rivers.points[read + i]);
+      lengths.push(length);
+    }
+    read += length * 3;
+  }
+  return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) };
+}
+function drownForeignLand(seeded, width, height, region) {
+  const active = dilateMask(region.owned, width, height, region.haloCells);
+  const field = seeded.slice();
+  const floor = SEA_LEVEL + ABYSSAL_FLOOR;
+  for (let i = 0; i < field.length; i++) {
+    if (!active[i] && field[i] > SEA_LEVEL) field[i] = floor;
+  }
+  return field;
+}
+function dilateMask(mask, width, height, radius) {
+  if (radius <= 0) return mask;
+  const rows = new Uint8Array(mask.length);
+  const scratch = new Int32Array(Math.max(width, height));
+  for (let y = 0; y < height; y++) spread(mask, rows, y * width, 1, width, radius, scratch);
+  const out = new Uint8Array(mask.length);
+  for (let x = 0; x < width; x++) spread(rows, out, x, width, height, radius, scratch);
+  return out;
+}
+function spread(from, to, offset, stride, size, radius, distance) {
+  const far = size + radius + 1;
+  for (let i = 0; i < size; i++) distance[i] = far;
+  let since = far;
+  for (let lap = 0; lap < 2; lap++) {
+    for (let i = 0; i < size; i++) {
+      since = from[offset + i * stride] ? 0 : since + 1;
+      if (since < distance[i]) distance[i] = since;
+    }
+  }
+  since = far;
+  for (let lap = 0; lap < 2; lap++) {
+    for (let i = size - 1; i >= 0; i--) {
+      since = from[offset + i * stride] ? 0 : since + 1;
+      if (since < distance[i]) distance[i] = since;
+    }
+  }
+  for (let i = 0; i < size; i++) to[offset + i * stride] = distance[i] <= radius ? 1 : 0;
 }
 
 // src/storage/ArtifactStore.ts

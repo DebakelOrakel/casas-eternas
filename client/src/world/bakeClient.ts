@@ -44,6 +44,11 @@ export interface BakeJob {
   percent: number
   error?: string
   result?: BakeResult
+  // The order that produced the job, as the server records it. What lets a
+  // screen recognise a job as being about ITS world and stage when somebody
+  // else placed the order — see findActiveBake.
+  request?: { worldUid: string; stage: number }
+  queuedAt?: string
 }
 
 // Why an order failed, in terms the caller can act on rather than a status
@@ -153,6 +158,43 @@ export async function commissionBake(
     default:
       return { ok: false, reason: 'rejected', message }
   }
+}
+
+// The most recent job for this world and stage that has not failed, or null.
+//
+// This is how a screen discovers work SOMEBODY ELSE started — the worldgen
+// screen orders a bake, the user switches to the map, and without this the map
+// would only see "artifact absent" and start the same computation again. The
+// server does not deduplicate orders (two enqueues are two bakes), so noticing
+// existing work is the caller's job, and this is the noticing.
+//
+// A 'done' job is deliberately included: the artifact may have landed seconds
+// after the caller's read missed, and following a finished job simply returns
+// its result at the first poll — the cheap retry, by the existing road. Only
+// 'failed' is excluded, because attaching to it can produce nothing.
+//
+// Best-effort like every read in this file: offline, signed out, or a server
+// without the bake module all answer null, and the caller does whatever it
+// would have done without a server.
+export async function findActiveBake(worldUid: string, stage: number): Promise<BakeJob | null> {
+  if (worldUid === '' || !(await canCommissionBakes())) return null
+  const base = await apiBase()
+  if (!base) return null
+  let jobs: BakeJob[]
+  try {
+    const response = await authFetch(`${base}/bakes`, { cache: 'no-store' })
+    if (!response.ok) return null
+    jobs = (await response.json()) as BakeJob[]
+  } catch {
+    return null
+  }
+  const matching = jobs.filter((job) =>
+    job.state !== 'failed' && job.request?.worldUid === worldUid && job.request?.stage === stage)
+  if (matching.length === 0) return null
+  // Newest first: orders are not deduplicated, so an old finished job and a
+  // fresh running one can coexist — the fresh one is the one to follow.
+  matching.sort((a, b) => (b.queuedAt ?? '').localeCompare(a.queuedAt ?? ''))
+  return matching[0]
 }
 
 async function errorMessage(response: Response): Promise<string> {

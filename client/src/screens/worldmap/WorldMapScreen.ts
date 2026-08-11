@@ -27,7 +27,9 @@ import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { getServerStatus } from '../../server/serverStatus'
-import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../world/bakeClient'
+import { hasSession } from '../../server/session'
+import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, findActiveBake, followBake } from '../../world/bakeClient'
+import type { BakeJob } from '../../world/bakeClient'
 import { worldInputsFrom } from '../../world/save/loadWorldInputs'
 import { openWorld } from '../../world/query'
 import type { FieldView, World } from '../../world/query'
@@ -954,6 +956,89 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   bakeButton.addEventListener('click', () => { void orderBake() })
 
+  // Attach to a bake somebody else set in motion — same follow, same toasts,
+  // same read-back as orderBake, minus the ordering. True when the stage ended
+  // up applied; false sends the caller down the path it would have taken had
+  // the job not existed (bake locally, or offer the order button).
+  //
+  // Deliberately NOT merged with orderBake despite the resemblance: one
+  // places an order and owns the outcomes of placing it (unknownWorld, busy,
+  // forbidden), the other only watches, and a shared body would carry both
+  // sets of special cases behind flags. The notification flow is the part
+  // they genuinely share, and it is the catalog that keeps those texts single.
+  async function followExistingBake(job: BakeJob, factor: number): Promise<boolean> {
+    const generation = bakeGeneration
+    const label = levelLabel(factor)
+    const pipelineVersion = amplificationPipelineVersion()
+    bakeOrdered = true
+    void refreshBakeButton()
+    const toast = ctx.notifications.show({
+      message: t(bakeIsWaiting(job) ? 'common.notify.bakeWaiting' : 'common.notify.bakeRunning', { level: label }),
+      icon: '/icons/server_load.png',
+      sticky: true,
+    })
+    const settle = (message: string, icon: string, durationMs: number): void => {
+      ctx.notifications.dismiss(toast)
+      ctx.notifications.show({ message, icon, durationMs })
+    }
+
+    const outcome = await followBake(job.id, pipelineVersion, (update) => {
+      if (generation !== bakeGeneration) return
+      ctx.notifications.update(toast, {
+        message: t(bakeIsWaiting(update) ? 'common.notify.bakeWaiting' : 'common.notify.bakeRunning', { level: label }),
+        progress: bakeFraction(update),
+      })
+    })
+    if (generation !== bakeGeneration) {
+      ctx.notifications.dismiss(toast)
+      return false
+    }
+    if (!outcome.ok) {
+      // A mismatch is worth its sentence — the job worked, for another build,
+      // and re-attaching cannot change that. A failed job is NOT worth one
+      // here: the caller is about to do the work another way, and a failure
+      // toast followed by a successful bake reads as the screen contradicting
+      // itself.
+      if (outcome.reason === 'mismatch') {
+        settle(t('common.notify.bakeMismatch', { serverVersion: outcome.serverVersion, clientVersion: outcome.clientVersion }), '/icons/warning.png', 15000)
+      } else {
+        ctx.notifications.dismiss(toast)
+        bakeOrdered = false
+        void refreshBakeButton()
+      }
+      return false
+    }
+
+    const store = await getArtifactStore()
+    const hit = await readAmplificationArtifact(store, { worldId, pipelineVersion, stage: String(factor) }, bakeSource?.riverDensity).catch(() => null)
+    if (generation !== bakeGeneration || !bakeSource) {
+      ctx.notifications.dismiss(toast)
+      return false
+    }
+    if (!hit) {
+      settle(t('common.notify.bakeUnfetchable', { level: label }), '/icons/warning.png', 12000)
+      bakeOrdered = false
+      void refreshBakeButton()
+      return false
+    }
+    applyBakeResult(hit.artifact, factor, bakeSource.detailSeed)
+    noteLevel(factor)
+    settle(
+      t('common.notify.bakeDone', {
+        level: label,
+        width: outcome.result.width,
+        height: outcome.result.height,
+        seconds: Math.round(outcome.result.durationMs / 1000),
+      }),
+      '/icons/server_clean.png',
+      15000,
+    )
+    setBakeText(`${hit.artifact.width}×${hit.artifact.height}`)
+    bakeOrdered = false
+    void refreshBakeButton()
+    return true
+  }
+
   // --- Amplification bake (docs/decisions/worldmap-amplification.md) ---
   // Runs in its own worker after the macro map is already on screen, then
   // swaps the geometry. Deliberately fire-and-forget from the load path: a
@@ -1037,6 +1122,26 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         return
       }
 
+      // Absent from every store — but is somebody already MAKING it? The
+      // worldgen screen orders server bakes, the server does not deduplicate
+      // orders, and a read that raced the job's last write misses honestly.
+      // In all of those, computing it here again is the waste this check
+      // exists to prevent: attach to the existing job, then read what it
+      // wrote. Reported as a bug before the check existed — the map baked 4K
+      // beside a server that was baking, or had just baked, the same world.
+      const active = await findActiveBake(worldUid, factor).catch(() => null)
+      if (generation !== bakeGeneration) return
+      if (active) {
+        const attached = await followExistingBake(active, factor)
+        if (generation !== bakeGeneration) return
+        if (attached) {
+          void runStage(index + 1)
+          return
+        }
+        // Attach failed (job died, or its output is keyed for another build):
+        // fall through to what would have happened without it.
+      }
+
       // Fetch-only stage with nothing on the server: stop here rather than
       // bake it. This is the whole point of the split — an 8k bake is the
       // 2.6 GB that kills the tab, and a stage the client cannot produce must
@@ -1050,6 +1155,19 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         return
       }
 
+      // About to spend a minute-plus computing a stage a server may well be
+      // holding — name why the cached path came up empty, because every link
+      // in it fails silently by design (a store miss means "compute it") and
+      // "the map baked again" has already been reported as a bug with no way
+      // to tell WHICH link broke. Console only: this is for whoever is
+      // debugging, not for the player.
+      void getServerStatus().then((status) => {
+        console.info(
+          `[bake] ${label}: not in cache, baking locally — server ${status.state}`
+          + `${status.state === 'remote' ? (hasSession() ? ', signed in' : ', NO SESSION (reads 401)') : ''}`
+          + `, key ${key.worldId}/${key.pipelineVersion}/${key.stage}`,
+        )
+      })
       const worker = new Worker(new URL('../../worldgen/amplificationWorker.ts', import.meta.url), { type: 'module' })
       amplifyWorker = worker
       const finish = (): void => {
