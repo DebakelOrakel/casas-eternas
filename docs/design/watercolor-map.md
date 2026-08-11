@@ -1,7 +1,7 @@
 ---
 summary: Design direction for the world map's look — watercolour rendering, and the discovery that the game's three knowledge states (unexplored / explored / active) map onto the stages of an actual watercolour painting, so the medium carries the state readout without a legend.
 date: 2026-08-11
-status: idea — nothing built; a three-stage prototype is planned (see "Prototype plan"), not started
+status: all three prototype stages BUILT 2026-08-11 (knowledge registers on the CPU, the paper post-process, edge darkening) — with two of the plan's calls reversed on contact, see the "Revised on contact" boxes. The knowledge field itself is still a debug stand-in: exploration does not exist
 ---
 
 # The Watercolour Map
@@ -97,6 +97,16 @@ last thing terrain detail arrives for.
 paper. The distinction must therefore not rest on lightness but on **grain** —
 bare paper shows its fibre, any wash drowns it. That survives even the palest
 biome.
+
+**The palette is the map's own** (built 2026-08-11, `map/terrainPalette.ts`).
+It is keyed on the same classification as the generator's `biomeColor` and is
+free to disagree with it, for the same reason the overlays below are: the
+generator's palette is a DATA VIEW, tuned so twelve classes stay apart while a
+simulation is being tuned, while this one is how the world LOOKS — free to
+collapse a distinction the data view needs (boreal and temperate forest are
+both dark conifer green from above) and to open one it does not care about.
+Sharing a palette would mean neither could be tuned without damaging the other.
+The colours are therefore named as pigments rather than as labels.
 
 ## The frontier
 
@@ -223,7 +233,8 @@ architecture.
 
 ## Prototype plan
 
-Staged 2026-08-11, not started. Lives in the **worldmap screen** — paper,
+Staged 2026-08-11 and all three built the same day; each stage's box below
+records what survived contact. Lives in the **worldmap screen** — paper,
 biome wash, the near-mode altitude ramp and the `ElevationSurface` seam are
 all already there, and the workbench should keep showing what the save
 *contains*, not what a player *knows*.

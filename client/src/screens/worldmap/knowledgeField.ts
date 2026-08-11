@@ -18,7 +18,7 @@ import { SEA_LEVEL } from '../../worldgen/elevation/elevationScale'
 //
 // The grid is COARSE on purpose. It is not a resolution compromise: the drawn
 // boundary is warped by a cell or two anyway (same trick, and the same reason,
-// as expandBiomeIds in ui/mapOverlay/biomePaper.ts), so a fine grid would buy
+// as expandBiomeIds in map/biomeIds.ts), so a fine grid would buy
 // nothing but memory — and if exploration is ever tracked per hex, that warp is
 // also what keeps a honeycomb silhouette off the frontier.
 
@@ -30,7 +30,7 @@ export const KNOWLEDGE_RES_Y = 256
 // organic, not enough to leak a settlement's halo into the next valley.
 const WARP_CELLS = 1.5
 // Lattice density of the warp field as a multiple of the knowledge grid. Same
-// reasoning as biomePaper's WARP_LATTICE_SCALE: at the grid's own frequency the
+// reasoning as biomeIds' WARP_LATTICE_SCALE: at the grid's own frequency the
 // warp is white noise and produces a ragged one-cell edge rather than a
 // meander; a couple of cells per lattice step is what reads as a coastline.
 const WARP_LATTICE_SCALE = 0.5

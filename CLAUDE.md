@@ -63,6 +63,15 @@ The test for where a thing belongs: **if a function does not need to know *which
 world is meant, it is not world-layer code.** `runErosionPass` does not;
 `deriveWorldId` does.
 
+`ui/` is a location, not a layer, and it holds two different kinds of thing:
+**widgets** (`tooltip`, `panel`, `notifications`, `help`, `chrome`) which are DOM
+only and import nothing outside `ui/`, so anything may use them; and **connected
+panels** (`storagePanel`, `serverIndicator`, `worldPanels`, `signInPanel`) which
+talk to `server/` and `storage/` and are really screen fragments sitting above
+the peers. Nothing that computes pixels or fields belongs there at all —
+`paperBase` and `biomeIds` moved to `map/` on 2026-08-11 for exactly that
+reason.
+
 ## Commands
 
 ```

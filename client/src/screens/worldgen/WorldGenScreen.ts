@@ -28,7 +28,7 @@ import { formatWorldAge, worldAgeMa } from '../../worldgen/core/worldTime'
 import type { SimEvent, PlateSimulationSnapshot } from '../../worldgen/tectonics/plateSimulation'
 import { eventCategory } from '../../worldgen/tectonics/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
-import { buildPaperBase, buildUnshadedPaperBase } from '../../ui/mapOverlay/paperBase'
+import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
 import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops } from '../../worldgen/climate/climateColors'
 import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
@@ -2005,7 +2005,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   // Expand the worker's packed relief bytes into the RGBA "paper" bases —
-  // shared rendering with the worldmap screen, see ui/mapOverlay/paperBase.ts.
+  // shared rendering with the worldmap screen, see map/paperBase.ts.
   function buildSimplifiedBase(): Uint8ClampedArray | null {
     if (!lastRelief) return null
     if (!simplifiedBaseCache) simplifiedBaseCache = buildPaperBase(lastRelief)

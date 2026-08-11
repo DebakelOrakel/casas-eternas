@@ -1,12 +1,11 @@
-import { Biome } from '../../worldgen/climate/biomes'
-import { periodicValueNoise2D } from '../../worldgen/elevation/ridgedNoise'
+import { Biome } from '../worldgen/climate/biomes'
+import { periodicValueNoise2D } from '../worldgen/elevation/ridgedNoise'
 
-// Biome colouring for the map's paper base — the "pigment on paper" register
-// the generator established for its terrain wash (see WorldGenScreen's
-// paintTerrain), but keyed on BIOME rather than elevation, which is what
-// actually tells a reader what a place IS.
+// Getting biome ids onto the paper's grid — the step before anything is
+// coloured. What colour a place then takes is map/terrainPalette's business;
+// this file only answers WHICH biome each paper texel belongs to.
 //
-// Two problems have to be solved before the palette can be used at all, both
+// Two problems have to be solved before a palette can be used at all, both
 // caused by the biome field being coarser than the texture it is drawn onto:
 //
 //  1. Nearest-neighbour upsampling would render visible squares — a

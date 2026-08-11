@@ -1,7 +1,7 @@
 import { computeReliefBytes } from '../worldgen/render/reliefShade'
 import { upscaleBilinearToroidal } from '../worldgen/core/field'
-import { buildPaperBase, buildUnshadedPaperBase } from '../ui/mapOverlay/paperBase'
-import { dilateLandBiomes, expandBiomeIds } from '../ui/mapOverlay/biomePaper'
+import { buildPaperBase, buildUnshadedPaperBase } from './paperBase'
+import { dilateLandBiomes, expandBiomeIds } from './biomeIds'
 import { applyTerrainWash, DEFAULT_TERRAIN_WASH } from './terrainPalette'
 import type { TerrainWash } from './terrainPalette'
 import { createElevationSurface, downsampleElevation } from './elevationSurface'
@@ -72,8 +72,7 @@ export interface KnowledgeSource {
 
 export interface MapPresentation {
   setWorld(fields: MapWorldFields): void
-  // The knowledge field, or null for "everything known", which reproduces the
-  // pre-knowledge map byte for byte (see the identity note on PAPER_TONE).
+  // The knowledge field, or null for "everything known".
   setKnowledge(source: KnowledgeSource | null): void
   // Retune where the three registers sit. Debug-facing: stage A exists to
   // decide these numbers.
@@ -338,9 +337,9 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
   // Knowledge enters LAST, as two lerps per texel over the finished picture,
   // and that ordering is what makes it cheap AND exact: the wash and the
   // hillshade are computed once at full strength, and k only decides how much
-  // of them survives. At k = 1 everywhere both lerps are the identity, so the
-  // output is byte-for-byte the map that existed before any of this — which is
-  // the property the extraction's spec check pins down.
+  // of them survives. At k = 1 everywhere both lerps are the identity, so a
+  // fully known world is exactly the map with no knowledge model at all —
+  // which is what makes this a modulation rather than a second renderer.
   //
   //   flat map   = lerp(PAPER, lerp(unshaded, shaded, relief(k)), pigment(k))
   //   relief map = lerp(PAPER, unshaded, pigment(k))
