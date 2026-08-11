@@ -12,6 +12,7 @@ import type { ElevationSurface } from '../../map/elevationSurface'
 import { createKnowledgeField } from './knowledgeField'
 import type { KnowledgeField } from './knowledgeField'
 import { createKnowledgeDebugPanel } from './knowledgeDebugPanel'
+import { createWatercolorPass } from './watercolorPass'
 import { MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_FINE_ZOOM, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
 import { AMPLIFY_FETCH_STAGES } from '../../world/bakeSettings'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
@@ -233,9 +234,27 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const KNOWLEDGE_REPAINT_INTERVAL_MS = 220
   let knowledgeRepaintTimer: ReturnType<typeof setTimeout> | null = null
 
+  // The sheet: paper fibre, granulation, spatter, drips (see watercolorPass).
+  // Fades out over the descent along the same ramp everything else in the near
+  // regime keys off — the effect belongs to the MAP register.
+  const watercolor = createWatercolorPass({
+    scene,
+    camera,
+    worldWidth: WORLD_WIDTH,
+    worldHeight: WORLD_HEIGHT,
+    getStrength: () => 1 - getCameraNearBlend(),
+  })
+
+  // Resolution of the k texture the shader reads. Coarser than the paper on
+  // purpose: fibre and spatter do not need texel precision, and this is
+  // re-uploaded on every brush stroke.
+  const KNOWLEDGE_TEXTURE_WIDTH = 1024
+  const KNOWLEDGE_TEXTURE_HEIGHT = 512
+
   function refreshKnowledge(): void {
     presentation.refreshKnowledge()
     setRiverPolylines()
+    if (knowledge) watercolor.setKnowledge(knowledge.toBytes(KNOWLEDGE_TEXTURE_WIDTH, KNOWLEDGE_TEXTURE_HEIGHT), KNOWLEDGE_TEXTURE_WIDTH, KNOWLEDGE_TEXTURE_HEIGHT)
   }
 
   function scheduleKnowledgeRepaint(): void {
@@ -292,6 +311,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Stage A's tuning strip — temporary, see knowledgeDebugPanel.ts.
   const debugPanel = createKnowledgeDebugPanel(root, {
     ramp: knowledgeRamp,
+    sheet: watercolor.tuning,
     onRampChange: () => { presentation.setKnowledgeRamp(knowledgeRamp); setRiverPolylines() },
     onSeed: () => { seedKnowledge(); refreshKnowledge() },
     onClear: () => { knowledge?.fill(0); refreshKnowledge() },
@@ -389,6 +409,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     knowledgeSeedInputs = { elevations, width, height, biome, detailSeed }
     seedKnowledge()
     presentation.setKnowledge(knowledge)
+    watercolor.setKnowledge(knowledge.toBytes(KNOWLEDGE_TEXTURE_WIDTH, KNOWLEDGE_TEXTURE_HEIGHT), KNOWLEDGE_TEXTURE_WIDTH, KNOWLEDGE_TEXTURE_HEIGHT)
 
     // Derived BEFORE the view exists, because the near-detail patch needs two
     // of the surfaces at construction. Both callbacks stash and find no view;
@@ -628,6 +649,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       if (knowledgeRepaintTimer !== null) clearTimeout(knowledgeRepaintTimer)
       scene.onPointerObservable.remove(brushObserver)
       debugPanel.dispose()
+      watercolor.dispose()
       riverLayer?.dispose()
       scene.onBeforeRenderObservable.remove(skyObserver)
       skyDome.dispose()

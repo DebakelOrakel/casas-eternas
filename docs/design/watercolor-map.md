@@ -280,6 +280,31 @@ Answers: **does it look painted?** Independent of A; could even run first.
 
 - Paper (warm off-white plus fibre), granulation, the density curve, droplets
   and drips. Grain anchored to the SCREEN — the sheet is the sheet.
+
+> **Revised on contact (2026-08-11, built).** Two of the calls above were
+> wrong, and both took under a minute of looking to settle.
+>
+> **Everything is world-anchored, including the fibre.** "The sheet is in front
+> of you" is true of a real sheet and irrelevant here. What actually decides it
+> is SPATIAL FREQUENCY: fine isotropic grain pinned to the screen reads as a
+> surface you look *through*, but anything larger or directional reads as an
+> object, and an object that holds still while the world slides under it is
+> dirt on the lens. The safe side of the shower-door line is the world. Cost:
+> the noise must be periodic over the torus or a seam runs down the map.
+> Benefit: the moiré guard comes free, since the derivative that detects
+> sub-pixel cells is needed anyway (same argument as the hex grid's `fwidth`).
+>
+> **The drips are gone.** They were the only element with no meaning — carried
+> over from the reference image, never given a job — while being the largest
+> and highest-contrast thing on screen, drawn across the unexplored paper that
+> covers most of the frame. World-anchoring could not save them either: "down"
+> is not a direction a top-down map has, and drips running south would go
+> diagonal the moment the camera yaws. The motion worth keeping is wet paint
+> RUNNING IN as a place is revealed — an event, not a permanent feature — and
+> it waits on the exploration mechanic.
+>
+> Consequence for stage C: granulation is already welded to the ground, so C is
+> left with edge darkening alone.
 - The pass needs to know where the paint ends. Rather than guessing from image
   brightness, intersect the view ray with the ground plane and sample the same
   `k` texture: exact for a plane, about ten lines, and it gives world-anchored

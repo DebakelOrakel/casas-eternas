@@ -51,6 +51,10 @@ export interface KnowledgeField {
   seed(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, seed: number, count: number): void
   fill(value: number): void
   sampleAtUV(u: number, v: number): number
+  // k as bytes at an arbitrary resolution, for handing to a shader. Sampled
+  // through the same warp as everything else, so the frontier a fragment sees
+  // is the frontier the paper was painted with.
+  toBytes(width: number, height: number): Uint8Array
 }
 
 // Radii as a fraction of world width. A settlement's immediate surroundings are
@@ -202,5 +206,16 @@ export function createKnowledgeField(textureWidth: number, textureHeight: number
     },
 
     sampleAtUV,
+
+    toBytes(width: number, height: number): Uint8Array {
+      const out = new Uint8Array(width * height)
+      for (let y = 0; y < height; y++) {
+        const v = (y + 0.5) / height
+        for (let x = 0; x < width; x++) {
+          out[y * width + x] = Math.round(Math.min(1, Math.max(0, sampleAtUV((x + 0.5) / width, v))) * 255)
+        }
+      }
+      return out
+    },
   }
 }

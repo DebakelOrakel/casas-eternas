@@ -1,4 +1,5 @@
 import type { KnowledgeRamp } from '../../map/mapPresentation'
+import type { WatercolorTuning } from './watercolorPass'
 import './knowledgeDebug.css'
 
 // Tuning controls for the watercolour map's knowledge registers — stage A of
@@ -17,6 +18,10 @@ export interface KnowledgeDebugPanelOptions {
   // Mutated in place by the sliders; the callback fires after every change.
   ramp: KnowledgeRamp
   onRampChange: () => void
+  // Also mutated in place — but the pass reads it per frame, so it needs no
+  // callback at all. That asymmetry is the whole difference between the two
+  // stages: A recomposites eight million texels on the CPU, B is a uniform.
+  sheet: WatercolorTuning
   onSeed: () => void
   onClear: () => void
   onReveal: () => void
@@ -32,7 +37,7 @@ export interface KnowledgeDebugPanel {
 }
 
 export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeDebugPanelOptions): KnowledgeDebugPanel {
-  const { ramp, onRampChange, onSeed, onClear, onReveal, onBrushToggle } = options
+  const { ramp, sheet, onRampChange, onSeed, onClear, onReveal, onBrushToggle } = options
   let brushActive = false
 
   const root = document.createElement('div')
@@ -47,6 +52,13 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
     <button type="button" data-action="seed">reseed</button>
     <button type="button" data-action="clear">clear</button>
     <button type="button" data-action="reveal">reveal all</button>
+    <span class="knowledge-debug__title">sheet (debug)</span>
+    <label>fibre <input type="range" data-sheet="fibreAmount" min="0" max="0.5" step="0.005" /></label>
+    <label>fibre scale <input type="range" data-sheet="fibreScale" min="100" max="3000" step="50" /></label>
+    <label>granulation <input type="range" data-sheet="granulation" min="0" max="0.6" step="0.01" /></label>
+    <label>spatter <input type="range" data-sheet="dropletDensity" min="0" max="260" step="5" /></label>
+    <label>spatter size <input type="range" data-sheet="dropletSize" min="0.02" max="0.45" step="0.01" /></label>
+    <label>frontier <input type="range" data-sheet="frontier" min="0.02" max="0.5" step="0.01" /></label>
   `
   host.appendChild(root)
 
@@ -54,9 +66,18 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
   knob('exploredPigment').value = String(ramp.exploredPigment)
   knob('exploredAt').value = String(ramp.exploredAt)
   knob('activeFrom').value = String(ramp.activeFrom)
+  for (const input of root.querySelectorAll<HTMLInputElement>('[data-sheet]')) {
+    input.value = String(sheet[input.dataset.sheet as keyof WatercolorTuning])
+  }
 
   const onInput = (event: Event): void => {
     const input = event.target as HTMLInputElement
+    const sheetKnob = input.dataset.sheet
+    if (sheetKnob) {
+      // No callback: the pass reads these straight off the object each frame.
+      sheet[sheetKnob as keyof WatercolorTuning] = Number(input.value)
+      return
+    }
     const name = input.dataset.knob
     if (!name || name === 'radius') return
     ramp[name as keyof KnowledgeRamp] = Number(input.value)
