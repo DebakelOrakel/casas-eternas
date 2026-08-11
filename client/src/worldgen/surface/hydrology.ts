@@ -247,8 +247,10 @@ export function channelThreshold(criticalArea: number, meanRunoff: number): numb
 // river's drawn width depends only on its own discharge, NOT on the current
 // threshold. Moving the density knob therefore adds/removes channels without
 // resizing the ones already shown.
-const RIVER_MIN_WIDTH = 0.4
-const RIVER_MAX_WIDTH = 4
+// Exported because the map's ribbon overlay converts stored widths back onto
+// this scale (reading worldgen vocabulary, per the map→worldgen boundary).
+export const RIVER_MIN_WIDTH = 0.4
+export const RIVER_MAX_WIDTH = 4
 
 function riverWidth(dischargeAtCell: number, maxDischarge: number): number {
   const scale = maxDischarge > 0 ? maxDischarge : 1

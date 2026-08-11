@@ -132,6 +132,11 @@ export interface WorldgenCamera {
   // Camera altitude above the ground plane in world units (the fixed rig
   // height while in the map regime).
   getAltitude: () => number
+  // The visible world width at the focus row this frame (world units) —
+  // divided by the render width it is the same world-units-per-pixel the
+  // drag pan converts with. Exact at the focus; a tilted view's ratio
+  // genuinely varies with on-screen depth.
+  getViewWidth: () => number
 }
 
 // Wrap an angle into (-π, π] so the automatic return-to-north always takes
@@ -502,6 +507,9 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
     },
     getAltitude() {
       return viewHeight
+    },
+    getViewWidth() {
+      return viewWidthAtFocus
     },
     dispose() {
       scene.onPointerObservable.remove(pointerObserver)

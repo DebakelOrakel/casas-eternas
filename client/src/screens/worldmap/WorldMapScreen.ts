@@ -46,16 +46,6 @@ import '../../ui/chrome/chrome.css'
 // for judging. Goes away with the debug field it seeds.
 const SEED_SETTLEMENTS = 7
 
-// River ribbon widths per relief level — the same reasoning as the
-// generator's: the stored per-point widths are cartographic, and at relief
-// zoom a literal reading turns a line into a flood while the D8 staircase's
-// mitered joints degenerate into sawteeth.
-const RIBBON_WIDTH_PROFILES = {
-  flat: { factor: 1, maxWidthPx: Number.POSITIVE_INFINITY },
-  coarse: { factor: 0.5, maxWidthPx: 4 },
-  fine: { factor: 0.3, maxWidthPx: 2 },
-} as const
-
 export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   const scene = new Scene(ctx.engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
@@ -71,6 +61,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     getYaw: getCameraYaw,
     getNearBlend: getCameraNearBlend,
     getAltitude: getCameraAltitude,
+    getViewWidth: getCameraViewWidth,
   } = createWorldgenCamera({
     scene,
     canvas: ctx.canvas,
@@ -182,7 +173,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // amplified tier arrives), and which relief level they are currently styled
   // for.
   let riverLayer: ReturnType<typeof createToroidalRibbonOverlay> | null = null
-  let ribbonLevel: keyof typeof RIBBON_WIDTH_PROFILES = 'flat'
+  let ribbonLevel: 'flat' | 'coarse' | 'fine' = 'flat'
 
   // What the presentation last produced. Held here rather than pushed straight
   // into the map view because the view does not exist yet the first time round:
@@ -537,11 +528,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       worldHeight: WORLD_HEIGHT,
       textureWidth: fieldWidth,
       textureHeight: fieldHeight,
-      // The stored widths are in the SOURCE grid's texels, so on a finer
-      // grid the same river would draw physically thinner. Scaling by the
-      // amplification factor keeps a river the size its discharge earns,
-      // independent of what resolution it was extracted at.
-      widthScale: 1.5 * factor,
+      getViewWidth: getCameraViewWidth,
       // The amplified grid packs several times as many D8 direction changes
       // (and discharge wiggles) into the same world distance, which the
       // interpolating spline would faithfully render as a wobble — average
@@ -596,16 +583,15 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverLayer.setPolylines(new Float32Array(outPoints), new Uint32Array(outLengths))
   }
 
-  // Keep the ribbons styled for whichever relief level is on screen —
-  // surface AND width profile, swapped only on an actual level change.
+  // Keep the ribbons draped on whichever relief surface is on screen,
+  // swapped only on an actual level change (width follows zoom continuously
+  // in the overlay's own shader).
   function syncRibbonLevel(force = false): void {
     if (!riverLayer) return
     const zoom = getCameraZoom()
-    const level: keyof typeof RIBBON_WIDTH_PROFILES = !reliefCoarseSurface ? 'flat' : zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
+    const level: typeof ribbonLevel = !reliefCoarseSurface ? 'flat' : zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
     if (level === ribbonLevel && !force) return
     ribbonLevel = level
-    const profile = RIBBON_WIDTH_PROFILES[level]
-    riverLayer.setWidthProfile(profile.factor, profile.maxWidthPx)
     riverLayer.setHeightSurface(level === 'flat' ? null : level === 'fine' && reliefFineSurface ? reliefFineSurface : reliefCoarseSurface)
   }
 

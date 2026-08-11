@@ -129,18 +129,6 @@ const BREAKUP_COLOR = '235, 140, 30'
 // first pass.
 // Scene scale + relief-preview settings are shared with the worldmap screen
 // — see map/mapSceneSettings.ts.
-// River ribbon widths per relief level. The stored per-point widths are
-// CARTOGRAPHIC (sized to read as lines at map zoom); translated literally at
-// relief zoom a 3-texel line becomes a 23 km flood and the D8 staircase's
-// mitered joints degenerate into sawteeth — so closer levels multiply the
-// widths down and cap them near physical river scale (texel units, 1 texel
-// ≈ 7.8 km).
-const RIBBON_WIDTH_PROFILES = {
-  flat: { factor: 1, maxWidthPx: Number.POSITIVE_INFINITY },
-  coarse: { factor: 0.5, maxWidthPx: 4 },
-  fine: { factor: 0.3, maxWidthPx: 2 },
-} as const
-
 // Slider value → mantle mixing per epoch. Higher vigour = less stirring = finer
 // field = more, smaller plates.
 //
@@ -266,6 +254,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     setDesiredTilt: setCameraDesiredTilt,
     getZoom: getCameraZoom,
     getYaw: getCameraYaw,
+    getViewWidth: getCameraViewWidth,
   } = createWorldgenCamera({
     scene,
     canvas: ctx.canvas,
@@ -310,7 +299,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // that fit its scale.
   let reliefCoarseSurface: ReturnType<typeof createElevationSurface> | null = null
   let reliefFineSurface: ReturnType<typeof createElevationSurface> | null = null
-  let ribbonLevel: keyof typeof RIBBON_WIDTH_PROFILES = 'flat'
+  let ribbonLevel: 'flat' | 'coarse' | 'fine' = 'flat'
 
   // The flat map plane + its toroidal 3x3 recentering (see ToroidalMapView).
   const mapView = createToroidalMapView({
@@ -327,18 +316,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     },
     onRecenter: (centerX, centerZ) => {
       riverLayer?.recenter(centerX, centerZ)
-      // Keep the ribbons styled for whichever relief level is on screen —
-      // surface AND width profile (rebuilds are a few ms and only happen on
-      // an actual level transition). Level is 'flat' whenever no relief
-      // exists, whatever the zoom: pre-erosion the zoom scale is shallow and
-      // the cartographic widths are the right ones.
+      // Keep the ribbons draped on whichever relief surface is on screen
+      // (rebuilds are a few ms and only happen on an actual level
+      // transition; width follows zoom continuously in the overlay's own
+      // shader). Level is 'flat' whenever no relief exists, whatever the
+      // zoom.
       if (!riverLayer) return
       const zoom = getCameraZoom()
-      const level: keyof typeof RIBBON_WIDTH_PROFILES = !reliefCoarseSurface ? 'flat' : zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
+      const level: typeof ribbonLevel = !reliefCoarseSurface ? 'flat' : zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
       if (level !== ribbonLevel) {
         ribbonLevel = level
-        const profile = RIBBON_WIDTH_PROFILES[level]
-        riverLayer.setWidthProfile(profile.factor, profile.maxWidthPx)
         if (reliefCoarseSurface) {
           riverLayer.setHeightSurface(level === 'fine' && reliefFineSurface ? reliefFineSurface : reliefCoarseSurface)
         }
@@ -363,7 +350,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       ribbonLevel = 'flat'
       mapView.setReliefSurfaces(null)
       riverLayer?.setHeightSurface(null)
-      riverLayer?.setWidthProfile(1, Number.POSITIVE_INFINITY)
     }
     // The bake start button shares this gate (a bake refines ERODED terrain),
     // and this is the one place every erosionRunCount change flows through.
@@ -378,6 +364,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     worldHeight: WORLD_HEIGHT,
     textureWidth: MAP_WIDTH,
     textureHeight: MAP_HEIGHT,
+    getViewWidth: getCameraViewWidth,
   })
   riverLayer.setEnabled(false)
 
