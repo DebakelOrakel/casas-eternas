@@ -313,7 +313,7 @@ Answers: **does it look painted?** Independent of A; could even run first.
 - Fades out along the existing near-mode altitude ramp, or a watercolour
   vignette ends up over a ground-level view.
 
-### Stage C — world-anchored pigment, material plugin
+### Stage C — edge darkening
 
 Only if A and B both land. Edge darkening and granulation that survive zoom.
 
@@ -326,6 +326,38 @@ Only if A and B both land. Edge darkening and granulation that survive zoom.
 - Known integration point, to be looked at rather than guessed: the hex grid
   plugin also writes at `CUSTOM_FRAGMENT_MAIN_END`, so the two need a defined
   order. The grid is ink ON TOP of paint.
+
+> **Revised on contact (2026-08-11, built). There is no material plugin, and no
+> alpha channel is used.** Stage C came out as ~90 lines of CPU inside
+> `mapPresentation`, alongside the knowledge lerps.
+>
+> Two of its three reasons for existing had already dissolved. B's move to
+> world-anchored noise took **granulation** with it, leaving C only edge
+> darkening. And the surviving argument — "a rim that survives zoom" — turned
+> out to be backwards once B had taught the lesson: a fragment shader would
+> hold the rim at a constant ~1.5 px however far you zoom, which is right for
+> the hex grid (an *instrument*, ink over paint) and wrong for a rim, which is
+> *paint*. A physical drying edge is a property of the wash, so it must scale
+> with the world and blur when the wash blurs. Baking it into the paper texture
+> is not the cheap approximation of the shader version; it is the more honest
+> one.
+>
+> The frontier's rim needs no boundary mask at all: `k` is already a smooth
+> field, so `|∇k|` peaks exactly where the paint runs out and is soft for free
+> — which is what keeps it affordable inside a brush stroke. Only the interior
+> boundaries (biome edges plus the coastline, taken from the relief byte's top
+> bit so a save without a biome layer still gets shores) need the mask-and-blur,
+> and those change per tier rather than per stroke, so the blur is cached.
+>
+> **The identity claim is narrower now, and stated deliberately:** edge
+> darkening changes the picture at `k = 1` too — it is a feature, not a
+> modulation. The baseline the spec check enforces is that the KNOWLEDGE
+> machinery is the identity at `k = 1` with `edgeDarkening = 0`.
+>
+> Measured on the synthetic world: 26.5 % of texels touched, mean drop 9 of
+> 255, peak 77 — and **0 texels of rim on bare paper**, which is the one
+> property that must hold. A rim without pigment under it is a pencil line, and
+> that is a different medium saying a different thing.
 
 ### Gates and what is not in it
 

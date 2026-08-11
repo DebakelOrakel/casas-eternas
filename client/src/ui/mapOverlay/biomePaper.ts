@@ -1,4 +1,4 @@
-import { Biome, biomeColor } from '../../worldgen/climate/biomes'
+import { Biome } from '../../worldgen/climate/biomes'
 import { periodicValueNoise2D } from '../../worldgen/elevation/ridgedNoise'
 
 // Biome colouring for the map's paper base — the "pigment on paper" register
@@ -113,28 +113,8 @@ export function expandBiomeIds(biome: Uint8Array, resX: number, resY: number, wi
   return out
 }
 
-// Blend the biome palette over a paper base, IN PLACE. Land only: the ocean
-// keeps the paper's own blue, which already carries bathymetric shading and
-// reads as water without competing with the biome hues.
-//
-// `desaturate` pulls each palette colour toward its own luminance and
-// `alpha` decides how much of it reaches the paper — the same two knobs, and
-// the same reasoning, as the generator's terrain wash: the paper's white and
-// its hillshade must keep showing through, or the map stops being a map and
-// becomes a flat colour chart.
-export function applyBiomeWash(paper: Uint8ClampedArray, relief: Uint8Array, ids: Uint8Array, desaturate: number, alpha: number): void {
-  for (let i = 0; i < relief.length; i++) {
-    if (!(relief[i] & 128)) continue // ocean: paper blue stays
-    const id = ids[i]
-    if (id === Biome.Ocean) continue // dilation missed it; leave the paper alone
-    const [cr, cg, cb] = biomeColor(id)
-    const lum = 0.299 * cr + 0.587 * cg + 0.114 * cb
-    const tr = cr + (lum - cr) * desaturate
-    const tg = cg + (lum - cg) * desaturate
-    const tb = cb + (lum - cb) * desaturate
-    const p = i * 4
-    paper[p] = paper[p] * (1 - alpha) + tr * alpha
-    paper[p + 1] = paper[p + 1] * (1 - alpha) + tg * alpha
-    paper[p + 2] = paper[p + 2] * (1 - alpha) + tb * alpha
-  }
-}
+// The wash itself moved to map/terrainPalette.ts (2026-08-11), together with a
+// palette of its own: what colour a place IS turned out to be a different
+// question from which class it belongs to, and the two want to be tuned
+// separately. What stays here is getting biome ids onto the paper's grid at
+// all, which is the part that has nothing to do with colour.

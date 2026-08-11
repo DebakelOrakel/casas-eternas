@@ -1,7 +1,9 @@
 import { computeReliefBytes } from '../worldgen/render/reliefShade'
 import { upscaleBilinearToroidal } from '../worldgen/core/field'
 import { buildPaperBase, buildUnshadedPaperBase } from '../ui/mapOverlay/paperBase'
-import { applyBiomeWash, dilateLandBiomes, expandBiomeIds } from '../ui/mapOverlay/biomePaper'
+import { dilateLandBiomes, expandBiomeIds } from '../ui/mapOverlay/biomePaper'
+import { applyTerrainWash, DEFAULT_TERRAIN_WASH } from './terrainPalette'
+import type { TerrainWash } from './terrainPalette'
 import { createElevationSurface, downsampleElevation } from './elevationSurface'
 import { createFineElevationSurface } from './fineElevationSurface'
 import { RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from './mapSceneSettings'
@@ -76,6 +78,12 @@ export interface MapPresentation {
   // Retune where the three registers sit. Debug-facing: stage A exists to
   // decide these numbers.
   setKnowledgeRamp(ramp: KnowledgeRamp): void
+  // Edge darkening. Debug-facing for the same reason as the ramp; changing the
+  // WIDTH re-blurs the boundary mask, changing the strength does not.
+  setPigment(pigment: PigmentTuning): void
+  // The terrain palette's own two knobs — chroma and how much pigment reaches
+  // the paper. See map/terrainPalette.
+  setTerrainWash(wash: TerrainWash): void
   // The knowledge field changed in place — repaint against it.
   refreshKnowledge(): void
   // How much is known at a UV, 0..1 (1 with no field). Callers that draw their
@@ -90,14 +98,6 @@ export interface MapPresentation {
   // — the texture's resolution stays in here.
   biomeIdAtUV(u: number, v: number): number | null
 }
-
-// How much of the biome palette reaches the paper. Same two knobs, and the
-// same reasoning, as the generator's terrain wash: pull the colours toward
-// their own luminance and let them through only partly, so the paper's white
-// and its hillshade keep showing. Full-strength palette would turn the map
-// into a flat colour chart.
-const BIOME_DESATURATE = 0.45
-const BIOME_ALPHA = 0.55
 
 // The sheet itself: a warm off-white, not #fff. Pure white reads as ABSENCE —
 // as though the render failed — while a paper tone reads as an unpainted sheet,
@@ -124,6 +124,32 @@ export const DEFAULT_KNOWLEDGE_RAMP: KnowledgeRamp = {
   exploredPigment: 0.35,
   exploredAt: 0.5,
   activeFrom: 0.6,
+}
+
+// Edge darkening — the signature of the medium. Pigment is carried to the rim
+// of a wash as it dries and stays there, so every wash is outlined in its own
+// colour, darker. Without it a flat wash reads as a fill; with it, it reads as
+// something that was wet.
+//
+// Two kinds of rim, and the frontier's is the important one: it is the edge of
+// the painting itself, the thing the reference image is mostly made of. Biome
+// boundaries get a weaker one, because they are transitions WITHIN a wash
+// rather than its edge.
+export interface PigmentTuning {
+  // Peak darkening at a rim, as a fraction of the colour there.
+  edgeDarkening: number
+  // Rim width in paper texels, for the biome boundaries. The frontier's width
+  // comes from the knowledge field's own softness instead — it is already a
+  // smooth field, so its gradient IS the rim.
+  edgeWidth: number
+  // How much weaker an internal boundary is than the wash's own edge.
+  interiorEdgeScale: number
+}
+
+export const DEFAULT_PIGMENT_TUNING: PigmentTuning = {
+  edgeDarkening: 0.34,
+  edgeWidth: 3,
+  interiorEdgeScale: 0.45,
 }
 
 const smoothstep = (edge0: number, edge1: number, x: number): number => {
@@ -155,6 +181,76 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
   let seaLevelTemperature: Float32Array | null = null
   let knowledge: KnowledgeSource | null = null
   let ramp: KnowledgeRamp = { ...DEFAULT_KNOWLEDGE_RAMP }
+  let pigment: PigmentTuning = { ...DEFAULT_PIGMENT_TUNING }
+  let terrainWash: TerrainWash = { ...DEFAULT_TERRAIN_WASH }
+  // Rim strength along BIOME and coast boundaries, 0..1. Rebuilt only when the
+  // classification changes — which is per loaded world and per amplified tier,
+  // not per brush stroke, and that matters because the blur below is the
+  // expensive part of the whole module.
+  let interiorEdge: Float32Array | null = null
+
+  // A soft rim from a hard boundary: mark every texel whose 4-neighbourhood is
+  // not uniform, then box-blur the marks. Separable and run on a scratch
+  // buffer, so widening the rim costs two sweeps per pass rather than a
+  // quadratic kernel.
+  //
+  // The coastline counts as a boundary in its own right (top bit of the relief
+  // byte) and not merely as the Ocean biome's edge: on a save with no biome
+  // layer at all there would otherwise be no rim anywhere, and the shore is
+  // the one edge every map has.
+  function buildInteriorEdge(): void {
+    interiorEdge = null
+    if (!lastRelief) return
+    const w = textureWidth
+    const h = textureHeight
+    const mask = new Float32Array(w * h)
+    for (let y = 0; y < h; y++) {
+      const up = ((y - 1 + h) % h) * w
+      const down = ((y + 1) % h) * w
+      const row = y * w
+      for (let x = 0; x < w; x++) {
+        const left = (x - 1 + w) % w
+        const right = (x + 1) % w
+        const land = lastRelief[row + x] & 128
+        let edge = 0
+        if ((lastRelief[row + left] & 128) !== land || (lastRelief[row + right] & 128) !== land
+          || (lastRelief[up + x] & 128) !== land || (lastRelief[down + x] & 128) !== land) edge = 1
+        if (!edge && biomeIds) {
+          const id = biomeIds[row + x]
+          if (biomeIds[row + left] !== id || biomeIds[row + right] !== id
+            || biomeIds[up + x] !== id || biomeIds[down + x] !== id) edge = 1
+        }
+        mask[row + x] = edge
+      }
+    }
+    const radius = Math.max(1, Math.round(pigment.edgeWidth))
+    const scratch = new Float32Array(w * h)
+    // Two box passes approximate a bell, which is what a drying rim looks
+    // like; a single pass leaves a visibly rectangular falloff.
+    for (let pass = 0; pass < 2; pass++) {
+      for (let y = 0; y < h; y++) {
+        const row = y * w
+        for (let x = 0; x < w; x++) {
+          let sum = 0
+          for (let d = -radius; d <= radius; d++) sum += mask[row + ((x + d + w) % w)]
+          scratch[row + x] = sum / (radius * 2 + 1)
+        }
+      }
+      for (let x = 0; x < w; x++) {
+        for (let y = 0; y < h; y++) {
+          let sum = 0
+          for (let d = -radius; d <= radius; d++) sum += scratch[((y + d + h) % h) * w + x]
+          mask[y * w + x] = sum / (radius * 2 + 1)
+        }
+      }
+    }
+    // Normalised so the peak reaches 1 whatever the radius — otherwise
+    // widening the rim would silently fade it.
+    let peak = 0
+    for (let i = 0; i < mask.length; i++) if (mask[i] > peak) peak = mask[i]
+    if (peak > 0) for (let i = 0; i < mask.length; i++) mask[i] = Math.min(1, mask[i] / peak)
+    interiorEdge = mask
+  }
   // The raster now in force, kept so a knowledge change can re-derive without
   // the caller handing the field in again.
   let currentField: { data: Float32Array; width: number; height: number; detailSeed: number } | null = null
@@ -260,24 +356,47 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
     const shaded = buildPaperBase(lastRelief)
     const unshaded = buildUnshadedPaperBase(lastRelief)
     if (biomeIds) {
-      applyBiomeWash(shaded, lastRelief, biomeIds, BIOME_DESATURATE, BIOME_ALPHA)
-      applyBiomeWash(unshaded, lastRelief, biomeIds, BIOME_DESATURATE, BIOME_ALPHA)
+      applyTerrainWash(shaded, lastRelief, biomeIds, terrainWash)
+      applyTerrainWash(unshaded, lastRelief, biomeIds, terrainWash)
     }
     const k = knowledge?.texels
-    if (k) {
-      for (let i = 0; i < k.length; i++) {
-        const kv = k[i]
-        const relief = smoothstep(ramp.activeFrom, 1, kv)
-        const pigment = kv <= ramp.exploredAt
-          ? smoothstep(0, ramp.exploredAt, kv) * ramp.exploredPigment
-          : ramp.exploredPigment + (1 - ramp.exploredPigment) * smoothstep(ramp.exploredAt, 1, kv)
-        const p = i * 4
-        for (let c = 0; c < 3; c++) {
-          const flat = unshaded[p + c]
-          const lit = flat + (shaded[p + c] - flat) * relief
-          const tone = PAPER_TONE[c]
-          shaded[p + c] = tone + (lit - tone) * pigment
-          unshaded[p + c] = tone + (flat - tone) * pigment
+    const w = textureWidth
+    const h = textureHeight
+    if (k || pigment.edgeDarkening > 0) {
+      for (let y = 0; y < h; y++) {
+        const up = ((y - 1 + h) % h) * w
+        const down = ((y + 1) % h) * w
+        const row = y * w
+        for (let x = 0; x < w; x++) {
+          const i = row + x
+          const kv = k ? k[i] : 1
+          const relief = smoothstep(ramp.activeFrom, 1, kv)
+          const density = kv <= ramp.exploredAt
+            ? smoothstep(0, ramp.exploredAt, kv) * ramp.exploredPigment
+            : ramp.exploredPigment + (1 - ramp.exploredPigment) * smoothstep(ramp.exploredAt, 1, kv)
+
+          // The wash's own rim. |∇k| peaks exactly where the paint runs out,
+          // and because k is a smooth field the gradient is already soft — no
+          // blur needed, which is what keeps a brush stroke affordable.
+          let rim = 0
+          if (k) {
+            const gx = k[row + ((x + 1) % w)] - k[row + ((x - 1 + w) % w)]
+            const gy = k[down + x] - k[up + x]
+            rim = Math.min(1, Math.hypot(gx, gy) * w * 0.006)
+          }
+          if (interiorEdge) rim = Math.max(rim, interiorEdge[i] * pigment.interiorEdgeScale)
+          // Only where there is pigment to carry: a rim on blank paper would be
+          // a pencil line, which is a different medium and a different meaning.
+          const darken = 1 - rim * pigment.edgeDarkening * density
+
+          const p = i * 4
+          for (let c = 0; c < 3; c++) {
+            const flat = unshaded[p + c]
+            const lit = flat + (shaded[p + c] - flat) * relief
+            const tone = PAPER_TONE[c]
+            shaded[p + c] = (tone + (lit - tone) * density) * darken
+            unshaded[p + c] = (tone + (flat - tone) * density) * darken
+          }
         }
       }
     }
@@ -362,6 +481,7 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       }
       lastRelief = computeReliefBytes(paperField, textureWidth, textureHeight)
       reclassifyBiomes(paperField)
+      buildInteriorEdge()
       currentField = { data: field, width: fieldWidth, height: fieldHeight, detailSeed }
       repaintPaper()
       emitSurfaces()
@@ -377,6 +497,19 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       ramp = { ...next }
       if (lastRelief) repaintPaper()
       emitSurfaces()
+    },
+
+    setTerrainWash(next: TerrainWash): void {
+      terrainWash = { ...next }
+      if (lastRelief) repaintPaper()
+    },
+
+    setPigment(next: PigmentTuning): void {
+      const widthChanged = Math.round(next.edgeWidth) !== Math.round(pigment.edgeWidth)
+      pigment = { ...next }
+      // Only the width forces the blur again; strength is applied at paint time.
+      if (widthChanged) buildInteriorEdge()
+      if (lastRelief) repaintPaper()
     },
 
     // The knowledge field mutated in place (a brush stroke, a scout arriving).

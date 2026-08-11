@@ -1,4 +1,5 @@
-import type { KnowledgeRamp } from '../../map/mapPresentation'
+import type { KnowledgeRamp, PigmentTuning } from '../../map/mapPresentation'
+import type { TerrainWash } from '../../map/terrainPalette'
 import type { WatercolorTuning } from './watercolorPass'
 import './knowledgeDebug.css'
 
@@ -18,6 +19,13 @@ export interface KnowledgeDebugPanelOptions {
   // Mutated in place by the sliders; the callback fires after every change.
   ramp: KnowledgeRamp
   onRampChange: () => void
+  // Edge darkening, likewise mutated in place — but it repaints on the CPU, so
+  // unlike the sheet it does need a callback.
+  pigment: PigmentTuning
+  onPigmentChange: () => void
+  // The terrain palette's chroma and strength — the "make it pop" pair.
+  wash: TerrainWash
+  onWashChange: () => void
   // Also mutated in place — but the pass reads it per frame, so it needs no
   // callback at all. That asymmetry is the whole difference between the two
   // stages: A recomposites eight million texels on the CPU, B is a uniform.
@@ -37,7 +45,7 @@ export interface KnowledgeDebugPanel {
 }
 
 export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeDebugPanelOptions): KnowledgeDebugPanel {
-  const { ramp, sheet, onRampChange, onSeed, onClear, onReveal, onBrushToggle } = options
+  const { ramp, sheet, pigment, wash, onRampChange, onPigmentChange, onWashChange, onSeed, onClear, onReveal, onBrushToggle } = options
   let brushActive = false
 
   const root = document.createElement('div')
@@ -52,6 +60,13 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
     <button type="button" data-action="seed">reseed</button>
     <button type="button" data-action="clear">clear</button>
     <button type="button" data-action="reveal">reveal all</button>
+    <span class="knowledge-debug__title">terrain wash (debug)</span>
+    <label>chroma <input type="range" data-wash="desaturate" min="-0.6" max="0.8" step="0.02" /></label>
+    <label>strength <input type="range" data-wash="strength" min="0" max="1" step="0.02" /></label>
+    <span class="knowledge-debug__title">pigment (debug)</span>
+    <label>edge dark <input type="range" data-pigment="edgeDarkening" min="0" max="0.8" step="0.01" /></label>
+    <label>edge width <input type="range" data-pigment="edgeWidth" min="1" max="10" step="1" /></label>
+    <label>interior <input type="range" data-pigment="interiorEdgeScale" min="0" max="1" step="0.05" /></label>
     <span class="knowledge-debug__title">sheet (debug)</span>
     <label>fibre <input type="range" data-sheet="fibreAmount" min="0" max="0.5" step="0.005" /></label>
     <label>fibre scale <input type="range" data-sheet="fibreScale" min="100" max="3000" step="50" /></label>
@@ -69,6 +84,12 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
   for (const input of root.querySelectorAll<HTMLInputElement>('[data-sheet]')) {
     input.value = String(sheet[input.dataset.sheet as keyof WatercolorTuning])
   }
+  for (const input of root.querySelectorAll<HTMLInputElement>('[data-pigment]')) {
+    input.value = String(pigment[input.dataset.pigment as keyof PigmentTuning])
+  }
+  for (const input of root.querySelectorAll<HTMLInputElement>('[data-wash]')) {
+    input.value = String(wash[input.dataset.wash as keyof TerrainWash])
+  }
 
   const onInput = (event: Event): void => {
     const input = event.target as HTMLInputElement
@@ -76,6 +97,18 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
     if (sheetKnob) {
       // No callback: the pass reads these straight off the object each frame.
       sheet[sheetKnob as keyof WatercolorTuning] = Number(input.value)
+      return
+    }
+    const washKnob = input.dataset.wash
+    if (washKnob) {
+      wash[washKnob as keyof TerrainWash] = Number(input.value)
+      onWashChange()
+      return
+    }
+    const pigmentKnob = input.dataset.pigment
+    if (pigmentKnob) {
+      pigment[pigmentKnob as keyof PigmentTuning] = Number(input.value)
+      onPigmentChange()
       return
     }
     const name = input.dataset.knob

@@ -6,8 +6,10 @@ import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { ToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
-import { createMapPresentation, DEFAULT_KNOWLEDGE_RAMP } from '../../map/mapPresentation'
-import type { KnowledgeRamp, MapWorldFields } from '../../map/mapPresentation'
+import { createMapPresentation, DEFAULT_KNOWLEDGE_RAMP, DEFAULT_PIGMENT_TUNING } from '../../map/mapPresentation'
+import type { KnowledgeRamp, MapWorldFields, PigmentTuning } from '../../map/mapPresentation'
+import { DEFAULT_TERRAIN_WASH } from '../../map/terrainPalette'
+import type { TerrainWash } from '../../map/terrainPalette'
 import type { ElevationSurface } from '../../map/elevationSurface'
 import { createKnowledgeField } from './knowledgeField'
 import type { KnowledgeField } from './knowledgeField'
@@ -211,6 +213,8 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // settlements are seeded from that world's own terrain.
   let knowledge: KnowledgeField | null = null
   const knowledgeRamp: KnowledgeRamp = { ...DEFAULT_KNOWLEDGE_RAMP }
+  const pigmentTuning: PigmentTuning = { ...DEFAULT_PIGMENT_TUNING }
+  const terrainWash: TerrainWash = { ...DEFAULT_TERRAIN_WASH }
   // What the stand-in settlements are placed against, kept so "reseed" can run
   // again without reloading the world.
   let knowledgeSeedInputs: { elevations: Float32Array; width: number; height: number; biome: { data: Float32Array; resX: number; resY: number } | null; detailSeed: number } | null = null
@@ -313,6 +317,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     ramp: knowledgeRamp,
     sheet: watercolor.tuning,
     onRampChange: () => { presentation.setKnowledgeRamp(knowledgeRamp); setRiverPolylines() },
+    pigment: pigmentTuning,
+    onPigmentChange: () => presentation.setPigment(pigmentTuning),
+    wash: terrainWash,
+    onWashChange: () => presentation.setTerrainWash(terrainWash),
     onSeed: () => { seedKnowledge(); refreshKnowledge() },
     onClear: () => { knowledge?.fill(0); refreshKnowledge() },
     onReveal: () => { knowledge?.fill(1); refreshKnowledge() },
