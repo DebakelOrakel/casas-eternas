@@ -255,6 +255,9 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   channelSlopeExponent: CHANNEL_SLOPE_EXPONENT,
   channelAreaMax: SURFACE_TUNING.channelAreaMax,
   channelAreaMin: SURFACE_TUNING.channelAreaMin,
+  // The estuary floor caps how deep the bake's erosion may cut below sea
+  // level at ocean mouths — retuning it moves coastlines in the baked field.
+  estuaryMaxDepthM: SURFACE_TUNING.estuaryMaxDepthM,
 }
 
 export interface AmplifiedField {

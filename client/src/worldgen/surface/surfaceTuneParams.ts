@@ -128,6 +128,19 @@ export const SURFACE_TUNING = {
   // delivers. Raise for wider, gentler fans; 0 restores pure-D8 deposition.
   deltaSpreadFraction: 0.4,
 
+  // A river's base level at the coast is the sea SURFACE, not the sea bed. The
+  // incision clamp alone grades a mouth to its D8 receiver — an ocean cell at
+  // shelf or slope depth — and the downstream-first update order then walks
+  // that depth headward, which is where the shelf-deep "ocean arms" reaching
+  // far into continents came from (docs/decisions/river-mouth-base-level.md).
+  // Land draining into the WORLD OCEAN may therefore incise at most this far
+  // below sea level: mouths still drown into estuaries (real ones run
+  // ~5–30 m), never canyon-deep. Enclosed sub-sea basins are exempt — their
+  // tributaries legitimately grade toward a Death-Valley-style floor. 0 would
+  // forbid drowned mouths entirely; raising it re-opens the artefact
+  // gradually.
+  estuaryMaxDepthM: 20,
+
   // Fluvial incision is scaled by the cell's TECTONIC height, not its current one.
   //
   // The reason is a coupling that no single global setting can break: the same incision

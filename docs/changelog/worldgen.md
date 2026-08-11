@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-08-11
+- **changed** Erosion: river mouths now grade to the sea surface instead of the sea bed — estuary-deep drowned mouths stay, the long carved ocean arms are gone. `worldgen.panel.erosion`
+
 ## 2026-08-09
 - **fixed** Climate: biome boundaries no longer step along the 62 km climate grid — the classification interpolates its climate inputs instead of taking the containing cell's. `world.overlay.biomes`
 

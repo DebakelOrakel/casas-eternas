@@ -10447,7 +10447,7 @@ function deriveWorldId(seedLabel, inputs) {
   const label = seedLabel.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").replace(/^[.\s]+/, "").trim().replace(/\s+/g, "-").slice(0, 24) || "world";
   return `${label}-${hex8(sa)}${hex8(sb)}`;
 }
-var AMPLIFICATION_ALGO_VERSION = 4;
+var AMPLIFICATION_ALGO_VERSION = 5;
 function derivePipelineVersion(constants) {
   const text = Object.keys(constants).sort().map((name) => `${name}=${constants[name]}`).join("|");
   const [a, b] = hashBytes(new TextEncoder().encode(text), 2166136261, 2654435769);
@@ -10723,6 +10723,18 @@ var SURFACE_TUNING = {
   // uncarried load) rounds the lobes without changing how much material a river
   // delivers. Raise for wider, gentler fans; 0 restores pure-D8 deposition.
   deltaSpreadFraction: 0.4,
+  // A river's base level at the coast is the sea SURFACE, not the sea bed. The
+  // incision clamp alone grades a mouth to its D8 receiver — an ocean cell at
+  // shelf or slope depth — and the downstream-first update order then walks
+  // that depth headward, which is where the shelf-deep "ocean arms" reaching
+  // far into continents came from (docs/decisions/river-mouth-base-level.md).
+  // Land draining into the WORLD OCEAN may therefore incise at most this far
+  // below sea level: mouths still drown into estuaries (real ones run
+  // ~5–30 m), never canyon-deep. Enclosed sub-sea basins are exempt — their
+  // tributaries legitimately grade toward a Death-Valley-style floor. 0 would
+  // forbid drowned mouths entirely; raising it re-opens the artefact
+  // gradually.
+  estuaryMaxDepthM: 20,
   // Fluvial incision is scaled by the cell's TECTONIC height, not its current one.
   //
   // The reason is a coupling that no single global setting can break: the same incision
@@ -11032,7 +11044,10 @@ var AMPLIFY_CONSTANTS = {
   // the density curve and were function-local until now.
   channelSlopeExponent: CHANNEL_SLOPE_EXPONENT,
   channelAreaMax: SURFACE_TUNING.channelAreaMax,
-  channelAreaMin: SURFACE_TUNING.channelAreaMin
+  channelAreaMin: SURFACE_TUNING.channelAreaMin,
+  // The estuary floor caps how deep the bake's erosion may cut below sea
+  // level at ocean mouths — retuning it moves coastlines in the baked field.
+  estuaryMaxDepthM: SURFACE_TUNING.estuaryMaxDepthM
 };
 function ridgedAt(x, y, width, height, seed) {
   let sum = 0;
@@ -11471,10 +11486,11 @@ function buildErosionMask(tectonic, plainFactor = EROSION_PLAIN_FACTOR) {
   }
   return mask;
 }
-async function runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, params, erosionMask, tectonic, onProgress) {
+async function runStreamPowerIterations(elevations, routing, accumulation, isLand, oceanMask, width, height, params, erosionMask, tectonic, onProgress) {
   const { flowTarget, popOrder, poppedCount } = routing;
   const useSqrtForArea = params.areaExponentM === 0.5;
   const slopeExponentIsOne = params.slopeExponentN === 1;
+  const estuaryFloor = SEA_LEVEL - metersToElevation(SURFACE_TUNING.estuaryMaxDepthM);
   const depositing = params.transportCapacityKt > 0;
   const excavated = depositing ? new Float32Array(elevations.length) : null;
   const load = depositing ? new Float32Array(elevations.length) : null;
@@ -11499,7 +11515,8 @@ async function runStreamPowerIterations(elevations, routing, accumulation, isLan
       const slopeTerm = slopeExponentIsOne ? slope : Math.pow(slope, params.slopeExponentN);
       const dh = -params.erodibilityK * area * slopeTerm * erosionMask[cell];
       const before = elevations[cell];
-      elevations[cell] = Math.max(elevations[target], before + dh * params.timeStep);
+      const floor = oceanMask !== null && oceanMask[target] === 1 ? Math.max(elevations[target], estuaryFloor) : elevations[target];
+      elevations[cell] = Math.max(floor, before + dh * params.timeStep);
       if (excavated) excavated[cell] = before - elevations[cell];
     }
     if (excavated && load && donorFloor && shelfOrder) {
@@ -11662,7 +11679,7 @@ async function runErosionPass(rawElevations, width, height, params = DEFAULT_ERO
       } else {
         elevations.set(routing.filled);
       }
-      await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, refreshParams, erosionMask, rawElevations, (fraction) => roundProgress("streamPower", (r + fraction) / refreshes));
+      await runStreamPowerIterations(elevations, routing, accumulation, isLand, oceanMask, width, height, refreshParams, erosionMask, rawElevations, (fraction) => roundProgress("streamPower", (r + fraction) / refreshes));
     }
     await runThermalErosion(elevations, isLand, width, height, params.thermal, (fraction) => roundProgress("thermal", fraction));
     await onRoundComplete?.(elevations.slice(), round);

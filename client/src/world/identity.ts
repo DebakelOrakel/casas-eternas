@@ -143,7 +143,12 @@ export function deriveWorldId(seedLabel: string, inputs: BakeInputs): string {
 // (hydrology.CHANNEL_SLOPE_EXPONENT). Mountain channels roughly triple, so a
 // cached v3 artifact holds a visibly different river network under a key that
 // claims to describe this one.
-export const AMPLIFICATION_ALGO_VERSION = 4
+// v5 (2026-08-11): incision into the world ocean is floored at estuary depth
+// (SURFACE_TUNING.estuaryMaxDepthM) instead of the receiver's bed, so the
+// bake stops carving shelf-deep arms into macro land — a cached v4 artifact
+// holds coastlines this pipeline no longer produces. The constant itself is
+// hashed via AMPLIFY_CONSTANTS; this bump is for the clamp-shape change.
+export const AMPLIFICATION_ALGO_VERSION = 5
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

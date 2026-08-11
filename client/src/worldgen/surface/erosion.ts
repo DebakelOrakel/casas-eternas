@@ -317,6 +317,10 @@ export async function runStreamPowerIterations(
   routing: FlowRouting,
   accumulation: Float32Array,
   isLand: Uint8Array,
+  // The world-ocean component (pre-erosion), for the estuary floor below —
+  // null when the world has no ocean. Deliberately NOT "any water cell":
+  // enclosed sub-sea basins stay exempt, see estuaryMaxDepthM's comment.
+  oceanMask: Uint8Array | null,
   width: number,
   height: number,
   params: StreamPowerParams,
@@ -329,6 +333,10 @@ export async function runStreamPowerIterations(
   const { flowTarget, popOrder, poppedCount } = routing
   const useSqrtForArea = params.areaExponentM === 0.5
   const slopeExponentIsOne = params.slopeExponentN === 1
+  // Base level at the coast: a river grades to the sea SURFACE, not the sea
+  // bed (see SURFACE_TUNING.estuaryMaxDepthM). Cells draining into the world
+  // ocean are floored here rather than at their receiver's depth.
+  const estuaryFloor = SEA_LEVEL - metersToElevation(SURFACE_TUNING.estuaryMaxDepthM)
   // Allocated once for the whole call, not per iteration. Left null when deposition
   // is off so the original model costs exactly what it always did.
   const depositing = params.transportCapacityKt > 0
@@ -365,7 +373,16 @@ export async function runStreamPowerIterations(
 
       const dh = -params.erodibilityK * area * slopeTerm * erosionMask[cell]
       const before = elevations[cell]
-      elevations[cell] = Math.max(elevations[target], before + dh * params.timeStep)
+      // The receiver clamp is the stability defense (see the module doc
+      // block); the estuary floor on top of it is base-level physics. An
+      // ocean receiver sits at shelf/slope depth, and clamping to its bed
+      // let a coastal cell be cut that deep in one round — after which the
+      // downstream-first order walked the depth headward without limit (the
+      // "long ocean arms"). Once a cell is floored at estuary depth, every
+      // cell upstream inherits the bound through the plain receiver clamp,
+      // so the floor propagates by construction.
+      const floor = oceanMask !== null && oceanMask[target] === 1 ? Math.max(elevations[target], estuaryFloor) : elevations[target]
+      elevations[cell] = Math.max(floor, before + dh * params.timeStep)
       // The REALISED drop, not -dh·dt: the clamp above often bites, and booking the
       // intended cut as sediment would invent material that was never removed.
       if (excavated) excavated[cell] = before - elevations[cell]
@@ -785,7 +802,7 @@ export async function runErosionPass(
       } else {
         elevations.set(routing.filled)
       }
-      await runStreamPowerIterations(elevations, routing, accumulation, isLand, width, height, refreshParams, erosionMask, rawElevations, (fraction) => roundProgress('streamPower', (r + fraction) / refreshes))
+      await runStreamPowerIterations(elevations, routing, accumulation, isLand, oceanMask, width, height, refreshParams, erosionMask, rawElevations, (fraction) => roundProgress('streamPower', (r + fraction) / refreshes))
     }
     // Order matters only a little here (both passes reread whatever the
     // other just wrote next round, since routing gets rederived from
