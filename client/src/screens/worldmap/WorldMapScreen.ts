@@ -29,6 +29,7 @@ import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { getServerStatus } from '../../server/serverStatus'
 import { worldInputsFrom } from '../../world/save/loadWorldInputs'
+import { deriveRivers } from '../../worldgen/surface/runAmplification'
 import { openWorld } from '../../world/query'
 import type { FieldView, World } from '../../world/query'
 import '../../ui/chrome/chrome.css'
@@ -385,7 +386,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     presentWorld(
       inputs.elevations, inputs.width, inputs.height,
       inputs.biome, inputs.detailSeed, inputs.erosionControls.riverDensity,
-      inputs.biomeInputs,
+      inputs.biomeInputs, inputs.climate,
     )
   }
 
@@ -393,7 +394,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // `riverDensity` is the density the world was SAVED with. Rivers are keyed by
   // it inside an amplification artifact, so a read that guessed would find the
   // wrong set — or none.
-  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number, riverDensity: number | undefined, savedBiomeInputs: MapWorldFields['biomeInputs'] = null): void {
+  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number, riverDensity: number | undefined, savedBiomeInputs: MapWorldFields['biomeInputs'] = null, climate: { data: Float32Array; resX: number; resY: number } | null = null): void {
     // A new world supersedes any tier fetch still in flight for the last one.
     loadGeneration++
     hoverTooltip?.dispose()
@@ -510,6 +511,24 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     })
 
     void loadTiers(detailSeed, riverDensity)
+    void deriveMacroRivers(elevations, width, height, climate, riverDensity)
+  }
+
+  // The MACRO tier's rivers, so a freshly loaded world is never river-less
+  // while the bake tiers load (or don't exist). Re-derived from the save's own
+  // raster + climate through the SAME deriveRivers the bake runs — the save
+  // deliberately carries no polylines. Runs on the main thread; the routing
+  // yields, and on the 2048 grid the whole derivation is around a second.
+  async function deriveMacroRivers(elevations: Float32Array, width: number, height: number, climate: { data: Float32Array; resX: number; resY: number } | null, riverDensity: number | undefined): Promise<void> {
+    // No climate, no discharge — the Archean case; the map simply has no rivers.
+    if (!climate) return
+    const generation = loadGeneration
+    const rivers = await deriveRivers(elevations, width, height, climate.data, climate.resX, climate.resY, riverDensity)
+    if (generation !== loadGeneration) return
+    // A bake tier's finer network may have landed while this derived — never
+    // replace finer with coarser.
+    if (riverSource) return
+    applyRivers(rivers.points, rivers.lengths, width, height, 1)
   }
 
   // River ribbons for the re-derived network. Built on arrival (a world only
@@ -539,8 +558,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // changes nothing) — i.e. the smoothed line settles in the middle of
       // the staircase, which is where the river actually runs. Scaled with
       // the refinement because a finer grid spreads the same zigzag over
-      // more points, making it lower-frequency.
-      smoothingPasses: 2 * factor,
+      // more points, making it lower-frequency. At the source grid's own
+      // resolution (the macro tier) the zigzag is invisible and the
+      // generator's screen smooths nothing — match it.
+      smoothingPasses: factor > 1 ? 2 * factor : 0,
     })
     setRiverPolylines()
     ribbonLevel = 'flat'
@@ -625,8 +646,8 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const generation = loadGeneration
     const pipelineVersion = amplificationPipelineVersion()
     const store = await getArtifactStore()
-    // Factor 1 is the macro raster the save already carries, and the only tier
-    // with no rivers — those are a product of a bake.
+    // Factor 1 is the macro raster the save already carries — nothing to
+    // fetch; its rivers come from deriveMacroRivers.
     for (const factor of AMPLIFY_FETCH_STAGES.filter((f) => f > 1)) {
       if (generation !== loadGeneration) return
       const hit = await readAmplificationArtifact(store, { worldId, pipelineVersion, stage: String(factor) }, riverDensity).catch(() => null)

@@ -150,26 +150,55 @@ export async function runAmplification(
   let rivers: RiverPolylines = { points: new Float32Array(0), lengths: new Uint32Array(0) }
   if (request.precipitation && request.climateResX && request.climateResY) {
     onProgress('hydrology', 0)
-    const routing = await fillDepressionsAndRouteFlow(field, result.width, result.height, 0)
-    onProgress('hydrology', 0.6)
-    const discharge = accumulateDischarge(routing, field, request.precipitation, request.climateResX, request.climateResY)
-    // Handed in by a split bake, derived here by a whole one — see the two
-    // fields' own comment. `??` and not a truthiness test: 0 is a legitimate
-    // value for a world with no land, and would silently fall back.
-    const maxDischarge = request.maxDischarge ?? maxDischargeOverLand(discharge, field)
-    const meanRunoff = request.meanRunoff ?? meanLandRunoff(request.precipitation, field, result.width, result.height, request.climateResX, request.climateResY)
-    // The channel criterion is a cell COUNT and is used as one, at every
-    // stage — NOT rescaled to a constant physical catchment the way the
-    // erosion constants are. That is what makes a finer bake produce a richer
-    // river network rather than the same one with more vertices; amplify.ts
-    // carries the measurements behind the decision.
-    const criticalArea = densityToCriticalArea(request.riverDensity ?? 55)
-    rivers = extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge)
+    rivers = await deriveRivers(
+      field, result.width, result.height,
+      request.precipitation, request.climateResX, request.climateResY,
+      request.riverDensity,
+      { maxDischarge: request.maxDischarge, meanRunoff: request.meanRunoff },
+      (fraction) => onProgress('hydrology', fraction),
+    )
     if (request.region) rivers = ownedRivers(rivers, request.region.owned, result.width)
     onProgress('hydrology', 1)
   }
 
   return { elevation: field, width: result.width, height: result.height, rivers }
+}
+
+// Route, accumulate and extract the river network of ONE elevation field —
+// the hydrology stage above, shared with the worldmap's macro tier: a freshly
+// loaded save shows the rivers its own raster carries before any bake lands,
+// and because both callers run this same function, the macro network and a
+// baked one differ only by their grid, never by their rules.
+//
+// (The save deliberately carries a discharge RASTER and no polylines — the
+// client re-derives deterministically from elevation + precipitation +
+// riverDensity, which is exactly this call. See the save writer's comment.)
+export async function deriveRivers(
+  field: Float32Array,
+  width: number,
+  height: number,
+  precipitation: Float32Array,
+  climateResX: number,
+  climateResY: number,
+  riverDensity: number | undefined,
+  // Handed in by a split bake, derived here by a whole one — see the two
+  // request fields' own comment. `??` and not a truthiness test: 0 is a
+  // legitimate value for a world with no land, and would silently fall back.
+  overrides: { maxDischarge?: number; meanRunoff?: number } = {},
+  onProgress: (fraction: number) => void = () => {},
+): Promise<RiverPolylines> {
+  const routing = await fillDepressionsAndRouteFlow(field, width, height, 0)
+  onProgress(0.6)
+  const discharge = accumulateDischarge(routing, field, precipitation, climateResX, climateResY)
+  const maxDischarge = overrides.maxDischarge ?? maxDischargeOverLand(discharge, field)
+  const meanRunoff = overrides.meanRunoff ?? meanLandRunoff(precipitation, field, width, height, climateResX, climateResY)
+  // The channel criterion is a cell COUNT and is used as one, at every
+  // stage — NOT rescaled to a constant physical catchment the way the
+  // erosion constants are. That is what makes a finer bake produce a richer
+  // river network rather than the same one with more vertices; amplify.ts
+  // carries the measurements behind the decision.
+  const criticalArea = densityToCriticalArea(riverDensity ?? 55)
+  return extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge)
 }
 
 // The rivers this region owns, by the HEAD of each polyline.
