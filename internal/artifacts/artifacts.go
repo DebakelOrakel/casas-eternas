@@ -24,6 +24,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+
+	"github.com/DebakelOrakel/casas-eternas/internal/config"
 )
 
 // uploadLimit caps one artifact file. An amplified elevation raster is ~17 MB
@@ -32,13 +34,11 @@ import (
 // deployment has an opinion — as is the size cap that eviction will need.
 const uploadLimit = 512 << 20 // 512 MiB
 
-// Config is what cmd/ resolves from the flags. No viper here by design.
+// Config carries the full configuration tree (every module holds it whole —
+// decided 2026-08-12). No viper here by design; the module reads Global and
+// its OWN section (`artifacts.*`), nothing else.
 type Config struct {
-	// Dir is where artifacts live, one uuid directory per artifact.
-	Dir string
-	// CapBytes bounds the store; the sweep evicts least-recently-used
-	// artifacts after writes. 0 = unlimited.
-	CapBytes int64
+	All config.Config
 }
 
 // Module serves the artifact store.
@@ -46,12 +46,16 @@ type Module struct {
 	store *Store
 }
 
-// New prepares the store, creating the directory so a bad --dir-artifacts
+// New prepares the store, creating the directory so a bad artifacts.storage
 // fails at startup rather than on first write.
 func New(cfg Config) (*Module, error) {
-	store, err := NewStore(cfg.Dir, cfg.CapBytes)
+	capBytes, err := config.ParseByteSize(cfg.All.Artifacts.Cap)
 	if err != nil {
-		return nil, fmt.Errorf("--dir-artifacts: %w", err)
+		return nil, fmt.Errorf("artifacts.cap: %w", err)
+	}
+	store, err := NewStore(cfg.All.Artifacts.Storage.DirPath(), capBytes)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts.storage: %w", err)
 	}
 	return &Module{store: store}, nil
 }

@@ -41,7 +41,7 @@ test:
 	cd client && npm run harness:golden
 
 # The bake pipeline, bundled for Node. Lands beside the binary because that is
-# where --baker looks by default.
+# where bake.baker looks by default.
 baker:
 	cd client && npm run build:baker
 
@@ -49,11 +49,11 @@ client:
 	cd client && npm run build
 
 # Everything a local instance needs, then start it. `go build` rather than
-# `go run` on purpose: --baker and --dir-client resolve relative to the
-# EXECUTABLE, and go run puts that in a temp directory.
+# `go run` on purpose: bake.baker resolves relative to the EXECUTABLE, and
+# go run puts that in a temp directory.
 run: baker client
 	go build -o casas-eternas .
-	./casas-eternas start --target all --dir-client client/dist
+	./casas-eternas start --target all --client.storage.dir.path client/dist
 
 build:
 	docker build --platform linux/amd64 -f deploy/Dockerfile -t $(IMAGE):$(TAG) .

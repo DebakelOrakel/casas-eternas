@@ -24,7 +24,7 @@ dist-ssr
 casas
 casas-eternas
 
-# The server's own stores (casas-eternas start --dir-worlds/--dir-artifacts):
+# The server's own stores (world.storage.dir.path / artifacts.storage.dir.path):
 # a world is irreplaceable but belongs to whoever ran the server, and an
 # artifact is recomputable — neither belongs in the repository.
 worlds/*

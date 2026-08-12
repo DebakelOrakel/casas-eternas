@@ -136,18 +136,19 @@ spec:
               value: ghcr.io/debakelorakel/casas-eternas:latest
             # Authentication. Environment rather than args because CMD already
             # carries the flag list and repeating it here to append three would
-            # be two places to keep in step; viper binds every flag to
-            # CASAS_<FLAG> (see cmd/root.go's initConfig).
+            # be two places to keep in step; every config key is reachable as
+            # CASAS_<KEY> with dots and dashes as underscores (see cmd/root.go's
+            # initConfig).
             #
             # THE POD WILL NOT START until both files below exist. That is the
             # intended failure: a server told to check identity that cannot is
             # worse than one that refuses to run, because it looks healthy while
             # rejecting everybody. See deploy/README.md for the bootstrap.
-            - name: CASAS_AUTH_MODE
+            - name: CASAS_GLOBAL_AUTH_MODE
               value: password
-            - name: CASAS_AUTH_HTPASSWD
+            - name: CASAS_GLOBAL_AUTH_HTPASSWD
               value: /etc/casas-eternas/auth/htpasswd
-            - name: CASAS_AUTH_SESSION_KEY
+            - name: CASAS_GLOBAL_AUTH_SESSION_KEY
               value: /etc/casas-eternas/auth/session.key
           ports:
             - name: http

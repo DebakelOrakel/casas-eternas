@@ -94,7 +94,7 @@ type Module struct {
 
 func New(cfg Config) (*Module, error) {
 	if cfg.WorldsDir == "" || cfg.ArtifactsDir == "" {
-		return nil, fmt.Errorf("--dir-worlds and --dir-artifacts are both required for bakes")
+		return nil, fmt.Errorf("world.storage and artifacts.storage are both required for bakes")
 	}
 	// The runner is chosen by DETECTING the cluster and by nothing else. There
 	// is deliberately no flag: both of its settings would be a behaviour the
@@ -112,7 +112,7 @@ func New(cfg Config) (*Module, error) {
 	} else {
 		runner, err = NewLocalRunner(cfg.BakerPath, nodeHeapMB)
 		if err != nil {
-			return nil, fmt.Errorf("--baker: %w", err)
+			return nil, fmt.Errorf("bake.baker: %w", err)
 		}
 	}
 

@@ -181,11 +181,11 @@ func buildTLS(cfg config.Server) (*tls.Config, error) {
 	}
 	pem, err := os.ReadFile(cfg.TLSCA)
 	if err != nil {
-		return nil, fmt.Errorf("reading --tls-ca: %w", err)
+		return nil, fmt.Errorf("reading global.tls.ca: %w", err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("--tls-ca %q contains no usable certificate", cfg.TLSCA)
+		return nil, fmt.Errorf("global.tls.ca %q contains no usable certificate", cfg.TLSCA)
 	}
 	tlsConfig.ClientCAs = pool
 	tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert

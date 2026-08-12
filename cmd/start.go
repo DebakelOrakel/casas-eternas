@@ -21,50 +21,50 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/world"
 )
 
-// Start resolves the flags into plain configuration, builds the selected
-// modules and hands them to the server.
+// Start resolves file, environment and flags into the one typed configuration
+// tree, builds the selected modules and hands them to the server.
 //
-// This function is the ONLY place viper is read on the way to a module: every
-// package under internal/ takes a struct instead, so a module can be tested
-// without a command line and never knows what its flag is called.
+// This function (through loadConfig) is the ONLY place viper is read on the
+// way to a module: every package under internal/ takes the tree instead, so a
+// module can be tested without a command line and never knows what its flag
+// is called.
 func Start(cmd *cobra.Command, args []string) error {
 	targets, err := config.ParseTargets(viper.GetStringSlice(flagTarget))
 	if err != nil {
 		return err
 	}
 
-	srv := config.Server{
-		Listen:  viper.GetString(flagListen),
-		TLSCert: viper.GetString(flagTLSCert),
-		TLSKey:  viper.GetString(flagTLSKey),
-		TLSCA:   viper.GetString(flagTLSCA),
-	}
-	if err := srv.Validate(); err != nil {
+	cfg, err := loadConfig()
+	if err != nil {
 		return err
 	}
 
-	modules, gate, err := buildModules(targets)
+	modules, gate, err := buildModules(targets, cfg)
 	if err != nil {
 		return err
 	}
 
 	slog.Info("starting", "targets", targets.Names())
-	return server.Run(cmd.Context(), srv, modules, gate)
+	return server.Run(cmd.Context(), cfg.Global.Server(), modules, gate)
 }
 
 // buildModules constructs exactly the selected modules, in a fixed order so
 // mounting and shutdown are reproducible rather than map-order dependent.
-func buildModules(targets config.Targets) ([]server.Module, func(http.Handler) http.Handler, error) {
+//
+// Target-scoped validation happens here, for SELECTED targets only: a
+// world-only deployment does not have to configure artifact storage it will
+// never touch.
+func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, func(http.Handler) http.Handler, error) {
 	var modules []server.Module
 
 	// Resolved ONCE and handed to every module that needs it. Three modules
-	// deciding independently what the flag said is how the value the client is
-	// told drifts from the value the server enforces.
-	authMode, err := config.ParseAuthMode(viper.GetString(flagAuthMode))
+	// deciding independently what the setting said is how the value the client
+	// is told drifts from the value the server enforces.
+	authMode, err := config.ParseAuthMode(cfg.Global.Auth.Mode)
 	if err != nil {
 		return nil, nil, err
 	}
-	caller, tokens, login, err := buildAuth(authMode)
+	caller, tokens, login, err := buildAuth(authMode, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -79,39 +79,51 @@ func buildModules(targets config.Targets) ([]server.Module, func(http.Handler) h
 	}
 
 	if targets.Has(config.TargetClient) {
-		m, err := client.New(client.Config{Dir: viper.GetString(flagDirClient), AuthMode: authMode, LoginPath: loginPath})
+		m, err := client.New(client.Config{All: cfg, LoginPath: loginPath})
 		if err != nil {
 			return nil, nil, err
 		}
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetWorld) {
-		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorlds), KeepRevisions: viper.GetInt(flagKeepRevs), Identity: caller})
+		if err := cfg.World.Storage.Validate("world"); err != nil {
+			return nil, nil, err
+		}
+		m, err := world.New(world.Config{All: cfg, Identity: caller})
 		if err != nil {
 			return nil, nil, err
 		}
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetArtifacts) {
-		capBytes, err := config.ParseByteSize(viper.GetString(flagArtifactsCap))
-		if err != nil {
-			return nil, nil, fmt.Errorf("--artifacts-cap: %w", err)
+		if err := cfg.Artifacts.Storage.Validate("artifacts"); err != nil {
+			return nil, nil, err
 		}
-		m, err := artifacts.New(artifacts.Config{Dir: viper.GetString(flagDirArtifacts), CapBytes: capBytes})
+		m, err := artifacts.New(artifacts.Config{All: cfg})
 		if err != nil {
 			return nil, nil, err
 		}
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetBake) {
+		// Bake still reads the world and artifacts sections directly — the
+		// known cross-module coupling its decoupling steps remove; keeping the
+		// reads HERE makes the coupling visible at the composition root
+		// rather than buried in the module.
+		if err := cfg.World.Storage.Validate("world"); err != nil {
+			return nil, nil, fmt.Errorf("bake needs the world storage until its decoupling lands: %w", err)
+		}
+		if err := cfg.Artifacts.Storage.Validate("artifacts"); err != nil {
+			return nil, nil, fmt.Errorf("bake needs the artifact storage until its decoupling lands: %w", err)
+		}
 		m, err := bake.New(bake.Config{
-			WorldsDir:     viper.GetString(flagDirWorlds),
-			ArtifactsDir:  viper.GetString(flagDirArtifacts),
-			BakerPath:     bakerPath(),
+			WorldsDir:     cfg.World.Storage.DirPath(),
+			ArtifactsDir:  cfg.Artifacts.Storage.DirPath(),
+			BakerPath:     bakerPath(cfg.Bake.Baker),
 			Identity:      caller,
 			Tokens:        tokens,
-			Listen:        viper.GetString(flagListen),
-			MaxConcurrent: viper.GetInt(flagBakeMax),
+			Listen:        cfg.Global.Listen,
+			MaxConcurrent: cfg.Bake.MaxConcurrent,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -130,12 +142,12 @@ func buildModules(targets config.Targets) ([]server.Module, func(http.Handler) h
 	}), nil
 }
 
-// bakerPath resolves --baker, defaulting to the bundle beside the binary.
+// bakerPath resolves bake.baker, defaulting to the bundle beside the binary.
 //
 // Beside the BINARY rather than beside the working directory: a server is
 // started from wherever its data lives, and the bundle ships with the program.
-func bakerPath() string {
-	if configured := viper.GetString(flagBaker); configured != "" {
+func bakerPath(configured string) string {
+	if configured != "" {
 		return configured
 	}
 	executable, err := os.Executable()
@@ -152,8 +164,8 @@ func bakerPath() string {
 // A mode that CHECKS identity and cannot verify a token would attribute every
 // request to nobody, which looks exactly like a permission bug from the outside.
 // So every ingredient it needs is required here, at startup, where the message
-// can name the missing flag.
-func buildAuth(mode config.AuthMode) (*identity.Resolver, *auth.Tokens, server.Module, error) {
+// can name the missing setting.
+func buildAuth(mode config.AuthMode, cfg config.Config) (*identity.Resolver, *auth.Tokens, server.Module, error) {
 	if !mode.ChecksIdentity() {
 		// No issuer either: a Job talking to a server that checks nobody needs
 		// no credential, and handing it one would be a token nothing verifies.
@@ -163,19 +175,19 @@ func buildAuth(mode config.AuthMode) (*identity.Resolver, *auth.Tokens, server.M
 	if mode == config.AuthOIDC {
 		// The declared, empty path: the mode parses and the resolver would
 		// verify the tokens this server issues, but nothing issues them yet.
-		return nil, nil, nil, fmt.Errorf("--auth-mode %s is not implemented yet", mode)
+		return nil, nil, nil, fmt.Errorf("auth mode %s is not implemented yet", mode)
 	}
 
 	// Users before the key, so a start that is going to fail fails BEFORE
 	// warning about something else. Warning about an ephemeral signing key and
 	// then refusing to start for an unrelated reason sends the reader after the
 	// wrong problem.
-	users, err := auth.NewUsers(viper.GetString(flagAuthHtpasswd))
+	users, err := auth.NewUsers(cfg.Global.Auth.Htpasswd)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("--%s: %w", flagAuthHtpasswd, err)
+		return nil, nil, nil, fmt.Errorf("%s: %w", keyAuthHtpass, err)
 	}
 
-	key, err := signingKey()
+	key, err := signingKey(cfg.Global.Auth.SessionKey)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -187,12 +199,12 @@ func buildAuth(mode config.AuthMode) (*identity.Resolver, *auth.Tokens, server.M
 	login, err := session.New(session.Config{
 		Users:  users,
 		Tokens: tokens,
-		TTL:    viper.GetDuration(flagAuthTokenTTL),
+		TTL:    cfg.Global.Auth.TokenTTL,
 	})
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	slog.Info("authentication ready", "mode", mode, "users", users.Path(), "token ttl", viper.GetDuration(flagAuthTokenTTL))
+	slog.Info("authentication ready", "mode", mode, "users", users.Path(), "token ttl", cfg.Global.Auth.TokenTTL)
 	return resolver, tokens, login, nil
 }
 
@@ -201,9 +213,9 @@ func buildAuth(mode config.AuthMode) (*identity.Resolver, *auth.Tokens, server.M
 // Generating rather than refusing keeps a single local server easy to start.
 // Saying so loudly is the other half: the consequences — sessions lost on
 // restart, replicas that reject each other's tokens — are invisible until they
-// bite, and by then they look like a bug rather than a missing flag.
-func signingKey() ([]byte, error) {
-	if path := viper.GetString(flagAuthKey); path != "" {
+// bite, and by then they look like a bug rather than a missing setting.
+func signingKey(path string) ([]byte, error) {
+	if path != "" {
 		return auth.ReadKey(path)
 	}
 	key, err := auth.GenerateKey()
@@ -211,7 +223,7 @@ func signingKey() ([]byte, error) {
 		return nil, err
 	}
 	slog.Warn("no signing key configured, generated an ephemeral one",
-		"flag", "--"+flagAuthKey,
+		"setting", keyAuthKey,
 		"consequence", "sessions end at restart, and replicas will not accept each other's tokens")
 	return key, nil
 }

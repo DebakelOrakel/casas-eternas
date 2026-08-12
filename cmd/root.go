@@ -11,48 +11,64 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Flag names as constants: each is referenced three times — at definition, at
-// the viper binding and at the read — and a typo in any of them fails silently
-// as a zero value rather than loudly at compile time.
+// ONE VOCABULARY (decided 2026-08-12): every setting has exactly one name,
+// and it is the dotted config key — `world.storage.dir.path` is the key in
+// casas.yaml, the flag `--world.storage.dir.path`, and (through the
+// replacer) CASAS_WORLD_STORAGE_DIR_PATH. The flag names below ARE the viper
+// keys, so the binding cannot drift.
+//
+// The one named exception is `--target/-t`: target selection is the process
+// ROLE, deliberately not part of the shared config file (the same file
+// serves every process of a split deployment), so it exists only as a flag
+// and CASAS_TARGET. The loader refuses a target key in the file.
 const (
-	flagTarget       = "target"
-	flagDirArtifacts = "dir-artifacts"
-	flagArtifactsCap = "artifacts-cap"
-	flagDirWorlds    = "dir-worlds"
-	flagKeepRevs     = "keep-revisions"
-	flagListen       = "listen"
-	flagTLSCert      = "tls-cert"
-	flagTLSKey       = "tls-key"
-	flagTLSCA        = "tls-ca"
-	flagBaker        = "baker"
-	flagDirClient    = "dir-client"
-	flagBakeMax      = "bake-max-concurrent"
-	flagAuthMode     = "auth-mode"
-	flagAuthHtpasswd = "auth-htpasswd"
-	flagAuthKey      = "auth-session-key"
-	flagAuthTokenTTL = "auth-token-ttl"
-	flagAuthSessTTL  = "auth-session-ttl"
+	flagConfig = "config"
+	flagTarget = "target"
+
+	keyListen      = "global.listen"
+	keyTLSCert     = "global.tls.cert"
+	keyTLSKey      = "global.tls.key"
+	keyTLSCA       = "global.tls.ca"
+	keyAuthMode    = "global.auth.mode"
+	keyAuthHtpass  = "global.auth.htpasswd"
+	keyAuthKey     = "global.auth.session-key"
+	keyAuthTknTTL  = "global.auth.token-ttl"
+	keyAuthSessTTL = "global.auth.session-ttl"
+	keySvcWorlds   = "global.services.worlds"
+	keySvcArts     = "global.services.artifacts"
+
+	keyWorldPath  = "world.storage.dir.path"
+	keyKeepRevs   = "world.keep-revisions"
+	keyArtsPath   = "artifacts.storage.dir.path"
+	keyArtsCap    = "artifacts.cap"
+	keyClientPath = "client.storage.dir.path"
+	keyBaker      = "bake.baker"
+	keyBakeMax    = "bake.max-concurrent"
 )
 
 const (
-	textTarget       = `The target modules to start: all, client, world, artifacts, bake. Repeatable.`
-	textDirArtifacts = `The directory to the artifact store.`
-	textArtifactsCap = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
-	textDirWorlds    = `The directory the saved worlds live in.`
-	textKeepRevs     = `How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.`
-	textBaker        = `Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.`
-	textDirClient    = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
-	textBakeMax      = `How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.`
-	textAuthMode     = `How the server establishes who is asking: none (local, one synthetic owner), password (this server holds the users), oidc (a foreign provider does). See docs/decisions/server-auth.md.`
-	textAuthHtpasswd = `Path to the htpasswd file holding the users, bcrypt cost 10 or above (htpasswd -B -C 12). Required by --auth-mode password. Re-read on every sign-in, so changing it needs no restart.`
-	textAuthKey      = `Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.`
-	textAuthTokenTTL = `How long an issued token is valid.`
-	textAuthSessTTL  = `How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then --auth-token-ttl is the one that matters.`
+	textConfig = `Path to the configuration file. Default: ./casas.yaml if it exists. Flags and CASAS_* variables override the file.`
+	textTarget = `The target modules to start: all, client, world, artifacts, bake. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.`
 
-	textListen  = `Address to listen on, as host:port. ":8080" binds every interface, "127.0.0.1:8080" keeps a local instance off the network.`
-	textTLSCert = `Path to the server certificate. Enables HTTPS together with --tls-key.`
-	textTLSKey  = `Path to the server private key. Enables HTTPS together with --tls-cert.`
-	textTLSCA   = `Path to the CA that CLIENT certificates are verified against. Setting it turns on mutual TLS.`
+	textListen      = `Address to listen on, as host:port. ":8080" binds every interface, "127.0.0.1:8080" keeps a local instance off the network.`
+	textTLSCert     = `Path to the server certificate. Enables HTTPS together with global.tls.key.`
+	textTLSKey      = `Path to the server private key. Enables HTTPS together with global.tls.cert.`
+	textTLSCA       = `Path to the CA that CLIENT certificates are verified against. Setting it turns on mutual TLS.`
+	textAuthMode    = `How the server establishes who is asking: none (local, one synthetic owner), password (this server holds the users), oidc (a foreign provider does). See docs/decisions/server-auth.md.`
+	textAuthHtpass  = `Path to the htpasswd file holding the users, bcrypt cost 10 or above (htpasswd -B -C 12). Required by auth mode password. Re-read on every sign-in, so changing it needs no restart.`
+	textAuthKey     = `Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.`
+	textAuthTknTTL  = `How long an issued token is valid.`
+	textAuthSessTTL = `How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then global.auth.token-ttl is the one that matters.`
+	textSvcWorlds   = `URL of the service running the world module, when it is not co-resident. Empty expects it in this process.`
+	textSvcArts     = `URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.`
+
+	textWorldPath  = `The directory the saved worlds live in.`
+	textKeepRevs   = `How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.`
+	textArtsPath   = `The directory of the artifact store.`
+	textArtsCap    = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
+	textClientPath = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
+	textBaker      = `Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.`
+	textBakeMax    = `How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.`
 )
 
 // RootCmd represents the base command when called without any subcommands
@@ -64,7 +80,9 @@ var RootCmd = &cobra.Command{
 It stores what the browser client makes and derives: named worlds, and the
 content-addressed artifacts baked from them. It generates nothing itself.
 
-One binary runs every part; "start --target" chooses which.`,
+One binary runs every part; "start --target" chooses which. Configuration
+comes from casas.yaml, CASAS_* variables and flags — one vocabulary: the
+config key is the flag name is the variable name.`,
 	// Showing the help beats printing success while doing nothing.
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
@@ -82,7 +100,6 @@ var StartCmd = &cobra.Command{
 
   casas-eternas start --target all           everything, for local play
   casas-eternas start -t world -t artifacts  storage only, no client
-  casas-eternas start -t bake                bake worker only
   casas-eternas start -t client              frontend only`,
 	RunE: Start,
 }
@@ -90,72 +107,72 @@ var StartCmd = &cobra.Command{
 func init() {
 	cobra.OnInitialize(initConfig)
 
+	RootCmd.PersistentFlags().String(flagConfig, "", textConfig)
+
 	// Persistent, because transport belongs to the PROCESS and not to any one
 	// module: whichever modules run, they share one listener and one TLS
-	// identity. The --dir-* flags below are the opposite case — they configure
-	// one specific module, so they sit on the subcommand that starts it.
-	RootCmd.PersistentFlags().String(flagListen, ":8080", textListen)
-	RootCmd.PersistentFlags().String(flagTLSCert, "", textTLSCert)
-	RootCmd.PersistentFlags().String(flagTLSKey, "", textTLSKey)
-	RootCmd.PersistentFlags().String(flagTLSCA, "", textTLSCA)
+	// identity. The target-section flags below are the opposite case — they
+	// configure one specific module, so they sit on the subcommand.
+	RootCmd.PersistentFlags().String(keyListen, ":8080", textListen)
+	RootCmd.PersistentFlags().String(keyTLSCert, "", textTLSCert)
+	RootCmd.PersistentFlags().String(keyTLSKey, "", textTLSKey)
+	RootCmd.PersistentFlags().String(keyTLSCA, "", textTLSCA)
 
-	// Selection and configuration stay separate flags on purpose. Making a path
-	// flag's PRESENCE its enable switch was considered and rejected: it forbids
-	// defaults (a defaulted flag is always "present"), and a module that owns no
-	// directory would need a second mechanism anyway.
+	// Selection and configuration stay separate on purpose; see the vocabulary
+	// note at the top for why --target is a flag and never a file key.
 	StartCmd.Flags().StringSliceP(flagTarget, "t", []string{}, textTarget)
-	StartCmd.Flags().String(flagDirArtifacts, "./artifacts", textDirArtifacts)
-	StartCmd.Flags().String(flagArtifactsCap, "", textArtifactsCap)
-	StartCmd.Flags().String(flagDirWorlds, "./worlds", textDirWorlds)
-	StartCmd.Flags().Int(flagKeepRevs, 3, textKeepRevs)
-	StartCmd.Flags().String(flagBaker, "", textBaker)
-	StartCmd.Flags().String(flagDirClient, "", textDirClient)
-	StartCmd.Flags().Int(flagBakeMax, 1, textBakeMax)
-	// On StartCmd rather than persistent: it configures the MODULES that start
-	// builds, the way --dir-worlds does. The persistent flags configure the
-	// process's socket, which is a different thing (see config.Server).
-	StartCmd.Flags().String(flagAuthMode, string(config.DefaultAuthMode), textAuthMode)
-	StartCmd.Flags().String(flagAuthHtpasswd, "", textAuthHtpasswd)
-	StartCmd.Flags().String(flagAuthKey, "", textAuthKey)
-	StartCmd.Flags().Duration(flagAuthTokenTTL, 720*time.Hour, textAuthTokenTTL)
-	StartCmd.Flags().Duration(flagAuthSessTTL, 720*time.Hour, textAuthSessTTL)
+	StartCmd.Flags().String(keyAuthMode, string(config.DefaultAuthMode), textAuthMode)
+	StartCmd.Flags().String(keyAuthHtpass, "", textAuthHtpass)
+	StartCmd.Flags().String(keyAuthKey, "", textAuthKey)
+	StartCmd.Flags().Duration(keyAuthTknTTL, 720*time.Hour, textAuthTknTTL)
+	StartCmd.Flags().Duration(keyAuthSessTTL, 720*time.Hour, textAuthSessTTL)
+	StartCmd.Flags().String(keySvcWorlds, "", textSvcWorlds)
+	StartCmd.Flags().String(keySvcArts, "", textSvcArts)
+	StartCmd.Flags().String(keyWorldPath, "./worlds", textWorldPath)
+	StartCmd.Flags().Int(keyKeepRevs, 3, textKeepRevs)
+	StartCmd.Flags().String(keyArtsPath, "./artifacts", textArtsPath)
+	StartCmd.Flags().String(keyArtsCap, "", textArtsCap)
+	StartCmd.Flags().String(keyClientPath, "", textClientPath)
+	StartCmd.Flags().String(keyBaker, "", textBaker)
+	StartCmd.Flags().Int(keyBakeMax, 1, textBakeMax)
 
-	for _, err := range []error{
-		viper.BindPFlag(flagListen, RootCmd.PersistentFlags().Lookup(flagListen)),
-		viper.BindPFlag(flagTLSCert, RootCmd.PersistentFlags().Lookup(flagTLSCert)),
-		viper.BindPFlag(flagTLSKey, RootCmd.PersistentFlags().Lookup(flagTLSKey)),
-		viper.BindPFlag(flagTLSCA, RootCmd.PersistentFlags().Lookup(flagTLSCA)),
-		viper.BindPFlag(flagTarget, StartCmd.Flags().Lookup(flagTarget)),
-		viper.BindPFlag(flagDirArtifacts, StartCmd.Flags().Lookup(flagDirArtifacts)),
-		viper.BindPFlag(flagArtifactsCap, StartCmd.Flags().Lookup(flagArtifactsCap)),
-		viper.BindPFlag(flagDirWorlds, StartCmd.Flags().Lookup(flagDirWorlds)),
-		viper.BindPFlag(flagKeepRevs, StartCmd.Flags().Lookup(flagKeepRevs)),
-		viper.BindPFlag(flagBaker, StartCmd.Flags().Lookup(flagBaker)),
-		viper.BindPFlag(flagAuthMode, StartCmd.Flags().Lookup(flagAuthMode)),
-		viper.BindPFlag(flagAuthHtpasswd, StartCmd.Flags().Lookup(flagAuthHtpasswd)),
-		viper.BindPFlag(flagAuthKey, StartCmd.Flags().Lookup(flagAuthKey)),
-		viper.BindPFlag(flagAuthTokenTTL, StartCmd.Flags().Lookup(flagAuthTokenTTL)),
-		viper.BindPFlag(flagAuthSessTTL, StartCmd.Flags().Lookup(flagAuthSessTTL)),
-		viper.BindPFlag(flagDirClient, StartCmd.Flags().Lookup(flagDirClient)),
-		viper.BindPFlag(flagBakeMax, StartCmd.Flags().Lookup(flagBakeMax)),
-	} {
-		if err != nil {
+	bindings := map[string]*cobra.Command{
+		flagConfig: RootCmd,
+		keyListen:  RootCmd, keyTLSCert: RootCmd, keyTLSKey: RootCmd, keyTLSCA: RootCmd,
+		flagTarget: StartCmd, keyAuthMode: StartCmd, keyAuthHtpass: StartCmd, keyAuthKey: StartCmd,
+		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd, keySvcWorlds: StartCmd, keySvcArts: StartCmd,
+		keyWorldPath: StartCmd, keyKeepRevs: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
+		keyClientPath: StartCmd, keyBaker: StartCmd, keyBakeMax: StartCmd,
+	}
+	for key, cmd := range bindings {
+		flags := cmd.Flags()
+		if cmd == RootCmd {
+			flags = cmd.PersistentFlags()
+		}
+		if err := viper.BindPFlag(key, flags.Lookup(key)); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
+	}
 
+	// Keys that exist in the tree but have no flag (the storage union's type
+	// selectors). SetDefault makes them known to viper, which is what lets a
+	// file or CASAS_* variable reach them through Unmarshal.
+	for _, key := range []string{"world.storage.type", "artifacts.storage.type", "client.storage.type"} {
+		viper.SetDefault(key, "")
 	}
 
 	RootCmd.AddCommand(StartCmd)
 }
 
-// initConfig reads in config file and ENV variables if set.
+// initConfig wires the environment side of the vocabulary.
 func initConfig() {
-	// Prefixed, so the bound flags claim CASAS_TARGET / CASAS_DIR_ARTIFACTS rather
-	// than the bare TARGET / DIR_ARTIFACTS — names generic enough that a container
-	// runtime or a sidecar would eventually collide with them.
+	// Prefixed, so the bound keys claim CASAS_TARGET / CASAS_WORLD_STORAGE_DIR_PATH
+	// rather than bare names generic enough that a container runtime or a
+	// sidecar would eventually collide with them. Dots and dashes both become
+	// underscores: `global.auth.session-key` → CASAS_GLOBAL_AUTH_SESSION_KEY.
 	viper.SetEnvPrefix("CASAS")
-	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	viper.AutomaticEnv() // read in environment variables that match
 }
 

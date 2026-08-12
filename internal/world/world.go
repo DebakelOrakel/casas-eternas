@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
 
@@ -27,15 +28,11 @@ import (
 // inspected. A candidate for a flag once a real deployment has an opinion.
 const uploadLimit = 512 << 20 // 512 MiB
 
-// Config is what cmd/ resolves from the flags. No viper here by design.
+// Config carries the full configuration tree (every module holds it whole —
+// decided 2026-08-12) plus the module's wiring. No viper here by design; the
+// module reads Global and its OWN section (`world.*`), nothing else.
 type Config struct {
-	// Dir is where saved worlds live, one directory per world. Named for its
-	// CONTENTS rather than for this module, because the module will grow a tile
-	// database and a loop that need directories of their own.
-	Dir string
-	// KeepRevisions bounds how many revisions each world retains; older ones
-	// are pruned on upload. 0 keeps every revision.
-	KeepRevisions int
+	All config.Config
 	// Identity answers who a request comes from. The one resolver cmd/ builds is
 	// shared with every module, so who a caller IS has one answer in the
 	// process — this module holds the answerer, not the auth mode it was
@@ -50,12 +47,12 @@ type Module struct {
 }
 
 // New prepares the store. The directory is created eagerly so a bad
-// --dir-worlds fails at startup, naming the flag, rather than on the first
-// upload hours later.
+// world.storage fails at startup, naming the setting, rather than on the
+// first upload hours later.
 func New(cfg Config) (*Module, error) {
-	store, err := NewStore(cfg.Dir, cfg.KeepRevisions)
+	store, err := NewStore(cfg.All.World.Storage.DirPath(), cfg.All.World.KeepRevisions)
 	if err != nil {
-		return nil, fmt.Errorf("--dir-worlds: %w", err)
+		return nil, fmt.Errorf("world.storage: %w", err)
 	}
 	return &Module{cfg: cfg, store: store}, nil
 }

@@ -23,7 +23,7 @@ only where it is read from, not its shape.
 
 ## First run: the deployment starts in password mode
 
-`manifests.yaml` sets `--auth-mode password`, and the Secret it mounts is applied
+`manifests.yaml` sets auth mode `password` (via CASAS_GLOBAL_AUTH_MODE), and the Secret it mounts is applied
 **empty**. The pod therefore will not start until it is filled — deliberately: a
 server told to check identity that cannot would look healthy while rejecting
 everybody, which is debugged as a permission bug rather than as the missing file

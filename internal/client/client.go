@@ -8,7 +8,7 @@
 // page knows where the storage is, and says so in /config.json.
 // See docs/decisions/server-storage.md.
 //
-// It also serves the built client itself (--dir-client), which is what makes
+// It also serves the built client itself (client.storage), which is what makes
 // local play one command and one origin. `apiBase` is still the only sensible
 // value; `authMode` now comes from the server's own resolved config, so what
 // the browser is told and what the server enforces cannot differ.
@@ -27,23 +27,16 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 )
 
-// Config is what cmd/ resolves from the flags. No viper here by design.
+// Config carries the full configuration tree (every module holds it whole —
+// decided 2026-08-12) plus the module's wiring. No viper here by design; the
+// module reads Global and its OWN section, nothing else.
 type Config struct {
-	// Dir is the built client (vite's dist/). Serving it from the same process
-	// is what makes local play one command and one origin — and therefore what
-	// makes CORS never appear.
-	Dir string
+	All config.Config
 	// LoginPath is where the browser logs in, when there is anywhere to. Passed
 	// in rather than imported from the session module: cmd/ is where modules are
 	// composed, and a module reaching into another for a constant would make the
 	// two impossible to mount apart.
 	LoginPath string
-
-	// AuthMode is reported to the browser verbatim. Taken from the same
-	// resolved value the server ENFORCES rather than written out here: a client
-	// told "none" by a server that checks would show the wrong indicator and
-	// offer affordances that then fail.
-	AuthMode config.AuthMode
 }
 
 // Module serves the client and its runtime configuration.
@@ -67,7 +60,7 @@ type runtimeConfig struct {
 	// only when the storage genuinely should be a foreign origin.
 	APIBase string `json:"apiBase"`
 
-	// AuthMode is none | password | oidc, verbatim from --auth-mode. It tells
+	// AuthMode is none | password | oidc, verbatim from global.auth.mode. It tells
 	// the client which login FLOW to run — a form for `password`, a redirect
 	// for `oidc` — which is why the value names where the users live rather
 	// than what the header looks like. See docs/decisions/server-auth.md.
@@ -106,18 +99,19 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	// A directory that was NAMED and is missing is a different thing entirely,
 	// and fails below: a default is a guess, a given value is an instruction.
 	if m.Dir() == "" {
-		slog.Info("client module serving /config.json only", "reason", "--dir-client not set")
+		slog.Info("client module serving /config.json only", "reason", "client.storage not set")
 		return nil
 	}
 	if _, err := os.Stat(m.Dir()); err != nil {
-		return fmt.Errorf("--dir-client %q: %w", m.Dir(), err)
+		return fmt.Errorf("client.storage.dir.path %q: %w", m.Dir(), err)
 	}
 	mux.Handle("GET /", m.spaHandler())
 	return nil
 }
 
-// Dir is the resolved client directory.
-func (m *Module) Dir() string { return m.cfg.Dir }
+// Dir is the resolved client directory — empty when no storage is configured,
+// which is the legitimate dev-run shape (serve /config.json only).
+func (m *Module) Dir() string { return m.cfg.All.Client.Storage.DirPath() }
 
 // spaHandler serves the built client, falling back to index.html.
 //
@@ -127,10 +121,10 @@ func (m *Module) Dir() string { return m.cfg.Dir }
 // assets — a missing script answering with HTML turns a clear 404 into a
 // baffling parse error three layers down.
 func (m *Module) spaHandler() http.Handler {
-	files := http.FileServer(http.Dir(m.cfg.Dir))
+	files := http.FileServer(http.Dir(m.Dir()))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clean := filepath.Clean(r.URL.Path)
-		if _, err := os.Stat(filepath.Join(m.cfg.Dir, clean)); err == nil {
+		if _, err := os.Stat(filepath.Join(m.Dir(), clean)); err == nil {
 			// Fingerprinted build assets are safe to cache forever; the shell
 			// never is, or a deploy would not reach anyone who has visited.
 			if strings.HasPrefix(clean, "/assets/") {
@@ -144,7 +138,7 @@ func (m *Module) spaHandler() http.Handler {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeFile(w, r, filepath.Join(m.cfg.Dir, "index.html"))
+		http.ServeFile(w, r, filepath.Join(m.Dir(), "index.html"))
 	})
 }
 
@@ -153,7 +147,7 @@ func (m *Module) serveConfig(w http.ResponseWriter, r *http.Request) {
 	// would point a client at an address that no longer answers.
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "application/json")
-	document := runtimeConfig{APIBase: "/v1", AuthMode: string(m.cfg.AuthMode)}
+	document := runtimeConfig{APIBase: "/v1", AuthMode: m.cfg.All.Global.Auth.Mode}
 	if m.cfg.LoginPath != "" {
 		document.Login = &login{Path: m.cfg.LoginPath}
 	}

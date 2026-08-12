@@ -4,7 +4,7 @@ import "testing"
 
 // The failure this guards is not "a typo is rejected" — it is what a typo would
 // do if it were NOT. ChecksIdentity counts everything that is not `none` as a
-// mode that checks, so `--auth-mode passwrod` would start a server that refuses
+// mode that checks, so “global.auth.mode: passwrod“ would start a server that refuses
 // every request while looking healthy. That reads as a permission bug and gets
 // debugged as one.
 func TestParseAuthMode(t *testing.T) {

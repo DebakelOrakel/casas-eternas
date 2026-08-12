@@ -80,7 +80,11 @@ and written down 2026-08-12:
 
 - Dependencies flow one way: `cmd` → modules → leaves. **Nothing imports
   `internal/server`** — it knows the modules structurally, they do not know
-  it. cobra/viper exist only in `cmd/`; modules receive plain config structs.
+  it. cobra/viper exist only in `cmd/`; modules receive the full typed
+  `config.Config` tree and read ONLY `Global` plus their own section — a
+  review-enforced discipline, see docs/decisions/server-config.md. **One
+  vocabulary:** a setting's dotted key IS its flag name IS its CASAS_*
+  variable; never invent a second name for one.
 - **A module's routes live under its own namespace** (`/v1/<module>…`), and
   no module registers into another's. (Known violation to fix: bake's
   `POST /v1/worlds/{uid}/bake`.)

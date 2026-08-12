@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// Target names a module that `start` can run. They are the values of --target,
+// Target names a module that `start` can run. They are the values of `--target`,
 // so they are user-facing surface: renaming one breaks deployment manifests and
 // container environments, not just code.
 type Target string
@@ -85,7 +85,7 @@ func validTargets() string {
 }
 
 // AuthMode is how the server establishes who is asking. The values are
-// user-facing surface — they are what --auth-mode takes and what the client is
+// user-facing surface — they are what `global.auth.mode` takes and what the client is
 // told in /config.json — so renaming one breaks deployments, not just code.
 //
 // The axis is WHERE THE USERS LIVE, not what the request header looks like:
@@ -113,12 +113,12 @@ const (
 // also least to most machinery.
 var authModes = []AuthMode{AuthNone, AuthPassword, AuthOIDC}
 
-// DefaultAuthMode is what the server runs as unless --auth-mode says otherwise.
+// DefaultAuthMode is what the server runs as unless `global.auth.mode` says otherwise.
 // Kept here rather than in the module that reports it, so the value the client
 // is TOLD and the value the server ENFORCES cannot differ.
 const DefaultAuthMode = AuthNone
 
-// ParseAuthMode resolves the raw --auth-mode value.
+// ParseAuthMode resolves the raw `global.auth.mode` value.
 //
 // Unknown values FAIL rather than falling back to the default, and that is the
 // whole point of the function: ChecksIdentity treats anything that is not
@@ -148,7 +148,7 @@ func validAuthModes() string {
 func (m AuthMode) ChecksIdentity() bool { return m != AuthNone && m != "" }
 
 // ParseByteSize resolves a human size ("50GB", "500 MB", "1.5TB", bare bytes)
-// into bytes. Empty and "0" mean zero — which --artifacts-cap reads as
+// into bytes. Empty and "0" mean zero — which `artifacts.cap` reads as
 // "unlimited". Decimal units (kB = 1000), matching how the panels report
 // sizes; a cap is a budget, not an allocator.
 func ParseByteSize(raw string) (int64, error) {
@@ -199,16 +199,16 @@ type Server struct {
 func (s Server) TLSEnabled() bool { return s.TLSCert != "" && s.TLSKey != "" }
 
 // Validate catches the half-configured cases early, where the message can still
-// name the flag that is missing.
+// name the setting that is missing.
 func (s Server) Validate() error {
 	if s.Listen == "" {
-		return fmt.Errorf("--listen must not be empty")
+		return fmt.Errorf("global.listen must not be empty")
 	}
 	if (s.TLSCert == "") != (s.TLSKey == "") {
-		return fmt.Errorf("--tls-cert and --tls-key must be given together")
+		return fmt.Errorf("global.tls.cert and global.tls.key must be given together")
 	}
 	if s.TLSCA != "" && !s.TLSEnabled() {
-		return fmt.Errorf("--tls-ca requires --tls-cert and --tls-key")
+		return fmt.Errorf("global.tls.ca requires global.tls.cert and global.tls.key")
 	}
 	return nil
 }

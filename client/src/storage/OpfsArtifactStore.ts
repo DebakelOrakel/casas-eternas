@@ -27,7 +27,7 @@ import type { ArtifactHandle, ArtifactKey, LocalArtifactStore, StorageUsage, Sto
 const ROOT = 'artifacts'
 
 // The local cache's own budget, enforced with the same policy as the server's
-// --artifacts-cap: least-recently-used artifacts go once the cache outgrows
+// artifacts.cap: least-recently-used artifacts go once the cache outgrows
 // it, meta-less junk first. 4 GB holds roughly fifty baked stages — far more
 // than one person iterates on — while staying well under the pressure at
 // which browsers start evicting origins wholesale (that remains the second
