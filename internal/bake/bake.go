@@ -162,8 +162,12 @@ func (m *Module) Describe() map[string]any {
 	return map[string]any{"bakeRunner": runner}
 }
 
+// Mount claims the bake routes — all of them under /v1/bakes, because a bake
+// IS the job: commissioning one is creating a job resource, not an operation
+// on the world. (It lived at POST /v1/worlds/{uid}/bake until 2026-08-12,
+// which was the one route registered inside another module's namespace.)
 func (m *Module) Mount(mux *http.ServeMux) error {
-	mux.HandleFunc("POST /v1/worlds/{uid}/bake", m.handleEnqueue)
+	mux.HandleFunc("POST /v1/bakes", m.handleEnqueue)
 	mux.HandleFunc("GET /v1/bakes", m.handleList)
 	mux.HandleFunc("GET /v1/bakes/{id}", m.handleGet)
 	mux.HandleFunc("POST /v1/bakes/{id}/progress", m.handleProgress)
@@ -226,10 +230,9 @@ func newID() string {
 func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var request Request
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&request); err != nil {
-		clientError(w, http.StatusBadRequest, `expected {"stage": 2}`)
+		clientError(w, http.StatusBadRequest, `expected {"worldUid": "…", "stage": 2}`)
 		return
 	}
-	request.WorldUID = r.PathValue("uid")
 	if request.Scope.Kind == "" {
 		request.Scope.Kind = ScopeWorld
 	}

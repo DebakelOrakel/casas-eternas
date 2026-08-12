@@ -86,8 +86,8 @@ and written down 2026-08-12:
   vocabulary:** a setting's dotted key IS its flag name IS its CASAS_*
   variable; never invent a second name for one.
 - **A module's routes live under its own namespace** (`/v1/<module>…`), and
-  no module registers into another's. (Known violation to fix: bake's
-  `POST /v1/worlds/{uid}/bake`.)
+  no module registers into another's. (The one violation — bake's
+  `POST /v1/worlds/{uid}/bake` — moved to `POST /v1/bakes` on 2026-08-12.)
 - **A module's disk layout and JSON formats are private.** Cross-module needs
   are injected functions composed in `cmd/` — the same pattern that
   distributes `identity.Resolver`. Never duplicate another module's paths or

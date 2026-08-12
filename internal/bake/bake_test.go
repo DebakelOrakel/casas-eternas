@@ -123,9 +123,14 @@ func writeWorld(t *testing.T, dir, uid, owner string) {
 	}
 }
 
+// post commissions a bake for uid. The uid is spliced into the JSON body —
+// since 2026-08-12 it travels there, not in the path — so the tests keep
+// stating bodies as the fields they are actually about.
 func post(m *Module, uid, body, token string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/v1/worlds/"+uid+"/bake", strings.NewReader(body))
-	request.SetPathValue("uid", uid)
+	if strings.HasPrefix(body, "{") {
+		body = `{"worldUid":"` + uid + `",` + body[1:]
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/bakes", strings.NewReader(body))
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}

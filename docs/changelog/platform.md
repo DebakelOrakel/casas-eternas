@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-12
+- **changed** Server: a bake is commissioned at `POST /v1/bakes` — the last route that lived inside another module's namespace.
 - **fixed** Server: a bake request arriving during shutdown is refused with 503 instead of crashing the process.
 - **changed** Server: configuration is one vocabulary — a casas.yaml plus flags and CASAS_* variables that all use the same dotted keys; the old flag names (`--dir-worlds`, `--auth-mode`, …) are gone.
 - **new** Server: `artifacts.cap` bounds the artifact store — past it, least-recently-used artifacts are evicted after writes, meta-less leftovers first.

@@ -129,7 +129,7 @@ export async function commissionBake(
 
   let response: Response
   try {
-    response = await authFetch(`${base}/worlds/${encodeURIComponent(worldUid)}/bake`, {
+    response = await authFetch(`${base}/bakes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       // erosionRounds is sent EXPLICITLY rather than left to the server's
@@ -137,7 +137,7 @@ export async function commissionBake(
       // including this one, so a server whose default had drifted would bake a
       // real world under a key nobody asks for — the silent failure again, by
       // a different route.
-      body: JSON.stringify({ stage, erosionRounds }),
+      body: JSON.stringify({ worldUid, stage, erosionRounds }),
     })
   } catch {
     return { ok: false, reason: 'offline' }
