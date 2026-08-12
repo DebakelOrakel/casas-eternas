@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
@@ -52,18 +53,19 @@ const jobHistory = 200
 
 // Config is what cmd/ resolves from the flags. No viper here by design.
 type Config struct {
-	// WorldOwner answers who owns a world and whether it has a stored
-	// revision — everything admitting a bake request needs to know. Injected
-	// by cmd/ (the same pattern that distributes identity.Resolver): a closure
-	// over the co-resident world store, or an HTTP lookup against
-	// global.services.worlds. Either way this module never learns the world
-	// store's disk layout.
+	// WorldAccess ranks the enqueuing caller against the world — everything
+	// admitting a bake request needs to know, since 2026-08-12 as a LEVEL
+	// (editor and up may bake) rather than an owner comparison. Injected by
+	// cmd/ (the same pattern that distributes identity.Resolver): a closure
+	// over the co-resident world module, or an HTTP lookup of the world
+	// service's meta endpoint, whose answer carries the level. Either way
+	// this module never learns the world store's layout or its grants.
 	//
 	// bearer is the enqueuing caller's Authorization header, forwarded
-	// verbatim so the HTTP variant authenticates as the person asking —
-	// identity travels in the token, and this module holds nobody's. The
-	// closure variant ignores it.
-	WorldOwner func(ctx context.Context, uid, bearer string) (owner string, ok bool)
+	// verbatim so identity travels in the token and this module holds
+	// nobody's. A bake-job token ranks as None — a job must never order
+	// more bakes; the ranking enforces what canBake used to compare.
+	WorldAccess func(ctx context.Context, uid, bearer string) (exists bool, level access.Level)
 	// The world as the BAKER reads it — exactly one of the two is set.
 	// WorldZip yields the current revision's save as a file path, for a local
 	// runner sitting beside the world store; called at start rather than at
@@ -120,8 +122,8 @@ func New(cfg Config) (*Module, error) {
 	// Exactly-one checks, because these are the wiring cmd/ owes this module —
 	// a missing half is a composition bug, and both halves at once would make
 	// the spec builder below ambiguous about where the truth lives.
-	if cfg.WorldOwner == nil {
-		return nil, fmt.Errorf("bake needs its WorldOwner accessor wired; that is cmd/'s job")
+	if cfg.WorldAccess == nil {
+		return nil, fmt.Errorf("bake needs its WorldAccess wiring; that is cmd/'s job")
 	}
 	if (cfg.WorldZip == nil) == (cfg.WorldsURL == "") {
 		return nil, fmt.Errorf("bake needs exactly one world source (WorldZip or WorldsURL); that is cmd/'s job")
@@ -258,17 +260,20 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		httpjson.ClientError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Both checked before queueing, so a request that cannot succeed fails now
-	// rather than at the far end of a queue that may be minutes long.
-	owner, ok := m.cfg.WorldOwner(r.Context(), request.WorldUID, r.Header.Get("Authorization"))
-	if !ok {
+	// Ranked before queueing, so a request that cannot succeed fails now
+	// rather than at the far end of a queue that may be minutes long. The
+	// visibility shape matches the world module's: a world the caller may
+	// not read answers 404 — private means invisible — and only a readable
+	// one distinguishes 403. A bake is minutes of a machine, so the level is
+	// editor and up, never merely viewer; and a bake-job token ranks as
+	// None, which is what keeps a leaked job token from ordering more bakes.
+	exists, level := m.cfg.WorldAccess(r.Context(), request.WorldUID, r.Header.Get("Authorization"))
+	if !exists || level < access.Viewer {
 		httpjson.ClientError(w, http.StatusNotFound, "no such world, or it has no stored revision")
 		return
 	}
-	if !m.canBake(m.cfg.Identity.Caller(r), owner) {
-		// 403 and not 404: the world exists, and pretending otherwise would
-		// make a permission problem look like a missing save.
-		httpjson.ClientError(w, http.StatusForbidden, "only a world's owner may commission a bake for it")
+	if level < access.Editor {
+		httpjson.ClientError(w, http.StatusForbidden, "world.bake needs editor access to this world")
 		return
 	}
 
@@ -382,29 +387,6 @@ func (m *Module) mayReportFor(r *http.Request, id string) bool {
 
 func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 	httpjson.Write(w, http.StatusOK, m.jobs.list())
-}
-
-// canBake decides whether this caller may commission a bake of this world.
-//
-// A bake is minutes of a machine, so in a multi-user deployment it is not a
-// thing anyone may ask for on anyone's world. The rule is OWNERSHIP — it is
-// your world — matching the staging the artifact store already sets out.
-//
-// In `none` mode this passes unconditionally, because that mode IS the local
-// one: a person on their own machine, with nobody to be protected from. The
-// check still runs, which is the point of having it now rather than later.
-func (m *Module) canBake(caller, owner string) bool {
-	if !m.cfg.Identity.ChecksIdentity() {
-		return true
-	}
-	// A machine identity owns nothing, ever. Without this the comparison below
-	// is true when caller and owner are BOTH the job subject — reachable, since
-	// a job is a caller and a world it wrote would record it as the owner. The
-	// rule is worth stating rather than relying on no such world existing.
-	if caller == auth.SubjectBakeJob || owner == auth.SubjectBakeJob {
-		return false
-	}
-	return caller != identity.Anonymous && caller == owner
 }
 
 // progressBodyLimit bounds what a progress report may be. It is two small

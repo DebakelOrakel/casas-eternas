@@ -143,3 +143,23 @@ func Can(callerID string, admin bool, action Action, grants Grants) bool {
 	}
 	return grants.LevelOf(callerID) >= Required(action)
 }
+
+// LevelFromString reads a REPORTED level — the wire form of String(), as the
+// world service's meta endpoint answers it to a peer ranking a caller.
+// Tolerant where ParseLevel is strict: every String() output is valid here
+// (including none and admin, which are never grantable and so never parse),
+// and anything else ranks as None — a peer must fail closed, not open.
+func LevelFromString(name string) Level {
+	switch name {
+	case "viewer":
+		return Viewer
+	case "editor":
+		return Editor
+	case "owner":
+		return Owner
+	case "admin":
+		return Admin
+	default:
+		return None
+	}
+}

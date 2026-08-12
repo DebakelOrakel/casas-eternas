@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
@@ -74,29 +75,37 @@ func (f *fakeRunner) Run(ctx context.Context, spec Spec, onProgress func(Progres
 	return Result{WorldID: "w", PipelineVersion: "v", Stage: "2", Width: 4096, Height: 2048}, nil
 }
 
-// fakeWorlds stands in for the closures cmd/ builds over the world store —
-// since 2026-08-12 this module never touches the store's disk layout itself,
-// so its tests do not either.
+// fakeWorlds stands in for the ranking closure cmd/ builds over the world
+// module — since 2026-08-12 this module never touches the store's layout or
+// its grants itself, so its tests do not either. Levels are keyed by the
+// BEARER the enqueue forwards, which is exactly the contract: identity
+// travels in the header, the ranking answers a level.
 type fakeWorlds struct {
 	mu     sync.Mutex
-	owners map[string]string
+	levels map[string]map[string]access.Level // uid -> bearer -> level
 }
 
-func (f *fakeWorlds) set(uid, owner string) {
+func (f *fakeWorlds) set(uid, bearer string, level access.Level) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.owners[uid] = owner
+	if f.levels[uid] == nil {
+		f.levels[uid] = map[string]access.Level{}
+	}
+	f.levels[uid][bearer] = level
 }
 
-func (f *fakeWorlds) owner(_ context.Context, uid, _ string) (string, bool) {
+func (f *fakeWorlds) rank(_ context.Context, uid, bearer string) (bool, access.Level) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	owner, ok := f.owners[uid]
-	return owner, ok
+	byBearer, ok := f.levels[uid]
+	if !ok {
+		return false, access.None
+	}
+	return true, byBearer[bearer]
 }
 
-func (f *fakeWorlds) zip(_ context.Context, uid string) (string, bool) {
-	if _, ok := f.owner(context.Background(), uid, ""); !ok {
+func (f *fakeWorlds) zip(ctx context.Context, uid string) (string, bool) {
+	if exists, _ := f.rank(ctx, uid, ""); !exists {
 		return "", false
 	}
 	return "/fake/" + uid + "/world.zip", true
@@ -113,12 +122,12 @@ func newTestModule(t *testing.T, mode config.AuthMode, workers int) (*Module, *f
 // which can actually verify a token.
 func newTestModuleWith(t *testing.T, caller *identity.Resolver, workers int) (*Module, *fakeRunner, *fakeWorlds) {
 	t.Helper()
-	worlds := &fakeWorlds{owners: map[string]string{}}
+	worlds := &fakeWorlds{levels: map[string]map[string]access.Level{}}
 	runner := newFakeRunner()
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Module{
 		cfg: Config{
-			WorldOwner:    worlds.owner,
+			WorldAccess:   worlds.rank,
 			WorldZip:      worlds.zip,
 			ArtifactsDir:  t.TempDir(),
 			Identity:      caller,
@@ -138,10 +147,17 @@ func newTestModuleWith(t *testing.T, caller *identity.Resolver, workers int) (*M
 	return m, runner, worlds
 }
 
-// writeWorld registers a world with the fakes, as an upload would.
-func writeWorld(t *testing.T, worlds *fakeWorlds, uid, owner string) {
+// writeWorld registers a world whose EDITOR is the given bearer — the level
+// the ranking answers for whoever presents it. The empty bearer covers the
+// local mode's unauthenticated requests.
+func writeWorld(t *testing.T, worlds *fakeWorlds, uid string, editorBearers ...string) {
 	t.Helper()
-	worlds.set(uid, owner)
+	if len(editorBearers) == 0 {
+		editorBearers = []string{""}
+	}
+	for _, bearer := range editorBearers {
+		worlds.set(uid, bearer, access.Editor)
+	}
 }
 
 // post commissions a bake for uid. The uid is spliced into the JSON body —
@@ -163,19 +179,15 @@ func post(m *Module, uid, body, token string) *httptest.ResponseRecorder {
 const testUID = "9f2c1b4e-7a30-4d55-8c11-2b6e5d0a1f83"
 
 // `none` is the LOCAL mode by definition: a person on their own machine, with
-// nobody to be protected from. Every request passes, and the check still runs.
+// nobody to be protected from. The module still asks the ranking — the short
+// circuit (everything ranks admin there) lives in cmd/'s closure, which is
+// what the fake stands in for.
 func TestLocalModeLetsEveryoneBake(t *testing.T) {
 	m, _, worlds := newTestModule(t, config.AuthNone, 1)
-	writeWorld(t, worlds, testUID, identity.Local)
+	writeWorld(t, worlds, testUID)
 
 	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusAccepted {
 		t.Errorf("anonymous local request = %d, want 202", got)
-	}
-	// Even a world owned by somebody else: in this mode there is no somebody
-	// else, and inventing one would only be a lie with a stack trace.
-	writeWorld(t, worlds, testUID, "someone-far-away")
-	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusAccepted {
-		t.Errorf("foreign-owned world in local mode = %d, want 202", got)
 	}
 }
 
@@ -183,7 +195,7 @@ func TestLocalModeLetsEveryoneBake(t *testing.T) {
 // arriving once Close has begun must be REFUSED, not crash the process.
 func TestEnqueueAfterCloseAnswers503(t *testing.T) {
 	m, _, worlds := newTestModule(t, config.AuthNone, 1)
-	writeWorld(t, worlds, testUID, identity.Local)
+	writeWorld(t, worlds, testUID)
 	if err := m.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -192,15 +204,15 @@ func TestEnqueueAfterCloseAnswers503(t *testing.T) {
 	}
 }
 
-// The rule the whole check exists for, and the one that would be silently
-// inverted by a wrong comparison.
-func TestOwnershipIsEnforcedWhenIdentityIsChecked(t *testing.T) {
+// The rule the whole check exists for: editor and up commission bakes, and
+// the refusal SHAPE follows the visibility rule — below viewer the world is
+// invisible (404), only a readable world distinguishes 403.
+func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
 	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
 	m, _, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
-	writeWorld(t, worlds, testUID, "ada")
 
 	issue := func(subject, audience string) string {
 		t.Helper()
@@ -210,71 +222,34 @@ func TestOwnershipIsEnforcedWhenIdentityIsChecked(t *testing.T) {
 		}
 		return token
 	}
+	editor := issue("ada", auth.AudienceSession)
+	viewer := issue("grace", auth.AudienceSession)
+	worlds.set(testUID, "Bearer "+editor, access.Editor)
+	worlds.set(testUID, "Bearer "+viewer, access.Viewer)
 
-	// Everything that is not a verifiable token for the OWNER must be refused,
-	// and all of it identically — an unverifiable token is worth exactly as much
-	// as none at all, never a fallback to some weaker identity.
+	// Below viewer the world does not exist for you — including a bake
+	// token, which is what keeps a leaked job token from ordering more
+	// bakes: it ranks as nobody.
 	for _, c := range []struct{ name, token string }{
 		{"no credentials", ""},
 		{"nonsense", "not-a-valid-token"},
-		{"someone else's session", issue("grace", auth.AudienceSession)},
-		// The audience split, from the other side: a token that this server
-		// really did issue, for the very artifact key this bake would write,
-		// still is not a login.
+		{"a stranger's session", issue("eve", auth.AudienceSession)},
 		{"a bake token", issue("ada", auth.BakeAudience("v4-abc"))},
 	} {
-		if got := post(m, testUID, `{"stage":2}`, c.token).Code; got != http.StatusForbidden {
-			t.Errorf("%s = %d, want 403", c.name, got)
+		if got := post(m, testUID, `{"stage":2}`, c.token).Code; got != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404", c.name, got)
 		}
 	}
 
-	// And the owner's own session does open it — the case that proves the four
-	// above are refused for the right reason and not because nothing works.
-	if got := post(m, testUID, `{"stage":2}`, issue("ada", auth.AudienceSession)).Code; got == http.StatusForbidden {
-		t.Error("the owner's own session was refused")
+	// A viewer SEES the world, so the refusal may honestly say "not yours
+	// to bake".
+	if got := post(m, testUID, `{"stage":2}`, viewer).Code; got != http.StatusForbidden {
+		t.Errorf("viewer = %d, want 403", got)
 	}
-
-	// The unit underneath, where the decision actually lives: a wrong operator
-	// here is the difference between "only the owner" and "anyone but".
-	cases := []struct {
-		caller, owner string
-		want          bool
-	}{
-		{"ada", "ada", true},
-		{"ada", "grace", false},
-		{identity.Anonymous, "", false}, // both empty must NOT match
-		{identity.Anonymous, "ada", false},
-		{"ada", "", false},
-	}
-	for _, c := range cases {
-		if got := m.canBake(c.caller, c.owner); got != c.want {
-			t.Errorf("canBake(%q, %q) = %v, want %v", c.caller, c.owner, got, c.want)
-		}
-	}
-}
-
-// The other half of "a job is a caller": it must never be a USER. Its token
-// identifies it, so the gate lets it read and write — but ownership is compared
-// against a name no person has, so a leaked job token cannot order more bakes.
-func TestABakeJobCannotOrderBakes(t *testing.T) {
-	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
-	if err != nil {
-		t.Fatalf("NewTokens: %v", err)
-	}
-	m, _, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
-	writeWorld(t, worlds, testUID, "ada")
-
-	job, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), time.Hour)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	if got := post(m, testUID, `{"stage":2}`, job).Code; got != http.StatusForbidden {
-		t.Errorf("a bake job ordered a bake = %d, want 403", got)
-	}
-	// And the comparison underneath, stated directly: no owner is ever called
-	// this, so the name itself is the refusal.
-	if m.canBake(auth.SubjectBakeJob, auth.SubjectBakeJob) {
-		t.Error("canBake accepted a job as its own owner — the subject must not be ownable")
+	// And an editor bakes — the case that proves the refusals above refuse
+	// for the right reason.
+	if got := post(m, testUID, `{"stage":2}`, editor).Code; got != http.StatusAccepted {
+		t.Errorf("editor = %d, want 202", got)
 	}
 }
 
@@ -287,12 +262,11 @@ func TestProgressAcceptsOnlyTheJobItBelongsTo(t *testing.T) {
 		t.Fatalf("NewTokens: %v", err)
 	}
 	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
-	writeWorld(t, worlds, testUID, "ada")
-
 	session, _, err := tokens.Issue("ada", auth.AudienceSession, time.Hour)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
+	writeWorld(t, worlds, testUID, "Bearer "+session)
 	accepted := post(m, testUID, `{"stage":2}`, session)
 	if accepted.Code != http.StatusAccepted {
 		t.Fatalf("bake request = %d, want 202", accepted.Code)
@@ -381,23 +355,22 @@ func TestProgressAcceptsOnlyTheJobItBelongsTo(t *testing.T) {
 	}
 }
 
-// A refusal must not double as a denial that the world exists.
-func TestRefusalDistinguishesMissingFromForbidden(t *testing.T) {
+// An absent world and an invisible one answer identically — that equality
+// IS the privacy property, so it is asserted rather than assumed.
+func TestHiddenAndMissingAreIndistinguishable(t *testing.T) {
 	m, _, worlds := newTestModule(t, config.AuthPassword, 1)
-	writeWorld(t, worlds, testUID, "ada")
+	worlds.set(testUID, "Bearer someone-elses", access.Editor)
 
-	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusForbidden {
-		t.Errorf("existing world, wrong caller = %d, want 403", got)
-	}
-	absent := "11111111-2222-4333-8444-555555555555"
-	if got := post(m, absent, `{"stage":2}`, "").Code; got != http.StatusNotFound {
-		t.Errorf("absent world = %d, want 404", got)
+	hidden := post(m, testUID, `{"stage":2}`, "").Code
+	absent := post(m, "11111111-2222-4333-8444-555555555555", `{"stage":2}`, "").Code
+	if hidden != http.StatusNotFound || absent != http.StatusNotFound {
+		t.Errorf("hidden = %d, absent = %d, want 404 for both", hidden, absent)
 	}
 }
 
 func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 	m, runner, worlds := newTestModule(t, config.AuthNone, 1)
-	writeWorld(t, worlds, testUID, identity.Local)
+	writeWorld(t, worlds, testUID)
 
 	for _, body := range []string{`{"stage":3}`, `{"stage":0}`, `{"scope":{"kind":"basin"},"stage":2}`, `not json`} {
 		if got := post(m, testUID, body, "").Code; got != http.StatusBadRequest {
@@ -428,7 +401,7 @@ func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 func TestConcurrencyIsCapped(t *testing.T) {
 	const cap = 2
 	m, runner, worlds := newTestModule(t, config.AuthNone, cap)
-	writeWorld(t, worlds, testUID, identity.Local)
+	writeWorld(t, worlds, testUID)
 
 	for i := 0; i < 6; i++ {
 		if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusAccepted {
@@ -456,7 +429,7 @@ func TestConcurrencyIsCapped(t *testing.T) {
 
 func TestProgressAndResultReachTheJobRecord(t *testing.T) {
 	m, runner, worlds := newTestModule(t, config.AuthNone, 1)
-	writeWorld(t, worlds, testUID, identity.Local)
+	writeWorld(t, worlds, testUID)
 
 	recorder := post(m, testUID, `{"stage":2}`, "")
 	var job Job
@@ -509,7 +482,7 @@ func TestClusterJobCarriesAScopedToken(t *testing.T) {
 	m.cfg.ArtifactsDir = ""
 	m.cfg.ArtifactsURL = "http://server:8080/v1"
 	m.cfg.SelfURL = "http://server:8080/v1"
-	writeWorld(t, worlds, testUID, identity.Local)
+	writeWorld(t, worlds, testUID)
 
 	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
 		t.Fatalf("bake request = %d, want 202", code)
@@ -551,7 +524,7 @@ func TestLocalJobCarriesNoToken(t *testing.T) {
 	}
 	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
 	m.cfg.Tokens = tokens
-	writeWorld(t, worlds, testUID, identity.Local)
+	writeWorld(t, worlds, testUID)
 
 	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
 		t.Fatalf("bake request = %d, want 202", code)
@@ -574,7 +547,7 @@ func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
 	m.cfg.Tokens = tokens
 	m.cfg.WorldZip = nil
 	m.cfg.WorldsURL = "http://worlds:8080/v1"
-	writeWorld(t, worlds, testUID, identity.Local)
+	writeWorld(t, worlds, testUID)
 
 	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
 		t.Fatalf("bake request = %d, want 202", code)

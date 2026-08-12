@@ -114,12 +114,28 @@ type entry struct {
 	uid   string
 	bytes int64
 	meta  *entryMeta // nil: no readable meta.json (mid-write, or junk)
+	// key remembers what a RESERVATION was minted for, before its meta.json
+	// lands — it is what lets a write into a fresh artifact be ranked
+	// against its world (the meta is exactly what has not been written yet).
+	key   *Key
 	mtime time.Time
 	// Last time this process touched the entry (resolve hit, read, write).
 	// IN-MEMORY ONLY, deliberately: persisting per-read access would mean a
 	// write per read, and losing recency across a restart costs at worst one
 	// re-fetch of something the cache would have kept — cache stakes.
 	lastAccess time.Time
+}
+
+// world answers which world an entry belongs to — the landed meta first,
+// the reservation's key before that, "" for junk that has neither.
+func (e *entry) world() string {
+	if e.meta != nil {
+		return e.meta.Key.WorldUID
+	}
+	if e.key != nil {
+		return e.key.WorldUID
+	}
+	return ""
 }
 
 // ListedArtifact is one entry of the listing — flat, the client groups.
@@ -227,6 +243,10 @@ func (s *Store) index(uid string, mtime time.Time) {
 	next := &entry{uid: uid, mtime: mtime, bytes: dirBytes(s.artifactDir(uid))}
 	if previous != nil {
 		next.lastAccess = previous.lastAccess
+		// The reservation's key survives every re-index until the meta lands
+		// (below, where it takes over as the authority) — losing it between
+		// resolve and the first write would leave the write unrankable.
+		next.key = previous.key
 	}
 	if raw, err := os.ReadFile(filepath.Join(s.artifactDir(uid), "meta.json")); err == nil {
 		var meta entryMeta
@@ -293,7 +313,7 @@ func (s *Store) Resolve(ctx context.Context, key Key, create bool) (string, []st
 		// Reserved in the index before any meta exists, so a second resolve
 		// of the same key reuses it. A crash before the meta lands leaves an
 		// empty directory the listing reports as unresolved bytes.
-		s.entries[minted] = &entry{uid: minted, mtime: time.Now()}
+		s.entries[minted] = &entry{uid: minted, key: &key, mtime: time.Now()}
 		s.byKey[key.String()] = minted
 		uid = minted
 	}
@@ -301,6 +321,25 @@ func (s *Store) Resolve(ctx context.Context, key Key, create bool) (string, []st
 		e.lastAccess = time.Now()
 	}
 	return uid, s.fileNames(uid), nil
+}
+
+// WorldOf answers which world an artifact belongs to — the checks' join
+// key. From the meta when one has landed, from the reservation's key before
+// that; false only for an entry that has neither (junk from before this
+// field, or a hand-copied directory not yet re-indexed), which callers
+// treat as admin-territory: fail closed, junk has no readers to serve.
+func (s *Store) WorldOf(ctx context.Context, uid string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refresh(); err != nil {
+		return "", false
+	}
+	e, ok := s.entries[uid]
+	if !ok {
+		return "", false
+	}
+	world := e.world()
+	return world, world != ""
 }
 
 // touch records an access for the eviction sweep's recency ordering.
@@ -503,7 +542,8 @@ func (s *Store) List(ctx context.Context) ([]ListedArtifact, error) {
 			continue // a freshly minted, still-empty directory
 		}
 		item := ListedArtifact{ArtifactUID: e.uid, Bytes: e.bytes}
-		if e.meta != nil {
+		switch {
+		case e.meta != nil:
 			item.WorldUID = e.meta.Key.WorldUID
 			item.WorldID = e.meta.Key.WorldID
 			item.PipelineVersion = e.meta.Key.PipelineVersion
@@ -512,6 +552,14 @@ func (s *Store) List(ctx context.Context) ([]ListedArtifact, error) {
 			item.Width = e.meta.Width
 			item.Height = e.meta.Height
 			item.BakeMs = e.meta.BakeMs
+		case e.key != nil:
+			// A reservation being written: identified by what it was minted
+			// for, so the listing (and its visibility filter) can attribute
+			// the bytes before the meta lands.
+			item.WorldUID = e.key.WorldUID
+			item.WorldID = e.key.WorldID
+			item.PipelineVersion = e.key.PipelineVersion
+			item.Stage = e.key.Stage
 		}
 		out = append(out, item)
 	}
@@ -564,7 +612,7 @@ func (s *Store) RemoveWorld(ctx context.Context, worldUID string) error {
 	}
 	found := false
 	for uid, e := range s.entries {
-		if e.meta == nil || e.meta.Key.WorldUID != worldUID {
+		if e.world() != worldUID {
 			continue
 		}
 		found = true

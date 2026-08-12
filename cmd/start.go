@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/artifacts"
 	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/bake"
@@ -72,7 +73,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	if err != nil {
 		return nil, nil, err
 	}
-	caller, tokens, login, err := buildAuth(authMode, cfg)
+	caller, tokens, login, registry, err := buildAuth(authMode, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -93,33 +94,55 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		}
 		modules = append(modules, m)
 	}
-	// The world STORE outlives the if below: when bake runs co-resident, its
-	// world accessors are closures over this same store, so the per-world
-	// locks and the layout have one owner in the process.
-	var worldStore *world.Store
+	// The world MODULE outlives the if below: when artifacts or bake run
+	// co-resident, their world ranking is a closure over this same module,
+	// so the grants, the per-world locks and the layout have one owner in
+	// the process.
+	var worldModule *world.Module
 	if targets.Has(config.TargetWorld) {
 		if err := cfg.World.Storage.Validate("world"); err != nil {
 			return nil, nil, err
 		}
-		m, err := world.New(world.Config{All: cfg, Identity: caller})
+		// The migration rule for pre-registry worlds needs name→id; without a
+		// registry (local mode) legacy worlds are admin-only, which the nil
+		// closure expresses.
+		var legacyOwner func(string) (string, bool)
+		if registry != nil {
+			legacyOwner = func(name string) (string, bool) {
+				entry, ok := registry.ByName(name)
+				return entry.ID, ok
+			}
+		}
+		m, err := world.New(world.Config{All: cfg, Identity: caller, LegacyOwner: legacyOwner})
 		if err != nil {
 			return nil, nil, err
 		}
-		worldStore = m.Store()
+		worldModule = m
 		modules = append(modules, m)
+	}
+	// The ONE ranking closure artifacts and bake consult — local over the
+	// co-resident world module, HTTP against global.services.worlds, or the
+	// local-mode short circuit. Built once so the capability handshake runs
+	// once and both consumers agree by construction.
+	var rankWorld func(ctx context.Context, uid, bearer string) (bool, access.Level)
+	if targets.Has(config.TargetArtifacts) || targets.Has(config.TargetBake) {
+		rankWorld, err = worldRanking(caller, worldModule, authMode, cfg.Global.Services.Worlds)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	if targets.Has(config.TargetArtifacts) {
 		if err := cfg.Artifacts.Storage.Validate("artifacts"); err != nil {
 			return nil, nil, err
 		}
-		m, err := artifacts.New(artifacts.Config{All: cfg})
+		m, err := artifacts.New(artifacts.Config{All: cfg, Identity: caller, WorldAccess: rankWorld})
 		if err != nil {
 			return nil, nil, err
 		}
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetBake) {
-		bcfg, err := bakeConfig(targets, cfg, worldStore, caller, tokens)
+		bcfg, err := bakeConfig(targets, cfg, worldModule, rankWorld, caller, tokens)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -146,7 +169,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 // own: co-resident store when the target is selected here, HTTP against the
 // configured peer service when it is not. This is the composition that makes
 // "a target must be able to run alone" true for bake.
-func bakeConfig(targets config.Targets, cfg config.Config, worldStore *world.Store, caller *identity.Resolver, tokens *auth.Tokens) (bake.Config, error) {
+func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Module, rankWorld func(context.Context, string, string) (bool, access.Level), caller *identity.Resolver, tokens *auth.Tokens) (bake.Config, error) {
 	inCluster := bake.InCluster()
 	selfURL := serverBaseURL(cfg.Global.Listen)
 	if inCluster && selfURL == "" {
@@ -160,30 +183,23 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldStore *world.Sto
 		MaxConcurrent: cfg.Bake.MaxConcurrent,
 	}
 
+	// The ranking is the shared closure built in buildModules; what remains
+	// here is where the BAKER reads the bytes from.
+	bcfg.WorldAccess = rankWorld
 	switch {
-	case worldStore != nil:
-		// Co-resident: closures over the ONE store the world module runs on.
-		store := worldStore
-		bcfg.WorldOwner = func(ctx context.Context, uid, _ string) (string, bool) {
-			meta, err := store.Get(ctx, uid)
-			return meta.Owner, err == nil && meta.Revision >= 1
-		}
+	case worldModule != nil:
 		if inCluster {
 			// The Job runs on another node and reaches this same server by IP.
 			bcfg.WorldsURL = selfURL
 		} else {
+			store := worldModule.Store()
 			bcfg.WorldZip = func(ctx context.Context, uid string) (string, bool) {
 				path, err := store.CurrentZipPath(ctx, uid)
 				return path, err == nil
 			}
 		}
 	case cfg.Global.Services.Worlds != "":
-		base := strings.TrimRight(cfg.Global.Services.Worlds, "/")
-		if err := requireCapability(keySvcWorlds, base, "world"); err != nil {
-			return bake.Config{}, err
-		}
-		bcfg.WorldOwner = httpWorldOwner(base)
-		bcfg.WorldsURL = base + server.APIPrefix
+		bcfg.WorldsURL = strings.TrimRight(cfg.Global.Services.Worlds, "/") + server.APIPrefix
 	default:
 		return bake.Config{}, fmt.Errorf("bake needs a world source: select the world target too, or set global.services.worlds")
 	}
@@ -208,41 +224,69 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldStore *world.Sto
 	return bcfg, nil
 }
 
-// httpWorldOwner asks a peer world service who owns a world. The caller's own
-// Authorization header travels along verbatim — the peer authenticates the
-// PERSON asking for the bake, so no service identity has to exist for this
-// (the open point in docs/design/access-control.md stays open, not worked
-// around).
-func httpWorldOwner(base string) func(ctx context.Context, uid, bearer string) (string, bool) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	return func(ctx context.Context, uid, bearer string) (string, bool) {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+server.APIPrefix+"/worlds/"+url.PathEscape(uid)+"/meta", nil)
-		if err != nil {
-			return "", false
-		}
-		if bearer != "" {
-			request.Header.Set("Authorization", bearer)
-		}
-		response, err := client.Do(request)
-		if err != nil {
-			// Logged here because the module can only say "no such world" —
-			// an unreachable peer must not masquerade as a missing save.
-			slog.Warn("world service unreachable", "base", base, "err", err)
-			return "", false
-		}
-		defer response.Body.Close()
-		if response.StatusCode != http.StatusOK {
-			return "", false
-		}
-		var meta struct {
-			Owner    string `json:"owner"`
-			Revision int    `json:"revision"`
-		}
-		if json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&meta) != nil {
-			return "", false
-		}
-		return meta.Owner, meta.Revision >= 1
+// worldRanking builds the ONE closure artifacts and bake rank worlds with.
+// Three compositions, decided by what else this process runs:
+//
+//   - co-resident world module: resolve the forwarded bearer locally (the
+//     none-mode short circuit folds in here as admin) and ask AccessFor;
+//   - global.services.worlds: forward the caller's own Authorization header
+//     to the peer's meta endpoint — the service that OWNS the grants ranks
+//     the caller and answers `callerLevel`, so grants never travel and no
+//     service identity has to exist;
+//   - neither, in the local MODE: everything ranks admin, because every
+//     check answers yes there by design.
+//
+// Neither, in a CHECKING mode, is a refusal: a process that must rank
+// callers against worlds it cannot see is misconfigured.
+func worldRanking(resolver *identity.Resolver, worldModule *world.Module, mode config.AuthMode, servicesWorlds string) (func(ctx context.Context, uid, bearer string) (bool, access.Level), error) {
+	if worldModule != nil {
+		m := worldModule
+		return func(ctx context.Context, uid, bearer string) (bool, access.Level) {
+			callerID, admin := resolver.ResolveBearer(bearer)
+			if !resolver.ChecksIdentity() {
+				admin = true
+			}
+			return m.AccessFor(ctx, uid, callerID, admin)
+		}, nil
 	}
+	if servicesWorlds != "" {
+		base := strings.TrimRight(servicesWorlds, "/")
+		if err := requireCapability(keySvcWorlds, base, "world"); err != nil {
+			return nil, err
+		}
+		client := &http.Client{Timeout: 10 * time.Second}
+		return func(ctx context.Context, uid, bearer string) (bool, access.Level) {
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+server.APIPrefix+"/worlds/"+url.PathEscape(uid)+"/meta", nil)
+			if err != nil {
+				return false, access.None
+			}
+			if bearer != "" {
+				request.Header.Set("Authorization", bearer)
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				// Logged here because the consumer can only say "not found" —
+				// an unreachable peer must not masquerade as a missing world.
+				slog.Warn("world service unreachable", "base", base, "err", err)
+				return false, access.None
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				return false, access.None
+			}
+			var body struct {
+				CallerLevel string `json:"callerLevel"`
+			}
+			if json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&body) != nil {
+				return false, access.None
+			}
+			return true, access.LevelFromString(body.CallerLevel)
+		}, nil
+	}
+	if !mode.ChecksIdentity() {
+		return func(context.Context, string, string) (bool, access.Level) { return true, access.Admin }, nil
+	}
+	return nil, fmt.Errorf("a checking server needs a world source to rank callers: select the world target too, or set global.services.worlds")
 }
 
 // requireCapability refuses to start against a peer that does not run the
@@ -312,17 +356,18 @@ func bakerPath(configured string) string {
 // request to nobody, which looks exactly like a permission bug from the outside.
 // So every ingredient it needs is required here, at startup, where the message
 // can name the missing setting.
-func buildAuth(mode config.AuthMode, cfg config.Config) (*identity.Resolver, *auth.Tokens, server.Module, error) {
+func buildAuth(mode config.AuthMode, cfg config.Config) (*identity.Resolver, *auth.Tokens, server.Module, *user.Registry, error) {
 	if !mode.ChecksIdentity() {
 		// No issuer either: a Job talking to a server that checks nobody needs
 		// no credential, and handing it one would be a token nothing verifies.
-		return identity.NewResolver(mode, nil), nil, nil, nil
+		// No registry: the synthetic local identity is nobody to record.
+		return identity.NewResolver(mode, nil), nil, nil, nil, nil
 	}
 
 	if mode == config.AuthOIDC {
 		// The declared, empty path: the mode parses and the resolver would
 		// verify the tokens this server issues, but nothing issues them yet.
-		return nil, nil, nil, fmt.Errorf("auth mode %s is not implemented yet", mode)
+		return nil, nil, nil, nil, fmt.Errorf("auth mode %s is not implemented yet", mode)
 	}
 
 	// Users before the key, so a start that is going to fail fails BEFORE
@@ -331,26 +376,26 @@ func buildAuth(mode config.AuthMode, cfg config.Config) (*identity.Resolver, *au
 	// wrong problem.
 	users, err := auth.NewUsers(cfg.Global.Auth.Htpasswd)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("%s: %w", keyAuthHtpass, err)
+		return nil, nil, nil, nil, fmt.Errorf("%s: %w", keyAuthHtpass, err)
 	}
 
 	key, err := signingKey(cfg.Global.Auth.SessionKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	tokens, err := auth.NewTokens(key)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	// The registry lives with the auth subsystem (auth.storage), not under
 	// global — only the process running login reads or writes it. Opened
 	// eagerly so a bad path refuses to start, like every other store.
 	if err := cfg.Auth.Storage.Validate("auth"); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	registry, err := user.NewRegistry(cfg.Auth.Storage.DirPath())
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("auth.storage: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("auth.storage: %w", err)
 	}
 	admins := make(map[string]bool, len(cfg.Global.Auth.Admins))
 	for _, name := range cfg.Global.Auth.Admins {
@@ -365,11 +410,11 @@ func buildAuth(mode config.AuthMode, cfg config.Config) (*identity.Resolver, *au
 		Admins:   admins,
 	})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	slog.Info("authentication ready", "mode", mode, "users", users.Path(),
 		"registry", cfg.Auth.Storage.DirPath(), "admins", len(admins), "token ttl", cfg.Global.Auth.TokenTTL)
-	return resolver, tokens, login, nil
+	return resolver, tokens, login, registry, nil
 }
 
 // signingKey reads the configured key, or makes an ephemeral one and says so.

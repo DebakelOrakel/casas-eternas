@@ -74,18 +74,28 @@ func (r *Resolver) ChecksIdentity() bool { return r != nil && r.mode.ChecksIdent
 // Anything else is Anonymous: absent, expired, forged, or issued elsewhere.
 // None of them is a reason to fall back to a weaker identity.
 func (r *Resolver) Caller(req *http.Request) string {
+	caller, _ := r.ResolveBearer(req.Header.Get("Authorization"))
+	return caller
+}
+
+// ResolveBearer is Caller for a raw Authorization header value — the form the
+// composition closures need, where a FORWARDED header stands in for the
+// request it came from (a bake enqueue ranking its caller against a world,
+// via cmd/'s world-access closure). One implementation for both entry points,
+// so the two can never drift.
+func (r *Resolver) ResolveBearer(authorization string) (caller string, admin bool) {
 	if !r.ChecksIdentity() {
-		return Local
+		return Local, false
 	}
 	if r.tokens == nil {
-		return Anonymous
+		return Anonymous, false
 	}
-	raw := bearer(req)
+	raw := bearerOf(authorization)
 	if raw == "" {
-		return Anonymous
+		return Anonymous, false
 	}
-	if subject, err := r.tokens.Verify(raw, auth.AudienceSession); err == nil {
-		return subject
+	if subject, isAdmin, err := r.tokens.VerifySession(raw); err == nil {
+		return subject, isAdmin
 	}
 	// A job's token, which names one job by audience.
 	//
@@ -96,9 +106,9 @@ func (r *Resolver) Caller(req *http.Request) string {
 	// mints them to always write the right subject is not a guarantee, it is a
 	// habit; this makes impersonation impossible instead of unlikely.
 	if _, _, err := r.tokens.VerifyBakeJob(raw); err == nil {
-		return auth.SubjectBakeJob
+		return auth.SubjectBakeJob, false
 	}
-	return Anonymous
+	return Anonymous, false
 }
 
 // Admin reports whether the request carries an admin's session.
@@ -109,15 +119,8 @@ func (r *Resolver) Caller(req *http.Request) string {
 // for. In the local mode the answer is false; `none` has no operators to
 // distinguish, and the checks that consult this all answer yes there anyway.
 func (r *Resolver) Admin(req *http.Request) bool {
-	if !r.ChecksIdentity() || r.tokens == nil {
-		return false
-	}
-	raw := bearer(req)
-	if raw == "" {
-		return false
-	}
-	_, admin, err := r.tokens.VerifySession(raw)
-	return err == nil && admin
+	_, admin := r.ResolveBearer(req.Header.Get("Authorization"))
+	return admin
 }
 
 // BakeJob answers WHICH bake job is asking, if one is.
@@ -150,8 +153,11 @@ func (r *Resolver) BakeJob(req *http.Request) (jobID string, ok bool) {
 // on the scheme because RFC 7235 says the scheme is not case sensitive and some
 // clients send "bearer".
 func bearer(req *http.Request) string {
-	header := strings.TrimSpace(req.Header.Get("Authorization"))
-	scheme, value, found := strings.Cut(header, " ")
+	return bearerOf(req.Header.Get("Authorization"))
+}
+
+func bearerOf(header string) string {
+	scheme, value, found := strings.Cut(strings.TrimSpace(header), " ")
 	if !found || !strings.EqualFold(scheme, "Bearer") {
 		return ""
 	}

@@ -17,6 +17,7 @@
 package artifacts
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,8 +26,10 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
+	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
 
 // uploadLimit caps one artifact file. An amplified elevation raster is ~17 MB
@@ -40,16 +43,30 @@ const uploadLimit = 512 << 20 // 512 MiB
 // its OWN section (`artifacts.*`), nothing else.
 type Config struct {
 	All config.Config
+	// Identity answers who a request comes from — the one resolver cmd/
+	// builds and every module shares.
+	Identity *identity.Resolver
+	// WorldAccess ranks a caller (by their forwarded Authorization header)
+	// against a world — artifacts INHERIT their world's visibility, which is
+	// why reading one is not "informational". Injected by cmd/: a closure
+	// over the co-resident world module, or an HTTP lookup of the world
+	// service's meta endpoint, whose answer carries the level. In the local
+	// mode the closure answers Admin, which is the none-mode short circuit.
+	WorldAccess func(ctx context.Context, worldUID, bearer string) (exists bool, level access.Level)
 }
 
 // Module serves the artifact store.
 type Module struct {
+	cfg   Config
 	store *Store
 }
 
 // New prepares the store, creating the directory so a bad artifacts.storage
 // fails at startup rather than on first write.
 func New(cfg Config) (*Module, error) {
+	if cfg.Identity == nil || cfg.WorldAccess == nil {
+		return nil, fmt.Errorf("artifacts needs its identity and world-access wiring; that is cmd/'s job")
+	}
 	capBytes, err := config.ParseByteSize(cfg.All.Artifacts.Cap)
 	if err != nil {
 		return nil, fmt.Errorf("artifacts.cap: %w", err)
@@ -58,7 +75,7 @@ func New(cfg Config) (*Module, error) {
 	if err != nil {
 		return nil, fmt.Errorf("artifacts.storage: %w", err)
 	}
-	return &Module{store: store}, nil
+	return &Module{cfg: cfg, store: store}, nil
 }
 
 // Name identifies the module in logs and errors.
@@ -81,6 +98,50 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 // Close releases the store. Nothing is held open.
 func (m *Module) Close() error { return nil }
 
+// operator answers "may this request do anything here": the admin claim, or
+// the local mode, where every check answers yes by design.
+func (m *Module) operator(r *http.Request) bool {
+	if !m.cfg.Identity.ChecksIdentity() {
+		return true
+	}
+	_, admin := m.cfg.Identity.ResolveBearer(r.Header.Get("Authorization"))
+	return admin
+}
+
+// allowed ranks a request against an artifact's world — artifacts INHERIT
+// the world's ACL, with the same visibility shape: a world the caller may
+// not read hides its artifacts behind 404, and only readable ones
+// distinguish 403.
+//
+// Two bypasses, both deliberate: the operator (admin claim / local mode) —
+// which is also what keeps ORPHANS reachable, artifacts whose world is
+// already gone and can rank nobody; and a bake job carrying its own token,
+// the writer this system itself sent out — accepted for ANY artifact until
+// step 4 of the access plan narrows its token to the one world it bakes.
+func (m *Module) allowed(w http.ResponseWriter, r *http.Request, worldUID string, need access.Level, what string) bool {
+	if m.operator(r) {
+		return true
+	}
+	if _, ok := m.cfg.Identity.BakeJob(r); ok {
+		return true
+	}
+	if worldUID == "" {
+		// No world to rank against (junk entry): operator territory only.
+		httpjson.ClientError(w, http.StatusNotFound, "no such artifact")
+		return false
+	}
+	exists, level := m.cfg.WorldAccess(r.Context(), worldUID, r.Header.Get("Authorization"))
+	if !exists || level < access.Viewer {
+		httpjson.ClientError(w, http.StatusNotFound, "no such artifact")
+		return false
+	}
+	if level < need {
+		httpjson.ClientError(w, http.StatusForbidden, what+" needs "+need.String()+" access to its world")
+		return false
+	}
+	return true
+}
+
 type resolveRequest struct {
 	Key
 	// With create, an absent key mints an artifact and returns its fresh uid —
@@ -101,6 +162,13 @@ func (m *Module) handleResolve(w http.ResponseWriter, r *http.Request) {
 		httpjson.ClientError(w, http.StatusBadRequest, "expected {worldUid, worldId, pipelineVersion, stage, create?}")
 		return
 	}
+	need, what := access.Viewer, "reading artifacts"
+	if request.Create {
+		need, what = access.Editor, "writing artifacts"
+	}
+	if !m.allowed(w, r, request.WorldUID, need, what) {
+		return
+	}
 	uid, files, err := m.store.Resolve(r.Context(), request.Key, request.Create)
 	if err != nil {
 		respondStoreError(w, err)
@@ -113,6 +181,10 @@ func (m *Module) handleResolve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
+	worldUID, _ := m.store.WorldOf(r.Context(), r.PathValue("artifactUID"))
+	if !m.allowed(w, r, worldUID, access.Viewer, "reading artifacts") {
+		return
+	}
 	raw, err := m.store.Read(r.Context(), r.PathValue("artifactUID"), r.PathValue("name"))
 	if err != nil {
 		respondStoreError(w, err)
@@ -128,6 +200,12 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 
 func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("artifactUID")
+	// Ranked via the RESERVATION's key when the meta has not landed yet —
+	// which on the write path it by definition has not.
+	worldUID, _ := m.store.WorldOf(r.Context(), uid)
+	if !m.allowed(w, r, worldUID, access.Editor, "writing artifacts") {
+		return
+	}
 	body := http.MaxBytesReader(w, r.Body, uploadLimit)
 	if err := m.store.Write(r.Context(), uid, r.PathValue("name"), body); err != nil {
 		switch {
@@ -156,14 +234,43 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 		httpjson.ServerError(w, "listing artifacts", err)
 		return
 	}
-	if artifacts == nil {
-		artifacts = []ListedArtifact{}
+	// The listing inherits the worlds' visibility: an artifact shows to
+	// whoever may read its world. Meta-less entries (junk, mid-write) show
+	// only to the operator — they can rank nobody. One WorldAccess per
+	// DISTINCT world, not per artifact.
+	visible := make([]ListedArtifact, 0, len(artifacts))
+	if m.operator(r) {
+		visible = artifacts
+	} else {
+		bearer := r.Header.Get("Authorization")
+		levels := map[string]access.Level{}
+		for _, artifact := range artifacts {
+			if artifact.WorldUID == "" {
+				continue
+			}
+			level, ranked := levels[artifact.WorldUID]
+			if !ranked {
+				_, level = m.cfg.WorldAccess(r.Context(), artifact.WorldUID, bearer)
+				levels[artifact.WorldUID] = level
+			}
+			if level >= access.Viewer {
+				visible = append(visible, artifact)
+			}
+		}
 	}
+	// Usage stays the whole store: it is the cache-size gauge the eviction
+	// panel reasons about, not a per-user figure.
 	usage, _ := m.store.Usage(r.Context())
-	httpjson.Write(w, http.StatusOK, map[string]any{"artifacts": artifacts, "bytes": usage})
+	httpjson.Write(w, http.StatusOK, map[string]any{"artifacts": visible, "bytes": usage})
 }
 
 func (m *Module) handleRemove(w http.ResponseWriter, r *http.Request) {
+	// Editor suffices: an artifact is recomputable by anyone who may bake,
+	// so dropping one destroys nothing an editor could not remake.
+	worldUID, _ := m.store.WorldOf(r.Context(), r.PathValue("artifactUID"))
+	if !m.allowed(w, r, worldUID, access.Editor, "removing an artifact") {
+		return
+	}
 	if err := m.store.RemoveArtifact(r.Context(), r.PathValue("artifactUID")); err != nil {
 		respondStoreError(w, err)
 		return
@@ -176,12 +283,23 @@ func (m *Module) handleRemove(w http.ResponseWriter, r *http.Request) {
 // meta files attribute to one world.
 func (m *Module) handleClear(w http.ResponseWriter, r *http.Request) {
 	if world := r.URL.Query().Get("world"); world != "" {
+		// The sweep rides on world.delete's level: it exists so deleting a
+		// world can take its artifacts with it. (Sweep BEFORE the world is
+		// deleted — an orphaned world ranks nobody and falls to the operator.)
+		if !m.allowed(w, r, world, access.Owner, "sweeping a world's artifacts") {
+			return
+		}
 		if err := m.store.RemoveWorld(r.Context(), world); err != nil {
 			respondStoreError(w, err)
 			return
 		}
 		slog.Info("artifacts dropped", "uid", world)
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Clearing EVERYTHING is store administration, not a per-world right.
+	if !m.operator(r) {
+		httpjson.ClientError(w, http.StatusForbidden, "clearing the whole store is an admin action")
 		return
 	}
 	if err := m.store.Clear(r.Context()); err != nil {

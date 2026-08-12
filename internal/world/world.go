@@ -10,6 +10,7 @@
 package world
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
@@ -38,6 +40,12 @@ type Config struct {
 	// process — this module holds the answerer, not the auth mode it was
 	// configured with.
 	Identity *identity.Resolver
+	// LegacyOwner maps a pre-registry owner NAME to a user id — the migration
+	// rule for worlds without grants.json on a checking server: the meta's
+	// owner, IF it maps to a registry user, is the owner; otherwise the world
+	// is admin-only. Injected by cmd/ as a closure over the registry; nil
+	// when no registry exists, which makes every legacy world admin-only.
+	LegacyOwner func(name string) (id string, ok bool)
 }
 
 // Module serves the world store.
@@ -82,20 +90,94 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 // Close releases the store. Nothing is held open.
 func (m *Module) Close() error { return nil }
 
+// AccessFor answers whether a world exists and the caller's level on it —
+// the ONE ranking in the process: this module's handlers use it directly,
+// artifacts and bake get it injected as a closure by cmd/. Admin outranks
+// everything; the none-mode short circuit happens where the caller is
+// resolved (callerOf / cmd/'s closure), which is what knows the mode.
+func (m *Module) AccessFor(ctx context.Context, uid, callerID string, admin bool) (exists bool, level access.Level) {
+	meta, err := m.store.Get(ctx, uid)
+	if err != nil {
+		return false, access.None
+	}
+	if admin {
+		return true, access.Admin
+	}
+	grants, found, err := m.store.ReadGrants(ctx, uid)
+	if err != nil {
+		// Corrupt grants FAIL CLOSED: an unreadable ACL must never reopen a
+		// shared world under legacy rules.
+		slog.Error("unreadable grants", "uid", uid, "err", err)
+		return true, access.None
+	}
+	if !found {
+		// The migration rule for worlds from before grants existed: the
+		// meta's owner, if it maps to a registry user, is the owner; a
+		// synthetic or unmapped owner leaves the world admin-only — switching
+		// a server to `password` never silently gives worlds away.
+		if meta.Owner != "" && meta.Owner != identity.Local && m.cfg.LegacyOwner != nil {
+			if id, ok := m.cfg.LegacyOwner(meta.Owner); ok && id == callerID {
+				return true, access.Owner
+			}
+		}
+		return true, access.None
+	}
+	return true, grants.LevelOf(callerID)
+}
+
+// callerOf resolves the request once for the checks: in the local mode the
+// synthetic caller is treated as admin, which is the design's stated rule —
+// every check answers yes there, while the DATA is still written correctly.
+func (m *Module) callerOf(r *http.Request) (caller string, admin bool) {
+	caller, admin = m.cfg.Identity.ResolveBearer(r.Header.Get("Authorization"))
+	if !m.cfg.Identity.ChecksIdentity() {
+		admin = true
+	}
+	return caller, admin
+}
+
+// gate refuses a request below the action's level, with the shape the
+// visibility rule demands: a world the caller may not READ answers 404 —
+// private means invisible, exactly like the filtered listing — and only on
+// a readable world does 403 distinguish "not yours to do".
+func (m *Module) gate(w http.ResponseWriter, r *http.Request, uid string, action access.Action) bool {
+	caller, admin := m.callerOf(r)
+	exists, level := m.AccessFor(r.Context(), uid, caller, admin)
+	if !exists || level < access.Viewer {
+		httpjson.ClientError(w, http.StatusNotFound, "no such world")
+		return false
+	}
+	if level < access.Required(action) {
+		httpjson.ClientError(w, http.StatusForbidden, fmt.Sprintf("%s needs %s access to this world", action, access.Required(action)))
+		return false
+	}
+	return true
+}
+
 func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 	metas, err := m.store.List(r.Context())
 	if err != nil {
 		httpjson.ServerError(w, "listing worlds", err)
 		return
 	}
-	if metas == nil {
-		metas = []Meta{}
+	// The listing IS the visibility rule: own + granted + public, nothing
+	// else. One grants read per world — N is small, and the design doc
+	// blesses exactly this until it is not.
+	caller, admin := m.callerOf(r)
+	visible := make([]Meta, 0, len(metas))
+	for _, meta := range metas {
+		if _, level := m.AccessFor(r.Context(), meta.UID, caller, admin); level >= access.Viewer {
+			visible = append(visible, meta)
+		}
 	}
-	httpjson.Write(w, http.StatusOK, metas)
+	httpjson.Write(w, http.StatusOK, visible)
 }
 
 func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("uid")
+	if !m.gate(w, r, uid, access.ActionRead) {
+		return
+	}
 	data, meta, err := m.store.ReadCurrent(r.Context(), uid)
 	if err != nil {
 		respondStoreError(w, err)
@@ -109,20 +191,33 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// handleMeta answers a world's record without its bytes — what a peer service
-// needs: a world-less bake target admitting a request asks this route who owns
-// the world and whether it has a revision, at the cost of a lookup rather than
-// a download.
+// handleMeta answers a world's record without its bytes — what a peer
+// service needs: a world-less bake or artifacts target ranking a request
+// asks this route, forwarding the caller's own Authorization header. The
+// answer therefore carries `callerLevel`: the service that OWNS the grants
+// ranks the caller, and the peer only compares — grants never travel.
 func (m *Module) handleMeta(w http.ResponseWriter, r *http.Request) {
-	meta, err := m.store.Get(r.Context(), r.PathValue("uid"))
+	uid := r.PathValue("uid")
+	if !m.gate(w, r, uid, access.ActionRead) {
+		return
+	}
+	meta, err := m.store.Get(r.Context(), uid)
 	if err != nil {
 		respondStoreError(w, err)
 		return
 	}
-	httpjson.Write(w, http.StatusOK, meta)
+	caller, admin := m.callerOf(r)
+	_, level := m.AccessFor(r.Context(), uid, caller, admin)
+	httpjson.Write(w, http.StatusOK, struct {
+		Meta
+		CallerLevel string `json:"callerLevel"`
+	}{Meta: meta, CallerLevel: level.String()})
 }
 
 func (m *Module) handlePreview(w http.ResponseWriter, r *http.Request) {
+	if !m.gate(w, r, r.PathValue("uid"), access.ActionRead) {
+		return
+	}
 	raw, err := m.store.ReadPreview(r.Context(), r.PathValue("uid"))
 	if err != nil {
 		respondStoreError(w, err)
@@ -143,6 +238,20 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		httpjson.ClientError(w, http.StatusBadRequest, `If-Match must be a revision like "3", or absent to create`)
 		return
+	}
+	// Creating is open to every authenticated caller — the store pins them
+	// as owner. Writing into an EXISTING world needs editor access, with the
+	// same visibility shape as everywhere: unreadable means 404.
+	caller, admin := m.callerOf(r)
+	if exists, level := m.AccessFor(r.Context(), uid, caller, admin); exists {
+		if level < access.Viewer {
+			httpjson.ClientError(w, http.StatusNotFound, "no such world")
+			return
+		}
+		if level < access.Editor {
+			httpjson.ClientError(w, http.StatusForbidden, "world.write needs editor access to this world")
+			return
+		}
 	}
 
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, uploadLimit))
@@ -180,6 +289,9 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 
 func (m *Module) handleDelete(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("uid")
+	if !m.gate(w, r, uid, access.ActionDelete) {
+		return
+	}
 	if err := m.store.Delete(r.Context(), uid); err != nil {
 		respondStoreError(w, err)
 		return

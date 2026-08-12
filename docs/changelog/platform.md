@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-12
+- **new** Server: worlds are private — the list shows own, granted and public worlds, and every route enforces the granted level (viewer/editor/owner), with artifacts and bakes inheriting the world's access.
 - **fixed** Server: a world's owner is pinned when it is created — saving someone else's world no longer takes it over.
 - **new** Server: logins mint an entry in the user registry — sessions now name a stable user id instead of the login name, and `global.auth.admins` marks admin sessions.
 - **fixed** Server: deleting or evicting a half-written artifact no longer strands its key on a dead uid — the next bake of that key stores its result instead of failing.
