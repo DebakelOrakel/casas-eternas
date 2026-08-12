@@ -88,15 +88,15 @@ func (f *fakeWorlds) set(uid, owner string) {
 	f.owners[uid] = owner
 }
 
-func (f *fakeWorlds) owner(uid, _ string) (string, bool) {
+func (f *fakeWorlds) owner(_ context.Context, uid, _ string) (string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	owner, ok := f.owners[uid]
 	return owner, ok
 }
 
-func (f *fakeWorlds) zip(uid string) (string, bool) {
-	if _, ok := f.owner(uid, ""); !ok {
+func (f *fakeWorlds) zip(_ context.Context, uid string) (string, bool) {
+	if _, ok := f.owner(context.Background(), uid, ""); !ok {
 		return "", false
 	}
 	return "/fake/" + uid + "/world.zip", true

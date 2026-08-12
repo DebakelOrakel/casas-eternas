@@ -1,6 +1,7 @@
 package artifacts
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -172,6 +173,11 @@ func NewStore(dir string, capBytes int64) (*Store, error) {
 	return &Store{dir: dir, cap: capBytes, entries: map[string]*entry{}, byKey: map[string]string{}}, nil
 }
 
+// The public methods take a context (2026-08-12) even though the dir backend
+// cannot honour cancellation — file I/O has no ctx. The parameter is the seam
+// the storage union's future backends (S3) need; handlers already pass their
+// request's, so growing a cancellable backend changes no caller.
+
 func (s *Store) artifactDir(uid string) string { return filepath.Join(s.dir, uid) }
 
 // refresh reconciles the index with the directory. Called under s.mu.
@@ -265,7 +271,7 @@ func mintUID() (string, error) {
 //
 // The returned names are the files currently present, which is the batch
 // existence answer (`present` used to be its own endpoint).
-func (s *Store) Resolve(key Key, create bool) (string, []string, error) {
+func (s *Store) Resolve(ctx context.Context, key Key, create bool) (string, []string, error) {
 	if !key.Valid() {
 		return "", nil, ErrBadPath
 	}
@@ -359,7 +365,7 @@ func (s *Store) filePath(uid, name string) (string, error) {
 }
 
 // Read returns one artifact file.
-func (s *Store) Read(uid, name string) ([]byte, error) {
+func (s *Store) Read(ctx context.Context, uid, name string) ([]byte, error) {
 	path, err := s.filePath(uid, name)
 	if err != nil {
 		return nil, err
@@ -379,7 +385,7 @@ func (s *Store) Read(uid, name string) ([]byte, error) {
 // from Resolve, which is what keeps junk from minting entries. Writing
 // meta.json is what makes an entry resolvable; the index picks it up through
 // the directory's changed mtime on the next access.
-func (s *Store) Write(uid, name string, body io.Reader) error {
+func (s *Store) Write(ctx context.Context, uid, name string, body io.Reader) error {
 	path, err := s.filePath(uid, name)
 	if err != nil {
 		return err
@@ -487,7 +493,7 @@ func (s *Store) enforceCap(justWritten string) {
 
 // List reports every entry, largest first — flat; grouping is the reader's
 // business, and both tiers group the same way.
-func (s *Store) List() ([]ListedArtifact, error) {
+func (s *Store) List(ctx context.Context) ([]ListedArtifact, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.refresh(); err != nil {
@@ -516,7 +522,7 @@ func (s *Store) List() ([]ListedArtifact, error) {
 }
 
 // RemoveArtifact drops one entry. Absent counts as removed.
-func (s *Store) RemoveArtifact(uid string) error {
+func (s *Store) RemoveArtifact(ctx context.Context, uid string) error {
 	if !safeSegment(uid) {
 		return ErrBadPath
 	}
@@ -536,7 +542,7 @@ func (s *Store) RemoveArtifact(uid string) error {
 
 // RemoveWorld drops every entry whose meta names the world — the sweep
 // "delete a world, its artifacts go too" works in this unit.
-func (s *Store) RemoveWorld(worldUID string) error {
+func (s *Store) RemoveWorld(ctx context.Context, worldUID string) error {
 	if !safeSegment(worldUID) {
 		return ErrBadPath
 	}
@@ -566,7 +572,7 @@ func (s *Store) RemoveWorld(worldUID string) error {
 // Clear drops everything. Safe by construction — every byte in here is a
 // deterministic function of a world and a pipeline version, so the worst case
 // is that the next reader bakes again.
-func (s *Store) Clear() error {
+func (s *Store) Clear(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	children, err := os.ReadDir(s.dir)
@@ -587,7 +593,7 @@ func (s *Store) Clear() error {
 }
 
 // Usage reports the total bytes held, for the storage panel's readout.
-func (s *Store) Usage() (int64, error) {
+func (s *Store) Usage(ctx context.Context) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(s.dir, func(_ string, entry os.DirEntry, err error) error {
 		if err != nil {

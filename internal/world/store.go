@@ -1,6 +1,7 @@
 package world
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -88,6 +89,11 @@ type RevisionMeta struct {
 }
 
 // Store is the filesystem-backed world store.
+//
+// Its methods take a context (2026-08-12) even though the dir backend cannot
+// honour cancellation — file I/O has no ctx. The parameter is the seam the
+// storage union's future backends (S3) need; handlers already pass their
+// request's, so growing a cancellable backend changes no caller.
 type Store struct {
 	dir string
 	// How many revisions to retain per world; older ones are pruned on
@@ -136,7 +142,7 @@ func (s *Store) revDir(uid string, revision int) string {
 func ValidUID(uid string) bool { return safeUID.MatchString(uid) }
 
 // Get returns a world's metadata.
-func (s *Store) Get(uid string) (Meta, error) {
+func (s *Store) Get(ctx context.Context, uid string) (Meta, error) {
 	if !ValidUID(uid) {
 		return Meta{}, ErrNotFound
 	}
@@ -166,7 +172,7 @@ func (s *Store) readMeta(uid string) (Meta, error) {
 // is what keeps a listing cheap enough that no index is needed yet. An entry
 // that will not parse is SKIPPED rather than failing the whole listing: one
 // broken world should not make the panel unusable.
-func (s *Store) List() ([]Meta, error) {
+func (s *Store) List(ctx context.Context) ([]Meta, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -195,7 +201,7 @@ func (s *Store) List() ([]Meta, error) {
 // must not exist yet". A mismatch is refused rather than reconciled, because
 // the alternative — last writer wins — silently destroys the other machine's
 // work, and a world is precisely the thing that cannot be recomputed.
-func (s *Store) Put(uid string, data []byte, info SaveInfo, owner string, expected int) (Meta, error) {
+func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo, owner string, expected int) (Meta, error) {
 	if !ValidUID(uid) {
 		return Meta{}, fmt.Errorf("invalid world uid")
 	}
@@ -335,8 +341,8 @@ func (s *Store) pruneRevisions(uid string, current int) {
 }
 
 // ReadCurrent returns the bytes of a world's current revision.
-func (s *Store) ReadCurrent(uid string) ([]byte, Meta, error) {
-	meta, err := s.Get(uid)
+func (s *Store) ReadCurrent(ctx context.Context, uid string) ([]byte, Meta, error) {
+	meta, err := s.Get(ctx, uid)
 	if err != nil {
 		return nil, Meta{}, err
 	}
@@ -354,8 +360,8 @@ func (s *Store) ReadCurrent(uid string) ([]byte, Meta, error) {
 // that it exists. For a co-resident consumer (the bake runner) that streams
 // the file itself instead of pulling tens of megabytes through this process —
 // the path is handed out, the LAYOUT around it stays this store's business.
-func (s *Store) CurrentZipPath(uid string) (string, error) {
-	meta, err := s.Get(uid)
+func (s *Store) CurrentZipPath(ctx context.Context, uid string) (string, error) {
+	meta, err := s.Get(ctx, uid)
 	if err != nil {
 		return "", err
 	}
@@ -370,8 +376,8 @@ func (s *Store) CurrentZipPath(uid string) (string, error) {
 }
 
 // ReadPreview returns the current revision's thumbnail.
-func (s *Store) ReadPreview(uid string) ([]byte, error) {
-	meta, err := s.Get(uid)
+func (s *Store) ReadPreview(ctx context.Context, uid string) ([]byte, error) {
+	meta, err := s.Get(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +395,7 @@ func (s *Store) ReadPreview(uid string) ([]byte, error) {
 }
 
 // Delete removes a world and every revision of it.
-func (s *Store) Delete(uid string) error {
+func (s *Store) Delete(ctx context.Context, uid string) error {
 	if !ValidUID(uid) {
 		return ErrNotFound
 	}

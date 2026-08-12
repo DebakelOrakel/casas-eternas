@@ -1,6 +1,7 @@
 package artifacts
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -35,14 +36,14 @@ func metaFor(key Key, label string) string {
 // create, files, meta last. Returns the uid.
 func bake(t *testing.T, s *Store, key Key, label, payload string) string {
 	t.Helper()
-	uid, _, err := s.Resolve(key, true)
+	uid, _, err := s.Resolve(context.Background(), key, true)
 	if err != nil {
 		t.Fatalf("Resolve(create): %v", err)
 	}
-	if err := s.Write(uid, "elevation.u16", strings.NewReader(payload)); err != nil {
+	if err := s.Write(context.Background(), uid, "elevation.u16", strings.NewReader(payload)); err != nil {
 		t.Fatalf("Write elevation: %v", err)
 	}
-	if err := s.Write(uid, "meta.json", strings.NewReader(metaFor(key, label))); err != nil {
+	if err := s.Write(context.Background(), uid, "meta.json", strings.NewReader(metaFor(key, label))); err != nil {
 		t.Fatalf("Write meta: %v", err)
 	}
 	return uid
@@ -52,25 +53,25 @@ func TestResolveMintsOnceAndReuses(t *testing.T) {
 	s := newTestStore(t)
 	key := testKey()
 
-	if _, _, err := s.Resolve(key, false); !errors.Is(err, ErrNotFound) {
+	if _, _, err := s.Resolve(context.Background(), key, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("resolve of an absent key = %v, want ErrNotFound", err)
 	}
-	uid, files, err := s.Resolve(key, true)
+	uid, files, err := s.Resolve(context.Background(), key, true)
 	if err != nil || uid == "" || len(files) != 0 {
 		t.Fatalf("create = %q, %v, %v", uid, files, err)
 	}
 	// The same key resolves to the SAME uid — the idempotency the old path
 	// grammar provided by construction, now provided by the reservation.
-	again, _, err := s.Resolve(key, true)
+	again, _, err := s.Resolve(context.Background(), key, true)
 	if err != nil || again != uid {
 		t.Fatalf("second create = %q, want %q (err %v)", again, uid, err)
 	}
 	// The resolve response carries the present files — the batch existence
 	// answer that used to be the `present` endpoint.
-	if err := s.Write(uid, "elevation.u16", strings.NewReader("x")); err != nil {
+	if err := s.Write(context.Background(), uid, "elevation.u16", strings.NewReader("x")); err != nil {
 		t.Fatal(err)
 	}
-	_, files, err = s.Resolve(key, true)
+	_, files, err = s.Resolve(context.Background(), key, true)
 	if err != nil || len(files) != 1 || files[0] != "elevation.u16" {
 		t.Fatalf("files = %v (err %v)", files, err)
 	}
@@ -78,7 +79,7 @@ func TestResolveMintsOnceAndReuses(t *testing.T) {
 
 func TestWriteRequiresAMintedArtifact(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.Write("00000000-0000-4000-8000-000000000000", "elevation.u16", strings.NewReader("x")); !errors.Is(err, ErrNotFound) {
+	if err := s.Write(context.Background(), "00000000-0000-4000-8000-000000000000", "elevation.u16", strings.NewReader("x")); !errors.Is(err, ErrNotFound) {
 		t.Errorf("write into unminted uid = %v, want ErrNotFound", err)
 	}
 }
@@ -87,19 +88,19 @@ func TestReadRoundTripsAndRefusesTraversal(t *testing.T) {
 	s := newTestStore(t)
 	uid := bake(t, s, testKey(), "Ätna", "raster-bytes")
 
-	raw, err := s.Read(uid, "elevation.u16")
+	raw, err := s.Read(context.Background(), uid, "elevation.u16")
 	if err != nil || string(raw) != "raster-bytes" {
 		t.Fatalf("read = %q, %v", raw, err)
 	}
-	if _, err := s.Read(uid, "rivers.f32"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Read(context.Background(), uid, "rivers.f32"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("absent file = %v, want ErrNotFound", err)
 	}
 	for _, name := range []string{"..", "../../etc/passwd", "a/../../b", "", "a\x00b", "a/b/c/d/e"} {
-		if err := s.Write(uid, name, strings.NewReader("x")); !errors.Is(err, ErrBadPath) {
+		if err := s.Write(context.Background(), uid, name, strings.NewReader("x")); !errors.Is(err, ErrBadPath) {
 			t.Errorf("Write(name=%q) = %v, want ErrBadPath", name, err)
 		}
 	}
-	if _, err := s.Read("../escape", "meta.json"); !errors.Is(err, ErrBadPath) {
+	if _, err := s.Read(context.Background(), "../escape", "meta.json"); !errors.Is(err, ErrBadPath) {
 		t.Errorf("traversal uid = %v, want ErrBadPath", err)
 	}
 }
@@ -119,7 +120,7 @@ func TestIndexRebuildsFromMetas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	found, files, err := second.Resolve(key, false)
+	found, files, err := second.Resolve(context.Background(), key, false)
 	if err != nil || found != uid {
 		t.Fatalf("restarted resolve = %q, %v (want %q)", found, err, uid)
 	}
@@ -145,7 +146,7 @@ func TestHandCopiedDirectoryIsIndexed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	uid, _, err := s.Resolve(key, false)
+	uid, _, err := s.Resolve(context.Background(), key, false)
 	if err != nil || uid != "backup-von-2026" {
 		t.Fatalf("hand-copied resolve = %q, %v", uid, err)
 	}
@@ -166,7 +167,7 @@ func TestListReportsMetasAndStrays(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	artifacts, err := s.List()
+	artifacts, err := s.List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -190,7 +191,7 @@ func TestListReportsMetasAndStrays(t *testing.T) {
 	}
 	// The listing and the usage figure must agree — the invariant whose
 	// violation showed as phantom megabytes above an empty panel.
-	usage, _ := s.Usage()
+	usage, _ := s.Usage(context.Background())
 	if usage != listed {
 		t.Errorf("usage %d disagrees with the listing sum %d", usage, listed)
 	}
@@ -205,31 +206,31 @@ func TestRemoveArtifactWorldAndClear(t *testing.T) {
 	bake(t, s, keyA2, "Alpha", "a2")
 	uidB := bake(t, s, keyB, "Bravo", "b")
 
-	if err := s.RemoveArtifact(uidA1); err != nil {
+	if err := s.RemoveArtifact(context.Background(), uidA1); err != nil {
 		t.Fatalf("RemoveArtifact: %v", err)
 	}
-	if _, _, err := s.Resolve(keyA1, false); !errors.Is(err, ErrNotFound) {
+	if _, _, err := s.Resolve(context.Background(), keyA1, false); !errors.Is(err, ErrNotFound) {
 		t.Errorf("removed artifact still resolves: %v", err)
 	}
 
 	// The world sweep works off the metas: every entry naming uid-alpha goes.
-	if err := s.RemoveWorld("uid-alpha"); err != nil {
+	if err := s.RemoveWorld(context.Background(), "uid-alpha"); err != nil {
 		t.Fatalf("RemoveWorld: %v", err)
 	}
-	if _, _, err := s.Resolve(keyA2, false); !errors.Is(err, ErrNotFound) {
+	if _, _, err := s.Resolve(context.Background(), keyA2, false); !errors.Is(err, ErrNotFound) {
 		t.Errorf("swept world still resolves: %v", err)
 	}
-	if _, _, err := s.Resolve(keyB, false); err != nil {
+	if _, _, err := s.Resolve(context.Background(), keyB, false); err != nil {
 		t.Errorf("the other world was affected: %v", err)
 	}
-	if err := s.RemoveWorld("uid-alpha"); !errors.Is(err, ErrNotFound) {
+	if err := s.RemoveWorld(context.Background(), "uid-alpha"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("second sweep = %v, want ErrNotFound", err)
 	}
 
-	if err := s.Clear(); err != nil {
+	if err := s.Clear(context.Background()); err != nil {
 		t.Fatalf("Clear: %v", err)
 	}
-	if _, _, err := s.Resolve(keyB, false); !errors.Is(err, ErrNotFound) {
+	if _, _, err := s.Resolve(context.Background(), keyB, false); !errors.Is(err, ErrNotFound) {
 		t.Errorf("cleared store still resolves: %v", err)
 	}
 	// The store must still be usable afterwards, not merely empty.
@@ -249,7 +250,7 @@ func TestConcurrentResolvesShareOneUID(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			uid, _, err := s.Resolve(key, true)
+			uid, _, err := s.Resolve(context.Background(), key, true)
 			if err != nil {
 				t.Errorf("resolver %d: %v", i, err)
 			}
@@ -279,7 +280,7 @@ func TestCapEvictsLeastRecentlyUsed(t *testing.T) {
 	bake(t, store, oldKey, "Old", strings.Repeat("o", 90))
 	bake(t, store, hotKey, "Hot", strings.Repeat("h", 90))
 	// Touch the second entry so the first is the least recently used.
-	if _, _, err := store.Resolve(hotKey, false); err != nil {
+	if _, _, err := store.Resolve(context.Background(), hotKey, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -288,13 +289,13 @@ func TestCapEvictsLeastRecentlyUsed(t *testing.T) {
 	newKey := Key{WorldUID: "uid-b", WorldID: "3333333333333333", PipelineVersion: "v6-a", Stage: "2"}
 	newUID := bake(t, store, newKey, "New", strings.Repeat("n", 90))
 
-	if _, _, err := store.Resolve(oldKey, false); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.Resolve(context.Background(), oldKey, false); !errors.Is(err, ErrNotFound) {
 		t.Errorf("stale entry survived the sweep: %v", err)
 	}
-	if _, _, err := store.Resolve(hotKey, false); err != nil {
+	if _, _, err := store.Resolve(context.Background(), hotKey, false); err != nil {
 		t.Errorf("recently used entry was evicted: %v", err)
 	}
-	if uid, _, err := store.Resolve(newKey, false); err != nil || uid != newUID {
+	if uid, _, err := store.Resolve(context.Background(), newKey, false); err != nil || uid != newUID {
 		t.Errorf("the just-written entry must never be the victim: %q, %v", uid, err)
 	}
 }
@@ -326,7 +327,7 @@ func TestCapSparesFreshMetalessEntries(t *testing.T) {
 	if _, err := os.Stat(freshStray); err != nil {
 		t.Errorf("a fresh meta-less entry must be spared: %v", err)
 	}
-	if _, _, err := store.Resolve(keyA, false); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.Resolve(context.Background(), keyA, false); !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected the oldest complete entry to be evicted instead: %v", err)
 	}
 

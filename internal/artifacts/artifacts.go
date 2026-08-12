@@ -26,6 +26,7 @@ import (
 	"strconv"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
+	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
 )
 
 // uploadLimit caps one artifact file. An amplified elevation raster is ~17 MB
@@ -97,10 +98,10 @@ type resolveResponse struct {
 func (m *Module) handleResolve(w http.ResponseWriter, r *http.Request) {
 	var request resolveRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil {
-		clientError(w, http.StatusBadRequest, "expected {worldUid, worldId, pipelineVersion, stage, create?}")
+		httpjson.ClientError(w, http.StatusBadRequest, "expected {worldUid, worldId, pipelineVersion, stage, create?}")
 		return
 	}
-	uid, files, err := m.store.Resolve(request.Key, request.Create)
+	uid, files, err := m.store.Resolve(r.Context(), request.Key, request.Create)
 	if err != nil {
 		respondStoreError(w, err)
 		return
@@ -108,11 +109,11 @@ func (m *Module) handleResolve(w http.ResponseWriter, r *http.Request) {
 	if request.Create {
 		slog.Info("artifact resolved for writing", "artifact", uid, "uid", request.WorldUID, "world", request.WorldID, "version", request.PipelineVersion, "stage", request.Stage)
 	}
-	writeJSON(w, http.StatusOK, resolveResponse{ArtifactUID: uid, Files: files})
+	httpjson.Write(w, http.StatusOK, resolveResponse{ArtifactUID: uid, Files: files})
 }
 
 func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
-	raw, err := m.store.Read(r.PathValue("artifactUID"), r.PathValue("name"))
+	raw, err := m.store.Read(r.Context(), r.PathValue("artifactUID"), r.PathValue("name"))
 	if err != nil {
 		respondStoreError(w, err)
 		return
@@ -128,18 +129,18 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("artifactUID")
 	body := http.MaxBytesReader(w, r.Body, uploadLimit)
-	if err := m.store.Write(uid, r.PathValue("name"), body); err != nil {
+	if err := m.store.Write(r.Context(), uid, r.PathValue("name"), body); err != nil {
 		switch {
 		case errors.Is(err, ErrBadPath):
-			clientError(w, http.StatusBadRequest, "invalid artifact path")
+			httpjson.ClientError(w, http.StatusBadRequest, "invalid artifact path")
 		case errors.Is(err, ErrNotFound):
 			// Writing into an unminted uid: resolve with create first. Loud on
 			// purpose — accepting the write would mint entries out of thin air.
-			clientError(w, http.StatusNotFound, "no such artifact — resolve with create first")
+			httpjson.ClientError(w, http.StatusNotFound, "no such artifact — resolve with create first")
 		default:
 			// A body that exceeded the cap surfaces from the copy, not from the
 			// path check, so it is reported here rather than as a store fault.
-			clientError(w, http.StatusRequestEntityTooLarge, "artifact upload too large or truncated")
+			httpjson.ClientError(w, http.StatusRequestEntityTooLarge, "artifact upload too large or truncated")
 		}
 		return
 	}
@@ -150,20 +151,20 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
-	artifacts, err := m.store.List()
+	artifacts, err := m.store.List(r.Context())
 	if err != nil {
-		serverError(w, "listing artifacts", err)
+		httpjson.ServerError(w, "listing artifacts", err)
 		return
 	}
 	if artifacts == nil {
 		artifacts = []ListedArtifact{}
 	}
-	usage, _ := m.store.Usage()
-	writeJSON(w, http.StatusOK, map[string]any{"artifacts": artifacts, "bytes": usage})
+	usage, _ := m.store.Usage(r.Context())
+	httpjson.Write(w, http.StatusOK, map[string]any{"artifacts": artifacts, "bytes": usage})
 }
 
 func (m *Module) handleRemove(w http.ResponseWriter, r *http.Request) {
-	if err := m.store.RemoveArtifact(r.PathValue("artifactUID")); err != nil {
+	if err := m.store.RemoveArtifact(r.Context(), r.PathValue("artifactUID")); err != nil {
 		respondStoreError(w, err)
 		return
 	}
@@ -175,7 +176,7 @@ func (m *Module) handleRemove(w http.ResponseWriter, r *http.Request) {
 // meta files attribute to one world.
 func (m *Module) handleClear(w http.ResponseWriter, r *http.Request) {
 	if world := r.URL.Query().Get("world"); world != "" {
-		if err := m.store.RemoveWorld(world); err != nil {
+		if err := m.store.RemoveWorld(r.Context(), world); err != nil {
 			respondStoreError(w, err)
 			return
 		}
@@ -183,8 +184,8 @@ func (m *Module) handleClear(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := m.store.Clear(); err != nil {
-		serverError(w, "clearing artifacts", err)
+	if err := m.store.Clear(r.Context()); err != nil {
+		httpjson.ServerError(w, "clearing artifacts", err)
 		return
 	}
 	slog.Info("artifact store cleared")
@@ -194,27 +195,10 @@ func (m *Module) handleClear(w http.ResponseWriter, r *http.Request) {
 func respondStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		clientError(w, http.StatusNotFound, "no such artifact")
+		httpjson.ClientError(w, http.StatusNotFound, "no such artifact")
 	case errors.Is(err, ErrBadPath):
-		clientError(w, http.StatusBadRequest, "invalid artifact path")
+		httpjson.ClientError(w, http.StatusBadRequest, "invalid artifact path")
 	default:
-		serverError(w, "artifact store", err)
+		httpjson.ServerError(w, "artifact store", err)
 	}
-}
-
-func clientError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
-}
-
-// serverError logs the detail and returns a generic message: the cause belongs
-// in the operator's log, not in a response body.
-func serverError(w http.ResponseWriter, context string, err error) {
-	slog.Error(context, "err", err)
-	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-}
-
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
 }

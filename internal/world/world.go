@@ -10,7 +10,6 @@
 package world
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +18,7 @@ import (
 	"strconv"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
+	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
 
@@ -83,20 +83,20 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 func (m *Module) Close() error { return nil }
 
 func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
-	metas, err := m.store.List()
+	metas, err := m.store.List(r.Context())
 	if err != nil {
-		serverError(w, "listing worlds", err)
+		httpjson.ServerError(w, "listing worlds", err)
 		return
 	}
 	if metas == nil {
 		metas = []Meta{}
 	}
-	writeJSON(w, http.StatusOK, metas)
+	httpjson.Write(w, http.StatusOK, metas)
 }
 
 func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("uid")
-	data, meta, err := m.store.ReadCurrent(uid)
+	data, meta, err := m.store.ReadCurrent(r.Context(), uid)
 	if err != nil {
 		respondStoreError(w, err)
 		return
@@ -114,16 +114,16 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 // the world and whether it has a revision, at the cost of a lookup rather than
 // a download.
 func (m *Module) handleMeta(w http.ResponseWriter, r *http.Request) {
-	meta, err := m.store.Get(r.PathValue("uid"))
+	meta, err := m.store.Get(r.Context(), r.PathValue("uid"))
 	if err != nil {
 		respondStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, meta)
+	httpjson.Write(w, http.StatusOK, meta)
 }
 
 func (m *Module) handlePreview(w http.ResponseWriter, r *http.Request) {
-	raw, err := m.store.ReadPreview(r.PathValue("uid"))
+	raw, err := m.store.ReadPreview(r.Context(), r.PathValue("uid"))
 	if err != nil {
 		respondStoreError(w, err)
 		return
@@ -136,35 +136,35 @@ func (m *Module) handlePreview(w http.ResponseWriter, r *http.Request) {
 func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("uid")
 	if !ValidUID(uid) {
-		clientError(w, http.StatusBadRequest, "not a valid world uid")
+		httpjson.ClientError(w, http.StatusBadRequest, "not a valid world uid")
 		return
 	}
 	expected, ok := parseIfMatch(r.Header.Get("If-Match"))
 	if !ok {
-		clientError(w, http.StatusBadRequest, `If-Match must be a revision like "3", or absent to create`)
+		httpjson.ClientError(w, http.StatusBadRequest, `If-Match must be a revision like "3", or absent to create`)
 		return
 	}
 
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, uploadLimit))
 	if err != nil {
-		clientError(w, http.StatusRequestEntityTooLarge, "world upload too large or truncated")
+		httpjson.ClientError(w, http.StatusRequestEntityTooLarge, "world upload too large or truncated")
 		return
 	}
 
 	info, err := inspectSave(data)
 	if err != nil {
-		clientError(w, http.StatusBadRequest, err.Error())
+		httpjson.ClientError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// The uid in the path and the one inside the save must agree. Accepting a
 	// mismatch would file a world under an id its own recipe does not carry —
 	// so the next upload from the same client would create a second entry.
 	if info.UID != uid {
-		clientError(w, http.StatusBadRequest, fmt.Sprintf("save carries uid %s but was addressed as %s", info.UID, uid))
+		httpjson.ClientError(w, http.StatusBadRequest, fmt.Sprintf("save carries uid %s but was addressed as %s", info.UID, uid))
 		return
 	}
 
-	meta, err := m.store.Put(uid, data, info, m.cfg.Identity.Caller(r), expected)
+	meta, err := m.store.Put(r.Context(), uid, data, info, m.cfg.Identity.Caller(r), expected)
 	if err != nil {
 		respondStoreError(w, err)
 		return
@@ -175,12 +175,12 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 	if meta.Revision == 1 {
 		status = http.StatusCreated
 	}
-	writeJSON(w, status, meta)
+	httpjson.Write(w, status, meta)
 }
 
 func (m *Module) handleDelete(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("uid")
-	if err := m.store.Delete(uid); err != nil {
+	if err := m.store.Delete(r.Context(), uid); err != nil {
 		respondStoreError(w, err)
 		return
 	}
@@ -217,33 +217,16 @@ func etag(revision int) string { return `"` + strconv.Itoa(revision) + `"` }
 func respondStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		clientError(w, http.StatusNotFound, "no such world")
+		httpjson.ClientError(w, http.StatusNotFound, "no such world")
 	case errors.Is(err, ErrExists):
 		// 409, not 412: nothing was asked to be matched. The caller said
 		// "create" and something is already there.
-		clientError(w, http.StatusConflict, "world already exists; send If-Match with its revision to update it")
+		httpjson.ClientError(w, http.StatusConflict, "world already exists; send If-Match with its revision to update it")
 	case errors.Is(err, ErrRevisionMismatch):
 		// 412 is what RFC 9110 specifies for a failed If-Match. The plan
 		// originally said 409; that is the code for the case above.
-		clientError(w, http.StatusPreconditionFailed, "revision mismatch; fetch the world again and retry")
+		httpjson.ClientError(w, http.StatusPreconditionFailed, "revision mismatch; fetch the world again and retry")
 	default:
-		serverError(w, "world store", err)
+		httpjson.ServerError(w, "world store", err)
 	}
-}
-
-func clientError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
-}
-
-// serverError logs the detail and returns a generic message: the cause belongs
-// in the operator's log, not in a response body.
-func serverError(w http.ResponseWriter, context string, err error) {
-	slog.Error(context, "err", err)
-	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-}
-
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
 }

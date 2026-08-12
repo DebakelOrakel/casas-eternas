@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/auth"
+	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
 
@@ -40,7 +41,9 @@ const defaultErosionRounds = 2
 
 // nodeHeapMB is what the baker's Node process is allowed. Sized for the 8192²
 // measurement (~2.6 GB) with headroom, since running out mid-bake wastes the
-// minutes already spent.
+// minutes already spent. The cluster Job pins the same number by hand in
+// bake-job.yaml's command line (the template has no value for it) — change
+// the two together.
 const nodeHeapMB = 6144
 
 // jobHistory caps the in-memory job records. The RESULT lives in the artifact
@@ -60,7 +63,7 @@ type Config struct {
 	// verbatim so the HTTP variant authenticates as the person asking —
 	// identity travels in the token, and this module holds nobody's. The
 	// closure variant ignores it.
-	WorldOwner func(uid, bearer string) (owner string, ok bool)
+	WorldOwner func(ctx context.Context, uid, bearer string) (owner string, ok bool)
 	// The world as the BAKER reads it — exactly one of the two is set.
 	// WorldZip yields the current revision's save as a file path, for a local
 	// runner sitting beside the world store; called at start rather than at
@@ -68,7 +71,7 @@ type Config struct {
 	// baking a stale path. WorldsURL is the /v1 base to fetch from instead: a
 	// cluster Job reaching its own server by pod IP, or any runner whose
 	// world module lives in another process.
-	WorldZip  func(uid string) (path string, ok bool)
+	WorldZip  func(ctx context.Context, uid string) (path string, ok bool)
 	WorldsURL string
 	// The artifact sink — exactly one of the two is set. ArtifactsDir is the
 	// directory the co-resident artifacts module serves (safe to share:
@@ -245,7 +248,7 @@ func newID() string {
 func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var request Request
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&request); err != nil {
-		clientError(w, http.StatusBadRequest, `expected {"worldUid": "…", "stage": 2}`)
+		httpjson.ClientError(w, http.StatusBadRequest, `expected {"worldUid": "…", "stage": 2}`)
 		return
 	}
 	if request.Scope.Kind == "" {
@@ -255,20 +258,20 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		request.ErosionRounds = defaultErosionRounds
 	}
 	if err := request.Validate(); err != nil {
-		clientError(w, http.StatusBadRequest, err.Error())
+		httpjson.ClientError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// Both checked before queueing, so a request that cannot succeed fails now
 	// rather than at the far end of a queue that may be minutes long.
-	owner, ok := m.cfg.WorldOwner(request.WorldUID, r.Header.Get("Authorization"))
+	owner, ok := m.cfg.WorldOwner(r.Context(), request.WorldUID, r.Header.Get("Authorization"))
 	if !ok {
-		clientError(w, http.StatusNotFound, "no such world, or it has no stored revision")
+		httpjson.ClientError(w, http.StatusNotFound, "no such world, or it has no stored revision")
 		return
 	}
 	if !m.canBake(m.cfg.Identity.Caller(r), owner) {
 		// 403 and not 404: the world exists, and pretending otherwise would
 		// make a permission problem look like a missing save.
-		clientError(w, http.StatusForbidden, "only a world's owner may commission a bake for it")
+		httpjson.ClientError(w, http.StatusForbidden, "only a world's owner may commission a bake for it")
 		return
 	}
 
@@ -279,7 +282,7 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	// which costs nothing; the panic the old close(queue) risked cost the
 	// whole shutdown.
 	if m.shutdown.Err() != nil {
-		clientError(w, http.StatusServiceUnavailable, "server is shutting down")
+		httpjson.ClientError(w, http.StatusServiceUnavailable, "server is shutting down")
 		return
 	}
 
@@ -291,22 +294,22 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			j.State = StateFailed
 			j.Error = "bake queue is full"
 		})
-		clientError(w, http.StatusServiceUnavailable, "bake queue is full")
+		httpjson.ClientError(w, http.StatusServiceUnavailable, "bake queue is full")
 		return
 	}
 	slog.Info("bake queued", "job", job.ID, "world", request.WorldUID, "stage", request.Stage)
 	// 202: accepted, not done. The caller polls, or simply looks for the
 	// artifact — which is the point of keying artifacts by content.
-	writeJSON(w, http.StatusAccepted, job)
+	httpjson.Write(w, http.StatusAccepted, job)
 }
 
 func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 	job, ok := m.jobs.get(r.PathValue("id"))
 	if !ok {
-		clientError(w, http.StatusNotFound, "no such job")
+		httpjson.ClientError(w, http.StatusNotFound, "no such job")
 		return
 	}
-	writeJSON(w, http.StatusOK, job)
+	httpjson.Write(w, http.StatusOK, job)
 }
 
 // handleProgress takes a running job's own report of where it has got to.
@@ -326,16 +329,16 @@ func (m *Module) handleProgress(w http.ResponseWriter, r *http.Request) {
 	if !m.mayReportFor(r, id) {
 		// Deliberately not 401: the caller may be perfectly well authenticated,
 		// just not as this job. 403 says "not you" rather than "who are you".
-		clientError(w, http.StatusForbidden, "not this job")
+		httpjson.ClientError(w, http.StatusForbidden, "not this job")
 		return
 	}
 	var report Progress
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, progressBodyLimit)).Decode(&report); err != nil {
-		clientError(w, http.StatusBadRequest, "malformed progress")
+		httpjson.ClientError(w, http.StatusBadRequest, "malformed progress")
 		return
 	}
 	if report.Phase == "" {
-		clientError(w, http.StatusBadRequest, "phase is required")
+		httpjson.ClientError(w, http.StatusBadRequest, "phase is required")
 		return
 	}
 	// Clamped rather than rejected: a percent slightly out of range is a rounding
@@ -358,7 +361,7 @@ func (m *Module) handleProgress(w http.ResponseWriter, r *http.Request) {
 		// 404 for both "no such job" and "not running any more": the reporter
 		// cannot act on the difference, and saying which would let anyone
 		// holding one job's token probe for the state of others.
-		clientError(w, http.StatusNotFound, "no such running job")
+		httpjson.ClientError(w, http.StatusNotFound, "no such running job")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -381,7 +384,7 @@ func (m *Module) mayReportFor(r *http.Request, id string) bool {
 }
 
 func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, m.jobs.list())
+	httpjson.Write(w, http.StatusOK, m.jobs.list())
 }
 
 // canBake decides whether this caller may commission a bake of this world.
@@ -450,7 +453,7 @@ func (m *Module) work(ctx context.Context) {
 			ErosionRounds: job.Request.ErosionRounds,
 		}
 		if m.cfg.WorldZip != nil {
-			zip, ok := m.cfg.WorldZip(job.Request.WorldUID)
+			zip, ok := m.cfg.WorldZip(ctx, job.Request.WorldUID)
 			if !ok {
 				// Deleted (or pruned) between enqueue and start. Failing the
 				// job names the actual cause; handing the runner a dead path
@@ -534,14 +537,4 @@ func (m *Module) work(ctx context.Context) {
 		slog.Info("bake done", "job", id, "world", result.WorldID, "stage", result.Stage,
 			"size", fmt.Sprintf("%dx%d", result.Width, result.Height), "took", ended.Sub(started).Round(time.Second))
 	}
-}
-
-func clientError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
-}
-
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
 }

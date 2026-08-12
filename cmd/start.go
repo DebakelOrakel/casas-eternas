@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -162,16 +163,16 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldStore *world.Sto
 	case worldStore != nil:
 		// Co-resident: closures over the ONE store the world module runs on.
 		store := worldStore
-		bcfg.WorldOwner = func(uid, _ string) (string, bool) {
-			meta, err := store.Get(uid)
+		bcfg.WorldOwner = func(ctx context.Context, uid, _ string) (string, bool) {
+			meta, err := store.Get(ctx, uid)
 			return meta.Owner, err == nil && meta.Revision >= 1
 		}
 		if inCluster {
 			// The Job runs on another node and reaches this same server by IP.
 			bcfg.WorldsURL = selfURL
 		} else {
-			bcfg.WorldZip = func(uid string) (string, bool) {
-				path, err := store.CurrentZipPath(uid)
+			bcfg.WorldZip = func(ctx context.Context, uid string) (string, bool) {
+				path, err := store.CurrentZipPath(ctx, uid)
 				return path, err == nil
 			}
 		}
@@ -181,7 +182,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldStore *world.Sto
 			return bake.Config{}, err
 		}
 		bcfg.WorldOwner = httpWorldOwner(base)
-		bcfg.WorldsURL = base + "/v1"
+		bcfg.WorldsURL = base + server.APIPrefix
 	default:
 		return bake.Config{}, fmt.Errorf("bake needs a world source: select the world target too, or set global.services.worlds")
 	}
@@ -206,7 +207,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldStore *world.Sto
 		if err := requireCapability(keySvcArts, base, "artifacts"); err != nil {
 			return bake.Config{}, err
 		}
-		bcfg.ArtifactsURL = base + "/v1"
+		bcfg.ArtifactsURL = base + server.APIPrefix
 	default:
 		return bake.Config{}, fmt.Errorf("bake needs an artifact sink: select the artifacts target too, or set global.services.artifacts")
 	}
@@ -218,10 +219,10 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldStore *world.Sto
 // PERSON asking for the bake, so no service identity has to exist for this
 // (the open point in docs/design/access-control.md stays open, not worked
 // around).
-func httpWorldOwner(base string) func(uid, bearer string) (string, bool) {
+func httpWorldOwner(base string) func(ctx context.Context, uid, bearer string) (string, bool) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	return func(uid, bearer string) (string, bool) {
-		request, err := http.NewRequest(http.MethodGet, base+"/v1/worlds/"+url.PathEscape(uid)+"/meta", nil)
+	return func(ctx context.Context, uid, bearer string) (string, bool) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+server.APIPrefix+"/worlds/"+url.PathEscape(uid)+"/meta", nil)
 		if err != nil {
 			return "", false
 		}
@@ -258,7 +259,7 @@ func httpWorldOwner(base string) func(uid, bearer string) (string, bool) {
 // the setting to fix.
 func requireCapability(key, base, module string) error {
 	client := &http.Client{Timeout: 5 * time.Second}
-	response, err := client.Get(base + "/v1/capabilities")
+	response, err := client.Get(base + server.CapabilitiesPath)
 	if err != nil {
 		return fmt.Errorf("%s: %s is unreachable: %w", key, base, err)
 	}
@@ -291,7 +292,7 @@ func serverBaseURL(listen string) string {
 	if index := strings.LastIndex(listen, ":"); index >= 0 && index+1 < len(listen) {
 		port = listen[index+1:]
 	}
-	return fmt.Sprintf("http://%s:%s/v1", ip, port)
+	return fmt.Sprintf("http://%s:%s%s", ip, port, server.APIPrefix)
 }
 
 // bakerPath resolves bake.baker, defaulting to the bundle beside the binary.

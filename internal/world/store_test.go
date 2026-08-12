@@ -2,6 +2,7 @@ package world
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -39,7 +40,7 @@ func putSave(t *testing.T, s *Store, uid string, body string, expected int) (Met
 	if err != nil {
 		t.Fatalf("inspectSave: %v", err)
 	}
-	meta, err := s.Put(uid, data, info, "local", expected)
+	meta, err := s.Put(context.Background(), uid, data, info, "local", expected)
 	return meta, data, err
 }
 
@@ -61,7 +62,7 @@ func TestPutThenReadRoundTrips(t *testing.T) {
 		t.Errorf("display meta = seed %q, generator %q, hash %q", meta.Seed, meta.Generator, meta.ContentHash)
 	}
 
-	data, read, err := s.ReadCurrent(sampleUID)
+	data, read, err := s.ReadCurrent(context.Background(), sampleUID)
 	if err != nil {
 		t.Fatalf("ReadCurrent: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestPutThenReadRoundTrips(t *testing.T) {
 	if !bytes.Equal(data, sent) {
 		t.Error("stored bytes are not byte-identical to the ones uploaded")
 	}
-	preview, err := s.ReadPreview(sampleUID)
+	preview, err := s.ReadPreview(context.Background(), sampleUID)
 	if err != nil || !bytes.Equal(preview, []byte("PNG-first")) {
 		t.Errorf("preview = %q, err = %v", preview, err)
 	}
@@ -102,7 +103,7 @@ func TestPutEnforcesTheExpectedRevision(t *testing.T) {
 
 	// A refused write must have changed nothing: what is current is the one
 	// accepted update, not either of the two rejected attempts.
-	data, _, _ := s.ReadCurrent(sampleUID)
+	data, _, _ := s.ReadCurrent(context.Background(), sampleUID)
 	if !bytes.Equal(data, accepted) {
 		t.Error("current contents are not the accepted write")
 	}
@@ -144,13 +145,13 @@ func TestWorldWithoutMetaReadsAsAbsent(t *testing.T) {
 	if err := os.Remove(filepath.Join(s.worldDir(sampleUID), "meta.json")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Get(sampleUID); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Get(context.Background(), sampleUID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Get = %v, want ErrNotFound", err)
 	}
-	if _, _, err := s.ReadCurrent(sampleUID); !errors.Is(err, ErrNotFound) {
+	if _, _, err := s.ReadCurrent(context.Background(), sampleUID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("ReadCurrent = %v, want ErrNotFound", err)
 	}
-	list, err := s.List()
+	list, err := s.List(context.Background())
 	if err != nil || len(list) != 0 {
 		t.Errorf("List = %v (%d entries), want empty", err, len(list))
 	}
@@ -178,7 +179,7 @@ func TestListIsNewestFirstAndSkipsBrokenEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	list, err := s.List()
+	list, err := s.List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -198,13 +199,13 @@ func TestDeleteRemovesEveryRevision(t *testing.T) {
 	if _, _, err := putSave(t, s, sampleUID, "v2", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Delete(sampleUID); err != nil {
+	if err := s.Delete(context.Background(), sampleUID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := os.Stat(s.worldDir(sampleUID)); !os.IsNotExist(err) {
 		t.Error("world directory survived the delete")
 	}
-	if err := s.Delete(sampleUID); !errors.Is(err, ErrNotFound) {
+	if err := s.Delete(context.Background(), sampleUID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("second delete = %v, want ErrNotFound", err)
 	}
 }
@@ -222,7 +223,7 @@ func TestInvalidUIDsAreRefused(t *testing.T) {
 		if ValidUID(uid) {
 			t.Errorf("ValidUID(%q) = true", uid)
 		}
-		if _, err := s.Get(uid); !errors.Is(err, ErrNotFound) {
+		if _, err := s.Get(context.Background(), uid); !errors.Is(err, ErrNotFound) {
 			t.Errorf("Get(%q) = %v, want ErrNotFound", uid, err)
 		}
 	}
@@ -268,7 +269,7 @@ func TestConcurrentPutsLetExactlyOneWin(t *testing.T) {
 	if won != 1 {
 		t.Errorf("%d racers succeeded, want exactly 1", won)
 	}
-	meta, err := s.Get(sampleUID)
+	meta, err := s.Get(context.Background(), sampleUID)
 	if err != nil || meta.Revision != 2 {
 		t.Errorf("after the race revision = %d (err %v), want 2", meta.Revision, err)
 	}
@@ -304,7 +305,7 @@ func TestPutDedupesIdenticalUpload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspectSave: %v", err)
 	}
-	again, err := s.Put(sampleUID, firstBytes, info, "local", first.Revision)
+	again, err := s.Put(context.Background(), sampleUID, firstBytes, info, "local", first.Revision)
 	if err != nil {
 		t.Fatalf("identical re-upload: %v", err)
 	}
@@ -346,7 +347,7 @@ func TestPruneKeepsNewestN(t *testing.T) {
 		}
 	}
 	// The current revision still reads, and the meta still names it.
-	if _, meta, err := store.ReadCurrent(sampleUID); err != nil || meta.Revision != 3 {
+	if _, meta, err := store.ReadCurrent(context.Background(), sampleUID); err != nil || meta.Revision != 3 {
 		t.Errorf("current after prune = rev %d, err %v", meta.Revision, err)
 	}
 }

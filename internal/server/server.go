@@ -47,16 +47,39 @@ type Describer interface {
 	Describe() map[string]any
 }
 
+// APIPrefix is the version prefix of every API route. One constant for the
+// places that COMPOSE URLs (this package and cmd/); the modules' route
+// patterns spell it out as literals on purpose — a pattern is a registered
+// public surface, and hiding half of it behind a constant would make a grep
+// for "/v1/worlds" miss the very line that claims it. Nothing imports this
+// package except cmd/, which is exactly who composes.
+const APIPrefix = "/v1"
+
 // CapabilitiesPath says which modules this process runs. Public, and that is a
 // decision rather than an oversight: it is what the client probes to tell a
 // server that is down from one it is merely not logged in to, and answering 401
 // here would report every logged-out user as "server unreachable".
-const CapabilitiesPath = "/v1/capabilities"
+const CapabilitiesPath = APIPrefix + "/capabilities"
 
 // shutdownGrace bounds how long in-flight requests may finish after a signal.
 // Uploading a world is the long pole here, hence seconds rather than the
 // millisecond-scale value a pure API would use.
 const shutdownGrace = 15 * time.Second
+
+// mount calls a module's Mount, turning a panic into the error it should have
+// been. The realistic panic here is ServeMux's own: two modules claiming the
+// same route pattern. That is a composition bug in cmd/, and it should surface
+// as "mounting <module>: <conflict>" naming the module that lost — not as a
+// stack trace that leaves the operator to work out which of five Mount calls
+// blew up.
+func mount(m Module, mux *http.ServeMux) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("panic: %v", recovered)
+		}
+	}()
+	return m.Mount(mux)
+}
 
 // Run mounts every module, serves until interrupted, then shuts down cleanly.
 // It closes the modules on the way out regardless of how it leaves.
@@ -84,7 +107,7 @@ func Run(ctx context.Context, cfg config.Server, modules []Module, gate func(htt
 
 	names := make([]string, 0, len(modules))
 	for _, m := range modules {
-		if mountErr := m.Mount(mux); mountErr != nil {
+		if mountErr := mount(m, mux); mountErr != nil {
 			return fmt.Errorf("mounting %s: %w", m.Name(), mountErr)
 		}
 		names = append(names, m.Name())

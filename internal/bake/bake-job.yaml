@@ -22,7 +22,9 @@ metadata:
   labels:
     app: casas-eternas
     # The selector everything else keys off: the anti-affinity below matches
-    # it, and so does the sweep that finds Jobs from a previous server process.
+    # it, and it is the handle a sweep for Jobs orphaned by a replaced server
+    # process WOULD use — that sweep is a named open point
+    # (docs/decisions/distributed-bake.md), not something that exists.
     casas-eternas/component: bake
     casas-eternas/job-id: {{ .JobID }}
 spec:
@@ -77,6 +79,10 @@ spec:
           # With an immutable tag or a digest this becomes free, and pinning one
           # is the better answer whenever the deployment can name it.
           imagePullPolicy: Always
+          # --max-old-space-size mirrors nodeHeapMB in bake.go BY HAND — the
+          # template has no value for it, so change the two together. Note the
+          # tension with the 4Gi limit below: the kernel's ceiling sits under
+          # Node's, so a runaway bake is killed by the cgroup, not GC'd.
           command: ["node", "--max-old-space-size=6144", "/app/baker.mjs"]
           args: {{ .Args }}
           resources:

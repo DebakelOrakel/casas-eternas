@@ -147,6 +147,8 @@ func (m *Module) serveConfig(w http.ResponseWriter, r *http.Request) {
 	// would point a client at an address that no longer answers.
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "application/json")
+	// The literal mirrors server.APIPrefix, which this module must not import
+	// (nothing imports internal/server); change the two together.
 	document := runtimeConfig{APIBase: "/v1", AuthMode: m.cfg.All.Global.Auth.Mode}
 	if m.cfg.LoginPath != "" {
 		document.Login = &login{Path: m.cfg.LoginPath}
