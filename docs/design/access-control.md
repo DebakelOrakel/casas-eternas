@@ -300,3 +300,9 @@ records the fork when step 1 begins.
   budget is whose is undecided.
 - **Token refresh/revocation** (server-auth.md step 8) — adjacent, not
   part of this.
+- **Service identities** (stated 2026-08-12): a world-less bake service
+  (the "a target must run alone" rule) authenticates to the world service
+  by minting tokens with the shared key — mechanically fine today, but once
+  this ACL enforces, that machine identity needs DEFINED rights (read the
+  world it bakes, nothing else) rather than riding on "any authenticated
+  caller". Same family as the job-token narrowing, one level up.

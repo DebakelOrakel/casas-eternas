@@ -63,7 +63,41 @@ The test for where a thing belongs: **if a function does not need to know *which
 world is meant, it is not world-layer code.** `runErosionPass` does not;
 `deriveWorldId` does.
 
-`ui/` is a location, not a layer, and it holds two different kinds of thing:
+**Go server modules — the target is the boundary.** Vocabulary first, because
+the words are NOT interchangeable: a PACKAGE is a Go unit under `internal/`
+(the leaves `auth`/`identity`/`config` are packages, not modules); a MODULE
+implements `server.Module` (routes + lifecycle — session is a module with no
+target, chosen by auth mode); a TARGET is the deployment unit `-t` selects,
+wired explicitly in `cmd/start.go` (no registry — the composition root is the
+one place that knows every module); a SERVICE is a running process with a set
+of targets — always the same binary. Package layout follows the DOMAIN,
+targets follow the DEPLOYMENT unit; a subsystem that must straddle processes
+gains a sub-target, not a new package (server-storage.md). **A target must be
+able to run alone — otherwise it is not a target** (stated 2026-08-12; bake is
+the one violator, fix planned: cross-module needs become co-resident closures
+OR URL-backed variants, chosen by `cmd/` at composition). The rules, audited
+and written down 2026-08-12:
+
+- Dependencies flow one way: `cmd` → modules → leaves. **Nothing imports
+  `internal/server`** — it knows the modules structurally, they do not know
+  it. cobra/viper exist only in `cmd/`; modules receive plain config structs.
+- **A module's routes live under its own namespace** (`/v1/<module>…`), and
+  no module registers into another's. (Known violation to fix: bake's
+  `POST /v1/worlds/{uid}/bake`.)
+- **A module's disk layout and JSON formats are private.** Cross-module needs
+  are injected functions composed in `cmd/` — the same pattern that
+  distributes `identity.Resolver`. Never duplicate another module's paths or
+  tags. (Known violation to fix: bake re-implements the world store's layout
+  and Meta struct, tests included.)
+- **One process per store directory.** In-process locks and in-memory indexes
+  ARE the concurrency model; scaling means splitting targets by module, never
+  replicating a store module against one directory.
+- Identity travels in the token (verifiable in every process via the shared
+  key); rights live with the resource. That is what lets any target split
+  run without runtime calls between modules —
+  [docs/design/access-control.md](docs/design/access-control.md).
+
+
 **widgets** (`tooltip`, `panel`, `notifications`, `help`, `chrome`) which are DOM
 only and import nothing outside `ui/`, so anything may use them; and **connected
 panels** (`storagePanel`, `serverIndicator`, `worldPanels`, `signInPanel`) which
