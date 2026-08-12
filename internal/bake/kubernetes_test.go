@@ -2,7 +2,6 @@ package bake
 
 import (
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"text/template"
@@ -194,22 +193,5 @@ func TestJobNameIsAValidObjectName(t *testing.T) {
 		if len(name) > 63 {
 			t.Errorf("jobName(%q) is %d chars, over the 63 limit", id, len(name))
 		}
-	}
-}
-
-func TestServerBaseURLUsesTheListenPort(t *testing.T) {
-	t.Setenv("CASAS_POD_IP", "10.1.2.3")
-	if got := serverBaseURL(":9090"); got != "http://10.1.2.3:9090/v1" {
-		t.Errorf("serverBaseURL = %q", got)
-	}
-	if got := serverBaseURL("0.0.0.0:8080"); got != "http://10.1.2.3:8080/v1" {
-		t.Errorf("serverBaseURL = %q", got)
-	}
-	// Without the downward API there is no address a Job could come back to,
-	// and an empty string is what makes the runner refuse rather than create
-	// Jobs that cannot reach anything.
-	_ = os.Unsetenv("CASAS_POD_IP")
-	if got := serverBaseURL(":8080"); got != "" {
-		t.Errorf("serverBaseURL without POD_IP = %q, want empty", got)
 	}
 }

@@ -1,11 +1,17 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -111,44 +117,11 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetBake) {
-		// Bake still reads the world and artifacts sections — the remaining
-		// cross-module coupling its decoupling (A3) removes; keeping the
-		// reads HERE makes the coupling visible at the composition root
-		// rather than buried in the module.
-		if err := cfg.Artifacts.Storage.Validate("artifacts"); err != nil {
-			return nil, nil, fmt.Errorf("bake needs the artifact storage until its decoupling lands: %w", err)
+		bcfg, err := bakeConfig(targets, cfg, worldStore, caller, tokens)
+		if err != nil {
+			return nil, nil, err
 		}
-		store := worldStore
-		if store == nil {
-			// `-t bake` without `-t world`: no world module runs, but the bake
-			// still needs the saves. Opening the store here (same package,
-			// same layout owner) is the stopgap; A3 replaces it with HTTP via
-			// global.services.worlds.
-			if err := cfg.World.Storage.Validate("world"); err != nil {
-				return nil, nil, fmt.Errorf("bake needs the world storage until its decoupling lands: %w", err)
-			}
-			var err error
-			store, err = world.NewStore(cfg.World.Storage.DirPath(), cfg.World.KeepRevisions)
-			if err != nil {
-				return nil, nil, fmt.Errorf("world.storage: %w", err)
-			}
-		}
-		m, err := bake.New(bake.Config{
-			WorldOwner: func(uid string) (string, bool) {
-				meta, err := store.Get(uid)
-				return meta.Owner, err == nil && meta.Revision >= 1
-			},
-			WorldZip: func(uid string) (string, bool) {
-				path, err := store.CurrentZipPath(uid)
-				return path, err == nil
-			},
-			ArtifactsDir:  cfg.Artifacts.Storage.DirPath(),
-			BakerPath:     bakerPath(cfg.Bake.Baker),
-			Identity:      caller,
-			Tokens:        tokens,
-			Listen:        cfg.Global.Listen,
-			MaxConcurrent: cfg.Bake.MaxConcurrent,
-		})
+		m, err := bake.New(bcfg)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -164,6 +137,161 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		server.CapabilitiesPath, // "is this server answering", asked while logged out
 		session.Path,            // the login endpoint itself
 	}), nil
+}
+
+// bakeConfig wires the bake module's two sides — where its worlds come from,
+// where its artifacts go — from what ELSE this process runs. Each side on its
+// own: co-resident store when the target is selected here, HTTP against the
+// configured peer service when it is not. This is the composition that makes
+// "a target must be able to run alone" true for bake.
+func bakeConfig(targets config.Targets, cfg config.Config, worldStore *world.Store, caller *identity.Resolver, tokens *auth.Tokens) (bake.Config, error) {
+	inCluster := bake.InCluster()
+	selfURL := serverBaseURL(cfg.Global.Listen)
+	if inCluster && selfURL == "" {
+		return bake.Config{}, fmt.Errorf("CASAS_POD_IP is not set: a cluster bake Job reaches this server by its pod IP (deploy/manifests.yaml wires it)")
+	}
+	bcfg := bake.Config{
+		BakerPath:     bakerPath(cfg.Bake.Baker),
+		Identity:      caller,
+		Tokens:        tokens,
+		SelfURL:       selfURL,
+		MaxConcurrent: cfg.Bake.MaxConcurrent,
+	}
+
+	switch {
+	case worldStore != nil:
+		// Co-resident: closures over the ONE store the world module runs on.
+		store := worldStore
+		bcfg.WorldOwner = func(uid, _ string) (string, bool) {
+			meta, err := store.Get(uid)
+			return meta.Owner, err == nil && meta.Revision >= 1
+		}
+		if inCluster {
+			// The Job runs on another node and reaches this same server by IP.
+			bcfg.WorldsURL = selfURL
+		} else {
+			bcfg.WorldZip = func(uid string) (string, bool) {
+				path, err := store.CurrentZipPath(uid)
+				return path, err == nil
+			}
+		}
+	case cfg.Global.Services.Worlds != "":
+		base := strings.TrimRight(cfg.Global.Services.Worlds, "/")
+		if err := requireCapability(keySvcWorlds, base, "world"); err != nil {
+			return bake.Config{}, err
+		}
+		bcfg.WorldOwner = httpWorldOwner(base)
+		bcfg.WorldsURL = base + "/v1"
+	default:
+		return bake.Config{}, fmt.Errorf("bake needs a world source: select the world target too, or set global.services.worlds")
+	}
+
+	switch {
+	case targets.Has(config.TargetArtifacts):
+		// Already validated in the artifacts block above.
+		if inCluster {
+			bcfg.ArtifactsURL = selfURL
+		} else {
+			bcfg.ArtifactsDir = cfg.Artifacts.Storage.DirPath()
+		}
+	case cfg.Global.Services.Artifacts != "":
+		if inCluster {
+			// The baker derives its progress-report URL from the artifacts
+			// base, so a remote artifact store would swallow the reports.
+			// Refused rather than degraded until the spec names a progress
+			// URL of its own.
+			return bake.Config{}, fmt.Errorf("a cluster bake cannot use global.services.artifacts yet: the Job reports progress to its artifacts base, which must be this server")
+		}
+		base := strings.TrimRight(cfg.Global.Services.Artifacts, "/")
+		if err := requireCapability(keySvcArts, base, "artifacts"); err != nil {
+			return bake.Config{}, err
+		}
+		bcfg.ArtifactsURL = base + "/v1"
+	default:
+		return bake.Config{}, fmt.Errorf("bake needs an artifact sink: select the artifacts target too, or set global.services.artifacts")
+	}
+	return bcfg, nil
+}
+
+// httpWorldOwner asks a peer world service who owns a world. The caller's own
+// Authorization header travels along verbatim — the peer authenticates the
+// PERSON asking for the bake, so no service identity has to exist for this
+// (the open point in docs/design/access-control.md stays open, not worked
+// around).
+func httpWorldOwner(base string) func(uid, bearer string) (string, bool) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	return func(uid, bearer string) (string, bool) {
+		request, err := http.NewRequest(http.MethodGet, base+"/v1/worlds/"+url.PathEscape(uid)+"/meta", nil)
+		if err != nil {
+			return "", false
+		}
+		if bearer != "" {
+			request.Header.Set("Authorization", bearer)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			// Logged here because the module can only say "no such world" —
+			// an unreachable peer must not masquerade as a missing save.
+			slog.Warn("world service unreachable", "base", base, "err", err)
+			return "", false
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			return "", false
+		}
+		var meta struct {
+			Owner    string `json:"owner"`
+			Revision int    `json:"revision"`
+		}
+		if json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&meta) != nil {
+			return "", false
+		}
+		return meta.Owner, meta.Revision >= 1
+	}
+}
+
+// requireCapability refuses to start against a peer that does not run the
+// module this process depends on. Addresses are configuration, capabilities
+// are self-description — this is the handshake between the two, and failing
+// NOW names the misconfiguration instead of letting every later request 404.
+// `key` is the config key the address came from, so the message names exactly
+// the setting to fix.
+func requireCapability(key, base, module string) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Get(base + "/v1/capabilities")
+	if err != nil {
+		return fmt.Errorf("%s: %s is unreachable: %w", key, base, err)
+	}
+	defer response.Body.Close()
+	var capabilities struct {
+		Modules []string `json:"modules"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&capabilities); err != nil {
+		return fmt.Errorf("%s: %s answered, but not with capabilities: %w", key, base, err)
+	}
+	if !slices.Contains(capabilities.Modules, module) {
+		return fmt.Errorf("%s: %s runs %v, not the %s module", key, base, capabilities.Modules, module)
+	}
+	return nil
+}
+
+// serverBaseURL is the address a bake Job on another node uses to reach this
+// server. The pod's own IP, injected by the downward API — a Job cannot mount
+// this pod's ReadWriteOnce volume, so HTTP is the only way back, and the pod
+// IP needs no Service to exist first. Empty outside a cluster.
+//
+// If the server pod is replaced mid-bake the address dies with it; so does the
+// bake's reason to exist, since nobody is waiting for it any more.
+func serverBaseURL(listen string) string {
+	ip := os.Getenv("CASAS_POD_IP")
+	if ip == "" {
+		return ""
+	}
+	port := "8080"
+	if index := strings.LastIndex(listen, ":"); index >= 0 && index+1 < len(listen) {
+		port = listen[index+1:]
+	}
+	return fmt.Sprintf("http://%s:%s/v1", ip, port)
 }
 
 // bakerPath resolves bake.baker, defaulting to the bundle beside the binary.

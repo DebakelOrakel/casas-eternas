@@ -88,7 +88,7 @@ func (f *fakeWorlds) set(uid, owner string) {
 	f.owners[uid] = owner
 }
 
-func (f *fakeWorlds) owner(uid string) (string, bool) {
+func (f *fakeWorlds) owner(uid, _ string) (string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	owner, ok := f.owners[uid]
@@ -96,7 +96,7 @@ func (f *fakeWorlds) owner(uid string) (string, bool) {
 }
 
 func (f *fakeWorlds) zip(uid string) (string, bool) {
-	if _, ok := f.owner(uid); !ok {
+	if _, ok := f.owner(uid, ""); !ok {
 		return "", false
 	}
 	return "/fake/" + uid + "/world.zip", true
@@ -503,7 +503,12 @@ func TestClusterJobCarriesAScopedToken(t *testing.T) {
 	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
 	m.cfg.Tokens = tokens
 	m.clusterMode = true
-	m.serverURL = "http://server:8080/v1"
+	// The cluster shape, as cmd/ composes it: URLs everywhere, no file paths.
+	m.cfg.WorldZip = nil
+	m.cfg.WorldsURL = "http://server:8080/v1"
+	m.cfg.ArtifactsDir = ""
+	m.cfg.ArtifactsURL = "http://server:8080/v1"
+	m.cfg.SelfURL = "http://server:8080/v1"
 	writeWorld(t, worlds, testUID, identity.Local)
 
 	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
@@ -548,6 +553,42 @@ func TestLocalJobCarriesNoToken(t *testing.T) {
 	}
 	if spec := runner.awaitSpec(t); spec.AuthToken != "" {
 		t.Error("a local job was given a token it has no use for")
+	}
+}
+
+// The half-and-half composition A3 exists for: a local runner beside the
+// artifact store whose worlds live in another process. The spec must mix a
+// world URL with an artifacts directory, carry a token for the remote read,
+// and still not learn a job id — its progress comes over the pipe.
+func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
+	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	if err != nil {
+		t.Fatalf("NewTokens: %v", err)
+	}
+	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
+	m.cfg.Tokens = tokens
+	m.cfg.WorldZip = nil
+	m.cfg.WorldsURL = "http://worlds:8080/v1"
+	writeWorld(t, worlds, testUID, identity.Local)
+
+	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
+		t.Fatalf("bake request = %d, want 202", code)
+	}
+	spec := runner.awaitSpec(t)
+	if spec.WorldURL != "http://worlds:8080/v1/worlds/"+testUID {
+		t.Errorf("worldUrl = %q", spec.WorldURL)
+	}
+	if spec.WorldZip != "" {
+		t.Errorf("a remote-worlds spec must not carry a zip path, got %q", spec.WorldZip)
+	}
+	if spec.ArtifactsDir == "" || spec.ArtifactsURL != "" {
+		t.Errorf("artifacts should stay local: dir=%q url=%q", spec.ArtifactsDir, spec.ArtifactsURL)
+	}
+	if spec.AuthToken == "" {
+		t.Error("reading a remote world needs a credential, none was issued")
+	}
+	if spec.JobID != "" {
+		t.Errorf("a local runner must not learn a job id, got %q", spec.JobID)
 	}
 }
 

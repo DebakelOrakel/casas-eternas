@@ -72,7 +72,7 @@ func clusterForTest(t *testing.T) (*clusterAPI, string) {
 
 func runnerForTest(t *testing.T, api *clusterAPI, image string) *kubernetesRunner {
 	t.Helper()
-	runner, err := NewKubernetesRunner(image, "http://10.0.0.1:8080/v1")
+	runner, err := NewKubernetesRunner(image)
 	if err == nil {
 		// Only reachable if the machine really is a pod; take the API we built
 		// from the environment either way, so the target is the test's cluster.
@@ -88,7 +88,6 @@ func runnerForTest(t *testing.T, api *clusterAPI, image string) *kubernetesRunne
 	}
 	return &kubernetesRunner{
 		api: api, template: parsed, image: image,
-		serverURL:     "http://10.0.0.1:8080/v1",
 		memoryRequest: "64Mi", memoryLimit: "128Mi", // tiny: this must schedule anywhere
 	}
 }

@@ -73,10 +73,11 @@ one place that knows every module); a SERVICE is a running process with a set
 of targets — always the same binary. Package layout follows the DOMAIN,
 targets follow the DEPLOYMENT unit; a subsystem that must straddle processes
 gains a sub-target, not a new package (server-storage.md). **A target must be
-able to run alone — otherwise it is not a target** (stated 2026-08-12; bake is
-the one violator, fix planned: cross-module needs become co-resident closures
-OR URL-backed variants, chosen by `cmd/` at composition). The rules, audited
-and written down 2026-08-12:
+able to run alone — otherwise it is not a target** (stated 2026-08-12, and
+delivered the same day: bake's cross-module needs are co-resident closures OR
+URL-backed variants via `global.services.*`, chosen by `cmd/` at composition
+and checked against the peer's `/v1/capabilities` at startup). The rules,
+audited and written down 2026-08-12:
 
 - Dependencies flow one way: `cmd` → modules → leaves. **Nothing imports
   `internal/server`** — it knows the modules structurally, they do not know
@@ -91,8 +92,9 @@ and written down 2026-08-12:
 - **A module's disk layout and JSON formats are private.** Cross-module needs
   are injected functions composed in `cmd/` — the same pattern that
   distributes `identity.Resolver`. Never duplicate another module's paths or
-  tags. (Known violation to fix: bake re-implements the world store's layout
-  and Meta struct, tests included.)
+  tags. (The violation — bake re-implementing the world store's layout, tests
+  included — was removed 2026-08-12; the baker's TypeScript fs store still
+  writes the artifact layout, the one remaining copy.)
 - **One process per store directory.** In-process locks and in-memory indexes
   ARE the concurrency model; scaling means splitting targets by module, never
   replicating a store module against one directory.

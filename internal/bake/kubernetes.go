@@ -54,10 +54,9 @@ const (
 )
 
 type kubernetesRunner struct {
-	api       *clusterAPI
-	template  *template.Template
-	image     string
-	serverURL string
+	api      *clusterAPI
+	template *template.Template
+	image    string
 	// Memory the Job asks for and is capped at. The measured 8192² peak is
 	// ~2.6 GB, so the request has to be honest or the scheduler will put two
 	// bakes on one node despite the anti-affinity being satisfied.
@@ -67,7 +66,8 @@ type kubernetesRunner struct {
 
 // NewKubernetesRunner is only reachable when InCluster() says so — see
 // docs/decisions/distributed-bake.md for why there is no flag to force it.
-func NewKubernetesRunner(image, serverURL string) (Runner, error) {
+// The addresses a Job talks to travel in each Spec, not here.
+func NewKubernetesRunner(image string) (Runner, error) {
 	api, err := newClusterAPI()
 	if err != nil {
 		return nil, err
@@ -83,7 +83,6 @@ func NewKubernetesRunner(image, serverURL string) (Runner, error) {
 		api:           api,
 		template:      parsed,
 		image:         image,
-		serverURL:     strings.TrimSuffix(serverURL, "/"),
 		memoryRequest: "3Gi",
 		memoryLimit:   "4Gi",
 	}, nil

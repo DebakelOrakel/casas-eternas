@@ -72,6 +72,7 @@ func (m *Module) Store() *Store { return m.store }
 func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("GET /v1/worlds", m.handleList)
 	mux.HandleFunc("GET /v1/worlds/{uid}", m.handleGet)
+	mux.HandleFunc("GET /v1/worlds/{uid}/meta", m.handleMeta)
 	mux.HandleFunc("GET /v1/worlds/{uid}/preview.png", m.handlePreview)
 	mux.HandleFunc("PUT /v1/worlds/{uid}", m.handlePut)
 	mux.HandleFunc("DELETE /v1/worlds/{uid}", m.handleDelete)
@@ -106,6 +107,19 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	_, _ = w.Write(data)
+}
+
+// handleMeta answers a world's record without its bytes — what a peer service
+// needs: a world-less bake target admitting a request asks this route who owns
+// the world and whether it has a revision, at the cost of a lookup rather than
+// a download.
+func (m *Module) handleMeta(w http.ResponseWriter, r *http.Request) {
+	meta, err := m.store.Get(r.PathValue("uid"))
+	if err != nil {
+		respondStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, meta)
 }
 
 func (m *Module) handlePreview(w http.ResponseWriter, r *http.Request) {

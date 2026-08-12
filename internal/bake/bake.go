@@ -26,7 +26,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -52,32 +51,47 @@ const jobHistory = 200
 type Config struct {
 	// WorldOwner answers who owns a world and whether it has a stored
 	// revision — everything admitting a bake request needs to know. Injected
-	// by cmd/ as a closure over the world store (the same pattern that
-	// distributes identity.Resolver), which is what keeps the world store's
-	// disk layout its own module's private business; this module used to read
-	// meta.json itself and re-implemented the layout, tests included.
-	WorldOwner func(uid string) (owner string, ok bool)
-	// WorldZip yields the current revision's save as a file path — the LOCAL
-	// runner's input. A cluster Job never calls it; it fetches the world over
-	// HTTP. Called at start rather than at enqueue, so a world deleted while
-	// queued fails the job instead of baking a stale path.
-	WorldZip func(uid string) (path string, ok bool)
-	// Where the baker writes. Same directory the artifacts module serves from,
-	// and safe because that store is idempotent by construction and needs no
-	// locking.
+	// by cmd/ (the same pattern that distributes identity.Resolver): a closure
+	// over the co-resident world store, or an HTTP lookup against
+	// global.services.worlds. Either way this module never learns the world
+	// store's disk layout.
+	//
+	// bearer is the enqueuing caller's Authorization header, forwarded
+	// verbatim so the HTTP variant authenticates as the person asking —
+	// identity travels in the token, and this module holds nobody's. The
+	// closure variant ignores it.
+	WorldOwner func(uid, bearer string) (owner string, ok bool)
+	// The world as the BAKER reads it — exactly one of the two is set.
+	// WorldZip yields the current revision's save as a file path, for a local
+	// runner sitting beside the world store; called at start rather than at
+	// enqueue, so a world deleted while queued fails the job instead of
+	// baking a stale path. WorldsURL is the /v1 base to fetch from instead: a
+	// cluster Job reaching its own server by pod IP, or any runner whose
+	// world module lives in another process.
+	WorldZip  func(uid string) (path string, ok bool)
+	WorldsURL string
+	// The artifact sink — exactly one of the two is set. ArtifactsDir is the
+	// directory the co-resident artifacts module serves (safe to share:
+	// that store is idempotent by construction); ArtifactsURL is its /v1 base
+	// in another process. In cluster mode the baker also derives its
+	// progress-report URL from ArtifactsURL, which is why cmd/ refuses the
+	// cluster + remote-artifacts combination until the spec carries a
+	// progress URL of its own.
 	ArtifactsDir string
+	ArtifactsURL string
+	// SelfURL is the /v1 base under which a bake Job on ANOTHER node reaches
+	// this very server. Resolved by cmd/ from the pod IP; required in a
+	// cluster, empty for a purely local runner (which reports over its pipe).
+	SelfURL string
 	// The Node bundle, from `npm run build:baker`.
 	BakerPath string
 	// Identity answers who a request comes from — the same resolver every other
 	// module holds, so ownership is compared against one notion of "caller".
 	Identity *identity.Resolver
-	// Tokens mints the credential a CLUSTER bake carries. Nil when the server
-	// checks nobody, in which case a Job needs none: it is talking to a server
-	// that lets everyone in.
+	// Tokens mints the credential a bake carries when it reads or writes over
+	// HTTP. Nil when the server checks nobody, in which case none is needed:
+	// it is talking to servers that let everyone in.
 	Tokens *auth.Tokens
-	// Listen is the server's own bind address, used only to work out the port a
-	// bake Job should reach it on.
-	Listen string
 	// MaxConcurrent bakes. One by default, and that is a memory argument: two
 	// 8192² bakes want 5 GB between them. In a cluster it also interacts with
 	// the hard anti-affinity — the effective figure is min(this, nodes), and
@@ -90,7 +104,6 @@ type Module struct {
 	// Whether jobs run as Kubernetes Jobs. Captured once at construction —
 	// a process does not move in or out of a cluster while it runs.
 	clusterMode bool
-	serverURL   string
 	runner      Runner
 	jobs        *registry
 	queue       chan string
@@ -104,11 +117,17 @@ type Module struct {
 }
 
 func New(cfg Config) (*Module, error) {
-	if cfg.WorldOwner == nil || cfg.WorldZip == nil {
-		return nil, fmt.Errorf("bake needs its world accessors wired; that is cmd/'s job")
+	// Exactly-one checks, because these are the wiring cmd/ owes this module —
+	// a missing half is a composition bug, and both halves at once would make
+	// the spec builder below ambiguous about where the truth lives.
+	if cfg.WorldOwner == nil {
+		return nil, fmt.Errorf("bake needs its WorldOwner accessor wired; that is cmd/'s job")
 	}
-	if cfg.ArtifactsDir == "" {
-		return nil, fmt.Errorf("artifacts.storage is required for bakes")
+	if (cfg.WorldZip == nil) == (cfg.WorldsURL == "") {
+		return nil, fmt.Errorf("bake needs exactly one world source (WorldZip or WorldsURL); that is cmd/'s job")
+	}
+	if (cfg.ArtifactsDir == "") == (cfg.ArtifactsURL == "") {
+		return nil, fmt.Errorf("bake needs exactly one artifact sink (ArtifactsDir or ArtifactsURL); that is cmd/'s job")
 	}
 	// The runner is chosen by DETECTING the cluster and by nothing else. There
 	// is deliberately no flag: both of its settings would be a behaviour the
@@ -119,7 +138,14 @@ func New(cfg Config) (*Module, error) {
 	var runner Runner
 	var err error
 	if InCluster() {
-		runner, err = NewKubernetesRunner(bakeImage(), serverBaseURL(cfg.Listen))
+		// A Job on another node has only URLs — a file path in this pod means
+		// the composition is wrong, and finding out here beats a Job getting
+		// created with an empty fetch address. SelfURL is where it reports
+		// progress; missing means CASAS_POD_IP was not injected.
+		if cfg.SelfURL == "" || cfg.WorldsURL == "" || cfg.ArtifactsURL == "" {
+			return nil, fmt.Errorf("a cluster bake needs SelfURL, WorldsURL and ArtifactsURL; is CASAS_POD_IP set? (deploy/manifests.yaml wires it)")
+		}
+		runner, err = NewKubernetesRunner(bakeImage())
 		if err != nil {
 			return nil, fmt.Errorf("cluster bake runner: %w", err)
 		}
@@ -139,7 +165,6 @@ func New(cfg Config) (*Module, error) {
 	m := &Module{
 		cfg:         cfg,
 		clusterMode: InCluster(),
-		serverURL:   serverBaseURL(cfg.Listen),
 		runner:      runner,
 		jobs:        newRegistry(jobHistory),
 		// Buffered so a burst of requests is accepted rather than blocking the
@@ -211,25 +236,6 @@ func (m *Module) Close() error {
 // a pipeline version, and a client would simply never look for what was made).
 func bakeImage() string { return os.Getenv("CASAS_BAKE_IMAGE") }
 
-// serverBaseURL is the address a bake Job uses to fetch its world and PUT its
-// artifacts. The pod's own IP, injected by the downward API — a Job on another
-// node cannot mount this pod's ReadWriteOnce volume, so HTTP is the only way
-// back, and the pod IP needs no Service to exist first.
-//
-// If the server pod is replaced mid-bake the address dies with it; so does the
-// bake's reason to exist, since nobody is waiting for it any more.
-func serverBaseURL(listen string) string {
-	ip := os.Getenv("CASAS_POD_IP")
-	if ip == "" {
-		return ""
-	}
-	port := "8080"
-	if index := strings.LastIndex(listen, ":"); index >= 0 && index+1 < len(listen) {
-		port = listen[index+1:]
-	}
-	return fmt.Sprintf("http://%s:%s/v1", ip, port)
-}
-
 func newID() string {
 	raw := make([]byte, 8)
 	_, _ = rand.Read(raw)
@@ -254,7 +260,7 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 	// Both checked before queueing, so a request that cannot succeed fails now
 	// rather than at the far end of a queue that may be minutes long.
-	owner, ok := m.cfg.WorldOwner(request.WorldUID)
+	owner, ok := m.cfg.WorldOwner(request.WorldUID, r.Header.Get("Authorization"))
 	if !ok {
 		clientError(w, http.StatusNotFound, "no such world, or it has no stored revision")
 		return
@@ -434,40 +440,16 @@ func (m *Module) work(ctx context.Context) {
 			j.StartedAt = &started
 		})
 
+		// Files where the composition put a store beside this process, URLs
+		// where it did not — each half decided on its own, so a local runner
+		// beside the artifacts can still fetch its world from a peer service.
+		// Both shapes produce byte-identical artifacts under the identical
+		// key (measured), so nothing downstream can tell which ran.
 		spec := Spec{
-			JobID:         id,
 			Stage:         job.Request.Stage,
 			ErosionRounds: job.Request.ErosionRounds,
 		}
-		// Files when the work happens here, URLs when it happens on another
-		// node. Both produce byte-identical artifacts under the identical key
-		// (measured), so nothing downstream can tell which ran.
-		if m.clusterMode {
-			spec.WorldURL = fmt.Sprintf("%s/worlds/%s", m.serverURL, job.Request.WorldUID)
-			spec.ArtifactsURL = m.serverURL
-			// A Job on another node reaches the server over HTTP like any other
-			// client, so on a server that checks identity it needs credentials —
-			// without them it gets a 401 reading the world it was created to
-			// bake. Scoped to this one job by audience, so it is not a login:
-			// the gate refuses it everywhere a session is expected.
-			if m.cfg.Tokens != nil {
-				token, _, tokenErr := m.cfg.Tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience(id), jobTokenTTL)
-				if tokenErr != nil {
-					// Failing here rather than sending the Job out without one:
-					// it would start, read the world, get a 401 and report a
-					// bake failure whose cause is on this side entirely.
-					failed := time.Now()
-					m.jobs.update(id, func(j *Job) {
-						j.State = StateFailed
-						j.Error = fmt.Sprintf("cannot issue a token for the bake job: %v", tokenErr)
-						j.EndedAt = &failed
-					})
-					slog.Error("bake not started", "job", id, "err", tokenErr)
-					continue
-				}
-				spec.AuthToken = token
-			}
-		} else {
+		if m.cfg.WorldZip != nil {
 			zip, ok := m.cfg.WorldZip(job.Request.WorldUID)
 			if !ok {
 				// Deleted (or pruned) between enqueue and start. Failing the
@@ -483,11 +465,42 @@ func (m *Module) work(ctx context.Context) {
 				continue
 			}
 			spec.WorldZip = zip
+		} else {
+			spec.WorldURL = fmt.Sprintf("%s/worlds/%s", m.cfg.WorldsURL, job.Request.WorldUID)
+		}
+		if m.cfg.ArtifactsDir != "" {
 			spec.ArtifactsDir = m.cfg.ArtifactsDir
-			// The local baker reports over its stderr pipe, which this process
-			// is already reading. Telling it its own id would invite it to post
-			// progress to a server it is running inside.
-			spec.JobID = ""
+		} else {
+			spec.ArtifactsURL = m.cfg.ArtifactsURL
+		}
+		// A baker that reaches ANY store over HTTP talks to a server that may
+		// check identity, and without credentials it gets a 401 reading the
+		// world it was created to bake. Scoped to this one job by audience, so
+		// it is not a login: the gate refuses it everywhere a session is
+		// expected.
+		if m.cfg.Tokens != nil && (spec.WorldURL != "" || spec.ArtifactsURL != "") {
+			token, _, tokenErr := m.cfg.Tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience(id), jobTokenTTL)
+			if tokenErr != nil {
+				// Failing here rather than sending the baker out without one:
+				// it would start, read the world, get a 401 and report a
+				// bake failure whose cause is on this side entirely.
+				failed := time.Now()
+				m.jobs.update(id, func(j *Job) {
+					j.State = StateFailed
+					j.Error = fmt.Sprintf("cannot issue a token for the bake job: %v", tokenErr)
+					j.EndedAt = &failed
+				})
+				slog.Error("bake not started", "job", id, "err", tokenErr)
+				continue
+			}
+			spec.AuthToken = token
+		}
+		// Only a Job on another node learns its own id: it reports progress
+		// through the HTTP route. The local baker reports over its stderr
+		// pipe, which this process is already reading — telling it its id
+		// would invite it to post progress to a server it is running inside.
+		if m.clusterMode {
+			spec.JobID = id
 		}
 		result, err := m.runner.Run(ctx, spec, func(p Progress) {
 			m.jobs.update(id, func(j *Job) {
