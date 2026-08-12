@@ -1,7 +1,10 @@
 # docs/
 
-Internal developer documentation — English, never shipped. The layout (and the
-one *planned* player-facing addition) is decided in
+Developer documentation — English. PUBLIC IN PRINCIPLE (stated 2026-08-12):
+everything here may appear on a future doc site, with one exception — `ideas/`
+(game design material, when it exists) stays private, because the game never
+states its ideas outright. Nothing ships any of this *yet*; the layout (and
+the one *planned* player-facing addition) is decided in
 [decisions/documentation-architecture.md](./decisions/documentation-architecture.md).
 
 ## Folders

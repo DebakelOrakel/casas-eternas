@@ -38,12 +38,19 @@ deployment's surfaces in version lockstep with the server.
 **Game client** — exists; the reference shape. Sign-in, panels, and the
 `adm` claim are already available in it.
 
-**Public docs** — its own bundle, NEW content: this is player-facing
-documentation, NOT `docs/` from the repo, which is explicitly internal and
-never shipped. Public means no gate concern — static serving is already
-outside the `/v1` guard. Served either by a `docs` module/target (version
-lockstep for self-hosting) or any static host; links from the client are
-plain links, trivial.
+**Public docs** — its own bundle, and (corrected 2026-08-12) its content
+already largely EXISTS: the repo's `docs/` is public in principle, with
+`ideas/` as the one private exception (game design material — the game
+never states its ideas outright). A doc site would therefore render
+decisions/design/changelog/vision — the front matter is data, overviews
+are generated — plus the *planned* player-facing manual
+(`docs/content/`, see decisions/documentation-architecture.md, whose
+"defer the public website" call still stands). Public means no gate
+concern — static serving is already outside the `/v1` guard. Served
+either by a `docs` module/target (version lockstep for self-hosting) or
+any static host; links from the client are plain links, trivial. The
+build MUST exclude `ideas/` — that is the one hard rule a docs bundle
+carries.
 
 **Notes (player's editable notes)** — the UI belongs in the client. The
 OPEN FORK is where the data lives: in the save (notes travel with the
