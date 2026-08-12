@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/DebakelOrakel/casas-eternas/internal/access"
 )
 
 // The world store on disk.
@@ -138,6 +140,77 @@ func (s *Store) revDir(uid string, revision int) string {
 	return filepath.Join(s.worldDir(uid), "rev", strconv.Itoa(revision))
 }
 
+// grantsPath is {uid}/grants.json — SERVER-owned, beside the meta: never
+// part of the uploaded save, never rebuilt from one. Deleting the world's
+// directory removes it with everything else.
+func (s *Store) grantsPath(uid string) string {
+	return filepath.Join(s.worldDir(uid), "grants.json")
+}
+
+// readGrants is the lockless half of ReadGrants, for callers already
+// holding the world's lock. found=false is the LEGITIMATE legacy state — a
+// world from before grants existed — not an error.
+func (s *Store) readGrants(uid string) (access.Grants, bool, error) {
+	raw, err := os.ReadFile(s.grantsPath(uid))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return access.Grants{}, false, nil
+		}
+		return access.Grants{}, false, err
+	}
+	var grants access.Grants
+	if err := json.Unmarshal(raw, &grants); err != nil {
+		// Corrupt is NOT absent: absent means legacy rules, and a parse error
+		// promoted to "no grants" would silently reopen a shared world.
+		return access.Grants{}, false, fmt.Errorf("world %s has unreadable grants: %w", uid, err)
+	}
+	return grants, true, nil
+}
+
+// ReadGrants answers a world's ACL. The world must exist; found reports
+// whether a grants document does — see readGrants.
+func (s *Store) ReadGrants(ctx context.Context, uid string) (access.Grants, bool, error) {
+	if _, err := s.Get(ctx, uid); err != nil {
+		return access.Grants{}, false, err
+	}
+	return s.readGrants(uid)
+}
+
+// WriteGrants replaces a world's ACL — the transfer/share path. Under the
+// world's lock like Put, so a share and an upload cannot interleave their
+// reads of the document.
+func (s *Store) WriteGrants(ctx context.Context, uid string, grants access.Grants) error {
+	if grants.Owner == "" {
+		return fmt.Errorf("grants must name an owner — a world with nobody at the top can never be shared or deleted again")
+	}
+	for id, role := range grants.Users {
+		if _, err := access.ParseLevel(role); err != nil {
+			return fmt.Errorf("grant for %s: %w", id, err)
+		}
+	}
+	mu := s.lock(uid)
+	mu.Lock()
+	defer mu.Unlock()
+	if _, err := s.readMeta(uid); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(s.grantsPath(uid), grants); err != nil {
+		return err
+	}
+	// Keep the display mirror honest immediately, not at the next upload.
+	meta, err := s.readMeta(uid)
+	if err != nil {
+		return err
+	}
+	if meta.Owner != grants.Owner {
+		meta.Owner = grants.Owner
+		if err := writeJSONAtomic(filepath.Join(s.worldDir(uid), "meta.json"), meta); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ValidUID reports whether a uid may be used as a path segment.
 func ValidUID(uid string) bool { return safeUID.MatchString(uid) }
 
@@ -210,11 +283,13 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 	defer mu.Unlock()
 
 	current, err := s.readMeta(uid)
+	creating := false
 	switch {
 	case errors.Is(err, ErrNotFound):
 		if expected != 0 {
 			return Meta{}, ErrRevisionMismatch
 		}
+		creating = true
 	case err != nil:
 		return Meta{}, err
 	default:
@@ -271,10 +346,30 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 		return Meta{}, err
 	}
 
+	// THE OWNER IS PINNED AT CREATION (2026-08-12, docs/decisions/
+	// server-users.md and the access-control design): grants.json is written
+	// once, when the world first exists, and ownership moves only through an
+	// explicit transfer — never by writing a revision. Meta.Owner is a
+	// DISPLAY MIRROR of it from here on; re-stamping it per upload was the
+	// standing bug where a shared world's first editor save stole the world.
+	displayOwner := current.Owner
+	if creating {
+		if err := writeJSONAtomic(s.grantsPath(uid), access.Grants{Owner: owner}); err != nil {
+			return Meta{}, err
+		}
+		displayOwner = owner
+	} else if grants, found, grantsErr := s.readGrants(uid); grantsErr == nil && found {
+		displayOwner = grants.Owner
+	}
+	// A world from before grants existed has neither: its meta keeps the
+	// owner it already recorded (NOT the current caller), and no grants are
+	// minted for it here — the migration rule for a checking server decides
+	// that case deliberately, not a side effect of an upload.
+
 	meta := Meta{
 		UID:         uid,
 		Name:        info.Name,
-		Owner:       owner,
+		Owner:       displayOwner,
 		Revision:    revision,
 		CreatedAt:   current.CreatedAt,
 		UpdatedAt:   now,
@@ -287,9 +382,6 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 	}
 	if meta.CreatedAt.IsZero() {
 		meta.CreatedAt = now
-	}
-	if meta.Owner == "" {
-		meta.Owner = owner
 	}
 	// The world's own meta.json goes last of all: until it names the new
 	// revision, the store still resolves to the previous one, so a crash
