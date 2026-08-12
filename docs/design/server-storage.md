@@ -135,6 +135,10 @@ which is a second login method rather than a second token.
 
 ## Who may write
 
+> Stages 2+ are now designed in full: [access-control.md](./access-control.md)
+> (2026-08-12) — per-world roles, grants.json, the user registry, and the
+> build order. Nothing of it is built yet.
+
 Client-computed artifacts under a shared key are a poisoning vector: one
 tampered client uploads nonsense terrain and everyone else downloads it.
 Three stages, in the order they would arrive:
