@@ -1,6 +1,8 @@
 ---
 summary: The docs pipeline sketched in notes.md bundles two separable deliverables — an in-game manual (the valuable one) and a public website (deferrable marketing chrome). Starlight only ever serves the website, and it is NOT embeddable in the Vanilla-TS/Babylon Vite client anyway (it's an Astro integration owning its own build). Decision: DEFER the public site entirely; build the in-game manual in-project on unified/remark (which you need regardless); do NOT adopt a second framework for a not-yet-needed artifact. Starlight-vs-homegrown is re-decided only if/when a public site becomes real. What IS decided now: the source layout and the anchor IDs (which reuse the i18n key namespace).
 date: 2026-07-28
+area: platform
+stage: decided
 status: decided (source layout + anchors; defer both site AND manual) — no toolchain adopted
 ---
 

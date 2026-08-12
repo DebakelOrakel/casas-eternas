@@ -1,6 +1,8 @@
 ---
 summary: How world generation fits into the client/server architecture — what runs where and why.
 date: 2026-07-20
+area: worldgen
+stage: built
 ---
 
 # World Generation — Design

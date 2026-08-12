@@ -1,6 +1,8 @@
 ---
 summary: How the server is configured, decided when the flag count started to hurt. One vocabulary — the dotted config key IS the flag name IS the CASAS_* variable, so nothing can drift between the three. A casas.yaml (Loki/Mimir-shaped) holds a `global:` section for the process and one section per target; storage is a tagged union (`storage.type` + one backend block) so a future S3 backend is a new block, not a renaming. Target selection is deliberately NOT a file key — the same file serves every process of a split deployment — and the loader refuses one loudly, as it refuses unknown keys. Every module receives the whole typed tree and reads only `global` plus its own section, a discipline enforced by review rather than the compiler.
 date: 2026-08-12
+area: platform
+stage: built
 status: decided and BUILT 2026-08-12 — tree, loader, one-vocabulary flags, env replacer, strict unmarshal, smoke-tested end to end. The `services:` map exists but is not yet validated against /v1/capabilities; that lands with the bake decoupling.
 ---
 

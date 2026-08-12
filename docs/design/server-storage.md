@@ -1,6 +1,8 @@
 ---
 summary: How the Go server could store things for the client — a WORLD store (named, mutable, owned) next to an ARTIFACT store (content-addressed, immutable, shared) for derived data like the amplification tiles, over plain REST, with an identity concept from day one so SSO is later a config change rather than a rewrite.
 date: 2026-08-07
+area: platform
+stage: built
 status: design discussion — superseded in part by decisions/server-storage.md (2026-08-07), which decides the identity, configuration, storage-backend and UI forks this doc left open. The rest stands as the longer argument.
 ---
 

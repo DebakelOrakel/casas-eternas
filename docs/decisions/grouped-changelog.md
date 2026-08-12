@@ -1,7 +1,9 @@
 ---
 summary: A categorized, human changelog under docs/changelog/ — NOT the git commit log. One file per area (worldgen, ui, mechanics, concepts, platform), each listing roughly when a feature was added / changed / dropped / fixed, with dates. Seeded retroactively from the commits of 2026-07-20..28. No decisions category — decisions are self-dating via their own front matter, so a date-ordered decisions overview is generated, not hand-maintained. Distinct from the title screen's mission list, which is a "what it can do now" snapshot.
 date: 2026-07-28
-status: decided — not built
+area: platform
+stage: built
+status: decided and BUILT 2026-07-28 (seeded retroactively from the first 84 commits); the title screen renders the changelog files inline since 2026-08-01
 ---
 
 # Changelog (categorized)

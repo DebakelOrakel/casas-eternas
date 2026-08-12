@@ -1,6 +1,8 @@
 ---
 summary: Extend the world save into a self-describing, QUERYABLE dataset — every world aspect we generate is baked into field-layer rasters (+ vector layers) described by a manifest, so a game server can look up any value by sampling, with ZERO knowledge of the generation algorithms. The recipe (regenerate) and sim snapshot (continue) stay alongside, serving different consumers.
 date: 2026-07-26
+area: platform
+stage: building
 status: Phase 1 BUILT (2026-07-26) — main-thread bake from caches; see status note at end
 ---
 

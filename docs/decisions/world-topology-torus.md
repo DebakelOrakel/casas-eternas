@@ -1,6 +1,8 @@
 ---
 summary: The shipped generator's substrate is a flat torus (wraps in x and y), not the unit-sphere substrate plate-tectonics-initial-state.md decided — this document records that pivot, retroactively.
 date: 2026-07-23
+area: worldgen
+stage: built
 status: decided; implemented
 ---
 

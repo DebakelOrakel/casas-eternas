@@ -1,6 +1,8 @@
 ---
 summary: PROTO — the human layer of world-gen, after the Ecology layer. Seeds pre-state proto-settlements (Neolithic→Iron Age) via a bounded dispersal model over the Ecology suitability field, producing settlements + a contact/trade graph as the game's starting condition. Direction (dispersal) decided; the rest to design later.
 date: 2026-07-26
+area: worldgen
+stage: idea
 status: proto / brainstorming — comes AFTER the Ecology panel is built
 ---
 

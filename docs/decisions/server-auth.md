@@ -1,6 +1,8 @@
 ---
 summary: How the server establishes who is asking. Three modes stay — but `token` becomes `password`, because the axis that matters is WHERE the users live, not what the header looks like. Credentials are an htpasswd file mounted from a Secret; logging in exchanges them for a JWT the server issues itself; OIDC later is a second login method feeding the same token, not a second token. Four paths stay public so a logged-out client can find out where to log in. Revocation is decided (short TTL plus refresh, revoked by a per-user stamp) but not yet built. Both files live in the Secret; the cost — an admin screen cannot write users through a read-only mount, and would go through the Kubernetes API — is recorded rather than discovered later.
 date: 2026-08-09
+area: platform
+stage: built
 status: decided, sequenced in seven steps. ALL SEVEN BUILT 2026-08-09 — the server authenticates and enforces, the client signs in and behaves like a serverless one when it has not. Refresh (step 8) remains unscheduled
 ---
 

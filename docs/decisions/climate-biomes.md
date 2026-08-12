@@ -1,6 +1,8 @@
 ---
 summary: Static, latitude-based climate (temperature + precipitation + wind + ocean currents) computed at world-gen time, feeding a Whittaker biome classification. No dynamic weather.
 date: 2026-07-24
+area: worldgen
+stage: built
 status: implemented (all 6 phases built); the "revisit if too coarse" note under Integration was revisited 2026-08-08 — the CLASSIFICATION moved to the world raster, the climate fields did not, and its coarse inputs were switched from nearest to interpolated 2026-08-09
 ---
 

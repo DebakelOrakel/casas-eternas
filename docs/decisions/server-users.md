@@ -1,6 +1,8 @@
 ---
 summary: Who a user IS, as opposed to how they log in. A registry (users.json under auth.storage) holds stable uuid identities, MINTED AT FIRST LOGIN — htpasswd stays the one place users are administered, and the registry follows it. A session token's subject is the registry id from then on, never the login name; the name remains display data in the login response. Admins are login names on global.auth.admins whose sessions carry an `adm` claim — the decision travels in the token, so every process keeps verifying locally and none ever needs the registry. Step 1 of the access-control build order.
 date: 2026-08-12
+area: platform
+stage: built
 status: decided and BUILT 2026-08-12 — registry, session hook, admin claim, identity.Admin, deploy wiring. Steps 2–5 of docs/design/access-control.md build on it.
 ---
 

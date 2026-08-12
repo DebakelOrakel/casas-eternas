@@ -1,6 +1,8 @@
 ---
 summary: Fluvial incision draining into the WORLD OCEAN is floored at estuary depth (SEA_LEVEL − estuaryMaxDepthM, 20 m) instead of grading to its receiver's bed — which sat at shelf/slope depth and let erosion carve "ocean arms" hundreds of km into continents. Enclosed sub-sea basins stay exempt. The bake inherits the same floor (ALGO v5); a deliberate ria mechanism ("carve first, drown after") is deferred.
 date: 2026-08-11
+area: worldgen
+stage: built
 status: decided and built 2026-08-11; measured on the synthetic harness world (0 deep ocean-connected cuts remain, estuary-depth mouths stay)
 ---
 

@@ -1,6 +1,8 @@
 ---
 summary: An evolving coarse mantle field drives the plates (kinematic coupling) so the supercontinent (Wilson) cycle and volcanism both emerge from one substrate, instead of fixed Euler poles + scripted band-aids.
 date: 2026-07-25
+area: worldgen
+stage: building
 status: M1 + M2 + M3 implemented (mantle field drives plates, Wilson cycle emerges, all three volcanism kinds ship); M4 not built
 ---
 

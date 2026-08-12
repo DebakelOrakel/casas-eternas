@@ -1,7 +1,9 @@
 ---
 summary: Why the tectonics/erosion sim resolution and the final world's detail resolution are separate layers, not one grid to enlarge.
 date: 2026-07-23
-status: direction agreed, not yet implemented
+area: worldgen
+stage: building
+status: direction agreed; the middle tier became real 2026-08-07 as the worldmap amplification bake (see the update at the end) — the procedural micro tier below the bake's ~2 km reach remains unbuilt
 ---
 
 # Resolution Strategy — Sim Grid vs. World Detail

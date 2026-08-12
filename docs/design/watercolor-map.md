@@ -1,6 +1,8 @@
 ---
 summary: Design direction for the world map's look — watercolour rendering, and the discovery that the game's three knowledge states (unexplored / explored / active) map onto the stages of an actual watercolour painting, so the medium carries the state readout without a legend.
 date: 2026-08-11
+area: ui
+stage: building
 status: all three prototype stages BUILT 2026-08-11 (knowledge registers on the CPU, the paper post-process, edge darkening) — with two of the plan's calls reversed on contact, see the "Revised on contact" boxes. The knowledge field itself is still a debug stand-in: exploration does not exist
 ---
 

@@ -1,10 +1,16 @@
 ---
 summary: A saved world is a .zip — a human-readable YAML recipe/status + a JSON sim snapshot + the two heavy float rasters + a preview, restorable instantly and offline.
 date: 2026-07-24
+area: platform
+stage: built
 status: implemented (v1alpha1)
 ---
 
 # World Save / Load Format
+
+The format's contents are documented in the living reference
+[design/world-save-format.md](../design/world-save-format.md); this doc records
+the fork behind it.
 
 The worldgen screen's top-left folder/floppy buttons load and save a world as a
 `.zip`. Everything in the generation pipeline is deterministic (seeded), so in

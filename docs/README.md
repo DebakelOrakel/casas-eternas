@@ -19,12 +19,19 @@ the one *planned* player-facing addition) is decided in
 
 ## decisions/ vs. design/
 
-A **decision** records a specific fork with options and a chosen answer — it has a
-`status` and is mostly done when written. A **design** doc is the living
-counterpart: architectural overviews (how worldgen splits across client/server)
-or the essence of a design discussion whose status may still be "idea, nothing
-decided". When a design direction hardens into a real fork, the choice gets its
-own doc in `decisions/`.
+The split is by **genre**, not by how far along something is. A **decision** doc
+records one fork: the options, the chosen answer, and why. A **design** doc is a
+map or a plan — how pieces fit together, or the essence of a design discussion
+spanning many concerns. When a single fork inside a design discussion is big
+enough to stand alone, it gets its own doc in `decisions/` (as
+[decisions/server-users.md](./decisions/server-users.md) grew out of
+[design/access-control.md](./design/access-control.md)); a design doc may also
+keep decided forks inline while they are parts of one coherent plan.
+
+Lifecycle lives in the front matter (`stage` + `status`), never in the folder:
+both folders legitimately hold everything from an idea to a built system, and
+decision docs are living documents — addenda and dated revisions are the norm,
+not an exception.
 
 ## Front matter convention
 
@@ -33,11 +40,27 @@ Every doc in `decisions/` and `design/` starts with:
 ```yaml
 ---
 summary: One or two sentences — enough to decide whether to open the doc.
-date: 2026-07-28
-status: decided | direction agreed, not yet implemented | idea — nothing decided or built | …
+date: 2026-07-28   # creation date; "last updated" is derived from git, never maintained by hand
+area: worldgen     # worldgen | ui | mechanics | concepts | platform — the changelog's vocabulary
+stage: built       # idea | decided | building | built | superseded
+status: free-form and honest — the nuance stage cannot hold
 ---
 ```
 
-`status` is free-form but honest. This front matter is data: a date-ordered
-decisions overview is a *generated view* over it, never a hand-maintained list
+`stage` is the machine-readable lifecycle, deliberately coarse so it can stay
+true — it changes maybe twice in a doc's life:
+
+- `idea` — nothing decided or built
+- `decided` — the fork is chosen, nothing (or almost nothing) built yet
+- `building` — partially built; open steps remain
+- `built` — what the doc records exists (for overview docs describing the
+  current system, this is the normal stage)
+- `superseded` — the **whole** doc is replaced: add `superseded-by:` naming the
+  successor, and `supersedes:` on the successor. Partial supersession is common
+  and stays where it always was — prose in `status`.
+
+`status` is free-form but honest; "BUILT AND DOES NOT PAY YET" is a valid and
+valuable status. This front matter is data: a date-ordered decisions overview,
+grouping by `area`, or graying out superseded docs are *generated views* over
+it, never hand-maintained lists
 (see [decisions/grouped-changelog.md](./decisions/grouped-changelog.md)).

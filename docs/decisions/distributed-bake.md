@@ -1,6 +1,8 @@
 ---
 summary: Server-side amplification bakes become Kubernetes Jobs when — and only when — the server is running in a cluster. A job is already a value with a scope behind a Runner interface, so this is an added implementation rather than a rebuild. Decided: only a world's owner may commission one, the runner is chosen by detecting the cluster rather than by a flag, anti-affinity is hard so two 2.6 GB bakes never share a node, and each Job gets a one-shot token scoped to the artifact key it may write. Everything in that list exists ONLY in a cluster; a local server keeps the plain subprocess with no checks at all.
 date: 2026-08-08
+area: platform
+stage: building
 status: decided — architecture and the four forks below. STEPS 1–3 BUILT 2026-08-08 and verified against a real OpenShift cluster: the Job is accepted, its pod is admitted by restricted-v2 and scheduled. A real image runs as a Job and completes (pending → running → succeeded in 54 s, mostly image pull). Not yet run end to end as a BAKE, which needs the server deployed so a Job can reach it. STEP 4 BUILT 2026-08-08: the world map orders a bake for a stage it cannot make itself, verified end to end against a local server — but its CLIENT half is SUPERSEDED 2026-08-11 (see "Who triggers a bake"): the server triggers its own bakes on a read it cannot fulfil, and the world map becomes a read-only consumer. Nothing of that new shape is built yet.
 ---
 
