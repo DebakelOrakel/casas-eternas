@@ -212,12 +212,10 @@ func (s *Store) refresh() error {
 		}
 		s.index(uid, info.ModTime())
 	}
-	for uid, known := range s.entries {
+	for uid := range s.entries {
 		if !seen[uid] {
 			delete(s.entries, uid)
-			if known.meta != nil && s.byKey[known.meta.Key.String()] == uid {
-				delete(s.byKey, known.meta.Key.String())
-			}
+			s.dropKeys(uid)
 		}
 	}
 	return nil
@@ -521,6 +519,23 @@ func (s *Store) List(ctx context.Context) ([]ListedArtifact, error) {
 	return out, nil
 }
 
+// dropKeys removes every key mapping that points at uid. A reverse sweep on
+// purpose: removal must NOT depend on the entry's in-memory meta, because two
+// legitimate states have none — a resolve reservation whose writer has not
+// finished (exactly what eviction's junk-first pass deletes), and an entry
+// whose meta.json landed after the last refresh read it. Hanging the cleanup
+// on the meta leaked the mapping in both, and the key then resolved to a
+// dropped uid whose PUTs answered 404 (found 2026-08-12 by
+// TestRemovalByArtifactAndByWorld). byKey holds one entry per artifact, so
+// the sweep is as cheap as the removal it rides on.
+func (s *Store) dropKeys(uid string) {
+	for key, owner := range s.byKey {
+		if owner == uid {
+			delete(s.byKey, key)
+		}
+	}
+}
+
 // RemoveArtifact drops one entry. Absent counts as removed.
 func (s *Store) RemoveArtifact(ctx context.Context, uid string) error {
 	if !safeSegment(uid) {
@@ -531,12 +546,8 @@ func (s *Store) RemoveArtifact(ctx context.Context, uid string) error {
 	if err := os.RemoveAll(s.artifactDir(uid)); err != nil {
 		return err
 	}
-	if e, ok := s.entries[uid]; ok {
-		delete(s.entries, uid)
-		if e.meta != nil && s.byKey[e.meta.Key.String()] == uid {
-			delete(s.byKey, e.meta.Key.String())
-		}
-	}
+	delete(s.entries, uid)
+	s.dropKeys(uid)
 	return nil
 }
 
@@ -561,7 +572,7 @@ func (s *Store) RemoveWorld(ctx context.Context, worldUID string) error {
 			return err
 		}
 		delete(s.entries, uid)
-		delete(s.byKey, e.meta.Key.String())
+		s.dropKeys(uid)
 	}
 	if !found {
 		return ErrNotFound

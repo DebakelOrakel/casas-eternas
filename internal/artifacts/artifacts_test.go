@@ -106,6 +106,40 @@ func TestWritingIntoAnUnmintedUidIsRefused(t *testing.T) {
 	}
 }
 
+// The regression the byKey sweep exists for (found and fixed 2026-08-12):
+// removing an entry whose IN-MEMORY meta is nil used to leave the key mapped
+// to the dropped uid, so the next resolve answered a uid whose PUTs 404ed.
+// Two legitimate states have a nil in-memory meta, and both are exercised
+// here WITHOUT a listing in between — a listing's refresh would have read the
+// meta and masked the leak.
+func TestRemovalNeverStrandsAKeyOnADroppedUid(t *testing.T) {
+	mux := newTestModule(t)
+
+	// State one: a reservation whose writer never finished — exactly what
+	// eviction's junk-first pass deletes.
+	uid, _ := resolve(t, mux, true)
+	if got := do(mux, http.MethodDelete, "/v1/artifacts/"+uid, "").Code; got != http.StatusNoContent {
+		t.Fatalf("delete reservation = %d", got)
+	}
+	if got := do(mux, http.MethodPost, "/v1/artifacts/resolve", resolveBody).Code; got != http.StatusNotFound {
+		t.Errorf("key still resolves after its reservation was dropped: %d", got)
+	}
+	if minted, _ := resolve(t, mux, true); minted == uid {
+		t.Error("a fresh create resolved to the dropped uid")
+	}
+
+	// State two: the meta.json landed, but no refresh read it before the
+	// delete arrived.
+	uid, _ = resolve(t, mux, false)
+	writeMeta(t, mux, uid)
+	if got := do(mux, http.MethodDelete, "/v1/artifacts/"+uid, "").Code; got != http.StatusNoContent {
+		t.Fatalf("delete after meta = %d", got)
+	}
+	if got := do(mux, http.MethodPost, "/v1/artifacts/resolve", resolveBody).Code; got != http.StatusNotFound {
+		t.Errorf("key still resolves after its artifact was dropped: %d", got)
+	}
+}
+
 func TestListShapesAreNeverNull(t *testing.T) {
 	// A nil slice marshals as `null`, and exactly that crashed the storage
 	// panel mid-render once (2026-08-12). Empty must be [].
@@ -137,13 +171,6 @@ func TestRemovalByArtifactAndByWorld(t *testing.T) {
 	uid, _ := resolve(t, mux, true)
 	do(mux, http.MethodPut, "/v1/artifacts/"+uid+"/f", "x")
 	writeMeta(t, mux, uid)
-	// A listing sits between write and delete, as the panel's own flow does.
-	// It is LOAD-BEARING here: removal cleans the key mapping through the
-	// IN-MEMORY meta, which only a refresh (this listing) has read — delete
-	// straight after the meta lands and the mapping leaks, so the key
-	// resolves to a dropped uid. Found 2026-08-12 writing this test;
-	// reported, deliberately not fixed in the same change.
-	do(mux, http.MethodGet, "/v1/artifacts", "")
 
 	if got := do(mux, http.MethodDelete, "/v1/artifacts/"+uid, "").Code; got != http.StatusNoContent {
 		t.Fatalf("delete = %d, want 204", got)
@@ -153,7 +180,6 @@ func TestRemovalByArtifactAndByWorld(t *testing.T) {
 	}
 
 	// And the by-world sweep, which the meta attribution makes possible.
-	// (RemoveWorld refreshes itself, so no listing is needed here.)
 	uid, _ = resolve(t, mux, true)
 	writeMeta(t, mux, uid)
 	if got := do(mux, http.MethodDelete, "/v1/artifacts?world=a754f0db-ff5c-4b45-9f2c-1b4e7a30d001", "").Code; got != http.StatusNoContent {
