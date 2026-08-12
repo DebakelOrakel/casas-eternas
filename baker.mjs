@@ -9767,7 +9767,8 @@ var require_lib3 = __commonJS({
 });
 
 // scripts/bake.ts
-import { readFile, mkdir, writeFile, rename } from "node:fs/promises";
+import { readFile, mkdir, writeFile, rename, readdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 
 // src/world/query.ts
@@ -10433,7 +10434,7 @@ function hashBytes(view, seedA, seedB) {
   return [a, b];
 }
 var hex8 = (value) => (value >>> 0).toString(16).padStart(8, "0");
-function deriveWorldId(seedLabel, inputs) {
+function deriveWorldId(inputs) {
   let [a, b] = hashBytes(inputs.elevation, 2166136261, 2654435769);
   if (inputs.precipitation) {
     const [pa, pb] = hashBytes(inputs.precipitation, a, b);
@@ -10444,10 +10445,9 @@ function deriveWorldId(seedLabel, inputs) {
     `|s=${inputs.erosionStrength ?? "d"}|r=${inputs.drainageRefresh ?? "d"}`
   );
   const [sa, sb] = hashBytes(scalars, a, b);
-  const label = seedLabel.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").replace(/^[.\s]+/, "").trim().replace(/\s+/g, "-").slice(0, 24) || "world";
-  return `${label}-${hex8(sa)}${hex8(sb)}`;
+  return `${hex8(sa)}${hex8(sb)}`;
 }
-var AMPLIFICATION_ALGO_VERSION = 5;
+var AMPLIFICATION_ALGO_VERSION = 6;
 function derivePipelineVersion(constants) {
   const text = Object.keys(constants).sort().map((name) => `${name}=${constants[name]}`).join("|");
   const [a, b] = hashBytes(new TextEncoder().encode(text), 2166136261, 2654435769);
@@ -10517,7 +10517,7 @@ async function openWorld(archive) {
       const elevation = await fromSave("elevation");
       if (!elevation) throw new Error("a world without elevation has no identity");
       const precipitation = await fromSave("precipitation");
-      return deriveWorldId(seedText, {
+      return deriveWorldId({
         elevation: elevation.data,
         precipitation: precipitation?.data ?? null,
         erosionStrength: recipe.erosionControls.strength,
@@ -10548,6 +10548,7 @@ async function worldInputsFrom(world2) {
   if (!elevation) return null;
   const climate2 = await world2.acquire("precipitation");
   const biome = await world2.acquire("biome");
+  const lakeDepth = await world2.acquire("lakeDepth");
   const temperature = await world2.acquire("temperature");
   const precipitationEffective = await world2.acquire("precipitationEffective");
   const seasonalAmplitude = await world2.acquire("seasonalAmplitude");
@@ -10562,6 +10563,7 @@ async function worldInputsFrom(world2) {
     erosionControls: world2.recipe.erosionControls,
     climate: climate2,
     biome,
+    lakeDepth,
     biomeInputs,
     worldId: await world2.worldId(),
     worldUid: world2.recipe.worldUid
@@ -10947,14 +10949,26 @@ function isChannelCell(routing, elevation, discharge, cell, threshold, reference
   const boost = Math.pow(Math.max(receiverSlope(routing, elevation, cell), 1e-7) / referenceSlope, CHANNEL_SLOPE_EXPONENT);
   return discharge[cell] * boost >= threshold;
 }
-function extractRiverPolylines(routing, discharge, elevation, threshold, maxDischarge) {
-  const { width, height, flowTarget } = routing;
-  const n = width * height;
-  const channel = new Uint8Array(n);
+function buildChannelMask(routing, elevation, discharge, threshold) {
   const referenceSlope = channelReferenceSlope(routing, elevation, discharge, threshold);
+  const n = discharge.length;
+  const channel = new Uint8Array(n);
   for (let cell = 0; cell < n; cell++) {
     if (isChannelCell(routing, elevation, discharge, cell, threshold, referenceSlope)) channel[cell] = 1;
   }
+  const { popOrder, poppedCount, flowTarget } = routing;
+  for (let k = poppedCount - 1; k >= 0; k--) {
+    const cell = popOrder[k];
+    if (!channel[cell]) continue;
+    const t = flowTarget[cell];
+    if (t >= 0 && t < n && elevation[t] > SEA_LEVEL) channel[t] = 1;
+  }
+  return channel;
+}
+function extractRiverPolylines(routing, discharge, elevation, threshold, maxDischarge) {
+  const { width, height, flowTarget } = routing;
+  const n = width * height;
+  const channel = buildChannelMask(routing, elevation, discharge, threshold);
   const adjacent = (a, b) => {
     const ax = a % width;
     const ay = (a - ax) / width;
@@ -11725,17 +11739,31 @@ async function runAmplification(request, onProgress = () => {
   let rivers = { points: new Float32Array(0), lengths: new Uint32Array(0) };
   if (request.precipitation && request.climateResX && request.climateResY) {
     onProgress("hydrology", 0);
-    const routing = await fillDepressionsAndRouteFlow(field, result.width, result.height, 0);
-    onProgress("hydrology", 0.6);
-    const discharge = accumulateDischarge(routing, field, request.precipitation, request.climateResX, request.climateResY);
-    const maxDischarge = request.maxDischarge ?? maxDischargeOverLand(discharge, field);
-    const meanRunoff = request.meanRunoff ?? meanLandRunoff(request.precipitation, field, result.width, result.height, request.climateResX, request.climateResY);
-    const criticalArea = densityToCriticalArea(request.riverDensity ?? 55);
-    rivers = extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge);
+    rivers = await deriveRivers(
+      field,
+      result.width,
+      result.height,
+      request.precipitation,
+      request.climateResX,
+      request.climateResY,
+      request.riverDensity,
+      { maxDischarge: request.maxDischarge, meanRunoff: request.meanRunoff },
+      (fraction) => onProgress("hydrology", fraction)
+    );
     if (request.region) rivers = ownedRivers(rivers, request.region.owned, result.width);
     onProgress("hydrology", 1);
   }
   return { elevation: field, width: result.width, height: result.height, rivers };
+}
+async function deriveRivers(field, width, height, precipitation, climateResX, climateResY, riverDensity, overrides = {}, onProgress = () => {
+}) {
+  const routing = await fillDepressionsAndRouteFlow(field, width, height, 0);
+  onProgress(0.6);
+  const discharge = accumulateDischarge(routing, field, precipitation, climateResX, climateResY);
+  const maxDischarge = overrides.maxDischarge ?? maxDischargeOverLand(discharge, field);
+  const meanRunoff = overrides.meanRunoff ?? meanLandRunoff(precipitation, field, width, height, climateResX, climateResY);
+  const criticalArea = densityToCriticalArea(riverDensity ?? 55);
+  return extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge);
 }
 function ownedRivers(rivers, owned, width) {
   const points = [];
@@ -11789,10 +11817,6 @@ function spread(from, to, offset, stride, size, radius, distance) {
   for (let i = 0; i < size; i++) to[offset + i * stride] = distance[i] <= radius ? 1 : 0;
 }
 
-// src/storage/ArtifactStore.ts
-var artifactDirectory = (key) => `worlds/${key.worldId}/amp/${key.pipelineVersion}/${key.stage}`;
-var artifactPath = (key, file) => `${artifactDirectory(key)}/${file}`;
-
 // src/world/bakeSettings.ts
 var AMPLIFY_EROSION_ROUNDS = 2;
 
@@ -11814,46 +11838,59 @@ var riverFiles = (density) => {
   const key = riverDensityKey(density);
   return { points: `rivers-${key}.f32`, lengths: `riverLengths-${key}.u32` };
 };
-async function writeAmplificationArtifact(store, key, artifact, bakeMs, riverDensity) {
+async function writeAmplificationArtifact(store, key, artifact, bakeMs, riverDensity, label = "", rounds = AMPLIFY_EROSION_ROUNDS) {
+  const handle = await store.resolve(key, true);
+  if (!handle) return false;
   const rivers = riverFiles(riverDensity);
+  const elevationBytes = new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING));
   const meta = {
+    key,
     width: artifact.width,
     height: artifact.height,
     riverPointCount: artifact.riverPoints.length,
     riverPolylineCount: artifact.riverLengths.length,
     bakeMs,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    label,
+    pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, constants: { ...AMPLIFY_CONSTANTS } },
+    files: {
+      [FILES.elevation]: elevationBytes.byteLength,
+      [rivers.points]: artifact.riverPoints.byteLength,
+      [rivers.lengths]: artifact.riverLengths.byteLength
+    }
   };
-  const wrote = await store.write(artifactPath(key, FILES.elevation), new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING))) && await store.write(artifactPath(key, rivers.points), artifact.riverPoints) && await store.write(artifactPath(key, rivers.lengths), artifact.riverLengths) && await store.write(artifactPath(key, FILES.meta), new TextEncoder().encode(JSON.stringify(meta)));
-  if (!wrote) {
-    await store.remove(artifactPath(key, FILES.meta));
-  }
-  return wrote;
+  return await store.write(handle, FILES.elevation, elevationBytes) && await store.write(handle, rivers.points, artifact.riverPoints) && await store.write(handle, rivers.lengths, artifact.riverLengths) && await store.write(handle, FILES.meta, new TextEncoder().encode(JSON.stringify(meta)));
 }
 
 // src/storage/HttpArtifactStore.ts
-var LOCAL_PREFIX = "worlds/";
-var LOCAL_GROUP = "amp";
-function toRemotePath(path) {
-  if (!path.startsWith(LOCAL_PREFIX)) return null;
-  const segments = path.slice(LOCAL_PREFIX.length).split("/").filter((s) => s.length > 0);
-  if (segments.length < 5 || segments[1] !== LOCAL_GROUP) return null;
-  const [worldId, , pipelineVersion, stage, ...rest] = segments;
-  return { worldId, pipelineVersion, stage, name: rest.join("/") };
-}
-var encodePath = (p) => [p.worldId, p.pipelineVersion, p.stage, ...p.name.split("/")].map(encodeURIComponent).join("/");
 function createHttpArtifactStore(options) {
   const resolveBase = options.resolveBase;
   const send = options.fetch ?? ((input, init) => fetch(input, init));
-  const url = async (path) => {
+  const fileUrl = async (handle, name) => {
     const base = await resolveBase();
-    const remote = toRemotePath(path);
-    if (!base || !remote) return null;
-    return `${base}/artifacts/${encodePath(remote)}`;
+    if (!base || !handle.remote) return null;
+    return `${base}/artifacts/${encodeURIComponent(handle.remote)}/${name.split("/").map(encodeURIComponent).join("/")}`;
   };
   return {
-    async read(path) {
-      const target = await url(path);
+    async resolve(key, create) {
+      const base = await resolveBase();
+      if (!base) return null;
+      try {
+        const response = await send(`${base}/artifacts/resolve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...key, create })
+        });
+        if (!response.ok) return null;
+        const body = await response.json();
+        if (!body.artifactUid) return null;
+        return { key, remote: body.artifactUid, files: body.files ?? [] };
+      } catch {
+        return null;
+      }
+    },
+    async read(handle, name) {
+      const target = await fileUrl(handle, name);
       if (!target) return null;
       try {
         const response = await send(target, { cache: "no-store" });
@@ -11863,8 +11900,8 @@ function createHttpArtifactStore(options) {
         return null;
       }
     },
-    async write(path, bytes) {
-      const target = await url(path);
+    async write(handle, name, bytes) {
+      const target = await fileUrl(handle, name);
       if (!target) return false;
       try {
         const response = await send(target, {
@@ -11876,73 +11913,72 @@ function createHttpArtifactStore(options) {
       } catch {
         return false;
       }
-    },
-    async exists(path) {
-      const target = await url(path);
-      if (!target) return false;
-      try {
-        const response = await send(target, { method: "HEAD", cache: "no-store" });
-        return response.ok;
-      } catch {
-        return false;
-      }
-    },
-    async size(path) {
-      const target = await url(path);
-      if (!target) return null;
-      try {
-        const response = await send(target, { method: "HEAD", cache: "no-store" });
-        if (!response.ok) return null;
-        const length = Number(response.headers.get("Content-Length"));
-        return Number.isFinite(length) ? length : null;
-      } catch {
-        return null;
-      }
-    },
-    async remove(path) {
-      const target = await url(path);
-      if (!target) return;
-      try {
-        await send(target, { method: "DELETE" });
-      } catch {
-      }
-    },
-    // Deliberately unsupported rather than emulated. Both exist for the LOCAL
-    // inventory — the storage panel walks directories to total up what this
-    // machine is holding, and asks the browser for its quota. The server
-    // answers both in one request through its own listing endpoint, so
-    // pretending here would mean a slow, wrong second implementation of it.
-    async listDirectory() {
-      return [];
-    },
-    async usage() {
-      return null;
     }
   };
+}
+
+// src/storage/ArtifactStore.ts
+var NO_UID = "no-uid";
+function artifactKey(worldUid, worldId, pipelineVersion, stage) {
+  return { worldUid: worldUid || NO_UID, worldId, pipelineVersion, stage };
 }
 
 // scripts/bake.ts
 var progressIntervalMs = 3e3;
 function createFsArtifactStore(root) {
-  const resolve = (path) => {
-    const remote = toRemotePath(path);
-    if (!remote) return null;
-    return join(root, remote.worldId, remote.pipelineVersion, remote.stage, ...remote.name.split("/"));
+  const safeName = (name) => {
+    const segments = name.split("/");
+    return segments.length <= 4 && segments.every((s) => s.length > 0 && s !== "." && s !== ".." && !s.includes("\\"));
   };
-  return {
-    async read(path) {
-      const target = resolve(path);
-      if (!target) return null;
+  async function findByKey(key) {
+    let children;
+    try {
+      children = await readdir(root);
+    } catch {
+      return null;
+    }
+    for (const child of children) {
       try {
-        const buffer = await readFile(target);
+        const raw = await readFile(join(root, child, "meta.json"), "utf8");
+        const meta = JSON.parse(raw);
+        if (meta.key && meta.key.worldUid === key.worldUid && meta.key.worldId === key.worldId && meta.key.pipelineVersion === key.pipelineVersion && meta.key.stage === key.stage) return child;
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }
+  return {
+    async resolve(key, create) {
+      let uid = await findByKey(key);
+      if (!uid) {
+        if (!create) return null;
+        uid = randomUUID();
+        try {
+          await mkdir(join(root, uid), { recursive: true });
+        } catch {
+          return null;
+        }
+      }
+      let files = [];
+      try {
+        files = (await readdir(join(root, uid))).filter((name) => !name.startsWith(".tmp-"));
+      } catch {
+      }
+      return { key, local: uid, files };
+    },
+    async read(handle, name) {
+      if (!handle.local || !safeName(name)) return null;
+      try {
+        const buffer = await readFile(join(root, handle.local, ...name.split("/")));
         return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
       } catch {
         return null;
       }
     },
-    async write(path, bytes) {
-      const target = resolve(path);
-      if (!target) return false;
+    async write(handle, name, bytes) {
+      if (!handle.local || !safeName(name)) return false;
+      const target = join(root, handle.local, ...name.split("/"));
       try {
         await mkdir(dirname(target), { recursive: true });
         const view = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
@@ -11953,21 +11989,6 @@ function createFsArtifactStore(root) {
       } catch {
         return false;
       }
-    },
-    async exists(path) {
-      return await this.read(path) !== null;
-    },
-    async size(path) {
-      const bytes = await this.read(path);
-      return bytes ? bytes.byteLength : null;
-    },
-    async remove() {
-    },
-    async listDirectory() {
-      return [];
-    },
-    async usage() {
-      return null;
     }
   };
 }
@@ -12076,7 +12097,7 @@ async function main() {
   const store = artifactStoreFor(job);
   if (!store) fail("neither artifactsDir nor artifactsUrl was given");
   const pipelineVersion = amplificationPipelineVersion(job.erosionRounds);
-  const key = { worldId: inputs.worldId, pipelineVersion, stage: String(job.stage) };
+  const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, String(job.stage));
   const stored = await writeAmplificationArtifact(store, key, {
     elevation: result.elevation,
     width: result.width,
@@ -12085,7 +12106,7 @@ async function main() {
     riverLengths: result.rivers.lengths
     // Rivers are keyed by the world's own density inside the artifact, so a
     // server bake lands where the browser will look for it.
-  }, durationMs, inputs.erosionControls.riverDensity);
+  }, durationMs, inputs.erosionControls.riverDensity, inputs.seedText, job.erosionRounds);
   if (!stored) fail("could not write the artifact");
   process.stdout.write(`${JSON.stringify({
     worldId: key.worldId,

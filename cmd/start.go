@@ -86,7 +86,7 @@ func buildModules(targets config.Targets) ([]server.Module, func(http.Handler) h
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetWorld) {
-		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorlds), Identity: caller})
+		m, err := world.New(world.Config{Dir: viper.GetString(flagDirWorlds), KeepRevisions: viper.GetInt(flagKeepRevs), Identity: caller})
 		if err != nil {
 			return nil, nil, err
 		}

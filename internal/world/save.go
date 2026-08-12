@@ -75,13 +75,19 @@ type SaveInfo struct {
 	// visible rather than silently reconciled.
 	Revision   int
 	ErosionRun int
-	Preview    []byte
+	// Display data for listings, read from the same yaml the fields above
+	// come from: the recipe's seed and the build that wrote the save
+	// (status.generator — provenance, never a key). Empty for saves that
+	// predate them.
+	Seed      string
+	Generator string
+	Preview   []byte
 }
 
 // inspectSave reads the two things above out of a .zip.
 //
 // A save with no `metadata.uid` is rejected rather than assigned one: the
-// client mints or derives it (storage/artifactKey.ts), and having the server
+// client mints or derives it (client/src/world/identity.ts), and having the server
 // invent one too would mean the same world could enter the store twice under
 // two ids, which is the exact failure the uid exists to prevent.
 func inspectSave(data []byte) (SaveInfo, error) {
@@ -125,6 +131,8 @@ func inspectSave(data []byte) (SaveInfo, error) {
 	if raw, found := readYAMLValue(yamlText, "status.erosionRun"); found {
 		info.ErosionRun, _ = strconv.Atoi(raw)
 	}
+	info.Seed, _ = readYAMLValue(yamlText, "spec.seed")
+	info.Generator, _ = readYAMLValue(yamlText, "status.generator")
 	return info, nil
 }
 

@@ -1,94 +1,102 @@
-import type { ArtifactStore } from './ArtifactStore'
+import type { LocalArtifactStore, StoredArtifact } from './ArtifactStore'
 
-// Minimal housekeeping for the artifact cache — deliberately just "how much
-// is in there" and "throw it all away", which is all a cache over
-// recomputable data needs to be operable while it is still a debug
-// affordance. Per-entry eviction (LRU against a size cap) is the obvious
-// next step and is NOT here: it needs an access-time index that nothing yet
-// reads, and until worlds accumulate, "clear everything" is the same
-// operation with less machinery.
+// Housekeeping and view-shaping for the artifact cache. The store lists FLAT
+// entries (uid + meta fields, identical in shape to the server's listing);
+// this module folds either tier's list into the grouping the panel renders —
+// one function, so the two sections cannot drift.
 
-// Everything the cache writes lives under this one prefix, so removing it is
-// the whole clear operation (see ArtifactStore's path grammar).
-const ROOT = 'worlds'
-
-export async function clearArtifacts(store: ArtifactStore): Promise<void> {
-  await store.remove(ROOT)
+export async function clearArtifacts(store: LocalArtifactStore): Promise<void> {
+  await store.clear()
 }
 
-export async function removeCachedWorld(store: ArtifactStore, worldId: string): Promise<void> {
-  // The world id is the whole subtree — every pipeline version and every
-  // stage baked for it.
-  await store.remove(`${ROOT}/${worldId}`)
-}
-
-// One baked tier of one world, as the manager lists it.
+// One baked tier, as the panel lists it.
 export interface CachedStage {
-  // The amplification factor the entry was baked at.
   stage: string
   width: number
   height: number
   bytes: number
   bakeMs: number
-  createdAt: number
 }
 
-export interface CachedWorld {
-  worldId: string
-  // The readable half of the id — the seed the world was generated from
-  // (see artifactKey.deriveWorldId), which is the only part a human can
-  // recognise.
-  label: string
+// One pipeline version of one terrain — a LINE in the panel: the stages this
+// exact algorithm + constants combination has produced.
+export interface CachedVersion {
+  pipelineVersion: string
   bytes: number
   stages: CachedStage[]
 }
 
-// Grid width → the shorthand people actually use for it. Derived rather than
-// tabulated so 16384 keeps working the day someone tries it.
-export const resolutionLabel = (width: number): string => `${Math.round(width / 1024)}k`
+// One terrain (content hash) of a world — several accumulate as a world is
+// eroded on, and telling them apart is what the panel's lines exist for.
+export interface CachedTerrain {
+  worldId: string
+  bytes: number
+  versions: CachedVersion[]
+}
 
-// Walks the cache tree and reports what is in it. Sizes come from the
-// filesystem's own metadata (see ArtifactStore.size), so this stays cheap
-// even when the entries are tens of megabytes; only the tiny meta.json is
-// actually read, because width/height and the bake cost live there rather
-// than in the path.
-//
-// Entries that fail to parse are skipped rather than reported as errors: an
-// inventory of a cache should show what is usable, and anything else is
-// something `clear` will deal with.
-export async function listCachedWorlds(store: ArtifactStore): Promise<CachedWorld[]> {
-  const worlds: CachedWorld[] = []
-  for (const worldId of await store.listDirectory(ROOT)) {
-    const stages: CachedStage[] = []
-    let worldBytes = 0
-    for (const version of await store.listDirectory(`${ROOT}/${worldId}/amp`)) {
-      for (const stage of await store.listDirectory(`${ROOT}/${worldId}/amp/${version}`)) {
-        const directory = `${ROOT}/${worldId}/amp/${version}/${stage}`
-        let bytes = 0
-        // Listed rather than taken from a fixed set of names: rivers are keyed
-        // per density (rivers-55.f32 and friends), so a hard-coded list would
-        // under-report every stage that has been extracted at more than one.
-        for (const file of await store.listDirectory(directory)) bytes += (await store.size(`${directory}/${file}`)) ?? 0
-        worldBytes += bytes
-        const metaBytes = await store.read(`${directory}/meta.json`)
-        if (!metaBytes) continue
-        try {
-          const meta = JSON.parse(new TextDecoder().decode(metaBytes)) as { width: number; height: number; bakeMs: number; createdAt: number }
-          stages.push({ stage, width: meta.width, height: meta.height, bytes, bakeMs: meta.bakeMs, createdAt: meta.createdAt })
-        } catch {
-          // Unreadable metadata: its bytes still count toward the world's
-          // size (they are occupying the disk), but it cannot be described.
-        }
-      }
+export interface CachedWorld {
+  // The owning world's uid — NO_UID for worlds never saved with one, and the
+  // artifact's own uid for an entry whose meta is unreadable (bytes with a
+  // name, still deletable).
+  worldUid: string
+  label: string
+  bytes: number
+  terrains: CachedTerrain[]
+  // Every artifact uid in this group — the unit deletion works in.
+  artifactUids: string[]
+}
+
+// Grid width → the shorthand people actually use for it. Derived rather than
+// tabulated so 16384 keeps working the day someone tries it. Uppercase K,
+// matching the bake buttons in the erosion panel.
+export const resolutionLabel = (width: number): string => `${Math.round(width / 1024)}K`
+
+// Folds a flat listing into world groups: uid → terrain → version → stages.
+// Entries without a readable meta (no key fields) become their own group so
+// their bytes stay visible and deletable — the phantom-total lesson.
+export function groupArtifacts(entries: StoredArtifact[]): CachedWorld[] {
+  const byUid = new Map<string, CachedWorld>()
+  for (const entry of entries) {
+    if (!entry.worldUid) {
+      byUid.set(`?${entry.artifactUid}`, {
+        worldUid: entry.artifactUid,
+        label: entry.artifactUid,
+        bytes: entry.bytes,
+        terrains: [],
+        artifactUids: [entry.artifactUid],
+      })
+      continue
     }
-    if (stages.length === 0 && worldBytes === 0) continue
-    stages.sort((a, b) => a.width - b.width)
-    worlds.push({
-      worldId,
-      label: worldId.slice(0, worldId.lastIndexOf('-')) || worldId,
-      bytes: worldBytes,
-      stages,
-    })
+    let world = byUid.get(entry.worldUid)
+    if (!world) {
+      world = { worldUid: entry.worldUid, label: '', bytes: 0, terrains: [], artifactUids: [] }
+      byUid.set(entry.worldUid, world)
+    }
+    world.label ||= entry.label
+    world.bytes += entry.bytes
+    world.artifactUids.push(entry.artifactUid)
+    let terrain = world.terrains.find((candidate) => candidate.worldId === entry.worldId)
+    if (!terrain) {
+      terrain = { worldId: entry.worldId, bytes: 0, versions: [] }
+      world.terrains.push(terrain)
+    }
+    terrain.bytes += entry.bytes
+    let version = terrain.versions.find((candidate) => candidate.pipelineVersion === entry.pipelineVersion)
+    if (!version) {
+      version = { pipelineVersion: entry.pipelineVersion, bytes: 0, stages: [] }
+      terrain.versions.push(version)
+    }
+    version.bytes += entry.bytes
+    version.stages.push({ stage: entry.stage, width: entry.width, height: entry.height, bytes: entry.bytes, bakeMs: entry.bakeMs })
+  }
+  const worlds = [...byUid.values()]
+  for (const world of worlds) {
+    world.label ||= world.worldUid
+    world.terrains.sort((a, b) => b.bytes - a.bytes)
+    for (const terrain of world.terrains) {
+      terrain.versions.sort((a, b) => a.pipelineVersion.localeCompare(b.pipelineVersion))
+      for (const version of terrain.versions) version.stages.sort((a, b) => a.width - b.width)
+    }
   }
   worlds.sort((a, b) => b.bytes - a.bytes)
   return worlds
@@ -101,7 +109,7 @@ export const formatBytes = (bytes: number): string =>
 // the cache's own files: for this app they are the same number to within
 // rounding, and the honest one is what the browser will actually enforce a
 // quota against. Null when the browser declines to estimate.
-export async function describeArtifactUsage(store: ArtifactStore): Promise<string | null> {
+export async function describeArtifactUsage(store: LocalArtifactStore): Promise<string | null> {
   const usage = await store.usage()
   if (!usage) return null
   const mb = (bytes: number): string => `${(bytes / 1e6).toFixed(bytes < 1e8 ? 1 : 0)} MB`

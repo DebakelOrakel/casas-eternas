@@ -108,9 +108,9 @@ console.log('\n— identity —')
 const elev = new Float32Array(64 * 32)
 for (let i = 0; i < elev.length; i++) elev[i] = Math.sin(i * 0.017) * 0.4
 const precip = new Float32Array(16 * 8).fill(800)
-const id = M.key.deriveWorldId('Ätna', { elevation: elev, precipitation: precip, erosionStrength: 2, drainageRefresh: 3 })
-check('deriveWorldId is stable for fixed bytes', id === 'Ätna-ba90bda173d581ef', `got ${id}`)
-check('the label keeps non-ASCII and ends in the hash', id.startsWith('Ätna-') && /-[0-9a-f]{16}$/.test(id), id)
+const id = M.key.deriveWorldId({ elevation: elev, precipitation: precip, erosionStrength: 2, drainageRefresh: 3 })
+check('deriveWorldId is stable for fixed bytes', id === 'ba90bda173d581ef', `got ${id}`)
+check('the id is a pure 16-hex hash (label dropped 2026-08-12)', /^[0-9a-f]{16}$/.test(id), id)
 
 // Every constant the pipeline version LISTS must actually move it. This does not
 // catch a constant that was never listed — that is the gap which let three
@@ -125,7 +125,7 @@ check(`all ${Object.keys(M.amplify.AMPLIFY_CONSTANTS).length} listed constants m
 // --- 4. the artifact store ---------------------------------------------------
 console.log('\n— amplification artifact —')
 const store = M.memory.createMemoryArtifactStore()
-const key = { worldId: id, pipelineVersion: M.artifact.amplificationPipelineVersion(), stage: '2' }
+const key = { worldUid: 'test-uid', worldId: id, pipelineVersion: M.artifact.amplificationPipelineVersion(), stage: '2' }
 const art = {
   elevation: Float32Array.from({ length: 40 }, (_, i) => -0.9 + (i / 39) * 1.8),
   width: 8, height: 5,
@@ -179,7 +179,7 @@ else {
   check('the uid is read rather than derived', loaded.worldUid === '0192abcd-0000-8000-8000-000000000000')
   // The reader must reach the SAME id as deriving it here by hand — and it must
   // hash the STORED (dequantised) precipitation, never a raw float array.
-  const direct = M.key.deriveWorldId('zip-welt', {
+  const direct = M.key.deriveWorldId({
     elevation: loaded.elevations, precipitation: loaded.climate?.data ?? null, erosionStrength: 4, drainageRefresh: 1,
   })
   check('reader and direct derivation agree on the worldId', loaded.worldId === direct, `${loaded.worldId} vs ${direct}`)

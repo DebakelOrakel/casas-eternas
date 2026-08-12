@@ -3,6 +3,17 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-08-12
+- **changed** Storage: artifacts live under minted uids with their meta.json as the only truth — a resolve endpoint maps the logical key, hand-copied entries index themselves, and schema changes can never orphan bytes again. `common.panel.storage`
+- **changed** Storage: the terrain id is a bare content hash — the seed text left the key and shows up as a label from the artifact's own metadata instead. `common.panel.storage`
+
+## 2026-08-11
+- **changed** Storage: artifacts are filed under the owning world's uid above the terrain hash — deleting a world can now sweep everything it ever earned, and the local cache uses the server's path grammar verbatim. `common.panel.storage`
+- **changed** Server: the world store keeps the newest N revisions (`--keep-revisions`, default 3) and skips byte-identical re-uploads instead of hoarding every copy forever.
+- **new** Server: each revision records the content hash of the save as uploaded.
+- **changed** Storage: checking whether a bake stage exists on the server costs one request instead of one per file — the `present` endpoint is now actually used.
+- **new** Save: `status.generator` records which build wrote the save — provenance, never a key.
+
 ## 2026-08-09
 - **changed** Erosion: an erosion pass runs about three times faster and a 4K bake about two and a half — sediment deposition no longer walks the deep ocean floor it discards. `worldgen.panel.erosion`
 - **new** Build: a fourth harness checks the amplification bake — invariants, determinism and an opt-in byte baseline — closing the one pipeline no check reached.

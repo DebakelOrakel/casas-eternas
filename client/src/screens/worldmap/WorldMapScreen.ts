@@ -24,6 +24,7 @@ import type { TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { amplificationPipelineVersion, readAmplificationArtifact } from '../../world/artifacts'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
+import { artifactKey } from '../../storage/ArtifactStore'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
@@ -182,6 +183,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // actually consumes (see world/identity.ts) — the key its artifacts are
   // stored under.
   let worldId = ''
+  // The stable uid beside the content hash — the artifact path carries both
+  // (see ArtifactStore's grammar). Empty for a save too old to carry one.
+  let worldUid = ''
   // Scene-space river ribbons + the relief surfaces they drape on (set when an
   // amplified tier arrives), and which relief level they are currently styled
   // for.
@@ -395,6 +399,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
     world = opened
     worldId = inputs.worldId
+    worldUid = inputs.worldUid
     presentWorld(
       inputs.elevations, inputs.width, inputs.height,
       inputs.biome, inputs.detailSeed, inputs.erosionControls.riverDensity,
@@ -675,7 +680,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // fetch; its rivers come from deriveMacroRivers.
     for (const factor of AMPLIFY_FETCH_STAGES.filter((f) => f > 1)) {
       if (generation !== loadGeneration) return
-      const hit = await readAmplificationArtifact(store, { worldId, pipelineVersion, stage: String(factor) }, riverDensity).catch(() => null)
+      const hit = await readAmplificationArtifact(store, artifactKey(worldUid, worldId, pipelineVersion, String(factor)), riverDensity).catch(() => null)
       if (generation !== loadGeneration) return
       // Each tier is asked for independently: a gap at 4k says nothing about
       // whether 8k exists.

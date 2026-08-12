@@ -12,7 +12,9 @@ import (
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	store, err := NewStore(t.TempDir())
+	// keepRevisions 0 (retain all): the retention sweep has its own tests, and
+	// everything else here asserts on revision directories it expects to stay.
+	store, err := NewStore(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -31,7 +33,7 @@ func newTestStore(t *testing.T) *Store {
 // DEFLATE-compressed, so its payload does not appear literally in the file.
 func putSave(t *testing.T, s *Store, uid string, body string, expected int) (Meta, []byte, error) {
 	t.Helper()
-	yaml := "metadata:\n  name: alpha\n  uid: " + uid + "\nstatus:\n  erosionRun: 2\n  revision: 1\n"
+	yaml := "metadata:\n  name: alpha\n  uid: " + uid + "\nspec:\n  seed: alpha-seed\nstatus:\n  erosionRun: 2\n  revision: 1\n  generator: test-build\n"
 	data := buildSave(t, yaml, []byte("PNG-"+body), map[string][]byte{"payload": []byte(body)})
 	info, err := inspectSave(data)
 	if err != nil {
@@ -52,6 +54,11 @@ func TestPutThenReadRoundTrips(t *testing.T) {
 	}
 	if meta.Owner != "local" || meta.Name != "alpha" || !meta.HasPreview {
 		t.Errorf("meta = %+v", meta)
+	}
+	// The listing's display data, read out of the yaml and mirrored into the
+	// world meta so the load/save panels need no unzip.
+	if meta.Seed != "alpha-seed" || meta.Generator != "test-build" || len(meta.ContentHash) != 64 {
+		t.Errorf("display meta = seed %q, generator %q, hash %q", meta.Seed, meta.Generator, meta.ContentHash)
 	}
 
 	data, read, err := s.ReadCurrent(sampleUID)
@@ -282,5 +289,64 @@ func TestCreatedAtSurvivesUpdates(t *testing.T) {
 	}
 	if !second.UpdatedAt.After(first.UpdatedAt) {
 		t.Errorf("updatedAt did not advance: %v -> %v", first.UpdatedAt, second.UpdatedAt)
+	}
+}
+
+// A byte-identical re-upload of the current revision changes nothing, so it
+// must mint nothing: same revision back, no new directory on disk.
+func TestPutDedupesIdenticalUpload(t *testing.T) {
+	s := newTestStore(t)
+	first, firstBytes, err := putSave(t, s, sampleUID, "v1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := inspectSave(firstBytes)
+	if err != nil {
+		t.Fatalf("inspectSave: %v", err)
+	}
+	again, err := s.Put(sampleUID, firstBytes, info, "local", first.Revision)
+	if err != nil {
+		t.Fatalf("identical re-upload: %v", err)
+	}
+	if again.Revision != first.Revision {
+		t.Errorf("revision moved on identical bytes: %d -> %d", first.Revision, again.Revision)
+	}
+	if _, err := os.Stat(s.revDir(sampleUID, first.Revision+1)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("an identical upload left a new revision directory behind")
+	}
+	// Different bytes at the same expected revision still advance as ever.
+	if next, _, err := putSave(t, s, sampleUID, "v2", first.Revision); err != nil || next.Revision != first.Revision+1 {
+		t.Fatalf("changed upload = rev %d, err %v", next.Revision, err)
+	}
+}
+
+// Retention: with keepRevisions = 2, the third upload prunes revision 1 while
+// the current and its predecessor stay readable.
+func TestPruneKeepsNewestN(t *testing.T) {
+	store, err := NewStore(t.TempDir(), 2)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	tick := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time {
+		tick = tick.Add(time.Second)
+		return tick
+	}
+	for i, body := range []string{"v1", "v2", "v3"} {
+		if _, _, err := putSave(t, store, sampleUID, body, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(store.revDir(sampleUID, 1)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("revision 1 should have been pruned")
+	}
+	for _, n := range []int{2, 3} {
+		if _, err := os.Stat(filepath.Join(store.revDir(sampleUID, n), "world.zip")); err != nil {
+			t.Errorf("revision %d should be retained: %v", n, err)
+		}
+	}
+	// The current revision still reads, and the meta still names it.
+	if _, meta, err := store.ReadCurrent(sampleUID); err != nil || meta.Revision != 3 {
+		t.Errorf("current after prune = rev %d, err %v", meta.Revision, err)
 	}
 }

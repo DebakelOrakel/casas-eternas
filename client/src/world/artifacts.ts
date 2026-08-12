@@ -1,6 +1,5 @@
-import { artifactPath } from '../storage/ArtifactStore'
-import type { ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
-import { derivePipelineVersion } from './identity'
+import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
+import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { bakeLayer, decodeLayer } from './save/worldLayers'
 import type { AmplificationArtifact } from '../worldgen/surface/bakeInBrowser'
 
@@ -16,7 +15,7 @@ import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
 // `{...AMPLIFY_CONSTANTS, rounds}` by hand. They agreed, but nothing made them:
 // adding a constant at one site and not the others mints two keys for one
 // artifact, and the reader would find terrain filed under a key that does not
-// describe it. `artifactKey.derivePipelineVersion` deliberately takes the
+// describe it. `identity.derivePipelineVersion` deliberately takes the
 // constants as an argument so it has no opinion on where they live — this is
 // that opinion, held once.
 //
@@ -27,11 +26,18 @@ export function amplificationPipelineVersion(rounds: number = AMPLIFY_EROSION_RO
 }
 
 // What one amplification bake produces, and how it is written to (and read
-// back from) an ArtifactStore. The store deals in bytes at paths; this is
-// the layer that knows what the bytes mean, so the same encoding serves the
-// local store today and the server store later.
+// back from) an ArtifactStore. The store deals in resolve/read/write over
+// opaque artifact uids; this is the layer that knows what the bytes MEAN.
 
+// The meta.json every artifact carries — deliberately its COMPLETE
+// self-description (2026-08-12): the logical key makes a hand-copied entry
+// re-indexable wherever it lands, and the pipeline constants WRITTEN OUT (not
+// only their hash) are what makes a future key-schema migration possible at
+// all — a hash cannot be reversed into the values that fed it. The store
+// index reads `key` and the display fields; everything else rides along for
+// whoever needs it later.
 interface ArtifactMeta {
+  key: ArtifactKey
   width: number
   height: number
   riverPointCount: number
@@ -40,6 +46,17 @@ interface ArtifactMeta {
   // "was the cache worth it", and readable straight off disk.
   bakeMs: number
   createdAt: number
+  // The world's seed text, for listings — display data; for a `no-uid` entry
+  // the only name there is.
+  label: string
+  pipeline: {
+    algoVersion: number
+    rounds: number
+    constants: Record<string, number>
+  }
+  // Name → byte length of everything written beside this meta, so an entry
+  // can state its own completeness without naming conventions.
+  files: Record<string, number>
 }
 
 // Elevation is quantised to u16 rather than stored as raw f32, for two
@@ -63,9 +80,6 @@ const ELEVATION_ENCODING: Encoding = { dtype: 'u16', scale: 2 / 65535, offset: -
 // Rivers travel as raw binary rather than the save's JSON form: a baked
 // world's network runs to six figures of points, and JSON would be an order
 // of magnitude larger and slower to parse than the numbers it carries.
-// Terrain-level files: one per world+pipeline+stage, shared by every river
-// density. The expensive ones — the 8192x4096 elevation raster is 67 MB and
-// takes minutes to produce.
 const FILES = {
   elevation: 'elevation.u16',
   meta: 'meta.json',
@@ -77,8 +91,8 @@ const FILES = {
 // so a stray float cannot mint an endless family of near-identical entries.
 //
 // Everything else the extraction depends on — the eroded field, precipitation,
-// the erosion controls — is already fixed by the worldId and pipeline version
-// above it in the path, so the density is the whole of the remaining freedom.
+// the erosion controls — is already fixed by the artifact's key, so the
+// density is the whole of the remaining freedom.
 export function riverDensityKey(density: number | undefined): string {
   const value = Math.round(density ?? DEFAULT_RIVER_DENSITY)
   return String(Math.min(100, Math.max(0, value)))
@@ -96,57 +110,58 @@ const riverFiles = (density: number | undefined): { points: string; lengths: str
 // Every operation here is best-effort: an artifact store is a cache over
 // deterministically recomputable data, so a partial write, a missing file or
 // a corrupt read all mean the same thing — bake it again.
-export async function writeAmplificationArtifact(store: ArtifactStore, key: ArtifactKey, artifact: AmplificationArtifact, bakeMs: number, riverDensity?: number): Promise<boolean> {
+export async function writeAmplificationArtifact(store: ArtifactStore, key: ArtifactKey, artifact: AmplificationArtifact, bakeMs: number, riverDensity?: number, label = '', rounds: number = AMPLIFY_EROSION_ROUNDS): Promise<boolean> {
+  const handle = await store.resolve(key, true)
+  if (!handle) return false
   const rivers = riverFiles(riverDensity)
+  const elevationBytes = new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING))
   const meta: ArtifactMeta = {
+    key,
     width: artifact.width,
     height: artifact.height,
     riverPointCount: artifact.riverPoints.length,
     riverPolylineCount: artifact.riverLengths.length,
     bakeMs,
     createdAt: Date.now(),
+    label,
+    pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, constants: { ...AMPLIFY_CONSTANTS } },
+    files: {
+      [FILES.elevation]: elevationBytes.byteLength,
+      [rivers.points]: artifact.riverPoints.byteLength,
+      [rivers.lengths]: artifact.riverLengths.byteLength,
+    },
   }
-  // Elevation first and meta LAST: meta is what the reader checks for, so a
-  // write interrupted half way leaves an entry that reads as absent rather
-  // than as present-but-truncated.
-  const wrote =
-    (await store.write(artifactPath(key, FILES.elevation), new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING)))) &&
-    (await store.write(artifactPath(key, rivers.points), artifact.riverPoints)) &&
-    (await store.write(artifactPath(key, rivers.lengths), artifact.riverLengths)) &&
-    (await store.write(artifactPath(key, FILES.meta), new TextEncoder().encode(JSON.stringify(meta))))
-  if (!wrote) {
-    // Don't leave a half-written entry behind to be found later.
-    await store.remove(artifactPath(key, FILES.meta))
-  }
-  return wrote
+  // Payload first, meta LAST: the meta is what makes an entry resolvable by
+  // key across restarts, so a write interrupted half way leaves bytes that
+  // read as unresolved rather than an entry pointing at half a file.
+  return (
+    (await store.write(handle, FILES.elevation, elevationBytes)) &&
+    (await store.write(handle, rivers.points, artifact.riverPoints)) &&
+    (await store.write(handle, rivers.lengths, artifact.riverLengths)) &&
+    (await store.write(handle, FILES.meta, new TextEncoder().encode(JSON.stringify(meta))))
+  )
 }
 
-// Is this stage there, without fetching it?
+// Is this stage there, without fetching it? One resolve answers: the handle's
+// files ARE the batch existence check.
 //
-// Its own function because the difference is not small: `read` on a present
-// 8192² artifact pulls and decodes ~134 MB, and a caller that only wants to
-// know whether to OFFER a bake would be paying that to learn one bit. meta.json
-// is written last (see the write order above), so its presence is also the
-// signal that the rest of the entry is complete rather than half-written.
+// BOTH halves, because they can legitimately exist apart: the terrain may be
+// there from a bake at another density, and that is exactly the case the
+// per-density river files exist to allow. Asking only about the meta would
+// report a stage as ready and then draw a world with no rivers.
 export async function amplificationArtifactExists(store: ArtifactStore, key: ArtifactKey, riverDensity?: number): Promise<boolean> {
-  // BOTH halves, because they can legitimately exist apart: the terrain may be
-  // there from a bake at another density, and that is exactly the case this
-  // split was made to allow. Asking only about meta.json would report a stage
-  // as ready and then draw a world with no rivers.
-  if (!(await store.exists(artifactPath(key, FILES.meta)))) return false
-  return store.exists(artifactPath(key, riverFiles(riverDensity).points))
+  const handle = await store.resolve(key, false)
+  if (!handle) return false
+  const needed = [FILES.meta, riverFiles(riverDensity).points]
+  return needed.every((name) => handle.files.includes(name))
 }
 
 export async function readAmplificationArtifact(store: ArtifactStore, key: ArtifactKey, riverDensity?: number): Promise<{ artifact: AmplificationArtifact; bakeMs: number } | null> {
-  const metaBytes = await store.read(artifactPath(key, FILES.meta))
-  if (!metaBytes) return null
-  let meta: ArtifactMeta
-  try {
-    meta = JSON.parse(new TextDecoder().decode(metaBytes)) as ArtifactMeta
-  } catch {
-    return null
-  }
-  const elevationBytes = await store.read(artifactPath(key, FILES.elevation))
+  const handle = await store.resolve(key, false)
+  if (!handle) return null
+  const meta = await readMeta(store, handle)
+  if (!meta) return null
+  const elevationBytes = await store.read(handle, FILES.elevation)
   if (!elevationBytes) return null
   const expectedCells = meta.width * meta.height
   if (elevationBytes.byteLength !== expectedCells * 2) return null // truncated or from another shape
@@ -157,24 +172,33 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
   // trap: the caller treats any hit as a complete cached stage, draws amplified
   // ground with no rivers on it, and never bakes — a permanent state that even
   // re-baking cannot leave, because the terrain it finds is exactly what stops
-  // it. Before rivers were keyed per density this could not arise; meta.json
-  // present meant rivers present.
+  // it.
   //
   // A file that EXISTS but is empty is different and stays legal: a world saved
   // before climate was computed bakes without hydrology, and riverless is then
   // the true answer rather than a missing one.
   const rivers = riverFiles(riverDensity)
-  const pointBytes = await store.read(artifactPath(key, rivers.points))
+  const pointBytes = await store.read(handle, rivers.points)
   if (!pointBytes) return null
-  const lengthBytes = await store.read(artifactPath(key, rivers.lengths))
+  const lengthBytes = await store.read(handle, rivers.lengths)
   return {
     artifact: {
       elevation: decodeLayer(elevationBytes, ELEVATION_ENCODING),
       width: meta.width,
       height: meta.height,
-      riverPoints: pointBytes ? new Float32Array(pointBytes) : new Float32Array(0),
+      riverPoints: new Float32Array(pointBytes),
       riverLengths: lengthBytes ? new Uint32Array(lengthBytes) : new Uint32Array(0),
     },
     bakeMs: meta.bakeMs,
+  }
+}
+
+async function readMeta(store: ArtifactStore, handle: ArtifactHandle): Promise<ArtifactMeta | null> {
+  const metaBytes = await store.read(handle, FILES.meta)
+  if (!metaBytes) return null
+  try {
+    return JSON.parse(new TextDecoder().decode(metaBytes)) as ArtifactMeta
+  } catch {
+    return null
   }
 }

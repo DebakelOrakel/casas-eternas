@@ -25,6 +25,12 @@ export interface WorldSummary {
   size: number
   erosionRun: number
   hasPreview: boolean
+  // Display data mirrored from the save at upload (empty for worlds not
+  // re-uploaded since 2026-08-12): the recipe's seed, the build that wrote
+  // it, and the current revision's content hash.
+  seed: string
+  generator: string
+  contentHash: string
 }
 
 // Why an upload failed, in terms a caller can act on rather than a status code.
@@ -84,6 +90,22 @@ export async function listWorlds(): Promise<WorldSummary[] | null> {
     return (await response.json()) as WorldSummary[]
   } catch {
     return null
+  }
+}
+
+// Deletes a world — every revision of it. The caller confirms; this only
+// carries the request out and forgets the remembered revision, so a later
+// save of the same world offers "create" rather than sending a stale
+// If-Match at an entry that no longer exists.
+export async function deleteWorld(uid: string): Promise<boolean> {
+  const base = await apiBase()
+  if (!base) return false
+  try {
+    const response = await authFetch(`${base}/worlds/${encodeURIComponent(uid)}`, { method: 'DELETE' })
+    if (response.ok) forgetRevision(uid)
+    return response.ok
+  } catch {
+    return false
   }
 }
 

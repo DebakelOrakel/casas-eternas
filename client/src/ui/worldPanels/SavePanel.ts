@@ -19,8 +19,9 @@ export type SaveTarget = 'download' | 'server'
 
 export interface SavePanelOptions {
   // The world being saved. Read on open rather than passed in once, since a
-  // load or a regenerate replaces it while the panel exists.
-  currentUid(): string
+  // load or a regenerate replaces it while the panel exists. `uid` is empty
+  // before the first save; `revision` is the LOCAL save counter.
+  currentWorld(): { uid: string; seed: string; revision: number }
   onChoose(target: SaveTarget): void
 }
 
@@ -35,6 +36,12 @@ export function createSavePanel(host: HTMLElement, options: SavePanelOptions): S
   const state = document.createElement('p')
   state.className = 'save-state'
   panel.body.appendChild(state)
+
+  // What is about to be written, so "update on server" names its object: the
+  // world's identity beside the server's answer above it.
+  const identity = document.createElement('div')
+  identity.className = 'save-identity'
+  panel.body.appendChild(identity)
 
   const toServer = document.createElement('button')
   toServer.type = 'button'
@@ -56,14 +63,14 @@ export function createSavePanel(host: HTMLElement, options: SavePanelOptions): S
   panel.footer.append(download, toServer)
 
   async function refresh(): Promise<void> {
-    const uid = options.currentUid()
+    const current = options.currentWorld()
     state.textContent = '…'
     // Disabled while unknown: a button whose label has not settled yet is a
     // button someone clicks before it means what it will mean.
     toServer.disabled = true
 
     const worlds = await listWorlds()
-    const held = worlds?.find((world) => world.uid === uid)
+    const held = worlds?.find((world) => world.uid === current.uid)
     toServer.disabled = false
 
     if (held) {
@@ -73,6 +80,24 @@ export function createSavePanel(host: HTMLElement, options: SavePanelOptions): S
     } else {
       state.textContent = t('common.panel.save.notOnServer')
       toServer.textContent = t('common.panel.save.action.create')
+    }
+
+    // Hashes shortened for the eye, full value in the title. A world saved
+    // before the fields existed simply shows fewer lines.
+    identity.replaceChildren()
+    const lines: [string, string, string?][] = [
+      [t('common.world.seed'), current.seed, undefined],
+      [t('common.world.uid'), current.uid ? current.uid.slice(0, 8) : '', current.uid],
+      [t('common.world.revision'), current.revision > 0 ? String(current.revision) : '', undefined],
+      [t('common.world.checksum'), held?.contentHash ? held.contentHash.slice(0, 8) : '', held?.contentHash],
+      [t('common.world.build'), held?.generator ?? '', undefined],
+    ]
+    for (const [label, value, full] of lines) {
+      if (!value) continue
+      const line = document.createElement('span')
+      line.textContent = `${label} ${value}`
+      if (full) line.title = full
+      identity.appendChild(line)
     }
   }
 

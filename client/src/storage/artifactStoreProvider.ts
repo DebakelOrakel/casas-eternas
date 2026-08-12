@@ -4,7 +4,7 @@ import { createHttpArtifactStore } from './HttpArtifactStore'
 import { createTieredArtifactStore } from './TieredArtifactStore'
 import { getServerStatus, refreshServerStatus } from '../server/serverStatus'
 import { apiBase } from '../server/worldClient'
-import type { ArtifactStore } from './ArtifactStore'
+import type { ArtifactStore, LocalArtifactStore } from './ArtifactStore'
 import { authFetch } from '../server/session'
 
 // One artifact store per page, resolved lazily and shared.
@@ -22,7 +22,7 @@ import { authFetch } from '../server/session'
 // to drop a shared server's copy is a different act with a different blast
 // radius, and the storage panel says so explicitly when it offers it.
 
-let localPending: Promise<ArtifactStore> | null = null
+let localPending: Promise<LocalArtifactStore> | null = null
 let tieredPending: Promise<ArtifactStore> | null = null
 
 // Throttle for re-probing an 'unreachable' verdict (see remoteAvailable below).
@@ -35,7 +35,7 @@ let lastUnreachableRetry = 0
 // This machine's own cache. Falls back to memory when OPFS is unavailable
 // (insecure context, older browser, storage denied): the session still gets
 // its within-session hits, and callers never have to branch on it.
-export function getLocalArtifactStore(): Promise<ArtifactStore> {
+export function getLocalArtifactStore(): Promise<LocalArtifactStore> {
   localPending ??= createOpfsArtifactStore().then((store) => store ?? createMemoryArtifactStore())
   return localPending
 }

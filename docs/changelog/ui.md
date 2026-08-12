@@ -3,6 +3,12 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-08-12
+- **fixed** Storage: leftovers from an older storage layout appear as their own deletable entry instead of haunting the total as bytes nothing lists. `common.panel.storage`
+- **changed** Storage: the storage window groups artifacts per world, one line per terrain state and algorithm version — what used to read as duplicate 4K chips is now told apart; local and server render alike, and the footer button says plainly that it deletes local data. `common.panel.storage`
+- **new** Load: every world lists its seed, UID, checksum and the build that wrote it, and can be deleted — the button arms on the first click and acts on the second. `common.panel.load`
+- **changed** Save: the save window shows what is about to be written (seed, UID, revision) beside what the server already holds. `common.panel.save`
+
 ## 2026-08-11
 - **changed** Map: rivers draw as dark ink lines on the paper map and turn to water blue through the descent. `worldmap`
 - **fixed** Map: rivers in the descent view ride the near-field detail terrain instead of tunnelling under its bumps. `worldmap`

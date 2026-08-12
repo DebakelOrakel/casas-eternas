@@ -1,6 +1,8 @@
 package artifacts
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,51 +11,53 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 	"unicode"
 )
 
-// The artifact store on disk, mirroring the client's own path grammar
-// (client/src/storage/ArtifactStore.ts) one level below the root:
+// The artifact store on disk — FLAT since 2026-08-12:
 //
-//	{dir}/{worldId}/{pipelineVersion}/{stage}/elevation.u16
-//	                                         /rivers.f32
-//	                                         /riverLengths.u32
-//	                                         /meta.json
+//	{dir}/{artifactUid}/elevation.u16
+//	                   /rivers-{density}.f32
+//	                   /riverLengths-{density}.u32
+//	                   /meta.json
 //
-// Deliberately NOT under the same root as the world store, even though the
-// client's local paths begin `worlds/`: there, `worldId` is a CONTENT HASH,
-// while a world is addressed by its stable uid. Sharing a prefix would imply a
-// relationship that does not exist — an artifact's worldId can belong to a
-// world that was never uploaded at all.
+// The artifact uid is a minted uuid and means nothing; meta.json is the ONLY
+// truth about what an entry is. The logical key — worldUid, worldId,
+// pipelineVersion, stage — lives inside it, and `resolve` maps key → uid
+// through an index built from the metas. That is the robustness lesson the
+// path-encoded layouts kept teaching: every schema change made walkers blind
+// and left ghost bytes nothing could list. Here a schema change edits meta
+// fields, a manually copied directory (any name) is indexed as soon as its
+// meta is readable, and a directory with no readable meta is reported with
+// its bytes rather than haunting the usage total.
 //
-// Everything about this store is the opposite of internal/world, and each
-// difference is deliberate (docs/decisions/server-storage.md):
+// The index is validated by MTIME, not rebuilt per call and not only at
+// startup: each access stats the root, re-reads only new or changed child
+// directories (writing meta.json into one bumps its mtime), and drops the
+// vanished. A baker writing straight into the directory, or a human copying
+// an entry in, is visible on the next request — no restart, no watcher.
 //
-//   - writes are IDEMPOTENT, so two clients racing to upload the same bake
-//     both succeed and no locking is needed. That is what content addressing
-//     buys: the key IS the description of the bytes.
-//   - no fsync. Losing an entry to a power cut costs a re-bake, and paying
-//     milliseconds on every write to avoid that is the wrong trade — exactly
-//     the opposite conclusion from the world store, where a loss is permanent.
-//   - entries are droppable at any time, which is why a size cap belongs here
-//     and nowhere else.
+// Everything else about this store keeps the artifact contract
+// (docs/decisions/server-storage.md): idempotent writes (resolve hands the
+// same uid to every writer of one key), no fsync (losing an entry costs a
+// re-bake), droppable at any time.
 
 // ErrNotFound is returned for an artifact that is not there.
 var ErrNotFound = errors.New("artifact not found")
 
-// ErrBadPath is returned for a key that cannot become a filesystem path.
+// ErrBadPath is returned for a name that cannot become a filesystem path.
 var ErrBadPath = errors.New("invalid artifact path")
 
-// maxSegment bounds one path component. The client's world ids carry a
-// human-readable seed label, which it sanitises but does not shorten beyond 24
-// characters plus a 16-character hash; 128 leaves room without inviting a
-// filename no filesystem will take.
+// maxSegment bounds one path component. Every segment is machine-minted today
+// (uuid, fixed file names); 128 is headroom, not a promise.
 const maxSegment = 128
 
 // safeSegment rejects anything that could escape the store or confuse a
-// filesystem. Deliberately NOT an allow-list of ASCII: the client's label
-// sanitiser keeps accents on purpose ("Ätna" must not become "tna"), so the
-// rule is about SEPARATORS and control characters, not about alphabet.
+// filesystem. Deliberately NOT an allow-list of ASCII: manually copied
+// directories arrive with arbitrary names, and the rule is about SEPARATORS
+// and control characters, not about alphabet.
 func safeSegment(segment string) bool {
 	if segment == "" || len(segment) > maxSegment {
 		return false
@@ -72,44 +76,72 @@ func safeSegment(segment string) bool {
 	return true
 }
 
-// Key addresses one stage of one bake.
+// Key is the LOGICAL identity of one bake — what `resolve` translates into a
+// storage uid. The uid never carries meaning; this does.
 type Key struct {
-	WorldID         string
-	PipelineVersion string
-	Stage           string
-}
-
-// Valid reports whether every component may become a path segment.
-func (k Key) Valid() bool {
-	return safeSegment(k.WorldID) && safeSegment(k.PipelineVersion) && safeSegment(k.Stage)
-}
-
-// StageInfo is what a listing reports about one baked stage.
-type StageInfo struct {
+	WorldUID        string `json:"worldUid"`
+	WorldID         string `json:"worldId"`
 	PipelineVersion string `json:"pipelineVersion"`
 	Stage           string `json:"stage"`
-	Bytes           int64  `json:"bytes"`
-	// Read out of the stage's own meta.json, which the client writes. Zero
-	// when it is absent or unreadable — an incomplete entry still counts
-	// toward size, because it still occupies the disk.
-	Width  int `json:"width"`
-	Height int `json:"height"`
-	BakeMs int `json:"bakeMs"`
 }
 
-// WorldArtifacts groups every stage baked for one world id.
-type WorldArtifacts struct {
-	WorldID string      `json:"worldId"`
-	Bytes   int64       `json:"bytes"`
-	Stages  []StageInfo `json:"stages"`
+// Valid reports whether the key is filled. Segments are not path components
+// anymore, so the only requirement is that they are present and sane.
+func (k Key) Valid() bool {
+	return safeSegment(k.WorldUID) && safeSegment(k.WorldID) && safeSegment(k.PipelineVersion) && safeSegment(k.Stage)
 }
 
-// Store is the filesystem-backed artifact store.
+func (k Key) String() string {
+	return k.WorldUID + "\x00" + k.WorldID + "\x00" + k.PipelineVersion + "\x00" + k.Stage
+}
+
+// entryMeta is the slice of the client's meta.json the server reads — the key
+// plus what a listing displays. Unknown fields pass through untouched on disk.
+type entryMeta struct {
+	Key    Key    `json:"key"`
+	Label  string `json:"label"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	BakeMs int    `json:"bakeMs"`
+}
+
+// entry is one artifact directory as the index knows it.
+type entry struct {
+	uid   string
+	bytes int64
+	meta  *entryMeta // nil: no readable meta.json (mid-write, or junk)
+	mtime time.Time
+}
+
+// ListedArtifact is one entry of the listing — flat, the client groups.
+type ListedArtifact struct {
+	ArtifactUID string `json:"artifactUid"`
+	Bytes       int64  `json:"bytes"`
+	// Meta fields, flattened; zero values when the entry has no readable
+	// meta.json and is only bytes with a directory name.
+	WorldUID        string `json:"worldUid"`
+	WorldID         string `json:"worldId"`
+	PipelineVersion string `json:"pipelineVersion"`
+	Stage           string `json:"stage"`
+	Label           string `json:"label"`
+	Width           int    `json:"width"`
+	Height          int    `json:"height"`
+	BakeMs          int    `json:"bakeMs"`
+}
+
+// Store is the filesystem-backed artifact store plus its mtime-validated
+// index.
 type Store struct {
 	dir string
+
+	mu      sync.Mutex
+	entries map[string]*entry // uid → entry
+	byKey   map[string]string // Key.String() → uid
 }
 
-// NewStore prepares the store, creating the root if it is absent.
+// NewStore prepares the store, creating the root if it is absent. The first
+// refresh happens lazily on first use — startup does not pay for a large
+// store it may never read.
 func NewStore(dir string) (*Store, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("artifacts directory must not be empty")
@@ -117,18 +149,166 @@ func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("preparing %q: %w", dir, err)
 	}
-	return &Store{dir: dir}, nil
+	return &Store{dir: dir, entries: map[string]*entry{}, byKey: map[string]string{}}, nil
 }
 
-func (s *Store) stageDir(key Key) string {
-	return filepath.Join(s.dir, key.WorldID, key.PipelineVersion, key.Stage)
+func (s *Store) artifactDir(uid string) string { return filepath.Join(s.dir, uid) }
+
+// refresh reconciles the index with the directory. Called under s.mu.
+//
+// One ReadDir of the root, then a stat per child: a child whose mtime is
+// unchanged keeps its index entry untouched; a new or changed one gets its
+// meta.json re-read and its bytes re-walked. Writing any file into an
+// artifact directory bumps that directory's mtime, so a bake completing (the
+// meta lands last) or a hand-copied entry is picked up on the next call.
+func (s *Store) refresh() error {
+	children, err := os.ReadDir(s.dir)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(children))
+	for _, child := range children {
+		if !child.IsDir() {
+			continue // stray files at the root are ignored entirely
+		}
+		uid := child.Name()
+		seen[uid] = true
+		info, err := child.Info()
+		if err != nil {
+			continue
+		}
+		// An entry WITHOUT a meta is re-read unconditionally: it is the one
+		// state a coarse filesystem timestamp could freeze (meta written in
+		// the same tick the scan ran), it is rare, and retrying costs one
+		// ReadFile against a file that is usually still absent.
+		if known, ok := s.entries[uid]; ok && known.meta != nil && known.mtime.Equal(info.ModTime()) {
+			continue
+		}
+		s.index(uid, info.ModTime())
+	}
+	for uid, known := range s.entries {
+		if !seen[uid] {
+			delete(s.entries, uid)
+			if known.meta != nil && s.byKey[known.meta.Key.String()] == uid {
+				delete(s.byKey, known.meta.Key.String())
+			}
+		}
+	}
+	return nil
 }
 
-// filePath resolves one file inside a stage. `name` may contain slashes so a
-// future tile layout (`tiles/12_7`) needs no new route — every segment is
-// checked, which is what keeps that flexibility from becoming a traversal.
-func (s *Store) filePath(key Key, name string) (string, error) {
+// index (re)reads one artifact directory into the index. Called under s.mu.
+func (s *Store) index(uid string, mtime time.Time) {
+	previous := s.entries[uid]
+	next := &entry{uid: uid, mtime: mtime, bytes: dirBytes(s.artifactDir(uid))}
+	if raw, err := os.ReadFile(filepath.Join(s.artifactDir(uid), "meta.json")); err == nil {
+		var meta entryMeta
+		if json.Unmarshal(raw, &meta) == nil && meta.Key.Valid() {
+			next.meta = &meta
+		}
+	}
+	s.entries[uid] = next
+	if previous != nil && previous.meta != nil && (next.meta == nil || previous.meta.Key != next.meta.Key) {
+		if s.byKey[previous.meta.Key.String()] == uid {
+			delete(s.byKey, previous.meta.Key.String())
+		}
+	}
+	if next.meta != nil {
+		// First writer wins on a duplicate key (two racing bakes of one key on
+		// two machines): both directories hold identical bytes, one of them
+		// resolves, the other stays listed and deletable.
+		if _, taken := s.byKey[next.meta.Key.String()]; !taken || s.byKey[next.meta.Key.String()] == uid {
+			s.byKey[next.meta.Key.String()] = uid
+		}
+	}
+}
+
+// mintUID returns a fresh uuid-shaped identifier.
+func mintUID() (string, error) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	raw[6] = (raw[6] & 0x0f) | 0x40 // version 4
+	raw[8] = (raw[8] & 0x3f) | 0x80 // RFC 4122 variant
+	h := hex.EncodeToString(raw)
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32], nil
+}
+
+// Resolve maps a logical key to its artifact uid. With create, a missing key
+// mints a directory and reserves the mapping, so every concurrent writer of
+// one key lands in the same place — the idempotency the path grammar used to
+// provide by construction.
+//
+// The returned names are the files currently present, which is the batch
+// existence answer (`present` used to be its own endpoint).
+func (s *Store) Resolve(key Key, create bool) (string, []string, error) {
 	if !key.Valid() {
+		return "", nil, ErrBadPath
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refresh(); err != nil {
+		return "", nil, err
+	}
+	uid, ok := s.byKey[key.String()]
+	if !ok {
+		if !create {
+			return "", nil, ErrNotFound
+		}
+		minted, err := mintUID()
+		if err != nil {
+			return "", nil, err
+		}
+		if err := os.MkdirAll(s.artifactDir(minted), 0o755); err != nil {
+			return "", nil, err
+		}
+		// Reserved in the index before any meta exists, so a second resolve
+		// of the same key reuses it. A crash before the meta lands leaves an
+		// empty directory the listing reports as unresolved bytes.
+		s.entries[minted] = &entry{uid: minted, mtime: time.Now()}
+		s.byKey[key.String()] = minted
+		uid = minted
+	}
+	return uid, s.fileNames(uid), nil
+}
+
+// fileNames lists an artifact's files (top level plus one nested level, the
+// shape tiles will use). Called under s.mu.
+func (s *Store) fileNames(uid string) []string {
+	names := []string{}
+	root := s.artifactDir(uid)
+	children, err := os.ReadDir(root)
+	if err != nil {
+		return names
+	}
+	for _, child := range children {
+		if strings.HasPrefix(child.Name(), ".tmp-") {
+			continue
+		}
+		if !child.IsDir() {
+			names = append(names, child.Name())
+			continue
+		}
+		nested, err := os.ReadDir(filepath.Join(root, child.Name()))
+		if err != nil {
+			continue
+		}
+		for _, inner := range nested {
+			if !inner.IsDir() && !strings.HasPrefix(inner.Name(), ".tmp-") {
+				names = append(names, child.Name()+"/"+inner.Name())
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// filePath resolves one file inside an artifact. `name` may contain slashes
+// so a future tile layout (`tiles/12_7`) needs no new route — every segment
+// is checked, which is what keeps that flexibility from becoming a traversal.
+func (s *Store) filePath(uid, name string) (string, error) {
+	if !safeSegment(uid) {
 		return "", ErrBadPath
 	}
 	segments := strings.Split(name, "/")
@@ -140,12 +320,12 @@ func (s *Store) filePath(key Key, name string) (string, error) {
 			return "", ErrBadPath
 		}
 	}
-	return filepath.Join(append([]string{s.stageDir(key)}, segments...)...), nil
+	return filepath.Join(append([]string{s.artifactDir(uid)}, segments...)...), nil
 }
 
 // Read returns one artifact file.
-func (s *Store) Read(key Key, name string) ([]byte, error) {
-	path, err := s.filePath(key, name)
+func (s *Store) Read(uid, name string) ([]byte, error) {
+	path, err := s.filePath(uid, name)
 	if err != nil {
 		return nil, err
 	}
@@ -159,15 +339,19 @@ func (s *Store) Read(key Key, name string) ([]byte, error) {
 	return raw, nil
 }
 
-// Write stores one artifact file, replacing any previous copy.
-//
-// No locking and no conflict check: the key describes the bytes, so a repeated
-// write is a no-op by construction and two clients uploading the same bake
-// cannot disagree. That is precisely why the world store needs an optimistic
-// lock and this one does not.
-func (s *Store) Write(key Key, name string, body io.Reader) error {
-	path, err := s.filePath(key, name)
+// Write stores one artifact file into an EXISTING artifact — the uid comes
+// from Resolve, which is what keeps junk from minting entries. Writing
+// meta.json is what makes an entry resolvable; the index picks it up through
+// the directory's changed mtime on the next access.
+func (s *Store) Write(uid, name string, body io.Reader) error {
+	path, err := s.filePath(uid, name)
 	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(s.artifactDir(uid)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrNotFound
+		}
 		return err
 	}
 	dir := filepath.Dir(path)
@@ -193,173 +377,104 @@ func (s *Store) Write(key Key, name string, body io.Reader) error {
 	return os.Rename(tmpName, path)
 }
 
-// Present reports which of `names` exist for a key, in the order asked.
-//
-// The one addition plain REST needs here: at 8192² with tiled artifacts there
-// are over a hundred files per stage, and discovering which are missing must
-// not cost a hundred round trips.
-func (s *Store) Present(key Key, names []string) ([]string, error) {
-	if !key.Valid() {
-		return nil, ErrBadPath
-	}
-	present := make([]string, 0, len(names))
-	for _, name := range names {
-		path, err := s.filePath(key, name)
-		if err != nil {
-			// A malformed name is simply absent rather than fatal: the caller
-			// asked "do you have this", and the answer is no.
-			continue
-		}
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			present = append(present, name)
-		}
-	}
-	return present, nil
-}
-
-// List walks the store and reports every world's stages, largest world first.
-//
-// Reads only each stage's meta.json — a few hundred bytes — never the rasters,
-// so a listing stays cheap enough that no index is needed yet. The trigger for
-// one is eviction needing to sort by access time.
-func (s *Store) List() ([]WorldArtifacts, error) {
-	worldDirs, err := os.ReadDir(s.dir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
+// List reports every entry, largest first — flat; grouping is the reader's
+// business, and both tiers group the same way.
+func (s *Store) List() ([]ListedArtifact, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refresh(); err != nil {
 		return nil, err
 	}
-
-	out := make([]WorldArtifacts, 0, len(worldDirs))
-	for _, worldEntry := range worldDirs {
-		if !worldEntry.IsDir() {
-			continue
+	out := make([]ListedArtifact, 0, len(s.entries))
+	for _, e := range s.entries {
+		if e.bytes == 0 && e.meta == nil {
+			continue // a freshly minted, still-empty directory
 		}
-		world := WorldArtifacts{WorldID: worldEntry.Name()}
-		versionDirs, err := os.ReadDir(filepath.Join(s.dir, world.WorldID))
-		if err != nil {
-			continue
+		item := ListedArtifact{ArtifactUID: e.uid, Bytes: e.bytes}
+		if e.meta != nil {
+			item.WorldUID = e.meta.Key.WorldUID
+			item.WorldID = e.meta.Key.WorldID
+			item.PipelineVersion = e.meta.Key.PipelineVersion
+			item.Stage = e.meta.Key.Stage
+			item.Label = e.meta.Label
+			item.Width = e.meta.Width
+			item.Height = e.meta.Height
+			item.BakeMs = e.meta.BakeMs
 		}
-		for _, versionEntry := range versionDirs {
-			if !versionEntry.IsDir() {
-				continue
-			}
-			stageDirs, err := os.ReadDir(filepath.Join(s.dir, world.WorldID, versionEntry.Name()))
-			if err != nil {
-				continue
-			}
-			for _, stageEntry := range stageDirs {
-				if !stageEntry.IsDir() {
-					continue
-				}
-				key := Key{WorldID: world.WorldID, PipelineVersion: versionEntry.Name(), Stage: stageEntry.Name()}
-				info := s.describeStage(key)
-				world.Bytes += info.Bytes
-				world.Stages = append(world.Stages, info)
-			}
-		}
-		if len(world.Stages) == 0 {
-			continue
-		}
-		sort.Slice(world.Stages, func(i, j int) bool { return world.Stages[i].Bytes < world.Stages[j].Bytes })
-		out = append(out, world)
+		out = append(out, item)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Bytes > out[j].Bytes })
 	return out, nil
 }
 
-func (s *Store) describeStage(key Key) StageInfo {
-	info := StageInfo{PipelineVersion: key.PipelineVersion, Stage: key.Stage}
-	dir := s.stageDir(key)
-	if _, err := os.Stat(dir); err != nil {
-		return info
+// RemoveArtifact drops one entry. Absent counts as removed.
+func (s *Store) RemoveArtifact(uid string) error {
+	if !safeSegment(uid) {
+		return ErrBadPath
 	}
-	// Walked rather than listed: a stage may hold nested files once artifacts
-	// are tiled (`tiles/12_7`), and a flat listing reported those stages as
-	// zero bytes while Usage counted them — the two figures disagreed by
-	// exactly the nested files, which is the kind of understatement a size
-	// readout must not have.
-	info.Bytes = dirBytes(dir)
-	// meta.json is the client's own, written last so its presence means the
-	// entry is complete. Unreadable leaves the dimensions at zero rather than
-	// dropping the stage — the bytes are on disk either way.
-	raw, err := os.ReadFile(filepath.Join(dir, "meta.json"))
-	if err != nil {
-		return info
-	}
-	var meta struct {
-		Width  int `json:"width"`
-		Height int `json:"height"`
-		BakeMs int `json:"bakeMs"`
-	}
-	if json.Unmarshal(raw, &meta) == nil {
-		info.Width, info.Height, info.BakeMs = meta.Width, meta.Height, meta.BakeMs
-	}
-	return info
-}
-
-// dirBytes totals every file under a directory. Unreadable corners are skipped
-// rather than failing the figure — a listing that refuses to render because one
-// entry is odd is worse than one that is slightly low.
-func dirBytes(dir string) int64 {
-	var total int64
-	_ = filepath.WalkDir(dir, func(_ string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return nil
-		}
-		if info, err := entry.Info(); err == nil {
-			total += info.Size()
-		}
-		return nil
-	})
-	return total
-}
-
-// RemoveFile drops one artifact. Absent counts as removed: the caller wanted
-// the bytes gone, and they are.
-func (s *Store) RemoveFile(key Key, name string) error {
-	path, err := s.filePath(key, name)
-	if err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.RemoveAll(s.artifactDir(uid)); err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	if e, ok := s.entries[uid]; ok {
+		delete(s.entries, uid)
+		if e.meta != nil && s.byKey[e.meta.Key.String()] == uid {
+			delete(s.byKey, e.meta.Key.String())
+		}
 	}
 	return nil
 }
 
-// RemoveWorld drops every artifact of one world id.
-func (s *Store) RemoveWorld(worldID string) error {
-	if !safeSegment(worldID) {
+// RemoveWorld drops every entry whose meta names the world — the sweep
+// "delete a world, its artifacts go too" works in this unit.
+func (s *Store) RemoveWorld(worldUID string) error {
+	if !safeSegment(worldUID) {
 		return ErrBadPath
 	}
-	path := filepath.Join(s.dir, worldID)
-	if _, err := os.Stat(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return ErrNotFound
-		}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refresh(); err != nil {
 		return err
 	}
-	return os.RemoveAll(path)
+	found := false
+	for uid, e := range s.entries {
+		if e.meta == nil || e.meta.Key.WorldUID != worldUID {
+			continue
+		}
+		found = true
+		if err := os.RemoveAll(s.artifactDir(uid)); err != nil {
+			return err
+		}
+		delete(s.entries, uid)
+		delete(s.byKey, e.meta.Key.String())
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // Clear drops everything. Safe by construction — every byte in here is a
 // deterministic function of a world and a pipeline version, so the worst case
 // is that the next reader bakes again.
 func (s *Store) Clear() error {
-	entries, err := os.ReadDir(s.dir)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	children, err := os.ReadDir(s.dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		return err
 	}
-	for _, entry := range entries {
-		if err := os.RemoveAll(filepath.Join(s.dir, entry.Name())); err != nil {
+	for _, child := range children {
+		if err := os.RemoveAll(filepath.Join(s.dir, child.Name())); err != nil {
 			return err
 		}
 	}
+	s.entries = map[string]*entry{}
+	s.byKey = map[string]string{}
 	return nil
 }
 
@@ -379,4 +494,21 @@ func (s *Store) Usage() (int64, error) {
 		return nil
 	})
 	return total, err
+}
+
+// dirBytes totals every file under a directory. Unreadable corners are skipped
+// rather than failing the figure — a listing that refuses to render because one
+// entry is odd is worse than one that is slightly low.
+func dirBytes(dir string) int64 {
+	var total int64
+	_ = filepath.WalkDir(dir, func(_ string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil
+		}
+		if info, err := entry.Info(); err == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }

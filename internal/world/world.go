@@ -33,6 +33,9 @@ type Config struct {
 	// CONTENTS rather than for this module, because the module will grow a tile
 	// database and a loop that need directories of their own.
 	Dir string
+	// KeepRevisions bounds how many revisions each world retains; older ones
+	// are pruned on upload. 0 keeps every revision.
+	KeepRevisions int
 	// Identity answers who a request comes from. The one resolver cmd/ builds is
 	// shared with every module, so who a caller IS has one answer in the
 	// process — this module holds the answerer, not the auth mode it was
@@ -50,7 +53,7 @@ type Module struct {
 // --dir-worlds fails at startup, naming the flag, rather than on the first
 // upload hours later.
 func New(cfg Config) (*Module, error) {
-	store, err := NewStore(cfg.Dir)
+	store, err := NewStore(cfg.Dir, cfg.KeepRevisions)
 	if err != nil {
 		return nil, fmt.Errorf("--dir-worlds: %w", err)
 	}

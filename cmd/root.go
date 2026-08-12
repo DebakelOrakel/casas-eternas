@@ -18,6 +18,7 @@ const (
 	flagTarget       = "target"
 	flagDirArtifacts = "dir-artifacts"
 	flagDirWorlds    = "dir-worlds"
+	flagKeepRevs     = "keep-revisions"
 	flagListen       = "listen"
 	flagTLSCert      = "tls-cert"
 	flagTLSKey       = "tls-key"
@@ -36,6 +37,7 @@ const (
 	textTarget       = `The target modules to start: all, client, world, artifacts, bake. Repeatable.`
 	textDirArtifacts = `The directory to the artifact store.`
 	textDirWorlds    = `The directory the saved worlds live in.`
+	textKeepRevs     = `How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.`
 	textBaker        = `Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.`
 	textDirClient    = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
 	textBakeMax      = `How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.`
@@ -102,6 +104,7 @@ func init() {
 	StartCmd.Flags().StringSliceP(flagTarget, "t", []string{}, textTarget)
 	StartCmd.Flags().String(flagDirArtifacts, "./artifacts", textDirArtifacts)
 	StartCmd.Flags().String(flagDirWorlds, "./worlds", textDirWorlds)
+	StartCmd.Flags().Int(flagKeepRevs, 3, textKeepRevs)
 	StartCmd.Flags().String(flagBaker, "", textBaker)
 	StartCmd.Flags().String(flagDirClient, "", textDirClient)
 	StartCmd.Flags().Int(flagBakeMax, 1, textBakeMax)
@@ -122,6 +125,7 @@ func init() {
 		viper.BindPFlag(flagTarget, StartCmd.Flags().Lookup(flagTarget)),
 		viper.BindPFlag(flagDirArtifacts, StartCmd.Flags().Lookup(flagDirArtifacts)),
 		viper.BindPFlag(flagDirWorlds, StartCmd.Flags().Lookup(flagDirWorlds)),
+		viper.BindPFlag(flagKeepRevs, StartCmd.Flags().Lookup(flagKeepRevs)),
 		viper.BindPFlag(flagBaker, StartCmd.Flags().Lookup(flagBaker)),
 		viper.BindPFlag(flagAuthMode, StartCmd.Flags().Lookup(flagAuthMode)),
 		viper.BindPFlag(flagAuthHtpasswd, StartCmd.Flags().Lookup(flagAuthHtpasswd)),

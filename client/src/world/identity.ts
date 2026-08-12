@@ -78,11 +78,14 @@ export interface BakeInputs {
 // (see amplificationArtifact). Terrain is computed once; densities are cheap
 // variations on it.
 
-// `seedLabel` is carried into the id purely so a human reading the store
-// (a directory listing now, a server path later) can tell which world an
-// entry belongs to. Correctness comes from the hash alone; the label is
-// sanitised and may repeat.
-export function deriveWorldId(seedLabel: string, inputs: BakeInputs): string {
+// A pure 64-bit content hash, sixteen hex characters. It used to carry the
+// sanitised seed text as a readable prefix ("Ätna-1a2b…") — dropped
+// 2026-08-12: identity came from the hash alone, the label was display data
+// living in a key, and it was the only reason user text reached server paths
+// at all (the accent-tolerant segment validation existed for it). The
+// readable half now travels as `label` in the artifact's meta.json, and a
+// world WITH a uid is named by the world store anyway.
+export function deriveWorldId(inputs: BakeInputs): string {
   let [a, b] = hashBytes(inputs.elevation, 0x811c9dc5, 0x9e3779b9)
   if (inputs.precipitation) {
     const [pa, pb] = hashBytes(inputs.precipitation, a, b)
@@ -95,23 +98,7 @@ export function deriveWorldId(seedLabel: string, inputs: BakeInputs): string {
     `|s=${inputs.erosionStrength ?? 'd'}|r=${inputs.drainageRefresh ?? 'd'}`,
   )
   const [sa, sb] = hashBytes(scalars, a, b)
-  // Sanitised by REMOVING what would break a path, not by allowing only
-  // ASCII: an allow-list turned "Ätna" into "tna", which is worse than
-  // useless as a label. Path separators, the Windows-reserved characters
-  // and control codes go; everything else — accents included — stays, and
-  // whitespace becomes dashes so the id remains one token. The trailing
-  // hash is always the last dash-separated group, so dashes inside the
-  // label are harmless.
-  const label = seedLabel
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '')
-    // A leading dot would make the segment read as "." or ".."; the
-    // trailing hash means it can never actually BE one, so this is
-    // tidiness plus defence in depth.
-    .replace(/^[.\s]+/, '')
-    .trim()
-    .replace(/\s+/g, '-')
-    .slice(0, 24) || 'world'
-  return `${label}-${hex8(sa)}${hex8(sb)}`
+  return `${hex8(sa)}${hex8(sb)}`
 }
 
 // --- the pipeline half ----------------------------------------------------

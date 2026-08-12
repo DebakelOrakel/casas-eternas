@@ -1,64 +1,98 @@
-import type { ArtifactStore, StorageUsage } from './ArtifactStore'
+import type { ArtifactHandle, ArtifactKey, LocalArtifactStore, StorageUsage, StoredArtifact } from './ArtifactStore'
 
-// An ArtifactStore that keeps everything in a Map. Two jobs:
-//
-//  - it makes the cache flow TESTABLE OUTSIDE A BROWSER. OPFS exists only in
-//    a page, so without this the only way to exercise "hit skips the bake,
-//    miss computes and stores" would be by hand, in a browser, on a
-//    multi-minute bake.
-//  - it is the honest fallback when OPFS is unavailable (older browser,
-//    insecure context, storage denied): the session still gets its
-//    within-session hits, and nothing above has to know the difference.
-//
-// Deliberately unbounded: a cache with no eviction is fine for a store whose
-// lifetime is one page, and adding a policy here would only duplicate the
-// one the persistent store needs.
-export function createMemoryArtifactStore(): ArtifactStore {
-  const files = new Map<string, ArrayBuffer>()
-  const normalise = (path: string): string => path.split('/').filter((segment) => segment.length > 0).join('/')
+// In-memory LocalArtifactStore — the fallback when OPFS is unavailable
+// (insecure context, storage denied), and what the harnesses exercise the
+// artifact read/write path against. Same semantics as the real one, held in
+// two Maps; entries live for the session, which for a cache over
+// recomputable data is a perfectly good floor.
+
+const keyString = (key: ArtifactKey): string => `${key.worldUid}\0${key.worldId}\0${key.pipelineVersion}\0${key.stage}`
+
+export function createMemoryArtifactStore(): LocalArtifactStore {
+  const files = new Map<string, Map<string, ArrayBuffer>>() // uid → name → bytes
+  const byKey = new Map<string, string>()
+  let minted = 0
+
+  const toBuffer = (bytes: ArrayBuffer | ArrayBufferView): ArrayBuffer => {
+    if (ArrayBuffer.isView(bytes)) {
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+    }
+    return bytes.slice(0)
+  }
+
+  const parseMeta = (uid: string): { key?: Partial<ArtifactKey>; label?: string; width?: number; height?: number; bakeMs?: number } | null => {
+    const raw = files.get(uid)?.get('meta.json')
+    if (!raw) return null
+    try {
+      return JSON.parse(new TextDecoder().decode(raw))
+    } catch {
+      return null
+    }
+  }
 
   return {
-    async read(path: string): Promise<ArrayBuffer | null> {
-      return files.get(normalise(path)) ?? null
+    async resolve(key: ArtifactKey, create: boolean): Promise<ArtifactHandle | null> {
+      let uid = byKey.get(keyString(key))
+      if (!uid) {
+        if (!create) return null
+        uid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `mem-${++minted}`
+        files.set(uid, new Map())
+        byKey.set(keyString(key), uid)
+      }
+      return { key, local: uid, files: [...(files.get(uid)?.keys() ?? [])].sort() }
     },
-    async write(path: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
-      // Copied, not referenced: a caller that reuses its scratch buffer must
-      // not be able to mutate what it already "stored".
-      const view = ArrayBuffer.isView(bytes)
-        ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-        : new Uint8Array(bytes)
-      files.set(normalise(path), view.slice().buffer)
+
+    async read(handle: ArtifactHandle, name: string): Promise<ArrayBuffer | null> {
+      if (!handle.local) return null
+      return files.get(handle.local)?.get(name) ?? null
+    },
+
+    async write(handle: ArtifactHandle, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
+      if (!handle.local) return false
+      const entry = files.get(handle.local)
+      if (!entry) return false
+      entry.set(name, toBuffer(bytes))
       return true
     },
-    async exists(path: string): Promise<boolean> {
-      return files.has(normalise(path))
-    },
-    async size(path: string): Promise<number | null> {
-      return files.get(normalise(path))?.byteLength ?? null
-    },
-    async remove(path: string): Promise<void> {
-      const prefix = normalise(path)
-      // Removes an entry or a whole subtree, matching the OPFS store's
-      // recursive removal.
-      for (const key of [...files.keys()]) {
-        if (key === prefix || key.startsWith(`${prefix}/`)) files.delete(key)
+
+    async list(): Promise<StoredArtifact[]> {
+      const out: StoredArtifact[] = []
+      for (const [uid, entry] of files) {
+        let bytes = 0
+        for (const raw of entry.values()) bytes += raw.byteLength
+        if (bytes === 0) continue
+        const meta = parseMeta(uid)
+        out.push({
+          artifactUid: uid,
+          bytes,
+          worldUid: meta?.key?.worldUid ?? '',
+          worldId: meta?.key?.worldId ?? '',
+          pipelineVersion: meta?.key?.pipelineVersion ?? '',
+          stage: meta?.key?.stage ?? '',
+          label: meta?.label ?? '',
+          width: meta?.width ?? 0,
+          height: meta?.height ?? 0,
+          bakeMs: meta?.bakeMs ?? 0,
+        })
       }
+      return out.sort((a, b) => b.bytes - a.bytes)
     },
-    async listDirectory(path: string): Promise<string[]> {
-      const prefix = normalise(path)
-      const children = new Set<string>()
-      for (const key of files.keys()) {
-        if (prefix.length > 0 && !key.startsWith(`${prefix}/`)) continue
-        const rest = prefix.length > 0 ? key.slice(prefix.length + 1) : key
-        const head = rest.split('/')[0]
-        if (head) children.add(head)
-      }
-      return [...children]
+
+    async removeArtifact(artifactUid: string): Promise<void> {
+      files.delete(artifactUid)
+      for (const [key, uid] of byKey) if (uid === artifactUid) byKey.delete(key)
     },
+
+    async clear(): Promise<void> {
+      files.clear()
+      byKey.clear()
+    },
+
     async usage(): Promise<StorageUsage | null> {
-      let usedBytes = 0
-      for (const bytes of files.values()) usedBytes += bytes.byteLength
-      return { usedBytes, quotaBytes: 0 }
+      let used = 0
+      for (const entry of files.values()) for (const raw of entry.values()) used += raw.byteLength
+      // Quota 0 = "not reported"; the panel treats it as such.
+      return { usedBytes: used, quotaBytes: 0 }
     },
   }
 }

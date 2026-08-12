@@ -88,7 +88,7 @@ export interface WorldInputs {
   // rather than by the caller so every reader of a save agrees on it.
   worldId: string
   // The world's own identity in the server's store, `metadata.uid`. The OTHER
-  // half of the pair artifactKey.ts keeps deliberately side by side: worldId
+  // half of the pair world/identity.ts keeps deliberately side by side: worldId
   // moves whenever the terrain does, worldUid never moves at all. Ordering a
   // bake needs this one, because the server addresses worlds by what you named
   // and own, not by what the terrain currently hashes to.

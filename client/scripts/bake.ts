@@ -22,13 +22,15 @@
 //   node baker.mjs '<job JSON>'
 // with the job on argv and a one-line JSON result on stdout, so the Go side
 // needs no framing beyond "read the last line".
-import { readFile, mkdir, writeFile, rename } from 'node:fs/promises'
+import { readFile, mkdir, writeFile, rename, readdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
 import { runAmplification } from '../src/worldgen/surface/runAmplification'
 import { amplificationPipelineVersion, writeAmplificationArtifact } from '../src/world/artifacts'
-import { createHttpArtifactStore, toRemotePath } from '../src/storage/HttpArtifactStore'
-import type { ArtifactStore, StorageUsage } from '../src/storage/ArtifactStore'
+import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
+import { artifactKey } from '../src/storage/ArtifactStore'
+import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../src/storage/ArtifactStore'
 
 // Where the baker reads and writes. Two shapes, because the same bake runs in
 // two places (docs/decisions/distributed-bake.md):
@@ -63,38 +65,83 @@ interface Job {
   jobId?: string
 }
 
-// The artifact store's byte-level interface, backed by the filesystem.
+// The artifact store's resolve/read/write interface, backed by the
+// filesystem — the server's own directory, which the Go store re-indexes by
+// mtime, so an entry this subprocess writes is visible to the server on its
+// next request without any handshake.
 //
 // Implemented here rather than reusing the encoder's own writer because that
 // is exactly the point of the interface: `writeAmplificationArtifact` does the
 // quantisation, the file naming and the meta-last ordering, and it does not
-// care whether the bytes land in OPFS, over HTTP, or here. Reimplementing the
-// ENCODING would be the mistake; reimplementing "put bytes at a path" is four
-// lines and keeps the encoder single-sourced.
+// care whether the bytes land in OPFS, over HTTP, or here.
 function createFsArtifactStore(root: string): ArtifactStore {
-  // The local grammar (`worlds/{id}/amp/{version}/{stage}/…`) maps onto the
-  // server's (`{id}/{version}/{stage}/…`) through the same translation the
-  // HTTP store uses — shared so the two layouts cannot drift apart.
-  const resolve = (path: string): string | null => {
-    const remote = toRemotePath(path)
-    if (!remote) return null
-    return join(root, remote.worldId, remote.pipelineVersion, remote.stage, ...remote.name.split('/'))
+  // A name is at most a shallow relative path from our own writer — anything
+  // else is refused rather than resolved.
+  const safeName = (name: string): boolean => {
+    const segments = name.split('/')
+    return segments.length <= 4 && segments.every((s) => s.length > 0 && s !== '.' && s !== '..' && !s.includes('\\'))
+  }
+
+  // key → uid by reading each entry's meta.json — the same rule as every
+  // other store: the meta is the truth, the directory name means nothing. A
+  // baker runs once per job, so a full scan per resolve is noise.
+  async function findByKey(key: ArtifactKey): Promise<string | null> {
+    let children: string[]
+    try {
+      children = await readdir(root)
+    } catch {
+      return null
+    }
+    for (const child of children) {
+      try {
+        const raw = await readFile(join(root, child, 'meta.json'), 'utf8')
+        const meta = JSON.parse(raw) as { key?: ArtifactKey }
+        if (
+          meta.key &&
+          meta.key.worldUid === key.worldUid && meta.key.worldId === key.worldId &&
+          meta.key.pipelineVersion === key.pipelineVersion && meta.key.stage === key.stage
+        ) return child
+      } catch {
+        continue
+      }
+    }
+    return null
   }
 
   return {
-    async read(path: string): Promise<ArrayBuffer | null> {
-      const target = resolve(path)
-      if (!target) return null
+    async resolve(key: ArtifactKey, create: boolean): Promise<ArtifactHandle | null> {
+      let uid = await findByKey(key)
+      if (!uid) {
+        if (!create) return null
+        uid = randomUUID()
+        try {
+          await mkdir(join(root, uid), { recursive: true })
+        } catch {
+          return null
+        }
+      }
+      let files: string[] = []
       try {
-        const buffer = await readFile(target)
+        files = (await readdir(join(root, uid))).filter((name) => !name.startsWith('.tmp-'))
+      } catch {
+        // an empty, freshly minted entry
+      }
+      return { key, local: uid, files }
+    },
+
+    async read(handle: ArtifactHandle, name: string): Promise<ArrayBuffer | null> {
+      if (!handle.local || !safeName(name)) return null
+      try {
+        const buffer = await readFile(join(root, handle.local, ...name.split('/')))
         return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
       } catch {
         return null
       }
     },
-    async write(path: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
-      const target = resolve(path)
-      if (!target) return false
+
+    async write(handle: ArtifactHandle, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
+      if (!handle.local || !safeName(name)) return false
+      const target = join(root, handle.local, ...name.split('/'))
       try {
         await mkdir(dirname(target), { recursive: true })
         const view = ArrayBuffer.isView(bytes)
@@ -102,7 +149,7 @@ function createFsArtifactStore(root: string): ArtifactStore {
           : new Uint8Array(bytes as ArrayBuffer)
         // Temp-then-rename, matching the Go store: a reader must see either
         // the old bytes or the new ones, never half a raster — and the server
-        // may well be serving this path while the bake writes it.
+        // may well be serving this entry while the bake writes it.
         const tmp = `${target}.tmp-${process.pid}`
         await writeFile(tmp, view)
         await rename(tmp, target)
@@ -110,20 +157,6 @@ function createFsArtifactStore(root: string): ArtifactStore {
       } catch {
         return false
       }
-    },
-    async exists(path: string): Promise<boolean> {
-      return (await this.read(path)) !== null
-    },
-    async size(path: string): Promise<number | null> {
-      const bytes = await this.read(path)
-      return bytes ? bytes.byteLength : null
-    },
-    async remove(): Promise<void> {},
-    async listDirectory(): Promise<string[]> {
-      return []
-    },
-    async usage(): Promise<StorageUsage | null> {
-      return null
     },
   }
 }
@@ -288,7 +321,10 @@ async function main(): Promise<void> {
   // would never look for — bakes succeeded, artifacts appeared, and not one
   // was ever used.
   const pipelineVersion = amplificationPipelineVersion(job.erosionRounds)
-  const key = { worldId: inputs.worldId, pipelineVersion, stage: String(job.stage) }
+  // The world uid comes from the save itself, which the server has already
+  // checked against the entry it stores the world under — so baker and
+  // browser key the artifact identically by construction.
+  const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, String(job.stage))
   const stored = await writeAmplificationArtifact(store, key, {
     elevation: result.elevation,
     width: result.width,
@@ -297,7 +333,7 @@ async function main(): Promise<void> {
     riverLengths: result.rivers.lengths,
     // Rivers are keyed by the world's own density inside the artifact, so a
     // server bake lands where the browser will look for it.
-  }, durationMs, inputs.erosionControls.riverDensity)
+  }, durationMs, inputs.erosionControls.riverDensity, inputs.seedText, job.erosionRounds)
   if (!stored) fail('could not write the artifact')
 
   process.stdout.write(`${JSON.stringify({

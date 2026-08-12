@@ -1,6 +1,8 @@
 package world
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +27,12 @@ import (
 // And revisions are separate directories rather than one overwritten file, so
 // an upload never destroys the copy it replaces — which matters because this
 // is the half of the system holding data that cannot be recomputed.
+//
+// Revisions are a SAFETY MARGIN, not a history feature (decided 2026-08-11):
+// nothing serves an old revision over the API, so keeping every one forever
+// was write-only storage. The store retains the newest `keepRevisions` and
+// prunes older ones on upload; a byte-identical re-upload is deduplicated via
+// the revision's content hash and mints no new revision at all.
 
 // ErrNotFound is returned for a world (or revision) that is not there.
 var ErrNotFound = errors.New("world not found")
@@ -57,6 +65,12 @@ type Meta struct {
 	Size       int64 `json:"size"`
 	ErosionRun int   `json:"erosionRun"`
 	HasPreview bool  `json:"hasPreview"`
+	// Display data mirrored the same way (2026-08-12, for the load/save
+	// panels): the recipe's seed, the build that wrote the save, and the
+	// current revision's content hash. Empty until a world is uploaded again.
+	Seed        string `json:"seed"`
+	Generator   string `json:"generator"`
+	ContentHash string `json:"contentHash"`
 }
 
 // RevisionMeta is {dir}/{uid}/rev/{n}/meta.json.
@@ -66,11 +80,19 @@ type RevisionMeta struct {
 	ErosionRun int       `json:"erosionRun"`
 	HasPreview bool      `json:"hasPreview"`
 	CreatedAt  time.Time `json:"createdAt"`
+	// SHA-256 of the zip bytes as uploaded — what the dedupe compares.
+	// Deliberately a plain byte hash and NOT the client's worldId: that one
+	// hashes dequantised layers and would differ between writer and reader
+	// (the trap server-storage.md records under "What changes in world.yaml").
+	ContentHash string `json:"contentHash"`
 }
 
 // Store is the filesystem-backed world store.
 type Store struct {
 	dir string
+	// How many revisions to retain per world; older ones are pruned on
+	// upload. 0 keeps every revision (the pre-2026-08-11 behaviour).
+	keepRevisions int
 	// One mutex per world, so two uploads of the SAME world serialise while
 	// uploads of different worlds do not. The revision check alone is not
 	// enough: without this, two requests could both read revision 3 and both
@@ -86,14 +108,18 @@ type Store struct {
 }
 
 // NewStore prepares the store, creating the root if it is absent.
-func NewStore(dir string) (*Store, error) {
+// keepRevisions bounds how many revisions each world retains (0 = all).
+func NewStore(dir string, keepRevisions int) (*Store, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("worlds directory must not be empty")
+	}
+	if keepRevisions < 0 {
+		return nil, fmt.Errorf("keep-revisions must be 0 (keep all) or positive, got %d", keepRevisions)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("preparing %q: %w", dir, err)
 	}
-	return &Store{dir: dir, now: time.Now}, nil
+	return &Store{dir: dir, keepRevisions: keepRevisions, now: time.Now}, nil
 }
 
 func (s *Store) lock(uid string) *sync.Mutex {
@@ -194,6 +220,20 @@ func (s *Store) Put(uid string, data []byte, info SaveInfo, owner string, expect
 		}
 	}
 
+	contentHash := hex.EncodeToString(func() []byte { h := sha256.Sum256(data); return h[:] }())
+
+	// Dedupe: a byte-identical re-upload of the current revision changes
+	// nothing and mints nothing — the caller gets the current state back, the
+	// same answer a new revision would have encoded, minus the copy on disk.
+	// Compared only against the CURRENT revision (that is the one being
+	// replaced); an older identical revision has been superseded in between,
+	// so re-uploading it is a real change of current state.
+	if current.Revision > 0 {
+		if rev, err := s.readRevisionMeta(uid, current.Revision); err == nil && rev.ContentHash != "" && rev.ContentHash == contentHash {
+			return current, nil
+		}
+	}
+
 	revision := current.Revision + 1
 	revDir := s.revDir(uid, revision)
 	if err := os.MkdirAll(revDir, 0o755); err != nil {
@@ -214,26 +254,30 @@ func (s *Store) Put(uid string, data []byte, info SaveInfo, owner string, expect
 
 	now := s.now()
 	revMeta := RevisionMeta{
-		Revision:   revision,
-		Size:       int64(len(data)),
-		ErosionRun: info.ErosionRun,
-		HasPreview: len(info.Preview) > 0,
-		CreatedAt:  now,
+		Revision:    revision,
+		Size:        int64(len(data)),
+		ErosionRun:  info.ErosionRun,
+		HasPreview:  len(info.Preview) > 0,
+		CreatedAt:   now,
+		ContentHash: contentHash,
 	}
 	if err := writeJSONAtomic(filepath.Join(revDir, "meta.json"), revMeta); err != nil {
 		return Meta{}, err
 	}
 
 	meta := Meta{
-		UID:        uid,
-		Name:       info.Name,
-		Owner:      owner,
-		Revision:   revision,
-		CreatedAt:  current.CreatedAt,
-		UpdatedAt:  now,
-		Size:       revMeta.Size,
-		ErosionRun: revMeta.ErosionRun,
-		HasPreview: revMeta.HasPreview,
+		UID:         uid,
+		Name:        info.Name,
+		Owner:       owner,
+		Revision:    revision,
+		CreatedAt:   current.CreatedAt,
+		UpdatedAt:   now,
+		Size:        revMeta.Size,
+		ErosionRun:  revMeta.ErosionRun,
+		HasPreview:  revMeta.HasPreview,
+		Seed:        info.Seed,
+		Generator:   info.Generator,
+		ContentHash: contentHash,
 	}
 	if meta.CreatedAt.IsZero() {
 		meta.CreatedAt = now
@@ -247,7 +291,47 @@ func (s *Store) Put(uid string, data []byte, info SaveInfo, owner string, expect
 	if err := writeJSONAtomic(filepath.Join(s.worldDir(uid), "meta.json"), meta); err != nil {
 		return Meta{}, err
 	}
+	// Retention, after the new revision is fully in force. Best-effort: a
+	// prune that fails leaves extra safety copies, which is the harmless
+	// direction, and must not fail an upload that already succeeded.
+	s.pruneRevisions(uid, revision)
 	return meta, nil
+}
+
+func (s *Store) readRevisionMeta(uid string, revision int) (RevisionMeta, error) {
+	raw, err := os.ReadFile(filepath.Join(s.revDir(uid, revision), "meta.json"))
+	if err != nil {
+		return RevisionMeta{}, err
+	}
+	var meta RevisionMeta
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return RevisionMeta{}, err
+	}
+	return meta, nil
+}
+
+// pruneRevisions drops every revision older than the newest keepRevisions.
+// 0 keeps all. Walks the rev directory rather than counting down from the
+// current number, so a gap (a previously pruned or failed revision) does not
+// end the sweep early.
+func (s *Store) pruneRevisions(uid string, current int) {
+	if s.keepRevisions <= 0 {
+		return
+	}
+	oldest := current - s.keepRevisions + 1
+	entries, err := os.ReadDir(filepath.Join(s.worldDir(uid), "rev"))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		n, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		if n < oldest {
+			_ = os.RemoveAll(s.revDir(uid, n))
+		}
+	}
 }
 
 // ReadCurrent returns the bytes of a world's current revision.

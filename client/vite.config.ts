@@ -1,9 +1,23 @@
 import { defineConfig } from 'vite'
+import { execSync } from 'node:child_process'
 
 // Where the Go server lives during development. Overridable so a dev client can
 // point at a real deployment without touching this file; the default matches
 // `casas-eternas start`'s own default listen address.
 const API = process.env.CASAS_API ?? 'http://localhost:8080'
+
+// The build's provenance (see src/app/buildVersion.ts): the commit this build
+// was made from, with -dirty when the tree had local changes. Resolved here at
+// config load so a production bundle carries a real value; anything loading
+// the modules without vite's define step (the Node harnesses) falls back to
+// the declared 'dev'.
+const BUILD = (() => {
+  try {
+    return execSync('git describe --always --dirty', { encoding: 'utf8' }).trim()
+  } catch {
+    return 'unknown'
+  }
+})()
 
 // The dev server's port is PINNED, and that is not cosmetic: browser storage
 // (OPFS, IndexedDB, caches) is scoped to the ORIGIN, port included. Vite's
@@ -14,6 +28,9 @@ const API = process.env.CASAS_API ?? 'http://localhost:8080'
 // silent drift into a loud "port already in use", which is the failure mode
 // one can actually debug.
 export default defineConfig({
+  define: {
+    __CASAS_BUILD__: JSON.stringify(BUILD),
+  },
   server: {
     port: 5173,
     strictPort: true,

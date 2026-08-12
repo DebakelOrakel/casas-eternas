@@ -1,7 +1,6 @@
 package artifacts
 
 import (
-	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -19,271 +18,245 @@ func newTestStore(t *testing.T) *Store {
 	return store
 }
 
-// A realistic key: the client's world id carries a sanitised seed label plus a
-// 64-bit hash, and its labels keep accents on purpose.
 func testKey() Key {
-	return Key{WorldID: "Ätna-e609be7190af0d7f", PipelineVersion: "v2-1a2b3c4d5e6f7081", Stage: "2"}
+	return Key{WorldUID: "2bfe969c-1c67-4b8e-9dc6-3f6d2fddc001", WorldID: "e609be7190af0d7f", PipelineVersion: "v6-1a2b3c4d5e6f7081", Stage: "2"}
 }
 
-func write(t *testing.T, s *Store, key Key, name, body string) {
+// metaFor renders the client's meta.json for a key — the one file that makes
+// an entry resolvable.
+func metaFor(key Key, label string) string {
+	return `{"key":{"worldUid":"` + key.WorldUID + `","worldId":"` + key.WorldID + `","pipelineVersion":"` + key.PipelineVersion + `","stage":"` + key.Stage + `"},"label":"` + label + `","width":4096,"height":2048,"bakeMs":9000}`
+}
+
+// bake writes a complete artifact the way the client does: resolve with
+// create, files, meta last. Returns the uid.
+func bake(t *testing.T, s *Store, key Key, label, payload string) string {
 	t.Helper()
-	if err := s.Write(key, name, strings.NewReader(body)); err != nil {
-		t.Fatalf("Write %s: %v", name, err)
+	uid, _, err := s.Resolve(key, true)
+	if err != nil {
+		t.Fatalf("Resolve(create): %v", err)
 	}
+	if err := s.Write(uid, "elevation.u16", strings.NewReader(payload)); err != nil {
+		t.Fatalf("Write elevation: %v", err)
+	}
+	if err := s.Write(uid, "meta.json", strings.NewReader(metaFor(key, label))); err != nil {
+		t.Fatalf("Write meta: %v", err)
+	}
+	return uid
 }
 
-func TestWriteReadRoundTrips(t *testing.T) {
+func TestResolveMintsOnceAndReuses(t *testing.T) {
 	s := newTestStore(t)
 	key := testKey()
-	write(t, s, key, "elevation.u16", "raster-bytes")
 
-	raw, err := s.Read(key, "elevation.u16")
-	if err != nil {
-		t.Fatalf("Read: %v", err)
+	if _, _, err := s.Resolve(key, false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("resolve of an absent key = %v, want ErrNotFound", err)
 	}
-	if !bytes.Equal(raw, []byte("raster-bytes")) {
-		t.Errorf("read back %q", raw)
+	uid, files, err := s.Resolve(key, true)
+	if err != nil || uid == "" || len(files) != 0 {
+		t.Fatalf("create = %q, %v, %v", uid, files, err)
 	}
-	if _, err := s.Read(key, "rivers.f32"); !errors.Is(err, ErrNotFound) {
+	// The same key resolves to the SAME uid — the idempotency the old path
+	// grammar provided by construction, now provided by the reservation.
+	again, _, err := s.Resolve(key, true)
+	if err != nil || again != uid {
+		t.Fatalf("second create = %q, want %q (err %v)", again, uid, err)
+	}
+	// The resolve response carries the present files — the batch existence
+	// answer that used to be the `present` endpoint.
+	if err := s.Write(uid, "elevation.u16", strings.NewReader("x")); err != nil {
+		t.Fatal(err)
+	}
+	_, files, err = s.Resolve(key, true)
+	if err != nil || len(files) != 1 || files[0] != "elevation.u16" {
+		t.Fatalf("files = %v (err %v)", files, err)
+	}
+}
+
+func TestWriteRequiresAMintedArtifact(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Write("00000000-0000-4000-8000-000000000000", "elevation.u16", strings.NewReader("x")); !errors.Is(err, ErrNotFound) {
+		t.Errorf("write into unminted uid = %v, want ErrNotFound", err)
+	}
+}
+
+func TestReadRoundTripsAndRefusesTraversal(t *testing.T) {
+	s := newTestStore(t)
+	uid := bake(t, s, testKey(), "Ätna", "raster-bytes")
+
+	raw, err := s.Read(uid, "elevation.u16")
+	if err != nil || string(raw) != "raster-bytes" {
+		t.Fatalf("read = %q, %v", raw, err)
+	}
+	if _, err := s.Read(uid, "rivers.f32"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("absent file = %v, want ErrNotFound", err)
 	}
-	// The layout must match the client's grammar, one level under the root.
-	if _, err := os.Stat(filepath.Join(s.dir, key.WorldID, key.PipelineVersion, key.Stage, "elevation.u16")); err != nil {
-		t.Errorf("expected layout not on disk: %v", err)
-	}
-}
-
-// The property that makes locking unnecessary: the key describes the bytes, so
-// writing twice is a no-op rather than a conflict. This is the deliberate
-// opposite of the world store, which refuses an unexpected revision.
-func TestWriteIsIdempotent(t *testing.T) {
-	s := newTestStore(t)
-	key := testKey()
-	for i := 0; i < 3; i++ {
-		write(t, s, key, "elevation.u16", "same-bytes")
-	}
-	raw, err := s.Read(key, "elevation.u16")
-	if err != nil || !bytes.Equal(raw, []byte("same-bytes")) {
-		t.Fatalf("read = %q, err %v", raw, err)
-	}
-}
-
-// Concurrent writers must all succeed and leave a complete file — no torn
-// content, no leftover temporaries. Guaranteed by write-to-temp-then-rename,
-// which is the only thing standing in for a lock here.
-func TestConcurrentWritesAllSucceed(t *testing.T) {
-	s := newTestStore(t)
-	key := testKey()
-	const body = "identical-payload-from-every-writer"
-
-	var wg sync.WaitGroup
-	errs := make([]error, 8)
-	for i := range errs {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			errs[i] = s.Write(key, "elevation.u16", strings.NewReader(body))
-		}(i)
-	}
-	wg.Wait()
-	for i, err := range errs {
-		if err != nil {
-			t.Errorf("writer %d: %v", i, err)
-		}
-	}
-	raw, err := s.Read(key, "elevation.u16")
-	if err != nil || string(raw) != body {
-		t.Fatalf("read = %q, err %v", raw, err)
-	}
-	entries, _ := os.ReadDir(s.stageDir(key))
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".tmp-") {
-			t.Errorf("temporary file survived: %s", entry.Name())
-		}
-	}
-}
-
-// The whole point of `present`: discovering the gaps in one round trip.
-func TestPresentReportsBothHalves(t *testing.T) {
-	s := newTestStore(t)
-	key := testKey()
-	write(t, s, key, "elevation.u16", "x")
-	write(t, s, key, "meta.json", "{}")
-
-	present, err := s.Present(key, []string{"elevation.u16", "rivers.f32", "meta.json", "riverLengths.u32"})
-	if err != nil {
-		t.Fatalf("Present: %v", err)
-	}
-	if len(present) != 2 || present[0] != "elevation.u16" || present[1] != "meta.json" {
-		t.Errorf("present = %v", present)
-	}
-	// A malformed name answers "no", rather than failing the whole query — the
-	// caller asked whether it is held, and it is not.
-	if got, _ := s.Present(key, []string{"../escape"}); len(got) != 0 {
-		t.Errorf("a traversal name must not report present: %v", got)
-	}
-	// A directory is not an artifact.
-	write(t, s, key, "tiles/12_7", "tile")
-	if got, _ := s.Present(key, []string{"tiles"}); len(got) != 0 {
-		t.Errorf("a directory must not report present: %v", got)
-	}
-	if got, _ := s.Present(key, []string{"tiles/12_7"}); len(got) != 1 {
-		t.Errorf("a nested name should be found: %v", got)
-	}
-}
-
-// Every component becomes a directory name, so traversal is refused rather
-// than sanitised. The label may carry accents — that is deliberate, and the
-// rule is about separators and control characters, not about alphabet.
-func TestPathsAreRefusedNotSanitised(t *testing.T) {
-	s := newTestStore(t)
-	good := testKey()
-	if !good.Valid() {
-		t.Fatal("a realistic key with an accented label must be accepted")
-	}
-
-	bad := []Key{
-		{WorldID: "..", PipelineVersion: "v1", Stage: "2"},
-		{WorldID: "a/b", PipelineVersion: "v1", Stage: "2"},
-		{WorldID: `a\b`, PipelineVersion: "v1", Stage: "2"},
-		{WorldID: "", PipelineVersion: "v1", Stage: "2"},
-		{WorldID: "w", PipelineVersion: "../../etc", Stage: "2"},
-		{WorldID: "w", PipelineVersion: "v1", Stage: "."},
-		{WorldID: "w", PipelineVersion: "v1", Stage: "a\x00b"},
-		{WorldID: strings.Repeat("x", maxSegment+1), PipelineVersion: "v1", Stage: "2"},
-	}
-	for _, key := range bad {
-		if key.Valid() {
-			t.Errorf("Valid(%+v) = true", key)
-		}
-		if err := s.Write(key, "elevation.u16", strings.NewReader("x")); !errors.Is(err, ErrBadPath) {
-			t.Errorf("Write(%+v) = %v, want ErrBadPath", key, err)
-		}
-	}
 	for _, name := range []string{"..", "../../etc/passwd", "a/../../b", "", "a\x00b", "a/b/c/d/e"} {
-		if err := s.Write(good, name, strings.NewReader("x")); !errors.Is(err, ErrBadPath) {
+		if err := s.Write(uid, name, strings.NewReader("x")); !errors.Is(err, ErrBadPath) {
 			t.Errorf("Write(name=%q) = %v, want ErrBadPath", name, err)
 		}
 	}
-	// Nothing may have escaped the root.
-	entries, _ := os.ReadDir(s.dir)
-	for _, entry := range entries {
-		if entry.Name() != good.WorldID {
-			t.Errorf("unexpected entry at the root: %s", entry.Name())
-		}
+	if _, err := s.Read("../escape", "meta.json"); !errors.Is(err, ErrBadPath) {
+		t.Errorf("traversal uid = %v, want ErrBadPath", err)
 	}
 }
 
-func TestListGroupsAndMeasures(t *testing.T) {
+// The index survives a restart because it IS the metas: a fresh Store over
+// the same directory resolves the same key.
+func TestIndexRebuildsFromMetas(t *testing.T) {
+	dir := t.TempDir()
+	first, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := testKey()
+	uid := bake(t, first, key, "Ätna", "payload")
+
+	second, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, files, err := second.Resolve(key, false)
+	if err != nil || found != uid {
+		t.Fatalf("restarted resolve = %q, %v (want %q)", found, err, uid)
+	}
+	if len(files) != 2 {
+		t.Errorf("files after restart = %v", files)
+	}
+}
+
+// A hand-copied directory — ANY name, as long as its meta.json is readable —
+// is indexed on the next access, without a restart. This is the property the
+// whole redesign exists for.
+func TestHandCopiedDirectoryIsIndexed(t *testing.T) {
 	s := newTestStore(t)
-	small := Key{WorldID: "alpha-1111111111111111", PipelineVersion: "v2-aaaa", Stage: "2"}
-	large := Key{WorldID: "alpha-1111111111111111", PipelineVersion: "v2-aaaa", Stage: "4"}
-	other := Key{WorldID: "bravo-2222222222222222", PipelineVersion: "v2-aaaa", Stage: "2"}
+	key := testKey()
+	copied := filepath.Join(s.dir, "backup-von-2026")
+	if err := os.MkdirAll(copied, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(copied, "elevation.u16"), []byte("bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(copied, "meta.json"), []byte(metaFor(key, "Ätna")), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	write(t, s, small, "elevation.u16", strings.Repeat("a", 100))
-	write(t, s, small, "meta.json", `{"width":4096,"height":2048,"bakeMs":102000}`)
-	write(t, s, large, "elevation.u16", strings.Repeat("b", 400))
-	write(t, s, other, "elevation.u16", strings.Repeat("c", 50))
+	uid, _, err := s.Resolve(key, false)
+	if err != nil || uid != "backup-von-2026" {
+		t.Fatalf("hand-copied resolve = %q, %v", uid, err)
+	}
+}
 
-	worlds, err := s.List()
+func TestListReportsMetasAndStrays(t *testing.T) {
+	s := newTestStore(t)
+	keyA := testKey()
+	keyB := Key{WorldUID: "uid-bravo", WorldID: "2222222222222222", PipelineVersion: "v6-bbbb", Stage: "4"}
+	bake(t, s, keyA, "Ätna", strings.Repeat("a", 100))
+	bake(t, s, keyB, "Bravo", strings.Repeat("b", 400))
+	// A directory with no readable meta: bytes with a name, nothing more.
+	stray := filepath.Join(s.dir, "half-copied")
+	if err := os.MkdirAll(stray, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stray, "elevation.u16"), []byte(strings.Repeat("s", 60)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	artifacts, err := s.List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(worlds) != 2 {
-		t.Fatalf("List returned %d worlds, want 2", len(worlds))
+	if len(artifacts) != 3 {
+		t.Fatalf("List returned %d entries, want 3", len(artifacts))
 	}
-	// Largest world first, so the panel leads with what is actually costing room.
-	if worlds[0].WorldID != small.WorldID {
-		t.Errorf("order = %s first; want the larger world", worlds[0].WorldID)
+	// Largest first.
+	if artifacts[0].Label != "Bravo" || artifacts[0].WorldUID != "uid-bravo" || artifacts[0].Stage != "4" {
+		t.Errorf("first entry = %+v", artifacts[0])
 	}
-	if len(worlds[0].Stages) != 2 {
-		t.Fatalf("world has %d stages, want 2", len(worlds[0].Stages))
+	var strayEntry *ListedArtifact
+	var listed int64
+	for i := range artifacts {
+		listed += artifacts[i].Bytes
+		if artifacts[i].ArtifactUID == "half-copied" {
+			strayEntry = &artifacts[i]
+		}
 	}
-	// Stages smallest first — the quickest read of what a world has cost.
-	if worlds[0].Stages[0].Stage != "2" || worlds[0].Stages[1].Stage != "4" {
-		t.Errorf("stage order = %s, %s", worlds[0].Stages[0].Stage, worlds[0].Stages[1].Stage)
+	if strayEntry == nil || strayEntry.WorldUID != "" || strayEntry.Bytes != 60 {
+		t.Fatalf("stray entry = %+v", strayEntry)
 	}
-	if worlds[0].Stages[0].Width != 4096 || worlds[0].Stages[0].BakeMs != 102000 {
-		t.Errorf("meta.json not read: %+v", worlds[0].Stages[0])
-	}
-	// The stage with no meta.json still counts toward size; it occupies disk
-	// either way, and dropping it would understate usage.
-	if worlds[0].Stages[1].Bytes != 400 || worlds[0].Stages[1].Width != 0 {
-		t.Errorf("stage without meta = %+v", worlds[0].Stages[1])
-	}
-	if worlds[0].Bytes != 100+int64(len(`{"width":4096,"height":2048,"bakeMs":102000}`))+400 {
-		t.Errorf("world bytes = %d", worlds[0].Bytes)
-	}
-
-	usage, err := s.Usage()
-	if err != nil {
-		t.Fatalf("Usage: %v", err)
-	}
-	if usage != worlds[0].Bytes+worlds[1].Bytes {
-		t.Errorf("usage %d does not match the sum of the worlds", usage)
-	}
-}
-
-// A stage may hold nested files once artifacts are tiled. Counting only the
-// stage's direct children reported those stages as empty while Usage counted
-// them, so the panel's per-world figure and its total disagreed — found by
-// running the real routes, not by the tests above.
-func TestNestedFilesCountTowardSize(t *testing.T) {
-	s := newTestStore(t)
-	key := testKey()
-	write(t, s, key, "elevation.u16", strings.Repeat("a", 100))
-	write(t, s, key, "tiles/12_7", strings.Repeat("b", 40))
-	write(t, s, key, "tiles/12_8", strings.Repeat("c", 60))
-
-	worlds, err := s.List()
-	if err != nil || len(worlds) != 1 {
-		t.Fatalf("List = %v, %v", worlds, err)
-	}
-	if worlds[0].Stages[0].Bytes != 200 {
-		t.Errorf("stage bytes = %d, want 200 (nested files included)", worlds[0].Stages[0].Bytes)
-	}
+	// The listing and the usage figure must agree — the invariant whose
+	// violation showed as phantom megabytes above an empty panel.
 	usage, _ := s.Usage()
-	if usage != worlds[0].Bytes {
-		t.Errorf("usage %d disagrees with the world total %d", usage, worlds[0].Bytes)
+	if usage != listed {
+		t.Errorf("usage %d disagrees with the listing sum %d", usage, listed)
 	}
 }
 
-func TestRemoveAndClear(t *testing.T) {
+func TestRemoveArtifactWorldAndClear(t *testing.T) {
 	s := newTestStore(t)
-	a := Key{WorldID: "alpha-1111111111111111", PipelineVersion: "v2-aaaa", Stage: "2"}
-	b := Key{WorldID: "bravo-2222222222222222", PipelineVersion: "v2-aaaa", Stage: "2"}
-	write(t, s, a, "elevation.u16", "a")
-	write(t, s, b, "elevation.u16", "b")
+	keyA1 := Key{WorldUID: "uid-alpha", WorldID: "1111111111111111", PipelineVersion: "v6-aaaa", Stage: "2"}
+	keyA2 := Key{WorldUID: "uid-alpha", WorldID: "3333333333333333", PipelineVersion: "v6-aaaa", Stage: "2"}
+	keyB := Key{WorldUID: "uid-bravo", WorldID: "2222222222222222", PipelineVersion: "v6-aaaa", Stage: "2"}
+	uidA1 := bake(t, s, keyA1, "Alpha", "a1")
+	bake(t, s, keyA2, "Alpha", "a2")
+	uidB := bake(t, s, keyB, "Bravo", "b")
 
-	if err := s.RemoveWorld(a.WorldID); err != nil {
+	if err := s.RemoveArtifact(uidA1); err != nil {
+		t.Fatalf("RemoveArtifact: %v", err)
+	}
+	if _, _, err := s.Resolve(keyA1, false); !errors.Is(err, ErrNotFound) {
+		t.Errorf("removed artifact still resolves: %v", err)
+	}
+
+	// The world sweep works off the metas: every entry naming uid-alpha goes.
+	if err := s.RemoveWorld("uid-alpha"); err != nil {
 		t.Fatalf("RemoveWorld: %v", err)
 	}
-	if _, err := s.Read(a, "elevation.u16"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("removed world still readable: %v", err)
+	if _, _, err := s.Resolve(keyA2, false); !errors.Is(err, ErrNotFound) {
+		t.Errorf("swept world still resolves: %v", err)
 	}
-	if _, err := s.Read(b, "elevation.u16"); err != nil {
+	if _, _, err := s.Resolve(keyB, false); err != nil {
 		t.Errorf("the other world was affected: %v", err)
 	}
-	if err := s.RemoveWorld(a.WorldID); !errors.Is(err, ErrNotFound) {
-		t.Errorf("second remove = %v, want ErrNotFound", err)
-	}
-	if err := s.RemoveWorld("../escape"); !errors.Is(err, ErrBadPath) {
-		t.Errorf("traversal remove = %v, want ErrBadPath", err)
+	if err := s.RemoveWorld("uid-alpha"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second sweep = %v, want ErrNotFound", err)
 	}
 
 	if err := s.Clear(); err != nil {
 		t.Fatalf("Clear: %v", err)
 	}
-	entries, _ := os.ReadDir(s.dir)
-	if len(entries) != 0 {
-		t.Errorf("Clear left %d entries", len(entries))
+	if _, _, err := s.Resolve(keyB, false); !errors.Is(err, ErrNotFound) {
+		t.Errorf("cleared store still resolves: %v", err)
 	}
 	// The store must still be usable afterwards, not merely empty.
-	write(t, s, a, "elevation.u16", "again")
-	if raw, err := s.Read(a, "elevation.u16"); err != nil || string(raw) != "again" {
-		t.Errorf("store unusable after Clear: %q, %v", raw, err)
+	if again := bake(t, s, keyB, "Bravo", "again"); again == uidB {
+		t.Log("uid reuse after clear is fine but statistically absurd")
 	}
-	if err := s.Clear(); err != nil {
-		t.Errorf("clearing twice must be harmless: %v", err)
+}
+
+// Concurrent resolves of one key must agree on a single uid — the property
+// that lets two machines bake the same world without coordination.
+func TestConcurrentResolvesShareOneUID(t *testing.T) {
+	s := newTestStore(t)
+	key := testKey()
+	uids := make([]string, 8)
+	var wg sync.WaitGroup
+	for i := range uids {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			uid, _, err := s.Resolve(key, true)
+			if err != nil {
+				t.Errorf("resolver %d: %v", i, err)
+			}
+			uids[i] = uid
+		}(i)
+	}
+	wg.Wait()
+	for _, uid := range uids[1:] {
+		if uid != uids[0] {
+			t.Fatalf("resolvers disagreed: %v", uids)
+		}
 	}
 }

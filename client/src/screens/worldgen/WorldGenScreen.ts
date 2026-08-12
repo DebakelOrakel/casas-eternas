@@ -1,4 +1,5 @@
 import { Color4, PointerEventTypes, Scene } from '@babylonjs/core'
+import { BUILD_VERSION } from '../../app/buildVersion'
 import { createWorldgenCamera } from '../../camera/worldgenCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
@@ -49,6 +50,7 @@ import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { readRecipeValue as readYamlValue } from '../../world/save/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
+import { artifactKey } from '../../storage/ArtifactStore'
 import { amplificationArtifactExists, amplificationPipelineVersion, readAmplificationArtifact, writeAmplificationArtifact } from '../../world/artifacts'
 import { readWorldInputs } from '../../world/save/loadWorldInputs'
 import { openWorld } from '../../world/query'
@@ -278,7 +280,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let markCleanOnNextRender = false
   // A world's STABLE identity and how many times it has been saved — written to
   // world.yaml's metadata/status, read back on load, and deliberately NOT
-  // derived from anything: see artifactKey.newWorldUid for why the terrain hash
+  // derived from anything: see identity.newWorldUid for why the terrain hash
   // cannot serve here. Empty until the world is first saved or loaded.
   let worldUid = ''
   let worldRevision = 0
@@ -2883,6 +2885,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // lock compares it, so two machines editing one world collide loudly
       // instead of one silently overwriting the other.
       `  revision: ${worldRevision}`,
+      // PROVENANCE, never a key (see app/buildVersion.ts): which build wrote
+      // this stand. Regenerating the same recipe on another build may well
+      // produce different terrain, and this is what lets a reader say so.
+      `  generator: ${BUILD_VERSION}`,
       // NOT recorded here: the terrain's content id (world/identity's
       // deriveWorldId). It would let a listing say "the server holds different
       // terrain" without downloading 8 MB — but it hashes the DEQUANTISED
@@ -3002,7 +3008,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
     const manifest = {
       formatVersion: 1,
-      generatorVersion: 'casas-eternas/v1alpha1',
+      // The same provenance string status.generator carries — a real build id
+      // since 2026-08-11, where a static 'casas-eternas/v1alpha1' had stood
+      // saying nothing.
+      generatorVersion: BUILD_VERSION,
       world: { width: MAP_WIDTH, height: MAP_HEIGHT, topology: 'torus' },
       layers,
     }
@@ -3118,7 +3127,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Both fall back to the plain behaviour when there is no server — a window
   // offering a single option is friction rather than choice.
   const savePanel = createSavePanel(root, {
-    currentUid: () => worldUid,
+    currentWorld: () => ({ uid: worldUid, seed: seedInput.value, revision: worldRevision }),
     onChoose: (target) => { void saveTo(target) },
   })
   const loadPanel = createLoadPanel(root, {
@@ -3172,11 +3181,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Finest first: the whole point of the search is "best available", and 8K
   // carries roughly seven times the channel length of 4K. Silent when there is
   // nothing — an absent artifact is the normal state, not a failure.
-  async function adoptBestBakedRivers(worldIdForLookup: string, riverDensity: number | undefined): Promise<void> {
+  async function adoptBestBakedRivers(worldUidForLookup: string, worldIdForLookup: string, riverDensity: number | undefined): Promise<void> {
     const pipelineVersion = amplificationPipelineVersion()
     const store = await getArtifactStore()
     for (const factor of [4, 2]) {
-      const key = { worldId: worldIdForLookup, pipelineVersion, stage: String(factor) }
+      const key = artifactKey(worldUidForLookup, worldIdForLookup, pipelineVersion, String(factor))
       const hit = await readAmplificationArtifact(store, key, riverDensity).catch(() => null)
       if (!hit) continue
       showBakedRivers(hit.artifact.riverPoints, hit.artifact.riverLengths, factor)
@@ -3199,13 +3208,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
 
     const pipelineVersion = amplificationPipelineVersion()
-    const key = { worldId: inputs.worldId, pipelineVersion, stage: String(factor) }
+    const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, String(factor))
     const store = await getArtifactStore()
     if (await amplificationArtifactExists(store, key, inputs.erosionControls.riverDensity).catch(() => false)) {
       // Already made, by this machine or another. Saying so beats spending
       // minutes to reproduce bytes that are addressed by content anyway.
       ctx.notifications.show({ message: t('common.notify.bakeExists', { level }), icon: '/icons/ok.png', durationMs: 6000 })
-      void adoptBestBakedRivers(inputs.worldId, inputs.erosionControls.riverDensity)
+      void adoptBestBakedRivers(inputs.worldUid, inputs.worldId, inputs.erosionControls.riverDensity)
       return
     }
 
@@ -3275,7 +3284,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         return
       }
       settle(t('common.notify.bakeDone', { level, width: outcome.result.width, height: outcome.result.height, seconds: Math.round(outcome.result.durationMs / 1000) }), '/icons/server_clean.png', 15000)
-      void adoptBestBakedRivers(inputs.worldId, inputs.erosionControls.riverDensity)
+      void adoptBestBakedRivers(inputs.worldUid, inputs.worldId, inputs.erosionControls.riverDensity)
       return
     }
 
@@ -3308,7 +3317,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           })
         },
       )
-      await writeAmplificationArtifact(store, key, baked.artifact, baked.durationMs, inputs.erosionControls.riverDensity).catch(() => false)
+      await writeAmplificationArtifact(store, key, baked.artifact, baked.durationMs, inputs.erosionControls.riverDensity, inputs.seedText).catch(() => false)
       showBakedRivers(baked.artifact.riverPoints, baked.artifact.riverLengths, factor)
       settle(t('common.notify.bakeDone', { level, width: baked.artifact.width, height: baked.artifact.height, seconds: Math.round(baked.durationMs / 1000) }), '/icons/server_clean.png', 15000)
     } catch {
@@ -3516,7 +3525,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Identity, or a derived one for a save written before the field existed.
     // Deriving rather than rolling a fresh id is what keeps the same legacy
     // file opened on two machines a SINGLE world in the store — see
-    // artifactKey.deriveWorldUid.
+    // identity.deriveWorldUid.
     worldUid = readYamlValue(yaml, 'metadata.uid') || deriveWorldUid(new Uint8Array(elevation))
     worldRevision = Number(readYamlValue(yaml, 'status.revision') ?? 0)
     // Both 8K preconditions just changed: this world now has an identity, and
@@ -3547,7 +3556,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     void file.arrayBuffer()
       .then((bytes) => openWorld(bytes))
       .then(async (loaded) => {
-        if (loaded) return adoptBestBakedRivers(await loaded.worldId(), loaded.recipe.erosionControls.riverDensity)
+        if (loaded) return adoptBestBakedRivers(loaded.recipe.worldUid, await loaded.worldId(), loaded.recipe.erosionControls.riverDensity)
       })
       .catch(() => undefined)
     mantleVigourInput.value = String(spec.values['genesis.mantleVigour'])
@@ -3626,10 +3635,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   riverDensityInput.addEventListener('input', () => {
     riverDensityLabel.textContent = riverDensityInput.value
     // Drop any baked network being previewed. It masked the recomputed one, so
-    // the slider looked dead — and keeping it would be wrong rather than merely
-    // stale: `riverDensity` is hashed into deriveWorldId, so a different
-    // density is a DIFFERENT worldId, and that artifact no longer describes
-    // this world at all.
+    // the slider looked dead — and it genuinely describes another setting:
+    // baked rivers are keyed per density (rivers-{density}.f32, see
+    // world/artifacts), so the network on screen belongs to the density the
+    // slider just left.
     bakedRiverDisplay = null
     drawRivers()
     if (tectonicsRunning) return

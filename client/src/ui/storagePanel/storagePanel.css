@@ -2,32 +2,56 @@
    title bar, body, footer, buttons — lives in ui/panel/panel.css and is
    shared with the load and save panels. */
 
-.cache-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 1rem;
+/* Wider than the shared default: a group header plus version lines with
+   three chips and a hash need the room, and this window is a table at
+   heart. */
+.app-panel--storage {
+  width: min(760px, calc(100vw - 3rem));
 }
 
-.cache-row + .cache-row {
+/* One world: header line with label, size and delete; version lines below. */
+.cache-world {
+  padding: 0.35rem 0;
+}
+
+.cache-world + .cache-world {
   border-top: 1px solid rgba(26, 26, 26, 0.07);
 }
 
-.cache-row-main {
-  flex: 1;
-  min-width: 0;
+.cache-world-head {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.75rem;
+  padding: 0.25rem 1rem;
 }
 
-/* The seed label can be long; the resolution chips must never be pushed out
-   of the row by it. */
-.cache-row-label {
+/* The seed label can be long; size and delete must never be pushed out. */
+.cache-world-label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.9rem;
+}
+
+/* One terrain × version line, indented under its world. */
+.cache-line {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.15rem 1rem 0.15rem 1.75rem;
+}
+
+.cache-line-hash {
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  opacity: 0.6;
+  flex: none;
+}
+
+.cache-line .cache-row-chips {
+  flex: 1;
 }
 
 .cache-row-chips {
@@ -47,6 +71,12 @@
 
 .cache-chip--empty {
   opacity: 0.4;
+}
+
+/* The algorithm-version chip leads its line — same shape as the resolution
+   chips, told apart by tone rather than by form. */
+.cache-chip--version {
+  background: rgba(45, 95, 175, 0.14);
 }
 
 .cache-row-size {
@@ -71,7 +101,7 @@
   opacity: 0.55;
 }
 
-.cache-section + .cache-row {
+.cache-section + .cache-world {
   border-top: none;
 }
 

@@ -1,5 +1,5 @@
 import { getLocale, t } from '../../i18n/i18n'
-import { apiBase, fetchWorld, fetchWorldPreview, listWorlds } from '../../server/worldClient'
+import { apiBase, deleteWorld, fetchWorld, fetchWorldPreview, listWorlds } from '../../server/worldClient'
 import type { WorldSummary } from '../../server/worldClient'
 import { createPanel } from '../panel/Panel'
 import './worldPanels.css'
@@ -83,16 +83,30 @@ export function createLoadPanel(host: HTMLElement, options: LoadPanelOptions): L
     main.className = 'world-main'
     const name = document.createElement('span')
     name.className = 'world-name'
+    // metadata.name as the save wrote it — today that is the seed text; the
+    // editable display name is the still-open task server-storage.md split off.
     name.textContent = world.name || world.uid
     name.title = world.uid
     const meta = document.createElement('span')
     meta.className = 'world-meta'
     // Erosion count says how far the world was actually taken, which is the
     // one thing a thumbnail cannot show.
-    meta.textContent = [formatWhen(world.updatedAt), `rev ${world.revision}`, `${world.erosionRun}×`, formatSize(world.size)]
+    meta.textContent = [formatWhen(world.updatedAt), `${t('common.world.revision')} ${world.revision}`, `${world.erosionRun}×`, formatSize(world.size)]
       .filter(Boolean)
       .join(' · ')
-    main.append(name, meta)
+    // The identity line: what exactly this entry is, for anyone comparing
+    // saves across machines. Hashes shortened for the eye, full in the title;
+    // fields a pre-2026-08-12 upload does not carry simply stay away.
+    const identity = document.createElement('span')
+    identity.className = 'world-meta world-meta--identity'
+    identity.textContent = [
+      world.seed ? `${t('common.world.seed')} ${world.seed}` : '',
+      `${t('common.world.uid')} ${world.uid.slice(0, 8)}`,
+      world.contentHash ? `${t('common.world.checksum')} ${world.contentHash.slice(0, 8)}` : '',
+      world.generator ? `${t('common.world.build')} ${world.generator}` : '',
+    ].filter(Boolean).join(' · ')
+    identity.title = [world.uid, world.contentHash].filter(Boolean).join('\n')
+    main.append(name, meta, identity)
 
     const open = document.createElement('button')
     open.type = 'button'
@@ -132,7 +146,40 @@ export function createLoadPanel(host: HTMLElement, options: LoadPanelOptions): L
       })()
     })
 
-    row.append(thumb, main, open, download)
+    // Deleting is irreversible here — a world is the one thing nobody can
+    // recompute — so the button confirms IN PLACE: the first click arms it,
+    // the second (within a few seconds) deletes. No dialog machinery, and an
+    // accidental click disarms itself.
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.className = 'app-panel-button world-delete'
+    remove.textContent = t('common.panel.load.action.delete')
+    let armed: ReturnType<typeof setTimeout> | undefined
+    remove.addEventListener('click', () => {
+      if (armed === undefined) {
+        remove.textContent = t('common.panel.load.action.deleteConfirm')
+        remove.classList.add('world-delete--armed')
+        armed = setTimeout(() => {
+          armed = undefined
+          remove.textContent = t('common.panel.load.action.delete')
+          remove.classList.remove('world-delete--armed')
+        }, 4000)
+        return
+      }
+      clearTimeout(armed)
+      void (async () => {
+        remove.disabled = true
+        const gone = await deleteWorld(world.uid)
+        if (!gone) {
+          remove.disabled = false
+          panel.status.textContent = t('common.panel.load.unavailable')
+          return
+        }
+        await refresh()
+      })()
+    })
+
+    row.append(thumb, main, open, download, remove)
     return row
   }
 

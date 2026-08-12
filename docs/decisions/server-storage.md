@@ -1,7 +1,7 @@
 ---
 summary: The server keeps two stores with two different keys — a WORLD store keyed on a stable `metadata.uid` in world.yaml, and an ARTIFACT store keyed on the content hash of the terrain, so re-eroding a world correctly invalidates its derived data without making it a different world. The client learns where the storage is from a `/config.json` served by whoever serves the page (relative `apiBase` by default, so CORS never arises) and what it can do from the API itself. One binary with a single `start` subcommand runs whichever modules `--target` names — client, world, artifacts, where singular means a subsystem with behaviour and plural a collection without any — so local play and a split deployment are the same program. Storage on disk is files, not a database. One window with two tabs, deliberately unequal delete affordances. World store first, artifact store after.
 date: 2026-08-07
-status: decided — architecture and the forks below. BUILT 2026-08-08: the CLI surface and module skeleton, world.yaml's metadata.uid, the WORLD STORE (revisions, optimistic locking, preview extraction), the client's load/save/storage panels, and the ARTIFACT STORE (get/put/present/list/delete). Not built: the client talking to the artifact store, eviction, and the client-serving flags.
+status: decided — architecture and the forks below. BUILT 2026-08-08: the CLI surface and module skeleton, world.yaml's metadata.uid, the WORLD STORE (revisions, optimistic locking, preview extraction), the client's load/save/storage panels, and the ARTIFACT STORE (get/put/present/list/delete). REVISED 2026-08-11 — see the addendum: artifacts gained a worldUid level above the content hash, world revisions became last-N with content-hash dedupe, one path grammar everywhere, `present` wired, provenance in status. Still not built: eviction.
 ---
 
 # Server storage: two identities, two stores, one config file
@@ -416,6 +416,102 @@ In order:
    and floppy buttons that already exist, plus the worlds tab.
 4. **Artifacts**: `HttpArtifactStore`, a `TieredArtifactStore`
    (local → server → compute), and `present`.
+
+## Addendum 2026-08-11: the storage schema revisited
+
+A second look at both schemas, decided in discussion. Four changes, one
+confirmation, and one section above is partially superseded.
+
+**1. Artifacts live under the world's uid: `artifacts/{worldUid}/{worldId}/{pipelineVersion}/{stage}/…`**
+— revising "the two roots must stay apart" above. The content hash REMAINS
+the level that determines the bytes (the uid cannot replace it: same world,
+one more erosion pass — same uid, different terrain; and an algo+slider hash
+aliases exactly the way recipe-keying a world would). The uid is a GROUPING
+prefix above it: deleting a world can sweep everything it ever earned
+(`DELETE /v1/artifacts/{uid}`), and a listing reads per world. The cost was
+weighed and accepted: artifacts for worlds without a uid (never saved, or a
+legacy save whose reader deliberately does not derive one) file under the
+client's `no-uid` sentinel and never map to a deletable world. Re-saving
+heals the split.
+
+**2. One path grammar, verbatim, everywhere.** The client's local tree was
+`worlds/{worldId}/amp/…` — the very prefix the layout section above argues
+against, plus an `amp/` group with no server counterpart. It now IS the
+server's URL shape; `HttpArtifactStore`'s translation reduced to URL-encoding,
+and the one-time OPFS sweep of the old tree cost nothing because ALGO v6 had
+already staled every entry it could hold. Artifact families beyond the bake
+(tiles, nav) need no new level: the version string is family-scoped and the
+server's `{name...}` wildcard already accepts nested names.
+
+**3. World revisions are a bounded safety margin, not a history feature.**
+Nothing serves an old revision over the API, so keeping every one forever was
+write-only storage. The store now retains the newest N (`--keep-revisions`,
+default 3, 0 = keep all), prunes older on upload, writes the revision's
+`contentHash` (SHA-256 of the zip AS UPLOADED — deliberately not the client's
+worldId, which hashes dequantised layers and would differ between writer and
+reader), and DEDUPES: a byte-identical re-upload of the current revision
+mints nothing. Organising revisions by algo+slider hash was considered and
+rejected — same sliders and same algo routinely produce different terrain
+(more epochs, another pass), so the hash would alias successive revisions;
+content addressing is the artifact store's axis, time is the world store's.
+
+**4. `status.generator` carries build provenance** — `git describe` at build
+time, injected by vite, also replacing the manifest's static
+`generatorVersion`. Provenance, never a key: a semantic algorithm version was
+rejected because no generator-wide number exists and a hand-bumped one has
+the forgotten-bump failure mode the content hash exists to avoid.
+
+**5 (2026-08-12). The worldId lost its seed-label prefix** and is a bare
+16-hex content hash. The label was display data living in a key — the only
+reason user text reached server paths at all, and the sole justification for
+the accent-tolerant segment validation. It now travels as `label` in the
+artifact's `meta.json` (the bake writer records the seed text; listings on
+both tiers surface it, and a world WITH a uid is named by the world store
+anyway). Free at this moment for the same reason as change 2: every key was
+already invalid.
+
+**Confirmed:** `present` is now actually called — batch existence checks go
+through it (`ArtifactStore.present`, tiered local-first), which was its
+purpose and matters more once artifacts are tiled.
+
+## Addendum 2026-08-12: the artifact store stops encoding meaning in paths
+
+One day of the path-grammar layout produced two of its characteristic bugs
+(a ghost subtree the listing could not see, a serialisation crash rendering
+it), and the diagnosis generalised: **semantics lived in path depth**, so
+every walker had to know the layout and every schema change orphaned bytes.
+Decided with the user, superseding changes 1–2 of the addendum above:
+
+- **Layout is FLAT and meaningless**: `artifacts/{artifactUid}/…`, the uid a
+  minted uuid, on the server and in OPFS alike (each tier mints its own).
+  meta.json is the ONLY truth: it carries the logical key (worldUid, worldId,
+  pipelineVersion, stage), the label, and the pipeline constants WRITTEN OUT
+  — a hash cannot be reversed, so the constants are what makes a future
+  key-schema migration possible. A hand-copied directory under any name is
+  indexed as soon as its meta is readable; one without a readable meta lists
+  as bytes with a name, deletable, never a phantom in the total.
+- **`resolve` is the one operation that speaks the key**
+  (`POST /v1/artifacts/resolve`, create-flag for writers): it maps key → uid
+  with per-key reservation, which restores the idempotency the deterministic
+  paths used to provide. Its `files` answer replaced the `present` endpoint
+  the morning after it was wired — the resolve IS the batch existence check.
+  All other routes address `{artifactUid}` directly.
+- **The server index is mtime-validated, not startup-only**: each access
+  stats the root and re-reads only new or changed entries, so a baker
+  subprocess writing into the directory or a manual copy shows up on the
+  next request without a restart.
+- The client interface moved from bytes-at-a-path to
+  resolve/read/write over opaque handles; the tiered store's handle carries
+  BOTH tiers' uids plus the key, and a remote hit backfills into a locally
+  minted entry — identity travels in the meta, not in the uid.
+- Both tiers list FLAT entries in one shape and the panel groups them
+  through one function; listing sum and usage total agree by construction.
+
+Breaking on purpose, with the user's explicit consent: server disk layout and
+artifact URL space changed shape; existing artifact trees are abandoned (they
+were stale under ALGO v6 anyway) and deployed baker images must be rebuilt —
+an old baker PUTs a four-segment path the server now refuses, which fails
+loudly rather than filing under a wrong key.
 
 ## Related
 
