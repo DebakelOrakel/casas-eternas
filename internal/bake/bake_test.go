@@ -513,6 +513,11 @@ func TestClusterJobCarriesAScopedToken(t *testing.T) {
 	if spec.BakeURL != m.cfg.SelfURL {
 		t.Errorf("bakeUrl = %q, want the commissioning server %q", spec.BakeURL, m.cfg.SelfURL)
 	}
+	// And the token is narrowed to the one world the job bakes — what lets
+	// the artifact store accept it exactly there and nowhere else.
+	if _, _, world, err := tokens.VerifyBakeJob(spec.AuthToken); err != nil || world != testUID {
+		t.Errorf("job token world claim = %q (err %v), want %q", world, err, testUID)
+	}
 }
 
 // The local runner reads files directly, so a token would be a credential handed

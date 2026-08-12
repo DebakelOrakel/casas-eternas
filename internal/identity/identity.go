@@ -105,7 +105,7 @@ func (r *Resolver) ResolveBearer(authorization string) (caller string, admin boo
 	// moment job tokens became callers at all. Relying on the one place that
 	// mints them to always write the right subject is not a guarantee, it is a
 	// habit; this makes impersonation impossible instead of unlikely.
-	if _, _, err := r.tokens.VerifyBakeJob(raw); err == nil {
+	if _, _, _, err := r.tokens.VerifyBakeJob(raw); err == nil {
 		return auth.SubjectBakeJob, false
 	}
 	return Anonymous, false
@@ -123,30 +123,33 @@ func (r *Resolver) Admin(req *http.Request) bool {
 	return admin
 }
 
-// BakeJob answers WHICH bake job is asking, if one is.
+// BakeJob answers WHICH bake job is asking, if one is — the job id and the
+// world its token is narrowed to.
 //
-// The same question Caller answers, at the resolution the progress endpoint
-// needs: a job's token names one job, so this is what turns "may this caller
-// report for this job" into a comparison. It lives here rather than in the bake
-// module for the reason the package exists — a second place resolving a caller
-// would eventually disagree with this one, and a disagreement about identity
-// reads as a permission bug.
+// The same question Caller answers, at the resolution the consumers need: a
+// job's token names one job, so the progress endpoint compares the id; and
+// since 2026-08-12 it names one WORLD, so the artifact store compares the
+// world. It lives here rather than in those modules for the reason the
+// package exists — a second place resolving a caller would eventually
+// disagree with this one, and a disagreement about identity reads as a
+// permission bug.
 //
 // In the local mode this returns false: nothing is verified there, and the
-// endpoint it serves is unreachable anyway (that runner reports over a pipe).
-func (r *Resolver) BakeJob(req *http.Request) (jobID string, ok bool) {
+// endpoints it serves are unreachable anyway (that runner reports over a
+// pipe and writes files directly).
+func (r *Resolver) BakeJob(req *http.Request) (jobID, worldUID string, ok bool) {
 	if !r.ChecksIdentity() || r.tokens == nil {
-		return "", false
+		return "", "", false
 	}
 	raw := bearer(req)
 	if raw == "" {
-		return "", false
+		return "", "", false
 	}
-	_, id, err := r.tokens.VerifyBakeJob(raw)
+	_, id, world, err := r.tokens.VerifyBakeJob(raw)
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
-	return id, true
+	return id, world, true
 }
 
 // bearer pulls the credential out of the Authorization header, case-insensitively

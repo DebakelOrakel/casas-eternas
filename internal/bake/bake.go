@@ -381,7 +381,7 @@ func (m *Module) mayReportFor(r *http.Request, id string) bool {
 	if !m.cfg.Identity.ChecksIdentity() {
 		return true
 	}
-	jobID, ok := m.cfg.Identity.BakeJob(r)
+	jobID, _, ok := m.cfg.Identity.BakeJob(r)
 	return ok && jobID == id
 }
 
@@ -461,7 +461,7 @@ func (m *Module) work(ctx context.Context) {
 		// it is not a login: the gate refuses it everywhere a session is
 		// expected.
 		if m.cfg.Tokens != nil && (spec.WorldURL != "" || spec.ArtifactsURL != "") {
-			token, _, tokenErr := m.cfg.Tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience(id), jobTokenTTL)
+			token, _, tokenErr := m.cfg.Tokens.IssueBakeJob(id, job.Request.WorldUID, jobTokenTTL)
 			if tokenErr != nil {
 				// Failing here rather than sending the baker out without one:
 				// it would start, read the world, get a 401 and report a

@@ -220,7 +220,45 @@ func (t *Tokens) VerifySession(raw string) (subject string, admin bool, err erro
 // BakeAudience is the audience of the token belonging to one bake job.
 func BakeAudience(jobID string) string { return AudienceBakePrefix + jobID }
 
-// VerifyBakeJob accepts a token belonging to SOME bake job, and says which.
+// bakeClaims is a bake job token's payload: the registered set plus the ONE
+// world the job exists to bake.
+type bakeClaims struct {
+	jwt.RegisteredClaims
+	// World narrows the token to its job's world (step 4 of the access plan,
+	// 2026-08-12): the artifact store accepts a job as a writer only where
+	// this claim matches the artifact's world. Without it a leaked job token
+	// was a pass for ANY artifact for its hour.
+	World string `json:"wld,omitempty"`
+}
+
+// IssueBakeJob mints the credential one bake job carries: subject is the
+// machine identity, audience names the job, and the world claim names the
+// one world it may touch.
+func (t *Tokens) IssueBakeJob(jobID, worldUID string, ttl time.Duration) (string, time.Time, error) {
+	if jobID == "" || worldUID == "" {
+		return "", time.Time{}, fmt.Errorf("refusing to issue a bake token without a job and its world")
+	}
+	now := time.Now()
+	expires := now.Add(ttl)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, bakeClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   SubjectBakeJob,
+			Audience:  jwt.ClaimStrings{BakeAudience(jobID)},
+			Issuer:    Issuer,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(expires),
+		},
+		World: worldUID,
+	})
+	signed, err := token.SignedString(t.key)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("signing a token: %w", err)
+	}
+	return signed, expires, nil
+}
+
+// VerifyBakeJob accepts a token belonging to SOME bake job, and says which —
+// the job AND the world its claim narrows it to.
 //
 // Separate from Verify because the caller does not know the audience in advance
 // — that is the thing being asked. Everything else is identical: the same
@@ -230,24 +268,26 @@ func BakeAudience(jobID string) string { return AudienceBakePrefix + jobID }
 //
 // It exists because a Job reaches the API like any other client and would
 // otherwise be refused by the gate — which is what happened on the first real
-// cluster run after job tokens were introduced.
-func (t *Tokens) VerifyBakeJob(raw string) (subject, jobID string, err error) {
-	claims := &jwt.RegisteredClaims{}
+// cluster run after job tokens were introduced. worldUID may be empty only
+// for a token minted before the claim existed; callers that gate on the
+// world treat that as no claim at all.
+func (t *Tokens) VerifyBakeJob(raw string) (subject, jobID, worldUID string, err error) {
+	claims := &bakeClaims{}
 	if _, parseErr := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) { return t.key, nil },
 		jwt.WithValidMethods([]string{signingMethod}),
 		jwt.WithIssuer(Issuer),
 		jwt.WithExpirationRequired(),
 	); parseErr != nil {
-		return "", "", fmt.Errorf("token rejected: %w", parseErr)
+		return "", "", "", fmt.Errorf("token rejected: %w", parseErr)
 	}
 	// Exactly one, so a token carrying both a session and a job audience cannot
 	// be minted into something that is quietly both.
 	if len(claims.Audience) != 1 || !strings.HasPrefix(claims.Audience[0], AudienceBakePrefix) {
-		return "", "", fmt.Errorf("token rejected: not a bake job token")
+		return "", "", "", fmt.Errorf("token rejected: not a bake job token")
 	}
 	id := strings.TrimPrefix(claims.Audience[0], AudienceBakePrefix)
 	if id == "" || claims.Subject == "" {
-		return "", "", fmt.Errorf("token rejected: incomplete bake job token")
+		return "", "", "", fmt.Errorf("token rejected: incomplete bake job token")
 	}
-	return claims.Subject, id, nil
+	return claims.Subject, id, claims.World, nil
 }

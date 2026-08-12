@@ -115,14 +115,16 @@ func (m *Module) operator(r *http.Request) bool {
 //
 // Two bypasses, both deliberate: the operator (admin claim / local mode) —
 // which is also what keeps ORPHANS reachable, artifacts whose world is
-// already gone and can rank nobody; and a bake job carrying its own token,
-// the writer this system itself sent out — accepted for ANY artifact until
-// step 4 of the access plan narrows its token to the one world it bakes.
+// already gone and can rank nobody; and a bake job whose token's world
+// claim MATCHES this artifact's world — the writer this system itself sent
+// out, narrowed to exactly the world it was sent for (step 4 of the access
+// plan, 2026-08-12). A job token without the claim, or for another world,
+// ranks as nobody like any other stranger.
 func (m *Module) allowed(w http.ResponseWriter, r *http.Request, worldUID string, need access.Level, what string) bool {
 	if m.operator(r) {
 		return true
 	}
-	if _, ok := m.cfg.Identity.BakeJob(r); ok {
+	if _, jobWorld, ok := m.cfg.Identity.BakeJob(r); ok && jobWorld != "" && jobWorld == worldUID {
 		return true
 	}
 	if worldUID == "" {

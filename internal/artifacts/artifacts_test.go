@@ -234,14 +234,30 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 		}
 	}
 
-	// A bake job's own token writes without any grant — the system's own
-	// writer, until step 4 narrows it to its world.
-	jobToken, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), time.Hour)
+	// A bake job's token writes exactly where its world claim points — the
+	// system's own writer, narrowed to the one world it was sent for. For
+	// any other world, or without the claim (a pre-claim token), it is a
+	// stranger like every other.
+	rightJob, _, err := tokens.IssueBakeJob("job-1", worldUID, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/job.f32", "x", jobToken).Code; got != http.StatusNoContent {
-		t.Errorf("bake job write = %d, want 204", got)
+	wrongJob, _, err := tokens.IssueBakeJob("job-2", "00000000-1111-4222-8333-444444444444", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clueless, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-3"), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/job.f32", "x", rightJob).Code; got != http.StatusNoContent {
+		t.Errorf("bake job write for its own world = %d, want 204", got)
+	}
+	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/job2.f32", "x", wrongJob).Code; got != http.StatusNotFound {
+		t.Errorf("bake job write for ANOTHER world = %d, want 404", got)
+	}
+	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/job3.f32", "x", clueless).Code; got != http.StatusNotFound {
+		t.Errorf("claim-less job token write = %d, want 404", got)
 	}
 
 	// Owner sweeps their world; the operator clears the store.

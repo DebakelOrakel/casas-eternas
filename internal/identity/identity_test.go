@@ -119,7 +119,7 @@ func TestBakeJobNamesExactlyItsOwnJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-7"), time.Hour)
+	job, _, err := tokens.IssueBakeJob("job-7", "world-9", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,16 +131,16 @@ func TestBakeJobNamesExactlyItsOwnJob(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.Header.Set("Authorization", "Bearer "+job)
-	if id, ok := checking.BakeJob(request); !ok || id != "job-7" {
-		t.Errorf("BakeJob = %q/%v, want job-7/true", id, ok)
+	if id, world, ok := checking.BakeJob(request); !ok || id != "job-7" || world != "world-9" {
+		t.Errorf("BakeJob = %q/%q/%v, want job-7/world-9/true", id, world, ok)
 	}
 
 	// A session is a caller but not a job; the local mode verifies nothing.
 	request.Header.Set("Authorization", "Bearer "+session)
-	if _, ok := checking.BakeJob(request); ok {
+	if _, _, ok := checking.BakeJob(request); ok {
 		t.Error("a user session passed as a bake job")
 	}
-	if _, ok := NewResolver(config.AuthNone, nil).BakeJob(request); ok {
+	if _, _, ok := NewResolver(config.AuthNone, nil).BakeJob(request); ok {
 		t.Error("the local mode attributed a job id")
 	}
 }
