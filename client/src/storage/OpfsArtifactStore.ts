@@ -26,6 +26,19 @@ import type { ArtifactHandle, ArtifactKey, LocalArtifactStore, StorageUsage, Sto
 
 const ROOT = 'artifacts'
 
+// The local cache's own budget, enforced with the same policy as the server's
+// --artifacts-cap: least-recently-used artifacts go once the cache outgrows
+// it, meta-less junk first. 4 GB holds roughly fifty baked stages — far more
+// than one person iterates on — while staying well under the pressure at
+// which browsers start evicting origins wholesale (that remains the second
+// net, documented above). A CONSTANT rather than a setting: cache tuning, not
+// operator surface.
+const LOCAL_CAP_BYTES = 4e9
+
+// How often the sweep may walk the tree. Writes arrive in bursts (a bake
+// lands four files back to back); one walk per burst is plenty.
+const SWEEP_INTERVAL_MS = 30_000
+
 interface ParsedMeta {
   key?: Partial<ArtifactKey>
   label?: string
@@ -98,6 +111,13 @@ export async function createOpfsArtifactStore(): Promise<LocalArtifactStore | nu
     }
   }
 
+  // Last time this page touched an entry (resolve hit, read, write) — the
+  // sweep's recency signal. IN-MEMORY only, same reasoning as the server's:
+  // persisting per-read access would mean a write per read, and losing
+  // recency across a reload costs at worst one re-fetch.
+  const lastAccess = new Map<string, number>()
+  let lastSweep = 0
+
   // key-string → uid, built once per page and maintained by write/remove.
   let index: Map<string, string> | null = null
   async function ensureIndex(): Promise<Map<string, string>> {
@@ -145,6 +165,47 @@ export async function createOpfsArtifactStore(): Promise<LocalArtifactStore | nu
     return total
   }
 
+  async function removeEntry(uid: string): Promise<void> {
+    const root = await rootDir(false)
+    if (!root) return
+    await root.removeEntry(uid, { recursive: true }).catch(() => undefined)
+    lastAccess.delete(uid)
+    if (index) {
+      for (const [key, indexed] of index) if (indexed === uid) index.delete(key)
+    }
+  }
+
+  // Evicts least-recently-used artifacts until the cache fits its budget —
+  // never the one just written. Entries this page never touched fall back to
+  // their meta's createdAt; entries with neither (junk from older layouts,
+  // abandoned writes) go first. Locally there is no grace period: this page
+  // is the only writer, so a mid-write entry always has an access time.
+  async function enforceCap(justWritten: string): Promise<void> {
+    const now = Date.now()
+    if (now - lastSweep < SWEEP_INTERVAL_MS) return
+    lastSweep = now
+    const root = await rootDir(false)
+    if (!root) return
+    const entries: { uid: string; bytes: number; recency: number; junk: boolean }[] = []
+    let total = 0
+    for await (const [uid, child] of root.entries()) {
+      if (child.kind !== 'directory') continue
+      const bytes = await subtreeBytes(child as FileSystemDirectoryHandle)
+      total += bytes
+      if (uid === justWritten) continue
+      const meta = await readMeta(uid)
+      const recency = lastAccess.get(uid) ?? (meta && typeof (meta as { createdAt?: number }).createdAt === 'number' ? (meta as { createdAt?: number }).createdAt! : 0)
+      entries.push({ uid, bytes, recency, junk: !meta && !lastAccess.has(uid) })
+    }
+    if (total <= LOCAL_CAP_BYTES) return
+    entries.sort((a, b) => (a.junk !== b.junk ? (a.junk ? -1 : 1) : a.recency - b.recency))
+    for (const victim of entries) {
+      if (total <= LOCAL_CAP_BYTES) break
+      await removeEntry(victim.uid)
+      total -= victim.bytes
+    }
+  }
+
   return {
     async resolve(key: ArtifactKey, create: boolean): Promise<ArtifactHandle | null> {
       const byKey = await ensureIndex()
@@ -157,12 +218,15 @@ export async function createOpfsArtifactStore(): Promise<LocalArtifactStore | nu
         // the same entry, or two writers duplicate the bytes.
         byKey.set(keyString(key), uid)
       }
+      lastAccess.set(uid, Date.now())
       return { key, local: uid, files: await fileNames(uid) }
     },
 
     async read(handle: ArtifactHandle, name: string): Promise<ArrayBuffer | null> {
       if (!handle.local) return null
-      return readFile(handle.local, name)
+      const bytes = await readFile(handle.local, name)
+      if (bytes) lastAccess.set(handle.local, Date.now())
+      return bytes
     },
 
     async write(handle: ArtifactHandle, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
@@ -175,6 +239,10 @@ export async function createOpfsArtifactStore(): Promise<LocalArtifactStore | nu
         // reach here, and copying 17 MB to satisfy the type would be absurd.
         await writable.write(bytes as FileSystemWriteChunkType)
         await writable.close()
+        lastAccess.set(handle.local, Date.now())
+        // The cap is enforced off the write path (writes are what grow the
+        // cache) but not awaited — a finished bake must not wait on a sweep.
+        void enforceCap(handle.local)
         return true
       } catch {
         return false
@@ -207,12 +275,7 @@ export async function createOpfsArtifactStore(): Promise<LocalArtifactStore | nu
     },
 
     async removeArtifact(artifactUid: string): Promise<void> {
-      const root = await rootDir(false)
-      if (!root) return
-      await root.removeEntry(artifactUid, { recursive: true }).catch(() => undefined)
-      if (index) {
-        for (const [key, uid] of index) if (uid === artifactUid) index.delete(key)
-      }
+      await removeEntry(artifactUid)
     },
 
     async clear(): Promise<void> {

@@ -17,6 +17,7 @@ import (
 const (
 	flagTarget       = "target"
 	flagDirArtifacts = "dir-artifacts"
+	flagArtifactsCap = "artifacts-cap"
 	flagDirWorlds    = "dir-worlds"
 	flagKeepRevs     = "keep-revisions"
 	flagListen       = "listen"
@@ -36,6 +37,7 @@ const (
 const (
 	textTarget       = `The target modules to start: all, client, world, artifacts, bake. Repeatable.`
 	textDirArtifacts = `The directory to the artifact store.`
+	textArtifactsCap = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
 	textDirWorlds    = `The directory the saved worlds live in.`
 	textKeepRevs     = `How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.`
 	textBaker        = `Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.`
@@ -103,6 +105,7 @@ func init() {
 	// directory would need a second mechanism anyway.
 	StartCmd.Flags().StringSliceP(flagTarget, "t", []string{}, textTarget)
 	StartCmd.Flags().String(flagDirArtifacts, "./artifacts", textDirArtifacts)
+	StartCmd.Flags().String(flagArtifactsCap, "", textArtifactsCap)
 	StartCmd.Flags().String(flagDirWorlds, "./worlds", textDirWorlds)
 	StartCmd.Flags().Int(flagKeepRevs, 3, textKeepRevs)
 	StartCmd.Flags().String(flagBaker, "", textBaker)
@@ -124,6 +127,7 @@ func init() {
 		viper.BindPFlag(flagTLSCA, RootCmd.PersistentFlags().Lookup(flagTLSCA)),
 		viper.BindPFlag(flagTarget, StartCmd.Flags().Lookup(flagTarget)),
 		viper.BindPFlag(flagDirArtifacts, StartCmd.Flags().Lookup(flagDirArtifacts)),
+		viper.BindPFlag(flagArtifactsCap, StartCmd.Flags().Lookup(flagArtifactsCap)),
 		viper.BindPFlag(flagDirWorlds, StartCmd.Flags().Lookup(flagDirWorlds)),
 		viper.BindPFlag(flagKeepRevs, StartCmd.Flags().Lookup(flagKeepRevs)),
 		viper.BindPFlag(flagBaker, StartCmd.Flags().Lookup(flagBaker)),

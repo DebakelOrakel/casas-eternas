@@ -36,6 +36,9 @@ const uploadLimit = 512 << 20 // 512 MiB
 type Config struct {
 	// Dir is where artifacts live, one uuid directory per artifact.
 	Dir string
+	// CapBytes bounds the store; the sweep evicts least-recently-used
+	// artifacts after writes. 0 = unlimited.
+	CapBytes int64
 }
 
 // Module serves the artifact store.
@@ -46,7 +49,7 @@ type Module struct {
 // New prepares the store, creating the directory so a bad --dir-artifacts
 // fails at startup rather than on first write.
 func New(cfg Config) (*Module, error) {
-	store, err := NewStore(cfg.Dir)
+	store, err := NewStore(cfg.Dir, cfg.CapBytes)
 	if err != nil {
 		return nil, fmt.Errorf("--dir-artifacts: %w", err)
 	}

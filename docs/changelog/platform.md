@@ -4,6 +4,8 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-12
+- **new** Server: `--artifacts-cap` bounds the artifact store — past it, least-recently-used artifacts are evicted after writes, meta-less leftovers first.
+- **new** Storage: the browser's artifact cache keeps itself under 4 GB the same way, before the browser would evict the whole origin. `common.panel.storage`
 - **changed** Storage: artifacts live under minted uids with their meta.json as the only truth — a resolve endpoint maps the logical key, hand-copied entries index themselves, and schema changes can never orphan bytes again. `common.panel.storage`
 - **changed** Storage: the terrain id is a bare content hash — the seed text left the key and shows up as a label from the artifact's own metadata instead. `common.panel.storage`
 

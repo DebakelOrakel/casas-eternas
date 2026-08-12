@@ -103,6 +103,9 @@ type entryMeta struct {
 	Width  int    `json:"width"`
 	Height int    `json:"height"`
 	BakeMs int    `json:"bakeMs"`
+	// Milliseconds since epoch, as the client writes it — the eviction
+	// fallback when no in-memory access time exists (fresh restart).
+	CreatedAt int64 `json:"createdAt"`
 }
 
 // entry is one artifact directory as the index knows it.
@@ -111,6 +114,11 @@ type entry struct {
 	bytes int64
 	meta  *entryMeta // nil: no readable meta.json (mid-write, or junk)
 	mtime time.Time
+	// Last time this process touched the entry (resolve hit, read, write).
+	// IN-MEMORY ONLY, deliberately: persisting per-read access would mean a
+	// write per read, and losing recency across a restart costs at worst one
+	// re-fetch of something the cache would have kept — cache stakes.
+	lastAccess time.Time
 }
 
 // ListedArtifact is one entry of the listing — flat, the client groups.
@@ -129,10 +137,18 @@ type ListedArtifact struct {
 	BakeMs          int    `json:"bakeMs"`
 }
 
+// evictionGrace shields a meta-less entry from the sweep while it may simply
+// be mid-write: a bake takes minutes and its meta lands last, so an entry
+// with no meta AND no in-process access time is only junk once it has sat
+// unclaimed well past any bake's duration.
+const evictionGrace = time.Hour
+
 // Store is the filesystem-backed artifact store plus its mtime-validated
 // index.
 type Store struct {
 	dir string
+	// Byte cap the sweep enforces after writes; 0 = unlimited.
+	cap int64
 
 	mu      sync.Mutex
 	entries map[string]*entry // uid → entry
@@ -141,15 +157,19 @@ type Store struct {
 
 // NewStore prepares the store, creating the root if it is absent. The first
 // refresh happens lazily on first use — startup does not pay for a large
-// store it may never read.
-func NewStore(dir string) (*Store, error) {
+// store it may never read. capBytes bounds the store (0 = unlimited); the
+// sweep runs after writes, which are the only operations that grow it.
+func NewStore(dir string, capBytes int64) (*Store, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("artifacts directory must not be empty")
+	}
+	if capBytes < 0 {
+		return nil, fmt.Errorf("artifacts cap must be 0 (unlimited) or positive, got %d", capBytes)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("preparing %q: %w", dir, err)
 	}
-	return &Store{dir: dir, entries: map[string]*entry{}, byKey: map[string]string{}}, nil
+	return &Store{dir: dir, cap: capBytes, entries: map[string]*entry{}, byKey: map[string]string{}}, nil
 }
 
 func (s *Store) artifactDir(uid string) string { return filepath.Join(s.dir, uid) }
@@ -201,6 +221,9 @@ func (s *Store) refresh() error {
 func (s *Store) index(uid string, mtime time.Time) {
 	previous := s.entries[uid]
 	next := &entry{uid: uid, mtime: mtime, bytes: dirBytes(s.artifactDir(uid))}
+	if previous != nil {
+		next.lastAccess = previous.lastAccess
+	}
 	if raw, err := os.ReadFile(filepath.Join(s.artifactDir(uid), "meta.json")); err == nil {
 		var meta entryMeta
 		if json.Unmarshal(raw, &meta) == nil && meta.Key.Valid() {
@@ -270,7 +293,19 @@ func (s *Store) Resolve(key Key, create bool) (string, []string, error) {
 		s.byKey[key.String()] = minted
 		uid = minted
 	}
+	if e, ok := s.entries[uid]; ok {
+		e.lastAccess = time.Now()
+	}
 	return uid, s.fileNames(uid), nil
+}
+
+// touch records an access for the eviction sweep's recency ordering.
+func (s *Store) touch(uid string) {
+	s.mu.Lock()
+	if e, ok := s.entries[uid]; ok {
+		e.lastAccess = time.Now()
+	}
+	s.mu.Unlock()
 }
 
 // fileNames lists an artifact's files (top level plus one nested level, the
@@ -336,6 +371,7 @@ func (s *Store) Read(uid, name string) ([]byte, error) {
 		}
 		return nil, err
 	}
+	s.touch(uid)
 	return raw, nil
 }
 
@@ -374,7 +410,79 @@ func (s *Store) Write(uid, name string, body io.Reader) error {
 	}
 	// Rename without an fsync: atomic against a reader either way, and a power
 	// cut costing one re-bake is cheaper than syncing every artifact write.
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	s.touch(uid)
+	// The cap is enforced HERE and only here: writes are the one operation
+	// that grows the store, so the write path is the whole trigger — no
+	// timer, no background sweeper.
+	s.enforceCap(uid)
+	return nil
+}
+
+// enforceCap evicts whole artifacts until the store fits its cap, never the
+// one just written. Order: meta-less entries past the grace first (strays and
+// abandoned writes — junk clears itself under pressure), then least recently
+// used, with the meta's own createdAt (then the directory mtime) standing in
+// for entries this process has not touched.
+func (s *Store) enforceCap(justWritten string) {
+	if s.cap <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refresh(); err != nil {
+		return
+	}
+	var total int64
+	for _, e := range s.entries {
+		total += e.bytes
+	}
+	if total <= s.cap {
+		return
+	}
+	candidates := make([]*entry, 0, len(s.entries))
+	now := time.Now()
+	for _, e := range s.entries {
+		if e.uid == justWritten {
+			continue
+		}
+		if e.meta == nil && e.lastAccess.IsZero() && now.Sub(e.mtime) < evictionGrace {
+			continue // possibly another writer mid-bake — spared until stale
+		}
+		candidates = append(candidates, e)
+	}
+	recency := func(e *entry) time.Time {
+		if !e.lastAccess.IsZero() {
+			return e.lastAccess
+		}
+		if e.meta != nil && e.meta.CreatedAt > 0 {
+			return time.UnixMilli(e.meta.CreatedAt)
+		}
+		return e.mtime
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		iStray := candidates[i].meta == nil
+		jStray := candidates[j].meta == nil
+		if iStray != jStray {
+			return iStray
+		}
+		return recency(candidates[i]).Before(recency(candidates[j]))
+	})
+	for _, victim := range candidates {
+		if total <= s.cap {
+			break
+		}
+		if err := os.RemoveAll(s.artifactDir(victim.uid)); err != nil {
+			continue
+		}
+		total -= victim.bytes
+		delete(s.entries, victim.uid)
+		if victim.meta != nil && s.byKey[victim.meta.Key.String()] == victim.uid {
+			delete(s.byKey, victim.meta.Key.String())
+		}
+	}
 }
 
 // List reports every entry, largest first — flat; grouping is the reader's

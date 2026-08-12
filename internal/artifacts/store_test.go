@@ -7,11 +7,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	store, err := NewStore(t.TempDir())
+	// Cap 0 (unlimited): eviction has its own tests; everything else asserts
+	// on entries it expects to stay.
+	store, err := NewStore(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -105,14 +108,14 @@ func TestReadRoundTripsAndRefusesTraversal(t *testing.T) {
 // the same directory resolves the same key.
 func TestIndexRebuildsFromMetas(t *testing.T) {
 	dir := t.TempDir()
-	first, err := NewStore(dir)
+	first, err := NewStore(dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	key := testKey()
 	uid := bake(t, first, key, "Ätna", "payload")
 
-	second, err := NewStore(dir)
+	second, err := NewStore(dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,5 +261,88 @@ func TestConcurrentResolvesShareOneUID(t *testing.T) {
 		if uid != uids[0] {
 			t.Fatalf("resolvers disagreed: %v", uids)
 		}
+	}
+}
+
+// The cap: writes past it evict least-recently-used artifacts — never the one
+// just written — and meta-less junk goes first once it is older than the
+// grace.
+func TestCapEvictsLeastRecentlyUsed(t *testing.T) {
+	// A complete test artifact is ~270 bytes (90 payload + ~180 meta); 600
+	// holds two of them, so exactly one eviction is needed once three exist.
+	store, err := NewStore(t.TempDir(), 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey := Key{WorldUID: "uid-a", WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"}
+	hotKey := Key{WorldUID: "uid-a", WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"}
+	bake(t, store, oldKey, "Old", strings.Repeat("o", 90))
+	bake(t, store, hotKey, "Hot", strings.Repeat("h", 90))
+	// Touch the second entry so the first is the least recently used.
+	if _, _, err := store.Resolve(hotKey, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// This write pushes the total past 250 bytes; the sweep must reclaim the
+	// stale entry, keep the touched one, and never eat the newcomer.
+	newKey := Key{WorldUID: "uid-b", WorldID: "3333333333333333", PipelineVersion: "v6-a", Stage: "2"}
+	newUID := bake(t, store, newKey, "New", strings.Repeat("n", 90))
+
+	if _, _, err := store.Resolve(oldKey, false); !errors.Is(err, ErrNotFound) {
+		t.Errorf("stale entry survived the sweep: %v", err)
+	}
+	if _, _, err := store.Resolve(hotKey, false); err != nil {
+		t.Errorf("recently used entry was evicted: %v", err)
+	}
+	if uid, _, err := store.Resolve(newKey, false); err != nil || uid != newUID {
+		t.Errorf("the just-written entry must never be the victim: %q, %v", uid, err)
+	}
+}
+
+// A meta-less directory INSIDE the grace is spared (it may be another
+// writer's bake mid-flight); the same directory past the grace is the first
+// thing the sweep takes.
+func TestCapSparesFreshMetalessEntries(t *testing.T) {
+	store, err := NewStore(t.TempDir(), 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A foreign, meta-less directory that this process never touched — as a
+	// hand-copy or crashed bake would leave it. Fresh mtime → inside grace.
+	freshStray := filepath.Join(store.dir, "mid-flight")
+	if err := os.MkdirAll(freshStray, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(freshStray, "elevation.u16"), []byte(strings.Repeat("s", 120)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	keyA := Key{WorldUID: "uid-a", WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"}
+	keyB := Key{WorldUID: "uid-b", WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"}
+	bake(t, store, keyA, "A", strings.Repeat("a", 90))
+	bake(t, store, keyB, "B", strings.Repeat("b", 90))
+
+	// Over cap, but the stray is inside the grace — the oldest COMPLETE entry
+	// goes instead.
+	if _, err := os.Stat(freshStray); err != nil {
+		t.Errorf("a fresh meta-less entry must be spared: %v", err)
+	}
+	if _, _, err := store.Resolve(keyA, false); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected the oldest complete entry to be evicted instead: %v", err)
+	}
+
+	// Age the stray past the grace: now it is junk and goes first.
+	old := time.Now().Add(-2 * evictionGrace)
+	if err := os.Chtimes(freshStray, old, old); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	if e, ok := store.entries["mid-flight"]; ok {
+		e.mtime = old // the index cached the fresh mtime; age it the same way
+	}
+	store.mu.Unlock()
+	keyC := Key{WorldUID: "uid-c", WorldID: "4444444444444444", PipelineVersion: "v6-a", Stage: "2"}
+	bake(t, store, keyC, "C", strings.Repeat("c", 90))
+	if _, err := os.Stat(freshStray); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("an aged meta-less entry must be the first victim: %v", err)
 	}
 }

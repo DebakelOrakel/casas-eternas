@@ -1,7 +1,7 @@
 ---
 summary: The server keeps two stores with two different keys — a WORLD store keyed on a stable `metadata.uid` in world.yaml, and an ARTIFACT store keyed on the content hash of the terrain, so re-eroding a world correctly invalidates its derived data without making it a different world. The client learns where the storage is from a `/config.json` served by whoever serves the page (relative `apiBase` by default, so CORS never arises) and what it can do from the API itself. One binary with a single `start` subcommand runs whichever modules `--target` names — client, world, artifacts, where singular means a subsystem with behaviour and plural a collection without any — so local play and a split deployment are the same program. Storage on disk is files, not a database. One window with two tabs, deliberately unequal delete affordances. World store first, artifact store after.
 date: 2026-08-07
-status: decided — architecture and the forks below. BUILT 2026-08-08: the CLI surface and module skeleton, world.yaml's metadata.uid, the WORLD STORE (revisions, optimistic locking, preview extraction), the client's load/save/storage panels, and the ARTIFACT STORE (get/put/present/list/delete). REVISED 2026-08-11 — see the addendum: artifacts gained a worldUid level above the content hash, world revisions became last-N with content-hash dedupe, one path grammar everywhere, `present` wired, provenance in status. Still not built: eviction.
+status: decided — architecture and the forks below. BUILT 2026-08-08: the CLI surface and module skeleton, world.yaml's metadata.uid, the WORLD STORE (revisions, optimistic locking, preview extraction), the client's load/save/storage panels, and the ARTIFACT STORE (get/put/present/list/delete). REVISED 2026-08-11 and again 2026-08-12 — see the two addenda: world revisions are last-N with content-hash dedupe, the artifact store is flat under minted uids with meta.json as the only truth and a resolve endpoint, and EVICTION is built (2026-08-12): `--artifacts-cap` on the server, a 4 GB constant in the OPFS cache — LRU after writes, meta-less junk first. Nothing of the original plan remains unbuilt.
 ---
 
 # Server storage: two identities, two stores, one config file
@@ -506,6 +506,18 @@ Decided with the user, superseding changes 1–2 of the addendum above:
   minted entry — identity travels in the meta, not in the uid.
 - Both tiers list FLAT entries in one shape and the panel groups them
   through one function; listing sum and usage total agree by construction.
+
+**Eviction (built 2026-08-12, closing the one open item).** The unit is the
+artifact; the trigger is the write path (reads do not grow a store, so there
+is no timer and no background sweeper). Order: meta-less entries first — junk
+clears itself under pressure — but only past a one-hour grace on the server,
+where another writer's bake may be mid-flight with its meta still to come;
+then least-recently-used, with recency held IN MEMORY (persisting per-read
+access would mean a write per read) and the meta's own `createdAt` standing
+in after a restart. The just-written artifact is never the victim. Server cap:
+`--artifacts-cap` ("50GB"; empty/0 = unlimited, the default — an operator
+opts in). Local cap: a 4 GB constant in the OPFS store — cache tuning, not
+operator surface — with the browser's own origin eviction as the second net.
 
 Breaking on purpose, with the user's explicit consent: server disk layout and
 artifact URL space changed shape; existing artifact trees are abandoned (they

@@ -9,6 +9,7 @@ package config
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -145,6 +146,36 @@ func validAuthModes() string {
 // one place callers should ask, so "is this the local mode" is never spelled
 // out as a comparison in three different files.
 func (m AuthMode) ChecksIdentity() bool { return m != AuthNone && m != "" }
+
+// ParseByteSize resolves a human size ("50GB", "500 MB", "1.5TB", bare bytes)
+// into bytes. Empty and "0" mean zero — which --artifacts-cap reads as
+// "unlimited". Decimal units (kB = 1000), matching how the panels report
+// sizes; a cap is a budget, not an allocator.
+func ParseByteSize(raw string) (int64, error) {
+	text := strings.TrimSpace(strings.ToUpper(raw))
+	if text == "" {
+		return 0, nil
+	}
+	units := []struct {
+		suffix string
+		factor float64
+	}{
+		{"TB", 1e12}, {"GB", 1e9}, {"MB", 1e6}, {"KB", 1e3}, {"B", 1},
+	}
+	factor := 1.0
+	for _, unit := range units {
+		if strings.HasSuffix(text, unit.suffix) {
+			factor = unit.factor
+			text = strings.TrimSpace(strings.TrimSuffix(text, unit.suffix))
+			break
+		}
+	}
+	value, err := strconv.ParseFloat(text, 64)
+	if err != nil || value < 0 {
+		return 0, fmt.Errorf("not a size: %q (examples: 50GB, 500MB, 0 for unlimited)", raw)
+	}
+	return int64(value * factor), nil
+}
 
 // Server is the process-wide transport configuration — the part that belongs to
 // the process rather than to any one module, which is why its flags are

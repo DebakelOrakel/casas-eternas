@@ -93,7 +93,11 @@ func buildModules(targets config.Targets) ([]server.Module, func(http.Handler) h
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetArtifacts) {
-		m, err := artifacts.New(artifacts.Config{Dir: viper.GetString(flagDirArtifacts)})
+		capBytes, err := config.ParseByteSize(viper.GetString(flagArtifactsCap))
+		if err != nil {
+			return nil, nil, fmt.Errorf("--artifacts-cap: %w", err)
+		}
+		m, err := artifacts.New(artifacts.Config{Dir: viper.GetString(flagDirArtifacts), CapBytes: capBytes})
 		if err != nil {
 			return nil, nil, err
 		}
