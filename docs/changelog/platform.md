@@ -5,6 +5,7 @@ the format.
 
 ## 2026-08-12
 - **fixed** Server: deleting or evicting a half-written artifact no longer strands its key on a dead uid — the next bake of that key stores its result instead of failing.
+- **new** Server: a cluster bake can write to a remote artifact service — the Job reports progress to its commissioning server via the spec's own `bakeUrl`.
 - **new** Server: a bake target runs without the world module — worlds come from `global.services.worlds`, checked against the peer's capabilities at startup.
 - **changed** Server: a bake is commissioned at `POST /v1/bakes` — the last route that lived inside another module's namespace.
 - **fixed** Server: a bake request arriving during shutdown is refused with 503 instead of crashing the process.

@@ -60,6 +60,11 @@ interface Job {
   artifactsUrl?: string
   // Bearer token for that API, naming this one job.
   authToken?: string
+  // API base of the BAKE module that commissioned this job — where progress
+  // reports go. Named for the module, like artifactsUrl, not for the one
+  // route currently used. Falls back to artifactsUrl when absent, which is
+  // the co-resident shape where both are the same server.
+  bakeUrl?: string
   // This job's id, for reporting progress back. Absent for a local run, whose
   // progress reaches the server over the pipe instead.
   jobId?: string
@@ -211,8 +216,9 @@ function authorizedFetch(job: Job): (input: string, init?: RequestInit) => Promi
 // that fails usually fails every time and a log full of the same line is a log
 // nobody reads.
 function progressReporter(job: Job): (phase: string, percent: number) => void {
-  if (!job.artifactsUrl || !job.jobId) return () => {}
-  const url = `${job.artifactsUrl}/bakes/${encodeURIComponent(job.jobId)}/progress`
+  const base = job.bakeUrl ?? job.artifactsUrl
+  if (!base || !job.jobId) return () => {}
+  const url = `${base}/bakes/${encodeURIComponent(job.jobId)}/progress`
   const send = authorizedFetch(job)
   let lastSentAt = 0
   let lastPhase = ''

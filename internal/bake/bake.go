@@ -76,10 +76,7 @@ type Config struct {
 	// The artifact sink — exactly one of the two is set. ArtifactsDir is the
 	// directory the co-resident artifacts module serves (safe to share:
 	// that store is idempotent by construction); ArtifactsURL is its /v1 base
-	// in another process. In cluster mode the baker also derives its
-	// progress-report URL from ArtifactsURL, which is why cmd/ refuses the
-	// cluster + remote-artifacts combination until the spec carries a
-	// progress URL of its own.
+	// in another process.
 	ArtifactsDir string
 	ArtifactsURL string
 	// SelfURL is the /v1 base under which a bake Job on ANOTHER node reaches
@@ -498,12 +495,15 @@ func (m *Module) work(ctx context.Context) {
 			}
 			spec.AuthToken = token
 		}
-		// Only a Job on another node learns its own id: it reports progress
-		// through the HTTP route. The local baker reports over its stderr
-		// pipe, which this process is already reading — telling it its id
-		// would invite it to post progress to a server it is running inside.
+		// Only a Job on another node learns its own id and where to report:
+		// progress goes to THIS server's bake API (BakeURL), which need not
+		// be the artifact store's address. The local baker reports over its
+		// stderr pipe, which this process is already reading — telling it an
+		// id would invite it to post progress to a server it is running
+		// inside.
 		if m.clusterMode {
 			spec.JobID = id
+			spec.BakeURL = m.cfg.SelfURL
 		}
 		result, err := m.runner.Run(ctx, spec, func(p Progress) {
 			m.jobs.update(id, func(j *Job) {

@@ -55,6 +55,13 @@ type Spec struct {
 	// Bearer token for the URL form, naming this one job.
 	AuthToken string `json:"authToken,omitempty"`
 
+	// API base of the bake module that commissioned the job — where progress
+	// reports go. Named for the MODULE it addresses, like ArtifactsURL, not
+	// for the one route the baker currently posts to. Only a cluster Job
+	// carries it; without it the baker falls back to ArtifactsURL, the
+	// co-resident shape.
+	BakeURL string `json:"bakeUrl,omitempty"`
+
 	// The bake job's id.
 	//
 	// The cluster runner names its Job object after it, which is what makes a

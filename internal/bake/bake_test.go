@@ -535,6 +535,11 @@ func TestClusterJobCarriesAScopedToken(t *testing.T) {
 	if _, err := tokens.Verify(spec.AuthToken, auth.BakeAudience("some-other-job")); err == nil {
 		t.Error("a job token was accepted for another job")
 	}
+	// Progress goes to THIS server's bake API — which need not be the
+	// artifact store's address, so the spec names it separately.
+	if spec.BakeURL != m.cfg.SelfURL {
+		t.Errorf("bakeUrl = %q, want the commissioning server %q", spec.BakeURL, m.cfg.SelfURL)
+	}
 }
 
 // The local runner reads files directly, so a token would be a credential handed
@@ -590,6 +595,9 @@ func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
 	if spec.JobID != "" {
 		t.Errorf("a local runner must not learn a job id, got %q", spec.JobID)
 	}
+	if spec.BakeURL != "" {
+		t.Errorf("a local runner reports over its pipe, not to %q", spec.BakeURL)
+	}
 }
 
 // Spec is marshalled straight into the baker's argv, so its JSON field names
@@ -610,14 +618,14 @@ func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
 	// by which one is present, so an empty string would be an ambiguous job.
 	// jobId is in that list too — a local baker that had one would post progress
 	// to a server it is running inside.
-	for _, key := range []string{"worldUrl", "artifactsUrl", "authToken", "jobId"} {
+	for _, key := range []string{"worldUrl", "artifactsUrl", "authToken", "bakeUrl", "jobId"} {
 		if strings.Contains(string(local), key) {
 			t.Errorf("local spec should omit %s: %s", key, local)
 		}
 	}
 
-	remote, _ := json.Marshal(Spec{Stage: 4, ErosionRounds: 2, WorldURL: "http://s/v1/worlds/x", ArtifactsURL: "http://s/v1", AuthToken: "t", JobID: "j1"})
-	for _, key := range []string{`"worldUrl":"http://s/v1/worlds/x"`, `"artifactsUrl":"http://s/v1"`, `"authToken":"t"`, `"jobId":"j1"`} {
+	remote, _ := json.Marshal(Spec{Stage: 4, ErosionRounds: 2, WorldURL: "http://s/v1/worlds/x", ArtifactsURL: "http://s/v1", AuthToken: "t", BakeURL: "http://b/v1", JobID: "j1"})
+	for _, key := range []string{`"worldUrl":"http://s/v1/worlds/x"`, `"artifactsUrl":"http://s/v1"`, `"authToken":"t"`, `"bakeUrl":"http://b/v1"`, `"jobId":"j1"`} {
 		if !strings.Contains(string(remote), key) {
 			t.Errorf("remote spec is missing %s: %s", key, remote)
 		}

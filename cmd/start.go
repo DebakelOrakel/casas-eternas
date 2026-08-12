@@ -196,13 +196,6 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldStore *world.Sto
 			bcfg.ArtifactsDir = cfg.Artifacts.Storage.DirPath()
 		}
 	case cfg.Global.Services.Artifacts != "":
-		if inCluster {
-			// The baker derives its progress-report URL from the artifacts
-			// base, so a remote artifact store would swallow the reports.
-			// Refused rather than degraded until the spec names a progress
-			// URL of its own.
-			return bake.Config{}, fmt.Errorf("a cluster bake cannot use global.services.artifacts yet: the Job reports progress to its artifacts base, which must be this server")
-		}
 		base := strings.TrimRight(cfg.Global.Services.Artifacts, "/")
 		if err := requireCapability(keySvcArts, base, "artifacts"); err != nil {
 			return bake.Config{}, err
