@@ -85,6 +85,10 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		}
 		modules = append(modules, m)
 	}
+	// The world STORE outlives the if below: when bake runs co-resident, its
+	// world accessors are closures over this same store, so the per-world
+	// locks and the layout have one owner in the process.
+	var worldStore *world.Store
 	if targets.Has(config.TargetWorld) {
 		if err := cfg.World.Storage.Validate("world"); err != nil {
 			return nil, nil, err
@@ -93,6 +97,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		if err != nil {
 			return nil, nil, err
 		}
+		worldStore = m.Store()
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetArtifacts) {
@@ -106,18 +111,37 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetBake) {
-		// Bake still reads the world and artifacts sections directly — the
-		// known cross-module coupling its decoupling steps remove; keeping the
+		// Bake still reads the world and artifacts sections — the remaining
+		// cross-module coupling its decoupling (A3) removes; keeping the
 		// reads HERE makes the coupling visible at the composition root
 		// rather than buried in the module.
-		if err := cfg.World.Storage.Validate("world"); err != nil {
-			return nil, nil, fmt.Errorf("bake needs the world storage until its decoupling lands: %w", err)
-		}
 		if err := cfg.Artifacts.Storage.Validate("artifacts"); err != nil {
 			return nil, nil, fmt.Errorf("bake needs the artifact storage until its decoupling lands: %w", err)
 		}
+		store := worldStore
+		if store == nil {
+			// `-t bake` without `-t world`: no world module runs, but the bake
+			// still needs the saves. Opening the store here (same package,
+			// same layout owner) is the stopgap; A3 replaces it with HTTP via
+			// global.services.worlds.
+			if err := cfg.World.Storage.Validate("world"); err != nil {
+				return nil, nil, fmt.Errorf("bake needs the world storage until its decoupling lands: %w", err)
+			}
+			var err error
+			store, err = world.NewStore(cfg.World.Storage.DirPath(), cfg.World.KeepRevisions)
+			if err != nil {
+				return nil, nil, fmt.Errorf("world.storage: %w", err)
+			}
+		}
 		m, err := bake.New(bake.Config{
-			WorldsDir:     cfg.World.Storage.DirPath(),
+			WorldOwner: func(uid string) (string, bool) {
+				meta, err := store.Get(uid)
+				return meta.Owner, err == nil && meta.Revision >= 1
+			},
+			WorldZip: func(uid string) (string, bool) {
+				path, err := store.CurrentZipPath(uid)
+				return path, err == nil
+			},
 			ArtifactsDir:  cfg.Artifacts.Storage.DirPath(),
 			BakerPath:     bakerPath(cfg.Bake.Baker),
 			Identity:      caller,

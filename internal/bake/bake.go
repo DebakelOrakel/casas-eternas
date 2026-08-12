@@ -26,7 +26,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -51,14 +50,21 @@ const jobHistory = 200
 
 // Config is what cmd/ resolves from the flags. No viper here by design.
 type Config struct {
-	// Where saved worlds live — read only. Shared with the world module by
-	// path rather than by object: the world store's writes are atomic renames,
-	// so reading underneath one is safe, and keeping the modules unaware of
-	// each other is what lets any subset of them run.
-	WorldsDir string
+	// WorldOwner answers who owns a world and whether it has a stored
+	// revision — everything admitting a bake request needs to know. Injected
+	// by cmd/ as a closure over the world store (the same pattern that
+	// distributes identity.Resolver), which is what keeps the world store's
+	// disk layout its own module's private business; this module used to read
+	// meta.json itself and re-implemented the layout, tests included.
+	WorldOwner func(uid string) (owner string, ok bool)
+	// WorldZip yields the current revision's save as a file path — the LOCAL
+	// runner's input. A cluster Job never calls it; it fetches the world over
+	// HTTP. Called at start rather than at enqueue, so a world deleted while
+	// queued fails the job instead of baking a stale path.
+	WorldZip func(uid string) (path string, ok bool)
 	// Where the baker writes. Same directory the artifacts module serves from,
-	// and safe for the same reason — that store is idempotent by construction
-	// and needs no locking.
+	// and safe because that store is idempotent by construction and needs no
+	// locking.
 	ArtifactsDir string
 	// The Node bundle, from `npm run build:baker`.
 	BakerPath string
@@ -98,8 +104,11 @@ type Module struct {
 }
 
 func New(cfg Config) (*Module, error) {
-	if cfg.WorldsDir == "" || cfg.ArtifactsDir == "" {
-		return nil, fmt.Errorf("world.storage and artifacts.storage are both required for bakes")
+	if cfg.WorldOwner == nil || cfg.WorldZip == nil {
+		return nil, fmt.Errorf("bake needs its world accessors wired; that is cmd/'s job")
+	}
+	if cfg.ArtifactsDir == "" {
+		return nil, fmt.Errorf("artifacts.storage is required for bakes")
 	}
 	// The runner is chosen by DETECTING the cluster and by nothing else. There
 	// is deliberately no flag: both of its settings would be a behaviour the
@@ -245,12 +254,8 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 	// Both checked before queueing, so a request that cannot succeed fails now
 	// rather than at the far end of a queue that may be minutes long.
-	owner, zip, ok := m.worldMeta(request.WorldUID)
+	owner, ok := m.cfg.WorldOwner(request.WorldUID)
 	if !ok {
-		clientError(w, http.StatusNotFound, "no such world, or it has no stored revision")
-		return
-	}
-	if _, err := os.Stat(zip); err != nil {
 		clientError(w, http.StatusNotFound, "no such world, or it has no stored revision")
 		return
 	}
@@ -373,26 +378,6 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m.jobs.list())
 }
 
-// worldMeta reads the little of a world's record this module needs.
-//
-// Reads the world store's own meta.json rather than importing the package: the
-// modules are deliberately independent, and a read-only reader of a documented
-// on-disk layout is a smaller coupling than a shared object would be.
-func (m *Module) worldMeta(uid string) (owner string, zip string, ok bool) {
-	raw, err := os.ReadFile(filepath.Join(m.cfg.WorldsDir, uid, "meta.json"))
-	if err != nil {
-		return "", "", false
-	}
-	var meta struct {
-		Owner    string `json:"owner"`
-		Revision int    `json:"revision"`
-	}
-	if json.Unmarshal(raw, &meta) != nil || meta.Revision < 1 {
-		return "", "", false
-	}
-	return meta.Owner, filepath.Join(m.cfg.WorldsDir, uid, "rev", fmt.Sprint(meta.Revision), "world.zip"), true
-}
-
 // canBake decides whether this caller may commission a bake of this world.
 //
 // A bake is minutes of a machine, so in a multi-user deployment it is not a
@@ -449,7 +434,6 @@ func (m *Module) work(ctx context.Context) {
 			j.StartedAt = &started
 		})
 
-		_, zip, _ := m.worldMeta(job.Request.WorldUID)
 		spec := Spec{
 			JobID:         id,
 			Stage:         job.Request.Stage,
@@ -484,6 +468,20 @@ func (m *Module) work(ctx context.Context) {
 				spec.AuthToken = token
 			}
 		} else {
+			zip, ok := m.cfg.WorldZip(job.Request.WorldUID)
+			if !ok {
+				// Deleted (or pruned) between enqueue and start. Failing the
+				// job names the actual cause; handing the runner a dead path
+				// would report a baker fault instead.
+				failed := time.Now()
+				m.jobs.update(id, func(j *Job) {
+					j.State = StateFailed
+					j.Error = "the world disappeared before the bake started"
+					j.EndedAt = &failed
+				})
+				slog.Warn("bake not started, world gone", "job", id, "world", job.Request.WorldUID)
+				continue
+			}
 			spec.WorldZip = zip
 			spec.ArtifactsDir = m.cfg.ArtifactsDir
 			// The local baker reports over its stderr pipe, which this process

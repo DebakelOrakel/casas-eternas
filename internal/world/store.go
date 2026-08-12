@@ -350,6 +350,25 @@ func (s *Store) ReadCurrent(uid string) ([]byte, Meta, error) {
 	return raw, meta, nil
 }
 
+// CurrentZipPath returns where the current revision's save lives, verifying
+// that it exists. For a co-resident consumer (the bake runner) that streams
+// the file itself instead of pulling tens of megabytes through this process —
+// the path is handed out, the LAYOUT around it stays this store's business.
+func (s *Store) CurrentZipPath(uid string) (string, error) {
+	meta, err := s.Get(uid)
+	if err != nil {
+		return "", err
+	}
+	if meta.Revision < 1 {
+		return "", ErrNotFound
+	}
+	path := filepath.Join(s.revDir(uid, meta.Revision), "world.zip")
+	if _, err := os.Stat(path); err != nil {
+		return "", ErrNotFound
+	}
+	return path, nil
+}
+
 // ReadPreview returns the current revision's thumbnail.
 func (s *Store) ReadPreview(uid string) ([]byte, error) {
 	meta, err := s.Get(uid)

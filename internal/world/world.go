@@ -60,6 +60,12 @@ func New(cfg Config) (*Module, error) {
 // Name identifies the module in logs and errors.
 func (m *Module) Name() string { return "world" }
 
+// Store exposes the store to cmd/, the composition root — which is the ONE
+// caller this is meant for: cross-module needs (bake's world reads) are
+// closures over this store, built where every module is already known.
+// Modules never call each other's accessors directly.
+func (m *Module) Store() *Store { return m.store }
+
 // Mount claims the world store's routes. Worlds are addressed by their stable
 // uid, never by their terrain hash — see docs/decisions/server-storage.md for
 // why those are two different identities.

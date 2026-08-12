@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -76,22 +74,56 @@ func (f *fakeRunner) Run(ctx context.Context, spec Spec, onProgress func(Progres
 	return Result{WorldID: "w", PipelineVersion: "v", Stage: "2", Width: 4096, Height: 2048}, nil
 }
 
+// fakeWorlds stands in for the closures cmd/ builds over the world store —
+// since 2026-08-12 this module never touches the store's disk layout itself,
+// so its tests do not either.
+type fakeWorlds struct {
+	mu     sync.Mutex
+	owners map[string]string
+}
+
+func (f *fakeWorlds) set(uid, owner string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.owners[uid] = owner
+}
+
+func (f *fakeWorlds) owner(uid string) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	owner, ok := f.owners[uid]
+	return owner, ok
+}
+
+func (f *fakeWorlds) zip(uid string) (string, bool) {
+	if _, ok := f.owner(uid); !ok {
+		return "", false
+	}
+	return "/fake/" + uid + "/world.zip", true
+}
+
 // newTestModule builds a module around the fake runner, skipping New (which
 // insists on a real baker bundle).
-func newTestModule(t *testing.T, mode config.AuthMode, workers int) (*Module, *fakeRunner, string) {
+func newTestModule(t *testing.T, mode config.AuthMode, workers int) (*Module, *fakeRunner, *fakeWorlds) {
 	t.Helper()
 	return newTestModuleWith(t, identity.NewResolver(mode, nil), workers)
 }
 
 // newTestModuleWith takes the resolver directly, for the tests that need one
 // which can actually verify a token.
-func newTestModuleWith(t *testing.T, caller *identity.Resolver, workers int) (*Module, *fakeRunner, string) {
+func newTestModuleWith(t *testing.T, caller *identity.Resolver, workers int) (*Module, *fakeRunner, *fakeWorlds) {
 	t.Helper()
-	dir := t.TempDir()
+	worlds := &fakeWorlds{owners: map[string]string{}}
 	runner := newFakeRunner()
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Module{
-		cfg:      Config{WorldsDir: dir, ArtifactsDir: t.TempDir(), Identity: caller, MaxConcurrent: workers},
+		cfg: Config{
+			WorldOwner:    worlds.owner,
+			WorldZip:      worlds.zip,
+			ArtifactsDir:  t.TempDir(),
+			Identity:      caller,
+			MaxConcurrent: workers,
+		},
 		runner:   runner,
 		jobs:     newRegistry(jobHistory),
 		queue:    make(chan string, 64),
@@ -103,24 +135,13 @@ func newTestModuleWith(t *testing.T, caller *identity.Resolver, workers int) (*M
 		go m.work(ctx)
 	}
 	t.Cleanup(func() { _ = m.Close() })
-	return m, runner, dir
+	return m, runner, worlds
 }
 
-// writeWorld lays down the little of the world store's layout this module reads.
-func writeWorld(t *testing.T, dir, uid, owner string) {
+// writeWorld registers a world with the fakes, as an upload would.
+func writeWorld(t *testing.T, worlds *fakeWorlds, uid, owner string) {
 	t.Helper()
-	revDir := filepath.Join(dir, uid, "rev", "1")
-	if err := os.MkdirAll(revDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(revDir, "world.zip"), []byte("pretend"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	meta := map[string]any{"uid": uid, "owner": owner, "revision": 1}
-	raw, _ := json.Marshal(meta)
-	if err := os.WriteFile(filepath.Join(dir, uid, "meta.json"), raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	worlds.set(uid, owner)
 }
 
 // post commissions a bake for uid. The uid is spliced into the JSON body —
@@ -144,15 +165,15 @@ const testUID = "9f2c1b4e-7a30-4d55-8c11-2b6e5d0a1f83"
 // `none` is the LOCAL mode by definition: a person on their own machine, with
 // nobody to be protected from. Every request passes, and the check still runs.
 func TestLocalModeLetsEveryoneBake(t *testing.T) {
-	m, _, dir := newTestModule(t, config.AuthNone, 1)
-	writeWorld(t, dir, testUID, identity.Local)
+	m, _, worlds := newTestModule(t, config.AuthNone, 1)
+	writeWorld(t, worlds, testUID, identity.Local)
 
 	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusAccepted {
 		t.Errorf("anonymous local request = %d, want 202", got)
 	}
 	// Even a world owned by somebody else: in this mode there is no somebody
 	// else, and inventing one would only be a lie with a stack trace.
-	writeWorld(t, dir, testUID, "someone-far-away")
+	writeWorld(t, worlds, testUID, "someone-far-away")
 	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusAccepted {
 		t.Errorf("foreign-owned world in local mode = %d, want 202", got)
 	}
@@ -161,8 +182,8 @@ func TestLocalModeLetsEveryoneBake(t *testing.T) {
 // The shutdown race the old close(queue) turned into a panic: an enqueue
 // arriving once Close has begun must be REFUSED, not crash the process.
 func TestEnqueueAfterCloseAnswers503(t *testing.T) {
-	m, _, dir := newTestModule(t, config.AuthNone, 1)
-	writeWorld(t, dir, testUID, identity.Local)
+	m, _, worlds := newTestModule(t, config.AuthNone, 1)
+	writeWorld(t, worlds, testUID, identity.Local)
 	if err := m.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -178,8 +199,8 @@ func TestOwnershipIsEnforcedWhenIdentityIsChecked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	m, _, dir := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
-	writeWorld(t, dir, testUID, "ada")
+	m, _, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
+	writeWorld(t, worlds, testUID, "ada")
 
 	issue := func(subject, audience string) string {
 		t.Helper()
@@ -240,8 +261,8 @@ func TestABakeJobCannotOrderBakes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	m, _, dir := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
-	writeWorld(t, dir, testUID, "ada")
+	m, _, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
+	writeWorld(t, worlds, testUID, "ada")
 
 	job, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), time.Hour)
 	if err != nil {
@@ -265,8 +286,8 @@ func TestProgressAcceptsOnlyTheJobItBelongsTo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	m, runner, dir := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
-	writeWorld(t, dir, testUID, "ada")
+	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
+	writeWorld(t, worlds, testUID, "ada")
 
 	session, _, err := tokens.Issue("ada", auth.AudienceSession, time.Hour)
 	if err != nil {
@@ -362,8 +383,8 @@ func TestProgressAcceptsOnlyTheJobItBelongsTo(t *testing.T) {
 
 // A refusal must not double as a denial that the world exists.
 func TestRefusalDistinguishesMissingFromForbidden(t *testing.T) {
-	m, _, dir := newTestModule(t, config.AuthPassword, 1)
-	writeWorld(t, dir, testUID, "ada")
+	m, _, worlds := newTestModule(t, config.AuthPassword, 1)
+	writeWorld(t, worlds, testUID, "ada")
 
 	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusForbidden {
 		t.Errorf("existing world, wrong caller = %d, want 403", got)
@@ -375,8 +396,8 @@ func TestRefusalDistinguishesMissingFromForbidden(t *testing.T) {
 }
 
 func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
-	m, runner, dir := newTestModule(t, config.AuthNone, 1)
-	writeWorld(t, dir, testUID, identity.Local)
+	m, runner, worlds := newTestModule(t, config.AuthNone, 1)
+	writeWorld(t, worlds, testUID, identity.Local)
 
 	for _, body := range []string{`{"stage":3}`, `{"stage":0}`, `{"scope":{"kind":"basin"},"stage":2}`, `not json`} {
 		if got := post(m, testUID, body, "").Code; got != http.StatusBadRequest {
@@ -406,8 +427,8 @@ func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 // under a burst, not merely be configured.
 func TestConcurrencyIsCapped(t *testing.T) {
 	const cap = 2
-	m, runner, dir := newTestModule(t, config.AuthNone, cap)
-	writeWorld(t, dir, testUID, identity.Local)
+	m, runner, worlds := newTestModule(t, config.AuthNone, cap)
+	writeWorld(t, worlds, testUID, identity.Local)
 
 	for i := 0; i < 6; i++ {
 		if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusAccepted {
@@ -434,8 +455,8 @@ func TestConcurrencyIsCapped(t *testing.T) {
 }
 
 func TestProgressAndResultReachTheJobRecord(t *testing.T) {
-	m, runner, dir := newTestModule(t, config.AuthNone, 1)
-	writeWorld(t, dir, testUID, identity.Local)
+	m, runner, worlds := newTestModule(t, config.AuthNone, 1)
+	writeWorld(t, worlds, testUID, identity.Local)
 
 	recorder := post(m, testUID, `{"stage":2}`, "")
 	var job Job
@@ -479,11 +500,11 @@ func TestClusterJobCarriesAScopedToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	m, runner, dir := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
+	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
 	m.cfg.Tokens = tokens
 	m.clusterMode = true
 	m.serverURL = "http://server:8080/v1"
-	writeWorld(t, dir, testUID, identity.Local)
+	writeWorld(t, worlds, testUID, identity.Local)
 
 	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
 		t.Fatalf("bake request = %d, want 202", code)
@@ -518,9 +539,9 @@ func TestLocalJobCarriesNoToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	m, runner, dir := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
+	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
 	m.cfg.Tokens = tokens
-	writeWorld(t, dir, testUID, identity.Local)
+	writeWorld(t, worlds, testUID, identity.Local)
 
 	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
 		t.Fatalf("bake request = %d, want 202", code)
