@@ -18,16 +18,16 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
-	"github.com/DebakelOrakel/casas-eternas/internal/artifacts"
 	"github.com/DebakelOrakel/casas-eternas/internal/auth"
-	"github.com/DebakelOrakel/casas-eternas/internal/bake"
-	"github.com/DebakelOrakel/casas-eternas/internal/client"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/artifacts"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/bake"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/client"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/session"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/world"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
-	"github.com/DebakelOrakel/casas-eternas/internal/session"
 	"github.com/DebakelOrakel/casas-eternas/internal/user"
-	"github.com/DebakelOrakel/casas-eternas/internal/world"
 )
 
 // Start resolves file, environment and flags into the one typed configuration

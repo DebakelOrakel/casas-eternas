@@ -162,7 +162,7 @@ Each step is verifiable before the next, and the first two need no cluster.
    dependencies into one with dozens. It POLLS rather than watches, since a
    watch stream's reconnect and resource-version handling is the fiddliest
    part of the API and a job running for minutes cannot tell the difference.
-   The Job manifest is `internal/bake/bake-job.yaml` — an editable file, not
+   The Job manifest is `internal/modules/bake/bake-job.yaml` — an editable file, not
    Go strings, so what a reader sees is what the cluster is asked for. It sits
    beside the code only because `go:embed` cannot reach out of its package.
 

@@ -3,7 +3,7 @@
 //
 // Named for what it HOLDS, not for being a cache — the client's OPFS copy is a
 // cache, this one is the shared authoritative copy. What both do share is the
-// property its counterpart internal/world does NOT have: everything here is a
+// property its counterpart internal/modules/world does NOT have: everything here is a
 // deterministic function of a world plus a pipeline version, so it can be
 // dropped at any time and recomputed. That is why the two are separate modules
 // with deliberately different delete affordances in the UI.

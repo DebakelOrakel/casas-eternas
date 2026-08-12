@@ -193,23 +193,23 @@ never silently gives worlds away; the operator decides.
 
 **Rebuilt:**
 
-- `internal/world` handlers: List FILTERS (reads grants per world — N is
+- `internal/modules/world` handlers: List FILTERS (reads grants per world — N is
   small), Get/Preview at viewer, Put at editor (create: any authenticated
   user, becomes owner), Delete at owner; `Meta.Owner` demoted to a display
   mirror of grants.json.
-- `internal/artifacts` — the first structurally interesting seam: the
+- `internal/modules/artifacts` — the first structurally interesting seam: the
   module must not know the world module, so its Config gains an injected
   `WorldLevel(callerID, worldUid) Level`, wired by `cmd/` as a closure over
   the world store's grants reader — composition at the root, the same
   pattern that distributes `identity.Resolver` today. resolve/read at
   viewer, resolve(create)/write at editor, listing filtered, clear at
   admin.
-- `internal/bake` — the second: `canBake` becomes `Can(caller, world.bake)`
+- `internal/modules/bake` — the second: `canBake` becomes `Can(caller, world.bake)`
   (editor and up), and the JOB TOKEN gains a world claim; `artifacts`
   accepts a bake-job caller only when the claim matches the key's
   worldUid. That IS the promised token narrowing — one claim, no new
   infrastructure.
-- `internal/session` / `internal/identity`: login mints the registry
+- `internal/modules/session` / `internal/identity`: login mints the registry
   entry; `Caller()` returns the id from then on. The signature stays a
   string — the change is semantic, not structural.
 

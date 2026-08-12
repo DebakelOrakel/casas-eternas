@@ -16,7 +16,7 @@ import (
 //	CASAS_K8S_TOKEN=<service account token> \
 //	CASAS_K8S_CA=/path/to/ca.crt \
 //	CASAS_K8S_NAMESPACE=<namespace> \
-//	go test ./internal/bake/ -run Cluster -v
+//	go test ./internal/modules/bake/ -run Cluster -v
 //
 // Optional: CASAS_K8S_IMAGE=<a pullable image> turns on the part that waits
 // for a pod to actually run. Without it the test still does the valuable half

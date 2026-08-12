@@ -22,7 +22,7 @@ import (
 // what makes the hard anti-affinity in the template workable at all.
 
 // The Job manifest, kept as an editable file rather than built in Go: what a
-// reader sees in internal/bake/bake-job.yaml is exactly what the cluster is
+// reader sees in internal/modules/bake/bake-job.yaml is exactly what the cluster is
 // asked for. It lives beside this file rather than in deploy/ only because
 // go:embed cannot reach outside its own package; deploy/README.md says so.
 // Embedded so the binary runs alone; a ConfigMap-mounted override later is a

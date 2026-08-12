@@ -339,7 +339,7 @@ plan did not anticipate: `world.Config` and `bake.Config` no longer carry an
 know how authentication was configured now only knows how to ask who is calling,
 which is what the package claimed to be for.
 
-The login endpoint is its own module (`internal/session`) rather than a route the
+The login endpoint is its own module (`internal/modules/session`) rather than a route the
 server mounts beside `/v1/capabilities`, because "modules claim their routes" is
 this codebase's existing shape and the endpoint fits it. `internal/auth` stays
 HTTP-free, as steps 2 and 3 set it up to be. It is mounted whenever there is

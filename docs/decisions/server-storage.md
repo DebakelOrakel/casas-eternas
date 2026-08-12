@@ -227,9 +227,9 @@ one-file change.
 cmd/              cobra + viper, the only place either appears
 internal/config   resolved structs, target parsing, validation
 internal/server   listener, TLS, mux, graceful shutdown
-internal/client    /config.json (and later the static bundle)
-internal/world     the world subsystem — saves now, tiles and loop later
-internal/artifacts the artifact store
+internal/modules/client     /config.json (and later the static bundle)
+internal/modules/world      the world subsystem — saves now, tiles and loop later
+internal/modules/artifacts  the artifact store
 ```
 
 `internal/server` defines the `Module` interface it mounts, and the
@@ -254,7 +254,7 @@ server's is the shared authoritative copy.
 This is also where the two axes stop being the same axis:
 
 - **Package layout follows the domain.** Saves, tiles and the loop share
-  one world's state, so they belong in one `internal/world`.
+  one world's state, so they belong in one world module.
 - **`--target` follows the deployment unit.** A save endpoint is
   stateless and replicable; a world loop is stateful and exists once per
   world. A cluster will eventually want three of the first and one of the

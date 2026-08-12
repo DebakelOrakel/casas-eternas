@@ -2,7 +2,7 @@
 // saves — named, mutable, owned; later it grows the tile database and the world
 // loop, which is why it is named for the domain rather than for its first job.
 //
-// Its counterpart internal/artifacts is the opposite kind of thing: a bag of
+// Its counterpart internal/modules/artifacts is the opposite kind of thing: a bag of
 // derived files with no behaviour. That is the whole reason they are separate
 // modules — mutable vs immutable, owned vs ownerless, irreplaceable vs
 // recomputable — and only this one holds data a user can actually lose.

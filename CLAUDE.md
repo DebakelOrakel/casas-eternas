@@ -66,8 +66,11 @@ world is meant, it is not world-layer code.** `runErosionPass` does not;
 **Go server modules — the target is the boundary.** Vocabulary first, because
 the words are NOT interchangeable: a PACKAGE is a Go unit under `internal/`
 (the leaves `auth`/`identity`/`config` are packages, not modules); a MODULE
-implements `server.Module` (routes + lifecycle — session is a module with no
-target, chosen by auth mode); a TARGET is the deployment unit `-t` selects,
+implements `server.Module` (routes + lifecycle) and lives under
+`internal/modules/` — the directory asserts exactly that, and session is a
+module with no target, chosen by auth mode; a TARGET is the deployment unit
+`-t` selects — deliberately NOT a directory (layout follows the domain,
+targets follow the deployment unit, and `cmd/` is where they exist),
 wired explicitly in `cmd/start.go` (no registry — the composition root is the
 one place that knows every module); a SERVICE is a running process with a set
 of targets — always the same binary. Package layout follows the DOMAIN,
