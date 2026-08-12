@@ -91,11 +91,12 @@ func newTestModuleWith(t *testing.T, caller *identity.Resolver, workers int) (*M
 	runner := newFakeRunner()
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Module{
-		cfg:    Config{WorldsDir: dir, ArtifactsDir: t.TempDir(), Identity: caller, MaxConcurrent: workers},
-		runner: runner,
-		jobs:   newRegistry(jobHistory),
-		queue:  make(chan string, 64),
-		cancel: cancel,
+		cfg:      Config{WorldsDir: dir, ArtifactsDir: t.TempDir(), Identity: caller, MaxConcurrent: workers},
+		runner:   runner,
+		jobs:     newRegistry(jobHistory),
+		queue:    make(chan string, 64),
+		shutdown: ctx,
+		cancel:   cancel,
 	}
 	for range workers {
 		m.workers.Add(1)
@@ -149,6 +150,19 @@ func TestLocalModeLetsEveryoneBake(t *testing.T) {
 	writeWorld(t, dir, testUID, "someone-far-away")
 	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusAccepted {
 		t.Errorf("foreign-owned world in local mode = %d, want 202", got)
+	}
+}
+
+// The shutdown race the old close(queue) turned into a panic: an enqueue
+// arriving once Close has begun must be REFUSED, not crash the process.
+func TestEnqueueAfterCloseAnswers503(t *testing.T) {
+	m, _, dir := newTestModule(t, config.AuthNone, 1)
+	writeWorld(t, dir, testUID, identity.Local)
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusServiceUnavailable {
+		t.Errorf("enqueue after Close = %d, want 503", got)
 	}
 }
 

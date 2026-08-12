@@ -88,8 +88,13 @@ type Module struct {
 	runner      Runner
 	jobs        *registry
 	queue       chan string
-	cancel      context.CancelFunc
-	workers     sync.WaitGroup
+	// shutdown is done once Close has begun. It is what the workers and the
+	// enqueue handler watch — the queue channel is never closed, because the
+	// handler may be sending on it in the same instant Close runs, and a send
+	// on a closed channel is a panic rather than a refusal.
+	shutdown context.Context
+	cancel   context.CancelFunc
+	workers  sync.WaitGroup
 }
 
 func New(cfg Config) (*Module, error) {
@@ -130,8 +135,9 @@ func New(cfg Config) (*Module, error) {
 		jobs:        newRegistry(jobHistory),
 		// Buffered so a burst of requests is accepted rather than blocking the
 		// HTTP handler; full means genuinely swamped, which answers 503.
-		queue:  make(chan string, 64),
-		cancel: cancel,
+		queue:    make(chan string, 64),
+		shutdown: ctx,
+		cancel:   cancel,
 	}
 	for range workers {
 		m.workers.Add(1)
@@ -164,12 +170,14 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	return nil
 }
 
-// Close stops the worker and waits for the job in flight. A bake that is
-// minutes in is worth the wait on shutdown — killing it wastes the work and
-// leaves a half-written artifact for the next reader to find.
+// Close cancels the workers and waits for them to wind down. The cancellation
+// reaches a running bake's subprocess or Job, which aborts it — a half-run
+// bake is harmless, because the artifact store only ever sees complete file
+// PUTs and the key is derived from inputs, so an interrupted bake simply
+// leaves nothing to find. The queue channel is deliberately NOT closed; see
+// the field comment.
 func (m *Module) Close() error {
 	m.cancel()
-	close(m.queue)
 	done := make(chan struct{})
 	go func() {
 		m.workers.Wait()
@@ -247,6 +255,17 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		// 403 and not 404: the world exists, and pretending otherwise would
 		// make a permission problem look like a missing save.
 		clientError(w, http.StatusForbidden, "only a world's owner may commission a bake for it")
+		return
+	}
+
+	// Checked LAST, right before queueing: a request refused for shutdown
+	// should not have been refused for a reason that would still apply
+	// tomorrow. The remaining race — shutdown beginning between this check and
+	// the send — strands an id in the buffered queue of an exiting process,
+	// which costs nothing; the panic the old close(queue) risked cost the
+	// whole shutdown.
+	if m.shutdown.Err() != nil {
+		clientError(w, http.StatusServiceUnavailable, "server is shutting down")
 		return
 	}
 
@@ -410,7 +429,13 @@ const jobTokenTTL = time.Hour
 
 func (m *Module) work(ctx context.Context) {
 	defer m.workers.Done()
-	for id := range m.queue {
+	for {
+		var id string
+		select {
+		case <-ctx.Done():
+			return
+		case id = <-m.queue:
+		}
 		job, ok := m.jobs.get(id)
 		if !ok {
 			continue
