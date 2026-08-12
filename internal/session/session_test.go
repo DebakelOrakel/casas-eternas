@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/auth"
+	"github.com/DebakelOrakel/casas-eternas/internal/user"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -34,7 +35,11 @@ func newTestModule(t *testing.T, ttl time.Duration) (*Module, *auth.Tokens) {
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	m, err := New(Config{Users: users, Tokens: tokens, TTL: ttl})
+	registry, err := user.NewRegistry(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	m, err := New(Config{Users: users, Tokens: tokens, TTL: ttl, Registry: registry, Admins: map[string]bool{"root": true}})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -74,13 +79,33 @@ func TestLoginIssuesAUsableSession(t *testing.T) {
 		t.Errorf("expiresAt %v is not about an hour away", body.ExpiresAt)
 	}
 
-	// The point of the endpoint: what it returns must open the door.
+	// The point of the endpoint: what it returns must open the door — and its
+	// subject is the REGISTRY ID minted at this very login, never the name.
 	subject, err := tokens.Verify(body.Token, auth.AudienceSession)
 	if err != nil {
 		t.Fatalf("the issued token does not verify: %v", err)
 	}
-	if subject != "ada" {
-		t.Errorf("token subject = %q, want ada", subject)
+	entry, found := m.cfg.Registry.ByName("ada")
+	if !found {
+		t.Fatal("login did not mint a registry entry")
+	}
+	if subject != entry.ID {
+		t.Errorf("token subject = %q, want the registry id %q", subject, entry.ID)
+	}
+	if subject == "ada" {
+		t.Error("the login name leaked into the token subject")
+	}
+	// The same person again is the same id — logging in twice must not fork
+	// the identity.
+	second := login(t, m, "ada", "geheim")
+	var again response
+	_ = json.NewDecoder(second.Body).Decode(&again)
+	if s, _ := tokens.Verify(again.Token, auth.AudienceSession); s != entry.ID {
+		t.Errorf("second login subject = %q, want %q", s, entry.ID)
+	}
+	// Not on the admin list, so the claim must be absent.
+	if _, admin, _ := tokens.VerifySession(body.Token); admin {
+		t.Error("a plain user's session carries the admin claim")
 	}
 
 	// A credential in a shared cache is a credential handed to the next person
@@ -145,10 +170,37 @@ func TestNewRequiresEverything(t *testing.T) {
 		{"no users", Config{Tokens: tokens, TTL: time.Hour}},
 		{"no lifetime", Config{Users: users, Tokens: tokens}},
 		{"negative lifetime", Config{Users: users, Tokens: tokens, TTL: -time.Hour}},
+		{"no registry", Config{Users: users, Tokens: tokens, TTL: time.Hour}},
 	} {
 		if _, err := New(c.cfg); err == nil {
 			t.Errorf("%s: accepted", c.name)
 		}
+	}
+}
+
+// The admin CLAIM is minted at login for names on global.auth.admins — the
+// decision travels in the token, so no process ever needs the registry to
+// answer "is this an admin" (docs/decisions/server-users.md).
+func TestAdminsAreMarkedInTheirSession(t *testing.T) {
+	m, tokens := newTestModule(t, time.Hour)
+	hash, err := bcrypt.GenerateFromPassword([]byte("geheim"), auth.MinBcryptCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The helper's htpasswd holds only ada; add the admin it declared.
+	if err := os.WriteFile(m.cfg.Users.Path(), []byte("ada:"+string(hash)+"\nroot:"+string(hash)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recorder := login(t, m, "root", "geheim")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("admin login = %d: %s", recorder.Code, recorder.Body)
+	}
+	var body response
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if _, admin, err := tokens.VerifySession(body.Token); err != nil || !admin {
+		t.Errorf("admin session claim = %v (err %v), want true", admin, err)
 	}
 }
 

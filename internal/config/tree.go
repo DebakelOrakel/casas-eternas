@@ -34,6 +34,7 @@ type Config struct {
 	Artifacts ArtifactsConfig `mapstructure:"artifacts"`
 	Bake      BakeConfig      `mapstructure:"bake"`
 	Client    ClientConfig    `mapstructure:"client"`
+	Auth      AuthConfig      `mapstructure:"auth"`
 }
 
 // Global is everything that belongs to the PROCESS, not to a target: the
@@ -52,13 +53,19 @@ type TLSConfig struct {
 }
 
 // AuthSettings is the file/flag shape of authentication; `Mode` is parsed
-// through ParseAuthMode at validation so a typo refuses to start.
+// through ParseAuthMode at validation so a typo refuses to start. GLOBAL,
+// because every process reads it: the mode and the shared key are what let
+// each verify locally. The auth subsystem's own STATE lives in AuthConfig.
 type AuthSettings struct {
 	Mode       string        `mapstructure:"mode"`
 	Htpasswd   string        `mapstructure:"htpasswd"`
 	SessionKey string        `mapstructure:"session-key"`
 	TokenTTL   time.Duration `mapstructure:"token-ttl"`
 	SessionTTL time.Duration `mapstructure:"session-ttl"`
+	// Admins are LOGIN NAMES whose sessions carry the admin claim, checked
+	// at login by the process holding the registry. Global (not AuthConfig)
+	// because it is policy an operator writes, not state a process keeps.
+	Admins []string `mapstructure:"admins"`
 }
 
 // Services are the peer addresses for split deployments — static on purpose:
@@ -138,6 +145,15 @@ type BakeConfig struct {
 }
 
 type ClientConfig struct {
+	Storage Storage `mapstructure:"storage"`
+}
+
+// AuthConfig is the auth SUBSYSTEM's own section — state only the process
+// running login touches, today the user registry (users.json). Shaped like
+// every other target section (storage union) because that is what auth is on
+// its way to becoming — docs/design/access-control.md, "an auth target".
+// Distinct from Global.Auth, which every process reads.
+type AuthConfig struct {
 	Storage Storage `mapstructure:"storage"`
 }
 

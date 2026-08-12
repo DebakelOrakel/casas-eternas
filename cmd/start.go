@@ -25,6 +25,7 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
 	"github.com/DebakelOrakel/casas-eternas/internal/session"
+	"github.com/DebakelOrakel/casas-eternas/internal/user"
 	"github.com/DebakelOrakel/casas-eternas/internal/world"
 )
 
@@ -341,16 +342,33 @@ func buildAuth(mode config.AuthMode, cfg config.Config) (*identity.Resolver, *au
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	// The registry lives with the auth subsystem (auth.storage), not under
+	// global — only the process running login reads or writes it. Opened
+	// eagerly so a bad path refuses to start, like every other store.
+	if err := cfg.Auth.Storage.Validate("auth"); err != nil {
+		return nil, nil, nil, err
+	}
+	registry, err := user.NewRegistry(cfg.Auth.Storage.DirPath())
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("auth.storage: %w", err)
+	}
+	admins := make(map[string]bool, len(cfg.Global.Auth.Admins))
+	for _, name := range cfg.Global.Auth.Admins {
+		admins[name] = true
+	}
 	resolver := identity.NewResolver(mode, tokens)
 	login, err := session.New(session.Config{
-		Users:  users,
-		Tokens: tokens,
-		TTL:    cfg.Global.Auth.TokenTTL,
+		Users:    users,
+		Tokens:   tokens,
+		TTL:      cfg.Global.Auth.TokenTTL,
+		Registry: registry,
+		Admins:   admins,
 	})
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	slog.Info("authentication ready", "mode", mode, "users", users.Path(), "token ttl", cfg.Global.Auth.TokenTTL)
+	slog.Info("authentication ready", "mode", mode, "users", users.Path(),
+		"registry", cfg.Auth.Storage.DirPath(), "admins", len(admins), "token ttl", cfg.Global.Auth.TokenTTL)
 	return resolver, tokens, login, nil
 }
 

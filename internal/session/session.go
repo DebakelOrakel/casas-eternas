@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/auth"
+	"github.com/DebakelOrakel/casas-eternas/internal/user"
 )
 
 // Path is where the client logs in. Reported in /config.json rather than
@@ -31,6 +32,13 @@ type Config struct {
 	Tokens *auth.Tokens
 	// TTL is how long an issued token is good for.
 	TTL time.Duration
+	// Registry turns a verified login NAME into the stable user id a token's
+	// subject carries — minting the entry on first sight. This hook is the
+	// one place the registry grows; see docs/decisions/server-users.md.
+	Registry *user.Registry
+	// Admins are the login names whose sessions carry the admin claim,
+	// resolved from global.auth.admins by cmd/.
+	Admins map[string]bool
 }
 
 // Module serves the login endpoint.
@@ -48,6 +56,9 @@ func New(cfg Config) (*Module, error) {
 	}
 	if cfg.TTL <= 0 {
 		return nil, fmt.Errorf("session: token lifetime is %v", cfg.TTL)
+	}
+	if cfg.Registry == nil {
+		return nil, fmt.Errorf("session: no user registry")
 	}
 	return &Module{cfg: cfg}, nil
 }
@@ -96,13 +107,23 @@ func (m *Module) serveLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, expires, err := m.cfg.Tokens.Issue(name, auth.AudienceSession, m.cfg.TTL)
+	// The registry entry is minted HERE, after the password verified — the
+	// token's subject is the stable id from then on, never the login name:
+	// names are credential surface an operator edits, ids are what owners
+	// and grants record. Display stays the name, in the response below.
+	entry, err := m.cfg.Registry.Ensure(name)
+	if err != nil {
+		slog.Error("cannot register the user", "error", err, "user", name)
+		http.Error(w, "cannot register the user", http.StatusInternalServerError)
+		return
+	}
+	token, expires, err := m.cfg.Tokens.IssueSession(entry.ID, m.cfg.Admins[name], m.cfg.TTL)
 	if err != nil {
 		slog.Error("cannot issue a token", "error", err, "user", name)
 		http.Error(w, "cannot issue a token", http.StatusInternalServerError)
 		return
 	}
-	slog.Info("logged in", "user", name, "expires", expires)
+	slog.Info("logged in", "user", name, "id", entry.ID, "admin", m.cfg.Admins[name], "expires", expires)
 
 	w.Header().Set("Content-Type", "application/json")
 	// A credential must never sit in a shared cache, and "no-store" is the only

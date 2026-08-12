@@ -66,7 +66,7 @@ COPY --from=web    /app/client/dist   /app/dist
 # group 0 the owner's access on everything the process reads, so any assigned
 # UID works. Writable state lives on mounted volumes, not here.
 RUN chgrp -R 0 /app && chmod -R g=u /app \
- && mkdir -p /data/worlds /data/artifacts && chgrp -R 0 /data && chmod -R g=u /data
+ && mkdir -p /data/worlds /data/artifacts /data/auth && chgrp -R 0 /data && chmod -R g=u /data
 
 USER 1001
 EXPOSE 8080
@@ -75,4 +75,4 @@ VOLUME ["/data"]
 # Every module by default. A deployment that wants only storage, or only the
 # frontend, overrides the arguments — see internal/config's target list.
 ENTRYPOINT ["/app/casas-eternas"]
-CMD ["start", "--target", "all", "--client.storage.dir.path", "/app/dist", "--world.storage.dir.path", "/data/worlds", "--artifacts.storage.dir.path", "/data/artifacts"]
+CMD ["start", "--target", "all", "--client.storage.dir.path", "/app/dist", "--world.storage.dir.path", "/data/worlds", "--artifacts.storage.dir.path", "/data/artifacts", "--auth.storage.dir.path", "/data/auth"]

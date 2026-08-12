@@ -159,6 +159,64 @@ func (t *Tokens) Verify(raw, audience string) (string, error) {
 	return claims.Subject, nil
 }
 
+// sessionClaims is a session token's payload: the registered set plus the
+// one claim of ours.
+type sessionClaims struct {
+	jwt.RegisteredClaims
+	// Admin marks an operator's session. A CLAIM rather than a per-process
+	// list (decided 2026-08-12, docs/decisions/server-users.md): modules know
+	// callers only by id, the name→id registry lives with the auth subsystem
+	// alone, and a claim keeps every process verifying locally — the same
+	// property the whole token design rests on. The cost is honest: admin
+	// changes take effect at the next login, bounded by the token TTL.
+	Admin bool `json:"adm,omitempty"`
+}
+
+// IssueSession mints a logged-in person's token: subject is the user's
+// REGISTRY ID (never the login name — names are credential surface, ids are
+// identity), plus the admin claim.
+func (t *Tokens) IssueSession(userID string, admin bool, ttl time.Duration) (string, time.Time, error) {
+	if userID == "" {
+		return "", time.Time{}, fmt.Errorf("refusing to issue a session with no subject")
+	}
+	now := time.Now()
+	expires := now.Add(ttl)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, sessionClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
+			Audience:  jwt.ClaimStrings{AudienceSession},
+			Issuer:    Issuer,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(expires),
+		},
+		Admin: admin,
+	})
+	signed, err := token.SignedString(t.key)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("signing a token: %w", err)
+	}
+	return signed, expires, nil
+}
+
+// VerifySession is Verify for the session audience, answering the admin
+// claim too. Verify remains correct for sessions — it simply cannot see the
+// claim — so callers that only need the subject keep using it.
+func (t *Tokens) VerifySession(raw string) (subject string, admin bool, err error) {
+	claims := &sessionClaims{}
+	if _, parseErr := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) { return t.key, nil },
+		jwt.WithValidMethods([]string{signingMethod}),
+		jwt.WithIssuer(Issuer),
+		jwt.WithAudience(AudienceSession),
+		jwt.WithExpirationRequired(),
+	); parseErr != nil {
+		return "", false, fmt.Errorf("token rejected: %w", parseErr)
+	}
+	if claims.Subject == "" {
+		return "", false, fmt.Errorf("token rejected: no subject")
+	}
+	return claims.Subject, claims.Admin, nil
+}
+
 // BakeAudience is the audience of the token belonging to one bake job.
 func BakeAudience(jobID string) string { return AudienceBakePrefix + jobID }
 

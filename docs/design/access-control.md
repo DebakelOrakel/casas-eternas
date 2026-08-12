@@ -1,7 +1,7 @@
 ---
 summary: Authorization for the multiplayer server — per-world roles (owner/editor/viewer + public flag) granted to stable user ids, enforced inside the modules against a grants.json that lives beside each world. Hand-rolled internal/access over any policy engine, with the switch point named. Decided in discussion 2026-08-12; NOTHING IS BUILT — this doc is the plan, including build order and the two bugs it must fix on the way (owner follows the last writer; bake-job tokens are API-wide).
 date: 2026-08-12
-status: planned — every fork below was put to the user and decided 2026-08-12; a decisions/ doc follows when building starts
+status: in progress — every fork below was put to the user and decided 2026-08-12. STEP 1 BUILT 2026-08-12 (user registry, id-keyed tokens, admin claim — docs/decisions/server-users.md); steps 2–5 remain
 ---
 
 # Access control: sharing worlds

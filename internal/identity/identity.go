@@ -101,6 +101,25 @@ func (r *Resolver) Caller(req *http.Request) string {
 	return Anonymous
 }
 
+// Admin reports whether the request carries an admin's session.
+//
+// From the token's claim, verified locally — never a lookup: the name→id
+// registry lives with the auth subsystem alone, and rights that had to be
+// resolved elsewhere per request would break the split this design exists
+// for. In the local mode the answer is false; `none` has no operators to
+// distinguish, and the checks that consult this all answer yes there anyway.
+func (r *Resolver) Admin(req *http.Request) bool {
+	if !r.ChecksIdentity() || r.tokens == nil {
+		return false
+	}
+	raw := bearer(req)
+	if raw == "" {
+		return false
+	}
+	_, admin, err := r.tokens.VerifySession(raw)
+	return err == nil && admin
+}
+
 // BakeJob answers WHICH bake job is asking, if one is.
 //
 // The same question Caller answers, at the resolution the progress endpoint

@@ -70,6 +70,50 @@ func TestCallerResolvesEveryKindOfCredential(t *testing.T) {
 	}
 }
 
+// Admin comes from the session's claim, verified locally — and from nowhere
+// else: a bake token, a forged token or the local mode must all answer false.
+func TestAdminComesOnlyFromTheClaim(t *testing.T) {
+	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminSession, _, err := tokens.IssueSession("id-1", true, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainSession, _, err := tokens.IssueSession("id-2", false, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checking := NewResolver(config.AuthPassword, tokens)
+
+	cases := []struct {
+		name     string
+		resolver *Resolver
+		header   string
+		want     bool
+	}{
+		{"admin claim", checking, "Bearer " + adminSession, true},
+		{"plain session", checking, "Bearer " + plainSession, false},
+		{"bake token", checking, "Bearer " + job, false},
+		{"no credentials", checking, "", false},
+		{"local mode", NewResolver(config.AuthNone, nil), "Bearer " + adminSession, false},
+	}
+	for _, c := range cases {
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		if c.header != "" {
+			request.Header.Set("Authorization", c.header)
+		}
+		if got := c.resolver.Admin(request); got != c.want {
+			t.Errorf("%s: Admin = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestBakeJobNamesExactlyItsOwnJob(t *testing.T) {
 	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {

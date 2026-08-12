@@ -34,6 +34,7 @@ const (
 	keyAuthKey     = "global.auth.session-key"
 	keyAuthTknTTL  = "global.auth.token-ttl"
 	keyAuthSessTTL = "global.auth.session-ttl"
+	keyAuthAdmins  = "global.auth.admins"
 	keySvcWorlds   = "global.services.worlds"
 	keySvcArts     = "global.services.artifacts"
 
@@ -42,6 +43,7 @@ const (
 	keyArtsPath   = "artifacts.storage.dir.path"
 	keyArtsCap    = "artifacts.cap"
 	keyClientPath = "client.storage.dir.path"
+	keyAuthStore  = "auth.storage.dir.path"
 	keyBaker      = "bake.baker"
 	keyBakeMax    = "bake.max-concurrent"
 )
@@ -59,6 +61,7 @@ const (
 	textAuthKey     = `Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.`
 	textAuthTknTTL  = `How long an issued token is valid.`
 	textAuthSessTTL = `How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then global.auth.token-ttl is the one that matters.`
+	textAuthAdmins  = `Login names whose sessions carry the admin claim. Checked at login by the process holding the user registry; a change takes effect at the member's next login.`
 	textSvcWorlds   = `URL of the service running the world module, when it is not co-resident. Empty expects it in this process.`
 	textSvcArts     = `URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.`
 
@@ -67,6 +70,7 @@ const (
 	textArtsPath   = `The directory of the artifact store.`
 	textArtsCap    = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
 	textClientPath = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
+	textAuthStore  = `The directory the auth subsystem's state lives in — the user registry (users.json), minted at first login.`
 	textBaker      = `Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.`
 	textBakeMax    = `How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.`
 )
@@ -126,6 +130,7 @@ func init() {
 	StartCmd.Flags().String(keyAuthKey, "", textAuthKey)
 	StartCmd.Flags().Duration(keyAuthTknTTL, 720*time.Hour, textAuthTknTTL)
 	StartCmd.Flags().Duration(keyAuthSessTTL, 720*time.Hour, textAuthSessTTL)
+	StartCmd.Flags().StringSlice(keyAuthAdmins, nil, textAuthAdmins)
 	StartCmd.Flags().String(keySvcWorlds, "", textSvcWorlds)
 	StartCmd.Flags().String(keySvcArts, "", textSvcArts)
 	StartCmd.Flags().String(keyWorldPath, "./worlds", textWorldPath)
@@ -133,6 +138,7 @@ func init() {
 	StartCmd.Flags().String(keyArtsPath, "./artifacts", textArtsPath)
 	StartCmd.Flags().String(keyArtsCap, "", textArtsCap)
 	StartCmd.Flags().String(keyClientPath, "", textClientPath)
+	StartCmd.Flags().String(keyAuthStore, "./auth", textAuthStore)
 	StartCmd.Flags().String(keyBaker, "", textBaker)
 	StartCmd.Flags().Int(keyBakeMax, 1, textBakeMax)
 
@@ -140,7 +146,8 @@ func init() {
 		flagConfig: RootCmd,
 		keyListen:  RootCmd, keyTLSCert: RootCmd, keyTLSKey: RootCmd, keyTLSCA: RootCmd,
 		flagTarget: StartCmd, keyAuthMode: StartCmd, keyAuthHtpass: StartCmd, keyAuthKey: StartCmd,
-		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd, keySvcWorlds: StartCmd, keySvcArts: StartCmd,
+		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd, keyAuthAdmins: StartCmd,
+		keySvcWorlds: StartCmd, keySvcArts: StartCmd, keyAuthStore: StartCmd,
 		keyWorldPath: StartCmd, keyKeepRevs: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
 		keyClientPath: StartCmd, keyBaker: StartCmd, keyBakeMax: StartCmd,
 	}
@@ -158,7 +165,7 @@ func init() {
 	// Keys that exist in the tree but have no flag (the storage union's type
 	// selectors). SetDefault makes them known to viper, which is what lets a
 	// file or CASAS_* variable reach them through Unmarshal.
-	for _, key := range []string{"world.storage.type", "artifacts.storage.type", "client.storage.type"} {
+	for _, key := range []string{"world.storage.type", "artifacts.storage.type", "client.storage.type", "auth.storage.type"} {
 		viper.SetDefault(key, "")
 	}
 

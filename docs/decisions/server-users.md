@@ -1,0 +1,70 @@
+---
+summary: Who a user IS, as opposed to how they log in. A registry (users.json under auth.storage) holds stable uuid identities, MINTED AT FIRST LOGIN — htpasswd stays the one place users are administered, and the registry follows it. A session token's subject is the registry id from then on, never the login name; the name remains display data in the login response. Admins are login names on global.auth.admins whose sessions carry an `adm` claim — the decision travels in the token, so every process keeps verifying locally and none ever needs the registry. Step 1 of the access-control build order.
+date: 2026-08-12
+status: decided and BUILT 2026-08-12 — registry, session hook, admin claim, identity.Admin, deploy wiring. Steps 2–5 of docs/design/access-control.md build on it.
+---
+
+# Server users: identity vs credential
+
+## The problem
+
+Everything that is about to exist — owners that stick, grants, admin rights —
+needs to record WHO. The only name the server had was the htpasswd login
+name: credential surface an operator edits, renameable, and about to collide
+with a second login method (OIDC brings a foreign `sub`). Recording names as
+identities bakes the credential into every owner field and grant.
+
+## The decision: an id-keyed registry, minted at login
+
+`internal/user` keeps `users.json` — `{id (uuid v4), name, createdAt,
+oidcSubject?}` — written atomically, refusing to open when corrupt (starting
+fresh would re-mint every id and orphan everything recorded under the old
+ones).
+
+Entries are minted **on first successful login**, in the session module,
+right after the password verifies. Rejected alternatives:
+
+- **Pre-provisioning** (operator writes users.json too) — two files to keep
+  in step, and the registry would start deciding who may log in, which is
+  htpasswd's job. The registry records who exists; it never decides who may.
+- **Deriving the id from the name** (hash) — a rename would silently become
+  a different person; that is the bug ids exist to prevent.
+
+The token's `sub` is the registry id from then on. The login response still
+carries `user: <name>` for display, so the client is untouched. Existing
+sessions die at deploy (one re-login); worlds saved before this record the
+NAME as owner and re-own on their next save — the migration rule for a
+checking server is in docs/design/access-control.md ("Existing worlds").
+
+## Where the registry lives: `auth.storage`
+
+A new `auth:` section shaped like every other target section (storage
+union), because that is what auth is on its way to becoming — the separable
+auth target. Deliberately NOT under `global.auth`: global holds what every
+process reads (mode, shared key, TTLs, admins); the registry is state only
+the login-serving process touches. Default `./auth`; the container mounts
+`/data/auth`.
+
+## Admins: a claim in the token
+
+`global.auth.admins` lists login names. At login, the process holding the
+registry checks membership and mints an `adm` claim into the session token
+(`auth.IssueSession` / `VerifySession`; `identity.Resolver.Admin` reads it).
+
+Chosen over a per-process admin list because modules know callers only by
+id and the name→id mapping lives with the auth subsystem alone — a
+per-process list would need the registry everywhere, exactly the coupling
+the split design forbids. The cost is stated, not hidden: an admin change
+takes effect at the member's NEXT login, bounded by the token TTL. The
+local mode answers false — `none` has no operators to distinguish, and the
+checks that will consult this all answer yes there anyway.
+
+## Open, deliberately
+
+- Nothing CHECKS admin yet — the claim exists so steps 3–5 of the
+  access-control plan have something to read.
+- Revocation (per-user notBefore) still waits on server-auth.md's step 8;
+  the claim inherits its TTL-bounded staleness.
+- The ephemeral-signing-key warning should probably become a refusal once
+  `global.services.*` are set (split = shared key IS the trust domain) —
+  to be decided when the auth target is cut.
