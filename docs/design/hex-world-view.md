@@ -3,7 +3,7 @@ summary: Design for the 3D world view — a zoomable camera over the map, hex ti
 date: 2026-08-06
 area: ui
 stage: building
-status: partially built (worldmap screen through the descent view, 2026-08-07) — hex/port/settlement layers still design-only; unifying the two screens' map decided 2026-08-09, not built
+status: partially built (worldmap screen through the descent view, 2026-08-07) — hex/port/settlement layers still design-only; unifying the two screens' map decided 2026-08-09, not built; the three foundational forks (river-through-tile, 300 m final, continuous zoom with thresholds) decided 2026-08-13 → decisions/hex-tiling.md, staged build plan below
 ---
 
 # Hex World View — Idea Sketch
@@ -347,15 +347,55 @@ hydrology) — see
 [worldmap-amplification.md](../decisions/worldmap-amplification.md) for
 the decision, the authority rules and the staged ladder around it.
 
+## The build plan (2026-08-13)
+
+Agreed once the three foundational forks were decided (hex size, river
+representation, zoom model — see
+[decisions/hex-tiling.md](../decisions/hex-tiling.md)). Phases, in order:
+
+1. **The logical grid** (data, no visuals). A pure math module: world
+   position ↔ axial hex coordinate (torus modulo), corners/edges/
+   neighbours, shared edge identities, the ⅓/⅔ port slots — derived from
+   `mapSceneSettings`' torus-snapped constants, never restated. Layering:
+   the lattice math is world-agnostic (peer level); tile *contents* are
+   world-layer when they exist. First visible payoff: hover-highlight of
+   the hex under the cursor in the descent view (a uniform in the
+   existing grid plugin), proving the logical and painted grids coincide.
+2. **Tile classification** (derived, cached, chunk-wise near the
+   camera). Per hex: median height, slope, biome, water state
+   (land/water/shore via corner classification), river presence — from
+   which the graded developability falls out. Must sample THE shared
+   fine-height source (`fineElevationSurface`), or later plates will
+   float above the terrain. Debug overlay for eyeballing, deliberately
+   changelog-free.
+3. **Ports v1 as metadata.** Snap the amplified river polylines onto
+   edge ports (wide rivers claim both slots of an edge); compute shore
+   crossings marching-hex style from relief + water level. All derived
+   and deterministic, never serialized — the same authority rule as the
+   amplification bake.
+4. **First real plates.** A debug "develop this hex" click: the tile
+   freezes its canonical height (median of its fine relief), becomes a
+   flat plate with edge seams (embankment against wilderness), the
+   contiguity rule active. The "grid = civilisation" visual language
+   stands in the picture for the first time.
+5. **Game systems** (settlement axes, rewilding, costs) — deliberately
+   last; the game design material lives outside the repository.
+
+Prerequisites worth closing before phase 2: the amplification bake is the
+classification's terrain source (4k is enough to start, 8k still waits on
+the memory work), and the fine relief's seed provenance (djb2 of the seed
+string instead of the generator's warpSeed — the manifest gap noted in
+the status section) should be fixed first, or tiles get classified
+against a pattern that later changes.
+
 ## Open questions
 
-- Exact hex size (250–350 m band; 300 m is the sweet spot candidate).
-- Whether rivers might warrant edge-based representation instead of
-  through-tile — through-tile fits the D8 pipeline and is realistic at
-  300 m, but this is the one hard-to-reverse choice in the port design.
 - Thresholds/costs for the developability grades, and rewilding pace.
 - Where exactly the "path organic vs. road geometric" upgrade boundary
   sits.
+- ~~Exact hex size~~, ~~rivers through-tile vs. on-edge~~, and the zoom
+  model: decided 2026-08-13 —
+  [decisions/hex-tiling.md](../decisions/hex-tiling.md).
 
 ## One map, two screens (decided 2026-08-09, not built)
 
