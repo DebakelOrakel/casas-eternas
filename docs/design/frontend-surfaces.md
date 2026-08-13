@@ -69,10 +69,11 @@ affordances; the server enforces regardless. Admin affordances become
 claim-gated panels in the client; an own bundle happens IF the surface
 grows its own concerns (user management, a deployment view) — and is cheap
 then, because bundles are just directories. Note: the biggest admin topic,
-creating users, is something the server cannot do today at all — htpasswd
-is a read-only Secret mount; that belongs to the auth-target build-out
-(docs/decisions/server-auth.md records the constraint), not to an admin
-page.
+creating users, exists server-side since 2026-08-13 — the auth module's
+admin handlers, today served only on the unix admin socket
+(docs/decisions/server-user-admin.md). An admin panel would put the same
+handlers on the network listener behind the `adm` claim; they gain a gate,
+they do not move.
 
 **Login** — server-side, YES: that is the planned auth target
 (docs/design/access-control.md). Frontend-side, NO standalone login page: a

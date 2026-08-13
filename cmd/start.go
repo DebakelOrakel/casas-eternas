@@ -18,16 +18,16 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
-	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/artifacts"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/bake"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/client"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/docs"
-	"github.com/DebakelOrakel/casas-eternas/internal/modules/session"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/world"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 	"github.com/DebakelOrakel/casas-eternas/internal/user"
 )
 
@@ -74,18 +74,52 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	if err != nil {
 		return nil, nil, err
 	}
-	caller, tokens, login, registry, err := buildAuth(authMode, cfg)
+	// Login is the auth TARGET's job (2026-08-13, server-user-admin.md): only
+	// the process running it opens the credential store; every process still
+	// verifies tokens locally through the resolver below. The store opens
+	// FIRST so a start that is going to fail fails before the signing-key
+	// warning sends the reader after the wrong problem.
+	var registry *user.Registry
+	if targets.Has(config.TargetAuth) && authMode.ChecksIdentity() {
+		registry, err = openCredentials(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if targets.Has(config.TargetAuth) {
+		slog.Info("auth target selected, but nothing to log in to", "mode", authMode)
+	}
+
+	caller, tokens, err := buildIdentity(authMode, cfg)
 	if err != nil {
+		if registry != nil {
+			registry.Close()
+		}
 		return nil, nil, err
 	}
-	// Mounted whenever there is something to log in to, regardless of --target:
-	// a deployment serving only the artifact store still has to let its callers
-	// authenticate, and there is nowhere else to do it.
-	// The client is told where to log in only when something is listening there.
+
+	// The client is told where to log in only when something is listening
+	// there; a split client-only process leaves it empty until the services
+	// wiring (frontend-surfaces) teaches it the auth service's address.
 	loginPath := ""
-	if login != nil {
+	if registry != nil {
+		admins := make(map[string]bool, len(cfg.Global.Auth.Admins))
+		for _, name := range cfg.Global.Auth.Admins {
+			admins[name] = true
+		}
+		login, err := auth.New(auth.Config{
+			Tokens:   tokens,
+			TTL:      cfg.Global.Auth.TokenTTL,
+			Registry: registry,
+			Admins:   admins,
+		})
+		if err != nil {
+			registry.Close()
+			return nil, nil, err
+		}
 		modules = append(modules, login)
-		loginPath = session.Path
+		loginPath = auth.Path
+		slog.Info("authentication ready", "mode", authMode,
+			"registry", cfg.Auth.Storage.DirPath(), "admins", len(admins), "token ttl", cfg.Global.Auth.TokenTTL)
 	}
 
 	if targets.Has(config.TargetClient) {
@@ -168,7 +202,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	return modules, server.Gate(caller, []string{
 		client.ConfigPath,       // where the API is and how to log in
 		server.CapabilitiesPath, // "is this server answering", asked while logged out
-		session.Path,            // the login endpoint itself
+		auth.Path,               // the login endpoint itself
 	}), nil
 }
 
@@ -177,7 +211,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 // own: co-resident store when the target is selected here, HTTP against the
 // configured peer service when it is not. This is the composition that makes
 // "a target must be able to run alone" true for bake.
-func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Module, rankWorld func(context.Context, string, string) (bool, access.Level), caller *identity.Resolver, tokens *auth.Tokens) (bake.Config, error) {
+func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Module, rankWorld func(context.Context, string, string) (bool, access.Level), caller *identity.Resolver, tokens *token.Tokens) (bake.Config, error) {
 	inCluster := bake.InCluster()
 	selfURL := serverBaseURL(cfg.Global.Listen)
 	if inCluster && selfURL == "" {
@@ -356,73 +390,71 @@ func bakerPath(configured string) string {
 	return filepath.Join(filepath.Dir(executable), "baker.mjs")
 }
 
-// buildAuth assembles what authentication needs: the process's one identity
-// resolver, and the login module — which exists only in a mode that has
-// something to log in to.
+// buildIdentity is what EVERY process needs in a checking mode: the one
+// resolver that answers "who is asking", and the token issuer/verifier over
+// the shared key. It opens no store — that is openCredentials' job, on the
+// auth target alone, which is what lets world/artifacts/bake targets run
+// without auth.storage.
 //
 // A mode that CHECKS identity and cannot verify a token would attribute every
-// request to nobody, which looks exactly like a permission bug from the outside.
-// So every ingredient it needs is required here, at startup, where the message
-// can name the missing setting.
-func buildAuth(mode config.AuthMode, cfg config.Config) (*identity.Resolver, *auth.Tokens, server.Module, *user.Registry, error) {
+// request to nobody, which looks exactly like a permission bug from the
+// outside. So the key is resolved here, at startup, where the message can
+// name the missing setting.
+func buildIdentity(mode config.AuthMode, cfg config.Config) (*identity.Resolver, *token.Tokens, error) {
 	if !mode.ChecksIdentity() {
 		// No issuer either: a Job talking to a server that checks nobody needs
 		// no credential, and handing it one would be a token nothing verifies.
-		// No registry: the synthetic local identity is nobody to record.
-		return identity.NewResolver(mode, nil), nil, nil, nil, nil
+		return identity.NewResolver(mode, nil), nil, nil
 	}
-
 	if mode == config.AuthOIDC {
 		// The declared, empty path: the mode parses and the resolver would
 		// verify the tokens this server issues, but nothing issues them yet.
-		return nil, nil, nil, nil, fmt.Errorf("auth mode %s is not implemented yet", mode)
+		return nil, nil, fmt.Errorf("auth mode %s is not implemented yet", mode)
 	}
-
-	// Users before the key, so a start that is going to fail fails BEFORE
-	// warning about something else. Warning about an ephemeral signing key and
-	// then refusing to start for an unrelated reason sends the reader after the
-	// wrong problem.
-	users, err := auth.NewUsers(cfg.Global.Auth.Htpasswd)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("%s: %w", keyAuthHtpass, err)
-	}
-
 	key, err := signingKey(cfg.Global.Auth.SessionKey)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, err
 	}
-	tokens, err := auth.NewTokens(key)
+	tokens, err := token.NewTokens(key)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, err
 	}
-	// The registry lives with the auth subsystem (auth.storage), not under
-	// global — only the process running login reads or writes it. Opened
-	// eagerly so a bad path refuses to start, like every other store.
+	return identity.NewResolver(mode, tokens), tokens, nil
+}
+
+// openCredentials opens (or founds) the auth target's user store — the one
+// store that both verifies logins and records who exists. It lives under
+// auth.storage, not global: only the login-serving process reads or writes
+// it. Opened eagerly so a bad path refuses to start, like every other store.
+func openCredentials(cfg config.Config) (*user.Registry, error) {
 	if err := cfg.Auth.Storage.Validate("auth"); err != nil {
-		return nil, nil, nil, nil, err
+		return nil, err
 	}
 	registry, err := user.NewRegistry(cfg.Auth.Storage.DirPath())
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("auth.storage: %w", err)
+		return nil, fmt.Errorf("auth.storage: %w", err)
 	}
-	admins := make(map[string]bool, len(cfg.Global.Auth.Admins))
-	for _, name := range cfg.Global.Auth.Admins {
-		admins[name] = true
+	// Every later failure must release auth.db — its lock is the one-process
+	// rule, and a refused start must not leave it held until process exit.
+	fail := func(err error) (*user.Registry, error) {
+		registry.Close()
+		return nil, err
 	}
-	resolver := identity.NewResolver(mode, tokens)
-	login, err := session.New(session.Config{
-		Users:    users,
-		Tokens:   tokens,
-		TTL:      cfg.Global.Auth.TokenTTL,
-		Registry: registry,
-		Admins:   admins,
-	})
-	if err != nil {
-		return nil, nil, nil, nil, err
+
+	// An empty credential store is two very different situations, told apart
+	// by the admin socket. WITH a socket it is the bootstrap state — exec in,
+	// create the first user — and deserves a loud hint. WITHOUT one there is
+	// no way to add a user at runtime, so a server that starts could only
+	// ever refuse everybody: a misconfiguration wearing a permission bug's
+	// clothes, refused here where the message can say what to configure.
+	if !registry.HasCredentials() {
+		if cfg.Global.Admin.Socket == "" {
+			return fail(fmt.Errorf("no credentials in %s and no %s to bootstrap over — nobody could ever log in", cfg.Auth.Storage.DirPath(), keyAdminSock))
+		}
+		slog.Warn("the credential store is empty — nobody can log in until a user exists",
+			"bootstrap", "casas-eternas auth user add <name> (over the admin socket)", "socket", cfg.Global.Admin.Socket)
 	}
-	slog.Info("authentication ready", "mode", mode, "users", users.Path(),
-		"registry", cfg.Auth.Storage.DirPath(), "admins", len(admins), "token ttl", cfg.Global.Auth.TokenTTL)
-	return resolver, tokens, login, registry, nil
+	return registry, nil
 }
 
 // signingKey reads the configured key, or makes an ephemeral one and says so.
@@ -433,9 +465,9 @@ func buildAuth(mode config.AuthMode, cfg config.Config) (*identity.Resolver, *au
 // bite, and by then they look like a bug rather than a missing setting.
 func signingKey(path string) ([]byte, error) {
 	if path != "" {
-		return auth.ReadKey(path)
+		return token.ReadKey(path)
 	}
-	key, err := auth.GenerateKey()
+	key, err := token.GenerateKey()
 	if err != nil {
 		return nil, err
 	}

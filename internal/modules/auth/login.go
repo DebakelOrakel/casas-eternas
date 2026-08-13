@@ -1,11 +1,15 @@
-// Package session is the one door credentials go through.
+// Package auth is the auth subsystem's module: the one door credentials go
+// through, and — once the admin surface lands — the place users are
+// administered. It was the session module until 2026-08-13; the auth TARGET
+// is what lets a split deployment pin login (and the registry it writes) to
+// one process. See docs/decisions/server-user-admin.md.
 //
 // It is deliberately the ONLY place a password is seen. Everything else on this
 // server takes a token, which is why basic auth appears here and nowhere else:
 // sending a password on every request would cost bcrypt's ~100 ms each time, and
 // keeping it in a browser to be able to is worse than holding a token that
 // expires. See docs/decisions/server-auth.md.
-package session
+package auth
 
 import (
 	"encoding/json"
@@ -14,27 +18,27 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/auth"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 	"github.com/DebakelOrakel/casas-eternas/internal/user"
 )
 
 // Path is where the client logs in. Reported in /config.json rather than
 // hardcoded in the client, so the browser never has to know this server's route
-// layout — and so `oidc` can name a foreign URL in the same place.
-const Path = "/v1/session"
+// layout — and so `oidc` can name a foreign URL in the same place. That
+// discovery is also what made the move from /v1/session harmless: the module's
+// routes live under the module's namespace, and no client ever derived this.
+const Path = "/v1/auth/session"
 
 // Config is what cmd/ resolves from the flags. No viper here by design.
 type Config struct {
-	// Users verifies passwords. Absent in a mode that has no local user
-	// database — `oidc`, once it exists.
-	Users *auth.Users
 	// Tokens mints what a successful login returns.
-	Tokens *auth.Tokens
+	Tokens *token.Tokens
 	// TTL is how long an issued token is good for.
 	TTL time.Duration
-	// Registry turns a verified login NAME into the stable user id a token's
-	// subject carries — minting the entry on first sight. This hook is the
-	// one place the registry grows; see docs/decisions/server-users.md.
+	// Registry verifies credentials AND answers who they belong to — one
+	// lookup since identity and credential moved into one store
+	// (docs/decisions/server-user-admin.md). The module OWNS the registry's
+	// lifetime: Close releases auth.db and its file lock.
 	Registry *user.Registry
 	// Admins are the login names whose sessions carry the admin claim,
 	// resolved from global.auth.admins by cmd/.
@@ -49,22 +53,19 @@ type Module struct {
 // New checks the module can actually do its job before the server starts.
 func New(cfg Config) (*Module, error) {
 	if cfg.Tokens == nil {
-		return nil, fmt.Errorf("session: no token issuer")
-	}
-	if cfg.Users == nil {
-		return nil, fmt.Errorf("session: no user database")
+		return nil, fmt.Errorf("auth: no token issuer")
 	}
 	if cfg.TTL <= 0 {
-		return nil, fmt.Errorf("session: token lifetime is %v", cfg.TTL)
+		return nil, fmt.Errorf("auth: token lifetime is %v", cfg.TTL)
 	}
 	if cfg.Registry == nil {
-		return nil, fmt.Errorf("session: no user registry")
+		return nil, fmt.Errorf("auth: no user registry")
 	}
 	return &Module{cfg: cfg}, nil
 }
 
 // Name identifies the module in logs and errors.
-func (m *Module) Name() string { return "session" }
+func (m *Module) Name() string { return "auth" }
 
 // Mount claims the login route.
 func (m *Module) Mount(mux *http.ServeMux) error {
@@ -72,8 +73,9 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	return nil
 }
 
-// Close releases the module. Nothing is held open.
-func (m *Module) Close() error { return nil }
+// Close releases the registry — the module holds auth.db open, and the file
+// lock must not outlive the server.
+func (m *Module) Close() error { return m.cfg.Registry.Close() }
 
 // response is what a successful login returns. `expiresAt` so the client can
 // renew before being surprised, `user` so it can show who is logged in without
@@ -92,13 +94,19 @@ func (m *Module) serveLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	valid, err := m.cfg.Users.Verify(name, password)
+	// One lookup answers both halves: whether the password is right, and WHO
+	// it belongs to — a credential attaches to an identity in the store, so a
+	// verified login always has its registry entry. The token's subject is
+	// that stable id, never the login name: names are credential surface,
+	// ids are what owners and grants record. Display stays the name, in the
+	// response below.
+	entry, valid, err := m.cfg.Registry.Verify(name, password)
 	if err != nil {
-		// The user file is unreadable or malformed. That is a fault here, not a
-		// wrong password, and answering 401 would send someone off to check a
-		// password that was fine. It is also the one case worth logging loudly:
-		// nobody can log in until it is fixed.
-		slog.Error("cannot check credentials", "error", err, "file", m.cfg.Users.Path())
+		// The store is unreadable. That is a fault here, not a wrong
+		// password, and answering 401 would send someone off to check a
+		// password that was fine. It is also the one case worth logging
+		// loudly: nobody can log in until it is fixed.
+		slog.Error("cannot check credentials", "error", err)
 		http.Error(w, "credentials cannot be checked", http.StatusInternalServerError)
 		return
 	}
@@ -106,18 +114,7 @@ func (m *Module) serveLogin(w http.ResponseWriter, r *http.Request) {
 		unauthorized(w)
 		return
 	}
-
-	// The registry entry is minted HERE, after the password verified — the
-	// token's subject is the stable id from then on, never the login name:
-	// names are credential surface an operator edits, ids are what owners
-	// and grants record. Display stays the name, in the response below.
-	entry, err := m.cfg.Registry.Ensure(name)
-	if err != nil {
-		slog.Error("cannot register the user", "error", err, "user", name)
-		http.Error(w, "cannot register the user", http.StatusInternalServerError)
-		return
-	}
-	token, expires, err := m.cfg.Tokens.IssueSession(entry.ID, m.cfg.Admins[name], m.cfg.TTL)
+	issued, expires, err := m.cfg.Tokens.IssueSession(entry.ID, m.cfg.Admins[name], m.cfg.TTL)
 	if err != nil {
 		slog.Error("cannot issue a token", "error", err, "user", name)
 		http.Error(w, "cannot issue a token", http.StatusInternalServerError)
@@ -129,7 +126,7 @@ func (m *Module) serveLogin(w http.ResponseWriter, r *http.Request) {
 	// A credential must never sit in a shared cache, and "no-store" is the only
 	// directive that says so without exception.
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(response{Token: token, ExpiresAt: expires, User: name})
+	_ = json.NewEncoder(w).Encode(response{Token: issued, ExpiresAt: expires, User: name})
 }
 
 // unauthorized refuses without saying which half was wrong, and — deliberately —

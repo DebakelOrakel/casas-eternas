@@ -1,4 +1,16 @@
-package auth
+// Package token answers "is this token one we issued", and mints the ones we
+// do. Issuing and verifying are AUTHENTICATION — establishing who someone is.
+// What they are then allowed to do is authorisation, and that lives with the
+// thing being protected: the world store records an owner, the bake module
+// compares against it. Roles and quota do NOT belong here.
+//
+// Named for what it holds: the password half of authentication moved into the
+// user registry (one store, one transaction — docs/decisions/server-user-admin.md),
+// and this leaf kept the token mechanics. It was `internal/auth` until
+// 2026-08-13; the name freed the module namespace for the auth module the
+// admin surface lives in. See docs/decisions/server-auth.md for the token
+// design itself.
+package token
 
 import (
 	"crypto/rand"

@@ -6,32 +6,32 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 // Caller is the process's ONE answer to "who is asking" — every module's
 // authorisation sits on it, so its table of cases is worth stating in full.
 func TestCallerResolvesEveryKindOfCredential(t *testing.T) {
-	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, _, err := tokens.Issue("ada", auth.AudienceSession, time.Hour)
+	session, _, err := tokens.Issue("ada", token.AudienceSession, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A bake token whose subject CLAIMS to be a user — the impersonation case:
 	// the claim must be ignored, a job is a job whatever it says it is.
-	disguisedJob, _, err := tokens.Issue("ada", auth.BakeAudience("job-1"), time.Hour)
+	disguisedJob, _, err := tokens.Issue("ada", token.BakeAudience("job-1"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := auth.NewTokens([]byte("a different signing key entirely, ok!!"))
+	foreign, err := token.NewTokens([]byte("a different signing key entirely, ok!!"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	forged, _, err := foreign.Issue("ada", auth.AudienceSession, time.Hour)
+	forged, _, err := foreign.Issue("ada", token.AudienceSession, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestCallerResolvesEveryKindOfCredential(t *testing.T) {
 		// RFC 7235: the scheme is case-insensitive, and some clients send it
 		// lowercase.
 		{"lowercase bearer scheme", checking, "bearer " + session, "ada"},
-		{"a job token is the job, never its subject claim", checking, "Bearer " + disguisedJob, auth.SubjectBakeJob},
+		{"a job token is the job, never its subject claim", checking, "Bearer " + disguisedJob, token.SubjectBakeJob},
 	}
 	for _, c := range cases {
 		request := httptest.NewRequest(http.MethodGet, "/v1/worlds", nil)
@@ -73,7 +73,7 @@ func TestCallerResolvesEveryKindOfCredential(t *testing.T) {
 // Admin comes from the session's claim, verified locally — and from nowhere
 // else: a bake token, a forged token or the local mode must all answer false.
 func TestAdminComesOnlyFromTheClaim(t *testing.T) {
-	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestAdminComesOnlyFromTheClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), time.Hour)
+	job, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience("job-1"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestAdminComesOnlyFromTheClaim(t *testing.T) {
 }
 
 func TestBakeJobNamesExactlyItsOwnJob(t *testing.T) {
-	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestBakeJobNamesExactlyItsOwnJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, _, err := tokens.Issue("ada", auth.AudienceSession, time.Hour)
+	session, _, err := tokens.Issue("ada", token.AudienceSession, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

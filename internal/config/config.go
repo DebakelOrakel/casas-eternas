@@ -26,12 +26,19 @@ const (
 	TargetArtifacts Target = "artifacts"
 	TargetBake      Target = "bake"
 	TargetDocs      Target = "docs"
+	// TargetAuth is the login process: the one that opens the credential
+	// store and serves /v1/auth/session. Every OTHER process still verifies
+	// tokens locally over the shared key; this target is where they are
+	// issued and where users are administered. In the local mode (`none`)
+	// it has nothing to do and contributes no module. Added 2026-08-13,
+	// docs/decisions/server-user-admin.md.
+	TargetAuth Target = "auth"
 )
 
 // modules lists the real targets, in the order they are reported to the user.
 // TargetAll is absent on purpose: it expands to this, so having it in the list
 // would let "all" select itself.
-var modules = []Target{TargetClient, TargetWorld, TargetArtifacts, TargetBake, TargetDocs}
+var modules = []Target{TargetClient, TargetWorld, TargetArtifacts, TargetBake, TargetDocs, TargetAuth}
 
 // Targets is a resolved selection: every module that should run.
 type Targets map[Target]bool
@@ -67,7 +74,7 @@ func ParseTargets(raw []string) (Targets, error) {
 			for _, m := range modules {
 				selected[m] = true
 			}
-		case TargetClient, TargetWorld, TargetArtifacts, TargetBake, TargetDocs:
+		case TargetClient, TargetWorld, TargetArtifacts, TargetBake, TargetDocs, TargetAuth:
 			selected[target] = true
 		default:
 			return nil, fmt.Errorf("unknown target %q; valid targets: %s", value, validTargets())
@@ -101,8 +108,9 @@ const (
 	// default: a synthetic identity owns everything, so nobody else can be
 	// present and there is nothing to protect anyone from.
 	AuthNone AuthMode = "none"
-	// AuthPassword: this server holds the user database (an htpasswd file),
-	// and logging in exchanges credentials for a token it issues itself.
+	// AuthPassword: this server holds the user database (auth.db, under
+	// auth.storage), and logging in exchanges credentials for a token it
+	// issues itself.
 	AuthPassword AuthMode = "password"
 	// AuthOIDC: a foreign identity provider holds the users. It is a second
 	// LOGIN METHOD rather than a second token — the session it produces is
@@ -194,6 +202,11 @@ type Server struct {
 	// Setting it turns on mutual TLS; serving plain HTTPS needs only the pair
 	// above.
 	TLSCA string
+
+	// AdminSocket is the unix-socket path of the local admin channel; empty
+	// serves none. Plain HTTP, no TLS, no gate: reaching the socket IS the
+	// authorization (docs/decisions/server-user-admin.md).
+	AdminSocket string
 }
 
 // TLSEnabled reports whether the server should serve HTTPS.

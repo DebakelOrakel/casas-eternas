@@ -1,15 +1,23 @@
-// Package user is the registry of who exists: the stable ids everything else
-// records, distinct from the login names people type.
+// Package user is the registry of who exists AND how they prove it locally:
+// the stable ids everything else records, plus the credentials the auth
+// subsystem verifies. One bbolt database rather than a file per concern, so
+// that creating a user mints identity and credential in ONE transaction —
+// see docs/decisions/server-user-admin.md.
 //
-// The split matters because names are CREDENTIAL surface (htpasswd lines an
-// operator edits; later an OIDC subject a foreign provider owns) while owners
-// and grants need an identity that survives a rename and never collides
-// across login methods. Entries are MINTED ON FIRST LOGIN rather than
-// provisioned: the htpasswd file stays the one place users are administered,
-// and the registry follows it — see docs/decisions/server-users.md.
+// The split that MATTERS is unchanged: names are credential surface (a login
+// name, later an OIDC subject a foreign provider owns) while owners and
+// grants need an identity that survives a rename and never collides across
+// login methods. Ids are minted here and never derived from names.
 //
 // A LEAF like auth: it imports nothing of this repo, so the session module
 // can hold one without gaining an edge anywhere.
+//
+// bbolt rather than the archived boltdb/bolt, and bbolt rather than an LSM
+// store: reads (one per login) run in parallel against a memory-mapped
+// B+tree, writes (admin operations) serialize onto the single writer this
+// store is allowed to have anyway — the exclusive file lock turns "one
+// process per store directory" from review discipline into something the
+// kernel enforces.
 package user
 
 import (
@@ -19,8 +27,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 // User is one registry entry.
@@ -29,39 +38,45 @@ type User struct {
 	// and grants record. A uuid, minted here, never derived from the name.
 	ID string `json:"id"`
 	// Name is the login name at the time of minting — display data and the
-	// join key to htpasswd, never an identity.
+	// key a credential is looked up under, never an identity.
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
 	// OIDCSubject joins a foreign provider's `sub` to this entry, once OIDC
-	// exists. Reserved now so the file format does not change under it.
+	// exists. Reserved now so the record format does not change under it.
 	OIDCSubject string `json:"oidcSubject,omitempty"`
 }
 
-// file is users.json on disk — wrapped in an object so the format can grow a
-// field without becoming a different file.
+// file is the users.json layout this registry kept before bbolt — read once
+// at founding, never written again.
 type file struct {
 	Users []User `json:"users"`
 }
 
-// Registry is the id-keyed user store, backed by one JSON file.
-//
-// One file rather than a directory per user: the registry is read at login
-// only, its whole content fits in memory at any population this server will
-// see, and a single atomic rename is the simplest write that cannot tear.
-type Registry struct {
-	path string
+var (
+	bucketUsers       = []byte("users")
+	bucketCredentials = []byte("credentials")
+)
 
-	mu     sync.Mutex
-	users  []User
-	byName map[string]int
-	byID   map[string]int
+// Registry is the id-keyed user store, backed by one bbolt database
+// (auth.db) holding a `users` bucket (id → JSON entry) and a `credentials`
+// bucket (id → bcrypt hash).
+//
+// Name lookups SCAN the users bucket rather than maintaining a name index:
+// at any population this server will see, a scan inside a read transaction
+// is memory access, and an index is a second copy that can only ever be
+// wrong. The trigger to revisit is a population where logins measurably
+// drag, not taste.
+type Registry struct {
+	db *bolt.DB
 
 	// now is injected so tests can be deterministic about timestamps.
 	now func() time.Time
 }
 
-// NewRegistry opens (or founds) the registry in dir, eagerly: a bad
-// auth.storage fails at startup, naming the setting, not at the first login.
+// NewRegistry opens (or founds) auth.db in dir, eagerly: a bad auth.storage
+// fails at startup, naming the setting, not at the first login. Founding a
+// fresh database imports a users.json left by the pre-bbolt registry, ids
+// preserved verbatim.
 func NewRegistry(dir string) (*Registry, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("registry directory must not be empty")
@@ -69,102 +84,184 @@ func NewRegistry(dir string) (*Registry, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("preparing %q: %w", dir, err)
 	}
-	r := &Registry{path: filepath.Join(dir, "users.json"), now: time.Now}
-	if err := r.load(); err != nil {
-		return nil, err
+	path := filepath.Join(dir, "auth.db")
+	// Stat before Open, because Open creates the file: founding is the one
+	// moment the users.json import may run.
+	_, statErr := os.Stat(path)
+	founding := os.IsNotExist(statErr)
+
+	// The timeout turns a second process into a loud startup error instead of
+	// a silent hang on the file lock — the lock IS the one-process rule.
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: time.Second})
+	if err != nil {
+		return nil, fmt.Errorf("auth.db in %q: %w (one process per store directory — is another server holding it?)", dir, err)
+	}
+	r := &Registry{db: db, now: time.Now}
+	if err := db.Update(func(tx *bolt.Tx) error {
+		for _, name := range [][]byte{bucketUsers, bucketCredentials} {
+			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		// A database that will not open holds the ids everything else
+		// references; refusing beats silently founding fresh, which would
+		// re-mint every user under new ids — orphaning owners and grants.
+		db.Close()
+		return nil, fmt.Errorf("auth.db in %q is unusable: %w", dir, err)
+	}
+	// Every record is parsed once at open, so a database that got corrupted
+	// refuses HERE, loudly, rather than surfacing as a user who silently
+	// cannot log in — the same reasoning that refuses a corrupt users.json.
+	if err := db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketUsers).ForEach(func(id, raw []byte) error {
+			var u User
+			if err := json.Unmarshal(raw, &u); err != nil {
+				return fmt.Errorf("record %q: %w", id, err)
+			}
+			return nil
+		})
+	}); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("auth.db in %q is unusable: %w", dir, err)
+	}
+	if founding {
+		if err := r.importUsersJSON(dir); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return r, nil
 }
 
-func (r *Registry) load() error {
-	r.users = nil
-	r.byName = map[string]int{}
-	r.byID = map[string]int{}
-	raw, err := os.ReadFile(r.path)
+// Close releases the database and its file lock. The module holding the
+// registry calls it at shutdown; a registry that is never closed is released
+// by process exit, which bbolt survives (writes are transactional), but the
+// lock outliving the server would refuse the next start on some platforms.
+func (r *Registry) Close() error { return r.db.Close() }
+
+// importUsersJSON founds the database from the pre-bbolt registry file. Ids
+// are preserved verbatim — a re-minted id would orphan every owner and grant
+// recorded under the old one — and the file is renamed afterwards, so a
+// rollback still has its data and the import cannot run twice.
+func (r *Registry) importUsersJSON(dir string) error {
+	src := filepath.Join(dir, "users.json")
+	raw, err := os.ReadFile(src)
+	if os.IsNotExist(err) {
+		return nil
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
 		return err
 	}
 	var parsed file
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		// Refusing beats rebuilding: a registry that will not parse holds the
-		// ids everything else references, and silently starting fresh would
-		// re-mint every user under new ids — orphaning owners and grants.
-		return fmt.Errorf("user registry %s is unreadable: %w", r.path, err)
+		return fmt.Errorf("user registry %s is unreadable: %w", src, err)
 	}
-	r.users = parsed.Users
-	for i, u := range r.users {
-		r.byName[u.Name] = i
-		r.byID[u.ID] = i
+	err = r.db.Update(func(tx *bolt.Tx) error {
+		seen := map[string]bool{}
+		for _, u := range parsed.Users {
+			// The old registry could not write a duplicate name; finding one
+			// means the file is not what it claims, and picking either entry
+			// silently would attach the wrong credential later.
+			if seen[u.Name] {
+				return fmt.Errorf("%s: user %q appears twice", src, u.Name)
+			}
+			seen[u.Name] = true
+			if err := putUser(tx, u); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(src, src+".imported"); err != nil {
+		return fmt.Errorf("imported %s but could not set it aside: %w", src, err)
 	}
 	return nil
 }
 
 // Ensure returns the entry for a login name, minting one on first sight.
-// Called after the password (or later the OIDC provider) has verified the
-// name — the registry records who exists, it never decides who may.
+// Called after the credential (or later the OIDC provider) has verified the
+// name — the registry records who exists; for foreign-held users it never
+// decides who may. One write transaction, so two concurrent first logins
+// cannot mint two ids for one name.
 func (r *Registry) Ensure(name string) (User, error) {
 	if name == "" {
 		return User{}, fmt.Errorf("refusing to register an empty name")
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if i, ok := r.byName[name]; ok {
-		return r.users[i], nil
-	}
-	id, err := mintID()
-	if err != nil {
-		return User{}, err
-	}
-	entry := User{ID: id, Name: name, CreatedAt: r.now().UTC()}
-	r.users = append(r.users, entry)
-	r.byName[name] = len(r.users) - 1
-	r.byID[id] = len(r.users) - 1
-	if err := r.persist(); err != nil {
-		// The entry must not exist in memory only: a second replica (or a
-		// restart) would mint a DIFFERENT id for the same person.
-		r.load()
-		return User{}, err
-	}
-	return entry, nil
+	var entry User
+	err := r.db.Update(func(tx *bolt.Tx) error {
+		if existing, ok := findByName(tx, name); ok {
+			entry = existing
+			return nil
+		}
+		minted, err := r.mintUser(tx, name)
+		entry = minted
+		return err
+	})
+	return entry, err
 }
 
 // ByID answers the entry a stable id names — how a display layer turns an
 // owner back into something readable.
 func (r *Registry) ByID(id string) (User, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	i, ok := r.byID[id]
-	if !ok {
-		return User{}, false
-	}
-	return r.users[i], true
+	var entry User
+	found := false
+	_ = r.db.View(func(tx *bolt.Tx) error {
+		if raw := tx.Bucket(bucketUsers).Get([]byte(id)); raw != nil {
+			found = json.Unmarshal(raw, &entry) == nil
+		}
+		return nil
+	})
+	return entry, found
 }
 
 // ByName answers the entry a login name maps to.
 func (r *Registry) ByName(name string) (User, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	i, ok := r.byName[name]
-	if !ok {
-		return User{}, false
-	}
-	return r.users[i], true
+	var entry User
+	found := false
+	_ = r.db.View(func(tx *bolt.Tx) error {
+		entry, found = findByName(tx, name)
+		return nil
+	})
+	return entry, found
 }
 
-// persist writes users.json atomically. Called under r.mu.
-func (r *Registry) persist() error {
-	raw, err := json.MarshalIndent(file{Users: r.users}, "", "  ")
+// mintUser writes a fresh entry inside the caller's transaction.
+func (r *Registry) mintUser(tx *bolt.Tx, name string) (User, error) {
+	id, err := mintID()
+	if err != nil {
+		return User{}, err
+	}
+	entry := User{ID: id, Name: name, CreatedAt: r.now().UTC()}
+	return entry, putUser(tx, entry)
+}
+
+// findByName scans the users bucket — see the Registry comment for why this
+// is a scan and what would justify an index.
+func findByName(tx *bolt.Tx, name string) (User, bool) {
+	var entry User
+	found := false
+	_ = tx.Bucket(bucketUsers).ForEach(func(_, raw []byte) error {
+		var u User
+		if json.Unmarshal(raw, &u) == nil && u.Name == name {
+			entry, found = u, true
+		}
+		return nil
+	})
+	return entry, found
+}
+
+// putUser writes one entry inside the caller's transaction.
+func putUser(tx *bolt.Tx, u User) error {
+	raw, err := json.Marshal(u)
 	if err != nil {
 		return err
 	}
-	tmp := r.path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, r.path)
+	return tx.Bucket(bucketUsers).Put([]byte(u.ID), raw)
 }
 
 // mintID returns a fresh uuid-shaped identifier.

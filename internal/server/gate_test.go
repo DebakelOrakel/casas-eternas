@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 const gateKey = "a signing key long enough to be accepted"
@@ -22,9 +22,9 @@ func reached(flag *bool) http.Handler {
 	})
 }
 
-func newGate(t *testing.T, mode config.AuthMode) (func(http.Handler) http.Handler, *auth.Tokens) {
+func newGate(t *testing.T, mode config.AuthMode) (func(http.Handler) http.Handler, *token.Tokens) {
 	t.Helper()
-	tokens, err := auth.NewTokens([]byte(gateKey))
+	tokens, err := token.NewTokens([]byte(gateKey))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestApiRequiresACaller(t *testing.T) {
 		}
 	}
 
-	expired, _, err := tokens.Issue("ada", auth.AudienceSession, -time.Minute)
+	expired, _, err := tokens.Issue("ada", token.AudienceSession, -time.Minute)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestApiRequiresACaller(t *testing.T) {
 
 	// And a real session does — the case that proves the refusals above are for
 	// the right reason and not because the gate refuses everything.
-	session, _, err := tokens.Issue("ada", auth.AudienceSession, time.Hour)
+	session, _, err := tokens.Issue("ada", token.AudienceSession, time.Hour)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestApiRequiresACaller(t *testing.T) {
 // ownership lives, in the bake module.
 func TestABakeJobIsACallerButNotAUser(t *testing.T) {
 	gate, tokens := newGate(t, config.AuthPassword)
-	job, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), time.Hour)
+	job, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience("job-1"), time.Hour)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -132,18 +132,18 @@ func TestABakeJobIsACallerButNotAUser(t *testing.T) {
 
 	// Still refused: expired, and issued somewhere else. A job token is not a
 	// skeleton key, it is one more thing this server signed.
-	expired, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), -time.Minute)
+	expired, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience("job-1"), -time.Minute)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
 	if code, ran := request(t, gate, "/v1/worlds/abc", expired); code != http.StatusUnauthorized || ran {
 		t.Errorf("an expired job token was accepted: %d (reached: %v)", code, ran)
 	}
-	stranger, err := auth.NewTokens([]byte("a different key, also long enough ok"))
+	stranger, err := token.NewTokens([]byte("a different key, also long enough ok"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	foreign, _, err := stranger.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-1"), time.Hour)
+	foreign, _, err := stranger.Issue(token.SubjectBakeJob, token.BakeAudience("job-1"), time.Hour)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}

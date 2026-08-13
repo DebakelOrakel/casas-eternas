@@ -130,10 +130,12 @@ than a refactor.
 
 **The modes hardened into a decision 2026-08-09 —
 [server-auth.md](../decisions/server-auth.md).** `token` became `password`
-(the axis is where the users live, not what the header looks like), the
-credentials are an htpasswd file mounted from a Secret, and logging in
-exchanges them for a JWT the server issues itself — including under `oidc`,
-which is a second login method rather than a second token.
+(the axis is where the users live, not what the header looks like), and
+logging in exchanges credentials for a JWT the server issues itself —
+including under `oidc`, which is a second login method rather than a second
+token. The credentials themselves live in the auth module's own store since
+2026-08-13, administered over the admin socket
+([server-user-admin.md](../decisions/server-user-admin.md)).
 
 ## Who may write
 

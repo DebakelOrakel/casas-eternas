@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
-	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 // A runner that records what it was asked to do and finishes when told. Lets
@@ -208,7 +208,7 @@ func TestEnqueueAfterCloseAnswers503(t *testing.T) {
 // the refusal SHAPE follows the visibility rule — below viewer the world is
 // invisible (404), only a readable world distinguishes 403.
 func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
-	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
@@ -222,8 +222,8 @@ func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
 		}
 		return token
 	}
-	editor := issue("ada", auth.AudienceSession)
-	viewer := issue("grace", auth.AudienceSession)
+	editor := issue("ada", token.AudienceSession)
+	viewer := issue("grace", token.AudienceSession)
 	worlds.set(testUID, "Bearer "+editor, access.Editor)
 	worlds.set(testUID, "Bearer "+viewer, access.Viewer)
 
@@ -233,8 +233,8 @@ func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
 	for _, c := range []struct{ name, token string }{
 		{"no credentials", ""},
 		{"nonsense", "not-a-valid-token"},
-		{"a stranger's session", issue("eve", auth.AudienceSession)},
-		{"a bake token", issue("ada", auth.BakeAudience("v4-abc"))},
+		{"a stranger's session", issue("eve", token.AudienceSession)},
+		{"a bake token", issue("ada", token.BakeAudience("v4-abc"))},
 	} {
 		if got := post(m, testUID, `{"stage":2}`, c.token).Code; got != http.StatusNotFound {
 			t.Errorf("%s = %d, want 404", c.name, got)
@@ -257,12 +257,12 @@ func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
 // pays for itself: the token names a job, so "may this caller report for this
 // job" is one comparison.
 func TestProgressAcceptsOnlyTheJobItBelongsTo(t *testing.T) {
-	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
 	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
-	session, _, err := tokens.Issue("ada", auth.AudienceSession, time.Hour)
+	session, _, err := tokens.Issue("ada", token.AudienceSession, time.Hour)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -290,11 +290,11 @@ func TestProgressAcceptsOnlyTheJobItBelongsTo(t *testing.T) {
 		m.handleProgress(recorder, request)
 		return recorder.Code
 	}
-	own, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience(id), time.Hour)
+	own, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience(id), time.Hour)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	other, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("some-other-job"), time.Hour)
+	other, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience("some-other-job"), time.Hour)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -469,7 +469,7 @@ func TestProgressAndResultReachTheJobRecord(t *testing.T) {
 // 401 reading the world it was created to bake. That was true and unnoticed
 // until 2026-08-09: the field existed and nobody filled it.
 func TestClusterJobCarriesAScopedToken(t *testing.T) {
-	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
@@ -495,17 +495,17 @@ func TestClusterJobCarriesAScopedToken(t *testing.T) {
 	// The audience names the JOB, not the person who ordered it and not the
 	// artifact key: it is what lets the job report progress against one order,
 	// and what stops the token being usable as a login.
-	subject, err := tokens.Verify(spec.AuthToken, auth.BakeAudience(spec.JobID))
+	subject, err := tokens.Verify(spec.AuthToken, token.BakeAudience(spec.JobID))
 	if err != nil {
 		t.Fatalf("the job's token does not verify for its own job: %v", err)
 	}
-	if subject != auth.SubjectBakeJob {
-		t.Errorf("token subject = %q, want %q — a job must not borrow its orderer's identity", subject, auth.SubjectBakeJob)
+	if subject != token.SubjectBakeJob {
+		t.Errorf("token subject = %q, want %q — a job must not borrow its orderer's identity", subject, token.SubjectBakeJob)
 	}
-	if _, err := tokens.Verify(spec.AuthToken, auth.AudienceSession); err == nil {
+	if _, err := tokens.Verify(spec.AuthToken, token.AudienceSession); err == nil {
 		t.Error("a job token was accepted as a session")
 	}
-	if _, err := tokens.Verify(spec.AuthToken, auth.BakeAudience("some-other-job")); err == nil {
+	if _, err := tokens.Verify(spec.AuthToken, token.BakeAudience("some-other-job")); err == nil {
 		t.Error("a job token was accepted for another job")
 	}
 	// Progress goes to THIS server's bake API — which need not be the
@@ -523,7 +523,7 @@ func TestClusterJobCarriesAScopedToken(t *testing.T) {
 // The local runner reads files directly, so a token would be a credential handed
 // out for nothing.
 func TestLocalJobCarriesNoToken(t *testing.T) {
-	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestLocalJobCarriesNoToken(t *testing.T) {
 // world URL with an artifacts directory, carry a token for the remote read,
 // and still not learn a job id — its progress comes over the pipe.
 func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
-	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}

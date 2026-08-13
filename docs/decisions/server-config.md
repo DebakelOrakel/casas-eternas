@@ -43,7 +43,7 @@ global:            # the PROCESS: socket, TLS, auth, peer services
   listen: ":8080"
   auth:
     mode: password
-    htpasswd: /etc/casas-eternas/auth/htpasswd
+    session-key: /etc/casas-eternas/auth/session.key
   services:        # peer addresses for split deployments; empty = co-resident
     worlds: ""
 world:

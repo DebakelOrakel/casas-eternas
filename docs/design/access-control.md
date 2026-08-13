@@ -86,16 +86,19 @@ their own roles — kept in mind, not built toward: actions are named values
 
 ## Identity: a small user registry, not login-name strings
 
-Today the caller is the htpasswd login name — a string with no stable id.
-Renaming a user would orphan every world they own, and OIDC (decided, not
-built) arrives with a foreign subject that must map to SOMETHING. String
-identity is also this repo's most recently paid-for bug class twice over.
+When this was designed, the caller was the htpasswd login name — a string
+with no stable id. Renaming a user would orphan every world they own, and
+OIDC (decided, not built) arrives with a foreign subject that must map to
+SOMETHING. String identity is also this repo's most recently paid-for bug
+class twice over.
 
-So: a `users.json` registry — `{ id: uuid, name, createdAt }`, later an
-`oidcSubject` — minted on first login. htpasswd stays a pure credential
-file (its own doc already insists on that split); the registry is the
-identity. **Owner and grants store user IDS, never names.** Renames become
-a registry edit; OIDC becomes a second way to arrive at the same id.
+So: a registry — `{ id: uuid, name, createdAt }`, later an `oidcSubject` —
+distinct from the credential; the registry is the identity. **Owner and
+grants store user IDS, never names.** Renames become a registry edit; OIDC
+becomes a second way to arrive at the same id. (Since 2026-08-13 identity
+and credential live in one auth.db administered over the admin socket, and
+local users are created there rather than minted at login — the id rule is
+unchanged; decisions/server-user-admin.md.)
 
 ## Roles × actions
 
@@ -119,7 +122,9 @@ which is also why artifact GETs are not "informational").
 
 **Visibility:** private by default; the world list shows own + granted +
 public. The only unauthenticated/unscoped routes remain the three that
-exist today: `/config.json`, `GET /v1/capabilities`, `POST /v1/session`.
+exist today: `/config.json`, `GET /v1/capabilities`, and the login endpoint
+(`POST /v1/auth/session` since 2026-08-13; the client discovers it via
+`config.json`, so the move was free).
 
 ## Where the grants live: `{uid}/grants.json`
 
@@ -228,9 +233,9 @@ proposed properly when building starts.
 Asked 2026-08-12: can this run as its own service? Split answer, and the
 line runs exactly where the data lives.
 
-**Authentication separates cleanly** — `--target auth`: login
-(`/v1/session`), the users.json registry, later the OIDC callback and user
-administration. A subsystem with behaviour and its own state, i.e. the
+**Authentication separates cleanly** — `--target auth` (CUT 2026-08-13,
+server-user-admin.md step 3): login (`/v1/auth/session`), the credential
+store (auth.db), later the OIDC callback and user administration. A subsystem with behaviour and its own state, i.e. the
 shape the target system exists for. It can run apart because tokens are
 JWTs under the shared `--auth-session-key`: every other process VERIFIES
 locally and never calls the auth service per request — it is needed at

@@ -41,10 +41,22 @@ type Config struct {
 // Global is everything that belongs to the PROCESS, not to a target: the
 // socket, TLS, how callers are authenticated, and where peer services live.
 type Global struct {
-	Listen   string       `mapstructure:"listen"`
-	TLS      TLSConfig    `mapstructure:"tls"`
-	Auth     AuthSettings `mapstructure:"auth"`
-	Services Services     `mapstructure:"services"`
+	Listen   string        `mapstructure:"listen"`
+	TLS      TLSConfig     `mapstructure:"tls"`
+	Auth     AuthSettings  `mapstructure:"auth"`
+	Admin    AdminSettings `mapstructure:"admin"`
+	Services Services      `mapstructure:"services"`
+}
+
+// AdminSettings is the process's local administration channel. GLOBAL, not a
+// target section: the socket is process-level like the listener — every
+// resident module may contribute admin handlers under its namespace
+// (docs/decisions/server-user-admin.md).
+type AdminSettings struct {
+	// Socket is the path of a unix domain socket serving the admin API over
+	// plain HTTP. Possession IS the authorization — file permissions (or
+	// pods/exec RBAC) gate it, no token involved. Empty serves no socket.
+	Socket string `mapstructure:"socket"`
 }
 
 type TLSConfig struct {
@@ -59,7 +71,6 @@ type TLSConfig struct {
 // each verify locally. The auth subsystem's own STATE lives in AuthConfig.
 type AuthSettings struct {
 	Mode       string        `mapstructure:"mode"`
-	Htpasswd   string        `mapstructure:"htpasswd"`
 	SessionKey string        `mapstructure:"session-key"`
 	TokenTTL   time.Duration `mapstructure:"token-ttl"`
 	SessionTTL time.Duration `mapstructure:"session-ttl"`
@@ -167,7 +178,7 @@ type AuthConfig struct {
 // Server projects the process-wide transport settings into the shape
 // server.Run consumes.
 func (g Global) Server() Server {
-	return Server{Listen: g.Listen, TLSCert: g.TLS.Cert, TLSKey: g.TLS.Key, TLSCA: g.TLS.CA}
+	return Server{Listen: g.Listen, TLSCert: g.TLS.Cert, TLSKey: g.TLS.Key, TLSCA: g.TLS.CA, AdminSocket: g.Admin.Socket}
 }
 
 // Validate checks everything that does not depend on which targets run;

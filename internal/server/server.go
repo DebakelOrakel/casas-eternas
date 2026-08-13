@@ -47,6 +47,17 @@ type Describer interface {
 	Describe() map[string]any
 }
 
+// AdminModule is an OPTIONAL third interface: a module with a local
+// administration surface claims its admin routes here, and they are served
+// ONLY on the unix admin socket — never on the network listener. No gate, no
+// token: reaching the socket IS the authorization, which its 0600 file mode
+// (and, on a cluster, pods/exec RBAC) enforces. Structural like the two
+// above, so this package still knows about no module in particular.
+// See docs/decisions/server-user-admin.md.
+type AdminModule interface {
+	MountAdmin(mux *http.ServeMux) error
+}
+
 // APIPrefix is the version prefix of every API route. One constant for the
 // places that COMPOSE URLs (this package and cmd/); the modules' route
 // patterns spell it out as literals on purpose — a pattern is a registered
@@ -165,7 +176,26 @@ func Run(ctx context.Context, cfg config.Server, modules []Module, gate func(htt
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	serveErr := make(chan error, 1)
+	// Buffered for BOTH servers, so neither goroutine can block on a channel
+	// nobody reads after the other has already decided the outcome.
+	serveErr := make(chan error, 2)
+
+	adminShutdown, err := serveAdmin(cfg, modules, names, serveErr)
+	if err != nil {
+		return err
+	}
+	if adminShutdown != nil {
+		// Registered after the module-close defer, so it runs BEFORE it:
+		// admin handlers drain before the stores they write to close.
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
+			defer cancel()
+			if adminErr := adminShutdown(shutdownCtx); adminErr != nil {
+				err = errors.Join(err, fmt.Errorf("admin socket: %w", adminErr))
+			}
+		}()
+	}
+
 	go func() {
 		slog.Info("listening", "addr", cfg.Listen, "tls", cfg.TLSEnabled())
 		if cfg.TLSEnabled() {

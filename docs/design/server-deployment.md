@@ -1,9 +1,9 @@
 ---
-summary: The deployment map for the server's small files — what each one is (config, secret, or state), how often it is read and written, where it lives on a plain machine versus Kubernetes versus a split-target deployment, and which modules touch it. casas.yaml is the one true ConfigMap; the session key and TLS material are Secrets; htpasswd is a Secret on its way out (decisions/server-user-admin.md); users.json/auth.db are state on volumes. Also records the finding that buildAuth is per-process today, which is why password mode plus split targets needs the auth target.
+summary: The deployment map for the server's small files — what each one is (config, secret, or state), how often it is read and written, where it lives on a plain machine versus Kubernetes versus a split-target deployment, and which modules touch it. casas.yaml is the one true ConfigMap; the session key and TLS material are Secrets; auth.db is state on the auth volume, administered over the pod-local admin socket. Also records the finding that forced the auth target: buildAuth used to run per process.
 date: 2026-08-13
 area: platform
-stage: decided
-status: the map is agreed direction (2026-08-13), derived from the code as of that date. deploy/manifests.yaml is the all-in-one predecessor and matches the "today" column; the split picture, the auth target and the admin socket are unbuilt.
+stage: built
+status: agreed, built and made true in one day (2026-08-13, decisions/server-user-admin.md): auth target, admin socket and `auth user` CLI exist, htpasswd is gone, and every row of the map behaves identically on a plain machine and on the cluster. deploy/manifests.yaml matches.
 ---
 
 # Server deployment: where the small files live
@@ -23,8 +23,7 @@ belongs to exactly one module's storage.
 |---|---|---|---|---|
 | `casas.yaml` | config | once, at start, by `cmd/` | operator only | **ConfigMap**, every Deployment |
 | session key (`global.auth.session-key`) | secret | once, at start | operator only (rotation = rollout) | **Secret**, every API-serving Deployment |
-| htpasswd (`global.auth.htpasswd`) | secret (retiring) | **per login attempt**, deliberately uncached | operator (`htpasswd -B -C 12`) | **Secret**, auth Deployment only — until [server-user-admin.md](../decisions/server-user-admin.md) lands |
-| `users.json` → `auth.db` | state | at start, then in memory | process (first login / admin ops), atomic | **PVC** (`auth.storage`), auth Deployment only, replicas 1 |
+| `auth.db` | state | per login (a read transaction) | process (admin socket), transactional | **PVC** (`auth.storage`), auth Deployment only, replicas 1 |
 | TLS cert/key/ca (`global.tls.*`) | secret | once, at start | operator only | **not used** — the Route/Ingress terminates |
 | bake-job token | credential in flight | the Job, as bearer | minted per job | no mount — travels in the Job spec |
 
@@ -48,26 +47,16 @@ bake (job tokens) mint, everyone verifies. The asymmetry that matters:
 short-lived token in the Job spec. A compromised job can spend its token,
 not mint identities. Rotation is a rollout, identically on both platforms.
 
-**htpasswd — a Secret, and the row being retired.** Its load-bearing
-property is that `auth.Users` re-reads it per attempt
-([internal/auth/htpasswd.go](../../internal/auth/htpasswd.go)): a Secret
-rotation lands without a restart, as soon as the kubelet syncs the projected
-file (periodic, up to ~a minute, atomic symlink swap — which the strict
-parser relies on and gets). Never mount it via `subPath`: subPath mounts are
-not updated by Kubernetes, and that would silently kill rotation. It is
-needed only by the process that runs login. It was also the one row whose
-*write* path differed between platforms — edit the file versus write the
-Secret through the API — which is a large part of why
-[server-user-admin.md](../decisions/server-user-admin.md) retires it in
-favour of `auth.db`.
-
-**users.json / auth.db — state, and the deliberate odd one out.** Lives
-under `auth.storage` on a volume, written by the process, one process per
-store directory (with bbolt, kernel-enforced). Never a ConfigMap, never a
-Secret — those are operator→process channels, and this file goes the other
-way. On the cluster: a PVC on the auth Deployment, replicas 1. On a plain
-machine: a directory. Identical code path on both, which is the property
-the whole user-admin decision buys.
+**auth.db — state, and the deliberate odd one out.** Lives under
+`auth.storage` on a volume, written by the process through the admin socket,
+one process per store directory (with bbolt, kernel-enforced). Never a
+ConfigMap, never a Secret — those are operator→process channels, and this
+file goes the other way. On the cluster: a PVC on the auth Deployment,
+replicas 1. On a plain machine: a directory. Identical code path on both,
+which is the property the whole user-admin decision buys. (Its predecessor —
+an htpasswd file in the Secret — was the one row whose write path differed
+between platforms, and that asymmetry is why it is gone;
+[server-user-admin.md](../decisions/server-user-admin.md).)
 
 **TLS — the platform's job on the cluster.** The Route terminates with the
 router's certificate (edge, HTTP redirect); pods speak HTTP. `global.tls.*`
@@ -78,7 +67,6 @@ exists for the plain-machine shape, where there is no router in front.
 ```
 ConfigMap  casas-config ────────► every Deployment   (env CASAS_TARGET differs)
 Secret     casas-session-key ───► world, artifacts, bake, auth
-Secret     casas-htpasswd ──────► auth only          (retires with auth.db)
 PVC        auth-storage ────────► auth only,      replicas 1  (auth.db)
 PVC        world-storage ───────► world only,     replicas 1
 PVC        artifacts-storage ───► artifacts only, replicas 1
@@ -86,22 +74,25 @@ Route / cert-manager ───────────► TLS, in front of every
 admin socket (UDS) ─────────────► pod-local, per process; reached via pods/exec
 ```
 
-`client` and `docs` serve static bytes; they need neither htpasswd nor the
-registry, and could in principle run without the key. Today they get the
-resolver anyway because `buildAuth` is per-process — harmless, noted below.
+`client` and `docs` serve static bytes; they need no credential store and
+could in principle run without the key — fine detail, not a boundary anyone
+enforces.
 
 The admin socket ([server-user-admin.md](../decisions/server-user-admin.md))
 is pod-local filesystem: nothing outside the pod reaches it, which is its
 security model. A separate setup Job therefore cannot use it; bootstrap is
 an exec, or an initContainer writing the pre-start `auth.db`.
 
-## The finding that shapes the split: buildAuth is per-process
+## The finding that shaped the split: buildAuth was per-process
 
-Today [cmd/start.go](../../cmd/start.go) builds authentication regardless of
-target: in password mode, *every* process mounts the session module, opens
-htpasswd and opens the registry. For the all-in-one Deployment that is
-correct and invisible. For a split it is not: either every pod mounts the
-credential Secret and the auth storage — violating "one process per store
+RESOLVED 2026-08-13, the same day, by server-user-admin.md step 3 — login
+and the credential store now follow the `auth` target, and every other
+process only verifies. The finding stays recorded because it is why the
+target HAD to exist. As found: [cmd/start.go](../../cmd/start.go) built
+authentication regardless of target — in password mode, *every* process
+mounted the session module and opened the credential store. For the
+all-in-one Deployment that is correct and invisible. For a split it is not:
+either every pod opens the auth storage — violating "one process per store
 directory", or worse, with per-pod PVCs each process mints *different* user
 ids for the same name — or login is pinned to one target.
 

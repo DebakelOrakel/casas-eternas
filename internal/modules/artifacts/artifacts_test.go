@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
-	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 // The store's behaviour is covered in store_test.go; these tests cover the
@@ -139,7 +139,7 @@ func doAs(mux *http.ServeMux, method, path, body, token string) *httptest.Respon
 // is the operator's, and a bake job's own token writes without any grant
 // (the bypass step 4 will narrow).
 func TestArtifactsInheritTheWorldsACL(t *testing.T) {
-	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clueless, _, err := tokens.Issue(auth.SubjectBakeJob, auth.BakeAudience("job-3"), time.Hour)
+	clueless, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience("job-3"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

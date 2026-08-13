@@ -2,8 +2,8 @@
 summary: How local users are administered once an admin surface exists. htpasswd retires — credentials and the user registry merge into one bbolt database (auth.db) owned by the auth module, administered through the module's own admin endpoints. Locally those endpoints are served over a unix socket (HTTP over UDS) where possession of the socket IS the authorization, and `casas-eternas auth user add|list|delete|passwd` is a thin CLI client over it. Bootstrap and emergency access are the same mechanism — the socket against an empty or locked-out database. No config bootstrap, no writing Secrets through the Kubernetes API.
 date: 2026-08-13
 area: platform
-stage: decided
-status: decided in discussion 2026-08-13, sequenced in six steps the same day, NOTHING BUILT. Supersedes the credential half of server-auth.md (htpasswd in the Secret, and the recorded "admin screen writes the Secret through the k8s API" consequence) and revises server-users.md (registry merges into auth.db; local users become admin-provisioned, minting-at-first-login stays for OIDC). CLI verbs approved; still awaiting approval — the `-t auth` target name, the login-route move to /v1/auth/session, and the socket key (proposal global.admin.socket).
+stage: built
+status: decided, sequenced and ALL SIX steps built 2026-08-13 (end-to-end smoke against the real binary passed). Step 6 landed as a HARD BREAK, decided the same day in a second discussion — the sequenced htpasswd transition was built and then removed before ever running in production; see the step for why. Supersedes the credential half of server-auth.md (htpasswd in the Secret, and the recorded "admin screen writes the Secret through the k8s API" consequence) and revises server-users.md (registry merges into auth.db; local users become admin-provisioned, minting-at-first-login stays for OIDC). All surface names (`-t auth`, /v1/auth/session, global.admin.socket, the CLI verbs) approved.
 ---
 
 # Local user administration: auth.db behind an admin socket
@@ -44,8 +44,9 @@ auth workload — a read per login, a write per admin operation.
 Buckets: `users` (the registry that is users.json today) and `credentials`
 (name → bcrypt hash, replacing htpasswd's lines). Creating a user mints
 identity and credential **in one transaction** — the operation the two-file
-world could not have. The bcrypt rules travel over unchanged from
-[server-auth.md](./server-auth.md): bcrypt only, cost ≥ 10, recommended 12,
+world could not have. Every hash is minted in the store at one cost (12, two
+above Go's default; server-auth.md's cost FLOOR retired with the import —
+no external hash ever enters, so there is nobody a floor would speak to),
 and the absent-user timing defence stays.
 
 The file lock is a feature, not a limitation: bbolt takes an exclusive flock
@@ -127,25 +128,28 @@ auth module's job once it owns the credentials. So local users become
 admin-provisioned. **Minting-at-first-login remains the model for OIDC**,
 where the users genuinely live elsewhere and the registry genuinely follows.
 
-## What retires, what renames
+## What retired, what renamed
 
 - The htpasswd file, `global.auth.htpasswd`, and the `htpasswd` key of the
-  `casas-eternas-auth` Secret. The **session key stays in the Secret** — it
-  is shared, operator-owned, read-once; nothing about it changes.
-- `users.json` — merges into `auth.db` (its refuse-to-open-when-corrupt rule
-  carries over; ids must never be re-minted).
-- The session module becomes the **auth module** when the auth target is cut
+  `casas-eternas-auth` Secret — all gone. The **session key stays in the
+  Secret** — it is shared, operator-owned, read-once; nothing about it
+  changed.
+- `users.json` — merged into `auth.db` (its refuse-to-open-when-corrupt rule
+  carries over; ids must never be re-minted). The founding import for a
+  users.json left by an older server REMAINS in the code: it costs no
+  operator step and protects the ids that owners and grants reference.
+- The session module became the **auth module** with the target cut
   ([access-control.md](../design/access-control.md)) — the CLI group, config
-  section and storage key already say `auth`, and the one-vocabulary rule
+  section and storage key already said `auth`, and the one-vocabulary rule
   that carries this decision would tear if the module kept a different name.
 
-## Surface proposed here (names to be approved at build time)
+## Surface
 
-- Subcommand group `auth user` with `add`, `list`, `delete`, `passwd`
-  (approved in discussion 2026-08-13).
-- The socket path key — process-level, since any resident module may
-  contribute admin handlers: proposal `global.admin.socket`, empty meaning
-  "no admin socket". Not yet approved.
+- Subcommand group `auth user` with `add`, `list`, `delete`, `passwd`, plus
+  `--password-stdin` on the two that take one.
+- The socket path key `global.admin.socket` — process-level, since any
+  resident module may contribute admin handlers; empty means "no admin
+  socket". All approved 2026-08-13.
 
 ## Sequencing (planned 2026-08-13)
 
@@ -153,7 +157,11 @@ Six steps. Each ends green on `make lint` and `go test ./...`, lands alone,
 and leaves every deployment shape working; `none` mode is untouched
 throughout. The client is untouched until the panels (frontend-surfaces) —
 this is Go and deploy work only. Surface approvals are embedded where they
-block, marked ⚠; nothing carrying one starts without it.
+block, marked ⚠; all three were approved 2026-08-13, and steps 1–5 were
+built the same day. One mechanical consequence the plan had not named: the
+module package `auth` collides with the LEAF `internal/auth`, and an import
+alias would hide the name from grep — so the leaf renamed to
+`internal/token`, which after step 6 is all it holds anyway.
 
 **1. The store.** `go.etcd.io/bbolt` becomes a dependency (always bbolt,
 never the archived `boltdb/bolt`). `internal/user.Registry` grows into the
@@ -170,13 +178,12 @@ stays in `internal/user` (it is the "who exists" leaf, now also "how they
 prove it"); if that reads wrong in code, the fallback is a fresh leaf both
 `auth` and `session` consume. ~300–400 lines plus tests.
 
-**2. Session verifies against the store; htpasswd demotes to import
-source.** `buildAuth` opens the store in password mode; `session` calls
-`registry.Verify` instead of `auth.Users`. When the DB is being FOUNDED and
-`global.auth.htpasswd` is set, its lines import as credentials — bcrypt
-hashes copy verbatim, same format — logged loudly, once. A fresh deployment
-never needs the file again; the existing one migrates on its first start.
-After this step the file is read at founding only, never per login.
+**2. Session verifies against the store.** `buildAuth` opens the store in
+password mode; the login handler answers validity and identity in one
+lookup. (As planned, this step also carried an htpasswd founding import as
+the migration path; step 6's hard break removed it again the same day —
+recorded there, since a reversal only the winner survives is the kind this
+repo writes down.)
 
 **3. The auth module and target.** ⚠ approvals: `-t auth` joining the
 target list, and the login route moving `/v1/session` → `/v1/auth/session`
@@ -204,14 +211,22 @@ dialer. Passwords are prompted or read from `--password-stdin`, never argv
 (`ps` leaks). Server errors pass through verbatim; the wrong-pod answer
 from step 4 is the UX for a mis-aimed exec. ~200 lines.
 
-**6. Retirement.** `global.auth.htpasswd` leaves the config tree — and
-because the loader decodes with `ErrorUnused`, a casas.yaml still carrying
-the key becomes a START ERROR: the deployments drop the key FIRST, then
-this lands. `internal/auth/htpasswd.go` and its tests are deleted (the
-bcrypt pieces having moved in step 1), the `casas-eternas-auth` Secret
-loses its `htpasswd` key, `deploy/manifests.yaml` drops the env line and
-its two now-false comments (the Secret's "write through the API" note and
-the mount's "read-only workaround" note). Doc statuses flip as steps land.
+**6. Retirement — BUILT, as a HARD BREAK.** As planned, this step was gated
+on a two-phase deployment dance: run the new binary once so the founding
+import moves the deployed htpasswd's credentials into auth.db, drop the
+key everywhere, only then delete (the loader's `ErrorUnused` makes a
+leftover key a start error). Decided 2026-08-13, second discussion: with
+exactly ONE deployment and no release audience, transition machinery
+served nobody — so the htpasswd import, `internal/token/htpasswd.go` with
+its tests, the `global.auth.htpasswd` key, the Secret's htpasswd half and
+the manifests' lines went in one move, and the bcrypt cost floor went with
+them (no external hash ever enters the store, so there is nobody a floor
+would speak to; everything is minted at one private cost). What the break
+costs, once, on one deployment: identities survive through the users.json
+import — ids preserved, owners and grants keep resolving — and each
+account gets its password back with `auth user passwd <name>`, which is
+exactly why SetPassword and Create are separate operations. A stranger
+arriving with an htpasswd someday re-types passwords the same way.
 
 **Out of scope, stated:** the panels-based admin UI (frontend-surfaces),
 revocation (`notBefore` — server-auth.md step 8, which now has its bucket
@@ -221,9 +236,9 @@ writes, unchanged by any of this.
 
 ## Fallout elsewhere
 
-- The deployment map moves to
+- The deployment map lives in
   [design/server-deployment.md](../design/server-deployment.md); net change
-  there: the htpasswd Secret row disappears, `auth.db` joins the auth
+  there: the htpasswd Secret row is gone, `auth.db` joined the auth
   volume, and every remaining row behaves identically on plain and cluster.
 - Revocation (server-auth.md's unbuilt step 8, the per-user `notBefore`
   stamp) gains its natural home: a value beside the credentials, one more

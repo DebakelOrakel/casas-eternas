@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 // Local is the synthetic owner every world gets while nobody authenticates.
@@ -36,7 +36,7 @@ const Anonymous = ""
 // to prevent.
 type Resolver struct {
 	mode   config.AuthMode
-	tokens *auth.Tokens
+	tokens *token.Tokens
 }
 
 // NewResolver builds the process's one resolver.
@@ -44,7 +44,7 @@ type Resolver struct {
 // `tokens` may be nil in a mode that does not check identity; in a mode that
 // does, its absence means no request can ever be attributed, which is a
 // misconfiguration the caller is expected to have already refused.
-func NewResolver(mode config.AuthMode, tokens *auth.Tokens) *Resolver {
+func NewResolver(mode config.AuthMode, tokens *token.Tokens) *Resolver {
 	return &Resolver{mode: mode, tokens: tokens}
 }
 
@@ -61,7 +61,7 @@ func (r *Resolver) ChecksIdentity() bool { return r != nil && r.mode.ChecksIdent
 // are accepted, and they are deliberately different identities:
 //
 //   - a person's session, whose subject is the user
-//   - a bake Job, whose subject is auth.SubjectBakeJob
+//   - a bake Job, whose subject is token.SubjectBakeJob
 //
 // The second was missing until the first real cluster run, and its absence was
 // written down as a FEATURE: a test asserted that a job token must not open the
@@ -106,7 +106,7 @@ func (r *Resolver) ResolveBearer(authorization string) (caller string, admin boo
 	// mints them to always write the right subject is not a guarantee, it is a
 	// habit; this makes impersonation impossible instead of unlikely.
 	if _, _, _, err := r.tokens.VerifyBakeJob(raw); err == nil {
-		return auth.SubjectBakeJob, false
+		return token.SubjectBakeJob, false
 	}
 	return Anonymous, false
 }

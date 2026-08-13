@@ -23,18 +23,8 @@ only where it is read from, not its shape.
 
 ## First run: the deployment starts in password mode
 
-`manifests.yaml` sets auth mode `password` (via CASAS_GLOBAL_AUTH_MODE), and the Secret it mounts is applied
-**empty**. The pod therefore will not start until it is filled — deliberately: a
-server told to check identity that cannot would look healthy while rejecting
-everybody, which is debugged as a permission bug rather than as the missing file
-it is. The log says which flag is short.
-
-Two values, both out of git:
-
-    # a user. bcrypt cost 10 or above — `htpasswd -B` alone writes 5, which the
-    # server refuses, so -C is not optional
-    htpasswd -B -C 12 -c ./htpasswd ada
-    htpasswd -B -C 12    ./htpasswd grace     # any further user; -c would truncate
+`manifests.yaml` sets auth mode `password` (via CASAS_GLOBAL_AUTH_MODE). One
+value belongs in the Secret, out of git:
 
     # the key session tokens are signed with. Generated once and kept: without
     # it every restart ends every session, and two replicas reject each other's
@@ -42,16 +32,23 @@ Two values, both out of git:
     openssl rand -base64 48 > ./session.key
 
     oc create secret generic casas-eternas-auth \
-      --from-file=htpasswd=./htpasswd \
       --from-literal=session.key="$(cat ./session.key)" \
       --dry-run=client -o yaml | oc apply -f -
 
-    rm ./htpasswd ./session.key      # the cluster has them now
+    rm ./session.key                 # the cluster has it now
 
-Changing a password later is the same command again; the server re-reads the
-file on every sign-in, so a rolled Secret takes effect without a restart —
-Kubernetes updates the projected file within its sync period.
+Users are STATE, not configuration: they live in auth.db on the data volume
+and are administered over the pod's admin socket — reaching it is the
+authorization, gated by `pods/exec` RBAC
+(docs/decisions/server-user-admin.md). A fresh store starts empty and warns;
+create the first user with
+
+    echo -n 'the-password' | oc exec -i deploy/casas-eternas -- casas-eternas auth user add ada --password-stdin
+    # or interactively:  oc rsh deploy/casas-eternas  →  casas-eternas auth user add ada
+
+`auth user list|passwd|delete` manage them from there. Changes take effect
+immediately — no restart, no Secret involved.
 
 To run **without** authentication (a single-user server on a trusted network),
-drop the three `CASAS_AUTH_*` variables from the Deployment. The default is
-`none`, in which one synthetic identity owns everything and no login exists.
+drop the auth variables from the Deployment. The default is `none`, in which
+one synthetic identity owns everything and no login exists.

@@ -30,9 +30,9 @@ import (
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
-	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 // defaultErosionRounds mirrors the client's AMPLIFY_EROSION_ROUNDS. A request
@@ -93,7 +93,7 @@ type Config struct {
 	// Tokens mints the credential a bake carries when it reads or writes over
 	// HTTP. Nil when the server checks nobody, in which case none is needed:
 	// it is talking to servers that let everyone in.
-	Tokens *auth.Tokens
+	Tokens *token.Tokens
 	// MaxConcurrent bakes. One by default, and that is a memory argument: two
 	// 8192² bakes want 5 GB between them. In a cluster it also interacts with
 	// the hard anti-affinity — the effective figure is min(this, nodes), and

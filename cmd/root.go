@@ -30,11 +30,11 @@ const (
 	keyTLSKey      = "global.tls.key"
 	keyTLSCA       = "global.tls.ca"
 	keyAuthMode    = "global.auth.mode"
-	keyAuthHtpass  = "global.auth.htpasswd"
 	keyAuthKey     = "global.auth.session-key"
 	keyAuthTknTTL  = "global.auth.token-ttl"
 	keyAuthSessTTL = "global.auth.session-ttl"
 	keyAuthAdmins  = "global.auth.admins"
+	keyAdminSock   = "global.admin.socket"
 	keySvcWorlds   = "global.services.worlds"
 	keySvcArts     = "global.services.artifacts"
 
@@ -51,18 +51,18 @@ const (
 
 const (
 	textConfig = `Path to the configuration file. Default: ./casas.yaml if it exists. Flags and CASAS_* variables override the file.`
-	textTarget = `The target modules to start: all, client, world, artifacts, bake, docs. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.`
+	textTarget = `The target modules to start: all, client, world, artifacts, bake, docs, auth. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.`
 
 	textListen      = `Address to listen on, as host:port. ":8080" binds every interface, "127.0.0.1:8080" keeps a local instance off the network.`
 	textTLSCert     = `Path to the server certificate. Enables HTTPS together with global.tls.key.`
 	textTLSKey      = `Path to the server private key. Enables HTTPS together with global.tls.cert.`
 	textTLSCA       = `Path to the CA that CLIENT certificates are verified against. Setting it turns on mutual TLS.`
 	textAuthMode    = `How the server establishes who is asking: none (local, one synthetic owner), password (this server holds the users), oidc (a foreign provider does). See docs/decisions/server-auth.md.`
-	textAuthHtpass  = `Path to the htpasswd file holding the users, bcrypt cost 10 or above (htpasswd -B -C 12). Required by auth mode password. Re-read on every sign-in, so changing it needs no restart.`
 	textAuthKey     = `Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.`
 	textAuthTknTTL  = `How long an issued token is valid.`
 	textAuthSessTTL = `How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then global.auth.token-ttl is the one that matters.`
 	textAuthAdmins  = `Login names whose sessions carry the admin claim. Checked at login by the process holding the user registry; a change takes effect at the member's next login.`
+	textAdminSock   = `Path of a unix socket serving this process's admin API (user administration, over plain HTTP). Whoever can reach the socket is admin — file permissions gate it, no login. Empty serves none.`
 	textSvcWorlds   = `URL of the service running the world module, when it is not co-resident. Empty expects it in this process.`
 	textSvcArts     = `URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.`
 
@@ -71,7 +71,7 @@ const (
 	textArtsPath   = `The directory of the artifact store.`
 	textArtsCap    = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
 	textClientPath = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
-	textAuthStore  = `The directory the auth subsystem's state lives in — the user registry (users.json), minted at first login.`
+	textAuthStore  = `The directory the auth subsystem's state lives in — auth.db, holding users and their credentials. A users.json left by an older server is imported once when the database is founded.`
 	textDocsPath   = `The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.`
 	textBaker      = `Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.`
 	textBakeMax    = `How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.`
@@ -123,12 +123,12 @@ func init() {
 	RootCmd.PersistentFlags().String(keyTLSCert, "", textTLSCert)
 	RootCmd.PersistentFlags().String(keyTLSKey, "", textTLSKey)
 	RootCmd.PersistentFlags().String(keyTLSCA, "", textTLSCA)
+	RootCmd.PersistentFlags().String(keyAdminSock, "", textAdminSock)
 
 	// Selection and configuration stay separate on purpose; see the vocabulary
 	// note at the top for why --target is a flag and never a file key.
 	StartCmd.Flags().StringSliceP(flagTarget, "t", []string{}, textTarget)
 	StartCmd.Flags().String(keyAuthMode, string(config.DefaultAuthMode), textAuthMode)
-	StartCmd.Flags().String(keyAuthHtpass, "", textAuthHtpass)
 	StartCmd.Flags().String(keyAuthKey, "", textAuthKey)
 	StartCmd.Flags().Duration(keyAuthTknTTL, 720*time.Hour, textAuthTknTTL)
 	StartCmd.Flags().Duration(keyAuthSessTTL, 720*time.Hour, textAuthSessTTL)
@@ -148,7 +148,8 @@ func init() {
 	bindings := map[string]*cobra.Command{
 		flagConfig: RootCmd,
 		keyListen:  RootCmd, keyTLSCert: RootCmd, keyTLSKey: RootCmd, keyTLSCA: RootCmd,
-		flagTarget: StartCmd, keyAuthMode: StartCmd, keyAuthHtpass: StartCmd, keyAuthKey: StartCmd,
+		keyAdminSock: RootCmd,
+		flagTarget:   StartCmd, keyAuthMode: StartCmd, keyAuthKey: StartCmd,
 		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd, keyAuthAdmins: StartCmd,
 		keySvcWorlds: StartCmd, keySvcArts: StartCmd, keyAuthStore: StartCmd,
 		keyWorldPath: StartCmd, keyKeepRevs: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,

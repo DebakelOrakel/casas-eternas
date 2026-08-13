@@ -70,25 +70,19 @@ spec:
       # looks — artifacts are droppable, so a size cap is the eventual answer.
       storage: 20Gi
 ---
-# What authentication needs that must not be in git: the users and the key their
-# session tokens are signed with. Applied EMPTY on purpose — the resource exists
-# so the Deployment can mount it and nobody has to remember its name, and the
-# values are put in afterwards (see deploy/README.md).
+# What authentication needs that must not be in git: the key session tokens
+# are signed with. Applied EMPTY on purpose — the resource exists so the
+# Deployment can mount it and nobody has to remember its name, and the value
+# is put in afterwards (see deploy/README.md).
 #
 #   oc create secret generic casas-eternas-auth \
-#     --from-file=htpasswd=./htpasswd \
 #     --from-literal=session.key="$(openssl rand -base64 48)" \
 #     --dry-run=client -o yaml | oc apply -f -
 #
 # Without session.key a restart ends every session, and two replicas reject each
-# other's tokens. Without htpasswd the pod does not start at all, which is the
-# intended failure for a server told to check identity that cannot.
-#
-# Note what this costs, decided 2026-08-09: a Secret mount is READ-ONLY, so the
-# planned user administration cannot add a user by writing this file. It would
-# have to write the Secret through the Kubernetes API instead — a few lines of
-# RBAC on the ServiceAccount that already exists.
-# (docs/decisions/server-auth.md, "Where the file lives")
+# other's tokens. The USERS are not in here: they are state in auth.db on the
+# data volume, administered over the pod's admin socket — `oc exec` +
+# `casas-eternas auth user …` (docs/decisions/server-user-admin.md).
 apiVersion: v1
 kind: Secret
 metadata:
@@ -135,21 +129,20 @@ spec:
             - name: CASAS_BAKE_IMAGE
               value: ghcr.io/debakelorakel/casas-eternas:latest
             # Authentication. Environment rather than args because CMD already
-            # carries the flag list and repeating it here to append three would
+            # carries the flag list and repeating it here to append a few would
             # be two places to keep in step; every config key is reachable as
             # CASAS_<KEY> with dots and dashes as underscores (see cmd/root.go's
             # initConfig).
-            #
-            # THE POD WILL NOT START until both files below exist. That is the
-            # intended failure: a server told to check identity that cannot is
-            # worse than one that refuses to run, because it looks healthy while
-            # rejecting everybody. See deploy/README.md for the bootstrap.
             - name: CASAS_GLOBAL_AUTH_MODE
               value: password
-            - name: CASAS_GLOBAL_AUTH_HTPASSWD
-              value: /etc/casas-eternas/auth/htpasswd
             - name: CASAS_GLOBAL_AUTH_SESSION_KEY
               value: /etc/casas-eternas/auth/session.key
+            # The local admin channel: user administration over `oc exec` +
+            # `casas-eternas auth user …`. A unix socket, so reaching it IS
+            # the authorization — gated by pods/exec RBAC, not by a
+            # credential. /tmp is the pod's emptyDir below.
+            - name: CASAS_GLOBAL_ADMIN_SOCKET
+              value: /tmp/admin.sock
           ports:
             - name: http
               containerPort: 8080
@@ -203,8 +196,6 @@ spec:
             # of the same budget the bake is already straining.
             - name: tmp
               mountPath: /tmp
-            # Read-only, which is what the user administration will have to work
-            # around later — see the Secret's own note.
             - name: auth
               mountPath: /etc/casas-eternas/auth
               readOnly: true

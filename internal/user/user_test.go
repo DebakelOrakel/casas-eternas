@@ -1,6 +1,7 @@
 package user
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,13 +10,20 @@ import (
 
 var uuidShape = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-// The property everything downstream leans on: one name, one id, forever.
-func TestEnsureMintsOnceAndSurvivesReopening(t *testing.T) {
-	dir := t.TempDir()
+func open(t *testing.T, dir string) *Registry {
+	t.Helper()
 	r, err := NewRegistry(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { r.Close() })
+	return r
+}
+
+// The property everything downstream leans on: one name, one id, forever.
+func TestEnsureMintsOnceAndSurvivesReopening(t *testing.T) {
+	dir := t.TempDir()
+	r := open(t, dir)
 
 	ada, err := r.Ensure("ada")
 	if err != nil {
@@ -37,10 +45,10 @@ func TestEnsureMintsOnceAndSurvivesReopening(t *testing.T) {
 
 	// A restart must read the same ids back — a re-minted id would orphan
 	// every owner and grant recorded under the old one.
-	reopened, err := NewRegistry(dir)
-	if err != nil {
+	if err := r.Close(); err != nil {
 		t.Fatal(err)
 	}
+	reopened := open(t, dir)
 	if got, ok := reopened.ByName("ada"); !ok || got.ID != ada.ID {
 		t.Errorf("reopened registry answered %+v for ada, want id %s", got, ada.ID)
 	}
@@ -49,23 +57,29 @@ func TestEnsureMintsOnceAndSurvivesReopening(t *testing.T) {
 	}
 }
 
-// A corrupt registry must refuse, not silently start fresh: starting fresh
-// re-mints every user under new ids.
-func TestUnreadableRegistryRefusesToOpen(t *testing.T) {
+// A corrupt store must refuse, not silently start fresh: starting fresh
+// re-mints every user under new ids. Both corruptions — the users.json a
+// founding would import, and the database itself — refuse the same way.
+func TestCorruptStoresRefuseToOpen(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "users.json"), []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := NewRegistry(dir); err == nil {
-		t.Fatal("a corrupt users.json opened without complaint")
+		t.Fatal("a corrupt users.json founded a registry without complaint")
+	}
+
+	dir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "auth.db"), []byte("not a bolt database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRegistry(dir); err == nil {
+		t.Fatal("a corrupt auth.db opened without complaint")
 	}
 }
 
 func TestLookupsAnswerAbsence(t *testing.T) {
-	r, err := NewRegistry(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := open(t, t.TempDir())
 	if _, ok := r.ByName("nobody"); ok {
 		t.Error("ByName invented a user")
 	}
@@ -74,5 +88,75 @@ func TestLookupsAnswerAbsence(t *testing.T) {
 	}
 	if _, err := r.Ensure(""); err == nil {
 		t.Error("an empty name was registered")
+	}
+}
+
+// Founding a fresh database imports the pre-bbolt users.json with its ids
+// preserved verbatim, and sets the file aside so the import cannot run twice.
+func TestFoundingImportsUsersJSON(t *testing.T) {
+	dir := t.TempDir()
+	legacy := file{Users: []User{
+		{ID: "11111111-2222-4333-8444-555555555555", Name: "ada"},
+		{ID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", Name: "grace"},
+	}}
+	raw, _ := json.Marshal(legacy)
+	if err := os.WriteFile(filepath.Join(dir, "users.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := open(t, dir)
+	if got, ok := r.ByName("ada"); !ok || got.ID != legacy.Users[0].ID {
+		t.Errorf("ada = %+v, want the imported id %s", got, legacy.Users[0].ID)
+	}
+	if got, ok := r.ByID(legacy.Users[1].ID); !ok || got.Name != "grace" {
+		t.Errorf("ByID(imported) = %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "users.json")); !os.IsNotExist(err) {
+		t.Error("users.json still in place after the import")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "users.json.imported")); err != nil {
+		t.Errorf("users.json.imported: %v", err)
+	}
+
+	// A users.json appearing AFTER founding is stale data, not an instruction:
+	// the database exists, so nothing may import it.
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	late, _ := json.Marshal(file{Users: []User{{ID: "99999999-0000-4000-8000-000000000000", Name: "mallory"}}})
+	if err := os.WriteFile(filepath.Join(dir, "users.json"), late, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reopened := open(t, dir)
+	if _, ok := reopened.ByName("mallory"); ok {
+		t.Error("a users.json beside an existing database was imported")
+	}
+}
+
+// A users.json with a duplicate name must refuse the WHOLE founding — picking
+// either entry silently would attach the wrong credential later.
+func TestFoundingRefusesDuplicateNames(t *testing.T) {
+	dir := t.TempDir()
+	dup := file{Users: []User{
+		{ID: "11111111-2222-4333-8444-555555555555", Name: "ada"},
+		{ID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", Name: "ada"},
+	}}
+	raw, _ := json.Marshal(dup)
+	if err := os.WriteFile(filepath.Join(dir, "users.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRegistry(dir); err == nil {
+		t.Fatal("a duplicate name founded a registry without complaint")
+	}
+}
+
+// The file lock IS the one-process rule: a second open must fail loudly
+// rather than hang or silently share.
+func TestSecondProcessIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	_ = open(t, dir)
+	if second, err := NewRegistry(dir); err == nil {
+		second.Close()
+		t.Fatal("a second registry opened the same directory")
 	}
 }

@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
-	"github.com/DebakelOrakel/casas-eternas/internal/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 // The store's behaviour is covered in store_test.go; these tests cover the
@@ -159,7 +159,7 @@ func TestGetServesTheZipWithItsRevisionAsETag(t *testing.T) {
 // the matrix. This is the behaviour step 3 changes for users, so it is
 // asserted at the HTTP layer, not the store.
 func TestPrivateWorldsAreInvisibleAndGrantsOpenThem(t *testing.T) {
-	tokens, err := auth.NewTokens([]byte("a signing key long enough to be accepted"))
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatal(err)
 	}
