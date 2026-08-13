@@ -95,9 +95,10 @@ type Config struct {
 	// it is talking to servers that let everyone in.
 	Tokens *token.Tokens
 	// MaxConcurrent bakes. One by default, and that is a memory argument: two
-	// 8192² bakes want 5 GB between them. In a cluster it also interacts with
-	// the hard anti-affinity — the effective figure is min(this, nodes), and
-	// setting it higher only produces Pending jobs.
+	// 8192² bakes want 5 GB between them. In a cluster the ceiling is the
+	// nodes' free memory instead — each Job reserves its honest 3Gi, and
+	// setting this above what the cluster can hold only produces Pending
+	// jobs, which the runner reports as exactly that.
 	MaxConcurrent int
 }
 

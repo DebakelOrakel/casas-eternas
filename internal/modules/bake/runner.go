@@ -34,9 +34,9 @@ type Runner interface {
 // actually do the work, rather than the ids the caller used.
 //
 // It carries BOTH shapes because the same bake runs in two places. A local
-// subprocess sits next to the files and gets paths. A Kubernetes Job runs on
-// some other node — anti-affinity puts it there deliberately — and cannot
-// mount the server's ReadWriteOnce volume, so it gets URLs and a token instead.
+// subprocess sits next to the files and gets paths. A Kubernetes Job may land
+// on any node — usually not the server's — and cannot count on mounting the
+// server's ReadWriteOnce volume, so it gets URLs and a token instead.
 //
 // This struct IS the wire format: it is marshalled straight into the baker's
 // argv, so these field names are a contract with client/scripts/bake.ts.

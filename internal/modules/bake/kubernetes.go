@@ -21,7 +21,9 @@ import (
 // the job registry above are untouched by this file. What changes is only
 // WHERE the work happens — and, because the baker already reads and writes
 // over HTTP, the Job needs no volume and can be scheduled anywhere. That is
-// what makes the hard anti-affinity in the template workable at all.
+// what lets the template leave placement to the scheduler entirely: an
+// honest memory request decides how many bakes fit a node, a topology
+// spread only keeps the load even.
 
 // The Job manifest, kept as an editable file rather than built in Go: what a
 // reader sees in internal/modules/bake/bake-job.yaml is exactly what the cluster is
@@ -47,9 +49,10 @@ const (
 	// deletes them on the spot.
 	jobTTLSeconds = 21600
 	// How many FAILED jobs are retained for inspection; older ones are
-	// pruned when a new failure joins. Small on purpose: a terminated pod
-	// still matches the hard anti-affinity, so every retained failure
-	// blocks its node for new bakes until it is pruned or the TTL reaps it.
+	// pruned when a new failure joins. Terminated pods release their
+	// resource requests, so retained failures cost no scheduling capacity —
+	// they only clutter the namespace and slightly skew the spread
+	// preference, which is why the bound stays small anyway.
 	keepFailedJobs = 3
 	// How long a Job may fail to start a pod before it is given up on.
 	//
@@ -59,9 +62,9 @@ const (
 	// without this would poll it until the process died, holding a worker slot
 	// the whole time.
 	//
-	// Generous, because Pending is a legitimate state here: hard anti-affinity
-	// means a Job beyond the node count waits for one to free up, and that is
-	// the design working rather than failing.
+	// Generous, because Pending is a legitimate state here: the honest 3Gi
+	// memory request means a Job beyond the cluster's free capacity waits
+	// for a slot, and that is the design working rather than failing.
 	schedulingDeadline = 10 * time.Minute
 )
 
@@ -70,8 +73,9 @@ type kubernetesRunner struct {
 	template *template.Template
 	image    string
 	// Memory the Job asks for and is capped at. The measured 8192² peak is
-	// ~2.6 GB, so the request has to be honest or the scheduler will put two
-	// bakes on one node despite the anti-affinity being satisfied.
+	// ~2.6 GB, and the request being honest is what makes co-located bakes
+	// safe at all: it is the only per-node limit there is (2026-08-13 — the
+	// hard anti-affinity it used to back up is gone).
 	memoryRequest string
 	memoryLimit   string
 }
@@ -149,9 +153,9 @@ func (r *kubernetesRunner) Run(ctx context.Context, spec Spec, onProgress func(P
 	// Cleaned up on every path EXCEPT a failed pod (decided 2026-08-13): its
 	// log is the only place the failure's reason lives, and deleting the Job
 	// deletes the evidence — which is how a BackoffLimitExceeded once cost a
-	// morning of guessing. Everything else goes immediately: a finished or
-	// half-run bake pod holds 2.6 GB and blocks its node against the
-	// anti-affinity rule for as long as it exists.
+	// morning of guessing. Everything else goes immediately: an abandoned
+	// but still-running pod holds its 3Gi reservation, and finished ones
+	// are clutter with no story to tell.
 	keep := false
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
@@ -226,8 +230,8 @@ func (r *kubernetesRunner) render(name, jobID, args string) ([]byte, error) {
 // is its pod's log, and streaming that back would be a second connection and a
 // second failure mode for a number nobody acts on. What IS reported is the
 // distinction that matters — a Job waiting for a node looks nothing like one
-// that is working, and calling both "running" would be a lie the anti-affinity
-// rule makes routine.
+// that is working, and calling both "running" would be a lie a busy cluster
+// makes routine.
 func (r *kubernetesRunner) await(ctx context.Context, name string, stage int, onProgress func(Progress)) (result Result, podFailed bool, err error) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -294,8 +298,8 @@ func (r *kubernetesRunner) await(ctx context.Context, name string, stage int, on
 			// nothing useful in any of them, and the operator would otherwise
 			// be looking at a stuck object with no hint where to start. Not a
 			// pod failure: there is no pod and therefore no log to keep.
-			return Result{}, false, fmt.Errorf("bake job %s started no pod within %s: no node may satisfy the "+
-				"anti-affinity, admission (SCC, quota) refused the pod, or its image cannot be pulled — "+
+			return Result{}, false, fmt.Errorf("bake job %s started no pod within %s: no node has the requested "+
+				"memory free, admission (SCC, quota) refused the pod, or its image cannot be pulled — "+
 				"`kubectl describe job %s` says which", name, schedulingDeadline, name)
 		}
 		if phase != reported {

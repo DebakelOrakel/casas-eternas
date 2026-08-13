@@ -92,25 +92,30 @@ func TestTemplateRendersAValidJob(t *testing.T) {
 }
 
 // The rules that exist for a measured reason. If any of these silently
-// disappeared from the template, bakes would still run — and two would land on
-// one node, or a finished Job would linger holding a reservation.
+// disappeared from the template, bakes would still run — and overcommit a
+// node, or a finished Job would linger holding a reservation.
 func TestTemplateKeepsTheRulesThatMatter(t *testing.T) {
 	manifest := renderTemplate(t, testValues())
 	spec := dig(t, manifest, "spec").(map[string]any)
 	podSpec := dig(t, manifest, "spec", "template", "spec").(map[string]any)
 
-	// Hard, not preferred: two 2.6 GB bakes must never share a node, and
-	// "preferred" would let them under exactly the pressure that makes it hurt.
-	affinity := dig(t, manifest, "spec", "template", "spec", "affinity", "podAntiAffinity").(map[string]any)
-	if _, ok := affinity["requiredDuringSchedulingIgnoredDuringExecution"]; !ok {
-		t.Error("anti-affinity is not required — two bakes could share a node")
+	// A PREFERENCE, deliberately (2026-08-13, replacing a hard one-per-node
+	// anti-affinity): spreading must never block a node that genuinely has
+	// room — the honest memory request below is the law, this only keeps
+	// the load even. ScheduleAnyway is the whole point; DoNotSchedule would
+	// be the old hard rule wearing new syntax.
+	if _, ok := podSpec["affinity"]; ok {
+		t.Error("the template grew an affinity back — capacity belongs to the requests, spreading to the constraint below")
 	}
-	if _, ok := affinity["preferredDuringSchedulingIgnoredDuringExecution"]; ok {
-		t.Error("anti-affinity is merely preferred")
+	constraint := dig(t, manifest, "spec", "template", "spec").(map[string]any)["topologySpreadConstraints"].([]any)[0].(map[string]any)
+	if constraint["topologyKey"] != "kubernetes.io/hostname" {
+		t.Errorf("topologyKey = %v, want per-node", constraint["topologyKey"])
 	}
-	rule := affinity["requiredDuringSchedulingIgnoredDuringExecution"].([]any)[0].(map[string]any)
-	if rule["topologyKey"] != "kubernetes.io/hostname" {
-		t.Errorf("topologyKey = %v, want per-node", rule["topologyKey"])
+	if constraint["whenUnsatisfiable"] != "ScheduleAnyway" {
+		t.Errorf("whenUnsatisfiable = %v — anything harder re-blocks nodes that have room", constraint["whenUnsatisfiable"])
+	}
+	if constraint["maxSkew"] != float64(1) {
+		t.Errorf("maxSkew = %v, want 1 (empty nodes first)", constraint["maxSkew"])
 	}
 
 	// Retries belong to the server, not the cluster: a bake that failed for a
@@ -141,7 +146,7 @@ func TestTemplateKeepsTheRulesThatMatter(t *testing.T) {
 	resources := container["resources"].(map[string]any)
 	requests := resources["requests"].(map[string]any)
 	if requests["memory"] != "3Gi" {
-		t.Errorf("memory request = %v; it must be honest or the scheduler co-locates bakes", requests["memory"])
+		t.Errorf("memory request = %v; it is the ONLY per-node limit — dishonest means overcommitted nodes", requests["memory"])
 	}
 	// Memory is capped, CPU deliberately is not — CFS throttling is exactly
 	// wrong for a six-minute burst.
@@ -154,7 +159,7 @@ func TestTemplateKeepsTheRulesThatMatter(t *testing.T) {
 	}
 
 	// The Job mounts no persistent volume: that is what lets it be scheduled
-	// on any node, which is what makes the anti-affinity above workable.
+	// on any node, which is what leaves placement to the scheduler at all.
 	for _, volume := range podSpec["volumes"].([]any) {
 		if _, ok := volume.(map[string]any)["persistentVolumeClaim"]; ok {
 			t.Error("the bake Job claims a PVC; it cannot then be scheduled freely")

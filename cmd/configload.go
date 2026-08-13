@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"reflect"
+	"strconv"
+	"strings"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/go-viper/mapstructure/v2"
@@ -50,7 +53,19 @@ func loadConfig() (config.Config, error) {
 	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 		Result:      &cfg,
 		ErrorUnused: true,
-		DecodeHook:  mapstructure.StringToTimeDurationHookFunc(),
+		DecodeHook: mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToTimeDurationHookFunc(),
+			// Environment values arrive as STRINGS whatever the key's type —
+			// CASAS_BAKE_MAX_CONCURRENT=3 must land in an int field. Exact
+			// parsing only, so "abc" stays a loud start error rather than a
+			// weakly-typed guess.
+			func(from reflect.Kind, to reflect.Kind, value any) (any, error) {
+				if from != reflect.String || to != reflect.Int {
+					return value, nil
+				}
+				return strconv.Atoi(strings.TrimSpace(value.(string)))
+			},
+		),
 	})
 	if err != nil {
 		return config.Config{}, err

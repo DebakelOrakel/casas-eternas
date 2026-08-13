@@ -201,10 +201,10 @@ type jobState struct {
 	Succeeded int
 	Failed    int
 	Active    int
-	// Whether any pod has actually been scheduled. With hard anti-affinity a
-	// Job beyond the node count sits unschedulable, and reporting that as
-	// "running" would leave someone watching a progress readout that cannot
-	// move (docs/decisions/distributed-bake.md).
+	// Whether any pod has actually been scheduled. With honest memory
+	// requests a Job beyond the cluster's free capacity sits unschedulable,
+	// and reporting that as "running" would leave someone watching a
+	// progress readout that cannot move (docs/decisions/distributed-bake.md).
 	Started bool
 	Message string
 }
@@ -257,7 +257,7 @@ type jobSummary struct {
 
 // listJobs answers this namespace's bake Jobs, selected by the component
 // label the template stamps on every one (bake-job.yaml) — the same handle
-// its anti-affinity keys off.
+// its topology spread keys off.
 func (c *clusterAPI) listJobs(ctx context.Context) ([]jobSummary, error) {
 	raw, status, err := c.do(ctx, http.MethodGet, c.jobsPath()+"?labelSelector="+url.QueryEscape("casas-eternas/component=bake"), nil)
 	if err != nil {
@@ -292,8 +292,8 @@ func (c *clusterAPI) listJobs(ctx context.Context) ([]jobSummary, error) {
 }
 
 // deleteJob removes a Job and its pods. Foreground propagation so the pods go
-// too — an orphaned bake pod would keep its 2.6 GB reservation and keep the
-// anti-affinity rule occupied against a node.
+// too — an orphaned bake pod still running would keep its 3Gi reservation
+// for as long as it lives.
 func (c *clusterAPI) deleteJob(ctx context.Context, name string) error {
 	body, _ := json.Marshal(map[string]any{
 		"apiVersion":        "meta/v1",

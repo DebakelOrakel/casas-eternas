@@ -24,9 +24,8 @@ metadata:
     app: casas-eternas
 ---
 # Namespaced, never cluster-wide: the server creates Jobs beside itself and has
-# no business anywhere else. `delete` is here because a finished bake pod keeps
-# its 3 GB reservation — and keeps a node occupied against the anti-affinity
-# rule — until it is removed; the TTL alone would leave it there for minutes.
+# no business anywhere else. `delete` is what removes finished Jobs on the
+# spot and prunes retained failed ones; `list` is the retention sweep's view.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -116,10 +115,10 @@ spec:
           image: ghcr.io/debakelorakel/casas-eternas:latest
           imagePullPolicy: Always
           env:
-            # A bake Job runs on ANOTHER node — the anti-affinity puts it there
-            # — so it cannot mount this pod's ReadWriteOnce volume and reaches
-            # the server over HTTP instead. The pod's own IP is the address it
-            # comes back to, and it needs no Service to exist first.
+            # A bake Job may land on ANY node — usually not this one — so it
+            # cannot count on mounting this pod's ReadWriteOnce volume and
+            # reaches the server over HTTP instead. The pod's own IP is the
+            # address it comes back to, and it needs no Service to exist first.
             - name: CASAS_POD_IP
               valueFrom:
                 fieldRef:
@@ -130,6 +129,11 @@ spec:
             # ever look for — a failure that looks exactly like success.
             - name: CASAS_BAKE_IMAGE
               value: ghcr.io/debakelorakel/casas-eternas:latest
+            # Three bakes in flight; each Job reserves its honest 3Gi, so the
+            # ceiling in practice is the nodes' free memory — beyond it the
+            # extra Jobs sit Pending, which the server reports as exactly that.
+            - name: CASAS_BAKE_MAX_CONCURRENT
+              value: "3"
             # Authentication. Environment rather than args because CMD already
             # carries the flag list and repeating it here to append a few would
             # be two places to keep in step; every config key is reachable as
