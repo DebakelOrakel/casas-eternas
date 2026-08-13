@@ -3,7 +3,7 @@ summary: Who a user IS, as opposed to how they log in. A registry (users.json un
 date: 2026-08-12
 area: platform
 stage: built
-status: decided and BUILT 2026-08-12 — registry, session hook, admin claim, identity.Admin, deploy wiring. Steps 2–5 of docs/design/access-control.md build on it. 2026-08-13 — revised by server-user-admin.md: users.json merges into auth.db (bbolt) and LOCAL users become admin-provisioned there, knowingly reversing this doc's pre-provisioning rejection (its two reasons dissolve when identity and credential share one database). Minting-at-first-login stays the model for OIDC. Ids, the id-in-token rule and the admin claim stand unchanged.
+status: decided and BUILT 2026-08-12 — registry, session hook, admin claim, identity.Admin, deploy wiring. Steps 2–5 of docs/design/access-control.md build on it. 2026-08-13 — revised by server-user-admin.md: users.json merges into auth.db (bbolt) and LOCAL users become admin-provisioned there, knowingly reversing this doc's pre-provisioning rejection (its two reasons dissolve when identity and credential share one database). Minting-at-first-login stays the model for OIDC. Ids and the id-in-token rule stand unchanged; the admin claim's mechanics too — but its SOURCE moved the same day: global.auth.admins is gone, the role is a field on the user record, bound via `auth role bind` (the "policy an operator writes" reasoning below inverted once the admin socket became the operator's write channel — see server-user-admin.md's addendum).
 ---
 
 # Server users: identity vs credential

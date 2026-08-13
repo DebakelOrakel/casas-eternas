@@ -76,6 +76,35 @@ var authUserDeleteCmd = &cobra.Command{
 	RunE:              runAuthUserDelete,
 }
 
+// The role RESOURCE, beside the user resource: `user` is who exists and how
+// they prove it, `role` is what their sessions may claim. One global role
+// per user — a field, not a set — so bind REPLACES, and binding `user` is
+// the way back to the default. Per-world rights are grants on the world,
+// deliberately not roles here (docs/design/access-control.md). The route
+// behind bind stays under /v1/auth/users/{name}/role: the CLI groups by
+// task, the API by record, and the record is the user's.
+var authRoleCmd = &cobra.Command{
+	Use:   "role",
+	Short: "Manages global roles — what a user's sessions may claim.",
+}
+
+var authRoleBindCmd = &cobra.Command{
+	Use:   "bind <name> <user|admin>",
+	Short: "Binds a user's global role; admin sessions carry the adm claim from their next login on.",
+	Example: `  casas-eternas auth role bind ada admin
+  casas-eternas auth role bind ada user     # back to the default`,
+	Args:              cobra.ExactArgs(2),
+	ValidArgsFunction: completeRoleArgs,
+	RunE:              runAuthRoleBind,
+}
+
+var authRoleListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "Lists every binding that deviates from the default role.",
+	Args:  cobra.NoArgs,
+	RunE:  runAuthRoleList,
+}
+
 var authUserPasswdCmd = &cobra.Command{
 	Use:   "passwd <name>",
 	Short: "Sets a user's password.",
@@ -84,6 +113,55 @@ var authUserPasswdCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeUserNames,
 	RunE:              runAuthUserPasswd,
+}
+
+func runAuthRoleBind(cmd *cobra.Command, args []string) error {
+	if err := adminRequest(http.MethodPut, auth.UsersPath+"/"+args[0]+"/role",
+		map[string]string{"role": args[1]}, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "role %s bound to %s (takes effect at their next login)\n", args[1], args[0])
+	return nil
+}
+
+// runAuthRoleList projects the user listing onto its bindings — no second
+// endpoint, because the store is the one truth and this is presentation.
+func runAuthRoleList(cmd *cobra.Command, args []string) error {
+	var listing struct {
+		Users []user.Listing `json:"users"`
+	}
+	if err := adminRequest(http.MethodGet, auth.UsersPath, nil, &listing); err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 8, 2, ' ', 0)
+	bound := 0
+	for _, u := range listing.Users {
+		if u.Role == "" {
+			continue
+		}
+		if bound == 0 {
+			fmt.Fprintln(w, "NAME\tROLE")
+		}
+		bound++
+		fmt.Fprintf(w, "%s\t%s\n", u.Name, u.Role)
+	}
+	if bound == 0 {
+		fmt.Fprintf(w, "no bindings — every user has the default role (%s)\n", user.RoleUser)
+	}
+	return w.Flush()
+}
+
+// completeRoleArgs offers user names for the first argument and the role
+// vocabulary for the second.
+func completeRoleArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	switch len(args) {
+	case 0:
+		return completeUserNames(cmd, args, toComplete)
+	case 1:
+		return []string{user.RoleUser, user.RoleAdmin}, cobra.ShellCompDirectiveNoFileComp
+	default:
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
 }
 
 // completeUserNames asks the running server, so tab completion offers the
@@ -111,7 +189,8 @@ func init() {
 	authUserAddCmd.Flags().Bool(flagPasswordStdin, false, textPasswordStdin)
 	authUserPasswdCmd.Flags().Bool(flagPasswordStdin, false, textPasswordStdin)
 	authUserCmd.AddCommand(authUserAddCmd, authUserListCmd, authUserDeleteCmd, authUserPasswdCmd)
-	authCmd.AddCommand(authUserCmd)
+	authRoleCmd.AddCommand(authRoleBindCmd, authRoleListCmd)
+	authCmd.AddCommand(authUserCmd, authRoleCmd)
 	RootCmd.AddCommand(authCmd)
 }
 
@@ -137,7 +216,7 @@ func runAuthUserList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tID\tCREATED\tLOGIN")
+	fmt.Fprintln(w, "NAME\tID\tROLE\tCREATED\tLOGIN")
 	for _, u := range listing.Users {
 		created := "-"
 		if !u.CreatedAt.IsZero() {
@@ -149,7 +228,11 @@ func runAuthUserList(cmd *cobra.Command, args []string) error {
 			// before passwords moved into the store, or OIDC-only one day.
 			login = "no password"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", u.Name, u.ID, created, login)
+		role := u.Role
+		if role == "" {
+			role = user.RoleUser
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", u.Name, u.ID, role, created, login)
 	}
 	return w.Flush()
 }

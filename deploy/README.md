@@ -44,6 +44,7 @@ authorization, gated by `pods/exec` RBAC
 create the first user with
 
     echo -n 'the-password' | oc exec -i deploy/casas-eternas -- /app/casas-eternas auth user add ada --password-stdin
+    oc exec deploy/casas-eternas -- /app/casas-eternas auth role bind ada admin
     # or interactively:  oc rsh deploy/casas-eternas  →  ./casas-eternas auth user add ada
 
 No flags: the exec session inherits the pod's environment, so

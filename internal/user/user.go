@@ -41,10 +41,28 @@ type User struct {
 	// key a credential is looked up under, never an identity.
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
+	// Role is the GLOBAL role — what the login mints into the token's adm
+	// claim. Empty is the default (a plain user), so every record written
+	// before roles existed means what it always did. Attached to the
+	// identity rather than the name or the credential: a rename keeps the
+	// role, and a future OIDC login coupled to this entry inherits it.
+	// Per-world rights are grants on the world, deliberately NOT a role
+	// here — see docs/design/access-control.md.
+	Role string `json:"role,omitempty"`
 	// OIDCSubject joins a foreign provider's `sub` to this entry, once OIDC
 	// exists. Reserved now so the record format does not change under it.
 	OIDCSubject string `json:"oidcSubject,omitempty"`
 }
+
+// The role vocabulary. RoleUser is the accepted SPELLING of the default —
+// stored as the empty string, so setting it back is not a format change.
+const (
+	RoleUser  = "user"
+	RoleAdmin = "admin"
+)
+
+// Admin reports whether this entry's sessions carry the admin claim.
+func (u User) Admin() bool { return u.Role == RoleAdmin }
 
 // file is the users.json layout this registry kept before bbolt — read once
 // at founding, never written again.
@@ -203,6 +221,30 @@ func (r *Registry) Ensure(name string) (User, error) {
 		return err
 	})
 	return entry, err
+}
+
+// SetRole assigns the global role — RoleAdmin carries the adm claim from
+// the member's NEXT login on (the decision travels in the token, so the
+// staleness is the token TTL, exactly as it was when the list lived in the
+// config). RoleUser clears it.
+func (r *Registry) SetRole(name, role string) error {
+	var stored string
+	switch role {
+	case RoleUser:
+		stored = ""
+	case RoleAdmin:
+		stored = RoleAdmin
+	default:
+		return fmt.Errorf("%w: unknown role %q (valid: %s, %s)", ErrInvalid, role, RoleUser, RoleAdmin)
+	}
+	return r.db.Update(func(tx *bolt.Tx) error {
+		u, ok := findByName(tx, name)
+		if !ok {
+			return fmt.Errorf("user %q: %w", name, ErrUnknown)
+		}
+		u.Role = stored
+		return putUser(tx, u)
+	})
 }
 
 // ByID answers the entry a stable id names — how a display layer turns an

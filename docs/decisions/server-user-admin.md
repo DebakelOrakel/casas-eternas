@@ -3,7 +3,7 @@ summary: How local users are administered once an admin surface exists. htpasswd
 date: 2026-08-13
 area: platform
 stage: built
-status: decided, sequenced and ALL SIX steps built 2026-08-13 (end-to-end smoke against the real binary passed). Step 6 landed as a HARD BREAK, decided the same day in a second discussion — the sequenced htpasswd transition was built and then removed before ever running in production; see the step for why. Supersedes the credential half of server-auth.md (htpasswd in the Secret, and the recorded "admin screen writes the Secret through the k8s API" consequence) and revises server-users.md (registry merges into auth.db; local users become admin-provisioned, minting-at-first-login stays for OIDC). All surface names (`-t auth`, /v1/auth/session, global.admin.socket, the CLI verbs) approved.
+status: decided, sequenced and ALL SIX steps built 2026-08-13 (end-to-end smoke against the real binary passed). Step 6 landed as a HARD BREAK, decided the same day in a second discussion — the sequenced htpasswd transition was built and then removed before ever running in production; see the step for why. Same-day addendum BUILT: the admin role moved into auth.db as well (`auth role bind|list`, global.auth.admins removed) — see the addendum section. Supersedes the credential half of server-auth.md (htpasswd in the Secret, and the recorded "admin screen writes the Secret through the k8s API" consequence) and revises server-users.md (registry merges into auth.db; local users become admin-provisioned, minting-at-first-login stays for OIDC). All surface names (`-t auth`, /v1/auth/session, global.admin.socket, the CLI verbs) approved.
 ---
 
 # Local user administration: auth.db behind an admin socket
@@ -233,6 +233,45 @@ revocation (`notBefore` — server-auth.md step 8, which now has its bucket
 waiting), OIDC, and any grants/ACL work (access-control step 5 is a
 separate track). `global.auth.admins` stays config — policy an operator
 writes, unchanged by any of this.
+
+## Addendum (2026-08-13): the admin role moves in too
+
+`global.auth.admins` — the last user-shaped thing living in the config — is
+gone; the global role is a FIELD on the user record in auth.db, bound over
+the admin surface. This knowingly reverses server-users.md's reasoning
+("policy an operator writes, not state a process keeps"), and the ground
+shifted underneath it the moment the socket landed: back then the config
+was the only place an operator *could* write — now the admin channel is
+exactly that place, with the same authorization (possession). What the move
+buys, concretely: the role attaches to the ID rather than a login name (a
+rename keeps it, and a future OIDC login coupled through `oidcSubject`
+inherits it), role changes need no config rollout, and one of
+access-control.md's three split wrinkles — the name→id resolution of
+`--admins` needing the registry — dissolves, because the login process now
+owns both.
+
+Unchanged on purpose: the claim mechanics. The decision still travels in
+the token, minted at login, stale until the next one (TTL-bounded) — only
+its birthplace moved. And still no first-user magic: the first admin is
+`auth role bind <name> admin` over the socket, said out loud.
+
+Surface (approved 2026-08-13, replacing an earlier `promote/demote`
+sketch): `role` is its own RESOURCE beside `user` —
+
+- `auth role bind <name> <user|admin>` — name first, like every other
+  command here; bind REPLACES, since a user holds exactly one global role
+  (a field, not a set), and binding `user` is the way back to the default.
+- `auth role list` — the bindings that deviate from the default; a
+  client-side projection of the user listing, no second endpoint.
+- The API route stays `PUT /v1/auth/users/{name}/role`: the CLI groups by
+  task, the API by record, and the record is the user's.
+
+The vocabulary is closed (`user`, `admin`); the default is stored as the
+empty string, so every record from before roles existed means what it
+always did. Per-world levels (viewer/editor/owner) are grants on the world
+and deliberately never called roles here. Removing the config key is the
+same ErrorUnused hard break as the rest — painless, since no deployment
+ever set it.
 
 ## Fallout elsewhere
 

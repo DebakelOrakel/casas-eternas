@@ -37,12 +37,11 @@ type Config struct {
 	TTL time.Duration
 	// Registry verifies credentials AND answers who they belong to — one
 	// lookup since identity and credential moved into one store
-	// (docs/decisions/server-user-admin.md). The module OWNS the registry's
+	// (docs/decisions/server-user-admin.md). The registry also carries each
+	// user's global ROLE — the admin claim is state beside the credential,
+	// not a config list, since 2026-08-13. The module OWNS the registry's
 	// lifetime: Close releases auth.db and its file lock.
 	Registry *user.Registry
-	// Admins are the login names whose sessions carry the admin claim,
-	// resolved from global.auth.admins by cmd/.
-	Admins map[string]bool
 }
 
 // Module serves the login endpoint.
@@ -114,13 +113,13 @@ func (m *Module) serveLogin(w http.ResponseWriter, r *http.Request) {
 		unauthorized(w)
 		return
 	}
-	issued, expires, err := m.cfg.Tokens.IssueSession(entry.ID, m.cfg.Admins[name], m.cfg.TTL)
+	issued, expires, err := m.cfg.Tokens.IssueSession(entry.ID, entry.Admin(), m.cfg.TTL)
 	if err != nil {
 		slog.Error("cannot issue a token", "error", err, "user", name)
 		http.Error(w, "cannot issue a token", http.StatusInternalServerError)
 		return
 	}
-	slog.Info("logged in", "user", name, "id", entry.ID, "admin", m.cfg.Admins[name], "expires", expires)
+	slog.Info("logged in", "user", name, "id", entry.ID, "admin", entry.Admin(), "expires", expires)
 
 	w.Header().Set("Content-Type", "application/json")
 	// A credential must never sit in a shared cache, and "no-store" is the only

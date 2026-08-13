@@ -102,15 +102,10 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	// wiring (frontend-surfaces) teaches it the auth service's address.
 	loginPath := ""
 	if registry != nil {
-		admins := make(map[string]bool, len(cfg.Global.Auth.Admins))
-		for _, name := range cfg.Global.Auth.Admins {
-			admins[name] = true
-		}
 		login, err := auth.New(auth.Config{
 			Tokens:   tokens,
 			TTL:      cfg.Global.Auth.TokenTTL,
 			Registry: registry,
-			Admins:   admins,
 		})
 		if err != nil {
 			registry.Close()
@@ -119,7 +114,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		modules = append(modules, login)
 		loginPath = auth.Path
 		slog.Info("authentication ready", "mode", authMode,
-			"registry", cfg.Auth.Storage.DirPath(), "admins", len(admins), "token ttl", cfg.Global.Auth.TokenTTL)
+			"registry", cfg.Auth.Storage.DirPath(), "token ttl", cfg.Global.Auth.TokenTTL)
 	}
 
 	if targets.Has(config.TargetClient) {

@@ -27,7 +27,7 @@ func newTestModule(t *testing.T, ttl time.Duration) (*Module, *token.Tokens) {
 	if _, err := registry.Create("ada", "geheim"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	m, err := New(Config{Tokens: tokens, TTL: ttl, Registry: registry, Admins: map[string]bool{"root": true}})
+	m, err := New(Config{Tokens: tokens, TTL: ttl, Registry: registry})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -169,13 +169,16 @@ func TestNewRequiresEverything(t *testing.T) {
 	}
 }
 
-// The admin CLAIM is minted at login for names on global.auth.admins — the
-// decision travels in the token, so no process ever needs the registry to
-// answer "is this an admin" (docs/decisions/server-users.md).
-func TestAdminsAreMarkedInTheirSession(t *testing.T) {
+// The admin CLAIM is minted at login from the user's ROLE in the store —
+// the decision still travels in the token, so no process ever needs the
+// registry to answer "is this an admin"; only its birthplace moved from the
+// config list into auth.db (docs/decisions/server-user-admin.md).
+func TestTheRoleMintsTheAdminClaim(t *testing.T) {
 	m, tokens := newTestModule(t, time.Hour)
-	// The helper's store holds only ada; add the admin it declared.
 	if _, err := m.cfg.Registry.Create("root", "geheim"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.cfg.Registry.SetRole("root", user.RoleAdmin); err != nil {
 		t.Fatal(err)
 	}
 	recorder := login(t, m, "root", "geheim")
@@ -188,6 +191,20 @@ func TestAdminsAreMarkedInTheirSession(t *testing.T) {
 	}
 	if _, admin, err := tokens.VerifySession(body.Token); err != nil || !admin {
 		t.Errorf("admin session claim = %v (err %v), want true", admin, err)
+	}
+
+	// Rebinding to the default demotes — at the NEXT login, which is the
+	// staleness the model always had.
+	if err := m.cfg.Registry.SetRole("root", user.RoleUser); err != nil {
+		t.Fatal(err)
+	}
+	again := login(t, m, "root", "geheim")
+	var demoted response
+	if err := json.NewDecoder(again.Body).Decode(&demoted); err != nil {
+		t.Fatal(err)
+	}
+	if _, admin, _ := tokens.VerifySession(demoted.Token); admin {
+		t.Error("a demoted user's fresh session still carries the admin claim")
 	}
 }
 

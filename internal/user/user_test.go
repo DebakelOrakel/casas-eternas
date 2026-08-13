@@ -150,6 +150,47 @@ func TestFoundingRefusesDuplicateNames(t *testing.T) {
 	}
 }
 
+// The global role is a field on the identity — it survives reopening,
+// rebinding to the default clears it, and the vocabulary is closed.
+func TestSetRole(t *testing.T) {
+	dir := t.TempDir()
+	r := open(t, dir)
+	if _, err := r.Ensure("ada"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetRole("ada", RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if entry, _ := r.ByName("ada"); !entry.Admin() {
+		t.Error("the bound role does not answer Admin()")
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened := open(t, dir)
+	if entry, _ := reopened.ByName("ada"); !entry.Admin() {
+		t.Error("the role did not survive reopening")
+	}
+	if err := reopened.SetRole("ada", RoleUser); err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := reopened.ByName("ada")
+	if entry.Admin() {
+		t.Error("rebinding to the default did not demote")
+	}
+	// Stored as the EMPTY string, so records from before roles existed and
+	// demoted ones are the same shape.
+	if entry.Role != "" {
+		t.Errorf("the default role is stored as %q, want empty", entry.Role)
+	}
+	if err := reopened.SetRole("ada", "emperor"); err == nil {
+		t.Error("an unknown role was bound")
+	}
+	if err := reopened.SetRole("nobody", RoleAdmin); err == nil {
+		t.Error("a role was bound to an unknown user")
+	}
+}
+
 // The file lock IS the one-process rule: a second open must fail loudly
 // rather than hang or silently share.
 func TestSecondProcessIsRefused(t *testing.T) {

@@ -111,6 +111,8 @@ func TestAdminRefusals(t *testing.T) {
 		{"not json", http.MethodPost, UsersPath, `garbage`, http.StatusBadRequest},
 		{"delete unknown", http.MethodDelete, UsersPath + "/nobody", "", http.StatusNotFound},
 		{"passwd unknown", http.MethodPut, UsersPath + "/nobody/password", `{"password":"x"}`, http.StatusNotFound},
+		{"role for unknown user", http.MethodPut, UsersPath + "/nobody/role", `{"role":"admin"}`, http.StatusNotFound},
+		{"unknown role", http.MethodPut, UsersPath + "/ada/role", `{"role":"emperor"}`, http.StatusBadRequest},
 	}
 	for _, c := range cases {
 		if got := adminDo(t, admin, c.method, c.path, c.body); got.Code != c.want {

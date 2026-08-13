@@ -33,7 +33,6 @@ const (
 	keyAuthKey     = "global.auth.session-key"
 	keyAuthTknTTL  = "global.auth.token-ttl"
 	keyAuthSessTTL = "global.auth.session-ttl"
-	keyAuthAdmins  = "global.auth.admins"
 	keyAdminSock   = "global.admin.socket"
 	keySvcWorlds   = "global.services.worlds"
 	keySvcArts     = "global.services.artifacts"
@@ -67,7 +66,6 @@ const (
 	textAuthKey     = `Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.`
 	textAuthTknTTL  = `How long an issued token is valid.`
 	textAuthSessTTL = `How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then global.auth.token-ttl is the one that matters.`
-	textAuthAdmins  = `Login names whose sessions carry the admin claim. Checked at login by the process holding the user registry; a change takes effect at the member's next login.`
 	textAdminSock   = `Path of a unix socket serving this process's admin API (user administration, over plain HTTP). Whoever can reach the socket is admin — file permissions gate it, no login. Empty serves none.`
 	textSvcWorlds   = `URL of the service running the world module, when it is not co-resident. Empty expects it in this process.`
 	textSvcArts     = `URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.`
@@ -141,7 +139,6 @@ func init() {
 	StartCmd.Flags().String(keyAuthKey, "", textAuthKey)
 	StartCmd.Flags().Duration(keyAuthTknTTL, 720*time.Hour, textAuthTknTTL)
 	StartCmd.Flags().Duration(keyAuthSessTTL, 720*time.Hour, textAuthSessTTL)
-	StartCmd.Flags().StringSlice(keyAuthAdmins, nil, textAuthAdmins)
 	StartCmd.Flags().String(keySvcWorlds, "", textSvcWorlds)
 	StartCmd.Flags().String(keySvcArts, "", textSvcArts)
 	StartCmd.Flags().String(keyWorldPath, "./worlds", textWorldPath)
@@ -159,7 +156,7 @@ func init() {
 		keyListen:  RootCmd, keyTLSCert: RootCmd, keyTLSKey: RootCmd, keyTLSCA: RootCmd,
 		keyAdminSock: RootCmd,
 		flagTarget:   StartCmd, keyAuthMode: StartCmd, keyAuthKey: StartCmd,
-		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd, keyAuthAdmins: StartCmd,
+		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd,
 		keySvcWorlds: StartCmd, keySvcArts: StartCmd, keyAuthStore: StartCmd,
 		keyWorldPath: StartCmd, keyKeepRevs: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
 		keyClientPath: StartCmd, keyBaker: StartCmd, keyBakeMax: StartCmd, keyDocsPath: StartCmd,

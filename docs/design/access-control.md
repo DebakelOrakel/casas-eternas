@@ -103,9 +103,11 @@ unchanged; decisions/server-user-admin.md.)
 ## Roles × actions
 
 Roles per world: `viewer`, `editor`, `owner`; `public: true` makes every
-authenticated user a viewer. Globally there is only `admin`, named by an
-operator flag (`--admins name1,name2`, resolved to ids through the
-registry) — explicit and visible in the deployment, no first-user magic.
+authenticated user a viewer. Globally there is only `admin` — designed as
+an operator flag (`--admins`), since 2026-08-13 a field on the user record
+bound via `auth role bind <name> admin` over the admin socket
+(decisions/server-user-admin.md, addendum) — explicit either way, and
+still no first-user magic.
 
 | action | viewer | editor | owner | admin |
 |---|---|---|---|---|
@@ -254,7 +256,8 @@ stay co-deployed — they share the disk anyway).
 
 Three wrinkles a split costs, named now: display names (modules store only
 ids; showing a name means asking the auth service or denormalised hints in
-grants.json); `--admins` (name→id resolution needs the registry); and
+grants.json); the admin role (RESOLVED 2026-08-13: it lives in the
+registry itself now, so the login process owns both halves); and
 revocation (server-auth.md's unbuilt step 8 — a per-user notBefore would
 live with the registry while verification is local everywhere, so per-user
 revocation needs short TTLs or a back-channel, and the split sharpens

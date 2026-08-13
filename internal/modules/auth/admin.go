@@ -33,6 +33,7 @@ func (m *Module) MountAdmin(mux *http.ServeMux) error {
 	mux.HandleFunc("POST "+UsersPath, m.serveCreateUser)
 	mux.HandleFunc("DELETE "+UsersPath+"/{name}", m.serveDeleteUser)
 	mux.HandleFunc("PUT "+UsersPath+"/{name}/password", m.serveSetPassword)
+	mux.HandleFunc("PUT "+UsersPath+"/{name}/role", m.serveSetRole)
 	return nil
 }
 
@@ -95,11 +96,27 @@ func (m *Module) serveSetPassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (m *Module) serveSetRole(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Role string `json:"role"`
+	}
+	if !decodeAdminBody(w, r, &body) {
+		return
+	}
+	name := r.PathValue("name")
+	if err := m.cfg.Registry.SetRole(name, body.Role); err != nil {
+		adminError(w, "setting a role", err)
+		return
+	}
+	slog.Info("role set over the admin socket", "user", name, "role", body.Role)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // decodeAdminBody reads one JSON body, reporting false after answering. The
 // unknown-field refusal is the same loudness rule as the config loader's: a
 // typo'd "pasword" that silently decodes to an empty password is a lockout
 // with no message.
-func decodeAdminBody(w http.ResponseWriter, r *http.Request, into *credentialBody) bool {
+func decodeAdminBody(w http.ResponseWriter, r *http.Request, into any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAdminBody))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(into); err != nil {

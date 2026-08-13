@@ -74,10 +74,6 @@ type AuthSettings struct {
 	SessionKey string        `mapstructure:"session-key"`
 	TokenTTL   time.Duration `mapstructure:"token-ttl"`
 	SessionTTL time.Duration `mapstructure:"session-ttl"`
-	// Admins are LOGIN NAMES whose sessions carry the admin claim, checked
-	// at login by the process holding the registry. Global (not AuthConfig)
-	// because it is policy an operator writes, not state a process keeps.
-	Admins []string `mapstructure:"admins"`
 }
 
 // Services are the peer addresses for split deployments — static on purpose:
