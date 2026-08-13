@@ -3,7 +3,7 @@ summary: Who a user IS, as opposed to how they log in. A registry (users.json un
 date: 2026-08-12
 area: platform
 stage: built
-status: decided and BUILT 2026-08-12 — registry, session hook, admin claim, identity.Admin, deploy wiring. Steps 2–5 of docs/design/access-control.md build on it.
+status: decided and BUILT 2026-08-12 — registry, session hook, admin claim, identity.Admin, deploy wiring. Steps 2–5 of docs/design/access-control.md build on it. 2026-08-13 — revised by server-user-admin.md: users.json merges into auth.db (bbolt) and LOCAL users become admin-provisioned there, knowingly reversing this doc's pre-provisioning rejection (its two reasons dissolve when identity and credential share one database). Minting-at-first-login stays the model for OIDC. Ids, the id-in-token rule and the admin claim stand unchanged.
 ---
 
 # Server users: identity vs credential

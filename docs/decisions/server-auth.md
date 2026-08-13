@@ -3,7 +3,7 @@ summary: How the server establishes who is asking. Three modes stay — but `tok
 date: 2026-08-09
 area: platform
 stage: built
-status: decided, sequenced in seven steps. ALL SEVEN BUILT 2026-08-09 — the server authenticates and enforces, the client signs in and behaves like a serverless one when it has not. Refresh (step 8) remains unscheduled
+status: decided, sequenced in seven steps. ALL SEVEN BUILT 2026-08-09 — the server authenticates and enforces, the client signs in and behaves like a serverless one when it has not. Refresh (step 8) remains unscheduled. 2026-08-13 — the CREDENTIAL half is superseded by server-user-admin.md: htpasswd and the recorded "admin screen writes the Secret through the k8s API" consequence retire in favour of auth.db (bbolt) under auth.storage; the bcrypt rules and the absent-user timing defence carry over. The token/JWT/mode half of this doc stands unchanged
 ---
 
 # Server authentication
