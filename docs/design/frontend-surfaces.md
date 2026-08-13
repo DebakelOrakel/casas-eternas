@@ -1,6 +1,8 @@
 ---
 summary: A map of every user-facing surface the project will grow — game client, public docs, notes, admin, login, settings — and the vocabulary that sorts them. The frontend equivalent of a server TARGET is a STATIC BUNDLE (a directory anyone can serve, talking to the API via /config.json), so "independently operable" is automatic and never the question; the real decisions are "own bundle or not" and "same origin or not", because the session (localStorage) is shared per origin. Settings decompose by OWNER (device / account / deployment / world), not by where a UI might live. Direction notes, nothing built.
 date: 2026-08-12
+area: platform
+stage: decided
 status: direction agreed in discussion 2026-08-12 — nothing here is built or scheduled; the notes fork and the game screen deliberately wait for the game-side write-up
 ---
 
@@ -88,8 +90,11 @@ deployable containing one form.
 | deployment | listen, storage, caps | casas.yaml — operator territory, deliberately NO ui |
 | world | generator sliders, grants | the save / grants.json — already placed |
 
-**Named but deferred** — an operations/status view (running bakes, storage
-fill; today half of StoragePanel, really admin material), and the GAME
-SCREEN itself: under the one-running-world-per-server model it leans toward
+**Named but deferred** — the CHANGELOG PAGE: the viewer (ui/changelog/,
+tabs + renderer over the docs/changelog Markdown) is built and parked — it
+rendered on the title screen until 2026-08-12, when the artwork took that
+space; it returns as its own page. Also an operations/status view (running
+bakes, storage fill; today half of StoragePanel, really admin material),
+and the GAME SCREEN itself: under the one-running-world-per-server model it leans toward
 being its own per-instance surface rather than another client screen — but
 that, too, waits for the game-side write-up.

@@ -1,12 +1,16 @@
 .title-screen {
   position: absolute;
   inset: 0;
-  background: #ffffff;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 6vh 1.5rem 2rem;
-  overflow-y: auto;
+  /* The artwork is PINNED to the bottom edge, flush left and right, never
+     distorted: full width, height follows the image's own ratio. On a tall
+     window it simply ends partway up (white above); on a wide one the excess
+     crops at the TOP, so the bottom edge always stays the bottom edge. */
+  background-color: #ffffff;
+  background-image: url('/background.png');
+  background-repeat: no-repeat;
+  background-position: center bottom;
+  background-size: 100% auto;
+  overflow: hidden;
   font-family: 'Cinzel', serif;
   color: #1a1a1a;
 }
@@ -66,22 +70,24 @@
   letter-spacing: 0.12em;
 }
 
-/* The changelog viewer's own styles live in ui/changelog/changelog.css. */
-
+/* The menu: left-aligned, set in from the left edge by a generous margin —
+   the inset is the one value to tune against the artwork. */
 .title-screen .title-nav {
   position: absolute;
-  bottom: 15%;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 25%;
+  top: 40%;
+  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.8rem;
+  text-align: left;
 }
 
 /* Secondary destinations (sphere + mars) side by side under the main entry. */
 .title-screen .title-nav-row {
   display: flex;
+  justify-content: flex-start;
   gap: 2.5rem;
 }
 
@@ -100,16 +106,4 @@
 
 .title-screen .text-link:hover {
   text-decoration: underline;
-}
-
-/* Narrow screens: drop the bottom nav out of its absolute position into the
-   normal flow (below the changelog) so it can never overlap. The screen scrolls. */
-@media (max-width: 720px) {
-  .title-screen .title-nav {
-    position: static;
-    left: auto;
-    bottom: auto;
-    transform: none;
-    margin-top: 2.5rem;
-  }
 }

@@ -1,11 +1,13 @@
 import { ArcRotateCamera, Color4, Scene, Vector3 } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { getLocale, setLocale, type Locale } from '../../i18n/i18n'
-import { CHANGELOG_CATEGORIES } from '../../ui/changelog/categories'
-import { renderChangelog } from '../../ui/changelog/renderChangelog'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import './title.css'
+
+// The changelog no longer renders here — the artwork owns the screen. The
+// viewer (ui/changelog/) stays intact: it returns as its own page, see
+// docs/design/frontend-surfaces.md.
 
 export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   const scene = new Scene(ctx.engine)
@@ -28,17 +30,15 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
       <h1>Casas Eternas</h1>
       <p class="subtitle">Herederos del Mundo</p>
     </div> -->
-    <section class="changelog">
-      <h2 class="changelog-title">Changelog</h2>
-      <div class="changelog-tabs" data-value="changelog-tabs"></div>
-      <div class="changelog-body" data-value="changelog-body"></div>
-    </section>
     <nav class="title-nav">
-      <button class="text-link" data-action="worldgen">Hacedor del Mundo</button>
-      <button class="text-link" data-action="worldmap">Herederos del Mundo</button>
+      <button class="text-link" data-action="worldgen">Generator</button>
+      <button class="text-link" data-action="worldmap">Map View</button>
+      &nbsp;
+      <button class="text-link" data-action="changelog">Changelog</button>
+      &nbsp;
       <div class="title-nav-row">
-        <button class="text-link" data-action="worldgen-sphere">Sphere</button>
-        <button class="text-link" data-action="mars">Mars</button>
+        <button class="text-link" style="color:white;" data-action="worldgen-sphere">Sphere</button>
+        <button class="text-link" style="color:white;" data-action="mars">Mars</button>
       </div>
     </nav>
   `
@@ -54,30 +54,6 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
   root.querySelector('[data-action="mars"]')!.addEventListener('click', () => {
     ctx.goTo('mars')
   })
-
-  // Changelog: category cards act as tabs; clicking one renders that category's
-  // changelog (parsed from its docs/changelog Markdown) into the body below.
-  // English only — the title screen is deliberately not localized.
-  const tabsHost = root.querySelector<HTMLElement>('[data-value="changelog-tabs"]')!
-  const bodyHost = root.querySelector<HTMLElement>('[data-value="changelog-body"]')!
-  const tabButtons: HTMLButtonElement[] = []
-  const showCategory = (id: string): void => {
-    const cat = CHANGELOG_CATEGORIES.find((c) => c.id === id)
-    if (!cat) return
-    for (const b of tabButtons) b.classList.toggle('is-active', b.dataset.cat === id)
-    bodyHost.replaceChildren(renderChangelog(cat.md))
-  }
-  for (const cat of CHANGELOG_CATEGORIES) {
-    const tab = document.createElement('button')
-    tab.type = 'button'
-    tab.className = 'changelog-tab'
-    tab.dataset.cat = cat.id
-    tab.textContent = cat.label
-    tab.addEventListener('click', () => showCategory(cat.id))
-    tabsHost.appendChild(tab)
-    tabButtons.push(tab)
-  }
-  showCategory(CHANGELOG_CATEGORIES[0].id) // default to the first (Worldgen)
 
   // Language switch (title screen only): mark the active locale, and on a change
   // set it and rebuild the screen so every screen entered afterwards is localized.
