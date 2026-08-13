@@ -52,8 +52,13 @@ var authUserCmd = &cobra.Command{
 var authUserAddCmd = &cobra.Command{
 	Use:   "add <name>",
 	Short: "Creates a user: identity and password in one step.",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runAuthUserAdd,
+	Example: `  casas-eternas auth user add ada
+  echo -n 'the-password' | casas-eternas auth user add ada --password-stdin`,
+	Args: cobra.ExactArgs(1),
+	// The argument is a NEW name — nothing to complete, and certainly not
+	// filenames.
+	ValidArgsFunction: cobra.NoFileCompletions,
+	RunE:              runAuthUserAdd,
 }
 
 var authUserListCmd = &cobra.Command{
@@ -64,17 +69,42 @@ var authUserListCmd = &cobra.Command{
 }
 
 var authUserDeleteCmd = &cobra.Command{
-	Use:   "delete <name>",
-	Short: "Removes a user. Their worlds fall to admins; re-adding the name mints a NEW identity.",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runAuthUserDelete,
+	Use:               "delete <name>",
+	Short:             "Removes a user. Their worlds fall to admins; re-adding the name mints a NEW identity.",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeUserNames,
+	RunE:              runAuthUserDelete,
 }
 
 var authUserPasswdCmd = &cobra.Command{
 	Use:   "passwd <name>",
 	Short: "Sets a user's password.",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runAuthUserPasswd,
+	Example: `  casas-eternas auth user passwd ada
+  echo -n 'the-password' | casas-eternas auth user passwd ada --password-stdin`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeUserNames,
+	RunE:              runAuthUserPasswd,
+}
+
+// completeUserNames asks the running server, so tab completion offers the
+// names that actually exist. Best effort by design: an unreachable socket
+// answers with no candidates rather than an error — completion must never
+// be the thing that fails.
+func completeUserNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) != 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var listing struct {
+		Users []user.Listing `json:"users"`
+	}
+	if err := adminRequest(http.MethodGet, auth.UsersPath, nil, &listing); err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	names := make([]string, 0, len(listing.Users))
+	for _, u := range listing.Users {
+		names = append(names, u.Name)
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
 func init() {

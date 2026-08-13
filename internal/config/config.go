@@ -65,7 +65,7 @@ func (t Targets) Names() []string {
 // starts no modules would otherwise look exactly like a healthy server.
 func ParseTargets(raw []string) (Targets, error) {
 	if len(raw) == 0 {
-		return nil, fmt.Errorf("no target selected; valid targets: %s", validTargets())
+		return nil, fmt.Errorf("no target selected; valid targets: %s", strings.Join(ValidTargets(), ", "))
 	}
 	selected := Targets{}
 	for _, value := range raw {
@@ -77,19 +77,23 @@ func ParseTargets(raw []string) (Targets, error) {
 		case TargetClient, TargetWorld, TargetArtifacts, TargetBake, TargetDocs, TargetAuth:
 			selected[target] = true
 		default:
-			return nil, fmt.Errorf("unknown target %q; valid targets: %s", value, validTargets())
+			return nil, fmt.Errorf("unknown target %q; valid targets: %s", value, strings.Join(ValidTargets(), ", "))
 		}
 	}
 	return selected, nil
 }
 
-func validTargets() string {
+// ValidTargets lists every value `-t` accepts, `all` first. EXPORTED so the
+// flag's help text and its shell completion render from the same list the
+// parser enforces — a target added here appears everywhere at once, which is
+// the one-vocabulary rule applied to an enumeration.
+func ValidTargets() []string {
 	names := make([]string, 0, len(modules)+1)
 	names = append(names, string(TargetAll))
 	for _, m := range modules {
 		names = append(names, string(m))
 	}
-	return strings.Join(names, ", ")
+	return names
 }
 
 // AuthMode is how the server establishes who is asking. The values are
@@ -139,16 +143,18 @@ func ParseAuthMode(raw string) (AuthMode, error) {
 	case AuthNone, AuthPassword, AuthOIDC:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("unknown auth mode %q; valid modes: %s", raw, validAuthModes())
+		return "", fmt.Errorf("unknown auth mode %q; valid modes: %s", raw, strings.Join(ValidAuthModes(), ", "))
 	}
 }
 
-func validAuthModes() string {
+// ValidAuthModes lists every value `global.auth.mode` accepts, least to most
+// machinery — exported for the same reason as ValidTargets.
+func ValidAuthModes() []string {
 	names := make([]string, 0, len(authModes))
 	for _, m := range authModes {
 		names = append(names, string(m))
 	}
-	return strings.Join(names, ", ")
+	return names
 }
 
 // ChecksIdentity reports whether authorisation decisions mean anything. The

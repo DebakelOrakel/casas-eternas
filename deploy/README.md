@@ -43,8 +43,12 @@ authorization, gated by `pods/exec` RBAC
 (docs/decisions/server-user-admin.md). A fresh store starts empty and warns;
 create the first user with
 
-    echo -n 'the-password' | oc exec -i deploy/casas-eternas -- casas-eternas auth user add ada --password-stdin
-    # or interactively:  oc rsh deploy/casas-eternas  →  casas-eternas auth user add ada
+    echo -n 'the-password' | oc exec -i deploy/casas-eternas -- /app/casas-eternas auth user add ada --password-stdin
+    # or interactively:  oc rsh deploy/casas-eternas  →  ./casas-eternas auth user add ada
+
+No flags: the exec session inherits the pod's environment, so
+CASAS_GLOBAL_ADMIN_SOCKET already points at the socket — an absolute path,
+so the working directory does not matter either.
 
 `auth user list|passwd|delete` manage them from there. Changes take effect
 immediately — no restart, no Secret involved.

@@ -49,15 +49,21 @@ const (
 	keyBakeMax    = "bake.max-concurrent"
 )
 
+// The two enum texts are composed, not written: the value lists live in
+// internal/config beside the parsers that enforce them, so the help, the
+// error message and the shell completion cannot drift apart.
+var (
+	textTarget   = fmt.Sprintf(`The target modules to start: %s. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.`, strings.Join(config.ValidTargets(), ", "))
+	textAuthMode = fmt.Sprintf(`How the server establishes who is asking: %s — none is local (one synthetic owner), password means this server holds the users, oidc a foreign provider. See docs/decisions/server-auth.md.`, strings.Join(config.ValidAuthModes(), ", "))
+)
+
 const (
 	textConfig = `Path to the configuration file. Default: ./casas.yaml if it exists. Flags and CASAS_* variables override the file.`
-	textTarget = `The target modules to start: all, client, world, artifacts, bake, docs, auth. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.`
 
 	textListen      = `Address to listen on, as host:port. ":8080" binds every interface, "127.0.0.1:8080" keeps a local instance off the network.`
 	textTLSCert     = `Path to the server certificate. Enables HTTPS together with global.tls.key.`
 	textTLSKey      = `Path to the server private key. Enables HTTPS together with global.tls.cert.`
 	textTLSCA       = `Path to the CA that CLIENT certificates are verified against. Setting it turns on mutual TLS.`
-	textAuthMode    = `How the server establishes who is asking: none (local, one synthetic owner), password (this server holds the users), oidc (a foreign provider does). See docs/decisions/server-auth.md.`
 	textAuthKey     = `Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.`
 	textAuthTknTTL  = `How long an issued token is valid.`
 	textAuthSessTTL = `How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then global.auth.token-ttl is the one that matters.`
@@ -102,11 +108,14 @@ config key is the flag name is the variable name.`,
 var StartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Starts one or more modules.",
-	Long: `Starts the selected modules in a single process.
-
-  casas-eternas start --target all           everything, for local play
+	Long:  `Starts the selected modules in a single process.`,
+	Example: `  casas-eternas start --target all           everything, for local play
   casas-eternas start -t world -t artifacts  storage only, no client
   casas-eternas start -t client              frontend only`,
+	// Everything start takes arrives as a flag; a stray positional argument
+	// is a mangled flag, and ignoring it silently would run something the
+	// caller did not ask for.
+	Args: cobra.NoArgs,
 	RunE: Start,
 }
 
@@ -171,6 +180,24 @@ func init() {
 	// file or CASAS_* variable reach them through Unmarshal.
 	for _, key := range []string{"world.storage.type", "artifacts.storage.type", "client.storage.type", "auth.storage.type", "docs.storage.type"} {
 		viper.SetDefault(key, "")
+	}
+
+	// Shell completion for the two enum flags, from the same lists the
+	// parsers enforce. Cobra generates the completion machinery itself
+	// (`casas-eternas completion <shell>`); these only teach it the values.
+	completeFrom := func(values []string) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+			return values, cobra.ShellCompDirectiveNoFileComp
+		}
+	}
+	for key, values := range map[string][]string{
+		flagTarget:  config.ValidTargets(),
+		keyAuthMode: config.ValidAuthModes(),
+	} {
+		if err := StartCmd.RegisterFlagCompletionFunc(key, completeFrom(values)); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
 	}
 
 	RootCmd.AddCommand(StartCmd)
