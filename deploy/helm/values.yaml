@@ -1,0 +1,189 @@
+# casas-eternas — one binary, deployed as COMPONENTS of targets, and the job
+# workers beside them (docs/decisions/helm-chart.md, DEC-0043).
+#
+# A component is one Deployment running `casas-eternas start -t <targets…>`.
+# The default is the monolith: one component with `all`. examples/ holds
+# other shapes. What follows from the targets the chart derives itself:
+# replicas, volumes, the wiring between processes, the Ingress's paths, the
+# scaler's rights. It refuses at install what cannot run.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  registry: ghcr.io
+  repository: debakelorakel/casas-eternas
+  # One tag for every component AND the workers: an artifact carries a
+  # pipeline version, and a worker of another build writes artifacts no
+  # client looks for. Empty: the chart's appVersion.
+  tag: ""
+  pullPolicy: Always
+imagePullSecrets: []
+
+# auto | openshift | kubernetes (fork 7). `auto` asks the cluster for the
+# Route API; with no cluster to ask (`helm template`, a GitOps renderer) it
+# reads as `kubernetes`, so set `openshift` there. OpenShift: no fixed UID
+# (its SCC assigns one) and edge-termination annotations on the Ingress.
+# Kubernetes: UID/GID/fsGroup 1001, the image's user.
+platform: auto
+
+# THE casas.yaml, verbatim vocabulary: a key here IS the flag name IS the
+# CASAS_* variable (cmd/root.go). One ConfigMap, read by every component.
+# The chart sets on its own, per component and as CASAS_* variables (which
+# beat the file): the state and content directories, the dir backends'
+# paths, the relay's listeners, global.services.*, the files of `secrets`
+# and jobs.scale-workers. Do not set those here.
+config:
+  global:
+    listen: ":8080"
+    auth:
+      # The compiled default is `none` (the local mode). This line is what
+      # makes the deployment an authenticated server; losing it means an
+      # OPEN server.
+      mode: password
+    admin:
+      # User administration: `kubectl exec` + `casas-eternas auth user …`
+      # in the component that runs auth. Reaching the socket IS the
+      # authorization (gated by pods/exec RBAC).
+      socket: /tmp/admin.sock
+  world:
+    storage:
+      # dir (on the component's volume) or s3 (then the s3 block, and the
+      # keys under secrets.worldsS3).
+      type: dir
+    # keep-revisions: 3
+  artifacts:
+    storage:
+      type: dir
+    # cap: 20GB
+  jobs:
+    # The most workers the server scales the worker Deployment to. Each
+    # reserves the memory workers.resources requests, so the ceiling in
+    # practice is the nodes' free memory.
+    max-concurrent: 6
+
+# The secrets, by role (fork 4). Each names an existing Secret; the chart
+# mounts it under /etc/casas-eternas/secrets/<role>/ into the components
+# (or workers) that need it, and sets the config key to the file. An empty
+# name leaves the role out: the server then does what it does without the
+# file (an ephemeral key with its warning, or no s3 keys).
+#
+# `create: true` with `data` makes the Secret from these values — for a
+# throwaway install only: a value here is a secret in Git or in Helm's
+# release history.
+secrets:
+  # The key session tokens are signed with; file `session.key`.
+  #   kubectl create secret generic casas-eternas-auth \
+  #     --from-literal=session.key="$(openssl rand -base64 48)"
+  sessionKey:
+    name: casas-eternas-auth
+    create: false
+    data: {}
+  # The worlds store's s3 keys (world.storage.type: s3); files
+  # `access-key`, `secret-key`.
+  worldsS3:
+    name: ""
+    create: false
+    data: {}
+  # The artifact store's s3 keys; files `access-key`, `secret-key`.
+  artifactsS3:
+    name: ""
+    create: false
+    data: {}
+  # The dir backends' link keys (at least 32 random bytes); file `link-key`.
+  worldsLinkKey:
+    name: ""
+    create: false
+    data: {}
+  artifactsLinkKey:
+    name: ""
+    create: false
+    data: {}
+  # The workers' service account credential; file `credentials`.
+  #   kubectl exec deploy/<component> -- /app/casas-eternas auth service add cluster-workers > credentials
+  #   kubectl create secret generic casas-eternas-worker --from-file=credentials
+  workerCredentials:
+    name: casas-eternas-worker
+    create: false
+    data: {}
+
+# One Ingress, one host (fork 5). Its paths come from the components:
+# `/` to the one with client, `/v1/<module>` to the one with that module,
+# `/relay` (the relay's WebSocket, for workers outside the cluster) to the
+# one with relay. No timeout annotation is needed: the relay pings every
+# 30 s.
+ingress:
+  enabled: true
+  className: ""
+  host: ""
+  annotations: {}
+  # The certificate's Secret (e.g. made by cert-manager); empty for none.
+  tls:
+    secretName: ""
+  # Route /relay to the relay's WebSocket.
+  relay: true
+
+# ── Components ──────────────────────────────────────────────────────────
+# Every target exactly once over all components (`all` is every one).
+# `replicas` only for a component of client and docs alone; every other is
+# one process per store, pinned to 1 with strategy Recreate.
+#
+# Helm merges maps: to replace the default component, set it to null
+# (`components: { server: null, … }`), or it stays beside yours.
+#
+# Per component, beside `targets`:
+#   replicas, resources, persistence { size, storageClass, existingClaim },
+#   and the hooks: podAnnotations, podLabels, nodeSelector, tolerations,
+#   affinity, topologySpreadConstraints, priorityClassName,
+#   podSecurityContext, securityContext, extraEnv, extraVolumes,
+#   extraVolumeMounts.
+components:
+  server:
+    targets: [all]
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { memory: 2Gi }
+    # Used where a target keeps state on disk: auth, jobs and relay always,
+    # world and artifacts with storage type dir.
+    persistence:
+      size: 20Gi
+      storageClass: ""
+      existingClaim: ""
+
+# ── Workers ─────────────────────────────────────────────────────────────
+# The Node job workers (fork 3). With a component that runs jobs, the
+# server scales them from 0 to config.jobs.max-concurrent and the chart
+# wires them; `replicas` and `server` are ignored then. Off, the server
+# starts no scaler (jobs.scale-workers: false) and only workers from outside
+# compute. Without a component that runs jobs: workers alone, for a server
+# elsewhere — a fixed `replicas`, and `server` is required.
+workers:
+  enabled: true
+  replicas: 1
+  server:
+    # e.g. wss://casas-eternas.example.org/relay
+    relay: ""
+    # The server as these workers reach it (and where they trade their
+    # credential for a bus token), e.g. https://casas-eternas.example.org
+    api: ""
+  # The Node heap ceiling, MB. Keep it equal to the jobs module's
+  # nodeHeapMB (internal/modules/jobs/jobs.go; a test compares them).
+  heapMB: 6144
+  # A level-1 replay held 6.2 GB on one worker (detail-ladder.md).
+  resources:
+    requests: { cpu: "1", memory: 6Gi }
+    limits: { cpu: "6", memory: 10Gi }
+  # One worker per node where the nodes allow it (soft).
+  topologySpread: true
+  # The same hooks as a component.
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  priorityClassName: ""
+  podSecurityContext: {}
+  securityContext: {}
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []

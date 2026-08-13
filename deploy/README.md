@@ -24,5 +24,10 @@ through.
 `runAsUser`/`fsGroup` themselves, and the Ingress is for ingress-nginx
 instead of an OpenShift Route. Keep it in step with `manifests.yaml`.
 
+`helm/` — the Helm chart: the same deployment as components of targets
+(the monolith by default) and the workers beside them, for OpenShift or
+plain Kubernetes; `helm/examples/` holds other shapes. Why it is built as
+it is: [decisions/helm-chart.md](../docs/decisions/helm-chart.md).
+
 `nginx.conf` — **unused.** Left until the one-binary image has been
 running in a cluster for a while; delete it then.

@@ -1,0 +1,34 @@
+{{- $auth := include "casas-eternas.componentOf" (dict "root" . "module" "auth") -}}
+{{- $jobs := include "casas-eternas.componentOf" (dict "root" . "module" "jobs") -}}
+casas-eternas {{ .Chart.Version }} on {{ include "casas-eternas.platform" . }}
+{{- range $name, $component := .Values.components }}
+  component {{ $name }}: {{ join ", " $component.targets }}
+{{- end }}
+{{- if .Values.workers.enabled }}
+  workers: {{ if $jobs }}scaled by the server, up to config.jobs.max-concurrent ({{ index .Values.config.jobs "max-concurrent" }}){{ else }}{{ .Values.workers.replicas }}, for {{ .Values.workers.server.api }}{{ end }}
+{{- else if $jobs }}
+  workers: none here; only workers from outside, over /relay
+{{- end }}
+{{- if .Values.secrets.sessionKey.name }}
+
+The session-token signing key (skip if it exists):
+
+  kubectl create secret generic {{ .Values.secrets.sessionKey.name }} \
+    --from-literal=session.key="$(openssl rand -base64 48)"
+{{- end }}
+{{- if $auth }}
+
+The first user, over the admin socket of the component that runs auth:
+
+  kubectl exec deploy/{{ include "casas-eternas.componentName" (dict "root" . "name" $auth) }} -- \
+    /app/casas-eternas auth user add <name>
+{{- if and .Values.workers.enabled $jobs .Values.secrets.workerCredentials.name }}
+
+The workers' service account, once:
+
+  kubectl exec deploy/{{ include "casas-eternas.componentName" (dict "root" . "name" $auth) }} -- \
+    /app/casas-eternas auth service add cluster-workers > credentials
+  kubectl create secret generic {{ .Values.secrets.workerCredentials.name }} --from-file=credentials
+  rm credentials
+{{- end }}
+{{- end }}

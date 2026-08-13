@@ -1,0 +1,15 @@
+{{- if .Values.components }}
+# THE casas.yaml, shared by every component: each process reads `global`
+# plus its own modules' sections, and the target never travels in the file
+# (it is `-t` in the args). What differs per component the chart sets as
+# CASAS_* variables, which beat the file (templates/components.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "casas-eternas.fullname" . }}-config
+  labels:
+    {{- include "casas-eternas.labels" . | nindent 4 }}
+data:
+  casas.yaml: |
+    {{- toYaml .Values.config | nindent 4 }}
+{{- end }}

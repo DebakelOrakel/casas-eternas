@@ -38,6 +38,35 @@ Uploads are worlds of tens of megabytes — on another controller, one with a
 body limit must allow them (ingress-nginx:
 `nginx.ingress.kubernetes.io/proxy-body-size: "0"`).
 
+## With Helm
+
+`deploy/helm` deploys the same, from one values file
+([decisions/helm-chart.md](../decisions/helm-chart.md)):
+
+```
+helm install casas deploy/helm --namespace casas \
+  --set platform=openshift --set ingress.host=casas-eternas.ahoi.sh \
+  --set ingress.tls.secretName=casas-eternas-tls
+```
+
+- **`platform`** is `auto` by default, and asks the cluster; set it where
+  the chart is rendered without one (`helm template`, a GitOps tool). On
+  `kubernetes` the pods get UID, GID and `fsGroup` 1001.
+- **`config`** is the `casas.yaml`, in the server's own vocabulary. The
+  chart sets the directories, the relay's listeners, the peers' addresses
+  and the secrets' files itself.
+- **`secrets`** names the Secrets by role (session key, s3 keys, link
+  keys, the workers' credential); the chart mounts each where its targets
+  run. Make them as below; the chart does not, unless told to.
+- **`components`** is one `server` with `all` by default; other shapes are
+  in `deploy/helm/examples/`. Helm merges maps, so a values file with
+  components of its own sets `components.server: null`.
+- **`workers`** are scaled by the server up to `config.jobs.max-concurrent`;
+  `workers.enabled: false` leaves only workers from outside.
+
+The scaler finds the worker Deployment by its label in the namespace: one
+release per namespace.
+
 ## First run
 
 ```

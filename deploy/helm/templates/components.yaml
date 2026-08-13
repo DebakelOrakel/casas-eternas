@@ -1,0 +1,363 @@
+{{- include "casas-eternas.validate" . }}
+{{- $root := . }}
+{{- $platform := include "casas-eternas.platform" . }}
+{{- $scales := include "casas-eternas.scalesWorkers" . }}
+{{- range $name, $component := .Values.components }}
+{{- $modules := splitList "," (include "casas-eternas.modulesOf" (dict "root" $root "component" $component)) }}
+{{- $full := include "casas-eternas.componentName" (dict "root" $root "name" $name) }}
+{{- $volume := include "casas-eternas.needsVolume" (dict "root" $root "modules" $modules) }}
+{{- $persistence := $component.persistence | default dict }}
+{{- $stateless := true }}
+{{- range $module := $modules }}{{- if not (has $module (list "client" "docs")) }}{{- $stateless = false }}{{- end }}{{- end }}
+{{- $jobs := has "jobs" $modules }}
+{{- $secrets := $root.Values.secrets }}
+{{- if and $jobs $scales }}
+---
+# The identity the jobs module scales the workers as (internal/modules/jobs,
+# scaler.go). Only this component's: no other needs the API.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "casas-eternas.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+---
+# Namespaced, never cluster-wide: the worker Deployment, found by its label
+# and scaled through the scale subresource. Nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $full }}-scaler
+  labels:
+    {{- include "casas-eternas.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $full }}-scaler
+  labels:
+    {{- include "casas-eternas.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $full }}-scaler
+subjects:
+  - kind: ServiceAccount
+    name: {{ $full }}
+{{- end }}
+{{- if and $volume (not $persistence.existingClaim) }}
+---
+# The component's state: auth.db, jobs.db, the relay's JetStream, and the
+# dir backends' worlds and artifacts — whichever of its targets keep any.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "casas-eternas.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with $persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $persistence.size | default "10Gi" }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "casas-eternas.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  {{- if $stateless }}
+  replicas: {{ $component.replicas | default 1 }}
+  {{- else }}
+  # One process per store: in-process locks and indexes are the stores'
+  # concurrency model, so one replica, and Recreate so a rollout never runs
+  # two on one volume.
+  replicas: 1
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "casas-eternas.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: {{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "casas-eternas.selectorLabels" $root | nindent 8 }}
+        app.kubernetes.io/component: {{ $name }}
+        {{- with $component.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # The server reads casas.yaml once: a changed one restarts the pod.
+        checksum/config: {{ include (print $root.Template.BasePath "/configmap.yaml") $root | sha256sum }}
+        {{- with $component.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- if and $jobs $scales }}
+      serviceAccountName: {{ $full }}
+      {{- else }}
+      automountServiceAccountToken: false
+      {{- end }}
+      {{- with $root.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (include "casas-eternas.podSecurityContext" (dict "root" $root "override" $component.podSecurityContext)) }}
+      securityContext:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $component.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with $component.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $component.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $component.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $component.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ $name }}
+          image: {{ include "casas-eternas.image" $root }}
+          imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+          args:
+            - start
+            {{- range $target := $component.targets }}
+            - -t
+            - {{ $target }}
+            {{- end }}
+            - --config
+            - /etc/casas-eternas/casas.yaml
+          env:
+            {{- if has "client" $modules }}
+            - name: CASAS_CLIENT_CONTENT_DIR
+              value: /app/dist
+            {{- end }}
+            {{- if has "docs" $modules }}
+            - name: CASAS_DOCS_CONTENT_DIR
+              value: /app/docs-dist
+            {{- end }}
+            {{- if has "auth" $modules }}
+            - name: CASAS_AUTH_STATE_DIR
+              value: /data/auth
+            {{- end }}
+            {{- if and (has "world" $modules) (include "casas-eternas.storeOnDir" (dict "Values" $root.Values "store" "world")) }}
+            - name: CASAS_WORLD_STORAGE_DIR_PATH
+              value: /data/worlds
+            {{- end }}
+            {{- if and (has "artifacts" $modules) (include "casas-eternas.storeOnDir" (dict "Values" $root.Values "store" "artifacts")) }}
+            - name: CASAS_ARTIFACTS_STORAGE_DIR_PATH
+              value: /data/artifacts
+            {{- end }}
+            {{- if $jobs }}
+            - name: CASAS_JOBS_STATE_DIR
+              value: /data/jobs
+            # A worker runs in a pod of its own, usually on another node, and
+            # reaches this one over HTTP: the pod's own IP is the address its
+            # tasks name.
+            - name: CASAS_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # Whether this server scales the worker Deployment: off where
+            # every worker joins from outside (workers.enabled: false).
+            - name: CASAS_JOBS_SCALE_WORKERS
+              value: {{ ternary "true" "false" (not (empty $scales)) | quote }}
+            {{- end }}
+            {{- if has "relay" $modules }}
+            - name: CASAS_RELAY_STATE_DIR
+              value: /data/relay
+            # Every interface: the workers and the other components connect
+            # from their own pods. Safe on an authenticated server, whose
+            # relay admits only its own tokens.
+            - name: CASAS_RELAY_LISTEN
+              value: 0.0.0.0:4222
+            # The WebSocket, for workers outside the cluster, behind the
+            # Ingress at /relay, which ends TLS.
+            - name: CASAS_RELAY_WEBSOCKET
+              value: 0.0.0.0:4223
+            {{- end }}
+            {{- /* The peers this component's modules need and do not run. */}}
+            {{- if and (or (has "artifacts" $modules) $jobs) (not (has "world" $modules)) }}
+            - name: CASAS_GLOBAL_SERVICES_WORLDS
+              value: http://{{ include "casas-eternas.componentName" (dict "root" $root "name" (include "casas-eternas.componentOf" (dict "root" $root "module" "world"))) }}:8080
+            {{- end }}
+            {{- if and $jobs (not (has "artifacts" $modules)) }}
+            - name: CASAS_GLOBAL_SERVICES_ARTIFACTS
+              value: http://{{ include "casas-eternas.componentName" (dict "root" $root "name" (include "casas-eternas.componentOf" (dict "root" $root "module" "artifacts"))) }}:8080
+            {{- end }}
+            {{- if and $jobs (not (has "relay" $modules)) }}
+            - name: CASAS_GLOBAL_SERVICES_RELAY
+              value: nats://{{ include "casas-eternas.componentName" (dict "root" $root "name" (include "casas-eternas.componentOf" (dict "root" $root "module" "relay"))) }}:4222
+            {{- end }}
+            {{- /* The secrets' files (fork 4). */}}
+            {{- if $secrets.sessionKey.name }}
+            - name: CASAS_GLOBAL_AUTH_SESSION_KEY
+              value: {{ include "casas-eternas.secretDir" "sessionKey" }}/session.key
+            {{- end }}
+            {{- if has "world" $modules }}
+            {{- if $secrets.worldsS3.name }}
+            - name: CASAS_WORLD_STORAGE_S3_ACCESS_KEY_FILE
+              value: {{ include "casas-eternas.secretDir" "worldsS3" }}/access-key
+            - name: CASAS_WORLD_STORAGE_S3_SECRET_KEY_FILE
+              value: {{ include "casas-eternas.secretDir" "worldsS3" }}/secret-key
+            {{- end }}
+            {{- if $secrets.worldsLinkKey.name }}
+            - name: CASAS_WORLD_LINK_KEY
+              value: {{ include "casas-eternas.secretDir" "worldsLinkKey" }}/link-key
+            {{- end }}
+            {{- end }}
+            {{- if has "artifacts" $modules }}
+            {{- if $secrets.artifactsS3.name }}
+            - name: CASAS_ARTIFACTS_STORAGE_S3_ACCESS_KEY_FILE
+              value: {{ include "casas-eternas.secretDir" "artifactsS3" }}/access-key
+            - name: CASAS_ARTIFACTS_STORAGE_S3_SECRET_KEY_FILE
+              value: {{ include "casas-eternas.secretDir" "artifactsS3" }}/secret-key
+            {{- end }}
+            {{- if $secrets.artifactsLinkKey.name }}
+            - name: CASAS_ARTIFACTS_LINK_KEY
+              value: {{ include "casas-eternas.secretDir" "artifactsLinkKey" }}/link-key
+            {{- end }}
+            {{- end }}
+            {{- with $component.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            {{- if has "relay" $modules }}
+            - name: relay
+              containerPort: 4222
+              protocol: TCP
+            - name: relay-ws
+              containerPort: 4223
+              protocol: TCP
+            {{- end }}
+          # /v1/capabilities answers only once the modules are mounted, so
+          # ready means able to serve.
+          readinessProbe:
+            httpGet: { path: /v1/capabilities, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /v1/capabilities, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          {{- with $component.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "casas-eternas.securityContext" $component.securityContext | nindent 12 }}
+          volumeMounts:
+            {{- if $volume }}
+            - name: data
+              mountPath: /data
+            {{- end }}
+            # The admin socket and scratch, under the read-only rootfs.
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: /etc/casas-eternas/casas.yaml
+              subPath: casas.yaml
+              readOnly: true
+            {{- range $role := list "sessionKey" "worldsS3" "worldsLinkKey" "artifactsS3" "artifactsLinkKey" }}
+            {{- $secret := index $secrets $role }}
+            {{- if and $secret.name (or (eq $role "sessionKey") (and (hasPrefix "worlds" $role) (has "world" $modules)) (and (hasPrefix "artifacts" $role) (has "artifacts" $modules))) }}
+            - name: secret-{{ $role | lower }}
+              mountPath: {{ include "casas-eternas.secretDir" $role }}
+              readOnly: true
+            {{- end }}
+            {{- end }}
+            {{- with $component.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        {{- if $volume }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $persistence.existingClaim | default $full }}
+        {{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: config
+          configMap:
+            name: {{ include "casas-eternas.fullname" $root }}-config
+        {{- range $role := list "sessionKey" "worldsS3" "worldsLinkKey" "artifactsS3" "artifactsLinkKey" }}
+        {{- $secret := index $secrets $role }}
+        {{- if and $secret.name (or (eq $role "sessionKey") (and (hasPrefix "worlds" $role) (has "world" $modules)) (and (hasPrefix "artifacts" $role) (has "artifacts" $modules))) }}
+        - name: secret-{{ $role | lower }}
+          secret:
+            secretName: {{ $secret.name }}
+            # Optional: a missing Secret lets the pod start and fail with the
+            # server's own message, not hang in ContainerCreating.
+            optional: true
+            defaultMode: 0400
+        {{- end }}
+        {{- end }}
+        {{- with $component.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "casas-eternas.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "casas-eternas.selectorLabels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    {{- if has "relay" $modules }}
+    # The relay, for the workers and the other components inside the
+    # namespace.
+    - name: relay
+      port: 4222
+      targetPort: relay
+      protocol: TCP
+    # Its WebSocket, which the Ingress sends /relay to.
+    - name: relay-ws
+      port: 4223
+      targetPort: relay-ws
+      protocol: TCP
+    {{- end }}
+{{- end }}

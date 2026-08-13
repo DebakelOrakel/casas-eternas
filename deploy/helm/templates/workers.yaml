@@ -1,0 +1,146 @@
+{{- if .Values.workers.enabled }}
+{{- $w := .Values.workers }}
+{{- $jobsComponent := include "casas-eternas.componentOf" (dict "root" . "module" "jobs") }}
+{{- $relayComponent := include "casas-eternas.componentOf" (dict "root" . "module" "relay") }}
+{{- $authComponent := include "casas-eternas.componentOf" (dict "root" . "module" "auth") }}
+{{- $serve := dict "pools" (list "level" "tile") }}
+{{- if $jobsComponent }}
+{{- /* Inside: the relay's Service, the token trade at the auth component. */}}
+{{- $_ := set $serve "relay" (printf "nats://%s:4222" (include "casas-eternas.componentName" (dict "root" . "name" $relayComponent))) }}
+{{- $_ := set $serve "auth" (printf "http://%s:8080" (include "casas-eternas.componentName" (dict "root" . "name" $authComponent))) }}
+{{- else }}
+{{- /* Alone, for a server elsewhere: its addresses (validate requires them). */}}
+{{- $_ := set $serve "relay" $w.server.relay }}
+{{- $_ := set $serve "auth" $w.server.api }}
+{{- $_ := set $serve "api" $w.server.api }}
+{{- end }}
+{{- $selector := dict "app.kubernetes.io/name" (include "casas-eternas.name" .) "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/component" "worker" }}
+---
+# THE JOB WORKERS: long-lived Node processes serving the coordinator's tasks
+# over the relay (docs/decisions/detail-ladder.md, addendum 2026-10-03).
+{{- if $jobsComponent }}
+# The server SCALES THIS DEPLOYMENT ITSELF, up to config.jobs.max-concurrent
+# and back to zero when every job is through. It finds it by the label
+# `casas-eternas/component: worker`, in this namespace — so one release per
+# namespace. `replicas` is left out on purpose: an upgrade then keeps the
+# scaler's number instead of setting it back.
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "casas-eternas.fullname" . }}-worker
+  labels:
+    {{- include "casas-eternas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+    casas-eternas/component: worker
+spec:
+  {{- if not $jobsComponent }}
+  # Workers for a server elsewhere: that server cannot scale them here.
+  replicas: {{ $w.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- toYaml $selector | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- toYaml $selector | nindent 8 }}
+        casas-eternas/component: worker
+        {{- with $w.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $w.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      # No API access: a worker talks to the relay and the server only.
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (include "casas-eternas.podSecurityContext" (dict "root" . "override" $w.podSecurityContext)) }}
+      securityContext:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $w.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with $w.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $w.topologySpread }}
+      # One worker per node where the nodes allow it: each holds gigabytes.
+      # Soft, so a scale-up beyond the free nodes still places them.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- toYaml $selector | nindent 14 }}
+          matchLabelKeys:
+            - pod-template-hash
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "casas-eternas.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - node
+            - --max-old-space-size={{ $w.heapMB }}
+            - /app/job-worker.mjs
+            - --serve
+            - {{ toJson $serve | squote }}
+          env:
+            {{- if .Values.secrets.workerCredentials.name }}
+            - name: RELAY_CREDENTIALS
+              value: {{ include "casas-eternas.secretDir" "workerCredentials" }}/credentials
+            {{- end }}
+            {{- with $w.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $w.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "casas-eternas.securityContext" $w.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.secrets.workerCredentials.name }}
+            - name: credentials
+              mountPath: {{ include "casas-eternas.secretDir" "workerCredentials" }}
+              readOnly: true
+            {{- end }}
+            {{- with $w.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+        {{- if .Values.secrets.workerCredentials.name }}
+        - name: credentials
+          secret:
+            secretName: {{ .Values.secrets.workerCredentials.name }}
+            # Optional: a worker without it starts and says the file is
+            # missing, instead of hanging in ContainerCreating.
+            optional: true
+            defaultMode: 0400
+        {{- end }}
+        {{- with $w.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+{{- end }}

@@ -1,0 +1,26 @@
+# The monolith with worlds and artifacts on s3, here Exoscale SOS (flavour
+# ceph: an endpoint of its own): the volume then holds only auth.db, jobs.db
+# and the relay's JetStream. The bucket's endpoint must be one a worker
+# outside the cluster can reach, if there are any.
+config:
+  world:
+    storage:
+      type: s3
+      s3:
+        flavour: ceph
+        endpoint: https://sos-ch-gva-2.exo.io
+        bucket: casas-eternas-worlds
+  artifacts:
+    storage:
+      type: s3
+      s3:
+        flavour: ceph
+        endpoint: https://sos-ch-gva-2.exo.io
+        bucket: casas-eternas-artifacts
+secrets:
+  worldsS3: { name: casas-eternas-worlds-s3 }
+  artifactsS3: { name: casas-eternas-artifacts-s3 }
+components:
+  server:
+    targets: [all]
+    persistence: { size: 2Gi }

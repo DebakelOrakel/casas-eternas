@@ -1,0 +1,16 @@
+# Workers alone, for a server elsewhere (e.g. another cluster with spare
+# nodes). That server cannot scale them: a fixed count. Their service
+# account comes from that server (`auth service add <name>`).
+components:
+  # Helm merges maps: the default component goes only when set to null.
+  server: null
+workers:
+  enabled: true
+  replicas: 2
+  server:
+    relay: wss://casas-eternas.example.org/relay
+    api: https://casas-eternas.example.org
+ingress:
+  enabled: false
+secrets:
+  sessionKey: { name: "" }

@@ -1,0 +1,8 @@
+# A server without workers of its own: every worker joins from outside over
+# /relay. The chart sets jobs.scale-workers to false and grants no rights on
+# Deployments.
+workers:
+  enabled: false
+ingress:
+  host: casas-eternas.example.org
+  tls: { secretName: casas-eternas-tls }

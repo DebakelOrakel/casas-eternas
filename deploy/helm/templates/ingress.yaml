@@ -1,0 +1,74 @@
+{{- if and .Values.ingress.enabled .Values.components }}
+{{- $root := . }}
+{{- $front := include "casas-eternas.componentOf" (dict "root" . "module" "client") }}
+{{- if not $front }}{{- $front = keys .Values.components | sortAlpha | first }}{{- end }}
+{{- /* Each module's path, to the component that runs it (fork 5). */}}
+{{- $paths := list (dict "module" "world" "path" "/v1/worlds") (dict "module" "artifacts" "path" "/v1/artifacts") (dict "module" "jobs" "path" "/v1/jobs") (dict "module" "auth" "path" "/v1/auth") (dict "module" "docs" "path" "/docs") }}
+{{- $annotations := dict }}
+{{- if eq (include "casas-eternas.platform" .) "openshift" }}
+{{- /* The Route OpenShift makes from this: TLS ends at the router, plain HTTP is redirected. */}}
+{{- $_ := set $annotations "route.openshift.io/termination" "edge" }}
+{{- $_ := set $annotations "route.openshift.io/insecure-edge-termination-policy" "Redirect" }}
+{{- end }}
+{{- $annotations = merge (deepCopy (.Values.ingress.annotations | default dict)) $annotations }}
+---
+# The way in from outside: one host, one Ingress. `/` to the component with
+# the client; a module's API path to the component that runs it, where that
+# is another; `/relay` to the relay's WebSocket. NATS takes a WebSocket on
+# any path, so nothing is rewritten.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "casas-eternas.fullname" . }}
+  labels:
+    {{- include "casas-eternas.labels" . | nindent 4 }}
+  {{- with $annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.secretName }}
+  tls:
+    - hosts:
+        - {{ required "ingress.host is needed with ingress.tls" .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - http:
+        paths:
+          {{- $relay := include "casas-eternas.componentOf" (dict "root" . "module" "relay") }}
+          {{- if and .Values.ingress.relay $relay }}
+          - path: /relay
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "casas-eternas.componentName" (dict "root" $root "name" $relay) }}
+                port:
+                  name: relay-ws
+          {{- end }}
+          {{- range $entry := $paths }}
+          {{- $component := include "casas-eternas.componentOf" (dict "root" $root "module" $entry.module) }}
+          {{- if and $component (ne $component $front) }}
+          - path: {{ $entry.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "casas-eternas.componentName" (dict "root" $root "name" $component) }}
+                port:
+                  name: http
+          {{- end }}
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "casas-eternas.componentName" (dict "root" $root "name" $front) }}
+                port:
+                  name: http
+      {{- with .Values.ingress.host }}
+      host: {{ . | quote }}
+      {{- end }}
+{{- end }}

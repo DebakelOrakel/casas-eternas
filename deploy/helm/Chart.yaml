@@ -1,0 +1,9 @@
+apiVersion: v2
+name: casas-eternas
+description: >-
+  World store, artifact store, job coordinator, relay, docs, login and
+  client — one binary, deployed as components of targets (the monolith by
+  default), and the job workers beside them (docs/decisions/helm-chart.md).
+type: application
+version: 0.2.0
+appVersion: "latest"
