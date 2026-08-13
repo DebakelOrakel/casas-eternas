@@ -517,7 +517,16 @@ func (m *Module) work(ctx context.Context) {
 			slog.Error("bake failed", "job", id, "err", err)
 			continue
 		}
-		slog.Info("bake done", "job", id, "world", result.WorldID, "stage", result.Stage,
-			"size", fmt.Sprintf("%dx%d", result.Width, result.Height), "took", ended.Sub(started).Round(time.Second))
+		// The world comes from the job REQUEST, not the result: a cluster
+		// runner deliberately returns no Result payload (the Job wrote its
+		// artifacts itself), which used to render here as world="". The size
+		// is genuinely unknown in that case, so the attribute simply stays
+		// away rather than reading 0x0.
+		done := []any{"job", id, "world", job.Request.WorldUID, "stage", result.Stage,
+			"took", ended.Sub(started).Round(time.Second)}
+		if result.Width > 0 {
+			done = append(done, "size", fmt.Sprintf("%dx%d", result.Width, result.Height))
+		}
+		slog.Info("bake done", done...)
 	}
 }
