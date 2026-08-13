@@ -143,6 +143,17 @@ func (m *Module) callerOf(r *http.Request) (caller string, admin bool) {
 func (m *Module) gate(w http.ResponseWriter, r *http.Request, uid string, action access.Action) bool {
 	caller, admin := m.callerOf(r)
 	exists, level := m.AccessFor(r.Context(), uid, caller, admin)
+	// A bake Job READS the world it was created to bake — the same one-claim
+	// narrowing the artifact store applies to the job's writes, mirrored here
+	// for its one read. Read ONLY: a job writes artifacts, never worlds, so
+	// no other action is elevated. Found missing 2026-08-13, the first time
+	// a checking server met a cluster bake — the job's GET got the
+	// stranger's 404 and the bake died in three seconds.
+	if exists && level < access.Viewer && action == access.ActionRead {
+		if _, jobWorld, ok := m.cfg.Identity.BakeJob(r); ok && jobWorld == uid {
+			level = access.Viewer
+		}
+	}
 	if !exists || level < access.Viewer {
 		httpjson.ClientError(w, http.StatusNotFound, "no such world")
 		return false

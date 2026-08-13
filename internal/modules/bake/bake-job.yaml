@@ -33,8 +33,11 @@ spec:
   # identically, and six wasted minutes per attempt is a poor way to find that
   # out. The server sees the failure and can say so.
   backoffLimit: 0
-  # Finished Jobs disappear on their own. The RESULT is the artifact in the
-  # store; a Job object is only the story of how it got there.
+  # The backstop for Jobs nobody deleted (a server that died mid-bake).
+  # Successful Jobs are deleted by the server the moment they finish; FAILED
+  # ones are deliberately kept — their pod's log is the only place the
+  # reason lives — bounded by the server's retention sweep and, ultimately,
+  # by this TTL.
   ttlSecondsAfterFinished: {{ .TTLSeconds }}
   template:
     metadata:

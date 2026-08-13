@@ -169,7 +169,12 @@ ownerless worlds.
   token used to be accepted API-wide for its hour. DONE 2026-08-12 (step 4):
   the token carries its job's world as a claim, and the artifact store
   accepts it exactly there; progress reporting was already narrowed by the
-  job-id audience.
+  job-id audience. 2026-08-13 — the WORLD half of the same claim turned out
+  to be missing: a job could not READ the world it bakes on a checking
+  server (the first real cluster bake in password mode died on the privacy
+  404, since every earlier one had run under `none`). The world module now
+  accepts the claim for READS on exactly that world; writes and deletes
+  stay refused.
 
 ## Existing worlds, and switching a server to `password`
 

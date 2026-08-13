@@ -6,6 +6,8 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -36,9 +38,19 @@ const (
 	// generous — and polling avoids a watch stream's reconnect and
 	// resource-version handling, which is the fiddliest part of the API.
 	pollInterval = 2 * time.Second
-	// Finished Jobs disappear on their own after this. The artifact is the
-	// result; the Job object is only the story of how it got there.
-	jobTTLSeconds = 600
+	// Finished Jobs disappear on their own after this — the backstop for
+	// jobs nobody deleted (a server that died mid-bake). Six hours rather
+	// than minutes since 2026-08-13, because FAILED jobs are deliberately
+	// kept (see Run): their pod's log is the only place the reason lives,
+	// and a TTL that beat the operator to it made BackoffLimitExceeded
+	// unexplainable. Successful jobs never wait for this; the server
+	// deletes them on the spot.
+	jobTTLSeconds = 21600
+	// How many FAILED jobs are retained for inspection; older ones are
+	// pruned when a new failure joins. Small on purpose: a terminated pod
+	// still matches the hard anti-affinity, so every retained failure
+	// blocks its node for new bakes until it is pruned or the TTL reaps it.
+	keepFailedJobs = 3
 	// How long a Job may fail to start a pod before it is given up on.
 	//
 	// This is not paranoia. A pod rejected by admission — an SCC that refuses
@@ -134,16 +146,51 @@ func (r *kubernetesRunner) Run(ctx context.Context, spec Spec, onProgress func(P
 	if err := r.api.createJob(ctx, manifest); err != nil {
 		return Result{}, err
 	}
-	// Always cleaned up, even on failure or shutdown: the TTL would get there
-	// eventually, but a bake pod left holding 2.6 GB blocks a node against the
-	// anti-affinity rule for as long as it lives.
+	// Cleaned up on every path EXCEPT a failed pod (decided 2026-08-13): its
+	// log is the only place the failure's reason lives, and deleting the Job
+	// deletes the evidence — which is how a BackoffLimitExceeded once cost a
+	// morning of guessing. Everything else goes immediately: a finished or
+	// half-run bake pod holds 2.6 GB and blocks its node against the
+	// anti-affinity rule for as long as it exists.
+	keep := false
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer cancel()
+		if keep {
+			r.pruneFailedJobs(cleanup)
+			return
+		}
 		_ = r.api.deleteJob(cleanup, name)
 	}()
 
-	return r.await(ctx, name, spec.Stage, onProgress)
+	result, podFailed, err := r.await(ctx, name, spec.Stage, onProgress)
+	keep = podFailed
+	return result, err
+}
+
+// pruneFailedJobs is the retention rule: the newest keepFailedJobs failures
+// stay for inspection, everything older goes. Successful and abandoned jobs
+// never reach this — they are deleted the moment they end.
+func (r *kubernetesRunner) pruneFailedJobs(ctx context.Context) {
+	jobs, err := r.api.listJobs(ctx)
+	if err != nil {
+		slog.Warn("cannot list bake jobs for retention", "err", err)
+		return
+	}
+	var failed []jobSummary
+	for _, j := range jobs {
+		if j.Failed {
+			failed = append(failed, j)
+		}
+	}
+	sort.Slice(failed, func(i, j int) bool { return failed[i].Created.After(failed[j].Created) })
+	for _, old := range failed[min(keepFailedJobs, len(failed)):] {
+		if err := r.api.deleteJob(ctx, old.Name); err != nil {
+			slog.Warn("cannot prune failed bake job", "job", old.Name, "err", err)
+			continue
+		}
+		slog.Info("pruned failed bake job", "job", old.Name)
+	}
 }
 
 func (r *kubernetesRunner) render(name, jobID, args string) ([]byte, error) {
@@ -172,6 +219,8 @@ func (r *kubernetesRunner) render(name, jobID, args string) ([]byte, error) {
 }
 
 // await polls until the Job finishes, reporting what it can along the way.
+// `podFailed` singles out the one outcome whose evidence must survive — a pod
+// that ran and died — from every other way of not succeeding.
 //
 // There is no per-phase progress here, unlike the local runner: a Job's output
 // is its pod's log, and streaming that back would be a second connection and a
@@ -179,7 +228,7 @@ func (r *kubernetesRunner) render(name, jobID, args string) ([]byte, error) {
 // distinction that matters — a Job waiting for a node looks nothing like one
 // that is working, and calling both "running" would be a lie the anti-affinity
 // rule makes routine.
-func (r *kubernetesRunner) await(ctx context.Context, name string, stage int, onProgress func(Progress)) (Result, error) {
+func (r *kubernetesRunner) await(ctx context.Context, name string, stage int, onProgress func(Progress)) (result Result, podFailed bool, err error) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	reported := ""
@@ -200,7 +249,7 @@ func (r *kubernetesRunner) await(ctx context.Context, name string, stage int, on
 			if phase == "" {
 				phase = "not yet observed"
 			}
-			return Result{}, fmt.Errorf("stopped waiting for bake job %s after %s (last seen: %s): %w",
+			return Result{}, false, fmt.Errorf("stopped waiting for bake job %s after %s (last seen: %s): %w",
 				name, time.Since(begun).Round(time.Second), phase, ctx.Err())
 		case <-ticker.C:
 		}
@@ -221,13 +270,16 @@ func (r *kubernetesRunner) await(ctx context.Context, name string, stage int, on
 			// is exactly what keying artifacts by content bought. The job
 			// record therefore says "done" with the stage it was asked for and
 			// nothing else, and that is honest rather than lossy.
-			return Result{Stage: fmt.Sprint(stage)}, nil
+			return Result{Stage: fmt.Sprint(stage)}, false, nil
 		case state.Failed > 0:
 			message := state.Message
 			if message == "" {
 				message = "the bake pod failed"
 			}
-			return Result{}, fmt.Errorf("bake job %s failed: %s", name, message)
+			// The error names where the reason lives, because the Job is
+			// deliberately KEPT (see Run) — the condition alone, like the
+			// BackoffLimitExceeded this line once showed, explains nothing.
+			return Result{}, true, fmt.Errorf("bake job %s failed: %s — the job is kept, its pod's log has the reason: kubectl logs job/%s", name, message, name)
 		}
 
 		phase := "pending"
@@ -240,8 +292,9 @@ func (r *kubernetesRunner) await(ctx context.Context, name string, stage int, on
 		if phase == "pending" && time.Now().After(giveUpUnstarted) {
 			// The three real causes, named — because the Job's own status says
 			// nothing useful in any of them, and the operator would otherwise
-			// be looking at a stuck object with no hint where to start.
-			return Result{}, fmt.Errorf("bake job %s started no pod within %s: no node may satisfy the "+
+			// be looking at a stuck object with no hint where to start. Not a
+			// pod failure: there is no pod and therefore no log to keep.
+			return Result{}, false, fmt.Errorf("bake job %s started no pod within %s: no node may satisfy the "+
 				"anti-affinity, admission (SCC, quota) refused the pod, or its image cannot be pulled — "+
 				"`kubectl describe job %s` says which", name, schedulingDeadline, name)
 		}

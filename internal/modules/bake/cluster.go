@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -245,6 +246,49 @@ func (c *clusterAPI) jobStatus(ctx context.Context, name string) (jobState, erro
 		}
 	}
 	return state, nil
+}
+
+// jobSummary is the little of a listed Job the retention sweep needs.
+type jobSummary struct {
+	Name    string
+	Created time.Time
+	Failed  bool
+}
+
+// listJobs answers this namespace's bake Jobs, selected by the component
+// label the template stamps on every one (bake-job.yaml) — the same handle
+// its anti-affinity keys off.
+func (c *clusterAPI) listJobs(ctx context.Context) ([]jobSummary, error) {
+	raw, status, err := c.do(ctx, http.MethodGet, c.jobsPath()+"?labelSelector="+url.QueryEscape("casas-eternas/component=bake"), nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, apiError("listing jobs", status, raw)
+	}
+	var parsed struct {
+		Items []struct {
+			Metadata struct {
+				Name              string    `json:"name"`
+				CreationTimestamp time.Time `json:"creationTimestamp"`
+			} `json:"metadata"`
+			Status struct {
+				Failed int `json:"failed"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("listing jobs: %w", err)
+	}
+	jobs := make([]jobSummary, 0, len(parsed.Items))
+	for _, item := range parsed.Items {
+		jobs = append(jobs, jobSummary{
+			Name:    item.Metadata.Name,
+			Created: item.Metadata.CreationTimestamp,
+			Failed:  item.Status.Failed > 0,
+		})
+	}
+	return jobs, nil
 }
 
 // deleteJob removes a Job and its pods. Foreground propagation so the pods go

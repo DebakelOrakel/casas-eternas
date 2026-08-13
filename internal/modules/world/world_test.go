@@ -153,6 +153,81 @@ func TestGetServesTheZipWithItsRevisionAsETag(t *testing.T) {
 	}
 }
 
+// A bake Job may READ the one world its token names — and nothing else in no
+// other way: every other world stays the stranger's 404, and even its own
+// world refuses writes and deletes. Pins the gap found 2026-08-13, when the
+// first cluster bake against a checking server died on this very 404.
+func TestBakeJobReadsExactlyItsWorld(t *testing.T) {
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &Module{
+		cfg:   Config{Identity: identity.NewResolver(config.AuthPassword, tokens)},
+		store: newTestStore(t),
+	}
+	mux := http.NewServeMux()
+	if err := m.Mount(mux); err != nil {
+		t.Fatal(err)
+	}
+	as := func(method, path, bearer string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, nil)
+		request.Header.Set("Authorization", "Bearer "+bearer)
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	// ada owns the world; the job was minted FOR it, the stray job for another.
+	ada, _, err := tokens.IssueSession("ada-id", false, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	save := buildSave(t, sampleYAML(), []byte("PNG"), nil)
+	request := httptest.NewRequest(http.MethodPut, "/v1/worlds/"+sampleUID, strings.NewReader(string(save)))
+	request.Header.Set("Authorization", "Bearer "+ada)
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create = %d", recorder.Code)
+	}
+	job, _, err := tokens.IssueBakeJob("job-1", sampleUID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stray, _, err := tokens.IssueBakeJob("job-2", "00000000-0000-4000-8000-000000000000", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{
+		"/v1/worlds/" + sampleUID,
+		"/v1/worlds/" + sampleUID + "/meta",
+	} {
+		if got := as(http.MethodGet, path, job).Code; got != http.StatusOK {
+			t.Errorf("job GET %s = %d, want 200", path, got)
+		}
+		// A job for a DIFFERENT world is a stranger here — including the
+		// 404 that must not confirm existence.
+		if got := as(http.MethodGet, path, stray).Code; got != http.StatusNotFound {
+			t.Errorf("stray job GET %s = %d, want 404", path, got)
+		}
+	}
+	// Read only: its own world refuses everything above viewer.
+	if got := as(http.MethodDelete, "/v1/worlds/"+sampleUID, job).Code; got == http.StatusOK || got == http.StatusNoContent {
+		t.Errorf("job DELETE succeeded (%d)", got)
+	}
+	update := buildSave(t, sampleYAML(), []byte("PNG"), map[string][]byte{"payload": []byte("v2")})
+	request = httptest.NewRequest(http.MethodPut, "/v1/worlds/"+sampleUID, strings.NewReader(string(update)))
+	request.Header.Set("Authorization", "Bearer "+job)
+	request.Header.Set("If-Match", `"1"`)
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+	if recorder.Code == http.StatusOK || recorder.Code == http.StatusCreated {
+		t.Errorf("job PUT succeeded (%d)", recorder.Code)
+	}
+}
+
 // The visibility rule end to end, through real tokens and real grants: a
 // private world is INVISIBLE to strangers — absent from the list, 404 on
 // every direct route — and the granted levels open exactly their rows of

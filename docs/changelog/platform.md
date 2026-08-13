@@ -6,6 +6,8 @@ the format.
 ## 2026-08-13
 - **new** Server: local users live in the auth store and are administered over a unix admin socket — `casas-eternas auth user add|list|delete|passwd`; the htpasswd file is gone.
 - **new** Server: admin is a role bound to the user — `casas-eternas auth role bind <name> admin` — replacing the `global.auth.admins` config list.
+- **fixed** Server: a cluster bake can read the world it bakes on an authenticating server — its job was refused as a stranger and died within seconds.
+- **changed** Server: failed bake jobs are kept (the last three) so their pod logs survive for diagnosis; successful ones are still removed immediately.
 - **new** Server: login is the `auth` target's job — the endpoint moved to `POST /v1/auth/session` (discovered via config.json), and split deployments pin the user store to one process.
 - **new** Server: the documentation site ships with the server — /docs renders the vision, decisions, design notes and changelog, navigated by area with stage badges.
 
