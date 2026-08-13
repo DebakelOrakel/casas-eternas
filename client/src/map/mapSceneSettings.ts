@@ -77,8 +77,8 @@ export const NEAR_MIN_ALTITUDE = 2500 * UNITS_PER_METER
 const HEX_WIDTH_M = 300
 const WORLD_WIDTH_M = METERS_PER_CELL * MAP_WIDTH
 const WORLD_HEIGHT_M = METERS_PER_CELL * MAP_HEIGHT
-const HEX_COLUMNS = Math.round(WORLD_WIDTH_M / HEX_WIDTH_M)
-const HEX_ROWS = 2 * Math.round(WORLD_HEIGHT_M / (HEX_WIDTH_M * (Math.sqrt(3) / 2)) / 2)
+export const HEX_COLUMNS = Math.round(WORLD_WIDTH_M / HEX_WIDTH_M)
+export const HEX_ROWS = 2 * Math.round(WORLD_HEIGHT_M / (HEX_WIDTH_M * (Math.sqrt(3) / 2)) / 2)
 export const HEX_COL_SPACING = MAP_WORLD_WIDTH / HEX_COLUMNS
 export const HEX_ROW_SPACING = MAP_WORLD_HEIGHT / HEX_ROWS
 

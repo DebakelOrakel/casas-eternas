@@ -24,19 +24,39 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
   private strengthValue = 0
   private spacingX = 1
   private spacingY = 1
+  private periodX = 1
+  private periodY = 1
   private color = new Color3(0.15, 0.2, 0.28)
   private fadeStart = 1e9
   private fadeEnd = 1e9
+  private highlightX = 0
+  private highlightZ = 0
+  private highlightOn = 0
 
   constructor(material: Material) {
     super(material, 'HexGrid', 200, { HEXGRID: false })
     this._enable(true)
   }
 
-  configure(spacingX: number, spacingY: number, color?: Color3): void {
+  configure(spacingX: number, spacingY: number, periodX: number, periodY: number, color?: Color3): void {
     this.spacingX = spacingX
     this.spacingY = spacingY
+    this.periodX = periodX
+    this.periodY = periodY
     if (color) this.color = color
+  }
+
+  // The hovered tile, as its canonical center (map/hexGrid.ts) — the shader
+  // matches it against each fragment's own nearest lattice center modulo
+  // the toroidal period, so the highlight lights up on every wrap copy.
+  // null clears it. Only meaningful while the grid is visible; the fades
+  // apply to the fill exactly as they do to the lines.
+  setHighlight(center: { x: number; z: number } | null): void {
+    this.highlightOn = center ? 1 : 0
+    if (center) {
+      this.highlightX = center.x
+      this.highlightZ = center.z
+    }
   }
 
   // 0 = off (the shader branch is compiled out entirely), 0..1 = line
@@ -75,6 +95,8 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
         { name: 'hexGridColor', size: 3, type: 'vec3' },
         { name: 'hexGridEye', size: 3, type: 'vec3' },
         { name: 'hexGridFade', size: 2, type: 'vec2' },
+        { name: 'hexGridPeriod', size: 2, type: 'vec2' },
+        { name: 'hexGridHighlight', size: 3, type: 'vec3' },
       ],
       fragment: `#ifdef HEXGRID
         uniform float hexGridStrength;
@@ -82,6 +104,8 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
         uniform vec3 hexGridColor;
         uniform vec3 hexGridEye;
         uniform vec2 hexGridFade;
+        uniform vec2 hexGridPeriod;
+        uniform vec3 hexGridHighlight;
       #endif`,
     }
   }
@@ -94,6 +118,8 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
     const eye = scene.activeCamera?.globalPosition
     uniformBuffer.updateFloat3('hexGridEye', eye?.x ?? 0, eye?.y ?? 0, eye?.z ?? 0)
     uniformBuffer.updateFloat2('hexGridFade', this.fadeStart, this.fadeEnd)
+    uniformBuffer.updateFloat2('hexGridPeriod', this.periodX, this.periodY)
+    uniformBuffer.updateFloat3('hexGridHighlight', this.highlightX, this.highlightZ, this.highlightOn)
   }
 
   override getCustomCode(shaderType: string): { [pointName: string]: string } | null {
@@ -110,29 +136,34 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
       return {
         CUSTOM_FRAGMENT_DEFINITIONS: `varying vec3 vHexWorldPos;
           #ifdef HEXGRID
-          float hexEdgeDistance(vec2 p, vec2 s) {
+          float hexEdgeDistance(vec2 p, vec2 s, out vec2 center) {
             vec2 period = vec2(s.x, 2.0 * s.y);
             vec2 a = floor(p / period + 0.5) * period;
             vec2 halfOff = vec2(0.5 * s.x, s.y);
             vec2 b = floor((p - halfOff) / period + 0.5) * period + halfOff;
             float d1 = 1e9;
             float d2 = 1e9;
+            center = a;
             // Nearest + second-nearest over both lattices' local candidates
             // (each plus its horizontal neighbors — hexes also border
-            // same-lattice cells sideways).
+            // same-lattice cells sideways). The nearest center doubles as
+            // the fragment's tile identity for the hover highlight.
             for (int i = -1; i <= 1; i++) {
               float dx = float(i) * s.x;
-              float da = distance(p, a + vec2(dx, 0.0));
-              if (da < d1) { d2 = d1; d1 = da; } else if (da < d2) { d2 = da; }
-              float db = distance(p, b + vec2(dx, 0.0));
-              if (db < d1) { d2 = d1; d1 = db; } else if (db < d2) { d2 = db; }
+              vec2 ca = a + vec2(dx, 0.0);
+              float da = distance(p, ca);
+              if (da < d1) { d2 = d1; d1 = da; center = ca; } else if (da < d2) { d2 = da; }
+              vec2 cb = b + vec2(dx, 0.0);
+              float db = distance(p, cb);
+              if (db < d1) { d2 = d1; d1 = db; center = cb; } else if (db < d2) { d2 = db; }
             }
             return 0.5 * (d2 - d1);
           }
           #endif`,
         CUSTOM_FRAGMENT_MAIN_END: `#ifdef HEXGRID
           {
-            float hexD = hexEdgeDistance(vHexWorldPos.xz, hexGridSpacing);
+            vec2 hexCenter;
+            float hexD = hexEdgeDistance(vHexWorldPos.xz, hexGridSpacing, hexCenter);
             float aa = fwidth(hexD);
             float hexLine = 1.0 - smoothstep(0.6 * aa, 1.5 * aa, hexD);
             // Moiré guard: once the antialiasing footprint approaches the
@@ -145,7 +176,16 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
             // sit full-contrast on fogged terrain.
             float hexDist = distance(vHexWorldPos, hexGridEye);
             float hexDistFade = 1.0 - smoothstep(hexGridFade.x, hexGridFade.y, hexDist);
-            gl_FragColor.rgb = mix(gl_FragColor.rgb, hexGridColor, hexLine * hexCoverage * hexDistFade * hexGridStrength * 0.45);
+            // Hover highlight: the hovered tile's canonical center arrives
+            // as a uniform; matching it modulo the toroidal period keeps the
+            // fill on all wrap copies. Half a column spacing separates
+            // distinct centers, so a quarter of it is an unambiguous match
+            // radius.
+            vec2 hexHlDelta = hexCenter - hexGridHighlight.xy;
+            hexHlDelta -= hexGridPeriod * floor(hexHlDelta / hexGridPeriod + 0.5);
+            float hexHlMatch = hexGridHighlight.z * (1.0 - step(0.25 * hexGridSpacing.x, length(hexHlDelta)));
+            float hexShade = max(hexLine * 0.45, hexHlMatch * 0.22);
+            gl_FragColor.rgb = mix(gl_FragColor.rgb, hexGridColor, hexShade * hexCoverage * hexDistFade * hexGridStrength);
           }
           #endif`,
       }

@@ -28,6 +28,11 @@
   text-transform: uppercase;
 }
 
+.knowledge-debug__status {
+  width: 100%;
+  font-weight: 600;
+}
+
 .knowledge-debug label {
   display: inline-flex;
   align-items: center;

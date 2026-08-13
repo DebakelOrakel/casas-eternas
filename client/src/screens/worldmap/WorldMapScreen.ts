@@ -6,6 +6,7 @@ import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { ToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
+import { hexAt, hexCenter } from '../../map/hexGrid'
 import { createMapPresentation, DEFAULT_KNOWLEDGE_RAMP, DEFAULT_PIGMENT_TUNING } from '../../map/mapPresentation'
 import type { KnowledgeRamp, MapWorldFields, PigmentTuning } from '../../map/mapPresentation'
 import { DEFAULT_TERRAIN_WASH } from '../../map/terrainPalette'
@@ -356,6 +357,46 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scheduleKnowledgeRepaint()
   })
 
+  // Light the hovered 300 m tile through the grid shader. Interaction arms
+  // below FULL grid visibility — a threshold on the continuous zoom axis,
+  // not a mode (decisions/hex-tiling.md, fork 3). The picked point may lie
+  // on any wrap copy; hexAt canonicalizes it, and the shader lights every
+  // copy of that tile.
+  let hexPointerInside = false
+  let lastHexHoverTime = 0
+  function updateHexHover(): void {
+    if (!mapView) return
+    lastHexHoverTime = performance.now()
+    if (!hexPointerInside || getCameraAltitude() > HEXGRID_FADE_LOW_ALTITUDE) {
+      mapView.setHexHighlight(null)
+      debugPanel.setHexTile(null)
+      return
+    }
+    const point = mapView.pickGround(scene.pointerX, scene.pointerY)
+    const tile = point ? hexAt(point.x, point.z) : null
+    mapView.setHexHighlight(tile ? hexCenter(tile) : null)
+    debugPanel.setHexTile(tile)
+  }
+  const hexHoverObserver = scene.onPointerObservable.add((info) => {
+    if (info.type !== PointerEventTypes.POINTERMOVE) return
+    hexPointerInside = true
+    updateHexHover()
+  })
+  // The world streams under a RESTING cursor during the descent and while
+  // panning — without this, the highlight sticks to the tile picked at the
+  // last pointer move and visibly lags the terrain flow. Throttled: the
+  // pick against the fine mesh is not free, and 150 ms of lag on a flowing
+  // highlight is invisible.
+  const hexFrameObserver = scene.onBeforeRenderObservable.add(() => {
+    if (performance.now() - lastHexHoverTime < 150) return
+    updateHexHover()
+  })
+  const onHexPointerLeave = (): void => {
+    hexPointerInside = false
+    updateHexHover()
+  }
+  ctx.canvas.addEventListener('pointerleave', onHexPointerLeave)
+
   // Same load affordance as the generator: folder button → file picker.
   const fileInput = document.createElement('input')
   fileInput.type = 'file'
@@ -433,6 +474,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // the two pushes below hand everything over once there is one.
     presentation.setWorld({ elevations, width, height, biome, detailSeed, biomeInputs: savedBiomeInputs, lakeDepth })
     presentation.setElevation(elevations, width, height, detailSeed)
+    debugPanel.setTerrainTier(width, height)
 
     mapView = createToroidalMapView({
       scene,
@@ -654,6 +696,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     world?.addAmplifiedElevation(artifact.elevation, artifact.width, artifact.height)
     void world?.acquire('elevation', 'presentation').then((view) => { elevationView = view; hoverTooltip?.refresh() })
     presentation.setElevation(artifact.elevation, artifact.width, artifact.height, detailSeed)
+    debugPanel.setTerrainTier(artifact.width, artifact.height)
     applyRivers(artifact.riverPoints, artifact.riverLengths, artifact.width, artifact.height, factor)
     hoverTooltip?.refresh()
   }
@@ -701,6 +744,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       loadGeneration++
       if (knowledgeRepaintTimer !== null) clearTimeout(knowledgeRepaintTimer)
       scene.onPointerObservable.remove(brushObserver)
+      scene.onPointerObservable.remove(hexHoverObserver)
+      scene.onBeforeRenderObservable.remove(hexFrameObserver)
+      ctx.canvas.removeEventListener('pointerleave', onHexPointerLeave)
       debugPanel.dispose()
       watercolor.dispose()
       riverLayer?.dispose()

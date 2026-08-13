@@ -1,5 +1,5 @@
 import { Color3, DirectionalLight, HemisphericLight, MeshBuilder, RawTexture, Scene, StandardMaterial, Vector3, VertexBuffer } from '@babylonjs/core'
-import type { InstancedMesh, Mesh } from '@babylonjs/core'
+import type { AbstractMesh, InstancedMesh, Mesh } from '@babylonjs/core'
 import type { ElevationSurface } from './elevationSurface'
 import { HexGridMaterialPlugin } from './hexGridMaterialPlugin'
 
@@ -85,6 +85,18 @@ export interface ToroidalMapView {
   // (the worldmap fades it out during the descent) without recomputing any
   // geometry. The surfaces themselves stay metre-true.
   setHeightScale(scale: number): void
+  // The hovered hex tile's canonical center (map/hexGrid.ts), or null to
+  // clear — forwarded to the grid plugin, which fills that tile on every
+  // wrap copy. No-op when the view was built without a hexGrid.
+  setHexHighlight(center: { x: number; z: number } | null): void
+  // Pick the terrain THIS view renders, restricted to its own surfaces
+  // (flat plane, relief levels, near-detail patch) — a plain scene.pick can
+  // land on any stray pickable mesh, and any surface that is not the
+  // rendered ground answers with a parallax-shifted point. The ray aims at
+  // the pixel's CENTER (rasterizers sample fragments there, screen APIs
+  // hand out corners); at grazing angles that half pixel is tile-sized on
+  // the ground.
+  pickGround(screenX: number, screenY: number): { x: number; z: number } | null
   // Hide/show the whole map view (all layers).
   setEnabled(enabled: boolean): void
   dispose(): void
@@ -153,7 +165,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   let hexGridPlugin: HexGridMaterialPlugin | null = null
   if (hexGrid) {
     hexGridPlugin = new HexGridMaterialPlugin(reliefMaterial)
-    hexGridPlugin.configure(hexGrid.spacingX, hexGrid.spacingY)
+    hexGridPlugin.configure(hexGrid.spacingX, hexGrid.spacingY, worldWidth, worldHeight)
   }
 
   // The relief lights touch ONLY the relief meshes (includedOnlyMeshes,
@@ -532,6 +544,28 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       if (scale === heightScale) return
       heightScale = scale
       applyHeightScale()
+    },
+    setHexHighlight(center: { x: number; z: number } | null): void {
+      hexGridPlugin?.setHighlight(center)
+    },
+    pickGround(screenX: number, screenY: number): { x: number; z: number } | null {
+      const isGround = (mesh: AbstractMesh): boolean => {
+        // A custom predicate REPLACES scene.pick's default enabled/visible
+        // filter rather than adding to it — without this check the ray also
+        // tests the HIDDEN levels, and the coarse mesh deviates from the
+        // shown fine one by tens of metres on relief (it sits above it on
+        // ridges), so picks land beside the surface the user actually sees.
+        // Zero on flat ground, which is what made it look knowledge-related.
+        if (!mesh.isEnabled() || !mesh.isVisible) return false
+        if (mesh === tile || (patchMesh !== null && mesh === patchMesh)) return true
+        if (wrapInstances.includes(mesh as InstancedMesh)) return true
+        const inLevel = (level: ReliefLevel | null): boolean =>
+          level !== null && (mesh === level.base || level.instances.includes(mesh as InstancedMesh))
+        return inLevel(coarseLevel) || inLevel(fineLevel)
+      }
+      const pick = scene.pick(screenX + 0.5, screenY + 0.5, isGround)
+      const point = pick?.hit ? pick.pickedPoint : null
+      return point ? { x: point.x, z: point.z } : null
     },
     setEnabled(next: boolean): void {
       enabled = next

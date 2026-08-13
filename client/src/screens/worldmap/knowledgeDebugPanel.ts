@@ -41,6 +41,13 @@ export interface KnowledgeDebugPanel {
   isBrushActive(): boolean
   // Brush radius as a fraction of world width.
   brushRadius(): number
+  // The terrain raster currently feeding the presentation — the screen
+  // reports the macro raster at load and each amplified tier as it lands
+  // (2048 → "2K", 4096 → "4K", 8192 → "8K").
+  setTerrainTier(width: number, height: number): void
+  // The hex tile the hover pick currently resolves to (canonical col,row),
+  // or null — a truth readout for chasing pick-vs-highlight mismatches.
+  setHexTile(tile: { col: number; row: number } | null): void
   dispose(): void
 }
 
@@ -51,6 +58,8 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
   const root = document.createElement('div')
   root.className = 'knowledge-debug'
   root.innerHTML = `
+    <span class="knowledge-debug__status" data-status="tier">terrain: —</span>
+    <span class="knowledge-debug__status" data-status="hex">hex: —</span>
     <span class="knowledge-debug__title">knowledge (debug)</span>
     <button type="button" data-action="brush">brush: off</button>
     <label>radius <input type="range" data-knob="radius" min="0.01" max="0.25" step="0.005" value="0.06" /></label>
@@ -132,9 +141,19 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
   }
   root.addEventListener('click', onClick)
 
+  const tierStatus = root.querySelector<HTMLSpanElement>('[data-status="tier"]')!
+  const hexStatus = root.querySelector<HTMLSpanElement>('[data-status="hex"]')!
+
   return {
     isBrushActive: () => brushActive,
     brushRadius: () => Number(knob('radius').value),
+    setTerrainTier(width: number, height: number): void {
+      const label = width === 2048 ? '2K (macro)' : width === 4096 ? '4K' : width === 8192 ? '8K' : `${width}×${height}`
+      tierStatus.textContent = `terrain: ${label}`
+    },
+    setHexTile(tile: { col: number; row: number } | null): void {
+      hexStatus.textContent = tile ? `hex: ${tile.col},${tile.row}` : 'hex: —'
+    },
     dispose(): void {
       root.removeEventListener('input', onInput)
       root.removeEventListener('click', onClick)
