@@ -103,6 +103,18 @@ boundaries above are target boundaries. "Session is a module with no target,
 chosen by auth mode" stops being true on the day two pods run different
 targets in password mode.
 
+## The auth mode is configuration, deliberately
+
+`global.auth.mode` defaults to `none` — right for the local single-player
+case, and on a cluster it is the manifest's env line that makes the server
+an authenticated one. A coded guard (refuse a defaulted mode when the
+process detects Kubernetes) was built and REVERTED the same day
+(2026-08-13): it would have made platform detection a policy input and made
+the server ask where a config value came from — both against the grain of
+"the server does not know where it runs" and "modules see plain values".
+Whoever can drop the env line can drop the gate too; protecting the
+manifest is the platform's job, not the binary's.
+
 ## What stays deliberately boring
 
 Worlds, artifacts, revisions, grants: they are the *big* files and directory

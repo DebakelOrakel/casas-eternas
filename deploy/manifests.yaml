@@ -1,5 +1,7 @@
 # OpenShift manifests for casas-eternas: ONE binary serving the client, the
-# world store, the artifact store and the bake worker.
+# docs site, the world store, the artifact store, the bake worker and the
+# login (auth target; users administered over the admin socket, see
+# deploy/README.md).
 # PVC + Deployment + Service + Route. Route has NO host, so OpenShift generates
 # one on the cluster's default apps domain:
 # casas-eternas-<namespace>.apps.<cluster>.
@@ -133,6 +135,10 @@ spec:
             # be two places to keep in step; every config key is reachable as
             # CASAS_<KEY> with dots and dashes as underscores (see cmd/root.go's
             # initConfig).
+            # The compiled default is `none` (the local mode) — this line is
+            # what makes the deployment an authenticated server. Losing it
+            # means an OPEN server; it is configuration, guard it like the
+            # Secret.
             - name: CASAS_GLOBAL_AUTH_MODE
               value: password
             - name: CASAS_GLOBAL_AUTH_SESSION_KEY

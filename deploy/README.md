@@ -53,6 +53,8 @@ so the working directory does not matter either.
 `auth user list|passwd|delete` manage them from there. Changes take effect
 immediately — no restart, no Secret involved.
 
-To run **without** authentication (a single-user server on a trusted network),
-drop the auth variables from the Deployment. The default is `none`, in which
-one synthetic identity owns everything and no login exists.
+To run **without** authentication (a single-user server on a trusted
+network), set `CASAS_GLOBAL_AUTH_MODE=none` — one synthetic identity then
+owns everything and no login exists. Say it explicitly rather than dropping
+the variable: `none` is also the compiled default, and an open server should
+be visible in the manifest, not implied by an absence.

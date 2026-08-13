@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 #
-# Container image for casas-eternas: ONE binary that serves the client, stores
-# worlds and artifacts, and bakes amplified terrain.
+# Container image for casas-eternas: ONE binary that serves the client and
+# the docs site, stores worlds and artifacts, bakes amplified terrain, and
+# runs the login (auth target).
 #
 # Build context is the REPO ROOT (needs client/, docs/changelog/, cmd/,
 # internal/, main.go):
