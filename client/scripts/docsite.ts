@@ -356,7 +356,8 @@ function badges(doc: Doc): string {
 
 function docCard(doc: Doc): string {
   return `<a class="card" href="/docs/${doc.route}">
-    <div class="card-head"><span class="card-title">${esc(doc.title)}</span>${badges(doc)}</div>
+    <span class="card-title">${esc(doc.title)}</span>
+    <div class="card-badges">${badges(doc)}</div>
     <p class="card-summary">${esc(doc.summary)}</p>
   </a>`
 }
@@ -543,7 +544,7 @@ async function build(): Promise<void> {
     const cards = items
       .map(
         (i) => `<a class="card" href="/docs/${i.route}">
-        <div class="card-head"><span class="card-title">${esc(i.label)}</span></div>
+        <span class="card-title">${esc(i.label)}</span>
         <p class="card-summary">${esc(i.summary)}</p>
       </a>`,
       )
@@ -697,8 +698,10 @@ main { flex: 1; min-width: 0; max-width: 780px; padding: 2.2rem 3rem 4rem; }
 
 .card { display: block; text-decoration: none; padding: 0.7rem 0.9rem; margin: 0.5rem 0; border: 1px solid #e7e4dc; border-radius: 4px; }
 .card:hover { border-color: #b9b2a2; }
-.card-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
-.card-title { font-family: 'Cinzel', serif; font-weight: 600; margin-right: 0.3rem; }
+.card-title { display: block; font-family: 'Cinzel', serif; font-weight: 600; }
+/* Badges on their OWN line under the title: sharing a flex row with a long
+   Cinzel title made them wrap unevenly and poke past the card's edge. */
+.card-badges { margin-top: 0.35rem; }
 .card-summary { margin: 0.35rem 0 0; font-size: 0.88rem; color: #555; }
 
 .teaser { border: 1px solid #e7e4dc; border-radius: 4px; padding: 0.2rem 1rem 0.8rem; }
