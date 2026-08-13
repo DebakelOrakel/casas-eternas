@@ -361,6 +361,12 @@ representation, zoom model — see
    world-layer when they exist. First visible payoff: hover-highlight of
    the hex under the cursor in the descent view (a uniform in the
    existing grid plugin), proving the logical and painted grids coincide.
+   *(BUILT 2026-08-13: `map/hexGrid.ts` on honeycomb-grid, verified
+   against the shader lattice over 200k points; highlight wired. Known
+   residual: the CPU pick is close but not pixel-perfect against the
+   rendered fragment — if it ever matters, the escalation is GPU picking,
+   tile identity rendered to an offscreen target and read under the
+   cursor.)*
 2. **Tile classification** (derived, cached, chunk-wise near the
    camera). Per hex: median height, slope, biome, water state
    (land/water/shore via corner classification), river presence — from
@@ -368,6 +374,20 @@ representation, zoom model — see
    fine-height source (`fineElevationSurface`), or later plates will
    float above the terrain. Debug overlay for eyeballing, deliberately
    changelog-free.
+   *(BUILT 2026-08-13 except rivers, eyeballed OK the same day:
+   `map/hexTiles.ts` classifies over the truth fine surface (bias 0) +
+   lake layer + painted biome, with PROVISIONAL grade constants — the
+   thresholds stay an open question. Visible as a hover readout line and
+   a tile-tint overlay ("classes" toggle) in the debug panel, filled
+   ~600 tiles/frame around the camera. River presence deliberately waits
+   for phase 3, where the polyline→port mapping identifies river tiles
+   exactly instead of a second distance test here. Two traps cost a
+   round each and are worth remembering: world→mesh-UV is v = z/H + 0.5
+   — CreateGround's own vertex data, NOT watercolorPass' flipped
+   knowledge-texture frame — and material-plugin SAMPLERS must be
+   declared in CUSTOM_FRAGMENT_DEFINITIONS, because the
+   getUniforms().fragment block is not injected on UBO engines and the
+   effect then silently never compiles.)*
 3. **Ports v1 as metadata.** Snap the amplified river polylines onto
    edge ports (wide rivers claim both slots of an edge); compute shore
    crossings marching-hex style from relief + water level. All derived

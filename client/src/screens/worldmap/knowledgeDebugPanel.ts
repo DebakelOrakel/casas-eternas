@@ -35,6 +35,8 @@ export interface KnowledgeDebugPanelOptions {
   onReveal: () => void
   // Brush mode takes the pointer away from the camera's pan.
   onBrushToggle: (active: boolean) => void
+  // Phase 2 debug overlay: tint tiles by their classification.
+  onClassesToggle: (active: boolean) => void
 }
 
 export interface KnowledgeDebugPanel {
@@ -45,21 +47,24 @@ export interface KnowledgeDebugPanel {
   // reports the macro raster at load and each amplified tier as it lands
   // (2048 → "2K", 4096 → "4K", 8192 → "8K").
   setTerrainTier(width: number, height: number): void
-  // The hex tile the hover pick currently resolves to (canonical col,row),
-  // or null — a truth readout for chasing pick-vs-highlight mismatches.
-  setHexTile(tile: { col: number; row: number } | null): void
+  // The hovered tile's readout line ("hex: col,row · height · slope · …"),
+  // or null when nothing is hovered — the screen formats it, the panel just
+  // shows it.
+  setHexTile(text: string | null): void
   dispose(): void
 }
 
 export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeDebugPanelOptions): KnowledgeDebugPanel {
-  const { ramp, sheet, pigment, wash, onRampChange, onPigmentChange, onWashChange, onSeed, onClear, onReveal, onBrushToggle } = options
+  const { ramp, sheet, pigment, wash, onRampChange, onPigmentChange, onWashChange, onSeed, onClear, onReveal, onBrushToggle, onClassesToggle } = options
   let brushActive = false
+  let classesActive = false
 
   const root = document.createElement('div')
   root.className = 'knowledge-debug'
   root.innerHTML = `
     <span class="knowledge-debug__status" data-status="tier">terrain: —</span>
     <span class="knowledge-debug__status" data-status="hex">hex: —</span>
+    <button type="button" data-action="classes">classes: off</button>
     <span class="knowledge-debug__title">knowledge (debug)</span>
     <button type="button" data-action="brush">brush: off</button>
     <label>radius <input type="range" data-knob="radius" min="0.01" max="0.25" step="0.005" value="0.06" /></label>
@@ -135,6 +140,12 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
       brushButton.textContent = `brush: ${brushActive ? 'on' : 'off'}`
       brushButton.classList.toggle('is-on', brushActive)
       onBrushToggle(brushActive)
+    } else if (action === 'classes') {
+      classesActive = !classesActive
+      const button = root.querySelector<HTMLButtonElement>('[data-action="classes"]')!
+      button.textContent = `classes: ${classesActive ? 'on' : 'off'}`
+      button.classList.toggle('is-on', classesActive)
+      onClassesToggle(classesActive)
     } else if (action === 'seed') onSeed()
     else if (action === 'clear') onClear()
     else if (action === 'reveal') onReveal()
@@ -151,8 +162,8 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
       const label = width === 2048 ? '2K (macro)' : width === 4096 ? '4K' : width === 8192 ? '8K' : `${width}×${height}`
       tierStatus.textContent = `terrain: ${label}`
     },
-    setHexTile(tile: { col: number; row: number } | null): void {
-      hexStatus.textContent = tile ? `hex: ${tile.col},${tile.row}` : 'hex: —'
+    setHexTile(text: string | null): void {
+      hexStatus.textContent = text ?? 'hex: —'
     },
     dispose(): void {
       root.removeEventListener('input', onInput)

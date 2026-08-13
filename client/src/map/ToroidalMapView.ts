@@ -89,6 +89,10 @@ export interface ToroidalMapView {
   // clear — forwarded to the grid plugin, which fills that tile on every
   // wrap copy. No-op when the view was built without a hexGrid.
   setHexHighlight(center: { x: number; z: number } | null): void
+  // Forward a per-tile class window to the grid plugin (phase 2's debug
+  // overlay; see HexGridMaterialPlugin.setClassOverlay for the encoding).
+  // null clears it. No-op without a hexGrid.
+  setHexClassOverlay(texture: RawTexture | null, window?: { col0: number; row0: number; cols: number; rows: number }): void
   // Pick the terrain THIS view renders, restricted to its own surfaces
   // (flat plane, relief levels, near-detail patch) — a plain scene.pick can
   // land on any stray pickable mesh, and any surface that is not the
@@ -547,6 +551,9 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     },
     setHexHighlight(center: { x: number; z: number } | null): void {
       hexGridPlugin?.setHighlight(center)
+    },
+    setHexClassOverlay(texture: RawTexture | null, window?: { col0: number; row0: number; cols: number; rows: number }): void {
+      hexGridPlugin?.setClassOverlay(texture, window)
     },
     pickGround(screenX: number, screenY: number): { x: number; z: number } | null {
       const isGround = (mesh: AbstractMesh): boolean => {

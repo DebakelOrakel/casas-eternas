@@ -1,5 +1,5 @@
 import { Color3, MaterialPluginBase } from '@babylonjs/core'
-import type { Material, MaterialDefines, Scene, SubMesh, UniformBuffer } from '@babylonjs/core'
+import type { BaseTexture, Material, MaterialDefines, Scene, SubMesh, UniformBuffer } from '@babylonjs/core'
 
 // Fragment-shader hex grid over the relief material — the LOGICAL 300 m
 // grid's first visible incarnation (docs/design/hex-world-view.md), drawn as
@@ -32,9 +32,13 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
   private highlightX = 0
   private highlightZ = 0
   private highlightOn = 0
+  private colCount = 1
+  private rowCount = 1
+  private classTexture: BaseTexture | null = null
+  private classWindow = { col0: 0, row0: 0, cols: 1, rows: 1 }
 
   constructor(material: Material) {
-    super(material, 'HexGrid', 200, { HEXGRID: false })
+    super(material, 'HexGrid', 200, { HEXGRID: false, HEXCLASSES: false })
     this._enable(true)
   }
 
@@ -43,7 +47,23 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
     this.spacingY = spacingY
     this.periodX = periodX
     this.periodY = periodY
+    // The lattice counts are exact by the torus snap; the shader needs them
+    // to canonicalize a fragment's (col, row) the same way hexGrid.ts does.
+    this.colCount = Math.round(periodX / spacingX)
+    this.rowCount = Math.round(periodY / spacingY)
     if (color) this.color = color
+  }
+
+  // A window of per-tile class bytes (phase 2's debug overlay): the texture's
+  // red channel carries 0 = no data, 1 = water, 2 = shore, 3+g = land with
+  // grade bin g (0..10). The window is a (cols × rows) rectangle of
+  // torus-canonical tiles starting at (col0, row0); the shader tints every
+  // fragment whose tile falls inside it. null clears the overlay.
+  setClassOverlay(texture: BaseTexture | null, window?: { col0: number; row0: number; cols: number; rows: number }): void {
+    const wasOn = this.classTexture !== null
+    this.classTexture = texture
+    if (window) this.classWindow = window
+    if (wasOn !== (texture !== null)) this.markAllDefinesAsDirty()
   }
 
   // The hovered tile, as its canonical center (map/hexGrid.ts) — the shader
@@ -85,6 +105,11 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
 
   override prepareDefines(defines: MaterialDefines): void {
     defines['HEXGRID'] = this.strengthValue > 0
+    defines['HEXCLASSES'] = this.strengthValue > 0 && this.classTexture !== null
+  }
+
+  override getSamplers(samplers: string[]): void {
+    samplers.push('hexClassSampler')
   }
 
   override getUniforms(): { ubo: { name: string; size: number; type: string }[]; fragment: string } {
@@ -97,6 +122,8 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
         { name: 'hexGridFade', size: 2, type: 'vec2' },
         { name: 'hexGridPeriod', size: 2, type: 'vec2' },
         { name: 'hexGridHighlight', size: 3, type: 'vec3' },
+        { name: 'hexGridCounts', size: 2, type: 'vec2' },
+        { name: 'hexClassWindow', size: 4, type: 'vec4' },
       ],
       fragment: `#ifdef HEXGRID
         uniform float hexGridStrength;
@@ -106,6 +133,8 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
         uniform vec2 hexGridFade;
         uniform vec2 hexGridPeriod;
         uniform vec3 hexGridHighlight;
+        uniform vec2 hexGridCounts;
+        uniform vec4 hexClassWindow;
       #endif`,
     }
   }
@@ -120,6 +149,9 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
     uniformBuffer.updateFloat2('hexGridFade', this.fadeStart, this.fadeEnd)
     uniformBuffer.updateFloat2('hexGridPeriod', this.periodX, this.periodY)
     uniformBuffer.updateFloat3('hexGridHighlight', this.highlightX, this.highlightZ, this.highlightOn)
+    uniformBuffer.updateFloat2('hexGridCounts', this.colCount, this.rowCount)
+    uniformBuffer.updateFloat4('hexClassWindow', this.classWindow.col0, this.classWindow.row0, this.classWindow.cols, this.classWindow.rows)
+    if (this.classTexture) uniformBuffer.setTexture('hexClassSampler', this.classTexture)
   }
 
   override getCustomCode(shaderType: string): { [pointName: string]: string } | null {
@@ -135,6 +167,14 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
     if (shaderType === 'fragment') {
       return {
         CUSTOM_FRAGMENT_DEFINITIONS: `varying vec3 vHexWorldPos;
+          // The sampler is declared HERE and not in getUniforms().fragment:
+          // that block is only injected on engines without uniform buffers,
+          // so on WebGL2 the sampler would be undeclared, the effect would
+          // fail to compile, and Babylon would silently keep rendering with
+          // the previous effect — grid visible, overlay impossible.
+          #ifdef HEXCLASSES
+          uniform sampler2D hexClassSampler;
+          #endif
           #ifdef HEXGRID
           float hexEdgeDistance(vec2 p, vec2 s, out vec2 center) {
             vec2 period = vec2(s.x, 2.0 * s.y);
@@ -176,6 +216,34 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
             // sit full-contrast on fogged terrain.
             float hexDist = distance(vHexWorldPos, hexGridEye);
             float hexDistFade = 1.0 - smoothstep(hexGridFade.x, hexGridFade.y, hexDist);
+            // Per-tile class tint (phase 2 debug overlay), UNDER the lines:
+            // derive the fragment's canonical (col, row) from its nearest
+            // center — the same odd-row-offset convention as hexGrid.ts —
+            // and look it up in the class window texture.
+            #ifdef HEXCLASSES
+            {
+              float hcRow = floor(hexCenter.y / hexGridSpacing.y + 0.5);
+              float hcOdd = mod(hcRow, 2.0);
+              float hcCol = floor((hexCenter.x - hcOdd * 0.5 * hexGridSpacing.x) / hexGridSpacing.x + 0.5);
+              hcRow = mod(hcRow, hexGridCounts.y);
+              hcCol = mod(hcCol, hexGridCounts.x);
+              float dcol = mod(hcCol - hexClassWindow.x, hexGridCounts.x);
+              float drow = mod(hcRow - hexClassWindow.y, hexGridCounts.y);
+              if (dcol < hexClassWindow.z && drow < hexClassWindow.w) {
+                float cls = texture2D(hexClassSampler, vec2((dcol + 0.5) / hexClassWindow.z, (drow + 0.5) / hexClassWindow.w)).r * 255.0;
+                vec3 clsColor = vec3(0.0);
+                float clsOn = 0.0;
+                if (cls >= 0.5 && cls < 1.5) { clsColor = vec3(0.15, 0.35, 0.75); clsOn = 1.0; }
+                else if (cls >= 1.5 && cls < 2.5) { clsColor = vec3(0.92, 0.78, 0.35); clsOn = 1.0; }
+                else if (cls >= 2.5) {
+                  float g = clamp((cls - 3.0) / 10.0, 0.0, 1.0);
+                  clsColor = mix(vec3(0.82, 0.2, 0.15), vec3(0.2, 0.72, 0.25), g);
+                  clsOn = 1.0;
+                }
+                gl_FragColor.rgb = mix(gl_FragColor.rgb, clsColor, clsOn * 0.3 * hexCoverage * hexDistFade * hexGridStrength);
+              }
+            }
+            #endif
             // Hover highlight: the hovered tile's canonical center arrives
             // as a uniform; matching it modulo the toroidal period keeps the
             // fill on all wrap copies. Half a column spacing separates

@@ -1,4 +1,4 @@
-import { Color3, Color4, MeshBuilder, PointerEventTypes, Scene, ShaderMaterial } from '@babylonjs/core'
+import { Color3, Color4, MeshBuilder, PointerEventTypes, RawTexture, Scene, ShaderMaterial, Texture } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { createWorldgenCamera } from '../../camera/worldgenCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
@@ -7,6 +7,11 @@ import type { ToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
 import { hexAt, hexCenter } from '../../map/hexGrid'
+import { createHexClassifier } from '../../map/hexTiles'
+import type { HexClassifier, HexTileClass } from '../../map/hexTiles'
+import { HEX_COLUMNS, HEX_ROWS } from '../../map/mapSceneSettings'
+import { createElevationSurface } from '../../map/elevationSurface'
+import { createFineElevationSurface } from '../../map/fineElevationSurface'
 import { createMapPresentation, DEFAULT_KNOWLEDGE_RAMP, DEFAULT_PIGMENT_TUNING } from '../../map/mapPresentation'
 import type { KnowledgeRamp, MapWorldFields, PigmentTuning } from '../../map/mapPresentation'
 import { DEFAULT_TERRAIN_WASH } from '../../map/terrainPalette'
@@ -16,7 +21,7 @@ import { createKnowledgeField } from './knowledgeField'
 import type { KnowledgeField } from './knowledgeField'
 import { createKnowledgeDebugPanel } from './knowledgeDebugPanel'
 import { createWatercolorPass } from './watercolorPass'
-import { MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_FINE_ZOOM, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
+import { MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
 import { AMPLIFY_FETCH_STAGES } from '../../world/bakeSettings'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
 import { biomeLabelKey } from '../../worldgen/climate/biomes'
@@ -336,6 +341,13 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // The map must not slide out from under a brush stroke — the camera
     // exposes exactly this seam (see worldgenCamera's setPanEnabled).
     onBrushToggle: (active: boolean) => setCameraPanEnabled(!active),
+    onClassesToggle: (active: boolean) => {
+      hexClassesOn = active
+      if (!active) {
+        resetHexClassWindow()
+        mapView?.setHexClassOverlay(null)
+      }
+    },
   })
 
   // Paint knowledge where the pointer is. Babylon's pick gives the map plane's
@@ -357,6 +369,96 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scheduleKnowledgeRepaint()
   })
 
+  // Phase 2 (hex-world-view.md build plan): per-tile classification over the
+  // TRUTH fine surface — the same fine-height seam the near patch renders,
+  // but with bias 0 (the patch's 0.6 exists to stay above the base mesh and
+  // must not become anyone's ground truth). Rebuilt whenever the height
+  // raster in force changes, so the cache can never serve a stale tier.
+  let hexClassifier: HexClassifier | null = null
+  let hexLakeDepth: { data: Float32Array; resX: number; resY: number } | null = null
+  function rebuildHexClassifier(field: Float32Array, fieldWidth: number, fieldHeight: number, detailSeed: number): void {
+    const truth = createFineElevationSurface(field, fieldWidth, fieldHeight, RELIEF_HEIGHT_SCALE, detailSeed, 0)
+    const lake = hexLakeDepth ? createElevationSurface(hexLakeDepth.data, hexLakeDepth.resX, hexLakeDepth.resY, 1) : null
+    hexClassifier = createHexClassifier({
+      heightAtUV: (u, v) => truth.heightAtUV(u, v),
+      lakeDepthAtUV: lake ? (u, v) => lake.heightAtUV(u, v) : undefined,
+      biomeIdAtUV: (u, v) => presentation.biomeIdAtUV(u, v),
+    })
+    resetHexClassWindow()
+  }
+
+  // The class overlay's window: HEX_CLASS_WINDOW² tiles around the camera
+  // focus, classified INCREMENTALLY (the classifier runs 13 fine-surface
+  // samples per tile — a full window in one frame would hitch), written to
+  // a small RGBA texture the grid shader samples. Debug instrument like the
+  // rest of the panel; dies with it.
+  const HEX_CLASS_WINDOW = 96
+  const HEX_CLASS_FILL_BUDGET = 600
+  let hexClassesOn = false
+  let hexClassTexture: RawTexture | null = null
+  let hexClassData: Uint8Array | null = null
+  let hexClassOrigin: { col0: number; row0: number } | null = null
+  let hexClassFill = 0
+
+  function hexClassEncode(cls: HexTileClass): number {
+    if (cls.water === 'water') return 1
+    if (cls.water === 'shore') return 2
+    return 3 + Math.max(0, Math.min(10, Math.round(cls.grade * 10)))
+  }
+
+  function resetHexClassWindow(): void {
+    hexClassOrigin = null
+    hexClassFill = 0
+    hexClassData?.fill(0)
+  }
+
+  const wrapCentered = (d: number, n: number): number => {
+    const m = ((d % n) + n) % n
+    return m > n / 2 ? m - n : m
+  }
+
+  function updateHexClassOverlay(): void {
+    if (!mapView) return
+    if (!hexClassesOn || !hexClassifier) {
+      mapView.setHexClassOverlay(null)
+      return
+    }
+    const focus = getCameraFocus()
+    const focusTile = hexAt(focus.x, focus.z)
+    const half = HEX_CLASS_WINDOW / 2
+    if (hexClassOrigin) {
+      // Re-window once the focus drifts a quarter window off center; the
+      // refill sweeps visibly, which is honest for a debug view.
+      const dc = wrapCentered(focusTile.col - hexClassOrigin.col0 - half, HEX_COLUMNS)
+      const dr = wrapCentered(focusTile.row - hexClassOrigin.row0 - half, HEX_ROWS)
+      if (Math.abs(dc) > half / 2 || Math.abs(dr) > half / 2) resetHexClassWindow()
+    }
+    if (!hexClassOrigin) {
+      hexClassOrigin = {
+        col0: ((focusTile.col - half) % HEX_COLUMNS + HEX_COLUMNS) % HEX_COLUMNS,
+        row0: ((focusTile.row - half) % HEX_ROWS + HEX_ROWS) % HEX_ROWS,
+      }
+      hexClassFill = 0
+    }
+    if (!hexClassData) {
+      hexClassData = new Uint8Array(HEX_CLASS_WINDOW * HEX_CLASS_WINDOW * 4)
+      hexClassTexture = RawTexture.CreateRGBATexture(hexClassData, HEX_CLASS_WINDOW, HEX_CLASS_WINDOW, scene, false, false, Texture.NEAREST_SAMPLINGMODE)
+    }
+    const total = HEX_CLASS_WINDOW * HEX_CLASS_WINDOW
+    if (hexClassFill < total) {
+      const end = Math.min(total, hexClassFill + HEX_CLASS_FILL_BUDGET)
+      for (let i = hexClassFill; i < end; i++) {
+        const col = (hexClassOrigin.col0 + (i % HEX_CLASS_WINDOW)) % HEX_COLUMNS
+        const row = (hexClassOrigin.row0 + Math.floor(i / HEX_CLASS_WINDOW)) % HEX_ROWS
+        hexClassData[i * 4] = hexClassEncode(hexClassifier.classify({ col, row }))
+        hexClassData[i * 4 + 3] = 255
+      }
+      hexClassFill = end
+      hexClassTexture!.update(hexClassData)
+    }
+    mapView.setHexClassOverlay(hexClassTexture, { col0: hexClassOrigin.col0, row0: hexClassOrigin.row0, cols: HEX_CLASS_WINDOW, rows: HEX_CLASS_WINDOW })
+  }
+
   // Light the hovered 300 m tile through the grid shader. Interaction arms
   // below FULL grid visibility — a threshold on the continuous zoom axis,
   // not a mode (decisions/hex-tiling.md, fork 3). The picked point may lie
@@ -375,7 +477,20 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const point = mapView.pickGround(scene.pointerX, scene.pointerY)
     const tile = point ? hexAt(point.x, point.z) : null
     mapView.setHexHighlight(tile ? hexCenter(tile) : null)
-    debugPanel.setHexTile(tile)
+    if (!tile) {
+      debugPanel.setHexTile(null)
+      return
+    }
+    const cls = hexClassifier?.classify(tile)
+    if (!cls) {
+      debugPanel.setHexTile(`hex: ${tile.col},${tile.row}`)
+      return
+    }
+    const biomeName = cls.biomeId !== null ? t(biomeLabelKey(cls.biomeId) as TKey) : '—'
+    const shorePart = cls.water === 'shore' ? ` ${(cls.landFraction * 100).toFixed(0)}% land` : ''
+    debugPanel.setHexTile(
+      `hex: ${tile.col},${tile.row} · ${Math.round(cls.medianHeightMeters)} m · slope ${(cls.slope * 100).toFixed(0)}% · ${cls.water}${shorePart} · ${biomeName} · grade ${cls.grade.toFixed(2)}`,
+    )
   }
   const hexHoverObserver = scene.onPointerObservable.add((info) => {
     if (info.type !== PointerEventTypes.POINTERMOVE) return
@@ -388,6 +503,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // pick against the fine mesh is not free, and 150 ms of lag on a flowing
   // highlight is invisible.
   const hexFrameObserver = scene.onBeforeRenderObservable.add(() => {
+    updateHexClassOverlay()
     if (performance.now() - lastHexHoverTime < 150) return
     updateHexHover()
   })
@@ -475,6 +591,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     presentation.setWorld({ elevations, width, height, biome, detailSeed, biomeInputs: savedBiomeInputs, lakeDepth })
     presentation.setElevation(elevations, width, height, detailSeed)
     debugPanel.setTerrainTier(width, height)
+    // Lakes are macro authority (carried, never re-derived) — stash the layer
+    // once per load; tier rebuilds reuse it.
+    hexLakeDepth = lakeDepth ?? null
+    rebuildHexClassifier(elevations, width, height, detailSeed)
 
     mapView = createToroidalMapView({
       scene,
@@ -697,6 +817,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     void world?.acquire('elevation', 'presentation').then((view) => { elevationView = view; hoverTooltip?.refresh() })
     presentation.setElevation(artifact.elevation, artifact.width, artifact.height, detailSeed)
     debugPanel.setTerrainTier(artifact.width, artifact.height)
+    rebuildHexClassifier(artifact.elevation, artifact.width, artifact.height, detailSeed)
     applyRivers(artifact.riverPoints, artifact.riverLengths, artifact.width, artifact.height, factor)
     hoverTooltip?.refresh()
   }
@@ -754,6 +875,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       skyDome.dispose()
       skyMaterial.dispose()
       hoverTooltip?.dispose()
+      hexClassTexture?.dispose()
       mapView?.dispose()
       mapView = null // disposed AND cleared, so the guards above mean what they say
       helpTooltip.dispose()
