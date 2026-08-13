@@ -1,13 +1,14 @@
 import { ArcRotateCamera, Color4, Scene, Vector3 } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
-import { getLocale, setLocale, type Locale } from '../../i18n/i18n'
+import { getLocale, setLocale, t, type Locale } from '../../i18n/i18n'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import './title.css'
 
-// The changelog no longer renders here — the artwork owns the screen. The
-// viewer (ui/changelog/) stays intact: it returns as its own page, see
-// docs/design/frontend-surfaces.md.
+// The changelog no longer renders here — the artwork owns the screen, and the
+// documentation (changelog included) lives on the docs site the nav links to
+// (/docs/, served by the docs module). The parked viewer in ui/changelog/
+// remains the in-client half, should one ever be wanted again.
 
 export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   const scene = new Scene(ctx.engine)
@@ -31,10 +32,10 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
       <p class="subtitle">Herederos del Mundo</p>
     </div> -->
     <nav class="title-nav">
-      <button class="text-link" data-action="worldgen">Generator</button>
-      <button class="text-link" data-action="worldmap">Map View</button>
+      <button class="text-link" data-action="worldgen">${t('common.title.nav.generator')}</button>
+      <button class="text-link" data-action="worldmap">${t('common.title.nav.map')}</button>
       &nbsp;
-      <button class="text-link" data-action="changelog">Changelog</button>
+      <a class="text-link" href="/docs/" target="_blank" rel="noopener">${t('common.title.nav.documentation')}</a>
       &nbsp;
       <div class="title-nav-row">
         <button class="text-link" style="color:white;" data-action="worldgen-sphere">Sphere</button>

@@ -90,10 +90,11 @@ deployable containing one form.
 | deployment | listen, storage, caps | casas.yaml — operator territory, deliberately NO ui |
 | world | generator sliders, grants | the save / grants.json — already placed |
 
-**Named but deferred** — the CHANGELOG PAGE: the viewer (ui/changelog/,
-tabs + renderer over the docs/changelog Markdown) is built and parked — it
-rendered on the title screen until 2026-08-12, when the artwork took that
-space; it returns as its own page. Also an operations/status view (running
+**Named but deferred** — the changelog found its page 2026-08-13: the DOCS
+SITE (built — `npm run build:docs`, served by the `docs` module under
+/docs/) carries it per area; the parked in-client viewer (ui/changelog/)
+remains, should an in-game rendering ever be wanted again. Still deferred:
+an operations/status view (running
 bakes, storage fill; today half of StoragePanel, really admin material),
 and the GAME SCREEN itself: under the one-running-world-per-server model it leans toward
 being its own per-instance surface rather than another client screen — but

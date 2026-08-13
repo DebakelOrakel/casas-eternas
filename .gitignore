@@ -55,3 +55,7 @@ client/scripts/golden-hashes.json
 *.ca
 .htpasswd
 client/scripts/amplify-hashes.json
+
+# The generated documentation site and its bundled generator:
+client/docs-dist/
+client/scripts/.docsite.mjs

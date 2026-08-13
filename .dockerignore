@@ -23,11 +23,14 @@ casas-eternas
 
 docs
 *.md
-# …except the changelog, which the title screen's viewer imports at build time
-# with Vite's ?raw. Both rules above would swallow it, so it is re-included
-# explicitly — the negations must come after the patterns they undo.
-!docs/changelog
-!docs/changelog/*.md
+# …except the docs tree, which the web stage renders into the documentation
+# site (npm run build:docs) — the negations must come after the patterns they
+# undo. ideas/ is deliberately NOT re-included: private material never enters
+# the build context at all, on top of the generator never reading it and the
+# runtime image only receiving the rendered docs-dist.
+!docs/**
+docs/ideas
+docs/ideas/**
 
 notes-dont-process.md
 GPU_TECTONICS_PLAN.md

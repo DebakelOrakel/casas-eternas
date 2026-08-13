@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-08-13
+- **changed** Title: the menu is localized and links to the documentation site, where the changelog now lives.
+
 ## 2026-08-12
 - **changed** Title: the title screen wears its artwork along the bottom edge, with the menu reaching left from the screen's center; the changelog left the screen and will return as its own page.
 - **fixed** Storage: leftovers from an older storage layout appear as their own deletable entry instead of haunting the total as bytes nothing lists. `common.panel.storage`

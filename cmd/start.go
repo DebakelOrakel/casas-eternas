@@ -24,6 +24,7 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/artifacts"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/bake"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/client"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/docs"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/session"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/world"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
@@ -89,6 +90,13 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 
 	if targets.Has(config.TargetClient) {
 		m, err := client.New(client.Config{All: cfg, LoginPath: loginPath})
+		if err != nil {
+			return nil, nil, err
+		}
+		modules = append(modules, m)
+	}
+	if targets.Has(config.TargetDocs) {
+		m, err := docs.New(docs.Config{All: cfg})
 		if err != nil {
 			return nil, nil, err
 		}

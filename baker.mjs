@@ -12011,9 +12011,10 @@ function authorizedFetch(job) {
   };
 }
 function progressReporter(job) {
-  if (!job.artifactsUrl || !job.jobId) return () => {
+  const base = job.bakeUrl ?? job.artifactsUrl;
+  if (!base || !job.jobId) return () => {
   };
-  const url = `${job.artifactsUrl}/bakes/${encodeURIComponent(job.jobId)}/progress`;
+  const url = `${base}/bakes/${encodeURIComponent(job.jobId)}/progress`;
   const send = authorizedFetch(job);
   let lastSentAt = 0;
   let lastPhase = "";

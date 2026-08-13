@@ -30,13 +30,16 @@ WORKDIR /app/client
 COPY client/package.json client/package-lock.json ./
 RUN npm ci
 
-# Only the changelog is needed, not all of docs/ — the viewer reads exactly these.
-COPY docs/changelog/ /app/docs/changelog/
+# All of docs/ — the changelog viewer reads changelog/, and build:docs renders
+# the whole tree into the site. ideas/ never enters the build's OUTPUT (the
+# generator only reads vision/decisions/design/changelog), and the runtime
+# image copies only docs-dist, so nothing private can ship even by accident.
+COPY docs/ /app/docs/
 COPY client/ ./
 
 # dist/ is the app; baker.mjs is the bake pipeline for the server to spawn.
 # Both come out of the same source tree in the same layer, which is the point.
-RUN npm run build && npm run build:baker
+RUN npm run build && npm run build:baker && npm run build:docs
 
 # ---- Stage 2: the server ----------------------------------------------------
 FROM golang:1.26-alpine AS server
@@ -61,6 +64,7 @@ WORKDIR /app
 COPY --from=server /out/casas-eternas /app/casas-eternas
 COPY --from=web    /app/baker.mjs     /app/baker.mjs
 COPY --from=web    /app/client/dist   /app/dist
+COPY --from=web    /app/client/docs-dist /app/docs-dist
 
 # OpenShift assigns a random UID that is ALWAYS in the root group (GID 0). Give
 # group 0 the owner's access on everything the process reads, so any assigned
@@ -75,4 +79,4 @@ VOLUME ["/data"]
 # Every module by default. A deployment that wants only storage, or only the
 # frontend, overrides the arguments — see internal/config's target list.
 ENTRYPOINT ["/app/casas-eternas"]
-CMD ["start", "--target", "all", "--client.storage.dir.path", "/app/dist", "--world.storage.dir.path", "/data/worlds", "--artifacts.storage.dir.path", "/data/artifacts", "--auth.storage.dir.path", "/data/auth"]
+CMD ["start", "--target", "all", "--client.storage.dir.path", "/app/dist", "--docs.storage.dir.path", "/app/docs-dist", "--world.storage.dir.path", "/data/worlds", "--artifacts.storage.dir.path", "/data/artifacts", "--auth.storage.dir.path", "/data/auth"]

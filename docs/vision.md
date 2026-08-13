@@ -74,10 +74,3 @@ Possible Title: "Casas Eternas: Herederos del Mundo"
 * Should take terrain elevation to decide how much moisture is released.
 * Higher elevation cools air, making it drop more water.
 * Mountain ranges should create rain shadows.
-
-## People and Races
-
-* Could be a world out of a SouthPark episode, where an alien species runs a TV show containing of different races from all over the universe.
-* Should contain Romans, are as Roman as one could be
-* Maybe have dwarves, but they are in reality Swiss with swiss characteristics.
-* Also maybe have some proto-arabic people, but they are Marxist/Leninist and live by the woke sharia (tm).

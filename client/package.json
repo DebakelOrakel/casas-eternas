@@ -13,12 +13,18 @@
     "harness:golden": "node --max-old-space-size=8192 scripts/golden.mjs",
     "harness:golden:record": "node --max-old-space-size=8192 scripts/golden.mjs record",
     "harness:golden:hash": "node --max-old-space-size=8192 scripts/golden.mjs hash-record",
-    "build:baker": "npx esbuild scripts/bake.ts --bundle --platform=node --format=esm --target=node20 --outfile=../baker.mjs --log-level=warning"
+    "build:baker": "npx esbuild scripts/bake.ts --bundle --platform=node --format=esm --target=node20 --outfile=../baker.mjs --log-level=warning",
+    "build:docs": "npx esbuild scripts/docsite.ts --bundle --packages=external --platform=node --format=esm --target=node20 --outfile=scripts/.docsite.mjs --log-level=warning && node scripts/.docsite.mjs"
   },
   "devDependencies": {
     "@babylonjs/inspector": "^9.17.0",
     "@types/node": "^26.2.0",
+    "rehype-stringify": "^10.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
     "typescript": "~6.0.2",
+    "unified": "^11.0.5",
     "vite": "^8.1.1"
   },
   "dependencies": {

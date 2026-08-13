@@ -25,12 +25,13 @@ const (
 	TargetWorld     Target = "world"
 	TargetArtifacts Target = "artifacts"
 	TargetBake      Target = "bake"
+	TargetDocs      Target = "docs"
 )
 
 // modules lists the real targets, in the order they are reported to the user.
 // TargetAll is absent on purpose: it expands to this, so having it in the list
 // would let "all" select itself.
-var modules = []Target{TargetClient, TargetWorld, TargetArtifacts, TargetBake}
+var modules = []Target{TargetClient, TargetWorld, TargetArtifacts, TargetBake, TargetDocs}
 
 // Targets is a resolved selection: every module that should run.
 type Targets map[Target]bool
@@ -66,7 +67,7 @@ func ParseTargets(raw []string) (Targets, error) {
 			for _, m := range modules {
 				selected[m] = true
 			}
-		case TargetClient, TargetWorld, TargetArtifacts, TargetBake:
+		case TargetClient, TargetWorld, TargetArtifacts, TargetBake, TargetDocs:
 			selected[target] = true
 		default:
 			return nil, fmt.Errorf("unknown target %q; valid targets: %s", value, validTargets())

@@ -48,12 +48,17 @@ baker:
 client:
 	cd client && npm run build
 
+# The documentation site — docs/ rendered static (see the addendum in
+# docs/decisions/documentation-architecture.md). The build link-checks itself.
+docs:
+	cd client && npm run build:docs
+
 # Everything a local instance needs, then start it. `go build` rather than
 # `go run` on purpose: bake.baker resolves relative to the EXECUTABLE, and
 # go run puts that in a temp directory.
-run: baker client
+run: baker client docs
 	go build -o casas-eternas .
-	./casas-eternas start --target all --client.storage.dir.path client/dist
+	./casas-eternas start --target all --client.storage.dir.path client/dist --docs.storage.dir.path client/docs-dist
 
 build:
 	docker build --platform linux/amd64 -f deploy/Dockerfile -t $(IMAGE):$(TAG) .

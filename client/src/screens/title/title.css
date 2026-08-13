@@ -102,6 +102,7 @@
   text-transform: uppercase;
   color: #1a1a1a;
   cursor: pointer;
+  text-decoration: none; /* the documentation entry is an <a>, styled like its button siblings */
 }
 
 .title-screen .text-link:hover {

@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-08-13
+- **new** Server: the documentation site ships with the server — /docs renders the vision, decisions, design notes and changelog, navigated by area with stage badges.
+
 ## 2026-08-12
 - **changed** Server: a bake job's credential is good for exactly the world it bakes — nowhere else.
 - **new** Server: worlds are private — the list shows own, granted and public worlds, and every route enforces the granted level (viewer/editor/owner), with artifacts and bakes inheriting the world's access.

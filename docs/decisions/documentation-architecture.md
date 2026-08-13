@@ -3,7 +3,7 @@ summary: The docs pipeline sketched in notes.md bundles two separable deliverabl
 date: 2026-07-28
 area: platform
 stage: decided
-status: decided (source layout + anchors; defer both site AND manual) — no toolchain adopted
+status: decided (source layout + anchors; the manual stays deferred) — ADDENDUM 2026-08-13: the public site is BUILT the same day (homegrown, the re-decision the doc reserved): npm run build:docs renders docs/ to a static site the `docs` module serves under /docs/ — see the addendum at the end
 ---
 
 # Documentation architecture (source layout & anchors)
@@ -197,3 +197,63 @@ HTML emitter + Pagefind, or Starlight. All of it hangs off the layout + anchors 
 made *cheaper* by fixing those now, not costlier. `notes.md` records the reasoning for each
 (anchor IDs expensive, delivery mechanism cheap to defer, notes API worth a real Go+SQLite
 backend rather than a `localStorage` fake).
+
+## Addendum 2026-08-13: the site becomes real (planned, not yet built)
+
+The premise moved twice since the original call: `docs/` is now public in
+principle except `ideas/` (stated 2026-08-12, see docs/README.md), and the
+changelog left the title screen — so the site is no longer deferrable
+marketing chrome, it is where the changelog and the docs LIVE. The reserved
+re-decision falls as reserved: **homegrown, not Starlight** — the site's job
+is to look like Casas Eternas, and Starlight's value is exactly the chrome
+we would fight; Pagefind (Starlight's own search) works standalone over any
+static HTML if search is ever wanted.
+
+**Scope**: render `vision.md`, `decisions/`, `design/`, `changelog/`.
+`ideas/` is hard-excluded; `content/` stays reserved for the manual (its
+own pipeline, unchanged by this addendum). Site language: English — the
+docs' language; deliberately not localized.
+
+**Display axes** (decided in discussion 2026-08-12/13): navigate by `area`
+— the five values that are already the changelog's vocabulary — never by
+folder. Genre (decision/design, derived from the folder) and `stage` (front
+matter) are BADGES, not navigation. Layout:
+
+- **Sidebar, two levels**: Vision on top; the five areas as collapsible
+  groups (native `details`/`summary`, active area open) holding
+  `Changelog` as first fixed sub-item, then the doc titles.
+- **Area index page** (clicking the area itself): a changelog TEASER — the
+  newest 3–5 entries, linking to the full per-area changelog page — then
+  the doc list: title + front-matter `summary` + badges
+  [genre|stage|last-updated], grouped by liveliness: "In progress"
+  (idea/decided/building) above "Reference" (built); `superseded` hidden
+  by default, shown with a banner + `superseded-by` link on its own page.
+- **Doc page**: rendered Markdown with the front matter as a header block
+  (summary, badges, free-form `status` as prose).
+
+**Pipeline**: a build script on unified/remark (the toolchain the manual
+needs anyway): walk the tree, parse front matter, Markdown→HTML with
+relative `.md` links rewritten to site routes (links to code paths render
+as plain code, no target), `last-updated` from `git log -1`, one shared
+template + one CSS file speaking the title screen's design (Cinzel, paper
+tones, the changelog kind-badge colors). Zero client-side JS in v1
+(details/summary carries the sidebar); Pagefind deferred until wanted. The
+changelog Markdown parser is EXTRACTED from ui/changelog into a pure
+parse step shared by the client viewer and the site emitter — same format,
+one parser.
+
+**Serving**: a `docs` module (client-shaped: serve a directory, nothing
+else) under the path prefix `/docs/`, its own target, config key
+`docs.storage.dir.path` — version lockstep for self-hosting; any static
+host works identically. Public by construction (only `/v1/*` is gated).
+The client links to it (`/docs/`, vite dev-proxy added alongside `/v1`) —
+the title screen's stub button becomes that link, labeled Documentation.
+
+**Build order**: ① generator + template/CSS (verified by a link-check pass
+in the script itself) → ② changelog-parser extraction (was already done —
+parseChangelog.ts existed) → ③ docs module + target + composition → ④
+build wiring (npm script, Makefile, Dockerfile) → ⑤ title-screen link +
+localization of the title nav. ALL BUILT 2026-08-13; `-t docs` runs alone,
+proving the target rule. Front matter turned out looser than strict YAML
+(colons in summaries), so the generator parses the flat convention itself
+— no YAML dependency.

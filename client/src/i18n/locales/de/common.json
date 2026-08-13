@@ -71,5 +71,8 @@
   "common.panel.signIn.action.submit": "Anmelden",
   "common.panel.signIn.failed": "Benutzer oder Passwort stimmt nicht.",
   "common.panel.signIn.unreachable": "Der Server hat nicht geantwortet.",
-  "common.notify.signedOut": "Abgemeldet — der Server nimmt diese Sitzung nicht mehr an."
+  "common.notify.signedOut": "Abgemeldet — der Server nimmt diese Sitzung nicht mehr an.",
+  "common.title.nav.generator": "Generator",
+  "common.title.nav.map": "Kartenansicht",
+  "common.title.nav.documentation": "Dokumentation"
 }

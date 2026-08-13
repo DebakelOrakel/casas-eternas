@@ -71,5 +71,8 @@
   "common.panel.signIn.action.submit": "Sign in",
   "common.panel.signIn.failed": "Wrong user or password.",
   "common.panel.signIn.unreachable": "The server did not answer.",
-  "common.notify.signedOut": "Signed out — the server no longer accepts this session."
+  "common.notify.signedOut": "Signed out — the server no longer accepts this session.",
+  "common.title.nav.generator": "Generator",
+  "common.title.nav.map": "Map View",
+  "common.title.nav.documentation": "Documentation"
 }

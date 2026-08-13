@@ -44,13 +44,14 @@ const (
 	keyArtsCap    = "artifacts.cap"
 	keyClientPath = "client.storage.dir.path"
 	keyAuthStore  = "auth.storage.dir.path"
+	keyDocsPath   = "docs.storage.dir.path"
 	keyBaker      = "bake.baker"
 	keyBakeMax    = "bake.max-concurrent"
 )
 
 const (
 	textConfig = `Path to the configuration file. Default: ./casas.yaml if it exists. Flags and CASAS_* variables override the file.`
-	textTarget = `The target modules to start: all, client, world, artifacts, bake. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.`
+	textTarget = `The target modules to start: all, client, world, artifacts, bake, docs. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.`
 
 	textListen      = `Address to listen on, as host:port. ":8080" binds every interface, "127.0.0.1:8080" keeps a local instance off the network.`
 	textTLSCert     = `Path to the server certificate. Enables HTTPS together with global.tls.key.`
@@ -71,6 +72,7 @@ const (
 	textArtsCap    = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
 	textClientPath = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
 	textAuthStore  = `The directory the auth subsystem's state lives in — the user registry (users.json), minted at first login.`
+	textDocsPath   = `The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.`
 	textBaker      = `Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.`
 	textBakeMax    = `How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.`
 )
@@ -139,6 +141,7 @@ func init() {
 	StartCmd.Flags().String(keyArtsCap, "", textArtsCap)
 	StartCmd.Flags().String(keyClientPath, "", textClientPath)
 	StartCmd.Flags().String(keyAuthStore, "./auth", textAuthStore)
+	StartCmd.Flags().String(keyDocsPath, "", textDocsPath)
 	StartCmd.Flags().String(keyBaker, "", textBaker)
 	StartCmd.Flags().Int(keyBakeMax, 1, textBakeMax)
 
@@ -149,7 +152,7 @@ func init() {
 		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd, keyAuthAdmins: StartCmd,
 		keySvcWorlds: StartCmd, keySvcArts: StartCmd, keyAuthStore: StartCmd,
 		keyWorldPath: StartCmd, keyKeepRevs: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
-		keyClientPath: StartCmd, keyBaker: StartCmd, keyBakeMax: StartCmd,
+		keyClientPath: StartCmd, keyBaker: StartCmd, keyBakeMax: StartCmd, keyDocsPath: StartCmd,
 	}
 	for key, cmd := range bindings {
 		flags := cmd.Flags()
@@ -165,7 +168,7 @@ func init() {
 	// Keys that exist in the tree but have no flag (the storage union's type
 	// selectors). SetDefault makes them known to viper, which is what lets a
 	// file or CASAS_* variable reach them through Unmarshal.
-	for _, key := range []string{"world.storage.type", "artifacts.storage.type", "client.storage.type", "auth.storage.type"} {
+	for _, key := range []string{"world.storage.type", "artifacts.storage.type", "client.storage.type", "auth.storage.type", "docs.storage.type"} {
 		viper.SetDefault(key, "")
 	}
 

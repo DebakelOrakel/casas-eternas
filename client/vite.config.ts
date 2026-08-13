@@ -46,6 +46,7 @@ export default defineConfig({
     proxy: {
       '/config.json': { target: API, changeOrigin: true },
       '/v1': { target: API, changeOrigin: true },
+      '/docs': { target: API, changeOrigin: true },
     },
   },
 })

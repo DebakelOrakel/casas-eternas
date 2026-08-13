@@ -35,6 +35,7 @@ type Config struct {
 	Bake      BakeConfig      `mapstructure:"bake"`
 	Client    ClientConfig    `mapstructure:"client"`
 	Auth      AuthConfig      `mapstructure:"auth"`
+	Docs      DocsConfig      `mapstructure:"docs"`
 }
 
 // Global is everything that belongs to the PROCESS, not to a target: the
@@ -145,6 +146,12 @@ type BakeConfig struct {
 }
 
 type ClientConfig struct {
+	Storage Storage `mapstructure:"storage"`
+}
+
+// DocsConfig is the documentation site's section: the built static site
+// (npm run build:docs) the docs module serves under /docs/.
+type DocsConfig struct {
 	Storage Storage `mapstructure:"storage"`
 }
 
