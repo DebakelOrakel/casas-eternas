@@ -201,7 +201,8 @@ backend rather than a `localStorage` fake).
 ## Addendum 2026-08-13: the site becomes real (planned, not yet built)
 
 The premise moved twice since the original call: `docs/` is now public in
-principle except `ideas/` (stated 2026-08-12, see docs/README.md), and the
+principle (stated 2026-08-12, see docs/README.md; game design material lives
+outside the repository), and the
 changelog left the title screen — so the site is no longer deferrable
 marketing chrome, it is where the changelog and the docs LIVE. The reserved
 re-decision falls as reserved: **homegrown, not Starlight** — the site's job
@@ -210,7 +211,7 @@ we would fight; Pagefind (Starlight's own search) works standalone over any
 static HTML if search is ever wanted.
 
 **Scope**: render `vision.md`, `decisions/`, `design/`, `changelog/`.
-`ideas/` is hard-excluded; `content/` stays reserved for the manual (its
+`content/` stays reserved for the manual (its
 own pipeline, unchanged by this addendum). Site language: English — the
 docs' language; deliberately not localized.
 

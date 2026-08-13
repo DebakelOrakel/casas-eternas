@@ -24,7 +24,7 @@ docs/changelog/
   worldgen.md    simulation layers: tectonics, erosion, climate, hydrology, ecology
   ui.md          controls, overlays, rendering, save/load
   mechanics.md   game mechanics — empty for now, grows from the game screen on
-  concepts.md    setting & world concepts (species, factions, docs/ideas)
+  concepts.md    setting & world concepts (species, factions)
   platform.md    build, worker pool, deploy, performance
 ```
 

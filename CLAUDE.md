@@ -199,8 +199,8 @@ separation *was* the bug.
 `decisions/` records one decided fork each (options, answer, why); `design/` holds
 living architecture notes that may precede any decision; `changelog/` answers
 *when did this arrive*. Docs are English and public in principle — everything
-except `ideas/` (game design material, private: the game never states its
-ideas outright) may end up on a doc site; nothing ships them yet.
+may end up on a doc site; nothing ships them yet. Game design material is kept
+outside the repository (the game never states its ideas outright).
 
 When a design direction hardens into a real fork, it earns its own doc in
 `decisions/`. Do not hand-maintain overview lists: the front matter is data and

@@ -3,7 +3,7 @@
 Setting & world concepts — the peoples, factions, and game-fiction ideas. Distinct from
 [mechanics.md](./mechanics.md) (how the game plays) and from the decision records in
 [docs/decisions/](../decisions/) (when a technical fork was resolved). Source material lives in
-`docs/ideas/` and `docs/vision.md`.
+`docs/vision.md`; the game design material itself is kept outside the repository.
 
 ## 2026-07-28
 - **changed** Species: the three peoples are **species**, not "races" — human, dwarf, beaver. `world.species`

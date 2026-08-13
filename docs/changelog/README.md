@@ -11,7 +11,7 @@ capability. It answers "*when* did this arrive", grouped by area. See the decisi
 | [worldgen.md](./worldgen.md) | Simulation layers: tectonics, crust, erosion, climate, hydrology, volcanism, ecology, elevation |
 | [ui.md](./ui.md) | Controls, overlays, rendering, save/load, notifications |
 | [mechanics.md](./mechanics.md) | Game mechanics — empty for now, grows from the game screen on |
-| [concepts.md](./concepts.md) | Setting & world concepts (species, factions; `docs/ideas/`) |
+| [concepts.md](./concepts.md) | Setting & world concepts (species, factions) |
 | [platform.md](./platform.md) | Build, worker pool, deploy, performance, code structure |
 
 > There is no `decisions` file here. Decisions are self-dating — every doc in
