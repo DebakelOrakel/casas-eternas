@@ -1,0 +1,357 @@
+{
+  "binary": "casas-eternas",
+  "commands": [
+    {
+      "path": "casas-eternas",
+      "use": "casas-eternas",
+      "short": "Server for casas-eternas — stores worlds and derived artifacts.",
+      "long": "Server for casas-eternas.\n\nIt stores what the browser client makes and derives: named worlds, and the\ncontent-addressed artifacts baked from them. It generates nothing itself.\n\nOne binary runs every part; \"start --target\" chooses which. Configuration\ncomes from casas.yaml, CASAS_* variables and flags — one vocabulary: the\nconfig key is the flag name is the variable name.",
+      "flags": [
+        {
+          "name": "config",
+          "usage": "Path to the configuration file. Default: ./casas.yaml if it exists. Flags and CASAS_* variables override the file.",
+          "env": "CASAS_CONFIG"
+        },
+        {
+          "name": "global.admin.socket",
+          "usage": "Path of a unix socket serving this process's admin API (user administration, over plain HTTP). Whoever can reach the socket is admin — file permissions gate it, no login. Empty serves none.",
+          "env": "CASAS_GLOBAL_ADMIN_SOCKET"
+        },
+        {
+          "name": "global.listen",
+          "default": ":8080",
+          "usage": "Address to listen on, as host:port. \":8080\" binds every interface, \"127.0.0.1:8080\" keeps a local instance off the network.",
+          "env": "CASAS_GLOBAL_LISTEN"
+        },
+        {
+          "name": "global.tls.ca",
+          "usage": "Path to the CA that CLIENT certificates are verified against. Setting it turns on mutual TLS.",
+          "env": "CASAS_GLOBAL_TLS_CA"
+        },
+        {
+          "name": "global.tls.cert",
+          "usage": "Path to the server certificate. Enables HTTPS together with global.tls.key.",
+          "env": "CASAS_GLOBAL_TLS_CERT"
+        },
+        {
+          "name": "global.tls.key",
+          "usage": "Path to the server private key. Enables HTTPS together with global.tls.cert.",
+          "env": "CASAS_GLOBAL_TLS_KEY"
+        }
+      ]
+    },
+    {
+      "path": "casas-eternas auth",
+      "use": "auth",
+      "short": "Administers the auth subsystem of a running server.",
+      "long": "Administers the auth subsystem of a RUNNING server, over its unix\nadmin socket (global.admin.socket). Whoever can reach the socket is admin —\nfile permissions gate it, no login. In a split deployment these commands\nanswer only in the process running the auth target."
+    },
+    {
+      "path": "casas-eternas auth role",
+      "use": "role",
+      "short": "Manages global roles — what a user's sessions may claim."
+    },
+    {
+      "path": "casas-eternas auth role bind",
+      "use": "bind \u003cname\u003e \u003cuser|admin\u003e",
+      "short": "Binds a user's global role; admin sessions carry the adm claim from their next login on.",
+      "example": "  casas-eternas auth role bind ada admin\n  casas-eternas auth role bind ada user     # back to the default"
+    },
+    {
+      "path": "casas-eternas auth role list",
+      "use": "list",
+      "short": "Lists every binding that deviates from the default role."
+    },
+    {
+      "path": "casas-eternas auth user",
+      "use": "user",
+      "short": "Manages the local users."
+    },
+    {
+      "path": "casas-eternas auth user add",
+      "use": "add \u003cname\u003e",
+      "short": "Creates a user: identity and password in one step.",
+      "example": "  casas-eternas auth user add ada\n  echo -n 'the-password' | casas-eternas auth user add ada --password-stdin",
+      "flags": [
+        {
+          "name": "password-stdin",
+          "default": "false",
+          "usage": "Read the password from stdin instead of prompting — for scripts and Jobs. Trailing newlines are stripped; nothing else is."
+        }
+      ]
+    },
+    {
+      "path": "casas-eternas auth user delete",
+      "use": "delete \u003cname\u003e",
+      "short": "Removes a user. Their worlds fall to admins; re-adding the name mints a NEW identity."
+    },
+    {
+      "path": "casas-eternas auth user list",
+      "use": "list",
+      "short": "Lists every user, and whether they can log in."
+    },
+    {
+      "path": "casas-eternas auth user passwd",
+      "use": "passwd \u003cname\u003e",
+      "short": "Sets a user's password.",
+      "example": "  casas-eternas auth user passwd ada\n  echo -n 'the-password' | casas-eternas auth user passwd ada --password-stdin",
+      "flags": [
+        {
+          "name": "password-stdin",
+          "default": "false",
+          "usage": "Read the password from stdin instead of prompting — for scripts and Jobs. Trailing newlines are stripped; nothing else is."
+        }
+      ]
+    },
+    {
+      "path": "casas-eternas start",
+      "use": "start",
+      "short": "Starts one or more modules.",
+      "long": "Starts the selected modules in a single process.",
+      "example": "  casas-eternas start --target all           everything, for local play\n  casas-eternas start -t world -t artifacts  storage only, no client\n  casas-eternas start -t client              frontend only",
+      "flags": [
+        {
+          "name": "artifacts.cap",
+          "usage": "Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. \"50GB\". 0 or empty keeps it unlimited.",
+          "env": "CASAS_ARTIFACTS_CAP"
+        },
+        {
+          "name": "artifacts.storage.dir.path",
+          "default": "./artifacts",
+          "usage": "The directory of the artifact store.",
+          "env": "CASAS_ARTIFACTS_STORAGE_DIR_PATH"
+        },
+        {
+          "name": "auth.storage.dir.path",
+          "default": "./auth",
+          "usage": "The directory the auth subsystem's state lives in — auth.db, holding users and their credentials. A users.json left by an older server is imported once when the database is founded.",
+          "env": "CASAS_AUTH_STORAGE_DIR_PATH"
+        },
+        {
+          "name": "bake.baker",
+          "usage": "Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.",
+          "env": "CASAS_BAKE_BAKER"
+        },
+        {
+          "name": "bake.max-concurrent",
+          "default": "1",
+          "usage": "How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.",
+          "env": "CASAS_BAKE_MAX_CONCURRENT"
+        },
+        {
+          "name": "client.storage.dir.path",
+          "usage": "The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside \"npm run dev\" wants.",
+          "env": "CASAS_CLIENT_STORAGE_DIR_PATH"
+        },
+        {
+          "name": "docs.storage.dir.path",
+          "usage": "The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.",
+          "env": "CASAS_DOCS_STORAGE_DIR_PATH"
+        },
+        {
+          "name": "global.auth.mode",
+          "default": "none",
+          "usage": "How the server establishes who is asking: none, password, oidc — none is local (one synthetic owner), password means this server holds the users, oidc a foreign provider. See docs/decisions/server-auth.md.",
+          "env": "CASAS_GLOBAL_AUTH_MODE"
+        },
+        {
+          "name": "global.auth.session-key",
+          "usage": "Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.",
+          "env": "CASAS_GLOBAL_AUTH_SESSION_KEY"
+        },
+        {
+          "name": "global.auth.session-ttl",
+          "default": "720h0m0s",
+          "usage": "How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then global.auth.token-ttl is the one that matters.",
+          "env": "CASAS_GLOBAL_AUTH_SESSION_TTL"
+        },
+        {
+          "name": "global.auth.token-ttl",
+          "default": "720h0m0s",
+          "usage": "How long an issued token is valid.",
+          "env": "CASAS_GLOBAL_AUTH_TOKEN_TTL"
+        },
+        {
+          "name": "global.services.artifacts",
+          "usage": "URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.",
+          "env": "CASAS_GLOBAL_SERVICES_ARTIFACTS"
+        },
+        {
+          "name": "global.services.worlds",
+          "usage": "URL of the service running the world module, when it is not co-resident. Empty expects it in this process.",
+          "env": "CASAS_GLOBAL_SERVICES_WORLDS"
+        },
+        {
+          "name": "target",
+          "shorthand": "t",
+          "default": "[]",
+          "usage": "The target modules to start: all, client, world, artifacts, bake, docs, auth. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.",
+          "env": "CASAS_TARGET"
+        },
+        {
+          "name": "world.keep-revisions",
+          "default": "3",
+          "usage": "How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.",
+          "env": "CASAS_WORLD_KEEP_REVISIONS"
+        },
+        {
+          "name": "world.storage.dir.path",
+          "default": "./worlds",
+          "usage": "The directory the saved worlds live in.",
+          "env": "CASAS_WORLD_STORAGE_DIR_PATH"
+        }
+      ]
+    }
+  ],
+  "keys": [
+    {
+      "key": "artifacts.cap",
+      "env": "CASAS_ARTIFACTS_CAP",
+      "usage": "Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. \"50GB\". 0 or empty keeps it unlimited.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "artifacts.storage.dir.path",
+      "env": "CASAS_ARTIFACTS_STORAGE_DIR_PATH",
+      "default": "./artifacts",
+      "usage": "The directory of the artifact store.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "artifacts.storage.type",
+      "env": "CASAS_ARTIFACTS_STORAGE_TYPE"
+    },
+    {
+      "key": "auth.storage.dir.path",
+      "env": "CASAS_AUTH_STORAGE_DIR_PATH",
+      "default": "./auth",
+      "usage": "The directory the auth subsystem's state lives in — auth.db, holding users and their credentials. A users.json left by an older server is imported once when the database is founded.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "auth.storage.type",
+      "env": "CASAS_AUTH_STORAGE_TYPE"
+    },
+    {
+      "key": "bake.baker",
+      "env": "CASAS_BAKE_BAKER",
+      "usage": "Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "bake.max-concurrent",
+      "env": "CASAS_BAKE_MAX_CONCURRENT",
+      "default": "1",
+      "usage": "How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "client.storage.dir.path",
+      "env": "CASAS_CLIENT_STORAGE_DIR_PATH",
+      "usage": "The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside \"npm run dev\" wants.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "client.storage.type",
+      "env": "CASAS_CLIENT_STORAGE_TYPE"
+    },
+    {
+      "key": "docs.storage.dir.path",
+      "env": "CASAS_DOCS_STORAGE_DIR_PATH",
+      "usage": "The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "docs.storage.type",
+      "env": "CASAS_DOCS_STORAGE_TYPE"
+    },
+    {
+      "key": "global.admin.socket",
+      "env": "CASAS_GLOBAL_ADMIN_SOCKET",
+      "usage": "Path of a unix socket serving this process's admin API (user administration, over plain HTTP). Whoever can reach the socket is admin — file permissions gate it, no login. Empty serves none.",
+      "command": "casas-eternas"
+    },
+    {
+      "key": "global.auth.mode",
+      "env": "CASAS_GLOBAL_AUTH_MODE",
+      "default": "none",
+      "usage": "How the server establishes who is asking: none, password, oidc — none is local (one synthetic owner), password means this server holds the users, oidc a foreign provider. See docs/decisions/server-auth.md.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "global.auth.session-key",
+      "env": "CASAS_GLOBAL_AUTH_SESSION_KEY",
+      "usage": "Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "global.auth.session-ttl",
+      "env": "CASAS_GLOBAL_AUTH_SESSION_TTL",
+      "default": "720h0m0s",
+      "usage": "How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then global.auth.token-ttl is the one that matters.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "global.auth.token-ttl",
+      "env": "CASAS_GLOBAL_AUTH_TOKEN_TTL",
+      "default": "720h0m0s",
+      "usage": "How long an issued token is valid.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "global.listen",
+      "env": "CASAS_GLOBAL_LISTEN",
+      "default": ":8080",
+      "usage": "Address to listen on, as host:port. \":8080\" binds every interface, \"127.0.0.1:8080\" keeps a local instance off the network.",
+      "command": "casas-eternas"
+    },
+    {
+      "key": "global.services.artifacts",
+      "env": "CASAS_GLOBAL_SERVICES_ARTIFACTS",
+      "usage": "URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "global.services.worlds",
+      "env": "CASAS_GLOBAL_SERVICES_WORLDS",
+      "usage": "URL of the service running the world module, when it is not co-resident. Empty expects it in this process.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "global.tls.ca",
+      "env": "CASAS_GLOBAL_TLS_CA",
+      "usage": "Path to the CA that CLIENT certificates are verified against. Setting it turns on mutual TLS.",
+      "command": "casas-eternas"
+    },
+    {
+      "key": "global.tls.cert",
+      "env": "CASAS_GLOBAL_TLS_CERT",
+      "usage": "Path to the server certificate. Enables HTTPS together with global.tls.key.",
+      "command": "casas-eternas"
+    },
+    {
+      "key": "global.tls.key",
+      "env": "CASAS_GLOBAL_TLS_KEY",
+      "usage": "Path to the server private key. Enables HTTPS together with global.tls.cert.",
+      "command": "casas-eternas"
+    },
+    {
+      "key": "world.keep-revisions",
+      "env": "CASAS_WORLD_KEEP_REVISIONS",
+      "default": "3",
+      "usage": "How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "world.storage.dir.path",
+      "env": "CASAS_WORLD_STORAGE_DIR_PATH",
+      "default": "./worlds",
+      "usage": "The directory the saved worlds live in.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "world.storage.type",
+      "env": "CASAS_WORLD_STORAGE_TYPE"
+    }
+  ]
+}

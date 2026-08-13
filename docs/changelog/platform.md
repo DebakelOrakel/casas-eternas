@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-08-13
+- **new** Docs: the site gains an Operations section — guides for running the server locally, in Docker and on Kubernetes, plus CLI and configuration references generated from the binary itself.
 - **new** Server: local users live in the auth store and are administered over a unix admin socket — `casas-eternas auth user add|list|delete|passwd`; the htpasswd file is gone.
 - **new** Server: admin is a role bound to the user — `casas-eternas auth role bind <name> admin` — replacing the `global.auth.admins` config list.
 - **fixed** Server: a cluster bake can read the world it bakes on an authenticating server — its job was refused as a stranger and died within seconds.

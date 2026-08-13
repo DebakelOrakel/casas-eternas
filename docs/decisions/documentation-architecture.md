@@ -3,7 +3,7 @@ summary: The docs pipeline sketched in notes.md bundles two separable deliverabl
 date: 2026-07-28
 area: platform
 stage: decided
-status: decided (source layout + anchors; the manual stays deferred) — ADDENDUM 2026-08-13: the public site is BUILT the same day (homegrown, the re-decision the doc reserved): npm run build:docs renders docs/ to a static site the `docs` module serves under /docs/ — see the addendum at the end
+status: decided (source layout + anchors; the manual stays deferred) — ADDENDUM 2026-08-13: the public site is BUILT the same day (homegrown, the re-decision the doc reserved): npm run build:docs renders docs/ to a static site the `docs` module serves under /docs/. ADDENDUM (2), same day, decided and BUILT: top levels of the site are AUDIENCES — Development (the existing tree) beside a new Operations top level (docs/operations/: per-environment guides plus CLI/config reference pages rendered from a clidump-generated, lint-guarded JSON — never hand-written); the player top level stays the reserved content/ manual
 ---
 
 # Documentation architecture (source layout & anchors)
@@ -257,3 +257,76 @@ localization of the title nav. ALL BUILT 2026-08-13; `-t docs` runs alone,
 proving the target rule. Front matter turned out looser than strict YAML
 (colons in summaries), so the generator parses the flat convention itself
 — no YAML dependency.
+
+## Addendum 2026-08-13 (2): top levels are AUDIENCES — Operations arrives
+
+The deployment matured the same day (auth store, admin socket, cluster
+bakes), which makes it worth documenting — and that surfaces the axis the
+site was missing: everything it renders today serves ONE audience, the
+project itself. Decided in discussion:
+
+**Top levels of the site are audiences.** `Development` (the existing
+tree: vision, decisions, design, changelog — area navigation unchanged;
+the "navigate by area, never by folder" rule is hereby SCOPED to this top
+level), `Operations` (whoever runs a server: today the operator of one,
+later any self-hoster), and — when the game earns it — the reserved
+player top level, which is exactly what `docs/content/` and the anchor
+IDs above have been waiting for. Nothing is moved; Operations is a new
+sibling:
+
+```
+docs/operations/          one FLAT directory; grouping is front matter
+  concepts.md             group: overview — targets, auth modes, one vocabulary
+  local.md                group: installation — the binary on a machine
+  docker.md               group: installation — the container without a cluster
+  kubernetes.md           group: installation — manifests, Secret, bootstrap, bakes
+  cli-reference.json      GENERATED — see below
+```
+
+Inside Operations the pages sit in GROUPS, and the groups are genre
+(refined in the same discussion, after the first cut put pages directly
+under the section and the sidebar's levels stopped meaning one thing
+each): `overview` (orientation, quickstart-sized), `installation` (setup
+per environment — split there because the steps genuinely differ),
+`guides` (topical explanations; reserved — an empty group is not
+rendered), `reference` (the generated pages). Every group gets a
+GENERATED index page over its pages' front matter, exactly like the area
+indexes. The group is a front-matter field, never a filename prefix or a
+subdirectory — the same "front matter is data" rule that keeps
+Development's navigation off the folders. Front matter: `summary` +
+`date` + `group` + a flat `order:` (the generator's convention is flat;
+the nested `sidebar: order:` reserved above stays a content/-only,
+Starlight-compatible shape); NO stage/status badges — an operations
+manual is always "current", a lifecycle badge there is noise.
+deploy/README.md thins to a pointer once the guides carry its content.
+
+**The CLI and configuration references are not written at all — they are
+views.** The vocabulary (key = flag = env, every description text) lives
+once, in the cobra tree; hand-written reference pages would be the second
+copy the one-vocabulary rule forbids. So: a small Go tool (`tools/clidump`)
+walks the command tree and emits JSON — per key: key, flag, computed env
+name, default, help text; per command: Use/Short/Example — into
+`docs/operations/cli-reference.json`, COMMITTED and guarded by `make lint`
+regenerating and diffing it (machine-maintained with a drift gate, the
+go.sum category — not a hand-maintained list). The docsite build stays
+pure Node: docsite.ts renders the two reference pages straight from the
+JSON, no intermediate Markdown, one HTML producer as before. The
+alternative — dumping through Docker stages at build time, nothing
+committed — was weighed and declined: it buys purity at the price of a
+Go-dependent docs dev loop and cross-stage build plumbing.
+
+**No mode switch in the UI** (refined in the same discussion): the top
+levels are SECTION HEADINGS in the one sidebar — Operations first, then
+Development — not two site modes. One navigation, one page tree, and one
+SHAPE per level on both sides: section heading → collapsible group with
+an index page (areas and operations groups share the same classes and
+markup) → page links. The styling lives in shared classes on purpose, so
+the two sections cannot drift apart.
+
+**Build order**: ① `tools/clidump` + committed JSON + lint guard →
+② the four guides, distilled from deploy/README.md and the 2026-08-13
+operational knowledge; deploy/README becomes a pointer → ③ docsite.ts:
+the section headings, the operations collection (Markdown pages plus the
+two JSON-fed reference pages), generated overview page → ④ docs/README.md
+taxonomy row + changelog entry. ALL FOUR BUILT the same day; the drift
+gate was proven by mutating a help text and watching the lint fail.

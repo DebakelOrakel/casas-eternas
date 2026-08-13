@@ -23,7 +23,7 @@
 IMAGE ?= ghcr.io/debakelorakel/casas-eternas
 TAG   ?= latest
 
-.PHONY: lint test baker client run build push
+.PHONY: lint test baker client run build push cli-reference
 
 lint:
 	cd client && npx tsc --noEmit
@@ -32,6 +32,16 @@ lint:
 	cd client && npx tsc --noEmit -p tsconfig.node.json
 	gofmt -l . | tee /dev/stderr | (! read)
 	go vet ./...
+	# The committed CLI/config reference must match the cobra tree it is
+	# generated from — a machine-maintained file with a drift gate, not a
+	# hand-maintained list (docs/decisions/documentation-architecture.md).
+	@go run ./tools/clidump | diff -q docs/operations/cli-reference.json - > /dev/null \
+		|| (echo "docs/operations/cli-reference.json is stale — run 'make cli-reference'" >&2; exit 1)
+
+# Regenerate the CLI/config reference the docs site renders. Run after
+# changing commands, flags or their help texts; lint fails until you do.
+cli-reference:
+	go run ./tools/clidump > docs/operations/cli-reference.json
 
 test:
 	go test ./internal/...
