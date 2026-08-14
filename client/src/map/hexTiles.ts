@@ -32,6 +32,9 @@ export interface HexTileClass {
   id: HexId
   // Median terrain height over the sample set, metres above sea level.
   medianHeightMeters: number
+  // Highest sampled point of the tile. A plate has to sit at or above this to
+  // cover its own ground — see hexPlates' canonical height.
+  maxHeightMeters: number
   // Steepest sampled tangent (rise/run, dimensionless).
   slope: number
   water: HexWaterState
@@ -135,6 +138,7 @@ export function createHexClassifier(samplers: HexTileSamplers): HexClassifier {
 
     const sorted = [...heights].sort((a, b) => a - b)
     const medianHeightMeters = sorted[(sorted.length - 1) >> 1] / UNITS_PER_METER
+    const maxHeightMeters = sorted[sorted.length - 1] / UNITS_PER_METER
     const landFraction = 1 - waterCount / points.length
     const water: HexWaterState = waterCount === points.length ? 'water' : waterCount === 0 ? 'land' : 'shore'
 
@@ -148,7 +152,7 @@ export function createHexClassifier(samplers: HexTileSamplers): HexClassifier {
       grade = slopeBase * biomeFactor * (water === 'shore' ? landFraction : 1)
     }
 
-    const result: HexTileClass = { id, medianHeightMeters, slope: maxSlope, water, landFraction, biomeId, grade }
+    const result: HexTileClass = { id, medianHeightMeters, maxHeightMeters, slope: maxSlope, water, landFraction, biomeId, grade }
     if (cache.size >= CACHE_CAP) cache.clear()
     cache.set(key, result)
     return result

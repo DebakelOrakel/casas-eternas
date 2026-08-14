@@ -414,8 +414,34 @@ representation, zoom model — see
    flat plate with edge seams (embankment against wilderness), the
    contiguity rule active. The "grid = civilisation" visual language
    stands in the picture for the first time.
-5. **Game systems** (settlement axes, rewilding, costs) — deliberately
-   last; the game design material lives outside the repository.
+   *(BUILT 2026-08-14: `map/hexPlates.ts` holds the rules and the state
+   — free of Babylon so the rules are checked headless — and
+   `map/hexPlateLayer.ts` turns them into geometry: a flat hexagon per
+   plate plus a skirt on every edge, down to the neighbouring plate's
+   height or to the lowest ground along that edge. Only the higher of
+   two plates draws their shared wall, or the pair z-fights along every
+   seam. Development is GAME state: session-only, never saved, never
+   hashed. The canonical height is NOT the median this document asks
+   for, and the reason is worth keeping: nothing cuts the terrain, so a
+   plate at the median leaves the uphill half of its own tile poking
+   through it (seen immediately, 2026-08-14). The plate therefore sits
+   at the tile's HIGHEST sampled point, which covers its ground and
+   makes the skirt read as a terrace's retaining wall. Measured cost on
+   ground that may actually be developed — steep tiles are refused
+   anyway — median 0.2 m, p90 0.5 m, worst case 19.8 m of extra step on
+   a 300 m frontage. Cutting the terrain properly stays the honest fix
+   and wants its own step: the near-field patch cannot express a hex
+   boundary at ~200 m vertex spacing, so it would need a real
+   plate-aware mesher.)*
+5. **Game systems** (settlement axes, rewilding, costs) — NOT SCHEDULED
+   (2026-08-14). It is game mechanics, and the world around it has to
+   read right first; the game design material lives outside the
+   repository anyway. Everything above it is world-building and stands
+   on its own.
+
+The natural work after phase 4 is therefore not phase 5 but the open
+questions below — the coastal basins first, since that one is a
+correctness question rather than a tuning one.
 
 Prerequisites worth closing before phase 2: the amplification bake is the
 classification's terrain source (4k is enough to start, 8k still waits on
@@ -426,15 +452,28 @@ against a pattern that later changes.
 
 ## Open questions
 
-- **Rivers sometimes stop short of the water they drain into** (seen
-  2026-08-13 on the phase 3 tile tinting, not yet investigated). The
-  candidates, in order of suspicion: the hydrology polyline ends at its
-  last CHANNEL cell, which need not be the shore cell; lakes are macro
-  authority (2048) while the amplified river network is 4k/8k, so the two
-  meet at different resolutions; and the channel criterion may drop the
-  final low-gradient stretch. Worth settling before mouths become
-  gameplay (harbours, fords) — it is the same seam the port design calls
-  "river out-port ending at the shore contour = mouth".
+- **Coastal basins are flooded as lakes instead of being sea**
+  (measured 2026-08-14, deferred to its own step after phase 4). Of the
+  lakes an amplified bake produces, the ones with no river touching them
+  — 40 of 205 in the measurement — sit at the coast (98 % within five
+  cells, median distance 0) with their floor BELOW sea level (median
+  −56 m). They are fjord-like arms the bake's erosion carved and then
+  pinched off from the world ocean: no longer part of the ocean
+  component, so `computeLakes` floods them as lakes by construction
+  ("an enclosed sea is a depression like any other"). On the map they
+  read as a chain of unconnected ponds along the coast. This predates
+  the lake layer — the bake always carved them; shipping lakes only made
+  them visible. The fork to settle: is such a basin **sea** (a fjord —
+  the physical reading, and a one-condition change), a **lagoon** (a
+  lake, but labelled and drawn as one), or something the erosion should
+  not produce at all (the deepest fix, and the continuation of v5's
+  estuary clamp)? Note the implementation choice is free of a second
+  artifact turnover if the filter runs client-side on read: only the
+  lake layer is affected, never the terrain or the rivers.
+- ~~Rivers stopping short of the water they drain into~~ — fixed
+  2026-08-14: the gap was exactly one cell at every resolution and the
+  polyline now reaches the receiving water cell
+  (`AMPLIFICATION_ALGO_VERSION` 7).
 - Thresholds/costs for the developability grades, and rewilding pace.
 - Where exactly the "path organic vs. road geometric" upgrade boundary
   sits.

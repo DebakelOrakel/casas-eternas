@@ -37,10 +37,15 @@ export interface KnowledgeDebugPanelOptions {
   onBrushToggle: (active: boolean) => void
   // Phase 2 debug overlay: tint tiles by their classification.
   onClassesToggle: (active: boolean) => void
+  // Phase 4: clicking a tile develops it into a plate.
+  onDevelopToggle: (active: boolean) => void
+  onDevelopClear: () => void
 }
 
 export interface KnowledgeDebugPanel {
   isBrushActive(): boolean
+  // Whether a click should develop the tile under it (phase 4).
+  isDevelopActive(): boolean
   // Brush radius as a fraction of world width.
   brushRadius(): number
   // The terrain raster currently feeding the presentation — the screen
@@ -51,20 +56,26 @@ export interface KnowledgeDebugPanel {
   // or null when nothing is hovered — the screen formats it, the panel just
   // shows it.
   setHexTile(text: string | null): void
+  // The geometry diagnostic line: where things actually are, in numbers.
+  setHexGeometry(text: string | null): void
   dispose(): void
 }
 
 export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeDebugPanelOptions): KnowledgeDebugPanel {
-  const { ramp, sheet, pigment, wash, onRampChange, onPigmentChange, onWashChange, onSeed, onClear, onReveal, onBrushToggle, onClassesToggle } = options
+  const { ramp, sheet, pigment, wash, onRampChange, onPigmentChange, onWashChange, onSeed, onClear, onReveal, onBrushToggle, onClassesToggle, onDevelopToggle, onDevelopClear } = options
   let brushActive = false
   let classesActive = false
+  let developActive = false
 
   const root = document.createElement('div')
   root.className = 'knowledge-debug'
   root.innerHTML = `
     <span class="knowledge-debug__status" data-status="tier">terrain: —</span>
     <span class="knowledge-debug__status" data-status="hex">hex: —</span>
+    <span class="knowledge-debug__status" data-status="geom"></span>
     <button type="button" data-action="classes">classes: off</button>
+    <button type="button" data-action="develop">develop: off</button>
+    <button type="button" data-action="develop-clear">clear plates</button>
     <span class="knowledge-debug__title">knowledge (debug)</span>
     <button type="button" data-action="brush">brush: off</button>
     <label>radius <input type="range" data-knob="radius" min="0.01" max="0.25" step="0.005" value="0.06" /></label>
@@ -146,7 +157,14 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
       button.textContent = `classes: ${classesActive ? 'on' : 'off'}`
       button.classList.toggle('is-on', classesActive)
       onClassesToggle(classesActive)
-    } else if (action === 'seed') onSeed()
+    } else if (action === 'develop') {
+      developActive = !developActive
+      const button = root.querySelector<HTMLButtonElement>('[data-action="develop"]')!
+      button.textContent = `develop: ${developActive ? 'on' : 'off'}`
+      button.classList.toggle('is-on', developActive)
+      onDevelopToggle(developActive)
+    } else if (action === 'develop-clear') onDevelopClear()
+    else if (action === 'seed') onSeed()
     else if (action === 'clear') onClear()
     else if (action === 'reveal') onReveal()
   }
@@ -154,9 +172,11 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
 
   const tierStatus = root.querySelector<HTMLSpanElement>('[data-status="tier"]')!
   const hexStatus = root.querySelector<HTMLSpanElement>('[data-status="hex"]')!
+  const geomStatus = root.querySelector<HTMLSpanElement>('[data-status="geom"]')!
 
   return {
     isBrushActive: () => brushActive,
+    isDevelopActive: () => developActive,
     brushRadius: () => Number(knob('radius').value),
     setTerrainTier(width: number, height: number): void {
       const label = width === 2048 ? '2K (macro)' : width === 4096 ? '4K' : width === 8192 ? '8K' : `${width}×${height}`
@@ -164,6 +184,9 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
     },
     setHexTile(text: string | null): void {
       hexStatus.textContent = text ?? 'hex: —'
+    },
+    setHexGeometry(text: string | null): void {
+      geomStatus.textContent = text ?? ''
     },
     dispose(): void {
       root.removeEventListener('input', onInput)

@@ -93,6 +93,12 @@ export interface ToroidalMapView {
   // overlay; see HexGridMaterialPlugin.setClassOverlay for the encoding).
   // null clears it. No-op without a hexGrid.
   setHexClassOverlay(texture: RawTexture | null, window?: { col0: number; row0: number; cols: number; rows: number }): void
+  // Put a caller's own mesh under the relief lights and the same vertical
+  // exaggeration the terrain uses — for a layer that IS ground rather than an
+  // overlay on it (the developed plates). Without both it either renders
+  // unlit beside lit terrain or floats as the exaggeration changes.
+  attachLitMesh(mesh: Mesh): void
+  detachLitMesh(mesh: Mesh): void
   // Pick the terrain THIS view renders, restricted to its own surfaces
   // (flat plane, relief levels, near-detail patch) — a plain scene.pick can
   // land on any stray pickable mesh, and any surface that is not the
@@ -309,6 +315,9 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   // near-field disk, so detail exists wherever the grid invites close
   // reading.
   const PATCH_COVERAGE = 16
+  // Caller-owned meshes that live under the relief lights and follow the
+  // vertical exaggeration (see attachLitMesh). Their lifetime is the caller's.
+  const attachedMeshes: Mesh[] = []
   let patchMesh: Mesh | null = null
   let patchPositions: Float32Array | null = null
   let patchUvs: Float32Array | null = null
@@ -333,6 +342,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       for (const inst of level.instances) inst.scaling.y = heightScale
     }
     if (patchMesh) patchMesh.scaling.y = heightScale
+    for (const mesh of attachedMeshes) mesh.scaling.y = heightScale
   }
 
   // The ground meshes' own uv↔world mapping (derived from vertex data, same
@@ -554,6 +564,19 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     },
     setHexClassOverlay(texture: RawTexture | null, window?: { col0: number; row0: number; cols: number; rows: number }): void {
       hexGridPlugin?.setClassOverlay(texture, window)
+    },
+    attachLitMesh(mesh: Mesh): void {
+      if (attachedMeshes.includes(mesh)) return
+      attachedMeshes.push(mesh)
+      sun.includedOnlyMeshes.push(mesh)
+      fill.includedOnlyMeshes.push(mesh)
+      mesh.scaling.y = heightScale
+    },
+    detachLitMesh(mesh: Mesh): void {
+      const at = attachedMeshes.indexOf(mesh)
+      if (at >= 0) attachedMeshes.splice(at, 1)
+      sun.includedOnlyMeshes = sun.includedOnlyMeshes.filter((m) => m !== mesh)
+      fill.includedOnlyMeshes = fill.includedOnlyMeshes.filter((m) => m !== mesh)
     },
     pickGround(screenX: number, screenY: number): { x: number; z: number } | null {
       const isGround = (mesh: AbstractMesh): boolean => {
