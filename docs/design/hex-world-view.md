@@ -426,6 +426,15 @@ against a pattern that later changes.
 
 ## Open questions
 
+- **Rivers sometimes stop short of the water they drain into** (seen
+  2026-08-13 on the phase 3 tile tinting, not yet investigated). The
+  candidates, in order of suspicion: the hydrology polyline ends at its
+  last CHANNEL cell, which need not be the shore cell; lakes are macro
+  authority (2048) while the amplified river network is 4k/8k, so the two
+  meet at different resolutions; and the channel criterion may drop the
+  final low-gradient stretch. Worth settling before mouths become
+  gameplay (harbours, fords) — it is the same seam the port design calls
+  "river out-port ending at the shore contour = mouth".
 - Thresholds/costs for the developability grades, and rewilding pace.
 - Where exactly the "path organic vs. road geometric" upgrade boundary
   sits.

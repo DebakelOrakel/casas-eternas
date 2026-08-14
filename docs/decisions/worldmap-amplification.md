@@ -31,6 +31,21 @@ has to lead somewhere.
    the whole point. Climate/biomes stay at their coarse resolution and
    are merely sampled onto the fine grid as inputs (they are regional
    quantities; precipitation feeds the discharge as before).
+
+   *The lake half was written here in 2026-08-07 and only IMPLEMENTED on
+   2026-08-14: until then the bake re-extracted rivers alone, and the map
+   drew 7.8 km macro lake blocks under ~2 km terrain — the mismatch that
+   made river mouths and lake shores visibly fail to meet once the hex
+   grid put a 300 m ruler against them. The bake now runs `computeLakes`
+   on the routing and discharge it already has (so the added cost is one
+   pass, not a second bake) and the artifact carries a `lakeDepth.u8`
+   layer beside its elevation — the same one-byte quantisation the save
+   gives its own lake layer, i.e. half the elevation layer's size rather
+   than double it. Temperature therefore joins precipitation as a bake
+   input: evaporation decides which basins stay wet. A REGION bake makes
+   no lakes on purpose — a basin straddling two jobs would be flooded
+   twice from two partial catchments — and a missing layer means "keep
+   the save's macro lakes", never "there are none".*
    The channel criterion is a critical drainage area in CELLS
    (`densityToCriticalArea`) and is **used as one at every stage**.
 

@@ -7,6 +7,7 @@ export type { AmplificationArtifact }
 import type { Encoding } from './save/worldLayers'
 import { AMPLIFY_CONSTANTS } from '../worldgen/surface/amplify'
 import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
+import { metersToElevation } from '../worldgen/elevation/elevationScale'
 
 // The PIPELINE half of an artifact's key, assembled in one place.
 //
@@ -82,8 +83,15 @@ const ELEVATION_ENCODING: Encoding = { dtype: 'u16', scale: 2 / 65535, offset: -
 // of magnitude larger and slower to parse than the numbers it carries.
 const FILES = {
   elevation: 'elevation.u16',
+  lakeDepth: 'lakeDepth.u8',
   meta: 'meta.json',
 } as const
+
+// The same quantisation the SAVE gives its lake layer (world/save/
+// worldLayers.ts): one byte per cell over a 3,000 m range. A field that is
+// zero almost everywhere compresses to nearly nothing, and the artifact stays
+// half the size of its own elevation layer instead of double.
+const LAKE_DEPTH_ENCODING: Encoding = { dtype: 'u8', scale: metersToElevation(3000) / 255, offset: 0 }
 
 // River files, keyed by the density that produced them, so changing the slider
 // adds a small variation beside the terrain instead of orphaning it. Density is
@@ -115,6 +123,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
   if (!handle) return false
   const rivers = riverFiles(riverDensity)
   const elevationBytes = new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING))
+  const lakeBytes = artifact.lakeDepth ? new Uint8Array(bakeLayer(artifact.lakeDepth, LAKE_DEPTH_ENCODING)) : null
   const meta: ArtifactMeta = {
     key,
     width: artifact.width,
@@ -127,6 +136,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
     pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, constants: { ...AMPLIFY_CONSTANTS } },
     files: {
       [FILES.elevation]: elevationBytes.byteLength,
+      ...(lakeBytes ? { [FILES.lakeDepth]: lakeBytes.byteLength } : {}),
       [rivers.points]: artifact.riverPoints.byteLength,
       [rivers.lengths]: artifact.riverLengths.byteLength,
     },
@@ -136,6 +146,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
   // read as unresolved rather than an entry pointing at half a file.
   return (
     (await store.write(handle, FILES.elevation, elevationBytes)) &&
+    (lakeBytes === null || (await store.write(handle, FILES.lakeDepth, lakeBytes))) &&
     (await store.write(handle, rivers.points, artifact.riverPoints)) &&
     (await store.write(handle, rivers.lengths, artifact.riverLengths)) &&
     (await store.write(handle, FILES.meta, new TextEncoder().encode(JSON.stringify(meta))))
@@ -181,6 +192,14 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
   const pointBytes = await store.read(handle, rivers.points)
   if (!pointBytes) return null
   const lengthBytes = await store.read(handle, rivers.lengths)
+  // The lake layer is OPTIONAL, unlike the rivers above: a region bake makes
+  // none, and neither did any bake before this layer existed. A wrong-sized
+  // one is treated as absent rather than trusted — it would be from another
+  // shape entirely.
+  const lakeBytes = await store.read(handle, FILES.lakeDepth)
+  const lakeDepth = lakeBytes && lakeBytes.byteLength === expectedCells
+    ? decodeLayer(lakeBytes, LAKE_DEPTH_ENCODING)
+    : null
   return {
     artifact: {
       elevation: decodeLayer(elevationBytes, ELEVATION_ENCODING),
@@ -188,6 +207,7 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
       height: meta.height,
       riverPoints: new Float32Array(pointBytes),
       riverLengths: lengthBytes ? new Uint32Array(lengthBytes) : new Uint32Array(0),
+      lakeDepth,
     },
     bakeMs: meta.bakeMs,
   }

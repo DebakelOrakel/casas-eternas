@@ -96,6 +96,12 @@ export interface MapPresentation {
   // The height raster now in force — the save's macro field at load, then each
   // amplified tier as it arrives. Emits paper AND surfaces.
   setElevation(field: Float32Array, fieldWidth: number, fieldHeight: number, detailSeed: number): void
+  // Replace the lake layer — the amplification bake re-floods the basins on
+  // its own routing, so a landing tier brings lakes at ITS resolution rather
+  // than leaving the save's macro ones under fine terrain. Call BEFORE
+  // setElevation for a tier, so the repaint that follows already washes the
+  // new lakes.
+  setLakeDepth(lakeDepth: { data: Float32Array; resX: number; resY: number }): void
   // The biome actually PAINTED at this point, or null where no wash was built.
   // UV rather than texel coords, matching ElevationSurface and MapHoverTooltip
   // — the texture's resolution stays in here.
@@ -441,24 +447,27 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
     onSurfaces(sinkWithKnowledge(coarse), sinkWithKnowledge(fine), sinkWithKnowledge(detail))
   }
 
+  // Lake depths at texture resolution, in metres — nearest, like the biome
+  // table and for the same authority reason.
+  function resampleLakeDepth(lakeDepth: { data: Float32Array; resX: number; resY: number }): Float32Array {
+    const table = new Float32Array(textureWidth * textureHeight)
+    for (let y = 0; y < textureHeight; y++) {
+      const sy = Math.min(lakeDepth.resY - 1, Math.floor((y / textureHeight) * lakeDepth.resY))
+      for (let x = 0; x < textureWidth; x++) {
+        const sx = Math.min(lakeDepth.resX - 1, Math.floor((x / textureWidth) * lakeDepth.resX))
+        table[y * textureWidth + x] = elevationToMeters(lakeDepth.data[sy * lakeDepth.resX + sx])
+      }
+    }
+    return table
+  }
+
   return {
     setWorld(fields: MapWorldFields): void {
       const { elevations, width, height, biome, detailSeed, biomeInputs: savedBiomeInputs, lakeDepth } = fields
       biomeInputs = savedBiomeInputs
       // Lake depths at texture resolution, in metres — nearest, like the biome
       // table below and for the same authority reason.
-      lakeDepthAtTexel = null
-      if (lakeDepth) {
-        const table = new Float32Array(textureWidth * textureHeight)
-        for (let y = 0; y < textureHeight; y++) {
-          const sy = Math.min(lakeDepth.resY - 1, Math.floor((y / textureHeight) * lakeDepth.resY))
-          for (let x = 0; x < textureWidth; x++) {
-            const sx = Math.min(lakeDepth.resX - 1, Math.floor((x / textureWidth) * lakeDepth.resX))
-            table[y * textureWidth + x] = elevationToMeters(lakeDepth.data[sy * lakeDepth.resX + sx])
-          }
-        }
-        lakeDepthAtTexel = table
-      }
+      lakeDepthAtTexel = lakeDepth ? resampleLakeDepth(lakeDepth) : null
       // The macro ids at texture resolution, nearest — this is a lookup table
       // for two facts the classification cannot reach (salt flats, dry basin
       // floors), so nearest is right: they are categorical and the macro raster
@@ -506,6 +515,9 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
     // session's fixed texture resolution: a coarser field is upscaled, a finer
     // one BOX-DOWNSAMPLED (averaging heights, so the hillshade doesn't sparkle
     // the way point-sampling would).
+    setLakeDepth(lakeDepth: { data: Float32Array; resX: number; resY: number }): void {
+      lakeDepthAtTexel = resampleLakeDepth(lakeDepth)
+    },
     setElevation(field: Float32Array, fieldWidth: number, fieldHeight: number, detailSeed: number): void {
       let paperField = field
       if (fieldWidth > textureWidth && fieldWidth % textureWidth === 0) {

@@ -3308,6 +3308,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           drainageRefresh: inputs.erosionControls.refresh,
           riverDensity: inputs.erosionControls.riverDensity,
           precipitation: inputs.climate.data,
+          temperature: inputs.temperature?.data,
           climateResX: inputs.climate.resX, climateResY: inputs.climate.resY,
         },
         (phase, fraction) => {

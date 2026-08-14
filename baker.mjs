@@ -10447,7 +10447,7 @@ function deriveWorldId(inputs) {
   const [sa, sb] = hashBytes(scalars, a, b);
   return `${hex8(sa)}${hex8(sb)}`;
 }
-var AMPLIFICATION_ALGO_VERSION = 6;
+var AMPLIFICATION_ALGO_VERSION = 7;
 function derivePipelineVersion(constants) {
   const text = Object.keys(constants).sort().map((name) => `${name}=${constants[name]}`).join("|");
   const [a, b] = hashBytes(new TextEncoder().encode(text), 2166136261, 2654435769);
@@ -10562,6 +10562,7 @@ async function worldInputsFrom(world2) {
     detailSeed: world2.recipe.detailSeed,
     erosionControls: world2.recipe.erosionControls,
     climate: climate2,
+    temperature,
     biome,
     lakeDepth,
     biomeInputs,
@@ -10881,6 +10882,96 @@ function meanLandRunoff(precip, elevation, worldW, worldH, climateResX, climateR
   }
   return count > 0 ? sum / count : SURFACE_TUNING.runoffFloor;
 }
+function evaporationPotential(tempC) {
+  const pet = 150 + 60 * tempC;
+  return pet < 100 ? 100 : pet > 3e3 ? 3e3 : pet;
+}
+function tempAtCell(temperature, cx, cy, worldW, worldH, climateResX, climateResY) {
+  const gx = Math.min(climateResX - 1, Math.floor(cx / worldW * climateResX));
+  const gy = Math.min(climateResY - 1, Math.floor(cy / worldH * climateResY));
+  return temperature[gy * climateResX + gx];
+}
+function computeLakes(routing, discharge, elevation, temperature, precip, climateResX, climateResY, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM) {
+  const { width, height, filled } = routing;
+  const n = width * height;
+  const EPS = 1e-5;
+  const depth = new Float32Array(n);
+  const saltFlat = new Uint8Array(n);
+  const dryBasin = new Uint8Array(n);
+  const flooded = new Uint8Array(n);
+  for (let cell = 0; cell < n; cell++) {
+    if (filled[cell] > elevation[cell] + EPS) flooded[cell] = 1;
+  }
+  const wrap = (x, y) => wrapValue(y, height) * width + wrapValue(x, width);
+  const seen = new Uint8Array(n);
+  const queue = new Int32Array(n);
+  for (let s = 0; s < n; s++) {
+    if (!flooded[s] || seen[s]) continue;
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = s;
+    seen[s] = 1;
+    const region = [];
+    let spill = -Infinity;
+    let inflow = 0;
+    let tempSum = 0;
+    while (head < tail) {
+      const c = queue[head++];
+      region.push(c);
+      if (filled[c] > spill) spill = filled[c];
+      if (discharge[c] > inflow) inflow = discharge[c];
+      const cx = c % width;
+      const cy = (c - cx) / width;
+      tempSum += tempAtCell(temperature, cx, cy, width, height, climateResX, climateResY);
+      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+        const nb = wrap(cx + dx, cy + dy);
+        if (flooded[nb] && !seen[nb]) {
+          seen[nb] = 1;
+          queue[tail++] = nb;
+        }
+      }
+    }
+    let basinFloor = Infinity;
+    for (const c of region) if (elevation[c] < basinFloor) basinFloor = elevation[c];
+    const pet = evaporationPotential(tempSum / region.length);
+    if (basinFloor < SEA_LEVEL) {
+      let basinRain = 0;
+      for (const c of region) {
+        const cx = c % width;
+        basinRain += precipRunoffAt(precip, cx, (c - cx) / width, width, height, climateResX, climateResY);
+      }
+      inflow += basinRain;
+      let level = spill;
+      if (inflow < pet * region.length) {
+        const sorted = region.slice().sort((a, b) => elevation[a] - elevation[b]);
+        let area = 0;
+        level = basinFloor;
+        for (const c of sorted) {
+          area++;
+          if (pet * area >= inflow) {
+            level = elevation[c];
+            break;
+          }
+        }
+      }
+      const saltBandTop = level + metersToElevation(SURFACE_TUNING.saltBandM);
+      for (const c of region) {
+        if (elevation[c] <= level) depth[c] = level - elevation[c];
+        else if (elevation[c] <= SEA_LEVEL) {
+          dryBasin[c] = 1;
+          if (elevation[c] <= saltBandTop) saltFlat[c] = 1;
+        }
+      }
+      continue;
+    }
+    if (spill - basinFloor < metersToElevation(minBasinReliefM)) continue;
+    if (inflow < pet * region.length) continue;
+    for (const c of region) {
+      if (elevation[c] <= spill) depth[c] = spill - elevation[c];
+    }
+  }
+  return { depth, saltFlat, dryBasin };
+}
 function accumulateDischarge(routing, elevation, precip, climateResX, climateResY) {
   const { width, height, flowTarget, popOrder, poppedCount } = routing;
   const discharge = new Float32Array(width * height);
@@ -10996,7 +11087,15 @@ function extractRiverPolylines(routing, discharge, elevation, threshold, maxDisc
       len++;
       visited[cur] = 1;
       const t = flowTarget[cur];
-      if (t < 0 || !channel[t] || !adjacent(cur, t)) break;
+      if (t < 0 || !channel[t] || !adjacent(cur, t)) {
+        if (t >= 0 && t < n && adjacent(cur, t) && elevation[t] <= SEA_LEVEL) {
+          const tx = t % width;
+          const ty = (t - tx) / width;
+          points.push(tx + 0.5, ty + 0.5, riverWidth(discharge[cur], maxDischarge));
+          len++;
+        }
+        break;
+      }
       if (visited[t]) {
         const tx = t % width;
         const ty = (t - tx) / width;
@@ -11737,9 +11836,10 @@ async function runAmplification(request, onProgress = () => {
     field = eroded.elevations;
   }
   let rivers = { points: new Float32Array(0), lengths: new Uint32Array(0) };
+  let lakeDepth = null;
   if (request.precipitation && request.climateResX && request.climateResY) {
     onProgress("hydrology", 0);
-    rivers = await deriveRivers(
+    const derived = await deriveRivers(
       field,
       result.width,
       result.height,
@@ -11747,23 +11847,36 @@ async function runAmplification(request, onProgress = () => {
       request.climateResX,
       request.climateResY,
       request.riverDensity,
-      { maxDischarge: request.maxDischarge, meanRunoff: request.meanRunoff },
+      {
+        maxDischarge: request.maxDischarge,
+        meanRunoff: request.meanRunoff,
+        // Lakes only for a WHOLE-world bake. A region sees part of the
+        // drainage, and a basin straddling two jobs would be flooded twice
+        // from two different catchments — the same reasoning that hands a
+        // split bake its discharge inputs instead of letting it derive them.
+        temperature: request.region ? void 0 : request.temperature
+      },
       (fraction) => onProgress("hydrology", fraction)
     );
+    rivers = derived.rivers;
+    lakeDepth = derived.lakeDepth;
     if (request.region) rivers = ownedRivers(rivers, request.region.owned, result.width);
     onProgress("hydrology", 1);
   }
-  return { elevation: field, width: result.width, height: result.height, rivers };
+  return { elevation: field, width: result.width, height: result.height, rivers, lakeDepth };
 }
-async function deriveRivers(field, width, height, precipitation, climateResX, climateResY, riverDensity, overrides = {}, onProgress = () => {
+async function deriveRivers(field, width, height, precipitation, climateResX, climateResY, riverDensity, options = {}, onProgress = () => {
 }) {
   const routing = await fillDepressionsAndRouteFlow(field, width, height, 0);
   onProgress(0.6);
   const discharge = accumulateDischarge(routing, field, precipitation, climateResX, climateResY);
-  const maxDischarge = overrides.maxDischarge ?? maxDischargeOverLand(discharge, field);
-  const meanRunoff = overrides.meanRunoff ?? meanLandRunoff(precipitation, field, width, height, climateResX, climateResY);
+  const maxDischarge = options.maxDischarge ?? maxDischargeOverLand(discharge, field);
+  const meanRunoff = options.meanRunoff ?? meanLandRunoff(precipitation, field, width, height, climateResX, climateResY);
   const criticalArea = densityToCriticalArea(riverDensity ?? 55);
-  return extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge);
+  const threshold = channelThreshold(criticalArea, meanRunoff);
+  const rivers = extractRiverPolylines(routing, discharge, field, threshold, maxDischarge);
+  const lakeDepth = options.temperature ? computeLakes(routing, discharge, field, options.temperature, precipitation, climateResX, climateResY).depth : null;
+  return { rivers, lakeDepth };
 }
 function ownedRivers(rivers, owned, width) {
   const points = [];
@@ -11827,8 +11940,10 @@ function amplificationPipelineVersion(rounds = AMPLIFY_EROSION_ROUNDS) {
 var ELEVATION_ENCODING = { dtype: "u16", scale: 2 / 65535, offset: -1 };
 var FILES = {
   elevation: "elevation.u16",
+  lakeDepth: "lakeDepth.u8",
   meta: "meta.json"
 };
+var LAKE_DEPTH_ENCODING = { dtype: "u8", scale: metersToElevation(3e3) / 255, offset: 0 };
 function riverDensityKey(density) {
   const value = Math.round(density ?? DEFAULT_RIVER_DENSITY);
   return String(Math.min(100, Math.max(0, value)));
@@ -11843,6 +11958,7 @@ async function writeAmplificationArtifact(store, key, artifact, bakeMs, riverDen
   if (!handle) return false;
   const rivers = riverFiles(riverDensity);
   const elevationBytes = new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING));
+  const lakeBytes = artifact.lakeDepth ? new Uint8Array(bakeLayer(artifact.lakeDepth, LAKE_DEPTH_ENCODING)) : null;
   const meta = {
     key,
     width: artifact.width,
@@ -11855,11 +11971,12 @@ async function writeAmplificationArtifact(store, key, artifact, bakeMs, riverDen
     pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, constants: { ...AMPLIFY_CONSTANTS } },
     files: {
       [FILES.elevation]: elevationBytes.byteLength,
+      ...lakeBytes ? { [FILES.lakeDepth]: lakeBytes.byteLength } : {},
       [rivers.points]: artifact.riverPoints.byteLength,
       [rivers.lengths]: artifact.riverLengths.byteLength
     }
   };
-  return await store.write(handle, FILES.elevation, elevationBytes) && await store.write(handle, rivers.points, artifact.riverPoints) && await store.write(handle, rivers.lengths, artifact.riverLengths) && await store.write(handle, FILES.meta, new TextEncoder().encode(JSON.stringify(meta)));
+  return await store.write(handle, FILES.elevation, elevationBytes) && (lakeBytes === null || await store.write(handle, FILES.lakeDepth, lakeBytes)) && await store.write(handle, rivers.points, artifact.riverPoints) && await store.write(handle, rivers.lengths, artifact.riverLengths) && await store.write(handle, FILES.meta, new TextEncoder().encode(JSON.stringify(meta)));
 }
 
 // src/storage/HttpArtifactStore.ts
@@ -12083,6 +12200,7 @@ async function main() {
     erosionStrength: inputs.erosionControls.strength,
     drainageRefresh: inputs.erosionControls.refresh,
     precipitation: inputs.climate?.data,
+    temperature: inputs.temperature?.data,
     climateResX: inputs.climate?.resX,
     climateResY: inputs.climate?.resY,
     riverDensity: inputs.erosionControls.riverDensity
@@ -12104,7 +12222,10 @@ async function main() {
     width: result.width,
     height: result.height,
     riverPoints: result.rivers.points,
-    riverLengths: result.rivers.lengths
+    riverLengths: result.rivers.lengths,
+    // Null for a region job (a basin across two jobs would flood twice) and
+    // for a save without temperature; the reader then keeps the macro lakes.
+    lakeDepth: result.lakeDepth
     // Rivers are keyed by the world's own density inside the artifact, so a
     // server bake lands where the browser will look for it.
   }, durationMs, inputs.erosionControls.riverDensity, inputs.seedText, job.erosionRounds);

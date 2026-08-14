@@ -408,7 +408,29 @@ export function extractRiverPolylines(routing: FlowRouting, discharge: Float32Ar
       len++
       visited[cur] = 1
       const t = flowTarget[cur]
-      if (t < 0 || !channel[t] || !adjacent(cur, t)) break
+      if (t < 0 || !channel[t] || !adjacent(cur, t)) {
+        // A river must REACH the water it drains into. The channel mask stops
+        // at the last land cell by construction (buildChannelMask only marks a
+        // receiver above sea level), so without this the line ends one cell
+        // short of the coast — invisible at map zoom, but exactly one cell
+        // wide at every scale: 7.8 km at the macro raster, still ~2 km (about
+        // six 300 m hex tiles) after an 8k bake, which is where it became
+        // obvious (measured 2026-08-14; median gap was 1 cell at every
+        // resolution).
+        //
+        // Only the terminal point is added, and only onto water. The mask
+        // itself is left alone on purpose: computeRiparianBiomes shares it and
+        // relies on it meaning "channel ON LAND" (it skips sea cells anyway),
+        // and the two agreeing along the COURSE is what fixed the dashed
+        // rivers of 2026-08-08. A point in the sea is a mouth, not membership.
+        if (t >= 0 && t < n && adjacent(cur, t) && elevation[t] <= SEA_LEVEL) {
+          const tx = t % width
+          const ty = (t - tx) / width
+          points.push(tx + 0.5, ty + 0.5, riverWidth(discharge[cur], maxDischarge))
+          len++
+        }
+        break
+      }
       if (visited[t]) {
         // Merge into an existing trunk: add its point so the branch connects, stop.
         const tx = t % width

@@ -763,7 +763,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // No climate, no discharge — the Archean case; the map simply has no rivers.
     if (!climate) return
     const generation = loadGeneration
-    const rivers = await deriveRivers(elevations, width, height, climate.data, climate.resX, climate.resY, riverDensity)
+    // Rivers only: the save already carries its own macro lake layer, so no
+    // temperature goes in and no lakes come back.
+    const { rivers } = await deriveRivers(elevations, width, height, climate.data, climate.resX, climate.resY, riverDensity)
     if (generation !== loadGeneration) return
     // A bake tier's finer network may have landed while this derived — never
     // replace finer with coarser.
@@ -872,12 +874,21 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   // Everything an arriving amplified tier changes on screen.
-  function applyTier(artifact: { elevation: Float32Array; width: number; height: number; riverPoints: Float32Array; riverLengths: Uint32Array }, factor: number, detailSeed: number): void {
+  function applyTier(artifact: { elevation: Float32Array; width: number; height: number; riverPoints: Float32Array; riverLengths: Uint32Array; lakeDepth: Float32Array | null }, factor: number, detailSeed: number): void {
     // Registered, not overwritten: the world gains a tier and the view is
     // re-acquired from it, so what the readout answers with stays a stated
     // property rather than a side effect of whichever tier landed last.
     world?.addAmplifiedElevation(artifact.elevation, artifact.width, artifact.height)
     void world?.acquire('elevation', 'presentation').then((view) => { elevationView = view; hoverTooltip?.refresh() })
+    // Lakes BEFORE the elevation, so the repaint setElevation triggers already
+    // washes this tier's own basins. An artifact without the layer (a region
+    // bake, or one written before it existed) leaves the macro lakes standing
+    // — better a coarse lake than none.
+    if (artifact.lakeDepth) {
+      const lake = { data: artifact.lakeDepth, resX: artifact.width, resY: artifact.height }
+      presentation.setLakeDepth(lake)
+      hexLakeDepth = lake
+    }
     presentation.setElevation(artifact.elevation, artifact.width, artifact.height, detailSeed)
     debugPanel.setTerrainTier(artifact.width, artifact.height)
     rebuildHexClassifier(artifact.elevation, artifact.width, artifact.height, detailSeed)

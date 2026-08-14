@@ -48,6 +48,8 @@ export interface BrowserBakeRequest {
   drainageRefresh?: number
   riverDensity?: number
   precipitation?: Float32Array
+  // For the lake half of the hydrology re-run; rivers do not need it.
+  temperature?: Float32Array
   climateResX?: number
   climateResY?: number
 }
@@ -62,6 +64,11 @@ export interface AmplificationArtifact {
   height: number
   riverPoints: Float32Array
   riverLengths: Uint32Array
+  // Lake depth on the amplified grid, or null when this bake produced none
+  // (no climate, or a region bake). Null means "keep the macro layer the save
+  // carries", which is also what every artifact written before this layer
+  // existed reads back as.
+  lakeDepth: Float32Array | null
 }
 
 export interface BrowserBakeResult {
@@ -101,6 +108,7 @@ export function bakeStageInBrowser(
           height: message.height,
           riverPoints: new Float32Array(message.riverPoints),
           riverLengths: new Uint32Array(message.riverLengths),
+          lakeDepth: message.lakeDepth ? new Float32Array(message.lakeDepth) : null,
         },
         durationMs: message.durationMs,
       })
@@ -125,6 +133,7 @@ export function bakeStageInBrowser(
       drainageRefresh: request.drainageRefresh,
       riverDensity: request.riverDensity,
       precipitation: request.precipitation ? (request.precipitation.slice().buffer as ArrayBuffer) : undefined,
+      temperature: request.temperature ? (request.temperature.slice().buffer as ArrayBuffer) : undefined,
       climateResX: request.climateResX,
       climateResY: request.climateResY,
     }

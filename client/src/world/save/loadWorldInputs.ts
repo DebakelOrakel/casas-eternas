@@ -63,6 +63,12 @@ export interface WorldInputs {
   // for a world saved before climate was computed; the bake then stops after
   // erosion.
   climate: GridLayer | null
+  // Temperature on the same climate grid. The bake's hydrology re-run needs it
+  // to re-flood the basins (evaporation decides which stay wet); rivers do
+  // not. Its own field rather than a reach into `biomeInputs`, which describes
+  // what the WHITTAKER classification consumes — the two happen to overlap and
+  // are not the same requirement.
+  temperature: GridLayer | null
   biome: GridLayer | null
   // Water depth per world cell (elevation units), 0 where there is no lake —
   // a hydrology state the worldmap paints and cannot re-derive. Absent for a
@@ -139,6 +145,7 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
     detailSeed: world.recipe.detailSeed,
     erosionControls: world.recipe.erosionControls,
     climate,
+    temperature,
     biome,
     lakeDepth,
     biomeInputs,

@@ -139,7 +139,16 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // (hydrology.buildChannelMask) — the slope-area criterion initiates a channel,
 // it no longer ends one mid-course, so a cached v5 artifact holds rivers that
 // break into dashes on every plain this pipeline now draws through.
-export const AMPLIFICATION_ALGO_VERSION = 6
+// v7 (2026-08-14): TWO changes, deliberately in one bump so the caches turn
+// over once. (a) A river polyline now REACHES the water it drains into: the
+// channel mask still stops at the last land cell, and the extractor adds the
+// receiving water cell as the mouth point. The old gap was exactly one cell at
+// every resolution — 7.8 km on the macro raster, still ~2 km after an 8k bake,
+// i.e. about six 300 m hex tiles, which is where it became visible (measured
+// 2026-08-14). (b) The bake now also re-floods the basins: an artifact carries
+// a `lakeDepth.u8` layer beside its elevation, so lakes stop being 7.8 km macro
+// blocks under 2 km terrain. A cached v6 artifact has neither.
+export const AMPLIFICATION_ALGO_VERSION = 7
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

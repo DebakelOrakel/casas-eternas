@@ -306,6 +306,7 @@ async function main(): Promise<void> {
     erosionStrength: inputs.erosionControls.strength,
     drainageRefresh: inputs.erosionControls.refresh,
     precipitation: inputs.climate?.data,
+    temperature: inputs.temperature?.data,
     climateResX: inputs.climate?.resX,
     climateResY: inputs.climate?.resY,
     riverDensity: inputs.erosionControls.riverDensity,
@@ -337,6 +338,9 @@ async function main(): Promise<void> {
     height: result.height,
     riverPoints: result.rivers.points,
     riverLengths: result.rivers.lengths,
+    // Null for a region job (a basin across two jobs would flood twice) and
+    // for a save without temperature; the reader then keeps the macro lakes.
+    lakeDepth: result.lakeDepth,
     // Rivers are keyed by the world's own density inside the artifact, so a
     // server bake lands where the browser will look for it.
   }, durationMs, inputs.erosionControls.riverDensity, inputs.seedText, job.erosionRounds)

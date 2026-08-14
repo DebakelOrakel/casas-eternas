@@ -45,6 +45,10 @@ export interface AmplifyRequestMessage {
   // sampled onto the fine grid — see the decision doc. Absent for a world
   // saved before climate was computed; then the bake stops after erosion.
   precipitation?: ArrayBuffer
+  // Temperature on the same coarse grid — needed for LAKES only (evaporation
+  // decides which basins stay wet). Absent, the bake returns rivers and no
+  // lake layer, and the consumer keeps the save's macro one.
+  temperature?: ArrayBuffer
   climateResX?: number
   climateResY?: number
   // The world's own river-density setting (spec.hydrology.riverDensity).
@@ -70,6 +74,10 @@ export interface AmplifyDoneMessage {
   // must use as its texel space.
   riverPoints: ArrayBuffer
   riverLengths: ArrayBuffer
+  // Lakes re-flooded on the amplified field's own routing, on the same grid
+  // as the elevation. Absent when the bake had no temperature to evaporate
+  // with — which is NOT "no lakes", but "ask the save's macro layer".
+  lakeDepth?: ArrayBuffer
   // Wall-clock milliseconds, so the screen (and a human) can see what the
   // bake actually costs at this resolution.
   durationMs: number
@@ -112,6 +120,7 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
     erosionStrength: message.erosionStrength,
     drainageRefresh: message.drainageRefresh,
     precipitation: message.precipitation ? new Float32Array(message.precipitation) : undefined,
+    temperature: message.temperature ? new Float32Array(message.temperature) : undefined,
     climateResX: message.climateResX,
     climateResY: message.climateResY,
     riverDensity: message.riverDensity,
@@ -124,9 +133,12 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
     height: result.height,
     riverPoints: result.rivers.points.buffer as ArrayBuffer,
     riverLengths: result.rivers.lengths.buffer as ArrayBuffer,
+    lakeDepth: result.lakeDepth ? (result.lakeDepth.buffer as ArrayBuffer) : undefined,
     durationMs: performance.now() - started,
   }
-  self.postMessage(done, [done.elevation, done.riverPoints, done.riverLengths])
+  const transfer: ArrayBuffer[] = [done.elevation, done.riverPoints, done.riverLengths]
+  if (done.lakeDepth) transfer.push(done.lakeDepth)
+  self.postMessage(done, transfer)
 }
 
 self.onmessage = (event: MessageEvent<AmplificationInboundMessage>) => {

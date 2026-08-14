@@ -2,7 +2,7 @@ import { AMPLIFICATION_EROSION_OVERRIDES, amplifyElevation } from './amplify'
 import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass, scaleErosionParamsForCellSize } from './erosion'
 import { fillDepressionsAndRouteFlow } from './flowRouting'
 import { ABYSSAL_FLOOR, SEA_LEVEL, slopeFromAngle } from '../elevation/elevationScale'
-import { accumulateDischarge, channelThreshold, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff } from './hydrology'
+import { accumulateDischarge, channelThreshold, computeLakes, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff } from './hydrology'
 import type { RiverPolylines } from './hydrology'
 
 // The amplification bake itself: upsample, seed roughness, erode, re-run
@@ -76,6 +76,9 @@ export interface AmplifyRequest {
   // onto the fine grid — precipitation is a regional quantity. Absent for a
   // world saved before climate was computed; the bake then stops after erosion.
   precipitation?: Float32Array
+  // Needed for LAKES only (evaporation decides which basins stay wet); rivers
+  // run without it. Same coarse climate grid as precipitation.
+  temperature?: Float32Array
   climateResX?: number
   climateResY?: number
   riverDensity?: number
@@ -96,6 +99,10 @@ export interface AmplifyResult {
   width: number
   height: number
   rivers: RiverPolylines
+  // Lake depth on the amplified grid, or null when the bake had no
+  // temperature (or owns only a region). Null means "the consumer keeps the
+  // macro layer the save carries" — not "there are no lakes".
+  lakeDepth: Float32Array | null
 }
 
 export async function runAmplification(
@@ -148,20 +155,31 @@ export async function runAmplification(
   // the macro raster and would now lie beside the fine valleys this bake just
   // carved, so they are re-derived rather than carried over.
   let rivers: RiverPolylines = { points: new Float32Array(0), lengths: new Uint32Array(0) }
+  let lakeDepth: Float32Array | null = null
   if (request.precipitation && request.climateResX && request.climateResY) {
     onProgress('hydrology', 0)
-    rivers = await deriveRivers(
+    const derived = await deriveRivers(
       field, result.width, result.height,
       request.precipitation, request.climateResX, request.climateResY,
       request.riverDensity,
-      { maxDischarge: request.maxDischarge, meanRunoff: request.meanRunoff },
+      {
+        maxDischarge: request.maxDischarge,
+        meanRunoff: request.meanRunoff,
+        // Lakes only for a WHOLE-world bake. A region sees part of the
+        // drainage, and a basin straddling two jobs would be flooded twice
+        // from two different catchments — the same reasoning that hands a
+        // split bake its discharge inputs instead of letting it derive them.
+        temperature: request.region ? undefined : request.temperature,
+      },
       (fraction) => onProgress('hydrology', fraction),
     )
+    rivers = derived.rivers
+    lakeDepth = derived.lakeDepth
     if (request.region) rivers = ownedRivers(rivers, request.region.owned, result.width)
     onProgress('hydrology', 1)
   }
 
-  return { elevation: field, width: result.width, height: result.height, rivers }
+  return { elevation: field, width: result.width, height: result.height, rivers, lakeDepth }
 }
 
 // Route, accumulate and extract the river network of ONE elevation field —
@@ -184,21 +202,31 @@ export async function deriveRivers(
   // Handed in by a split bake, derived here by a whole one — see the two
   // request fields' own comment. `??` and not a truthiness test: 0 is a
   // legitimate value for a world with no land, and would silently fall back.
-  overrides: { maxDischarge?: number; meanRunoff?: number } = {},
+  //
+  // `temperature` is what turns this into rivers AND lakes: computeLakes needs
+  // it (evaporation decides which basins stay wet), and everything else it
+  // needs — the routing and the discharge — this function already has in hand.
+  // Absent, the lake half is skipped and the caller keeps whatever it had.
+  options: { maxDischarge?: number; meanRunoff?: number; temperature?: Float32Array } = {},
   onProgress: (fraction: number) => void = () => {},
-): Promise<RiverPolylines> {
+): Promise<{ rivers: RiverPolylines; lakeDepth: Float32Array | null }> {
   const routing = await fillDepressionsAndRouteFlow(field, width, height, 0)
   onProgress(0.6)
   const discharge = accumulateDischarge(routing, field, precipitation, climateResX, climateResY)
-  const maxDischarge = overrides.maxDischarge ?? maxDischargeOverLand(discharge, field)
-  const meanRunoff = overrides.meanRunoff ?? meanLandRunoff(precipitation, field, width, height, climateResX, climateResY)
+  const maxDischarge = options.maxDischarge ?? maxDischargeOverLand(discharge, field)
+  const meanRunoff = options.meanRunoff ?? meanLandRunoff(precipitation, field, width, height, climateResX, climateResY)
   // The channel criterion is a cell COUNT and is used as one, at every
   // stage — NOT rescaled to a constant physical catchment the way the
   // erosion constants are. That is what makes a finer bake produce a richer
   // river network rather than the same one with more vertices; amplify.ts
   // carries the measurements behind the decision.
   const criticalArea = densityToCriticalArea(riverDensity ?? 55)
-  return extractRiverPolylines(routing, discharge, field, channelThreshold(criticalArea, meanRunoff), maxDischarge)
+  const threshold = channelThreshold(criticalArea, meanRunoff)
+  const rivers = extractRiverPolylines(routing, discharge, field, threshold, maxDischarge)
+  const lakeDepth = options.temperature
+    ? computeLakes(routing, discharge, field, options.temperature, precipitation, climateResX, climateResY).depth
+    : null
+  return { rivers, lakeDepth }
 }
 
 // The rivers this region owns, by the HEAD of each polyline.
