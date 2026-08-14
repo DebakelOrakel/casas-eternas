@@ -393,6 +393,22 @@ representation, zoom model — see
    crossings marching-hex style from relief + water level. All derived
    and deterministic, never serialized — the same authority rule as the
    amplification bake.
+   *(BUILT 2026-08-13: `map/hexPorts.ts`. Rivers RESERVE — the polyline
+   is walked across the grid (points sit ~2 km apart, tiles are 300 m,
+   so every transition is found by bisection rather than by testing
+   endpoints), each crossing claims the nearer slot, and downstream
+   order gives in/out for free. Shorelines COMPUTE — marching hexagons
+   over the six corner heights. The "at most one out-port" property is
+   counted, not asserted: a river meandering back through a 300 m tile
+   legitimately leaves twice. Windowed around the camera, so the world's
+   ~100,000 km of channel never has to be resident. Visible in the debug
+   readout (`river 1in/1out 1 slot`, `waterline 1`) and as a river tint
+   in the class overlay. Two contract requirements found by measurement
+   and now documented at the function: the shore sampler must be
+   UNCLAMPED — the render surfaces flatten the sea to zero, which
+   collapses every crossing onto a corner (`createElevationSurface`
+   grew a `clampAtSeaLevel` flag for it) — and it must be PERIODIC,
+   because corners are sampled in the tile's principal frame.)*
 4. **First real plates.** A debug "develop this hex" click: the tile
    freezes its canonical height (median of its fine relief), becomes a
    flat plate with edge seams (embankment against wilderness), the

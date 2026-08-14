@@ -45,7 +45,13 @@ export function downsampleElevation(data: Float32Array, resX: number, resY: numb
 // heightScale converts one display-elevation unit (the -1..1 scale where 1.0
 // = ELEVATION_METERS) into world Y units — the caller owns that constant
 // since it knows the scene's metres-per-world-unit (see WorldGenScreen).
-export function createElevationSurface(elevation: Float32Array, resX: number, resY: number, heightScale: number): ElevationSurface {
+//
+// `clampAtSeaLevel` is the rendering behaviour described above and stays the
+// default. TRUTH consumers pass false: a marching-hexagons shoreline has to
+// interpolate where the terrain crosses sea level, and against a clamped
+// field every submerged sample reads exactly zero, so the crossing collapses
+// onto whichever corner is wet (map/hexPorts.ts documents the failure).
+export function createElevationSurface(elevation: Float32Array, resX: number, resY: number, heightScale: number, clampAtSeaLevel = true): ElevationSurface {
   const wrap = (i: number, n: number): number => ((i % n) + n) % n
   return {
     heightAtUV(u: number, v: number): number {
@@ -62,7 +68,8 @@ export function createElevationSurface(elevation: Float32Array, resX: number, re
       const y1w = wrap(y0 + 1, resY)
       const top = elevation[y0w * resX + x0w] * (1 - fx) + elevation[y0w * resX + x1w] * fx
       const bottom = elevation[y1w * resX + x0w] * (1 - fx) + elevation[y1w * resX + x1w] * fx
-      return Math.max(0, top * (1 - fy) + bottom * fy) * heightScale
+      const height = top * (1 - fy) + bottom * fy
+      return (clampAtSeaLevel ? Math.max(0, height) : height) * heightScale
     },
   }
 }

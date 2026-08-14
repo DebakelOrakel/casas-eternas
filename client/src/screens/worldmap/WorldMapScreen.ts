@@ -6,9 +6,11 @@ import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { ToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
-import { hexAt, hexCenter } from '../../map/hexGrid'
-import { createHexClassifier } from '../../map/hexTiles'
+import { hexAt, hexCenter, wrappedHexDelta } from '../../map/hexGrid'
+import { createHexClassifier, hexUvFromWorld } from '../../map/hexTiles'
 import type { HexClassifier, HexTileClass } from '../../map/hexTiles'
+import { buildRiverPorts, hexShoreCrossings } from '../../map/hexPorts'
+import type { HexRiverPortMap } from '../../map/hexPorts'
 import { HEX_COLUMNS, HEX_ROWS } from '../../map/mapSceneSettings'
 import { createElevationSurface } from '../../map/elevationSurface'
 import { createFineElevationSurface } from '../../map/fineElevationSurface'
@@ -376,7 +378,45 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // raster in force changes, so the cache can never serve a stale tier.
   let hexClassifier: HexClassifier | null = null
   let hexLakeDepth: { data: Float32Array; resX: number; resY: number } | null = null
+  // Phase 3: the seam data. Rivers RESERVE ports, shorelines COMPUTE their
+  // crossing — see map/hexPorts.ts. Deliberately NOT folded into the cached
+  // classification: the terrain class is world-wide and invalidated by a new
+  // height raster, while the port map is a moving window around the camera.
+  // One cache per invalidation rule; the consumers below combine them.
+  let hexShoreHeight: ((x: number, z: number) => number) | null = null
+  let hexPorts: HexRiverPortMap | null = null
+  let hexPortsCenter: { x: number; z: number } | null = null
+  // Half-width in tiles. Deliberately LARGER than the class overlay window
+  // (96 tiles across) so that window lies strictly inside it: a port-map miss
+  // for a tile the overlay paints then means "no river here", never "outside
+  // the window I built".
+  const HEX_PORT_WINDOW_TILES = 72
+
+  function rebuildHexPorts(): void {
+    if (!riverSource) return
+    const focus = getCameraFocus()
+    const half = HEX_PORT_WINDOW_TILES * HEX_COL_SPACING
+    if (hexPortsCenter) {
+      const d = wrappedHexDelta(hexPortsCenter, { x: focus.x, z: focus.z })
+      if (Math.abs(d.x) < half / 2 && Math.abs(d.z) < half / 2) return
+    }
+    hexPortsCenter = { x: focus.x, z: focus.z }
+    hexPorts = buildRiverPorts(
+      { points: riverSource.points, lengths: riverSource.lengths, width: riverSource.width, height: riverSource.height },
+      { centerX: focus.x, centerZ: focus.z, halfWidth: half, halfHeight: half },
+    )
+    // The overlay's river flags were filled against the previous port map.
+    resetHexClassWindow()
+  }
+
   function rebuildHexClassifier(field: Float32Array, fieldWidth: number, fieldHeight: number, detailSeed: number): void {
+    // UNCLAMPED for the shoreline: the render surfaces flatten the sea to
+    // zero, which would collapse every waterline crossing onto a corner.
+    const bathymetry = createElevationSurface(field, fieldWidth, fieldHeight, RELIEF_HEIGHT_SCALE, false)
+    hexShoreHeight = (x, z) => {
+      const { u, v } = hexUvFromWorld(x, z)
+      return bathymetry.heightAtUV(u, v)
+    }
     const truth = createFineElevationSurface(field, fieldWidth, fieldHeight, RELIEF_HEIGHT_SCALE, detailSeed, 0)
     const lake = hexLakeDepth ? createElevationSurface(hexLakeDepth.data, hexLakeDepth.resX, hexLakeDepth.resY, 1) : null
     hexClassifier = createHexClassifier({
@@ -451,6 +491,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         const col = (hexClassOrigin.col0 + (i % HEX_CLASS_WINDOW)) % HEX_COLUMNS
         const row = (hexClassOrigin.row0 + Math.floor(i / HEX_CLASS_WINDOW)) % HEX_ROWS
         hexClassData[i * 4] = hexClassEncode(hexClassifier.classify({ col, row }))
+        // Green channel = "a river crosses this tile" (phase 3). A separate
+        // channel rather than another class value, because a river tile still
+        // has a terrain class worth seeing.
+        hexClassData[i * 4 + 1] = hexPorts?.has({ col, row }) ? 255 : 0
         hexClassData[i * 4 + 3] = 255
       }
       hexClassFill = end
@@ -488,8 +532,21 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
     const biomeName = cls.biomeId !== null ? t(biomeLabelKey(cls.biomeId) as TKey) : '—'
     const shorePart = cls.water === 'shore' ? ` ${(cls.landFraction * 100).toFixed(0)}% land` : ''
+    // Phase 3 seam data, combined here rather than inside the cached class.
+    const rivers = hexPorts?.get(tile)
+    let seam = ''
+    if (rivers) {
+      const ins = rivers.ports.filter((p) => p.direction === 'in')
+      const outs = rivers.ports.filter((p) => p.direction === 'out')
+      const slots = rivers.ports.reduce((n, p) => n + p.slots.length, 0)
+      seam += ` · river ${ins.length}in/${outs.length}out ${slots} slot${slots === 1 ? '' : 's'}`
+    }
+    if (hexShoreHeight) {
+      const shore = hexShoreCrossings(tile, hexShoreHeight, 0)
+      if (shore.segments.length > 0) seam += ` · waterline ${shore.segments.length}`
+    }
     debugPanel.setHexTile(
-      `hex: ${tile.col},${tile.row} · ${Math.round(cls.medianHeightMeters)} m · slope ${(cls.slope * 100).toFixed(0)}% · ${cls.water}${shorePart} · ${biomeName} · grade ${cls.grade.toFixed(2)}`,
+      `hex: ${tile.col},${tile.row} · ${Math.round(cls.medianHeightMeters)} m · slope ${(cls.slope * 100).toFixed(0)}% · ${cls.water}${shorePart} · ${biomeName} · grade ${cls.grade.toFixed(2)}${seam}`,
     )
   }
   const hexHoverObserver = scene.onPointerObservable.add((info) => {
@@ -503,6 +560,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // pick against the fine mesh is not free, and 150 ms of lag on a flowing
   // highlight is invisible.
   const hexFrameObserver = scene.onBeforeRenderObservable.add(() => {
+    // Ports first: the class overlay's fill reads them for its river flag.
+    // Same threshold that arms hex interaction (decisions/hex-tiling.md fork
+    // 3) — above it nothing reads ports, so nothing builds them.
+    if (getCameraAltitude() <= HEXGRID_FADE_LOW_ALTITUDE) rebuildHexPorts()
     updateHexClassOverlay()
     if (performance.now() - lastHexHoverTime < 150) return
     updateHexHover()
@@ -719,6 +780,8 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverLayer?.dispose()
     riverLayer = null
     riverSource = { points, lengths, width: fieldWidth, height: fieldHeight, factor }
+    // A finer tier's network replaces the one the ports were built from.
+    hexPortsCenter = null
     if (lengths.length === 0) return
     riverLayer = createToroidalRibbonOverlay({
       scene,

@@ -230,7 +230,8 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
               float dcol = mod(hcCol - hexClassWindow.x, hexGridCounts.x);
               float drow = mod(hcRow - hexClassWindow.y, hexGridCounts.y);
               if (dcol < hexClassWindow.z && drow < hexClassWindow.w) {
-                float cls = texture2D(hexClassSampler, vec2((dcol + 0.5) / hexClassWindow.z, (drow + 0.5) / hexClassWindow.w)).r * 255.0;
+                vec4 clsTexel = texture2D(hexClassSampler, vec2((dcol + 0.5) / hexClassWindow.z, (drow + 0.5) / hexClassWindow.w));
+                float cls = clsTexel.r * 255.0;
                 vec3 clsColor = vec3(0.0);
                 float clsOn = 0.0;
                 if (cls >= 0.5 && cls < 1.5) { clsColor = vec3(0.15, 0.35, 0.75); clsOn = 1.0; }
@@ -240,6 +241,10 @@ export class HexGridMaterialPlugin extends MaterialPluginBase {
                   clsColor = mix(vec3(0.82, 0.2, 0.15), vec3(0.2, 0.72, 0.25), g);
                   clsOn = 1.0;
                 }
+                // Green channel: a river reserves ports on this tile. Shown
+                // as its own colour over the terrain class, because a river
+                // tile still has a class worth reading.
+                if (clsTexel.g > 0.5) { clsColor = vec3(0.25, 0.55, 0.95); clsOn = 1.0; }
                 gl_FragColor.rgb = mix(gl_FragColor.rgb, clsColor, clsOn * 0.3 * hexCoverage * hexDistFade * hexGridStrength);
               }
             }
