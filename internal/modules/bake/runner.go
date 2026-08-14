@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -102,6 +103,44 @@ func NewLocalRunner(bakerPath string, maxHeapMB int) (Runner, error) {
 		return nil, fmt.Errorf("bake bundle not found at %s (build it with `npm run build:baker`): %w", absolute, err)
 	}
 	return &localRunner{bakerPath: absolute, maxHeapMB: maxHeapMB}, nil
+}
+
+// BakerVersion asks the bundle which pipeline it IS, without running one
+// (`baker.mjs --version`, see client/scripts/bake.ts).
+//
+// A package function rather than a Runner method, because it is a property of
+// the BUNDLE and not of how a job gets executed: a cluster runner spawns
+// nothing locally, yet the image it launches carries the same baker as the
+// binary beside it. `casas-eternas version` is the caller, and the reason it
+// exists is the one failure this system has that is otherwise silent — a baker
+// built from a different commit than the client writes a perfectly good
+// artifact under a key nobody looks for, so the bake reports success and the
+// map never changes.
+func BakerVersion(ctx context.Context, bakerPath string) (string, error) {
+	absolute, err := filepath.Abs(bakerPath)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(absolute); err != nil {
+		return "", fmt.Errorf("no bake bundle at %s — build it with `npm run build:baker`", absolute)
+	}
+	// No heap ceiling: --version parses no world and allocates nothing worth
+	// bounding. Output is the same one-JSON-line contract Run relies on.
+	out, err := exec.CommandContext(ctx, "node", absolute, "--version").Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
+			return "", fmt.Errorf("%s: %s", absolute, strings.TrimSpace(string(exit.Stderr)))
+		}
+		return "", fmt.Errorf("running node %s --version: %w", absolute, err)
+	}
+	var reported struct {
+		PipelineVersion string `json:"pipelineVersion"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &reported); err != nil || reported.PipelineVersion == "" {
+		return "", fmt.Errorf("%s answered --version with something unreadable", absolute)
+	}
+	return reported.PipelineVersion, nil
 }
 
 func (r *localRunner) Run(ctx context.Context, spec Spec, onProgress func(Progress)) (Result, error) {

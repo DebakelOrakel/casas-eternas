@@ -23,6 +23,16 @@
 IMAGE ?= ghcr.io/debakelorakel/casas-eternas
 TAG   ?= latest
 
+# What `casas-eternas version` reports, stamped into the binary at link time.
+# The same string the client bundle carries (client/vite.config.ts resolves it
+# the same way), so one build says one thing about itself.
+#
+# Computed HERE and passed into the container build as an argument, because the
+# image cannot work it out: .dockerignore keeps .git out of the build context on
+# purpose, so `git describe` inside a stage has nothing to read.
+VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -X github.com/DebakelOrakel/casas-eternas/cmd.buildVersion=$(VERSION)
+
 .PHONY: lint test baker client run build push cli-reference
 
 lint:
@@ -67,11 +77,11 @@ docs:
 # `go run` on purpose: bake.baker resolves relative to the EXECUTABLE, and
 # go run puts that in a temp directory.
 run: baker client docs
-	go build -o casas-eternas .
+	go build -ldflags="$(LDFLAGS)" -o casas-eternas .
 	./casas-eternas start --target all --client.storage.dir.path client/dist --docs.storage.dir.path client/docs-dist
 
 build:
-	docker build --platform linux/amd64 -f deploy/Dockerfile -t $(IMAGE):$(TAG) .
+	docker build --platform linux/amd64 --build-arg CASAS_VERSION=$(VERSION) -f deploy/Dockerfile -t $(IMAGE):$(TAG) .
 
 push: lint build
 	docker push $(IMAGE):$(TAG)

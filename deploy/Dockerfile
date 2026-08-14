@@ -45,6 +45,11 @@ RUN npm run build && npm run build:baker && npm run build:docs
 # ---- Stage 2: the server ----------------------------------------------------
 FROM golang:1.26-alpine AS server
 WORKDIR /src
+# What `casas-eternas version` reports. Passed IN rather than derived here:
+# .dockerignore keeps .git out of the build context on purpose, so nothing in
+# this stage could run `git describe`. `make build` supplies it; a bare
+# `docker build` leaves the honest default.
+ARG CASAS_VERSION=dev
 COPY go.mod go.sum ./
 RUN go mod download
 COPY main.go ./
@@ -52,7 +57,9 @@ COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 # Static: the runtime image is Node's, which has no Go toolchain and need not
 # match libc.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/casas-eternas .
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X github.com/DebakelOrakel/casas-eternas/cmd.buildVersion=${CASAS_VERSION}" \
+    -o /out/casas-eternas .
 
 # ---- Runtime ----------------------------------------------------------------
 FROM node:22-alpine AS runtime

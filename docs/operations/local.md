@@ -66,4 +66,13 @@ restart. Fine for an experiment, wrong for anything persistent.
 
 `curl -s localhost:8080/config.json` shows what a client will be told
 (including the auth mode); `curl -s localhost:8080/v1/capabilities` lists
-the modules this process runs.
+the modules this process runs and the build answering.
+
+`casas-eternas version` answers the same about the binary in front of you,
+plus the one thing worth checking after a deploy: the **pipeline version**
+of the bake bundle it would run. Artifacts are addressed by that version,
+so a bundle built from a different commit than the client bakes perfectly
+good bytes under a key no client ever looks for — the bake succeeds and the
+map never changes. If the line reads `unknown`, this process has no bundle
+(normal for a `world` or `auth` target) or `bake.baker` points somewhere
+empty.

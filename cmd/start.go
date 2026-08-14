@@ -55,7 +55,7 @@ func Start(cmd *cobra.Command, args []string) error {
 	}
 
 	slog.Info("starting", "targets", targets.Names())
-	return server.Run(cmd.Context(), cfg.Global.Server(), modules, gate)
+	return server.Run(cmd.Context(), cfg.Global.Server(), buildVersion, modules, gate)
 }
 
 // buildModules constructs exactly the selected modules, in a fixed order so

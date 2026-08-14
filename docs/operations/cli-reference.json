@@ -201,6 +201,12 @@
           "env": "CASAS_WORLD_STORAGE_DIR_PATH"
         }
       ]
+    },
+    {
+      "path": "casas-eternas version",
+      "use": "version",
+      "short": "Prints the build, the API version and the bake pipeline this binary carries.",
+      "long": "Prints what this binary is.\n\nThe pipeline version is the one worth reading: artifacts are addressed by it,\nso a bake bundle from a different commit than the client expecting its output\nproduces artifacts nobody ever looks for — a failure that is otherwise silent.\nIt is read from the bake bundle itself (bake.baker), so it says what this\ninstallation would actually run.\n\nA running server reports the same build string at GET /v1/capabilities."
     }
   ],
   "keys": [

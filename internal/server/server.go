@@ -100,7 +100,13 @@ func mount(m Module, mux *http.ServeMux) (err error) {
 // package deliberately knows about none of them: a module only has to have the
 // three methods above to be mountable, and importing one here to read a path
 // constant would trade that away. cmd/ composes, so cmd/ names them.
-func Run(ctx context.Context, cfg config.Server, modules []Module, gate func(http.Handler) http.Handler) (err error) {
+//
+// `build` is a parameter for the same reason. It is the binary's provenance,
+// stamped into cmd/ at link time, and it appears here only because
+// /v1/capabilities is where a client can read it. Holding it as state of this
+// package would make the HTTP lifecycle the owner of a fact about the program
+// — and would need a second place for the linker to write to.
+func Run(ctx context.Context, cfg config.Server, build string, modules []Module, gate func(http.Handler) http.Handler) (err error) {
 	if validateErr := cfg.Validate(); validateErr != nil {
 		return validateErr
 	}
@@ -143,7 +149,12 @@ func Run(ctx context.Context, cfg config.Server, modules []Module, gate func(htt
 	mux.HandleFunc("GET "+CapabilitiesPath, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		body := map[string]any{"modules": names}
+		// `version` alongside `modules` because both answer "what am I talking
+		// to". It is provenance and not a contract: a client may show it or log
+		// it, it may never branch on it — what a server can DO is the module
+		// list and the described capabilities right below, which say so
+		// directly instead of asking anyone to know which build gained what.
+		body := map[string]any{"modules": names, "version": build}
 		for key, value := range described {
 			body[key] = value
 		}
