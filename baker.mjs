@@ -10447,11 +10447,67 @@ function deriveWorldId(inputs) {
   const [sa, sb] = hashBytes(scalars, a, b);
   return `${hex8(sa)}${hex8(sb)}`;
 }
-var AMPLIFICATION_ALGO_VERSION = 7;
+var AMPLIFICATION_ALGO_VERSION = 8;
 function derivePipelineVersion(constants) {
   const text = Object.keys(constants).sort().map((name) => `${name}=${constants[name]}`).join("|");
   const [a, b] = hashBytes(new TextEncoder().encode(text), 2166136261, 2654435769);
   return `v${AMPLIFICATION_ALGO_VERSION}-${hex8(a)}${hex8(b)}`;
+}
+
+// src/worldgen/core/rng.ts
+function hashSeedString(seed) {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+// src/worldgen/elevation/ridgedNoise.ts
+function hashLatticePoint(ix, iy, seed) {
+  let h = ix * 374761393 + iy * 668265263 + seed * 2246822519 >>> 0;
+  h = Math.imul(h ^ h >>> 13, 1274126177);
+  h = (h ^ h >>> 16) >>> 0;
+  return h / 4294967296;
+}
+function periodicValueNoise2D(x, y, cellsX, cellsY, seed) {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  const x0m = wrapValue(x0, cellsX) | 0;
+  const y0m = wrapValue(y0, cellsY) | 0;
+  const x1m = (x0m + 1) % cellsX;
+  const y1m = (y0m + 1) % cellsY;
+  const v00 = hashLatticePoint(x0m, y0m, seed);
+  const v10 = hashLatticePoint(x1m, y0m, seed);
+  const v01 = hashLatticePoint(x0m, y1m, seed);
+  const v11 = hashLatticePoint(x1m, y1m, seed);
+  const sx = smoothstep(fx);
+  const sy = smoothstep(fy);
+  const top = v00 + (v10 - v00) * sx;
+  const bottom = v01 + (v11 - v01) * sx;
+  return top + (bottom - top) * sy;
+}
+var DETAIL_OCTAVES = [
+  { cellsX: 512, cellsY: 256, amplitude: 1 },
+  { cellsX: 1024, cellsY: 512, amplitude: 0.5 }
+];
+var FINE_DETAIL_SEED_SALT = 1157093;
+function fineDetailNoise(x, y, width, height, seed) {
+  let sum = 0;
+  let amplitudeSum = 0;
+  let octaveSeed = seed;
+  for (const octave of DETAIL_OCTAVES) {
+    const lx = x / width * octave.cellsX;
+    const ly = y / height * octave.cellsY;
+    const n = periodicValueNoise2D(lx, ly, octave.cellsX, octave.cellsY, octaveSeed);
+    sum += (n - 0.5) * octave.amplitude;
+    amplitudeSum += octave.amplitude;
+    octaveSeed = octaveSeed * 1664525 + 1013904223 >>> 0;
+  }
+  return sum / amplitudeSum;
 }
 
 // src/world/query.ts
@@ -10472,8 +10528,7 @@ async function openWorld(archive) {
   const height = elevationEntry.resY ?? manifest.world.height;
   const yamlText = await zip.file("world.yaml")?.async("string") ?? "";
   const seedText = readRecipeValue(yamlText, "spec.seed") ?? "casas-eternas";
-  let detailSeed = 5381;
-  for (let i = 0; i < seedText.length; i++) detailSeed = (detailSeed * 33 ^ seedText.charCodeAt(i)) >>> 0;
+  const detailSeed = (hashSeedString(`${seedText}:coastalWarp`) ^ FINE_DETAIL_SEED_SALT) >>> 0;
   const recipe = {
     seedText,
     detailSeed,
@@ -10569,51 +10624,6 @@ async function worldInputsFrom(world2) {
     worldId: await world2.worldId(),
     worldUid: world2.recipe.worldUid
   };
-}
-
-// src/worldgen/elevation/ridgedNoise.ts
-function hashLatticePoint(ix, iy, seed) {
-  let h = ix * 374761393 + iy * 668265263 + seed * 2246822519 >>> 0;
-  h = Math.imul(h ^ h >>> 13, 1274126177);
-  h = (h ^ h >>> 16) >>> 0;
-  return h / 4294967296;
-}
-function periodicValueNoise2D(x, y, cellsX, cellsY, seed) {
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const fx = x - x0;
-  const fy = y - y0;
-  const x0m = wrapValue(x0, cellsX) | 0;
-  const y0m = wrapValue(y0, cellsY) | 0;
-  const x1m = (x0m + 1) % cellsX;
-  const y1m = (y0m + 1) % cellsY;
-  const v00 = hashLatticePoint(x0m, y0m, seed);
-  const v10 = hashLatticePoint(x1m, y0m, seed);
-  const v01 = hashLatticePoint(x0m, y1m, seed);
-  const v11 = hashLatticePoint(x1m, y1m, seed);
-  const sx = smoothstep(fx);
-  const sy = smoothstep(fy);
-  const top = v00 + (v10 - v00) * sx;
-  const bottom = v01 + (v11 - v01) * sx;
-  return top + (bottom - top) * sy;
-}
-var DETAIL_OCTAVES = [
-  { cellsX: 512, cellsY: 256, amplitude: 1 },
-  { cellsX: 1024, cellsY: 512, amplitude: 0.5 }
-];
-function fineDetailNoise(x, y, width, height, seed) {
-  let sum = 0;
-  let amplitudeSum = 0;
-  let octaveSeed = seed;
-  for (const octave of DETAIL_OCTAVES) {
-    const lx = x / width * octave.cellsX;
-    const ly = y / height * octave.cellsY;
-    const n = periodicValueNoise2D(lx, ly, octave.cellsX, octave.cellsY, octaveSeed);
-    sum += (n - 0.5) * octave.amplitude;
-    amplitudeSum += octave.amplitude;
-    octaveSeed = octaveSeed * 1664525 + 1013904223 >>> 0;
-  }
-  return sum / amplitudeSum;
 }
 
 // src/worldgen/surface/surfaceTuneParams.ts

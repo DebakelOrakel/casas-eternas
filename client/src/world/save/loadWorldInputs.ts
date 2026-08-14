@@ -54,9 +54,9 @@ export interface WorldInputs {
   width: number
   height: number
   seedText: string
-  // Seed for the deterministic near-field detail, hashed from the recipe's
-  // seed so the same world always grows the same bumps. NOT the generator's
-  // warpSeed — see fineElevationSurface.
+  // Seed for the deterministic near-field detail and for the bake's seed
+  // roughness. It IS the generator's warpSeed (salted), derived from the
+  // recipe's seed rather than stored — see world/query.openWorld.
   detailSeed: number
   erosionControls: ErosionControls
   // Precipitation drives the discharge in the bake's hydrology re-run. Absent

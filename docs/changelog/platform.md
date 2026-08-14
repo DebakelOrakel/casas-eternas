@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-08-14
+- **changed** Bake: a world's fine detail is seeded from the generator's own warp seed, so the bake's roughness and the near view finally draw one pattern — cached 4K and 8K artifacts are superseded and re-bake on next use.
+
 ## 2026-08-13
 - **new** Docs: the site gains an Operations section — guides for running the server locally, in Docker and on Kubernetes, plus CLI and configuration references generated from the binary itself.
 - **new** Server: local users live in the auth store and are administered over a unix admin socket — `casas-eternas auth user add|list|delete|passwd`; the htpasswd file is gone.

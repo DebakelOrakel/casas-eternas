@@ -6,6 +6,7 @@ import { applyLakeWash, applyTerrainWash, DEFAULT_TERRAIN_WASH } from './terrain
 import type { TerrainWash } from './terrainPalette'
 import { createElevationSurface, downsampleElevation } from './elevationSurface'
 import { createFineElevationSurface } from './fineElevationSurface'
+import type { ChannelField } from './channelField'
 import { RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from './mapSceneSettings'
 import { SEA_LEVEL, elevationToMeters } from '../worldgen/elevation/elevationScale'
 import { Biome, computeBiomesFine, reduceTemperatureToSeaLevel } from '../worldgen/climate/biomes'
@@ -96,6 +97,13 @@ export interface MapPresentation {
   // The height raster now in force — the save's macro field at load, then each
   // amplified tier as it arrives. Emits paper AND surfaces.
   setElevation(field: Float32Array, fieldWidth: number, fieldHeight: number, detailSeed: number): void
+  // Where the water is, for the fine synthesis to shape valleys around (see
+  // map/channelField). Arrives AFTER the raster it belongs to — the macro
+  // network is re-derived asynchronously at load, and a tier's polylines land
+  // with the tier — so this re-emits the surfaces rather than being an
+  // argument to setElevation. Null means "no network yet", which the sampler
+  // degrades to plain cascade detail for.
+  setChannelField(field: ChannelField | null): void
   // Replace the lake layer — the amplification bake re-floods the basins on
   // its own routing, so a landing tier brings lakes at ITS resolution rather
   // than leaving the save's macro ones under fine terrain. Call BEFORE
@@ -275,6 +283,7 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
   // The raster now in force, kept so a knowledge change can re-derive without
   // the caller handing the field in again.
   let currentField: { data: Float32Array; width: number; height: number; detailSeed: number } | null = null
+  let channelField: ChannelField | null = null
 
   // k at an arbitrary UV, read off the same per-texel array the paper uses —
   // one source, so the geometry can never disagree with the picture.
@@ -443,7 +452,7 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
     // automatically retreats to the band below the amplified cells instead of
     // competing with them. (What survives of it once erosion lands is a later
     // question — see the decision doc's ladder.)
-    const detail = createFineElevationSurface(field, width, height, RELIEF_HEIGHT_SCALE, detailSeed, 0.6)
+    const detail = createFineElevationSurface({ elevation: field, resX: width, resY: height, heightScale: RELIEF_HEIGHT_SCALE, seed: detailSeed, bias: 0.6, channels: channelField })
     onSurfaces(sinkWithKnowledge(coarse), sinkWithKnowledge(fine), sinkWithKnowledge(detail))
   }
 
@@ -531,6 +540,11 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       buildInteriorEdge()
       currentField = { data: field, width: fieldWidth, height: fieldHeight, detailSeed }
       repaintPaper()
+      emitSurfaces()
+    },
+
+    setChannelField(field: ChannelField | null): void {
+      channelField = field
       emitSurfaces()
     },
 

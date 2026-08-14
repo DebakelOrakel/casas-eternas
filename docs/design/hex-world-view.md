@@ -443,14 +443,168 @@ The natural work after phase 4 is therefore not phase 5 but the open
 questions below — the coastal basins first, since that one is a
 correctness question rather than a tuning one.
 
-Prerequisites worth closing before phase 2: the amplification bake is the
-classification's terrain source (4k is enough to start, 8k still waits on
-the memory work), and the fine relief's seed provenance (djb2 of the seed
-string instead of the generator's warpSeed — the manifest gap noted in
-the status section) should be fixed first, or tiles get classified
-against a pattern that later changes.
+## The near-field plan (agreed 2026-08-14)
+
+Phase 4 exposed that the near view underwhelms for measurable reasons:
+below ~2 km there is no real data (the cascade is unorganised noise),
+developable land is flat by selection (nothing to level), and the grid
+is a shader over terrain rather than geometry anything could follow.
+Three steps, in order, decided together with their forks:
+
+1. **Hydrology-aware synthesis** (`fineElevationSurface` v2 — the
+   skipped step 1 of the amplification ladder). A per-tier
+   distance-to-channel field rasterised from the river polylines
+   (4096×2048 u8, chamfer, derived-never-serialized) feeds three
+   ingredients: an ANALYTIC valley profile (depth/half-width from
+   discharge, noise suppressed on valley floors, a measured depth
+   budget so the raster's own carved valley is not carved twice, never
+   below the water surface), an anisotropic warp along contours
+   (strength ∝ slope; on plains the distance-field gradient lends a
+   faint flow direction), and a ridged blend at convex crests. All
+   render-side: no ALGO bump, no artifact turnover. Verification by
+   transect scripts (valley depth monotonic in discharge, amplitude ≈ 0
+   at channels, anisotropy via directional slope reversals, crest
+   sharpness before/after). DECIDED: the warpSeed manifest gap closes
+   in the same step — one format touch, one pattern change, in the step
+   that changes the pattern anyway.
+   *(BUILT 2026-08-14, verified against a real 4K bake rather than a
+   synthetic world: `map/channelField.ts` is the distance/height/size
+   field — 4096×2048, seeded from the polylines with each pixel's EXACT
+   sub-pixel distance and then chamfered twice around the torus, 2.0 s
+   for a 4K network, median error 436 m against brute force, i.e. an
+   ninth of a field pixel, and the same at the seam as in the bulk.
+   `fineElevationSurface` v2 takes it and opens the valley. Measured:
+   the carve reaches 20 m at 800 m from the water and 26–32 m at 1.7 km,
+   is monotonic in discharge (at 3.3 km only the largest quartile still
+   carves, 10 m against nothing), is 0.25 m at the channel itself, and
+   NOT ONE sample of a hundred thousand ends below its channel's water
+   surface. Three constants earned their shape by measurement: the
+   half-width keys on √(discharge) because a real world's channel widths
+   are so skewed that a linear map gave nine tenths of them the floor;
+   the depth is a BUDGET (a fraction of the height still standing above
+   the water) rather than an absolute, which is what stops the raster's
+   own valley being carved twice — measured, that raster stands 72–84 m
+   above its water at 1.7 km and 143–172 m at 3.3 km; and the ridge fold
+   is worth its constant, 0.68 → 1.12 m of crest curvature measured in
+   isolation.
+   THE ANISOTROPIC WARP IS NOT BUILT, and that is the interesting
+   result. Three constructions were measured by detrended slope
+   reversals along the contour against down the fall line: a
+   noise-displacement warp does NOTHING (0.964 against 0.961 without);
+   a three-tap directional low-pass works (→ 1.12) but only in the
+   sub-kilometre band, which is the band the ridge fold lives in, so it
+   spends the fold's whole gain; a height-proportional shear moves the
+   number a little (1.036) while adding a fifth more roughness in both
+   directions, because on real terrain the axis field rotates faster
+   than the shear can stretch. Elongation and crests compete for one
+   octave — the trade is a look decision and is left open. Cost of what
+   shipped: 15 ms per 192² patch, against 13 ms for v1.
+   The warpSeed gap IS closed, though it turned out to be a different
+   question than it looked. No manifest field was needed: `warpSeed` is
+   `hashSeedString(seed + ":coastalWarp")`, a pure function of the seed
+   text every save already carries, so the reader derives it. What made
+   it a real fork is that the same `detailSeed` also seeds the
+   amplification bake's roughness, which the artifact key does NOT
+   cover — changing it silently gives one key two terrains. Settled by
+   bumping `AMPLIFICATION_ALGO_VERSION` to 8 (2026-08-14): every cached
+   4k/8k artifact is orphaned and re-baked, and afterwards the bake's
+   roughness, the near-field cascade and the generator's own fine relief
+   sample one field family per world instead of three unrelated ones.)*
+2. **Hex-lattice near mesh.** Below ~full grid visibility the ground IS
+   a triangulated hex lattice (vertices at centers + corners, ~27k
+   verts per 96²-tile window ≈ today's patch density, anchored per the
+   wrap-frame lesson); the square patch continues above/beyond.
+   DECIDED: replace-below-threshold, not nested. Developed tiles
+   flatten their own seven vertices with real creases — hexPlateLayer
+   and both of its compromises (max-not-median, drawn-not-truth) fall
+   away, because the mesh IS the drawn ground and levelling actually
+   cuts. Grid lines stay in the shader; pickGround gains the mesh.
+   Wilderness stays smooth-continuous (a per-hex facet look remains a
+   cheap later experiment).
+3. **16K bake as a MEASUREMENT** (no display work): factor 8 locally
+   via baker.mjs (--max-old-space-size; ~10–12 GB expected against 8K's
+   ~3 GB), after checking the seed cascade's steps and the constant
+   rescaling at r=8. Deliverable: the threshold-reversal table extended
+   one row (min basin ~625 km² expected), valley cross-sections, mouth
+   checks, RSS/time, plus a headless PNG crop. Whether 16K ever enters
+   the fetch ladder is a separate decision — the 537 MB tab question
+   stands.
+
+Deliberately NOT in this plan: fighting flatland boredom with terrain
+tricks. Metre-true flatland is boring from 2.5 km, and that is the
+realism the 1:1 decision bought; interest there is CONTENT's job
+(biome albedo, vegetation, later settlements) — plains must stay
+legible as the valuable building ground the design prices them as.
+
+This paragraph used to name two prerequisites for the FIVE-PHASE plan's
+phase 2. Both have moved on and it is kept only so the trail is
+readable: the amplification bake did become the classification's terrain
+source (4k is enough, 8k still waits on the memory work), and the fine
+relief's seed provenance turned out not to be a manifest gap at all —
+it is a fork about the amplification key, and it now stands under Open
+questions in its own right.
 
 ## Open questions
+
+- **TWO GROUNDS IN THE NEAR VIEW** — the detail patch sinks into the
+  relief mesh beneath it, and the mesh's triangles show through as a
+  second, stippled sheet lying over the terrain (seen 2026-08-14 in the
+  mountains, measured the same day against a v8 4K bake). NOT caused by
+  the hydrology-aware synthesis, which is why it is recorded here rather
+  than fixed there: the valley carve adds one percentage point and two
+  metres to a defect that was already full-size.
+
+  | mesh level | ground | with channel field | without (v1) |
+  |---|---|---|---|
+  | fine 2048×1024 | all land | 17.1 % of points, median 33 m | 16.1 %, 31 m |
+  | fine 2048×1024 | above 2000 m | 14.1 %, 45 m | 13.7 %, 43 m |
+  | coarse 1024×512 | above 2000 m | 24.4 %, 98 m | 24.2 %, 96 m |
+
+  p99 of the penetration is 350 m at the fine level and 880 m at the
+  coarse one. The cause is a RESOLUTION MISMATCH, not a height error:
+  `map/toroidalMapView.ts` fixes the relief levels at 1024×512 and
+  2048×1024 over the world whatever tier is loaded, so above a 4K raster
+  the fine mesh sees every second cell and above an 8K one every fourth,
+  its vertices stand 7.8 km apart, and it spans that distance with
+  STRAIGHT triangles. The patch samples the same surface at ~208 m.
+  Wherever the chord passes above the surface it approximates, the patch
+  is inside the mesh — which is why it shows in mountains and not on
+  plains, where chord and surface coincide. The patch's anti-z-fight
+  lift is `altitude × 0.0015`, i.e. 3.75 m at the lowest altitude the
+  camera reaches: two orders of magnitude short.
+
+  DECIDED 2026-08-14 to do nothing for now, because step 2 of the
+  near-field plan dissolves it structurally — the hex-lattice near mesh
+  REPLACES the patch below the threshold, and two grounds stop existing.
+  **Re-measure after step 2.** The probe was a throwaway script and is
+  not kept; it is twenty lines, and the method is the whole of it. Over
+  random land points, banded by elevation: take the patch's DRAWN height
+  (the fine sampler at bias 0.6, plus the 3.75 m lift) and the mesh
+  height at the same point, where the mesh height is the LINEAR
+  interpolation across the triangle of a quad whose corners are the
+  plain elevation surface sampled at the level's own subdivision grid
+  (CreateGround splits each quad on the (i,j)–(i+1,j+1) diagonal).
+  Count how often the first is below the second, and by how much. If it
+  survives step 2, the two candidates, in order:
+
+  1. **Rendering groups.** Patch, river ribbons and plates into group 1
+     with a depth-buffer reset, relief levels into group 0; the patch
+     then wins inside its own square and the mesh underneath is simply
+     hidden. Cheap and exact. It buys that with an assumption the
+     ordering has to carry — that nothing stands between the camera and
+     the patch — which holds for this camera because the patch is
+     centred on the focus. Note the codebase uses no rendering groups at
+     all today, so this introduces the concept.
+  2. **Tie the mesh resolution to the tier.** The honest fix, and the
+     expensive one: 4096×2048 is 16.8 M triangles per wrap copy, against
+     a memory budget that is already the binding constraint on 8K.
+
+- **Anisotropy in the fine synthesis** (measured and deferred
+  2026-08-14 — see step 1's note above). Elongating the roughness along
+  the terrain and sharpening its crests both want the sub-kilometre
+  octave, and measurably cannot both have it. Taking the trade is a
+  question of which the near view should read as: lineated hillsides
+  with softer crests, or crisp crests with isotropic texture.
 
 - **Coastal basins are flooded as lakes instead of being sea**
   (measured 2026-08-14, deferred to its own step after phase 4). Of the

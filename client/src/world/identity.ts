@@ -148,7 +148,17 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // 2026-08-14). (b) The bake now also re-floods the basins: an artifact carries
 // a `lakeDepth.u8` layer beside its elevation, so lakes stop being 7.8 km macro
 // blocks under 2 km terrain. A cached v6 artifact has neither.
-export const AMPLIFICATION_ALGO_VERSION = 7
+// v8 (2026-08-14): the world's fine-detail SEED changed. It used to be a djb2
+// hash of the seed text, invented by the save reader; it is now the
+// generator's own `warpSeed` (itself `hashSeedString(seed + ":coastalWarp")`,
+// so derivable from the same seed text) xor the shared FINE_DETAIL_SEED_SALT.
+// One field family per world instead of three unrelated ones — the bake's seed
+// roughness, the near-field cascade and the generator's own fine relief now
+// agree. This bump is the whole reason it could be changed at all: the seed
+// feeds `runAmplification` but is NOT part of the artifact key, so without a
+// new version the same key would name two different terrains depending on
+// which client baked it.
+export const AMPLIFICATION_ALGO_VERSION = 8
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

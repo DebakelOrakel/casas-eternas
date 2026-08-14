@@ -18,6 +18,8 @@ import type { HexPlateLayer } from '../../map/hexPlateLayer'
 import { HEX_COLUMNS, HEX_ROWS } from '../../map/mapSceneSettings'
 import { createElevationSurface } from '../../map/elevationSurface'
 import { createFineElevationSurface } from '../../map/fineElevationSurface'
+import { buildChannelField } from '../../map/channelField'
+import type { ChannelField } from '../../map/channelField'
 import { createMapPresentation, DEFAULT_KNOWLEDGE_RAMP, DEFAULT_PIGMENT_TUNING } from '../../map/mapPresentation'
 import type { KnowledgeRamp, MapWorldFields, PigmentTuning } from '../../map/mapPresentation'
 import { DEFAULT_TERRAIN_WASH } from '../../map/terrainPalette'
@@ -250,6 +252,13 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // The rivers as the bake extracted them, retained because the ones actually
   // DRAWN are a subset that changes with knowledge.
   let riverSource: { points: Float32Array; lengths: Uint32Array; width: number; height: number; factor: number } | null = null
+  // The height raster in force, kept because everything the near field derives
+  // — the classifier, the channel distance field — is rebuilt by events that
+  // do not carry it (a river network landing, a tier's polylines arriving).
+  let currentRaster: { data: Float32Array; width: number; height: number; detailSeed: number } | null = null
+  // Step 1 of the near-field plan: where the water is, as a field. Built from
+  // whichever river network is current, so it turns over with the tier.
+  let channelField: ChannelField | null = null
 
   // A repaint touches every one of the paper's 8.4 million texels twice over,
   // so it cannot run per pointer-move. The brush writes into the field (cheap,
@@ -421,7 +430,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     resetHexClassWindow()
   }
 
-  function rebuildHexClassifier(field: Float32Array, fieldWidth: number, fieldHeight: number, detailSeed: number): void {
+  function rebuildHexClassifier(): void {
+    if (!currentRaster) return
+    const { data: field, width: fieldWidth, height: fieldHeight, detailSeed } = currentRaster
     // UNCLAMPED for the shoreline: the render surfaces flatten the sea to
     // zero, which would collapse every waterline crossing onto a corner.
     const bathymetry = createElevationSurface(field, fieldWidth, fieldHeight, RELIEF_HEIGHT_SCALE, false)
@@ -429,7 +440,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const { u, v } = hexUvFromWorld(x, z)
       return bathymetry.heightAtUV(u, v)
     }
-    const truth = createFineElevationSurface(field, fieldWidth, fieldHeight, RELIEF_HEIGHT_SCALE, detailSeed, 0)
+    const truth = createFineElevationSurface({ elevation: field, resX: fieldWidth, resY: fieldHeight, heightScale: RELIEF_HEIGHT_SCALE, seed: detailSeed, bias: 0, channels: channelField })
     const lake = hexLakeDepth ? createElevationSurface(hexLakeDepth.data, hexLakeDepth.resX, hexLakeDepth.resY, 1) : null
     hexClassifier = createHexClassifier({
       heightAtUV: (u, v) => truth.heightAtUV(u, v),
@@ -718,6 +729,11 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     mapView = null
 
     riverSource = null
+    currentRaster = { data: elevations, width, height, detailSeed }
+    // A new world's channels are not known until its network is re-derived
+    // below; until then the fine synthesis runs on cascade detail alone.
+    channelField = null
+    presentation.setChannelField(null)
     // The stand-in knowledge state, seeded from this world's own terrain.
     knowledge = createKnowledgeField(PAPER_TEXTURE_WIDTH, PAPER_TEXTURE_HEIGHT, detailSeed)
     knowledgeSeedInputs = { elevations, width, height, biome, detailSeed }
@@ -734,7 +750,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Lakes are macro authority (carried, never re-derived) — stash the layer
     // once per load; tier rebuilds reuse it.
     hexLakeDepth = lakeDepth ?? null
-    rebuildHexClassifier(elevations, width, height, detailSeed)
+    rebuildHexClassifier()
 
     mapView = createToroidalMapView({
       scene,
@@ -891,6 +907,17 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     riverSource = { points, lengths, width: fieldWidth, height: fieldHeight, factor }
     // A finer tier's network replaces the one the ports were built from.
     hexPortsCenter = null
+    // …and the one the fine synthesis shapes its valleys around. This is the
+    // one place a network turns over, so it is the one place the channel field
+    // is built (a few hundred ms on the main thread, once per tier, next to
+    // the second the macro network's own derivation already takes). It needs
+    // the raster the polylines came from, for the water surface at each
+    // channel.
+    channelField = currentRaster && currentRaster.width === fieldWidth && currentRaster.height === fieldHeight
+      ? buildChannelField({ points, lengths, width: fieldWidth, height: fieldHeight }, currentRaster.data)
+      : null
+    presentation.setChannelField(channelField)
+    rebuildHexClassifier()
     if (lengths.length === 0) return
     riverLayer = createToroidalRibbonOverlay({
       scene,
@@ -996,9 +1023,11 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       presentation.setLakeDepth(lake)
       hexLakeDepth = lake
     }
+    currentRaster = { data: artifact.elevation, width: artifact.width, height: artifact.height, detailSeed }
     presentation.setElevation(artifact.elevation, artifact.width, artifact.height, detailSeed)
     debugPanel.setTerrainTier(artifact.width, artifact.height)
-    rebuildHexClassifier(artifact.elevation, artifact.width, artifact.height, detailSeed)
+    // Rivers first: they carry this tier's channel field, and the classifier
+    // samples the fine surface that field shapes.
     applyRivers(artifact.riverPoints, artifact.riverLengths, artifact.width, artifact.height, factor)
     hoverTooltip?.refresh()
   }

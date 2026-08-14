@@ -4,6 +4,8 @@ import { fieldSpec } from './save/fieldSpec'
 import type { FieldSpec } from './save/fieldSpec'
 import { readRecipeNumber, readRecipeValue } from './save/recipeYaml'
 import { deriveWorldId } from './identity'
+import { hashSeedString } from '../worldgen/core/rng'
+import { FINE_DETAIL_SEED_SALT } from '../worldgen/elevation/ridgedNoise'
 import type { ErosionControls, WorldManifest, WorldManifestLayer } from './save/loadWorldInputs'
 
 // ASKING A FINISHED WORLD WHAT IS TRUE AT A PLACE.
@@ -65,8 +67,9 @@ export interface FieldView {
 // same archive and parsing it twice is how two readers start disagreeing.
 export interface WorldRecipe {
   seedText: string
-  // Seeds the deterministic near-field detail, hashed from the recipe's seed so
-  // the same world always grows the same bumps.
+  // Seeds the deterministic near-field detail AND the amplification bake's
+  // seed roughness: the generator's own warpSeed, derived from the recipe's
+  // seed and salted like every other consumer of that noise (see openWorld).
   detailSeed: number
   erosionControls: ErosionControls
   // The world's identity in the server's store (`metadata.uid`) — the half that
@@ -125,8 +128,20 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
   // would collide the moment two groups share a key.
   const yamlText = (await zip.file('world.yaml')?.async('string')) ?? ''
   const seedText = readRecipeValue(yamlText, 'spec.seed') ?? 'casas-eternas'
-  let detailSeed = 5381
-  for (let i = 0; i < seedText.length; i++) detailSeed = ((detailSeed * 33) ^ seedText.charCodeAt(i)) >>> 0
+  // THE GENERATOR'S OWN fine-detail seed, derived rather than read: `warpSeed`
+  // is `hashSeedString(seed + ":coastalWarp")` (archean/archeanState.ts) and
+  // therefore a pure function of the seed text the save already carries — the
+  // "manifest gap" this used to be described as never needed a manifest field
+  // at all. The salt is the one every consumer of fineDetailNoise-as-terrain
+  // shares, so the amplification bake's seed roughness, the near-field
+  // cascade and the generator's own fine relief all sample ONE field family
+  // for a world instead of three unrelated ones.
+  //
+  // Changing it changes baked terrain for an unchanged world, which the
+  // artifact key does not cover — that is why AMPLIFICATION_ALGO_VERSION went
+  // to 8 in the same commit. Anything baked before it is a different terrain
+  // under a different key, not a contradiction under the same one.
+  const detailSeed = (hashSeedString(`${seedText}:coastalWarp`) ^ FINE_DETAIL_SEED_SALT) >>> 0
   const recipe: WorldRecipe = {
     seedText,
     detailSeed,

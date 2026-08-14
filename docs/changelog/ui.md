@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-08-14
+- **changed** Map: the near view's terrain knows where the rivers are — valleys open toward the water, floodplains lie flat, and crests read as crests. `worldmap`
+
 ## 2026-08-13
 - **new** Map: the 300 m hex grid knows which tile the pointer is over — the hovered hex lights up once the grid is fully visible in the descent. `worldmap`
 - **changed** Title: the menu is localized and links to the documentation site, where the changelog now lives.
