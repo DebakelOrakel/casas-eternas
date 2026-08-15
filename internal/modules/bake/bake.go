@@ -45,6 +45,18 @@ const defaultErosionRounds = 2
 // minutes already spent. The cluster Job pins the same number by hand in
 // bake-job.yaml's command line (the template has no value for it) — change
 // the two together.
+//
+// IT DOES NOT BOUND THIS WORKLOAD, and that is worth knowing before anyone
+// raises it to fix a memory problem. Measured 2026-08-15 on a 16384² bake, the
+// largest the pipeline has ever run: at this 6144 ceiling it finished in 2510 s
+// with 9.4 GiB RESIDENT, and the same bake given a 24576 ceiling finished in
+// 2516 s with 8.5 GiB — the smaller ceiling used MORE memory, not less. The
+// amplification's working set is typed arrays, which live outside the V8 old
+// space this flag governs, so the ceiling only shifts GC timing. What actually
+// binds is system RAM.
+//
+// (Both runs produced byte-identical artifacts, which is also the determinism
+// check at that size.)
 const nodeHeapMB = 6144
 
 // jobHistory caps the in-memory job records. The RESULT lives in the artifact

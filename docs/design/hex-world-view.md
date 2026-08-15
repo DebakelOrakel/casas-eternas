@@ -613,10 +613,23 @@ Three steps, in order, decided together with their forks:
    | 8K | 1950 m | 2,499 km² | 11,792 | 9,812 | 527,563 km | 15.09 | 465 s |
    | 16K | 975 m | 625 km² | 37,649 | 33,650 | 988,210 km | 28.13 | 2,515 s |
 
-   16K peaked at **8.5 GB RSS** (13.2 GB peak footprint) in 41.9 minutes
-   and wrote a 395 MB artifact — under the 10–12 GB this plan expected.
-   The predicted 625 km² minimum basin is exactly what a non-rescaled
-   threshold gives.
+   16K peaked at **8.5 GiB resident** (13.2 GB peak footprint) in 41.9
+   minutes and wrote a 395 MB artifact — under the 10–12 GB this plan
+   expected. The predicted 625 km² minimum basin is exactly what a
+   non-rescaled threshold gives.
+
+   The bake was then repeated under the server's own heap ceiling
+   (`nodeHeapMB = 6144`, sized for 8K) to find out whether a 16K bake
+   could run there at all. It can, and the result inverted the question:
+   the 6 GB run finished in the same time using MORE memory (9.4 GiB
+   resident). `--max-old-space-size` governs the V8 old space, and this
+   pipeline's working set is typed arrays, which live outside it — the
+   ceiling only shifts GC timing, and system RAM is what binds. The
+   constant stays as it is; the reasoning now sits next to it.
+
+   Both runs produced BYTE-IDENTICAL artifacts, which is the determinism
+   check at this size and the reason a cached 16K artifact could be
+   trusted at all.
 
    THE ROW THAT MATTERS is not in that table. Valley cross-sections at
    trunk rivers, stepped at a fixed 250 m over a fixed 6 km (in METRES —
