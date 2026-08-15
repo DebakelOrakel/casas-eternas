@@ -520,7 +520,10 @@ Three steps, in order, decided together with their forks:
    away, because the mesh IS the drawn ground and levelling actually
    cuts. Grid lines stay in the shader; pickGround gains the mesh.
    Wilderness stays smooth-continuous (a per-hex facet look remains a
-   cheap later experiment).
+   cheap later experiment). REFRAMED 2026-08-15 — the lattice is no longer
+   a replacement for the square patch but RING 0 of the ground decided in
+   [decisions/near-ground-clipmap.md](../decisions/near-ground-clipmap.md);
+   the swap threshold below becomes that stack's inner radius.
    *(GROUND BUILT 2026-08-15, levelling still to come. `map/hexNearMesh.ts`
    generates the geometry and is Babylon-free like `hexPlates`, so it is
    checked headless; `ToroidalMapView` owns the mesh and the swap, exactly
@@ -566,6 +569,33 @@ questions in its own right.
 
 ## Open questions
 
+- **The descent's altitude was measured from SEA LEVEL** (found and fixed
+  2026-08-15, reported as "in the mountains I cannot get closer, or I end
+  up inside the map"). `worldgenCamera`'s near regime derived its altitude
+  purely from the zoom — `handoverAltitude · (2500 m / handoverAltitude)^u`
+  — with the terrain nowhere in the expression, so `NEAR_MIN_ALTITUDE`
+  was a floor above the SEA. Over a 4,000 m range the floor is inside the
+  mountain. The exaggeration compounded it rather than relieving it: the
+  blend runs on the same `u` (6 → 1), so halfway down the range is still
+  drawn two to three times its true relief and grows toward the camera
+  while the camera sinks.
+  This also reframes every near-field screenshot taken in mountains: they
+  were all shot at a grazing angle from a camera nearly inside the surface,
+  which is exactly where two surfaces interpenetrate most visibly — so it
+  is a plausible contributor to the "two grounds" reports rather than a
+  separate complaint.
+  FIXED by giving the camera a `getGroundHeight` — the DRAWN ground under
+  the focus, exaggeration included, since that is the surface it can
+  collide with — and measuring altitude from it. Both the camera and its
+  look-at target rise, or the view would tilt into the hillside by exactly
+  the height it was lifted. The offset is RAMPED IN over the descent: at
+  the handover the ground is drawn at its most exaggerated, and adopting it
+  whole there would pop the camera up by tens of kilometres in one frame.
+  Left deliberately untouched: the exaggeration curve itself. With altitude
+  measured over ground it no longer pushes the camera into anything, so how
+  dramatic the mid-descent should look went back to being a taste question
+  rather than a defect. The lever is one constant if it ever reads wrong.
+
 - **TWO GROUNDS IN THE NEAR VIEW** — the detail patch sinks into the
   relief mesh beneath it, and the mesh's triangles show through as a
   second, stippled sheet lying over the terrain (seen 2026-08-14 in the
@@ -593,6 +623,31 @@ questions in its own right.
   lift is `altitude × 0.0015`, i.e. 3.75 m at the lowest altitude the
   camera reaches: two orders of magnitude short.
 
+  SUPERSEDED 2026-08-15 by
+  [decisions/near-ground-clipmap.md](../decisions/near-ground-clipmap.md):
+  the seam is not a defect to treat but a property of having two grounds at
+  all, and the structure that removes it is one ground per register — rings
+  around the camera below the descent, tiles built on demand on the map. What
+  follows is what was tried on the way, kept because each attempt narrowed
+  the question.
+
+  FIXED 2026-08-15 with candidate 1 below, once building step 2 showed the
+  deferral's reasoning to be wrong. The near ground (patch and hex lattice),
+  the developed plates and the river ribbons render in their own group;
+  Babylon clears the depth buffer between groups, so the near ground draws
+  over the relief unconditionally and the interpenetration cannot show. The
+  assumption it rests on is the camera's — the near ground surrounds the
+  focus, so nothing in the terrain group is ever between the camera and it.
+  The cost is stated at the constant and is real: the same clear removes the
+  near group's occlusion AGAINST the terrain group, so a distant river behind
+  a ridge now shows through it, muted by fog. If that trade proves the wrong
+  way round, candidate 2 is not the answer either — the third way is to
+  displace the relief levels' vertices from a MINIMUM over the raster cells
+  each one stands for, so the chord sits at or below the surface it
+  approximates and no render order is assumed; it lowers ridges at the coarse
+  level, which is a change to the map's own look.
+
+  The original deferral, kept because the mistake is the useful part:
   DECIDED 2026-08-14 to do nothing for now, on the reasoning that step 2
   of the near-field plan would dissolve it — the hex-lattice near mesh
   replaces the patch, so two grounds stop existing. **That reasoning is

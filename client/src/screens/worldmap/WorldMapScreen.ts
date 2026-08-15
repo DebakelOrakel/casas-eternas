@@ -1,7 +1,7 @@
 import { Color3, Color4, MeshBuilder, PointerEventTypes, RawTexture, Scene, ShaderMaterial, Texture } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { createWorldgenCamera } from '../../camera/worldgenCamera'
-import { createToroidalMapView } from '../../map/ToroidalMapView'
+import { NEAR_RENDERING_GROUP, createToroidalMapView } from '../../map/ToroidalMapView'
 import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { ToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
@@ -98,7 +98,21 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // world view; see worldgenCamera's header).
     nearModeEnabled: true,
     nearMinAltitude: NEAR_MIN_ALTITUDE,
+    // What the descent's altitude is measured FROM. The near ground the
+    // camera can fly into is the DRAWN one, so the sampler is the same
+    // biased fine surface the patch and the hex lattice render, times the
+    // exaggeration in force this frame.
+    getGroundHeight: () => {
+      if (!reliefDetailSurface) return 0
+      const focus = getCameraFocus()
+      const { u, v } = hexUvFromWorld(focus.x, focus.z)
+      return reliefDetailSurface.heightAtUV(u, v) * drawnExaggeration
+    },
   })
+
+  // The exaggeration in force this frame, kept because the camera has to
+  // measure its altitude against the ground as DRAWN, not as stored.
+  let drawnExaggeration = MAP_EXAGGERATION
 
   // Tilt is purely zoom-driven, same as the generator: armed fully, the
   // envelope decides when it shows.
@@ -166,6 +180,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // a mountain is otherwise a few dozen pixels tall, fading to metre-true
     // as the descent turns the map into a world.
     const exaggeration = MAP_EXAGGERATION + (NEAR_EXAGGERATION - MAP_EXAGGERATION) * blend
+    drawnExaggeration = exaggeration
     mapView?.setHeightScale(exaggeration)
     riverLayer?.setHeightScale(exaggeration)
     Color3.LerpToRef(RIVER_INK, RIVER_WATER, blend, riverColorScratch)
@@ -366,6 +381,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Developing takes the pointer the same way the brush does — a click that
     // levels a tile must not also pan the map.
     onDevelopToggle: (active: boolean) => setCameraPanEnabled(!active),
+    onNearGroundToggle: (visible: boolean) => mapView?.setNearGroundVisible(visible),
     onDevelopClear: () => {
       if (!hexPlates) return
       for (const plate of hexPlates.all()) hexPlates.undevelop(plate.id)
@@ -926,6 +942,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       textureWidth: fieldWidth,
       textureHeight: fieldHeight,
       getViewWidth: getCameraViewWidth,
+      // With the near ground. The rivers are draped ON it, and its rendering
+      // group clears the depth buffer — a ribbon left in the terrain group
+      // would be painted over by the very ground it lies on.
+      renderingGroupId: NEAR_RENDERING_GROUP,
       // The amplified grid packs several times as many D8 direction changes
       // (and discharge wiggles) into the same world distance, which the
       // interpolating spline would faithfully render as a wobble — average

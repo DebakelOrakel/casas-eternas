@@ -109,10 +109,48 @@ export interface ToroidalMapView {
   // hand out corners); at grazing angles that half pixel is tile-sized on
   // the ground.
   pickGround(screenX: number, screenY: number): { x: number; z: number } | null
+  // Hide the NEAR GROUND alone (the detail patch and the hex lattice),
+  // leaving the relief meshes drawn — a debug instrument, see the panel's
+  // own note: two grounds over one another can only be told apart by
+  // removing one of them.
+  setNearGroundVisible(visible: boolean): void
   // Hide/show the whole map view (all layers).
   setEnabled(enabled: boolean): void
   dispose(): void
 }
+
+// WHICH GROUND WINS WHERE THEY OVERLAP.
+//
+// The relief levels are fixed grids over the whole world — 15.6 km and 7.8 km
+// between vertices — and they span that with STRAIGHT triangles, while the
+// near ground (the patch, and below the swap threshold the hex lattice)
+// samples the same surface every ~200 m. Wherever a coarse chord passes above
+// the surface it approximates, the near ground is INSIDE the relief mesh and
+// its triangles show through as a second, stippled sheet over the terrain.
+// Measured on a v8 4K bake (2026-08-15): at 14–17 % of land points on the
+// fine level, median 33 m deep, p99 350 m — and worse in mountains, which is
+// where it was spotted. The near ground's own anti-z-fight lift is 3.75 m at
+// the camera's floor, two orders of magnitude short of covering it.
+//
+// So the near ground gets its own rendering group. Babylon clears the depth
+// buffer between groups, so everything in the near group draws over the
+// terrain group unconditionally, and the interpenetration cannot show. The
+// assumption that makes this sound is the camera's: the near ground surrounds
+// the focus, so nothing in the terrain group is ever BETWEEN the camera and
+// it.
+//
+// THE COST, which is real and belongs next to the fix: the same depth clear
+// means the near group has no occlusion against the terrain group at all. The
+// river ribbons have to be in the near group — left behind in the terrain
+// group, the ground they are draped on would paint over them — and they are
+// drawn over the whole known world, so a distant river behind a ridge now
+// shows through it. Fog mutes it; it is not free. The alternative, if that
+// trade turns out to be the wrong way round, is to make the relief levels
+// sit at or below the surface they approximate (displace their vertices from
+// a MINIMUM over the raster cells each one stands for, rather than a point
+// sample) — no render-order assumption, but it lowers ridges at the coarse
+// level, which is a change to the map's own look.
+export const NEAR_RENDERING_GROUP = 1
 
 // Relief grid resolutions against the 2048x1024 map raster. Coarse: one
 // vertex per two raster cells (~15.6 km spacing) — cheap enough to have
@@ -459,6 +497,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   let hexAnchorX = 0
   let hexAnchorZ = 0
   let hexBuilt = false
+  let nearGroundVisible = true
 
   function rebuildHexNearMesh(anchorX: number, anchorZ: number, altitude: number): void {
     if (!coarseLevel || !patchDetailSurface || !patchBaseSurface) return
@@ -486,6 +525,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     if (!hexMesh) {
       hexMesh = new Mesh('mapHexNearGround', scene)
       hexMesh.material = reliefMaterial
+      hexMesh.renderingGroupId = NEAR_RENDERING_GROUP
       sun.includedOnlyMeshes.push(hexMesh)
       fill.includedOnlyMeshes.push(hexMesh)
     }
@@ -504,7 +544,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
 
   function updateNearDetail(focusX: number, focusZ: number): void {
     if (!nearDetail) return
-    const active = nearDetail.getActive() && coarseLevel !== null
+    const active = nearDetail.getActive() && coarseLevel !== null && nearGroundVisible
     if (!active) {
       patchMesh?.setEnabled(false)
       hexMesh?.setEnabled(false)
@@ -529,6 +569,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     if (!patchMesh) {
       patchMesh = MeshBuilder.CreateGround('mapNearDetail', { width: 1, height: 1, subdivisions: PATCH_SUBDIVISIONS, updatable: true }, scene)
       patchMesh.material = reliefMaterial
+      patchMesh.renderingGroupId = NEAR_RENDERING_GROUP
       patchMesh.scaling.y = heightScale
       sun.includedOnlyMeshes.push(patchMesh)
       fill.includedOnlyMeshes.push(patchMesh)
@@ -566,6 +607,11 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       (rightZ - upZ) * invSqrt2 * horizontal,
     )
   }
+
+  // Stated rather than inherited: clearing depth between rendering groups IS
+  // Babylon's default, but it is the entire mechanism the near group rests on,
+  // and a default relied upon silently is a default someone changes.
+  scene.setRenderingAutoClearDepthStencil(NEAR_RENDERING_GROUP, true, true, false)
 
   const observer = scene.onBeforeRenderObservable.add(() => {
     const focus = getFocus()
@@ -649,6 +695,9 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       sun.includedOnlyMeshes.push(mesh)
       fill.includedOnlyMeshes.push(mesh)
       mesh.scaling.y = heightScale
+      // A layer that IS ground belongs with the near ground, or the near
+      // group's depth clear paints over it.
+      mesh.renderingGroupId = NEAR_RENDERING_GROUP
     },
     detachLitMesh(mesh: Mesh): void {
       const at = attachedMeshes.indexOf(mesh)
@@ -679,6 +728,13 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       const pick = scene.pick(screenX + 0.5, screenY + 0.5, isGround)
       const point = pick?.hit ? pick.pickedPoint : null
       return point ? { x: point.x, z: point.z } : null
+    },
+    setNearGroundVisible(visible: boolean): void {
+      nearGroundVisible = visible
+      if (!visible) {
+        patchMesh?.setEnabled(false)
+        hexMesh?.setEnabled(false)
+      }
     },
     setEnabled(next: boolean): void {
       enabled = next
