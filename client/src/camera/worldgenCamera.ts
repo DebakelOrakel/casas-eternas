@@ -86,6 +86,13 @@ export interface WorldgenCameraOptions {
   // Camera altitude above the ground plane at the deepest zoom (z = 2), in
   // world units. The screen owns the metres-to-units conversion.
   nearMinAltitude?: number
+  // The DRAWN ground's world Y under the focus — exaggeration included, since
+  // that is the surface the camera can actually collide with. Supplied by the
+  // screen, which owns both the height sampler and the current exaggeration;
+  // without it the near regime measures its altitude from sea level and flies
+  // into every mountain. Omitted (the generator's preview) means a flat
+  // datum, i.e. exactly the old behaviour.
+  getGroundHeight?: () => number
   // Pitch from vertical at the deepest zoom. 76° puts the horizon around
   // the top fifth of the frame at the default fov.
   horizonPitchDeg?: number
@@ -168,6 +175,7 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
     nearModeEnabled = false,
     fovRad = 0.8,
     nearMinAltitude = 0.003,
+    getGroundHeight,
     horizonPitchDeg = 76,
     nearPitchMinDeg = 40,
     nearPitchMaxDeg = 80,
@@ -242,10 +250,22 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
   // User pitch adjustment (R/F) relative to the near regime's zoom-default
   // pitch curve; cleared whenever the view is back in the map regime.
   let nearPitchOffset = 0
-  // Camera height above the ground plane: the fixed rig height in the map
-  // regime (orthographic — height doesn't affect apparent size), the LIVE
-  // altitude in the near regime.
+  // Camera height above the GROUND: the fixed rig height in the map regime
+  // (orthographic — height doesn't affect apparent size), the LIVE altitude
+  // in the near regime.
   let viewHeight = cameraHeight
+  // The drawn ground's own height under the focus, which everything above is
+  // measured FROM in the near regime. Zero on the map, where "altitude" is a
+  // rig constant and terrain-relative would mean nothing.
+  //
+  // Without this the descent's floor is a height above SEA LEVEL, and over a
+  // 4,000 m range the camera is simply inside the mountain — reported
+  // 2026-08-15, and it is also why every near-field screenshot from the
+  // mountains was taken at a grazing angle from within the surface. Note it
+  // has to be the DRAWN ground, exaggeration included: during the descent the
+  // terrain is still drawn up to six times its true relief, so the mountain
+  // that swallows the camera is the drawn one, not the metre-true one.
+  let groundHeight = 0
   // Ground-plane width visible at the focus this frame — the pan/drag scale
   // for both regimes (ortho extents are stale while in the near regime).
   let viewWidthAtFocus = coverExtents(0).halfWidth * 2
@@ -264,7 +284,7 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
     if (tiltAngle === 0 && yawAngle === 0) {
       camera.position.x = focusX
       camera.position.z = focusZ
-      camera.position.y = viewHeight
+      camera.position.y = groundHeight + viewHeight
       return
     }
     // The camera stays viewHeight above the ground but pulls back along the
@@ -273,8 +293,10 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
     const backOffset = viewHeight * Math.tan(tiltAngle)
     const up = screenUp()
     camera.upVector.set(up.x, 0, up.z)
-    camera.position.set(focusX - up.x * backOffset, viewHeight, focusZ - up.z * backOffset)
-    camera.setTarget(new Vector3(focusX, 0, focusZ))
+    // Both ends rise with the ground: lifting only the camera would tilt the
+    // view down into the hillside by exactly the height it was lifted.
+    camera.position.set(focusX - up.x * backOffset, groundHeight + viewHeight, focusZ - up.z * backOffset)
+    camera.setTarget(new Vector3(focusX, groundHeight, focusZ))
   }
 
   let isDragging = false
@@ -376,6 +398,7 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
         camera.maxZ = cameraHeight * 4
       }
       viewHeight = cameraHeight
+      groundHeight = 0
       updateOrthoExtents(Math.min(1, currentZoom))
       viewWidthAtFocus = camera.orthoRight! - camera.orthoLeft!
       tiltTarget = Math.min(desiredTilt, envelopeTilt(currentZoom))
@@ -395,6 +418,12 @@ export function createWorldgenCamera(options: WorldgenCameraOptions): WorldgenCa
       const handoverAltitude = handoverDistance * Math.cos(maxTilt)
       const altitude = handoverAltitude * Math.pow(nearMinAltitude / handoverAltitude, nearU)
       viewHeight = altitude
+      // Ramped in over the descent. At the handover the ground is drawn at
+      // its most exaggerated, so adopting it whole there would pop the camera
+      // up by tens of kilometres in one frame; by the bottom, where the
+      // altitude is small and the ground is the thing you can hit, it counts
+      // fully.
+      groundHeight = Math.max(0, getGroundHeight?.() ?? 0) * nearU
       // The zoom curve provides the DEFAULT pitch; the user's R/F offset
       // moves within [nearPitchMin, nearPitchMax]. Re-deriving the offset
       // from the clamped result keeps it from accumulating past the band.
