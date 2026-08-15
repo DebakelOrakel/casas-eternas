@@ -521,6 +521,26 @@ Three steps, in order, decided together with their forks:
    cuts. Grid lines stay in the shader; pickGround gains the mesh.
    Wilderness stays smooth-continuous (a per-hex facet look remains a
    cheap later experiment).
+   *(GROUND BUILT 2026-08-15, levelling still to come. `map/hexNearMesh.ts`
+   generates the geometry and is Babylon-free like `hexPlates`, so it is
+   checked headless; `ToroidalMapView` owns the mesh and the swap, exactly
+   as it owns the patch. Checked: corners really are SHARED (3.02 vertices
+   per tile, not 7), every triangle faces up, every vertex normal points
+   up, the rim lands exactly on the plain surface, the window is built in
+   ONE wrap copy, and the lattice sits on hexGrid to float32 — the last one
+   is the check that the mesh IS the grid rather than something near it.
+   The window is 192 tiles wide, which was NOT free to choose: the square
+   patch covers 16 × altitude, so a smaller window would cover less ground
+   than the patch it replaces, and 192 tiles put the swap threshold at
+   3.6 km against the camera's 2.5 km floor — a band, but a narrow one. It
+   costs 129,949 vertices and 258,234 triangles, and a rebuild is 85 ms
+   against the hydrology-aware sampler, paid every quarter window (14 km of
+   travel) rather than every 400 m as the patch pays its 17 ms; the
+   escalation, if that hitch is felt, is the class overlay's trick of
+   filling a tile budget per frame. `pickGround` has the mesh. What is NOT
+   built yet is the point of the step: developed tiles do not flatten
+   their seven vertices, so `hexPlateLayer` and its two compromises are
+   still standing.)*
 3. **16K bake as a MEASUREMENT** (no display work): factor 8 locally
    via baker.mjs (--max-old-space-size; ~10–12 GB expected against 8K's
    ~3 GB), after checking the seed cascade's steps and the constant
@@ -573,9 +593,18 @@ questions in its own right.
   lift is `altitude × 0.0015`, i.e. 3.75 m at the lowest altitude the
   camera reaches: two orders of magnitude short.
 
-  DECIDED 2026-08-14 to do nothing for now, because step 2 of the
-  near-field plan dissolves it structurally — the hex-lattice near mesh
-  REPLACES the patch below the threshold, and two grounds stop existing.
+  DECIDED 2026-08-14 to do nothing for now, on the reasoning that step 2
+  of the near-field plan would dissolve it — the hex-lattice near mesh
+  replaces the patch, so two grounds stop existing. **That reasoning is
+  wrong, and building step 2 is what showed it** (2026-08-15): the two
+  grounds in question were never the patch and the lattice, they were the
+  NEAR ground and the relief mesh beneath it. Swapping which near ground
+  is drawn changes nothing about that — the lattice samples the same
+  surface the patch did and sinks into the same triangles. The deferral
+  itself still stands (nothing about the defect got worse, and the fix is
+  cheap whenever it is wanted), but the expectation attached to it does
+  not: this should be expected to SURVIVE step 2, and option 1 below is
+  the likely answer rather than a fallback.
   **Re-measure after step 2.** The probe was a throwaway script and is
   not kept; it is twenty lines, and the method is the whole of it. Over
   random land points, banded by elevation: take the patch's DRAWN height
