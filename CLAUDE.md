@@ -136,9 +136,20 @@ cd client && npm run harness:golden      # the generator's fields; ~13 min
 **Never run `git commit`.** Not even when a plan I wrote lists a commit sequence
 and it was approved — approving a plan's structure is not authorization to
 commit. Leave changes in the working tree. Read-only git (status, diff, log) is
-fine. Do proactively *say* when a coherent, verified batch looks like a good
-checkpoint, and suggest how to split it if the tree spans several concerns; the
-user shapes the history themselves.
+fine; the user shapes the history themselves.
+
+**But propose the commit, plainly and in its own section.** Whenever there is
+something to commit, end the report with a heading of its own — never a
+subordinate clause at the end of a paragraph, which is how a tree quietly
+accumulates four concerns. Per commit: the files, and a **one-line message in
+this repo's style** — bare imperative subject, capitalised, no full stop, no
+body, no trailer (`Implement hex tile ports`, `Add version command`). If the
+tree spans several concerns, propose the split, in the order that makes the
+history read like the work happened; where one file carries hunks belonging to
+different commits, say which hunks go where, because that is the part that is
+tedious to work out twice. Only suggest `--amend` when something in the tree
+actually FIXES the last commit — new behaviour on top of it is a new commit,
+and amending it in only blurs what the last one said.
 
 **All user-facing text goes through i18n** — a catalog key plus `t()`, never a
 hardcoded string. **Propose new catalog keys and wait for agreement** before
