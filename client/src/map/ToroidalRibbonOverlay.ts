@@ -27,6 +27,12 @@ export interface ToroidalRibbonOverlayOptions {
   // enough to stay above the mesh-vs-sampler disagreement, small enough
   // not to read as floating.
   drapedYOffset?: number
+  // Which rendering group the ribbons belong to. They must share the NEAR
+  // GROUND's group: that group's depth buffer is cleared before it draws, so
+  // ribbons left behind in the terrain's group would simply be painted over
+  // by the ground they are draped on. See ToroidalMapView.NEAR_RENDERING_GROUP
+  // for what the split buys and what it costs.
+  renderingGroupId?: number
   // Moving-average passes applied to each polyline's control points (and
   // their widths) BEFORE the Catmull-Rom spline. Zero keeps the input
   // exactly.
@@ -133,6 +139,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
   const color = options.color ?? new Color3(45 / 255, 95 / 255, 175 / 255)
   const yOffset = options.yOffset ?? 0.03
   const drapedYOffset = options.drapedYOffset ?? 0.0002
+  const renderingGroupId = options.renderingGroupId ?? 0
   const smoothingPasses = options.smoothingPasses ?? 0
   // Uniform texel→world scale (the map keeps texture and world aspect equal).
   const s = worldWidth / textureWidth
@@ -285,11 +292,13 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
     base.setVerticesBuffer(new VertexBuffer(engine, Float32Array.from(widths), 'ribbonWidths', { size: 2 }))
     base.material = material
     base.isPickable = false
+    base.renderingGroupId = renderingGroupId
     for (let dz = -1; dz <= 1; dz++) {
       for (let dx = -1; dx <= 1; dx++) {
         if (dx === 0 && dz === 0) continue
         const inst = base.createInstance(`riverRibbon_${dx}_${dz}`)
         inst.isPickable = false
+        inst.renderingGroupId = renderingGroupId
         inst.scaling.y = heightScale
         instances.push(inst)
       }
