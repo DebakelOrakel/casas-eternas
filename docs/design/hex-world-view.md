@@ -596,6 +596,65 @@ Three steps, in order, decided together with their forks:
    the fetch ladder is a separate decision — the 537 MB tab question
    stands.
 
+   **MEASURED 2026-08-15, and there was nothing to build.** The factor is
+   already carried everywhere and the three resolution-dependent places
+   derive themselves: `seedCascadeScales(16384)` returns `[1, 2, 4]` (one
+   more noise call than 8K, cut off by Nyquist rather than by a table),
+   the erosion constants are rescaled by `1/factor`, and the channel
+   threshold stays in cells by design. `Request.Validate()` has allowed
+   stage 8 all along. So the run was the work.
+
+   One world (`708863569`), one pipeline (`v8-4380b6f5a7576301`), three
+   tiers of it, all read back off the finished ARTIFACTS:
+
+   | tier | cell | min basin | polylines | confluences | channel | density | bake |
+   |---|---|---|---|---|---|---|---|
+   | 4K | 3900 m | 9,996 km² | 3,146 | 2,348 | 260,881 km | 7.50 | 94 s |
+   | 8K | 1950 m | 2,499 km² | 11,792 | 9,812 | 527,563 km | 15.09 | 465 s |
+   | 16K | 975 m | 625 km² | 37,649 | 33,650 | 988,210 km | 28.13 | 2,515 s |
+
+   16K peaked at **8.5 GB RSS** (13.2 GB peak footprint) in 41.9 minutes
+   and wrote a 395 MB artifact — under the 10–12 GB this plan expected.
+   The predicted 625 km² minimum basin is exactly what a non-rescaled
+   threshold gives.
+
+   THE ROW THAT MATTERS is not in that table. Valley cross-sections at
+   trunk rivers, stepped at a fixed 250 m over a fixed 6 km (in METRES —
+   the first cut stepped in cells and therefore searched twice as far at
+   4K, which made valleys look like they got NARROWER with resolution):
+
+   | tier | median valley |
+   |---|---|
+   | 4K | 117 m deep / 11.5 km wide |
+   | 8K | 199 m deep / 12.0 km wide |
+   | 16K | 306 m deep / 11.5 km wide |
+
+   **Resolution reaches the geometry, and has not started to saturate.**
+   8K → 16K adds as much depth (+107 m) as 4K → 8K did (+82 m), at
+   constant width — the terrain is genuinely being carved deeper, not
+   averaged differently. That is the finding this step existed for, and
+   it is the argument for finer bakes being worth their cost at all.
+
+   Two things fall out on the side. The open "rivers do not quite reach
+   the water" question shrinks with every tier: 1.1 % → 0.6 % → 0.4 % of
+   polylines end neither at a confluence nor within two cells of water.
+   And in the PNG crops the small tributaries at 16K run conspicuously
+   axis-parallel — that is D8, known and unchanged, only more visible
+   because there are three times as many small channels to see it in.
+
+   Not comparable with the threshold table in `surface/amplify.ts`
+   (2026-08-08): different world, and the script that produced those
+   numbers no longer exists. Every row here was recomputed with one
+   definition rather than appended to numbers that cannot be reproduced.
+
+   NOT DONE, deliberately (decided 2026-08-15): the generator's 16K
+   button stays disabled and `AMPLIFY_FETCH_STAGES` stays `[2, 4]`.
+   Enabling the button would commission a 42-minute server job whose
+   result nothing in the app reads, and the display ceiling is the same
+   537 MB argument as before — it wants the tiled ground of
+   [decisions/near-ground-clipmap.md](../decisions/near-ground-clipmap.md)
+   first. Baking 16K stays a local, deliberate act.
+
 Deliberately NOT in this plan: fighting flatland boredom with terrain
 tricks. Metre-true flatland is boring from 2.5 km, and that is the
 realism the 1:1 decision bought; interest there is CONTENT's job

@@ -155,7 +155,8 @@ Both structures SAMPLE the height field; neither owns it. Rings need coarse
 values at the edge and full resolution only near the camera; map tiles need
 one resolution but only where the frame is. Both want the same thing
 underneath: a sampling PYRAMID, read at the level the geometry asking is
-built at. A 16K bake (33.5 M cells) then never has to be resident whole —
+built at. A 16K bake (134 M cells; 537 MB as Float32, and the artifact on
+disk is 395 MB — measured 2026-08-15) then never has to be resident whole —
 neither as raster nor as vertex buffers.
 
 With the present structure that is not available at all. A world-sized mesh
@@ -166,7 +167,11 @@ measure, are downstream of this decision.
 
 Which is also the honest ordering note: this decision is a PREREQUISITE for
 16K, not a sequel to it. Step 3 measures whether a 16K bake can be produced;
-this is what decides whether it could ever be shown.
+this is what decides whether it could ever be shown. Step 3 has since run
+(2026-08-15): a 16K bake IS producible — 41.9 minutes, 8.5 GB peak, and it
+carves valleys 50 % deeper than 8K — and it is still not showable, which is
+exactly the split this paragraph predicted. The tier stays off in the app
+until this decision is built.
 
 ## Consequences
 

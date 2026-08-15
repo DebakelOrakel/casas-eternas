@@ -16,6 +16,13 @@
 // Measured 2026-08-07 (2 erosion rounds, full chain incl. hydrology):
 //   factor 2 → 4096x2048, ~102 s,  ~0.2 GB peak
 //   factor 4 → 8192x4096, ~444 s,  ~3 GB peak
+//   factor 8 → 16384x8192, ~2515 s, 8.5 GB peak RSS   (2026-08-15, Node baker)
+//
+// The factor-8 row is a LOCAL measurement, not a shipped tier: nothing bakes
+// or fetches it from the app. It is here because this is where the next
+// person will look for what a tier costs — the full comparison (drainage
+// density, valley depth per tier) is in docs/design/hex-world-view.md under
+// the near-field plan's step 3.
 //
 // The 8k tier is the decided target (docs/decisions/worldmap-amplification.md)
 // but is NOT shipped yet: tried in Safari the same day, it exhausted the tab's
