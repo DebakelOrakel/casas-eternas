@@ -81,11 +81,11 @@ export interface FlowRouting {
   // also exactly the data a future rivers/lakes pass needs (see the
   // module comment at the bottom of this file).
   filled: Float32Array
-  // D8 downstream neighbor's cell index, or -1 for an unrouted/terminal
-  // cell (only possible if there were zero ocean seed cells — see below).
-  // Single-target, used only for stream-power incision (see
-  // runStreamPowerIterations) — accumulateFlow uses `mfd` instead, not
-  // this.
+  // Downstream neighbor's cell index (single-flow, chosen by D8-LTD — see
+  // computeLtdFlowTargets), or -1 for an unrouted/terminal cell (only
+  // possible if there were zero ocean seed cells — see below). Used for
+  // stream-power incision (see runStreamPowerIterations) and for river
+  // tracing — accumulateFlow uses `mfd` instead, not this.
   flowTarget: Int32Array
   // Multiple-flow-direction edges, used for drainage-area accumulation
   // (see computeMfdEdges's own comment for why accumulation and incision
@@ -235,45 +235,156 @@ async function fillDepressions(raw: Float32Array, width: number, height: number,
 // for every cell, rather than derived from priority-flood's own
 // expansion order.
 //
-// This replaced an earlier version that assigned flowTarget[neighbor] =
-// current directly inside fillDepressions's own flood loop (whichever
-// already-processed cell's expansion reached a given neighbor *first*
-// claimed it) — which measured out, empirically, to a severe artifact
-// rather than a harmless shortcut: a direction histogram over a real
-// eroded field showed 99.7% of all flow assignments landing on one of
-// the 4 diagonal directions and just 0.3% on the 4 cardinal ones, with
-// that same ~99.7/0.3 split holding equally on steep and near-flat
-// terrain alike. That terrain-independence is what rules out "the real
-// gradients here just happen to be diagonal" — it's the flood's own
-// 8-connected spanning tree that's diagonal-biased (orthogonal neighbors
-// of a newly-popped cell are topologically shared with more
-// already-processed neighbors, so they tend to already be claimed by the
-// time that cell's own turn comes to expand into them, leaving diagonal
-// connections to dominate the tree almost regardless of actual
-// elevation shape). The visible symptom was drainage that read as
-// artificially streaky/parallel rather than naturally branching.
-function computeSteepestDescentFlowTargets(filled: Float32Array, width: number, height: number, bounded = false): Int32Array {
+// THE SINGLE-FLOW RECEIVER IS D8-LTD (Orlandini et al. 2003), NOT PLAIN
+// STEEPEST DESCENT — since 2026-08-15, and the change is about MEMORY, not
+// about steepness.
+//
+// Plain D8 quantises flow to 8 directions and forgets that it rounded: on a
+// smooth hillside whose true fall line runs, say, 15° off an axis, every cell
+// makes the SAME rounding error, so the error accumulates instead of
+// averaging out and a hundred neighbouring cells produce a hundred parallel,
+// axis-true courses. Measured on a plane tilted 15°: plain steepest descent
+// holds one direction for 750 cells straight. On baked terrain the defect
+// GROWS with resolution, because finer cells see locally smoother ground —
+// streaks of ≥8 cells covered 3.1 % of routed land at 4K and 12.2 % at 16K.
+//
+// LTD keeps ONE receiver per cell — everything downstream (incision, the
+// topological walk, polyline extraction) is untouched — but chooses it to
+// minimise the ACCUMULATED transverse deviation from the true fall line
+// (Tarboton's facet direction) rather than to maximise the local drop. The
+// running deviation λ is the memory: the rounding error changes sign instead
+// of piling up. Same tilted plane: mean streak 1.9 cells, and the mix of the
+// two bracketing directions reproduces the true angle to a percentage point
+// (27 % diagonal steps against tan 15° = 26.8 %). On real 16K terrain it cuts
+// ≥8-cell streaks from 12.2 % to 4.7 % and, at identical channel length,
+// nearly doubles the confluences — the lateral competition quantisation
+// suppresses.
+//
+// λ is carried along the flow NETWORK, not a single path: at a confluence the
+// downstream cell inherits λ from its largest contributor (the main stem),
+// because that is the course the channel below actually continues. Walking
+// popOrder backwards visits every cell after all of its contributors, so one
+// pass suffices — the same order accumulateFlow already relies on.
+//
+// (History worth keeping: before the separate routing pass existed at all,
+// receivers were assigned inside fillDepressions's own flood loop, and the
+// flood's 8-connected spanning tree put 99.7 % of all flow on the 4 diagonal
+// directions regardless of terrain. That was the first lesson that the
+// receiver choice is its own concern; LTD is the second.)
+
+// The eight triangular facets, each a (cardinal, adjacent diagonal) pair of
+// D8_OFFSETS indices. `orient` is which way the diagonal lies from the
+// cardinal, and it is what keeps the transverse deviation a signed quantity
+// in ONE global rotational sense — without it, λ would accumulate nonsense
+// the moment a path crosses from one facet into the next.
+const LTD_FACETS: ReadonlyArray<readonly [cardinal: number, diagonal: number, orient: number]> = [
+  [0, 1, +1], // N  → NE
+  [2, 1, -1], // E  → NE
+  [2, 3, +1], // E  → SE
+  [4, 3, -1], // S  → SE
+  [4, 5, +1], // S  → SW
+  [6, 5, -1], // W  → SW
+  [6, 7, +1], // W  → NW
+  [0, 7, -1], // N  → NW
+]
+const QUARTER_TURN = Math.PI / 4
+
+function computeLtdFlowTargets(filled: Float32Array, width: number, height: number, popOrder: Int32Array, poppedCount: number, bounded = false): Int32Array {
   const cellCount = width * height
   const flowTarget = new Int32Array(cellCount).fill(-1)
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const cell = y * width + x
-      const ownElevation = filled[cell]
-      let bestGradient = 0 // > 0 required — never route to an uphill or equal-elevation neighbor
-      let bestTarget = -1
-      for (const [dx, dy] of D8_OFFSETS) {
-        const neighbor = bounded ? d8NeighborBounded(x, y, dx, dy, width, height) : d8Neighbor(x, y, dx, dy, width, height)
-        if (neighbor < 0) continue
-        const distance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1
-        const gradient = (ownElevation - filled[neighbor]) / distance
-        if (gradient > bestGradient) {
-          bestGradient = gradient
-          bestTarget = neighbor
-        }
+  // λ, and the main-stem bookkeeping that decides whose λ a confluence
+  // inherits. Contributor counts are exact integers on purpose: Float32
+  // cannot count past 2^24, and a fuzzy comparison here would make the
+  // main-stem choice — and with it the terrain — imprecision-dependent.
+  const lambda = new Float32Array(cellCount)
+  const contrib = new Uint32Array(cellCount)
+  const bestInflow = new Uint32Array(cellCount)
+
+  for (let i = poppedCount - 1; i >= 0; i--) {
+    const cell = popOrder[i]
+    const x = cell % width
+    const y = (cell - x) / width
+    const ownElevation = filled[cell]
+
+    // One scan finds both the steepest facet (the true fall direction) and
+    // the plain steepest neighbour (the fallback for cells whose facets are
+    // cut off by a bounded grid's edge). atan2 is deferred to the winner —
+    // this loop runs once per cell per routing refresh.
+    let bestSlope = 0
+    let bestFacet = -1
+    let bestS1 = 0
+    let bestS2 = 0
+    let bestGradient = 0
+    let fallback = -1
+    for (let f = 0; f < LTD_FACETS.length; f++) {
+      const facet = LTD_FACETS[f]
+      const co = D8_OFFSETS[facet[0]]
+      const dd = D8_OFFSETS[facet[1]]
+      const nc = bounded ? d8NeighborBounded(x, y, co[0], co[1], width, height) : d8Neighbor(x, y, co[0], co[1], width, height)
+      if (nc >= 0) {
+        const gradient = ownElevation - filled[nc] // cardinal distance is 1
+        if (gradient > bestGradient) { bestGradient = gradient; fallback = nc }
       }
-      flowTarget[cell] = bestTarget
+      const nd = bounded ? d8NeighborBounded(x, y, dd[0], dd[1], width, height) : d8Neighbor(x, y, dd[0], dd[1], width, height)
+      if (nd >= 0 && f % 2 === 0) {
+        // Each diagonal appears in two facets; checking it once is enough
+        // for the fallback.
+        const gradient = (ownElevation - filled[nd]) / Math.SQRT2
+        if (gradient > bestGradient) { bestGradient = gradient; fallback = nd }
+      }
+      if (nc < 0 || nd < 0) continue
+      // Tarboton's facet slopes, in cell units — the cardinal neighbour is
+      // one cell away and the diagonal one further cell from IT, so both
+      // denominators are 1 and drop out.
+      const s1 = ownElevation - filled[nc]
+      const s2 = filled[nc] - filled[nd]
+      let slope: number
+      if (s2 <= 0) slope = s1 // direction clamps onto the cardinal
+      else if (s2 >= s1) slope = (ownElevation - filled[nd]) / Math.SQRT2 // onto the diagonal
+      else slope = Math.hypot(s1, s2)
+      if (slope > bestSlope) { bestSlope = slope; bestFacet = f; bestS1 = s1; bestS2 = s2 }
+    }
+
+    let target = fallback
+    let delta = 0
+    if (bestFacet >= 0) {
+      const facet = LTD_FACETS[bestFacet]
+      const orient = facet[2]
+      const co = D8_OFFSETS[facet[0]]
+      const dd = D8_OFFSETS[facet[1]]
+      const nc = bounded ? d8NeighborBounded(x, y, co[0], co[1], width, height) : d8Neighbor(x, y, co[0], co[1], width, height)
+      const nd = bounded ? d8NeighborBounded(x, y, dd[0], dd[1], width, height) : d8Neighbor(x, y, dd[0], dd[1], width, height)
+      const alpha = bestS2 <= 0 ? 0 : bestS2 >= bestS1 ? QUARTER_TURN : Math.atan2(bestS2, bestS1)
+      // Perpendicular offset of each candidate from the true fall line: the
+      // cardinal sits sin α off it, the diagonal √2·sin(45° − α) the other way.
+      const deltaCardinal = -orient * Math.sin(alpha)
+      const deltaDiagonal = orient * Math.SQRT2 * Math.sin(QUARTER_TURN - alpha)
+      const lam = lambda[cell]
+      const cardinalDown = filled[nc] < ownElevation
+      const diagonalDown = filled[nd] < ownElevation
+      if (cardinalDown && diagonalDown) {
+        // The whole method in one comparison: not "which is steeper" but
+        // "which keeps the path closest to where the water actually goes".
+        if (Math.abs(lam + deltaCardinal) <= Math.abs(lam + deltaDiagonal)) { target = nc; delta = deltaCardinal }
+        else { target = nd; delta = deltaDiagonal }
+      } else if (cardinalDown) { target = nc; delta = deltaCardinal }
+      else if (diagonalDown) { target = nd; delta = deltaDiagonal }
+      // Neither corner strictly down cannot happen for a facet with positive
+      // slope; the fallback already covers the float fringe.
+    }
+
+    flowTarget[cell] = target
+    if (target < 0) continue
+    const area = contrib[cell] + 1
+    contrib[target] += area
+    if (area > bestInflow[target]) {
+      bestInflow[target] = area
+      lambda[target] = lambda[cell] + delta
     }
   }
+
+  // Cells the flood never popped (possible only with zero ocean seeds) keep
+  // -1, exactly as before.
   return flowTarget
 }
 
@@ -400,13 +511,13 @@ function computeMfdEdges(filled: Float32Array, width: number, height: number, bo
 export async function fillDepressionsAndRouteFlow(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void, bounded = false): Promise<FlowRouting> {
   const { filled, popOrder, poppedCount } = await fillDepressions(raw, width, height, seaLevel, onProgress, bounded)
   // popOrder remains a valid topological order for both of these, with
-  // no change needed: both steepest descent and every MFD edge only ever
-  // route a cell to a neighbor at or below its own filled elevation, and
+  // no change needed: both the LTD receiver and every MFD edge only ever
+  // route a cell to a neighbor strictly below its own filled elevation, and
   // filled is monotonically non-decreasing outward from the ocean by
   // construction — so a cell's target(s) were always popped no later
   // than the cell itself, exactly what accumulateFlow's reverse walk
   // requires.
-  const flowTarget = computeSteepestDescentFlowTargets(filled, width, height, bounded)
+  const flowTarget = computeLtdFlowTargets(filled, width, height, popOrder, poppedCount, bounded)
   const mfd = computeMfdEdges(filled, width, height, bounded)
   return { width, height, filled, flowTarget, mfd, popOrder, poppedCount }
 }

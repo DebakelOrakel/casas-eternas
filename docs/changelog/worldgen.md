@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-08-15
+- **changed** Hydrology: water follows its true downhill course instead of snapping to the grid's eight directions, so streams stop running in long grid-parallel streaks and meet each other more often. `worldgen.panel.hydrology`
+
 ## 2026-08-14
 - **fixed** Hydrology: rivers now reach the sea they drain into instead of stopping one raster cell short. `worldgen.panel.hydrology`
 - **changed** Hydrology: an amplified bake re-floods its lakes too, so lake shores are as fine as the terrain around them. `worldgen.panel.hydrology`

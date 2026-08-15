@@ -153,9 +153,12 @@ feeds it today.
 ## Traps that have bitten before
 
 **Routing differs by step, and conflating them is a recurring mistake.** Erosion
-is hybrid: drainage-area *accumulation* is MFD, stream-power *incision* is D8.
-Rivers in `hydrology.ts` are pure D8 for both — MFD smeared the drawn channels
-into valley-floor bands.
+is hybrid: drainage-area *accumulation* is MFD, stream-power *incision* is
+single-flow. Rivers in `hydrology.ts` are pure single-flow for both — MFD
+smeared the drawn channels into valley-floor bands. The single-flow receiver
+itself is D8-LTD, not plain steepest descent, since 2026-08-15
+(`flowRouting.computeLtdFlowTargets` — plain D8's rounding error accumulates
+into axis-parallel streaks, and worse the finer the grid).
 
 **The overlay canvas is displayed vertically mirrored.** Draw "up" as `+y`; text
 needs a further 180°. It is a vertical mirror, not a 180° rotation — arrow

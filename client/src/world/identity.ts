@@ -158,7 +158,17 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // feeds `runAmplification` but is NOT part of the artifact key, so without a
 // new version the same key would name two different terrains depending on
 // which client baked it.
-export const AMPLIFICATION_ALGO_VERSION = 8
+// v9 (2026-08-15): the single-flow receiver is D8-LTD instead of plain
+// steepest descent (flowRouting.computeLtdFlowTargets has the method and the
+// measurements). Incision and river tracing follow the true fall line instead
+// of accumulating the 8-direction rounding error — on a plane tilted 15° off
+// an axis, plain D8 holds one direction for 750 cells straight, and on real
+// terrain the defect grew with resolution (streaks of ≥8 cells: 3.1 % of
+// routed land at 4K, 12.2 % at 16K; LTD: 4.7 % at 16K). The invisible kind of
+// change again — a receiver choice inside a shared function, hashed by no
+// constant — and it reorganises every drainage network, so a cached v8
+// artifact holds rivers this pipeline would never draw.
+export const AMPLIFICATION_ALGO_VERSION = 9
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

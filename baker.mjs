@@ -10447,7 +10447,7 @@ function deriveWorldId(inputs) {
   const [sa, sb] = hashBytes(scalars, a, b);
   return `${hex8(sa)}${hex8(sb)}`;
 }
-var AMPLIFICATION_ALGO_VERSION = 8;
+var AMPLIFICATION_ALGO_VERSION = 9;
 function derivePipelineVersion(constants) {
   const text = Object.keys(constants).sort().map((name) => `${name}=${constants[name]}`).join("|");
   const [a, b] = hashBytes(new TextEncoder().encode(text), 2166136261, 2654435769);
@@ -11406,26 +11406,114 @@ async function fillDepressions(raw, width, height, seaLevel, onProgress, bounded
   onProgress?.(1);
   return { filled, popOrder, poppedCount };
 }
-function computeSteepestDescentFlowTargets(filled, width, height, bounded = false) {
+var LTD_FACETS = [
+  [0, 1, 1],
+  // N  → NE
+  [2, 1, -1],
+  // E  → NE
+  [2, 3, 1],
+  // E  → SE
+  [4, 3, -1],
+  // S  → SE
+  [4, 5, 1],
+  // S  → SW
+  [6, 5, -1],
+  // W  → SW
+  [6, 7, 1],
+  // W  → NW
+  [0, 7, -1]
+  // N  → NW
+];
+var QUARTER_TURN = Math.PI / 4;
+function computeLtdFlowTargets(filled, width, height, popOrder, poppedCount, bounded = false) {
   const cellCount = width * height;
   const flowTarget = new Int32Array(cellCount).fill(-1);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const cell = y * width + x;
-      const ownElevation = filled[cell];
-      let bestGradient = 0;
-      let bestTarget = -1;
-      for (const [dx, dy] of D8_OFFSETS) {
-        const neighbor = bounded ? d8NeighborBounded(x, y, dx, dy, width, height) : d8Neighbor(x, y, dx, dy, width, height);
-        if (neighbor < 0) continue;
-        const distance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1;
-        const gradient = (ownElevation - filled[neighbor]) / distance;
+  const lambda = new Float32Array(cellCount);
+  const contrib = new Uint32Array(cellCount);
+  const bestInflow = new Uint32Array(cellCount);
+  for (let i = poppedCount - 1; i >= 0; i--) {
+    const cell = popOrder[i];
+    const x = cell % width;
+    const y = (cell - x) / width;
+    const ownElevation = filled[cell];
+    let bestSlope = 0;
+    let bestFacet = -1;
+    let bestS1 = 0;
+    let bestS2 = 0;
+    let bestGradient = 0;
+    let fallback = -1;
+    for (let f = 0; f < LTD_FACETS.length; f++) {
+      const facet = LTD_FACETS[f];
+      const co = D8_OFFSETS[facet[0]];
+      const dd = D8_OFFSETS[facet[1]];
+      const nc = bounded ? d8NeighborBounded(x, y, co[0], co[1], width, height) : d8Neighbor(x, y, co[0], co[1], width, height);
+      if (nc >= 0) {
+        const gradient = ownElevation - filled[nc];
         if (gradient > bestGradient) {
           bestGradient = gradient;
-          bestTarget = neighbor;
+          fallback = nc;
         }
       }
-      flowTarget[cell] = bestTarget;
+      const nd = bounded ? d8NeighborBounded(x, y, dd[0], dd[1], width, height) : d8Neighbor(x, y, dd[0], dd[1], width, height);
+      if (nd >= 0 && f % 2 === 0) {
+        const gradient = (ownElevation - filled[nd]) / Math.SQRT2;
+        if (gradient > bestGradient) {
+          bestGradient = gradient;
+          fallback = nd;
+        }
+      }
+      if (nc < 0 || nd < 0) continue;
+      const s1 = ownElevation - filled[nc];
+      const s2 = filled[nc] - filled[nd];
+      let slope;
+      if (s2 <= 0) slope = s1;
+      else if (s2 >= s1) slope = (ownElevation - filled[nd]) / Math.SQRT2;
+      else slope = Math.hypot(s1, s2);
+      if (slope > bestSlope) {
+        bestSlope = slope;
+        bestFacet = f;
+        bestS1 = s1;
+        bestS2 = s2;
+      }
+    }
+    let target = fallback;
+    let delta = 0;
+    if (bestFacet >= 0) {
+      const facet = LTD_FACETS[bestFacet];
+      const orient = facet[2];
+      const co = D8_OFFSETS[facet[0]];
+      const dd = D8_OFFSETS[facet[1]];
+      const nc = bounded ? d8NeighborBounded(x, y, co[0], co[1], width, height) : d8Neighbor(x, y, co[0], co[1], width, height);
+      const nd = bounded ? d8NeighborBounded(x, y, dd[0], dd[1], width, height) : d8Neighbor(x, y, dd[0], dd[1], width, height);
+      const alpha = bestS2 <= 0 ? 0 : bestS2 >= bestS1 ? QUARTER_TURN : Math.atan2(bestS2, bestS1);
+      const deltaCardinal = -orient * Math.sin(alpha);
+      const deltaDiagonal = orient * Math.SQRT2 * Math.sin(QUARTER_TURN - alpha);
+      const lam = lambda[cell];
+      const cardinalDown = filled[nc] < ownElevation;
+      const diagonalDown = filled[nd] < ownElevation;
+      if (cardinalDown && diagonalDown) {
+        if (Math.abs(lam + deltaCardinal) <= Math.abs(lam + deltaDiagonal)) {
+          target = nc;
+          delta = deltaCardinal;
+        } else {
+          target = nd;
+          delta = deltaDiagonal;
+        }
+      } else if (cardinalDown) {
+        target = nc;
+        delta = deltaCardinal;
+      } else if (diagonalDown) {
+        target = nd;
+        delta = deltaDiagonal;
+      }
+    }
+    flowTarget[cell] = target;
+    if (target < 0) continue;
+    const area = contrib[cell] + 1;
+    contrib[target] += area;
+    if (area > bestInflow[target]) {
+      bestInflow[target] = area;
+      lambda[target] = lambda[cell] + delta;
     }
   }
   return flowTarget;
@@ -11486,7 +11574,7 @@ function computeMfdEdges(filled, width, height, bounded = false) {
 }
 async function fillDepressionsAndRouteFlow(raw, width, height, seaLevel, onProgress, bounded = false) {
   const { filled, popOrder, poppedCount } = await fillDepressions(raw, width, height, seaLevel, onProgress, bounded);
-  const flowTarget = computeSteepestDescentFlowTargets(filled, width, height, bounded);
+  const flowTarget = computeLtdFlowTargets(filled, width, height, popOrder, poppedCount, bounded);
   const mfd = computeMfdEdges(filled, width, height, bounded);
   return { width, height, filled, flowTarget, mfd, popOrder, poppedCount };
 }
