@@ -1,9 +1,9 @@
 ---
-summary: How the ground's geometry is structured. Today a camera-following high-resolution patch lies over a world-sized low-resolution mesh, and the two meet on a seam that cannot be made to disappear. Decided — build only what is looked at: concentric rings around the camera from the descent down (the hex lattice as ring 0), tiles built on demand in the map register, and one sampling pyramid under both. The world-sized mesh goes.
+summary: How the ground's geometry is structured. Today a camera-following high-resolution patch lies over a world-sized low-resolution mesh, and the two meet on a seam that cannot be made to disappear. Decided — build only what is looked at: concentric rings around the camera from the descent down, tiles built on demand in the map register, and one sampling pyramid under both. The world-sized mesh goes.
 date: 2026-08-15
 area: ui
 stage: decided
-status: decided 2026-08-15; nothing built. The hex lattice that becomes ring 0 exists (map/hexNearMesh.ts, 2026-08-15). Supersedes the near-field detail patch and the world-sized relief levels in both registers. A prerequisite for showing a 16K bake, not a sequel to baking one.
+status: decided 2026-08-15; nothing built. A hex-lattice ring 0 was built and removed the same day — see "What ring 0 is". Supersedes the near-field detail patch and the world-sized relief levels in both registers. A prerequisite for showing a 16K bake, not a sequel to baking one.
 ---
 
 # One Ground Per Register
@@ -127,11 +127,21 @@ a 57.6 km inner ring out to world scale for ~150 k vertices — an order of
 magnitude LESS than today's fine level before its nine copies, with more
 detail where the camera is.
 
-**Ring 0 is the hex lattice** (`map/hexNearMesh.ts`, built 2026-08-15):
-vertices on tile centres and corners, six triangles per tile, 192 tiles
-across. That is what lets a developed tile flatten its own seven vertices and
-actually CUT the ground. The outer rings stay square grids — they carry
-silhouette, not tiles.
+**What ring 0 is, is open again.** It was going to be a hex lattice —
+vertices on tile centres and corners, six triangles per tile — because that
+is what lets a developed tile flatten its own seven vertices and actually CUT
+the ground. That was built and measured on 2026-08-15 (`map/hexNearMesh.ts`,
+192 tiles across) and REMOVED the same day: the cutting was correct and
+invisible, since developable ground spans about 0.2 m across a 300 m tile,
+and without the cutting the lattice cost 130k vertices against the square
+patch's 37k for a 17 % gain in vertex spacing. See
+[design/hex-world-view.md](../design/hex-world-view.md) for the full account.
+
+So ring 0 is a square grid like the rest until something needs it not to be.
+The ring stack does not depend on which it is — the rings carry silhouette
+and distance falloff, and tile-shaped geometry is a demand that would come
+from whatever finally answers "what does a developed tile look like", not
+from this decision.
 
 **The handover is the register boundary that already exists**: the
 orthographic→perspective flip at zoom 1, where the projection changes, the
@@ -162,15 +172,12 @@ this is what decides whether it could ever be shown.
 
 - `ToroidalMapView`'s near-detail patch goes, and with it the rim blend,
   `PATCH_COVERAGE`, and the altitude-scaled spacing.
-- `hexNearMesh` becomes ring 0 rather than a replacement for the patch, and
-  its swap threshold — derived today from the patch's coverage — becomes the
-  ring stack's inner radius instead.
 - The rendering-group split stays useful but stops being load-bearing: with
   one ground there is nothing to draw over. Its cost (the near group has no
   occlusion against the terrain group, so distant rivers show through ridges)
   should be re-examined once it is no longer paying for anything.
-- `pickGround`, the river ribbons' drape and the plate layer all follow the
-  rings instead of the patch.
+- `pickGround` and the river ribbons' drape follow the rings instead of the
+  patch, as does anything later laid on the ground.
 - The map register keeps its LOOK entirely — paper texture, hillshade, wash,
   exaggeration — and changes its geometry: the coarse and fine relief levels
   become tiles built on demand for the frame. The flat plane at far zoom can
@@ -186,7 +193,7 @@ this is what decides whether it could ever be shown.
 - Whether the rings recentre continuously or snap to their own grid. Snapping
   keeps the sampled heights stable frame to frame (no crawling), which is the
   classic reason clipmaps snap.
-- What the ribbons and the plate layer ride on across a ring boundary.
+- What the ribbons ride on across a ring boundary.
 - The map register's tile size and how tiles are evicted — the same
   least-recently-used question the artifact store already answers for
   artifacts, one level down.

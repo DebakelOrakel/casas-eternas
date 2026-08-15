@@ -1,10 +1,7 @@
-import { Color3, DirectionalLight, HemisphericLight, Mesh, MeshBuilder, RawTexture, Scene, StandardMaterial, Vector3, VertexBuffer, VertexData } from '@babylonjs/core'
+import { Color3, DirectionalLight, HemisphericLight, Mesh, MeshBuilder, RawTexture, Scene, StandardMaterial, Vector3, VertexBuffer } from '@babylonjs/core'
 import type { AbstractMesh, InstancedMesh } from '@babylonjs/core'
 import type { ElevationSurface } from './elevationSurface'
 import { HexGridMaterialPlugin } from './hexGridMaterialPlugin'
-import { HEX_NEAR_WINDOW_TILES, buildHexNearMesh, hexNearMeshMaxAltitude } from './hexNearMesh'
-import { HEX_COL_SPACING } from './mapSceneSettings'
-import type { HexId } from './hexGrid'
 
 // Which representation the map should wear this frame — decided by the
 // caller (it owns the camera/zoom semantics):
@@ -57,11 +54,6 @@ export interface ToroidalMapViewOptions {
   // instead of cliffing over it. Patch extent scales with altitude, so its
   // resolution sharpens exactly as the camera descends.
   nearDetail?: { detailSurface: ElevationSurface; baseSurface: ElevationSurface; getActive: () => boolean; getAltitude: () => number }
-  // Developed tiles, for the hex lattice to LEVEL rather than have drawn over
-  // it (see hexNearMesh's HexNearMeshPlates). Polled: `getRevision` is the
-  // cue to rebuild the window, `getCount` sizes its buffers. Without this the
-  // lattice is wholly wild and a caller must draw its plates itself.
-  nearPlates?: { heightAt: (tile: HexId) => number | null; getRevision: () => number; getCount: () => number }
   // Called each frame with the recenter block's center, so a screen can tile
   // extra meshes in lockstep (e.g. the river ribbon overlay).
   onRecenter?: (centerX: number, centerZ: number) => void
@@ -101,12 +93,6 @@ export interface ToroidalMapView {
   // overlay; see HexGridMaterialPlugin.setClassOverlay for the encoding).
   // null clears it. No-op without a hexGrid.
   setHexClassOverlay(texture: RawTexture | null, window?: { col0: number; row0: number; cols: number; rows: number }): void
-  // Put a caller's own mesh under the relief lights and the same vertical
-  // exaggeration the terrain uses — for a layer that IS ground rather than an
-  // overlay on it (the developed plates). Without both it either renders
-  // unlit beside lit terrain or floats as the exaggeration changes.
-  attachLitMesh(mesh: Mesh): void
-  detachLitMesh(mesh: Mesh): void
   // Pick the terrain THIS view renders, restricted to its own surfaces
   // (flat plane, relief levels, near-detail patch) — a plain scene.pick can
   // land on any stray pickable mesh, and any surface that is not the
@@ -115,16 +101,11 @@ export interface ToroidalMapView {
   // hand out corners); at grazing angles that half pixel is tile-sized on
   // the ground.
   pickGround(screenX: number, screenY: number): { x: number; z: number } | null
-  // Hide the NEAR GROUND alone (the detail patch and the hex lattice),
-  // leaving the relief meshes drawn — a debug instrument, see the panel's
+  // Hide the NEAR GROUND alone (the detail patch), leaving the relief meshes
+  // drawn — a debug instrument, see the panel's
   // own note: two grounds over one another can only be told apart by
   // removing one of them.
   setNearGroundVisible(visible: boolean): void
-  // Whether the hex lattice is the near ground right now (rather than the
-  // square patch, or nothing at map zoom). The lattice LEVELS developed tiles
-  // itself, so a caller that also draws plates has to stand its own layer
-  // down while this is true — two grounds again, otherwise.
-  hexNearGroundActive(): boolean
   // Hide/show the whole map view (all layers).
   setEnabled(enabled: boolean): void
   dispose(): void
@@ -134,8 +115,8 @@ export interface ToroidalMapView {
 //
 // The relief levels are fixed grids over the whole world — 15.6 km and 7.8 km
 // between vertices — and they span that with STRAIGHT triangles, while the
-// near ground (the patch, and below the swap threshold the hex lattice)
-// samples the same surface every ~200 m. Wherever a coarse chord passes above
+// near-field detail patch samples the same surface every ~200 m. Wherever a
+// coarse chord passes above
 // the surface it approximates, the near ground is INSIDE the relief mesh and
 // its triangles show through as a second, stippled sheet over the terrain.
 // Measured on a v8 4K bake (2026-08-15): at 14–17 % of land points on the
@@ -207,7 +188,7 @@ interface ReliefLevel {
 // sun — which is what keeps slopes crisp when the texture itself has run out
 // of resolution.
 export function createToroidalMapView(options: ToroidalMapViewOptions): ToroidalMapView {
-  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, getSunWorldBlend, hexGrid, nearDetail, nearPlates, onRecenter } = options
+  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, getSunWorldBlend, hexGrid, nearDetail, onRecenter } = options
 
   // Starts as a flat white placeholder (the caller's clear color) until the
   // first composited frame is uploaded, so there's no flash.
@@ -366,9 +347,6 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   // near-field disk, so detail exists wherever the grid invites close
   // reading.
   const PATCH_COVERAGE = 16
-  // Caller-owned meshes that live under the relief lights and follow the
-  // vertical exaggeration (see attachLitMesh). Their lifetime is the caller's.
-  const attachedMeshes: Mesh[] = []
   let patchMesh: Mesh | null = null
   let patchPositions: Float32Array | null = null
   let patchUvs: Float32Array | null = null
@@ -393,8 +371,6 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       for (const inst of level.instances) inst.scaling.y = heightScale
     }
     if (patchMesh) patchMesh.scaling.y = heightScale
-    if (hexMesh) hexMesh.scaling.y = heightScale
-    for (const mesh of attachedMeshes) mesh.scaling.y = heightScale
   }
 
   // The ground meshes' own uv↔world mapping (derived from vertex data, same
@@ -493,104 +469,16 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     patchLastSpacing = spacing
   }
 
-  // --- the hex-lattice near ground (see map/hexNearMesh.ts) ---
-  //
-  // Below `hexNearMeshMaxAltitude` the ground the camera looks at IS the tile
-  // grid, and the square patch stands down. Replace, not nest: two grounds
-  // drawn over one another is exactly the defect the design doc records under
-  // "two grounds in the near view", and this is the step that removes it for
-  // the near field rather than adding another instance of it.
-  //
-  // The mesh carries ABSOLUTE positions in the wrap copy nearest its anchor
-  // (that is what keeps it on the shader's lattice), so unlike the patch it
-  // is never repositioned per frame — it moves only when it is rebuilt.
-  let hexMesh: Mesh | null = null
-  let hexAnchorX = 0
-  let hexAnchorZ = 0
-  let hexBuilt = false
-  let hexPlateRevision = -1
-  let hexActive = false
   let nearGroundVisible = true
-
-  function rebuildHexNearMesh(anchorX: number, anchorZ: number, altitude: number): void {
-    if (!coarseLevel || !patchDetailSurface || !patchBaseSurface) return
-    const mapping = deriveUvMapping(coarseLevel)
-    const uvAt = (x: number, z: number): { u: number; v: number } => ({
-      u: mapping.u0 + (x - mapping.x0) / mapping.dxdu,
-      v: mapping.v0 + (z - mapping.z0) / mapping.dzdv,
-    })
-    const detailSurface = patchDetailSurface
-    const baseSurface = patchBaseSurface
-    const geometry = buildHexNearMesh({
-      anchorX,
-      anchorZ,
-      heightAt: (x, z) => {
-        const { u, v } = uvAt(x, z)
-        return detailSurface.heightAtUV(u, v)
-      },
-      baseAt: (x, z) => {
-        const { u, v } = uvAt(x, z)
-        return baseSurface.heightAtUV(u, v)
-      },
-      uvAt,
-      lift: altitude * 0.0015,
-      plates: nearPlates ? { heightAt: nearPlates.heightAt, count: nearPlates.getCount() } : undefined,
-    })
-    hexPlateRevision = nearPlates?.getRevision() ?? -1
-    if (!hexMesh) {
-      hexMesh = new Mesh('mapHexNearGround', scene)
-      hexMesh.material = reliefMaterial
-      hexMesh.renderingGroupId = NEAR_RENDERING_GROUP
-      sun.includedOnlyMeshes.push(hexMesh)
-      fill.includedOnlyMeshes.push(hexMesh)
-    }
-    const data = new VertexData()
-    data.positions = geometry.positions
-    data.normals = geometry.normals
-    data.uvs = geometry.uvs
-    data.colors = geometry.colors
-    data.indices = geometry.indices
-    data.applyToMesh(hexMesh, true)
-    hexMesh.scaling.y = heightScale
-    hexAnchorX = anchorX
-    hexAnchorZ = anchorZ
-    hexBuilt = true
-  }
 
   function updateNearDetail(focusX: number, focusZ: number): void {
     if (!nearDetail) return
     const active = nearDetail.getActive() && coarseLevel !== null && nearGroundVisible
     if (!active) {
       patchMesh?.setEnabled(false)
-      hexMesh?.setEnabled(false)
-      hexActive = false
       return
     }
-    // The swap. Above the threshold the window would cover less ground than
-    // the patch it replaces, which is a loss however good the near ground is.
     const altitude = nearDetail.getAltitude()
-    if (altitude <= hexNearMeshMaxAltitude(PATCH_COVERAGE)) {
-      patchMesh?.setEnabled(false)
-      // A quarter of the window, the same drift rule the plate layer uses:
-      // far enough that rebuilds are rare, near enough that the rim never
-      // reaches the middle of the view.
-      const drift = (HEX_NEAR_WINDOW_TILES * HEX_COL_SPACING) / 4
-      // A changed plate set rebuilds the WHOLE window — 130k vertices for one
-      // levelled tile. That is the honest cost of the lattice being the
-      // ground rather than a layer over it, and at debug scale (a click at a
-      // time) it is a single hitch; a settlement-sized set wants the dirty-
-      // tile treatment, which is the same escalation the window's own rebuild
-      // has waiting.
-      const platesChanged = nearPlates !== undefined && nearPlates.getRevision() !== hexPlateRevision
-      if (!hexBuilt || platesChanged || Math.abs(focusX - hexAnchorX) > drift || Math.abs(focusZ - hexAnchorZ) > drift) {
-        rebuildHexNearMesh(focusX, focusZ, altitude)
-      }
-      hexMesh?.setEnabled(true)
-      hexActive = true
-      return
-    }
-    hexMesh?.setEnabled(false)
-    hexActive = false
     if (!patchMesh) {
       patchMesh = MeshBuilder.CreateGround('mapNearDetail', { width: 1, height: 1, subdivisions: PATCH_SUBDIVISIONS, updatable: true }, scene)
       patchMesh.material = reliefMaterial
@@ -701,7 +589,6 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       patchDetailSurface = detail
       patchBaseSurface = base
       patchLastSpacing = 0 // force a rebuild on the next frame
-      hexBuilt = false
     },
     setHeightScale(scale: number): void {
       if (scale === heightScale) return
@@ -714,22 +601,6 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     setHexClassOverlay(texture: RawTexture | null, window?: { col0: number; row0: number; cols: number; rows: number }): void {
       hexGridPlugin?.setClassOverlay(texture, window)
     },
-    attachLitMesh(mesh: Mesh): void {
-      if (attachedMeshes.includes(mesh)) return
-      attachedMeshes.push(mesh)
-      sun.includedOnlyMeshes.push(mesh)
-      fill.includedOnlyMeshes.push(mesh)
-      mesh.scaling.y = heightScale
-      // A layer that IS ground belongs with the near ground, or the near
-      // group's depth clear paints over it.
-      mesh.renderingGroupId = NEAR_RENDERING_GROUP
-    },
-    detachLitMesh(mesh: Mesh): void {
-      const at = attachedMeshes.indexOf(mesh)
-      if (at >= 0) attachedMeshes.splice(at, 1)
-      sun.includedOnlyMeshes = sun.includedOnlyMeshes.filter((m) => m !== mesh)
-      fill.includedOnlyMeshes = fill.includedOnlyMeshes.filter((m) => m !== mesh)
-    },
     pickGround(screenX: number, screenY: number): { x: number; z: number } | null {
       const isGround = (mesh: AbstractMesh): boolean => {
         // A custom predicate REPLACES scene.pick's default enabled/visible
@@ -740,11 +611,6 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
         // Zero on flat ground, which is what made it look knowledge-related.
         if (!mesh.isEnabled() || !mesh.isVisible) return false
         if (mesh === tile || (patchMesh !== null && mesh === patchMesh)) return true
-        // The hex lattice IS the ground below the swap threshold, so it has to
-        // be pickable or every hover and every develop click in the near view
-        // lands on the relief mesh underneath — tens of metres away on relief,
-        // and a different tile at grazing angles.
-        if (hexMesh !== null && mesh === hexMesh) return true
         if (wrapInstances.includes(mesh as InstancedMesh)) return true
         const inLevel = (level: ReliefLevel | null): boolean =>
           level !== null && (mesh === level.base || level.instances.includes(mesh as InstancedMesh))
@@ -756,14 +622,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     },
     setNearGroundVisible(visible: boolean): void {
       nearGroundVisible = visible
-      if (!visible) {
-        patchMesh?.setEnabled(false)
-        hexMesh?.setEnabled(false)
-        hexActive = false
-      }
-    },
-    hexNearGroundActive(): boolean {
-      return hexActive
+      if (!visible) patchMesh?.setEnabled(false)
     },
     setEnabled(next: boolean): void {
       enabled = next
@@ -772,7 +631,6 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     dispose(): void {
       scene.onBeforeRenderObservable.remove(observer)
       patchMesh?.dispose()
-      hexMesh?.dispose()
       disposeLevel(coarseLevel)
       disposeLevel(fineLevel)
       for (const inst of wrapInstances) inst.dispose()

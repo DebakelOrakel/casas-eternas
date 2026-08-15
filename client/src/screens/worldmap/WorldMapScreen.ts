@@ -11,10 +11,6 @@ import { createHexClassifier, hexUvFromWorld } from '../../map/hexTiles'
 import type { HexClassifier, HexTileClass } from '../../map/hexTiles'
 import { buildRiverPorts, hexShoreCrossings } from '../../map/hexPorts'
 import type { HexRiverPortMap } from '../../map/hexPorts'
-import { createHexPlates } from '../../map/hexPlates'
-import type { HexPlates } from '../../map/hexPlates'
-import { createHexPlateLayer } from '../../map/hexPlateLayer'
-import type { HexPlateLayer } from '../../map/hexPlateLayer'
 import { HEX_COLUMNS, HEX_ROWS } from '../../map/mapSceneSettings'
 import { createElevationSurface } from '../../map/elevationSurface'
 import { createFineElevationSurface } from '../../map/fineElevationSurface'
@@ -378,15 +374,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         mapView?.setHexClassOverlay(null)
       }
     },
-    // Developing takes the pointer the same way the brush does — a click that
-    // levels a tile must not also pan the map.
-    onDevelopToggle: (active: boolean) => setCameraPanEnabled(!active),
     onNearGroundToggle: (visible: boolean) => mapView?.setNearGroundVisible(visible),
-    onDevelopClear: () => {
-      if (!hexPlates) return
-      for (const plate of hexPlates.all()) hexPlates.undevelop(plate.id)
-      syncPlateLayer()
-    },
   })
 
   // Paint knowledge where the pointer is. Babylon's pick gives the map plane's
@@ -542,36 +530,6 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     mapView.setHexClassOverlay(hexClassTexture, { col0: hexClassOrigin.col0, row0: hexClassOrigin.row0, cols: HEX_CLASS_WINDOW, rows: HEX_CLASS_WINDOW })
   }
 
-  // Phase 4: developed land. Debug-only for now — a click levels a tile — but
-  // the rules are the real ones (contiguity, water and grade refusals), and
-  // the state is game state: never saved, never hashed.
-  let hexPlates: HexPlates | null = null
-  let plateLayer: HexPlateLayer | null = null
-  // The same drawn-ground sampler the plates were built from, kept for the
-  // geometry diagnostic so plate height and ground height are read off ONE
-  // source rather than two that might disagree.
-  let plateGroundAt: ((x: number, z: number) => number) | null = null
-  let plateRevisionShown = -1
-  let lastPlateRefusal = ''
-
-  function syncPlateLayer(force = false): void {
-    if (!plateLayer || !hexPlates) return
-    const focus = getCameraFocus()
-    if (force || hexPlates.revision !== plateRevisionShown || plateLayer.needsRebuildFor(focus.x, focus.z)) {
-      plateRevisionShown = hexPlates.revision
-      // The focus is the anchor: plates are built in the wrap copy nearest it,
-      // because the grid reports tiles in a frame the terrain does not use.
-      plateLayer.rebuild(focus.x, focus.z)
-    }
-    // Below the swap the hex lattice IS the ground and levels developed tiles
-    // into its own geometry, so this layer stands down rather than laying a
-    // second, uncut plate over the cut one. Above the swap the square patch
-    // draws, which cannot cut, and the layer is still the only thing that
-    // shows a settlement at all — it retires for good when the patch does.
-    // Last, because rebuild() enables the mesh itself.
-    plateLayer.setEnabled(!(mapView?.hexNearGroundActive() ?? false))
-  }
-
   // Light the hovered 300 m tile through the grid shader. Interaction arms
   // below FULL grid visibility — a threshold on the continuous zoom axis,
   // not a mode (decisions/hex-tiling.md, fork 3). The picked point may lie
@@ -614,58 +572,25 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const shore = hexShoreCrossings(tile, hexShoreHeight, 0)
       if (shore.segments.length > 0) seam += ` · waterline ${shore.segments.length}`
     }
-    if (hexPlates) {
-      if (hexPlates.isDeveloped(tile)) seam += ' · DEVELOPED'
-      else {
-        const why = hexPlates.refusal(tile)
-        if (why) seam += ` · cannot develop: ${why}`
-      }
-      if (hexPlates.count > 0) seam += ` · plates ${hexPlates.count}`
-      if (lastPlateRefusal) seam += ` · last refusal: ${lastPlateRefusal}`
-    }
     debugPanel.setHexTile(
       `hex: ${tile.col},${tile.row} · ${Math.round(cls.medianHeightMeters)} m · slope ${(cls.slope * 100).toFixed(0)}% · ${cls.water}${shorePart} · ${biomeName} · grade ${cls.grade.toFixed(2)}${seam}`,
     )
 
-    // GEOMETRY DIAGNOSTIC. Three wrong guesses in a row (wrong world frame,
-    // wrong height surface, wrong tint) all shared one symptom — "nothing is
-    // there" — so stop guessing and put the numbers side by side: where the
-    // ray hit, which tile that is, where that tile's principal copy lives,
-    // where its plate is actually drawn, and how the two heights compare.
+    // FRAME DIAGNOSTIC. Kept from the plate work, because the lesson outlived
+    // it: three wrong guesses in a row all shared one symptom — "nothing is
+    // there" — and only putting the numbers side by side told them apart.
+    // hexGrid reports a tile in its PRINCIPAL copy while the meshes are
+    // centred on the origin, so anything that puts a tile into the scene has
+    // to be checked against both.
     const principal = hexCenter(tile)
-    const drawn = plateLayer?.drawnCenterOf(tile) ?? null
     const focus = getCameraFocus()
-    const parts = [
-      `pick ${point!.x.toFixed(3)},${point!.z.toFixed(3)}`,
-      `focus ${focus.x.toFixed(2)},${focus.z.toFixed(2)}`,
-      `principal ${principal.x.toFixed(3)},${principal.z.toFixed(3)}`,
-      drawn ? `drawn ${drawn.x.toFixed(3)},${drawn.z.toFixed(3)} Δ${(drawn.x - point!.x).toFixed(3)},${(drawn.z - point!.z).toFixed(3)}` : 'drawn —',
-    ]
-    const plate = hexPlates?.plateAt(tile)
-    if (plate) {
-      const ground = plateGroundAt?.(point!.x, point!.z) ?? NaN
-      parts.push(`plateY ${plate.height.toExponential(3)} groundY ${ground.toExponential(3)} Δ${(plate.height - ground).toExponential(2)}`)
-    }
-    debugPanel.setHexGeometry(parts.join(' · '))
+    debugPanel.setHexGeometry(
+      `pick ${point!.x.toFixed(3)},${point!.z.toFixed(3)} · focus ${focus.x.toFixed(2)},${focus.z.toFixed(2)} · principal ${principal.x.toFixed(3)},${principal.z.toFixed(3)}`,
+    )
   }
   const hexHoverObserver = scene.onPointerObservable.add((info) => {
     if (info.type !== PointerEventTypes.POINTERMOVE) return
     hexPointerInside = true
-    updateHexHover()
-  })
-
-  // Develop the clicked tile. Same threshold as the hover, and the brush owns
-  // the pointer when it is active.
-  const plateClickObserver = scene.onPointerObservable.add((info) => {
-    if (info.type !== PointerEventTypes.POINTERPICK || !mapView || !hexPlates) return
-    if (debugPanel.isBrushActive() || !debugPanel.isDevelopActive()) return
-    if (getCameraAltitude() > HEXGRID_FADE_LOW_ALTITUDE) return
-    const point = mapView.pickGround(scene.pointerX, scene.pointerY)
-    if (!point) return
-    const tile = hexAt(point.x, point.z)
-    const refused = hexPlates.isDeveloped(tile) ? null : hexPlates.develop(tile)
-    lastPlateRefusal = refused ?? ''
-    syncPlateLayer()
     updateHexHover()
   })
   // The world streams under a RESTING cursor during the descent and while
@@ -791,14 +716,6 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         getActive: () => getCameraNearBlend() > 0.02,
         getAltitude: getCameraAltitude,
       },
-      // The plates the lattice levels into itself. Read through the mutable
-      // binding on purpose: the plate set is rebuilt per world, after this
-      // view exists.
-      nearPlates: {
-        heightAt: (tile) => hexPlates?.plateAt(tile)?.height ?? null,
-        getRevision: () => hexPlates?.revision ?? 0,
-        getCount: () => hexPlates?.count ?? 0,
-      },
       hexGrid: {
         spacingX: HEX_COL_SPACING,
         spacingY: HEX_ROW_SPACING,
@@ -826,37 +743,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       },
       onRecenter: (centerX, centerZ) => {
         riverLayer?.recenter(centerX, centerZ)
-        syncPlateLayer()
         syncRibbonLevel()
       },
     })
 
-    // Plates start empty for every world; the classifier they consult is the
-    // one just rebuilt above, and the skirts read the same truth surface the
-    // classification measured its median from.
-    // THE surface the near view actually draws — the detail patch's own,
-    // bias and all. Plates are ground, so they belong on the ground that is
-    // rendered; the truth surface sits a median 7.7 m below it and buries
-    // them (measured 2026-08-14).
-    const renderGroundAt = (x: number, z: number): number => {
-      const { u, v } = hexUvFromWorld(x, z)
-      return reliefDetailSurface?.heightAtUV(u, v) ?? reliefFineSurface?.heightAtUV(u, v) ?? 0
-    }
-    plateGroundAt = renderGroundAt
-    hexPlates = createHexPlates({ classify: (tile) => hexClassifier!.classify(tile), renderGroundAt })
-    plateLayer?.dispose()
-    plateLayer = createHexPlateLayer({
-      scene,
-      plates: hexPlates,
-      terrainAt: renderGroundAt,
-      // A hair above the ground, scaled like the patch's own anti-z-fight
-      // lift: plates are laid ON the terrain, and at metre-true heights the
-      // two surfaces otherwise trade pixels along every edge.
-      lift: NEAR_MIN_ALTITUDE * 0.002,
-    })
-    mapView.attachLitMesh(plateLayer.mesh)
-    plateRevisionShown = -1
-    syncPlateLayer(true)
     // Hand over what the presentation derived above.
     pushPaper()
     pushSurfaces()
@@ -1112,8 +1002,6 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       if (knowledgeRepaintTimer !== null) clearTimeout(knowledgeRepaintTimer)
       scene.onPointerObservable.remove(brushObserver)
       scene.onPointerObservable.remove(hexHoverObserver)
-      scene.onPointerObservable.remove(plateClickObserver)
-      plateLayer?.dispose()
       scene.onBeforeRenderObservable.remove(hexFrameObserver)
       ctx.canvas.removeEventListener('pointerleave', onHexPointerLeave)
       debugPanel.dispose()

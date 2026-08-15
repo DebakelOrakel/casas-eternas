@@ -433,6 +433,15 @@ representation, zoom model — see
    and wants its own step: the near-field patch cannot express a hex
    boundary at ~200 m vertex spacing, so it would need a real
    plate-aware mesher.)*
+   **REMOVED 2026-08-15.** That own step was taken (the hex lattice under
+   the near-field plan's step 2), the cutting worked, and it made no
+   difference anyone could see — for the reason the 0.2 m above already
+   stated. `hexPlates`, `hexPlateLayer`, the develop click and the
+   panel's develop/clear buttons are gone; the tile CLASSIFICATION stays,
+   because it answers a real question ("what is this ground") that does
+   not depend on how development is drawn. The phase itself is not
+   cancelled, it is reopened: what a developed tile LOOKS like is now an
+   open question rather than a settled plate, see below.
 5. **Game systems** (settlement axes, rewilding, costs) — NOT SCHEDULED
    (2026-08-14). It is game mechanics, and the world around it has to
    read right first; the game design material lives outside the
@@ -520,61 +529,64 @@ Three steps, in order, decided together with their forks:
    away, because the mesh IS the drawn ground and levelling actually
    cuts. Grid lines stay in the shader; pickGround gains the mesh.
    Wilderness stays smooth-continuous (a per-hex facet look remains a
-   cheap later experiment). REFRAMED 2026-08-15 — the lattice is no longer
-   a replacement for the square patch but RING 0 of the ground decided in
-   [decisions/near-ground-clipmap.md](../decisions/near-ground-clipmap.md);
-   the swap threshold below becomes that stack's inner radius.
-   *(BUILT 2026-08-15, both halves. `map/hexNearMesh.ts`
-   generates the geometry and is Babylon-free like `hexPlates`, so it is
-   checked headless; `ToroidalMapView` owns the mesh and the swap, exactly
-   as it owns the patch. Checked: corners really are SHARED (3.02 vertices
-   per tile, not 7), every triangle faces up, every vertex normal points
-   up, the rim lands exactly on the plain surface, the window is built in
-   ONE wrap copy, and the lattice sits on hexGrid to float32 — the last one
-   is the check that the mesh IS the grid rather than something near it.
-   The window is 192 tiles wide, which was NOT free to choose: the square
-   patch covers 16 × altitude, so a smaller window would cover less ground
-   than the patch it replaces, and 192 tiles put the swap threshold at
-   3.6 km against the camera's 2.5 km floor — a band, but a narrow one. It
-   costs 129,949 vertices and 258,234 triangles, and a rebuild is 85 ms
-   against the hydrology-aware sampler, paid every quarter window (14 km of
-   travel) rather than every 400 m as the patch pays its 17 ms; the
-   escalation, if that hitch is felt, is the class overlay's trick of
-   filling a tile budget per frame. `pickGround` has the mesh.
-   LEVELLING, the point of the step, is the second half. A developed tile
-   shares no corners: it owns its seven vertices at one height, and every
-   edge carries a wall to the exact heights the neighbour gave that edge,
-   so the crease is watertight (measured: worst height gap 0.4 mm, which
-   is the float error between two tiles computing one corner from their
-   own centres — the same tolerance the corner sharing already runs on).
-   Two things the construction had to be told, both found by measurement
-   rather than by looking:
-   A wall faces AWAY FROM ITS MATERIAL, not outward. A fill — the plate
-   standing on its own embankment — faces out of the tile; a cut — the
-   back wall of a terrace dug into the hillside — faces in, because the
-   material there is the hill. The first version forced every wall
-   outward and lit 18 of 60 terrace walls from behind.
-   And a wall whose two ends fall on OPPOSITE sides of the ground is two
-   walls, split where the surfaces cross. One quad cannot face away from
-   material lying on both sides of it. The split point is exact: the
-   neighbour spans that edge with a straight chord, so interpolating
-   along it lands on the neighbour's own geometry.
-   With levelling that cuts, `hexPlates`' first compromise goes: the
-   canonical height is the MEDIAN of the tile's seven samples again, not
-   the maximum, because the median is what cuts as much as it fills
-   (measured on the test hill: 82 m of fill below, 76 m of cut above).
-   The second one stops being a compromise rather than going away — the
-   plate still sits on the DRAWN ground, and that is now the right answer
-   rather than a forced one: the lattice draws that same surface, and
-   taking the truth surface instead would sink every settlement into a
-   pit the width of the near view's bias.
-   `hexPlateLayer` is NOT gone. It stands down whenever the lattice is
-   the near ground (`hexNearGroundActive`), and still draws in the square
-   patch's regime above the swap, which cannot cut. It retires when the
-   patch does — see decisions/near-ground-clipmap.md. Cost: a seven-tile
-   hamlet adds 180 vertices and 60 triangles to the 130k-vertex window,
-   and a changed plate set rebuilds the whole window — at a click at a
-   time that is one hitch, at settlement scale it wants dirty tiles.)*
+   cheap later experiment).
+
+   **BUILT 2026-08-15, MEASURED, AND REMOVED THE SAME DAY.** Both halves
+   worked and neither earned its place. Kept in full here, because what it
+   cost to find out is the only thing that survives it.
+
+   *The lattice.* `map/hexNearMesh.ts` built the ground as the tile grid,
+   Babylon-free so it could be checked headless. Checked and passing:
+   corners really were SHARED (3.02 vertices per tile, not 7), every
+   triangle faced up, every vertex normal pointed up, the rim landed
+   exactly on the plain surface, the window was built in ONE wrap copy,
+   and the lattice sat on hexGrid to float32. The window had to be 192
+   tiles wide, which was not free to choose — the square patch covers
+   16 × altitude, so anything smaller would cover LESS ground than what it
+   replaced — putting the swap at 3.6 km against the camera's 2.5 km
+   floor. It cost 129,949 vertices and 258,234 triangles against the
+   patch's ~37k, and a rebuild was 85 ms against the hydrology-aware
+   sampler. What it bought in detail was nothing: 173 m between vertices
+   against the patch's 208 m at the same altitude. **Its entire
+   justification was that a tile could cut**, and when that turned out
+   not to be worth having, five times the geometry for a 17 % spacing
+   gain was not a trade anyone would make.
+
+   *The levelling.* A developed tile shared no corners: it owned its seven
+   vertices at one height, and every edge carried a wall to the exact
+   heights its neighbour gave that edge. The crease was watertight —
+   worst height gap 0.4 mm, which is the float error between two tiles
+   computing one corner from their own centres, the same tolerance the
+   corner sharing already ran on. Two things the construction had to be
+   told, both found by measurement rather than by looking, and both worth
+   keeping for whatever cuts terrain next:
+
+   - **A wall faces AWAY FROM ITS MATERIAL, not outward.** A fill — the
+     plate standing on its own embankment — faces out of the tile; a cut
+     — the back wall of a terrace dug into the hillside — faces IN,
+     because the material there is the hill. The first version forced
+     every wall outward and lit 18 of 60 terrace walls from behind.
+   - **A wall whose two ends fall on opposite sides of the ground is two
+     walls**, split where the surfaces cross. One quad cannot face away
+     from material lying on both sides of it. The split point is exact:
+     the neighbour spans that edge with a straight chord, so
+     interpolating along it lands on the neighbour's own geometry.
+
+   *Why it went.* Because it worked, and you could not see it. On ground
+   gentle enough to develop — and steep tiles are refused — a 300 m tile
+   spans about 0.2 m, so a levelled tile differs from its own ground by
+   nothing, and what remains on screen is the thin dark outline of its
+   walls. That number was MEASURED ON 2026-08-14 and written down one
+   section below, and it was still built. The rule it should have been
+   read as: **height cannot signal "developed" on this world, so no
+   amount of correctness in the cutting will make a settlement visible.**
+   Whatever answers that question, it is surface or structures, not
+   geometry — and that question is open (see below).
+
+   The ring stack of
+   [decisions/near-ground-clipmap.md](../decisions/near-ground-clipmap.md)
+   stands unchanged; it just no longer has a ring 0 built in advance. The
+   near ground is the square patch again.
 3. **16K bake as a MEASUREMENT** (no display work): factor 8 locally
    via baker.mjs (--max-old-space-size; ~10–12 GB expected against 8K's
    ~3 GB), after checking the seed cascade's steps and the constant
@@ -599,6 +611,35 @@ it is a fork about the amplification key, and it now stands under Open
 questions in its own right.
 
 ## Open questions
+
+- **WHAT DOES A DEVELOPED TILE LOOK LIKE?** Reopened 2026-08-15 after the
+  geometric answer was built twice and failed twice. This document's
+  premise is that "grid = civilisation" and that developed land becomes a
+  flat plate with edges. The first half of that is fine — the grid is a
+  shader and it reads. The second half has now been measured out of
+  existence: developable ground is gentle BY SELECTION (the classifier
+  refuses steep tiles), a 300 m tile of it spans about 0.2 m, and so
+  levelling it — however correctly, cut and all — changes nothing a
+  viewer can see. Height is not a channel this world has spare.
+
+  The candidates, none chosen, and the reason this is a fork rather than
+  a task:
+
+  - **Surface.** Worked earth against wild green: albedo, texture,
+    field-and-hedge pattern inside the tile. Cheap, and it is the only
+    answer that works on the ground people will actually settle. Risk:
+    it makes development a paint job, and the doc's whole point was that
+    the tile is a real thing.
+  - **Structures.** Buildings, walls, terrace steps — objects ON the
+    tile rather than a shape OF it. Reads at every distance a settlement
+    matters at, and it is what a player would look for anyway. Costs a
+    content pipeline this project does not have yet.
+  - **Geometry after all, but where it earns it.** Terracing only on the
+    tiles steep enough to need it, as a special case rather than the
+    rule. The measurement says that is a small minority (worst case
+    19.8 m of step, p90 0.5 m), so it is a garnish, not a mechanism.
+
+  Settling this is a prerequisite for phase 4 restarting, not part of it.
 
 - **The descent's altitude was measured from SEA LEVEL** (found and fixed
   2026-08-15, reported as "in the mountains I cannot get closer, or I end

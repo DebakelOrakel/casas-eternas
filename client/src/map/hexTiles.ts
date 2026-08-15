@@ -12,7 +12,8 @@ import { MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, UNITS_PER_METER } from './mapSceneSe
 // The height sampler must be the shared fine-height seam with bias 0 — the
 // same `fineElevationSurface` the near-field patch renders (which passes
 // bias 0.6 to stay above the base mesh). Classifying against any OTHER
-// height source is how plates end up floating over the terrain later.
+// height source is how anything placed on the classification's word ends up
+// floating over the terrain later.
 
 export interface HexTileSamplers {
   // Terrain surface in world-Y units at map UV — metre-true against the
@@ -33,9 +34,8 @@ export interface HexTileClass {
   // Median terrain height over the sample set, metres above sea level.
   medianHeightMeters: number
   // Highest sampled point of the tile — the readout's "how much relief is in
-  // here", and the honest measure of what levelling it would have to cut away.
-  // (It was once what a plate's height had to clear, back when nothing cut the
-  // ground underneath one; the lattice does, so a plate sits at the median.)
+  // here", and the honest measure of what levelling this tile would have to
+  // cut away.
   maxHeightMeters: number
   // Steepest sampled tangent (rise/run, dimensionless).
   slope: number

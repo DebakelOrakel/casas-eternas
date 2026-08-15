@@ -37,21 +37,16 @@ export interface KnowledgeDebugPanelOptions {
   onBrushToggle: (active: boolean) => void
   // Phase 2 debug overlay: tint tiles by their classification.
   onClassesToggle: (active: boolean) => void
-  // Phase 4: clicking a tile develops it into a plate.
-  onDevelopToggle: (active: boolean) => void
-  // Hide the near ground (the detail patch, and the hex lattice below the
-  // swap) so what is left is the plain relief mesh. An INSTRUMENT, not a
-  // feature: "two grounds drawn over each other" is only diagnosable by
-  // taking one of them away — with the near ground gone, anything still
-  // showing as a second sheet was never the near ground's doing.
+  // Hide the near ground (the detail patch) so what is left is the plain
+  // relief mesh. An INSTRUMENT, not a feature: "two grounds drawn over each
+  // other" is only diagnosable by taking one of them away — with the near
+  // ground gone, anything still showing as a second sheet was never the near
+  // ground's doing.
   onNearGroundToggle: (visible: boolean) => void
-  onDevelopClear: () => void
 }
 
 export interface KnowledgeDebugPanel {
   isBrushActive(): boolean
-  // Whether a click should develop the tile under it (phase 4).
-  isDevelopActive(): boolean
   // Brush radius as a fraction of world width.
   brushRadius(): number
   // The terrain raster currently feeding the presentation — the screen
@@ -68,10 +63,9 @@ export interface KnowledgeDebugPanel {
 }
 
 export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeDebugPanelOptions): KnowledgeDebugPanel {
-  const { ramp, sheet, pigment, wash, onRampChange, onPigmentChange, onWashChange, onSeed, onClear, onReveal, onBrushToggle, onClassesToggle, onDevelopToggle, onDevelopClear, onNearGroundToggle } = options
+  const { ramp, sheet, pigment, wash, onRampChange, onPigmentChange, onWashChange, onSeed, onClear, onReveal, onBrushToggle, onClassesToggle, onNearGroundToggle } = options
   let brushActive = false
   let classesActive = false
-  let developActive = false
   let nearGroundVisible = true
 
   const root = document.createElement('div')
@@ -81,8 +75,6 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
     <span class="knowledge-debug__status" data-status="hex">hex: —</span>
     <span class="knowledge-debug__status" data-status="geom"></span>
     <button type="button" data-action="classes">classes: off</button>
-    <button type="button" data-action="develop">develop: off</button>
-    <button type="button" data-action="develop-clear">clear plates</button>
     <button type="button" data-action="near-ground">near ground: on</button>
     <span class="knowledge-debug__title">knowledge (debug)</span>
     <button type="button" data-action="brush">brush: off</button>
@@ -165,20 +157,13 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
       button.textContent = `classes: ${classesActive ? 'on' : 'off'}`
       button.classList.toggle('is-on', classesActive)
       onClassesToggle(classesActive)
-    } else if (action === 'develop') {
-      developActive = !developActive
-      const button = root.querySelector<HTMLButtonElement>('[data-action="develop"]')!
-      button.textContent = `develop: ${developActive ? 'on' : 'off'}`
-      button.classList.toggle('is-on', developActive)
-      onDevelopToggle(developActive)
     } else if (action === 'near-ground') {
       nearGroundVisible = !nearGroundVisible
       const button = root.querySelector<HTMLButtonElement>('[data-action="near-ground"]')!
       button.textContent = `near ground: ${nearGroundVisible ? 'on' : 'off'}`
       button.classList.toggle('is-on', !nearGroundVisible)
       onNearGroundToggle(nearGroundVisible)
-    } else if (action === 'develop-clear') onDevelopClear()
-    else if (action === 'seed') onSeed()
+    } else if (action === 'seed') onSeed()
     else if (action === 'clear') onClear()
     else if (action === 'reveal') onReveal()
   }
@@ -190,7 +175,6 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
 
   return {
     isBrushActive: () => brushActive,
-    isDevelopActive: () => developActive,
     brushRadius: () => Number(knob('radius').value),
     setTerrainTier(width: number, height: number): void {
       const label = width === 2048 ? '2K (macro)' : width === 4096 ? '4K' : width === 8192 ? '8K' : `${width}×${height}`
