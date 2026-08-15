@@ -32,8 +32,10 @@ export interface HexTileClass {
   id: HexId
   // Median terrain height over the sample set, metres above sea level.
   medianHeightMeters: number
-  // Highest sampled point of the tile. A plate has to sit at or above this to
-  // cover its own ground — see hexPlates' canonical height.
+  // Highest sampled point of the tile — the readout's "how much relief is in
+  // here", and the honest measure of what levelling it would have to cut away.
+  // (It was once what a plate's height had to clear, back when nothing cut the
+  // ground underneath one; the lattice does, so a plate sits at the median.)
   maxHeightMeters: number
   // Steepest sampled tangent (rise/run, dimensionless).
   slope: number

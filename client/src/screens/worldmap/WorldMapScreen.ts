@@ -557,11 +557,19 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function syncPlateLayer(force = false): void {
     if (!plateLayer || !hexPlates) return
     const focus = getCameraFocus()
-    if (!force && hexPlates.revision === plateRevisionShown && !plateLayer.needsRebuildFor(focus.x, focus.z)) return
-    plateRevisionShown = hexPlates.revision
-    // The focus is the anchor: plates are built in the wrap copy nearest it,
-    // because the grid reports tiles in a frame the terrain does not use.
-    plateLayer.rebuild(focus.x, focus.z)
+    if (force || hexPlates.revision !== plateRevisionShown || plateLayer.needsRebuildFor(focus.x, focus.z)) {
+      plateRevisionShown = hexPlates.revision
+      // The focus is the anchor: plates are built in the wrap copy nearest it,
+      // because the grid reports tiles in a frame the terrain does not use.
+      plateLayer.rebuild(focus.x, focus.z)
+    }
+    // Below the swap the hex lattice IS the ground and levels developed tiles
+    // into its own geometry, so this layer stands down rather than laying a
+    // second, uncut plate over the cut one. Above the swap the square patch
+    // draws, which cannot cut, and the layer is still the only thing that
+    // shows a settlement at all — it retires for good when the patch does.
+    // Last, because rebuild() enables the mesh itself.
+    plateLayer.setEnabled(!(mapView?.hexNearGroundActive() ?? false))
   }
 
   // Light the hovered 300 m tile through the grid shader. Interaction arms
@@ -782,6 +790,14 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         baseSurface: reliefFineSurface!,
         getActive: () => getCameraNearBlend() > 0.02,
         getAltitude: getCameraAltitude,
+      },
+      // The plates the lattice levels into itself. Read through the mutable
+      // binding on purpose: the plate set is rebuilt per world, after this
+      // view exists.
+      nearPlates: {
+        heightAt: (tile) => hexPlates?.plateAt(tile)?.height ?? null,
+        getRevision: () => hexPlates?.revision ?? 0,
+        getCount: () => hexPlates?.count ?? 0,
       },
       hexGrid: {
         spacingX: HEX_COL_SPACING,

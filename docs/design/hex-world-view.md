@@ -524,7 +524,7 @@ Three steps, in order, decided together with their forks:
    a replacement for the square patch but RING 0 of the ground decided in
    [decisions/near-ground-clipmap.md](../decisions/near-ground-clipmap.md);
    the swap threshold below becomes that stack's inner radius.
-   *(GROUND BUILT 2026-08-15, levelling still to come. `map/hexNearMesh.ts`
+   *(BUILT 2026-08-15, both halves. `map/hexNearMesh.ts`
    generates the geometry and is Babylon-free like `hexPlates`, so it is
    checked headless; `ToroidalMapView` owns the mesh and the swap, exactly
    as it owns the patch. Checked: corners really are SHARED (3.02 vertices
@@ -540,10 +540,41 @@ Three steps, in order, decided together with their forks:
    against the hydrology-aware sampler, paid every quarter window (14 km of
    travel) rather than every 400 m as the patch pays its 17 ms; the
    escalation, if that hitch is felt, is the class overlay's trick of
-   filling a tile budget per frame. `pickGround` has the mesh. What is NOT
-   built yet is the point of the step: developed tiles do not flatten
-   their seven vertices, so `hexPlateLayer` and its two compromises are
-   still standing.)*
+   filling a tile budget per frame. `pickGround` has the mesh.
+   LEVELLING, the point of the step, is the second half. A developed tile
+   shares no corners: it owns its seven vertices at one height, and every
+   edge carries a wall to the exact heights the neighbour gave that edge,
+   so the crease is watertight (measured: worst height gap 0.4 mm, which
+   is the float error between two tiles computing one corner from their
+   own centres — the same tolerance the corner sharing already runs on).
+   Two things the construction had to be told, both found by measurement
+   rather than by looking:
+   A wall faces AWAY FROM ITS MATERIAL, not outward. A fill — the plate
+   standing on its own embankment — faces out of the tile; a cut — the
+   back wall of a terrace dug into the hillside — faces in, because the
+   material there is the hill. The first version forced every wall
+   outward and lit 18 of 60 terrace walls from behind.
+   And a wall whose two ends fall on OPPOSITE sides of the ground is two
+   walls, split where the surfaces cross. One quad cannot face away from
+   material lying on both sides of it. The split point is exact: the
+   neighbour spans that edge with a straight chord, so interpolating
+   along it lands on the neighbour's own geometry.
+   With levelling that cuts, `hexPlates`' first compromise goes: the
+   canonical height is the MEDIAN of the tile's seven samples again, not
+   the maximum, because the median is what cuts as much as it fills
+   (measured on the test hill: 82 m of fill below, 76 m of cut above).
+   The second one stops being a compromise rather than going away — the
+   plate still sits on the DRAWN ground, and that is now the right answer
+   rather than a forced one: the lattice draws that same surface, and
+   taking the truth surface instead would sink every settlement into a
+   pit the width of the near view's bias.
+   `hexPlateLayer` is NOT gone. It stands down whenever the lattice is
+   the near ground (`hexNearGroundActive`), and still draws in the square
+   patch's regime above the swap, which cannot cut. It retires when the
+   patch does — see decisions/near-ground-clipmap.md. Cost: a seven-tile
+   hamlet adds 180 vertices and 60 triangles to the 130k-vertex window,
+   and a changed plate set rebuilds the whole window — at a click at a
+   time that is one hitch, at settlement scale it wants dirty tiles.)*
 3. **16K bake as a MEASUREMENT** (no display work): factor 8 locally
    via baker.mjs (--max-old-space-size; ~10–12 GB expected against 8K's
    ~3 GB), after checking the seed cascade's steps and the constant

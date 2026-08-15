@@ -20,22 +20,22 @@ import type { HexTileClass } from './hexTiles'
 export interface HexPlate {
   id: HexId
   // The tile's canonical height in WORLD Y units, frozen at the moment it was
-  // developed: the HIGHEST point of the ground as DRAWN across the tile.
+  // developed: the MEDIAN of the ground as DRAWN across the tile.
   //
-  // Two departures from the design's "median of the tile's fine relief", both
-  // forced by the same fact — nothing CUTS the terrain under a plate:
+  // It used to be the HIGHEST of those samples, and that was a compromise
+  // forced by nothing CUTTING the terrain under a plate — at the median the
+  // uphill half of the tile poked through its own lid. The near ground is a
+  // hex lattice now (map/hexNearMesh.ts, 2026-08-15) and a developed tile owns
+  // its seven vertices, so levelling moves the ground rather than covering it:
+  // the median is simply the balanced answer, half cut and half filled, which
+  // is what levelling a field means.
   //
-  //   Highest, not median, because a plate at the median leaves the uphill
-  //   half of its own tile poking through it. On the gentle ground that is
-  //   developable at all the two are 0.2 m apart (measured), so this costs
-  //   almost nothing and guarantees the plate covers its hexagon.
-  //
-  //   The DRAWN ground, not the truth surface, because the near view renders
-  //   the detail patch, which is lifted a median 7.7 m above the truth by its
-  //   own anti-occlusion bias. A plate on the truth surface is simply buried.
-  //
-  // Cutting the terrain properly would remove both compromises and is its own
-  // step — see the design doc.
+  // The other departure stands, and is no longer a compromise either: the
+  // DRAWN ground, not the truth surface. A plate is a piece of the ground
+  // people see, the lattice draws that same surface, and taking the truth
+  // instead would sink every settlement into a systematic pit the width of
+  // the near view's bias. Heights for READING the world (the hover readout,
+  // gameplay) keep coming from the classification.
   height: number
 }
 
@@ -81,17 +81,20 @@ export function createHexPlates(options: HexPlateOptions): HexPlates {
   const plates = new Map<string, HexPlate>()
   let revision = 0
 
-  // The highest DRAWN ground in the tile: the plate has to cover its own
-  // hexagon, and nothing cuts the terrain away underneath it.
+  // The MEDIAN of the drawn ground over the tile's seven sample points — the
+  // height that cuts as much as it fills, now that levelling actually cuts.
+  // Seven samples, so the median is a real sample rather than an average of
+  // two, and a single freak corner cannot drag the field.
   function canonicalHeight(tile: HexId): number {
     const center = hexCenter(tile)
-    let height = options.renderGroundAt(center.x, center.z)
+    const samples = [options.renderGroundAt(center.x, center.z)]
     for (const corner of hexCorners(tile)) {
       const x = center.x + (corner.x - center.x) * PLATE_RIM_INSET
       const z = center.z + (corner.z - center.z) * PLATE_RIM_INSET
-      height = Math.max(height, options.renderGroundAt(x, z))
+      samples.push(options.renderGroundAt(x, z))
     }
-    return height
+    samples.sort((a, b) => a - b)
+    return samples[samples.length >> 1]
   }
 
   function refusal(tile: HexId): DevelopRefusal | null {
