@@ -39,6 +39,12 @@ export interface KnowledgeDebugPanelOptions {
   onClassesToggle: (active: boolean) => void
   // Phase 4: clicking a tile develops it into a plate.
   onDevelopToggle: (active: boolean) => void
+  // Hide the near ground (the detail patch, and the hex lattice below the
+  // swap) so what is left is the plain relief mesh. An INSTRUMENT, not a
+  // feature: "two grounds drawn over each other" is only diagnosable by
+  // taking one of them away — with the near ground gone, anything still
+  // showing as a second sheet was never the near ground's doing.
+  onNearGroundToggle: (visible: boolean) => void
   onDevelopClear: () => void
 }
 
@@ -62,10 +68,11 @@ export interface KnowledgeDebugPanel {
 }
 
 export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeDebugPanelOptions): KnowledgeDebugPanel {
-  const { ramp, sheet, pigment, wash, onRampChange, onPigmentChange, onWashChange, onSeed, onClear, onReveal, onBrushToggle, onClassesToggle, onDevelopToggle, onDevelopClear } = options
+  const { ramp, sheet, pigment, wash, onRampChange, onPigmentChange, onWashChange, onSeed, onClear, onReveal, onBrushToggle, onClassesToggle, onDevelopToggle, onDevelopClear, onNearGroundToggle } = options
   let brushActive = false
   let classesActive = false
   let developActive = false
+  let nearGroundVisible = true
 
   const root = document.createElement('div')
   root.className = 'knowledge-debug'
@@ -76,6 +83,7 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
     <button type="button" data-action="classes">classes: off</button>
     <button type="button" data-action="develop">develop: off</button>
     <button type="button" data-action="develop-clear">clear plates</button>
+    <button type="button" data-action="near-ground">near ground: on</button>
     <span class="knowledge-debug__title">knowledge (debug)</span>
     <button type="button" data-action="brush">brush: off</button>
     <label>radius <input type="range" data-knob="radius" min="0.01" max="0.25" step="0.005" value="0.06" /></label>
@@ -163,6 +171,12 @@ export function createKnowledgeDebugPanel(host: HTMLElement, options: KnowledgeD
       button.textContent = `develop: ${developActive ? 'on' : 'off'}`
       button.classList.toggle('is-on', developActive)
       onDevelopToggle(developActive)
+    } else if (action === 'near-ground') {
+      nearGroundVisible = !nearGroundVisible
+      const button = root.querySelector<HTMLButtonElement>('[data-action="near-ground"]')!
+      button.textContent = `near ground: ${nearGroundVisible ? 'on' : 'off'}`
+      button.classList.toggle('is-on', !nearGroundVisible)
+      onNearGroundToggle(nearGroundVisible)
     } else if (action === 'develop-clear') onDevelopClear()
     else if (action === 'seed') onSeed()
     else if (action === 'clear') onClear()
