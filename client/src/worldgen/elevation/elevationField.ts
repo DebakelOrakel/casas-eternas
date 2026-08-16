@@ -213,14 +213,22 @@ export function computeElevation(
   // densely overlap (weightSum >= 1, so no unbounded stacking along a
   // range) while letting sparse/edge coverage (weightSum < 1) actually
   // attenuate by the falloff, so isolated features fade out smoothly.
-  const uplift = weightSum > 0 ? upliftSum / Math.max(1, weightSum) : 0
+  const upliftRaw = weightSum > 0 ? upliftSum / Math.max(1, weightSum) : 0
+  // The isostatic soft knee: above the knee the DECK saturates toward
+  // knee+span instead of climbing to (and plateauing at) the 9000 m clamp —
+  // see ELEVATION_TUNING.upliftSoftKnee for the measurements. The ridged
+  // detail below deliberately reads the RAW uplift, so the crests still
+  // sharpen with the true crustal thickness while the deck under them sinks.
+  const knee = ELEVATION_TUNING.upliftSoftKnee
+  const span = ELEVATION_TUNING.upliftSoftSpan
+  const uplift = upliftRaw > knee ? knee + span * (1 - Math.exp(-(upliftRaw - knee) / span)) : upliftRaw
   // Ridged-multifractal relief on top of the smooth uplift, modulated by
   // that uplift so only raised terrain gets rugged (ELEVATION_TUNING.ridgeRelativeStrength),
   // centered on RIDGE_MEAN so ridgelines add height and valleys cut down with
   // no net bias, and gated to positive uplift so trenches and rift valleys
   // (negative uplift) stay smooth depressions. ridgeValue is the precomputed
   // ridgedMultifractal sample at this warped point.
-  const detail = uplift > 0 ? (ridgeValue - RIDGE_MEAN) * uplift * ELEVATION_TUNING.ridgeRelativeStrength : 0
+  const detail = upliftRaw > 0 ? (ridgeValue - RIDGE_MEAN) * upliftRaw * ELEVATION_TUNING.ridgeRelativeStrength : 0
   let elevation = blendedBaseline + uplift + detail
   if (fineValue !== 0 && elevation > 0) elevation += fineValue * Math.min(ELEVATION_TUNING.plainDetailMax, elevation * 0.5)
   return Math.max(-1, Math.min(1, elevation))
