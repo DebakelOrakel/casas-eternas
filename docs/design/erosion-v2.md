@@ -166,6 +166,25 @@ are either already saved or join U's layer. This touches the save format
 and is an ALGO/world-version break — accepted, we are in the
 hard-breaks-allowed phase.
 
+STATUS 2026-08-16: **the U export is BUILT and measured**
+(`elevation/upliftField.ts` — the terrain features already carry
+everything needed: accumulated thickness for magnitude, tangent for the
+capsule footprint, `epochsSinceDeposit` for ACTIVITY; U weights the same
+capsule kernel elevation uses by recency, so active orogens force and
+abandoned ranges do not). First measurement on a fresh 50-epoch world
+(`scripts/erosion-v2-uplift-check.mts`): correlation with the standing-
+relief stand-in only 0.53, just 16.9 % of real U's mass on today's high
+ground (the stand-in: 70.3 % by construction) — cause and effect really
+do diverge — and 8.2 % of real U is NEGATIVE (active rifts subsiding),
+which no elevation-derived forcing can express. Engine runs at age 100
+differ by 338 m RMS on land, concentrated exactly where the physics
+says: the active island arc stays up under real U, the stand-in lets it
+decay. Two open ends, on record: the per-world peak normalization can be
+set by a submarine ridge (land forcing then under-scaled — the P2
+calibration owns the final mapping), and `epochsSinceDeposit` is a
+recency PROXY — the true per-feature deposit-rate EMA belongs to
+stepEpoch when the interface is wired for real.
+
 ## Hydrology merges into the engine
 
 Discharge, lakes and channels already have to exist INSIDE the erosion
