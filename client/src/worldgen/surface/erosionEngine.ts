@@ -749,9 +749,15 @@ export function lambdaWalk(v: EngineViews, popped: number, s: CoordinatorScratch
 }
 
 // Drainage-area accumulation over the MFD edges, popOrder backward.
-export function accumulateFlowV2(v: EngineViews, width: number, height: number, popped: number): void {
+// `baseWeights` (optional) replaces the uniform per-cell contribution of 1 —
+// the hydrology merge's climate coupling: pass upsampled precipitation and
+// the engine's Q becomes water, not area. Which stage supplies it (and the
+// resulting pipeline-order question) is decided at the switchover; the
+// mechanism is deliberately already here.
+export function accumulateFlowV2(v: EngineViews, width: number, height: number, popped: number, baseWeights?: Float32Array): void {
   const { accumulation, mfdDegree, mfdDirection, mfdWeight, popOrder } = v
-  accumulation.fill(1)
+  if (baseWeights) accumulation.set(baseWeights)
+  else accumulation.fill(1)
   for (let i = popped - 1; i >= 0; i--) {
     const cell = popOrder[i]
     const amount = accumulation[cell]

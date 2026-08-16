@@ -222,6 +222,28 @@ enclosed-water restore hack. Rivers are extracted once from the final
 state by the same LTD walker. Salt flats / terminal basins keep their
 climate refinement, now consistent by construction.
 
+STATUS 2026-08-17 — the merge turned out to be an ADAPTER, not a rewrite
+(`surface/erosionEngineBridge.ts`): everything hydrology.ts consumes from
+a FlowRouting — filled, single-flow receivers, the topological order —
+the engine maintains as its own routing state; the bridge wraps it (MFD
+converted stride-8 → CSR for contract honesty; hydrology never reads it).
+Gated in the engine-check: accumulateDischarge + computeLakes run on the
+engine's network and classify a sane water world. Two findings recorded:
+
+- **The enclosed-water restore hack is retired BY CONSTRUCTION.** v1 needs
+  it because it bakes the flood-filled surface into the terrain; the
+  engine never writes `filled` into z, so a Caspian-class basin simply
+  stays deep. Nothing to restore.
+- **The climate-Q mechanism is in place, the wiring is a fork.**
+  `accumulateFlowV2` accepts per-cell base weights (pass upsampled
+  precipitation → the engine's erosion Q becomes water, not area). But
+  today climate runs AFTER erosion; feeding real precipitation into the
+  solve means reordering or iterating the stages — a user-visible
+  pipeline question, deliberately left for the switchover decision.
+- Open for lakes-first-class: the marine freeboard cap references SEA
+  level, so a long transient can aggrade a sub-sea terminal basin toward
+  +2 m; the basin's own balance level should cap it instead.
+
 ## Refined bakes under v2 — REVISED after the P0 measurement
 
 The paragraph below is what this plan originally claimed, kept struck

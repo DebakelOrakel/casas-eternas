@@ -19,6 +19,8 @@ import { ErosionEngine, DEFAULT_ENGINE_PARAMS } from '../src/worldgen/surface/er
 import { PooledErosionEngine, PipelinedErosionEngine } from '../src/worldgen/surface/erosionEnginePool'
 import { Worker as NodeWorker } from 'node:worker_threads'
 import { fineDetailNoise } from '../src/worldgen/elevation/ridgedNoise'
+import { engineFlowRouting } from '../src/worldgen/surface/erosionEngineBridge'
+import { accumulateDischarge, computeLakes } from '../src/worldgen/surface/hydrology'
 
 const [artifactDir, resArg, itersArg] = process.argv.slice(2)
 if (!artifactDir) {
@@ -209,4 +211,37 @@ for (const [stencilWorkers, refreshWorkers] of [[2, 1], [4, 2]] as const) {
       process.exitCode = 1
     }
   }
+}
+
+// --- the hydrology bridge: v1's lakes/discharge on the engine's own network --
+// Smoke gate, not physics: v1's hydrology must RUN on the engine's routing
+// via the bridge and produce a sane water world — positive discharge on
+// land, concentrated onto channels, and flooded depressions classified.
+{
+  const routing = engineFlowRouting(engine.views, RES_X, RES_Y, engine.poppedCount)
+  const CRX = 256
+  const CRY = 128
+  const precip = new Float32Array(CRX * CRY).fill(800)
+  const temperature = new Float32Array(CRX * CRY).fill(15)
+  const discharge = accumulateDischarge(routing, engine.z, precip, CRX, CRY)
+  const lakes = computeLakes(routing, discharge, engine.z, temperature, precip, CRX, CRY)
+  let landCells = 0
+  let wetLand = 0
+  let maxDischarge = 0
+  for (let i = 0; i < n; i++) {
+    if (engine.z[i] > 0) {
+      landCells++
+      if (discharge[i] > 0) wetLand++
+      if (discharge[i] > maxDischarge) maxDischarge = discharge[i]
+    }
+  }
+  let lakeCells = 0
+  let saltCells = 0
+  for (let i = 0; i < n; i++) {
+    if (lakes.depth[i] > 0) lakeCells++
+    if (lakes.saltFlat[i]) saltCells++
+  }
+  const ok = wetLand === landCells && maxDischarge > 800 * 50 && lakes.depth.length === n
+  console.log(`${ok ? 'PASS' : 'FAIL'} — hydrology on engine routing: discharge on ${wetLand}/${landCells} land cells (max ${(maxDischarge / 800).toFixed(0)} cells eq.), ${lakeCells} lake + ${saltCells} salt cells`)
+  if (!ok) process.exitCode = 1
 }
