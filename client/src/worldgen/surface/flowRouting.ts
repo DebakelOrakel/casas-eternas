@@ -25,20 +25,35 @@ import { MinHeap } from '../core/minHeap'
 
 // Called at every progress-reporting checkpoint across this module's
 // long loops (fillDepressions' pop count, and one per outer iteration in
-// runStreamPowerIterations/runThermalErosion) — always
-// awaits a real macrotask boundary (a zero-delay setTimeout), not just
-// every Nth call. This exists entirely for the generator pipeline's 'erode'
-// handler (pipeline/runtime.ts): postMessage calls made during a long, uninterrupted
-// synchronous stretch get queued for delivery, but browsers commonly
-// don't actually flush that delivery to the main thread until the
-// sending side yields back to its own event loop — without yielding
-// often enough, a ~10+ second erosion pass reads as one all-at-once
-// burst of progress messages right before the final render, not a live
-// updating percentage. Unconditional rather than throttled to every Nth
-// call — an earlier 1-in-8 version still wasn't frequent enough to read
-// as live, so this trades the small per-yield overhead (browser-clamped,
-// often 1-4ms) for actually solving the problem.
-export function maybeYield(): Promise<void> {
+// runStreamPowerIterations/runThermalErosion). When it yields, it awaits
+// a real macrotask boundary (a zero-delay setTimeout), because that is
+// what the generator pipeline's 'erode' handler (pipeline/runtime.ts)
+// needs: postMessage calls made during a long, uninterrupted synchronous
+// stretch get queued for delivery, but browsers commonly don't actually
+// flush that delivery to the main thread until the sending side yields
+// back to its own event loop — without yielding often enough, a ~10+
+// second erosion pass reads as one all-at-once burst of progress
+// messages right before the final render, not a live updating
+// percentage.
+//
+// Throttled by WALL CLOCK, not by call count. The history matters: an
+// early 1-in-8 call throttle wasn't frequent enough to read as live, so
+// it became unconditional — and the unconditional version was then
+// measured (2026-08-16, erosion-v2 P1 spike) to cost 57 % of an entire
+// erosion iteration in Node at 1024², because each yield is a full
+// setTimeout macrotask (~1 ms Node, 1-4 ms browser-clamped) and the
+// count-based checkpoints scale with the raster. A count throttle can
+// never be right here — the right cadence is in units of TIME (how often
+// a human-facing progress bar needs a flush), and 50 ms keeps progress
+// at 20 flushes/s while cutting the macrotask tax to a fixed ~2 % no
+// matter the grid. The non-yielding path returns undefined rather than a
+// resolved Promise: `await undefined` costs a microtask, not a timer.
+const YIELD_INTERVAL_MS = 50
+let lastYieldAt = 0
+export function maybeYield(): Promise<void> | undefined {
+  const now = performance.now()
+  if (now - lastYieldAt < YIELD_INTERVAL_MS) return undefined
+  lastYieldAt = now
   return new Promise((resolve) => setTimeout(resolve, 0))
 }
 

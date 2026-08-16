@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-08-16
+- **changed** Erosion: the pass computes noticeably faster — progress reporting no longer stalls the simulation between updates. `worldgen.panel.erosion`
+
 ## 2026-08-15
 - **changed** Hydrology: water follows its true downhill course instead of snapping to the grid's eight directions, so streams stop running in long grid-parallel streaks and meet each other more often. `worldgen.panel.hydrology`
 
