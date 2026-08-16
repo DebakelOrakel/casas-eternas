@@ -236,13 +236,45 @@ and closed (2026-08-16):
   P2 integrates the engine against the real tectonic field, where the
   initial condition carries the texture P0's smooth restart could not.
 
+  CONFIRMED at P2 kickoff (2026-08-16, spike runs at 2048 from the real
+  v9 terrain): age 25 iterations keeps 39-km relief at 541 m median —
+  above the current model's 521 — with dendritic texture intact; age 100
+  reads softened (348 m); age 400 is the familiar near-equilibrium blob
+  (271 m). The age axis IS the look control, measured end to end. Land
+  drifted 28.0 → 29.5 % over the same range — the coastline-pinning
+  constraint, confirmed on real terrain.
+
 Two P2 constraints P0 surfaced, recorded before they get lost:
 
-- **Coastlines must be pinned.** A free equilibrium moves them — P0's land
-  fraction drifted 26.4 → 31.1 % as uplift and deltas pushed shelves above
-  water. Coasts are macro authority; the engine needs a coastal constraint
-  (uplift shut off seaward of the macro coastline, growth allowance only
-  for deltas), not a hope that the balance lands where the macro said.
+- **Coastlines must be pinned — and the lever is DEPOSITION, not uplift.**
+  A free run moves them: P0's land fraction drifted 26.4 → 31.1 %, and the
+  P2 engine at 2048/age 400 drifted 27.5 → 29.5 %. The obvious fix —
+  uplift shut off seaward of the initial coastline (`coastMask`, built) —
+  was measured NEARLY INERT: 29.4 % pinned vs 29.5 % free (2026-08-16).
+  The actual mechanism is marine aggradation: submarine deposits build to
+  the +2 m freeboard along broad shelf fronts and surface as land far
+  beyond anything a delta earns. Capping deposition below sea level
+  removed only half the drift (29.5 → 28.4 %); additionally disabling
+  hillslope diffusion swung the balance NEGATIVE (26.5 % — coasts
+  retreat under fluvial attack once talus stops replenishing them). The
+  coastline is a BALANCE of ±1–2-point mechanisms, and no physics-side
+  cap holds it; every knob just moves the equilibrium of the balance.
+
+  The resolution is to stop treating this as one problem. It is two:
+
+  - **In the generator**, the erosion pass's output BECOMES the macro —
+    there is no external coastline to obey, and modest coast reshaping
+    (deltas prograding, cliffs retreating) is a feature. Drift at young
+    ages is small anyway (+0.5 points at age 25).
+  - **In the bake**, the finest-tier solve refines an EXISTING macro,
+    whose coasts are authority. Here the constraint is explicit, not
+    emergent: one rule, asked in one place — "may this cell change its
+    land/sea status?" — pinned to the macro coastline with a growth
+    allowance at river mouths and nothing else. Enforcing status rather
+    than tweaking three processes is what makes it auditable.
+
+  The coastMask input stays (correct, nearly inert alone); the status
+  rule is P3 work, where the bake meets the engine.
 - **Relief needs its decouplers.** In the current model relief is inherited
   roughness; in an equilibrium model, peak height and valley relief both
   come from U/K unless something decouples them — the K-field contrast
