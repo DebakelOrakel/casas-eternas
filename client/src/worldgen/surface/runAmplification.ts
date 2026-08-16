@@ -1,7 +1,8 @@
-import { AMPLIFICATION_EROSION_OVERRIDES, amplifyElevation } from './amplify'
-import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass, scaleErosionParamsForCellSize } from './erosion'
+import { BAKE_ENGINE_OVERRIDES, amplifyElevation } from './amplify'
+import { runErosionPassV2 } from './erosionPassV2'
+import { assembleFineForcing } from './erosionForcingFields'
 import { fillDepressionsAndRouteFlow } from './flowRouting'
-import { ABYSSAL_FLOOR, SEA_LEVEL, slopeFromAngle } from '../elevation/elevationScale'
+import { ABYSSAL_FLOOR, SEA_LEVEL } from '../elevation/elevationScale'
 import { accumulateDischarge, channelThreshold, computeLakes, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff } from './hydrology'
 import type { RiverPolylines } from './hydrology'
 
@@ -64,14 +65,29 @@ export interface AmplifyRequest {
   factor: number
   // Derived from the world so a given world always bakes identically.
   seed: number
-  // Erosion rounds on the amplified field. 0 skips erosion, which is still
-  // useful for isolating the seed layer.
+  // Engine iterations on the amplified field — the bake's own transient dose,
+  // NOT the world's landscapeAge (that one shaped the macro; this one only
+  // refines it). 0 skips erosion, which is still useful for isolating the
+  // seed layer. Kept under the historical name because it is the wire name
+  // the Go bake module speaks.
   erosionRounds: number
+  // Seed of the engine's lithology lattice (world/query.ts derives it from
+  // the recipe) — world-space and grid-fixed, so the bake carves the same
+  // rock bands the generator carved.
+  lithoSeed: number
   // The WORLD'S OWN erosion settings, as recorded in its save. A world tuned
-  // for gentle incision must not come back carved like an aggressive one.
-  // Undefined falls back to the defaults (older saves).
-  erosionStrength?: number
-  drainageRefresh?: number
+  // for soft alluvium must not come back carved like a hard-rock one.
+  // Undefined falls back to the declared defaults (older saves).
+  alluvium?: number
+  rockContrast?: number
+  // The engine's coarse forcing from the save's forcing layers, bilinearly
+  // upsampled onto the amplified grid. Absent for an old save: the bake then
+  // erodes with neutral forcing (no uplift, lithology-only rock contrast) —
+  // the accepted hard break.
+  upliftCoarse?: Float32Array
+  erodibilityCoarse?: Float32Array
+  forcingResX?: number
+  forcingResY?: number
   // Climate for the hydrology re-run. Coarse by nature and simply sampled
   // onto the fine grid — precipitation is a regional quantity. Absent for a
   // world saved before climate was computed; the bake then stops after erosion.
@@ -119,35 +135,36 @@ export async function runAmplification(
     ? drownForeignLand(result.data, result.width, result.height, request.region)
     : result.data
   if (request.erosionRounds > 0) {
-    // The seeded field IS the tectonic surface as far as this pass is
-    // concerned: runErosionPass reads its input both as the terrain to erode
-    // and as the uplift envelope it may not exceed, which is exactly the
-    // contract wanted here — the macro world (refined) stays the ceiling, so
-    // amplification carves INTO the authoritative shape but never past it.
+    // The v2 engine on the seeded field (docs/design/erosion-v2.md, P3). The
+    // engine's physical parameters (settling lengths in km, diffusivity in
+    // km², slopes as gradients) read the grid through cellM, so a finer grid
+    // needs no per-cell rescaling — the scale bugs that forced v1's
+    // scaleErosionParamsForCellSize were rebuilt out of the model.
     //
-    // Order matters only for readability, not arithmetic: the world's own
-    // slider settings first (what this world's erosion MEANS), then the
-    // per-cell rescaling (what the finer grid needs), then the round budget.
-    const withControls = erosionParamsWithControls(DEFAULT_EROSION_PASS_PARAMS, {
-      strength: request.erosionStrength,
-      networkRefreshes: request.drainageRefresh,
+    // The forcing mirrors the generator's assembly with the save standing in
+    // for the sim: U and the crust hardness from the save's forcing layers,
+    // the lithology noise from the world's own seed on its fixed lattice, and
+    // the save's REAL precipitation as the water contrast where the generator
+    // could only use its provisional climate. One deliberate override:
+    // upliftDt 0 — amplification refines a finished macro, and uplift would
+    // push interfluves above the authoritative shape (the same reasoning as
+    // v1's upliftRate 0, kept beside the bake's other policy in amplify.ts
+    // where the cache key hashes it).
+    const { forcing, params } = assembleFineForcing({
+      uplift: request.upliftCoarse ?? null,
+      hardness: request.erodibilityCoarse ?? null,
+      forcingResX: request.forcingResX ?? 1,
+      forcingResY: request.forcingResY ?? 1,
+      water: request.precipitation ?? null,
+      waterResX: request.climateResX ?? 1,
+      waterResY: request.climateResY ?? 1,
+      lithoSeed: request.lithoSeed,
+    }, field, result.width, result.height, { alluvium: request.alluvium, rockContrast: request.rockContrast })
+    const eroded = await runErosionPassV2(field, result.width, result.height, forcing, {
+      age: request.erosionRounds,
+      params: { ...params, upliftDt: BAKE_ENGINE_OVERRIDES.upliftDt },
+      onProgress: (fraction) => onProgress('erosion', fraction),
     })
-    const scaled = scaleErosionParamsForCellSize(withControls, 1 / request.factor)
-    const params = {
-      ...scaled,
-      rounds: request.erosionRounds,
-      // Amplification is not landscape evolution; the three overrides and
-      // their reasoning live in amplify.AMPLIFICATION_EROSION_OVERRIDES,
-      // beside the rest of the bake's policy (and where the cache key hashes
-      // them).
-      upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
-      plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
-      thermal: {
-        ...scaled.thermal,
-        talusSlope: slopeFromAngle(AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg) * (1 / request.factor),
-      },
-    }
-    const eroded = await runErosionPass(field, result.width, result.height, params, (_phase, fraction) => onProgress('erosion', fraction))
     field = eroded.elevations
   }
 

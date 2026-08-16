@@ -177,7 +177,15 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // change again — a receiver choice inside a shared function, hashed by no
 // constant — and it reorganises every drainage network, so a cached v8
 // artifact holds rivers this pipeline would never draw.
-export const AMPLIFICATION_ALGO_VERSION = 9
+// v10 (2026-08-16): the bake's erosion is the v2 ENGINE (erosion-v2 P3) —
+// implicit mass-conserving solve with the save's U/hardness forcing layers,
+// the world-seeded lithology lattice and the save's real precipitation as
+// water contrast, replacing runErosionPass entirely. Old saves without the
+// forcing layers bake with neutral forcing — the decided hard break. Every
+// AMPLIFY_CONSTANTS member behind v1's pass left the key and the engine's
+// parameter object entered it, so the membership change alone would move the
+// hash; this bump names the fact that the MODEL changed, not a constant.
+export const AMPLIFICATION_ALGO_VERSION = 10
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

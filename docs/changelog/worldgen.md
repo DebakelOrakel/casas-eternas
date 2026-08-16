@@ -5,6 +5,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 
 ## 2026-08-17
 - **changed** Erosion: rebuilt on a mass-conserving engine — sediment now goes somewhere instead of vanishing, rain shapes where valleys carve, and the new Landscape age, Floodplains and Rock contrast sliders replace Strength and Drainage. `worldgen.panel.erosion`
+- **changed** Erosion: the 4K/8K detail bakes run the same engine — they now carve the world's own rock and rain (with floodplains along the valleys), and old bakes are re-baked on next view. `worldgen.panel.erosion.bake`
 
 ## 2026-08-16
 - **fixed** Tectonics: crustal age now runs on one continuous clock across the Archean handover — young worlds' craton-age overlay stops reading everything as newborn, age-dependent ores (iron, tin, gems) place correctly, and late-Archean crust is no longer wrongly recycled for ages after the eon ends. `worldgen.panel.tectonics`

@@ -60,13 +60,23 @@ export const AMPLIFY_BAKE_STAGES = [2]
 // so it would only buy a failed request per world load.
 export const AMPLIFY_FETCH_STAGES = [2, 4]
 
-// Erosion rounds the bake runs on the amplified field — the decision doc's
-// open "pass budget", now measured (2026-08-07, synthetic world, mean local
-// relief on land above 1 km): seeded 162 m → 197 m after ONE round, 202 /
-// 204 / 206 m after 2 / 3 / 5. The first round delivers ~80 % of the gain;
-// everything after is diminishing returns at a linear ~50 s per round at
-// 4096². Two rounds keeps the valley-widening the second round exists for
-// (thermal acting on banks the first round steepened) without paying for
-// the flat part of the curve. The goal is visible tributary structure, not
-// equilibrium.
-export const AMPLIFY_EROSION_ROUNDS = 2
+// ENGINE ITERATIONS the bake runs on the amplified field (the v2 engine's
+// age axis; the constant keeps its wire name — the Go bake module and every
+// job JSON speak it, and its Go default mirrors this value).
+//
+// v1's value was 2 ROUNDS, a different unit entirely (each round a full
+// multi-mechanism pass; measured 2026-08-07, ~80 % of the relief gain in
+// round one). For the engine, measured 2026-08-16 on a real 2048 save at
+// factor 2 (4096×2048, single thread, channel lowering vs the seeded field):
+//
+//   age  6: channels p90  66 m, land mean −19 m, coast drift +0.28 pts, 28 s
+//   age 12: channels p90 106 m, land mean −35 m, coast drift +0.41 pts, 39 s
+//   age 24: channels p90 185 m, land mean −62 m, coast drift +0.62 pts, 62 s
+//
+// 12 lands the carving in the register v1's bake was tuned for (84→167 m
+// mean incision) at moderate whole-land denudation — a CALIBRATION
+// PLACEHOLDER until the coastline status rule (erosion-v2 P3 step ②) pins
+// the drift and a visual pass judges the look. The negative channel p50 in
+// those runs is not an error: the ξ–q engine aggrades floodplains while its
+// p90 tail carves, which v1's pure-incision model could not do.
+export const AMPLIFY_EROSION_ROUNDS = 12

@@ -131,8 +131,10 @@ async function bake(seed = 12345) {
     factor: FACTOR,
     seed,
     erosionRounds: 2,
-    erosionStrength: 1,
-    drainageRefresh: 1,
+    // A fixed lithology seed; the harness world has no save to derive one
+    // from. No coarse forcing layers either — the engine runs the neutral
+    // path, which is exactly what an old save gets.
+    lithoSeed: 4242,
     precipitation: precipitation(CLIMATE_RES_X, CLIMATE_RES_Y),
     climateResX: CLIMATE_RES_X,
     climateResY: CLIMATE_RES_Y,
@@ -190,16 +192,20 @@ console.log('— invariants')
   // erosion carves into, so the bake must stay at or below it — with one
   // measured exception.
   //
-  // THE EXCEPTION, measured 2026-08-09 rather than assumed: deposition on land
-  // fills valley floors, and 3% of cells end up above the seeded field by up to
-  // ~42 m on a 9000 m scale. None of them are below sea level, so this is
-  // alluvium and not the delta mechanism. That is refinement — a filled valley
-  // floor is what alluvium IS — and it means runAmplification's own comment
-  // ("never past it") is stronger than the code.
+  // THE EXCEPTION, first measured 2026-08-09 (v1: 3% of cells, ≤42 m, all
+  // alluvium) and RE-MEASURED 2026-08-16 when the bake moved to the v2
+  // engine: a mass-conserving model must put every eroded metre somewhere,
+  // so fill became broad and shallow instead of spiky — 38% of cells sit
+  // above the seeded field, but at p50 0.44 m / p90 2.4 m, two thirds of
+  // them sea floor under marine settling; only 1.40% of the map is >5 m
+  // over, 0.10% >20 m, max 58 m. That is refinement — a filled valley floor
+  // and a settled shelf are what deposition IS.
   //
-  // So the invariant is a BOUND rather than zero: a bake may fill, and may not
-  // invent terrain the macro does not have. The numbers below are the measured
-  // ones with room, so a runaway shows up and normal fill does not.
+  // So the invariant is a BOUND rather than zero: a bake may fill, and may
+  // not invent terrain the macro does not have. The area bound therefore
+  // counts SUBSTANTIAL fill (>5 m) — a flat any-epsilon count now measures
+  // the model's character, not a defect — and the worst-case bounds keep
+  // catching a runaway either way.
   const ceiling = await M.amplify.runAmplification({
     elevation: macroWorld(), macroWidth: MACRO_W, macroHeight: MACRO_H,
     factor: FACTOR, seed: 12345, erosionRounds: 0,
@@ -207,18 +213,18 @@ console.log('— invariants')
   let above = 0
   let worst = 0
   let worstBelowSea = 0
+  const overM = (v) => v * 9000
   for (let i = 0; i < field.length; i++) {
     const over = field[i] - ceiling.elevation[i]
     if (over <= 1e-6) continue
-    above++
+    if (overM(over) > 5) above++
     if (over > worst) worst = over
     if (field[i] <= SEA_LEVEL && over > worstBelowSea) worstBelowSea = over
   }
-  const overM = (v) => v * 9000
   check('nothing rises far above the macro ceiling', overM(worst) < 150,
-    `worst ${overM(worst).toFixed(1)} m over, on ${((above / field.length) * 100).toFixed(2)}% of cells`)
-  check('filling stays a minority of the map', above / field.length < 0.1,
-    `${((above / field.length) * 100).toFixed(2)}%`)
+    `worst ${overM(worst).toFixed(1)} m over, >5 m on ${((above / field.length) * 100).toFixed(2)}% of cells`)
+  check('substantial filling stays a small minority of the map', above / field.length < 0.05,
+    `${((above / field.length) * 100).toFixed(2)}% over by >5 m`)
   // Deltas are the one mechanism meant to raise sea floor, and they are capped
   // by a depth-graded freeboard — so this stays small even when it is not zero.
   check('nothing below sea level rises far', overM(worstBelowSea) < 150, `${overM(worstBelowSea).toFixed(1)} m`)
@@ -434,7 +440,7 @@ console.log('\n— region bakes')
   const whole = await bake()
   const asOneRegion = await M.amplify.runAmplification({
     elevation: macro, macroWidth: MACRO_W, macroHeight: MACRO_H, factor: FACTOR, seed: 12345,
-    erosionRounds: 2, erosionStrength: 1, drainageRefresh: 1,
+    erosionRounds: 2, lithoSeed: 4242,
     precipitation: precipitation(CLIMATE_RES_X, CLIMATE_RES_Y),
     climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, riverDensity: 55,
     region: { owned: allLand, haloCells: M.amplify.DEFAULT_HALO_CELLS },
@@ -457,7 +463,7 @@ console.log('\n— region bakes')
   // three checks are about is which cells a job writes, not how deeply it carves.
   const bakeRegion = (owned) => M.amplify.runAmplification({
     elevation: macro, macroWidth: MACRO_W, macroHeight: MACRO_H, factor: FACTOR, seed: 12345,
-    erosionRounds: 1, erosionStrength: 1, drainageRefresh: 1,
+    erosionRounds: 1, lithoSeed: 4242,
     precipitation: precipitation(CLIMATE_RES_X, CLIMATE_RES_Y),
     climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, riverDensity: 55,
     region: { owned, haloCells: M.amplify.DEFAULT_HALO_CELLS },

@@ -3,6 +3,8 @@ import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { fineDetailNoise, periodicValueNoise2D } from '../elevation/ridgedNoise'
 import { CHANNEL_SLOPE_EXPONENT } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
+import { DEFAULT_ENGINE_PARAMS } from './erosionEngine'
+import { EROSION_LITHO_SEED_SALT, ROCK_CONTRAST_SIGMA_MAX } from './erosionForcingFields'
 
 // Terrain AMPLIFICATION — the derived fine tier of
 // docs/decisions/worldmap-amplification.md. Takes the authoritative macro
@@ -183,37 +185,28 @@ const RIDGE_FIELD_MEAN = 0.47
 // enough that a plain does not.
 const RELIEF_RADIUS_FRACTION = 1 / 64
 
-// How the bake's erosion differs from the generator's defaults. These are
-// AMPLIFICATION POLICY, not worker mechanics, so they live next to the rest
+// How the bake's engine run differs from the generator's defaults. This is
+// AMPLIFICATION POLICY, not worker mechanics, so it lives next to the rest
 // of the policy rather than inline at the one call site — which also lets
-// the artifact cache hash them (see world/identity.ts: a value change
+// the artifact cache hash it (see world/identity.ts: a value change
 // must invalidate cached terrain, and a hand-maintained version number would
 // be forgotten).
 //
-// Measured 2026-08-07: mean incision of channel cells below their
-// surroundings 84 m → 167 m at identical cost, ridge crests and mean land
-// height essentially unchanged — this deepens valleys, it does not lower the
-// world.
+//  - upliftDt 0: in the generator the engine erodes a landscape that is
+//    still rising; here it refines a FINISHED macro, and uplift would push
+//    interfluves above the authoritative shape. Pure denudation-plus-
+//    deposition is the safer reading of the authority rule — the same
+//    reasoning as v1's upliftRate 0 (measured 2026-08-07: deepened valleys
+//    at unchanged crests). The save's uplift layer still travels: whether a
+//    small dose helps the look at the bake is a calibration question, and
+//    turning this one number is all it takes to ask it.
 //
-//  - upliftRate 0: runErosionPass reads its input as both terrain AND uplift
-//    envelope, re-lifting cells toward it every round. Right when simulating
-//    a landscape rising while rivers cut into it — but here the envelope IS
-//    the finished macro world, so uplift undoes the carving this bake exists
-//    for. Pure denudation is also the safer reading of the authority rule:
-//    without it the pass can only cut into the macro shape, never push
-//    anything back up.
-//  - plainFactor 0.4: the plain damping keeps 7.8 km cells from growing
-//    valleys everywhere, which reads wrong at macro scale. At half that
-//    spacing gentle drainage is exactly what should appear — relaxed, not
-//    removed, or plains lose their flatness entirely.
-//  - talusAngleDeg 6: a finer grid resolves steeper slopes, so the "steepest
-//    sustainable slope at this grid's scale" argument behind erosion.ts's 3°
-//    puts the angle higher here; leaving it planes the valley walls the pass
-//    just cut.
-export const AMPLIFICATION_EROSION_OVERRIDES = {
-  upliftRate: 0,
-  plainFactor: 0.4,
-  talusAngleDeg: 6,
+// v1's other two overrides died with the v1 bake path: plainFactor was v1's
+// plain damping (v2 carries plain microrelief physically), and talusAngleDeg
+// scaled v1's grid-relative talus, where the engine's criticalSlope is a
+// physical gradient already.
+export const BAKE_ENGINE_OVERRIDES = {
+  upliftDt: 0,
 } as const
 
 // Everything in this module whose value changes the bake's output, in one
@@ -243,9 +236,16 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   reliefRadiusFraction: RELIEF_RADIUS_FRACTION,
   ...Object.fromEntries(RIDGE_OCTAVE_CELLS.map((cells, i) => [`ridgeOctaveCells${i}`, cells])),
   ...Object.fromEntries(RIDGE_OCTAVE_AMPLITUDES.map((amp, i) => [`ridgeOctaveAmp${i}`, amp])),
-  upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
-  plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
-  talusAngleDeg: AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg,
+  // The v2 engine's whole parameter object, prefixed: the bake's terrain is
+  // a function of every one of them (kappaDt through epsM), and listing them
+  // individually is exactly the mirror-drift the block comment above warns
+  // about. The overrides and the forcing-assembly constants follow — the
+  // lithology salt and σ span change carved geology for an unchanged world,
+  // which is the invisible-under-one-key failure this object exists to catch.
+  ...Object.fromEntries(Object.entries(DEFAULT_ENGINE_PARAMS).map(([k, v]) => [`engine_${k}`, v])),
+  bakeUpliftDt: BAKE_ENGINE_OVERRIDES.upliftDt,
+  lithoSeedSalt: EROSION_LITHO_SEED_SALT,
+  rockContrastSigmaMax: ROCK_CONTRAST_SIGMA_MAX,
   // The bake RE-EXTRACTS rivers on the amplified field, so hydrology's channel
   // criterion is part of what it produces — and none of these three were in the
   // key. `CHANNEL_SLOPE_EXPONENT` was worse than merely absent: identity.ts
@@ -255,9 +255,6 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   channelSlopeExponent: CHANNEL_SLOPE_EXPONENT,
   channelAreaMax: SURFACE_TUNING.channelAreaMax,
   channelAreaMin: SURFACE_TUNING.channelAreaMin,
-  // The estuary floor caps how deep the bake's erosion may cut below sea
-  // level at ocean mouths — retuning it moves coastlines in the baked field.
-  estuaryMaxDepthM: SURFACE_TUNING.estuaryMaxDepthM,
 }
 
 export interface AmplifiedField {

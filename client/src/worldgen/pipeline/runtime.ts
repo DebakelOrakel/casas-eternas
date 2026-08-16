@@ -8,7 +8,7 @@ import { downstreamOf } from './stages'
 import type { StageId } from './stages'
 import { runErosionPassV2 } from '../surface/erosionPassV2'
 import type { WorkerLike } from '../surface/erosionEnginePool'
-import { assembleErosionForcing } from './erosionForcing'
+import { assembleErosionForcing, coarseForcingFields } from './erosionForcing'
 import { fillDepressionsAndRouteFlow } from '../surface/flowRouting'
 import type { ArcheanSimulation } from '../archean/archeanState'
 import { createArcheanSimulation } from '../archean/archeanState'
@@ -868,6 +868,10 @@ function handleSerializeWorld(): void {
       latticeLastClassCode: new Int8Array(0).buffer as ArrayBuffer,
       oceanAge: EMPTY_OCEAN_AGE.slice().buffer as ArrayBuffer,
       elevation: elevation.buffer as ArrayBuffer,
+      uplift: new Float32Array(0).buffer as ArrayBuffer,
+      erodibility: new Float32Array(0).buffer as ArrayBuffer,
+      forcingResX: 0,
+      forcingResY: 0,
     }
     emit(message, [message.archean!.mantle, message.archean!.streak, message.elevation])
     return
@@ -881,6 +885,10 @@ function handleSerializeWorld(): void {
   const accumulated = sim.latticeAccumulated.slice()
   const locked = sim.latticeLockedEpochs.slice()
   const lastClass = sim.latticeLastClassCode.slice()
+  // The engine's coarse forcing, derived from the sim being serialized — the
+  // same derivation the erode stage runs (pipeline/erosionForcing.ts), so the
+  // bake erodes with the forcing this world was made with.
+  const { uplift, hardness } = coarseForcingFields(sim, sim.width, sim.height)
   const worldMessage: WorkerWorldDataMessage = {
     type: 'worldData',
     snapshot: serializePlateSimulation(sim),
@@ -890,8 +898,12 @@ function handleSerializeWorld(): void {
     latticeLastClassCode: lastClass.buffer as ArrayBuffer,
     oceanAge: oceanAge.buffer as ArrayBuffer,
     elevation: elevation.buffer as ArrayBuffer,
+    uplift: uplift.buffer as ArrayBuffer,
+    erodibility: hardness.buffer as ArrayBuffer,
+    forcingResX: CLIMATE_RES_X,
+    forcingResY: CLIMATE_RES_Y,
   }
-  emit(worldMessage, [worldMessage.mantle, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge, worldMessage.elevation])
+  emit(worldMessage, [worldMessage.mantle, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge, worldMessage.elevation, worldMessage.uplift, worldMessage.erodibility])
 }
 
 function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'restoreWorld' }>): void {

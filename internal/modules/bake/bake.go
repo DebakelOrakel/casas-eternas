@@ -35,10 +35,12 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
-// defaultErosionRounds mirrors the client's AMPLIFY_EROSION_ROUNDS. A request
-// that omits the field gets this rather than zero: "no rounds" would silently
-// produce a world with no carved valleys, which looks like a broken bake.
-const defaultErosionRounds = 2
+// defaultErosionRounds mirrors the client's AMPLIFY_EROSION_ROUNDS (since
+// erosion-v2 P3 these are ENGINE ITERATIONS — the measurement behind the
+// value lives beside the client constant). A request that omits the field
+// gets this rather than zero: "no rounds" would silently produce a world
+// with no carved valleys, which looks like a broken bake.
+const defaultErosionRounds = 12
 
 // nodeHeapMB is what the baker's Node process is allowed. Sized for the 8192²
 // measurement (~2.6 GB) with headroom, since running out mid-bake wastes the

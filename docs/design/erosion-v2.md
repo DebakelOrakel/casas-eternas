@@ -569,6 +569,44 @@ the version break v2 already carries.
   ceiling). Baseline re-anchored on v2. The v1 pass remains ONLY as the
   bake's engine until P3.
 - **P3 — bake tiers** on the new engine; re-measure the tier tables.
+  Decided 2026-08-16: hard break for pre-v2 saves (they bake with neutral
+  forcing; the v1 pass and its legacy control reads die, teardown at P5),
+  build order engine → coastline status rule → threaded server bake →
+  derived tiers, designated finest tier 8K (16K waits on the MFD memory
+  work). STEP ① BUILT 2026-08-16 — the bake IS the engine:
+  - The save grew two manifest layers, `uplift` and `erodibility` (raw f32
+    at climate resolution, written from the live sim at save time via the
+    shared `coarseForcingFields`) — the bake's forcing without carrying the
+    simulation. The lithology seed is derived from the recipe like
+    detailSeed (`erosionLithoSeed`), so no format field was needed for it.
+  - The forcing assembly split: the pure grid half (upsample, lithology
+    noise on its FIXED 512×256 world lattice — a finer bake samples the
+    same rock bands more finely — water normalization, controls mapping)
+    moved to `surface/erosionForcingFields.assembleFineForcing`, shared
+    verbatim by the generator (golden re-run: 0 drifted metrics, the
+    refactor is byte-neutral) and by `runAmplification`, whose water
+    forcing is the save's REAL precipitation where the generator can only
+    use its provisional climate.
+  - Bake policy: `upliftDt 0` (v1's upliftRate-0 reasoning carried over —
+    a refinement must not push interfluves above the finished macro), the
+    engine's parameter object + salts hashed into AMPLIFY_CONSTANTS,
+    ALGO_VERSION 10. No per-cell-size parameter scaling: the engine's
+    physical units read the grid through cellM, which is exactly the
+    scale-conflation v1 needed `scaleErosionParamsForCellSize` to paper
+    over.
+  - Dose measured on a real 2048 save at 4K (single thread): age 6/12/24 →
+    channels p90 66/106/185 m carved, land mean −19/−35/−62 m, coast drift
+    +0.28/+0.41/+0.62 pts, 28/39/62 s. AMPLIFY_EROSION_ROUNDS = 12 (engine
+    iterations now; Go default mirrors it) — calibration placeholder until
+    ②'s status rule pins the drift. The engine aggrades floodplains
+    (channel p50 NEGATIVE) while its p90 tail carves — v1 could only cut.
+  - The amplify harness re-anchored one invariant on measurement: mass
+    conservation deposits broadly and shallowly (38 % of cells above the
+    seeded ceiling but p50 0.44 m, only 1.4 % over by >5 m, two thirds of
+    it marine settling), so the area bound now counts substantial (>5 m)
+    fill; the worst-case bounds (150 m) still catch runaways. All other
+    checks — N=1 splitting exactness, region determinism, byte determinism
+    across machines — passed on the engine unchanged.
 - **P4 — hydrology merge**; riverDensity → display Q-filter; runoffFloor
   removed (user-visible: arid regions lose rivers — now wanted, once
   disliked; stated for the record).

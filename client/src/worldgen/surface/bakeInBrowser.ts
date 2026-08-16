@@ -44,8 +44,15 @@ export interface BrowserBakeRequest {
   factor: number
   detailSeed: number
   erosionRounds: number
-  erosionStrength?: number
-  drainageRefresh?: number
+  lithoSeed: number
+  alluvium?: number
+  rockContrast?: number
+  // The engine's coarse forcing from the save's forcing layers; absent for
+  // an old save (neutral forcing — the accepted hard break).
+  uplift?: Float32Array
+  erodibility?: Float32Array
+  forcingResX?: number
+  forcingResY?: number
   riverDensity?: number
   precipitation?: Float32Array
   // For the lake half of the hydrology re-run; rivers do not need it.
@@ -129,8 +136,13 @@ export function bakeStageInBrowser(
       factor: request.factor,
       seed: request.detailSeed,
       erosionRounds: request.erosionRounds,
-      erosionStrength: request.erosionStrength,
-      drainageRefresh: request.drainageRefresh,
+      lithoSeed: request.lithoSeed,
+      alluvium: request.alluvium,
+      rockContrast: request.rockContrast,
+      uplift: request.uplift ? (request.uplift.slice().buffer as ArrayBuffer) : undefined,
+      erodibility: request.erodibility ? (request.erodibility.slice().buffer as ArrayBuffer) : undefined,
+      forcingResX: request.forcingResX,
+      forcingResY: request.forcingResY,
       riverDensity: request.riverDensity,
       precipitation: request.precipitation ? (request.precipitation.slice().buffer as ArrayBuffer) : undefined,
       temperature: request.temperature ? (request.temperature.slice().buffer as ArrayBuffer) : undefined,

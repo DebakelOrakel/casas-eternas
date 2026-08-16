@@ -29,17 +29,24 @@ export interface AmplifyRequestMessage {
   factor: number
   // Derived from the world so a given world always bakes identically.
   seed: number
-  // Erosion rounds to run on the amplified field. 0 skips erosion (the
+  // Engine iterations to run on the amplified field. 0 skips erosion (the
   // phase-1 behaviour, still useful for isolating the seed layer).
   erosionRounds: number
-  // The WORLD'S OWN erosion settings, as recorded in its save
-  // (spec.erosion.erosionStrength / drainageRefresh). The bake must erode
-  // the way this world was eroded — a world tuned for gentle incision
-  // should not come back from an amplification bake carved like a world
-  // tuned for aggressive incision. Undefined falls back to the defaults
-  // (older saves, or a save that never recorded them).
-  erosionStrength?: number
-  drainageRefresh?: number
+  // Seed of the engine's lithology lattice (derived from the recipe by
+  // world/query.ts).
+  lithoSeed: number
+  // The WORLD'S OWN erosion settings (spec.erosion.alluvium/rockContrast).
+  // The bake must erode the way this world was eroded; undefined falls back
+  // to the declared defaults (older saves).
+  alluvium?: number
+  rockContrast?: number
+  // The engine's coarse forcing from the save's forcing layers (Float32,
+  // forcingResX × forcingResY). Absent for an old save — the bake then runs
+  // neutral forcing, the accepted hard break.
+  uplift?: ArrayBuffer
+  erodibility?: ArrayBuffer
+  forcingResX?: number
+  forcingResY?: number
   // Climate inputs for the hydrology re-run, decoded from the save's baked
   // layers. Coarse by nature (they are regional quantities) and simply
   // sampled onto the fine grid — see the decision doc. Absent for a world
@@ -117,8 +124,13 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
     factor: message.factor,
     seed: message.seed,
     erosionRounds: message.erosionRounds,
-    erosionStrength: message.erosionStrength,
-    drainageRefresh: message.drainageRefresh,
+    lithoSeed: message.lithoSeed,
+    alluvium: message.alluvium,
+    rockContrast: message.rockContrast,
+    upliftCoarse: message.uplift ? new Float32Array(message.uplift) : undefined,
+    erodibilityCoarse: message.erodibility ? new Float32Array(message.erodibility) : undefined,
+    forcingResX: message.forcingResX,
+    forcingResY: message.forcingResY,
     precipitation: message.precipitation ? new Float32Array(message.precipitation) : undefined,
     temperature: message.temperature ? new Float32Array(message.temperature) : undefined,
     climateResX: message.climateResX,
