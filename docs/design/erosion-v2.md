@@ -3,7 +3,7 @@ summary: A plan for rebuilding the erosion step — macro pass, refined bakes an
 date: 2026-08-16
 area: worldgen
 stage: idea
-status: plan agreed in discussion 2026-08-16 (including the tectonics-interface refinement); NOTHING BUILT. Next step is the P0 physics prototype, whose consistency gate decides whether the central promise holds. The U-source fork below is narrowed but not closed.
+status: plan agreed 2026-08-16; P0 prototype RUN the same day and its original gate FAILED — by design, cheaply, and informatively. The failure revised the plan (see "Refined bakes under v2, REVISED"): tier consistency cannot come from independent per-tier solves under ANY erosion model, it comes from one solve plus derived tiers — recorded as its own decision in decisions/derived-bake-tiers.md, valid for the current pipeline too. P0 is COMPLETE: cost measured, and the look question closed structurally — a full equilibrium erases its initial condition, so texture comes from finite landscape age + K contrast + U detail, not from scalar tuning (see the P0 section). The U-source fork below is narrowed but not closed.
 ---
 
 # Erosion v2 — One Surface-Process Engine
@@ -176,15 +176,80 @@ enclosed-water restore hack. Rivers are extracted once from the final
 state by the same LTD walker. Salt flats / terminal basins keep their
 climate refinement, now consistent by construction.
 
-## Refined bakes under v2
+## Refined bakes under v2 — REVISED after the P0 measurement
 
-Same engine, same equation, same K field, finer grid, run to the same
-convergence criterion. The SYSTEMATIC tier disagreements (the ±50–90 m
-offsets that dominate today's 100–140 m) disappear structurally — both
-grids discretize the same attractor. Honest residual: exact channel
-positions in the fine bands stay partly grid-dependent (the attractor is
-not unique in network detail); macro valleys pin the large rivers. Expect a
-large improvement, not byte agreement.
+The paragraph below is what this plan originally claimed, kept struck
+through in spirit because P0 measured it FALSE the same day it was
+written: ~~same engine, finer grid, same convergence criterion — the
+systematic tier disagreements disappear structurally because both grids
+discretize the same attractor~~.
+
+P0 ran (512×256 vs 1024×512, same physical constants, same world-space
+forcing and lithology fields, 800 iterations each) and the independent
+solves disagreed by **464 m RMS, 426 m of it smooth, +142 m mean** —
+WORSE than the current model's 144 m under the identical protocol.
+Three calibration rounds removed genuine scale bugs (per-pair hillslope
+fractions → physical diffusivity; constant settling length → Q-dependent
+with exact exponential reach integration; the A0 sub-grid drainage
+closure for headwater slopes) and the systematic gap survived them all.
+The difference image says why: red interfluve cores veined with blue
+channels — the finer grid RESOLVES hillslopes standing above channels
+that the coarse grid, whose every cell carries trunk-scale drainage
+area, cannot represent at all. That is not a constant to tune; it is the
+known result that **LEM equilibria converge under grid refinement
+statistically, not pointwise**. More physics resolves more
+resolution-dependent structure, not less.
+
+The revision (its own decision, valid for the CURRENT pipeline too —
+see [decisions/derived-bake-tiers.md](../decisions/derived-bake-tiers.md)):
+**one solve at the designated finest tier; every coarser tier is its
+downsample.** Consistency by construction, byte-exact, no closure
+acrobatics. v2's engine then never runs per tier — it runs once per
+world at the finest grid, which also concentrates the threading budget
+where it pays. A fast provisional 4K remains the immediate preview,
+replaced by the derived family in one visible, in-game-documented swap.
+
+What P0 still owed after the revision — LOOK and COST — is now measured
+and closed (2026-08-16):
+
+- **COST**: 0.36 s/iteration at 512×256, 0.55 s at 1024×512
+  single-threaded; ~800 iterations to quasi-steady with ~30–40 m of
+  residual capture flicker (the metastable river captures real LEMs also
+  show). 443 s for a full 1024 run — the P1 threading gate (≥4× on
+  8 cores) is what makes finest-tier runs affordable.
+- **LOOK — the finding is structural, and it validates the plan's own
+  slider.** A calibrated round (U/K ×2.7, lithoSigma 1.4) raised the
+  equilibrium as the scaling law says it must (mean land 924 → 1460 m,
+  p95 2455 → 4224 m) yet local relief barely moved: 39-km relief median
+  233 m against the current model's 521 m at the same grid, and the crop
+  renders as smooth massifs with no dendritic dissection. The reason is
+  not a constant: **a full equilibrium erases its initial condition** —
+  every metre of texture must then come from the forcing, and P0's
+  forcing is smooth by construction (U smoothed at 256×128, K on a
+  ~30-km lattice). The current model's dissection is inherited tectonic
+  roughness that its transient erosion carves but never erases. So the
+  look does NOT come from scalar tuning; it comes from the three inputs
+  the plan already names: **finite landscape age** (run the transient
+  from the real tectonic terrain — the Landschaftsalter attractor is
+  load-bearing, full equilibrium is its far end, not the default),
+  **fine-scale K contrast**, and **U detail exported by tectonics**.
+  P2 integrates the engine against the real tectonic field, where the
+  initial condition carries the texture P0's smooth restart could not.
+
+Two P2 constraints P0 surfaced, recorded before they get lost:
+
+- **Coastlines must be pinned.** A free equilibrium moves them — P0's land
+  fraction drifted 26.4 → 31.1 % as uplift and deltas pushed shelves above
+  water. Coasts are macro authority; the engine needs a coastal constraint
+  (uplift shut off seaward of the macro coastline, growth allowance only
+  for deltas), not a hope that the balance lands where the macro said.
+- **Relief needs its decouplers.** In the current model relief is inherited
+  roughness; in an equilibrium model, peak height and valley relief both
+  come from U/K unless something decouples them — the K-field contrast
+  (soft bands carve, hard bands stand, peaks unmoved) and the erosion
+  threshold θc (steepens low-Q reaches) are those decouplers, and the first
+  look rounds quantified how much they carry: with neither, local relief
+  came out 341 m against the current model's 904 m at the same grid.
 
 Hypothesis to re-test, not a promise: region splitting diverged chaotically
 (measured 2026-08-10) on the TRANSIENT explicit model; equilibrium problems
@@ -277,9 +342,13 @@ the version break v2 already carries.
 ## Phased build with gates
 
 - **P0 — physics prototype** (scratchpad, 512×256, single thread):
-  implicit solver + diffusion + ξ–q + marine diffusion. GATE: cross-tier
-  consistency 512 vs 1024 must fall well below the current model's; if it
-  does not, the central promise is false and we stop cheaply.
+  implicit solver + diffusion + ξ–q + marine diffusion. ORIGINAL GATE
+  (cross-tier consistency 512 vs 1024) RUN 2026-08-16 and FAILED —
+  exactly the cheap stop it was designed to be, and the failure produced
+  the derived-tiers decision. The remaining look and cost questions were
+  then measured and closed the same day (see the P0 section above): cost
+  is P1's problem to parallelise, and the look lives in the initial
+  condition and forcing detail, not in the scalars — P0 is DONE.
 - **P1 — threading spike**: parallel flood + level-scheduled solver at
   2048. GATE: ≥4× on 8 cores.
 - **P2 — generator integration** behind the existing `runErosionPass`
