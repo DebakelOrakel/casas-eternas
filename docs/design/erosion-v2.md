@@ -533,7 +533,18 @@ the version break v2 already carries.
 - **P2 — generator integration** behind the existing `runErosionPass`
   surface; decide the U fork on P0 evidence; goldens re-anchored
   deliberately; the new slider set (see "Player-facing controls") proposed
-  for approval (UI surface).
+  for approval (UI surface). STATUS 2026-08-17: the engine-side
+  scaffolding is COMPLETE — `surface/erosionPassV2.ts` wraps the engine in
+  v1's exact result contract (with two documented shifts: elevations are
+  honest z, basins unbaked; preFill ≡ elevations), runs single-threaded or
+  pooled+pipelined, finalizes routing on the finished terrain for the
+  hydrology handoff; the climate-Q weights thread through every execution
+  path (FLAG_HAS_ACCUM_WEIGHTS — fixed default-parameter provisional
+  forcing per the 2026-08-17 decision, the live coupling/panel reorder is
+  its own later step); chunked runs keep a global cadence cursor. The BAKE
+  stays on v1 until P3 (stride-8 MFD memory at bake grids). Remaining for
+  the switchover: runtime forcing assembly + wiring, panel/slider swap
+  (i18n approval), golden re-anchor.
 - **P3 — bake tiers** on the new engine; re-measure the tier tables.
 - **P4 — hydrology merge**; riverDensity → display Q-filter; runoffFloor
   removed (user-visible: arid regions lose rivers — now wanted, once

@@ -20,6 +20,7 @@ import { PooledErosionEngine, PipelinedErosionEngine } from '../src/worldgen/sur
 import { Worker as NodeWorker } from 'node:worker_threads'
 import { fineDetailNoise } from '../src/worldgen/elevation/ridgedNoise'
 import { engineFlowRouting } from '../src/worldgen/surface/erosionEngineBridge'
+import { runErosionPassV2 } from '../src/worldgen/surface/erosionPassV2'
 import { accumulateDischarge, computeLakes } from '../src/worldgen/surface/hydrology'
 
 const [artifactDir, resArg, itersArg] = process.argv.slice(2)
@@ -243,5 +244,21 @@ for (const [stencilWorkers, refreshWorkers] of [[2, 1], [4, 2]] as const) {
   }
   const ok = wetLand === landCells && maxDischarge > 800 * 50 && lakes.depth.length === n
   console.log(`${ok ? 'PASS' : 'FAIL'} — hydrology on engine routing: discharge on ${wetLand}/${landCells} land cells (max ${(maxDischarge / 800).toFixed(0)} cells eq.), ${lakeCells} lake + ${saltCells} salt cells`)
+  if (!ok) process.exitCode = 1
+}
+
+// --- the pass adapter: v1's contract, both execution paths -------------------
+{
+  const single = await runErosionPassV2(z, RES_X, RES_Y, { uplift, erodibility }, { age: 8 })
+  const pooled = await runErosionPassV2(z, RES_X, RES_Y, { uplift, erodibility }, {
+    age: 8,
+    pool: { createWorker: () => new NodeWorker(workerUrl) as never, stencilWorkers: 2, refreshWorkers: 1, pipelineDepth: 4 },
+  })
+  const contractOk = (r: typeof single): boolean =>
+    r.elevations.length === n && r.preFillElevations.length === n &&
+    r.routing.poppedCount > 0 && r.routing.flowTarget.length === n &&
+    r.accumulation.length === n && r.elevations !== r.preFillElevations
+  const ok = contractOk(single) && contractOk(pooled)
+  console.log(`${ok ? 'PASS' : 'FAIL'} — runErosionPassV2 contract holds on both paths (popped ${single.routing.poppedCount} / ${pooled.routing.poppedCount})`)
   if (!ok) process.exitCode = 1
 }

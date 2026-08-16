@@ -45,6 +45,10 @@ export interface TerrainViews {
   moveSouth: Float32Array
   // Fluvial cut volumes for the sediment walk.
   erosionVolume: Float32Array
+  // Per-cell base contribution for drainage accumulation (the climate-Q
+  // coupling: upsampled provisional precipitation). Read only when
+  // FLAG_HAS_ACCUM_WEIGHTS is set; uniform 1 otherwise.
+  accumulationWeights: Float32Array
   // Per-worker residual reduction slots.
   maxStepW: Float64Array
   // Scalar flags: [0] = hasCoastMask.
@@ -111,9 +115,9 @@ function makeTaker(backing: ArrayBufferLike): { take: <T>(Type: TypedArrayCtor<T
 
 export function terrainBufferBytes(width: number, height: number): number {
   const n = width * height
-  // f32: z, uplift, erodibility, moveE/S, erosionVolume (6n)
+  // f32: z, uplift, erodibility, moveE/S, erosionVolume, accumulationWeights (7n)
   // u8:  coastMask; i32 flags(16); f64 maxStepW(64)
-  return 6 * 4 * n + n + 16 * 4 + 64 * 8 + 1024
+  return 7 * 4 * n + n + 16 * 4 + 64 * 8 + 1024
 }
 
 export function routingBufferBytes(width: number, height: number): number {
@@ -146,6 +150,7 @@ export function createTerrainViews(width: number, height: number, buffer?: Array
     moveEast: take(Float32Array, n),
     moveSouth: take(Float32Array, n),
     erosionVolume: take(Float32Array, n),
+    accumulationWeights: take(Float32Array, n),
     maxStepW: take(Float64Array, 64),
     flags: take(Int32Array, 16),
     coastMask: take(Uint8Array, n),
@@ -200,6 +205,7 @@ export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFro
     moveEast: terrain.moveEast,
     moveSouth: terrain.moveSouth,
     erosionVolume: terrain.erosionVolume,
+    accumulationWeights: terrain.accumulationWeights,
     maxStepW: terrain.maxStepW,
     flags: terrain.flags,
     zSnapshot: routing.zSnapshot,

@@ -29,6 +29,7 @@ import {
 import {
   DEFAULT_ENGINE_PARAMS,
   FLAG_HAS_COAST_MASK,
+  FLAG_HAS_ACCUM_WEIGHTS,
   kernelParamsFor,
   createCoordinatorScratch,
   computeOceanSeed,
@@ -149,6 +150,10 @@ export class PooledErosionEngine {
       views.coastMask.set(forcing.coastMask)
       views.flags[FLAG_HAS_COAST_MASK] = 1
     }
+    if (forcing.accumulationWeights) {
+      views.accumulationWeights.set(forcing.accumulationWeights)
+      views.flags[FLAG_HAS_ACCUM_WEIGHTS] = 1
+    }
     const ctrlBuffer = new SharedArrayBuffer(64)
     const doneBuffer = new SharedArrayBuffer(64)
     const kernelParams = kernelParamsFor(width, params)
@@ -240,11 +245,14 @@ export class PooledErosionEngine {
     return maxStep * 9000
   }
 
+  private cursor = 0
+
   run(iterations: number, routingEvery = 4, onIteration?: (iteration: number, residualM: number) => void): number {
     let residual = Infinity
     let calmStreak = 0
     for (let i = 0; i < iterations; i++) {
-      if (i % routingEvery === 0) this.refreshRouting()
+      if (this.cursor % routingEvery === 0) this.refreshRouting()
+      this.cursor++
       residual = this.stepPhysics()
       calmStreak = residual < this.params.epsM ? calmStreak + 1 : 0
       onIteration?.(i, residual)
@@ -303,6 +311,10 @@ export class PipelinedErosionEngine {
   private readonly refreshCtrl: Int32Array
   private activeIndex = -1
   private inFlight = false
+  // Global iteration cursor — chunked run() calls must not reset the
+  // boundary schedule (determinism holds for a FIXED chunking either way,
+  // but the staleness cadence should be uniform across chunk seams).
+  private cursor = 0
 
   private constructor(
     width: number,
@@ -364,6 +376,10 @@ export class PipelinedErosionEngine {
       terrain.coastMask.set(forcing.coastMask)
       terrain.flags[FLAG_HAS_COAST_MASK] = 1
     }
+    if (forcing.accumulationWeights) {
+      terrain.accumulationWeights.set(forcing.accumulationWeights)
+      terrain.flags[FLAG_HAS_ACCUM_WEIGHTS] = 1
+    }
     const ctrlABuffer = new SharedArrayBuffer(64)
     const doneABuffer = new SharedArrayBuffer(64)
     const ctrlBBuffer = new SharedArrayBuffer(64)
@@ -403,8 +419,25 @@ export class PipelinedErosionEngine {
     return this.terrain.z
   }
 
+  // The live-z assembly of the currently active routing buffer — what the
+  // pass adapter hands to the hydrology bridge after finalizeRouting.
+  get activeEngineViews(): EngineViews {
+    return this.liveViews[this.activeIndex]
+  }
+
   private get activeViews(): EngineViews {
     return this.liveViews[this.activeIndex]
+  }
+
+  // One SYNCHRONOUS refresh of the current terrain, adopted immediately —
+  // the pass adapter calls this once after the run so the routing handed
+  // to hydrology matches the finished z exactly (in-loop routing is up to
+  // a pipeline depth stale by design). Returns the popped count.
+  finalizeRouting(): number {
+    if (this.inFlight) this.waitAndAdopt()
+    this.startRefresh(this.activeIndex === -1 ? 0 : 1 - this.activeIndex)
+    this.waitAndAdopt()
+    return this.poppedCount
   }
 
   private dispatchStencil(job: number): void {
@@ -473,7 +506,8 @@ export class PipelinedErosionEngine {
     let residual = Infinity
     let calmStreak = 0
     for (let i = 0; i < iterations; i++) {
-      if (i % this.options.pipelineDepth === 0) this.boundary()
+      if (this.cursor % this.options.pipelineDepth === 0) this.boundary()
+      this.cursor++
       residual = this.stepPhysics()
       calmStreak = residual < this.params.epsM ? calmStreak + 1 : 0
       onIteration?.(i, residual)

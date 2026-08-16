@@ -101,6 +101,9 @@ export interface ErosionForcing {
   // Cells allowed to receive uplift — the coastline pin (the initial land
   // mask). Omit to run unpinned, which the engine-check harness does.
   coastMask?: Uint8Array
+  // Per-cell drainage contribution (the climate-Q coupling; see
+  // accumulateFlowV2). Omit for uniform area weighting.
+  accumulationWeights?: Float32Array
 }
 
 const ELEVATION_METERS = 9000 // the repo's metre anchor: z 1.0 = 9000 m
@@ -117,6 +120,7 @@ const LTD_FACETS: ReadonlyArray<readonly [number, number, number]> = [
 ]
 
 export const FLAG_HAS_COAST_MASK = 0
+export const FLAG_HAS_ACCUM_WEIGHTS = 1
 
 // The subset of params the parallel kernels need (a plain object so the
 // pool can structured-clone it to workers once).
@@ -748,15 +752,17 @@ export function lambdaWalk(v: EngineViews, popped: number, s: CoordinatorScratch
   }
 }
 
-// Drainage-area accumulation over the MFD edges, popOrder backward.
-// `baseWeights` (optional) replaces the uniform per-cell contribution of 1 —
-// the hydrology merge's climate coupling: pass upsampled precipitation and
-// the engine's Q becomes water, not area. Which stage supplies it (and the
-// resulting pipeline-order question) is decided at the switchover; the
-// mechanism is deliberately already here.
-export function accumulateFlowV2(v: EngineViews, width: number, height: number, popped: number, baseWeights?: Float32Array): void {
-  const { accumulation, mfdDegree, mfdDirection, mfdWeight, popOrder } = v
-  if (baseWeights) accumulation.set(baseWeights)
+// Drainage-area accumulation over the MFD edges, popOrder backward. When
+// FLAG_HAS_ACCUM_WEIGHTS is set, each cell contributes
+// views.accumulationWeights[i] instead of 1 — the hydrology merge's
+// climate coupling: upsampled provisional precipitation makes the engine's
+// Q water, not area (decided 2026-08-17: fixed default-parameter forcing
+// at the switchover; live climate coupling is its own later stage-order
+// step). In the views so every refresh path — single-threaded, pooled,
+// and the pipelined refresh coordinator — applies it identically.
+export function accumulateFlowV2(v: EngineViews, width: number, height: number, popped: number): void {
+  const { accumulation, mfdDegree, mfdDirection, mfdWeight, popOrder, flags } = v
+  if (flags[FLAG_HAS_ACCUM_WEIGHTS]) accumulation.set(v.accumulationWeights)
   else accumulation.fill(1)
   for (let i = popped - 1; i >= 0; i--) {
     const cell = popOrder[i]
@@ -868,6 +874,10 @@ export class ErosionEngine {
   readonly params: ErosionEngineParams
   readonly views: EngineViews
   poppedCount = 0
+  // Global iteration cursor: run() may be called in chunks (the pass
+  // adapter does, for progress redraws), and the refresh cadence must not
+  // reset at chunk boundaries.
+  private cursor = 0
 
   private readonly scratch: CoordinatorScratch
   private readonly floodScratch: FloodScratch
@@ -897,6 +907,10 @@ export class ErosionEngine {
     if (forcing.coastMask) {
       this.views.coastMask.set(forcing.coastMask)
       this.views.flags[FLAG_HAS_COAST_MASK] = 1
+    }
+    if (forcing.accumulationWeights) {
+      this.views.accumulationWeights.set(forcing.accumulationWeights)
+      this.views.flags[FLAG_HAS_ACCUM_WEIGHTS] = 1
     }
     this.scratch = createCoordinatorScratch(width, height)
     this.floodScratch = createFloodScratch(width, height)
@@ -969,7 +983,8 @@ export class ErosionEngine {
     let residual = Infinity
     let calmStreak = 0
     for (let i = 0; i < iterations; i++) {
-      if (i % routingEvery === 0) this.refreshRouting()
+      if (this.cursor % routingEvery === 0) this.refreshRouting()
+      this.cursor++
       residual = this.stepPhysics()
       calmStreak = residual < this.params.epsM ? calmStreak + 1 : 0
       onIteration?.(i, residual)
