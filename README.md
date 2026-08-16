@@ -4,7 +4,10 @@
 
 ## Run
 
+From a checkout:
+
 ```
-cd client
-npm rum dev
+make run
 ```
+
+Builds the baker bundle, the client and the docs site, then starts everything on :8080.
