@@ -157,7 +157,6 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
       landscapeAge: readRecipeNumber(yamlText, 'spec.erosion.landscapeAge'),
       alluvium: readRecipeNumber(yamlText, 'spec.erosion.alluvium'),
       rockContrast: readRecipeNumber(yamlText, 'spec.erosion.rockContrast'),
-      riverDensity: readRecipeNumber(yamlText, 'spec.hydrology.riverDensity'),
     },
     worldUid: readRecipeValue(yamlText, 'metadata.uid') ?? '',
   }

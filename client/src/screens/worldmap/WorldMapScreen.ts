@@ -659,16 +659,13 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     worldUid = inputs.worldUid
     presentWorld(
       inputs.elevations, inputs.width, inputs.height,
-      inputs.biome, inputs.detailSeed, inputs.erosionControls.riverDensity,
+      inputs.biome, inputs.detailSeed,
       inputs.biomeInputs, inputs.climate, inputs.lakeDepth,
     )
   }
 
 
-  // `riverDensity` is the density the world was SAVED with. Rivers are keyed by
-  // it inside an amplification artifact, so a read that guessed would find the
-  // wrong set — or none.
-  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number, riverDensity: number | undefined, savedBiomeInputs: MapWorldFields['biomeInputs'] = null, climate: { data: Float32Array; resX: number; resY: number } | null = null, lakeDepth: { data: Float32Array; resX: number; resY: number } | null = null): void {
+  function presentWorld(elevations: Float32Array, width: number, height: number, biome: { data: Float32Array; resX: number; resY: number } | null, detailSeed: number, savedBiomeInputs: MapWorldFields['biomeInputs'] = null, climate: { data: Float32Array; resX: number; resY: number } | null = null, lakeDepth: { data: Float32Array; resX: number; resY: number } | null = null): void {
     // A new world supersedes any tier fetch still in flight for the last one.
     loadGeneration++
     hoverTooltip?.dispose()
@@ -795,8 +792,8 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       },
     })
 
-    void loadTiers(detailSeed, riverDensity)
-    void deriveMacroRivers(elevations, width, height, climate, riverDensity)
+    void loadTiers(detailSeed)
+    void deriveMacroRivers(elevations, width, height, climate)
   }
 
   // The MACRO tier's rivers, so a freshly loaded world is never river-less
@@ -804,13 +801,13 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // raster + climate through the SAME deriveRivers the bake runs — the save
   // deliberately carries no polylines. Runs on the main thread; the routing
   // yields, and on the 2048 grid the whole derivation is around a second.
-  async function deriveMacroRivers(elevations: Float32Array, width: number, height: number, climate: { data: Float32Array; resX: number; resY: number } | null, riverDensity: number | undefined): Promise<void> {
+  async function deriveMacroRivers(elevations: Float32Array, width: number, height: number, climate: { data: Float32Array; resX: number; resY: number } | null): Promise<void> {
     // No climate, no discharge — the Archean case; the map simply has no rivers.
     if (!climate) return
     const generation = loadGeneration
     // Rivers only: the save already carries its own macro lake layer, so no
     // temperature goes in and no lakes come back.
-    const { rivers } = await deriveRivers(elevations, width, height, climate.data, climate.resX, climate.resY, riverDensity)
+    const { rivers } = await deriveRivers(elevations, width, height, climate.data, climate.resX, climate.resY)
     if (generation !== loadGeneration) return
     // A bake tier's finer network may have landed while this derived — never
     // replace finer with coarser.
@@ -979,23 +976,23 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // screen, and with none of them the save's macro raster is a perfectly
   // usable world. (Factor 1 is that macro raster — nothing to fetch; its
   // rivers come from deriveMacroRivers.)
-  async function loadTiers(detailSeed: number, riverDensity: number | undefined): Promise<void> {
+  async function loadTiers(detailSeed: number): Promise<void> {
     const generation = loadGeneration
     const pipelineVersion = amplificationPipelineVersion()
     const store = await getArtifactStore()
     const familyKey = artifactKey(worldUid, worldId, pipelineVersion, String(AMPLIFY_FINEST_STAGE))
     // The family's coarse member — null also for a pre-family finest
     // artifact, which then behaves like the provisional path below.
-    const coarse = await readAmplificationArtifact(store, familyKey, riverDensity, 2).catch(() => null)
+    const coarse = await readAmplificationArtifact(store, familyKey, 2).catch(() => null)
     if (generation !== loadGeneration) return
     if (coarse) {
       applyTier(coarse.artifact, 2, detailSeed)
     } else {
-      const sketch = await readAmplificationArtifact(store, artifactKey(worldUid, worldId, pipelineVersion, '2'), riverDensity).catch(() => null)
+      const sketch = await readAmplificationArtifact(store, artifactKey(worldUid, worldId, pipelineVersion, '2')).catch(() => null)
       if (generation !== loadGeneration) return
       if (sketch) applyTier(sketch.artifact, 2, detailSeed)
     }
-    const finest = await readAmplificationArtifact(store, familyKey, riverDensity).catch(() => null)
+    const finest = await readAmplificationArtifact(store, familyKey).catch(() => null)
     if (generation !== loadGeneration) return
     if (finest) applyTier(finest.artifact, AMPLIFY_FINEST_STAGE, detailSeed)
   }

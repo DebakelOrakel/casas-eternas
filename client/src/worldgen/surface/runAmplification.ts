@@ -5,7 +5,7 @@ import { assembleFineForcing } from './erosionForcingFields'
 import type { PipelineOptions, WorkerLike } from './erosionEnginePool'
 import { fillDepressionsAndRouteFlow } from './flowRouting'
 import { ABYSSAL_FLOOR, SEA_LEVEL } from '../elevation/elevationScale'
-import { accumulateDischarge, channelThreshold, computeLakes, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff } from './hydrology'
+import { accumulateDischarge, channelThreshold, computeLakes, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff, CANONICAL_RIVER_DENSITY } from './hydrology'
 import type { RiverPolylines } from './hydrology'
 
 // The amplification bake itself: upsample, seed roughness, erode, re-run
@@ -99,7 +99,6 @@ export interface AmplifyRequest {
   temperature?: Float32Array
   climateResX?: number
   climateResY?: number
-  riverDensity?: number
   // The slice this bake owns. Absent means the whole world, which is what every
   // caller does today.
   region?: BakeRegion
@@ -193,7 +192,6 @@ export async function runAmplification(
     const derived = await deriveRivers(
       field, result.width, result.height,
       request.precipitation, request.climateResX, request.climateResY,
-      request.riverDensity,
       {
         maxDischarge: request.maxDischarge,
         meanRunoff: request.meanRunoff,
@@ -221,8 +219,12 @@ export async function runAmplification(
 // baked one differ only by their grid, never by their rules.
 //
 // (The save deliberately carries a discharge RASTER and no polylines — the
-// client re-derives deterministically from elevation + precipitation +
-// riverDensity, which is exactly this call. See the save writer's comment.)
+// client re-derives deterministically from elevation + precipitation, which is
+// exactly this call. See the save writer's comment.)
+//
+// Extraction runs at CANONICAL_RIVER_DENSITY, always: since P4 the density
+// slider is a draw filter in the generator screen, and everything derived —
+// the baked network, the worldmap's macro rivers — is the model's one set.
 export async function deriveRivers(
   field: Float32Array,
   width: number,
@@ -230,7 +232,6 @@ export async function deriveRivers(
   precipitation: Float32Array,
   climateResX: number,
   climateResY: number,
-  riverDensity: number | undefined,
   // Handed in by a split bake, derived here by a whole one — see the two
   // request fields' own comment. `??` and not a truthiness test: 0 is a
   // legitimate value for a world with no land, and would silently fall back.
@@ -252,7 +253,7 @@ export async function deriveRivers(
   // erosion constants are. That is what makes a finer bake produce a richer
   // river network rather than the same one with more vertices; amplify.ts
   // carries the measurements behind the decision.
-  const criticalArea = densityToCriticalArea(riverDensity ?? 55)
+  const criticalArea = densityToCriticalArea(CANONICAL_RIVER_DENSITY)
   const threshold = channelThreshold(criticalArea, meanRunoff)
   const rivers = extractRiverPolylines(routing, discharge, field, threshold, maxDischarge)
   const lakeDepth = options.temperature
@@ -319,7 +320,7 @@ async function coastStatusMask(
   const routing = await fillDepressionsAndRouteFlow(field, width, height, 0)
   const discharge = accumulateDischarge(routing, field, request.precipitation, request.climateResX, request.climateResY)
   const meanRunoff = request.meanRunoff ?? meanLandRunoff(request.precipitation, field, width, height, request.climateResX, request.climateResY)
-  const threshold = channelThreshold(densityToCriticalArea(request.riverDensity ?? 55), meanRunoff)
+  const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), meanRunoff)
   const mouths = new Uint8Array(field.length)
   let found = 0
   for (let y = 0; y < height; y++) {

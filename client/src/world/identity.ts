@@ -68,22 +68,18 @@ export interface BakeInputs {
   rockContrast?: number
 }
 
-// riverDensity is DELIBERATELY absent, and it used to be here.
+// riverDensity is DELIBERATELY absent, and it used to be here — twice removed.
 //
-// The rule is "hash what the bake consumes", and the bake does read it — but
-// consuming and *costing* are not the same thing. Erosion strength and drainage
-// refresh change the terrain, so they must invalidate everything. River density
-// touches nothing before the final extraction: measured on a stage-2 bake, 70
-// of 79 seconds are erosion and the density is first read after them.
+// First from the key (2026-08-08): the rule is "hash what the bake consumes",
+// but consuming and *costing* are not the same thing. With it in the key,
+// nudging the slider minted a new worldId and orphaned the whole artifact —
+// 17 MB at 4k, 67 MB at 8k, per slider position, to redo an extraction worth
+// seconds; rivers were then keyed per-density BELOW the shared terrain.
 //
-// With it in the key, nudging the slider minted a new worldId and orphaned the
-// whole artifact — 17 MB at 4k, 67 MB at 8k, per slider position, to redo a
-// step worth seconds. It made the store worse than useless: it filled up with
-// entries nothing would ever ask for again.
-//
-// Rivers are keyed BELOW this instead, per density, next to a shared elevation
-// (see amplificationArtifact). Terrain is computed once; densities are cheap
-// variations on it.
+// Then from the bake entirely (erosion-v2 P4): the network is extracted once
+// at CANONICAL_RIVER_DENSITY and the slider became a pure draw filter, so
+// even the per-density file names are gone. If a control ever needs this
+// treatment again, that per-density file layout is the shape to bring back.
 
 // A pure 64-bit content hash, sixteen hex characters. It used to carry the
 // sanitised seed text as a readable prefix ("Ätna-1a2b…") — dropped
@@ -185,7 +181,14 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // AMPLIFY_CONSTANTS member behind v1's pass left the key and the engine's
 // parameter object entered it, so the membership change alone would move the
 // hash; this bump names the fact that the MODEL changed, not a constant.
-export const AMPLIFICATION_ALGO_VERSION = 10
+//
+// v11 (2026-08-16): drainage density became climate-driven (erosion-v2 P4) —
+// the 200 mm/yr runoffFloor left the runoff sampling, so arid regions carry
+// genuinely few rivers, and the bake extracts its network at the one
+// CANONICAL_RIVER_DENSITY instead of the save's slider value. Both change the
+// baked rivers and lakes for an unchanged world; the floor was never in
+// AMPLIFY_CONSTANTS, so the constants hash alone would not have moved.
+export const AMPLIFICATION_ALGO_VERSION = 11
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

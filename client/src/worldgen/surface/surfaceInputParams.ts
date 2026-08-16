@@ -32,13 +32,16 @@ export const SURFACE_INPUTS = {
     i18n: 'worldgen.panel.erosion.rockContrast',
     inSpec: true,
   },
-  // River density 0..100. NOT converted here: the worker takes the raw slider
-  // value and `densityToCriticalArea` maps it to a critical drainage area, a
-  // curve rather than a scale factor. Deliberately absent from the artifact
-  // cache key even though the bake reads it — see world/identity.ts.
+  // River density 0..100 — a DRAW filter since erosion-v2 P4: it picks which
+  // extracted channels the generator screen draws, not how many exist (that
+  // is climate-driven now). Display-side by construction — outside the spec,
+  // the artifact key and the bake; the model's own channel set sits at
+  // hydrology.ts' CANONICAL_RIVER_DENSITY. NOT converted here: the worker
+  // takes the raw slider value and `densityToCriticalArea` maps it to a
+  // critical drainage area, a curve rather than a scale factor.
   riverDensity: {
     min: 0, max: 100, step: 1, default: 55,
     i18n: 'worldgen.panel.hydrology.riverDensity',
-    inSpec: true,
+    inSpec: false,
   },
 } satisfies Record<string, InputParam>

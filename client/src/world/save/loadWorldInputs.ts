@@ -54,7 +54,6 @@ export interface ErosionControls {
   landscapeAge: number | undefined
   alluvium: number | undefined
   rockContrast: number | undefined
-  riverDensity: number | undefined
 }
 
 export interface WorldInputs {

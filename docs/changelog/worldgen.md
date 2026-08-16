@@ -9,6 +9,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **changed** Erosion: server bakes run multi-threaded — a 4K bake finishes in under half a minute, an 8K in about two. `worldgen.panel.erosion.bake`
 - **changed** Worldmap: sharpening to the finest bake no longer shifts the terrain — coarser views are exact downscales of it, and only the quick preview before it arrives is still its own sketch. `worldgen.panel.erosion.bake`
 - **changed** Climate: the climate panel moved before erosion, and its settings now shape where valleys carve — a humid world erodes differently from an arid one. `worldgen.panel.climate`
+- **changed** Hydrology: how many rivers a region carries now follows its climate — arid land runs nearly dry instead of every desert getting token rivers — and the density slider only picks which of them to draw. `worldgen.panel.hydrology`
 
 ## 2026-08-16
 - **fixed** Tectonics: crustal age now runs on one continuous clock across the Archean handover — young worlds' craton-age overlay stops reading everything as newborn, age-dependent ores (iron, tin, gems) place correctly, and late-Archean crust is no longer wrongly recycled for ages after the eon ends. `worldgen.panel.tectonics`

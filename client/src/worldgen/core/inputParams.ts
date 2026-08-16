@@ -24,7 +24,8 @@ export interface InputParam {
   // stay out: in the spec it would make two identical worlds differ by a
   // rendering preference, and (once inputs feed a cache key) orphan every
   // artifact each time someone nudged it. That is the mistake
-  // world/identity.ts records for riverDensity.
+  // world/identity.ts records for riverDensity — which has since left the
+  // spec entirely and is the standing example of a draw-only control.
   //
   // It also carries a second, softer meaning: a control whose home is not yet
   // settled stays out until it is, because a save format written today is a

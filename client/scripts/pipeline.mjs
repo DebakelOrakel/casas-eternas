@@ -491,10 +491,13 @@ test('a density-only change reuses the routing instead of re-flooding', async ()
   await until(() => p.count('hydrologyData') >= 2, { label: 'the density-only pass' })
   const rethresholded = p.last('hydrologyData')
   check('a density-only change does not re-flood', rethresholded.lakeDepth.byteLength === 0 && rethresholded.watersheds.byteLength === 0 && rethresholded.discharge.byteLength === 0)
-  check('but the river network does change', hash(rethresholded.riverPoints) !== hash(routed.riverPoints))
-  // Riparian reclassification follows the channel set, so it is recomputed every
-  // call rather than cached with the routing.
-  check('the riparian biomes are re-derived anyway', rethresholded.biomes.byteLength > 0)
+  check('but the drawn river network does change', hash(rethresholded.riverPoints) !== hash(routed.riverPoints))
+  // The slider is a DRAW filter since erosion-v2 P4: riparian biomes read the
+  // canonical channel set, so a density-only pass must NOT re-derive them — an
+  // empty buffer is the "biomes unchanged" contract, same as lakes. (They used
+  // to follow the slider, which let a display knob move saved biomes.)
+  check('the riparian biomes do not follow the draw filter', rethresholded.biomes.byteLength === 0)
+  check('the re-route itself did classify them', routed.biomes.byteLength > 0)
 })
 
 test('erosion can be stopped mid-pass', async () => {

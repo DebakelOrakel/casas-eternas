@@ -205,12 +205,6 @@ export const SURFACE_TUNING = {
   talusAngleDegrees: 3,
 
   // --- from hydrology.ts ---
-  // A modest per-cell runoff floor so even a bone-dry landmass still develops
-  // channels from drainage area alone (precip only MODULATES density, it doesn't
-  // gate rivers entirely) — the user disliked rivers vanishing outside the wettest
-  // regions. Wet cells sit far above this, so precip still dominates where it's high.
-  runoffFloor: 200,
-
   // Lake water depth per full-res cell (0 = dry). Climate-aware / endorheic:
   // priority-flood `filled` marks every depression's cells (filled > raw) and its
   // spill level; for each basin (a connected flooded region) we weigh the water

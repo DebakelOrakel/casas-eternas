@@ -1,7 +1,7 @@
 import { upscaleBilinearToroidal } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { fineDetailNoise, periodicValueNoise2D } from '../elevation/ridgedNoise'
-import { CHANNEL_SLOPE_EXPONENT } from './hydrology'
+import { CANONICAL_RIVER_DENSITY, CHANNEL_SLOPE_EXPONENT } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import { DEFAULT_ENGINE_PARAMS, STATUS_CLAMP_M } from './erosionEngine'
 import { EROSION_LITHO_SEED_SALT, ROCK_CONTRAST_SIGMA_MAX } from './erosionForcingFields'
@@ -266,6 +266,10 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   channelSlopeExponent: CHANNEL_SLOPE_EXPONENT,
   channelAreaMax: SURFACE_TUNING.channelAreaMax,
   channelAreaMin: SURFACE_TUNING.channelAreaMin,
+  // The bake extracts rivers at the model's one canonical density since the
+  // slider became a draw filter (P4) — so the density that shaped the baked
+  // network is part of what the artifact IS.
+  canonicalRiverDensity: CANONICAL_RIVER_DENSITY,
 }
 
 export interface AmplifiedField {

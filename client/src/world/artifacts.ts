@@ -94,27 +94,12 @@ const FILES = {
 // half the size of its own elevation layer instead of double.
 const LAKE_DEPTH_ENCODING: Encoding = { dtype: 'u8', scale: metersToElevation(3000) / 255, offset: 0 }
 
-// River files, keyed by the density that produced them, so changing the slider
-// adds a small variation beside the terrain instead of orphaning it. Density is
-// an integer 0-100 from the generator's slider; it is rounded and clamped here
-// so a stray float cannot mint an endless family of near-identical entries.
-//
-// Everything else the extraction depends on — the eroded field, precipitation,
-// the erosion controls — is already fixed by the artifact's key, so the
-// density is the whole of the remaining freedom.
-export function riverDensityKey(density: number | undefined): string {
-  const value = Math.round(density ?? DEFAULT_RIVER_DENSITY)
-  return String(Math.min(100, Math.max(0, value)))
-}
-
-// Mirrors hydrology's own fallback, so an artifact written for a save that
-// predates the slider lands under the same name a reader will look for.
-const DEFAULT_RIVER_DENSITY = 55
-
-const riverFiles = (density: number | undefined): { points: string; lengths: string } => {
-  const key = riverDensityKey(density)
-  return { points: `rivers-${key}.f32`, lengths: `riverLengths-${key}.u32` }
-}
+// ONE river file set per artifact: extraction runs at the model's
+// CANONICAL_RIVER_DENSITY since P4 (the slider is a draw filter and never
+// reaches a bake), so the per-density suffixes — `rivers-55.f32` and its
+// siblings, which let slider positions coexist beside one terrain — are gone
+// with the freedom they encoded. identity.ts keeps the story.
+const RIVER_FILES = { points: 'rivers.f32', lengths: 'riverLengths.u32' } as const
 
 // The derived family (docs/decisions/derived-bake-tiers.md): the designated
 // finest bake carries every coarser tier as a box-downsample of itself,
@@ -133,10 +118,10 @@ const familyFiles = (member: number): { elevation: string; lakeDepth: string } =
 // Every operation here is best-effort: an artifact store is a cache over
 // deterministically recomputable data, so a partial write, a missing file or
 // a corrupt read all mean the same thing — bake it again.
-export async function writeAmplificationArtifact(store: ArtifactStore, key: ArtifactKey, artifact: AmplificationArtifact, bakeMs: number, riverDensity?: number, label = '', rounds: number = AMPLIFY_EROSION_ROUNDS): Promise<boolean> {
+export async function writeAmplificationArtifact(store: ArtifactStore, key: ArtifactKey, artifact: AmplificationArtifact, bakeMs: number, label = '', rounds: number = AMPLIFY_EROSION_ROUNDS): Promise<boolean> {
   const handle = await store.resolve(key, true)
   if (!handle) return false
-  const rivers = riverFiles(riverDensity)
+  const rivers = RIVER_FILES
   const elevationBytes = new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING))
   const lakeBytes = artifact.lakeDepth ? new Uint8Array(bakeLayer(artifact.lakeDepth, LAKE_DEPTH_ENCODING)) : null
   // The designated finest stage writes its derived family beside itself:
@@ -197,14 +182,13 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
 // Is this stage there, without fetching it? One resolve answers: the handle's
 // files ARE the batch existence check.
 //
-// BOTH halves, because they can legitimately exist apart: the terrain may be
-// there from a bake at another density, and that is exactly the case the
-// per-density river files exist to allow. Asking only about the meta would
-// report a stage as ready and then draw a world with no rivers.
-export async function amplificationArtifactExists(store: ArtifactStore, key: ArtifactKey, riverDensity?: number): Promise<boolean> {
+// BOTH halves still, though the per-density freedom that let them exist apart
+// is gone: a half-written entry (payload without rivers) must read as absent,
+// not as a stage that is ready and then draws a world with no rivers.
+export async function amplificationArtifactExists(store: ArtifactStore, key: ArtifactKey): Promise<boolean> {
   const handle = await store.resolve(key, false)
   if (!handle) return false
-  const needed = [FILES.meta, riverFiles(riverDensity).points]
+  const needed = [FILES.meta, RIVER_FILES.points]
   return needed.every((name) => handle.files.includes(name))
 }
 
@@ -213,7 +197,7 @@ export async function amplificationArtifactExists(store: ArtifactStore, key: Art
 // rivers with their texel coordinates scaled down — a polyline is the same
 // river at every resolution. Null when the entry predates the family or the
 // member does not exist; the caller falls back to the finest.
-export async function readAmplificationArtifact(store: ArtifactStore, key: ArtifactKey, riverDensity?: number, familyMember?: number): Promise<{ artifact: AmplificationArtifact; bakeMs: number } | null> {
+export async function readAmplificationArtifact(store: ArtifactStore, key: ArtifactKey, familyMember?: number): Promise<{ artifact: AmplificationArtifact; bakeMs: number } | null> {
   const handle = await store.resolve(key, false)
   if (!handle) return null
   const meta = await readMeta(store, handle)
@@ -228,7 +212,7 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
   const expectedCells = width * height
   if (elevationBytes.byteLength !== expectedCells * 2) return null // truncated or from another shape
 
-  // Rivers for THIS density, and their absence makes the whole read fail.
+  // Rivers, and their absence makes the whole read fail.
   //
   // Returning the terrain with empty rivers was the tempting shape and it is a
   // trap: the caller treats any hit as a complete cached stage, draws amplified
@@ -239,7 +223,7 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
   // A file that EXISTS but is empty is different and stays legal: a world saved
   // before climate was computed bakes without hydrology, and riverless is then
   // the true answer rather than a missing one.
-  const rivers = riverFiles(riverDensity)
+  const rivers = RIVER_FILES
   const pointBytes = await store.read(handle, rivers.points)
   if (!pointBytes) return null
   const lengthBytes = await store.read(handle, rivers.lengths)

@@ -138,7 +138,6 @@ async function bake(seed = 12345) {
     precipitation: precipitation(CLIMATE_RES_X, CLIMATE_RES_Y),
     climateResX: CLIMATE_RES_X,
     climateResY: CLIMATE_RES_Y,
-    riverDensity: 55,
   })
 }
 
@@ -460,7 +459,7 @@ console.log('\n— region bakes')
     elevation: macro, macroWidth: MACRO_W, macroHeight: MACRO_H, factor: FACTOR, seed: 12345,
     erosionRounds: 2, lithoSeed: 4242,
     precipitation: precipitation(CLIMATE_RES_X, CLIMATE_RES_Y),
-    climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, riverDensity: 55,
+    climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
     region: { owned: allLand, haloCells: M.amplify.DEFAULT_HALO_CELLS },
   })
   let moved = 0
@@ -483,7 +482,7 @@ console.log('\n— region bakes')
     elevation: macro, macroWidth: MACRO_W, macroHeight: MACRO_H, factor: FACTOR, seed: 12345,
     erosionRounds: 1, lithoSeed: 4242,
     precipitation: precipitation(CLIMATE_RES_X, CLIMATE_RES_Y),
-    climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, riverDensity: 55,
+    climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
     region: { owned, haloCells: M.amplify.DEFAULT_HALO_CELLS },
     // From the plan, not from the slice — the whole point of the two scalars.
     maxDischarge: plan.maxDischarge, meanRunoff: plan.meanRunoff,

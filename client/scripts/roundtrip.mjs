@@ -86,10 +86,18 @@ check(`${M.spec.WORLD_SPEC_FIELDS.length} fields survive write → read`, mismat
 // contract that lets a save written before a knob existed still open.
 const partial = M.spec.specFromYaml('spec:\n  genesis:\n    water: 12\n', 'x')
 const waterField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'genesis.water')
-const otherField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'hydrology.riverDensity')
+const otherField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'erosion.landscapeAge')
 check('a missing key falls back to its declared default',
-  partial.values['genesis.water'] === 12 && partial.values['hydrology.riverDensity'] === otherField.input.default,
-  `water=${partial.values['genesis.water']} riverDensity=${partial.values['hydrology.riverDensity']} (want ${waterField ? 12 : '?'}/${otherField.input.default})`)
+  partial.values['genesis.water'] === 12 && partial.values['erosion.landscapeAge'] === otherField.input.default,
+  `water=${partial.values['genesis.water']} landscapeAge=${partial.values['erosion.landscapeAge']} (want ${waterField ? 12 : '?'}/${otherField.input.default})`)
+
+// A key the file DOES carry but the spec no longer knows must be ignored, not
+// crash or leak: riverDensity left the spec with erosion-v2 P4, and every save
+// written before that carries it.
+const legacy = M.spec.specFromYaml('spec:\n  genesis:\n    water: 12\n  hydrology:\n    riverDensity: 70\n', 'x')
+check('a retired key in an old save is simply ignored',
+  legacy.values['genesis.water'] === 12 && legacy.values['hydrology.riverDensity'] === undefined,
+  `riverDensity=${legacy.values['hydrology.riverDensity']}`)
 
 // Layout lock: indentation, nesting depth and field order, on the defaults.
 const defaults = {}
@@ -133,11 +141,10 @@ const art = {
   riverPoints: Float32Array.from([1.5, 2.5, 3.5, 4.5, 10, 20]),
   riverLengths: Uint32Array.from([2, 1]),
 }
-const wrote = await M.artifact.writeAmplificationArtifact(store, key, art, 1234, 55)
+const wrote = await M.artifact.writeAmplificationArtifact(store, key, art, 1234)
 check('write reports success', wrote === true)
-check('exists() finds it', await M.artifact.amplificationArtifactExists(store, key, 55))
-check('exists() does NOT find another density', (await M.artifact.amplificationArtifactExists(store, key, 90)) === false)
-const back = await M.artifact.readAmplificationArtifact(store, key, 55)
+check('exists() finds it', await M.artifact.amplificationArtifactExists(store, key))
+const back = await M.artifact.readAmplificationArtifact(store, key)
 if (!back) check('read returns the entry', false)
 else {
   let worst = 0
@@ -162,9 +169,9 @@ else {
     riverLengths: Uint32Array.from([1]),
     lakeDepth: Float32Array.from({ length: 8 * 4 }, (_, i) => (i % 5 === 0 ? 0.1 : 0)),
   }
-  check('a family is written only by the finest stage', (await M.artifact.readAmplificationArtifact(store, key, 55, 2)) === null)
-  await M.artifact.writeAmplificationArtifact(store, finestKey, fine, 99, 55)
-  const member = await M.artifact.readAmplificationArtifact(store, finestKey, 55, 2)
+  check('a family is written only by the finest stage', (await M.artifact.readAmplificationArtifact(store, key, 2)) === null)
+  await M.artifact.writeAmplificationArtifact(store, finestKey, fine, 99)
+  const member = await M.artifact.readAmplificationArtifact(store, finestKey, 2)
   if (!member) check('the family member reads back', false)
   else {
     check('the member is half the finest resolution', member.artifact.width === 4 && member.artifact.height === 2)

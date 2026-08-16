@@ -58,8 +58,6 @@ export interface AmplifyRequestMessage {
   temperature?: ArrayBuffer
   climateResX?: number
   climateResY?: number
-  // The world's own river-density setting (spec.hydrology.riverDensity).
-  riverDensity?: number
 }
 
 export type AmplificationInboundMessage = AmplifyRequestMessage
@@ -135,7 +133,6 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
     temperature: message.temperature ? new Float32Array(message.temperature) : undefined,
     climateResX: message.climateResX,
     climateResY: message.climateResY,
-    riverDensity: message.riverDensity,
   }, (phase, fraction) => reporters[phase](fraction))
 
   const done: AmplifyDoneMessage = {

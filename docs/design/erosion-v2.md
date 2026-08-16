@@ -709,9 +709,32 @@ the version break v2 already carries.
     honestly evaluated). The panel reorder itself is DOM order; the joint
     UI look (badges, provisional labels) remains its own step.
 
-- **P4 — hydrology merge**; riverDensity → display Q-filter; runoffFloor
-  removed (user-visible: arid regions lose rivers — now wanted, once
-  disliked; stated for the record).
+- **P4 — BUILT 2026-08-16** (the hydrology-merge adapter itself had landed
+  with P2; this is the remainder): drainage density is climate-driven and
+  the density slider is a cartographic draw filter.
+  - `runoffFloor` (200 mm/yr) removed from the runoff sampling: an arid
+    cell contributes what actually falls on it, so arid regions genuinely
+    lose rivers — the deliberate reversal of a once-explicit user wish,
+    decided with this plan and stated for the record. The floor's second
+    job (ocean-sentinel fallback at the coast) became a clamp to 0: a
+    coast cell adds no runoff of its own but still passes upstream
+    discharge along.
+  - `riverDensity` left the recipe entirely: out of the world spec (old
+    saves' key is ignored the partial-spec way), out of `ErosionControls`,
+    out of every bake request. The model's one channel set sits at
+    `CANONICAL_RIVER_DENSITY` (hydrology.ts, 55) — riparian biomes, the
+    coast status mask, the baked network and the worldmap's macro rivers
+    all read it. The panel slider remains as a DRAW filter in the
+    generator screen only: it thresholds which channels are drawn, and a
+    density-only pass now sends biomes EMPTY (the "unchanged" contract
+    lakes already had) — before this, a display knob moved saved biomes,
+    which the pipeline harness now asserts can no longer happen.
+  - Artifacts: the per-density river files (`rivers-55.f32` …) collapsed
+    to one canonical `rivers.f32`/`riverLengths.u32`;
+    `canonicalRiverDensity` entered AMPLIFY_CONSTANTS and
+    AMPLIFICATION_ALGO_VERSION went to 11 (the floor was never in the
+    constants, so the hash alone would not have moved). identity.ts keeps
+    the twice-removed story.
 - **P5 — teardown** of dead crutches, docs, decision records.
 
 Deliberately out of scope: GPU compute (second stage), erosion inside the

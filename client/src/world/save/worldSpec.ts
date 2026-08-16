@@ -48,7 +48,10 @@ export const WORLD_SPEC_FIELDS: readonly SpecField[] = [
   { path: 'climate.humidity', input: CLIMATE_INPUTS.humidity },
   { path: 'climate.contrast', input: CLIMATE_INPUTS.contrast },
   { path: 'climate.equatorOffset', input: CLIMATE_INPUTS.equatorOffset },
-  { path: 'hydrology.riverDensity', input: SURFACE_INPUTS.riverDensity },
+  // hydrology.riverDensity left the spec with erosion-v2 P4: the slider is a
+  // draw filter now, and a spec field would dirty the save for a display
+  // choice. Old saves carrying the key are read the usual partial-spec way —
+  // the unknown line is simply ignored.
   { path: 'ecology.carryingCapacity', input: ECOLOGY_INPUTS.carryingCapacity },
   { path: 'ecology.concentration', input: ECOLOGY_INPUTS.concentration },
   { path: 'ecology.provinceStrength', input: ECOLOGY_INPUTS.provinceStrength },

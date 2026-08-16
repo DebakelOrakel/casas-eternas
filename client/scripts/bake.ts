@@ -337,7 +337,6 @@ async function main(): Promise<void> {
     temperature: inputs.temperature?.data,
     climateResX: inputs.climate?.resX,
     climateResY: inputs.climate?.resY,
-    riverDensity: inputs.erosionControls.riverDensity,
   }, (phase, fraction) => {
     const percent = Math.floor(fraction * 100)
     if (percent === lastPercent) return
@@ -369,9 +368,7 @@ async function main(): Promise<void> {
     // Null for a region job (a basin across two jobs would flood twice) and
     // for a save without temperature; the reader then keeps the macro lakes.
     lakeDepth: result.lakeDepth,
-    // Rivers are keyed by the world's own density inside the artifact, so a
-    // server bake lands where the browser will look for it.
-  }, durationMs, inputs.erosionControls.riverDensity, inputs.seedText, job.erosionRounds)
+  }, durationMs, inputs.seedText, job.erosionRounds)
   if (!stored) fail('could not write the artifact')
 
   process.stdout.write(`${JSON.stringify({

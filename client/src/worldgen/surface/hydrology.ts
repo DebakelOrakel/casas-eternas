@@ -18,14 +18,27 @@ import { OCEAN_PRECIP } from '../climate/precipitation'
 // a filled depression (filled > raw) are excluded — they're lake bed, not
 // channel (the radial fan D8 makes on a flat fill isn't a river).
 
-// Nearest coarse-grid precip (mm/yr) at a full-res land cell, floored (see
-// SURFACE_TUNING.runoffFloor). Called for land cells only, so an ocean-sentinel precip (coarse
-// cell reads as ocean at the coast) just falls back to the floor.
+// The one density the MODEL runs at: riparian biomes, the bake's extracted
+// rivers and the coast status mask all read the channel set at this density.
+// The panel's density slider is a DRAW filter over it — display-side, outside
+// the spec and the artifact key — so moving it can neither change saved
+// biomes nor invalidate a bake (erosion v2, P4). Same 0–100 scale as the
+// slider; densityToCriticalArea maps it.
+export const CANONICAL_RIVER_DENSITY = 55
+
+// Nearest coarse-grid precip (mm/yr) at a full-res land cell. NO floor: an
+// arid cell contributes what actually falls on it, so drainage density is
+// climate-driven — arid regions genuinely lose rivers. That is a deliberate
+// reversal of the 200 mm/yr runoffFloor (erosion v2, P4): the floor existed so
+// bone-dry land still developed channels from drainage area alone, which is
+// exactly the climate-blindness v2 retires. Called for land cells only, so an
+// ocean-sentinel precip (coarse cell reads as ocean at the coast) clamps to
+// 0 — the cell still passes upstream discharge along, it just adds none.
 function precipRunoffAt(precip: Float32Array, cx: number, cy: number, worldW: number, worldH: number, climateResX: number, climateResY: number): number {
   const gx = Math.min(climateResX - 1, Math.floor((cx / worldW) * climateResX))
   const gy = Math.min(climateResY - 1, Math.floor((cy / worldH) * climateResY))
   const p = precip[gy * climateResX + gx]
-  return p > SURFACE_TUNING.runoffFloor ? p : SURFACE_TUNING.runoffFloor
+  return p > 0 ? p : 0
 }
 
 // Mean per-cell runoff over land — the reference the critical-area threshold
@@ -40,7 +53,7 @@ export function meanLandRunoff(precip: Float32Array, elevation: Float32Array, wo
     sum += precipRunoffAt(precip, cx, cy, worldW, worldH, climateResX, climateResY)
     count++
   }
-  return count > 0 ? sum / count : SURFACE_TUNING.runoffFloor
+  return count > 0 ? sum / count : 0
 }
 
 // Potential evaporation from an open water surface (mm/yr), rising with

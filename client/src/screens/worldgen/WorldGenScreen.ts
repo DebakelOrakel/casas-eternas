@@ -3005,7 +3005,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       //
       // The polyline layer that used to sit here was written by one place and
       // read by none: the client re-derives its rivers (deterministically, from
-      // elevation + precipitation + riverDensity, all of which are in this
+      // elevation + precipitation, both of which are in this
       // save) or fetches a baked artifact, and a game server cannot answer
       // "how big is this river" from a line whose only attribute is a drawing
       // width clamped at four pixels. It also went stale the moment an
@@ -3203,12 +3203,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Finest first: the whole point of the search is "best available", and 8K
   // carries roughly seven times the channel length of 4K. Silent when there is
   // nothing — an absent artifact is the normal state, not a failure.
-  async function adoptBestBakedRivers(worldUidForLookup: string, worldIdForLookup: string, riverDensity: number | undefined): Promise<void> {
+  async function adoptBestBakedRivers(worldUidForLookup: string, worldIdForLookup: string): Promise<void> {
     const pipelineVersion = amplificationPipelineVersion()
     const store = await getArtifactStore()
     for (const factor of [4, 2]) {
       const key = artifactKey(worldUidForLookup, worldIdForLookup, pipelineVersion, String(factor))
-      const hit = await readAmplificationArtifact(store, key, riverDensity).catch(() => null)
+      const hit = await readAmplificationArtifact(store, key).catch(() => null)
       if (!hit) continue
       showBakedRivers(hit.artifact.riverPoints, hit.artifact.riverLengths, factor)
       return
@@ -3232,11 +3232,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const pipelineVersion = amplificationPipelineVersion()
     const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, String(factor))
     const store = await getArtifactStore()
-    if (await amplificationArtifactExists(store, key, inputs.erosionControls.riverDensity).catch(() => false)) {
+    if (await amplificationArtifactExists(store, key).catch(() => false)) {
       // Already made, by this machine or another. Saying so beats spending
       // minutes to reproduce bytes that are addressed by content anyway.
       ctx.notifications.show({ message: t('common.notify.bakeExists', { level }), icon: '/icons/ok.png', durationMs: 6000 })
-      void adoptBestBakedRivers(inputs.worldUid, inputs.worldId, inputs.erosionControls.riverDensity)
+      void adoptBestBakedRivers(inputs.worldUid, inputs.worldId)
       return
     }
 
@@ -3306,7 +3306,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         return
       }
       settle(t('common.notify.bakeDone', { level, width: outcome.result.width, height: outcome.result.height, seconds: Math.round(outcome.result.durationMs / 1000) }), '/icons/server_clean.png', 15000)
-      void adoptBestBakedRivers(inputs.worldUid, inputs.worldId, inputs.erosionControls.riverDensity)
+      void adoptBestBakedRivers(inputs.worldUid, inputs.worldId)
       return
     }
 
@@ -3332,7 +3332,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           uplift: inputs.uplift?.data,
           erodibility: inputs.erodibility?.data,
           forcingResX: inputs.uplift?.resX, forcingResY: inputs.uplift?.resY,
-          riverDensity: inputs.erosionControls.riverDensity,
           precipitation: inputs.climate.data,
           temperature: inputs.temperature?.data,
           climateResX: inputs.climate.resX, climateResY: inputs.climate.resY,
@@ -3344,7 +3343,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           })
         },
       )
-      await writeAmplificationArtifact(store, key, baked.artifact, baked.durationMs, inputs.erosionControls.riverDensity, inputs.seedText).catch(() => false)
+      await writeAmplificationArtifact(store, key, baked.artifact, baked.durationMs, inputs.seedText).catch(() => false)
       showBakedRivers(baked.artifact.riverPoints, baked.artifact.riverLengths, factor)
       settle(t('common.notify.bakeDone', { level, width: baked.artifact.width, height: baked.artifact.height, seconds: Math.round(baked.durationMs / 1000) }), '/icons/server_clean.png', 15000)
     } catch {
@@ -3583,7 +3582,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     void file.arrayBuffer()
       .then((bytes) => openWorld(bytes))
       .then(async (loaded) => {
-        if (loaded) return adoptBestBakedRivers(loaded.recipe.worldUid, await loaded.worldId(), loaded.recipe.erosionControls.riverDensity)
+        if (loaded) return adoptBestBakedRivers(loaded.recipe.worldUid, await loaded.worldId())
       })
       .catch(() => undefined)
     mantleVigourInput.value = String(spec.values['genesis.mantleVigour'])
@@ -3606,7 +3605,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     humidityInput.value = String(spec.values['climate.humidity'])
     contrastInput.value = String(spec.values['climate.contrast'])
     equatorOffsetInput.value = String(spec.values['climate.equatorOffset'])
-    riverDensityInput.value = String(spec.values['hydrology.riverDensity'])
+    // riverDensity is not in the spec (a draw filter, P4) — the slider simply
+    // keeps whatever the session has set.
     ageInput.value = String(spec.values['erosion.landscapeAge'])
     alluviumInput.value = String(spec.values['erosion.alluvium'])
     rockContrastInput.value = String(spec.values['erosion.rockContrast'])

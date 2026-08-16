@@ -53,7 +53,6 @@ export interface BrowserBakeRequest {
   erodibility?: Float32Array
   forcingResX?: number
   forcingResY?: number
-  riverDensity?: number
   precipitation?: Float32Array
   // For the lake half of the hydrology re-run; rivers do not need it.
   temperature?: Float32Array
@@ -143,7 +142,6 @@ export function bakeStageInBrowser(
       erodibility: request.erodibility ? (request.erodibility.slice().buffer as ArrayBuffer) : undefined,
       forcingResX: request.forcingResX,
       forcingResY: request.forcingResY,
-      riverDensity: request.riverDensity,
       precipitation: request.precipitation ? (request.precipitation.slice().buffer as ArrayBuffer) : undefined,
       temperature: request.temperature ? (request.temperature.slice().buffer as ArrayBuffer) : undefined,
       climateResX: request.climateResX,

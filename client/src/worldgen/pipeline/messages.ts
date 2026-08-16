@@ -90,11 +90,12 @@ export interface WorkerClimateRunMessage {
 }
 // Requests a rivers/lakes (hydrology) compute on the current topography, using
 // the precipitation cached from the last computeClimate as the water source.
-// `riverDensity` (0–100) is an intuitive knob the worker maps to an actual
-// discharge threshold against the computed maximum (higher density = lower
-// threshold = more/smaller rivers). Routing + discharge are cached in the
-// worker, so a density-only change re-extracts cheaply without re-routing.
-// Replies with WorkerHydrologyDataMessage.
+// `riverDensity` (0–100) is a DRAW filter: it thresholds which channels the
+// map draws (higher density = lower threshold = more/smaller rivers drawn),
+// and nothing else — the model's channel set (riparian biomes, the bake) sits
+// at CANONICAL_RIVER_DENSITY since erosion-v2 P4. Routing + discharge are
+// cached in the worker, so a density-only change re-extracts cheaply without
+// re-routing. Replies with WorkerHydrologyDataMessage.
 export interface WorkerHydrologyRunMessage {
   type: 'hydrologyRun'
   riverDensity: number
@@ -386,8 +387,10 @@ export interface WorkerHydrologyDataMessage {
   lakeDepth: ArrayBuffer
   // Biomes RE-classified with the riparian moisture bonus from rivers/lakes
   // (Uint8, full-res — replaces the climate step's water-free biomes, and shares
-  // its resolution so the display never switches grids mid-run).
-  // Empty when no climate is available to reclassify. See computeRiparianBiomes.
+  // its resolution so the display never switches grids mid-run). Classified at
+  // the CANONICAL channel density, not the draw slider's, so like lakeDepth it
+  // only arrives on a re-route — a density-only pass sends it empty, meaning
+  // "biomes unchanged". See computeRiparianBiomes.
   biomes: ArrayBuffer
   // The precipitation those biomes were classified FROM: the climate grid's
   // annual total plus the riparian bonus (Float32, coarse, OCEAN_PRECIP on

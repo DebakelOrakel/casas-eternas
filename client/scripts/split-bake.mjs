@@ -75,7 +75,6 @@ const REQUEST = {
   precipitation: inputs.climate?.data,
   climateResX: inputs.climate?.resX,
   climateResY: inputs.climate?.resY,
-  riverDensity: inputs.erosionControls.riverDensity,
 }
 
 let macroLand = 0

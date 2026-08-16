@@ -11672,7 +11672,7 @@ function deriveWorldId(inputs) {
   const [sa, sb] = hashBytes(scalars, a, b);
   return `${hex8(sa)}${hex8(sb)}`;
 }
-var AMPLIFICATION_ALGO_VERSION = 10;
+var AMPLIFICATION_ALGO_VERSION = 11;
 function derivePipelineVersion(constants) {
   const text = Object.keys(constants).sort().map((name) => `${name}=${constants[name]}`).join("|");
   const [a, b] = hashBytes(new TextEncoder().encode(text), 2166136261, 2654435769);
@@ -11827,8 +11827,7 @@ async function openWorld(archive) {
       refresh: readRecipeNumber(yamlText, "spec.erosion.drainageRefresh"),
       landscapeAge: readRecipeNumber(yamlText, "spec.erosion.landscapeAge"),
       alluvium: readRecipeNumber(yamlText, "spec.erosion.alluvium"),
-      rockContrast: readRecipeNumber(yamlText, "spec.erosion.rockContrast"),
-      riverDensity: readRecipeNumber(yamlText, "spec.hydrology.riverDensity")
+      rockContrast: readRecipeNumber(yamlText, "spec.erosion.rockContrast")
     },
     worldUid: readRecipeValue(yamlText, "metadata.uid") ?? ""
   };
@@ -12110,11 +12109,6 @@ var SURFACE_TUNING = {
   // to a far smaller set of pairs, which is the point.
   talusAngleDegrees: 3,
   // --- from hydrology.ts ---
-  // A modest per-cell runoff floor so even a bone-dry landmass still develops
-  // channels from drainage area alone (precip only MODULATES density, it doesn't
-  // gate rivers entirely) — the user disliked rivers vanishing outside the wettest
-  // regions. Wet cells sit far above this, so precip still dominates where it's high.
-  runoffFloor: 200,
   // Lake water depth per full-res cell (0 = dry). Climate-aware / endorheic:
   // priority-flood `filled` marks every depression's cells (filled > raw) and its
   // spill level; for each basin (a connected flooded region) we weigh the water
@@ -12175,11 +12169,12 @@ var SURFACE_TUNING = {
 };
 
 // src/worldgen/surface/hydrology.ts
+var CANONICAL_RIVER_DENSITY = 55;
 function precipRunoffAt(precip, cx, cy, worldW, worldH, climateResX, climateResY) {
   const gx = Math.min(climateResX - 1, Math.floor(cx / worldW * climateResX));
   const gy = Math.min(climateResY - 1, Math.floor(cy / worldH * climateResY));
   const p = precip[gy * climateResX + gx];
-  return p > SURFACE_TUNING.runoffFloor ? p : SURFACE_TUNING.runoffFloor;
+  return p > 0 ? p : 0;
 }
 function meanLandRunoff(precip, elevation, worldW, worldH, climateResX, climateResY) {
   let sum = 0;
@@ -12191,7 +12186,7 @@ function meanLandRunoff(precip, elevation, worldW, worldH, climateResX, climateR
     sum += precipRunoffAt(precip, cx, cy, worldW, worldH, climateResX, climateResY);
     count++;
   }
-  return count > 0 ? sum / count : SURFACE_TUNING.runoffFloor;
+  return count > 0 ? sum / count : 0;
 }
 function evaporationPotential(tempC) {
   const pet = 150 + 60 * tempC;
@@ -12479,7 +12474,11 @@ var AMPLIFY_CONSTANTS = {
   // the density curve and were function-local until now.
   channelSlopeExponent: CHANNEL_SLOPE_EXPONENT,
   channelAreaMax: SURFACE_TUNING.channelAreaMax,
-  channelAreaMin: SURFACE_TUNING.channelAreaMin
+  channelAreaMin: SURFACE_TUNING.channelAreaMin,
+  // The bake extracts rivers at the model's one canonical density since the
+  // slider became a draw filter (P4) — so the density that shaped the baked
+  // network is part of what the artifact IS.
+  canonicalRiverDensity: CANONICAL_RIVER_DENSITY
 };
 function ridgedAt(x, y, width, height, seed) {
   let sum = 0;
@@ -13173,7 +13172,6 @@ async function runAmplification(request, onProgress = () => {
       request.precipitation,
       request.climateResX,
       request.climateResY,
-      request.riverDensity,
       {
         maxDischarge: request.maxDischarge,
         meanRunoff: request.meanRunoff,
@@ -13192,14 +13190,14 @@ async function runAmplification(request, onProgress = () => {
   }
   return { elevation: field, width: result.width, height: result.height, rivers, lakeDepth };
 }
-async function deriveRivers(field, width, height, precipitation, climateResX, climateResY, riverDensity, options = {}, onProgress = () => {
+async function deriveRivers(field, width, height, precipitation, climateResX, climateResY, options = {}, onProgress = () => {
 }) {
   const routing = await fillDepressionsAndRouteFlow(field, width, height, 0);
   onProgress(0.6);
   const discharge = accumulateDischarge(routing, field, precipitation, climateResX, climateResY);
   const maxDischarge = options.maxDischarge ?? maxDischargeOverLand(discharge, field);
   const meanRunoff = options.meanRunoff ?? meanLandRunoff(precipitation, field, width, height, climateResX, climateResY);
-  const criticalArea = densityToCriticalArea(riverDensity ?? 55);
+  const criticalArea = densityToCriticalArea(CANONICAL_RIVER_DENSITY);
   const threshold = channelThreshold(criticalArea, meanRunoff);
   const rivers = extractRiverPolylines(routing, discharge, field, threshold, maxDischarge);
   const lakeDepth = options.temperature ? computeLakes(routing, discharge, field, options.temperature, precipitation, climateResX, climateResY).depth : null;
@@ -13226,7 +13224,7 @@ async function coastStatusMask(field, width, height, request) {
   const routing = await fillDepressionsAndRouteFlow(field, width, height, 0);
   const discharge = accumulateDischarge(routing, field, request.precipitation, request.climateResX, request.climateResY);
   const meanRunoff = request.meanRunoff ?? meanLandRunoff(request.precipitation, field, width, height, request.climateResX, request.climateResY);
-  const threshold = channelThreshold(densityToCriticalArea(request.riverDensity ?? 55), meanRunoff);
+  const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), meanRunoff);
   const mouths = new Uint8Array(field.length);
   let found = 0;
   for (let y = 0; y < height; y++) {
@@ -13305,23 +13303,15 @@ var FILES = {
   meta: "meta.json"
 };
 var LAKE_DEPTH_ENCODING = { dtype: "u8", scale: metersToElevation(3e3) / 255, offset: 0 };
-function riverDensityKey(density) {
-  const value = Math.round(density ?? DEFAULT_RIVER_DENSITY);
-  return String(Math.min(100, Math.max(0, value)));
-}
-var DEFAULT_RIVER_DENSITY = 55;
-var riverFiles = (density) => {
-  const key = riverDensityKey(density);
-  return { points: `rivers-${key}.f32`, lengths: `riverLengths-${key}.u32` };
-};
+var RIVER_FILES = { points: "rivers.f32", lengths: "riverLengths.u32" };
 var familyFiles = (member) => ({
   elevation: `family-${member}/elevation.u16`,
   lakeDepth: `family-${member}/lakeDepth.u8`
 });
-async function writeAmplificationArtifact(store, key, artifact, bakeMs, riverDensity, label = "", rounds = AMPLIFY_EROSION_ROUNDS) {
+async function writeAmplificationArtifact(store, key, artifact, bakeMs, label = "", rounds = AMPLIFY_EROSION_ROUNDS) {
   const handle = await store.resolve(key, true);
   if (!handle) return false;
-  const rivers = riverFiles(riverDensity);
+  const rivers = RIVER_FILES;
   const elevationBytes = new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING));
   const lakeBytes = artifact.lakeDepth ? new Uint8Array(bakeLayer(artifact.lakeDepth, LAKE_DEPTH_ENCODING)) : null;
   const family = [];
@@ -13604,8 +13594,7 @@ async function main() {
     precipitation: inputs.climate?.data,
     temperature: inputs.temperature?.data,
     climateResX: inputs.climate?.resX,
-    climateResY: inputs.climate?.resY,
-    riverDensity: inputs.erosionControls.riverDensity
+    climateResY: inputs.climate?.resY
   }, (phase, fraction) => {
     const percent = Math.floor(fraction * 100);
     if (percent === lastPercent) return;
@@ -13628,9 +13617,7 @@ async function main() {
     // Null for a region job (a basin across two jobs would flood twice) and
     // for a save without temperature; the reader then keeps the macro lakes.
     lakeDepth: result.lakeDepth
-    // Rivers are keyed by the world's own density inside the artifact, so a
-    // server bake lands where the browser will look for it.
-  }, durationMs, inputs.erosionControls.riverDensity, inputs.seedText, job.erosionRounds);
+  }, durationMs, inputs.seedText, job.erosionRounds);
   if (!stored) fail("could not write the artifact");
   process.stdout.write(`${JSON.stringify({
     worldId: key.worldId,
