@@ -123,6 +123,18 @@ func (m *Module) Dir() string { return m.cfg.All.Client.Storage.DirPath() }
 func (m *Module) spaHandler() http.Handler {
 	files := http.FileServer(http.Dir(m.Dir()))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Cross-origin isolation, so the page may use SharedArrayBuffer — the
+		// erosion engine's worker pool shares its rasters through one
+		// (docs/design/erosion-v2.md, multithreading). Browsers grant SAB only
+		// when the DOCUMENT carries both headers; setting them on every
+		// response from this handler is harmless (subresources ignore COOP)
+		// and keeps the two serving branches below identical. The vite dev
+		// server sets the same pair — change the two together. Under
+		// require-corp any cross-origin SUBRESOURCE must opt in via CORP;
+		// API calls are unaffected either way, because fetch() runs in CORS
+		// mode, which COEP never restricts.
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
 		clean := filepath.Clean(r.URL.Path)
 		if _, err := os.Stat(filepath.Join(m.Dir(), clean)); err == nil {
 			// Fingerprinted build assets are safe to cache forever; the shell

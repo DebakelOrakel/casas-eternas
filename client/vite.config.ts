@@ -34,6 +34,15 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // Cross-origin isolation, so the page may use SharedArrayBuffer (the
+    // erosion engine's worker pool). The Go client module sets the same pair
+    // on the built app — change the two together. Everything the client
+    // fetches goes through the same-origin proxy below, so require-corp
+    // forbids nothing this app actually does.
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
     // Development runs the SAME code path as production rather than a special
     // case: the client always asks its own origin for /config.json and /v1,
     // and here vite forwards both to the Go server. Nothing in the app knows
