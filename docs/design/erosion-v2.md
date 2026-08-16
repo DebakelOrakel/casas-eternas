@@ -379,6 +379,25 @@ fluvial/sediment (land trees are independent; sediment needs a coast-split
 stage for its marine tail); (c) tournament/parallel merge. GPU stays the
 second stage.
 
+STATUS 2026-08-16/17 — **the worker port is IN THE TREE**:
+`surface/erosionEngineState.ts` (one buffer layout, identical for
+ArrayBuffer and SharedArrayBuffer), `erosionEngine.ts` re-cut so every
+parallel phase is an exported per-range/per-strip KERNEL and the
+single-threaded ErosionEngine is a thin driver over them,
+`erosionEngineWorker.ts` (dual-substrate entry: worker_threads AND
+browser Worker via `?worker`), `erosionEnginePool.ts` (the coordinator —
+blocking Atomics waits, legal because its home is the worldgen worker).
+Gates all green in scripts/erosion-v2-engine-check.mts: engine
+byte-identical to the measured spike, pool byte-identical to
+single-threaded at 2 AND 8 workers (per-cell-deterministic kernels +
+fixed strips = parity by construction). Measured at 2048, K=8:
+single-thread 227 ms/iter, pool(8) 138.5 ms/iter — 6.0× vs the serial
+baseline; an age-100 transient costs ~14 s, a full age-800 solve ~1.9
+min. Node workers load the TS entry directly (tsx execArgv inheritance);
+the browser side wires up at the switchover. The pipelined refresh
+(routing double-buffered on background workers) remains the next
+threading increment.
+
 Substrate: `SharedArrayBuffer` + the existing worker pool in the browser,
 `worker_threads` in the Node baker. SAB needs COOP/COEP headers — dev
 server and Go server must send them; small standalone task, do it early.

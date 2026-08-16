@@ -16,6 +16,8 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ErosionEngine, DEFAULT_ENGINE_PARAMS } from '../src/worldgen/surface/erosionEngine'
+import { PooledErosionEngine } from '../src/worldgen/surface/erosionEnginePool'
+import { Worker as NodeWorker } from 'node:worker_threads'
 import { fineDetailNoise } from '../src/worldgen/elevation/ridgedNoise'
 
 const [artifactDir, resArg, itersArg] = process.argv.slice(2)
@@ -136,4 +138,34 @@ try {
   }
 } finally {
   rmSync(work, { recursive: true, force: true })
+}
+
+// --- the worker pool: byte parity across worker counts -----------------------
+// The pooled engine runs the SAME kernels over the same state layout, so
+// its output must equal the single-threaded engine's exactly, for any
+// worker count. Workers are Node worker_threads loading the TS entry —
+// execArgv is inherited from the tsx parent, which is what makes that
+// possible in this harness (the browser spawns the same file via ?worker).
+const workerUrl = new URL('../src/worldgen/surface/erosionEngineWorker.ts', import.meta.url)
+for (const workerCount of [2, 8]) {
+  const pool = await PooledErosionEngine.create(
+    RES_X, RES_Y, z, { uplift, erodibility },
+    () => new NodeWorker(workerUrl) as never,
+    workerCount, DEFAULT_ENGINE_PARAMS)
+  const t1 = performance.now()
+  pool.run(ITERS, 1)
+  const poolMs = performance.now() - t1
+  await pool.close()
+  let differing = 0
+  for (let i = 0; i < n; i++) {
+    const v = Math.round(((pool.z[i] + 1) / 2) * 65535)
+    const clamped = v < 0 ? 0 : v > 65535 ? 65535 : v
+    if (clamped !== engineU16[i]) differing++
+  }
+  if (differing === 0) {
+    console.log(`PASS — pool(${workerCount}) byte-identical to single-threaded (${(poolMs / 1000).toFixed(1)} s vs ${(engineMs / 1000).toFixed(1)} s)`)
+  } else {
+    console.log(`FAIL — pool(${workerCount}): ${differing} of ${n} cells differ`)
+    process.exitCode = 1
+  }
 }
