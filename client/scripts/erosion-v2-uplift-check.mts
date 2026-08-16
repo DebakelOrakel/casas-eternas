@@ -31,6 +31,7 @@ const M = {
   field: await L('/src/worldgen/elevation/elevationField.ts'),
   ridged: await L('/src/worldgen/elevation/ridgedNoise.ts'),
   uplift: await L('/src/worldgen/elevation/upliftField.ts'),
+  erodibility: await L('/src/worldgen/elevation/erodibilityField.ts'),
   engine: await L('/src/worldgen/surface/erosionEngine.ts'),
   archean: await L('/src/worldgen/archean/archeanState.ts'),
   archeanStep: await L('/src/worldgen/archean/archeanStep.ts'),
@@ -136,6 +137,31 @@ const uStandin = new Float32Array(FW * FH)
   console.log(`  negative (subsiding) share of real U: ${(100 * negativeShare / totalAbs).toFixed(1)} %`)
 }
 
+// --- the K-factor field -------------------------------------------------------
+// sim.epoch + archeanEpochs, NOT sim.epoch: blob birthEpochs are stamped in
+// ARCHEAN epochs and never remapped at finalizeArchean, while the tectonic
+// clock restarts at 0 — against sim.epoch alone a young world's oldness
+// clamps to 0 everywhere (measured: hardness field came out neutral). The
+// combined axis is right for archean-born blobs and wrong only for the few
+// tectonic-era accretions — a KNOWN pre-existing defect of the birthEpoch
+// axis itself (also distorts the cratonAge overlay and ecology iron on
+// young worlds), reported 2026-08-16, fix pending a decision.
+const hardness = M.erodibility.computeErodibilityField(
+  sim.rafts, sim.sutures, sim.features, sim.epoch + sim.archeanEpochs, W, H, FW, FH)
+{
+  let min = Infinity
+  let max = -Infinity
+  let below = 0
+  let above = 0
+  for (let i = 0; i < hardness.length; i++) {
+    if (hardness[i] < min) min = hardness[i]
+    if (hardness[i] > max) max = hardness[i]
+    if (hardness[i] < 0.95) below++
+    if (hardness[i] > 1.05) above++
+  }
+  console.log(`hardness field: range ${min.toFixed(2)}–${max.toFixed(2)}, hardened ${(100 * below / hardness.length).toFixed(1)} %, softened ${(100 * above / hardness.length).toFixed(1)} % of cells (${sim.sutures.length} sutures)`)
+}
+
 // --- engine runs at 512 -------------------------------------------------------
 const RES_X = 512
 const RES_Y = 256
@@ -204,10 +230,17 @@ const stats = (z: Float32Array): string => {
   for (let i = 0; i < n; i++) if (z[i] > 0) land++
   return `land ${(100 * land / n).toFixed(1)} %`
 }
-for (const [name, forcing] of [['standin', uStandin], ['real', uReal]] as const) {
+const hardnessUp = upsample(hardness)
+const erodibilityReal = new Float32Array(n)
+for (let i = 0; i < n; i++) erodibilityReal[i] = erodibility[i] * hardnessUp[i]
+for (const [name, forcing, erod] of [
+  ['standin', uStandin, erodibility],
+  ['real', uReal, erodibility],
+  ['realk', uReal, erodibilityReal],
+] as const) {
   const engine = new M.engine.ErosionEngine(RES_X, RES_Y, z0, {
     uplift: upsample(forcing),
-    erodibility,
+    erodibility: erod,
     coastMask,
   })
   const t0 = performance.now()

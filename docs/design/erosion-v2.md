@@ -185,6 +185,29 @@ calibration owns the final mapping), and `epochsSinceDeposit` is a
 recency PROXY — the true per-feature deposit-rate EMA belongs to
 stepEpoch when the interface is wired for real.
 
+**The K inputs are BUILT too** (`elevation/erodibilityField.ts`, same
+day): a smooth multiplicative K-factor field at climate resolution —
+ancient cratons hard (via `computeCratonOldnessField`, the same crust-age
+story that places the Ecology's iron), young sutures soft / old sutures
+modestly hard (the persistent collision history), flood-basalt provinces
+as caprock (features with plateB −2). The engine multiplies it into its
+per-cell lithology noise. Measured on the test world: 12.2 % of cells
+hardened (the cratons), landscape effect at age 100 is 38 m RMS on land
+with ~1 km local capture shifts at craton margins — mechanism proven,
+magnitudes deliberately left to the calibration pass.
+
+Found on the way, REPORTED not fixed (2026-08-16): **the birthEpoch axis
+is broken across the archean→tectonic handover.** Blobs are stamped in
+ARCHEAN epochs, never remapped in finalizeArchean, and the tectonic clock
+restarts at zero — so against `sim.epoch` a young world's craton oldness
+clamps to 0 everywhere, and a tectonic-era accretion can read OLDER than
+an archean core. This also distorts the existing cratonAge overlay and
+the Ecology iron placement on young worlds (pipeline/runtime.ts passes
+`sim.epoch`); on long-run worlds the distortion fades, which is why it
+went unnoticed. The uplift-check script compensates with
+`sim.epoch + archeanEpochs`; the real fix (remap at handover, one
+continuous axis) is a decision for the user — it touches saves.
+
 ## Hydrology merges into the engine
 
 Discharge, lakes and channels already have to exist INSIDE the erosion
