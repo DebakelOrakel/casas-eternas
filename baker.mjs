@@ -10,6 +10,14 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   if (typeof require !== "undefined") return require.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
+};
 var __commonJS = (cb, mod) => function __require2() {
   try {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
@@ -9766,16 +9774,1205 @@ var require_lib3 = __commonJS({
   }
 });
 
+// src/worldgen/core/minHeap.ts
+var MinHeap;
+var init_minHeap = __esm({
+  "src/worldgen/core/minHeap.ts"() {
+    MinHeap = class {
+      keys;
+      indices;
+      size = 0;
+      poppedKey = 0;
+      poppedIndex = -1;
+      // `capacity` is a hint, not a limit — push() grows past it. Sizing it right
+      // just avoids the copies.
+      constructor(capacity) {
+        const initial = Math.max(1, capacity);
+        this.keys = new Float64Array(initial);
+        this.indices = new Int32Array(initial);
+      }
+      get length() {
+        return this.size;
+      }
+      push(key, index) {
+        if (this.size === this.keys.length) this.grow();
+        let i = this.size++;
+        this.keys[i] = key;
+        this.indices[i] = index;
+        while (i > 0) {
+          const parent = i - 1 >> 1;
+          if (this.keys[parent] <= this.keys[i]) break;
+          this.swapEntries(parent, i);
+          i = parent;
+        }
+      }
+      pop() {
+        this.poppedKey = this.keys[0];
+        this.poppedIndex = this.indices[0];
+        this.size--;
+        this.keys[0] = this.keys[this.size];
+        this.indices[0] = this.indices[this.size];
+        let i = 0;
+        for (; ; ) {
+          const left = i * 2 + 1;
+          const right = i * 2 + 2;
+          let smallest = i;
+          if (left < this.size && this.keys[left] < this.keys[smallest]) smallest = left;
+          if (right < this.size && this.keys[right] < this.keys[smallest]) smallest = right;
+          if (smallest === i) break;
+          this.swapEntries(smallest, i);
+          i = smallest;
+        }
+      }
+      grow() {
+        const keys = new Float64Array(this.keys.length * 2);
+        const indices = new Int32Array(this.indices.length * 2);
+        keys.set(this.keys);
+        indices.set(this.indices);
+        this.keys = keys;
+        this.indices = indices;
+      }
+      swapEntries(a, b) {
+        const tempKey = this.keys[a];
+        this.keys[a] = this.keys[b];
+        this.keys[b] = tempKey;
+        const tempIndex = this.indices[a];
+        this.indices[a] = this.indices[b];
+        this.indices[b] = tempIndex;
+      }
+    };
+  }
+});
+
+// src/worldgen/surface/erosionEngineState.ts
+function makeTaker(backing) {
+  let offset = 0;
+  return {
+    take: (Type, count) => {
+      const view = new Type(backing, offset, count);
+      offset = align(offset + count * Type.BYTES_PER_ELEMENT);
+      return view;
+    },
+    used: () => offset
+  };
+}
+function terrainBufferBytes(width, height) {
+  const n = width * height;
+  return 7 * 4 * n + 2 * n + 16 * 4 + 64 * 8 + 1024;
+}
+function routingBufferBytes(width, height) {
+  const n = width * height;
+  const edges = EDGES_PER_STRIP_FACTOR * width * ENGINE_STRIPS;
+  return (5 + 8) * 4 * n + 6 * 4 * n + (3 + 8) * n + 2 * width * ENGINE_STRIPS * 4 + // borderFill
+  edges * 12 + // edgeA/B/W
+  (64 + 64) * 4 + // stripPopped, edgeCount
+  4096;
+}
+function createTerrainViews(width, height, buffer) {
+  const n = width * height;
+  const bytes = terrainBufferBytes(width, height);
+  const backing = buffer ?? new ArrayBuffer(bytes);
+  if (backing.byteLength < bytes) throw new Error(`terrain buffer too small: ${backing.byteLength} < ${bytes}`);
+  const { take } = makeTaker(backing);
+  return {
+    z: take(Float32Array, n),
+    uplift: take(Float32Array, n),
+    erodibility: take(Float32Array, n),
+    moveEast: take(Float32Array, n),
+    moveSouth: take(Float32Array, n),
+    erosionVolume: take(Float32Array, n),
+    accumulationWeights: take(Float32Array, n),
+    maxStepW: take(Float64Array, 64),
+    flags: take(Int32Array, 16),
+    coastMask: take(Uint8Array, n),
+    statusMask: take(Uint8Array, n),
+    buffer: backing
+  };
+}
+function createRoutingViews(width, height, buffer) {
+  const n = width * height;
+  const edges = EDGES_PER_STRIP_FACTOR * width * ENGINE_STRIPS;
+  const bytes = routingBufferBytes(width, height);
+  const backing = buffer ?? new ArrayBuffer(bytes);
+  if (backing.byteLength < bytes) throw new Error(`routing buffer too small: ${backing.byteLength} < ${bytes}`);
+  const { take } = makeTaker(backing);
+  return {
+    zSnapshot: take(Float32Array, n),
+    filled: take(Float32Array, n),
+    accumulation: take(Float32Array, n),
+    ltdDeltaC: take(Float32Array, n),
+    ltdDeltaD: take(Float32Array, n),
+    mfdWeight: take(Float32Array, 8 * n),
+    borderFill: take(Float32Array, 2 * width * ENGINE_STRIPS),
+    edgeW: take(Float32Array, edges),
+    flowTarget: take(Int32Array, n),
+    stripPopOrder: take(Int32Array, n),
+    popOrder: take(Int32Array, n),
+    ltdCardinal: take(Int32Array, n),
+    ltdDiagonal: take(Int32Array, n),
+    ltdFallback: take(Int32Array, n),
+    edgeA: take(Int32Array, edges),
+    edgeB: take(Int32Array, edges),
+    stripPopped: take(Int32Array, 64),
+    edgeCount: take(Int32Array, 64),
+    ltdMode: take(Uint8Array, n),
+    mfdDegree: take(Uint8Array, n),
+    seedMask: take(Uint8Array, n),
+    mfdDirection: take(Uint8Array, 8 * n),
+    buffer: backing
+  };
+}
+function assembleViews(terrain, routing, zFromSnapshot = false) {
+  return {
+    z: zFromSnapshot ? routing.zSnapshot : terrain.z,
+    uplift: terrain.uplift,
+    erodibility: terrain.erodibility,
+    coastMask: terrain.coastMask,
+    statusMask: terrain.statusMask,
+    moveEast: terrain.moveEast,
+    moveSouth: terrain.moveSouth,
+    erosionVolume: terrain.erosionVolume,
+    accumulationWeights: terrain.accumulationWeights,
+    maxStepW: terrain.maxStepW,
+    flags: terrain.flags,
+    zSnapshot: routing.zSnapshot,
+    filled: routing.filled,
+    flowTarget: routing.flowTarget,
+    accumulation: routing.accumulation,
+    stripPopOrder: routing.stripPopOrder,
+    stripPopped: routing.stripPopped,
+    popOrder: routing.popOrder,
+    ltdCardinal: routing.ltdCardinal,
+    ltdDiagonal: routing.ltdDiagonal,
+    ltdDeltaC: routing.ltdDeltaC,
+    ltdDeltaD: routing.ltdDeltaD,
+    ltdFallback: routing.ltdFallback,
+    ltdMode: routing.ltdMode,
+    mfdDegree: routing.mfdDegree,
+    mfdDirection: routing.mfdDirection,
+    mfdWeight: routing.mfdWeight,
+    seedMask: routing.seedMask,
+    borderFill: routing.borderFill,
+    edgeA: routing.edgeA,
+    edgeB: routing.edgeB,
+    edgeW: routing.edgeW,
+    edgeCount: routing.edgeCount
+  };
+}
+function createEngineViews(width, height) {
+  return assembleViews(createTerrainViews(width, height), createRoutingViews(width, height));
+}
+var ENGINE_STRIPS, EDGES_PER_STRIP_FACTOR, align, JOB_EXIT, JOB_UPLIFT, JOB_LTD_SCAN, JOB_MFD, JOB_HILL_MOVES, JOB_HILL_APPLY, JOB_MARINE_MOVES, JOB_MARINE_APPLY, JOB_FLOOD_P1, JOB_FLOOD_P2, JOB_STATUS_CLAMP, REFRESH_CMD_EXIT, REFRESH_CMD_RUN, REFRESH_SEQ, REFRESH_CMD, REFRESH_TARGET, REFRESH_DONE, REFRESH_POPPED;
+var init_erosionEngineState = __esm({
+  "src/worldgen/surface/erosionEngineState.ts"() {
+    ENGINE_STRIPS = 16;
+    EDGES_PER_STRIP_FACTOR = 16;
+    align = (offset) => Math.ceil(offset / 8) * 8;
+    JOB_EXIT = 0;
+    JOB_UPLIFT = 1;
+    JOB_LTD_SCAN = 2;
+    JOB_MFD = 3;
+    JOB_HILL_MOVES = 4;
+    JOB_HILL_APPLY = 5;
+    JOB_MARINE_MOVES = 6;
+    JOB_MARINE_APPLY = 7;
+    JOB_FLOOD_P1 = 8;
+    JOB_FLOOD_P2 = 9;
+    JOB_STATUS_CLAMP = 10;
+    REFRESH_CMD_EXIT = 0;
+    REFRESH_CMD_RUN = 1;
+    REFRESH_SEQ = 0;
+    REFRESH_CMD = 1;
+    REFRESH_TARGET = 2;
+    REFRESH_DONE = 3;
+    REFRESH_POPPED = 4;
+  }
+});
+
+// src/worldgen/surface/erosionEngine.ts
+function kernelParamsFor(width, params) {
+  return {
+    upliftDt: params.upliftDt,
+    hillDiffKm2: params.hillDiffKm2,
+    criticalSlope: params.criticalSlope,
+    marineDiffDt: params.marineDiffDt,
+    cellM: WORLD_WIDTH_METERS / width
+  };
+}
+function createFloodScratch(width, height) {
+  const capacity = (height / ENGINE_STRIPS + 2) * width;
+  return {
+    visited: new Uint8Array(capacity),
+    labels: new Int32Array(capacity),
+    localFilled: new Float32Array(capacity),
+    heap: new MinHeap(capacity)
+  };
+}
+function kernelFloodPhase1(v, width, height, strip, scratch) {
+  const { z, seedMask, edgeA, edgeB, edgeW, edgeCount } = v;
+  const stripRows = height / ENGINE_STRIPS;
+  const gr0 = strip * stripRows;
+  const cap = stripRows * width;
+  const vis = scratch.visited;
+  vis.fill(0, 0, cap);
+  const lab = scratch.labels;
+  const lf = scratch.localFilled;
+  const heap = scratch.heap;
+  const keyBase = 2 * width + 1;
+  for (let l = 0; l < stripRows; l++) {
+    const g0 = (gr0 + l) * width;
+    const isBorder = l === 0 || l === stripRows - 1;
+    for (let x = 0; x < width; x++) {
+      const local = l * width + x;
+      const g = g0 + x;
+      if (seedMask[g]) {
+        lf[local] = z[g];
+        lab[local] = -1;
+        vis[local] = 1;
+        heap.push(lf[local], local);
+      } else if (isBorder) {
+        lf[local] = z[g];
+        lab[local] = l === 0 ? x : width + x;
+        vis[local] = 1;
+        heap.push(lf[local], local);
+      }
+    }
+  }
+  const edges = /* @__PURE__ */ new Map();
+  while (heap.length > 0) {
+    heap.pop();
+    const current = heap.poppedIndex;
+    const ly = current / width | 0;
+    const lx = current - ly * width;
+    const myLabel = lab[current];
+    for (const [dx, dy] of D8) {
+      const ny = ly + dy;
+      if (ny < 0 || ny >= stripRows) continue;
+      const nx = (lx + dx + width) % width;
+      const local = ny * width + nx;
+      if (vis[local]) {
+        const otherLabel = lab[local];
+        if (otherLabel !== myLabel) {
+          const spill = Math.max(lf[current], lf[local]);
+          let a = myLabel;
+          let b = otherLabel;
+          if (a > b) {
+            const t = a;
+            a = b;
+            b = t;
+          }
+          const key = (a + 1) * keyBase + (b + 1);
+          const prev = edges.get(key);
+          if (prev === void 0 || spill < prev) edges.set(key, spill);
+        }
+        continue;
+      }
+      vis[local] = 1;
+      lab[local] = myLabel;
+      const g = (gr0 + ny) * width + nx;
+      const stepDistance = dx !== 0 && dy !== 0 ? SQRT2 : 1;
+      lf[local] = Math.max(z[g], lf[current]) + EPSILON_FLOOD_STEP * stepDistance;
+      heap.push(lf[local], local);
+    }
+  }
+  const base = strip * EDGES_PER_STRIP_FACTOR * width;
+  const capEdges = EDGES_PER_STRIP_FACTOR * width;
+  let count = 0;
+  for (const [key, spill] of edges) {
+    if (count >= capEdges) break;
+    const a = Math.floor(key / keyBase) - 1;
+    const b = key % keyBase - 1;
+    edgeA[base + count] = a < 0 ? -1 : strip * 2 * width + a;
+    edgeB[base + count] = strip * 2 * width + b;
+    edgeW[base + count] = spill;
+    count++;
+  }
+  edgeCount[strip] = count;
+}
+function kernelFloodPhase2(v, width, height, strip, scratch) {
+  const { z, seedMask, filled, borderFill, stripPopOrder, stripPopped } = v;
+  const stripRows = height / ENGINE_STRIPS;
+  const gr0 = strip * stripRows;
+  const gTop = (gr0 - 1 + height) % height;
+  const gBot = (gr0 + stripRows) % height;
+  const rowsL = stripRows + 2;
+  const globalRow = (l) => l === 0 ? gTop : l === rowsL - 1 ? gBot : gr0 + l - 1;
+  const cap = rowsL * width;
+  const vis = scratch.visited;
+  vis.fill(0, 0, cap);
+  const lf = scratch.localFilled;
+  const heap = scratch.heap;
+  const stripPrev = (strip - 1 + ENGINE_STRIPS) % ENGINE_STRIPS;
+  const stripNext = (strip + 1) % ENGINE_STRIPS;
+  for (const [l, nodeBase] of [[0, stripPrev * 2 * width + width], [rowsL - 1, stripNext * 2 * width]]) {
+    for (let x = 0; x < width; x++) {
+      const local = l * width + x;
+      vis[local] = 1;
+      const level = borderFill[nodeBase + x];
+      if (level < Infinity) {
+        lf[local] = level;
+        heap.push(level, local);
+      }
+    }
+  }
+  for (let l = 1; l < rowsL - 1; l++) {
+    const g0 = globalRow(l) * width;
+    const isTop = l === 1;
+    const isBottom = l === rowsL - 2;
+    for (let x = 0; x < width; x++) {
+      const local = l * width + x;
+      if (isTop || isBottom) {
+        const level = borderFill[strip * 2 * width + (isTop ? x : width + x)];
+        if (level < Infinity) {
+          lf[local] = level;
+          vis[local] = 1;
+          heap.push(level, local);
+        }
+      } else if (seedMask[g0 + x]) {
+        lf[local] = z[g0 + x];
+        vis[local] = 1;
+        heap.push(lf[local], local);
+      }
+    }
+  }
+  let popped = 0;
+  const segBase = gr0 * width;
+  while (heap.length > 0) {
+    heap.pop();
+    const current = heap.poppedIndex;
+    const ly = current / width | 0;
+    const lx = current - ly * width;
+    if (ly > 0 && ly < rowsL - 1) {
+      const g = globalRow(ly) * width + lx;
+      filled[g] = lf[current];
+      stripPopOrder[segBase + popped++] = g;
+    }
+    for (const [dx, dy] of D8) {
+      const ny = ly + dy;
+      if (ny < 0 || ny >= rowsL) continue;
+      const nx = (lx + dx + width) % width;
+      const local = ny * width + nx;
+      if (vis[local]) continue;
+      vis[local] = 1;
+      const g = globalRow(ny) * width + nx;
+      const stepDistance = dx !== 0 && dy !== 0 ? SQRT2 : 1;
+      lf[local] = Math.max(z[g], lf[current]) + EPSILON_FLOOD_STEP * stepDistance;
+      heap.push(lf[local], local);
+    }
+  }
+  for (let l = 1; l < rowsL - 1; l++) {
+    const g0 = globalRow(l) * width;
+    for (let x = 0; x < width; x++) {
+      if (!vis[l * width + x]) filled[g0 + x] = Infinity;
+    }
+  }
+  stripPopped[strip] = popped;
+}
+function kernelLtdScan(v, width, height, r0, r1) {
+  const { filled, ltdCardinal, ltdDiagonal, ltdDeltaC, ltdDeltaD, ltdFallback, ltdMode } = v;
+  for (let y = r0; y < r1; y++) {
+    for (let x = 0; x < width; x++) {
+      const cell = y * width + x;
+      const own = filled[cell];
+      let bestSlope = 0;
+      let bestFacet = -1;
+      let bestS1 = 0;
+      let bestS2 = 0;
+      let bestGradient = 0;
+      let fallback = -1;
+      let bestNc = -1;
+      let bestNd = -1;
+      for (let f = 0; f < 8; f++) {
+        const facet = LTD_FACETS[f];
+        const co = D8[facet[0]];
+        const dd = D8[facet[1]];
+        const nc = (y + co[1] + height) % height * width + (x + co[0] + width) % width;
+        const g1 = own - filled[nc];
+        if (g1 > bestGradient) {
+          bestGradient = g1;
+          fallback = nc;
+        }
+        const nd = (y + dd[1] + height) % height * width + (x + dd[0] + width) % width;
+        if (f % 2 === 0) {
+          const g2 = (own - filled[nd]) / SQRT2;
+          if (g2 > bestGradient) {
+            bestGradient = g2;
+            fallback = nd;
+          }
+        }
+        const s1 = own - filled[nc];
+        const s2 = filled[nc] - filled[nd];
+        let slope;
+        if (s2 <= 0) slope = s1;
+        else if (s2 >= s1) slope = (own - filled[nd]) / SQRT2;
+        else slope = Math.hypot(s1, s2);
+        if (slope > bestSlope) {
+          bestSlope = slope;
+          bestFacet = f;
+          bestS1 = s1;
+          bestS2 = s2;
+          bestNc = nc;
+          bestNd = nd;
+        }
+      }
+      ltdFallback[cell] = fallback;
+      if (bestFacet >= 0) {
+        const orient = LTD_FACETS[bestFacet][2];
+        const alpha = bestS2 <= 0 ? 0 : bestS2 >= bestS1 ? QUARTER_TURN : Math.atan2(bestS2, bestS1);
+        ltdCardinal[cell] = bestNc;
+        ltdDiagonal[cell] = bestNd;
+        ltdDeltaC[cell] = -orient * Math.sin(alpha);
+        ltdDeltaD[cell] = orient * SQRT2 * Math.sin(QUARTER_TURN - alpha);
+        ltdMode[cell] = 4 | (filled[bestNc] < own ? 1 : 0) | (filled[bestNd] < own ? 2 : 0);
+      } else {
+        ltdMode[cell] = 0;
+      }
+    }
+  }
+}
+function kernelMfd(v, width, height, r0, r1) {
+  const { filled, mfdDegree, mfdDirection, mfdWeight } = v;
+  for (let y = r0; y < r1; y++) {
+    for (let x = 0; x < width; x++) {
+      const cell = y * width + x;
+      const own = filled[cell];
+      const base = cell * 8;
+      let count = 0;
+      let weightSum = 0;
+      for (let dir = 0; dir < 8; dir++) {
+        const offset = D8[dir];
+        const neighbor = (y + offset[1] + height) % height * width + (x + offset[0] + width) % width;
+        const drop = own - filled[neighbor];
+        if (drop <= 0) continue;
+        const weight = drop / (offset[0] !== 0 && offset[1] !== 0 ? SQRT2 : 1);
+        mfdDirection[base + count] = dir;
+        mfdWeight[base + count] = weight;
+        weightSum += weight;
+        count++;
+      }
+      for (let i = 0; i < count; i++) mfdWeight[base + i] /= weightSum;
+      mfdDegree[cell] = count;
+    }
+  }
+}
+function kernelUplift(v, width, r0, r1, kp) {
+  const { z, uplift, coastMask, flags } = v;
+  const hasMask = flags[FLAG_HAS_COAST_MASK] !== 0;
+  for (let i = r0 * width; i < r1 * width; i++) {
+    if (z[i] > 0 && (!hasMask || coastMask[i])) z[i] = Math.min(1, z[i] + kp.upliftDt * uplift[i]);
+  }
+}
+function kernelHillMoves(v, width, height, r0, r1, kp) {
+  const { z, moveEast, moveSouth } = v;
+  const cellKm2 = kp.cellM / 1e3 * (kp.cellM / 1e3);
+  for (let y = r0; y < r1; y++) {
+    for (let x = 0; x < width; x++) {
+      const cell = y * width + x;
+      let east = 0;
+      let south = 0;
+      if (z[cell] > 0) {
+        const eastCell = y * width + (x + 1) % width;
+        const southCell = (y + 1) % height * width + x;
+        for (const [nb, isEast] of [[eastCell, 1], [southCell, 0]]) {
+          const dz = z[cell] - z[nb];
+          if (dz === 0) continue;
+          const slope = Math.abs(dz) * ELEVATION_METERS2 / kp.cellM;
+          const ratio = Math.min(0.95, slope / kp.criticalSlope);
+          const boost = 1 / (1 - ratio * ratio);
+          const fraction = Math.min(0.2, kp.hillDiffKm2 / cellKm2 * Math.min(boost, 12));
+          const move = fraction * dz;
+          if (isEast) east = move;
+          else south = move;
+        }
+      }
+      moveEast[cell] = east;
+      moveSouth[cell] = south;
+    }
+  }
+}
+function kernelHillApply(v, width, height, r0, r1, workerId) {
+  const { z, moveEast, moveSouth, maxStepW } = v;
+  let maxStep = 0;
+  for (let y = r0; y < r1; y++) {
+    const north = (y - 1 + height) % height;
+    for (let x = 0; x < width; x++) {
+      const cell = y * width + x;
+      const west = y * width + (x - 1 + width) % width;
+      const delta = -(moveEast[cell] + moveSouth[cell]) + moveEast[west] + moveSouth[north * width + x];
+      if (delta !== 0) {
+        z[cell] += delta;
+        const step = Math.abs(delta);
+        if (z[cell] > 0 && step > maxStep) maxStep = step;
+      }
+    }
+  }
+  maxStepW[workerId] = maxStep;
+}
+function kernelMarineMoves(v, width, height, r0, r1, kp) {
+  const { z, moveEast, moveSouth } = v;
+  for (let y = r0; y < r1; y++) {
+    for (let x = 0; x < width; x++) {
+      const cell = y * width + x;
+      let east = 0;
+      let south = 0;
+      if (z[cell] <= 0) {
+        const eastCell = y * width + (x + 1) % width;
+        const southCell = (y + 1) % height * width + x;
+        if (z[eastCell] <= 0) east = kp.marineDiffDt * (z[cell] - z[eastCell]) * 0.1;
+        if (z[southCell] <= 0) south = kp.marineDiffDt * (z[cell] - z[southCell]) * 0.1;
+      }
+      moveEast[cell] = east;
+      moveSouth[cell] = south;
+    }
+  }
+}
+function kernelMarineApply(v, width, height, r0, r1) {
+  const { z, moveEast, moveSouth } = v;
+  for (let y = r0; y < r1; y++) {
+    const north = (y - 1 + height) % height;
+    for (let x = 0; x < width; x++) {
+      const cell = y * width + x;
+      const west = y * width + (x - 1 + width) % width;
+      z[cell] += -(moveEast[cell] + moveSouth[cell]) + moveEast[west] + moveSouth[north * width + x];
+    }
+  }
+}
+function kernelStatusClamp(v, width, r0, r1) {
+  const { z, statusMask, flags } = v;
+  if (flags[FLAG_HAS_STATUS_MASK] === 0) return;
+  const clamp = STATUS_CLAMP_M / ELEVATION_METERS2;
+  for (let i = r0 * width; i < r1 * width; i++) {
+    const status = statusMask[i];
+    if (status === 1) {
+      if (z[i] <= 0) z[i] = clamp;
+    } else if (status === 2) {
+      if (z[i] > 0) z[i] = -clamp;
+    }
+  }
+}
+function createCoordinatorScratch(width, height) {
+  const n = width * height;
+  return {
+    componentLabel: new Int32Array(n),
+    componentStack: new Int32Array(n),
+    nodeDist: new Float64Array(2 * width * ENGINE_STRIPS),
+    nodeDeg: new Int32Array(2 * width * ENGINE_STRIPS + 1),
+    graphHeap: new MinHeap(2 * width * ENGINE_STRIPS),
+    lambda: new Float32Array(n),
+    contrib: new Uint32Array(n),
+    bestInflow: new Uint32Array(n),
+    flux: new Float32Array(n),
+    donorMin: new Float32Array(n)
+  };
+}
+function computeOceanSeed(v, width, height, s) {
+  const { z, seedMask } = v;
+  const n = width * height;
+  const label = s.componentLabel;
+  const stack = s.componentStack;
+  label.fill(-1);
+  seedMask.fill(0);
+  const sizes = [];
+  let sp = 0;
+  for (let start = 0; start < n; start++) {
+    if (z[start] > 0 || label[start] !== -1) continue;
+    const id = sizes.length;
+    let size = 0;
+    stack[sp++] = start;
+    label[start] = id;
+    while (sp > 0) {
+      const i = stack[--sp];
+      size++;
+      const y = i / width | 0;
+      const x = i - y * width;
+      const neighbors = [
+        y * width + (x + 1) % width,
+        y * width + (x + width - 1) % width,
+        (y + 1) % height * width + x,
+        (y + height - 1) % height * width + x
+      ];
+      for (const nb of neighbors) {
+        if (z[nb] <= 0 && label[nb] === -1) {
+          label[nb] = id;
+          stack[sp++] = nb;
+        }
+      }
+    }
+    sizes.push(size);
+  }
+  if (sizes.length === 0) return false;
+  let best = 0;
+  for (let i = 1; i < sizes.length; i++) if (sizes[i] > sizes[best]) best = i;
+  for (let i = 0; i < n; i++) if (label[i] === best) seedMask[i] = 1;
+  return true;
+}
+function solveBorderGraph(v, width, height, s) {
+  const { z, seedMask, borderFill, edgeA, edgeB, edgeW, edgeCount } = v;
+  const stripRows = height / ENGINE_STRIPS;
+  const NN = ENGINE_STRIPS * 2 * width;
+  const dist = s.nodeDist;
+  const nodeDeg = s.nodeDeg;
+  const EC = EDGES_PER_STRIP_FACTOR * width;
+  nodeDeg.fill(0);
+  let realEdges = 0;
+  for (let strip = 0; strip < ENGINE_STRIPS; strip++) {
+    const base = strip * EC;
+    for (let e = 0; e < edgeCount[strip]; e++) {
+      const a = edgeA[base + e];
+      if (a < 0) continue;
+      nodeDeg[a + 1]++;
+      nodeDeg[edgeB[base + e] + 1]++;
+      realEdges++;
+    }
+    for (let x = 0; x < width; x++) {
+      const a = strip * 2 * width + width + x;
+      const t = (strip + 1) % ENGINE_STRIPS;
+      for (let dx = -1; dx <= 1; dx++) {
+        nodeDeg[a + 1]++;
+        nodeDeg[t * 2 * width + (x + dx + width) % width + 1]++;
+        realEdges++;
+      }
+    }
+  }
+  for (let i = 0; i < NN; i++) nodeDeg[i + 1] += nodeDeg[i];
+  const adjacencyTo = new Int32Array(2 * realEdges);
+  const adjacencyW = new Float64Array(2 * realEdges);
+  const fill = nodeDeg.slice(0, NN);
+  const addEdge = (a, b, weight) => {
+    adjacencyTo[fill[a]] = b;
+    adjacencyW[fill[a]++] = weight;
+    adjacencyTo[fill[b]] = a;
+    adjacencyW[fill[b]++] = weight;
+  };
+  dist.fill(Infinity);
+  const heap = s.graphHeap;
+  while (heap.length > 0) heap.pop();
+  for (let strip = 0; strip < ENGINE_STRIPS; strip++) {
+    const base = strip * EC;
+    for (let e = 0; e < edgeCount[strip]; e++) {
+      const a = edgeA[base + e];
+      const b = edgeB[base + e];
+      const weight = edgeW[base + e];
+      if (a < 0) {
+        if (weight < dist[b]) {
+          dist[b] = weight;
+          heap.push(weight, b);
+        }
+      } else {
+        addEdge(a, b, weight);
+      }
+    }
+    const rowA = ((strip + 1) * stripRows - 1) * width;
+    const t = (strip + 1) % ENGINE_STRIPS;
+    const rowB = t * stripRows * width;
+    for (let x = 0; x < width; x++) {
+      const a = strip * 2 * width + width + x;
+      const za = z[rowA + x];
+      for (let dx = -1; dx <= 1; dx++) {
+        const xb = (x + dx + width) % width;
+        addEdge(a, t * 2 * width + xb, Math.max(za, z[rowB + xb]));
+      }
+    }
+    const topRow = strip * stripRows * width;
+    for (let x = 0; x < width; x++) {
+      if (seedMask[topRow + x]) {
+        const node = strip * 2 * width + x;
+        const zv = z[topRow + x];
+        if (zv < dist[node]) {
+          dist[node] = zv;
+          heap.push(zv, node);
+        }
+      }
+      if (seedMask[rowA + x]) {
+        const node = strip * 2 * width + width + x;
+        const zv = z[rowA + x];
+        if (zv < dist[node]) {
+          dist[node] = zv;
+          heap.push(zv, node);
+        }
+      }
+    }
+  }
+  while (heap.length > 0) {
+    heap.pop();
+    const key = heap.poppedKey;
+    const u = heap.poppedIndex;
+    if (key > dist[u]) continue;
+    for (let e = nodeDeg[u]; e < fill[u]; e++) {
+      const target = adjacencyTo[e];
+      const candidate = Math.max(key, adjacencyW[e]);
+      if (candidate < dist[target]) {
+        dist[target] = candidate;
+        heap.push(candidate, target);
+      }
+    }
+  }
+  for (let strip = 0; strip < ENGINE_STRIPS; strip++) {
+    const topRow = strip * stripRows * width;
+    const bottomRow = ((strip + 1) * stripRows - 1) * width;
+    for (let x = 0; x < width; x++) {
+      const a = strip * 2 * width + x;
+      const b = strip * 2 * width + width + x;
+      borderFill[a] = dist[a] === Infinity ? Infinity : Math.max(z[topRow + x], dist[a]);
+      borderFill[b] = dist[b] === Infinity ? Infinity : Math.max(z[bottomRow + x], dist[b]);
+    }
+  }
+}
+function mergePopOrder(v, width, height) {
+  const { filled, stripPopOrder, stripPopped } = v;
+  const stripRows = height / ENGINE_STRIPS;
+  const heads = new Int32Array(ENGINE_STRIPS);
+  let total = 0;
+  for (let strip = 0; strip < ENGINE_STRIPS; strip++) total += stripPopped[strip];
+  const out = v.popOrder;
+  for (let k = 0; k < total; k++) {
+    let best = -1;
+    let bestKey = Infinity;
+    for (let strip = 0; strip < ENGINE_STRIPS; strip++) {
+      const head = heads[strip];
+      if (head >= stripPopped[strip]) continue;
+      const key = filled[stripPopOrder[strip * stripRows * width + head]];
+      if (key < bestKey) {
+        bestKey = key;
+        best = strip;
+      }
+    }
+    out[k] = stripPopOrder[best * stripRows * width + heads[best]++];
+  }
+  return total;
+}
+function lambdaWalk(v, popped, s) {
+  const { flowTarget, ltdCardinal, ltdDiagonal, ltdDeltaC, ltdDeltaD, ltdFallback, ltdMode, popOrder } = v;
+  const { lambda, contrib, bestInflow } = s;
+  flowTarget.fill(-1);
+  lambda.fill(0);
+  contrib.fill(0);
+  bestInflow.fill(0);
+  for (let i = popped - 1; i >= 0; i--) {
+    const cell = popOrder[i];
+    let target = ltdFallback[cell];
+    let delta = 0;
+    const mode = ltdMode[cell];
+    if (mode & 4) {
+      const cardinalDown = (mode & 1) !== 0;
+      const diagonalDown = (mode & 2) !== 0;
+      if (cardinalDown && diagonalDown) {
+        const lam = lambda[cell];
+        if (Math.abs(lam + ltdDeltaC[cell]) <= Math.abs(lam + ltdDeltaD[cell])) {
+          target = ltdCardinal[cell];
+          delta = ltdDeltaC[cell];
+        } else {
+          target = ltdDiagonal[cell];
+          delta = ltdDeltaD[cell];
+        }
+      } else if (cardinalDown) {
+        target = ltdCardinal[cell];
+        delta = ltdDeltaC[cell];
+      } else if (diagonalDown) {
+        target = ltdDiagonal[cell];
+        delta = ltdDeltaD[cell];
+      }
+    }
+    flowTarget[cell] = target;
+    if (target < 0) continue;
+    const area = contrib[cell] + 1;
+    contrib[target] += area;
+    if (area > bestInflow[target]) {
+      bestInflow[target] = area;
+      lambda[target] = lambda[cell] + delta;
+    }
+  }
+}
+function accumulateFlowV2(v, width, height, popped) {
+  const { accumulation, mfdDegree, mfdDirection, mfdWeight, popOrder, flags } = v;
+  if (flags[FLAG_HAS_ACCUM_WEIGHTS]) accumulation.set(v.accumulationWeights);
+  else accumulation.fill(1);
+  for (let i = popped - 1; i >= 0; i--) {
+    const cell = popOrder[i];
+    const amount = accumulation[cell];
+    const x = cell % width;
+    const y = (cell - x) / width;
+    const base = cell * 8;
+    const degree = mfdDegree[cell];
+    for (let e = 0; e < degree; e++) {
+      const offset = D8[mfdDirection[base + e]];
+      accumulation[(y + offset[1] + height) % height * width + (x + offset[0] + width) % width] += amount * mfdWeight[base + e];
+    }
+  }
+}
+function fluvialWalk(v, width, popped, params) {
+  const { z, flowTarget, accumulation, erodibility, erosionVolume, popOrder } = v;
+  const cellM = WORLD_WIDTH_METERS / width;
+  const cellKm2 = cellM / 1e3 * (cellM / 1e3);
+  let maxStep = 0;
+  for (let i = 0; i < popped; i++) {
+    const cell = popOrder[i];
+    erosionVolume[cell] = 0;
+    const old = z[cell];
+    if (old <= 0) continue;
+    const target = flowTarget[cell];
+    if (target < 0) continue;
+    const zr = z[target];
+    if (zr >= old) continue;
+    const x = cell % width;
+    const tx = target % width;
+    let ddx = Math.abs(tx - x);
+    if (ddx > 1) ddx = 1;
+    let ddy = Math.abs((target - tx) / width - (cell - x) / width);
+    if (ddy > 1) ddy = 1;
+    const distKm = cellM / 1e3 * (ddx && ddy ? SQRT2 : 1);
+    const dischargeKm2 = accumulation[cell] * cellKm2 + params.baseAreaKm2;
+    const F = params.kappaDt * erodibility[cell] * Math.pow(dischargeKm2, params.m) / distKm;
+    const znew = (old + F * zr) / (1 + F);
+    const cut = old - znew;
+    z[cell] = znew;
+    erosionVolume[cell] = cut * ELEVATION_METERS2 * cellKm2 * 1e6;
+    if (cut > maxStep) maxStep = cut;
+  }
+  return maxStep;
+}
+function sedimentWalk(v, width, popped, params, s) {
+  const { z, flowTarget, accumulation, erosionVolume, popOrder } = v;
+  const { flux, donorMin } = s;
+  const cellM = WORLD_WIDTH_METERS / width;
+  const cellKm2 = cellM / 1e3 * (cellM / 1e3);
+  let maxStep = 0;
+  flux.fill(0);
+  donorMin.fill(Infinity);
+  for (let i = popped - 1; i >= 0; i--) {
+    const cell = popOrder[i];
+    const target = flowTarget[cell];
+    let carrying = flux[cell] + erosionVolume[cell];
+    if (carrying > 0) {
+      const land = z[cell] > 0;
+      const settle = land ? Math.max(params.settleFloorKm, params.settleXiKm * Math.sqrt(accumulation[cell] * cellKm2 + params.baseAreaKm2)) : params.settleMarineKm;
+      const dropFraction = 1 - Math.exp(-(cellM / 1e3) / settle);
+      let deposit = carrying * dropFraction;
+      const donorCap = donorMin[cell] - 1e-5;
+      const cap = land ? donorCap : Math.min(donorCap, params.marineFreeboardM / ELEVATION_METERS2);
+      const room = (cap - z[cell]) * ELEVATION_METERS2 * cellKm2 * 1e6;
+      if (deposit > room) deposit = Math.max(0, room);
+      const capM3 = (land ? 10 : 30) * cellKm2 * 1e6;
+      if (deposit > capM3) deposit = capM3;
+      if (deposit > 0) {
+        const dz = deposit / (ELEVATION_METERS2 * cellKm2 * 1e6);
+        z[cell] += dz;
+        carrying -= deposit;
+        if (land && dz > maxStep) maxStep = dz;
+      }
+    }
+    if (target >= 0) {
+      flux[target] += carrying;
+      if (z[cell] < donorMin[target]) donorMin[target] = z[cell];
+    }
+  }
+  return maxStep;
+}
+var DEFAULT_ENGINE_PARAMS, ELEVATION_METERS2, EPSILON_FLOOD_STEP, SQRT2, QUARTER_TURN, D8, LTD_FACETS, FLAG_HAS_COAST_MASK, FLAG_HAS_ACCUM_WEIGHTS, FLAG_HAS_STATUS_MASK, STATUS_CLAMP_M, WORLD_WIDTH_METERS, ErosionEngine;
+var init_erosionEngine = __esm({
+  "src/worldgen/surface/erosionEngine.ts"() {
+    init_minHeap();
+    init_erosionEngineState();
+    DEFAULT_ENGINE_PARAMS = {
+      m: 0.5,
+      kappaDt: 9e-3,
+      baseAreaKm2: 500,
+      upliftDt: 22e-4,
+      settleXiKm: 1,
+      settleFloorKm: 20,
+      settleMarineKm: 8,
+      marineFreeboardM: 2,
+      hillDiffKm2: 0.5,
+      criticalSlope: 0.65,
+      marineDiffDt: 0.25,
+      epsM: 0.35
+    };
+    ELEVATION_METERS2 = 9e3;
+    EPSILON_FLOOD_STEP = 1e-7;
+    SQRT2 = Math.SQRT2;
+    QUARTER_TURN = Math.PI / 4;
+    D8 = [
+      [0, -1],
+      [1, -1],
+      [1, 0],
+      [1, 1],
+      [0, 1],
+      [-1, 1],
+      [-1, 0],
+      [-1, -1]
+    ];
+    LTD_FACETS = [
+      [0, 1, 1],
+      [2, 1, -1],
+      [2, 3, 1],
+      [4, 3, -1],
+      [4, 5, 1],
+      [6, 5, -1],
+      [6, 7, 1],
+      [0, 7, -1]
+    ];
+    FLAG_HAS_COAST_MASK = 0;
+    FLAG_HAS_ACCUM_WEIGHTS = 1;
+    FLAG_HAS_STATUS_MASK = 2;
+    STATUS_CLAMP_M = 0.5;
+    WORLD_WIDTH_METERS = 2048 * 7800;
+    ErosionEngine = class {
+      width;
+      height;
+      params;
+      views;
+      poppedCount = 0;
+      // Global iteration cursor: run() may be called in chunks (the pass
+      // adapter does, for progress redraws), and the refresh cadence must not
+      // reset at chunk boundaries.
+      cursor = 0;
+      scratch;
+      floodScratch;
+      kernelParams;
+      constructor(width, height, initial, forcing, params = DEFAULT_ENGINE_PARAMS) {
+        if (height % ENGINE_STRIPS !== 0) throw new Error(`height ${height} not divisible by ${ENGINE_STRIPS} strips`);
+        const n = width * height;
+        if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
+          throw new Error("field size mismatch");
+        }
+        this.width = width;
+        this.height = height;
+        this.params = params;
+        this.views = createEngineViews(width, height);
+        this.views.z.set(initial);
+        this.views.uplift.set(forcing.uplift);
+        this.views.erodibility.set(forcing.erodibility);
+        if (forcing.coastMask) {
+          this.views.coastMask.set(forcing.coastMask);
+          this.views.flags[FLAG_HAS_COAST_MASK] = 1;
+        }
+        if (forcing.accumulationWeights) {
+          this.views.accumulationWeights.set(forcing.accumulationWeights);
+          this.views.flags[FLAG_HAS_ACCUM_WEIGHTS] = 1;
+        }
+        if (forcing.statusMask) {
+          this.views.statusMask.set(forcing.statusMask);
+          this.views.flags[FLAG_HAS_STATUS_MASK] = 1;
+        }
+        this.scratch = createCoordinatorScratch(width, height);
+        this.floodScratch = createFloodScratch(width, height);
+        this.kernelParams = kernelParamsFor(width, params);
+      }
+      // The evolving terrain (normalized z, mutated in place by stepPhysics).
+      get z() {
+        return this.views.z;
+      }
+      get filled() {
+        return this.views.filled;
+      }
+      get flowTarget() {
+        return this.views.flowTarget;
+      }
+      get accumulation() {
+        return this.views.accumulation;
+      }
+      get popOrder() {
+        return this.views.popOrder;
+      }
+      // Recompute the whole routing state from the current z. Reads z only;
+      // writes only routing state — the one-way split the pipelined refresh
+      // depends on.
+      refreshRouting() {
+        if (!computeOceanSeed(this.views, this.width, this.height, this.scratch)) {
+          this.poppedCount = 0;
+          this.views.flowTarget.fill(-1);
+          this.views.accumulation.fill(1);
+          return;
+        }
+        for (let strip = 0; strip < ENGINE_STRIPS; strip++) kernelFloodPhase1(this.views, this.width, this.height, strip, this.floodScratch);
+        solveBorderGraph(this.views, this.width, this.height, this.scratch);
+        for (let strip = 0; strip < ENGINE_STRIPS; strip++) kernelFloodPhase2(this.views, this.width, this.height, strip, this.floodScratch);
+        this.poppedCount = mergePopOrder(this.views, this.width, this.height);
+        kernelLtdScan(this.views, this.width, this.height, 0, this.height);
+        lambdaWalk(this.views, this.poppedCount, this.scratch);
+        kernelMfd(this.views, this.width, this.height, 0, this.height);
+        accumulateFlowV2(this.views, this.width, this.height, this.poppedCount);
+      }
+      // One physics iteration on the current routing. Returns the residual: the
+      // largest land elevation change, in metres.
+      stepPhysics() {
+        let maxStep = 0;
+        kernelUplift(this.views, this.width, 0, this.height, this.kernelParams);
+        maxStep = Math.max(maxStep, fluvialWalk(this.views, this.width, this.poppedCount, this.params));
+        maxStep = Math.max(maxStep, sedimentWalk(this.views, this.width, this.poppedCount, this.params, this.scratch));
+        kernelHillMoves(this.views, this.width, this.height, 0, this.height, this.kernelParams);
+        kernelHillApply(this.views, this.width, this.height, 0, this.height, 0);
+        maxStep = Math.max(maxStep, this.views.maxStepW[0]);
+        kernelMarineMoves(this.views, this.width, this.height, 0, this.height, this.kernelParams);
+        kernelMarineApply(this.views, this.width, this.height, 0, this.height);
+        if (this.views.flags[FLAG_HAS_STATUS_MASK] !== 0) kernelStatusClamp(this.views, this.width, 0, this.height);
+        return maxStep * ELEVATION_METERS2;
+      }
+      // Run the transient: `iterations` IS the landscape age. Routing refreshes
+      // every `routingEvery` iterations (K ≤ 8 validated). Stops early only at
+      // quasi-steady state (3 consecutive residuals under epsM) — the far end
+      // of the age axis, not the goal.
+      run(iterations, routingEvery = 4, onIteration) {
+        let residual = Infinity;
+        let calmStreak = 0;
+        for (let i = 0; i < iterations; i++) {
+          if (this.cursor % routingEvery === 0) this.refreshRouting();
+          this.cursor++;
+          residual = this.stepPhysics();
+          calmStreak = residual < this.params.epsM ? calmStreak + 1 : 0;
+          onIteration?.(i, residual);
+          if (calmStreak >= 3) break;
+        }
+        return residual;
+      }
+    };
+  }
+});
+
+// src/worldgen/surface/erosionEngineWorker.ts
+var erosionEngineWorker_exports = {};
+function runLoop(init, ready) {
+  const { width, height, workerId, workerCount, kernelParams } = init;
+  const terrain = createTerrainViews(width, height, init.terrain);
+  const routingA = createRoutingViews(width, height, init.routingA);
+  const routingB = createRoutingViews(width, height, init.routingB);
+  const liveViews = assembleViews(terrain, routingA);
+  const snapshotViews = [
+    assembleViews(terrain, routingA, true),
+    assembleViews(terrain, routingB, true)
+  ];
+  const ctrl = new Int32Array(init.ctrl);
+  const done = new Int32Array(init.done);
+  const refreshCtrl = init.refreshCtrl ? new Int32Array(init.refreshCtrl) : null;
+  const scratch = createFloodScratch(width, height);
+  if (init.role === "refreshCoordinator") {
+    runRefreshCoordinator(init, snapshotViews, ctrl, done, refreshCtrl, ready);
+    return;
+  }
+  const rowsPer = Math.ceil(height / workerCount);
+  const r0 = Math.min(height, workerId * rowsPer);
+  const r1 = Math.min(height, (workerId + 1) * rowsPer);
+  ready();
+  let seen = 0;
+  for (; ; ) {
+    Atomics.wait(ctrl, 0, seen);
+    seen = Atomics.load(ctrl, 0);
+    const job = Atomics.load(ctrl, 1);
+    if (job === JOB_EXIT) break;
+    const views = init.role === "refresh" && refreshCtrl ? snapshotViews[Atomics.load(refreshCtrl, REFRESH_TARGET)] : liveViews;
+    switch (job) {
+      case JOB_UPLIFT:
+        kernelUplift(views, width, r0, r1, kernelParams);
+        break;
+      case JOB_LTD_SCAN:
+        kernelLtdScan(views, width, height, r0, r1);
+        break;
+      case JOB_MFD:
+        kernelMfd(views, width, height, r0, r1);
+        break;
+      case JOB_HILL_MOVES:
+        kernelHillMoves(views, width, height, r0, r1, kernelParams);
+        break;
+      case JOB_HILL_APPLY:
+        kernelHillApply(views, width, height, r0, r1, workerId);
+        break;
+      case JOB_MARINE_MOVES:
+        kernelMarineMoves(views, width, height, r0, r1, kernelParams);
+        break;
+      case JOB_MARINE_APPLY:
+        kernelMarineApply(views, width, height, r0, r1);
+        break;
+      case JOB_STATUS_CLAMP:
+        kernelStatusClamp(views, width, r0, r1);
+        break;
+      case JOB_FLOOD_P1:
+        for (let strip = workerId; strip < ENGINE_STRIPS; strip += workerCount) {
+          kernelFloodPhase1(views, width, height, strip, scratch);
+        }
+        break;
+      case JOB_FLOOD_P2:
+        for (let strip = workerId; strip < ENGINE_STRIPS; strip += workerCount) {
+          kernelFloodPhase2(views, width, height, strip, scratch);
+        }
+        break;
+    }
+    Atomics.add(done, 0, 1);
+    Atomics.notify(done, 0);
+  }
+}
+function runRefreshCoordinator(init, snapshotViews, ctrl, done, refreshCtrl, ready) {
+  const { width, height, workerCount } = init;
+  const scratch = createCoordinatorScratch(width, height);
+  const dispatch = (job) => {
+    Atomics.store(done, 0, 0);
+    Atomics.store(ctrl, 1, job);
+    Atomics.add(ctrl, 0, 1);
+    Atomics.notify(ctrl, 0);
+    let finished;
+    while ((finished = Atomics.load(done, 0)) < workerCount) {
+      Atomics.wait(done, 0, finished);
+    }
+  };
+  ready();
+  let seen = 0;
+  for (; ; ) {
+    Atomics.wait(refreshCtrl, REFRESH_SEQ, seen);
+    seen = Atomics.load(refreshCtrl, REFRESH_SEQ);
+    if (Atomics.load(refreshCtrl, REFRESH_CMD) === REFRESH_CMD_EXIT) break;
+    const views = snapshotViews[Atomics.load(refreshCtrl, REFRESH_TARGET)];
+    let popped = 0;
+    if (computeOceanSeed(views, width, height, scratch)) {
+      dispatch(JOB_FLOOD_P1);
+      solveBorderGraph(views, width, height, scratch);
+      dispatch(JOB_FLOOD_P2);
+      popped = mergePopOrder(views, width, height);
+      dispatch(JOB_LTD_SCAN);
+      lambdaWalk(views, popped, scratch);
+      dispatch(JOB_MFD);
+      accumulateFlowV2(views, width, height, popped);
+    } else {
+      views.flowTarget.fill(-1);
+      views.accumulation.fill(1);
+    }
+    Atomics.store(refreshCtrl, REFRESH_POPPED, popped);
+    Atomics.store(refreshCtrl, REFRESH_DONE, 1);
+    Atomics.notify(refreshCtrl, REFRESH_DONE);
+  }
+}
+async function boot() {
+  if (typeof self !== "undefined" && typeof self.postMessage === "function") {
+    const scope = self;
+    scope.onmessage = (event) => {
+      scope.onmessage = null;
+      runLoop(event.data, () => scope.postMessage("ready"));
+    };
+    return;
+  }
+  const { parentPort } = await import("node:worker_threads");
+  if (!parentPort) throw new Error("erosionEngineWorker: no worker substrate");
+  parentPort.once("message", (init) => {
+    runLoop(init, () => parentPort.postMessage("ready"));
+    parentPort.close();
+  });
+}
+var init_erosionEngineWorker = __esm({
+  "src/worldgen/surface/erosionEngineWorker.ts"() {
+    init_erosionEngineState();
+    init_erosionEngine();
+    init_erosionEngineState();
+    void boot();
+  }
+});
+
 // scripts/bake.ts
 import { readFile, mkdir, writeFile, rename, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
+import { Worker as NodeWorker, isMainThread } from "node:worker_threads";
+import { availableParallelism } from "node:os";
 
 // src/world/query.ts
 var import_jszip = __toESM(require_lib3(), 1);
-
-// src/worldgen/core/mapConfig.ts
-var METERS_PER_CELL = 7800;
 
 // src/worldgen/core/interpolation.ts
 function smoothstep(t) {
@@ -9812,9 +11009,6 @@ function marginProfile(t, abyssalFloor) {
 }
 var MARGIN_FIELD_LO = 0.08;
 var MARGIN_FIELD_HI = 1;
-function slopeFromAngle(degrees) {
-  return Math.tan(degrees * Math.PI / 180) * (METERS_PER_CELL / ELEVATION_METERS);
-}
 var SLOPE_RECALIBRATION = 2;
 function marginParameter(field) {
   const t = Math.max(0, Math.min(1, (field - MARGIN_FIELD_LO) / (MARGIN_FIELD_HI - MARGIN_FIELD_LO)));
@@ -10306,7 +11500,16 @@ var WORLD_FIELDS = [
   climate("monsoonIndex", "", true),
   world("lakeDepth", "depth", true),
   ...ECOLOGY_FIELD_NAMES.map((name) => climate(name, "", true)),
-  world("discharge", "m3/s", false)
+  world("discharge", "m3/s", false),
+  // The erosion engine's coarse forcing (docs/design/erosion-v2.md): uplift
+  // is the features' activity-weighted U (normalized to the world's peak,
+  // negative in rifts), erodibility the crust-history hardness multiplier
+  // BEFORE the seed-procedural lithology noise, which is applied at whatever
+  // grid consumes it. Written so the amplification bake can erode with the
+  // engine without carrying the simulation; meaningful over ocean too
+  // (submarine features uplift, oceanic crust has a hardness).
+  climate("uplift", "relative", false),
+  climate("erodibility", "", false)
 ];
 var BY_NAME = new Map(WORLD_FIELDS.map((f) => [f.name, f]));
 function fieldSpec(name) {
@@ -10364,6 +11567,10 @@ var WORLD_LAYERS = [
   ...ECOLOGY_FIELD_NAMES.map((name) => layer(name, "u8", 3 / 255, 0))
 ];
 var DISCHARGE_LAYER = layer("discharge", "u16", 4, 0);
+var FORCING_LAYERS = [
+  layer("uplift", "f32", 1, 0),
+  layer("erodibility", "f32", 1, 0)
+];
 var maxCode = (dtype) => dtype === "u16" ? 65535 : 255;
 function makeArray(dtype, n) {
   return dtype === "f32" ? new Float32Array(n) : dtype === "u16" ? new Uint16Array(n) : new Uint8Array(n);
@@ -10448,7 +11655,7 @@ function deriveWorldId(inputs) {
   const [sa, sb] = hashBytes(scalars, a, b);
   return `${hex8(sa)}${hex8(sb)}`;
 }
-var AMPLIFICATION_ALGO_VERSION = 9;
+var AMPLIFICATION_ALGO_VERSION = 10;
 function derivePipelineVersion(constants) {
   const text = Object.keys(constants).sort().map((name) => `${name}=${constants[name]}`).join("|");
   const [a, b] = hashBytes(new TextEncoder().encode(text), 2166136261, 2654435769);
@@ -10511,6 +11718,70 @@ function fineDetailNoise(x, y, width, height, seed) {
   return sum / amplitudeSum;
 }
 
+// src/worldgen/surface/erosionForcingFields.ts
+init_erosionEngine();
+var EROSION_LITHO_SEED_SALT = 1366306423;
+function erosionLithoSeed(warpSeed) {
+  return (warpSeed ^ EROSION_LITHO_SEED_SALT) >>> 0;
+}
+var ROCK_CONTRAST_SIGMA_MAX = 2.8;
+var LITHO_LATTICE_X = 512;
+var LITHO_LATTICE_Y = 256;
+function upsampleAt(coarse, resX, resY, x, y, width, height) {
+  const u = x / width * resX;
+  const v = y / height * resY;
+  const x0 = Math.floor(u);
+  const y0 = Math.floor(v);
+  const fx = u - x0;
+  const fy = v - y0;
+  const at = (xx, yy) => coarse[(yy % resY + resY) % resY * resX + (xx % resX + resX) % resX];
+  return (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy;
+}
+function assembleFineForcing(coarse, rawElevations, width, height, controls = {}) {
+  const n = width * height;
+  const sigma = ROCK_CONTRAST_SIGMA_MAX * ((controls.rockContrast ?? 50) / 100);
+  const uplift = new Float32Array(n);
+  const erodibility = new Float32Array(n);
+  const coastMask = new Uint8Array(n);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      if (coarse.uplift) uplift[i] = upsampleAt(coarse.uplift, coarse.forcingResX, coarse.forcingResY, x, y, width, height);
+      erodibility[i] = Math.exp(sigma * fineDetailNoise(x * LITHO_LATTICE_X / width, y * LITHO_LATTICE_Y / height, LITHO_LATTICE_X, LITHO_LATTICE_Y, coarse.lithoSeed)) * (coarse.hardness ? upsampleAt(coarse.hardness, coarse.forcingResX, coarse.forcingResY, x, y, width, height) : 1);
+      if (rawElevations[i] > 0) coastMask[i] = 1;
+    }
+  }
+  const accumulationWeights = new Float32Array(n);
+  if (coarse.water) {
+    let landSum = 0;
+    let landCount = 0;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        const weight = Math.max(0, upsampleAt(coarse.water, coarse.waterResX, coarse.waterResY, x, y, width, height));
+        accumulationWeights[i] = weight;
+        if (rawElevations[i] > 0) {
+          landSum += weight;
+          landCount++;
+        }
+      }
+    }
+    const meanLand = landCount > 0 && landSum > 0 ? landSum / landCount : 1;
+    for (let i = 0; i < n; i++) accumulationWeights[i] = accumulationWeights[i] / meanLand || 1;
+  } else {
+    accumulationWeights.fill(1);
+  }
+  const alluvium = controls.alluvium ?? 50;
+  const settleScale = Math.pow(2, (50 - alluvium) / 50);
+  const params = {
+    ...DEFAULT_ENGINE_PARAMS,
+    settleXiKm: DEFAULT_ENGINE_PARAMS.settleXiKm * settleScale,
+    settleFloorKm: DEFAULT_ENGINE_PARAMS.settleFloorKm * settleScale,
+    settleMarineKm: DEFAULT_ENGINE_PARAMS.settleMarineKm * settleScale
+  };
+  return { forcing: { uplift, erodibility, coastMask, accumulationWeights }, params };
+}
+
 // src/world/query.ts
 async function openWorld(archive) {
   let zip;
@@ -10533,6 +11804,7 @@ async function openWorld(archive) {
   const recipe = {
     seedText,
     detailSeed,
+    lithoSeed: erosionLithoSeed(hashSeedString(`${seedText}:coastalWarp`)),
     erosionControls: {
       strength: readRecipeNumber(yamlText, "spec.erosion.erosionStrength"),
       refresh: readRecipeNumber(yamlText, "spec.erosion.drainageRefresh"),
@@ -10609,6 +11881,8 @@ async function worldInputsFrom(world2) {
   const elevation = await world2.acquire("elevation");
   if (!elevation) return null;
   const climate2 = await world2.acquire("precipitation");
+  const uplift = await world2.acquire("uplift");
+  const erodibility = await world2.acquire("erodibility");
   const biome = await world2.acquire("biome");
   const lakeDepth = await world2.acquire("lakeDepth");
   const temperature = await world2.acquire("temperature");
@@ -10622,7 +11896,10 @@ async function worldInputsFrom(world2) {
     height: world2.height,
     seedText: world2.recipe.seedText,
     detailSeed: world2.recipe.detailSeed,
+    lithoSeed: world2.recipe.lithoSeed,
     erosionControls: world2.recipe.erosionControls,
+    uplift,
+    erodibility,
     climate: climate2,
     temperature,
     biome,
@@ -11129,6 +12406,7 @@ function extractRiverPolylines(routing, discharge, elevation, threshold, maxDisc
 }
 
 // src/worldgen/surface/amplify.ts
+init_erosionEngine();
 var SEED_ROUGHNESS_M = 60;
 function seedRoughnessAmplitude(elevation) {
   if (elevation <= SEA_LEVEL) return 0;
@@ -11149,11 +12427,10 @@ var RIDGE_OCTAVE_AMPLITUDES = [1, 0.5, 0.25];
 var RIDGE_STRENGTH = 0.5;
 var RIDGE_FIELD_MEAN = 0.47;
 var RELIEF_RADIUS_FRACTION = 1 / 64;
-var AMPLIFICATION_EROSION_OVERRIDES = {
-  upliftRate: 0,
-  plainFactor: 0.4,
-  talusAngleDeg: 6
+var BAKE_ENGINE_OVERRIDES = {
+  upliftDt: 0
 };
+var DELTA_ALLOWANCE_KM = 15;
 var AMPLIFY_CONSTANTS = {
   seedRoughnessM: SEED_ROUGHNESS_M,
   cascadeFalloff: CASCADE_FALLOFF,
@@ -11163,9 +12440,20 @@ var AMPLIFY_CONSTANTS = {
   reliefRadiusFraction: RELIEF_RADIUS_FRACTION,
   ...Object.fromEntries(RIDGE_OCTAVE_CELLS.map((cells, i) => [`ridgeOctaveCells${i}`, cells])),
   ...Object.fromEntries(RIDGE_OCTAVE_AMPLITUDES.map((amp, i) => [`ridgeOctaveAmp${i}`, amp])),
-  upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
-  plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
-  talusAngleDeg: AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg,
+  // The v2 engine's whole parameter object, prefixed: the bake's terrain is
+  // a function of every one of them (kappaDt through epsM), and listing them
+  // individually is exactly the mirror-drift the block comment above warns
+  // about. The overrides and the forcing-assembly constants follow — the
+  // lithology salt and σ span change carved geology for an unchanged world,
+  // which is the invisible-under-one-key failure this object exists to catch.
+  ...Object.fromEntries(Object.entries(DEFAULT_ENGINE_PARAMS).map(([k, v]) => [`engine_${k}`, v])),
+  bakeUpliftDt: BAKE_ENGINE_OVERRIDES.upliftDt,
+  lithoSeedSalt: EROSION_LITHO_SEED_SALT,
+  rockContrastSigmaMax: ROCK_CONTRAST_SIGMA_MAX,
+  // The coastline status rule (P3 ②): the growth allowance and the clamp
+  // depth both move baked coastlines.
+  deltaAllowanceKm: DELTA_ALLOWANCE_KM,
+  statusClampM: STATUS_CLAMP_M,
   // The bake RE-EXTRACTS rivers on the amplified field, so hydrology's channel
   // criterion is part of what it produces — and none of these three were in the
   // key. `CHANNEL_SLOPE_EXPONENT` was worse than merely absent: identity.ts
@@ -11174,10 +12462,7 @@ var AMPLIFY_CONSTANTS = {
   // the density curve and were function-local until now.
   channelSlopeExponent: CHANNEL_SLOPE_EXPONENT,
   channelAreaMax: SURFACE_TUNING.channelAreaMax,
-  channelAreaMin: SURFACE_TUNING.channelAreaMin,
-  // The estuary floor caps how deep the bake's erosion may cut below sea
-  // level at ocean mouths — retuning it moves coastlines in the baked field.
-  estuaryMaxDepthM: SURFACE_TUNING.estuaryMaxDepthM
+  channelAreaMin: SURFACE_TUNING.channelAreaMin
 };
 function ridgedAt(x, y, width, height, seed) {
   let sum = 0;
@@ -11242,79 +12527,322 @@ function amplifyElevation(macro, macroWidth, macroHeight, factor, seed, onProgre
   return { data, width, height };
 }
 
-// src/worldgen/core/toroidal.ts
-function wrappedDelta(a, b, period) {
-  let delta = a - b;
-  delta -= period * Math.round(delta / period);
-  return delta;
-}
+// src/worldgen/surface/erosionPassV2.ts
+init_erosionEngine();
 
-// src/worldgen/core/minHeap.ts
-var MinHeap = class {
-  keys;
-  indices;
-  size = 0;
-  poppedKey = 0;
-  poppedIndex = -1;
-  // `capacity` is a hint, not a limit — push() grows past it. Sizing it right
-  // just avoids the copies.
-  constructor(capacity) {
-    const initial = Math.max(1, capacity);
-    this.keys = new Float64Array(initial);
-    this.indices = new Int32Array(initial);
+// src/worldgen/surface/erosionEnginePool.ts
+init_erosionEngineState();
+init_erosionEngine();
+function onceReady(worker) {
+  return new Promise((resolve) => {
+    if (worker.on) {
+      worker.on("message", (value) => {
+        if (value === "ready") resolve();
+      });
+    } else if (worker.addEventListener) {
+      worker.addEventListener("message", (event) => {
+        if (event.data === "ready") resolve();
+      });
+    } else {
+      throw new Error("worker exposes neither on() nor addEventListener()");
+    }
+  });
+}
+var PipelinedErosionEngine = class _PipelinedErosionEngine {
+  width;
+  height;
+  params;
+  options;
+  poppedCount = 0;
+  terrain;
+  routing;
+  liveViews;
+  scratch;
+  workers;
+  ctrlA;
+  doneA;
+  ctrlB;
+  refreshCtrl;
+  activeIndex = -1;
+  inFlight = false;
+  // Global iteration cursor — chunked run() calls must not reset the
+  // boundary schedule (determinism holds for a FIXED chunking either way,
+  // but the staleness cadence should be uniform across chunk seams).
+  cursor = 0;
+  constructor(width, height, params, options, terrain, routing, workers, ctrlA, doneA, ctrlB, refreshCtrl) {
+    this.width = width;
+    this.height = height;
+    this.params = params;
+    this.options = options;
+    this.terrain = terrain;
+    this.routing = routing;
+    this.liveViews = [assembleViews(terrain, routing[0]), assembleViews(terrain, routing[1])];
+    this.workers = workers;
+    this.ctrlA = ctrlA;
+    this.doneA = doneA;
+    this.ctrlB = ctrlB;
+    this.refreshCtrl = refreshCtrl;
+    this.scratch = createCoordinatorScratch(width, height);
   }
-  get length() {
-    return this.size;
+  static async create(width, height, initial, forcing, createWorker, options, params = DEFAULT_ENGINE_PARAMS) {
+    if (height % ENGINE_STRIPS !== 0) throw new Error(`height ${height} not divisible by ${ENGINE_STRIPS} strips`);
+    if (options.stencilWorkers < 1 || options.refreshWorkers < 1 || options.pipelineDepth < 1) {
+      throw new Error("pipeline options must all be >= 1");
+    }
+    const n = width * height;
+    if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
+      throw new Error("field size mismatch");
+    }
+    const terrainBuffer = new SharedArrayBuffer(terrainBufferBytes(width, height));
+    const routingBufferA = new SharedArrayBuffer(routingBufferBytes(width, height));
+    const routingBufferB = new SharedArrayBuffer(routingBufferBytes(width, height));
+    const terrain = createTerrainViews(width, height, terrainBuffer);
+    const routing = [
+      createRoutingViews(width, height, routingBufferA),
+      createRoutingViews(width, height, routingBufferB)
+    ];
+    terrain.z.set(initial);
+    terrain.uplift.set(forcing.uplift);
+    terrain.erodibility.set(forcing.erodibility);
+    if (forcing.coastMask) {
+      terrain.coastMask.set(forcing.coastMask);
+      terrain.flags[FLAG_HAS_COAST_MASK] = 1;
+    }
+    if (forcing.accumulationWeights) {
+      terrain.accumulationWeights.set(forcing.accumulationWeights);
+      terrain.flags[FLAG_HAS_ACCUM_WEIGHTS] = 1;
+    }
+    if (forcing.statusMask) {
+      terrain.statusMask.set(forcing.statusMask);
+      terrain.flags[FLAG_HAS_STATUS_MASK] = 1;
+    }
+    const ctrlABuffer = new SharedArrayBuffer(64);
+    const doneABuffer = new SharedArrayBuffer(64);
+    const ctrlBBuffer = new SharedArrayBuffer(64);
+    const doneBBuffer = new SharedArrayBuffer(64);
+    const refreshCtrlBuffer = new SharedArrayBuffer(64);
+    const kernelParams = kernelParamsFor(width, params);
+    const workers = [];
+    const readies = [];
+    const spawn = (message) => {
+      const worker = createWorker();
+      workers.push(worker);
+      readies.push(onceReady(worker));
+      worker.postMessage({
+        terrain: terrainBuffer,
+        routingA: routingBufferA,
+        routingB: routingBufferB,
+        width,
+        height,
+        kernelParams,
+        ...message
+      });
+    };
+    for (let workerId = 0; workerId < options.stencilWorkers; workerId++) {
+      spawn({ role: "stencil", ctrl: ctrlABuffer, done: doneABuffer, workerId, workerCount: options.stencilWorkers });
+    }
+    for (let workerId = 0; workerId < options.refreshWorkers; workerId++) {
+      spawn({ role: "refresh", ctrl: ctrlBBuffer, done: doneBBuffer, refreshCtrl: refreshCtrlBuffer, workerId, workerCount: options.refreshWorkers });
+    }
+    spawn({ role: "refreshCoordinator", ctrl: ctrlBBuffer, done: doneBBuffer, refreshCtrl: refreshCtrlBuffer, workerId: 0, workerCount: options.refreshWorkers });
+    await Promise.all(readies);
+    return new _PipelinedErosionEngine(
+      width,
+      height,
+      params,
+      options,
+      terrain,
+      routing,
+      workers,
+      new Int32Array(ctrlABuffer),
+      new Int32Array(doneABuffer),
+      new Int32Array(ctrlBBuffer),
+      new Int32Array(refreshCtrlBuffer)
+    );
   }
-  push(key, index) {
-    if (this.size === this.keys.length) this.grow();
-    let i = this.size++;
-    this.keys[i] = key;
-    this.indices[i] = index;
-    while (i > 0) {
-      const parent = i - 1 >> 1;
-      if (this.keys[parent] <= this.keys[i]) break;
-      this.swapEntries(parent, i);
-      i = parent;
+  get z() {
+    return this.terrain.z;
+  }
+  // The live-z assembly of the currently active routing buffer — what the
+  // pass adapter hands to the hydrology bridge after finalizeRouting.
+  get activeEngineViews() {
+    return this.liveViews[this.activeIndex];
+  }
+  get activeViews() {
+    return this.liveViews[this.activeIndex];
+  }
+  // One SYNCHRONOUS refresh of the current terrain, adopted immediately —
+  // the pass adapter calls this once after the run so the routing handed
+  // to hydrology matches the finished z exactly (in-loop routing is up to
+  // a pipeline depth stale by design). Returns the popped count.
+  finalizeRouting() {
+    if (this.inFlight) this.waitAndAdopt();
+    this.startRefresh(this.activeIndex === -1 ? 0 : 1 - this.activeIndex);
+    this.waitAndAdopt();
+    return this.poppedCount;
+  }
+  dispatchStencil(job) {
+    Atomics.store(this.doneA, 0, 0);
+    Atomics.store(this.ctrlA, 1, job);
+    Atomics.add(this.ctrlA, 0, 1);
+    Atomics.notify(this.ctrlA, 0);
+    let finished;
+    while ((finished = Atomics.load(this.doneA, 0)) < this.options.stencilWorkers) {
+      Atomics.wait(this.doneA, 0, finished);
     }
   }
-  pop() {
-    this.poppedKey = this.keys[0];
-    this.poppedIndex = this.indices[0];
-    this.size--;
-    this.keys[0] = this.keys[this.size];
-    this.indices[0] = this.indices[this.size];
-    let i = 0;
-    for (; ; ) {
-      const left = i * 2 + 1;
-      const right = i * 2 + 2;
-      let smallest = i;
-      if (left < this.size && this.keys[left] < this.keys[smallest]) smallest = left;
-      if (right < this.size && this.keys[right] < this.keys[smallest]) smallest = right;
-      if (smallest === i) break;
-      this.swapEntries(smallest, i);
-      i = smallest;
+  startRefresh(target) {
+    this.routing[target].zSnapshot.set(this.terrain.z);
+    Atomics.store(this.refreshCtrl, REFRESH_DONE, 0);
+    Atomics.store(this.refreshCtrl, REFRESH_TARGET, target);
+    Atomics.store(this.refreshCtrl, REFRESH_CMD, REFRESH_CMD_RUN);
+    Atomics.add(this.refreshCtrl, REFRESH_SEQ, 1);
+    Atomics.notify(this.refreshCtrl, REFRESH_SEQ);
+    this.inFlight = true;
+  }
+  waitAndAdopt() {
+    while (Atomics.load(this.refreshCtrl, REFRESH_DONE) === 0) {
+      Atomics.wait(this.refreshCtrl, REFRESH_DONE, 0);
     }
+    this.activeIndex = Atomics.load(this.refreshCtrl, REFRESH_TARGET);
+    this.poppedCount = Atomics.load(this.refreshCtrl, REFRESH_POPPED);
+    this.inFlight = false;
   }
-  grow() {
-    const keys = new Float64Array(this.keys.length * 2);
-    const indices = new Int32Array(this.indices.length * 2);
-    keys.set(this.keys);
-    indices.set(this.indices);
-    this.keys = keys;
-    this.indices = indices;
+  boundary() {
+    if (this.activeIndex === -1) {
+      this.startRefresh(0);
+      this.waitAndAdopt();
+      this.startRefresh(1);
+      return;
+    }
+    this.waitAndAdopt();
+    this.startRefresh(1 - this.activeIndex);
   }
-  swapEntries(a, b) {
-    const tempKey = this.keys[a];
-    this.keys[a] = this.keys[b];
-    this.keys[b] = tempKey;
-    const tempIndex = this.indices[a];
-    this.indices[a] = this.indices[b];
-    this.indices[b] = tempIndex;
+  stepPhysics() {
+    let maxStep = 0;
+    this.dispatchStencil(JOB_UPLIFT);
+    maxStep = Math.max(maxStep, fluvialWalk(this.activeViews, this.width, this.poppedCount, this.params));
+    maxStep = Math.max(maxStep, sedimentWalk(this.activeViews, this.width, this.poppedCount, this.params, this.scratch));
+    this.terrain.maxStepW.fill(0, 0, this.options.stencilWorkers);
+    this.dispatchStencil(JOB_HILL_MOVES);
+    this.dispatchStencil(JOB_HILL_APPLY);
+    for (let workerId = 0; workerId < this.options.stencilWorkers; workerId++) {
+      maxStep = Math.max(maxStep, this.terrain.maxStepW[workerId]);
+    }
+    this.dispatchStencil(JOB_MARINE_MOVES);
+    this.dispatchStencil(JOB_MARINE_APPLY);
+    if (this.terrain.flags[FLAG_HAS_STATUS_MASK] !== 0) this.dispatchStencil(JOB_STATUS_CLAMP);
+    return maxStep * 9e3;
+  }
+  run(iterations, onIteration) {
+    let residual = Infinity;
+    let calmStreak = 0;
+    for (let i = 0; i < iterations; i++) {
+      if (this.cursor % this.options.pipelineDepth === 0) this.boundary();
+      this.cursor++;
+      residual = this.stepPhysics();
+      calmStreak = residual < this.params.epsM ? calmStreak + 1 : 0;
+      onIteration?.(i, residual);
+      if (calmStreak >= 3) break;
+    }
+    return residual;
+  }
+  async close() {
+    if (this.inFlight) this.waitAndAdopt();
+    Atomics.store(this.refreshCtrl, REFRESH_CMD, REFRESH_CMD_EXIT);
+    Atomics.add(this.refreshCtrl, REFRESH_SEQ, 1);
+    Atomics.notify(this.refreshCtrl, REFRESH_SEQ);
+    Atomics.store(this.ctrlA, 1, JOB_EXIT);
+    Atomics.add(this.ctrlA, 0, 1);
+    Atomics.notify(this.ctrlA, 0);
+    Atomics.store(this.ctrlB, 1, JOB_EXIT);
+    Atomics.add(this.ctrlB, 0, 1);
+    Atomics.notify(this.ctrlB, 0);
+    await Promise.all(this.workers.map((worker) => worker.terminate()));
   }
 };
 
+// src/worldgen/surface/erosionEngineBridge.ts
+function engineFlowRouting(views, width, height, poppedCount) {
+  const n = width * height;
+  const outEdgeStart = new Int32Array(n + 1);
+  for (let cell = 0; cell < n; cell++) outEdgeStart[cell + 1] = outEdgeStart[cell] + views.mfdDegree[cell];
+  const total = outEdgeStart[n];
+  const outEdgeDirections = new Uint8Array(total);
+  const outEdgeWeights = new Float32Array(total);
+  for (let cell = 0; cell < n; cell++) {
+    const base = cell * 8;
+    const start = outEdgeStart[cell];
+    const degree = views.mfdDegree[cell];
+    for (let e = 0; e < degree; e++) {
+      outEdgeDirections[start + e] = views.mfdDirection[base + e];
+      outEdgeWeights[start + e] = views.mfdWeight[base + e];
+    }
+  }
+  const mfd = { outEdgeStart, outEdgeDirections, outEdgeWeights, bounded: false };
+  return {
+    width,
+    height,
+    filled: views.filled,
+    flowTarget: views.flowTarget,
+    mfd,
+    popOrder: views.popOrder,
+    poppedCount
+  };
+}
+
+// src/worldgen/surface/erosionPassV2.ts
+var PROGRESS_CHUNKS = 8;
+async function runErosionPassV2(rawElevations, width, height, forcing, options) {
+  const params = options.params ?? DEFAULT_ENGINE_PARAMS;
+  const chunkSize = Math.max(1, Math.ceil(options.age / PROGRESS_CHUNKS));
+  if (options.pool) {
+    const { createWorker, ...pipeline } = options.pool;
+    const engine2 = await PipelinedErosionEngine.create(width, height, rawElevations, forcing, createWorker, pipeline, params);
+    try {
+      let done2 = 0;
+      while (done2 < options.age) {
+        const step = Math.min(chunkSize, options.age - done2);
+        engine2.run(step, (iteration) => options.onProgress?.((done2 + iteration + 1) / options.age));
+        done2 += step;
+        if (options.onChunkComplete) await options.onChunkComplete(engine2.z.slice(), done2 / chunkSize);
+        if (options.shouldCancel?.()) break;
+      }
+      const popped = engine2.finalizeRouting();
+      return {
+        elevations: engine2.z.slice(),
+        preFillElevations: engine2.z.slice(),
+        routing: engineFlowRouting(engine2.activeEngineViews, width, height, popped),
+        accumulation: engine2.activeEngineViews.accumulation
+      };
+    } finally {
+      await engine2.close();
+    }
+  }
+  const engine = new ErosionEngine(width, height, rawElevations, forcing, params);
+  const routingEvery = options.routingEvery ?? 4;
+  let done = 0;
+  while (done < options.age) {
+    const step = Math.min(chunkSize, options.age - done);
+    engine.run(step, routingEvery, (iteration) => options.onProgress?.((done + iteration + 1) / options.age));
+    done += step;
+    if (options.onChunkComplete) await options.onChunkComplete(engine.z.slice(), done / chunkSize);
+    if (options.shouldCancel?.()) break;
+  }
+  engine.refreshRouting();
+  return {
+    elevations: engine.z.slice(),
+    preFillElevations: engine.z.slice(),
+    routing: engineFlowRouting(engine.views, width, height, engine.poppedCount),
+    accumulation: engine.views.accumulation
+  };
+}
+
+// src/worldgen/surface/runAmplification.ts
+init_erosionEngine();
+
 // src/worldgen/surface/flowRouting.ts
+init_minHeap();
 var YIELD_INTERVAL_MS = 50;
 var lastYieldAt = 0;
 function maybeYield() {
@@ -11344,7 +12872,7 @@ function d8NeighborBounded(x, y, dx, dy, width, height) {
   if (nx < 0 || nx >= width || ny < 0 || ny >= height) return -1;
   return ny * width + nx;
 }
-var EPSILON_FLOOD_STEP = 1e-7;
+var EPSILON_FLOOD_STEP2 = 1e-7;
 function largestWaterComponent(raw, width, height, seaLevel) {
   const n = width * height;
   const label = new Int32Array(n).fill(-1);
@@ -11411,14 +12939,14 @@ async function fillDepressions(raw, width, height, seaLevel, onProgress, bounded
       if (neighbor < 0 || visited[neighbor]) continue;
       visited[neighbor] = 1;
       const stepDistance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1;
-      filled[neighbor] = Math.max(raw[neighbor], filled[current]) + EPSILON_FLOOD_STEP * stepDistance;
+      filled[neighbor] = Math.max(raw[neighbor], filled[current]) + EPSILON_FLOOD_STEP2 * stepDistance;
       heap.push(filled[neighbor], neighbor);
     }
   }
   onProgress?.(1);
   return { filled, popOrder, poppedCount };
 }
-var LTD_FACETS = [
+var LTD_FACETS2 = [
   [0, 1, 1],
   // N  → NE
   [2, 1, -1],
@@ -11436,7 +12964,7 @@ var LTD_FACETS = [
   [0, 7, -1]
   // N  → NW
 ];
-var QUARTER_TURN = Math.PI / 4;
+var QUARTER_TURN2 = Math.PI / 4;
 function computeLtdFlowTargets(filled, width, height, popOrder, poppedCount, bounded = false) {
   const cellCount = width * height;
   const flowTarget = new Int32Array(cellCount).fill(-1);
@@ -11454,8 +12982,8 @@ function computeLtdFlowTargets(filled, width, height, popOrder, poppedCount, bou
     let bestS2 = 0;
     let bestGradient = 0;
     let fallback = -1;
-    for (let f = 0; f < LTD_FACETS.length; f++) {
-      const facet = LTD_FACETS[f];
+    for (let f = 0; f < LTD_FACETS2.length; f++) {
+      const facet = LTD_FACETS2[f];
       const co = D8_OFFSETS[facet[0]];
       const dd = D8_OFFSETS[facet[1]];
       const nc = bounded ? d8NeighborBounded(x, y, co[0], co[1], width, height) : d8Neighbor(x, y, co[0], co[1], width, height);
@@ -11491,15 +13019,15 @@ function computeLtdFlowTargets(filled, width, height, popOrder, poppedCount, bou
     let target = fallback;
     let delta = 0;
     if (bestFacet >= 0) {
-      const facet = LTD_FACETS[bestFacet];
+      const facet = LTD_FACETS2[bestFacet];
       const orient = facet[2];
       const co = D8_OFFSETS[facet[0]];
       const dd = D8_OFFSETS[facet[1]];
       const nc = bounded ? d8NeighborBounded(x, y, co[0], co[1], width, height) : d8Neighbor(x, y, co[0], co[1], width, height);
       const nd = bounded ? d8NeighborBounded(x, y, dd[0], dd[1], width, height) : d8Neighbor(x, y, dd[0], dd[1], width, height);
-      const alpha = bestS2 <= 0 ? 0 : bestS2 >= bestS1 ? QUARTER_TURN : Math.atan2(bestS2, bestS1);
+      const alpha = bestS2 <= 0 ? 0 : bestS2 >= bestS1 ? QUARTER_TURN2 : Math.atan2(bestS2, bestS1);
       const deltaCardinal = -orient * Math.sin(alpha);
-      const deltaDiagonal = orient * Math.SQRT2 * Math.sin(QUARTER_TURN - alpha);
+      const deltaDiagonal = orient * Math.SQRT2 * Math.sin(QUARTER_TURN2 - alpha);
       const lam = lambda[cell];
       const cardinalDown = filled[nc] < ownElevation;
       const diagonalDown = filled[nd] < ownElevation;
@@ -11529,12 +13057,6 @@ function computeLtdFlowTargets(filled, width, height, popOrder, poppedCount, bou
     }
   }
   return flowTarget;
-}
-function edgeTarget(mfd, cell, edge, width, height) {
-  const x = cell % width;
-  const y = (cell - x) / width;
-  const [dx, dy] = D8_OFFSETS[mfd.outEdgeDirections[edge]];
-  return mfd.bounded ? d8NeighborBounded(x, y, dx, dy, width, height) : d8Neighbor(x, y, dx, dy, width, height);
 }
 function computeMfdEdges(filled, width, height, bounded = false) {
   const cellCount = width * height;
@@ -11590,325 +13112,6 @@ async function fillDepressionsAndRouteFlow(raw, width, height, seaLevel, onProgr
   const mfd = computeMfdEdges(filled, width, height, bounded);
   return { width, height, filled, flowTarget, mfd, popOrder, poppedCount };
 }
-function accumulateFlow(routing, baseAccumulation) {
-  const { width, height, mfd, popOrder, poppedCount } = routing;
-  const accumulation = baseAccumulation ? baseAccumulation.slice() : new Float32Array(width * height).fill(1);
-  for (let i = poppedCount - 1; i >= 0; i--) {
-    const cell = popOrder[i];
-    const cellAccumulation = accumulation[cell];
-    for (let e = mfd.outEdgeStart[cell]; e < mfd.outEdgeStart[cell + 1]; e++) {
-      accumulation[edgeTarget(mfd, cell, e, width, height)] += cellAccumulation * mfd.outEdgeWeights[e];
-    }
-  }
-  return accumulation;
-}
-
-// src/worldgen/surface/erosion.ts
-var DEFAULT_STREAM_POWER_PARAMS = {
-  iterations: 100,
-  erodibilityK: 3e-3,
-  areaExponentM: 0.5,
-  slopeExponentN: 1,
-  timeStep: 1,
-  // Marine deposition (deltas) ON — shipped 2026-08-01 (see the worldgen
-  // changelog); land deposition measured and NOT recommended, see
-  // depositSediment's notes. An earlier stage had both off after the first
-  // look at real maps: under the land-donor ceiling only ~27% of a body
-  // emerged (physically correct — a prodelta is submarine — but on screen a
-  // fringe averaging two cells per mouth); the sea-reference ceiling in
-  // depositSediment is what fixed that and justified turning marine back on.
-  // Kt=0.016 gives Danube-to-Nile bodies, Kt=0.004 roughly triples the
-  // emerged area and reaches Ganges scale.
-  transportCapacityKt: 0.016,
-  depositBelowSeaLevel: true,
-  depositOnLand: false,
-  // Set from the map's OWN river sizes, not from Earth's. The first value here was
-  // 8000 cells, reasoned from Earth's 100 000 km² delta-building rivers — but the
-  // largest catchment on a measured map is 3405 cells, so the gate sat above the
-  // maximum and no river ever qualified. At a quarter Earth with ~11% land the rivers
-  // are simply small. 2000 leaves roughly fifteen mouths building deltas.
-  deltaMinDrainageCells: 2e3
-};
-function gradedSeaCap(tectonic, cell) {
-  const depth = SEA_LEVEL - tectonic[cell];
-  const t = depth <= 0 ? 0 : depth >= SURFACE_TUNING.deltaFreeboardDepthRange ? 1 : depth / SURFACE_TUNING.deltaFreeboardDepthRange;
-  return SEA_LEVEL + SURFACE_TUNING.deltaFreeboardNear - (SURFACE_TUNING.deltaFreeboardNear - SURFACE_TUNING.deltaFreeboardFar) * t;
-}
-function depositSediment(elevations, routing, accumulation, isLand, excavated, load, donorFloor, tectonic, shelfOrder, width, height, transportCapacityKt, depositBelowSeaLevel, depositOnLand, deltaMinDrainageCells) {
-  const { flowTarget, popOrder, poppedCount } = routing;
-  load.fill(0);
-  donorFloor.fill(Infinity);
-  let shelfCount = 0;
-  for (let k = poppedCount - 1; k >= 0; k--) {
-    const cell = popOrder[k];
-    if (elevations[cell] >= SHELF_BREAK) shelfOrder[shelfCount++] = cell;
-  }
-  for (let k = 0; k < shelfCount; k++) {
-    const cell = shelfOrder[k];
-    const target = flowTarget[cell];
-    let flux = load[cell];
-    const seaCap = gradedSeaCap(tectonic, cell);
-    const donor = donorFloor[cell];
-    const ceiling = isLand[cell] ? donor : donor > SEA_LEVEL && donor < seaCap ? donor : seaCap;
-    let slope = 0;
-    if (target !== -1) {
-      const y = cell / width | 0;
-      const x = cell - y * width;
-      const ty = target / width | 0;
-      const tx = target - ty * width;
-      const dx = wrappedDelta(tx, x, width);
-      const dy = wrappedDelta(ty, y, height);
-      const distance = Math.max(1e-6, Math.sqrt(dx * dx + dy * dy));
-      slope = Math.max(0, (elevations[cell] - elevations[target]) / distance);
-    }
-    const allowed = isLand[cell] ? depositOnLand : depositBelowSeaLevel && accumulation[cell] >= deltaMinDrainageCells;
-    if (flux > 0 && allowed && ceiling < Infinity) {
-      const capacity = transportCapacityKt * accumulation[cell] * slope;
-      if (flux > capacity) {
-        const surplus = flux - capacity;
-        const centerShare = isLand[cell] ? surplus : surplus * (1 - SURFACE_TUNING.deltaSpreadFraction);
-        let deposit = centerShare;
-        const room = ceiling - elevations[cell];
-        if (deposit > room) deposit = room;
-        if (deposit > 0) {
-          elevations[cell] += deposit;
-          flux -= deposit;
-        }
-        if (!isLand[cell]) {
-          const y = cell / width | 0;
-          const x = cell - y * width;
-          const slice = surplus * SURFACE_TUNING.deltaSpreadFraction / D8_OFFSETS.length;
-          for (const [dx, dy] of D8_OFFSETS) {
-            const neighbor = d8Neighbor(x, y, dx, dy, width, height);
-            if (isLand[neighbor] || elevations[neighbor] < SHELF_BREAK) continue;
-            const neighborRoom = gradedSeaCap(tectonic, neighbor) - elevations[neighbor];
-            const placed = slice < neighborRoom ? slice : neighborRoom;
-            if (placed <= 0) continue;
-            elevations[neighbor] += placed;
-            flux -= placed;
-          }
-        }
-      }
-    }
-    flux += excavated[cell];
-    if (target !== -1) {
-      load[target] += flux;
-      if (elevations[cell] < donorFloor[target]) donorFloor[target] = elevations[cell];
-    }
-  }
-}
-var EROSION_PLAIN_FACTOR = 0.3;
-function buildErosionMask(tectonic, plainFactor = EROSION_PLAIN_FACTOR) {
-  const lo = metersToElevation(SURFACE_TUNING.erosionPlainTopM);
-  const hi = metersToElevation(SURFACE_TUNING.erosionMountainFullM);
-  const mask = new Float32Array(tectonic.length);
-  for (let i = 0; i < tectonic.length; i++) {
-    const e = tectonic[i];
-    const t = e <= lo ? 0 : e >= hi ? 1 : (e - lo) / (hi - lo);
-    mask[i] = plainFactor + (1 - plainFactor) * t;
-  }
-  return mask;
-}
-async function runStreamPowerIterations(elevations, routing, accumulation, isLand, oceanMask, width, height, params, erosionMask, tectonic, onProgress) {
-  const { flowTarget, popOrder, poppedCount } = routing;
-  const useSqrtForArea = params.areaExponentM === 0.5;
-  const slopeExponentIsOne = params.slopeExponentN === 1;
-  const estuaryFloor = SEA_LEVEL - metersToElevation(SURFACE_TUNING.estuaryMaxDepthM);
-  const depositing = params.transportCapacityKt > 0;
-  const excavated = depositing ? new Float32Array(elevations.length) : null;
-  const load = depositing ? new Float32Array(elevations.length) : null;
-  const donorFloor = depositing ? new Float32Array(elevations.length) : null;
-  const shelfOrder = depositing ? new Int32Array(routing.poppedCount) : null;
-  for (let iteration = 0; iteration < params.iterations; iteration++) {
-    excavated?.fill(0);
-    for (let k = 0; k < poppedCount; k++) {
-      const cell = popOrder[k];
-      if (!isLand[cell]) continue;
-      const target = flowTarget[cell];
-      if (target === -1) continue;
-      const y = cell / width | 0;
-      const x = cell - y * width;
-      const ty = target / width | 0;
-      const tx = target - ty * width;
-      const dx = wrappedDelta(tx, x, width);
-      const dy = wrappedDelta(ty, y, height);
-      const distance = Math.max(1e-6, Math.sqrt(dx * dx + dy * dy));
-      const slope = Math.max(0, (elevations[cell] - elevations[target]) / distance);
-      const area = useSqrtForArea ? Math.sqrt(accumulation[cell]) : Math.pow(accumulation[cell], params.areaExponentM);
-      const slopeTerm = slopeExponentIsOne ? slope : Math.pow(slope, params.slopeExponentN);
-      const dh = -params.erodibilityK * area * slopeTerm * erosionMask[cell];
-      const before = elevations[cell];
-      const floor = oceanMask !== null && oceanMask[target] === 1 ? Math.max(elevations[target], estuaryFloor) : elevations[target];
-      elevations[cell] = Math.max(floor, before + dh * params.timeStep);
-      if (excavated) excavated[cell] = before - elevations[cell];
-    }
-    if (excavated && load && donorFloor && shelfOrder) {
-      depositSediment(elevations, routing, accumulation, isLand, excavated, load, donorFloor, tectonic, shelfOrder, width, height, params.transportCapacityKt, params.depositBelowSeaLevel, params.depositOnLand, params.deltaMinDrainageCells);
-    }
-    onProgress?.((iteration + 1) / params.iterations);
-    await maybeYield();
-  }
-}
-var DEFAULT_THERMAL_EROSION_PARAMS = {
-  iterations: 50,
-  talusSlope: slopeFromAngle(SURFACE_TUNING.talusAngleDegrees),
-  transportRate: 0.3
-};
-async function runThermalErosion(elevations, isLand, width, height, params, onProgress) {
-  const cellCount = width * height;
-  const delta = new Float32Array(cellCount);
-  for (let iteration = 0; iteration < params.iterations; iteration++) {
-    delta.fill(0);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const cell = y * width + x;
-        if (!isLand[cell]) continue;
-        const ownElevation = elevations[cell];
-        for (const [dx, dy] of D8_OFFSETS) {
-          const neighbor = d8Neighbor(x, y, dx, dy, width, height);
-          if (!isLand[neighbor]) continue;
-          const drop = ownElevation - elevations[neighbor];
-          if (drop <= 0) continue;
-          const distance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1;
-          const slope = drop / distance;
-          if (slope <= params.talusSlope) continue;
-          const excess = (slope - params.talusSlope) * distance;
-          const amount = excess * params.transportRate * 0.5;
-          delta[cell] -= amount;
-          delta[neighbor] += amount;
-        }
-      }
-    }
-    for (let i = 0; i < cellCount; i++) elevations[i] += delta[i];
-    onProgress?.((iteration + 1) / params.iterations);
-    await maybeYield();
-  }
-}
-var DEFAULT_EROSION_PASS_PARAMS = {
-  rounds: 5,
-  // Per-round fraction of a cell's tectonic relief re-applied as uplift
-  // (see ErosionPassParams.upliftRate). A moderate starting value —
-  // enough that valleys stay incised against the uplift rather than being
-  // refilled flat, without the uplift overpowering erosion — meant to be
-  // retuned by eye alongside `rounds`, like the rest of this file's
-  // visual-tuning constants. 0 would restore pure denudation.
-  upliftRate: 0.15,
-  streamPower: DEFAULT_STREAM_POWER_PARAMS,
-  thermal: DEFAULT_THERMAL_EROSION_PARAMS,
-  networkRefreshes: 1,
-  plainFactor: EROSION_PLAIN_FACTOR
-};
-function scaleErosionParamsForCellSize(base, cellSizeRatio) {
-  return {
-    ...base,
-    thermal: { ...base.thermal, talusSlope: base.thermal.talusSlope * cellSizeRatio },
-    streamPower: {
-      ...base.streamPower,
-      transportCapacityKt: base.streamPower.transportCapacityKt * cellSizeRatio,
-      deltaMinDrainageCells: base.streamPower.deltaMinDrainageCells / (cellSizeRatio * cellSizeRatio)
-    }
-  };
-}
-function erosionParamsWithControls(base, controls) {
-  const strength = controls.strength && controls.strength > 0 ? controls.strength : 1;
-  return {
-    ...base,
-    streamPower: { ...base.streamPower, timeStep: base.streamPower.timeStep * strength },
-    networkRefreshes: controls.networkRefreshes && controls.networkRefreshes > 0 ? Math.floor(controls.networkRefreshes) : base.networkRefreshes
-  };
-}
-async function runErosionPass(rawElevations, width, height, params = DEFAULT_EROSION_PASS_PARAMS, onProgress, onRoundComplete, shouldCancel) {
-  const cellCount = width * height;
-  let elevations = rawElevations.slice();
-  const erosionMask = buildErosionMask(rawElevations, params.plainFactor);
-  const oceanMask = largestWaterComponent(rawElevations, width, height, SEA_LEVEL);
-  let enclosedWater = null;
-  if (oceanMask) {
-    enclosedWater = new Uint8Array(cellCount);
-    let any = false;
-    for (let i = 0; i < cellCount; i++) {
-      if (rawElevations[i] <= SEA_LEVEL && !oceanMask[i]) {
-        enclosedWater[i] = 1;
-        any = true;
-      }
-    }
-    if (!any) enclosedWater = null;
-  }
-  let routing;
-  let accumulation;
-  let preFillElevations;
-  let enclosedIndices = null;
-  let enclosedDepths = null;
-  const FLOODING_WEIGHT = 15;
-  const ACCUMULATING_WEIGHT = 5;
-  const phaseOrder = ["flooding", "accumulating", "streamPower", "thermal"];
-  const phaseWeight = {
-    flooding: FLOODING_WEIGHT,
-    accumulating: ACCUMULATING_WEIGHT,
-    streamPower: params.streamPower.iterations,
-    thermal: params.thermal.iterations
-  };
-  const roundWeightTotal = phaseOrder.reduce((sum, phase) => sum + phaseWeight[phase], 0);
-  const phaseStartFraction = {};
-  let cumulativeWeight = 0;
-  for (const phase of phaseOrder) {
-    phaseStartFraction[phase] = cumulativeWeight / roundWeightTotal;
-    cumulativeWeight += phaseWeight[phase];
-  }
-  for (let round = 0; round < params.rounds; round++) {
-    if (round > 0 && shouldCancel?.()) break;
-    const roundProgress = (phase, fraction) => {
-      const withinRound = phaseStartFraction[phase] + fraction * phaseWeight[phase] / roundWeightTotal;
-      onProgress?.(phase, (round + withinRound) / params.rounds);
-    };
-    if (params.upliftRate > 0) {
-      for (let i = 0; i < cellCount; i++) {
-        const envelope = rawElevations[i];
-        if (envelope <= SEA_LEVEL) continue;
-        const restored = elevations[i] + envelope * params.upliftRate;
-        elevations[i] = restored < envelope ? restored : envelope;
-      }
-    }
-    const isLand = new Uint8Array(cellCount);
-    for (let i = 0; i < cellCount; i++) isLand[i] = elevations[i] > SEA_LEVEL ? 1 : 0;
-    routing = void 0;
-    accumulation = void 0;
-    routing = await fillDepressionsAndRouteFlow(elevations, width, height, SEA_LEVEL, (fraction) => roundProgress("flooding", fraction));
-    roundProgress("accumulating", 0);
-    accumulation = accumulateFlow(routing);
-    roundProgress("accumulating", 1);
-    await maybeYield();
-    if (round === params.rounds - 1) preFillElevations = elevations.slice();
-    const refreshes = Math.max(1, params.networkRefreshes);
-    const itersPerRefresh = Math.max(1, Math.round(params.streamPower.iterations / refreshes));
-    const refreshParams = { ...params.streamPower, iterations: itersPerRefresh };
-    for (let r = 0; r < refreshes; r++) {
-      if (r > 0) {
-        routing = void 0;
-        accumulation = void 0;
-        routing = await fillDepressionsAndRouteFlow(elevations, width, height, SEA_LEVEL);
-        accumulation = accumulateFlow(routing);
-      }
-      if (enclosedWater) {
-        if (enclosedIndices === null) {
-          const indices = [];
-          for (let i = 0; i < cellCount; i++) if (enclosedWater[i]) indices.push(i);
-          enclosedIndices = Int32Array.from(indices);
-          enclosedDepths = new Float32Array(enclosedIndices.length);
-        }
-        for (let k = 0; k < enclosedIndices.length; k++) enclosedDepths[k] = elevations[enclosedIndices[k]];
-        elevations.set(routing.filled);
-        for (let k = 0; k < enclosedIndices.length; k++) elevations[enclosedIndices[k]] = enclosedDepths[k];
-      } else {
-        elevations.set(routing.filled);
-      }
-      await runStreamPowerIterations(elevations, routing, accumulation, isLand, oceanMask, width, height, refreshParams, erosionMask, rawElevations, (fraction) => roundProgress("streamPower", (r + fraction) / refreshes));
-    }
-    await runThermalErosion(elevations, isLand, width, height, params.thermal, (fraction) => roundProgress("thermal", fraction));
-    await onRoundComplete?.(elevations.slice(), round);
-  }
-  return { elevations, routing, accumulation, preFillElevations: preFillElevations ?? elevations };
-}
 
 // src/worldgen/surface/runAmplification.ts
 async function runAmplification(request, onProgress = () => {
@@ -11923,26 +13126,23 @@ async function runAmplification(request, onProgress = () => {
   );
   let field = request.region ? drownForeignLand(result.data, result.width, result.height, request.region) : result.data;
   if (request.erosionRounds > 0) {
-    const withControls = erosionParamsWithControls(DEFAULT_EROSION_PASS_PARAMS, {
-      strength: request.erosionStrength,
-      networkRefreshes: request.drainageRefresh
+    const { forcing, params } = assembleFineForcing({
+      uplift: request.upliftCoarse ?? null,
+      hardness: request.erodibilityCoarse ?? null,
+      forcingResX: request.forcingResX ?? 1,
+      forcingResY: request.forcingResY ?? 1,
+      water: request.precipitation ?? null,
+      waterResX: request.climateResX ?? 1,
+      waterResY: request.climateResY ?? 1,
+      lithoSeed: request.lithoSeed
+    }, field, result.width, result.height, { alluvium: request.alluvium, rockContrast: request.rockContrast });
+    forcing.statusMask = await coastStatusMask(field, result.width, result.height, request);
+    const eroded = await runErosionPassV2(field, result.width, result.height, forcing, {
+      age: request.erosionRounds,
+      params: { ...params, upliftDt: BAKE_ENGINE_OVERRIDES.upliftDt },
+      pool: request.pool,
+      onProgress: (fraction) => onProgress("erosion", fraction)
     });
-    const scaled = scaleErosionParamsForCellSize(withControls, 1 / request.factor);
-    const params = {
-      ...scaled,
-      rounds: request.erosionRounds,
-      // Amplification is not landscape evolution; the three overrides and
-      // their reasoning live in amplify.AMPLIFICATION_EROSION_OVERRIDES,
-      // beside the rest of the bake's policy (and where the cache key hashes
-      // them).
-      upliftRate: AMPLIFICATION_EROSION_OVERRIDES.upliftRate,
-      plainFactor: AMPLIFICATION_EROSION_OVERRIDES.plainFactor,
-      thermal: {
-        ...scaled.thermal,
-        talusSlope: slopeFromAngle(AMPLIFICATION_EROSION_OVERRIDES.talusAngleDeg) * (1 / request.factor)
-      }
-    };
-    const eroded = await runErosionPass(field, result.width, result.height, params, (_phase, fraction) => onProgress("erosion", fraction));
     field = eroded.elevations;
   }
   let rivers = { points: new Float32Array(0), lengths: new Uint32Array(0) };
@@ -12002,6 +13202,39 @@ function ownedRivers(rivers, owned, width) {
   }
   return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) };
 }
+async function coastStatusMask(field, width, height, request) {
+  const mask = new Uint8Array(field.length);
+  for (let i = 0; i < field.length; i++) mask[i] = field[i] > SEA_LEVEL ? 1 : 2;
+  if (!request.precipitation || !request.climateResX || !request.climateResY) return mask;
+  const routing = await fillDepressionsAndRouteFlow(field, width, height, 0);
+  const discharge = accumulateDischarge(routing, field, request.precipitation, request.climateResX, request.climateResY);
+  const meanRunoff = request.meanRunoff ?? meanLandRunoff(request.precipitation, field, width, height, request.climateResX, request.climateResY);
+  const threshold = channelThreshold(densityToCriticalArea(request.riverDensity ?? 55), meanRunoff);
+  const mouths = new Uint8Array(field.length);
+  let found = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      if (field[i] <= SEA_LEVEL || discharge[i] < threshold) continue;
+      for (let dy = -1; dy <= 1 && !mouths[i]; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (field[(y + dy + height) % height * width + (x + dx + width) % width] <= SEA_LEVEL) {
+            mouths[i] = 1;
+            found++;
+            break;
+          }
+        }
+      }
+    }
+  }
+  if (found === 0) return mask;
+  const radiusCells = Math.max(1, Math.round(DELTA_ALLOWANCE_KM / (WORLD_WIDTH_METERS / width / 1e3)));
+  const allowance = dilateMask(mouths, width, height, radiusCells);
+  for (let i = 0; i < field.length; i++) {
+    if (allowance[i] && field[i] <= SEA_LEVEL) mask[i] = 0;
+  }
+  return mask;
+}
 function drownForeignLand(seeded, width, height, region) {
   const active = dilateMask(region.owned, width, height, region.haloCells);
   const field = seeded.slice();
@@ -12041,7 +13274,7 @@ function spread(from, to, offset, stride, size, radius, distance) {
 }
 
 // src/world/bakeSettings.ts
-var AMPLIFY_EROSION_ROUNDS = 2;
+var AMPLIFY_EROSION_ROUNDS = 12;
 
 // src/world/artifacts.ts
 function amplificationPipelineVersion(rounds = AMPLIFY_EROSION_ROUNDS) {
@@ -12279,6 +13512,15 @@ function fail(message) {
 `);
   process.exit(1);
 }
+function enginePool() {
+  const cores = availableParallelism();
+  if (cores < 4) return void 0;
+  return {
+    createWorker: () => new NodeWorker(new URL(import.meta.url)),
+    ...cores >= 8 ? { stencilWorkers: 4, refreshWorkers: 2 } : { stencilWorkers: 2, refreshWorkers: 1 },
+    pipelineDepth: 8
+  };
+}
 async function main() {
   const raw = process.argv[2];
   if (raw === "--version") {
@@ -12307,8 +13549,14 @@ async function main() {
     factor: job.stage,
     seed: inputs.detailSeed,
     erosionRounds: job.erosionRounds,
-    erosionStrength: inputs.erosionControls.strength,
-    drainageRefresh: inputs.erosionControls.refresh,
+    pool: enginePool(),
+    lithoSeed: inputs.lithoSeed,
+    alluvium: inputs.erosionControls.alluvium,
+    rockContrast: inputs.erosionControls.rockContrast,
+    upliftCoarse: inputs.uplift?.data,
+    erodibilityCoarse: inputs.erodibility?.data,
+    forcingResX: inputs.uplift?.resX,
+    forcingResY: inputs.uplift?.resY,
     precipitation: inputs.climate?.data,
     temperature: inputs.temperature?.data,
     climateResX: inputs.climate?.resX,
@@ -12350,4 +13598,8 @@ async function main() {
   })}
 `);
 }
-void main().catch((error) => fail(String(error)));
+if (isMainThread) {
+  void main().catch((error) => fail(String(error)));
+} else {
+  void Promise.resolve().then(() => (init_erosionEngineWorker(), erosionEngineWorker_exports));
+}

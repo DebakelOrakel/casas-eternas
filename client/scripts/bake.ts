@@ -25,8 +25,11 @@
 import { readFile, mkdir, writeFile, rename, readdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join, dirname } from 'node:path'
+import { Worker as NodeWorker, isMainThread } from 'node:worker_threads'
+import { availableParallelism } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
 import { runAmplification } from '../src/worldgen/surface/runAmplification'
+import type { WorkerLike } from '../src/worldgen/surface/erosionEnginePool'
 import { amplificationPipelineVersion, writeAmplificationArtifact } from '../src/world/artifacts'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
 import { artifactKey } from '../src/storage/ArtifactStore'
@@ -262,6 +265,25 @@ function fail(message: string): never {
   process.exit(1)
 }
 
+// The engine's worker pool, self-spawned from THIS entry: baker.mjs is one
+// esbuild bundle, so `import.meta.url` names a file that already contains
+// the engine worker's code — a worker thread loading it takes the
+// `isMainThread` branch at the bottom and becomes an engine worker. No
+// second bundle, nothing for the Go side to ship or know. Sizing mirrors
+// the generator's (pipeline/runtime.ts): the split and the depth are
+// throughput knobs, never part of the result — the engine is byte-identical
+// across any worker count, which is what lets a job land on whatever
+// machine has cores to spare.
+function enginePool(): ({ createWorker: () => WorkerLike } & { stencilWorkers: number; refreshWorkers: number; pipelineDepth: number }) | undefined {
+  const cores = availableParallelism()
+  if (cores < 4) return undefined
+  return {
+    createWorker: () => new NodeWorker(new URL(import.meta.url)) as unknown as WorkerLike,
+    ...(cores >= 8 ? { stencilWorkers: 4, refreshWorkers: 2 } : { stencilWorkers: 2, refreshWorkers: 1 }),
+    pipelineDepth: 8,
+  }
+}
+
 async function main(): Promise<void> {
   const raw = process.argv[2]
 
@@ -303,6 +325,7 @@ async function main(): Promise<void> {
     factor: job.stage,
     seed: inputs.detailSeed,
     erosionRounds: job.erosionRounds,
+    pool: enginePool(),
     lithoSeed: inputs.lithoSeed,
     alluvium: inputs.erosionControls.alluvium,
     rockContrast: inputs.erosionControls.rockContrast,
@@ -361,4 +384,12 @@ async function main(): Promise<void> {
   })}\n`)
 }
 
-void main().catch((error: unknown) => fail(String(error)))
+// A worker thread loading this bundle is an ENGINE WORKER, not a baker:
+// importing the worker module registers its parentPort handshake and the
+// pool drives it over SharedArrayBuffers from there. The main thread runs
+// the bake.
+if (isMainThread) {
+  void main().catch((error: unknown) => fail(String(error)))
+} else {
+  void import('../src/worldgen/surface/erosionEngineWorker')
+}

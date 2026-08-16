@@ -102,7 +102,10 @@ export interface RoutingViews {
 // pipelined refresh); physics kernels always receive the live-z assembly.
 export interface EngineViews extends Omit<TerrainViews, 'buffer'>, Omit<RoutingViews, 'buffer'> {}
 
-const align = (offset: number): number => (offset + 7) & ~7
+// No bitwise trick here: `(offset + 7) & ~7` coerces to 32-bit signed, and
+// the routing section crosses 2^31 bytes at the 8K bake grid — the offset
+// came back NEGATIVE (found 2026-08-16 by the first threaded 8K bake).
+const align = (offset: number): number => Math.ceil(offset / 8) * 8
 
 type TypedArrayCtor<T> = { new (b: ArrayBufferLike, o: number, c: number): T; BYTES_PER_ELEMENT: number }
 

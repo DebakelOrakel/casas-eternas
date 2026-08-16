@@ -635,6 +635,30 @@ the version break v2 already carries.
     only 0.002 % (mouth allowance). The ①-era note "AMPLIFY_EROSION_ROUNDS
     is a placeholder until ② pins the drift" is hereby discharged: the
     dose is now free to be chosen on look alone.
+
+  STEP ③ BUILT 2026-08-16 — the server bake is threaded.
+  - MECHANISM: baker.mjs stays ONE esbuild bundle; `bake.ts` gates on
+    `isMainThread` — a worker thread loading the bundle imports the engine
+    worker module (whose parentPort handshake registers on import) and
+    becomes an engine worker, so the pool's `createWorker` is simply
+    `new Worker(new URL(import.meta.url))`. Nothing for the Go side to
+    ship or know; `--version` still answers. Sizing mirrors the
+    generator's (4+2 stencil/refresh at ≥8 cores, depth 8, no pool under
+    4 cores) — a throughput knob, never part of the result.
+  - MEASURED (real 2048 save, age 12, M-series 8 cores): 4K bake 24 s
+    end-to-end (v1: ~94 s), 8K bake 113 s (v1: 2515 s — the engine plus
+    threading is ~22× there). Two threaded 4K runs are byte-identical in
+    every content-addressed file (meta.json differs only in bakeMs/
+    createdAt) — the determinism doctrine holding through the bundle
+    self-spawn, which is what lets browser and server keep keying one
+    artifact.
+  - The first threaded 8K bake found a real bug: the state layout's
+    `align()` used `(offset + 7) & ~7`, whose bitwise ops coerce to 32-bit
+    signed — the routing section crosses 2^31 bytes at 8K and the offset
+    came back negative. Arithmetic alignment now; every gate re-passed.
+    The browser bake stays single-threaded for now (an amplification
+    worker spawning engine workers is the nested-worker case plus a
+    crossOriginIsolated gate — deferred, the server is where 8K lives).
 - **P4 — hydrology merge**; riverDensity → display Q-filter; runoffFloor
   removed (user-visible: arid regions lose rivers — now wanted, once
   disliked; stated for the record).

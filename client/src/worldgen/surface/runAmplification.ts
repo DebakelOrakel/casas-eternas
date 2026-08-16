@@ -2,6 +2,7 @@ import { BAKE_ENGINE_OVERRIDES, DELTA_ALLOWANCE_KM, amplifyElevation } from './a
 import { runErosionPassV2 } from './erosionPassV2'
 import { WORLD_WIDTH_METERS } from './erosionEngine'
 import { assembleFineForcing } from './erosionForcingFields'
+import type { PipelineOptions, WorkerLike } from './erosionEnginePool'
 import { fillDepressionsAndRouteFlow } from './flowRouting'
 import { ABYSSAL_FLOOR, SEA_LEVEL } from '../elevation/elevationScale'
 import { accumulateDischarge, channelThreshold, computeLakes, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff } from './hydrology'
@@ -109,6 +110,12 @@ export interface AmplifyRequest {
   // between two jobs would then show a step in river density.
   maxDischarge?: number
   meanRunoff?: number
+  // Present → the engine runs pooled + pipelined; the factory owns the
+  // substrate (the Node baker self-spawns its own bundle, a browser caller
+  // would use the `?worker` form). Absent → single-threaded. Byte-identical
+  // either way — the engine's determinism doctrine — so this changes the
+  // clock, never the artifact.
+  pool?: { createWorker: () => WorkerLike } & PipelineOptions
 }
 
 export interface AmplifyResult {
@@ -170,6 +177,7 @@ export async function runAmplification(
     const eroded = await runErosionPassV2(field, result.width, result.height, forcing, {
       age: request.erosionRounds,
       params: { ...params, upliftDt: BAKE_ENGINE_OVERRIDES.upliftDt },
+      pool: request.pool,
       onProgress: (fraction) => onProgress('erosion', fraction),
     })
     field = eroded.elevations
