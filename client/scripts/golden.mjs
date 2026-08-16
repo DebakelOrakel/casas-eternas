@@ -226,40 +226,58 @@ async function buildWorld(seed) {
   const ero = await M.erosionPassV2.runErosionPassV2(raw, W, H, forcing, { age: CONTROLS.age, params })
   const el = ero.elevations
 
-  const temperature = M.temperature.computeTemperature(el, W, H)
+  // Climate v1 on the PRE-EROSION terrain, mirroring the worker since the
+  // stage-2 coupling (climate sits before erosion; the erosion forcing
+  // evaluated the same chain on the same input above). The post-erosion
+  // climate truth is the terminal-basin refinement below, which runs on the
+  // eroded field exactly as the worker's hydrology handler does.
+  let temperature = M.temperature.computeTemperature(raw, W, H)
   const wind = M.wind.computeWind()
-  const currents = M.currents.computeOceanCurrents(el, wind, W, H)
-  M.currents.applyOceanSST(temperature, currents, el, W, H)
-  const seasonal = M.seasonality.computeSeasonalAmplitude(el, W, H)
-  const seasonalPrecip = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, W, H, 1, 0)
+  let currents = M.currents.computeOceanCurrents(raw, wind, W, H)
+  M.currents.applyOceanSST(temperature, currents, raw, W, H)
+  let seasonal = M.seasonality.computeSeasonalAmplitude(raw, W, H)
+  let seasonalPrecip = M.monsoon.computeSeasonalPrecipitation(raw, temperature, seasonal, wind, W, H, 1, 0)
   let precipitation = seasonalPrecip.annual
-  const biomes = M.biomes.computeBiomes(temperature, precipitation, seasonal, seasonalPrecip.index, el, W, H)
+  let biomes = M.biomes.computeBiomes(temperature, precipitation, seasonal, seasonalPrecip.index, raw, W, H)
   // The worker computes BOTH, and only the coarse one was guarded here. The
   // fine one is what the user sees and what the save bakes (worldLayers marks
   // `biome` fullRes), so leaving it out meant the harness watched the path with
   // the fewer consequences. Same arguments as above, deliberately — a
   // divergence between the two calls would be the harness's own bug.
-  const biomesFine = M.biomes.computeBiomesFine(temperature, precipitation, seasonal, seasonalPrecip.index, el, W, H)
+  let biomesFine = M.biomes.computeBiomesFine(temperature, precipitation, seasonal, seasonalPrecip.index, raw, W, H)
 
   const routing = await M.routing.fillDepressionsAndRouteFlow(el, W, H, 0)
   const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y
   const meanRunoff = M.hydro.meanLandRunoff(precipitation, el, W, H, CRX, CRY)
   let discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
   let maxDis = M.hydro.maxDischargeOverLand(discharge, el)
-  // Terminal-basin refinement, mirroring the worker (k=1): lakes v1 -> if any
-  // dry basin floor, climate v2 with the land override -> discharge/lakes v2.
+  // Climate refinement, mirroring the worker (k=1) — UNCONDITIONAL since the
+  // stage reorder: v1 above described the pre-erosion terrain, so this pass
+  // on the eroded field (dry basin floors counted as land) is where the
+  // final climate and biome fields come from. The refined biomes replace
+  // the v1 classification for everything downstream, exactly as
+  // cacheAndPostClimate does in the worker.
   let lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, temperature, precipitation, CRX, CRY)
-  if (lakes.dryBasin.some((v) => v === 1)) {
-    const t2 = M.temperature.computeTemperature(el, W, H, 0, 1, 0, lakes.dryBasin)
-    const c2 = M.currents.computeOceanCurrents(el, wind, W, H, lakes.dryBasin)
-    M.currents.applyOceanSST(t2, c2, el, W, H, lakes.dryBasin)
-    const s2 = M.seasonality.computeSeasonalAmplitude(el, W, H, 0, lakes.dryBasin)
-    const sp2 = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, W, H, 1, 0, lakes.dryBasin)
-    precipitation = sp2.annual
-    discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
-    maxDis = M.hydro.maxDischargeOverLand(discharge, el)
-    lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, t2, precipitation, CRX, CRY)
-  }
+  const t2 = M.temperature.computeTemperature(el, W, H, 0, 1, 0, lakes.dryBasin)
+  const c2 = M.currents.computeOceanCurrents(el, wind, W, H, lakes.dryBasin)
+  M.currents.applyOceanSST(t2, c2, el, W, H, lakes.dryBasin)
+  const s2 = M.seasonality.computeSeasonalAmplitude(el, W, H, 0, lakes.dryBasin)
+  const sp2 = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, W, H, 1, 0, lakes.dryBasin)
+  precipitation = sp2.annual
+  const biomes2 = M.biomes.computeBiomes(t2, precipitation, s2, sp2.index, el, W, H, lakes.dryBasin)
+  const biomesFine2 = M.biomes.computeBiomesFine(t2, precipitation, s2, sp2.index, el, W, H, lakes.dryBasin)
+  discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
+  maxDis = M.hydro.maxDischargeOverLand(discharge, el)
+  lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, t2, precipitation, CRX, CRY)
+
+  // Downstream reads the REFINED fields, exactly as the worker's
+  // cacheAndPostClimate hands them on: v1 above only fed the refinement.
+  temperature = t2
+  currents = c2
+  seasonal = s2
+  seasonalPrecip = sp2
+  biomes = biomes2
+  biomesFine = biomesFine2
 
   const cratonAge = M.rafts.computeCratonOldnessField(sim.rafts, sim.epoch, CRX, CRY, W, H)
   // Real volcanoes and sutures, and real params — through the very function the

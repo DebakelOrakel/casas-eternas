@@ -81,15 +81,14 @@ export const STAGES: readonly Stage[] = [
     outputs: ['elevation'],
   },
   {
-    id: 'erosion',
-    dependsOn: ['tectonics'],
-    kind: 'progressive',
-    inputs: { landscapeAge: SURFACE_INPUTS.landscapeAge, alluvium: SURFACE_INPUTS.alluvium, rockContrast: SURFACE_INPUTS.rockContrast },
-    outputs: ['elevation'],
-  },
-  {
     id: 'climate',
-    dependsOn: ['erosion'],
+    // BEFORE erosion since the stage-2 coupling (2026-08-16): the erosion
+    // engine's water forcing evaluates the weather chain with the climate
+    // panel's parameters, so a climate-slider change makes the EROSION
+    // stale, not the other way round. The stage computes on the
+    // pre-erosion terrain (the same input the forcing sees); the
+    // post-erosion climate truth is the hydrology stage's refinement pass.
+    dependsOn: ['tectonics'],
     kind: 'oneShot',
     inputs: {
       tempOffset: CLIMATE_INPUTS.tempOffset,
@@ -102,6 +101,17 @@ export const STAGES: readonly Stage[] = [
     // `landMask` is NOT produced here despite being a climate-grid field: the
     // save derives it from precipitation's ocean sentinel at write time.
     outputs: ['temperature', 'precipitation', 'seasonalAmplitude', 'monsoonIndex', 'biome'],
+  },
+  {
+    id: 'erosion',
+    // The climate edge is about the CONTROLS, not the fields: the forcing
+    // evaluates the weather chain itself (erosionForcing.ts), but it does so
+    // with the climate panel's sliders — so their change invalidates the
+    // carved terrain.
+    dependsOn: ['tectonics', 'climate'],
+    kind: 'progressive',
+    inputs: { landscapeAge: SURFACE_INPUTS.landscapeAge, alluvium: SURFACE_INPUTS.alluvium, rockContrast: SURFACE_INPUTS.rockContrast },
+    outputs: ['elevation'],
   },
   {
     id: 'hydrology',

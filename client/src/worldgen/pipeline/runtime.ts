@@ -24,11 +24,8 @@ import type { FlowRouting } from '../surface/flowRouting'
 import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
-import { computeTemperature } from '../climate/temperature'
-import { computeWind } from '../climate/wind'
-import { computeOceanCurrents, applyOceanSST } from '../climate/oceanCurrents'
-import { computeSeasonalAmplitude } from '../climate/seasonality'
-import { computeSeasonalPrecipitation } from '../climate/monsoon'
+import { computeWeather, defaultWeatherParams } from '../climate/weather'
+import type { WeatherParams } from '../climate/weather'
 import { computeBiomes, computeBiomesFine } from '../climate/biomes'
 import { downsampleMax } from '../core/field'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
@@ -455,12 +452,12 @@ function coarseElevation(elevations: Float32Array, worldWidth: number, worldHeig
 // its onProgress-driven postMessage calls below actually reach the main
 // thread live instead of arriving in one burst after the whole ~10+
 // second pass finishes).
-async function runErodeRequest(rawElevations: Float32Array, width: number, height: number, opts: { age?: number; alluvium?: number; rockContrast?: number } = {}): Promise<void> {
+async function runErodeRequest(rawElevations: Float32Array, width: number, height: number, opts: { age?: number; alluvium?: number; rockContrast?: number; weather?: WeatherParams } = {}): Promise<void> {
   if (!sim) return
   // The forcing and control mapping live in erosionForcing.ts, SHARED with
   // the golden harness — the harness must gate exactly the inputs the
   // player's erode runs on.
-  const { forcing, params } = assembleErosionForcing(sim, rawElevations, width, height, opts)
+  const { forcing, params } = assembleErosionForcing(sim, rawElevations, width, height, opts, opts.weather ?? defaultWeatherParams())
   const age = Math.round(opts.age ?? 40)
 
   // Pooled + pipelined when cross-origin isolation grants SAB (the client
@@ -565,7 +562,7 @@ function handleErosionStart(message: Extract<WorkerInboundMessage, { type: 'eros
     // does NOT treat this pre-erosion refresh as "erosion done" (which would clear
     // the stop icon + progress bar the instant a pass starts — see the render handler).
     await renderAndPost(undefined, true, 1)
-    if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height, { age: message.age, alluvium: message.alluvium, rockContrast: message.rockContrast })
+    if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height, { age: message.age, alluvium: message.alluvium, rockContrast: message.rockContrast, weather: message.weather })
   })().finally(() => {
     renderInFlight = false
   })
@@ -600,12 +597,11 @@ interface ClimateParams {
 // dry-floor override (LakeFields.dryBasin): those sub-sea cells count as land
 // throughout, with an unclamped downward lapse (see computeTemperature).
 function computeClimateChain(elevation: Float32Array, width: number, height: number, params: ClimateParams, dryLand?: Uint8Array) {
-  const temperature = computeTemperature(elevation, width, height, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, dryLand)
-  const wind = computeWind(params.equatorOffset)
-  const currents = computeOceanCurrents(elevation, wind, width, height, dryLand)
-  applyOceanSST(temperature, currents, elevation, width, height, dryLand)
-  const seasonalAmplitude = computeSeasonalAmplitude(elevation, width, height, params.equatorOffset, dryLand)
-  const seasonal = computeSeasonalPrecipitation(elevation, temperature, seasonalAmplitude, wind, width, height, params.humidity, params.equatorOffset, dryLand)
+  // The meteorology is climate/weather.computeWeather — shared with the
+  // erosion engine's water forcing (the stage-2 coupling), so the panel's
+  // overlays and the carved valleys can never disagree about what the
+  // climate IS.
+  const { temperature, wind, currents, seasonalAmplitude, seasonal } = computeWeather(elevation, width, height, params, dryLand)
   // Classified twice, on purpose, from identical inputs: `biomes` on the climate
   // grid for the ecology step, `biomesFine` on the world raster for everything
   // the user sees or saves (see climate/biomes.computeBiomesFine, and
@@ -650,17 +646,22 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
 }
 
 function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climateRun' }>): void {
-  // Runs on the current, possibly-eroded elevation (lastRawElevations). This
-  // is climate v1 — the optimistic mask where every sub-sea cell is water.
-  // The hydrology handler refines it (v2) once the terminal basins are known.
-  if (!sim || !lastRawElevations) { decline('climate', 'tectonics'); return }
+  // Runs on the PRE-EROSION terrain (stage-2 coupling: climate sits before
+  // erosion, so its result must not depend on whether erosion ran — this is
+  // the same input the erosion forcing evaluates its weather chain on). This
+  // is climate v1 — the optimistic mask where every sub-sea cell is water;
+  // the hydrology handler refines it (v2) on the CURRENT terrain once the
+  // terminal basins are known, which is where the post-erosion climate
+  // truth comes from.
+  const elevation = preErosionElevations ?? lastRawElevations
+  if (!sim || !elevation) { decline('climate', 'tectonics'); return }
   const params: ClimateParams = {
     temperatureOffset: message.temperatureOffset,
     temperatureContrast: message.temperatureContrast,
     humidity: message.humidity,
     equatorOffset: message.equatorOffset,
   }
-  cacheAndPostClimate(computeClimateChain(lastRawElevations, sim.width, sim.height, params), params)
+  cacheAndPostClimate(computeClimateChain(elevation, sim.width, sim.height, params), params)
   invalidateAfter('climate')
 }
 
@@ -695,19 +696,23 @@ function handleHydrologyRun(message: Extract<WorkerInboundMessage, { type: 'hydr
       let meanRunoff = meanLandRunoff(weather.precipitation, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
       {
         let lakes = computeLakes(routing, discharge, elevation, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
-        // CLIMATE REFINEMENT (v2, k=1): the balance levels above were computed
-        // against climate v1's optimistic mask (every sub-sea cell = water).
-        // If any terminal basin exposed dry floor, that floor is LAND — rerun
-        // the climate chain with the override (deep basins get their unclamped
-        // hot lapse, moisture sources shrink, biomes classify the floor), then
-        // re-derive the precipitation-dependent hydrology once: discharge and
-        // lakes — the ROUTING is untouched (the terrain didn't move), so no
-        // re-flood. Deliberately ONE refinement step, mirroring the riparian
-        // pattern: iterate further and this becomes a fixed-point solver for a
+        // CLIMATE REFINEMENT (v2, k=1): climate v1 was computed on the
+        // PRE-EROSION terrain with the optimistic mask (every sub-sea cell =
+        // water) — the stage sits before erosion since the stage-2 coupling.
+        // This pass re-runs the chain on the CURRENT (eroded) terrain with
+        // the terminal-basin dry floors counted as land, and is therefore
+        // UNCONDITIONAL since 2026-08-16: it is where the post-erosion
+        // climate and biome truth comes from at all — the first golden run
+        // after the reorder caught v1 biomes calling erosion-grown coast
+        // cells Ocean above sea level. (Before the reorder it ran only when
+        // a dry basin existed; the dry-floor override is now simply one of
+        // its inputs, possibly empty.) Then re-derive the
+        // precipitation-dependent hydrology once: discharge and lakes — the
+        // ROUTING is untouched (the terrain didn't move), so no re-flood.
+        // Deliberately ONE refinement step, mirroring the riparian pattern:
+        // iterate further and this becomes a fixed-point solver for a
         // second-decimal correction nobody can see.
-        let hasDry = false
-        for (let i = 0; i < lakes.dryBasin.length; i++) if (lakes.dryBasin[i]) { hasDry = true; break }
-        if (hasDry) {
+        {
           const chain = computeClimateChain(terrain, width, height, weather.params, lakes.dryBasin)
           // Update the caches + screen WITHOUT invalidateAfter('climate'):
           // the very next lines recompute the dependent hydrology themselves,

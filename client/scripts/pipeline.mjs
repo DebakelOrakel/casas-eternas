@@ -231,7 +231,10 @@ test('the stage table agrees with the code around it', async () => {
 
   // The reset taxonomy, asserted on the real table rather than in prose.
   check('resetting ecology reaches only migration', String(stages.downstreamOf('ecology')) === 'migration', String(stages.downstreamOf('ecology')))
-  check('resetting tectonics reaches every later stage', String(stages.downstreamOf('tectonics')) === 'erosion,climate,hydrology,ecology,migration', String(stages.downstreamOf('tectonics')))
+  // Climate before erosion since the stage-2 coupling: the order below IS
+  // the pipeline order, so the string asserts it too.
+  check('resetting tectonics reaches every later stage', String(stages.downstreamOf('tectonics')) === 'climate,erosion,hydrology,ecology,migration', String(stages.downstreamOf('tectonics')))
+  check('a climate change invalidates the carved terrain', stages.downstreamOf('climate').includes('erosion'), String(stages.downstreamOf('climate')))
   check('nothing is downstream of migration', stages.downstreamOf('migration').length === 0)
 })
 

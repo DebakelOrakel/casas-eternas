@@ -39,6 +39,16 @@ export interface WorkerErosionStartMessage {
   alluvium?: number
   // Lithology contrast 0..100 (50 neutral = σ 1.4).
   rockContrast?: number
+  // The climate panel's parameters in MODEL units (climate/weather.ts), the
+  // stage-2 coupling: the engine's water forcing evaluates the weather
+  // chain with these, so the panel's sliders shape where valleys carve.
+  // Absent → the declared defaults (an old caller, or a headless one).
+  weather?: {
+    temperatureOffset: number
+    temperatureContrast: number
+    humidity: number
+    equatorOffset: number
+  }
 }
 // PUT A STAGE BACK WHERE IT STARTED. One gesture for what used to be three
 // unrelated messages (resetErosion, resetTectonics, archeanReset), because they

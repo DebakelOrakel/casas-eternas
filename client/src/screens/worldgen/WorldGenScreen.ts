@@ -477,6 +477,24 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </span>
       </label>
     </div>
+    <div class="panel" data-stage="climate">
+      <button type="button" class="icon-button panel-reset" data-action="reset-climate" aria-label="${t('worldgen.action.resetClimate.label')}" data-help="worldgen.action.resetClimate">
+        <img src="/icons/reset.png" alt="" />
+      </button>
+      ${sliderField(CLIMATE_INPUTS.tempOffset, 'temp-band-input', 'temp-band-label')}
+      ${sliderField(CLIMATE_INPUTS.equatorOffset, 'equator-offset-input', 'equator-offset-label')}
+      ${sliderField(CLIMATE_INPUTS.humidity, 'humidity-input', 'humidity-label')}
+      ${sliderField(CLIMATE_INPUTS.contrast, 'contrast-input', 'contrast-label')}
+      <label class="field field--icon-row">
+        <span class="field-row">
+          <span class="climate-readout">
+            <span>${t('worldgen.panel.climate.readout.min')}: <span data-value="temp-min">–</span>${t('common.unit.celsius')}</span>
+            <span>${t('worldgen.panel.climate.readout.max')}: <span data-value="temp-max">–</span>${t('common.unit.celsius')}</span>
+          </span>
+          <span class="erosion-status" data-value="climate-status"></span>
+        </span>
+      </label>
+    </div>
     <div class="panel" data-stage="erosion">
       <button type="button" class="icon-button panel-reset" data-action="reset-erosion" aria-label="${t('worldgen.action.resetErosion.label')}" data-help="worldgen.action.resetErosion">
         <img src="/icons/reset.png" alt="" />
@@ -495,24 +513,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button" data-action="bake-detail" aria-label="${t('worldgen.action.runDetailBake.label')}" data-help="worldgen.action.runDetailBake">
             <img src="/icons/erosion_detail.png" alt="" />
           </button>
-        </span>
-      </label>
-    </div>
-    <div class="panel" data-stage="climate">
-      <button type="button" class="icon-button panel-reset" data-action="reset-climate" aria-label="${t('worldgen.action.resetClimate.label')}" data-help="worldgen.action.resetClimate">
-        <img src="/icons/reset.png" alt="" />
-      </button>
-      ${sliderField(CLIMATE_INPUTS.tempOffset, 'temp-band-input', 'temp-band-label')}
-      ${sliderField(CLIMATE_INPUTS.equatorOffset, 'equator-offset-input', 'equator-offset-label')}
-      ${sliderField(CLIMATE_INPUTS.humidity, 'humidity-input', 'humidity-label')}
-      ${sliderField(CLIMATE_INPUTS.contrast, 'contrast-input', 'contrast-label')}
-      <label class="field field--icon-row">
-        <span class="field-row">
-          <span class="climate-readout">
-            <span>${t('worldgen.panel.climate.readout.min')}: <span data-value="temp-min">–</span>${t('common.unit.celsius')}</span>
-            <span>${t('worldgen.panel.climate.readout.max')}: <span data-value="temp-max">–</span>${t('common.unit.celsius')}</span>
-          </span>
-          <span class="erosion-status" data-value="climate-status"></span>
         </span>
       </label>
     </div>
@@ -2325,6 +2325,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     postToWorker({ type: 'hydrologyRun', riverDensity: Number(riverDensityInput.value) })
   }
 
+  // The climate panel's sliders in MODEL units — one reading shared by the
+  // climate compute and (since the stage-2 coupling) the erosion request,
+  // whose water forcing evaluates the same weather chain with them.
+  const weatherParams = () => ({
+    temperatureOffset: Number(tempBandInput.value),
+    temperatureContrast: Number(contrastInput.value) / 100,
+    humidity: Number(humidityInput.value) / 100,
+    equatorOffset: Number(equatorOffsetInput.value) / 100,
+  })
+
   // Posts a climate compute with the current band-slider offset. Fired on
   // opening the climate panel and by the slider (debounced) for live re-tuning.
   function requestClimate(): void {
@@ -2333,13 +2343,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     climateInFlight = true
     updateControlsDisabled()
     updateProgress()
-    postToWorker({
-      type: 'climateRun',
-      temperatureOffset: Number(tempBandInput.value),
-      temperatureContrast: Number(contrastInput.value) / 100,
-      humidity: Number(humidityInput.value) / 100,
-      equatorOffset: Number(equatorOffsetInput.value) / 100,
-    })
+    postToWorker({ type: 'climateRun', ...weatherParams() })
   }
 
   function handleEcologyData(message: WorkerEcologyDataMessage): void {
@@ -2787,7 +2791,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateControlsDisabled()
     updateProgress()
     updateNavState() // first erosion unlocks Climate/Rivers
-    postToWorker({ type: 'erosionStart', age: Number(ageInput.value), alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value) })
+    postToWorker({ type: 'erosionStart', age: Number(ageInput.value), alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value), weather: weatherParams() })
   })
 
   resetErosionButton.addEventListener('click', () => {
@@ -4026,9 +4030,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const MIN_TECTONIC_EPOCHS = 30
   const entryRequirementUnmet = (index: number): string | null => {
     const erosionPanel = panelIndexOf('erosion')
-    if (index === erosionPanel && lastEpoch < MIN_TECTONIC_EPOCHS) return t('worldgen.notify.needsTectonics', { min: MIN_TECTONIC_EPOCHS, current: lastEpoch })
-    // Everything past Erosion, rather than the four panels named one by one: the
-    // gate is about the two stages the user has to run for themselves. The rest
+    // Climate sits BEFORE erosion since the stage-2 coupling (its sliders
+    // shape the erosion's water forcing), so the tectonics gate covers both:
+    // climate computes on the tectonic terrain and needs one to exist.
+    if (index >= panelIndexOf('climate') && index <= erosionPanel && lastEpoch < MIN_TECTONIC_EPOCHS) return t('worldgen.notify.needsTectonics', { min: MIN_TECTONIC_EPOCHS, current: lastEpoch })
+    // Everything past Erosion, rather than the panels named one by one: the
+    // gate is about the stages the user has to run for themselves. The rest
     // compute on entry, so they gate on what they are all derived from — and a
     // panel added after this one is covered without anyone remembering to.
     if (index > erosionPanel && erosionRunCount < 1) return t('worldgen.notify.needsErosion')

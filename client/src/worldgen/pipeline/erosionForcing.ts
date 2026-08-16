@@ -1,10 +1,8 @@
 import type { PlateSimulation } from '../tectonics/plateSimulation'
 import { computeUpliftField } from '../elevation/upliftField'
 import { computeErodibilityField } from '../elevation/erodibilityField'
-import { computeTemperature } from '../climate/temperature'
-import { computeWind } from '../climate/wind'
-import { computeSeasonalAmplitude } from '../climate/seasonality'
-import { computeSeasonalPrecipitation } from '../climate/monsoon'
+import { computeWeather, defaultWeatherParams } from '../climate/weather'
+import type { WeatherParams } from '../climate/weather'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../climate/climateField'
 import { worldEpoch } from '../core/worldTime'
 import type { ErosionEngineParams, ErosionForcing } from '../surface/erosionEngine'
@@ -65,22 +63,25 @@ export function assembleErosionForcing(
   width: number,
   height: number,
   controls: ErosionControlsV2 = {},
+  weather: WeatherParams = defaultWeatherParams(),
 ): { forcing: ErosionForcing; params: ErosionEngineParams } {
   const { uplift, hardness } = coarseForcingFields(sources, width, height)
 
-  // Provisional climate as the water forcing (decided 2026-08-17): the
-  // climate model evaluated on the INPUT terrain with DEFAULT parameters —
-  // orography reaches the solve, the climate panel's sliders deliberately
-  // do not (the live coupling is its own later stage-order step).
-  const provisionalTemperature = computeTemperature(rawElevations, width, height)
-  const provisionalPrecip = computeSeasonalPrecipitation(rawElevations, provisionalTemperature, computeSeasonalAmplitude(rawElevations, width, height), computeWind(), width, height, 1, 0).annual
+  // The climate as the water forcing — the FULL weather chain (currents and
+  // SST included) with the climate panel's own parameters, evaluated on the
+  // input terrain (stage-2 coupling, 2026-08-16: the climate panel sits
+  // before erosion, so its sliders reach the solve). Self-evaluated rather
+  // than read from the climate stage's cache: the forcing must not depend
+  // on whether that stage has run, and both compute the same chain on the
+  // same terrain (climate/weather.computeWeather — one function, no drift).
+  const water = computeWeather(rawElevations, width, height, weather).seasonal.annual
 
   return assembleFineForcing({
     uplift,
     hardness,
     forcingResX: CLIMATE_RES_X,
     forcingResY: CLIMATE_RES_Y,
-    water: provisionalPrecip,
+    water,
     waterResX: CLIMATE_RES_X,
     waterResY: CLIMATE_RES_Y,
     lithoSeed: erosionLithoSeed(sources.warpSeed),

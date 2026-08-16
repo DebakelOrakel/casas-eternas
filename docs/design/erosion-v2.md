@@ -679,6 +679,36 @@ the version break v2 already carries.
   its own step: the provisional state's in-game documentation (i18n
   approval) and the bake-button UX — the user flagged the UI for a joint
   look.
+- **STAGE-2 CLIMATE COUPLING — BUILT 2026-08-16** (the deferred half of the
+  2026-08-17 provisional-forcing decision): the climate panel's sliders now
+  reach the erosion solve, and the panel sits BEFORE erosion.
+  - The meteorology chain (temp → wind → currents → SST → amplitude →
+    precip) moved to `climate/weather.computeWeather` — ONE chain shared by
+    the climate stage and `assembleErosionForcing`, whose water forcing now
+    evaluates it with the panel's parameters (and gains the currents/SST the
+    provisional had skipped). `defaultWeatherParams()` reads the declared
+    slider defaults, so headless callers and the goldens erode with exactly
+    an untouched panel.
+  - Stage graph: climate dependsOn tectonics, erosion dependsOn tectonics +
+    climate — the climate edge is about the CONTROLS (the forcing
+    self-evaluates; it never reads the stage's cache), so a climate-slider
+    change invalidates the carved terrain via the same derived
+    `downstreamOf` both sides already share. The climate stage computes on
+    the PRE-EROSION terrain (the forcing's own input — its result must not
+    depend on whether erosion ran).
+  - The hydrology handler's climate refinement became UNCONDITIONAL: it is
+    now where the post-erosion climate and biome truth comes from, not just
+    the dry-basin correction. The first golden run after the reorder caught
+    why this is load-bearing: v1 biomes (pre-erosion terrain) called
+    erosion-grown coast cells Ocean above sea level — 7–17k cells per seed.
+    Compute-on-save runs climate → hydrology → ecology whenever the world is
+    eroded, so a save always carries refined fields.
+  - Golden re-anchored deliberately (0 hard failures after the refinement
+    fix; 19 drifted metrics, all the expected class: biome band shares 2–6 %
+    from currents-in-forcing + refined-as-truth, small dry-basin counts now
+    honestly evaluated). The panel reorder itself is DOM order; the joint
+    UI look (badges, provisional labels) remains its own step.
+
 - **P4 — hydrology merge**; riverDensity → display Q-filter; runoffFloor
   removed (user-visible: arid regions lose rivers — now wanted, once
   disliked; stated for the record).
