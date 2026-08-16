@@ -4095,18 +4095,22 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     ensureDataFor(index)
     // The terrain colour wash is panel-contextual: on for the shaping panels
     // (Genesis/Tectonics/Erosion), off for the neutral data panels (Climate/
-    // Rivers). Still toggleable in the bar within a panel; resets on switch.
-    overlaysOn.terrain = index < CLIMATE_PANEL_INDEX
+    // Ecology/Migration). Still toggleable in the bar within a panel; resets
+    // on switch. Named stages, not index ranges: the climate panel moved
+    // BEFORE erosion (stage-2 coupling), which silently broke every "before
+    // erosion" comparison this block used to make.
+    const shaping = PANEL_STAGES[index] === 'genesis' || PANEL_STAGES[index] === 'tectonics' || PANEL_STAGES[index] === 'erosion'
+    overlaysOn.terrain = shaping
     // The mantle overlay is on for Genesis/Tectonics (where you watch the plates
-    // drive), off from the Erosion panel (index 2) onward. Same per-panel reset.
-    overlaysOn.mantle = index < panelIndexOf('erosion')
+    // drive), off elsewhere. Same per-panel reset.
+    overlaysOn.mantle = index <= TECTONICS_PANEL_INDEX
     // Volcanism follows the mantle: both are the tectonic phase's story, and neither
     // exists during Genesis (the Archean produces no features and no plumes).
     overlaysOn.volcanoes = index === TECTONICS_PANEL_INDEX
     // Plumes follow the mantle field into Genesis, because the Archean now has them
     // too — and there they are worth more than in the tectonic phase: they mark where
     // crust is about to nucleate, before anything is visible on the map.
-    overlaysOn.hotspots = index < panelIndexOf('erosion')
+    overlaysOn.hotspots = index <= TECTONICS_PANEL_INDEX
     // Craton age is on in Genesis only. There it is the point of the phase — the
     // coastline alone cannot show that a continent grew by welding young crust onto
     // an old core. From the Tectonics panel on, the same map has to carry plates,

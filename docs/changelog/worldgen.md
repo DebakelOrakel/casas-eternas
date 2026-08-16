@@ -12,6 +12,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **changed** Hydrology: how many rivers a region carries now follows its climate — arid land runs nearly dry instead of every desert getting token rivers. `worldgen.panel.erosion`
 - **dropped** Hydrology: its panel and the river-density slider — rivers and lakes now compute and appear on the Erosion panel right after each pass. `worldgen.panel.erosion`
 - **changed** Erosion: the bake picker selects one resolution, finest first — the finest bake derives every coarser view, so there is nothing left to order twice. `worldgen.panel.erosion.bake`
+- **fixed** Climate: the panel reorder had dragged the old overlay defaults along — Climate no longer opens with the mantle showing, and Erosion keeps its terrain wash. `worldgen.panel.climate`
 
 ## 2026-08-16
 - **fixed** Tectonics: crustal age now runs on one continuous clock across the Archean handover — young worlds' craton-age overlay stops reading everything as newborn, age-dependent ores (iron, tin, gems) place correctly, and late-Archean crust is no longer wrongly recycled for ages after the eon ends. `worldgen.panel.tectonics`
