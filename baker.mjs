@@ -10441,8 +10441,9 @@ function deriveWorldId(inputs) {
     a = pa;
     b = pb;
   }
+  const hasV2 = inputs.landscapeAge !== void 0 || inputs.alluvium !== void 0 || inputs.rockContrast !== void 0;
   const scalars = new TextEncoder().encode(
-    `|s=${inputs.erosionStrength ?? "d"}|r=${inputs.drainageRefresh ?? "d"}`
+    `|s=${inputs.erosionStrength ?? "d"}|r=${inputs.drainageRefresh ?? "d"}` + (hasV2 ? `|a=${inputs.landscapeAge ?? "d"}|al=${inputs.alluvium ?? "d"}|rc=${inputs.rockContrast ?? "d"}` : "")
   );
   const [sa, sb] = hashBytes(scalars, a, b);
   return `${hex8(sa)}${hex8(sb)}`;
@@ -10535,6 +10536,9 @@ async function openWorld(archive) {
     erosionControls: {
       strength: readRecipeNumber(yamlText, "spec.erosion.erosionStrength"),
       refresh: readRecipeNumber(yamlText, "spec.erosion.drainageRefresh"),
+      landscapeAge: readRecipeNumber(yamlText, "spec.erosion.landscapeAge"),
+      alluvium: readRecipeNumber(yamlText, "spec.erosion.alluvium"),
+      rockContrast: readRecipeNumber(yamlText, "spec.erosion.rockContrast"),
       riverDensity: readRecipeNumber(yamlText, "spec.hydrology.riverDensity")
     },
     worldUid: readRecipeValue(yamlText, "metadata.uid") ?? ""
@@ -10576,7 +10580,10 @@ async function openWorld(archive) {
         elevation: elevation.data,
         precipitation: precipitation?.data ?? null,
         erosionStrength: recipe.erosionControls.strength,
-        drainageRefresh: recipe.erosionControls.refresh
+        drainageRefresh: recipe.erosionControls.refresh,
+        landscapeAge: recipe.erosionControls.landscapeAge,
+        alluvium: recipe.erosionControls.alluvium,
+        rockContrast: recipe.erosionControls.rockContrast
       });
     },
     async acquire(name, purpose = "authoritative") {
@@ -11308,7 +11315,12 @@ var MinHeap = class {
 };
 
 // src/worldgen/surface/flowRouting.ts
+var YIELD_INTERVAL_MS = 50;
+var lastYieldAt = 0;
 function maybeYield() {
+  const now = performance.now();
+  if (now - lastYieldAt < YIELD_INTERVAL_MS) return void 0;
+  lastYieldAt = now;
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 var D8_OFFSETS = [

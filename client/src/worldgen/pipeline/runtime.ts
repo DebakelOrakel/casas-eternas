@@ -7,11 +7,8 @@ import type { ElevationRenderer } from '../render/elevationRenderPool'
 import { downstreamOf } from './stages'
 import type { StageId } from './stages'
 import { runErosionPassV2 } from '../surface/erosionPassV2'
-import { DEFAULT_ENGINE_PARAMS } from '../surface/erosionEngine'
 import type { WorkerLike } from '../surface/erosionEnginePool'
-import { computeUpliftField } from '../elevation/upliftField'
-import { computeErodibilityField } from '../elevation/erodibilityField'
-import { fineDetailNoise } from '../elevation/ridgedNoise'
+import { assembleErosionForcing } from './erosionForcing'
 import { fillDepressionsAndRouteFlow } from '../surface/flowRouting'
 import type { ArcheanSimulation } from '../archean/archeanState'
 import { createArcheanSimulation } from '../archean/archeanState'
@@ -460,71 +457,10 @@ function coarseElevation(elevations: Float32Array, worldWidth: number, worldHeig
 // second pass finishes).
 async function runErodeRequest(rawElevations: Float32Array, width: number, height: number, opts: { age?: number; alluvium?: number; rockContrast?: number } = {}): Promise<void> {
   if (!sim) return
-  const n = width * height
-  // --- THE FORCING: the tectonics interface (docs/design/erosion-v2.md).
-  // U from the features' activity, the K story from the crust's history,
-  // both at climate resolution and bilinearly upsampled; the fine rock
-  // contrast is the world-seeded lithology noise on its fixed lattice.
-  const upliftCoarse = computeUpliftField(sim.features, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
-  const hardnessCoarse = computeErodibilityField(sim.rafts, sim.sutures, sim.features, worldEpoch(sim.archeanEpochs, sim.epoch), width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
-  const upsample = (coarse: Float32Array, x: number, y: number): number => {
-    const u = (x / width) * CLIMATE_RES_X
-    const v = (y / height) * CLIMATE_RES_Y
-    const x0 = Math.floor(u)
-    const y0 = Math.floor(v)
-    const fx = u - x0
-    const fy = v - y0
-    const at = (xx: number, yy: number): number => coarse[(((yy % CLIMATE_RES_Y) + CLIMATE_RES_Y) % CLIMATE_RES_Y) * CLIMATE_RES_X + (((xx % CLIMATE_RES_X) + CLIMATE_RES_X) % CLIMATE_RES_X)]
-    return (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy
-  }
-  // World-seeded lithology lattice; the salt keeps it decorrelated from the
-  // render's fine-detail noise, which shares warpSeed.
-  const lithoSeed = (sim.warpSeed ^ 0x51702e77) >>> 0
-  const sigma = 2.8 * ((opts.rockContrast ?? 50) / 100)
-  const uplift = new Float32Array(n)
-  const erodibility = new Float32Array(n)
-  const coastMask = new Uint8Array(n)
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const i = y * width + x
-      uplift[i] = upsample(upliftCoarse, x, y)
-      erodibility[i] = Math.exp(sigma * fineDetailNoise((x * 512) / width, (y * 256) / height, 512, 256, lithoSeed)) * upsample(hardnessCoarse, x, y)
-      if (rawElevations[i] > 0) coastMask[i] = 1
-    }
-  }
-  // Provisional climate as the water forcing (decided 2026-08-17): the
-  // climate model evaluated on the INPUT terrain with DEFAULT parameters —
-  // orography reaches the solve, the climate panel's sliders deliberately
-  // do not (the live coupling is its own later stage-order step).
-  // Normalized to mean 1 over land so the engine's discharge calibration
-  // (kappaDt against area-Q) keeps its meaning; only the CONTRAST changes.
-  const provisionalTemperature = computeTemperature(rawElevations, width, height)
-  const provisionalPrecip = computeSeasonalPrecipitation(rawElevations, provisionalTemperature, computeSeasonalAmplitude(rawElevations, width, height), computeWind(), width, height, 1, 0).annual
-  const accumulationWeights = new Float32Array(n)
-  let landSum = 0
-  let landCount = 0
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const i = y * width + x
-      const w = Math.max(0, upsample(provisionalPrecip, x, y))
-      accumulationWeights[i] = w
-      if (rawElevations[i] > 0) { landSum += w; landCount++ }
-    }
-  }
-  const meanLand = landCount > 0 && landSum > 0 ? landSum / landCount : 1
-  for (let i = 0; i < n; i++) accumulationWeights[i] = accumulationWeights[i] / meanLand || 1
-
-  // --- the controls (approved 2026-08-17): age is the iteration count,
-  // alluvium scales the settling lengths (50 = the calibrated neutral),
-  // rock contrast is the lithology σ applied above.
-  const alluvium = opts.alluvium ?? 50
-  const settleScale = Math.pow(2, (50 - alluvium) / 50)
-  const params = {
-    ...DEFAULT_ENGINE_PARAMS,
-    settleXiKm: DEFAULT_ENGINE_PARAMS.settleXiKm * settleScale,
-    settleFloorKm: DEFAULT_ENGINE_PARAMS.settleFloorKm * settleScale,
-    settleMarineKm: DEFAULT_ENGINE_PARAMS.settleMarineKm * settleScale,
-  }
+  // The forcing and control mapping live in erosionForcing.ts, SHARED with
+  // the golden harness — the harness must gate exactly the inputs the
+  // player's erode runs on.
+  const { forcing, params } = assembleErosionForcing(sim, rawElevations, width, height, opts)
   const age = Math.round(opts.age ?? 40)
 
   // Pooled + pipelined when cross-origin isolation grants SAB (the client
@@ -542,7 +478,7 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
   }
 
   let lastReportedPercent = -1
-  const erosionResult = await runErosionPassV2(rawElevations, width, height, { uplift, erodibility, coastMask, accumulationWeights }, {
+  const erosionResult = await runErosionPassV2(rawElevations, width, height, forcing, {
     age,
     params,
     pool,

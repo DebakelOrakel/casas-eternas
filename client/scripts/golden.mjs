@@ -95,6 +95,9 @@ const M = {
   field: await L('/src/worldgen/elevation/elevationField.ts'),
   ridged: await L('/src/worldgen/elevation/ridgedNoise.ts'),
   erosion: await L('/src/worldgen/surface/erosion.ts'),
+  erosionForcing: await L('/src/worldgen/pipeline/erosionForcing.ts'),
+  erosionPassV2: await L('/src/worldgen/surface/erosionPassV2.ts'),
+  surfaceInputs: await L('/src/worldgen/surface/surfaceInputParams.ts'),
   routing: await L('/src/worldgen/surface/flowRouting.ts'),
   hydro: await L('/src/worldgen/surface/hydrology.ts'),
   scale: await L('/src/worldgen/elevation/elevationScale.ts'),
@@ -210,7 +213,17 @@ async function buildWorld(seed) {
     }
   }
 
-  const ero = await M.erosion.runErosionPass(raw, W, H, M.erosion.DEFAULT_EROSION_PASS_PARAMS)
+  // The V2 stage, exactly as the generator runs it: shared forcing assembly
+  // (erosionForcing.ts) + the engine at the sliders' declared defaults. The
+  // v1 pass is no longer the generator's path (it survives only inside the
+  // bake until P3) — gating it here would watch the wrong world.
+  const CONTROLS = {
+    age: M.surfaceInputs.SURFACE_INPUTS.landscapeAge.default,
+    alluvium: M.surfaceInputs.SURFACE_INPUTS.alluvium.default,
+    rockContrast: M.surfaceInputs.SURFACE_INPUTS.rockContrast.default,
+  }
+  const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, raw, W, H, CONTROLS)
+  const ero = await M.erosionPassV2.runErosionPassV2(raw, W, H, forcing, { age: CONTROLS.age, params })
   const el = ero.elevations
 
   const temperature = M.temperature.computeTemperature(el, W, H)

@@ -555,12 +555,19 @@ the version break v2 already carries.
   worldId derivation extended BACKWARD-STABLY (old saves' ids and
   cached artifacts stay valid; new saves hash the new controls).
   Roundtrip, pipeline and amplify harnesses green. The goldens turned out
-  UNCHANGED — they call runErosionPass directly (their documented
-  runtime.ts blind spot), so they still gate the v1 pass, which the bake
-  still runs; the v2 generator output has NO golden-level field gate yet.
-  Porting the golden harness's erosion step to the v2 stage (and only
-  then re-anchoring) is the open QA item this leaves behind. The v1 pass
-  remains ONLY as the bake's engine until P3.
+  UNCHANGED at first — they call runErosionPass directly (their documented
+  runtime.ts blind spot), so they were still gating the v1 pass. CLOSED
+  the same day: the forcing assembly moved to `pipeline/erosionForcing.ts`
+  (ONE function, shared by runtime and harness — the harness must gate
+  byte-identical inputs to the player's erode), golden's erosion step now
+  runs the v2 stage at the sliders' declared defaults, and the very first
+  gated run caught a real bug the message-level harness could not: the
+  engine breached the 9000 m representational ceiling on every seed
+  (redistribution-normalized peaks + uplift). Fixed by saturating uplift
+  at the anchor (kernelUplift — v1's envelope cap played the same role);
+  spike/pool parity unaffected (the check world never reaches the
+  ceiling). Baseline re-anchored on v2. The v1 pass remains ONLY as the
+  bake's engine until P3.
 - **P3 — bake tiers** on the new engine; re-measure the tier tables.
 - **P4 — hydrology merge**; riverDensity → display Q-filter; runoffFloor
   removed (user-visible: arid regions lose rivers — now wanted, once

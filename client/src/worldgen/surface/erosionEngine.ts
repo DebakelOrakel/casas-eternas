@@ -414,11 +414,19 @@ export function kernelMfd(v: EngineViews, width: number, height: number, r0: num
 
 // Uplift — the forcing half of the balance, pinned to the initial coast
 // when the mask flag is set. Rows [r0, r1).
+//
+// Capped at z = 1.0: the metre anchor (9000 m) is the world's
+// REPRESENTATIONAL ceiling — the save quantizes to it, every consumer
+// assumes it, and the golden invariants enforce it. In principle erosion
+// bounds height; in practice mountain redistribution hands the engine
+// input peaks already AT the ceiling, and forty iterations of uplift on
+// top breached it by ~700 m on every golden seed (2026-08-17). Uplift
+// saturates there instead — v1's envelope cap played the same role.
 export function kernelUplift(v: EngineViews, width: number, r0: number, r1: number, kp: KernelParams): void {
   const { z, uplift, coastMask, flags } = v
   const hasMask = flags[FLAG_HAS_COAST_MASK] !== 0
   for (let i = r0 * width; i < r1 * width; i++) {
-    if (z[i] > 0 && (!hasMask || coastMask[i])) z[i] += kp.upliftDt * uplift[i]
+    if (z[i] > 0 && (!hasMask || coastMask[i])) z[i] = Math.min(1, z[i] + kp.upliftDt * uplift[i])
   }
 }
 
