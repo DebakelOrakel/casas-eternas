@@ -26,7 +26,7 @@ import type { KnowledgeField } from './knowledgeField'
 import { createKnowledgeDebugPanel } from './knowledgeDebugPanel'
 import { createWatercolorPass } from './watercolorPass'
 import { MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
-import { AMPLIFY_FETCH_STAGES } from '../../world/bakeSettings'
+import { AMPLIFY_FINEST_STAGE } from '../../world/bakeSettings'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
 import { biomeLabelKey } from '../../worldgen/climate/biomes'
 import { t } from '../../i18n/i18n'
@@ -958,8 +958,14 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     hoverTooltip?.refresh()
   }
 
-  // The amplified tiers this world already HAS, read coarse-first and applied
-  // as they land, so the map sharpens in steps.
+  // The amplified tiers this world already HAS — the derived-family ladder
+  // (docs/decisions/derived-bake-tiers.md): coarse-first so the map sharpens
+  // fast, but with at most ONE terrain-changing swap. When the designated
+  // finest bake exists, the coarse step is its own downsampled family
+  // member, so the follow-up to full resolution changes RESOLUTION only —
+  // the terrain never moves. Only when the family is absent does the
+  // independent provisional 4K show, the labelled-sketch state the ladder's
+  // one real swap replaces.
   //
   // Read-only on purpose: this screen never bakes and never commissions. Baking
   // is a WORKBENCH capability — the generator has both the in-browser path and
@@ -971,21 +977,27 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   //
   // A miss is not an error and gets no message: the coarser tiers stay on
   // screen, and with none of them the save's macro raster is a perfectly
-  // usable world.
+  // usable world. (Factor 1 is that macro raster — nothing to fetch; its
+  // rivers come from deriveMacroRivers.)
   async function loadTiers(detailSeed: number, riverDensity: number | undefined): Promise<void> {
     const generation = loadGeneration
     const pipelineVersion = amplificationPipelineVersion()
     const store = await getArtifactStore()
-    // Factor 1 is the macro raster the save already carries — nothing to
-    // fetch; its rivers come from deriveMacroRivers.
-    for (const factor of AMPLIFY_FETCH_STAGES.filter((f) => f > 1)) {
+    const familyKey = artifactKey(worldUid, worldId, pipelineVersion, String(AMPLIFY_FINEST_STAGE))
+    // The family's coarse member — null also for a pre-family finest
+    // artifact, which then behaves like the provisional path below.
+    const coarse = await readAmplificationArtifact(store, familyKey, riverDensity, 2).catch(() => null)
+    if (generation !== loadGeneration) return
+    if (coarse) {
+      applyTier(coarse.artifact, 2, detailSeed)
+    } else {
+      const sketch = await readAmplificationArtifact(store, artifactKey(worldUid, worldId, pipelineVersion, '2'), riverDensity).catch(() => null)
       if (generation !== loadGeneration) return
-      const hit = await readAmplificationArtifact(store, artifactKey(worldUid, worldId, pipelineVersion, String(factor)), riverDensity).catch(() => null)
-      if (generation !== loadGeneration) return
-      // Each tier is asked for independently: a gap at 4k says nothing about
-      // whether 8k exists.
-      if (hit) applyTier(hit.artifact, factor, detailSeed)
+      if (sketch) applyTier(sketch.artifact, 2, detailSeed)
     }
+    const finest = await readAmplificationArtifact(store, familyKey, riverDensity).catch(() => null)
+    if (generation !== loadGeneration) return
+    if (finest) applyTier(finest.artifact, AMPLIFY_FINEST_STAGE, detailSeed)
   }
 
   return {

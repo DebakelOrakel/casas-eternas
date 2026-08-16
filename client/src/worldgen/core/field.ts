@@ -125,6 +125,29 @@ export function sampleNearestWorld(
 // footprint rather than a mean or a centre sample. For thin features — rivers,
 // lakes — a footprint max is the only reduction that doesn't lose them entirely
 // between coarse cell centres.
+// Full-resolution raster down to a coarse grid by the MEAN over each
+// footprint — the right reduction for a continuous field like elevation,
+// where downsampleMax would raise every coarse cell to its highest peak.
+// The derived bake tiers lean on this being deterministic: same input,
+// same bytes, whoever computes it (docs/decisions/derived-bake-tiers.md).
+export function downsampleBox(fullRes: Float32Array, fullW: number, fullH: number, resX: number, resY: number): Float32Array {
+  const out = new Float32Array(resX * resY)
+  const fw = fullW / resX
+  const fh = fullH / resY
+  for (let gy = 0; gy < resY; gy++) {
+    const y0 = Math.floor(gy * fh)
+    const y1 = Math.floor((gy + 1) * fh)
+    for (let gx = 0; gx < resX; gx++) {
+      const x0 = Math.floor(gx * fw)
+      const x1 = Math.floor((gx + 1) * fw)
+      let sum = 0
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) sum += fullRes[y * fullW + x]
+      out[gy * resX + gx] = sum / ((y1 - y0) * (x1 - x0))
+    }
+  }
+  return out
+}
+
 export function downsampleMax(fullRes: Float32Array, fullW: number, fullH: number, resX: number, resY: number): Float32Array {
   const out = new Float32Array(resX * resY)
   const fw = fullW / resX

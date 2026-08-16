@@ -6,8 +6,9 @@ import type { AmplificationArtifact } from '../worldgen/surface/bakeInBrowser'
 export type { AmplificationArtifact }
 import type { Encoding } from './save/worldLayers'
 import { AMPLIFY_CONSTANTS } from '../worldgen/surface/amplify'
-import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
+import { AMPLIFY_EROSION_ROUNDS, AMPLIFY_FINEST_STAGE } from './bakeSettings'
 import { metersToElevation } from '../worldgen/elevation/elevationScale'
+import { downsampleBox } from '../worldgen/core/field'
 
 // The PIPELINE half of an artifact's key, assembled in one place.
 //
@@ -115,6 +116,20 @@ const riverFiles = (density: number | undefined): { points: string; lengths: str
   return { points: `rivers-${key}.f32`, lengths: `riverLengths-${key}.u32` }
 }
 
+// The derived family (docs/decisions/derived-bake-tiers.md): the designated
+// finest bake carries every coarser tier as a box-downsample of itself,
+// stored as extra files IN THE SAME ENTRY — one key, atomically consistent,
+// evicted as a unit. Rivers are deliberately NOT duplicated per member: a
+// polyline is the same river at every resolution, and the member reader
+// scales its texel coordinates instead.
+// Two segments, not three: the server store's listing walks exactly one
+// directory level (the `tiles/12_7` shape), so a deeper nesting would write
+// fine and then be invisible to every file listing.
+const familyFiles = (member: number): { elevation: string; lakeDepth: string } => ({
+  elevation: `family-${member}/elevation.u16`,
+  lakeDepth: `family-${member}/lakeDepth.u8`,
+})
+
 // Every operation here is best-effort: an artifact store is a cache over
 // deterministically recomputable data, so a partial write, a missing file or
 // a corrupt read all mean the same thing — bake it again.
@@ -124,6 +139,23 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
   const rivers = riverFiles(riverDensity)
   const elevationBytes = new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING))
   const lakeBytes = artifact.lakeDepth ? new Uint8Array(bakeLayer(artifact.lakeDepth, LAKE_DEPTH_ENCODING)) : null
+  // The designated finest stage writes its derived family beside itself:
+  // box-downsampled on the RAW f32 field before quantisation, so a member
+  // is exactly box(finest) and not box(quantised(finest)) — the family's
+  // byte-consistency is the whole point.
+  const family: { member: number; elevation: Uint16Array; lakeDepth: Uint8Array | null }[] = []
+  if (key.stage === String(AMPLIFY_FINEST_STAGE)) {
+    for (let member = AMPLIFY_FINEST_STAGE / 2; member >= 2; member /= 2) {
+      const scale = member / AMPLIFY_FINEST_STAGE
+      const w = Math.round(artifact.width * scale)
+      const h = Math.round(artifact.height * scale)
+      family.push({
+        member,
+        elevation: new Uint16Array(bakeLayer(downsampleBox(artifact.elevation, artifact.width, artifact.height, w, h), ELEVATION_ENCODING)),
+        lakeDepth: artifact.lakeDepth ? new Uint8Array(bakeLayer(downsampleBox(artifact.lakeDepth, artifact.width, artifact.height, w, h), LAKE_DEPTH_ENCODING)) : null,
+      })
+    }
+  }
   const meta: ArtifactMeta = {
     key,
     width: artifact.width,
@@ -139,11 +171,20 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
       ...(lakeBytes ? { [FILES.lakeDepth]: lakeBytes.byteLength } : {}),
       [rivers.points]: artifact.riverPoints.byteLength,
       [rivers.lengths]: artifact.riverLengths.byteLength,
+      ...Object.fromEntries(family.flatMap(({ member, elevation, lakeDepth }) => {
+        const names = familyFiles(member)
+        return [[names.elevation, elevation.byteLength] as const, ...(lakeDepth ? [[names.lakeDepth, lakeDepth.byteLength] as const] : [])]
+      })),
     },
   }
   // Payload first, meta LAST: the meta is what makes an entry resolvable by
   // key across restarts, so a write interrupted half way leaves bytes that
   // read as unresolved rather than an entry pointing at half a file.
+  for (const { member, elevation, lakeDepth } of family) {
+    const names = familyFiles(member)
+    if (!(await store.write(handle, names.elevation, elevation))) return false
+    if (lakeDepth && !(await store.write(handle, names.lakeDepth, lakeDepth))) return false
+  }
   return (
     (await store.write(handle, FILES.elevation, elevationBytes)) &&
     (lakeBytes === null || (await store.write(handle, FILES.lakeDepth, lakeBytes))) &&
@@ -167,14 +208,24 @@ export async function amplificationArtifactExists(store: ArtifactStore, key: Art
   return needed.every((name) => handle.files.includes(name))
 }
 
-export async function readAmplificationArtifact(store: ArtifactStore, key: ArtifactKey, riverDensity?: number): Promise<{ artifact: AmplificationArtifact; bakeMs: number } | null> {
+// `familyMember` asks for a coarser tier OF THE SAME BAKE (the derived
+// family): the member's own elevation/lake rasters plus the finest tier's
+// rivers with their texel coordinates scaled down — a polyline is the same
+// river at every resolution. Null when the entry predates the family or the
+// member does not exist; the caller falls back to the finest.
+export async function readAmplificationArtifact(store: ArtifactStore, key: ArtifactKey, riverDensity?: number, familyMember?: number): Promise<{ artifact: AmplificationArtifact; bakeMs: number } | null> {
   const handle = await store.resolve(key, false)
   if (!handle) return null
   const meta = await readMeta(store, handle)
   if (!meta) return null
-  const elevationBytes = await store.read(handle, FILES.elevation)
+  const finestFactor = Number(key.stage)
+  const memberScale = familyMember && finestFactor > 0 ? familyMember / finestFactor : 1
+  const elevationName = familyMember ? familyFiles(familyMember).elevation : FILES.elevation
+  const elevationBytes = await store.read(handle, elevationName)
   if (!elevationBytes) return null
-  const expectedCells = meta.width * meta.height
+  const width = Math.round(meta.width * memberScale)
+  const height = Math.round(meta.height * memberScale)
+  const expectedCells = width * height
   if (elevationBytes.byteLength !== expectedCells * 2) return null // truncated or from another shape
 
   // Rivers for THIS density, and their absence makes the whole read fail.
@@ -196,16 +247,26 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
   // none, and neither did any bake before this layer existed. A wrong-sized
   // one is treated as absent rather than trusted — it would be from another
   // shape entirely.
-  const lakeBytes = await store.read(handle, FILES.lakeDepth)
+  const lakeBytes = await store.read(handle, familyMember ? familyFiles(familyMember).lakeDepth : FILES.lakeDepth)
   const lakeDepth = lakeBytes && lakeBytes.byteLength === expectedCells
     ? decodeLayer(lakeBytes, LAKE_DEPTH_ENCODING)
     : null
+  const riverPoints = new Float32Array(pointBytes)
+  if (memberScale !== 1) {
+    // [x, y, widthPx] per vertex: positions live in the finest grid's
+    // texels and scale with the member; the drawn width is screen policy
+    // and does not.
+    for (let i = 0; i < riverPoints.length; i += 3) {
+      riverPoints[i] *= memberScale
+      riverPoints[i + 1] *= memberScale
+    }
+  }
   return {
     artifact: {
       elevation: decodeLayer(elevationBytes, ELEVATION_ENCODING),
-      width: meta.width,
-      height: meta.height,
-      riverPoints: new Float32Array(pointBytes),
+      width,
+      height,
+      riverPoints,
       riverLengths: lengthBytes ? new Uint32Array(lengthBytes) : new Uint32Array(0),
       lakeDepth,
     },

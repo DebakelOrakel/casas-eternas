@@ -659,6 +659,26 @@ the version break v2 already carries.
     The browser bake stays single-threaded for now (an amplification
     worker spawning engine workers is the nested-worker case plus a
     crossOriginIsolated gate — deferred, the server is where 8K lives).
+
+  STEP ④ BUILT 2026-08-16 — the derived tiers
+  (decisions/derived-bake-tiers.md carries the decision and now the status;
+  mechanics in short): AMPLIFY_FINEST_STAGE = 4 is the designated finest;
+  its artifact carries every coarser tier as `family-<factor>/` files in
+  the SAME entry — box-downsampled from the raw f32 field BEFORE
+  quantisation (a member is box(finest), not box(quantised(finest))),
+  rivers deliberately not duplicated (one polyline is the same river at
+  every resolution; the member read scales texel coordinates). One key,
+  atomically consistent, evicted as a unit; two path segments, not three,
+  because the server store's listing walks exactly one level. The
+  worldmap's ladder replaced AMPLIFY_FETCH_STAGES: family's coarse member
+  first when the family exists (the follow-up to full resolution is then
+  resolution-only — the terrain never moves), the independent provisional
+  4K only when it does not — at most ONE terrain-changing swap, which was
+  the decision's whole point. The family costs nothing visible at bake
+  time (8K end-to-end 118 s, within noise of pre-family runs). Open, as
+  its own step: the provisional state's in-game documentation (i18n
+  approval) and the bake-button UX — the user flagged the UI for a joint
+  look.
 - **P4 — hydrology merge**; riverDensity → display Q-filter; runoffFloor
   removed (user-visible: arid regions lose rivers — now wanted, once
   disliked; stated for the record).

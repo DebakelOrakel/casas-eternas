@@ -47,18 +47,28 @@
 // nothing falls back to baking it.
 export const AMPLIFY_BAKE_STAGES = [2]
 
-// The display ceiling, and it is a memory argument rather than a taste one.
-// Holding one amplified raster costs width × height × 4 bytes as Float32:
+// The DESIGNATED FINEST tier (docs/decisions/derived-bake-tiers.md): the one
+// stage whose bake is authoritative below macro scale. Its artifact carries
+// every coarser tier as a box-downsampled family member, so within the
+// family a tier swap changes resolution, never terrain; the fetch ladder IS
+// this constant plus the provisional stage-2 sketch (WorldMapScreen's
+// loadTiers), which replaced the old AMPLIFY_FETCH_STAGES list.
+//
+// 8K is also the DISPLAY ceiling, and that is a memory argument rather than
+// a taste one — holding one amplified raster costs width × height × 4 bytes
+// as Float32:
 //
 //   factor 2   4096×2048     33 MB
 //   factor 4   8192×4096    134 MB
 //   factor 8  16384×8192    537 MB
 //
-// 134 MB is a raster a tab can hold beside a map it is already showing; 537 MB
-// is asking for the same failure by a different route. Raising this to 8 wants
-// an actual measurement of a 16k DISPLAY first — and nothing bakes 16k today,
-// so it would only buy a failed request per world load.
-export const AMPLIFY_FETCH_STAGES = [2, 4]
+// 134 MB is a raster a tab can hold beside a map it is already showing;
+// 537 MB is asking for the tab death by another route. Raising this to 8
+// wants the engine's MFD memory work first (stride-8 is ~16 GB at 16K) AND
+// a measured 16K display story — until then the family's own coarser
+// members are how a smaller device would step down, not a longer stage
+// list.
+export const AMPLIFY_FINEST_STAGE = 4
 
 // ENGINE ITERATIONS the bake runs on the amplified field (the v2 engine's
 // age axis; the constant keeps its wire name — the Go bake module and every

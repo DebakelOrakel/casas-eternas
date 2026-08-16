@@ -33,6 +33,7 @@ const M = {
   artifact: await L('/src/world/artifacts.ts'),
   memory: await L('/src/storage/MemoryArtifactStore.ts'),
   amplify: await L('/src/worldgen/surface/amplify.ts'),
+  settings: await L('/src/world/bakeSettings.ts'),
 }
 const JSZip = (await import(`${CLIENT}/node_modules/jszip/dist/jszip.min.js`)).default
 
@@ -146,6 +147,39 @@ else {
   check('river points are exact', String(back.artifact.riverPoints) === String(art.riverPoints))
   check('river lengths are exact', String(back.artifact.riverLengths) === String(art.riverLengths))
   check('dimensions and bake cost survive', back.artifact.width === 8 && back.artifact.height === 5 && back.bakeMs === 1234)
+}
+
+// The derived family (docs/decisions/derived-bake-tiers.md): the designated
+// finest stage writes each coarser tier as a box-downsample of itself into
+// the SAME entry, and the member read halves the dimensions and the river
+// texel coordinates. A stage-2 write (above) must NOT gain family files.
+{
+  const finestKey = { ...key, stage: String(M.settings.AMPLIFY_FINEST_STAGE) }
+  const fine = {
+    elevation: Float32Array.from({ length: 8 * 4 }, (_, i) => Math.sin(i * 0.7) * 0.8),
+    width: 8, height: 4,
+    riverPoints: Float32Array.from([2, 2, 3]),
+    riverLengths: Uint32Array.from([1]),
+    lakeDepth: Float32Array.from({ length: 8 * 4 }, (_, i) => (i % 5 === 0 ? 0.1 : 0)),
+  }
+  check('a family is written only by the finest stage', (await M.artifact.readAmplificationArtifact(store, key, 55, 2)) === null)
+  await M.artifact.writeAmplificationArtifact(store, finestKey, fine, 99, 55)
+  const member = await M.artifact.readAmplificationArtifact(store, finestKey, 55, 2)
+  if (!member) check('the family member reads back', false)
+  else {
+    check('the member is half the finest resolution', member.artifact.width === 4 && member.artifact.height === 2)
+    let worst = 0
+    for (let gy = 0; gy < 2; gy++) {
+      for (let gx = 0; gx < 4; gx++) {
+        let sum = 0
+        for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) sum += fine.elevation[(gy * 2 + dy) * 8 + gx * 2 + dx]
+        worst = Math.max(worst, Math.abs(member.artifact.elevation[gy * 4 + gx] - sum / 4))
+      }
+    }
+    check('the member is the box mean of the finest, to quantisation', worst <= 1 / 65535 + 1e-9, `worst ${worst.toExponential(3)}`)
+    check('the member scales river texels and keeps the width', String(member.artifact.riverPoints) === String(Float32Array.from([1, 1, 3])))
+    check('the member carries a lake layer at its own size', member.artifact.lakeDepth !== null && member.artifact.lakeDepth.length === 8)
+  }
 }
 
 // --- 5. the zip reader -------------------------------------------------------

@@ -3,7 +3,7 @@ summary: Whether the amplification tiers (4K/8K/16K) stay independent bakes of t
 date: 2026-08-16
 area: platform
 stage: agreed
-status: direction agreed 2026-08-16, NOTHING BUILT. To be built as its own step, with its provisional-preview state documented IN-GAME (user requirement — i18n keys to approve when it lands). Independent of the erosion-v2 rebuild — it improves the current pipeline as much as the future one.
+status: BUILT 2026-08-16 (erosion-v2 P3 ④) — the finest (8K) artifact carries its coarser tiers as `family-<factor>/` files in the same entry (box-downsampled pre-quantisation, rivers shared with texel scaling on read), and the worldmap's ladder is provisional-sketch → ONE swap to the family, resolution-only within it. Still open — the in-game documentation of the provisional state (i18n keys to approve) and the provisional-4K UX; 16K as designated finest waits on the engine's MFD memory work.
 ---
 
 # Derived Bake Tiers

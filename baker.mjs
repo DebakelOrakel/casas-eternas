@@ -11061,6 +11061,23 @@ function sampleNearestWorld(field, resX, resY, x, y, worldWidth, worldHeight) {
   const gy = Math.min(resY - 1, Math.floor(wrapValue(y, worldHeight) / worldHeight * resY));
   return field[gy * resX + gx];
 }
+function downsampleBox(fullRes, fullW, fullH, resX, resY) {
+  const out = new Float32Array(resX * resY);
+  const fw = fullW / resX;
+  const fh = fullH / resY;
+  for (let gy = 0; gy < resY; gy++) {
+    const y0 = Math.floor(gy * fh);
+    const y1 = Math.floor((gy + 1) * fh);
+    for (let gx = 0; gx < resX; gx++) {
+      const x0 = Math.floor(gx * fw);
+      const x1 = Math.floor((gx + 1) * fw);
+      let sum = 0;
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) sum += fullRes[y * fullW + x];
+      out[gy * resX + gx] = sum / ((y1 - y0) * (x1 - x0));
+    }
+  }
+  return out;
+}
 
 // src/worldgen/climate/climateTuneParams.ts
 var lapseCPerKm = 6.5;
@@ -13274,6 +13291,7 @@ function spread(from, to, offset, stride, size, radius, distance) {
 }
 
 // src/world/bakeSettings.ts
+var AMPLIFY_FINEST_STAGE = 4;
 var AMPLIFY_EROSION_ROUNDS = 12;
 
 // src/world/artifacts.ts
@@ -13296,12 +13314,29 @@ var riverFiles = (density) => {
   const key = riverDensityKey(density);
   return { points: `rivers-${key}.f32`, lengths: `riverLengths-${key}.u32` };
 };
+var familyFiles = (member) => ({
+  elevation: `family-${member}/elevation.u16`,
+  lakeDepth: `family-${member}/lakeDepth.u8`
+});
 async function writeAmplificationArtifact(store, key, artifact, bakeMs, riverDensity, label = "", rounds = AMPLIFY_EROSION_ROUNDS) {
   const handle = await store.resolve(key, true);
   if (!handle) return false;
   const rivers = riverFiles(riverDensity);
   const elevationBytes = new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING));
   const lakeBytes = artifact.lakeDepth ? new Uint8Array(bakeLayer(artifact.lakeDepth, LAKE_DEPTH_ENCODING)) : null;
+  const family = [];
+  if (key.stage === String(AMPLIFY_FINEST_STAGE)) {
+    for (let member = AMPLIFY_FINEST_STAGE / 2; member >= 2; member /= 2) {
+      const scale = member / AMPLIFY_FINEST_STAGE;
+      const w = Math.round(artifact.width * scale);
+      const h = Math.round(artifact.height * scale);
+      family.push({
+        member,
+        elevation: new Uint16Array(bakeLayer(downsampleBox(artifact.elevation, artifact.width, artifact.height, w, h), ELEVATION_ENCODING)),
+        lakeDepth: artifact.lakeDepth ? new Uint8Array(bakeLayer(downsampleBox(artifact.lakeDepth, artifact.width, artifact.height, w, h), LAKE_DEPTH_ENCODING)) : null
+      });
+    }
+  }
   const meta = {
     key,
     width: artifact.width,
@@ -13316,9 +13351,18 @@ async function writeAmplificationArtifact(store, key, artifact, bakeMs, riverDen
       [FILES.elevation]: elevationBytes.byteLength,
       ...lakeBytes ? { [FILES.lakeDepth]: lakeBytes.byteLength } : {},
       [rivers.points]: artifact.riverPoints.byteLength,
-      [rivers.lengths]: artifact.riverLengths.byteLength
+      [rivers.lengths]: artifact.riverLengths.byteLength,
+      ...Object.fromEntries(family.flatMap(({ member, elevation, lakeDepth }) => {
+        const names = familyFiles(member);
+        return [[names.elevation, elevation.byteLength], ...lakeDepth ? [[names.lakeDepth, lakeDepth.byteLength]] : []];
+      }))
     }
   };
+  for (const { member, elevation, lakeDepth } of family) {
+    const names = familyFiles(member);
+    if (!await store.write(handle, names.elevation, elevation)) return false;
+    if (lakeDepth && !await store.write(handle, names.lakeDepth, lakeDepth)) return false;
+  }
   return await store.write(handle, FILES.elevation, elevationBytes) && (lakeBytes === null || await store.write(handle, FILES.lakeDepth, lakeBytes)) && await store.write(handle, rivers.points, artifact.riverPoints) && await store.write(handle, rivers.lengths, artifact.riverLengths) && await store.write(handle, FILES.meta, new TextEncoder().encode(JSON.stringify(meta)));
 }
 
