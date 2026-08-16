@@ -6,7 +6,7 @@ import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
 import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
-import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
+import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS, AMPLIFY_FINEST_STAGE } from '../../world/bakeSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../worldgen/core/mapConfig'
 
@@ -507,9 +507,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           <button type="button" class="icon-button" data-action="erode" aria-label="${t('worldgen.action.runErosion.label')}" data-help="worldgen.action.runErosion">
             <img src="/icons/erosion_heavy.png" alt="" />
           </button>
-          <button type="button" class="text-button" data-bake-tier="2" aria-pressed="true" data-help="worldgen.panel.erosion.bake4k">${t('worldgen.panel.erosion.bake4k.label')}</button>
-          <button type="button" class="text-button" data-bake-tier="4" aria-pressed="false" data-help="worldgen.panel.erosion.bake8k">${t('worldgen.panel.erosion.bake8k.label')}</button>
           <button type="button" class="text-button" data-bake-tier="8" aria-pressed="false" disabled data-help="worldgen.panel.erosion.bake16k">${t('worldgen.panel.erosion.bake16k.label')}</button>
+          <button type="button" class="text-button" data-bake-tier="4" aria-pressed="true" data-help="worldgen.panel.erosion.bake8k">${t('worldgen.panel.erosion.bake8k.label')}</button>
+          <button type="button" class="text-button" data-bake-tier="2" aria-pressed="false" data-help="worldgen.panel.erosion.bake4k">${t('worldgen.panel.erosion.bake4k.label')}</button>
           <button type="button" class="icon-button" data-action="bake-detail" aria-label="${t('worldgen.action.runDetailBake.label')}" data-help="worldgen.action.runDetailBake">
             <img src="/icons/erosion_detail.png" alt="" />
           </button>
@@ -3208,11 +3208,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let pendingBakeFactors: number[] = []
   let bakeRunning = false
 
-  // Which tiers the chips have selected, as factors (2 → 4K, 4 → 8K). A set
-  // rather than a single value because ordering 4K and 8K together is the
-  // normal way to leave a machine to work. 16K's chip exists and stays
-  // disabled — its help card says what it waits on (tiled artifacts).
-  const selectedBakeFactors = new Set<number>([2])
+  // Which tier the chips have selected, as a factor (2 → 4K, 4 → 8K). ONE
+  // value, radio-style, finest first in the row (user decision 2026-08-16):
+  // under derived tiers the finest bake carries every coarser view as its
+  // downsample, so ordering several tiers is redundant — the standalone 4K is
+  // only the stopgap before an 8K exists. Default = the designated finest.
+  // 16K's chip exists and stays disabled — its help card says what it waits
+  // on (tiled artifacts).
+  let selectedBakeFactor: number = AMPLIFY_FINEST_STAGE
 
   // Look for the finest baked network this world already has and show it.
   //
@@ -3402,37 +3405,41 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   async function refreshBakeButtons(): Promise<void> {
     const saved = worldUid !== '' && isStoredOnServer(worldUid)
     const server = await canCommissionBakes()
+    // 4K needs nothing but a world: without a server it bakes here, which is
+    // what the browser can survive at this tier. 8K is the ~2.6 GB that
+    // kills a tab, so it is server-only — and the server bakes from the
+    // STORED world, which is the second condition and the one more often
+    // missing while a world is still being made. 16K does not exist yet.
+    // Deliberately WITHOUT bakeRunning: that is a transient the chips show
+    // by being disabled, not a reason to move a selection.
+    const usable = (factor: number): boolean =>
+      factor === 2 ? true
+      : factor === 4 ? server && saved
+      : false
+    // Selection follows availability: a selected tier whose requirement just
+    // went away (signed out, world no longer on the server) must not stay
+    // selected — the start button would commission it into a late failure.
+    // Radio semantics, so it falls back to the finest usable tier instead of
+    // to nothing.
+    if (!usable(selectedBakeFactor)) selectedBakeFactor = 2
     for (const chip of bakeTierChips) {
       const factor = Number(chip.dataset.bakeTier)
-      // 4K needs nothing but a world: without a server it bakes here, which is
-      // what the browser can survive at this tier. 8K is the ~2.6 GB that
-      // kills a tab, so it is server-only — and the server bakes from the
-      // STORED world, which is the second condition and the one more often
-      // missing while a world is still being made. 16K does not exist yet.
-      const available =
-        factor === 2 ? !bakeRunning
-        : factor === 4 ? !bakeRunning && server && saved
-        : false
-      chip.disabled = !available
-      // Selection follows availability: a selected tier whose requirement just
-      // went away (signed out, world no longer on the server) must not stay in
-      // the order — the start button would commission it into a late failure.
-      if (!available) selectedBakeFactors.delete(factor)
-      chip.setAttribute('aria-pressed', String(selectedBakeFactors.has(factor)))
+      chip.disabled = bakeRunning || !usable(factor)
+      chip.setAttribute('aria-pressed', String(factor === selectedBakeFactor))
     }
     // The gate the tiers share: a bake refines ERODED terrain. Before the
     // first macro pass there is no climate either (compute-on-save has the
     // same erosionRunCount >= 1 condition), so a bake ordered earlier ran the
     // whole save cycle only to fail with "no rivers" at the end. The card on
     // this button names the precondition.
-    bakeStartButton.disabled = bakeRunning || erosionRunCount < 1 || selectedBakeFactors.size === 0
+    bakeStartButton.disabled = bakeRunning || erosionRunCount < 1
   }
 
   for (const chip of bakeTierChips) {
     chip.addEventListener('click', () => {
-      const factor = Number(chip.dataset.bakeTier)
-      if (selectedBakeFactors.has(factor)) selectedBakeFactors.delete(factor)
-      else selectedBakeFactors.add(factor)
+      // Radio, not toggle: clicking the selected chip keeps it selected —
+      // there is always exactly one tier to bake.
+      selectedBakeFactor = Number(chip.dataset.bakeTier)
       void refreshBakeButtons()
     })
   }
@@ -3440,15 +3447,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   void refreshBakeButtons()
 
   function orderAmplification(): void {
-    if (bakeRunning || erosionRunCount < 1 || selectedBakeFactors.size === 0) return
+    if (bakeRunning || erosionRunCount < 1) return
     bakeRunning = true
     void refreshBakeButtons()
     // Routed through the ordinary save request: the worker owns the world
     // data, and asking it here is the same question the save button asks.
     // pendingSaveTarget is forced away from 'server' so a bake never uploads.
-    // ONE save serves the whole order — every tier bakes the same archive.
+    // (Still an array downstream — the order machinery predates the
+    // single-select chips and one entry rides it fine.)
     pendingSaveTarget = 'download'
-    pendingBakeFactors = [...selectedBakeFactors].sort((a, b) => a - b)
+    pendingBakeFactors = [selectedBakeFactor]
     void saveWorld()
   }
 
