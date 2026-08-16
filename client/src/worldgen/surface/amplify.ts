@@ -3,7 +3,7 @@ import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { fineDetailNoise, periodicValueNoise2D } from '../elevation/ridgedNoise'
 import { CHANNEL_SLOPE_EXPONENT } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
-import { DEFAULT_ENGINE_PARAMS } from './erosionEngine'
+import { DEFAULT_ENGINE_PARAMS, STATUS_CLAMP_M } from './erosionEngine'
 import { EROSION_LITHO_SEED_SALT, ROCK_CONTRAST_SIGMA_MAX } from './erosionForcingFields'
 
 // Terrain AMPLIFICATION — the derived fine tier of
@@ -209,6 +209,13 @@ export const BAKE_ENGINE_OVERRIDES = {
   upliftDt: 0,
 } as const
 
+// How far seaward of a river mouth the land/sea status rule leaves cells
+// FREE (erosion-v2 P3 ②) — the room a delta may prograde into. Physical km
+// rather than cells, so every tier grants the same coastline the same
+// growth. ~a large real delta lobe; the constant is bake policy and hashed
+// below.
+export const DELTA_ALLOWANCE_KM = 15
+
 // Everything in this module whose value changes the bake's output, in one
 // place a cache key can hash. Kept beside the constants themselves so an
 // edit and its invalidation stay in the same field of view.
@@ -246,6 +253,10 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   bakeUpliftDt: BAKE_ENGINE_OVERRIDES.upliftDt,
   lithoSeedSalt: EROSION_LITHO_SEED_SALT,
   rockContrastSigmaMax: ROCK_CONTRAST_SIGMA_MAX,
+  // The coastline status rule (P3 ②): the growth allowance and the clamp
+  // depth both move baked coastlines.
+  deltaAllowanceKm: DELTA_ALLOWANCE_KM,
+  statusClampM: STATUS_CLAMP_M,
   // The bake RE-EXTRACTS rivers on the amplified field, so hydrology's channel
   // criterion is part of what it produces — and none of these three were in the
   // key. `CHANNEL_SLOPE_EXPONENT` was worse than merely absent: identity.ts

@@ -607,6 +607,34 @@ the version break v2 already carries.
     fill; the worst-case bounds (150 m) still catch runaways. All other
     checks — N=1 splitting exactness, region determinism, byte determinism
     across machines — passed on the engine unchanged.
+
+  STEP ② BUILT 2026-08-16 — the coastline status rule, exactly as this doc
+  specified it: one rule, asked in one place.
+  - MECHANISM (engine): `ErosionForcing.statusMask` (0 free / 1 keep land /
+    2 keep sea) enforced by `kernelStatusClamp` once per iteration after
+    every mechanism has moved material — a pinned cell that crossed sea
+    level is set back to ±0.5 m (STATUS_CLAMP_M). Flag-gated like the
+    coast mask: the generator passes nothing and its engine stays
+    byte-identical to the spike (all six engine-check gates re-passed after
+    the state-layout change). Excluded from the residual — a clamp is
+    enforcement, not evolution.
+  - POLICY (bake): pinned to the SEEDED field's status, with sea cells
+    within DELTA_ALLOWANCE_KM (15 km, physical so every tier grants the
+    same growth) of a river mouth left free. Mouths come from the seeded
+    field's own routing under the SAME channel criterion the river
+    extraction uses. The allowance grants GROWTH only — land never unpins,
+    because a cliff retreating and the marine balance drowning a shelf are
+    locally indistinguishable, and macro land is authority; retreat belongs
+    to the generator, whose free-coast output becomes the next macro. Both
+    constants hashed in AMPLIFY_CONSTANTS.
+  - MEASURED (real 2048 save, 4K): drift +0.41/+0.62 pts (age 12/24) →
+    +0.04/+0.04 with the rule — age-INDEPENDENT residual, i.e. delta
+    progradation, not creep — while carving is untouched (channels p90
+    106/187 m vs 106/185 free). Cost ~+7 s for the mask's routing
+    pre-pass. Harness invariants: macro land drowned 0 cells; sea surfaced
+    only 0.002 % (mouth allowance). The ①-era note "AMPLIFY_EROSION_ROUNDS
+    is a placeholder until ② pins the drift" is hereby discharged: the
+    dose is now free to be chosen on look alone.
 - **P4 — hydrology merge**; riverDensity → display Q-filter; runoffFloor
   removed (user-visible: arid regions lose rivers — now wanted, once
   disliked; stated for the record).

@@ -1,5 +1,6 @@
-import { BAKE_ENGINE_OVERRIDES, amplifyElevation } from './amplify'
+import { BAKE_ENGINE_OVERRIDES, DELTA_ALLOWANCE_KM, amplifyElevation } from './amplify'
 import { runErosionPassV2 } from './erosionPassV2'
+import { WORLD_WIDTH_METERS } from './erosionEngine'
 import { assembleFineForcing } from './erosionForcingFields'
 import { fillDepressionsAndRouteFlow } from './flowRouting'
 import { ABYSSAL_FLOOR, SEA_LEVEL } from '../elevation/elevationScale'
@@ -160,6 +161,12 @@ export async function runAmplification(
       waterResY: request.climateResY ?? 1,
       lithoSeed: request.lithoSeed,
     }, field, result.width, result.height, { alluvium: request.alluvium, rockContrast: request.rockContrast })
+    // The bake refines an EXISTING macro whose coasts are authority, so the
+    // status rule is explicit here where the generator runs free (its
+    // erosion output BECOMES the macro). Measured before the rule existed:
+    // +0.28…+0.62 land-fraction points of drift over age 6…24 — a balance
+    // of ±1–2-point mechanisms no physics-side cap holds.
+    forcing.statusMask = await coastStatusMask(field, result.width, result.height, request)
     const eroded = await runErosionPassV2(field, result.width, result.height, forcing, {
       age: request.erosionRounds,
       params: { ...params, upliftDt: BAKE_ENGINE_OVERRIDES.upliftDt },
@@ -274,6 +281,61 @@ function ownedRivers(rivers: RiverPolylines, owned: Uint8Array, width: number): 
     read += length * 3
   }
   return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) }
+}
+
+// The land/sea status rule's mask (erosion-v2 P3 ②): every cell pinned to
+// the SEEDED field's status — the fine-grid rendering of the macro
+// coastline — except sea cells within DELTA_ALLOWANCE_KM of a river mouth,
+// which stay free so deltas can prograde. One asymmetry, deliberate: the
+// allowance grants GROWTH only. Land never unpins, because "a cliff
+// retreating into the sea" and "the marine balance quietly drowning a
+// shelf" are indistinguishable to any local rule, and the macro's land is
+// authority (the generator, whose coasts are free, is where retreat may
+// happen and become the next macro).
+//
+// Mouths are found on the seeded field's own routing with the SAME channel
+// criterion the river extraction uses — a mouth is where a river the map
+// will actually draw meets the sea, not where any wet cell does. Without
+// climate there is no discharge and no allowance: the coast is fully
+// pinned.
+async function coastStatusMask(
+  field: Float32Array,
+  width: number,
+  height: number,
+  request: AmplifyRequest,
+): Promise<Uint8Array> {
+  const mask = new Uint8Array(field.length)
+  for (let i = 0; i < field.length; i++) mask[i] = field[i] > SEA_LEVEL ? 1 : 2
+  if (!request.precipitation || !request.climateResX || !request.climateResY) return mask
+
+  const routing = await fillDepressionsAndRouteFlow(field, width, height, 0)
+  const discharge = accumulateDischarge(routing, field, request.precipitation, request.climateResX, request.climateResY)
+  const meanRunoff = request.meanRunoff ?? meanLandRunoff(request.precipitation, field, width, height, request.climateResX, request.climateResY)
+  const threshold = channelThreshold(densityToCriticalArea(request.riverDensity ?? 55), meanRunoff)
+  const mouths = new Uint8Array(field.length)
+  let found = 0
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      if (field[i] <= SEA_LEVEL || discharge[i] < threshold) continue
+      for (let dy = -1; dy <= 1 && !mouths[i]; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (field[((y + dy + height) % height) * width + ((x + dx + width) % width)] <= SEA_LEVEL) {
+            mouths[i] = 1
+            found++
+            break
+          }
+        }
+      }
+    }
+  }
+  if (found === 0) return mask
+  const radiusCells = Math.max(1, Math.round(DELTA_ALLOWANCE_KM / (WORLD_WIDTH_METERS / width / 1000)))
+  const allowance = dilateMask(mouths, width, height, radiusCells)
+  for (let i = 0; i < field.length; i++) {
+    if (allowance[i] && field[i] <= SEA_LEVEL) mask[i] = 0
+  }
+  return mask
 }
 
 // Everything the region does: land outside it is replaced by deep sea.

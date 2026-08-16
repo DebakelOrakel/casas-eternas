@@ -40,6 +40,11 @@ export interface TerrainViews {
   erodibility: Float32Array
   // Coast pin: 1 = may receive uplift. Flag FLAG_HAS_COAST_MASK 0 → ignored.
   coastMask: Uint8Array
+  // Land/sea status rule (erosion-v2 P3 ②): 0 = free, 1 = must stay land,
+  // 2 = must stay sea. Enforced by kernelStatusClamp when
+  // FLAG_HAS_STATUS_MASK is set — the bake's macro-coastline authority; the
+  // generator never sets it (its coasts are free by decision).
+  statusMask: Uint8Array
   // Stencil scratch (hillslope/marine two-pass form).
   moveEast: Float32Array
   moveSouth: Float32Array
@@ -116,8 +121,8 @@ function makeTaker(backing: ArrayBufferLike): { take: <T>(Type: TypedArrayCtor<T
 export function terrainBufferBytes(width: number, height: number): number {
   const n = width * height
   // f32: z, uplift, erodibility, moveE/S, erosionVolume, accumulationWeights (7n)
-  // u8:  coastMask; i32 flags(16); f64 maxStepW(64)
-  return 7 * 4 * n + n + 16 * 4 + 64 * 8 + 1024
+  // u8:  coastMask, statusMask (2n); i32 flags(16); f64 maxStepW(64)
+  return 7 * 4 * n + 2 * n + 16 * 4 + 64 * 8 + 1024
 }
 
 export function routingBufferBytes(width: number, height: number): number {
@@ -154,6 +159,7 @@ export function createTerrainViews(width: number, height: number, buffer?: Array
     maxStepW: take(Float64Array, 64),
     flags: take(Int32Array, 16),
     coastMask: take(Uint8Array, n),
+    statusMask: take(Uint8Array, n),
     buffer: backing,
   }
 }
@@ -202,6 +208,7 @@ export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFro
     uplift: terrain.uplift,
     erodibility: terrain.erodibility,
     coastMask: terrain.coastMask,
+    statusMask: terrain.statusMask,
     moveEast: terrain.moveEast,
     moveSouth: terrain.moveSouth,
     erosionVolume: terrain.erosionVolume,
@@ -252,6 +259,7 @@ export const JOB_MARINE_MOVES = 6
 export const JOB_MARINE_APPLY = 7
 export const JOB_FLOOD_P1 = 8
 export const JOB_FLOOD_P2 = 9
+export const JOB_STATUS_CLAMP = 10
 
 // The refresh-coordinator protocol (refreshCtrl, Int32Array):
 //   [0] command sequence (bumped to wake the refresh coordinator)

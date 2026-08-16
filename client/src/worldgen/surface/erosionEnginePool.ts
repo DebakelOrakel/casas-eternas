@@ -15,6 +15,7 @@ import {
   JOB_MARINE_APPLY,
   JOB_FLOOD_P1,
   JOB_FLOOD_P2,
+  JOB_STATUS_CLAMP,
   REFRESH_CMD,
   REFRESH_CMD_EXIT,
   REFRESH_CMD_RUN,
@@ -30,6 +31,7 @@ import {
   DEFAULT_ENGINE_PARAMS,
   FLAG_HAS_COAST_MASK,
   FLAG_HAS_ACCUM_WEIGHTS,
+  FLAG_HAS_STATUS_MASK,
   kernelParamsFor,
   createCoordinatorScratch,
   computeOceanSeed,
@@ -154,6 +156,10 @@ export class PooledErosionEngine {
       views.accumulationWeights.set(forcing.accumulationWeights)
       views.flags[FLAG_HAS_ACCUM_WEIGHTS] = 1
     }
+    if (forcing.statusMask) {
+      views.statusMask.set(forcing.statusMask)
+      views.flags[FLAG_HAS_STATUS_MASK] = 1
+    }
     const ctrlBuffer = new SharedArrayBuffer(64)
     const doneBuffer = new SharedArrayBuffer(64)
     const kernelParams = kernelParamsFor(width, params)
@@ -242,6 +248,7 @@ export class PooledErosionEngine {
     }
     this.dispatch(JOB_MARINE_MOVES)
     this.dispatch(JOB_MARINE_APPLY)
+    if (this.views.flags[FLAG_HAS_STATUS_MASK] !== 0) this.dispatch(JOB_STATUS_CLAMP)
     return maxStep * 9000
   }
 
@@ -380,6 +387,10 @@ export class PipelinedErosionEngine {
       terrain.accumulationWeights.set(forcing.accumulationWeights)
       terrain.flags[FLAG_HAS_ACCUM_WEIGHTS] = 1
     }
+    if (forcing.statusMask) {
+      terrain.statusMask.set(forcing.statusMask)
+      terrain.flags[FLAG_HAS_STATUS_MASK] = 1
+    }
     const ctrlABuffer = new SharedArrayBuffer(64)
     const doneABuffer = new SharedArrayBuffer(64)
     const ctrlBBuffer = new SharedArrayBuffer(64)
@@ -499,6 +510,7 @@ export class PipelinedErosionEngine {
     }
     this.dispatchStencil(JOB_MARINE_MOVES)
     this.dispatchStencil(JOB_MARINE_APPLY)
+    if (this.terrain.flags[FLAG_HAS_STATUS_MASK] !== 0) this.dispatchStencil(JOB_STATUS_CLAMP)
     return maxStep * 9000
   }
 

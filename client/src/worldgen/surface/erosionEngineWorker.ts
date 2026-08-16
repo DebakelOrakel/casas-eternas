@@ -13,6 +13,7 @@ import {
   JOB_MARINE_APPLY,
   JOB_FLOOD_P1,
   JOB_FLOOD_P2,
+  JOB_STATUS_CLAMP,
   type EngineViews,
 } from './erosionEngineState'
 import {
@@ -32,6 +33,7 @@ import {
   kernelHillApply,
   kernelMarineMoves,
   kernelMarineApply,
+  kernelStatusClamp,
   type FloodScratch,
   type KernelParams,
 } from './erosionEngine'
@@ -138,6 +140,9 @@ function runLoop(init: InitMessage, ready: () => void): void {
         break
       case JOB_MARINE_APPLY:
         kernelMarineApply(views, width, height, r0, r1)
+        break
+      case JOB_STATUS_CLAMP:
+        kernelStatusClamp(views, width, r0, r1)
         break
       case JOB_FLOOD_P1:
         for (let strip = workerId; strip < ENGINE_STRIPS; strip += workerCount) {

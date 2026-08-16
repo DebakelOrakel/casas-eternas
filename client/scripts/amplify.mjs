@@ -228,6 +228,24 @@ console.log('— invariants')
   // Deltas are the one mechanism meant to raise sea floor, and they are capped
   // by a depth-graded freeboard — so this stays small even when it is not zero.
   check('nothing below sea level rises far', overM(worstBelowSea) < 150, `${overM(worstBelowSea).toFixed(1)} m`)
+
+  // THE STATUS RULE (erosion-v2 P3 ②): the macro coastline is authority.
+  // Land may NEVER drown (no allowance covers it), and sea may surface only
+  // inside the river-mouth growth allowance. Checked against the seeded
+  // field, which is what the rule pins to. This guards the WIRING — the
+  // engine's clamp makes the property true, so a failure here means the
+  // mask was not built or not passed, which no other check would see.
+  let landDrowned = 0
+  let seaSurfaced = 0
+  for (let i = 0; i < field.length; i++) {
+    const wasLand = ceiling.elevation[i] > SEA_LEVEL
+    const isLand = field[i] > SEA_LEVEL
+    if (wasLand && !isLand) landDrowned++
+    if (!wasLand && isLand) seaSurfaced++
+  }
+  check('macro land never drowns', landDrowned === 0, `${landDrowned} cells did`)
+  check('sea surfaces only near river mouths', seaSurfaced / field.length < 0.01,
+    `${seaSurfaced} cells (${((seaSurfaced / field.length) * 100).toFixed(3)}%)`)
 }
 
 // --- 1b. the bake plan -------------------------------------------------------

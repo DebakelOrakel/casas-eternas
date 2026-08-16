@@ -104,10 +104,15 @@ export interface ErosionForcing {
   // Per-cell drainage contribution (the climate-Q coupling; see
   // accumulateFlowV2). Omit for uniform area weighting.
   accumulationWeights?: Float32Array
+  // Land/sea status rule (0 free, 1 keep land, 2 keep sea), enforced once
+  // per iteration by kernelStatusClamp. The bake pins it to the macro
+  // coastline with a river-mouth growth allowance; the generator omits it
+  // (its erosion output BECOMES the macro — free coasts by decision, see
+  // docs/design/erosion-v2.md "Coastlines must be pinned").
+  statusMask?: Uint8Array
 }
 
 const ELEVATION_METERS = 9000 // the repo's metre anchor: z 1.0 = 9000 m
-const WORLD_WIDTH_METERS = 2048 * 7800
 const EPSILON_FLOOD_STEP = 1e-7
 const SQRT2 = Math.SQRT2
 const QUARTER_TURN = Math.PI / 4
@@ -121,6 +126,19 @@ const LTD_FACETS: ReadonlyArray<readonly [number, number, number]> = [
 
 export const FLAG_HAS_COAST_MASK = 0
 export const FLAG_HAS_ACCUM_WEIGHTS = 1
+export const FLAG_HAS_STATUS_MASK = 2
+
+// Where a status-clamped cell lands, in metres off sea level: a pinned land
+// cell driven under resurfaces just above the line, a pinned sea cell built
+// above it settles just below. Mechanism, not policy — the POLICY is the
+// mask (who is pinned), built by the caller.
+export const STATUS_CLAMP_M = 0.5
+
+// The world's physical width is fixed (2048 macro cells × 7.8 km); a grid
+// only chooses how finely it samples it. Exported for callers that need a
+// grid's cell size in the engine's own terms (the bake's delta-allowance
+// radius).
+export const WORLD_WIDTH_METERS = 2048 * 7800
 
 // The subset of params the parallel kernels need (a plain object so the
 // pool can structured-clone it to workers once).
@@ -510,6 +528,26 @@ export function kernelMarineApply(v: EngineViews, width: number, height: number,
       const cell = y * width + x
       const west = y * width + ((x - 1 + width) % width)
       z[cell] += -(moveEast[cell] + moveSouth[cell]) + moveEast[west] + moveSouth[north * width + x]
+    }
+  }
+}
+
+// The land/sea status rule — ONE rule, asked in one place, after every
+// mechanism of an iteration has moved material (docs/design/erosion-v2.md:
+// the coastline is a balance of ±1–2-point mechanisms and no physics-side
+// cap holds it; enforcing STATUS is what makes it auditable). Runs only
+// when the caller supplied a mask; excluded from the residual on purpose —
+// a clamp is enforcement, not evolution.
+export function kernelStatusClamp(v: EngineViews, width: number, r0: number, r1: number): void {
+  const { z, statusMask, flags } = v
+  if (flags[FLAG_HAS_STATUS_MASK] === 0) return
+  const clamp = STATUS_CLAMP_M / ELEVATION_METERS
+  for (let i = r0 * width; i < r1 * width; i++) {
+    const status = statusMask[i]
+    if (status === 1) {
+      if (z[i] <= 0) z[i] = clamp
+    } else if (status === 2) {
+      if (z[i] > 0) z[i] = -clamp
     }
   }
 }
@@ -920,6 +958,10 @@ export class ErosionEngine {
       this.views.accumulationWeights.set(forcing.accumulationWeights)
       this.views.flags[FLAG_HAS_ACCUM_WEIGHTS] = 1
     }
+    if (forcing.statusMask) {
+      this.views.statusMask.set(forcing.statusMask)
+      this.views.flags[FLAG_HAS_STATUS_MASK] = 1
+    }
     this.scratch = createCoordinatorScratch(width, height)
     this.floodScratch = createFloodScratch(width, height)
     this.kernelParams = kernelParamsFor(width, params)
@@ -980,6 +1022,7 @@ export class ErosionEngine {
     maxStep = Math.max(maxStep, this.views.maxStepW[0])
     kernelMarineMoves(this.views, this.width, this.height, 0, this.height, this.kernelParams)
     kernelMarineApply(this.views, this.width, this.height, 0, this.height)
+    if (this.views.flags[FLAG_HAS_STATUS_MASK] !== 0) kernelStatusClamp(this.views, this.width, 0, this.height)
     return maxStep * ELEVATION_METERS
   }
 
