@@ -37,7 +37,7 @@ import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../worldgen/cl
 import { evaporationPotential } from '../../worldgen/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '../../worldgen/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
-import { DISCHARGE_LAYER, WORLD_LAYERS, bakeLayer } from '../../world/save/worldLayers'
+import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from '../../world/save/worldLayers'
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
@@ -2949,12 +2949,23 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // up any world value by sampling, with no generation code. Bakes whatever the
   // main thread has cached (climate/hydrology/ecology from the panels visited);
   // layers absent from the cache are simply omitted from the manifest.
-  function bakeQueryLayers(zip: JSZip): void {
+  function bakeQueryLayers(zip: JSZip, forcing: { uplift: Float32Array; erodibility: Float32Array; resX: number; resY: number } | null): void {
     type ManifestLayer = { name: string; file: string; kind: 'raster' | 'vector'; resX?: number; resY?: number; dtype?: string; encoding?: { scale: number; offset: number }; unit?: string; landOnly?: boolean }
     const layers: ManifestLayer[] = []
     // Elevation is always present (post-generation); carried raw as elevation.f32
     // (it doubles as the restore raster).
     layers.push({ name: 'elevation', file: 'elevation.f32', kind: 'raster', resX: MAP_WIDTH, resY: MAP_HEIGHT, dtype: 'f32', encoding: { scale: 1, offset: 0 }, unit: 'relative', landOnly: false })
+
+    // The erosion engine's coarse forcing, from the worldData reply rather
+    // than a screen-side stash: it exists whenever the sim does, independent
+    // of the climate gate below — a bake erodes before it needs climate.
+    if (forcing) {
+      for (const spec of FORCING_LAYERS) {
+        const src = spec.name === 'uplift' ? forcing.uplift : forcing.erodibility
+        zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
+        layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: forcing.resX, resY: forcing.resY, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
+      }
+    }
 
     // Climate/hydrology/ecology are only baked once they've been computed
     // (compute-on-save ensures that when the world has been eroded).
@@ -3105,7 +3116,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     zip.file('lattice.class.i8', message.latticeLastClassCode)
     zip.file('oceanAge.f32', message.oceanAge)
     zip.file('elevation.f32', message.elevation)
-    bakeQueryLayers(zip)
+    bakeQueryLayers(zip, message.forcingResX > 0
+      ? { uplift: new Float32Array(message.uplift), erodibility: new Float32Array(message.erodibility), resX: message.forcingResX, resY: message.forcingResY }
+      : null)
     const preview = await makePreviewBlob()
     if (preview) zip.file('preview.png', preview)
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
@@ -3309,8 +3322,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         {
           macro: inputs.elevations, macroWidth: inputs.width, macroHeight: inputs.height,
           factor, detailSeed: inputs.detailSeed, erosionRounds: AMPLIFY_EROSION_ROUNDS,
-          erosionStrength: inputs.erosionControls.strength,
-          drainageRefresh: inputs.erosionControls.refresh,
+          lithoSeed: inputs.lithoSeed,
+          alluvium: inputs.erosionControls.alluvium,
+          rockContrast: inputs.erosionControls.rockContrast,
+          uplift: inputs.uplift?.data,
+          erodibility: inputs.erodibility?.data,
+          forcingResX: inputs.uplift?.resX, forcingResY: inputs.uplift?.resY,
           riverDensity: inputs.erosionControls.riverDensity,
           precipitation: inputs.climate.data,
           temperature: inputs.temperature?.data,

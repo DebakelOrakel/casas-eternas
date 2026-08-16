@@ -44,12 +44,13 @@ export interface GridLayer {
 // eroded rather than by generic defaults. Undefined means the save predates
 // the setting; the pipeline falls back to its own default.
 export interface ErosionControls {
-  // v1's controls — LEGACY: only old saves carry them; the v1 bake still
-  // applies them so those worlds re-bake the way they were made.
+  // v1's controls — DEAD since the bake moved to the engine (P3): still read
+  // so an old save's recipe survives a round-trip, applied by nothing.
+  // Removal is P5 teardown.
   strength: number | undefined
   refresh: number | undefined
-  // The v2 engine's controls (new saves). The generator applies these; the
-  // bake ignores them until P3 switches it to the engine.
+  // The v2 engine's controls. The generator and the amplification bake both
+  // apply these; undefined (an old save) falls back to the declared defaults.
   landscapeAge: number | undefined
   alluvium: number | undefined
   rockContrast: number | undefined
@@ -65,10 +66,19 @@ export interface WorldInputs {
   // roughness. It IS the generator's warpSeed (salted), derived from the
   // recipe's seed rather than stored — see world/query.openWorld.
   detailSeed: number
+  // Seed of the erosion engine's lithology lattice (see world/query.ts) —
+  // derived from the recipe like detailSeed, present for every save.
+  lithoSeed: number
   erosionControls: ErosionControls
-  // Precipitation drives the discharge in the bake's hydrology re-run. Absent
-  // for a world saved before climate was computed; the bake then stops after
-  // erosion.
+  // The erosion engine's coarse forcing, from the save's forcing layers
+  // (docs/design/erosion-v2.md, P3). Null for a save written before the
+  // layers existed — the bake then erodes with neutral forcing (no uplift,
+  // lithology-only rock contrast), a deliberate hard break.
+  uplift: GridLayer | null
+  erodibility: GridLayer | null
+  // Precipitation drives the discharge in the bake's hydrology re-run AND
+  // the engine's water forcing contrast. Absent for a world saved before
+  // climate was computed; the bake then stops after erosion.
   climate: GridLayer | null
   // Temperature on the same climate grid. The bake's hydrology re-run needs it
   // to re-flood the basins (evaporation decides which stay wet); rivers do
@@ -134,6 +144,8 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
   if (!elevation) return null
 
   const climate = await world.acquire('precipitation')
+  const uplift = await world.acquire('uplift')
+  const erodibility = await world.acquire('erodibility')
   const biome = await world.acquire('biome')
   const lakeDepth = await world.acquire('lakeDepth')
   const temperature = await world.acquire('temperature')
@@ -150,7 +162,10 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
     height: world.height,
     seedText: world.recipe.seedText,
     detailSeed: world.recipe.detailSeed,
+    lithoSeed: world.recipe.lithoSeed,
     erosionControls: world.recipe.erosionControls,
+    uplift,
+    erodibility,
     climate,
     temperature,
     biome,

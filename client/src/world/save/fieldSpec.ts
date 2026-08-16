@@ -63,6 +63,15 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
   world('lakeDepth', 'depth', true),
   ...ECOLOGY_FIELD_NAMES.map((name) => climate(name, '', true)),
   world('discharge', 'm3/s', false),
+  // The erosion engine's coarse forcing (docs/design/erosion-v2.md): uplift
+  // is the features' activity-weighted U (normalized to the world's peak,
+  // negative in rifts), erodibility the crust-history hardness multiplier
+  // BEFORE the seed-procedural lithology noise, which is applied at whatever
+  // grid consumes it. Written so the amplification bake can erode with the
+  // engine without carrying the simulation; meaningful over ocean too
+  // (submarine features uplift, oceanic crust has a hardness).
+  climate('uplift', 'relative', false),
+  climate('erodibility', '', false),
 ]
 
 const BY_NAME = new Map(WORLD_FIELDS.map((f) => [f.name, f]))

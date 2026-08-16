@@ -433,6 +433,17 @@ export interface WorkerWorldDataMessage {
   latticeLastClassCode: ArrayBuffer
   oceanAge: ArrayBuffer
   elevation: ArrayBuffer
+  // The erosion engine's two coarse forcing fields (Float32, forcingResX ×
+  // forcingResY — the climate grid), derived from the live sim at save time
+  // and persisted as save layers: the amplification bake erodes with the
+  // engine and needs U and the crust-history hardness, but must not carry
+  // the simulation (docs/design/erosion-v2.md, P3). Empty in the Archean
+  // branch — there is no plate sim to derive them from, and a pre-tectonic
+  // save cannot be baked anyway.
+  uplift: ArrayBuffer
+  erodibility: ArrayBuffer
+  forcingResX: number
+  forcingResY: number
 }
 
 // The other direction, which had no union at all: WorldGenScreen listed the twelve

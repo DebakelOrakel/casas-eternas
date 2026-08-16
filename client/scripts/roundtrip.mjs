@@ -160,15 +160,29 @@ const zipElev = new Float32Array(W * H)
 for (let i = 0; i < zipElev.length; i++) zipElev[i] = Math.cos(i * 0.11) * 0.5
 const precipSpec = M.layers.WORLD_LAYERS.find((s) => s.name === 'precipitation')
 const zipPrecip = new Float32Array(W * H).fill(1200)
+// The engine's forcing layers (erosion-v2 P3): raw f32, written by the save,
+// consumed by the bake. U deliberately carries a negative (rift) value — the
+// layer is signed, and a quantised range would have clipped it.
+const zipUplift = new Float32Array(W * H)
+const zipHardness = new Float32Array(W * H)
+for (let i = 0; i < zipUplift.length; i++) {
+  zipUplift[i] = Math.sin(i * 0.37) * 0.8
+  zipHardness[i] = 1 + 0.4 * Math.cos(i * 0.21)
+}
+const forcingSpecs = Object.fromEntries(M.layers.FORCING_LAYERS.map((s) => [s.name, s]))
 const zip = new JSZip()
 zip.file('world.yaml', ['spec:', `  seed: "zip-welt"`, '  erosion:', '    erosionStrength: 4', '    drainageRefresh: 1', 'metadata:', '  uid: 0192abcd-0000-8000-8000-000000000000', ''].join('\n'))
 zip.file('layers/elevation.f32', zipElev.buffer)
 zip.file('layers/precipitation.u16', M.layers.bakeLayer(zipPrecip, precipSpec))
+zip.file('layers/uplift.f32', M.layers.bakeLayer(zipUplift, forcingSpecs.uplift))
+zip.file('layers/erodibility.f32', M.layers.bakeLayer(zipHardness, forcingSpecs.erodibility))
 zip.file('manifest.json', JSON.stringify({
   world: { width: W, height: H, topology: 'torus' },
   layers: [
     { name: 'elevation', file: 'layers/elevation.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 } },
     { name: 'precipitation', file: 'layers/precipitation.u16', kind: 'raster', resX: W, resY: H, dtype: precipSpec.dtype, encoding: { scale: precipSpec.scale, offset: precipSpec.offset } },
+    { name: 'uplift', file: 'layers/uplift.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 } },
+    { name: 'erodibility', file: 'layers/erodibility.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 } },
   ],
 }))
 const loaded = await M.inputs.readWorldInputs(await zip.generateAsync({ type: 'arraybuffer' }))
@@ -177,6 +191,11 @@ else {
   check('elevation comes back byte-identical', String(loaded.elevations) === String(zipElev))
   check('the recipe is read', loaded.seedText === 'zip-welt' && loaded.erosionControls.strength === 4 && loaded.erosionControls.refresh === 1)
   check('the uid is read rather than derived', loaded.worldUid === '0192abcd-0000-8000-8000-000000000000')
+  check('the forcing layers come back byte-identical, sign included',
+    String(loaded.uplift?.data) === String(zipUplift) && String(loaded.erodibility?.data) === String(zipHardness))
+  // The lithology seed is DERIVED (like detailSeed), so every reader of one
+  // seed text must land on one lattice.
+  check('the lithology seed is derived from the recipe', Number.isInteger(loaded.lithoSeed) && loaded.lithoSeed >>> 0 === loaded.lithoSeed)
   // The reader must reach the SAME id as deriving it here by hand — and it must
   // hash the STORED (dequantised) precipitation, never a raw float array.
   const direct = M.key.deriveWorldId({

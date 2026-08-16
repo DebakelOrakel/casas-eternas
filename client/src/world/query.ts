@@ -6,6 +6,7 @@ import { readRecipeNumber, readRecipeValue } from './save/recipeYaml'
 import { deriveWorldId } from './identity'
 import { hashSeedString } from '../worldgen/core/rng'
 import { FINE_DETAIL_SEED_SALT } from '../worldgen/elevation/ridgedNoise'
+import { erosionLithoSeed } from '../worldgen/surface/erosionForcingFields'
 import type { ErosionControls, WorldManifest, WorldManifestLayer } from './save/loadWorldInputs'
 
 // ASKING A FINISHED WORLD WHAT IS TRUE AT A PLACE.
@@ -71,6 +72,10 @@ export interface WorldRecipe {
   // seed roughness: the generator's own warpSeed, derived from the recipe's
   // seed and salted like every other consumer of that noise (see openWorld).
   detailSeed: number
+  // Seeds the erosion engine's lithology lattice — the same warpSeed under
+  // the erosion salt (surface/erosionForcingFields.erosionLithoSeed), so a
+  // bake carves the exact rock bands the generator carved.
+  lithoSeed: number
   erosionControls: ErosionControls
   // The world's identity in the server's store (`metadata.uid`) — the half that
   // does NOT move when the terrain does. Empty for a save written before the
@@ -145,6 +150,7 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
   const recipe: WorldRecipe = {
     seedText,
     detailSeed,
+    lithoSeed: erosionLithoSeed(hashSeedString(`${seedText}:coastalWarp`)),
     erosionControls: {
       strength: readRecipeNumber(yamlText, 'spec.erosion.erosionStrength'),
       refresh: readRecipeNumber(yamlText, 'spec.erosion.drainageRefresh'),

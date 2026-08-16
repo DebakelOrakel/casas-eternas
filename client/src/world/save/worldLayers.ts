@@ -114,6 +114,18 @@ export const WORLD_LAYERS: LayerSpec[] = [
 // and even then it only flattens the top of the largest river.
 export const DISCHARGE_LAYER: LayerSpec = layer('discharge', 'u16', 4, 0)
 
+// The erosion engine's coarse forcing fields, written whenever a tectonic
+// world is saved — independent of the climate-gated layers above, because a
+// bake erodes before it needs climate. Raw f32 rather than quantised: U's
+// range is a per-world normalization with a negative (rift) tail and the
+// hardness constants are still calibration placeholders, so a fixed
+// quantisation range would bake today's calibration into the format for the
+// sake of ~200 KB a save.
+export const FORCING_LAYERS: LayerSpec[] = [
+  layer('uplift', 'f32', 1, 0),
+  layer('erodibility', 'f32', 1, 0),
+]
+
 
 const maxCode = (dtype: Dtype): number => (dtype === 'u16' ? 65535 : 255)
 
