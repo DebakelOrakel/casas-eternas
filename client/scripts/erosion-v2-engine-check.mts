@@ -16,7 +16,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ErosionEngine, DEFAULT_ENGINE_PARAMS } from '../src/worldgen/surface/erosionEngine'
-import { PooledErosionEngine } from '../src/worldgen/surface/erosionEnginePool'
+import { PooledErosionEngine, PipelinedErosionEngine } from '../src/worldgen/surface/erosionEnginePool'
 import { Worker as NodeWorker } from 'node:worker_threads'
 import { fineDetailNoise } from '../src/worldgen/elevation/ridgedNoise'
 
@@ -167,5 +167,46 @@ for (const workerCount of [2, 8]) {
   } else {
     console.log(`FAIL — pool(${workerCount}): ${differing} of ${n} cells differ`)
     process.exitCode = 1
+  }
+}
+
+// --- the pipelined engine: deterministic across worker splits ----------------
+// Pipelining changes the routing-staleness SCHEDULE (fixed depth D, swap at
+// fixed boundaries), so its output legitimately differs from the
+// synchronous engine — but it must be byte-identical across ANY worker
+// split, and statistically indistinguishable from the synchronous run.
+let pipelineReference: Uint16Array | null = null
+for (const [stencilWorkers, refreshWorkers] of [[2, 1], [4, 2]] as const) {
+  const pipeline = await PipelinedErosionEngine.create(
+    RES_X, RES_Y, z, { uplift, erodibility },
+    () => new NodeWorker(workerUrl) as never,
+    { stencilWorkers, refreshWorkers, pipelineDepth: 8 })
+  const t2 = performance.now()
+  pipeline.run(ITERS)
+  const pipeMs = performance.now() - t2
+  await pipeline.close()
+  const bytes = new Uint16Array(n)
+  for (let i = 0; i < n; i++) {
+    const v = Math.round(((pipeline.z[i] + 1) / 2) * 65535)
+    bytes[i] = v < 0 ? 0 : v > 65535 ? 65535 : v
+  }
+  if (!pipelineReference) {
+    pipelineReference = bytes
+    let land = 0
+    let landSync = 0
+    for (let i = 0; i < n; i++) {
+      if (bytes[i] > 32767) land++
+      if (engineU16[i] > 32767) landSync++
+    }
+    console.log(`pipelined(D=8): land ${(100 * land / n).toFixed(1)} % vs sync ${(100 * landSync / n).toFixed(1)} % (${(pipeMs / 1000).toFixed(1)} s)`)
+  } else {
+    let differing = 0
+    for (let i = 0; i < n; i++) if (bytes[i] !== pipelineReference[i]) differing++
+    if (differing === 0) {
+      console.log(`PASS — pipelined byte-identical across worker splits (2+1 vs ${stencilWorkers}+${refreshWorkers})`)
+    } else {
+      console.log(`FAIL — pipelined split mismatch: ${differing} of ${n} cells`)
+      process.exitCode = 1
+    }
   }
 }

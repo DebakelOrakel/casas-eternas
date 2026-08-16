@@ -394,9 +394,25 @@ fixed strips = parity by construction). Measured at 2048, K=8:
 single-thread 227 ms/iter, pool(8) 138.5 ms/iter — 6.0× vs the serial
 baseline; an age-100 transient costs ~14 s, a full age-800 solve ~1.9
 min. Node workers load the TS entry directly (tsx execArgv inheritance);
-the browser side wires up at the switchover. The pipelined refresh
-(routing double-buffered on background workers) remains the next
-threading increment.
+the browser side wires up at the switchover.
+
+**The pipelined refresh is BUILT and measured** (same day): two routing
+buffers, a dedicated refresh-coordinator WORKER running the refresh's
+serial parts (ocean, spill graph, merge, λ, accumulation) plus its own
+small kernel group — the whole measured serial wall moves OFF the
+iteration path. Determinism survives by scheduling-free design: the main
+coordinator copies the z-snapshot at a FIXED iteration boundary and swaps
+at the NEXT fixed boundary regardless of when the refresh finished, so
+active routing during [kD, (k+1)D) is always routing(z_{(k-1)D}) —
+staleness D..2D, byte-identical across every worker split (gated in the
+engine-check, along with land-fraction parity vs the synchronous engine).
+The key structural simplification: STENCIL KERNELS NEVER READ ROUTING
+STATE, so only the main coordinator and the refresh group see the double
+buffer at all. Measured at 2048: sync pool(8) 128.7 ms/iter → pipelined
+4+3+1 at D=8 104.1 ms (8.0× vs serial, staleness within the validated
+K≤8 class ×2), 5+2+1 at D=12 94.9 ms (8.7×, staleness 12..24 —
+pending its own validation before use). A full age-800 solve at 2048 now
+costs ~83 s; an age-100 transient ~10 s.
 
 Substrate: `SharedArrayBuffer` + the existing worker pool in the browser,
 `worker_threads` in the Node baker. SAB needs COOP/COEP headers — dev

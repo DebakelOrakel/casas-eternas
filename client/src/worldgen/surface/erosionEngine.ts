@@ -516,7 +516,6 @@ export interface CoordinatorScratch {
   bestInflow: Uint32Array
   flux: Float32Array
   donorMin: Float32Array
-  popOrder: Int32Array
 }
 
 export function createCoordinatorScratch(width: number, height: number): CoordinatorScratch {
@@ -532,7 +531,6 @@ export function createCoordinatorScratch(width: number, height: number): Coordin
     bestInflow: new Uint32Array(n),
     flux: new Float32Array(n),
     donorMin: new Float32Array(n),
-    popOrder: new Int32Array(n),
   }
 }
 
@@ -685,16 +683,16 @@ export function solveBorderGraph(v: EngineViews, width: number, height: number, 
   }
 }
 
-// Merge the per-strip pop segments (each sorted by filled) into one global
-// topological order in scratch.popOrder. Any filled-ascending order is
-// valid for every walk: receivers are STRICTLY lower in filled.
-export function mergePopOrder(v: EngineViews, width: number, height: number, s: CoordinatorScratch): number {
+// Merge the per-strip pop segments (each sorted by filled) into the global
+// topological order (views.popOrder). Any filled-ascending order is valid
+// for every walk: receivers are STRICTLY lower in filled.
+export function mergePopOrder(v: EngineViews, width: number, height: number): number {
   const { filled, stripPopOrder, stripPopped } = v
   const stripRows = height / ENGINE_STRIPS
   const heads = new Int32Array(ENGINE_STRIPS)
   let total = 0
   for (let strip = 0; strip < ENGINE_STRIPS; strip++) total += stripPopped[strip]
-  const out = s.popOrder
+  const out = v.popOrder
   for (let k = 0; k < total; k++) {
     let best = -1
     let bestKey = Infinity
@@ -713,8 +711,8 @@ export function mergePopOrder(v: EngineViews, width: number, height: number, s: 
 // transverse deviation, inheriting λ from the largest contributor at
 // confluences. Serial by nature (popOrder backward).
 export function lambdaWalk(v: EngineViews, popped: number, s: CoordinatorScratch): void {
-  const { flowTarget, ltdCardinal, ltdDiagonal, ltdDeltaC, ltdDeltaD, ltdFallback, ltdMode } = v
-  const { lambda, contrib, bestInflow, popOrder } = s
+  const { flowTarget, ltdCardinal, ltdDiagonal, ltdDeltaC, ltdDeltaD, ltdFallback, ltdMode, popOrder } = v
+  const { lambda, contrib, bestInflow } = s
   flowTarget.fill(-1)
   lambda.fill(0)
   contrib.fill(0)
@@ -751,9 +749,8 @@ export function lambdaWalk(v: EngineViews, popped: number, s: CoordinatorScratch
 }
 
 // Drainage-area accumulation over the MFD edges, popOrder backward.
-export function accumulateFlowV2(v: EngineViews, width: number, height: number, popped: number, s: CoordinatorScratch): void {
-  const { accumulation, mfdDegree, mfdDirection, mfdWeight } = v
-  const { popOrder } = s
+export function accumulateFlowV2(v: EngineViews, width: number, height: number, popped: number): void {
+  const { accumulation, mfdDegree, mfdDirection, mfdWeight, popOrder } = v
   accumulation.fill(1)
   for (let i = popped - 1; i >= 0; i--) {
     const cell = popOrder[i]
@@ -774,9 +771,8 @@ export function accumulateFlowV2(v: EngineViews, width: number, height: number, 
 // inside a filled depression routing runs uphill over the fill, and the
 // implicit form would PULL the cell up: a lake bed does not erode. Returns
 // the phase residual (normalized units).
-export function fluvialWalk(v: EngineViews, width: number, popped: number, params: ErosionEngineParams, s: CoordinatorScratch): number {
-  const { z, flowTarget, accumulation, erodibility, erosionVolume } = v
-  const { popOrder } = s
+export function fluvialWalk(v: EngineViews, width: number, popped: number, params: ErosionEngineParams): number {
+  const { z, flowTarget, accumulation, erodibility, erosionVolume, popOrder } = v
   const cellM = WORLD_WIDTH_METERS / width
   const cellKm2 = (cellM / 1000) * (cellM / 1000)
   let maxStep = 0
@@ -813,8 +809,8 @@ export function fluvialWalk(v: EngineViews, width: number, popped: number, param
 // the freeboard (a delta aggrades to the surface, then progrades). Returns
 // the phase residual (normalized units).
 export function sedimentWalk(v: EngineViews, width: number, popped: number, params: ErosionEngineParams, s: CoordinatorScratch): number {
-  const { z, flowTarget, accumulation, erosionVolume } = v
-  const { popOrder, flux, donorMin } = s
+  const { z, flowTarget, accumulation, erosionVolume, popOrder } = v
+  const { flux, donorMin } = s
   const cellM = WORLD_WIDTH_METERS / width
   const cellKm2 = (cellM / 1000) * (cellM / 1000)
   let maxStep = 0
@@ -919,7 +915,7 @@ export class ErosionEngine {
   }
 
   get popOrder(): Int32Array {
-    return this.scratch.popOrder
+    return this.views.popOrder
   }
 
   // Recompute the whole routing state from the current z. Reads z only;
@@ -937,11 +933,11 @@ export class ErosionEngine {
     for (let strip = 0; strip < ENGINE_STRIPS; strip++) kernelFloodPhase1(this.views, this.width, this.height, strip, this.floodScratch)
     solveBorderGraph(this.views, this.width, this.height, this.scratch)
     for (let strip = 0; strip < ENGINE_STRIPS; strip++) kernelFloodPhase2(this.views, this.width, this.height, strip, this.floodScratch)
-    this.poppedCount = mergePopOrder(this.views, this.width, this.height, this.scratch)
+    this.poppedCount = mergePopOrder(this.views, this.width, this.height)
     kernelLtdScan(this.views, this.width, this.height, 0, this.height)
     lambdaWalk(this.views, this.poppedCount, this.scratch)
     kernelMfd(this.views, this.width, this.height, 0, this.height)
-    accumulateFlowV2(this.views, this.width, this.height, this.poppedCount, this.scratch)
+    accumulateFlowV2(this.views, this.width, this.height, this.poppedCount)
   }
 
   // One physics iteration on the current routing. Returns the residual: the
@@ -949,7 +945,7 @@ export class ErosionEngine {
   stepPhysics(): number {
     let maxStep = 0
     kernelUplift(this.views, this.width, 0, this.height, this.kernelParams)
-    maxStep = Math.max(maxStep, fluvialWalk(this.views, this.width, this.poppedCount, this.params, this.scratch))
+    maxStep = Math.max(maxStep, fluvialWalk(this.views, this.width, this.poppedCount, this.params))
     maxStep = Math.max(maxStep, sedimentWalk(this.views, this.width, this.poppedCount, this.params, this.scratch))
     kernelHillMoves(this.views, this.width, this.height, 0, this.height, this.kernelParams)
     kernelHillApply(this.views, this.width, this.height, 0, this.height, 0)

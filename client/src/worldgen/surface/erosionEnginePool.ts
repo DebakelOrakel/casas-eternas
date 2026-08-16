@@ -1,6 +1,9 @@
 import {
-  createEngineViews,
-  engineBufferBytes,
+  createTerrainViews,
+  createRoutingViews,
+  assembleViews,
+  terrainBufferBytes,
+  routingBufferBytes,
   ENGINE_STRIPS,
   JOB_EXIT,
   JOB_UPLIFT,
@@ -12,7 +15,16 @@ import {
   JOB_MARINE_APPLY,
   JOB_FLOOD_P1,
   JOB_FLOOD_P2,
+  REFRESH_CMD,
+  REFRESH_CMD_EXIT,
+  REFRESH_CMD_RUN,
+  REFRESH_DONE,
+  REFRESH_POPPED,
+  REFRESH_SEQ,
+  REFRESH_TARGET,
   type EngineViews,
+  type RoutingViews,
+  type TerrainViews,
 } from './erosionEngineState'
 import {
   DEFAULT_ENGINE_PARAMS,
@@ -127,8 +139,9 @@ export class PooledErosionEngine {
     if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
       throw new Error('field size mismatch')
     }
-    const buffer = new SharedArrayBuffer(engineBufferBytes(width, height))
-    const views = createEngineViews(width, height, buffer)
+    const terrainBuffer = new SharedArrayBuffer(terrainBufferBytes(width, height))
+    const routingBuffer = new SharedArrayBuffer(routingBufferBytes(width, height))
+    const views = assembleViews(createTerrainViews(width, height, terrainBuffer), createRoutingViews(width, height, routingBuffer))
     views.z.set(initial)
     views.uplift.set(forcing.uplift)
     views.erodibility.set(forcing.erodibility)
@@ -146,11 +159,14 @@ export class PooledErosionEngine {
       workers.push(worker)
       readies.push(onceReady(worker))
       worker.postMessage({
-        buffer,
+        terrain: terrainBuffer,
+        routingA: routingBuffer,
+        routingB: routingBuffer,
         ctrl: ctrlBuffer,
         done: doneBuffer,
         width,
         height,
+        role: 'stencil',
         workerId,
         workerCount,
         kernelParams,
@@ -177,7 +193,7 @@ export class PooledErosionEngine {
   }
 
   get popOrder(): Int32Array {
-    return this.scratch.popOrder
+    return this.views.popOrder
   }
 
   private dispatch(job: number): void {
@@ -201,17 +217,17 @@ export class PooledErosionEngine {
     this.dispatch(JOB_FLOOD_P1)
     solveBorderGraph(this.views, this.width, this.height, this.scratch)
     this.dispatch(JOB_FLOOD_P2)
-    this.poppedCount = mergePopOrder(this.views, this.width, this.height, this.scratch)
+    this.poppedCount = mergePopOrder(this.views, this.width, this.height)
     this.dispatch(JOB_LTD_SCAN)
     lambdaWalk(this.views, this.poppedCount, this.scratch)
     this.dispatch(JOB_MFD)
-    accumulateFlowV2(this.views, this.width, this.height, this.poppedCount, this.scratch)
+    accumulateFlowV2(this.views, this.width, this.height, this.poppedCount)
   }
 
   stepPhysics(): number {
     let maxStep = 0
     this.dispatch(JOB_UPLIFT)
-    maxStep = Math.max(maxStep, fluvialWalk(this.views, this.width, this.poppedCount, this.params, this.scratch))
+    maxStep = Math.max(maxStep, fluvialWalk(this.views, this.width, this.poppedCount, this.params))
     maxStep = Math.max(maxStep, sedimentWalk(this.views, this.width, this.poppedCount, this.params, this.scratch))
     this.views.maxStepW.fill(0, 0, this.workerCount)
     this.dispatch(JOB_HILL_MOVES)
@@ -241,6 +257,244 @@ export class PooledErosionEngine {
     Atomics.store(this.ctrl, 1, JOB_EXIT)
     Atomics.add(this.ctrl, 0, 1)
     Atomics.notify(this.ctrl, 0)
+    await Promise.all(this.workers.map((worker) => worker.terminate()))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The PIPELINED engine: physics never waits for routing. Two routing
+// buffers; a dedicated refresh coordinator worker (plus its own small
+// worker group) recomputes routing from a z-SNAPSHOT while the stencil
+// group and the main coordinator keep iterating on the previous routing.
+//
+// Determinism is scheduling-free by design:
+//   - the snapshot is copied by the MAIN coordinator at a fixed iteration
+//     boundary (never while physics mutates z mid-copy),
+//   - the swap happens at the NEXT fixed boundary, whether the refresh
+//     finished long before it or the coordinator has to wait for it,
+//   - so the routing active during [kD, (k+1)D) is always routing(z_{(k-1)D}):
+//     staleness D..2D, identical for every worker split and every timing.
+// Physics tolerance for that staleness is the measured K-study (K ≤ 8
+// statistically equivalent; D defaults to 8 → staleness 8..16, validated
+// by the engine-check's stats gate).
+export interface PipelineOptions {
+  stencilWorkers: number
+  refreshWorkers: number
+  // The fixed swap cadence D, iterations. Also the refresh budget: a
+  // refresh slower than D iterations of physics stalls the boundary.
+  pipelineDepth: number
+}
+
+export class PipelinedErosionEngine {
+  readonly width: number
+  readonly height: number
+  readonly params: ErosionEngineParams
+  readonly options: PipelineOptions
+  poppedCount = 0
+
+  private readonly terrain: TerrainViews
+  private readonly routing: readonly [RoutingViews, RoutingViews]
+  private readonly liveViews: readonly [EngineViews, EngineViews]
+  private readonly scratch: CoordinatorScratch
+  private readonly workers: WorkerLike[]
+  private readonly ctrlA: Int32Array
+  private readonly doneA: Int32Array
+  private readonly ctrlB: Int32Array
+  private readonly refreshCtrl: Int32Array
+  private activeIndex = -1
+  private inFlight = false
+
+  private constructor(
+    width: number,
+    height: number,
+    params: ErosionEngineParams,
+    options: PipelineOptions,
+    terrain: TerrainViews,
+    routing: readonly [RoutingViews, RoutingViews],
+    workers: WorkerLike[],
+    ctrlA: Int32Array,
+    doneA: Int32Array,
+    ctrlB: Int32Array,
+    refreshCtrl: Int32Array,
+  ) {
+    this.width = width
+    this.height = height
+    this.params = params
+    this.options = options
+    this.terrain = terrain
+    this.routing = routing
+    this.liveViews = [assembleViews(terrain, routing[0]), assembleViews(terrain, routing[1])]
+    this.workers = workers
+    this.ctrlA = ctrlA
+    this.doneA = doneA
+    this.ctrlB = ctrlB
+    this.refreshCtrl = refreshCtrl
+    this.scratch = createCoordinatorScratch(width, height)
+  }
+
+  static async create(
+    width: number,
+    height: number,
+    initial: Float32Array,
+    forcing: ErosionForcing,
+    createWorker: () => WorkerLike,
+    options: PipelineOptions,
+    params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS,
+  ): Promise<PipelinedErosionEngine> {
+    if (height % ENGINE_STRIPS !== 0) throw new Error(`height ${height} not divisible by ${ENGINE_STRIPS} strips`)
+    if (options.stencilWorkers < 1 || options.refreshWorkers < 1 || options.pipelineDepth < 1) {
+      throw new Error('pipeline options must all be >= 1')
+    }
+    const n = width * height
+    if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
+      throw new Error('field size mismatch')
+    }
+    const terrainBuffer = new SharedArrayBuffer(terrainBufferBytes(width, height))
+    const routingBufferA = new SharedArrayBuffer(routingBufferBytes(width, height))
+    const routingBufferB = new SharedArrayBuffer(routingBufferBytes(width, height))
+    const terrain = createTerrainViews(width, height, terrainBuffer)
+    const routing: [RoutingViews, RoutingViews] = [
+      createRoutingViews(width, height, routingBufferA),
+      createRoutingViews(width, height, routingBufferB),
+    ]
+    terrain.z.set(initial)
+    terrain.uplift.set(forcing.uplift)
+    terrain.erodibility.set(forcing.erodibility)
+    if (forcing.coastMask) {
+      terrain.coastMask.set(forcing.coastMask)
+      terrain.flags[FLAG_HAS_COAST_MASK] = 1
+    }
+    const ctrlABuffer = new SharedArrayBuffer(64)
+    const doneABuffer = new SharedArrayBuffer(64)
+    const ctrlBBuffer = new SharedArrayBuffer(64)
+    const doneBBuffer = new SharedArrayBuffer(64)
+    const refreshCtrlBuffer = new SharedArrayBuffer(64)
+    const kernelParams = kernelParamsFor(width, params)
+    const workers: WorkerLike[] = []
+    const readies: Promise<void>[] = []
+    const spawn = (message: Record<string, unknown>): void => {
+      const worker = createWorker()
+      workers.push(worker)
+      readies.push(onceReady(worker))
+      worker.postMessage({
+        terrain: terrainBuffer,
+        routingA: routingBufferA,
+        routingB: routingBufferB,
+        width,
+        height,
+        kernelParams,
+        ...message,
+      })
+    }
+    for (let workerId = 0; workerId < options.stencilWorkers; workerId++) {
+      spawn({ role: 'stencil', ctrl: ctrlABuffer, done: doneABuffer, workerId, workerCount: options.stencilWorkers })
+    }
+    for (let workerId = 0; workerId < options.refreshWorkers; workerId++) {
+      spawn({ role: 'refresh', ctrl: ctrlBBuffer, done: doneBBuffer, refreshCtrl: refreshCtrlBuffer, workerId, workerCount: options.refreshWorkers })
+    }
+    spawn({ role: 'refreshCoordinator', ctrl: ctrlBBuffer, done: doneBBuffer, refreshCtrl: refreshCtrlBuffer, workerId: 0, workerCount: options.refreshWorkers })
+    await Promise.all(readies)
+    return new PipelinedErosionEngine(
+      width, height, params, options, terrain, routing, workers,
+      new Int32Array(ctrlABuffer), new Int32Array(doneABuffer), new Int32Array(ctrlBBuffer), new Int32Array(refreshCtrlBuffer))
+  }
+
+  get z(): Float32Array {
+    return this.terrain.z
+  }
+
+  private get activeViews(): EngineViews {
+    return this.liveViews[this.activeIndex]
+  }
+
+  private dispatchStencil(job: number): void {
+    Atomics.store(this.doneA, 0, 0)
+    Atomics.store(this.ctrlA, 1, job)
+    Atomics.add(this.ctrlA, 0, 1)
+    Atomics.notify(this.ctrlA, 0)
+    let finished
+    while ((finished = Atomics.load(this.doneA, 0)) < this.options.stencilWorkers) {
+      Atomics.wait(this.doneA, 0, finished)
+    }
+  }
+
+  private startRefresh(target: number): void {
+    // The deterministic snapshot: copied HERE, at the boundary, before any
+    // further physics mutates z.
+    this.routing[target].zSnapshot.set(this.terrain.z)
+    Atomics.store(this.refreshCtrl, REFRESH_DONE, 0)
+    Atomics.store(this.refreshCtrl, REFRESH_TARGET, target)
+    Atomics.store(this.refreshCtrl, REFRESH_CMD, REFRESH_CMD_RUN)
+    Atomics.add(this.refreshCtrl, REFRESH_SEQ, 1)
+    Atomics.notify(this.refreshCtrl, REFRESH_SEQ)
+    this.inFlight = true
+  }
+
+  private waitAndAdopt(): void {
+    while (Atomics.load(this.refreshCtrl, REFRESH_DONE) === 0) {
+      Atomics.wait(this.refreshCtrl, REFRESH_DONE, 0)
+    }
+    this.activeIndex = Atomics.load(this.refreshCtrl, REFRESH_TARGET)
+    this.poppedCount = Atomics.load(this.refreshCtrl, REFRESH_POPPED)
+    this.inFlight = false
+  }
+
+  private boundary(): void {
+    if (this.activeIndex === -1) {
+      // Bootstrap: physics cannot start without routing — one synchronous
+      // refresh, then immediately launch the overlapped one (same z, the
+      // schedule's k=0 entry).
+      this.startRefresh(0)
+      this.waitAndAdopt()
+      this.startRefresh(1)
+      return
+    }
+    this.waitAndAdopt()
+    this.startRefresh(1 - this.activeIndex)
+  }
+
+  stepPhysics(): number {
+    let maxStep = 0
+    this.dispatchStencil(JOB_UPLIFT)
+    maxStep = Math.max(maxStep, fluvialWalk(this.activeViews, this.width, this.poppedCount, this.params))
+    maxStep = Math.max(maxStep, sedimentWalk(this.activeViews, this.width, this.poppedCount, this.params, this.scratch))
+    this.terrain.maxStepW.fill(0, 0, this.options.stencilWorkers)
+    this.dispatchStencil(JOB_HILL_MOVES)
+    this.dispatchStencil(JOB_HILL_APPLY)
+    for (let workerId = 0; workerId < this.options.stencilWorkers; workerId++) {
+      maxStep = Math.max(maxStep, this.terrain.maxStepW[workerId])
+    }
+    this.dispatchStencil(JOB_MARINE_MOVES)
+    this.dispatchStencil(JOB_MARINE_APPLY)
+    return maxStep * 9000
+  }
+
+  run(iterations: number, onIteration?: (iteration: number, residualM: number) => void): number {
+    let residual = Infinity
+    let calmStreak = 0
+    for (let i = 0; i < iterations; i++) {
+      if (i % this.options.pipelineDepth === 0) this.boundary()
+      residual = this.stepPhysics()
+      calmStreak = residual < this.params.epsM ? calmStreak + 1 : 0
+      onIteration?.(i, residual)
+      if (calmStreak >= 3) break
+    }
+    return residual
+  }
+
+  async close(): Promise<void> {
+    // Never tear down under a refresh in flight — its coordinator is
+    // mid-dispatch on ctrlB and would race the exit bump.
+    if (this.inFlight) this.waitAndAdopt()
+    Atomics.store(this.refreshCtrl, REFRESH_CMD, REFRESH_CMD_EXIT)
+    Atomics.add(this.refreshCtrl, REFRESH_SEQ, 1)
+    Atomics.notify(this.refreshCtrl, REFRESH_SEQ)
+    Atomics.store(this.ctrlA, 1, JOB_EXIT)
+    Atomics.add(this.ctrlA, 0, 1)
+    Atomics.notify(this.ctrlA, 0)
+    Atomics.store(this.ctrlB, 1, JOB_EXIT)
+    Atomics.add(this.ctrlB, 0, 1)
+    Atomics.notify(this.ctrlB, 0)
     await Promise.all(this.workers.map((worker) => worker.terminate()))
   }
 }
