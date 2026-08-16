@@ -32,16 +32,8 @@ export const SURFACE_INPUTS = {
     i18n: 'worldgen.panel.erosion.rockContrast',
     inSpec: true,
   },
-  // River density 0..100 — a DRAW filter since erosion-v2 P4: it picks which
-  // extracted channels the generator screen draws, not how many exist (that
-  // is climate-driven now). Display-side by construction — outside the spec,
-  // the artifact key and the bake; the model's own channel set sits at
-  // hydrology.ts' CANONICAL_RIVER_DENSITY. NOT converted here: the worker
-  // takes the raw slider value and `densityToCriticalArea` maps it to a
-  // critical drainage area, a curve rather than a scale factor.
-  riverDensity: {
-    min: 0, max: 100, step: 1, default: 55,
-    i18n: 'worldgen.panel.hydrology.riverDensity',
-    inSpec: false,
-  },
+  // riverDensity is GONE (erosion-v2 P4 + teardown): drainage density is
+  // climate-driven, everything draws the one canonical channel set
+  // (hydrology.ts' CANONICAL_RIVER_DENSITY), and the hydrology panel that
+  // hosted the slider folded into the erosion panel.
 } satisfies Record<string, InputParam>

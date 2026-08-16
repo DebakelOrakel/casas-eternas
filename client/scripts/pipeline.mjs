@@ -45,11 +45,6 @@ const H = 128
 // silently passes on a world that cannot change. Measured at this size: 0% crust
 // at epoch 5, 68% by epoch 41, ~5 ms per epoch.
 const ARCHEAN_EPOCHS = 20
-// The slider's own default. Worth stating rather than picking a round number:
-// riverDensity runs 0..100, and a first draft of this file fed it 0.5 — which is
-// not "half" but the sparsest network the control can ask for, so two very
-// different requests came back identical.
-const RIVER_DENSITY = 55
 
 let failures = 0
 const check = (name, ok, detail = '') => {
@@ -399,7 +394,7 @@ test('the stages compute, in order, on one world', async () => {
 
   p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
-  p.dispatch({ type: 'hydrologyRun', riverDensity: RIVER_DENSITY })
+  p.dispatch({ type: 'hydrologyRun' })
   await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
   p.dispatch({ type: 'ecologyRun' })
   await until(() => p.count('ecologyData') >= 1, { label: 'ecology' })
@@ -424,7 +419,7 @@ test('INVALIDATION: eroding stales everything downstream, per the declared chain
   const climateMessage = { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 }
   p.dispatch(climateMessage)
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
-  p.dispatch({ type: 'hydrologyRun', riverDensity: RIVER_DENSITY })
+  p.dispatch({ type: 'hydrologyRun' })
   await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
   const beforeDischarge = hash(p.last('hydrologyData').discharge)
 
@@ -437,7 +432,7 @@ test('INVALIDATION: eroding stales everything downstream, per the declared chain
   // The eroded terrain is not the one that climate was computed on, so asking for
   // rivers now must refuse rather than route over a climate that describes a world
   // one erosion pass ago.
-  p.dispatch({ type: 'hydrologyRun', riverDensity: RIVER_DENSITY })
+  p.dispatch({ type: 'hydrologyRun' })
   await until(() => p.count('stageDeclined') >= 1, { label: 'the refusal' })
   const declined = p.last('stageDeclined')
   check('hydrology refuses on eroded terrain, naming what it needs', declined.stage === 'hydrology' && declined.needs === 'climate', JSON.stringify(declined))
@@ -445,7 +440,7 @@ test('INVALIDATION: eroding stales everything downstream, per the declared chain
 
   p.dispatch(climateMessage)
   await until(() => p.count('climateData') >= climateRuns + 1, { label: 'the recomputed climate' })
-  p.dispatch({ type: 'hydrologyRun', riverDensity: RIVER_DENSITY })
+  p.dispatch({ type: 'hydrologyRun' })
   await until(() => p.count('hydrologyData') >= 2, { label: 'hydrology again' })
   check('with the climate back, the rivers follow the new terrain', hash(p.last('hydrologyData').discharge) !== beforeDischarge)
 })
@@ -455,7 +450,7 @@ test('a stage that cannot run says so instead of going quiet', async () => {
   // controls and waits for a result the worker already decided not to produce.
   const p = await freshPipeline()
   p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
-  p.dispatch({ type: 'hydrologyRun', riverDensity: RIVER_DENSITY })
+  p.dispatch({ type: 'hydrologyRun' })
   p.dispatch({ type: 'ecologyRun' })
   p.dispatch({ type: 'migrationRun', origins: [] })
   p.dispatch({ type: 'erosionStart', strength: 1, networkRefreshes: 1 })
@@ -473,31 +468,29 @@ test('a stage that cannot run says so instead of going quiet', async () => {
   check('ecology names the climate once a world exists', q.last('stageDeclined').needs === 'climate', JSON.stringify(q.last('stageDeclined')))
 })
 
-test('a density-only change reuses the routing instead of re-flooding', async () => {
-  // The expensive half (priority-flood routing, discharge, lakes) is cached and
-  // only the channel threshold is re-applied. The contract is visible from
-  // outside: a re-route sends lakes, watersheds and discharge, a density-only
-  // pass sends those three empty and only new river polylines.
+test('a repeat hydrology call reuses the routing instead of re-flooding', async () => {
+  // The expensive half (priority-flood routing, discharge, lakes) is cached.
+  // The contract is visible from outside: a re-route sends lakes, watersheds,
+  // discharge and the riparian biomes; a repeat call over unchanged topography
+  // sends all four empty ("unchanged, keep yours") and re-extracts only the
+  // polylines — which must come out identical, since the density slider that
+  // once varied the threshold between calls is gone (erosion-v2 P4/teardown).
   const p = await freshPipeline()
   await growWorld(p)
   p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
-  p.dispatch({ type: 'hydrologyRun', riverDensity: 30 })
+  p.dispatch({ type: 'hydrologyRun' })
   await until(() => p.count('hydrologyData') >= 1, { label: 'the first routing' })
   const routed = p.last('hydrologyData')
   check('a re-route sends lakes, watersheds and discharge', routed.lakeDepth.byteLength > 0 && routed.watersheds.byteLength > 0 && routed.discharge.byteLength > 0)
+  check('and classifies the riparian biomes', routed.biomes.byteLength > 0)
 
-  p.dispatch({ type: 'hydrologyRun', riverDensity: 80 })
-  await until(() => p.count('hydrologyData') >= 2, { label: 'the density-only pass' })
-  const rethresholded = p.last('hydrologyData')
-  check('a density-only change does not re-flood', rethresholded.lakeDepth.byteLength === 0 && rethresholded.watersheds.byteLength === 0 && rethresholded.discharge.byteLength === 0)
-  check('but the drawn river network does change', hash(rethresholded.riverPoints) !== hash(routed.riverPoints))
-  // The slider is a DRAW filter since erosion-v2 P4: riparian biomes read the
-  // canonical channel set, so a density-only pass must NOT re-derive them — an
-  // empty buffer is the "biomes unchanged" contract, same as lakes. (They used
-  // to follow the slider, which let a display knob move saved biomes.)
-  check('the riparian biomes do not follow the draw filter', rethresholded.biomes.byteLength === 0)
-  check('the re-route itself did classify them', routed.biomes.byteLength > 0)
+  p.dispatch({ type: 'hydrologyRun' })
+  await until(() => p.count('hydrologyData') >= 2, { label: 'the repeat pass' })
+  const repeated = p.last('hydrologyData')
+  check('a repeat call does not re-flood', repeated.lakeDepth.byteLength === 0 && repeated.watersheds.byteLength === 0 && repeated.discharge.byteLength === 0)
+  check('and does not re-derive the biomes', repeated.biomes.byteLength === 0)
+  check('the river network is the same one', hash(repeated.riverPoints) === hash(routed.riverPoints))
 })
 
 test('erosion can be stopped mid-pass', async () => {
@@ -530,7 +523,7 @@ test('every message type is dispatchable from a cold start', async () => {
     { type: 'erosionStart', strength: 1, networkRefreshes: 1 },
     { type: 'requestElevationField' },
     { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 },
-    { type: 'hydrologyRun', riverDensity: RIVER_DENSITY },
+    { type: 'hydrologyRun' },
     { type: 'ecologyRun' }, { type: 'migrationRun', origins: [] },
     { type: 'serializeWorld' },
     ...['genesis', 'tectonics', 'erosion', 'climate', 'hydrology', 'ecology', 'migration'].map((stage) => ({ type: 'resetStage', stage })),

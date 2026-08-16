@@ -665,11 +665,10 @@ function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climat
   invalidateAfter('climate')
 }
 
-function handleHydrologyRun(message: Extract<WorkerInboundMessage, { type: 'hydrologyRun' }>): void {
+function handleHydrologyRun(): void {
   // Needs the current topography + a computed climate (rivers' water source).
   if (!sim || !lastRawElevations) { decline('hydrology', 'tectonics'); return }
   if (!climate) { decline('hydrology', 'climate'); return }
-  const { riverDensity } = message
   const terrain = lastRawElevations
   const width = sim.width
   const height = sim.height
@@ -684,9 +683,9 @@ function handleHydrologyRun(message: Extract<WorkerInboundMessage, { type: 'hydr
   // Async (the priority-flood routing is a Promise); the onmessage handler is
   // sync, so run it in an IIFE like the erode branch does.
   ;(async () => {
-    // Re-route only when topography/climate changed; a density-only tweak
-    // reuses the cached routing + discharge + lakes (the expensive parts) and
-    // just re-thresholds the rivers. An absent result IS "re-route needed".
+    // Re-route only when topography/climate changed; a repeat call reuses the
+    // cached routing + discharge + lakes (the expensive parts) and just
+    // re-extracts the polylines. An absent result IS "re-route needed".
     let rerouted = false
     let result = hydrology
     if (!result) {
@@ -736,26 +735,25 @@ function handleHydrologyRun(message: Extract<WorkerInboundMessage, { type: 'hydr
       hydrology = result
       rerouted = true
     }
-    // The slider thresholds only what is DRAWN (a cartographic filter since
-    // P4); the model's own channel set sits at the canonical density below.
-    const drawThreshold = channelThreshold(densityToCriticalArea(riverDensity), result.meanRunoff)
-    const rivers = extractRiverPolylines(result.routing, result.discharge, elevation, drawThreshold, result.maxDischarge)
-    // Lakes only change on a re-route; a density-only call sends an empty buffer.
+    // ONE threshold, the model's own: the generator draws exactly the
+    // canonical channel set the riparian biomes, the bake and the worldmap
+    // read. The density slider that used to threshold the drawing separately
+    // died with its panel (erosion-v2 P4/teardown).
+    const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), result.meanRunoff)
+    const rivers = extractRiverPolylines(result.routing, result.discharge, elevation, threshold, result.maxDischarge)
+    // Lakes only change on a re-route; a repeat call sends an empty buffer.
     const lakeOut = rerouted ? result.lakeDepth.slice() : new Float32Array(0)
     // Watersheds + the raw discharge field: re-route only, same contract.
     const watershedsOut = rerouted ? computeWatersheds(result.routing, elevation) : new Uint16Array(0)
     const dischargeOut = rerouted ? result.discharge.slice() : new Float32Array(0)
-    // Riparian biome reclassification reads the CANONICAL channel set, never
-    // the slider's: biomes are simulation truth and go into the save, and a
-    // display-side filter must not move them. That pins them to the routing,
-    // so they too change on a re-route only — a density-only call sends them
-    // empty (same contract as lakes; the screen keeps its last copy).
-    // Uses the display terrain (lastRawElevations) so land/ocean matches the map.
+    // Riparian biomes are pinned to the routing like the lakes, so they too
+    // change on a re-route only — a repeat call sends them empty (the screen
+    // keeps its last copy). Uses the display terrain (lastRawElevations) so
+    // land/ocean matches the map.
     let biomesOut: Uint8Array = new Uint8Array(0)
     let precipEffOut: Float32Array = new Float32Array(0)
     if (rerouted) {
-      const canonicalThreshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), result.meanRunoff)
-      const riparian = computeRiparianBiomes(result.routing, terrain, result.discharge, canonicalThreshold, result.maxDischarge, result.lakeDepth, weather.precipitation, weather.temperature, weather.seasonalAmplitude, weather.monsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, result.saltFlat ?? undefined, result.dryBasin ?? undefined)
+      const riparian = computeRiparianBiomes(result.routing, terrain, result.discharge, threshold, result.maxDischarge, result.lakeDepth, weather.precipitation, weather.temperature, weather.seasonalAmplitude, weather.monsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, result.saltFlat ?? undefined, result.dryBasin ?? undefined)
       // The riparian-effective precipitation rides along: it is what lets the
       // worldmap reclassify at bake resolution without re-running hydrology.
       biomesOut = riparian.biomes
@@ -1111,7 +1109,7 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   resetStage: (m) => handleResetStage(m as Extract<WorkerInboundMessage, { type: 'resetStage' }>),
   requestElevationField: () => handleRequestElevationField(),
   climateRun: (m) => handleClimateRun(m as Extract<WorkerInboundMessage, { type: 'climateRun' }>),
-  hydrologyRun: (m) => handleHydrologyRun(m as Extract<WorkerInboundMessage, { type: 'hydrologyRun' }>),
+  hydrologyRun: () => handleHydrologyRun(),
   ecologyRun: (m) => handleEcologyRun(m as Extract<WorkerInboundMessage, { type: 'ecologyRun' }>),
   migrationRun: (m) => handleMigrationRun(m as Extract<WorkerInboundMessage, { type: 'migrationRun' }>),
   serializeWorld: () => handleSerializeWorld(),

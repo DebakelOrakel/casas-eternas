@@ -735,6 +735,20 @@ the version break v2 already carries.
     AMPLIFICATION_ALGO_VERSION went to 11 (the floor was never in the
     constants, so the hash alone would not have moved). identity.ts keeps
     the twice-removed story.
+  - FOLLOW-UP, same day (user decision): the slider — and with it the whole
+    hydrology PANEL — removed. A draw filter that acted on one screen,
+    persisted nothing and contradicted the baked network shown beside it
+    was not worth a panel; and density is now information (arid = sparse)
+    that a global filter would only blur. The hydrology STAGE is untouched
+    and became panel-less: it runs automatically when an erosion pass
+    settles (the rivers are the solve's readout, drawn on the erosion
+    panel), on entering the erosion panel with eroded terrain, and on
+    demand from ecology/migration/save as before. `hydrologyRun` carries no
+    parameters; the repeat-call contract (cached routing, empty "unchanged"
+    buffers) is pipeline-harness-asserted. The three catalog keys
+    (`worldgen.panel.hydrology.title`, `…riverDensity.label/.help`) were
+    removed with user approval; the hydrology OVERLAY group keeps its keys
+    and its place in the overlay bar.
 - **P5 — teardown** of dead crutches, docs, decision records.
 
 Deliberately out of scope: GPU compute (second stage), erosion inside the

@@ -516,9 +516,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </span>
       </label>
     </div>
-    <div class="panel" data-stage="hydrology">
-      ${sliderField(SURFACE_INPUTS.riverDensity, 'river-density-input', 'river-density-label')}
-    </div>
     <div class="panel" data-stage="ecology">
       <button type="button" class="icon-button panel-reset" data-action="reset-ecology" aria-label="${t('worldgen.action.resetEcology.label')}" data-help="worldgen.action.resetEcology">
         <img src="/icons/reset.png" alt="" />
@@ -623,8 +620,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const contrastLabel = root.querySelector<HTMLElement>('[data-value="contrast-label"]')!
   const equatorOffsetInput = root.querySelector<HTMLInputElement>('.equator-offset-input')!
   const equatorOffsetLabel = root.querySelector<HTMLElement>('[data-value="equator-offset-label"]')!
-  const riverDensityInput = root.querySelector<HTMLInputElement>('.river-density-input')!
-  const riverDensityLabel = root.querySelector<HTMLElement>('[data-value="river-density-label"]')!
   const carryingCapacityInput = root.querySelector<HTMLInputElement>('.carrying-capacity-input')!
   const carryingCapacityLabel = root.querySelector<HTMLElement>('[data-value="carrying-capacity-label"]')!
   const concentrationInput = root.querySelector<HTMLInputElement>('.concentration-input')!
@@ -808,10 +803,18 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // invalidated by an upstream reset.
   // Panel order IS the pipeline chain — see PANEL_TITLES further down for the rest
   // of that argument. Hoisted here because the panel constants below derive from it.
-  const PANEL_STAGES: readonly StageId[] = STAGES.map((s) => s.id)
-  // Throws rather than returning -1: a stage with no panel would otherwise read as
-  // "panel before the first one" and quietly change every comparison that uses it.
-  const panelIndexOf = (id: StageId): number => {
+  //
+  // One stage has NO panel: hydrology. Its only control died with the density
+  // slider (erosion-v2 P4 made it a draw filter, the teardown removed it), and
+  // its readout — rivers, lakes, the salt repaint — belongs to the erosion
+  // panel, whose solve it measures. The STAGE still runs: automatically after
+  // each erosion pass, and on demand from ecology/migration/save as before.
+  type PanelStageId = Exclude<StageId, 'hydrology'>
+  const PANEL_STAGES: readonly PanelStageId[] = STAGES.map((s) => s.id).filter((id): id is PanelStageId => id !== 'hydrology')
+  // Throws rather than returning -1: a stage whose panel is missing would
+  // otherwise read as "panel before the first one" and quietly change every
+  // comparison that uses it.
+  const panelIndexOf = (id: PanelStageId): number => {
     const i = PANEL_STAGES.indexOf(id)
     if (i < 0) throw new Error(`no panel for stage ${id}`)
     return i
@@ -829,9 +832,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastBiomes: Uint8Array | null = null
   let climateResX = 0
   let climateResY = 0
-  // Rivers/lakes (hydrology) panel — its own step after climate. River segments
-  // come from the worker's computeHydrology; null until computed / invalidated.
-  const HYDROLOGY_PANEL_INDEX = panelIndexOf('hydrology')
+  // Rivers/lakes (hydrology) — a panel-less stage shown on the erosion panel.
+  // River segments come from the worker's hydrology step; null until computed /
+  // invalidated.
   let lastRiverData: { points: Float32Array; lengths: Uint32Array } | null = null
   // A baked river network, shown INSTEAD of the 2k one when this world has an
   // amplified artifact. Display only, and kept apart from lastRiverData for a
@@ -2314,15 +2317,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     compositeOverlays()
   }
 
-  // Posts a hydrology compute with the current density knob. Needs a computed
-  // climate (the worker caches its precipitation as the river water source); the
-  // hydrology panel ensures that first. Self-guards a running sim.
+  // Posts a hydrology compute. Needs a computed climate (the worker caches its
+  // precipitation as the river water source); every caller posts climateRun
+  // first when it is missing — the worker's mailbox is ordered, so the pair
+  // arrives in pipeline order. Self-guards a running sim.
   function requestHydrology(): void {
     if (tectonicsRunning) return
     hydrologyInFlight = true
     updateControlsDisabled()
     updateProgress()
-    postToWorker({ type: 'hydrologyRun', riverDensity: Number(riverDensityInput.value) })
+    postToWorker({ type: 'hydrologyRun' })
   }
 
   // The climate panel's sliders in MODEL units — one reading shared by the
@@ -2616,11 +2620,24 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // not the operation finishing, so the buttons/status readout stay as
     // they are until the actual final render arrives.
     if (!message.intermediate) {
+      const erosionJustSettled = erosionOpInFlight
       erosionOpInFlight = false
       erodeIcon.src = '/icons/erosion_heavy.png' // back from the stop icon
       erodeButton.setAttribute('aria-label', t('worldgen.action.runErosion.label'))
       updateControlsDisabled()
       updateProgress()
+      // The rivers are the erosion panel's readout (the hydrology stage has no
+      // panel of its own): when a pass settles — including a stopped one, whose
+      // partial terrain is just as real — run the chain right away instead of
+      // waiting for a panel switch that no longer exists. The render above has
+      // just invalidated climate and hydrology (every fresh topography does),
+      // so both are posted, in pipeline order. erosionRunCount 0 is the
+      // erosion RESET's revert render — reverted terrain gets no rivers, same
+      // as un-eroded. The save chain sequences its own computes.
+      if (erosionJustSettled && erosionRunCount >= 1 && !saveChainActive) {
+        if (lastTemperature === null) requestClimate()
+        if (lastRiverData === null) requestHydrology()
+      }
     }
   }
 
@@ -2790,7 +2807,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     erodeButton.setAttribute('aria-label', t('worldgen.action.runErosion.labelActive'))
     updateControlsDisabled()
     updateProgress()
-    updateNavState() // first erosion unlocks Climate/Rivers
+    updateNavState() // first erosion unlocks the panels past it (Ecology on)
     postToWorker({ type: 'erosionStart', age: Number(ageInput.value), alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value), weather: weatherParams() })
   })
 
@@ -2801,7 +2818,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     invalidateAfter('tectonics')
     updateControlsDisabled()
     updateProgress()
-    updateNavState() // reverting erosion re-locks Climate/Rivers
+    updateNavState() // reverting erosion re-locks the panels past it
     postToWorker({ type: 'resetStage', stage: 'erosion' })
   })
 
@@ -2918,7 +2935,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     humidityLabel.textContent = humidityInput.value
     contrastLabel.textContent = contrastInput.value
     equatorOffsetLabel.textContent = equatorOffsetInput.value
-    riverDensityLabel.textContent = riverDensityInput.value
     ageLabel.textContent = ageInput.value
     alluviumLabel.textContent = alluviumInput.value
     rockContrastLabel.textContent = rockContrastInput.value
@@ -3605,8 +3621,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     humidityInput.value = String(spec.values['climate.humidity'])
     contrastInput.value = String(spec.values['climate.contrast'])
     equatorOffsetInput.value = String(spec.values['climate.equatorOffset'])
-    // riverDensity is not in the spec (a draw filter, P4) — the slider simply
-    // keeps whatever the session has set.
     ageInput.value = String(spec.values['erosion.landscapeAge'])
     alluviumInput.value = String(spec.values['erosion.alluvium'])
     rockContrastInput.value = String(spec.values['erosion.rockContrast'])
@@ -3656,23 +3670,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   wireClimateSlider(humidityInput, humidityLabel)
   wireClimateSlider(contrastInput, contrastLabel)
   wireClimateSlider(equatorOffsetInput, equatorOffsetLabel)
-
-  // River density: live-recompute (debounced); a density-only change reuses the
-  // worker's cached routing/discharge, so it's cheap.
-  let hydrologyDebounce: ReturnType<typeof setTimeout> | undefined
-  riverDensityInput.addEventListener('input', () => {
-    riverDensityLabel.textContent = riverDensityInput.value
-    // Drop any baked network being previewed. It masked the recomputed one, so
-    // the slider looked dead — and it genuinely describes another setting:
-    // baked rivers are keyed per density (rivers-{density}.f32, see
-    // world/artifacts), so the network on screen belongs to the density the
-    // slider just left.
-    bakedRiverDisplay = null
-    drawRivers()
-    if (tectonicsRunning) return
-    clearTimeout(hydrologyDebounce)
-    hydrologyDebounce = setTimeout(requestHydrology, 150)
-  })
 
   // Ecology top sliders (carrying capacity + concentration): live-recompute
   // (debounced) — cheap (a single pass over the coarse climate grid). Concentration
@@ -4001,12 +3998,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // the pipeline chain (STAGES), each panel says which stage it is in the markup
   // (`data-stage`), and the titles are a Record over StageId, so a stage added to
   // the chain is a compile error here rather than a panel that silently shifts.
-  const PANEL_TITLES: Record<StageId, TKey> = {
+  const PANEL_TITLES: Record<PanelStageId, TKey> = {
     genesis: 'worldgen.panel.genesis.title',
     tectonics: 'worldgen.panel.tectonics.title',
     erosion: 'worldgen.panel.erosion.title',
     climate: 'worldgen.panel.climate.title',
-    hydrology: 'worldgen.panel.hydrology.title',
     ecology: 'worldgen.panel.ecology.title',
     migration: 'worldgen.panel.migration.title',
   }
@@ -4024,9 +4020,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Each more-detailed panel needs its upstream step settled, else it operates on
   // unfinished data (the hydrology test series proved rivers/lakes on un-eroded
   // terrain are badly wrong: giant undrained lakes, unnatural drainage). So the
-  // forward step is gated: entering Erosion needs some tectonics, entering Climate
-  // or Rivers needs at least one erosion pass. Returns why entry is blocked, or
-  // null if allowed. Values are tunable.
+  // forward step is gated: entering Climate/Erosion needs some tectonics,
+  // everything past Erosion needs at least one erosion pass. Returns why entry
+  // is blocked, or null if allowed. Values are tunable.
   const MIN_TECTONIC_EPOCHS = 30
   const entryRequirementUnmet = (index: number): string | null => {
     const erosionPanel = panelIndexOf('erosion')
@@ -4059,9 +4055,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // no harness on this side to notice. See docs/design/generator-pipeline.md.
   const ensureDataFor = (index: number): void => {
     if (index === CLIMATE_PANEL_INDEX && lastTemperature === null) requestClimate()
-    if (index === HYDROLOGY_PANEL_INDEX) {
+    // The erosion panel carries the hydrology readout: entering it with eroded
+    // terrain but no rivers (a reopened session, a mid-chain revisit) computes
+    // them, exactly as the settle of a pass does. Un-eroded terrain gets none —
+    // rivers/lakes on it are badly wrong (the old hydrology panel's gate).
+    if (index === panelIndexOf('erosion') && erosionRunCount >= 1 && lastRiverData === null) {
       if (lastTemperature === null) requestClimate()
-      if (lastRiverData === null) requestHydrology()
+      requestHydrology()
     }
     // Ecology reads both — productivity/biomes from climate, fish freshwater from
     // rivers and lakes.
@@ -4118,10 +4118,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // entering the panel computed a climate and then showed a blank map until you
     // found the right button.
     overlaysOn.temperature = index === CLIMATE_PANEL_INDEX
-    // Rivers/lakes come on automatically when you enter the Hydrology panel (the
-    // reason you're there), off elsewhere — same per-panel reset. Once the compute
-    // finishes, handleHydrologyData's updateOverlays() makes the layer visible.
-    overlaysOn.rivers = index === HYDROLOGY_PANEL_INDEX
+    // Rivers/lakes come on automatically on the Erosion panel — they are the
+    // solve's readout since the hydrology panel folded into it — off elsewhere;
+    // same per-panel reset. Once the compute finishes (auto after a pass, or on
+    // entry), handleHydrologyData's updateOverlays() makes the layer visible.
+    overlaysOn.rivers = index === panelIndexOf('erosion')
     // Carrying-capacity overlay comes on automatically in the Ecology panel (the
     // reason you're there), off elsewhere. handleEcologyData's updateOverlays()
     // makes it visible once the compute finishes.

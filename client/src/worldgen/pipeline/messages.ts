@@ -90,15 +90,12 @@ export interface WorkerClimateRunMessage {
 }
 // Requests a rivers/lakes (hydrology) compute on the current topography, using
 // the precipitation cached from the last computeClimate as the water source.
-// `riverDensity` (0–100) is a DRAW filter: it thresholds which channels the
-// map draws (higher density = lower threshold = more/smaller rivers drawn),
-// and nothing else — the model's channel set (riparian biomes, the bake) sits
-// at CANONICAL_RIVER_DENSITY since erosion-v2 P4. Routing + discharge are
-// cached in the worker, so a density-only change re-extracts cheaply without
-// re-routing. Replies with WorkerHydrologyDataMessage.
+// No parameters since the density slider died (erosion-v2 P4/teardown): the
+// whole stage runs at the model's CANONICAL_RIVER_DENSITY. Routing + discharge
+// are cached in the worker, so a repeat call without a topography change is
+// cheap. Replies with WorkerHydrologyDataMessage.
 export interface WorkerHydrologyRunMessage {
   type: 'hydrologyRun'
-  riverDensity: number
 }
 // Requests an ecology (resource/suitability) compute on the current climate. Uses
 // the cached climate temperature+precipitation as the productivity inputs and the

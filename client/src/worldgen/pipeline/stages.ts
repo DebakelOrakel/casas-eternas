@@ -120,7 +120,10 @@ export const STAGES: readonly Stage[] = [
     // so that basins still exist for lakes to fill.
     dependsOn: ['climate', 'erosion'],
     kind: 'oneShot',
-    inputs: { riverDensity: SURFACE_INPUTS.riverDensity },
+    // No controls since the density slider died (P4/teardown) — and no panel
+    // either: the stage runs after each erosion pass and on demand from the
+    // stages downstream; its readout lives on the erosion panel.
+    inputs: {},
     // Rewrites `biome` for riparian and salt-flat cells. River polylines and
     // watersheds are drawn but not registered fields.
     outputs: ['discharge', 'lakeDepth', 'precipitationEffective', 'biome'],
