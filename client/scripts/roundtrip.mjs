@@ -117,8 +117,10 @@ console.log('\n— identity —')
 const elev = new Float32Array(64 * 32)
 for (let i = 0; i < elev.length; i++) elev[i] = Math.sin(i * 0.017) * 0.4
 const precip = new Float32Array(16 * 8).fill(800)
-const id = M.key.deriveWorldId({ elevation: elev, precipitation: precip, erosionStrength: 2, drainageRefresh: 3 })
-check('deriveWorldId is stable for fixed bytes', id === 'ba90bda173d581ef', `got ${id}`)
+// Re-frozen at the P5 teardown: v1's strength/refresh left the hash shape, a
+// deliberate id break (ALGO v11 had already orphaned every older artifact).
+const id = M.key.deriveWorldId({ elevation: elev, precipitation: precip, landscapeAge: 40, alluvium: 50, rockContrast: 50 })
+check('deriveWorldId is stable for fixed bytes', id === '79f9328a6cf7c80c', `got ${id}`)
 check('the id is a pure 16-hex hash (label dropped 2026-08-12)', /^[0-9a-f]{16}$/.test(id), id)
 
 // Every constant the pipeline version LISTS must actually move it. This does not
@@ -212,7 +214,7 @@ for (let i = 0; i < zipUplift.length; i++) {
 }
 const forcingSpecs = Object.fromEntries(M.layers.FORCING_LAYERS.map((s) => [s.name, s]))
 const zip = new JSZip()
-zip.file('world.yaml', ['spec:', `  seed: "zip-welt"`, '  erosion:', '    erosionStrength: 4', '    drainageRefresh: 1', 'metadata:', '  uid: 0192abcd-0000-8000-8000-000000000000', ''].join('\n'))
+zip.file('world.yaml', ['spec:', `  seed: "zip-welt"`, '  erosion:', '    landscapeAge: 25', '    alluvium: 60', '    rockContrast: 35', 'metadata:', '  uid: 0192abcd-0000-8000-8000-000000000000', ''].join('\n'))
 zip.file('layers/elevation.f32', zipElev.buffer)
 zip.file('layers/precipitation.u16', M.layers.bakeLayer(zipPrecip, precipSpec))
 zip.file('layers/uplift.f32', M.layers.bakeLayer(zipUplift, forcingSpecs.uplift))
@@ -230,7 +232,7 @@ const loaded = await M.inputs.readWorldInputs(await zip.generateAsync({ type: 'a
 if (!loaded) check('the zip reads back at all', false)
 else {
   check('elevation comes back byte-identical', String(loaded.elevations) === String(zipElev))
-  check('the recipe is read', loaded.seedText === 'zip-welt' && loaded.erosionControls.strength === 4 && loaded.erosionControls.refresh === 1)
+  check('the recipe is read', loaded.seedText === 'zip-welt' && loaded.erosionControls.landscapeAge === 25 && loaded.erosionControls.alluvium === 60 && loaded.erosionControls.rockContrast === 35)
   check('the uid is read rather than derived', loaded.worldUid === '0192abcd-0000-8000-8000-000000000000')
   check('the forcing layers come back byte-identical, sign included',
     String(loaded.uplift?.data) === String(zipUplift) && String(loaded.erodibility?.data) === String(zipHardness))
@@ -240,7 +242,7 @@ else {
   // The reader must reach the SAME id as deriving it here by hand — and it must
   // hash the STORED (dequantised) precipitation, never a raw float array.
   const direct = M.key.deriveWorldId({
-    elevation: loaded.elevations, precipitation: loaded.climate?.data ?? null, erosionStrength: 4, drainageRefresh: 1,
+    elevation: loaded.elevations, precipitation: loaded.climate?.data ?? null, landscapeAge: 25, alluvium: 60, rockContrast: 35,
   })
   check('reader and direct derivation agree on the worldId', loaded.worldId === direct, `${loaded.worldId} vs ${direct}`)
 }

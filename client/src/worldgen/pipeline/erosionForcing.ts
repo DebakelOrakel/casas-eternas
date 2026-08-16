@@ -13,8 +13,7 @@ import type { ErosionControlsV2 } from '../surface/erosionForcingFields'
 // because the assembly is identity-relevant: the generator's erode stage
 // (pipeline/runtime.ts) and the golden harness must run the engine on
 // byte-identical inputs, or the harness gates a different world than the
-// one the player gets. Same precedent as erosionParamsWithControls: the
-// mapping lives once, whoever needs it imports it.
+// one the player gets. The mapping lives once, whoever needs it imports it.
 //
 // Lives in pipeline/ (not surface/) because it reaches across the peers:
 // it reads tectonic state and evaluates the climate model, which surface/

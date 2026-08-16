@@ -30,7 +30,8 @@ const M = {
   sim: await L('/src/worldgen/tectonics/plateSimulation.ts'),
   field: await L('/src/worldgen/elevation/elevationField.ts'),
   ridged: await L('/src/worldgen/elevation/ridgedNoise.ts'),
-  erosion: await L('/src/worldgen/surface/erosion.ts'),
+  erosionForcing: await L('/src/worldgen/pipeline/erosionForcing.ts'),
+  erosionPassV2: await L('/src/worldgen/surface/erosionPassV2.ts'),
   scale: await L('/src/worldgen/elevation/elevationScale.ts'),
   archean: await L('/src/worldgen/archean/archeanState.ts'),
   archeanStep: await L('/src/worldgen/archean/archeanStep.ts'),
@@ -126,7 +127,11 @@ for (const c of CANDIDATES) {
     }
   }
   const raw = crestMetrics(el)
-  const ero = await M.erosion.runErosionPass(el, W, H, M.erosion.DEFAULT_EROSION_PASS_PARAMS)
+  // The v2 engine at default controls (age = the slider's declared default),
+  // forced by the sim — v1's pass is gone (P5 teardown); "after erosion" now
+  // means the same solve the generator runs.
+  const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, el, W, H, {})
+  const ero = await M.erosionPassV2.runErosionPassV2(el, W, H, forcing, { age: 40, params })
   const m = crestMetrics(ero.elevations)
   const km = c.cells.map((n) => Math.round(WORLD_KM / n)).join('/')
   console.log(`${c.name} mean=${mean.toFixed(4)}  ${km} km` +

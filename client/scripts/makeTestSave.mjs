@@ -18,7 +18,9 @@ const M = {
   sim: await L('/src/worldgen/tectonics/plateSimulation.ts'),
   field: await L('/src/worldgen/elevation/elevationField.ts'),
   ridged: await L('/src/worldgen/elevation/ridgedNoise.ts'),
-  erosion: await L('/src/worldgen/surface/erosion.ts'),
+  erosionForcing: await L('/src/worldgen/pipeline/erosionForcing.ts'),
+  erosionPassV2: await L('/src/worldgen/surface/erosionPassV2.ts'),
+  surfaceInputs: await L('/src/worldgen/surface/surfaceInputParams.ts'),
   climateField: await L('/src/worldgen/climate/climateField.ts'),
   temperature: await L('/src/worldgen/climate/temperature.ts'),
   wind: await L('/src/worldgen/climate/wind.ts'),
@@ -46,7 +48,15 @@ for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed),
     M.ridged.fineDetailNoise(s.wx, s.wy, W, H, salt))
 }
-const ero = await M.erosion.runErosionPass(raw, W, H, M.erosion.DEFAULT_EROSION_PASS_PARAMS)
+// The v2 engine at the sliders' declared defaults, forced by the sim itself —
+// the same step golden.mjs runs.
+const CONTROLS = {
+  age: M.surfaceInputs.SURFACE_INPUTS.landscapeAge.default,
+  alluvium: M.surfaceInputs.SURFACE_INPUTS.alluvium.default,
+  rockContrast: M.surfaceInputs.SURFACE_INPUTS.rockContrast.default,
+}
+const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, raw, W, H, CONTROLS)
+const ero = await M.erosionPassV2.runErosionPassV2(raw, W, H, forcing, { age: CONTROLS.age, params })
 const el = ero.elevations
 
 const temperature = M.temperature.computeTemperature(el, W, H)
@@ -79,11 +89,9 @@ zip.file('manifest.json', JSON.stringify({
 zip.file('world.yaml', [
   'apiVersion: casas-eternas/v1alpha1', 'kind: FlatWorld', 'metadata:', '  name: alpha',
   '  uid: 7c9e6679-7425-40de-944b-e07fc1f90ae7', 'spec:', '  seed: "alpha"', '  erosion:',
-  // Slider RANGES, not invented numbers. Writing erosionStrength: 100 here —
-  // a plausible-looking "percent" — set the pass's timeStep to 100x and planed
-  // every continent to sea level, which looked exactly like a broken baker.
-  // The slider is 1..5, default 2.
-  '    erosionStrength: 2', '    drainageRefresh: 3', '  hydrology:', '    riverDensity: 55',
+  // The sliders' declared defaults, matching the CONTROLS the pass above ran
+  // with — so the save's recipe and its terrain agree, as a real save's do.
+  `    landscapeAge: ${CONTROLS.age}`, `    alluvium: ${CONTROLS.alluvium}`, `    rockContrast: ${CONTROLS.rockContrast}`,
   'status:', '  erosionRun: 1', '  revision: 1', '',
 ].join('\n'))
 zip.file('elevation.f32', el.buffer)

@@ -24,8 +24,7 @@ import { MinHeap } from '../core/minHeap'
 //   spacing in both axes, so accumulateFlow below weights every cell by a flat 1.
 
 // Called at every progress-reporting checkpoint across this module's
-// long loops (fillDepressions' pop count, and one per outer iteration in
-// runStreamPowerIterations/runThermalErosion). When it yields, it awaits
+// long loops (fillDepressions' pop count). When it yields, it awaits
 // a real macrotask boundary (a zero-delay setTimeout), because that is
 // what the generator pipeline's 'erode' handler (pipeline/runtime.ts)
 // needs: postMessage calls made during a long, uninterrupted synchronous
@@ -99,8 +98,7 @@ export interface FlowRouting {
   // Downstream neighbor's cell index (single-flow, chosen by D8-LTD — see
   // computeLtdFlowTargets), or -1 for an unrouted/terminal cell (only
   // possible if there were zero ocean seed cells — see below). Used for
-  // stream-power incision (see runStreamPowerIterations) and for river
-  // tracing — accumulateFlow uses `mfd` instead, not this.
+  // river tracing — accumulateFlow uses `mfd` instead, not this.
   flowTarget: Int32Array
   // Multiple-flow-direction edges, used for drainage-area accumulation
   // (see computeMfdEdges's own comment for why accumulation and incision
@@ -229,8 +227,9 @@ async function fillDepressions(raw: Float32Array, width: number, height: number,
       // 1), for consistency with computeSteepestDescentFlowTargets's own
       // distance normalization — but note this alone does NOT explain a
       // real, empirically-confirmed cardinal-direction drift under
-      // repeated erosion passes (see DEFAULT_STREAM_POWER_PARAMS' own
-      // comment); re-tested after adding this and the drift was
+      // repeated v1 erosion passes (measured 2026-08: a direction
+      // histogram drifted from ~54% to ~68% cardinal share); re-tested
+      // after adding this and the drift was
       // unchanged; EPSILON_FLOOD_STEP (1e-7) is simply too small relative
       // to real per-pass elevation deltas (~1e-3) for its own distance
       // scaling to matter. Left in as a real (if minor) correctness fix
@@ -440,14 +439,14 @@ export function edgeTarget(mfd: MfdEdges, cell: number, edge: number, width: num
 // distributes each cell's outflow across *every* downhill neighbor,
 // weighted by slope, instead of committing 100% of it to a single
 // steepest one — used only for accumulateFlow's drainage-area estimate.
-// runStreamPowerIterations still incises along a single steepest path
-// per cell (FlowRouting.flowTarget) — the standard combination in
+// Incision still follows a single steepest path per cell
+// (FlowRouting.flowTarget) — the standard combination in
 // landscape-evolution models: channel incision genuinely happens along
 // one thalweg, so a single representative slope is physically
 // reasonable there, but upstream drainage *area* is exactly where
 // single-flow-direction's grid-aligned channelization showed up in
-// practice (see DEFAULT_STREAM_POWER_PARAMS' own comment for the
-// empirical history: a direction histogram over repeated erosion passes
+// practice (the empirical history, measured on the v1 pass: a direction
+// histogram over repeated erosion passes
 // drifted from ~54% to ~68% cardinal-direction share, and neither
 // epsilon scaling nor the incision step's own distance weighting turned
 // out to be the cause when tested directly — MFD sidesteps the whole

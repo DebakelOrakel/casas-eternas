@@ -44,13 +44,10 @@ export interface GridLayer {
 // eroded rather than by generic defaults. Undefined means the save predates
 // the setting; the pipeline falls back to its own default.
 export interface ErosionControls {
-  // v1's controls — DEAD since the bake moved to the engine (P3): still read
-  // so an old save's recipe survives a round-trip, applied by nothing.
-  // Removal is P5 teardown.
-  strength: number | undefined
-  refresh: number | undefined
   // The v2 engine's controls. The generator and the amplification bake both
   // apply these; undefined (an old save) falls back to the declared defaults.
+  // (v1's strength/refresh were read here until the P5 teardown — an old
+  // save's lines are ignored the usual partial-spec way now.)
   landscapeAge: number | undefined
   alluvium: number | undefined
   rockContrast: number | undefined

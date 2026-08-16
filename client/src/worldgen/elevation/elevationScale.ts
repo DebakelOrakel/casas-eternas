@@ -200,8 +200,8 @@ export const MARGIN_FIELD_LO = 0.08
 export const MARGIN_FIELD_HI = 1.0
 
 // A real-world terrain angle, expressed in the units the erosion code measures
-// slope in: elevation units of rise per CELL of run (see runThermalErosion's
-// `drop / distance`, where distance is 1 or √2 cells). Converting needs both
+// slope in: elevation units of rise per CELL of run (`drop / distance`, where
+// distance is 1 or √2 cells). Converting needs both
 // scales — the vertical one from this module and the horizontal one from
 // mapConfig — which is exactly why an angle stated as a bare number was so easy
 // to get wrong.

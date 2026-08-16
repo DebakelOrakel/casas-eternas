@@ -945,7 +945,7 @@ export class ErosionEngine {
     this.height = height
     this.params = params
     this.views = createEngineViews(width, height)
-    // Copied, not aliased — same contract as runErosionPass: the caller's
+    // Copied, not aliased — the caller's
     // arrays must not be reshaped as a side effect.
     this.views.z.set(initial)
     this.views.uplift.set(forcing.uplift)

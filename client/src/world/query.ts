@@ -152,8 +152,6 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     detailSeed,
     lithoSeed: erosionLithoSeed(hashSeedString(`${seedText}:coastalWarp`)),
     erosionControls: {
-      strength: readRecipeNumber(yamlText, 'spec.erosion.erosionStrength'),
-      refresh: readRecipeNumber(yamlText, 'spec.erosion.drainageRefresh'),
       landscapeAge: readRecipeNumber(yamlText, 'spec.erosion.landscapeAge'),
       alluvium: readRecipeNumber(yamlText, 'spec.erosion.alluvium'),
       rockContrast: readRecipeNumber(yamlText, 'spec.erosion.rockContrast'),
@@ -199,8 +197,6 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
       return deriveWorldId({
         elevation: elevation.data,
         precipitation: precipitation?.data ?? null,
-        erosionStrength: recipe.erosionControls.strength,
-        drainageRefresh: recipe.erosionControls.refresh,
         landscapeAge: recipe.erosionControls.landscapeAge,
         alluvium: recipe.erosionControls.alluvium,
         rockContrast: recipe.erosionControls.rockContrast,

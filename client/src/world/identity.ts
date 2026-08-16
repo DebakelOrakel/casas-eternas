@@ -57,12 +57,11 @@ const hex8 = (value: number): string => (value >>> 0).toString(16).padStart(8, '
 export interface BakeInputs {
   elevation: Float32Array
   precipitation: Float32Array | null
-  // v1's controls — LEGACY, read from old saves so their ids stay stable.
-  erosionStrength: number | undefined
-  drainageRefresh: number | undefined
-  // The v2 engine's controls (2026-08-17). Only present in new saves; when
-  // all three are absent the hash bytes are exactly the pre-v2 ones, which
-  // is what keeps every old world's id — and its cached artifacts — valid.
+  // The v2 engine's controls. v1's erosionStrength/drainageRefresh were
+  // carried here for backward-stable ids until the P5 teardown removed the
+  // dead pass they belonged to — a deliberate id break for every save
+  // (ALGO v11 had already orphaned all older artifacts, so what a changed id
+  // costs is one re-bake, and what it buys is one hash shape instead of two).
   landscapeAge?: number
   alluvium?: number
   rockContrast?: number
@@ -97,10 +96,8 @@ export function deriveWorldId(inputs: BakeInputs): string {
   }
   // The scalars go in through the same mixer, as text, so an absent value
   // and a zero cannot collapse into each other.
-  const hasV2 = inputs.landscapeAge !== undefined || inputs.alluvium !== undefined || inputs.rockContrast !== undefined
   const scalars = new TextEncoder().encode(
-    `|s=${inputs.erosionStrength ?? 'd'}|r=${inputs.drainageRefresh ?? 'd'}` +
-    (hasV2 ? `|a=${inputs.landscapeAge ?? 'd'}|al=${inputs.alluvium ?? 'd'}|rc=${inputs.rockContrast ?? 'd'}` : ''),
+    `|a=${inputs.landscapeAge ?? 'd'}|al=${inputs.alluvium ?? 'd'}|rc=${inputs.rockContrast ?? 'd'}`,
   )
   const [sa, sb] = hashBytes(scalars, a, b)
   return `${hex8(sa)}${hex8(sb)}`

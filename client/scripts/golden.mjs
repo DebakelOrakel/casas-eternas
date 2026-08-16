@@ -94,7 +94,6 @@ const M = {
   params: await L('/src/worldgen/tectonics/tectonicsTuneParams.ts'),
   field: await L('/src/worldgen/elevation/elevationField.ts'),
   ridged: await L('/src/worldgen/elevation/ridgedNoise.ts'),
-  erosion: await L('/src/worldgen/surface/erosion.ts'),
   erosionForcing: await L('/src/worldgen/pipeline/erosionForcing.ts'),
   erosionPassV2: await L('/src/worldgen/surface/erosionPassV2.ts'),
   surfaceInputs: await L('/src/worldgen/surface/surfaceInputParams.ts'),

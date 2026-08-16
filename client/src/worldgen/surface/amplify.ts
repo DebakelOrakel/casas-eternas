@@ -80,8 +80,8 @@ export function seedCascadeScales(resX: number): number[] {
   return scales.length > 0 ? scales : [1]
 }
 
-// The per-cell rescaling the bake runs its erosion under lives in erosion.ts,
-// next to the constants it corrects — see scaleErosionParamsForCellSize.
+// (v1's per-cell erosion rescaling died with its pass — the v2 engine's
+// parameters are physical, so cellM covers what a rescaling table once did.)
 
 // THE RIVER THRESHOLD IS DELIBERATELY *NOT* RESCALED — and it used to be.
 //
@@ -126,8 +126,8 @@ export function seedCascadeScales(resX: number): number[] {
 // What changes, and it is intended: the stages no longer show the same rivers.
 // A finer map shows more of them, exactly as a real map does when you zoom in.
 //
-// The counterpart rescaling for EROSION is a different question with a
-// different answer, and it stays — see erosion.scaleErosionParamsForCellSize.
+// (The counterpart question for EROSION dissolved with v2: the engine's
+// parameters are physical, so the grid drops out via cellM.)
 
 // RIDGELINE RELIEF — why mountains read as round lumps, and what fixes it.
 //

@@ -21,12 +21,12 @@ import { metersToElevation } from '../elevation/elevationScale'
 // Why plains specifically needed this: a flat, tectonically-quiet cell got
 // near-zero detail from TWO separate places at the time of writing. computeElevation's
 // ridged-multifractal term (elevationField.ts) is gated on `uplift > 0`, so
-// anywhere with no nearby terrain feature gets none of it. And
-// runErosionPass's own incision is scaled down to EROSION_PLAIN_FACTOR (15%)
-// below EROSION_PLAIN_TOP_M specifically so mountains and plains stop
-// fighting over one relief/flatness trade-off (see erosion.ts's own comment)
-// — a deliberate, acknowledged compromise, but its side effect is that
-// plains keep almost exactly their smooth metaball-baseline shape. This layer
+// anywhere with no nearby terrain feature gets none of it. And the v1 erosion
+// pass (deleted with erosion-v2 P5) scaled its incision down on the plains
+// specifically so mountains and plains would stop fighting over one
+// relief/flatness trade-off
+// — a deliberate, acknowledged compromise, but its side effect was that
+// plains kept almost exactly their smooth metaball-baseline shape. This layer
 // doesn't touch either of those systems; it just paints a little texture on
 // top of what they produce, conditioned on the RESULT's own local slope so it
 // reads as consistent with the terrain rather than a uniform noise blanket.

@@ -3,7 +3,7 @@ summary: Fluvial incision draining into the WORLD OCEAN is floored at estuary de
 date: 2026-08-11
 area: worldgen
 stage: built
-status: decided and built 2026-08-11; measured on the synthetic harness world (0 deep ocean-connected cuts remain, estuary-depth mouths stay)
+status: SUPERSEDED 2026-08-16 by the erosion-v2 engine (docs/design/erosion-v2.md) — the implicit solve handles base level properly, so the estuary clamp and its constant were deleted in the P5 teardown; the problem analysis here remains the record of why v1 needed one
 ---
 
 # River-mouth base level

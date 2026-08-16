@@ -749,7 +749,25 @@ the version break v2 already carries.
     (`worldgen.panel.hydrology.title`, `…riverDensity.label/.help`) were
     removed with user approval; the hydrology OVERLAY group keeps its keys
     and its place in the overlay bar.
-- **P5 — teardown** of dead crutches, docs, decision records.
+- **P5 — BUILT 2026-08-16** — the teardown.
+  - `surface/erosion.ts` DELETED whole: runErosionPass, the stream-power/
+    thermal/deposition steps, erosionParamsWithControls,
+    scaleErosionParamsForCellSize, the delta sub-rules — nothing imported it
+    but a type, which moved. SURFACE_TUNING lost its entire "from erosion.ts"
+    section (delta freeboards, estuary clamp, zoned-incision thresholds,
+    talus angle); git history keeps the measurement essays that lived there.
+  - The legacy recipe reads died: `spec.erosion.erosionStrength` /
+    `drainageRefresh` are no longer read anywhere (an old save's lines are
+    ignored the partial-spec way), ErosionControls carries v2 controls only,
+    and deriveWorldId dropped the v1 scalars from its hash — a deliberate id
+    break for every save (ALGO v11 had already orphaned all older artifacts;
+    a changed id costs one re-bake). The roundtrip freeze was re-anchored on
+    the new shape.
+  - `erosionProgress` lost its `phase` field (one implicit solve has no
+    named phases; the screen only ever drew the fraction).
+  - makeTestSave.mjs and ridgeBands.mjs run the v2 engine now (same
+    forcing + pass the golden harness gates); river-mouth-base-level.md's
+    status records the estuary clamp as superseded by the engine.
 
 Deliberately out of scope: GPU compute (second stage), erosion inside the
 tectonic epoch loop (rejected for gameplay), glacial/aeolian processes.

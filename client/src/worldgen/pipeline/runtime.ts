@@ -107,8 +107,9 @@ let lastDisplayElevations: { data: Float32Array; width: number; height: number }
 // re-running the whole live epoch-stepping loop again, not an instant
 // revert. WorkerResetErosionMessage re-renders from this instead.
 let preErosionElevations: Float32Array | null = null
-// Set by a 'erosionStop' message; the in-flight runErosionPass polls it at each round
-// boundary and returns its partial result (which then becomes lastRawElevations).
+// Set by a 'erosionStop' message; the in-flight runErosionPassV2 polls it at
+// each chunk boundary and returns its partial result (which then becomes
+// lastRawElevations).
 let erosionStopRequested = false
 
 // A STAGE'S RESULT IS ONE OBJECT — it exists or it does not, never half of it.
@@ -446,9 +447,9 @@ function coarseElevation(elevations: Float32Array, worldWidth: number, worldHeig
 }
 
 // Runs one 'erosionStart' request end to end — extracted out of the onmessage
-// dispatcher (which stays a plain sync function) since runErosionPass is
-// itself async now (see erosion.ts's maybeYield: it periodically yields
-// to a real macrotask boundary during its long loops, which is what lets
+// dispatcher (which stays a plain sync function) since the erosion pass is
+// itself async (its routing yields to a real macrotask boundary during
+// its long loops, which is what lets
 // its onProgress-driven postMessage calls below actually reach the main
 // thread live instead of arriving in one burst after the whole ~10+
 // second pass finishes).
@@ -483,7 +484,7 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
       const percent = Math.round(fraction * 100)
       if (percent === lastReportedPercent) return
       lastReportedPercent = percent
-      const progressMessage: WorkerErosionProgressMessage = { type: 'erosionProgress', phase: 'streamPower', fraction }
+      const progressMessage: WorkerErosionProgressMessage = { type: 'erosionProgress', fraction }
       emit(progressMessage)
     },
     onChunkComplete: (chunkElevations) => renderAndPost(chunkElevations, true),
@@ -545,9 +546,8 @@ function handleErosionStart(message: Extract<WorkerInboundMessage, { type: 'eros
   // Busy rather than unsatisfied — no upstream stage is missing, so `needs` stays
   // absent and the screen simply stops waiting.
   if (renderInFlight) { decline('erosion'); return }
-  // Multi-second at this grid size (a 2048x1024 priority-flood plus up
-  // to 100 stream-power iterations, repeated for
-  // DEFAULT_EROSION_PASS_PARAMS.rounds) — doesn't block the main UI
+  // Multi-second at this grid size (a 2048x1024 priority-flood plus the
+  // engine's age-many implicit iterations) — doesn't block the main UI
   // thread regardless (this is a dedicated worker already separate
   // from rendering/input), but see runErodeRequest's own comment for
   // why it's async rather than a tight synchronous loop.
@@ -569,7 +569,7 @@ function handleErosionStart(message: Extract<WorkerInboundMessage, { type: 'eros
 }
 
 function handleErosionStop(): void {
-  // The in-flight runErosionPass polls this and returns its partial result.
+  // The in-flight runErosionPassV2 polls this and returns its partial result.
   erosionStopRequested = true
 }
 

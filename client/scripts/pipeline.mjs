@@ -389,7 +389,7 @@ test('the stages compute, in order, on one world', async () => {
   const p = await freshPipeline()
   await growWorld(p)
   const settledBefore = p.settledRenders()
-  p.dispatch({ type: 'erosionStart', strength: 1, networkRefreshes: 1 })
+  p.dispatch({ type: 'erosionStart' })
   await until(() => p.settledRenders() > settledBefore, { label: 'the erosion pass to finish', timeout: 180000 })
 
   p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
@@ -425,7 +425,7 @@ test('INVALIDATION: eroding stales everything downstream, per the declared chain
 
   const climateRuns = p.count('climateData')
   const settledBefore = p.settledRenders()
-  p.dispatch({ type: 'erosionStart', strength: 2, networkRefreshes: 1 })
+  p.dispatch({ type: 'erosionStart', age: 80 })
   await until(() => p.settledRenders() > settledBefore, { label: 'the erosion pass to finish', timeout: 180000 })
   check('erosion does not silently recompute the climate', p.count('climateData') === climateRuns)
 
@@ -453,7 +453,7 @@ test('a stage that cannot run says so instead of going quiet', async () => {
   p.dispatch({ type: 'hydrologyRun' })
   p.dispatch({ type: 'ecologyRun' })
   p.dispatch({ type: 'migrationRun', origins: [] })
-  p.dispatch({ type: 'erosionStart', strength: 1, networkRefreshes: 1 })
+  p.dispatch({ type: 'erosionStart' })
   await settle(200)
   const declined = p.messages.filter((m) => m.type === 'stageDeclined')
   check('all five refuse on a world that does not exist yet', declined.length === 5, declined.map((d) => d.stage).join(', '))
@@ -498,7 +498,7 @@ test('erosion can be stopped mid-pass', async () => {
   await growWorld(p)
   const unEroded = hash(p.last('rendered').elevation)
   const settledBefore = p.settledRenders()
-  p.dispatch({ type: 'erosionStart', strength: 1, networkRefreshes: 1 })
+  p.dispatch({ type: 'erosionStart' })
   await until(() => p.count('erosionProgress') >= 1, { label: 'erosion to start', timeout: 180000 })
   p.dispatch({ type: 'erosionStop' })
   await until(() => p.settledRenders() > settledBefore, { label: 'the partial result', timeout: 180000 })
@@ -520,7 +520,7 @@ test('every message type is dispatchable from a cold start', async () => {
   // one of them can actually meet, since the screen sends on user gestures.
   const cold = [
     { type: 'tectonicsStop' }, { type: 'tectonicsStart' }, { type: 'erosionStop' }, { type: 'resetStage', stage: 'erosion' },
-    { type: 'erosionStart', strength: 1, networkRefreshes: 1 },
+    { type: 'erosionStart' },
     { type: 'requestElevationField' },
     { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 },
     { type: 'hydrologyRun' },

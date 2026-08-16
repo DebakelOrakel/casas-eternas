@@ -8,7 +8,6 @@ import type { SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimula
 import type { RenderSimulationOptions } from '../render/elevationMapImage'
 import type { ContinentLabelPlacement } from '../render/continentLabelRenderer'
 import type { ArcheanSnapshot } from '../archean/archeanSnapshot'
-import type { ErosionPhase } from '../surface/erosion'
 import type { MigrationOrigin } from '../migration/migrationField'
 import type { StageId } from './stages'
 
@@ -31,11 +30,10 @@ export interface WorkerErosionStartMessage {
   type: 'erosionStart'
   // The v2 engine's landscape age in iterations — the central control: young
   // keeps inherited relief and sharp valleys, old approaches the denuded
-  // step, not the step count). Default 1.
+  // equilibrium. Absent → the slider's declared default.
   age?: number
   // Settling-length scale 0..100 (50 neutral): more alluvium = broader
   // valley floors and bigger deltas.
-  // at one extra priority-flood each. Default = DEFAULT_EROSION_PASS_PARAMS'.
   alluvium?: number
   // Lithology contrast 0..100 (50 neutral = σ 1.4).
   rockContrast?: number
@@ -297,8 +295,8 @@ export interface WorkerRenderedMessage {
 }
 
 // Sent repeatedly (throttled to once per whole-percent change, not once
-// per runErosionPass onProgress call — that's ~500+ calls for the
-// default params) while an 'erosionStart' request is in flight; nothing is sent
+// per engine onProgress callback — that would be one per
+// iteration) while an 'erosionStart' request is in flight; nothing is sent
 // for 'resetErosion', since that's a single already-computed render with
 // no meaningful sub-progress of its own.
 // A stage was asked to run and DECLINED, because something it reads is not there.
@@ -322,9 +320,11 @@ export interface WorkerStageDeclinedMessage {
   needs?: StageId
 }
 
+// The v1 pass reported four named phases here; the v2 engine is one implicit
+// solve, so the fraction is the whole story (the `phase` field left with the
+// pass in the P5 teardown — the screen only ever drew the fraction).
 export interface WorkerErosionProgressMessage {
   type: 'erosionProgress'
-  phase: ErosionPhase
   fraction: number
 }
 
