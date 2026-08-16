@@ -258,12 +258,48 @@ bakes may come back onto the table.
 
 ## Multithreading (a requirement, not an afterthought)
 
-| piece | method | expected scaling |
-|---|---|---|
-| priority flood | Barnes 2016/17: flood tiles independently, resolve the border spill graph globally, correct | near-linear |
-| implicit fluvial solve | parallel per drainage basin + level scheduling inside large basins (Barnes 2019) | ~10× on 16 cores published |
-| MFD accumulation | level-parallel over the topological order | good |
-| diffusion / thermal / marine | stencil ops | linear |
+| piece | method | expected scaling | P1 MEASURED (2048, 8 workers, 4P+6E) |
+|---|---|---|---|
+| priority flood | Barnes 2016/17: flood tiles independently, resolve the border spill graph globally, correct | near-linear | BUILT: 16 fixed strips, spill graph + min-max Dijkstra; exact (max 0.02 m vs serial, ε-chains only), deterministic for any worker count; P1 288→78 ms, P2 322→95 ms (~3.5×, E-core-limited) |
+| implicit fluvial solve | parallel per drainage basin + level scheduling inside large basins (Barnes 2019) | ~10× on 16 cores published | NOT built — measured serial: fluvial 18 + sediment 39 ms/iter; THE remaining wall, see below |
+| MFD accumulation | level-parallel over the topological order | good | NOT built — serial 78 ms at refresh; the λ-walk (72 ms) is its sibling |
+| diffusion / thermal / marine | stencil ops | linear | BUILT: 4–8× on the scans (LTD facet scan 215→48, MFD 73→19); small stencils are dispatch-bound (~1.3×) |
+
+The P1 spike (scratchpad `p1-spike.mjs`, 2026-08-16) ran the P0 physics
+threaded end-to-end and byte-identical across worker counts. Three findings
+beyond the table:
+
+1. **A 57 % overhead nobody was measuring.** P0's per-iteration cost was
+   dominated not by compute but by `maybeYield()` in the shared
+   `fillDepressions` — an unconditional `setTimeout(0)` macrotask every
+   ~n/200 pops, browser progress plumbing paid blindly in Node. Removing it
+   cut the serial iteration 566→221 ms at 1024. This affects TODAY'S
+   pipeline: the browser generator's erosion routing pays the same tax
+   (v1 fix candidate: time-throttled yields, not unconditional ones).
+2. **Routing refresh amortises, and the physics tolerates it.** Recomputing
+   ocean/flood/LTD/MFD/accumulation every K iterations (v1's own
+   drainage-refresh model) at K=4/K=8 leaves land fraction and convergence
+   unchanged and moves the field only within the capture-flicker class
+   (RMS 36/68 m at 512, 400 iters — the same magnitude two K=1 runs differ
+   by after a few iterations). The equilibrium attractor does not care.
+3. **The Amdahl wall is the ordered walks, precisely quantified**: λ-walk 72
+   + accumulation 78 + sediment 39 + fluvial 18 + pop-order merge ~100 ms
+   ≈ 310 ms serial at 2048. Everything else parallelises. This is what
+   caps same-K threading at ~1.2–2×.
+
+End-to-end at 2048×1024, 8 workers: serial best 830 ms/iter → K=1 threaded
+614 → K=4 248 → K=8 169 ms/iter (**4.9× combined**; a full ~800-iteration
+solve drops from ~11 to ~2.3 min). The honest split: threading alone gives
+~1.2–2× at equal K; the rest is amortisation.
+
+The P2 path THROUGH the wall, in order of leverage: (a) **pipelined
+refresh** — the routing refresh reads a z-snapshot and nothing the physics
+iterations write, so it can run on background workers while iterations
+continue on the previous routing; with validated K≥8 the serial walks then
+stop blocking the iteration path entirely; (b) basin-parallel
+fluvial/sediment (land trees are independent; sediment needs a coast-split
+stage for its marine tail); (c) tournament/parallel merge. GPU stays the
+second stage.
 
 Substrate: `SharedArrayBuffer` + the existing worker pool in the browser,
 `worker_threads` in the Node baker. SAB needs COOP/COEP headers — dev
@@ -271,8 +307,9 @@ server and Go server must send them; small standalone task, do it early.
 GPU (WebGPU) is deliberately a SECOND stage: the algorithms above are
 GPU-friendly, but the CPU path is the one the repo has and runs everywhere.
 
-Realistic outcome: 6–10× wall clock. The 42-minute 16K bake lands near
-5–8 minutes; the generator pass becomes interactive.
+Realistic outcome: 6–10× wall clock (K-amortisation + threading measured
+at 4.9× before pipelining/basins). The 42-minute 16K bake lands near 5–8
+minutes; the generator pass becomes interactive.
 
 ## Crutch scorecard
 
@@ -350,7 +387,14 @@ the version break v2 already carries.
   is P1's problem to parallelise, and the look lives in the initial
   condition and forcing detail, not in the scalars — P0 is DONE.
 - **P1 — threading spike**: parallel flood + level-scheduled solver at
-  2048. GATE: ≥4× on 8 cores.
+  2048. GATE: ≥4× on 8 cores. RUN 2026-08-16 (see the multithreading
+  section for the measured table): Barnes flood built and exact, scans
+  4–8×, combined threading+amortisation 4.9× end-to-end (830→169 ms/iter)
+  with physics validated at K≤8 — but threading ALONE at equal K is
+  1.2–2×, capped by the ordered walks (~310 ms serial). Verdict: the gate
+  is met only jointly, not by threads alone; the remaining wall is
+  quantified and the pipelined-refresh design (routing off the iteration
+  path) is how P2 breaks it.
 - **P2 — generator integration** behind the existing `runErosionPass`
   surface; decide the U fork on P0 evidence; goldens re-anchored
   deliberately; the new slider set (see "Player-facing controls") proposed
