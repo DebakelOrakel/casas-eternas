@@ -11,9 +11,13 @@ export interface RaftBlob {
   x: number
   y: number
   radius: number
-  // World epoch this piece of continental crust formed: 0 for the original
-  // cratonic nuclei (oldest), the accretion epoch for margin blobs welded on at
-  // subduction arcs (younger). Gives a real old-interior/young-margin craton-age
+  // World epoch this piece of continental crust formed — on the CONTINUOUS
+  // axis (core/worldTime.worldEpoch): archean stamps count from the world's
+  // first epoch, tectonic-era stamps continue past the handover instead of
+  // restarting with the tectonic clock (they did until 2026-08-16, which made
+  // a fresh margin read older than an Archean core on young worlds). 0 for
+  // the original cratonic nuclei (oldest), the accretion epoch for margin
+  // blobs welded on at subduction arcs (younger). Gives a real old-interior/young-margin craton-age
   // gradient (continents grow by marginal accretion) that the Ecology layer
   // samples for iron (old cratons). Optional so pre-existing saved rafts, which
   // lack it, simply read as age 0 (oldest). See docs/decisions/ecology.md P2.
@@ -59,6 +63,8 @@ export interface Suture {
   // Unit tangent along the collision seam (the fold-mountain belt's long axis).
   tangentX: number
   tangentY: number
+  // When the collision happened, on the continuous world-epoch axis
+  // (core/worldTime.worldEpoch — same axis as RaftBlob.birthEpoch).
   epoch: number
 }
 

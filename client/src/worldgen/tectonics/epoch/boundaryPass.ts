@@ -4,6 +4,7 @@ import { wrapValue } from '../../core/field'
 import { wrappedDelta } from '../../core/toroidal'
 import { raftMembership } from '../../crust/raftField'
 import { accreteToNearestRaft } from '../../crust/raftLifecycle'
+import { worldEpoch } from '../../core/worldTime'
 import { resetOceanAgeAround } from '../oceanAge'
 import { classifyBoundaryMotion } from '../plateVelocityDecomposition'
 import { TECTONICS_TUNING } from '../tectonicsTuneParams'
@@ -181,7 +182,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
         const inLen = Math.sqrt(inX * inX + inY * inY) || 1
         const accreteX = (((boundary.x + (inX / inLen) * TECTONICS_TUNING.accretionInset) % width) + width) % width
         const accreteY = (((boundary.y + (inY / inLen) * TECTONICS_TUNING.accretionInset) % height) + height) % height
-        accreteToNearestRaft(sim.rafts, accreteX, accreteY, TECTONICS_TUNING.accretionBlobRadius, sim.epoch, TECTONICS_TUNING.accretionMinGapSq, TECTONICS_TUNING.accretionMaxAttachSq, width, height)
+        accreteToNearestRaft(sim.rafts, accreteX, accreteY, TECTONICS_TUNING.accretionBlobRadius, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.accretionMinGapSq, TECTONICS_TUNING.accretionMaxAttachSq, width, height)
       }
     }
 

@@ -88,7 +88,8 @@ function capsuleWeight(
 }
 
 // The smooth K-factor field at `outWidth`×`outHeight` over a world of
-// `width`×`height` cells. Neutral is 1.0 everywhere; ocean floor stays
+// `width`×`height` cells. `currentEpoch` is the CONTINUOUS world epoch
+// (core/worldTime.worldEpoch) — the axis birthEpoch and suture stamps use. Neutral is 1.0 everywhere; ocean floor stays
 // neutral (the engine's marine steps have their own physics).
 export function computeErodibilityField(
   rafts: Raft[],

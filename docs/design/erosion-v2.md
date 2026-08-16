@@ -196,17 +196,21 @@ hardened (the cratons), landscape effect at age 100 is 38 m RMS on land
 with ~1 km local capture shifts at craton margins — mechanism proven,
 magnitudes deliberately left to the calibration pass.
 
-Found on the way, REPORTED not fixed (2026-08-16): **the birthEpoch axis
-is broken across the archean→tectonic handover.** Blobs are stamped in
-ARCHEAN epochs, never remapped in finalizeArchean, and the tectonic clock
+Found on the way and FIXED the same day (user's call, 2026-08-16): **the
+birthEpoch axis was broken across the archean→tectonic handover.** Blobs
+were stamped in ARCHEAN epochs, never remapped, and the tectonic clock
 restarts at zero — so against `sim.epoch` a young world's craton oldness
-clamps to 0 everywhere, and a tectonic-era accretion can read OLDER than
-an archean core. This also distorts the existing cratonAge overlay and
-the Ecology iron placement on young worlds (pipeline/runtime.ts passes
-`sim.epoch`); on long-run worlds the distortion fades, which is why it
-went unnoticed. The uplift-check script compensates with
-`sim.epoch + archeanEpochs`; the real fix (remap at handover, one
-continuous axis) is a decision for the user — it touches saves.
+clamped to 0 everywhere, and a tectonic-era accretion could read OLDER
+than an archean core. This also distorted the existing cratonAge overlay
+and the Ecology iron placement on young worlds; on long-run worlds the
+distortion faded, which is why it went unnoticed. The fix is one
+continuous axis, `core/worldTime.worldEpoch(archeanEpochs, epoch)`: every
+tectonic-era stamp (accretion, merges, split immunity, sutures,
+stabilisation checks) and every reader (craton oldness in the pipeline,
+the erodibility field) now uses it; archean stamps were already on it by
+construction. Old saves' tectonic-born blobs keep restarted-axis stamps
+and read somewhat too old — accepted, hard-breaks phase. Goldens
+re-anchored with the fix.
 
 ## Hydrology merges into the engine
 

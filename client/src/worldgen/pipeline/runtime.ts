@@ -16,7 +16,7 @@ import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from '../archean/archeanStep'
 import { convectionCellSeeds, finalizeArchean } from '../archean/finalizeArchean'
 import { findPlumeSites } from '../tectonics/plumes'
 import { stabilisedFraction } from '../crust/raftField'
-import { worldAgeMa } from '../core/worldTime'
+import { worldAgeMa, worldEpoch } from '../core/worldTime'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from '../tectonics/oceanAge'
 import type { ErosionPassParams } from '../surface/erosion'
 import type { FlowRouting } from '../surface/flowRouting'
@@ -340,7 +340,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     mantle: sim.mantle.slice().buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
-    cratonAge: computeCratonOldnessField(sim.rafts, sim.epoch, MANTLE_RES_X, MANTLE_RES_Y, sim.width, sim.height).buffer as ArrayBuffer,
+    cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), MANTLE_RES_X, MANTLE_RES_Y, sim.width, sim.height).buffer as ArrayBuffer,
     elevation: coarseElevation(result.elevations, sim.width, sim.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
@@ -760,7 +760,7 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
   // Hydrology (discharge/lakes) is optional here — if it hasn't been computed
   // yet, fish falls back to its marine component; the ecology panel re-triggers
   // this once hydrology lands (see WorldGenScreen's chaining).
-  const cratonAge = computeCratonOldnessField(sim.rafts, sim.epoch, CLIMATE_RES_X, CLIMATE_RES_Y, sim.width, sim.height)
+  const cratonAge = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, sim.width, sim.height)
   const eco = computeEcology({
     temperature: climate.temperature,
     precipitation: climate.precipitation,

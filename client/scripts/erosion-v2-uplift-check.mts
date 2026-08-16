@@ -138,14 +138,8 @@ const uStandin = new Float32Array(FW * FH)
 }
 
 // --- the K-factor field -------------------------------------------------------
-// sim.epoch + archeanEpochs, NOT sim.epoch: blob birthEpochs are stamped in
-// ARCHEAN epochs and never remapped at finalizeArchean, while the tectonic
-// clock restarts at 0 — against sim.epoch alone a young world's oldness
-// clamps to 0 everywhere (measured: hardness field came out neutral). The
-// combined axis is right for archean-born blobs and wrong only for the few
-// tectonic-era accretions — a KNOWN pre-existing defect of the birthEpoch
-// axis itself (also distorts the cratonAge overlay and ecology iron on
-// young worlds), reported 2026-08-16, fix pending a decision.
+// The continuous world-epoch axis (core/worldTime.worldEpoch) — the axis
+// every crust-age stamp uses since the 2026-08-16 handover fix.
 const hardness = M.erodibility.computeErodibilityField(
   sim.rafts, sim.sutures, sim.features, sim.epoch + sim.archeanEpochs, W, H, FW, FH)
 {

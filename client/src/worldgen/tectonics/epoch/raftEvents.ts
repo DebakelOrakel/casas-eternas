@@ -1,5 +1,6 @@
 import { toroidalDistanceSq, wrappedDelta } from '../../core/toroidal'
 import { mergeOverlappingRafts, splitDisconnectedRafts, splitRaftAtRift } from '../../crust/raftLifecycle'
+import { worldEpoch } from '../../core/worldTime'
 import { deservesContinentName, pickUnusedRaftName } from '../../crust/raftNames'
 import type { RaftMergeEvent, RaftSplitEvent } from '../../crust/raftTypes'
 import { coolMantleAt } from '../../mantle/mantleField'
@@ -56,13 +57,13 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
   // Continents that have drifted (or grown by accretion) into contact this
   // epoch suture into one (Phase 2c). Each suture is a continent-collision
   // event (name + seam geometry) for the notification/overlay layer.
-  const raftMerges = mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, sim.epoch, width, height)
+  const raftMerges = mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, worldEpoch(sim.archeanEpochs, sim.epoch), width, height)
   // Persist each collision belt for the world's life — terrain features get
   // pruned, so this is the only durable record of deep-time orogens (Ecology
   // provenance for tin / lode gold / gems). Stamped with the current epoch
   // (pre-increment). Merges are rare/gated, so this list grows slowly.
   for (const m of raftMerges) {
-    sim.sutures.push({ x: m.x, y: m.y, tangentX: m.tangentX, tangentY: m.tangentY, epoch: sim.epoch })
+    sim.sutures.push({ x: m.x, y: m.y, tangentX: m.tangentX, tangentY: m.tangentY, epoch: worldEpoch(sim.archeanEpochs, sim.epoch) })
   }
 
   // Continental breakup: a sustained divergent point under a continent tears it
@@ -76,7 +77,7 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
     const cny = wrappedDelta(cSeedA.y, cSeedB.y, height)
     const cnl = Math.sqrt(cnx * cnx + cny * cny) || 1
     const newRaftId = sim.rafts.reduce((max, raft) => Math.max(max, raft.id), -1) + 1
-    raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, TECTONICS_TUNING.splitMaxDistSq, TECTONICS_TUNING.splitGap, sim.epoch, TECTONICS_TUNING.splitMergeImmunityEpochs, width, height)
+    raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, TECTONICS_TUNING.splitMaxDistSq, TECTONICS_TUNING.splitGap, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.splitMergeImmunityEpochs, width, height)
     // Reset that point's divergence accumulator so it doesn't immediately
     // re-split the fresh halves next epoch.
     if (raftSplit) {

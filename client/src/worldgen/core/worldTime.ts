@@ -25,6 +25,20 @@ export function worldAgeMa(archeanEpochs: number, tectonicEpochs: number): numbe
   return archeanEpochs * ARCHEAN_MA_PER_EPOCH + tectonicEpochs * TECTONIC_MA_PER_EPOCH
 }
 
+// The CONTINUOUS epoch axis: epochs since the world began, spanning the
+// archean→tectonic handover. This is the axis every crust-age stamp and
+// every crust-age reader must use — birthEpoch, suture epochs, the craton
+// oldness normalization — because the tectonic clock restarts at zero while
+// the stamps made during the Archean do not. Before this existed
+// (2026-08-16), tectonic-era stamps used the restarted clock: on a young
+// world every craton read as age zero, and a freshly-accreted margin could
+// read OLDER than an Archean core. (An epoch counts a different Ma-span in
+// each era — see the constants above — so this axis measures EPOCHS, not
+// time; for elapsed time use worldAgeMa.)
+export function worldEpoch(archeanEpochs: number, tectonicEpochs: number): number {
+  return archeanEpochs + tectonicEpochs
+}
+
 // Formatted for display: always Ma, never Ga (user's call, 2026-08-06) — one
 // unit for the whole readout's life beats a nicer-looking big number that
 // changes units mid-run. Both the Genesis and Tectonics panels show this.

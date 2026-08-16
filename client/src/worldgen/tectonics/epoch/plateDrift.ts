@@ -1,6 +1,7 @@
 import { toroidalDistanceSq } from '../../core/toroidal'
 import { derivePlateTypes } from '../../crust/raftField'
 import { advanceRafts, recycleUnstabilisedCrust } from '../../crust/raftLifecycle'
+import { worldEpoch } from '../../core/worldTime'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../../mantle/mantleField'
 import { advectOceanAge } from '../oceanAge'
 import { advancePointByMotion, getVelocityAt } from '../plateMotion'
@@ -64,7 +65,7 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32A
   // derivePlateTypes below reads the result. Blobs accreted last epoch are one
   // epoch old now, so they are candidates — crust has to survive to the next epoch
   // to count, which is the right gate. See TECTONICS_TUNING.stabilisationEpochs.
-  recycleUnstabilisedCrust(sim.rafts, sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, sim.epoch, TECTONICS_TUNING.stabilisationEpochs, TECTONICS_TUNING.recycleDownwellingThreshold, width, height)
+  recycleUnstabilisedCrust(sim.rafts, sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.stabilisationEpochs, TECTONICS_TUNING.recycleDownwellingThreshold, width, height)
   // Sutures are welded into the drifting crust — advect each with the plate it
   // sits on, so a collision belt stays ON its continent instead of being left
   // behind in open ocean as the plates move (which would strand the tin/gem
