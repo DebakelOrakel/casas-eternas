@@ -44,8 +44,15 @@ export interface GridLayer {
 // eroded rather than by generic defaults. Undefined means the save predates
 // the setting; the pipeline falls back to its own default.
 export interface ErosionControls {
+  // v1's controls — LEGACY: only old saves carry them; the v1 bake still
+  // applies them so those worlds re-bake the way they were made.
   strength: number | undefined
   refresh: number | undefined
+  // The v2 engine's controls (new saves). The generator applies these; the
+  // bake ignores them until P3 switches it to the engine.
+  landscapeAge: number | undefined
+  alluvium: number | undefined
+  rockContrast: number | undefined
   riverDensity: number | undefined
 }
 

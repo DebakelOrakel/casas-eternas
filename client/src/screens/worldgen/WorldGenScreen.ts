@@ -481,8 +481,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       <button type="button" class="icon-button panel-reset" data-action="reset-erosion" aria-label="${t('worldgen.action.resetErosion.label')}" data-help="worldgen.action.resetErosion">
         <img src="/icons/reset.png" alt="" />
       </button>
-      ${sliderField(SURFACE_INPUTS.erosionStrength, 'erosion-strength-input', 'erosion-strength-label')}
-      ${sliderField(SURFACE_INPUTS.drainageRefresh, 'erosion-refresh-input', 'erosion-refresh-label')}
+      ${sliderField(SURFACE_INPUTS.landscapeAge, 'erosion-age-input', 'erosion-age-label')}
+      ${sliderField(SURFACE_INPUTS.alluvium, 'erosion-alluvium-input', 'erosion-alluvium-label')}
+      ${sliderField(SURFACE_INPUTS.rockContrast, 'erosion-rock-input', 'erosion-rock-label')}
       <label class="field field--icon-row">
         <span class="field-row">
           <button type="button" class="icon-button" data-action="erode" aria-label="${t('worldgen.action.runErosion.label')}" data-help="worldgen.action.runErosion">
@@ -588,12 +589,15 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // compute-wise, it just erodes more per step) and drainage-network refresh count
   // (re-derives the river network within a round so channels migrate/capture — costs
   // one extra priority-flood each, the only real time cost). See the erosion docs.
-  const strengthInput = root.querySelector<HTMLInputElement>('.erosion-strength-input')!
-  const strengthLabel = root.querySelector<HTMLElement>('[data-value="erosion-strength-label"]')!
-  const refreshInput = root.querySelector<HTMLInputElement>('.erosion-refresh-input')!
-  const refreshLabel = root.querySelector<HTMLElement>('[data-value="erosion-refresh-label"]')!
-  strengthInput.addEventListener('input', () => { strengthLabel.textContent = strengthInput.value })
-  refreshInput.addEventListener('input', () => { refreshLabel.textContent = refreshInput.value })
+  const ageInput = root.querySelector<HTMLInputElement>('.erosion-age-input')!
+  const ageLabel = root.querySelector<HTMLElement>('[data-value="erosion-age-label"]')!
+  const alluviumInput = root.querySelector<HTMLInputElement>('.erosion-alluvium-input')!
+  const rockContrastInput = root.querySelector<HTMLInputElement>('.erosion-rock-input')!
+  const alluviumLabel = root.querySelector<HTMLElement>('[data-value="erosion-alluvium-label"]')!
+  const rockContrastLabel = root.querySelector<HTMLElement>('[data-value="erosion-rock-label"]')!
+  ageInput.addEventListener('input', () => { ageLabel.textContent = ageInput.value })
+  alluviumInput.addEventListener('input', () => { alluviumLabel.textContent = alluviumInput.value })
+  rockContrastInput.addEventListener('input', () => { rockContrastLabel.textContent = rockContrastInput.value })
   const resetErosionButton = root.querySelector<HTMLButtonElement>('[data-action="reset-erosion"]')!
   const resetClimateButton = root.querySelector<HTMLButtonElement>('[data-action="reset-climate"]')!
   const resetEcologyButton = root.querySelector<HTMLButtonElement>('[data-action="reset-ecology"]')!
@@ -2783,7 +2787,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateControlsDisabled()
     updateProgress()
     updateNavState() // first erosion unlocks Climate/Rivers
-    postToWorker({ type: 'erosionStart', strength: Number(strengthInput.value), networkRefreshes: Number(refreshInput.value) })
+    postToWorker({ type: 'erosionStart', age: Number(ageInput.value), alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value) })
   })
 
   resetErosionButton.addEventListener('click', () => {
@@ -2911,8 +2915,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     contrastLabel.textContent = contrastInput.value
     equatorOffsetLabel.textContent = equatorOffsetInput.value
     riverDensityLabel.textContent = riverDensityInput.value
-    strengthLabel.textContent = strengthInput.value
-    refreshLabel.textContent = refreshInput.value
+    ageLabel.textContent = ageInput.value
+    alluviumLabel.textContent = alluviumInput.value
+    rockContrastLabel.textContent = rockContrastInput.value
     carryingCapacityLabel.textContent = carryingCapacityInput.value
     const c = Number(concentrationInput.value)
     concentrationLabel.textContent = c > 0 ? `+${c}` : String(c)
@@ -3581,8 +3586,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     contrastInput.value = String(spec.values['climate.contrast'])
     equatorOffsetInput.value = String(spec.values['climate.equatorOffset'])
     riverDensityInput.value = String(spec.values['hydrology.riverDensity'])
-    strengthInput.value = String(spec.values['erosion.erosionStrength'])
-    refreshInput.value = String(spec.values['erosion.drainageRefresh'])
+    ageInput.value = String(spec.values['erosion.landscapeAge'])
+    alluviumInput.value = String(spec.values['erosion.alluvium'])
+    rockContrastInput.value = String(spec.values['erosion.rockContrast'])
     carryingCapacityInput.value = String(spec.values['ecology.carryingCapacity'])
     concentrationInput.value = String(spec.values['ecology.concentration'])
     provinceInput.value = String(spec.values['ecology.provinceStrength'])

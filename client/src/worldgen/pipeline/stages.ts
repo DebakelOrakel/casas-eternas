@@ -84,7 +84,7 @@ export const STAGES: readonly Stage[] = [
     id: 'erosion',
     dependsOn: ['tectonics'],
     kind: 'progressive',
-    inputs: { erosionStrength: SURFACE_INPUTS.erosionStrength, drainageRefresh: SURFACE_INPUTS.drainageRefresh },
+    inputs: { landscapeAge: SURFACE_INPUTS.landscapeAge, alluvium: SURFACE_INPUTS.alluvium, rockContrast: SURFACE_INPUTS.rockContrast },
     outputs: ['elevation'],
   },
   {

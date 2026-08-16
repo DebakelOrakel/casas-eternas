@@ -38,8 +38,9 @@ const abundanceFields: SpecField[] = ECOLOGY_ABUNDANCE_GROUPS.flatMap((group) =>
 export const WORLD_SPEC_FIELDS: readonly SpecField[] = [
   { path: 'genesis.mantleVigour', input: ARCHEAN_INPUTS.mantleVigour },
   { path: 'genesis.water', input: ARCHEAN_INPUTS.water },
-  { path: 'erosion.erosionStrength', input: SURFACE_INPUTS.erosionStrength },
-  { path: 'erosion.drainageRefresh', input: SURFACE_INPUTS.drainageRefresh },
+  { path: 'erosion.landscapeAge', input: SURFACE_INPUTS.landscapeAge },
+  { path: 'erosion.alluvium', input: SURFACE_INPUTS.alluvium },
+  { path: 'erosion.rockContrast', input: SURFACE_INPUTS.rockContrast },
   // Climate's file order is NOT the panel's order (the panel shows the equator
   // offset second). Kept as it was written, because changing it would rewrite
   // every save for no gain.

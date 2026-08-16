@@ -9,18 +9,27 @@ import type { InputParam } from '../core/inputParams'
 // tuned for gentle incision does not come back carved like an aggressive one
 // (see docs/decisions/worldmap-amplification.md, rule 3).
 export const SURFACE_INPUTS = {
-  // Erosion strength as a multiplier on the pass's incision.
-  erosionStrength: {
-    min: 1, max: 5, step: 1, default: 2,
-    i18n: 'worldgen.panel.erosion.strength',
-    unit: 'common.unit.times',
+  // The v2 engine's central axis: how long the transient runs, in engine
+  // iterations. Young keeps the inherited tectonic relief and cuts sharp
+  // dendritic valleys; old approaches the smooth denuded equilibrium
+  // (measured: 25 crisp / 100 softened / 400 blob — erosion-v2.md).
+  landscapeAge: {
+    min: 10, max: 400, step: 5, default: 40,
+    i18n: 'worldgen.panel.erosion.age',
     inSpec: true,
   },
-  // How often the flow network is refreshed during a pass.
-  drainageRefresh: {
-    min: 1, max: 5, step: 1, default: 3,
-    i18n: 'worldgen.panel.erosion.drainage',
-    unit: 'common.unit.times',
+  // Settling-length scale: more alluvium settles sediment sooner — broader
+  // valley floors, bigger deltas. 50 is the engine's calibrated neutral.
+  alluvium: {
+    min: 0, max: 100, step: 5, default: 50,
+    i18n: 'worldgen.panel.erosion.alluvium',
+    inSpec: true,
+  },
+  // Lithology contrast σ: how differently hard and soft rock erode. 50 is
+  // the calibrated neutral (σ 1.4); 0 is uniform rock.
+  rockContrast: {
+    min: 0, max: 100, step: 5, default: 50,
+    i18n: 'worldgen.panel.erosion.rockContrast',
     inSpec: true,
   },
   // River density 0..100. NOT converted here: the worker takes the raw slider

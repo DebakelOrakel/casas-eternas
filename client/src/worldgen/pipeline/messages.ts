@@ -29,14 +29,16 @@ export interface WorkerTectonicsStopMessage {
 // stopped.
 export interface WorkerErosionStartMessage {
   type: 'erosionStart'
-  // Multiplier on the fluvial time step — dials erosion strength up (deeper valleys,
-  // more drainage rearrangement) at essentially no extra compute (it scales dh per
+  // The v2 engine's landscape age in iterations — the central control: young
+  // keeps inherited relief and sharp valleys, old approaches the denuded
   // step, not the step count). Default 1.
-  strength?: number
-  // How many times to re-derive the drainage network per round (see
-  // ErosionPassParams.networkRefreshes) — the lever that lets rivers migrate/capture,
+  age?: number
+  // Settling-length scale 0..100 (50 neutral): more alluvium = broader
+  // valley floors and bigger deltas.
   // at one extra priority-flood each. Default = DEFAULT_EROSION_PASS_PARAMS'.
-  networkRefreshes?: number
+  alluvium?: number
+  // Lithology contrast 0..100 (50 neutral = σ 1.4).
+  rockContrast?: number
 }
 // PUT A STAGE BACK WHERE IT STARTED. One gesture for what used to be three
 // unrelated messages (resetErosion, resetTectonics, archeanReset), because they

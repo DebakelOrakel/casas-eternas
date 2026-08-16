@@ -542,9 +542,25 @@ the version break v2 already carries.
   path (FLAG_HAS_ACCUM_WEIGHTS — fixed default-parameter provisional
   forcing per the 2026-08-17 decision, the live coupling/panel reorder is
   its own later step); chunked runs keep a global cadence cursor. The BAKE
-  stays on v1 until P3 (stride-8 MFD memory at bake grids). Remaining for
-  the switchover: runtime forcing assembly + wiring, panel/slider swap
-  (i18n approval), golden re-anchor.
+  stays on v1 until P3 (stride-8 MFD memory at bake grids). SWITCHED OVER
+  2026-08-17: the generator's erode stage runs the v2 engine
+  (pipeline/runtime.ts assembles the forcing — activity-weighted U,
+  crust-history K × world-seeded lithology noise, coast mask, provisional
+  default-parameter climate as normalized Q weights — and runs pooled +
+  pipelined when cross-origin isolation grants SAB, single-threaded
+  otherwise). The slider swap shipped with it (approved keys
+  `worldgen.panel.erosion.age`/`alluvium`/`rockContrast`; old
+  strength/drainage keys removed): age = iterations, alluvium =
+  settling-length scale (50 neutral), rock contrast = lithology σ.
+  worldId derivation extended BACKWARD-STABLY (old saves' ids and
+  cached artifacts stay valid; new saves hash the new controls).
+  Roundtrip, pipeline and amplify harnesses green. The goldens turned out
+  UNCHANGED — they call runErosionPass directly (their documented
+  runtime.ts blind spot), so they still gate the v1 pass, which the bake
+  still runs; the v2 generator output has NO golden-level field gate yet.
+  Porting the golden harness's erosion step to the v2 stage (and only
+  then re-anchoring) is the open QA item this leaves behind. The v1 pass
+  remains ONLY as the bake's engine until P3.
 - **P3 — bake tiers** on the new engine; re-measure the tier tables.
 - **P4 — hydrology merge**; riverDensity → display Q-filter; runoffFloor
   removed (user-visible: arid regions lose rivers — now wanted, once

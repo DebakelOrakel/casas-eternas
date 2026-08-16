@@ -6,7 +6,12 @@ import { ElevationRenderPool } from '../render/elevationRenderPool'
 import type { ElevationRenderer } from '../render/elevationRenderPool'
 import { downstreamOf } from './stages'
 import type { StageId } from './stages'
-import { DEFAULT_EROSION_PASS_PARAMS, erosionParamsWithControls, runErosionPass } from '../surface/erosion'
+import { runErosionPassV2 } from '../surface/erosionPassV2'
+import { DEFAULT_ENGINE_PARAMS } from '../surface/erosionEngine'
+import type { WorkerLike } from '../surface/erosionEnginePool'
+import { computeUpliftField } from '../elevation/upliftField'
+import { computeErodibilityField } from '../elevation/erodibilityField'
+import { fineDetailNoise } from '../elevation/ridgedNoise'
 import { fillDepressionsAndRouteFlow } from '../surface/flowRouting'
 import type { ArcheanSimulation } from '../archean/archeanState'
 import { createArcheanSimulation } from '../archean/archeanState'
@@ -18,7 +23,6 @@ import { findPlumeSites } from '../tectonics/plumes'
 import { stabilisedFraction } from '../crust/raftField'
 import { worldAgeMa, worldEpoch } from '../core/worldTime'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from '../tectonics/oceanAge'
-import type { ErosionPassParams } from '../surface/erosion'
 import type { FlowRouting } from '../surface/flowRouting'
 import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
@@ -454,38 +458,109 @@ function coarseElevation(elevations: Float32Array, worldWidth: number, worldHeig
 // its onProgress-driven postMessage calls below actually reach the main
 // thread live instead of arriving in one burst after the whole ~10+
 // second pass finishes).
-async function runErodeRequest(rawElevations: Float32Array, width: number, height: number, opts: { strength?: number; networkRefreshes?: number } = {}): Promise<void> {
-  // Throttled to once per whole-percent change rather than every
-  // onProgress call (~500+ for the default params) — that's plenty of
-  // granularity for a UI percentage readout without flooding postMessage.
+async function runErodeRequest(rawElevations: Float32Array, width: number, height: number, opts: { age?: number; alluvium?: number; rockContrast?: number } = {}): Promise<void> {
+  if (!sim) return
+  const n = width * height
+  // --- THE FORCING: the tectonics interface (docs/design/erosion-v2.md).
+  // U from the features' activity, the K story from the crust's history,
+  // both at climate resolution and bilinearly upsampled; the fine rock
+  // contrast is the world-seeded lithology noise on its fixed lattice.
+  const upliftCoarse = computeUpliftField(sim.features, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+  const hardnessCoarse = computeErodibilityField(sim.rafts, sim.sutures, sim.features, worldEpoch(sim.archeanEpochs, sim.epoch), width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+  const upsample = (coarse: Float32Array, x: number, y: number): number => {
+    const u = (x / width) * CLIMATE_RES_X
+    const v = (y / height) * CLIMATE_RES_Y
+    const x0 = Math.floor(u)
+    const y0 = Math.floor(v)
+    const fx = u - x0
+    const fy = v - y0
+    const at = (xx: number, yy: number): number => coarse[(((yy % CLIMATE_RES_Y) + CLIMATE_RES_Y) % CLIMATE_RES_Y) * CLIMATE_RES_X + (((xx % CLIMATE_RES_X) + CLIMATE_RES_X) % CLIMATE_RES_X)]
+    return (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy
+  }
+  // World-seeded lithology lattice; the salt keeps it decorrelated from the
+  // render's fine-detail noise, which shares warpSeed.
+  const lithoSeed = (sim.warpSeed ^ 0x51702e77) >>> 0
+  const sigma = 2.8 * ((opts.rockContrast ?? 50) / 100)
+  const uplift = new Float32Array(n)
+  const erodibility = new Float32Array(n)
+  const coastMask = new Uint8Array(n)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      uplift[i] = upsample(upliftCoarse, x, y)
+      erodibility[i] = Math.exp(sigma * fineDetailNoise((x * 512) / width, (y * 256) / height, 512, 256, lithoSeed)) * upsample(hardnessCoarse, x, y)
+      if (rawElevations[i] > 0) coastMask[i] = 1
+    }
+  }
+  // Provisional climate as the water forcing (decided 2026-08-17): the
+  // climate model evaluated on the INPUT terrain with DEFAULT parameters —
+  // orography reaches the solve, the climate panel's sliders deliberately
+  // do not (the live coupling is its own later stage-order step).
+  // Normalized to mean 1 over land so the engine's discharge calibration
+  // (kappaDt against area-Q) keeps its meaning; only the CONTRAST changes.
+  const provisionalTemperature = computeTemperature(rawElevations, width, height)
+  const provisionalPrecip = computeSeasonalPrecipitation(rawElevations, provisionalTemperature, computeSeasonalAmplitude(rawElevations, width, height), computeWind(), width, height, 1, 0).annual
+  const accumulationWeights = new Float32Array(n)
+  let landSum = 0
+  let landCount = 0
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      const w = Math.max(0, upsample(provisionalPrecip, x, y))
+      accumulationWeights[i] = w
+      if (rawElevations[i] > 0) { landSum += w; landCount++ }
+    }
+  }
+  const meanLand = landCount > 0 && landSum > 0 ? landSum / landCount : 1
+  for (let i = 0; i < n; i++) accumulationWeights[i] = accumulationWeights[i] / meanLand || 1
+
+  // --- the controls (approved 2026-08-17): age is the iteration count,
+  // alluvium scales the settling lengths (50 = the calibrated neutral),
+  // rock contrast is the lithology σ applied above.
+  const alluvium = opts.alluvium ?? 50
+  const settleScale = Math.pow(2, (50 - alluvium) / 50)
+  const params = {
+    ...DEFAULT_ENGINE_PARAMS,
+    settleXiKm: DEFAULT_ENGINE_PARAMS.settleXiKm * settleScale,
+    settleFloorKm: DEFAULT_ENGINE_PARAMS.settleFloorKm * settleScale,
+    settleMarineKm: DEFAULT_ENGINE_PARAMS.settleMarineKm * settleScale,
+  }
+  const age = Math.round(opts.age ?? 40)
+
+  // Pooled + pipelined when cross-origin isolation grants SAB (the client
+  // and dev server send COOP/COEP); single-threaded otherwise — same
+  // physics either way, byte-identical per the engine-check's gates.
+  let pool: ({ createWorker: () => WorkerLike } & { stencilWorkers: number; refreshWorkers: number; pipelineDepth: number }) | undefined
+  if (typeof SharedArrayBuffer !== 'undefined' && (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true) {
+    const { default: EngineWorkerCtor } = await import('../surface/erosionEngineWorker?worker')
+    const cores = (globalThis as { navigator?: { hardwareConcurrency?: number } }).navigator?.hardwareConcurrency ?? 8
+    pool = {
+      createWorker: () => new EngineWorkerCtor() as WorkerLike,
+      ...(cores >= 8 ? { stencilWorkers: 4, refreshWorkers: 2 } : { stencilWorkers: 2, refreshWorkers: 1 }),
+      pipelineDepth: 8,
+    }
+  }
+
   let lastReportedPercent = -1
-  // The slider→params mapping lives in erosion.ts so the worldmap's
-  // amplification bake applies the same world's settings identically.
-  const params: ErosionPassParams = erosionParamsWithControls(DEFAULT_EROSION_PASS_PARAMS, opts)
-  const erosionResult = await runErosionPass(
-    rawElevations,
-    width,
-    height,
+  const erosionResult = await runErosionPassV2(rawElevations, width, height, { uplift, erodibility, coastMask, accumulationWeights }, {
+    age,
     params,
-    (phase, fraction) => {
+    pool,
+    onProgress: (fraction) => {
       const percent = Math.round(fraction * 100)
       if (percent === lastReportedPercent) return
       lastReportedPercent = percent
-      const progressMessage: WorkerErosionProgressMessage = { type: 'erosionProgress', phase, fraction }
+      const progressMessage: WorkerErosionProgressMessage = { type: 'erosionProgress', phase: 'streamPower', fraction }
       emit(progressMessage)
     },
-    // Redraws once per round rather than on every fine-grained progress
-    // tick — a full redraw (Voronoi rasterization, boundary/highlight
-    // blending, labels) costs nearly as much as the erosion computation
-    // itself per call, so doing it at every one of the ~50-190 progress
-    // ticks would roughly double or triple the total wait for little
-    // added benefit over 5 visible in-progress steps.
-    (roundElevations) => renderAndPost(roundElevations, true),
-    () => erosionStopRequested,
-  )
+    onChunkComplete: (chunkElevations) => renderAndPost(chunkElevations, true),
+    shouldCancel: () => erosionStopRequested,
+  })
   await renderAndPost(erosionResult.elevations)
-  // Keep the pre-fill (basins-intact) terrain for the hydrology's lakes — set
-  // after renderAndPost, which clears it. See lastLakeBasinElevations.
+  // Keep the basins-intact terrain for the hydrology's lakes — set after
+  // renderAndPost, which clears it. Under v2 it equals the elevations
+  // (nothing bakes the fill in any more); the hydrology contract is
+  // unchanged. See lastLakeBasinElevations.
   lastLakeBasinElevations = erosionResult.preFillElevations
 }
 
@@ -554,7 +629,7 @@ function handleErosionStart(message: Extract<WorkerInboundMessage, { type: 'eros
     // does NOT treat this pre-erosion refresh as "erosion done" (which would clear
     // the stop icon + progress bar the instant a pass starts — see the render handler).
     await renderAndPost(undefined, true, 1)
-    if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height, { strength: message.strength, networkRefreshes: message.networkRefreshes })
+    if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height, { age: message.age, alluvium: message.alluvium, rockContrast: message.rockContrast })
   })().finally(() => {
     renderInFlight = false
   })
