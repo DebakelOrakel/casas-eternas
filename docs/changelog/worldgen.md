@@ -14,6 +14,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **changed** Erosion: the bake picker selects one resolution, finest first — the finest bake derives every coarser view, so there is nothing left to order twice. `worldgen.panel.erosion.bake`
 - **fixed** Climate: the panel reorder had dragged the old overlay defaults along — Climate no longer opens with the mantle showing, and Erosion keeps its terrain wash. `worldgen.panel.climate`
 - **changed** Elevation: mountain mass saturates isostatically instead of plateauing toward the 9000 m ceiling — the vast ultra-high decks and their frozen brim-full lakes are gone, and crests still sharpen with crustal thickness.
+- **new** Hydrology: lakes in permanently freezing climates are glaciers — ice on the map instead of blue water, an ice-cap surface in the biomes, no riparian greening and no fishery. `world.biome`
 
 ## 2026-08-16
 - **fixed** Tectonics: crustal age now runs on one continuous clock across the Archean handover — young worlds' craton-age overlay stops reading everything as newborn, age-dependent ores (iron, tin, gems) place correctly, and late-Archean crust is no longer wrongly recycled for ages after the eon ends. `worldgen.panel.tectonics`

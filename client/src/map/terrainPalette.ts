@@ -69,14 +69,23 @@ const LAKE_ALPHA = 0.85
 
 // Lay the lakes over the washed paper, IN PLACE. `lakeDepthMeters` is one
 // depth per texel (0 = no lake), already in metres.
-export function applyLakeWash(paper: Uint8ClampedArray, lakeDepthMeters: Float32Array): void {
+// A wet cell whose biome says Ice is a FROZEN basin (the riparian override,
+// see hydrology's LakeFields.frozen) — painted as glacier, not open water:
+// pale blue-white, barely darkening with depth.
+const LAKE_ICE_SHALLOW: [number, number, number] = [222, 233, 243]
+const LAKE_ICE_DEEP: [number, number, number] = [204, 220, 236]
+
+export function applyLakeWash(paper: Uint8ClampedArray, lakeDepthMeters: Float32Array, biomeIds: Uint8Array | null = null): void {
   for (let i = 0; i < lakeDepthMeters.length; i++) {
     const d = lakeDepthMeters[i]
     if (d <= 0) continue
     const t = Math.min(1, d / LAKE_DEPTH_SATURATION_M)
+    const ice = biomeIds !== null && biomeIds[i] === Biome.Ice
+    const shallow = ice ? LAKE_ICE_SHALLOW : LAKE_SHALLOW
+    const deep = ice ? LAKE_ICE_DEEP : LAKE_DEEP
     const p = i * 4
     for (let c = 0; c < 3; c++) {
-      const water = LAKE_SHALLOW[c] + (LAKE_DEEP[c] - LAKE_SHALLOW[c]) * t
+      const water = shallow[c] + (deep[c] - shallow[c]) * t
       paper[p + c] = paper[p + c] * (1 - LAKE_ALPHA) + water * LAKE_ALPHA
     }
   }

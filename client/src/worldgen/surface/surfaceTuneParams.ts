@@ -46,6 +46,19 @@ export const SURFACE_TUNING = {
   // hundreds of metres).
   minLakeBasinReliefM: 8,
 
+  // A basin whose MEAN ANNUAL temperature sits below this is permanently
+  // frozen: its water column stays (ice is water; the depth layer is
+  // unchanged), but the surface is a glacier — Biome.Ice overrides the
+  // classification on its wet cells, it feeds no riparian moisture and no
+  // freshwater fishery, and the maps paint it as ice instead of open water.
+  // −5 °C and not 0: lakes with seasonal ice cover but a liquid summer
+  // (Baikal-class, mean around 0 °C) stay lakes; only genuinely polar/
+  // high-cold basins freeze through. The −50 °C brim-full "lakes" this rule
+  // exists for were found 2026-08-16 (see docs/decisions/uplift-soft-knee.md
+  // — the PET floor of evaporationPotential holds any cold basin full, which
+  // is physically right for ice and looked absurd as blue water). Tune by eye.
+  lakeFrozenBelowC: -5,
+
   // Evaporites concentrate where the last water stood — the salt flat is a BAND
   // above the waterline, not the whole exposed floor (a fully-dry 2800 m deep
   // basin is a salt PAN at the bottom and hot desert rock on the slopes, not a

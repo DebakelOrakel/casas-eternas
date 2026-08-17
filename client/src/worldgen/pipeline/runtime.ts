@@ -158,6 +158,9 @@ interface HydrologyResult {
   // SaltFlat biome override's source, carried with the lake depths it came with.
   saltFlat: Uint8Array | null
   dryBasin: Uint8Array | null
+  // Permanently frozen basins (LakeFields.frozen) — the Biome.Ice override's
+  // source, and what excludes a glacier from the freshwater fishery below.
+  frozen: Uint8Array | null
   maxDischarge: number
   meanRunoff: number
 }
@@ -665,6 +668,16 @@ function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climat
   invalidateAfter('climate')
 }
 
+// The lake depths with frozen basins zeroed — what the ecology (fish) and the
+// migration cost field should see as WATER. Computed on demand rather than
+// stored: the full depth layer stays the display/save truth (ice is water).
+function liquidLakeDepth(h: HydrologyResult): Float32Array {
+  if (!h.frozen) return h.lakeDepth
+  const out = h.lakeDepth.slice()
+  for (let i = 0; i < out.length; i++) if (h.frozen[i]) out[i] = 0
+  return out
+}
+
 function handleHydrologyRun(): void {
   // Needs the current topography + a computed climate (rivers' water source).
   if (!sim || !lastRawElevations) { decline('hydrology', 'tectonics'); return }
@@ -730,7 +743,7 @@ function handleHydrologyRun(): void {
         renderDryBasin = lakes.dryBasin
         renderSaltFlat = lakes.saltFlat
         await renderAndPost(terrain, false, 1, true)
-        result = { routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, maxDischarge, meanRunoff }
+        result = { routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen, maxDischarge, meanRunoff }
       }
       hydrology = result
       rerouted = true
@@ -753,7 +766,7 @@ function handleHydrologyRun(): void {
     let biomesOut: Uint8Array = new Uint8Array(0)
     let precipEffOut: Float32Array = new Float32Array(0)
     if (rerouted) {
-      const riparian = computeRiparianBiomes(result.routing, terrain, result.discharge, threshold, result.maxDischarge, result.lakeDepth, weather.precipitation, weather.temperature, weather.seasonalAmplitude, weather.monsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, result.saltFlat ?? undefined, result.dryBasin ?? undefined)
+      const riparian = computeRiparianBiomes(result.routing, terrain, result.discharge, threshold, result.maxDischarge, result.lakeDepth, weather.precipitation, weather.temperature, weather.seasonalAmplitude, weather.monsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, result.saltFlat ?? undefined, result.dryBasin ?? undefined, result.frozen ?? undefined)
       // The riparian-effective precipitation rides along: it is what lets the
       // worldmap reclassify at bake resolution without re-running hydrology.
       biomesOut = riparian.biomes
@@ -793,7 +806,8 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     elevation: lastRawElevations,
     discharge: hydrology?.discharge ?? null,
     maxDischarge: hydrology?.maxDischarge ?? 0,
-    lakeDepth: hydrology?.lakeDepth ?? null,
+    // Liquid water only: a frozen basin is a glacier and feeds no fishery.
+    lakeDepth: hydrology ? liquidLakeDepth(hydrology) : null,
     volcanoes: collectVolcanoes(sim.features),
     // Collision belts for tin/lode-gold/gems: current fold mountains (on-crust)
     // + the accumulated (advected) deep-time sutures.

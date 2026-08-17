@@ -355,8 +355,14 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
     // Salt flats are a hydrology state and the classification has no way to
     // reach them — they come from the terminal-basin pass that ran on the macro
     // world. Carried over rather than re-derived, per the authority rule.
+    // Frozen lakes are the same class of state (a basin froze through — the
+    // macro biome says Ice on its wet cells), carried over gated on the lake
+    // mask so a LAND ice-cap cell never overrides a reclassified texel.
     if (macroBiomeAtTexel) {
-      for (let i = 0; i < ids.length; i++) if (macroBiomeAtTexel[i] === Biome.SaltFlat) ids[i] = Biome.SaltFlat
+      for (let i = 0; i < ids.length; i++) {
+        if (macroBiomeAtTexel[i] === Biome.SaltFlat) ids[i] = Biome.SaltFlat
+        else if (macroBiomeAtTexel[i] === Biome.Ice && lakeDepthAtTexel !== null && lakeDepthAtTexel[i] > 0) ids[i] = Biome.Ice
+      }
     }
     biomeIds = ids
   }
@@ -392,8 +398,8 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
     // Lakes go over the wash and under the knowledge lerps, so they dim and
     // fade toward paper with everything else where nobody has been.
     if (lakeDepthAtTexel) {
-      applyLakeWash(shaded, lakeDepthAtTexel)
-      applyLakeWash(unshaded, lakeDepthAtTexel)
+      applyLakeWash(shaded, lakeDepthAtTexel, biomeIds)
+      applyLakeWash(unshaded, lakeDepthAtTexel, biomeIds)
     }
     const k = knowledge?.texels
     const w = textureWidth

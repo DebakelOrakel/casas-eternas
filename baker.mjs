@@ -11955,6 +11955,18 @@ var SURFACE_TUNING = {
   // far above the gate either way (rift grabens are depth-capped in the
   // hundreds of metres).
   minLakeBasinReliefM: 8,
+  // A basin whose MEAN ANNUAL temperature sits below this is permanently
+  // frozen: its water column stays (ice is water; the depth layer is
+  // unchanged), but the surface is a glacier — Biome.Ice overrides the
+  // classification on its wet cells, it feeds no riparian moisture and no
+  // freshwater fishery, and the maps paint it as ice instead of open water.
+  // −5 °C and not 0: lakes with seasonal ice cover but a liquid summer
+  // (Baikal-class, mean around 0 °C) stay lakes; only genuinely polar/
+  // high-cold basins freeze through. The −50 °C brim-full "lakes" this rule
+  // exists for were found 2026-08-16 (see docs/decisions/uplift-soft-knee.md
+  // — the PET floor of evaporationPotential holds any cold basin full, which
+  // is physically right for ice and looked absurd as blue water). Tune by eye.
+  lakeFrozenBelowC: -5,
   // Evaporites concentrate where the last water stood — the salt flat is a BAND
   // above the waterline, not the whole exposed floor (a fully-dry 2800 m deep
   // basin is a salt PAN at the bottom and hot desert rock on the slopes, not a
@@ -12019,6 +12031,7 @@ function computeLakes(routing, discharge, elevation, temperature, precip, climat
   const depth = new Float32Array(n);
   const saltFlat = new Uint8Array(n);
   const dryBasin = new Uint8Array(n);
+  const frozen = new Uint8Array(n);
   const flooded = new Uint8Array(n);
   for (let cell = 0; cell < n; cell++) {
     if (filled[cell] > elevation[cell] + EPS) flooded[cell] = 1;
@@ -12076,9 +12089,12 @@ function computeLakes(routing, discharge, elevation, temperature, precip, climat
         }
       }
       const saltBandTop = level + metersToElevation(SURFACE_TUNING.saltBandM);
+      const isFrozen2 = tempSum / region.length < SURFACE_TUNING.lakeFrozenBelowC;
       for (const c of region) {
-        if (elevation[c] <= level) depth[c] = level - elevation[c];
-        else if (elevation[c] <= SEA_LEVEL) {
+        if (elevation[c] <= level) {
+          depth[c] = level - elevation[c];
+          if (isFrozen2) frozen[c] = 1;
+        } else if (elevation[c] <= SEA_LEVEL) {
           dryBasin[c] = 1;
           if (elevation[c] <= saltBandTop) saltFlat[c] = 1;
         }
@@ -12087,11 +12103,15 @@ function computeLakes(routing, discharge, elevation, temperature, precip, climat
     }
     if (spill - basinFloor < metersToElevation(minBasinReliefM)) continue;
     if (inflow < pet * region.length) continue;
+    const isFrozen = tempSum / region.length < SURFACE_TUNING.lakeFrozenBelowC;
     for (const c of region) {
-      if (elevation[c] <= spill) depth[c] = spill - elevation[c];
+      if (elevation[c] <= spill) {
+        depth[c] = spill - elevation[c];
+        if (isFrozen) frozen[c] = 1;
+      }
     }
   }
-  return { depth, saltFlat, dryBasin };
+  return { depth, saltFlat, dryBasin, frozen };
 }
 function accumulateDischarge(routing, elevation, precip, climateResX, climateResY) {
   const { width, height, flowTarget, popOrder, poppedCount } = routing;

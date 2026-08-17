@@ -287,7 +287,9 @@ async function buildWorld(seed) {
   const volcanoes = M.volcanoes.collectVolcanoes(sim.features)
   const eco = M.ecology.computeEcology({
     temperature, precipitation, biomes, currents, elevation: el,
-    discharge, maxDischarge: maxDis, lakeDepth: lakes.depth, volcanoes,
+    // Liquid water only, mirroring the worker's liquidLakeDepth: a frozen
+    // basin is a glacier and feeds no fishery.
+    discharge, maxDischarge: maxDis, lakeDepth: lakes.depth.map((d, i) => (lakes.frozen[i] ? 0 : d)), volcanoes,
     orogenPoints: sim.sutures.map((s) => ({ x: s.x, y: s.y })),
     cratonAge, warpSeed: sim.warpSeed, worldWidth: W, worldHeight: H,
   }, { carryingCapacity: 100, concentration: 0 })

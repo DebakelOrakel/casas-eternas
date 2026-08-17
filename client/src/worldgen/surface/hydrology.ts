@@ -86,6 +86,14 @@ export interface LakeFields {
   // despite the sign test, classify by their own (hot, deep) local climate.
   // Above the salt band that naturally comes out as desert rock.
   dryBasin: Uint8Array
+  // 1 on every wet cell of a basin whose mean annual temperature is below
+  // SURFACE_TUNING.lakeFrozenBelowC — a GLACIER, not open water. The depth
+  // stays (ice is water, and the PET floor holding a cold basin full is
+  // physically right for ice); what changes is the surface: Biome.Ice wins
+  // the classification, no riparian moisture, no freshwater fishery, and the
+  // maps paint ice. Decided per BASIN, not per cell — one lake is one
+  // surface, and the mean temperature is already summed for the PET anyway.
+  frozen: Uint8Array
 }
 
 export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
@@ -95,6 +103,7 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
   const depth = new Float32Array(n)
   const saltFlat = new Uint8Array(n)
   const dryBasin = new Uint8Array(n)
+  const frozen = new Uint8Array(n)
   const flooded = new Uint8Array(n)
   for (let cell = 0; cell < n; cell++) {
     // Sub-sea-level cells count too now: with the flood seeded from the world
@@ -169,9 +178,12 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
         }
       }
       const saltBandTop = level + metersToElevation(SURFACE_TUNING.saltBandM)
+      const isFrozen = tempSum / region.length < SURFACE_TUNING.lakeFrozenBelowC
       for (const c of region) {
-        if (elevation[c] <= level) depth[c] = level - elevation[c]
-        else if (elevation[c] <= SEA_LEVEL) {
+        if (elevation[c] <= level) {
+          depth[c] = level - elevation[c]
+          if (isFrozen) frozen[c] = 1
+        } else if (elevation[c] <= SEA_LEVEL) {
           dryBasin[c] = 1
           if (elevation[c] <= saltBandTop) saltFlat[c] = 1
         }
@@ -185,11 +197,15 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
     // branch above is the one deliberate exception to that rule.
     if (spill - basinFloor < metersToElevation(minBasinReliefM)) continue
     if (inflow < pet * region.length) continue
+    const isFrozen = tempSum / region.length < SURFACE_TUNING.lakeFrozenBelowC
     for (const c of region) {
-      if (elevation[c] <= spill) depth[c] = spill - elevation[c]
+      if (elevation[c] <= spill) {
+        depth[c] = spill - elevation[c]
+        if (isFrozen) frozen[c] = 1
+      }
     }
   }
-  return { depth, saltFlat, dryBasin }
+  return { depth, saltFlat, dryBasin, frozen }
 }
 
 // Precipitation-weighted discharge (relative water volume) per full-res cell,
@@ -515,7 +531,7 @@ export function computeWatersheds(routing: FlowRouting, elevation: Float32Array,
 // amplification bake needs, since re-deriving routing and discharge there just
 // to learn that a river passes by would cost seconds per load to recompute
 // something regional (see docs/decisions/worldmap-amplification.md).
-export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array): { biomes: Uint8Array; precipEff: Float32Array } {
+export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array, frozen?: Uint8Array): { biomes: Uint8Array; precipEff: Float32Array } {
   const scale = maxDischarge > 0 ? maxDischarge : 1
   // The same downstream-closed mask the polyline extractor draws — the two
   // disagreed silently once before, which drew mountain rivers with no green
@@ -526,7 +542,9 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
   for (let cell = 0; cell < elevation.length; cell++) {
     if (elevation[cell] <= SEA_LEVEL) continue
     let w = 0
-    if (lakeDepth[cell] > 0) w = 1
+    // A frozen lake moistens nothing — there is no open water to evaporate,
+    // no Nile effect off a glacier. (Its river cells stay: meltwater exists.)
+    if (lakeDepth[cell] > 0 && !frozen?.[cell]) w = 1
     else if (channelMask[cell]) w = Math.min(1, Math.sqrt(discharge[cell] / scale))
     if (w <= 0) continue
     const x = cell % worldW
@@ -574,6 +592,16 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
   if (saltFlat) {
     for (let cell = 0; cell < saltFlat.length; cell++) {
       if (saltFlat[cell]) biomes[cell] = Biome.SaltFlat
+    }
+  }
+  // Frozen-lake override, the same shape as the salt flat above: a glacier
+  // surface is a hydrology state the classification cannot reach (Whittaker
+  // sees the cell's climate, not that a basin's water froze through), and it
+  // is what lets every map paint ice from the biome layer alone — the save
+  // carries no separate frozen mask.
+  if (frozen) {
+    for (let cell = 0; cell < frozen.length; cell++) {
+      if (frozen[cell]) biomes[cell] = Biome.Ice
     }
   }
   return { biomes, precipEff }
