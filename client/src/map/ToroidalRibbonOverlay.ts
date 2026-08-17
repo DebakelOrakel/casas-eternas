@@ -79,9 +79,9 @@ export interface ToroidalRibbonOverlay {
 
 // --- the width rule ---------------------------------------------------------
 //
-// Every ribbon vertex derives TWO half-widths from the stored cartographic
-// width, and the vertex shader takes the max per frame
-// (RibbonWidthMaterialPlugin):
+// Every ribbon vertex derives TWO half-widths (plus its relative discharge,
+// for the presence rule below) from the stored cartographic width, and the
+// vertex shader takes the max per frame (RibbonWidthMaterialPlugin):
 //
 // - a PHYSICAL width in world units — what the river would measure on the
 //   ground. Wins near the ground, where a map line would read as a flood.
@@ -115,6 +115,36 @@ const RIBBON_CARTO_MIN_PX = 1.1
 const relativeWidth = (widthPx: number): number =>
   Math.min(1, Math.max(0, (widthPx - RIVER_MIN_WIDTH) / (RIVER_MAX_WIDTH - RIVER_MIN_WIDTH)))
 
+// --- the presence rule (zoom-Q filter) --------------------------------------
+//
+// An 8K bake's network is legitimately ~5× the macro network's total line
+// length (measured on world 558937267: 30.4 vs 5.9 world-widths of
+// centerline) — the channel threshold is a cell count on purpose, so a finer
+// grid resolves more tributaries. Drawn in full at every zoom, that reads as
+// "far too many rivers": the cartographic pixel floor above hands even the
+// smallest rill a resolvable line. Width already follows zoom; PRESENCE is
+// what this rule adds.
+//
+// The rule: the screen gets a constant ink budget. On-screen line length is
+// (network length above the threshold) × z × renderWidth, where z is the
+// visible fraction of the world's width — so holding visual density constant
+// means a drawn-length target of INK / z, and the per-frame threshold is that
+// target pushed through the inverse of the network's own length-vs-discharge
+// distribution (the histogram below, rebuilt with the geometry). Anchoring
+// INK at the macro network's total keeps a freshly loaded world unfiltered
+// (its budget exceeds its total at every zoom, threshold 0), while an 8K
+// network thins to the same far-zoom look — the two nets are near-identical
+// above r≈0.15 (8K 3.84 vs macro 3.67 world-widths at r≥0.15), so what
+// remains is the SAME major-river map, and the tributaries surface as the
+// budget grows on the way down (full 8K detail from z≈0.2).
+//
+// Threshold r is √ of discharge relative to the network's biggest river —
+// the same value the width rules key on, carried per vertex; the shader
+// tapers a band below the threshold instead of cutting (see
+// RibbonWidthMaterialPlugin), so tips grow out of their trunks smoothly.
+const FULL_VIEW_INK_WORLD_WIDTHS = 6
+const INK_BINS = 200
+
 // Catmull-Rom subdivisions per input span — turns the D8 cell-to-cell staircase
 // into a smooth curve.
 const SUBDIV = 5
@@ -144,11 +174,31 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
   // Uniform texel→world scale (the map keeps texture and world aspect equal).
   const s = worldWidth / textureWidth
 
+  // Drawn centerline length per relative-discharge bin, in world-widths —
+  // the distribution the presence rule inverts. Measured on the raw control
+  // points; the spline conserves length to well under a bin's worth.
+  let inkByBin: Float64Array | null = null
+
+  // The presence threshold for this frame: the smallest r whose remaining
+  // drawn length fits the zoom's ink budget. A 200-bin top-down scan per
+  // frame — noise next to the scene's own per-frame work.
+  function minRelForView(): number {
+    if (!inkByBin) return 0
+    const z = Math.min(1, Math.max(1e-6, getViewWidth() / worldWidth))
+    const budget = FULL_VIEW_INK_WORLD_WIDTHS / z
+    let acc = 0
+    for (let b = INK_BINS - 1; b >= 0; b--) {
+      acc += inkByBin[b]
+      if (acc > budget) return (b + 1) / INK_BINS
+    }
+    return 0
+  }
+
   const material = new StandardMaterial('ribbonOverlayMat', scene)
   material.emissiveColor = color
   material.disableLighting = true
   material.backFaceCulling = false
-  new RibbonWidthMaterialPlugin(material, () => getViewWidth() / scene.getEngine().getRenderWidth())
+  new RibbonWidthMaterialPlugin(material, () => getViewWidth() / scene.getEngine().getRenderWidth(), minRelForView)
 
   let base: Mesh | null = null
   let instances: InstancedMesh[] = []
@@ -235,6 +285,8 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
       const r = relativeWidth(sw[i])
       const physHalf = (Math.max(RIVER_PHYSICAL_MIN_M, r * RIVER_PHYSICAL_MAX_M) * UNITS_PER_METER) / 2
       const cartoHalfPx = (RIBBON_CARTO_MIN_PX + r * (RIBBON_CARTO_MAX_PX - RIBBON_CARTO_MIN_PX)) / 2
+      // r rides along as the third component — the presence rule's per-vertex
+      // side (the shader compares it against the frame's threshold).
       // Draped: terrain height at this point (world x/z back to the map's
       // normalized UV space, the surface's own convention) + clearance.
       // Flat: the constant hover offset, as before.
@@ -243,10 +295,10 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
         : yOffset
       positions.push(sx[i], y, sz[i])
       dirs.push(nx, nz)
-      widths.push(physHalf, cartoHalfPx)
+      widths.push(physHalf, cartoHalfPx, r)
       positions.push(sx[i], y, sz[i])
       dirs.push(-nx, -nz)
-      widths.push(physHalf, cartoHalfPx)
+      widths.push(physHalf, cartoHalfPx, r)
     }
     for (let i = 0; i < count - 1; i++) {
       const a = vertBase + i * 2
@@ -258,12 +310,14 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
     lastPoints = points
     lastLengths = lengths
     disposeMeshes()
+    inkByBin = null
     if (lengths.length === 0) return
 
     const positions: number[] = []
     const dirs: number[] = []
     const widths: number[] = []
     const indices: number[] = []
+    const ink = new Float64Array(INK_BINS)
     let off = 0
     for (let p = 0; p < lengths.length; p++) {
       const m = lengths[p]
@@ -275,11 +329,21 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
         cx.push(worldX(points[b]))
         cz.push(worldZ(points[b + 1]))
         w.push(points[b + 2])
+        if (i > 0) {
+          // Segment length in world-widths (texel space over the texture's
+          // width — the texel→world scale is uniform), binned by the
+          // segment's mean relative discharge.
+          const a = (off + i - 1) * 3
+          const segLen = Math.hypot(points[b] - points[a], points[b + 1] - points[a + 1]) / textureWidth
+          const r = relativeWidth((points[a + 2] + points[b + 2]) / 2)
+          ink[Math.min(INK_BINS - 1, Math.floor(r * INK_BINS))] += segLen
+        }
       }
       off += m
       appendRibbon(cx, cz, w, positions, dirs, widths, indices)
     }
     if (positions.length === 0) return
+    inkByBin = ink
 
     base = new Mesh('riverRibbon', scene)
     base.scaling.y = heightScale
@@ -289,7 +353,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
     data.applyToMesh(base)
     const engine = scene.getEngine()
     base.setVerticesBuffer(new VertexBuffer(engine, Float32Array.from(dirs), 'ribbonDir', { size: 2 }))
-    base.setVerticesBuffer(new VertexBuffer(engine, Float32Array.from(widths), 'ribbonWidths', { size: 2 }))
+    base.setVerticesBuffer(new VertexBuffer(engine, Float32Array.from(widths), 'ribbonWidths', { size: 3 }))
     base.material = material
     base.isPickable = false
     base.renderingGroupId = renderingGroupId

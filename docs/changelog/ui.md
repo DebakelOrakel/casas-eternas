@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-08-17
+- **changed** Map: rivers appear by size — the far view shows only the major rivers, and tributaries grow out of their trunks on the way down. `worldmap`
+
 ## 2026-08-14
 - **changed** Map: the near view's terrain knows where the rivers are — valleys open toward the water, floodplains lie flat, and crests read as crests. `worldmap`
 
