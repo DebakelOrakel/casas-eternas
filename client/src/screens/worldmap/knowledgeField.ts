@@ -1,5 +1,5 @@
 import { periodicValueNoise2D } from '../../worldgen/elevation/ridgedNoise'
-import { Biome } from '../../worldgen/climate/biomes'
+import { UNINHABITABLE_BIOMES } from '../../worldgen/climate/biomes'
 import { SEA_LEVEL } from '../../worldgen/elevation/elevationScale'
 
 // How much of the world the player KNOWS, as one scalar per place — the input
@@ -181,7 +181,7 @@ export function createKnowledgeField(textureWidth: number, textureHeight: number
           const bx = Math.min(biome.resX - 1, Math.floor(((i % width) / width) * biome.resX))
           const by = Math.min(biome.resY - 1, Math.floor((Math.floor(i / width) / height) * biome.resY))
           const id = Math.round(biome.data[by * biome.resX + bx])
-          if (id === Biome.Ocean || id === Biome.Ice || id === Biome.SaltFlat || id === Biome.Glacier) continue
+          if (UNINHABITABLE_BIOMES.has(id)) continue
         }
         habitable.push(i)
       }

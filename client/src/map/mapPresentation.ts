@@ -9,7 +9,7 @@ import { createFineElevationSurface } from './fineElevationSurface'
 import type { ChannelField } from './channelField'
 import { RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from './mapSceneSettings'
 import { SEA_LEVEL, elevationToMeters } from '../worldgen/elevation/elevationScale'
-import { Biome, computeBiomesFine, reduceTemperatureToSeaLevel } from '../worldgen/climate/biomes'
+import { Biome, computeBiomesFine, HYDROLOGY_STATE_BIOMES, reduceTemperatureToSeaLevel } from '../worldgen/climate/biomes'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../worldgen/climate/climateField'
 import type { ElevationSurface } from './elevationSurface'
 
@@ -359,15 +359,16 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       temperature.data, precipitationEffective.data, seasonalAmplitude.data, monsoonIndex.data,
       paperField, textureWidth, textureHeight, dryLand, seaLevelTemperature,
     )
-    // Salt flats and glaciers are hydrology states and the classification has
-    // no way to reach them — they come from the terminal-basin/frozen-lake
-    // passes that ran on the macro world. Carried over rather than re-derived,
-    // per the authority rule; Glacier needs no lake gating because unlike Ice
-    // it can ONLY mean a frozen basin.
+    // Hydrology-state biomes (HYDROLOGY_STATE_BIOMES — the classification has
+    // no way to reach them) are carried over from the macro authority rather
+    // than re-derived. The SET lives next to the enum so a new state biome
+    // joins this carry-over by declaration, not by someone remembering this
+    // loop exists. None of them needs a lake gating: unlike Ice, a state
+    // biome can only ever MEAN its state.
     if (macroBiomeAtTexel) {
       for (let i = 0; i < ids.length; i++) {
-        if (macroBiomeAtTexel[i] === Biome.SaltFlat) ids[i] = Biome.SaltFlat
-        else if (macroBiomeAtTexel[i] === Biome.Glacier) ids[i] = Biome.Glacier
+        const macro = macroBiomeAtTexel[i]
+        if (HYDROLOGY_STATE_BIOMES.has(macro)) ids[i] = macro
       }
     }
     // FINE-ONLY lakes (a bake refloods basins the macro raster never had, so

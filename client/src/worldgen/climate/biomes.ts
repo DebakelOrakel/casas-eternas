@@ -36,6 +36,21 @@ export const Biome = {
 
 type BiomeId = (typeof Biome)[keyof typeof Biome]
 
+// The biomes that are HYDROLOGY STATES, not climate classes: no classifier
+// can reach them — they are decided by the terminal-basin and frozen-lake
+// passes that ran on the macro world, and every re-classification (the
+// worldmap sharpens biomes on its current terrain tier) must CARRY them over
+// from the macro authority instead of re-deriving. Declared HERE, next to the
+// enum, so the next hydrology-state biome cannot silently miss the carry-over
+// — Glacier was hand-added to that list one day after SaltFlat's entry, which
+// is exactly the class of edit this set exists to make impossible to forget.
+export const HYDROLOGY_STATE_BIOMES: ReadonlySet<number> = new Set<number>([Biome.SaltFlat, Biome.Glacier])
+
+// Where nobody lives: open water, bare ice, salt crust. The knowledge/
+// migration seeding skips these when picking habitable start cells — the
+// second hand-list this vocabulary replaces.
+export const UNINHABITABLE_BIOMES: ReadonlySet<number> = new Set<number>([Biome.Ocean, Biome.Ice, Biome.SaltFlat, Biome.Glacier])
+
 // Palette tuned for on-map distinguishability (2026-07-26): the four forests keep
 // green hues but spread across value/temperature (dark-muted → bright → teal → deep),
 // and the dry cluster (grassland/woodland/savanna/desert) is separated by hue + lightness
