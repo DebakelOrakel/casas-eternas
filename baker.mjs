@@ -11322,6 +11322,8 @@ var Biome = {
   // gameplay (fresh water, crossing), different tooltip.
   Glacier: 13
 };
+var HYDROLOGY_STATE_BIOMES = /* @__PURE__ */ new Set([Biome.SaltFlat, Biome.Glacier]);
+var UNINHABITABLE_BIOMES = /* @__PURE__ */ new Set([Biome.Ocean, Biome.Ice, Biome.SaltFlat, Biome.Glacier]);
 var BIOME_COLORS = {
   [Biome.Ocean]: [40, 90, 140],
   [Biome.Ice]: [240, 244, 249],

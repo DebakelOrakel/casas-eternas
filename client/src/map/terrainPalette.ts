@@ -54,6 +54,17 @@ export const DEFAULT_TERRAIN_WASH: TerrainWash = {
   strength: 0.82,
 }
 
+// The one pen for all water LINES on the map: the worldmap's river ribbons
+// read it as their far-zoom ink, and the lake shorelines (traced as vector
+// loops by mapPresentation, drawn by the same ribbon overlay) are stroked
+// with it — river → shore ring → outflow reads as a single pen stroke, which
+// is what lets the ribbons END at a lake instead of being drawn across its
+// surface. Water SURFACES stay in the wash register; this ink is never a
+// fill. (A first cut painted the shoreline into the paper here — one texel of
+// texture blurs at zoom while the river ribbons stay crisp beside it, so the
+// line moved to vector.)
+export const WATER_LINE_INK: [number, number, number] = [43, 64, 102]
+
 // Lake water, in the paper's own register: anchored on the paper base's light
 // ocean blue rather than the generator's data-view lake blue, so a lake reads
 // as the same water the ocean is, one tone deeper. The ramp saturates where

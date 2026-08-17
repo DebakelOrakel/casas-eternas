@@ -8,6 +8,7 @@ import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import type { MapHoverTooltip } from '../../map/MapHoverTooltip'
 import { hexAt, hexCenter, wrappedHexDelta } from '../../map/hexGrid'
 import { createHexClassifier, hexUvFromWorld } from '../../map/hexTiles'
+import { WATER_LINE_INK } from '../../map/terrainPalette'
 import type { HexClassifier, HexTileClass } from '../../map/hexTiles'
 import { buildRiverPorts, hexShoreCrossings } from '../../map/hexPorts'
 import type { HexRiverPortMap } from '../../map/hexPorts'
@@ -28,7 +29,7 @@ import { createWatercolorPass } from './watercolorPass'
 import { MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
 import { AMPLIFY_FINEST_STAGE } from '../../world/bakeSettings'
 import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
-import { biomeLabelKey } from '../../worldgen/climate/biomes'
+import { Biome, biomeLabelKey } from '../../worldgen/climate/biomes'
 import { t } from '../../i18n/i18n'
 import type { TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
@@ -60,11 +61,12 @@ const SEED_SETTLEMENTS = 7
 
 // The rivers' two registers (docs/design/watercolor-map.md: "coast and rivers
 // as single confident lines" — ink over paint). On the paper map a river is
-// INK, kin to the hex grid's line work rather than to the generator's
-// data-view blue; on the descent the map becomes a world and the line becomes
-// water. Lerped along the same near-blend that fades the watercolour and the
-// exaggeration, so all three register shifts arrive together.
-const RIVER_INK = new Color3(43 / 255, 64 / 255, 102 / 255)
+// INK — the shared water-line pen, so the ribbons and the lake shorelines
+// stroked into the paper (terrainPalette) are literally one colour; on the
+// descent the map becomes a world and the line becomes water. Lerped along
+// the same near-blend that fades the watercolour and the exaggeration, so all
+// three register shifts arrive together.
+const RIVER_INK = new Color3(WATER_LINE_INK[0] / 255, WATER_LINE_INK[1] / 255, WATER_LINE_INK[2] / 255)
 const RIVER_WATER = new Color3(45 / 255, 95 / 255, 175 / 255)
 
 export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
@@ -179,8 +181,10 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     drawnExaggeration = exaggeration
     mapView?.setHeightScale(exaggeration)
     riverLayer?.setHeightScale(exaggeration)
+    shoreLayer?.setHeightScale(exaggeration)
     Color3.LerpToRef(RIVER_INK, RIVER_WATER, blend, riverColorScratch)
     riverLayer?.setColor(riverColorScratch)
+    shoreLayer?.setColor(riverColorScratch)
   })
 
   // Built per loaded world (texture dims come from its manifest); replaced
@@ -215,6 +219,12 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // amplified tier arrives), and which relief level they are currently styled
   // for.
   let riverLayer: ReturnType<typeof createToroidalRibbonOverlay> | null = null
+  // The lake shorelines, a second ribbon overlay in the same ink — vector like
+  // the rivers, so shore and river stay one pen at every zoom (the painted
+  // first cut blurred beside the crisp ribbons). Sourced from the
+  // presentation's tracer, which skips frozen basins.
+  let shoreLayer: ReturnType<typeof createToroidalRibbonOverlay> | null = null
+  let shoreSource: { points: Float32Array; lengths: Uint32Array; width: number; height: number } | null = null
   let ribbonLevel: 'flat' | 'coarse' | 'fine' | 'near' = 'flat'
 
   // What the presentation last produced. Held here rather than pushed straight
@@ -298,6 +308,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function refreshKnowledge(): void {
     presentation.refreshKnowledge()
     setRiverPolylines()
+    setShorePolylines()
     if (knowledge) watercolor.setKnowledge(knowledge.toBytes(KNOWLEDGE_TEXTURE_WIDTH, KNOWLEDGE_TEXTURE_HEIGHT), KNOWLEDGE_TEXTURE_WIDTH, KNOWLEDGE_TEXTURE_HEIGHT)
   }
 
@@ -356,7 +367,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const debugPanel = createKnowledgeDebugPanel(root, {
     ramp: knowledgeRamp,
     sheet: watercolor.tuning,
-    onRampChange: () => { presentation.setKnowledgeRamp(knowledgeRamp); setRiverPolylines() },
+    onRampChange: () => { presentation.setKnowledgeRamp(knowledgeRamp); setRiverPolylines(); setShorePolylines() },
     pigment: pigmentTuning,
     onPigmentChange: () => presentation.setPigment(pigmentTuning),
     wash: terrainWash,
@@ -671,6 +682,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     hoverTooltip?.dispose()
     riverLayer?.dispose()
     riverLayer = null
+    shoreLayer?.dispose()
+    shoreLayer = null
+    shoreSource = null
     mapView?.dispose()
     mapView = null
 
@@ -740,6 +754,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       },
       onRecenter: (centerX, centerZ) => {
         riverLayer?.recenter(centerX, centerZ)
+        shoreLayer?.recenter(centerX, centerZ)
         syncRibbonLevel()
       },
     })
@@ -792,6 +807,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       },
     })
 
+    refreshLakeShorelines()
     void loadTiers(detailSeed)
     void deriveMacroRivers(elevations, width, height, climate)
   }
@@ -869,18 +885,73 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     syncRibbonLevel(true)
   }
 
-  // The ribbons a player may actually see: rivers are vector geometry drawn
-  // OVER the paper, so unlike the wash they are not dimmed by knowledge — they
-  // are simply absent where nobody has been. A polyline crossing the frontier
-  // is split rather than dropped, so a river you know the lower half of ends at
-  // the edge of what you know instead of vanishing whole.
-  function setRiverPolylines(): void {
-    if (!riverLayer || !riverSource) return
-    const { points, lengths, width, height } = riverSource
-    if (!knowledge) {
-      riverLayer.setPolylines(points, lengths)
-      return
+  // Rivers END at a lake: the extraction deliberately traces one continuous
+  // channel through every basin it crosses (hydrology's river → lake → river
+  // rule, 2026-08-06 — back then lakes were not rendered and the through-line
+  // was the only thing holding a river together across a basin). Now the lake
+  // IS drawn, its shoreline is stroked in the same ink (terrainPalette's
+  // WATER_LINE_INK), and the submerged 29% of the baked network (measured on
+  // an 8K artifact: 65k of 223k points, 2529 of 8612 polylines) is double ink
+  // over a water surface — worse, on a filled basin the D8 paths run the
+  // FILL's gradient toward the spill, drawing tributaries that visibly bypass
+  // the lake they feed. So the DRAWING splits at the shore; the channel mask
+  // itself stays whole for riparian biomes, the status rule and the channel
+  // field. One wet point is kept at each entry/exit so the line reaches the
+  // water instead of stopping a texel short — the sea-mouth rule's sibling.
+  function clipRiversAtLakes(points: Float32Array, lengths: Uint32Array, width: number, height: number): { points: Float32Array; lengths: Uint32Array } {
+    const lake = hexLakeDepth
+    if (!lake) return { points, lengths }
+    const wetAt = (x: number, y: number): boolean => {
+      const sx = Math.min(lake.resX - 1, Math.max(0, Math.floor((x / width) * lake.resX)))
+      const sy = Math.min(lake.resY - 1, Math.max(0, Math.floor((y / height) * lake.resY)))
+      if (!(lake.data[sy * lake.resX + sx] > 0)) return false
+      // A FROZEN basin is not open water: the river keeps flowing across it
+      // — the subglacial reading — and its shore gets no ring either (the
+      // presentation's tracer makes the same exception). The painted biome
+      // carries the frozen verdict, per-texel rules included.
+      return presentation.biomeIdAtUV(x / width, y / height) !== Biome.Glacier
     }
+    const outPoints: number[] = []
+    const outLengths: number[] = []
+    let read = 0
+    for (const length of lengths) {
+      let run = 0
+      for (let n = 0; n < length; n++) {
+        const b = (read + n) * 3
+        if (wetAt(points[b], points[b + 1])) {
+          if (run > 0) {
+            // Exit into the water: one wet point, then split.
+            outPoints.push(points[b], points[b + 1], points[b + 2])
+            outLengths.push(run + 1)
+            run = 0
+          }
+          continue
+        }
+        if (run === 0 && n > 0) {
+          const prev = (read + n - 1) * 3
+          if (wetAt(points[prev], points[prev + 1])) {
+            // Entry from the water: start the run one wet point early.
+            outPoints.push(points[prev], points[prev + 1], points[prev + 2])
+            run++
+          }
+        }
+        outPoints.push(points[b], points[b + 1], points[b + 2])
+        run++
+      }
+      if (run >= 2) outLengths.push(run)
+      else if (run === 1) outPoints.length -= 3
+      read += length
+    }
+    return { points: new Float32Array(outPoints), lengths: new Uint32Array(outLengths) }
+  }
+
+  // The knowledge clip, shared by rivers and shorelines: line work is vector
+  // geometry drawn OVER the paper, so unlike the wash it is not dimmed by
+  // knowledge — it is simply absent where nobody has been. A polyline
+  // crossing the frontier is split rather than dropped, so a river you know
+  // the lower half of ends at the edge of what you know instead of vanishing
+  // whole.
+  function clipByKnowledge(points: Float32Array, lengths: Uint32Array, width: number, height: number): { points: Float32Array; lengths: Uint32Array } {
     const outPoints: number[] = []
     const outLengths: number[] = []
     let run = 0
@@ -894,7 +965,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
           run++
           continue
         }
-        // A run of one is a dot, not a river.
+        // A run of one is a dot, not a line.
         if (run >= 2) outLengths.push(run)
         else if (run === 1) outPoints.length -= 3
         run = 0
@@ -902,7 +973,47 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       if (run >= 2) outLengths.push(run)
       else if (run === 1) outPoints.length -= 3
     }
-    riverLayer.setPolylines(new Float32Array(outPoints), new Uint32Array(outLengths))
+    return { points: new Float32Array(outPoints), lengths: new Uint32Array(outLengths) }
+  }
+
+  function setRiverPolylines(): void {
+    if (!riverLayer || !riverSource) return
+    const lakeClipped = clipRiversAtLakes(riverSource.points, riverSource.lengths, riverSource.width, riverSource.height)
+    const clipped = knowledge ? clipByKnowledge(lakeClipped.points, lakeClipped.lengths, riverSource.width, riverSource.height) : lakeClipped
+    riverLayer.setPolylines(clipped.points, clipped.lengths)
+  }
+
+  function setShorePolylines(): void {
+    if (!shoreLayer || !shoreSource) return
+    const clipped = knowledge ? clipByKnowledge(shoreSource.points, shoreSource.lengths, shoreSource.width, shoreSource.height) : shoreSource
+    shoreLayer.setPolylines(clipped.points, clipped.lengths)
+  }
+
+  // Rebuild the shoreline overlay from the presentation's current lakes and
+  // painted biomes — called where the lake layer turns over (world load, a
+  // tier landing), the shoreline sibling of applyRivers.
+  function refreshLakeShorelines(): void {
+    shoreLayer?.dispose()
+    shoreLayer = null
+    shoreSource = presentation.lakeShorelines()
+    if (!shoreSource || shoreSource.lengths.length === 0) return
+    shoreLayer = createToroidalRibbonOverlay({
+      scene,
+      worldWidth: WORLD_WIDTH,
+      worldHeight: WORLD_HEIGHT,
+      textureWidth: shoreSource.width,
+      textureHeight: shoreSource.height,
+      getViewWidth: getCameraViewWidth,
+      renderingGroupId: NEAR_RENDERING_GROUP,
+      // Shore rings carry the thinnest pen at every point — the ink budget
+      // would cull all of them at far zoom rather than the least of them.
+      presenceRule: false,
+      // The tracer's lattice staircase is the texture's own grid; two passes
+      // melt it the way the amplified rivers' zigzag is melted.
+      smoothingPasses: 2,
+    })
+    setShorePolylines()
+    syncRibbonLevel(true)
   }
 
   // Keep the ribbons draped on whichever relief surface is on screen,
@@ -917,17 +1028,18 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // from the patch that overstates the ground — but that is the far field,
   // under the fog.
   function syncRibbonLevel(force = false): void {
-    if (!riverLayer) return
+    if (!riverLayer && !shoreLayer) return
     const zoom = getCameraZoom()
     const level: typeof ribbonLevel = !reliefCoarseSurface ? 'flat'
       : getCameraNearBlend() > 0.02 && reliefDetailSurface ? 'near'
       : zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
     if (level === ribbonLevel && !force) return
     ribbonLevel = level
-    riverLayer.setHeightSurface(
-      level === 'flat' ? null
-        : level === 'near' ? reliefDetailSurface
-        : level === 'fine' && reliefFineSurface ? reliefFineSurface : reliefCoarseSurface)
+    const surface = level === 'flat' ? null
+      : level === 'near' ? reliefDetailSurface
+      : level === 'fine' && reliefFineSurface ? reliefFineSurface : reliefCoarseSurface
+    riverLayer?.setHeightSurface(surface)
+    shoreLayer?.setHeightSurface(surface)
   }
 
   // Everything an arriving amplified tier changes on screen.
@@ -952,6 +1064,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Rivers first: they carry this tier's channel field, and the classifier
     // samples the fine surface that field shapes.
     applyRivers(artifact.riverPoints, artifact.riverLengths, artifact.width, artifact.height, factor)
+    // After setElevation: the shoreline tracer reads the repainted biomes
+    // (the frozen verdict) along with the tier's own lakes.
+    refreshLakeShorelines()
     hoverTooltip?.refresh()
   }
 
@@ -1016,6 +1131,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       debugPanel.dispose()
       watercolor.dispose()
       riverLayer?.dispose()
+      shoreLayer?.dispose()
       scene.onBeforeRenderObservable.remove(skyObserver)
       skyDome.dispose()
       skyMaterial.dispose()

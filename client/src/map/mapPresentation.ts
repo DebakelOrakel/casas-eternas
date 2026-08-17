@@ -10,6 +10,11 @@ import type { ChannelField } from './channelField'
 import { RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from './mapSceneSettings'
 import { SEA_LEVEL, elevationToMeters } from '../worldgen/elevation/elevationScale'
 import { Biome, computeBiomesFine, HYDROLOGY_STATE_BIOMES, reduceTemperatureToSeaLevel } from '../worldgen/climate/biomes'
+// The hydrology's width vocabulary — a pure value, the read the map→worldgen
+// boundary allows (see the root CLAUDE.md; channelField makes the same one).
+// Shoreline points carry the thinnest pen so the overlay draws them at its
+// cartographic floor.
+import { RIVER_MIN_WIDTH } from '../worldgen/surface/hydrology'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../worldgen/climate/climateField'
 import type { ElevationSurface } from './elevationSurface'
 
@@ -114,6 +119,16 @@ export interface MapPresentation {
   // UV rather than texel coords, matching ElevationSurface and MapHoverTooltip
   // — the texture's resolution stays in here.
   biomeIdAtUV(u: number, v: number): number | null
+  // The open-water lake shorelines as vector polylines in THIS presentation's
+  // texel coords (width/height say which), traced fresh from the current lake
+  // layer and painted biomes — the screen draws them with the same ribbon
+  // overlay the rivers use, in the same ink, so shore and river are one pen
+  // at every zoom (a painted texture line blurs where the ribbons stay
+  // crisp). FROZEN basins (Glacier) get no ring on purpose: their surface is
+  // ice terrain, not open water, and the rivers crossing them keep flowing —
+  // the subglacial reading. Loops close on themselves; a loop crossing the
+  // toroidal seam is split, like every polyline the overlay receives.
+  lakeShorelines(): { points: Float32Array; lengths: Uint32Array; width: number; height: number } | null
 }
 
 // The sheet itself: a warm off-white, not #fff. Pure white reads as ABSENCE —
@@ -615,6 +630,104 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       const px = Math.min(textureWidth - 1, Math.max(0, Math.floor(u * textureWidth)))
       const py = Math.min(textureHeight - 1, Math.max(0, Math.floor(v * textureHeight)))
       return biomeIds[py * textureWidth + px]
+    },
+
+    // Contour following on the wet mask, water kept on the walker's LEFT.
+    // Every wet/dry texel border contributes one directed lattice edge; at
+    // each corner the walker prefers the sharpest left turn, which keeps two
+    // basins meeting at a corner as two separate rings. Collinear steps merge
+    // into one segment, so a long straight shore costs two points, and the
+    // D8-ish staircase that remains is what the overlay's smoothing passes
+    // are for.
+    lakeShorelines(): { points: Float32Array; lengths: Uint32Array; width: number; height: number } | null {
+      if (!lakeDepthAtTexel) return null
+      const w = textureWidth
+      const h = textureHeight
+      const depth = lakeDepthAtTexel
+      const ids = biomeIds
+      const wet = (x: number, y: number): boolean => {
+        const i = ((y + h) % h) * w + ((x + w) % w)
+        return depth[i] > 0 && (ids === null || ids[i] !== Biome.Glacier)
+      }
+      // Directions E/S/W/N as bits 0..3 on the corner lattice (wrapped like
+      // the texels; the vertex at x = w IS the vertex at x = 0).
+      const DX = [1, 0, -1, 0]
+      const DY = [0, 1, 0, -1]
+      const vi = (x: number, y: number): number => ((y + h) % h) * w + ((x + w) % w)
+      const edges = new Uint8Array(w * h)
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (!wet(x, y)) continue
+          if (!wet(x, y - 1)) edges[vi(x + 1, y)] |= 1 << 2 // north border, walked W
+          if (!wet(x, y + 1)) edges[vi(x, y + 1)] |= 1 << 0 // south border, walked E
+          if (!wet(x - 1, y)) edges[vi(x, y)] |= 1 << 1 // west border, walked S
+          if (!wet(x + 1, y)) edges[vi(x + 1, y + 1)] |= 1 << 3 // east border, walked N
+        }
+      }
+      const points: number[] = []
+      const lengths: number[] = []
+      let run = 0
+      const push = (x: number, y: number): void => {
+        points.push(x, y, RIVER_MIN_WIDTH)
+        run++
+      }
+      const flush = (): void => {
+        if (run >= 2) lengths.push(run)
+        else points.length -= run * 3
+        run = 0
+      }
+      for (let sv = 0; sv < edges.length; sv++) {
+        while (edges[sv]) {
+          let dir = 0
+          while (!(edges[sv] & (1 << dir))) dir++
+          let cv = sv
+          let gx = sv % w
+          let gy = (sv - gx) / w
+          let lastDir = -1
+          push(gx, gy)
+          for (;;) {
+            edges[cv] &= ~(1 << dir)
+            const nx = gx + DX[dir]
+            const ny = gy + DY[dir]
+            if (dir === lastDir) {
+              points[points.length - 3] = nx
+              points[points.length - 2] = ny
+            } else {
+              push(nx, ny)
+            }
+            lastDir = dir
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) {
+              // The seam: the point just written sits ON it (x = w, or -1,
+              // …); the wrapped twin starts a fresh polyline, so no segment
+              // ever spans the torus — the overlay's contract.
+              flush()
+              gx = (nx + w) % w
+              gy = (ny + h) % h
+              cv = vi(gx, gy)
+              lastDir = -1
+              push(gx, gy)
+            } else {
+              gx = nx
+              gy = ny
+              cv = vi(nx, ny)
+            }
+            let next = -1
+            for (const cand of [(dir + 3) & 3, dir, (dir + 1) & 3]) {
+              if (edges[cv] & (1 << cand)) {
+                next = cand
+                break
+              }
+            }
+            if (next === -1) {
+              flush()
+              break
+            }
+            dir = next
+          }
+        }
+      }
+      if (lengths.length === 0) return null
+      return { points: new Float32Array(points), lengths: new Uint32Array(lengths), width: w, height: h }
     },
 
     knowledgeAtUV,

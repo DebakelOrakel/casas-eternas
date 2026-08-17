@@ -33,6 +33,12 @@ export interface ToroidalRibbonOverlayOptions {
   // by the ground they are draped on. See ToroidalMapView.NEAR_RENDERING_GROUP
   // for what the split buys and what it costs.
   renderingGroupId?: number
+  // Whether the presence rule (the zoom-Q ink budget below) applies. Default
+  // true — rivers thin with distance. Off for line work whose stored width is
+  // not a discharge: lake shorelines carry the thinnest pen at every point,
+  // and the budget would cull all of them at far zoom rather than the least
+  // of them.
+  presenceRule?: boolean
   // Moving-average passes applied to each polyline's control points (and
   // their widths) BEFORE the Catmull-Rom spline. Zero keeps the input
   // exactly.
@@ -343,7 +349,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
       appendRibbon(cx, cz, w, positions, dirs, widths, indices)
     }
     if (positions.length === 0) return
-    inkByBin = ink
+    if (options.presenceRule !== false) inkByBin = ink
 
     base = new Mesh('riverRibbon', scene)
     base.scaling.y = heightScale
