@@ -196,6 +196,13 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
   // raster. Nearest keeps the shore categorical — blending a depth across the
   // shore would invent shallow water on land.
   let lakeDepthAtTexel: Float32Array | null = null
+  // Where the MACRO had a lake at all (wet mask, texel res) — kept apart from
+  // lakeDepthAtTexel because applyTier replaces THAT with the bake's own lakes.
+  // The frozen rule below needs the distinction: a macro lake's frozen state is
+  // macro authority (the Glacier ids), but a FINE-ONLY lake (a basin the bake
+  // reflooded that the macro never had) has no authority to inherit and gets
+  // the rule derived per texel instead.
+  let macroLakeWetAtTexel: Uint8Array | null = null
   // The saved temperature with its lapse term removed, computed ONCE against
   // the macro raster the generator's climate actually ran on. It has to be
   // built here rather than inside the classification, because the terrain
@@ -363,6 +370,17 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
         else if (macroBiomeAtTexel[i] === Biome.Glacier) ids[i] = Biome.Glacier
       }
     }
+    // FINE-ONLY lakes (a bake refloods basins the macro raster never had, so
+    // there is no macro frozen/open verdict to carry over): a wet texel whose
+    // climate classifies Ice is a frozen pond — the per-texel form of the
+    // per-basin rule, and at pond size the two agree. Gated OFF wherever the
+    // macro had a lake, so a genuinely open macro lake (the deep Baikal-class
+    // rift in polar ice) keeps its verdict against its own cold shores.
+    if (lakeDepthAtTexel) {
+      for (let i = 0; i < ids.length; i++) {
+        if (lakeDepthAtTexel[i] > 0 && ids[i] === Biome.Ice && !macroLakeWetAtTexel?.[i]) ids[i] = Biome.Glacier
+      }
+    }
     biomeIds = ids
   }
 
@@ -482,6 +500,11 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       // Lake depths at texture resolution, in metres — nearest, like the biome
       // table below and for the same authority reason.
       lakeDepthAtTexel = lakeDepth ? resampleLakeDepth(lakeDepth) : null
+      macroLakeWetAtTexel = null
+      if (lakeDepthAtTexel) {
+        macroLakeWetAtTexel = new Uint8Array(lakeDepthAtTexel.length)
+        for (let i = 0; i < lakeDepthAtTexel.length; i++) if (lakeDepthAtTexel[i] > 0) macroLakeWetAtTexel[i] = 1
+      }
       // The macro ids at texture resolution, nearest — this is a lookup table
       // for two facts the classification cannot reach (salt flats, dry basin
       // floors), so nearest is right: they are categorical and the macro raster
