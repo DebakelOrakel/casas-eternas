@@ -71,6 +71,15 @@ interface Job {
   // This job's id, for reporting progress back. Absent for a local run, whose
   // progress reaches the server over the pipe instead.
   jobId?: string
+  // False forces the single-threaded engine — ONE state buffer instead of the
+  // pool's pipelined pair, which halves the routing memory (measured layout:
+  // a 16K bake is ~17 GiB single-buffer against ~26 GiB pipelined, the
+  // difference between fitting a 32 GB machine and thrashing it). The Go
+  // server never sets it; it exists for a MANUAL local run:
+  //   node baker.mjs '{"worldZip":"…","stage":8,"erosionRounds":12,
+  //                    "artifactsDir":"…","pool":false}'
+  // Slower by the pool's factor (~2× at 8 cores), which a one-off accepts.
+  pool?: boolean
 }
 
 // The artifact store's resolve/read/write interface, backed by the
@@ -325,7 +334,7 @@ async function main(): Promise<void> {
     factor: job.stage,
     seed: inputs.detailSeed,
     erosionRounds: job.erosionRounds,
-    pool: enginePool(),
+    pool: job.pool === false ? undefined : enginePool(),
     lithoSeed: inputs.lithoSeed,
     alluvium: inputs.erosionControls.alluvium,
     rockContrast: inputs.erosionControls.rockContrast,

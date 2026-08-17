@@ -13432,7 +13432,7 @@ async function main() {
     factor: job.stage,
     seed: inputs.detailSeed,
     erosionRounds: job.erosionRounds,
-    pool: enginePool(),
+    pool: job.pool === false ? void 0 : enginePool(),
     lithoSeed: inputs.lithoSeed,
     alluvium: inputs.erosionControls.alluvium,
     rockContrast: inputs.erosionControls.rockContrast,
