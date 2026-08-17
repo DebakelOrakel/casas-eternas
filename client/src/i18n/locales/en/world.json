@@ -12,6 +12,7 @@
   "world.biome.tropicalRainforest": "Tropical rainforest",
   "world.biome.alpine": "Alpine tundra",
   "world.biome.saltFlat": "Salt flat",
+  "world.biome.glacier": "Glacier",
   "world.biome.unknown": "Unknown",
   "world.resource.carryingCapacity.label": "Carrying capacity",
   "world.resource.carryingCapacity.help": "How many people the land can support — the aggregate of all resources.",

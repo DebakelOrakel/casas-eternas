@@ -352,16 +352,15 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       temperature.data, precipitationEffective.data, seasonalAmplitude.data, monsoonIndex.data,
       paperField, textureWidth, textureHeight, dryLand, seaLevelTemperature,
     )
-    // Salt flats are a hydrology state and the classification has no way to
-    // reach them — they come from the terminal-basin pass that ran on the macro
-    // world. Carried over rather than re-derived, per the authority rule.
-    // Frozen lakes are the same class of state (a basin froze through — the
-    // macro biome says Ice on its wet cells), carried over gated on the lake
-    // mask so a LAND ice-cap cell never overrides a reclassified texel.
+    // Salt flats and glaciers are hydrology states and the classification has
+    // no way to reach them — they come from the terminal-basin/frozen-lake
+    // passes that ran on the macro world. Carried over rather than re-derived,
+    // per the authority rule; Glacier needs no lake gating because unlike Ice
+    // it can ONLY mean a frozen basin.
     if (macroBiomeAtTexel) {
       for (let i = 0; i < ids.length; i++) {
         if (macroBiomeAtTexel[i] === Biome.SaltFlat) ids[i] = Biome.SaltFlat
-        else if (macroBiomeAtTexel[i] === Biome.Ice && lakeDepthAtTexel !== null && lakeDepthAtTexel[i] > 0) ids[i] = Biome.Ice
+        else if (macroBiomeAtTexel[i] === Biome.Glacier) ids[i] = Biome.Glacier
       }
     }
     biomeIds = ids

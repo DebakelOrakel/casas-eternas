@@ -39,6 +39,8 @@ export const PASTURE_BY_BIOME: Record<LandBiomeId, number> = {
   [Biome.Alpine]: 0.3,
   // A salt crust grows nothing.
   [Biome.SaltFlat]: 0.0,
+  // Neither does a frozen lake.
+  [Biome.Glacier]: 0.0,
 }
 
 // How much usable timber each biome yields (forests high, open/cold low).
@@ -56,6 +58,7 @@ export const TIMBER_BY_BIOME: Record<LandBiomeId, number> = {
   // Above the treeline by definition — no timber.
   [Biome.Alpine]: 0.0,
   [Biome.SaltFlat]: 0.0,
+  [Biome.Glacier]: 0.0,
 }
 
 // The two tables above are tuning too, and they are DELIBERATELY not folded into

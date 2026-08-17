@@ -32,6 +32,7 @@ const TERRAIN_COLORS: Record<number, [number, number, number]> = {
   [Biome.TropicalRainforest]: [26, 108, 46], // viridian
   [Biome.Alpine]: [140, 140, 156], // payne's grey, bare rock
   [Biome.SaltFlat]: [238, 232, 216], // warm salt crust
+  [Biome.Glacier]: [212, 226, 242], // pale glacier blue, frozen water
 }
 
 export function terrainColor(id: number): [number, number, number] {
@@ -69,9 +70,9 @@ const LAKE_ALPHA = 0.85
 
 // Lay the lakes over the washed paper, IN PLACE. `lakeDepthMeters` is one
 // depth per texel (0 = no lake), already in metres.
-// A wet cell whose biome says Ice is a FROZEN basin (the riparian override,
-// see hydrology's LakeFields.frozen) — painted as glacier, not open water:
-// pale blue-white, barely darkening with depth.
+// A wet cell whose biome says Glacier is a FROZEN basin (the riparian
+// override, see hydrology's LakeFields.frozen) — painted as ice, not open
+// water: pale blue-white, barely darkening with depth.
 const LAKE_ICE_SHALLOW: [number, number, number] = [222, 233, 243]
 const LAKE_ICE_DEEP: [number, number, number] = [204, 220, 236]
 
@@ -80,7 +81,7 @@ export function applyLakeWash(paper: Uint8ClampedArray, lakeDepthMeters: Float32
     const d = lakeDepthMeters[i]
     if (d <= 0) continue
     const t = Math.min(1, d / LAKE_DEPTH_SATURATION_M)
-    const ice = biomeIds !== null && biomeIds[i] === Biome.Ice
+    const ice = biomeIds !== null && biomeIds[i] === Biome.Glacier
     const shallow = ice ? LAKE_ICE_SHALLOW : LAKE_SHALLOW
     const deep = ice ? LAKE_ICE_DEEP : LAKE_DEEP
     const p = i * 4

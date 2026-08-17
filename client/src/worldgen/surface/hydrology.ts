@@ -598,10 +598,11 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
   // surface is a hydrology state the classification cannot reach (Whittaker
   // sees the cell's climate, not that a basin's water froze through), and it
   // is what lets every map paint ice from the biome layer alone — the save
-  // carries no separate frozen mask.
+  // carries no separate frozen mask. Its OWN biome, not Biome.Ice: Ice is a
+  // climate class on land, a glacier is a water body in a solid state.
   if (frozen) {
     for (let cell = 0; cell < frozen.length; cell++) {
-      if (frozen[cell]) biomes[cell] = Biome.Ice
+      if (frozen[cell]) biomes[cell] = Biome.Glacier
     }
   }
   return { biomes, precipEff }

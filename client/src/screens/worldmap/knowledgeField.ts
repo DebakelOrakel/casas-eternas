@@ -181,7 +181,7 @@ export function createKnowledgeField(textureWidth: number, textureHeight: number
           const bx = Math.min(biome.resX - 1, Math.floor(((i % width) / width) * biome.resX))
           const by = Math.min(biome.resY - 1, Math.floor((Math.floor(i / width) / height) * biome.resY))
           const id = Math.round(biome.data[by * biome.resX + bx])
-          if (id === Biome.Ocean || id === Biome.Ice || id === Biome.SaltFlat) continue
+          if (id === Biome.Ocean || id === Biome.Ice || id === Biome.SaltFlat || id === Biome.Glacier) continue
         }
         habitable.push(i)
       }

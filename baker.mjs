@@ -11314,7 +11314,13 @@ var Biome = {
   Alpine: 11,
   // Hydrology override, not a Whittaker class (like Ocean): the exposed dry
   // floor of a terminal basin — see computeLakes' salt-flat mask.
-  SaltFlat: 12
+  SaltFlat: 12,
+  // Hydrology override, the salt flat's cold sibling: a lake basin frozen
+  // through (mean annual below SURFACE_TUNING.lakeFrozenBelowC) — see
+  // computeLakes' frozen mask. Distinct from Ice on purpose: Ice is a CLIMATE
+  // class on land, a glacier is a water body in a solid state — different
+  // gameplay (fresh water, crossing), different tooltip.
+  Glacier: 13
 };
 var BIOME_COLORS = {
   [Biome.Ocean]: [40, 90, 140],
@@ -11339,8 +11345,10 @@ var BIOME_COLORS = {
   // deep saturated green
   [Biome.Alpine]: [158, 154, 168],
   // cool slate/lavender-grey — bare rock, distinct from Tundra's warm grey and Ice's near-white
-  [Biome.SaltFlat]: [236, 230, 218]
+  [Biome.SaltFlat]: [236, 230, 218],
   // warm off-white salt crust — real pans aren't snow-white, and Ice keeps the cold near-white
+  [Biome.Glacier]: [214, 228, 244]
+  // pale glacier blue — bluer than Ice's near-white, reads as frozen WATER
 };
 var BIOME_LABEL_KEYS = {
   [Biome.Ocean]: "world.biome.ocean",
@@ -11355,7 +11363,8 @@ var BIOME_LABEL_KEYS = {
   [Biome.Savanna]: "world.biome.savanna",
   [Biome.TropicalRainforest]: "world.biome.tropicalRainforest",
   [Biome.Alpine]: "world.biome.alpine",
-  [Biome.SaltFlat]: "world.biome.saltFlat"
+  [Biome.SaltFlat]: "world.biome.saltFlat",
+  [Biome.Glacier]: "world.biome.glacier"
 };
 
 // src/worldgen/ecology/ecologyTuneParams.ts
@@ -11374,7 +11383,9 @@ var PASTURE_BY_BIOME = {
   // grazing — comparable to tundra, not to bare ice.
   [Biome.Alpine]: 0.3,
   // A salt crust grows nothing.
-  [Biome.SaltFlat]: 0
+  [Biome.SaltFlat]: 0,
+  // Neither does a frozen lake.
+  [Biome.Glacier]: 0
 };
 var TIMBER_BY_BIOME = {
   [Biome.TropicalRainforest]: 1,
@@ -11389,7 +11400,8 @@ var TIMBER_BY_BIOME = {
   [Biome.Ice]: 0,
   // Above the treeline by definition — no timber.
   [Biome.Alpine]: 0,
-  [Biome.SaltFlat]: 0
+  [Biome.SaltFlat]: 0,
+  [Biome.Glacier]: 0
 };
 var ECOLOGY_TUNING = {
   // Weights of each subsistence source in the saturating carrying-capacity combine

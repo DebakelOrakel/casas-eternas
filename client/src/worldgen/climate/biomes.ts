@@ -26,6 +26,12 @@ export const Biome = {
   // Hydrology override, not a Whittaker class (like Ocean): the exposed dry
   // floor of a terminal basin — see computeLakes' salt-flat mask.
   SaltFlat: 12,
+  // Hydrology override, the salt flat's cold sibling: a lake basin frozen
+  // through (mean annual below SURFACE_TUNING.lakeFrozenBelowC) — see
+  // computeLakes' frozen mask. Distinct from Ice on purpose: Ice is a CLIMATE
+  // class on land, a glacier is a water body in a solid state — different
+  // gameplay (fresh water, crossing), different tooltip.
+  Glacier: 13,
 } as const
 
 type BiomeId = (typeof Biome)[keyof typeof Biome]
@@ -48,6 +54,7 @@ const BIOME_COLORS: Record<number, [number, number, number]> = {
   [Biome.TropicalRainforest]: [22, 106, 50], // deep saturated green
   [Biome.Alpine]: [158, 154, 168], // cool slate/lavender-grey — bare rock, distinct from Tundra's warm grey and Ice's near-white
   [Biome.SaltFlat]: [236, 230, 218], // warm off-white salt crust — real pans aren't snow-white, and Ice keeps the cold near-white
+  [Biome.Glacier]: [214, 228, 244], // pale glacier blue — bluer than Ice's near-white, reads as frozen WATER
 }
 
 export function biomeColor(id: number): [number, number, number] {
@@ -73,6 +80,7 @@ const BIOME_LABEL_KEYS: Record<number, string> = {
   [Biome.TropicalRainforest]: 'world.biome.tropicalRainforest',
   [Biome.Alpine]: 'world.biome.alpine',
   [Biome.SaltFlat]: 'world.biome.saltFlat',
+  [Biome.Glacier]: 'world.biome.glacier',
 }
 
 export function biomeLabelKey(id: number): string {
@@ -85,6 +93,7 @@ export function biomeLabelKey(id: number): string {
 export function biomeLegend(): { labelKey: string; rgb: [number, number, number] }[] {
   const order = [
     Biome.Ice,
+    Biome.Glacier,
     Biome.Tundra,
     Biome.Alpine,
     Biome.Boreal,

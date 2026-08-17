@@ -1311,10 +1311,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // and the measured 90th-percentile lake is 223 m deep, so nearly every lake
       // would have rendered at the palest end of the ramp.
       const shade = Math.min(1, elevationToMeters(d) / LAKE_SHADE_SATURATION_M)
-      // A frozen basin (Biome.Ice on a wet cell — the riparian override, see
-      // LakeFields.frozen) paints as glacier, not open water: pale blue-white,
+      // A frozen basin (Biome.Glacier — the riparian override, see
+      // LakeFields.frozen) paints as ice, not open water: pale blue-white,
       // barely darkening with depth (crevasse blue), instead of the lake ramp.
-      const ice = lastBiomes !== null && lastBiomes[i] === Biome.Ice
+      const ice = lastBiomes !== null && lastBiomes[i] === Biome.Glacier
       const r = ice ? 216 - 12 * shade : 60 - 25 * shade
       const g = ice ? 230 - 10 * shade : 110 - 30 * shade
       const b = ice ? 242 - 6 * shade : 170 - 20 * shade
