@@ -39,5 +39,22 @@
   "generator.step.migration.label": "Migration",
   "generator.step.migration.help": "Wo Menschen siedeln und wie sie sich ausbreiten. Nicht Teil der Kette — verlässt den Generator später.",
   "generator.step.status.computed": "berechnet",
-  "generator.step.status.pending": "nicht berechnet"
+  "generator.step.status.pending": "nicht berechnet",
+  "generator.world.intro": "Diese Angaben legen die Grundlage für alle weiteren Schritte. Eine Änderung verwirft die bisherige Simulation.",
+  "generator.world.empty": "Noch nicht simuliert · leerer Planet",
+  "generator.world.name.label": "Name der Welt",
+  "generator.world.name.help": "Wird für Speicherstände und Dateinamen verwendet.",
+  "generator.world.rollName.label": "Namen würfeln",
+  "generator.world.rollName.help": "Wählt einen Namen zufällig. Er lässt sich jederzeit ändern.",
+  "generator.world.seed.label": "Seed",
+  "generator.world.seed.help": "Gleicher Seed und gleiche Parameter ergeben dieselbe Welt.",
+  "generator.world.topology.label": "Topologie",
+  "generator.world.topology.help": "Die Topologie legt fest, wie die Ränder der Karte zusammenhängen, und damit wie Platten, Winde und Strömungen umlaufen.",
+  "generator.world.topology.flat.label": "Flach",
+  "generator.world.topology.flat.help": "Eine flache Karte, keine Pole, gleichmässig verteilte Strömungen.",
+  "generator.world.topology.sphere.label": "Kugel",
+  "generator.world.topology.sphere.help": "Umlauf in Ost-West-Richtung, Pole oben und unten.",
+  "generator.world.create.label": "Welt erzeugen",
+  "generator.world.create.help": "Legt die Welt an und öffnet den Schritt Erdmantel.",
+  "generator.step.status.set": "gesetzt"
 }

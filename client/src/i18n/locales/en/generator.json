@@ -39,5 +39,22 @@
   "generator.step.migration.label": "Migration",
   "generator.step.migration.help": "Where people settle and how they spread. Not part of the chain — it leaves the generator later.",
   "generator.step.status.computed": "computed",
-  "generator.step.status.pending": "not computed"
+  "generator.step.status.pending": "not computed",
+  "generator.world.intro": "These settings are the base for every later step. Changing them discards the current simulation.",
+  "generator.world.empty": "Not simulated yet · empty planet",
+  "generator.world.name.label": "World name",
+  "generator.world.name.help": "Used for saved states and file names.",
+  "generator.world.rollName.label": "Roll a name",
+  "generator.world.rollName.help": "Picks a name at random. It can be changed at any time.",
+  "generator.world.seed.label": "Seed",
+  "generator.world.seed.help": "The same seed and the same parameters produce the same world.",
+  "generator.world.topology.label": "Topology",
+  "generator.world.topology.help": "The topology decides how the edges of the map connect, and with that how plates, winds and currents wrap around.",
+  "generator.world.topology.flat.label": "Flat",
+  "generator.world.topology.flat.help": "A flat map whose four edges wrap, no poles, evenly spread currents.",
+  "generator.world.topology.sphere.label": "Sphere",
+  "generator.world.topology.sphere.help": "Wraps east to west, with poles at the top and bottom.",
+  "generator.world.create.label": "Create world",
+  "generator.world.create.help": "Lays out the world and opens the mantle step.",
+  "generator.step.status.set": "set"
 }

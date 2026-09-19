@@ -435,3 +435,147 @@
      digit count changes while erosion is running. */
   min-width: 2.5em;
 }
+
+/* --- step 0: the world's name, seed and shape -----------------------------
+   Lives in the sidebar, so it is a single 300px column and reads the design
+   tokens the column itself wears rather than the older paper look below. */
+.worldgen-flat-screen .world-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.worldgen-flat-screen .world-panel[hidden] {
+  display: none;
+}
+
+.worldgen-flat-screen .world-panel__intro {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dc-muted);
+}
+
+.worldgen-flat-screen .world-panel__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.worldgen-flat-screen .world-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.worldgen-flat-screen .world-field__label {
+  font-size: 13px;
+  color: var(--dc-text2);
+}
+
+.worldgen-flat-screen .world-panel .field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.worldgen-flat-screen .world-panel input[type='text'] {
+  flex-grow: 1;
+  min-width: 0;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--dc-input-line);
+  border-radius: 6px;
+  background: var(--dc-bg);
+  color: var(--dc-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.worldgen-flat-screen .world-panel .icon-button {
+  width: 44px;
+  height: 40px;
+  flex-shrink: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.worldgen-flat-screen .world-panel .icon-button img {
+  width: 18px;
+  height: 18px;
+}
+
+.worldgen-flat-screen .world-panel .icon-button:hover {
+  background: var(--dc-hover);
+}
+
+.worldgen-flat-screen .topology-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.worldgen-flat-screen .topology {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--dc-line2);
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.worldgen-flat-screen .topology[aria-pressed='true'] {
+  border-color: var(--dc-teal);
+  background: var(--dc-hover);
+}
+
+/* The shape that does not exist yet. aria-disabled rather than disabled, so
+   the row can still be read and pointed at — a control the pointer cannot
+   reach cannot explain itself. */
+.worldgen-flat-screen .topology[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.worldgen-flat-screen .topology__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dc-strong);
+}
+
+.worldgen-flat-screen .topology__desc {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--dc-muted);
+  text-wrap: pretty;
+}
+
+.worldgen-flat-screen .world-create {
+  margin-top: auto;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.worldgen-flat-screen .world-create:hover {
+  filter: brightness(0.95);
+}

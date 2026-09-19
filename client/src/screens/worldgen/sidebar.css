@@ -1,0 +1,55 @@
+/* The generator's left column — design canvas (Main.dc.html, the `<aside>`),
+   light column. Between the title bar and the step bar, both of which publish
+   their own heights; this one reads them rather than repeating the numbers. */
+.wg-sidebar {
+  position: fixed;
+  top: var(--title-bar-height, 0px);
+  bottom: var(--step-bar-height, 0px);
+  left: 0;
+  width: var(--sidebar-width, 300px);
+  /* Same layer as the rest of the map chrome, below the title bar (4). */
+  z-index: 3;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 20px 18px;
+  overflow-y: auto;
+  border-right: 1px solid var(--dc-line);
+  background: var(--dc-panel);
+  color: var(--dc-text);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+/* `display: flex` outranks the user-agent rule for [hidden]. */
+.wg-sidebar[hidden] {
+  display: none;
+}
+
+.wg-sidebar__title {
+  margin: 0;
+  font-family: 'Bricolage Grotesque', Georgia, serif;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--dc-strong);
+}
+
+.wg-sidebar__desc {
+  margin: -16px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dc-muted);
+  text-wrap: pretty;
+}
+
+.wg-sidebar__body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex-grow: 1;
+}
+
+.wg-sidebar__body:empty {
+  display: none;
+}

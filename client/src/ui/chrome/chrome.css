@@ -9,10 +9,11 @@
 
 .map-chrome .panel {
   position: fixed;
+  /* Centred on the map, not on the window, once a sidebar has taken part of it. */
+  left: var(--sidebar-width, 0px);
   /* Clears the generator's step bar. The `0px` fallback is what leaves the
      world map — same chrome, no step bar — exactly where it was. */
   bottom: var(--step-bar-height, 0px);
-  left: 0;
   right: 0;
   display: flex;
   flex-direction: row;

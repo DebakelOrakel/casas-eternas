@@ -39,6 +39,7 @@ import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
 import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from '../../world/save/worldLayers'
 import { getLocale, t, type TKey } from '../../i18n/i18n'
+import { relabel } from '../../i18n/relabel'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
@@ -51,6 +52,7 @@ import type { SaveTarget } from '../../ui/worldPanels/SavePanel'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { createWorldChooser } from './WorldChooser'
 import { createStepBar } from './StepBar'
+import { createSidebar } from './Sidebar'
 import { readRecipeValue as readYamlValue } from '../../world/save/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
@@ -248,6 +250,18 @@ function randomSeed(): string {
   return Math.floor(Math.random() * 1_000_000_000).toString()
 }
 
+// Names offered by step 0's dice. Proper nouns, so they are code and not a
+// catalog: they read the same in both languages, and a translator asked to
+// render "Aurelia" into German has nothing to do but make it worse.
+const WORLD_NAMES = [
+  'Aurelia', 'Kelduin', 'Tessarin', 'Orrivan', 'Nymbra', 'Skarn',
+  'Velmaris', 'Thanduor', 'Ishkar', 'Perenne', 'Volarin', 'Cassareth',
+]
+
+function randomWorldName(): string {
+  return WORLD_NAMES[Math.floor(Math.random() * WORLD_NAMES.length)]
+}
+
 export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   const scene = new Scene(ctx.engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
@@ -270,6 +284,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   })
 
   const initialSeed = randomSeed()
+  // The world's own name, as opposed to its seed. Until step 0 existed the two
+  // were the same string: `metadata.name` was written from the seed field, so
+  // every world was called by its own dice roll. It travels with the save and
+  // shows in the title bar and in the world list.
+  //
+  // It is deliberately NOT part of the spec: renaming a world must not make it
+  // a different one, so the name reaches neither readSpec() nor deriveWorldId()
+  // nor the world uid. It IS part of worldSignature, because renaming is an
+  // unsaved change like any other.
+  let worldName = randomWorldName()
   let lastLandFraction = 0
   let lastEpoch = 0
   // How many erosion passes have been applied to the current world (status
@@ -432,15 +456,44 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     <div class="compute-progress" data-value="compute-progress" hidden>
       <span class="compute-progress-fill" data-value="compute-progress-fill"></span>
     </div>
+    <div class="world-panel" data-stage="world">
+      <p class="world-panel__intro" data-t="generator.world.intro"></p>
+      <div class="world-panel__fields">
+        <label class="world-field">
+          <span class="world-field__label" data-help="generator.world.name" data-t="generator.world.name.label"></span>
+          <span class="field-row">
+            <input type="text" class="world-name-input" />
+            <button type="button" class="icon-button" data-action="roll-name" data-t-aria="generator.world.rollName.label" data-help="generator.world.rollName">
+              <img src="/icons/dice.png" alt="" />
+            </button>
+          </span>
+        </label>
+        <label class="world-field">
+          <span class="world-field__label" data-help="generator.world.seed" data-t="generator.world.seed.label"></span>
+          <span class="field-row">
+            <input type="text" class="seed-input" data-t-placeholder="worldgen.panel.genesis.seed.placeholder" value="${initialSeed}" />
+            <button type="button" class="icon-button" data-action="randomize-seed" data-t-aria="worldgen.action.randomizeSeed.label" data-help="worldgen.action.randomizeSeed">
+              <img src="/icons/dice.png" alt="" />
+            </button>
+          </span>
+        </label>
+        <div class="world-field world-field--topology">
+          <span class="world-field__label" data-help="generator.world.topology" data-t="generator.world.topology.label"></span>
+          <div class="topology-list">
+            <button type="button" class="topology" aria-pressed="true">
+              <span class="topology__name" data-t="generator.world.topology.flat.label"></span>
+              <span class="topology__desc" data-t="generator.world.topology.flat.help"></span>
+            </button>
+            <button type="button" class="topology" aria-pressed="false" aria-disabled="true">
+              <span class="topology__name" data-t="generator.world.topology.sphere.label"></span>
+              <span class="topology__desc" data-t="generator.world.topology.sphere.help"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <button type="button" class="world-create" data-action="create-world" data-help="generator.world.create" data-t="generator.world.create.label"></button>
+    </div>
     <div class="panel" data-stage="genesis">
-      <label class="field field--seed">
-        <span class="field-row">
-          <input type="text" class="seed-input" placeholder="${t('worldgen.panel.genesis.seed.placeholder')}" value="${initialSeed}" />
-          <button type="button" class="icon-button" data-action="randomize-seed" aria-label="${t('worldgen.action.randomizeSeed.label')}" data-help="worldgen.action.randomizeSeed">
-            <img src="/icons/dice.png" alt="" />
-          </button>
-        </span>
-      </label>
       <label class="field field--icon-row">
         <span class="field-row">
           <button type="button" class="icon-button" data-action="reset-archean" aria-label="${t('worldgen.action.resetArchean.label')}" data-help="worldgen.action.resetArchean">
@@ -543,6 +596,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   `
 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
+  const worldNameInput = root.querySelector<HTMLInputElement>('.world-name-input')!
+  const rollNameButton = root.querySelector<HTMLButtonElement>('[data-action="roll-name"]')!
+  const createWorldButton = root.querySelector<HTMLButtonElement>('[data-action="create-world"]')!
+  worldNameInput.value = worldName
   const mantleVigourInput = root.querySelector<HTMLInputElement>('.mantle-vigour-input')!
   const mantleVigourLabel = root.querySelector<HTMLElement>('[data-value="mantle-vigour-label"]')!
   const waterInput = root.querySelector<HTMLInputElement>('.water-input')!
@@ -616,13 +673,24 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // save menu, the job list and the theme switch the design draws there arrive
   // with the steps that own them.
   //
-  // No onLocaleChange: switching language here must not rebuild the screen,
-  // which would throw away an unsaved world. The bar relabels itself and the
-  // rest follows when the screen is next entered — the same bargain the title
-  // screen's switch already makes.
+  // onLocaleChange does NOT rebuild the screen, unlike the title and map
+  // screens: a rebuild here throws away an unsaved world. The pieces redrawn
+  // from the design canvas say themselves again in place instead. The older
+  // panels still cannot — their markup called `t()` once, when the screen was
+  // built — so they keep the language they were built in until the screen is
+  // entered again. They follow as each one moves into the sidebar.
   const titleBar = createTitleBar(root, {
     onSignIn: () => serverIndicator.openSignIn(),
     onWorldClick: () => openWorldChooser(),
+    onLocaleChange: () => {
+      relabel(worldPanel)
+      sidebar.relabel()
+      stepBar.relabel()
+      worldChooser.relabel()
+      // The step statuses are words the screen chooses, not the bar's; this is
+      // what puts the new language into them.
+      updateNavState()
+    },
   })
 
   const storagePanel = createStoragePanel(root)
@@ -827,11 +895,21 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Throws rather than returning -1: a stage whose panel is missing would
   // otherwise read as "panel before the first one" and quietly change every
   // comparison that uses it.
-  const panelIndexOf = (id: PanelStageId): number => {
-    const i = PANEL_STAGES.indexOf(id)
-    if (i < 0) throw new Error(`no panel for stage ${id}`)
+  //
+  // STEP_IDS is what the screen navigates, and it is NOT the stage list: step 0
+  // ("world") gives the world its name, its seed and its shape, none of which
+  // the pipeline computes. It is a step to the person using the generator and
+  // no stage at all to the pipeline, so it is added here rather than smuggled
+  // into StageId, where every exhaustive switch would then have to answer for
+  // a stage that runs nothing.
+  type StepId = 'world' | PanelStageId
+  const STEP_IDS: readonly StepId[] = ['world', ...PANEL_STAGES]
+  const panelIndexOf = (id: StepId): number => {
+    const i = STEP_IDS.indexOf(id)
+    if (i < 0) throw new Error(`no panel for step ${id}`)
     return i
   }
+  const GENESIS_PANEL_INDEX = panelIndexOf('genesis')
 
   // Entering this panel is what commits the Archean — see commitGenesis.
   const TECTONICS_PANEL_INDEX = panelIndexOf('tectonics')
@@ -2766,9 +2844,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // trusting that no Archean status can arrive once the phase has been handed over
     // — the visibility rule then lives in one condition instead of in the timing of
     // two messages.
-    worldBanner.hidden = panelIndex !== 0
+    worldBanner.hidden = panelIndex !== GENESIS_PANEL_INDEX
     // The backdrop grows to carry the line and shrinks back when there is none.
-    panels[panelIndexOf('genesis')].classList.toggle('has-banner', !worldBanner.hidden)
+    panels[GENESIS_PANEL_INDEX].classList.toggle('has-banner', !worldBanner.hidden)
     updateProgress()
   }
 
@@ -2883,7 +2961,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // believed.
   function worldSignature(): string {
     const spec = readSpec()
-    return JSON.stringify([spec.seed, spec.values, lastArcheanEpochs, lastEpoch, erosionRunCount])
+    return JSON.stringify([worldName, spec.seed, spec.values, lastArcheanEpochs, lastEpoch, erosionRunCount])
   }
 
   function markWorldEstablished(): void {
@@ -2899,11 +2977,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // tomorrow starts from what the save itself says.
   let lastSave: { target: SaveTarget; at: Date } | undefined
 
-  // Whether the load screen is still covering the generator. A plain flag and
+  // Whether the load screen is covering the generator. A plain flag and
   // not a read of the chooser itself, because updateSaveIndicator runs from
   // here and the chooser is built several hundred lines further down — asking
   // it would be the temporal dead zone that once blanked this whole screen.
-  let chooserOpen = true
+  let chooserOpen = false
 
   function saveState(): TitleBarSaveState {
     if (worldSignature() !== savedSignature) {
@@ -2923,7 +3001,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // Nothing while the chooser is up. The generator has already built a world
     // behind it, so there IS a seed to show — showing it would say a world is
     // open when the question on screen is still which one.
-    titleBar.setWorld(chooserOpen ? null : { seed: seedInput.value })
+    titleBar.setWorld(chooserOpen ? null : { name: worldName, seed: seedInput.value })
   }
 
   // One delegated listener instead of one per control: every slider, including the
@@ -2931,7 +3009,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   root.addEventListener('input', () => updateSaveIndicator())
 
   function buildWorldYaml(): string {
-    const name = seedInput.value || 'world'
+    const name = worldName || seedInput.value || 'world'
     return [
       'apiVersion: casas-eternas/v1alpha1',
       'kind: FlatWorld',
@@ -3111,7 +3189,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   async function deliverArchive(blob: Blob, filename: string): Promise<void> {
     if (pendingSaveTarget === 'browser') {
       const kept = await keepWorldInBrowser(worldUid, blob, {
-        name: seedInput.value || 'world',
+        name: worldName || seedInput.value || 'world',
         seed: seedInput.value,
         revision: worldRevision,
         erosionRun: erosionRunCount,
@@ -3191,7 +3269,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         await runBakeOrder(archeanBlob)
         return
       }
-      await deliverArchive(archeanBlob, `${(seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)
+      await deliverArchive(archeanBlob, `${(worldName || seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)
       return
     }
     zip.file('state.json', JSON.stringify(message.snapshot))
@@ -3214,7 +3292,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       await runBakeOrder(blob)
       return
     }
-    const safeName = (seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')
+    const safeName = (worldName || seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')
     await deliverArchive(blob, `${safeName}.zip`)
   }
 
@@ -3236,7 +3314,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // The generator's first screen (see WorldChooser). Built here, beside the
   // other two ways into a world, and opened at the foot of this function.
   const worldChooser = createWorldChooser(root, {
-    onNewWorld: () => closeWorldChooser(),
+    // A new world starts at step 0, wherever the generator happened to be
+    // standing when the list was reopened.
+    onNewWorld: () => {
+      closeWorldChooser()
+      showPanel(panelIndexOf('world'))
+    },
     // Same path a picked file takes — `loadWorldFromZip` closes the chooser
     // once the archive has actually turned out to be a world.
     onOpenArchive: (archive) => { void loadWorldFromZip(new File([archive], 'world.zip')) },
@@ -3249,16 +3332,22 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   function openWorldChooser(): void {
     if (chooserOpen) return
     chooserOpen = true
+    // The generator's own furniture steps aside as one: the list is about
+    // WHICH world, and a step bar underneath it would be answering a question
+    // nobody has asked yet. One place does this, and startup goes through it
+    // too — the first opening used to hide them separately, and when that line
+    // drifted the load screen came up sitting on top of the steps.
     stepBar.setVisible(false)
+    sidebar.setVisible(false)
     updateSaveIndicator()
-    stepBar.setVisible(false)
-  worldChooser.open()
+    worldChooser.open()
   }
 
   function closeWorldChooser(): void {
     if (!chooserOpen) return
     chooserOpen = false
     stepBar.setVisible(true)
+    sidebar.setVisible(true)
     worldChooser.close()
     // The bar has been showing no world; now there is one to name.
     updateSaveIndicator()
@@ -3656,6 +3745,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
     // Past the point where the archive can turn out not to be a world.
     closeWorldChooser()
+    // An opened world lands on the mantle, NOT on step 0: that step warns that
+    // changing it discards the simulation, and dropping someone there the
+    // moment they open a finished world is an invitation to destroy it.
+    showPanel(GENESIS_PANEL_INDEX)
 
     stopSim()
     // Drop any pending debounced regenerate — it would fire an `init` after the
@@ -3677,6 +3770,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // instead makes loading depend on what they were doing beforehand.
     const spec = specFromYaml(yaml, seed)
     seedInput.value = seed
+    // A world saved before step 0 existed was named after its seed, so this
+    // reads back as it always did rather than needing a migration.
+    worldName = readYamlValue(yaml, 'metadata.name') ?? seed
+    worldNameInput.value = worldName
     // Identity, or a derived one for a save written before the field existed.
     // Deriving rather than rolling a fresh id is what keeps the same legacy
     // file opened on two machines a SINGLE world in the store — see
@@ -4089,10 +4186,44 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     postToWorker({ type: 'resetStage', stage: 'tectonics' })
     updateNavState() // topography is back to the hand-over → re-lock erosion onwards
   })
-  seedInput.addEventListener('input', regenerateDebounced)
+  // The seed no longer rebuilds the world as you type it. It used to, because
+  // it sat in the Genesis panel where every control is a live knob; in step 0
+  // it is one half of the world's identity, and "Create world" is the moment
+  // the answer is given. Typing a seed and watching six steps of work vanish
+  // under the keystrokes is not an edit, it is an accident.
+  seedInput.addEventListener('input', () => updateNavState())
   randomizeButton.addEventListener('click', () => {
     seedInput.value = randomSeed()
+    // A click is not an `input` event, so the delegated listener above does not
+    // see it. The title bar shows the seed, thus it must be told, the same as
+    // the name dice does.
+    updateSaveIndicator()
+    updateNavState()
+  })
+
+  worldNameInput.addEventListener('input', () => {
+    worldName = worldNameInput.value
+    // Renaming touches nothing the world is made of, so it needs no rebuild —
+    // only the places that say the name out loud.
+    updateSaveIndicator()
+    updateNavState()
+  })
+  rollNameButton.addEventListener('click', () => {
+    worldName = randomWorldName()
+    worldNameInput.value = worldName
+    updateSaveIndicator()
+    updateNavState()
+  })
+
+  createWorldButton.addEventListener('click', () => {
+    if (isBusy()) return
+    if (!worldName.trim()) {
+      worldName = randomWorldName()
+      worldNameInput.value = worldName
+    }
+    if (!seedInput.value.trim()) seedInput.value = randomSeed()
     regenerate()
+    showPanel(GENESIS_PANEL_INDEX)
   })
   mantleVigourInput.addEventListener('input', () => {
     mantleVigourLabel.textContent = mantleVigourInput.value
@@ -4113,9 +4244,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // the chain is a compile error here rather than a panel that silently shifts.
   // Looked up BY STAGE rather than taken in document order, so the markup and the
   // chain have to agree about which panel is which instead of merely happening to.
-  const panels = PANEL_STAGES.map((id) => {
-    const el = root.querySelector<HTMLElement>(`.panel[data-stage="${id}"]`)
-    if (!el) throw new Error(`no panel markup for stage ${id}`)
+  const panels = STEP_IDS.map((id) => {
+    // `data-stage` alone, not `.panel[data-stage]`: step 0 lives in the sidebar
+    // and deliberately does NOT wear the foot row's `panel` class, which is
+    // what silently emptied this lookup and aborted the whole screen build.
+    // The data attribute is the contract; the class is a look.
+    const el = root.querySelector<HTMLElement>(`[data-stage="${id}"]`)
+    if (!el) throw new Error(`no panel markup for step ${id}`)
     return el
   })
   let panelIndex = 0
@@ -4145,8 +4280,19 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // later. Dropping it from the bar now would make it unreachable — the arrows
   // that used to reach it are gone — which is a feature removed by accident
   // rather than decided.
+  // The column, and step 0 moving into it. The other steps keep their controls
+  // in the panel row along the foot for now; each moves in its own step, so a
+  // broken one is always traceable to the step that broke it.
+  const sidebar = createSidebar(root)
+  // Step 0's markup carries its keys rather than its strings, so a language
+  // switch can find them again (see i18n/relabel). Nothing stands in it until
+  // this runs.
+  const worldPanel = panels[panelIndexOf('world')]
+  relabel(worldPanel)
+  sidebar.body.appendChild(worldPanel)
+
   const stepBar = createStepBar(root, {
-    steps: PANEL_STAGES.map((id) => ({ id, aside: id === 'migration' })),
+    steps: STEP_IDS.map((id) => ({ id, aside: id === 'migration' })),
     onSelect: (index) => {
       if (index === panelIndex) return
       const reason = entryRequirementUnmet(index)
@@ -4160,7 +4306,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // LEAVING GENESIS FORWARD IS WHAT ENDS THE ARCHEAN — it used to hang off
       // the next arrow, and hangs off the same gesture here: any move to a
       // later step, not merely the adjacent one.
-      if (PANEL_STAGES[panelIndex] === 'genesis' && index > panelIndexOf('genesis')) commitGenesis()
+      if (STEP_IDS[panelIndex] === 'genesis' && index > GENESIS_PANEL_INDEX) commitGenesis()
       showPanel(index)
     },
   })
@@ -4169,7 +4315,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // in StepBar about the third state the design draws. Each stage answers with
   // the thing that only exists once it has computed, rather than with a counter
   // kept beside it, so the bar cannot claim a step the screen does not hold.
-  const stageComputed: Record<PanelStageId, () => boolean> = {
+  const stageComputed: Record<StepId, () => boolean> = {
+    // Step 0 is never "computed" — it is answered. It counts as settled the
+    // moment the world has both halves of its identity.
+    world: () => worldName.trim() !== '' && seedInput.value.trim() !== '',
     genesis: () => lastArcheanEpochs > 0 || hasHandover,
     tectonics: () => lastEpoch > 0,
     climate: () => lastTemperature !== null,
@@ -4185,10 +4334,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const busy = isBusy()
     stepBar.setState({
       current: panelIndex,
-      computed: PANEL_STAGES.map((id) => stageComputed[id]()),
-      // The busy lock is the same one the controls get: stepping away
-      // mid-simulation would leave a half-run stage behind.
-      blocked: PANEL_STAGES.map((_, index) => index !== panelIndex && (busy || entryRequirementUnmet(index) !== null)),
+      steps: STEP_IDS.map((id, index) => {
+        const settled = stageComputed[id]()
+        return {
+          // Step 0 reports the shape it set rather than a computation it did
+          // not do, which is what the design's chip shows: "Flat · set".
+          status: id === 'world'
+            ? `${t('generator.world.topology.flat.label')} · ${t('generator.step.status.set')}`
+            : t(settled ? 'generator.step.status.computed' : 'generator.step.status.pending'),
+          settled,
+          // The busy lock is the same one the controls get: stepping away
+          // mid-simulation would leave a half-run stage behind.
+          blocked: index !== panelIndex && (busy || entryRequirementUnmet(index) !== null),
+        }
+      }),
     })
   }
   // The data panels are where their own step gets computed, so entering one asks
@@ -4226,6 +4385,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // the Archean hand-over moved to the gesture that means it (see commitGenesis).
   const showPanel = (index: number): void => {
     panelIndex = index
+    sidebar.setStep(STEP_IDS[index])
     panels.forEach((panel, i) => {
       panel.hidden = i !== index
     })
@@ -4236,7 +4396,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // on switch. Named stages, not index ranges: the climate panel moved
     // BEFORE erosion (stage-2 coupling), which silently broke every "before
     // erosion" comparison this block used to make.
-    const shaping = PANEL_STAGES[index] === 'genesis' || PANEL_STAGES[index] === 'tectonics' || PANEL_STAGES[index] === 'erosion'
+    const shaping = STEP_IDS[index] === 'genesis' || STEP_IDS[index] === 'tectonics' || STEP_IDS[index] === 'erosion'
     overlaysOn.terrain = shaping
     // The mantle overlay is on for Genesis/Tectonics (where you watch the plates
     // drive), off elsewhere. Same per-panel reset.
@@ -4259,7 +4419,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // hidden, so the last Archean sentence stayed on screen for the rest of the run.
     const genesis = index === panelIndexOf('genesis')
     worldBanner.hidden = !genesis || worldHintEl.textContent === ''
-    panels[0].classList.toggle('has-banner', !worldBanner.hidden)
+    panels[GENESIS_PANEL_INDEX].classList.toggle('has-banner', !worldBanner.hidden)
     // Temperature comes on when you enter the Climate panel — the same reasoning as
     // rivers below, and the same mechanism: it is switched on even before the climate
     // has been computed (the entry above requests it), and handleClimateData's
@@ -4316,8 +4476,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   // Last, so the list is drawn over a generator that is already standing: the
   // world behind it is what "Neue Welt erstellen" hands over, with nothing to
-  // wait for.
-  worldChooser.open()
+  // wait for. Through the same door as every later opening.
+  openWorldChooser()
 
   // LEAVING GENESIS FORWARD IS WHAT ENDS THE ARCHEAN: plate tectonics begins, seeds
   // are placed on the convection cells, and the rafts/ages/mantle carry over
@@ -4353,6 +4513,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scene,
     dispose() {
       stopSim()
+      sidebar.dispose()
       stepBar.dispose()
       worldChooser.dispose()
       titleBar.dispose()

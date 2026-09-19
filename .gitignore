@@ -13,8 +13,6 @@ dist-ssr
 *.local
 .vite/
 
-graphify-out
-
 # Go
 *.exe
 *.exe~

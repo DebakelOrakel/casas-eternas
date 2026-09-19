@@ -31,6 +31,9 @@ export interface WorldChooserOptions {
 
 export interface WorldChooser {
   element: HTMLElement
+  // Every string again, in the language that is active now. The screen holding
+  // this one cannot be rebuilt on a language switch — see i18n/relabel.
+  relabel(): void
   open(): void
   close(): void
   isOpen(): boolean
@@ -124,22 +127,29 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   const foot = root.querySelector<HTMLElement>('[data-slot="foot"]')!
   const countText = root.querySelector<HTMLElement>('.wc-count')!
 
-  root.querySelector('.wc-title')!.textContent = t('generator.load.title')
-  root.querySelector('.wc-subtitle')!.textContent = t('generator.load.subtitle')
-  root.querySelector('.wc-listtitle')!.textContent = t('generator.load.existing')
-
   const newChoice = root.querySelector<HTMLButtonElement>('[data-act="new"]')!
   const uploadChoice = root.querySelector<HTMLButtonElement>('[data-act="upload"]')!
   // The big two carry their explanation VISIBLY, in the design's subtitle line,
   // and therefore no data-help: a tooltip card repeating the sentence printed
   // under the label is noise. The `.help` key is the same string either way —
   // it is shown, not hidden.
-  newChoice.querySelector('.wc-choice__label')!.textContent = t('generator.load.new.label')
-  newChoice.querySelector('.wc-choice__sub')!.textContent = t('generator.load.new.help')
   newChoice.querySelector('.wc-choice__mark')!.appendChild(icon('<path d="M12 5v14M5 12h14"/>'))
-  uploadChoice.querySelector('.wc-choice__label')!.textContent = t('generator.load.upload.label')
-  uploadChoice.querySelector('.wc-choice__sub')!.textContent = t('generator.load.upload.help')
   uploadChoice.querySelector('.wc-choice__mark')!.appendChild(icon('<path d="M12 19V8M7 13l5-5 5 5M5 4h14"/>'))
+
+  // Every string the frame itself holds, in one place, so saying them again in
+  // another language is the same code that said them first.
+  function paintStatic(): void {
+    root.querySelector('.wc-title')!.textContent = t('generator.load.title')
+    root.querySelector('.wc-subtitle')!.textContent = t('generator.load.subtitle')
+    root.querySelector('.wc-listtitle')!.textContent = t('generator.load.existing')
+    newChoice.querySelector('.wc-choice__label')!.textContent = t('generator.load.new.label')
+    newChoice.querySelector('.wc-choice__sub')!.textContent = t('generator.load.new.help')
+    uploadChoice.querySelector('.wc-choice__label')!.textContent = t('generator.load.upload.label')
+    uploadChoice.querySelector('.wc-choice__sub')!.textContent = t('generator.load.upload.help')
+    for (const button of filterButtons) {
+      button.textContent = t(`generator.load.filter.${button.dataset.filter as Filter}.label` as TKey)
+    }
+  }
 
   // Neither of these closes the chooser itself. The screen does, and only once
   // it knows the world is actually there: an archive that turns out not to be
@@ -155,7 +165,6 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   const filterButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-filter]')]
   for (const button of filterButtons) {
     const value = button.dataset.filter as Filter
-    button.textContent = t(`generator.load.filter.${value}.label` as TKey)
     button.addEventListener('click', () => {
       if (filter === value) return
       filter = value
@@ -379,12 +388,19 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     releaseUrls()
   }
 
+  paintStatic()
   paintFilter()
   paintList()
   host.appendChild(root)
 
   return {
     element: root,
+    relabel() {
+      paintStatic()
+      // The cards carry strings too, and they are rebuilt from the entries
+      // already in hand — no second round trip to say the same list again.
+      paintList()
+    },
     open() {
       root.hidden = false
       void reload()

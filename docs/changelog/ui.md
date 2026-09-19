@@ -4,6 +4,9 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-19
+- **fixed** Generator: switching the language now also changes the load screen, the step bar, the sidebar and step 0, not the title bar alone. `generator`
+- **new** Generator: a column along the left names the step you are on and says what it does; the map gives up the width rather than being covered. `generator.step`
+- **new** Generator: a step 0 where a world gets its name, its seed and its shape before anything is simulated. `generator.world`
 - **changed** Generator: the ‹ › arrows give way to a step bar along the foot, naming every step and which of them have been computed. `generator.step`
 - **changed** Layout: the world's name in the title bar leads back to the list of worlds. `titlebar.world`
 - **new** Generator: it opens on a list of worlds — those this browser keeps and those on the server together — where one can be opened, removed, uploaded from a file, or a new one started. `generator.load`

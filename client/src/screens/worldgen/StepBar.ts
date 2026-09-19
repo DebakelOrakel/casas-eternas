@@ -16,10 +16,10 @@ import './stepBar.css'
 // shape the water forcing erosion runs on (see entryRequirementUnmet in
 // WorldGenScreen). The dependency is real and the drawing is not.
 //
-// Status is two-valued for now — computed or not. The design's third state,
-// "outdated", has nothing to read: changing a parameter CLEARS the downstream
-// stages rather than marking them, so a cleared stage and one never run are
-// the same thing here. Making them different is its own step.
+// The status line's words come from the screen. The design's third state,
+// "outdated", has nothing to read yet: changing a parameter CLEARS the
+// downstream stages rather than marking them, so a cleared stage and one never
+// run are the same thing here. Making them different is its own step.
 
 export interface StepBarStep {
   // A pipeline stage id. The labels are looked up as `generator.step.<id>`,
@@ -30,12 +30,22 @@ export interface StepBarStep {
   aside?: boolean
 }
 
+export interface StepBarStepState {
+  // The small line under the label. The screen supplies the words rather than
+  // the bar choosing them: step 0 is "set", not "computed", and a bar that
+  // hardcoded two states could never say so.
+  status: string
+  // Settled — the status line reads in the confirming colour and the mark is
+  // outlined rather than empty.
+  settled: boolean
+  // Entering it is refused for now, because an earlier step has not supplied
+  // what it needs.
+  blocked: boolean
+}
+
 export interface StepBarState {
   current: number
-  // Per step, in the same order: has it been computed, and is entering it
-  // blocked by an unmet requirement.
-  computed: readonly boolean[]
-  blocked: readonly boolean[]
+  steps: readonly StepBarStepState[]
 }
 
 export interface StepBarOptions {
@@ -49,6 +59,9 @@ export interface StepBarOptions {
 export interface StepBar {
   element: HTMLElement
   setState(state: StepBarState): void
+  // The step names again, in the language that is active now. The statuses
+  // come with the next setState, which the screen runs on every change anyway.
+  relabel(): void
   // Away while the load screen is up: that screen is about which world, not
   // about where in one. Hidden rather than covered, because both sit at the
   // same z-index and the later one in the document would otherwise win.
@@ -79,9 +92,11 @@ export function createStepBar(host: HTMLElement, options: StepBarOptions): StepB
 
     const mark = document.createElement('span')
     mark.className = 'step-bar__mark mono'
-    // Numbered from one, and the steps set apart get no number: a number says
-    // "this many to go", which is a promise the migration step does not keep.
-    mark.textContent = step.aside ? '·' : String(index + 1)
+    // Numbered from ZERO, because step 0 is a real step here: naming the world
+    // and choosing its seed is something you do, not something that happens
+    // before you start. The steps set apart get no number at all — a number
+    // says "this many to go", which is a promise migration does not keep.
+    mark.textContent = step.aside ? '·' : String(index)
 
     const text = document.createElement('span')
     text.className = 'step-bar__text'
@@ -96,20 +111,20 @@ export function createStepBar(host: HTMLElement, options: StepBarOptions): StepB
     button.addEventListener('click', () => options.onSelect(index))
     slot.append(line, button)
     bar.appendChild(slot)
-    return { slot, button, status }
+    return { slot, button, label, status }
   })
 
   function setState(state: StepBarState): void {
     buttons.forEach(({ slot, button, status }, index) => {
+      const step = state.steps[index]
+      if (!step) return
       const active = index === state.current
-      const computed = state.computed[index] === true
-      const blocked = state.blocked[index] === true
       button.setAttribute('aria-current', active ? 'step' : 'false')
       // Blocked, not disabled: a disabled button cannot be clicked and so can
       // never say why it refused. The screen answers with the reason.
-      button.setAttribute('aria-disabled', String(blocked))
-      slot.dataset.state = active ? 'active' : blocked ? 'blocked' : computed ? 'computed' : 'pending'
-      status.textContent = t(computed ? 'generator.step.status.computed' : 'generator.step.status.pending')
+      button.setAttribute('aria-disabled', String(step.blocked))
+      slot.dataset.state = active ? 'active' : step.blocked ? 'blocked' : step.settled ? 'computed' : 'pending'
+      status.textContent = step.status
     })
   }
 
@@ -118,6 +133,11 @@ export function createStepBar(host: HTMLElement, options: StepBarOptions): StepB
   return {
     element: bar,
     setState,
+    relabel() {
+      buttons.forEach(({ label }, index) => {
+        label.textContent = t(`generator.step.${options.steps[index].id}.label` as TKey)
+      })
+    },
     setVisible(visible) {
       bar.hidden = !visible
       host.classList.toggle('has-step-bar', visible)

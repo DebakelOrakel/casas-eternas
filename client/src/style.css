@@ -9,7 +9,13 @@ html, body {
 }
 
 #renderCanvas {
-  width: 100%;
+  /* The generator's sidebar takes real width instead of floating over the map.
+     main.ts keeps a ResizeObserver on this canvas, so narrowing it re-renders
+     at the new size and the camera picks the aspect up on its next frame —
+     nothing in the camera knows a sidebar exists. The `0px` fallback is every
+     other screen, unchanged. */
+  width: calc(100% - var(--sidebar-width, 0px));
+  margin-left: var(--sidebar-width, 0px);
   height: 100vh; /* fallback for browsers without dvh */
   height: 100dvh; /* match the *visible* viewport on mobile (browser chrome), like #overlay */
   display: block;
