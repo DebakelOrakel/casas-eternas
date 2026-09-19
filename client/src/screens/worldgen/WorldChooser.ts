@@ -1,0 +1,399 @@
+import { getLocale, t, type TKey } from '../../i18n/i18n'
+import { hasSession } from '../../server/session'
+import { deleteWorld, fetchWorld, fetchWorldPreview, listWorlds } from '../../server/worldClient'
+import { browserWorldThumbnail, forgetBrowserWorld, listBrowserWorlds, openBrowserWorld } from '../../world/browserWorlds'
+import '../../ui/theme/design.css'
+import './worldChooser.css'
+
+// The generator's first screen: which world are we working on?
+//
+// From the "Weltgenerator" design canvas (artboard Main.dc.html, "Welt
+// wählen"), light theme. It covers the generator rather than being a screen of
+// its own, and that is a decision worth stating: `ctx.goTo(id)` carries no
+// payload, so a separate route would first need a channel to hand the chosen
+// world to the generator. As an overlay there is nothing to hand over —
+// "open" is the archive path the screen already has, "new" just closes this.
+// The generator builds behind it, so its starting world is ready the moment
+// someone asks for one.
+//
+// It shows worlds from BOTH places at once — this browser and the server —
+// because "where is it kept" is a property of a world, not a place to navigate
+// to. The filter narrows that; it does not switch between two lists.
+
+export interface WorldChooserOptions {
+  // Keep the world the generator already built and get out of the way.
+  onNewWorld(): void
+  // Hands an archive over; the generator owns the loading itself.
+  onOpenArchive(archive: Blob): void
+  // The plain file picker, for a world that lives in neither place.
+  onPickFile(): void
+}
+
+export interface WorldChooser {
+  element: HTMLElement
+  open(): void
+  close(): void
+  isOpen(): boolean
+  dispose(): void
+}
+
+type Where = 'browser' | 'server'
+type Filter = 'all' | Where
+
+// One row, whatever it came from. The two sources answer the same questions
+// with different field names; normalising here is what lets the list sort and
+// render once instead of twice.
+interface Entry {
+  where: Where
+  uid: string
+  name: string
+  seed: string
+  erosionRun: number
+  bytes: number
+  savedAt: string
+}
+
+// Both formatters are deliberate copies of LoadPanel's, NOT an import: that
+// module is a panel, and a screen reaching into another screen fragment for a
+// string helper is the wrong direction. They are now written three times here
+// (LoadPanel, TitleBar, this) — which is the trigger to give them a home of
+// their own, as its own step.
+function formatWhen(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString(getLocale(), { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function icon(path: string): SVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '2')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.innerHTML = path
+  return svg
+}
+
+const SERVER_ICON = '<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/>'
+const BROWSER_ICON = '<rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8M12 17v4"/>'
+
+export function createWorldChooser(host: HTMLElement, options: WorldChooserOptions): WorldChooser {
+  const root = document.createElement('div')
+  root.className = 'world-chooser design-light'
+  root.hidden = true
+
+  root.innerHTML = `
+    <div class="wc-sheet">
+      <div class="wc-head">
+        <h1 class="wc-title"></h1>
+        <p class="wc-subtitle"></p>
+      </div>
+      <div class="wc-choices">
+        <button type="button" class="wc-choice wc-choice--new" data-act="new">
+          <span class="wc-choice__mark"></span>
+          <span class="wc-choice__text"><span class="wc-choice__label"></span><span class="wc-choice__sub"></span></span>
+        </button>
+        <button type="button" class="wc-choice wc-choice--upload" data-act="upload">
+          <span class="wc-choice__mark"></span>
+          <span class="wc-choice__text"><span class="wc-choice__label"></span><span class="wc-choice__sub"></span></span>
+        </button>
+      </div>
+      <div class="wc-listhead">
+        <h2 class="wc-listtitle"></h2>
+        <span class="wc-count mono"></span>
+        <span class="wc-grow"></span>
+        <div class="wc-filter">
+          <button type="button" data-filter="all" data-help="generator.load.filter.all"></button>
+          <button type="button" data-filter="browser" data-help="generator.load.filter.browser"></button>
+          <button type="button" data-filter="server" data-help="generator.load.filter.server"></button>
+        </div>
+      </div>
+      <div class="wc-list" data-slot="list"></div>
+      <p class="wc-foot" data-slot="foot"></p>
+    </div>
+  `
+
+  const list = root.querySelector<HTMLElement>('[data-slot="list"]')!
+  const foot = root.querySelector<HTMLElement>('[data-slot="foot"]')!
+  const countText = root.querySelector<HTMLElement>('.wc-count')!
+
+  root.querySelector('.wc-title')!.textContent = t('generator.load.title')
+  root.querySelector('.wc-subtitle')!.textContent = t('generator.load.subtitle')
+  root.querySelector('.wc-listtitle')!.textContent = t('generator.load.existing')
+
+  const newChoice = root.querySelector<HTMLButtonElement>('[data-act="new"]')!
+  const uploadChoice = root.querySelector<HTMLButtonElement>('[data-act="upload"]')!
+  // The big two carry their explanation VISIBLY, in the design's subtitle line,
+  // and therefore no data-help: a tooltip card repeating the sentence printed
+  // under the label is noise. The `.help` key is the same string either way —
+  // it is shown, not hidden.
+  newChoice.querySelector('.wc-choice__label')!.textContent = t('generator.load.new.label')
+  newChoice.querySelector('.wc-choice__sub')!.textContent = t('generator.load.new.help')
+  newChoice.querySelector('.wc-choice__mark')!.appendChild(icon('<path d="M12 5v14M5 12h14"/>'))
+  uploadChoice.querySelector('.wc-choice__label')!.textContent = t('generator.load.upload.label')
+  uploadChoice.querySelector('.wc-choice__sub')!.textContent = t('generator.load.upload.help')
+  uploadChoice.querySelector('.wc-choice__mark')!.appendChild(icon('<path d="M12 19V8M7 13l5-5 5 5M5 4h14"/>'))
+
+  // Neither of these closes the chooser itself. The screen does, and only once
+  // it knows the world is actually there: an archive that turns out not to be
+  // one must leave the list standing rather than drop you into the generator
+  // with a notification and no way back.
+  newChoice.addEventListener('click', () => options.onNewWorld())
+  uploadChoice.addEventListener('click', () => options.onPickFile())
+
+  // --- filter ---------------------------------------------------------------
+
+  let filter: Filter = 'all'
+
+  const filterButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-filter]')]
+  for (const button of filterButtons) {
+    const value = button.dataset.filter as Filter
+    button.textContent = t(`generator.load.filter.${value}.label` as TKey)
+    button.addEventListener('click', () => {
+      if (filter === value) return
+      filter = value
+      paintFilter()
+      paintList()
+    })
+  }
+
+  function paintFilter(): void {
+    for (const button of filterButtons) {
+      button.setAttribute('aria-pressed', String(button.dataset.filter === filter))
+    }
+  }
+
+  // --- data -----------------------------------------------------------------
+
+  let entries: Entry[] = []
+  // Null while unknown, false once the server has said no — the difference
+  // between "not asked yet" and "cannot be reached", which the list has to
+  // word differently.
+  let serverReachable: boolean | null = null
+
+  // Every object URL this screen made, so closing it does not leave the page
+  // holding thumbnails for the rest of the session.
+  const objectUrls = new Set<string>()
+
+  function releaseUrls(): void {
+    for (const url of objectUrls) URL.revokeObjectURL(url)
+    objectUrls.clear()
+  }
+
+  async function reload(): Promise<void> {
+    // Asked together: the server list is a network round trip and the browser
+    // list is not, and waiting for the slow one before showing either would
+    // make a local-only user pay for a server they do not use.
+    const [browser, server] = await Promise.all([listBrowserWorlds(), listWorlds()])
+    serverReachable = server !== null
+    entries = [
+      ...browser.map((world): Entry => ({
+        where: 'browser',
+        uid: world.uid,
+        name: world.name,
+        seed: world.seed,
+        erosionRun: world.erosionRun,
+        bytes: world.bytes,
+        savedAt: world.savedAt,
+      })),
+      ...(server ?? []).map((world): Entry => ({
+        where: 'server',
+        uid: world.uid,
+        name: world.name,
+        seed: world.seed,
+        erosionRun: world.erosionRun,
+        bytes: world.size,
+        savedAt: world.updatedAt,
+      })),
+    ].sort((a, b) => b.savedAt.localeCompare(a.savedAt))
+    paintList()
+  }
+
+  // --- rendering ------------------------------------------------------------
+
+  function thumbnailInto(frame: HTMLElement, entry: Entry): void {
+    const source = entry.where === 'browser'
+      ? openThumbnailUrl(entry.uid)
+      : fetchWorldPreview(entry.uid)
+    void source.then((url) => {
+      if (!url) return
+      objectUrls.add(url)
+      const image = document.createElement('img')
+      image.src = url
+      image.alt = ''
+      image.addEventListener('error', () => image.remove(), { once: true })
+      frame.appendChild(image)
+    })
+  }
+
+  async function openThumbnailUrl(uid: string): Promise<string | null> {
+    const blob = await browserWorldThumbnail(uid)
+    return blob ? URL.createObjectURL(blob) : null
+  }
+
+  function renderCard(entry: Entry): HTMLElement {
+    const card = document.createElement('div')
+    card.className = 'wc-card'
+
+    const open = document.createElement('button')
+    open.type = 'button'
+    open.className = 'wc-card__open'
+    open.dataset.help = 'generator.load.card'
+
+    const frame = document.createElement('span')
+    frame.className = 'wc-thumb'
+    thumbnailInto(frame, entry)
+
+    const main = document.createElement('span')
+    main.className = 'wc-main'
+
+    const heading = document.createElement('span')
+    heading.className = 'wc-heading'
+    const name = document.createElement('span')
+    name.className = 'wc-name'
+    name.textContent = entry.name || entry.uid
+    const seed = document.createElement('span')
+    seed.className = 'wc-seed mono'
+    // A world uploaded before the server mirrored the recipe's seed has none;
+    // then the line simply is not there rather than reading "Seed ".
+    seed.textContent = entry.seed ? `${t('titlebar.seed')} ${entry.seed}` : ''
+    heading.append(name, seed)
+
+    // The design draws "step 3/6" here. Nothing in either source knows which
+    // step a world stopped at — the save records no panel — so this says the
+    // one thing both sources DO carry: whether the world has been eroded, and
+    // how often. An invented step number would be worse than a smaller truth.
+    const progress = document.createElement('span')
+    progress.className = 'wc-progress'
+    const dot = document.createElement('span')
+    dot.className = 'wc-dot'
+    dot.dataset.state = entry.erosionRun >= 1 ? 'eroded' : 'fresh'
+    const progressText = document.createElement('span')
+    progressText.textContent = entry.erosionRun >= 1
+      ? t('generator.load.eroded', { n: entry.erosionRun })
+      : t('generator.load.notEroded')
+    progress.append(dot, progressText)
+
+    const meta = document.createElement('span')
+    meta.className = 'wc-meta'
+    meta.appendChild(icon(entry.where === 'server' ? SERVER_ICON : BROWSER_ICON))
+    const metaText = document.createElement('span')
+    metaText.textContent = [
+      t(`generator.load.filter.${entry.where}.label` as TKey),
+      formatSize(entry.bytes),
+      formatWhen(entry.savedAt),
+    ].filter(Boolean).join(' · ')
+    meta.appendChild(metaText)
+
+    main.append(heading, progress, meta)
+    open.append(frame, main)
+
+    open.addEventListener('click', () => {
+      void (async () => {
+        open.disabled = true
+        const archive = entry.where === 'browser'
+          ? await openBrowserWorld(entry.uid)
+          : await fetchWorld(entry.uid)
+        open.disabled = false
+        if (!archive) {
+          setNote(t('generator.load.unavailable'))
+          return
+        }
+        options.onOpenArchive(archive)
+      })()
+    })
+
+    // Removal confirms IN PLACE, the way LoadPanel's does: the first click
+    // arms the button, the second within a few seconds deletes, and an
+    // accidental click disarms itself. A world is the one thing here that
+    // cannot be recomputed, so it may not go on a single click — and it may
+    // not need a dialog either.
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.className = 'wc-remove'
+    remove.dataset.help = 'generator.load.remove'
+    remove.textContent = t('generator.load.remove.label')
+    let armed: ReturnType<typeof setTimeout> | undefined
+    remove.addEventListener('click', () => {
+      if (armed === undefined) {
+        remove.textContent = t('generator.load.remove.confirm')
+        remove.classList.add('wc-remove--armed')
+        armed = setTimeout(() => {
+          armed = undefined
+          remove.textContent = t('generator.load.remove.label')
+          remove.classList.remove('wc-remove--armed')
+        }, 4000)
+        return
+      }
+      clearTimeout(armed)
+      armed = undefined
+      void (async () => {
+        remove.disabled = true
+        if (entry.where === 'browser') {
+          await forgetBrowserWorld(entry.uid)
+        } else if (!(await deleteWorld(entry.uid))) {
+          remove.disabled = false
+          setNote(t('generator.load.unavailable'))
+          return
+        }
+        await reload()
+      })()
+    })
+
+    card.append(open, remove)
+    return card
+  }
+
+  function setNote(text: string): void {
+    const note = document.createElement('p')
+    note.className = 'wc-note'
+    note.textContent = text
+    list.replaceChildren(note)
+  }
+
+  function paintList(): void {
+    const shown = entries.filter((entry) => filter === 'all' || entry.where === filter)
+    countText.textContent = t('generator.load.count', { n: shown.length, all: entries.length })
+    foot.textContent = hasSession() ? t('generator.load.foot.signedIn') : t('generator.load.foot.signedOut')
+
+    if (shown.length === 0) {
+      // "Nothing here" and "the server did not answer" are different facts and
+      // a list that collapses them sends someone looking in the wrong place.
+      // The server's silence only matters where server worlds would show.
+      const missingServer = serverReachable === false && filter !== 'browser'
+      setNote(missingServer ? t('generator.load.unavailable') : t('generator.load.empty'))
+      return
+    }
+    list.replaceChildren(...shown.map(renderCard))
+  }
+
+  function close(): void {
+    root.hidden = true
+    releaseUrls()
+  }
+
+  paintFilter()
+  paintList()
+  host.appendChild(root)
+
+  return {
+    element: root,
+    open() {
+      root.hidden = false
+      void reload()
+    },
+    close,
+    isOpen: () => !root.hidden,
+    dispose() {
+      releaseUrls()
+      root.remove()
+    },
+  }
+}

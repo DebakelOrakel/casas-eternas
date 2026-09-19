@@ -2,12 +2,10 @@
    Main.dc.html, and docs/design/watercolor-map.md for where the rest of that
    redesign is heading. Worn by the worldgen and worldmap screens.
 
-   The colours are the design's LIGHT column, declared as tokens on the bar
-   itself rather than inlined at each rule. The design carries a dark column
-   too; when a theme switch arrives it redefines these eleven variables and
-   nothing below this block changes. Declaring them here rather than on :root
-   keeps the bar's palette out of the screens underneath, which are still the
-   older paper look and must not inherit it by accident.
+   The colours come from ui/theme/design.css: the bar wears `design-light` and
+   reads `--dc-*` from it. They started here and moved out when the load screen
+   became the second piece of the canvas to need them — the alternative was the
+   same sixteen hex values written twice, drifting apart on the first change.
 
    The height is a variable on the SCREEN ROOT rather than a number here,
    because four other stylesheets have to clear the bar and none of them should
@@ -17,18 +15,6 @@
 }
 
 .title-bar {
-  --tb-panel: #fbf8f2;
-  --tb-line: #ddd5c5;
-  --tb-line2: #d3cab8;
-  --tb-text: #1f2328;
-  --tb-muted: #5f6770;
-  --tb-accent: #d8912e;
-  --tb-on-accent: #1a1206;
-  --tb-teal: #2f8a7e;
-  --tb-on-teal: #ffffff;
-  --tb-lang-on: #f7f3eb;
-  --tb-hover: #ece5d8;
-
   position: fixed;
   top: 0;
   left: 0;
@@ -43,9 +29,9 @@
   align-items: center;
   gap: 16px;
   padding: 0 16px 0 20px;
-  border-bottom: 1px solid var(--tb-line);
-  background: var(--tb-panel);
-  color: var(--tb-text);
+  border-bottom: 1px solid var(--dc-line);
+  background: var(--dc-panel);
+  color: var(--dc-text);
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
 }
 
@@ -55,7 +41,7 @@
 }
 
 .title-bar button:focus-visible {
-  outline: 2px solid var(--tb-accent);
+  outline: 2px solid var(--dc-accent);
   outline-offset: 2px;
 }
 
@@ -82,7 +68,7 @@
   width: 1px;
   height: 24px;
   flex: none;
-  background: var(--tb-line2);
+  background: var(--dc-line2);
 }
 
 /* --- which world, and where it stands ------------------------------------ */
@@ -119,13 +105,13 @@
 .title-bar__seed {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
   font-size: 12px;
-  color: var(--tb-muted);
+  color: var(--dc-muted);
   white-space: nowrap;
 }
 
 .title-bar__status {
   font-size: 12px;
-  color: var(--tb-muted);
+  color: var(--dc-muted);
   white-space: nowrap;
 }
 
@@ -134,7 +120,7 @@
    status line stays one line of text. */
 .title-bar__status[data-state='unsaved'],
 .title-bar__status[data-state='new'] {
-  color: var(--tb-accent);
+  color: var(--dc-accent);
 }
 
 .title-bar__spacer {
@@ -153,7 +139,7 @@
   height: 36px;
   display: flex;
   align-items: stretch;
-  border: 1px solid var(--tb-line2);
+  border: 1px solid var(--dc-line2);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -164,18 +150,18 @@
   font-size: 12.5px;
   font-weight: 600;
   background: transparent;
-  color: var(--tb-muted);
+  color: var(--dc-muted);
 }
 
 .title-bar__lang button:hover {
-  background: var(--tb-hover);
+  background: var(--dc-hover);
 }
 
 /* The chosen language is a fill, not just a weight — the pair is small enough
    that a bolder 12.5px reads as noise rather than as a choice. */
 .title-bar__lang button[aria-pressed='true'] {
-  background: var(--tb-text);
-  color: var(--tb-lang-on);
+  background: var(--dc-text);
+  color: var(--dc-lang-on);
 }
 
 /* --- account ------------------------------------------------------------- */
@@ -194,8 +180,8 @@
   gap: 8px;
   border: 0;
   border-radius: 6px;
-  background: var(--tb-accent);
-  color: var(--tb-on-accent);
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
   font-size: 13.5px;
   font-weight: 600;
 }
@@ -206,15 +192,15 @@
   align-items: center;
   gap: 8px;
   padding: 0 12px 0 4px;
-  border: 1px solid var(--tb-line2);
+  border: 1px solid var(--dc-line2);
   border-radius: 18px;
   background: transparent;
-  color: var(--tb-text);
+  color: var(--dc-text);
   font-size: 13px;
 }
 
 .title-bar__account:hover {
-  background: var(--tb-hover);
+  background: var(--dc-hover);
 }
 
 .title-bar__initials {
@@ -222,8 +208,8 @@
   height: 28px;
   flex: none;
   border-radius: 14px;
-  background: var(--tb-teal);
-  color: var(--tb-on-teal);
+  background: var(--dc-teal);
+  color: var(--dc-on-teal);
   font-size: 12px;
   font-weight: 600;
   display: flex;

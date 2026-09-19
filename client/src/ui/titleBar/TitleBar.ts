@@ -1,5 +1,6 @@
 import { getLocale, setLocale, t, type Locale, type TKey } from '../../i18n/i18n'
 import { hasSession, onSessionChange, signedInUser, signOut } from '../../server/session'
+import '../theme/design.css'
 import './titleBar.css'
 
 // The strip across the top of every map-bearing screen: what this thing is,
@@ -74,13 +75,13 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   host.classList.add('has-title-bar')
 
   const bar = document.createElement('header')
-  bar.className = 'title-bar'
+  bar.className = 'title-bar design-light'
 
   // The wordmark's globe is inline rather than an <img> so it takes the bar's
   // accent colour from the same token everything else here reads.
   bar.innerHTML = `
     <div class="title-bar__mark">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--tb-accent)" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--dc-accent)" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
         <circle cx="12" cy="12" r="9.5" />
         <path d="M3 10c4 1 6-2 9-1s4 4 9 2" />
         <path d="M5 17c3-1 5 1 8 0s4-3 7-2" />

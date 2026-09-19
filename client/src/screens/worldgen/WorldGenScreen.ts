@@ -49,6 +49,7 @@ import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
 import { createSavePanel } from '../../ui/worldPanels/SavePanel'
 import type { SaveTarget } from '../../ui/worldPanels/SavePanel'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
+import { createWorldChooser } from './WorldChooser'
 import { readRecipeValue as readYamlValue } from '../../world/save/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
@@ -2902,6 +2903,12 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // tomorrow starts from what the save itself says.
   let lastSave: { target: SaveTarget; at: Date } | undefined
 
+  // Whether the load screen is still covering the generator. A plain flag and
+  // not a read of the chooser itself, because updateSaveIndicator runs from
+  // here and the chooser is built several hundred lines further down — asking
+  // it would be the temporal dead zone that once blanked this whole screen.
+  let chooserOpen = true
+
   function saveState(): TitleBarSaveState {
     if (worldSignature() !== savedSignature) {
       return lastSave === undefined && savedSignature === '' ? { kind: 'new' } : { kind: 'unsaved' }
@@ -2917,7 +2924,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // the badge is never a symbol with no explanation.
     saveWorldButton.setAttribute('data-help', unsaved ? 'common.action.saveWorld.unsaved' : 'common.action.saveWorld')
     titleBar.setSaveState(saveState())
-    titleBar.setWorld({ seed: seedInput.value })
+    // Nothing while the chooser is up. The generator has already built a world
+    // behind it, so there IS a seed to show — showing it would say a world is
+    // open when the question on screen is still which one.
+    titleBar.setWorld(chooserOpen ? null : { seed: seedInput.value })
   }
 
   // One delegated listener instead of one per control: every slider, including the
@@ -3227,6 +3237,24 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     currentWorld: () => ({ uid: worldUid, seed: seedInput.value, revision: worldRevision }),
     onChoose: (target) => { void saveTo(target) },
   })
+  // The generator's first screen (see WorldChooser). Built here, beside the
+  // other two ways into a world, and opened at the foot of this function.
+  const worldChooser = createWorldChooser(root, {
+    onNewWorld: () => closeWorldChooser(),
+    // Same path a picked file takes — `loadWorldFromZip` closes the chooser
+    // once the archive has actually turned out to be a world.
+    onOpenArchive: (archive) => { void loadWorldFromZip(new File([archive], 'world.zip')) },
+    onPickFile: () => pickLocalWorldFile(),
+  })
+
+  function closeWorldChooser(): void {
+    if (!chooserOpen) return
+    chooserOpen = false
+    worldChooser.close()
+    // The bar has been showing no world; now there is one to name.
+    updateSaveIndicator()
+  }
+
   const loadPanel = createLoadPanel(root, {
     // The panel chooses; the screen restores. Wrapping the archive as a File
     // keeps loadWorldFromZip's signature — it only ever needed the bytes.
@@ -3616,6 +3644,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       ctx.notifications.show({ message: t('common.notify.invalidWorldFile'), icon: '/icons/folder.png', durationMs: 6000 })
       return
     }
+
+    // Past the point where the archive can turn out not to be a world.
+    closeWorldChooser()
 
     stopSim()
     // Drop any pending debounced regenerate — it would fire an `init` after the
@@ -4242,6 +4273,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // screen build, and the generator comes up blank.
   updateSaveIndicator()
 
+  // Last, so the list is drawn over a generator that is already standing: the
+  // world behind it is what "Neue Welt erstellen" hands over, with nothing to
+  // wait for.
+  worldChooser.open()
+
   root.querySelector('[data-action="back"]')!.addEventListener('click', () => {
     if (panelIndex > 0) {
       showPanel(panelIndex - 1)
@@ -4294,6 +4330,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scene,
     dispose() {
       stopSim()
+      worldChooser.dispose()
       titleBar.dispose()
       helpTooltip.dispose()
       storagePanel.dispose()

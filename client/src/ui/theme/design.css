@@ -1,0 +1,38 @@
+/* The palette of the "Weltgenerator" design canvas (artboard Main.dc.html),
+   LIGHT column, as tokens.
+
+   One class rather than :root, because the screens underneath are still the
+   older paper look and must not inherit this by accident — a piece of the
+   redesign opts in by wearing `design-light`. The canvas carries a dark column
+   too; a theme switch would redefine these same names and nothing that reads
+   them changes, which is the whole reason they are named after their ROLE
+   (`--dc-panel`) and not after their colour.
+
+   Only the tokens the built pieces actually use are here. The canvas has some
+   sixty; copying all of them would be sixty values with nothing to check them
+   against. */
+.design-light {
+  /* surfaces */
+  --dc-bg: #f3efe6;
+  --dc-panel: #fbf8f2;
+  --dc-hover: #ece5d8;
+  --dc-lang-on: #f7f3eb;
+
+  /* lines */
+  --dc-line: #ddd5c5;
+  --dc-line2: #d3cab8;
+  --dc-dash-line: #b3a994;
+
+  /* type, strongest to faintest */
+  --dc-strong: #15191d;
+  --dc-text: #1f2328;
+  --dc-text2: #3d434a;
+  --dc-muted: #5f6770;
+  --dc-faint: #6b727a;
+
+  /* accents. `on-` is what stays readable ON that colour. */
+  --dc-accent: #d8912e;
+  --dc-on-accent: #1a1206;
+  --dc-teal: #2f8a7e;
+  --dc-on-teal: #ffffff;
+}
