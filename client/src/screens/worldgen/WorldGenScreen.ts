@@ -42,6 +42,7 @@ import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
+import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleBar'
 import { getServerStatus, refreshServerStatus } from '../../server/serverStatus'
 import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
 import { createSavePanel } from '../../ui/worldPanels/SavePanel'
@@ -608,6 +609,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Where a world would go, shown on every screen (see ui/serverIndicator).
   const serverIndicator = createServerIndicator(root)
   root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
+
+  // The title bar (ui/titleBar) — the first piece of the generator redesign to
+  // land, so it currently sits ABOVE the older chrome rather than replacing it:
+  // the folder/floppy/cache buttons keep working and move down past it. The
+  // save menu, the job list and the theme switch the design draws there arrive
+  // with the steps that own them.
+  //
+  // No onLocaleChange: switching language here must not rebuild the screen,
+  // which would throw away an unsaved world. The bar relabels itself and the
+  // rest follows when the screen is next entered — the same bargain the title
+  // screen's switch already makes.
+  const titleBar = createTitleBar(root, {
+    onSignIn: () => serverIndicator.openSignIn(),
+  })
 
   const storagePanel = createStoragePanel(root)
   root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => storagePanel.open())
@@ -2878,12 +2893,30 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateSaveIndicator()
   }
 
+  // Where the last save in THIS session went, and when. The signature above
+  // answers "has it changed since"; it cannot answer "and where does it sit",
+  // because a signature that matches is equally true of a world downloaded as a
+  // .zip and one uploaded to the server. Held only for the session: the title
+  // bar states what this run of the generator did, and a world reopened
+  // tomorrow starts from what the save itself says.
+  let lastSave: { target: SaveTarget; at: Date } | undefined
+
+  function saveState(): TitleBarSaveState {
+    if (worldSignature() !== savedSignature) {
+      return lastSave === undefined && savedSignature === '' ? { kind: 'new' } : { kind: 'unsaved' }
+    }
+    if (!lastSave) return { kind: 'new' }
+    return { kind: lastSave.target === 'server' ? 'server' : 'local', at: lastSave.at }
+  }
+
   function updateSaveIndicator(): void {
     const unsaved = worldSignature() !== savedSignature
     saveWorldButton.classList.toggle('has-unsaved', unsaved)
     // Same trick the server indicator uses: the hover card follows the state, so
     // the badge is never a symbol with no explanation.
     saveWorldButton.setAttribute('data-help', unsaved ? 'common.action.saveWorld.unsaved' : 'common.action.saveWorld')
+    titleBar.setSaveState(saveState())
+    titleBar.setWorld({ seed: seedInput.value })
   }
 
   // One delegated listener instead of one per control: every slider, including the
@@ -3182,6 +3215,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   async function saveTo(target: SaveTarget): Promise<void> {
     pendingSaveTarget = target
     await saveWorld()
+    // After saveWorld, so a failed save does not claim a resting place. The
+    // download path is "local" as far as the bar is concerned: both mean the
+    // world is off the server, and the bar's job is where it can be found again.
+    lastSave = { target, at: new Date() }
+    updateSaveIndicator()
     // Saving to the server is exactly what unblocks 8K, so the buttons are
     // re-evaluated here rather than leaving a greyed-out control that has just
     // become possible.
@@ -4171,6 +4209,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   showPanel(0)
 
+  // Once at startup, so the title bar opens showing the seed and "not saved
+  // yet" rather than an empty strip waiting for the first slider to move.
+  //
+  // It has to run HERE, not beside createTitleBar and not beside the `input`
+  // listener: worldSignature() reads readSpec(), which reads `foldoutInputs` —
+  // a `const` declared further down this function. Called any earlier it hits
+  // that binding's temporal dead zone, the ReferenceError aborts the whole
+  // screen build, and the generator comes up blank.
+  updateSaveIndicator()
+
   root.querySelector('[data-action="back"]')!.addEventListener('click', () => {
     if (panelIndex > 0) {
       showPanel(panelIndex - 1)
@@ -4223,6 +4271,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scene,
     dispose() {
       stopSim()
+      titleBar.dispose()
       helpTooltip.dispose()
       storagePanel.dispose()
       serverIndicator.dispose()

@@ -1,0 +1,26 @@
+{
+  "titlebar.appName": "Generator",
+  "titlebar.seed": "Seed",
+
+  "titlebar.world.label": "Welt",
+  "titlebar.world.help": "Die Welt, die dieser Bildschirm erzeugt, mit dem Seed, aus dem sie wuchs. Der Seed allein stellt sie wieder her.",
+
+  "titlebar.status.new.label": "Noch nicht gespeichert",
+  "titlebar.status.new.help": "Diese Welt besteht nur in diesem Tab und ist mit ihm fort.",
+  "titlebar.status.unsaved.label": "Ungespeicherte Änderungen",
+  "titlebar.status.unsaved.help": "Diese Welt hat sich seit dem letzten Speichern, Laden oder Neuerzeugen verändert.",
+  "titlebar.status.local.label": "Im Browser gespeichert · {when}",
+  "titlebar.status.local.help": "Nur in diesem Browser. Beim Löschen der Browserdaten ist sie fort.",
+  "titlebar.status.server.label": "Auf dem Server gespeichert · {when}",
+  "titlebar.status.server.help": "Liegt auf dem Server und lässt sich aus einem anderen Browser öffnen.",
+
+  "titlebar.language.de.label": "Deutsch",
+  "titlebar.language.de.help": "Die Oberfläche auf Deutsch zeigen.",
+  "titlebar.language.en.label": "English",
+  "titlebar.language.en.help": "Die Oberfläche auf Englisch zeigen.",
+
+  "titlebar.signIn.label": "Anmelden",
+  "titlebar.signIn.help": "Am Server anmelden, um Welten über diesen Browser hinaus zu behalten.",
+  "titlebar.account.label": "Konto: {user}",
+  "titlebar.account.help": "Als {user} angemeldet. Zum Abmelden klicken."
+}

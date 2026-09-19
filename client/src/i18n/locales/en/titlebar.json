@@ -1,0 +1,26 @@
+{
+  "titlebar.appName": "Generator",
+  "titlebar.seed": "Seed",
+
+  "titlebar.world.label": "World",
+  "titlebar.world.help": "The world this screen is generating, with the seed it grew from. The seed alone reproduces it.",
+
+  "titlebar.status.new.label": "Not saved yet",
+  "titlebar.status.new.help": "This world exists only in this tab and is gone when it closes.",
+  "titlebar.status.unsaved.label": "Unsaved changes",
+  "titlebar.status.unsaved.help": "This world has changed since it was last saved, loaded or regenerated.",
+  "titlebar.status.local.label": "Saved in browser · {when}",
+  "titlebar.status.local.help": "Kept in this browser only. Clearing site data removes it.",
+  "titlebar.status.server.label": "Saved to server · {when}",
+  "titlebar.status.server.help": "Kept on the server and can be opened from another browser.",
+
+  "titlebar.language.de.label": "Deutsch",
+  "titlebar.language.de.help": "Show the interface in German.",
+  "titlebar.language.en.label": "English",
+  "titlebar.language.en.help": "Show the interface in English.",
+
+  "titlebar.signIn.label": "Sign in",
+  "titlebar.signIn.help": "Sign in to the server to keep worlds beyond this browser.",
+  "titlebar.account.label": "Account: {user}",
+  "titlebar.account.help": "Signed in as {user}. Click to sign out."
+}

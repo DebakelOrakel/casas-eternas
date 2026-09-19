@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-09-19
+- **new** Layout: one title bar across the top of every screen — which world is open, where it was last saved, the language, and who is signed in. The title screen's flag buttons give way to it. `titlebar`
+
 ## 2026-08-17
 - **changed** Map: rivers end at the open lakes they feed, whose shores are drawn in the same pen the rivers are — one ink line from river to shore ring to outflow; across frozen lakes the rivers keep flowing. `worldmap`
 - **changed** Map: rivers appear by size — the far view shows only the major rivers, and tributaries grow out of their trunks on the way down. `worldmap`

@@ -166,7 +166,8 @@
    greyed + not clickable. */
 .worldgen-flat-screen .overlay-bar {
   position: fixed;
-  top: 1rem;
+  /* Clears the title bar — see ui/titleBar. */
+  top: calc(1rem + var(--title-bar-height, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 2;
@@ -270,7 +271,10 @@
 
 .worldgen-flat-screen .overlay-bar-backdrop {
   position: fixed;
-  top: 0;
+  /* Starts BELOW the title bar, not behind it: the bar is opaque, so a fade
+     running underneath it would only be a fade that starts invisible and
+     reaches less far down the map than it reads as. */
+  top: var(--title-bar-height, 0px);
   left: 0;
   right: 0;
   height: 5rem;
@@ -331,7 +335,8 @@
    pointer-events off so it never blocks the map. */
 .worldgen-flat-screen .overlay-legend {
   position: fixed;
-  top: 5.25rem;
+  /* Clears the title bar — see ui/titleBar. */
+  top: calc(5.25rem + var(--title-bar-height, 0px));
   left: 1rem;
   z-index: 2;
   width: 168px;

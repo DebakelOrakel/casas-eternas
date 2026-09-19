@@ -1,0 +1,245 @@
+/* The screen's title bar — see the "Weltgenerator" design canvas, artboard
+   Main.dc.html, and docs/design/watercolor-map.md for where the rest of that
+   redesign is heading. Worn by the worldgen and worldmap screens.
+
+   The colours are the design's LIGHT column, declared as tokens on the bar
+   itself rather than inlined at each rule. The design carries a dark column
+   too; when a theme switch arrives it redefines these eleven variables and
+   nothing below this block changes. Declaring them here rather than on :root
+   keeps the bar's palette out of the screens underneath, which are still the
+   older paper look and must not inherit it by accident.
+
+   The height is a variable on the SCREEN ROOT rather than a number here,
+   because four other stylesheets have to clear the bar and none of them should
+   own a copy of 56. See the note at the foot of this file. */
+.has-title-bar {
+  --title-bar-height: 56px;
+}
+
+.title-bar {
+  --tb-panel: #fbf8f2;
+  --tb-line: #ddd5c5;
+  --tb-line2: #d3cab8;
+  --tb-text: #1f2328;
+  --tb-muted: #5f6770;
+  --tb-accent: #d8912e;
+  --tb-on-accent: #1a1206;
+  --tb-teal: #2f8a7e;
+  --tb-on-teal: #ffffff;
+  --tb-lang-on: #f7f3eb;
+  --tb-hover: #ece5d8;
+
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Above the map chrome's file buttons (z-index 3) and the overlay legend,
+     because the bar spans the full width and would otherwise be overdrawn at
+     its left end while both exist side by side. */
+  z-index: 4;
+  box-sizing: border-box;
+  height: var(--title-bar-height);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px 0 20px;
+  border-bottom: 1px solid var(--tb-line);
+  background: var(--tb-panel);
+  color: var(--tb-text);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+.title-bar button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.title-bar button:focus-visible {
+  outline: 2px solid var(--tb-accent);
+  outline-offset: 2px;
+}
+
+/* --- wordmark ------------------------------------------------------------ */
+
+.title-bar__mark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.title-bar__mark svg {
+  display: block;
+}
+
+.title-bar__name {
+  font-family: 'Bricolage Grotesque', Georgia, serif;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.title-bar__divider {
+  width: 1px;
+  height: 24px;
+  flex: none;
+  background: var(--tb-line2);
+}
+
+/* --- which world, and where it stands ------------------------------------ */
+
+/* `display: flex` below outranks the UA stylesheet's `[hidden] {display:none}`,
+   so hiding the group needs a rule of its own — the same reason chrome.css
+   carries one for the bottom panel. */
+.title-bar [hidden] {
+  display: none;
+}
+
+.title-bar__world {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.title-bar__world-name {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Hidden rather than emptied when a world has no name of its own: an empty
+   flex item still eats one `gap`, which reads as a stray space before the
+   seed. */
+.title-bar__world-name:empty {
+  display: none;
+}
+
+.title-bar__seed {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--tb-muted);
+  white-space: nowrap;
+}
+
+.title-bar__status {
+  font-size: 12px;
+  color: var(--tb-muted);
+  white-space: nowrap;
+}
+
+/* Unsaved and never-saved are the two states worth catching the eye: they are
+   the ones where closing the tab costs work. Colour, not an icon, so the
+   status line stays one line of text. */
+.title-bar__status[data-state='unsaved'],
+.title-bar__status[data-state='new'] {
+  color: var(--tb-accent);
+}
+
+.title-bar__spacer {
+  flex-grow: 1;
+}
+
+.title-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- language ------------------------------------------------------------ */
+
+.title-bar__lang {
+  height: 36px;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--tb-line2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.title-bar__lang button {
+  width: 40px;
+  border: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--tb-muted);
+}
+
+.title-bar__lang button:hover {
+  background: var(--tb-hover);
+}
+
+/* The chosen language is a fill, not just a weight — the pair is small enough
+   that a bolder 12.5px reads as noise rather than as a choice. */
+.title-bar__lang button[aria-pressed='true'] {
+  background: var(--tb-text);
+  color: var(--tb-lang-on);
+}
+
+/* --- account ------------------------------------------------------------- */
+
+/* A fixed width, not padding around the label: "Sign in" and "Anmelden" are
+   different lengths, and with the button sized to its text the whole right-hand
+   group would jump sideways every time the language is switched — right next to
+   the buttons doing the switching. The width fits the longer of the two at
+   13.5px/600 plus the icon and its gap, with room for a third language later. */
+.title-bar__sign-in {
+  width: 124px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--tb-accent);
+  color: var(--tb-on-accent);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.title-bar__account {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 4px;
+  border: 1px solid var(--tb-line2);
+  border-radius: 18px;
+  background: transparent;
+  color: var(--tb-text);
+  font-size: 13px;
+}
+
+.title-bar__account:hover {
+  background: var(--tb-hover);
+}
+
+.title-bar__initials {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 14px;
+  background: var(--tb-teal);
+  color: var(--tb-on-teal);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The bar is fixed and full-width, so everything else anchored to the top edge
+   has to move down past it — the file buttons, the overlay bar and its
+   backdrop, the overlay legend, the overlay toggles. Each of those lives in
+   its own stylesheet and offsets ITSELF against this variable, rather than
+   this file reaching across module lines to restyle five selectors it does not
+   own. The fallback 0px is what makes that work: a screen without the bar
+   never sets the variable and keeps its original geometry, so the rules read
+   the same in both cases and there is no second layout to remember.
+
+   `has-title-bar` on the screen root is what turns the variable on, so the
+   number itself stays in CSS and the widget only decides whether a bar is
+   there. */

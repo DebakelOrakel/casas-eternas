@@ -4,7 +4,8 @@
    map-bearing screen that mounts a MapOverlayCompositor. */
 .overlay-toggles {
   position: fixed;
-  top: 1rem;
+  /* Clears the title bar where one is mounted — see ui/titleBar. */
+  top: calc(1rem + var(--title-bar-height, 0px));
   right: 1rem;
   z-index: 1;
   display: flex;

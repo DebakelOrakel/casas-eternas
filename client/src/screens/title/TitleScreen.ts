@@ -1,8 +1,9 @@
 import { ArcRotateCamera, Color4, Scene, Vector3 } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
-import { getLocale, setLocale, t, type Locale } from '../../i18n/i18n'
+import { t } from '../../i18n/i18n'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
+import { createTitleBar } from '../../ui/titleBar/TitleBar'
 import './title.css'
 
 // The changelog no longer renders here — the artwork owns the screen, and the
@@ -19,14 +20,6 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
   root.className = 'title-screen'
   root.innerHTML = `
     <span data-slot="server-indicator"></span>
-    <div class="lang-actions">
-      <button type="button" class="lang-button" data-lang="en" aria-label="English">
-        <img src="/icons/lang_en.png" alt="" />
-      </button>
-      <button type="button" class="lang-button" data-lang="de" aria-label="Deutsch">
-        <img src="/icons/lang_de.png" alt="" />
-      </button>
-    </div>
     <!-- <div class="title-block">
       <h1>Casas Eternas</h1>
       <p class="subtitle">Herederos del Mundo</p>
@@ -56,23 +49,22 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
     ctx.goTo('mars')
   })
 
-  // Language switch (title screen only): mark the active locale, and on a change
-  // set it and rebuild the screen so every screen entered afterwards is localized.
-  const activeLocale = getLocale()
-  root.querySelectorAll<HTMLButtonElement>('.lang-button').forEach((btn) => {
-    const lang = btn.dataset.lang as Locale
-    if (lang === activeLocale) btn.classList.add('is-active')
-    btn.addEventListener('click', () => {
-      if (getLocale() === lang) return
-      setLocale(lang)
-      ctx.goTo('title')
-    })
-  })
-
   // Where a world would go, on every screen — including this one, so the state
   // is visible before any work is started, not only when saving.
   const serverIndicator = createServerIndicator(root)
   root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
+
+  // The same strip the generator and the map wear (ui/titleBar). It carries the
+  // language switch, which is why the flag buttons that used to sit top-right
+  // are gone: two controls for one choice, on one screen, is one too many.
+  //
+  // Rebuilding on a language change is what this screen already did, and it can
+  // still afford to — there is nothing here to lose.
+  const titleBar = createTitleBar(root, {
+    onSignIn: () => serverIndicator.openSignIn(),
+    onLocaleChange: () => ctx.goTo('title'),
+  })
+  titleBar.setWorld(null)
 
   ctx.overlay.appendChild(root)
 
@@ -84,6 +76,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
   return {
     scene,
     dispose() {
+      titleBar.dispose()
       helpTooltip.dispose()
       serverIndicator.dispose()
       scene.dispose()

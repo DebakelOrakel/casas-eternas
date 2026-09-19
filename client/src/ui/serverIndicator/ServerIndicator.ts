@@ -77,6 +77,10 @@ export interface ServerIndicator {
   // Re-probes and repaints — for after a request failed against a server that
   // was believed to be up.
   refresh(): Promise<void>
+  // Opens the sign-in window this indicator owns. For the title bar's sign-in
+  // button, which asks the same question from the other end of the same strip:
+  // a second SignInPanel on one screen would be two windows answering it.
+  openSignIn(): void
   // Releases the session subscription and the sign-in window.
   dispose(): void
 }
@@ -178,6 +182,9 @@ export function createServerIndicator(host: HTMLElement): ServerIndicator {
         transfers -= 1
         paint()
       }
+    },
+    openSignIn(): void {
+      panel.open()
     },
     async refresh(): Promise<void> {
       const status = await refreshServerStatus()

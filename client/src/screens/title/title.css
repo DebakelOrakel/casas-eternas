@@ -13,42 +13,13 @@
   overflow: hidden;
   font-family: 'Cinzel', serif;
   color: #1a1a1a;
-}
-
-/* Language switch — top-right, mirroring the worldgen load/save buttons on the
-   opposite edge. 32px like those, but text (EN/DE) rather than an icon. */
-.title-screen .lang-actions {
-  position: fixed;
-  top: 1rem;
-  right: 1rem;
-  z-index: 3;
-  display: flex;
-  gap: 0.5rem;
-}
-
-.title-screen .lang-button {
-  width: 32px;
-  flex: none;
-  border: none;
-  background: none;
-  padding: 0;
-  cursor: pointer;
-  opacity: 0.35;
-  transition: opacity 0.15s ease;
-}
-
-.title-screen .lang-button:hover {
-  opacity: 0.7;
-}
-
-.title-screen .lang-button.is-active {
-  opacity: 1;
-}
-
-.title-screen .lang-button img {
-  width: 100%;
-  height: auto;
-  display: block;
+  /* The server indicator is this screen's only content in normal flow — there
+     is no .file-actions strip here to carry it — so the padding is what keeps
+     it out from behind the title bar. Everything else is absolutely
+     positioned and unaffected. Unset without a bar, hence the 0px fallback
+     (ui/titleBar). */
+  padding-top: var(--title-bar-height, 0px);
+  box-sizing: border-box;
 }
 
 .title-screen .title-block {

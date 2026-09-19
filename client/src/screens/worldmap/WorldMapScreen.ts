@@ -38,6 +38,7 @@ import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { artifactKey } from '../../storage/ArtifactStore'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
+import { createTitleBar } from '../../ui/titleBar/TitleBar'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { getServerStatus } from '../../server/serverStatus'
 import { worldInputsFrom } from '../../world/save/loadWorldInputs'
@@ -360,6 +361,19 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const serverIndicator = createServerIndicator(root)
   root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
 
+  // The same strip the generator wears (ui/titleBar). It carries no save state
+  // here on purpose: this screen opens finished worlds and never edits one, so
+  // every state the bar could show would be a claim about a save it did not
+  // make. It shows which world is open once one is.
+  //
+  // onLocaleChange rebuilds the screen, which this one can afford — unlike the
+  // generator it holds no unsaved work, only a world it can open again.
+  const titleBar = createTitleBar(root, {
+    onSignIn: () => serverIndicator.openSignIn(),
+    onLocaleChange: () => ctx.goTo('worldmap'),
+  })
+  titleBar.setWorld(null)
+
   const storagePanel = createStoragePanel(root)
   root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => storagePanel.open())
 
@@ -668,6 +682,9 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     world = opened
     worldId = inputs.worldId
     worldUid = inputs.worldUid
+    // A save carries no name of its own beyond its seed (the generator writes
+    // `metadata.name = seed`), so the bar shows the seed alone.
+    titleBar.setWorld({ seed: inputs.seedText })
     presentWorld(
       inputs.elevations, inputs.width, inputs.height,
       inputs.biome, inputs.detailSeed,
@@ -1128,6 +1145,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       scene.onPointerObservable.remove(hexHoverObserver)
       scene.onBeforeRenderObservable.remove(hexFrameObserver)
       ctx.canvas.removeEventListener('pointerleave', onHexPointerLeave)
+      titleBar.dispose()
       debugPanel.dispose()
       watercolor.dispose()
       riverLayer?.dispose()

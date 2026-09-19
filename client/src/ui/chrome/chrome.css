@@ -33,7 +33,9 @@
    sits just below them (top 4rem). */
 .map-chrome .file-actions {
   position: fixed;
-  top: 1rem;
+  /* Clears the title bar when one is mounted; without it the variable is
+     unset and this stays the plain 1rem it always was (ui/titleBar). */
+  top: calc(1rem + var(--title-bar-height, 0px));
   left: 1rem;
   z-index: 3;
   display: flex;
