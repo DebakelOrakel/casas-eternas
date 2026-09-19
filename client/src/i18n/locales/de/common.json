@@ -1,8 +1,4 @@
 {
-  "common.action.back.label": "Zurück",
-  "common.action.back.help": "Zum vorherigen Generierungsschritt zurückkehren.",
-  "common.action.next.label": "Weiter",
-  "common.action.next.help": "Zum nächsten Generierungsschritt vorrücken.",
   "common.action.loadWorld.label": "Welt laden",
   "common.action.loadWorld.help": "Eine zuvor gespeicherte Welt aus einer .zip-Datei öffnen.",
   "common.action.saveWorld.label": "Welt speichern",

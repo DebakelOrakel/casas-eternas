@@ -9,7 +9,9 @@
 
 .map-chrome .panel {
   position: fixed;
-  bottom: 0;
+  /* Clears the generator's step bar. The `0px` fallback is what leaves the
+     world map — same chrome, no step bar — exactly where it was. */
+  bottom: var(--step-bar-height, 0px);
   left: 0;
   right: 0;
   display: flex;
@@ -83,48 +85,6 @@
   display: block;
 }
 
-.map-chrome .nav-arrow {
-  position: fixed;
-  bottom: 1.25rem;
-  z-index: 1;
-  border: none;
-  background: none;
-  padding: 0 0.5rem;
-  font-size: 3.5rem;
-  line-height: 1;
-  color: #1a1a1a;
-  opacity: 0.6;
-  cursor: pointer;
-  transition: opacity 0.15s ease;
-}
-
-.map-chrome .nav-arrow:hover {
-  opacity: 1;
-}
-
-/* Next-step gated: the upstream panel isn't settled enough yet (see
-   entryRequirementUnmet). Kept clickable so a click can explain why. */
-.map-chrome .nav-arrow.is-disabled {
-  opacity: 0.2;
-  cursor: not-allowed;
-}
-.map-chrome .nav-arrow.is-disabled:hover {
-  opacity: 0.3;
-}
-
-/* Nav arrows disabled while a compute runs. */
-.map-chrome .nav-arrow:disabled {
-  opacity: 0.25;
-  cursor: default;
-}
-
-.map-chrome .nav-arrow--back {
-  left: 1rem;
-}
-
-.map-chrome .nav-arrow--next {
-  right: 1rem;
-}
 
 .map-chrome .panel-title {
   position: fixed;

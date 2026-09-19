@@ -229,3 +229,22 @@
    `has-title-bar` on the screen root is what turns the variable on, so the
    number itself stays in CSS and the widget only decides whether a bar is
    there. */
+
+/* The world block as a way out: only when a screen gave it somewhere to go.
+   It reads as text until the pointer is on it, because it names the world
+   first and is a control second. */
+.title-bar__world--action {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin: -4px -8px;
+}
+
+.title-bar__world--action:hover {
+  background: var(--dc-hover);
+}
+
+.title-bar__world--action:focus-visible {
+  outline: 2px solid var(--dc-accent);
+  outline-offset: 0;
+}

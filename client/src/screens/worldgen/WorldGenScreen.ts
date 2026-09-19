@@ -50,6 +50,7 @@ import { createSavePanel } from '../../ui/worldPanels/SavePanel'
 import type { SaveTarget } from '../../ui/worldPanels/SavePanel'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { createWorldChooser } from './WorldChooser'
+import { createStepBar } from './StepBar'
 import { readRecipeValue as readYamlValue } from '../../world/save/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
@@ -428,9 +429,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         <img src="/icons/server_clean.png" alt="" />
       </button>
     </div>
-    <button type="button" class="nav-arrow nav-arrow--back" data-action="back" aria-label="${t('common.action.back.label')}">‹</button>
-    <button type="button" class="nav-arrow nav-arrow--next" data-action="next" aria-label="${t('common.action.next.label')}">›</button>
-    <span class="panel-title" data-value="panel-title"></span>
     <div class="compute-progress" data-value="compute-progress" hidden>
       <span class="compute-progress-fill" data-value="compute-progress-fill"></span>
     </div>
@@ -624,6 +622,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // screen's switch already makes.
   const titleBar = createTitleBar(root, {
     onSignIn: () => serverIndicator.openSignIn(),
+    onWorldClick: () => openWorldChooser(),
   })
 
   const storagePanel = createStoragePanel(root)
@@ -655,8 +654,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const statContinents = root.querySelector<HTMLElement>('[data-value="stat-continents"]')!
   const erodeIcon = erodeButton.querySelector<HTMLImageElement>('img')!
   const toggleSimIcon = toggleSimButton.querySelector<HTMLImageElement>('img')!
-  const backButton = root.querySelector<HTMLButtonElement>('[data-action="back"]')!
-  const nextButton = root.querySelector<HTMLButtonElement>('[data-action="next"]')!
   const computeProgress = root.querySelector<HTMLElement>('[data-value="compute-progress"]')!
   const computeProgressFill = root.querySelector<HTMLElement>('[data-value="compute-progress-fill"]')!
 
@@ -731,9 +728,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // the erosion/climate/river sliders are left live for tuning (they only affect the
     // next pass, not the one in flight).
     for (const el of [seedInput, mantleVigourInput, waterInput]) el.disabled = busy
-    backButton.disabled = busy
-    nextButton.disabled = busy
-    updateNavState() // nav arrows also lock while busy (see its own gating)
+
+    updateNavState() // the step bar locks with it (see its own gating)
   }
 
   // The centered progress indicator over the panel: a real 0..100 bar for erosion, an
@@ -818,7 +814,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Coarse climate rasters (from the worker's computeClimate step). Sampled up
   // to full map resolution in the overlay paint fns. null until computed / when
   // invalidated by an upstream reset.
-  // Panel order IS the pipeline chain — see PANEL_TITLES further down for the rest
+  // Panel order IS the pipeline chain — see the step bar further down for the rest
   // of that argument. Hoisted here because the panel constants below derive from it.
   //
   // One stage has NO panel: hydrology. Its only control died with the density
@@ -3247,9 +3243,22 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     onPickFile: () => pickLocalWorldFile(),
   })
 
+  // Back to the world list. The step bar is for steps WITHIN a world; leaving
+  // one is a different kind of move, and it hangs off the world's name in the
+  // title bar — the place that says which world you are in.
+  function openWorldChooser(): void {
+    if (chooserOpen) return
+    chooserOpen = true
+    stepBar.setVisible(false)
+    updateSaveIndicator()
+    stepBar.setVisible(false)
+  worldChooser.open()
+  }
+
   function closeWorldChooser(): void {
     if (!chooserOpen) return
     chooserOpen = false
+    stepBar.setVisible(true)
     worldChooser.close()
     // The bar has been showing no world; now there is one to name.
     updateSaveIndicator()
@@ -4102,16 +4111,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // the pipeline chain (STAGES), each panel says which stage it is in the markup
   // (`data-stage`), and the titles are a Record over StageId, so a stage added to
   // the chain is a compile error here rather than a panel that silently shifts.
-  const PANEL_TITLES: Record<PanelStageId, TKey> = {
-    genesis: 'worldgen.panel.genesis.title',
-    tectonics: 'worldgen.panel.tectonics.title',
-    erosion: 'worldgen.panel.erosion.title',
-    climate: 'worldgen.panel.climate.title',
-    ecology: 'worldgen.panel.ecology.title',
-    migration: 'worldgen.panel.migration.title',
-  }
-  const panelTitle = root.querySelector<HTMLElement>('[data-value="panel-title"]')!
-  const nextArrow = root.querySelector<HTMLButtonElement>('[data-action="next"]')!
   // Looked up BY STAGE rather than taken in document order, so the markup and the
   // chain have to agree about which panel is which instead of merely happening to.
   const panels = PANEL_STAGES.map((id) => {
@@ -4141,13 +4140,56 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (index > erosionPanel && erosionRunCount < 1) return t('worldgen.notify.needsErosion')
     return null
   }
-  // Grey out (but keep clickable, so a click can explain why) the next arrow when
-  // the next panel's requirement isn't met yet.
+  // Migration is carried as `aside`: it is reachable but not part of the chain
+  // the other steps form, and it leaves the generator for a screen of its own
+  // later. Dropping it from the bar now would make it unreachable — the arrows
+  // that used to reach it are gone — which is a feature removed by accident
+  // rather than decided.
+  const stepBar = createStepBar(root, {
+    steps: PANEL_STAGES.map((id) => ({ id, aside: id === 'migration' })),
+    onSelect: (index) => {
+      if (index === panelIndex) return
+      const reason = entryRequirementUnmet(index)
+      if (reason) {
+        // Answered rather than refused: the bar stays clickable precisely so a
+        // blocked step can say what it is waiting for.
+        ctx.notifications.show({ message: reason, icon: '/icons/erosion.png', durationMs: 4000 })
+        return
+      }
+      if (isBusy()) return
+      // LEAVING GENESIS FORWARD IS WHAT ENDS THE ARCHEAN — it used to hang off
+      // the next arrow, and hangs off the same gesture here: any move to a
+      // later step, not merely the adjacent one.
+      if (PANEL_STAGES[panelIndex] === 'genesis' && index > panelIndexOf('genesis')) commitGenesis()
+      showPanel(index)
+    },
+  })
+
+  // Whether a step has actually been run. Two-valued on purpose — see the note
+  // in StepBar about the third state the design draws. Each stage answers with
+  // the thing that only exists once it has computed, rather than with a counter
+  // kept beside it, so the bar cannot claim a step the screen does not hold.
+  const stageComputed: Record<PanelStageId, () => boolean> = {
+    genesis: () => lastArcheanEpochs > 0 || hasHandover,
+    tectonics: () => lastEpoch > 0,
+    climate: () => lastTemperature !== null,
+    erosion: () => erosionRunCount >= 1,
+    ecology: () => hasEcologyData(),
+    migration: () => lastMigration !== null,
+  }
+
+  // The bar shows the whole chain at once, so it is repainted as a whole:
+  // every step's status and every step's gate, from one reading of the state.
+  // A per-step update would be four calls that can disagree.
   const updateNavState = (): void => {
-    const target = panelIndex + 1
-    const blocked = target < panels.length && entryRequirementUnmet(target) !== null
-    nextArrow.classList.toggle('is-disabled', blocked)
-    nextArrow.setAttribute('aria-disabled', String(blocked))
+    const busy = isBusy()
+    stepBar.setState({
+      current: panelIndex,
+      computed: PANEL_STAGES.map((id) => stageComputed[id]()),
+      // The busy lock is the same one the controls get: stepping away
+      // mid-simulation would leave a half-run stage behind.
+      blocked: PANEL_STAGES.map((_, index) => index !== panelIndex && (busy || entryRequirementUnmet(index) !== null)),
+    })
   }
   // The data panels are where their own step gets computed, so entering one asks
   // for whatever is missing. Deliberately NOT derived from the chain's dependsOn,
@@ -4187,7 +4229,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     panels.forEach((panel, i) => {
       panel.hidden = i !== index
     })
-    panelTitle.textContent = t(PANEL_TITLES[PANEL_STAGES[index]])
     ensureDataFor(index)
     // The terrain colour wash is panel-contextual: on for the shaping panels
     // (Genesis/Tectonics/Erosion), off for the neutral data panels (Climate/
@@ -4278,13 +4319,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // wait for.
   worldChooser.open()
 
-  root.querySelector('[data-action="back"]')!.addEventListener('click', () => {
-    if (panelIndex > 0) {
-      showPanel(panelIndex - 1)
-      return
-    }
-    ctx.goTo('title')
-  })
   // LEAVING GENESIS FORWARD IS WHAT ENDS THE ARCHEAN: plate tectonics begins, seeds
   // are placed on the convection cells, and the rafts/ages/mantle carry over
   // (finalizeArchean). Stopping the Archean is only ever a pause; this is the
@@ -4312,17 +4346,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateOverlays()
   }
 
-  nextArrow.addEventListener('click', () => {
-    if (panelIndex >= panels.length - 1) return
-    const target = panelIndex + 1
-    const reason = entryRequirementUnmet(target)
-    if (reason) {
-      ctx.notifications.show({ message: reason, icon: '/icons/erosion.png', durationMs: 4000 })
-      return
-    }
-    if (PANEL_STAGES[panelIndex] === 'genesis') commitGenesis()
-    showPanel(target)
-  })
 
   ctx.overlay.appendChild(root)
 
@@ -4330,6 +4353,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     scene,
     dispose() {
       stopSim()
+      stepBar.dispose()
       worldChooser.dispose()
       titleBar.dispose()
       helpTooltip.dispose()

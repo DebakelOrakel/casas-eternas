@@ -39,6 +39,11 @@ export interface TitleBarOptions {
   // already build a SignInPanel for the server indicator, and a second one
   // would put two sign-in windows on the same screen.
   onSignIn(): void
+  // Leaving the world that is named here — the screen decides what that means
+  // (the generator reopens its world list). Optional: a screen that has no
+  // world to leave, or nowhere to go, leaves it out and the block stays plain
+  // text rather than a control that does nothing.
+  onWorldClick?(): void
   // Called after the locale changed and the bar re-rendered itself. A screen
   // that can afford to rebuild says so here; one holding unsaved work (the
   // generator) leaves it out and stays in the old language until re-entered,
@@ -89,7 +94,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
       <span class="title-bar__name">${t('titlebar.appName')}</span>
     </div>
     <div class="title-bar__divider" data-slot="world-divider"></div>
-    <div class="title-bar__world" data-slot="world" data-help="titlebar.world">
+    <div class="title-bar__world" data-slot="world" data-help="titlebar.world" role="button" tabindex="0">
       <span class="title-bar__world-name" data-slot="world-name"></span>
       <span class="title-bar__seed" data-slot="seed"></span>
       <span class="title-bar__status" data-slot="status"></span>
@@ -174,6 +179,25 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   // `signOut()` and a session lost to the server both land here, so the chip
   // never outlives the session it names.
   const stopWatchingSession = onSessionChange(() => paintAccount())
+
+  // --- leaving the world ----------------------------------------------------
+
+  if (options.onWorldClick) {
+    const leave = options.onWorldClick.bind(options)
+    worldGroup.classList.add('title-bar__world--action')
+    worldGroup.addEventListener('click', () => leave())
+    // A div with role=button is not a button: Enter and Space do not reach it
+    // on their own, and without this the only way out of a world would be the
+    // mouse.
+    worldGroup.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+      leave()
+    })
+  } else {
+    worldGroup.removeAttribute('role')
+    worldGroup.removeAttribute('tabindex')
+  }
 
   // --- world and save state -------------------------------------------------
 

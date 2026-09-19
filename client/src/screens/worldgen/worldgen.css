@@ -120,7 +120,7 @@
    for open-ended processes (tectonics/climate/hydrology). */
 .worldgen-flat-screen .compute-progress {
   position: fixed;
-  bottom: 7.5rem;
+  bottom: calc(7.5rem + var(--step-bar-height, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 3;

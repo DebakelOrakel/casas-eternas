@@ -23,5 +23,21 @@
   "generator.load.empty": "Noch keine Welt gespeichert.",
   "generator.load.unavailable": "Die Server-Liste ist nicht erreichbar.",
   "generator.load.foot.signedIn": "Lokale Welten und Server-Welten werden zusammen angezeigt.",
-  "generator.load.foot.signedOut": "Ohne Konto siehst du nur Welten aus diesem Browser."
+  "generator.load.foot.signedOut": "Ohne Konto siehst du nur Welten aus diesem Browser.",
+  "generator.step.world.label": "Welt",
+  "generator.step.world.help": "Name und Seed. Alles Weitere wird daraus abgeleitet.",
+  "generator.step.genesis.label": "Erdmantel",
+  "generator.step.genesis.help": "Archaikum · vor 4,0–2,5 Mrd. Jahren. Mantelplumes erzeugen die ersten Landmassen, Konvektion verschiebt sie.",
+  "generator.step.tectonics.label": "Plattentektonik",
+  "generator.step.tectonics.help": "Proterozoikum · vor 2,5–0,54 Mrd. Jahren. Platten tragen das Land, Hotspots bilden Inseln, Gebirge werden abgetragen.",
+  "generator.step.climate.label": "Klima",
+  "generator.step.climate.help": "Meeresströmungen, Windsysteme, Temperatur und Niederschlag. Sie bestimmen auch, wo der Regen fällt, der erodiert.",
+  "generator.step.erosion.label": "Erosion",
+  "generator.step.erosion.help": "Känozoikum · letzte 66 Mio. Jahre. Flüsse graben Täler, tragen Sediment und bauen Deltas.",
+  "generator.step.ecology.label": "Ökologie",
+  "generator.step.ecology.help": "Vegetation, Erzvorkommen und alles Weitere, was das Land hergibt.",
+  "generator.step.migration.label": "Migration",
+  "generator.step.migration.help": "Wo Menschen siedeln und wie sie sich ausbreiten. Nicht Teil der Kette — verlässt den Generator später.",
+  "generator.step.status.computed": "berechnet",
+  "generator.step.status.pending": "nicht berechnet"
 }

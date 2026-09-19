@@ -1,0 +1,155 @@
+/* The generator's step bar — design canvas (Main.dc.html, "Fussleiste:
+   Schritte"), light column.
+
+   The height is published on the SCREEN ROOT, the way the title bar publishes
+   its own, so the bottom-anchored panels clear it without anything here
+   reaching across module lines to restyle them. The `0px` fallback is what
+   keeps the world map, which wears the same chrome and has no step bar,
+   exactly where it was. */
+.has-step-bar {
+  --step-bar-height: 64px;
+}
+
+.step-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* Above the map chrome (3), below the title bar (4) and the load screen. */
+  z-index: 3;
+  box-sizing: border-box;
+  height: var(--step-bar-height);
+  display: flex;
+  align-items: center;
+  padding: 0 16px 0 12px;
+  border-top: 1px solid var(--dc-line);
+  background: var(--dc-footer);
+  color: var(--dc-text);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  /* Narrow windows: the chain scrolls rather than wrapping or shrinking the
+     labels to nothing. A step you cannot read is not a step you can choose. */
+  overflow-x: auto;
+}
+
+/* `display: flex` outranks the user-agent rule for [hidden], so it has to be
+   said here or hiding the bar does nothing. */
+.step-bar[hidden] {
+  display: none;
+}
+
+.step-bar__slot {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* The step set apart from the chain drifts to the right and drops its
+   connector, so the eye reads six linked steps and one thing beside them. */
+.step-bar__slot--aside {
+  margin-left: auto;
+}
+
+.step-bar__slot--aside .step-bar__line,
+.step-bar__slot:first-child .step-bar__line {
+  display: none;
+}
+
+.step-bar__line {
+  width: 18px;
+  height: 1px;
+  background: var(--dc-line2);
+}
+
+.step-bar__step {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.step-bar__step:hover {
+  background: var(--dc-hover);
+}
+
+.step-bar__step:focus-visible {
+  outline: 2px solid var(--dc-accent);
+  outline-offset: -2px;
+}
+
+.step-bar__mark {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12.5px;
+}
+
+.step-bar__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.step-bar__label {
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--dc-text2);
+}
+
+.step-bar__status {
+  font-size: 11.5px;
+  white-space: nowrap;
+  color: var(--dc-teal);
+}
+
+/* The four states. Computed is the quiet default; the active step is the only
+   filled mark, so there is exactly one place the eye lands. */
+.step-bar__slot[data-state='computed'] .step-bar__mark {
+  border: 1.5px solid var(--dc-teal);
+  color: var(--dc-teal);
+}
+
+.step-bar__slot[data-state='pending'] .step-bar__mark,
+.step-bar__slot[data-state='blocked'] .step-bar__mark {
+  border: 1.5px solid var(--dc-line2);
+  color: var(--dc-muted);
+}
+
+.step-bar__slot[data-state='pending'] .step-bar__status,
+.step-bar__slot[data-state='blocked'] .step-bar__status {
+  color: var(--dc-muted);
+}
+
+/* Blocked reads as "not yet", not as "broken": the requirement is something
+   the previous step supplies, and it will. */
+.step-bar__slot[data-state='blocked'] .step-bar__step {
+  opacity: 0.55;
+}
+
+.step-bar__slot[data-state='active'] .step-bar__step {
+  background: var(--dc-hover);
+}
+
+.step-bar__slot[data-state='active'] .step-bar__mark {
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+}
+
+.step-bar__slot[data-state='active'] .step-bar__label {
+  font-weight: 600;
+  color: var(--dc-strong);
+}

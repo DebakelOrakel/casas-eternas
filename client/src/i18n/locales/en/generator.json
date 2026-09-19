@@ -23,5 +23,21 @@
   "generator.load.empty": "No world saved yet.",
   "generator.load.unavailable": "The server list cannot be reached.",
   "generator.load.foot.signedIn": "Local and server worlds are listed together.",
-  "generator.load.foot.signedOut": "Without an account you only see worlds from this browser."
+  "generator.load.foot.signedOut": "Without an account you only see worlds from this browser.",
+  "generator.step.world.label": "World",
+  "generator.step.world.help": "Name and seed. Everything after this is derived from them.",
+  "generator.step.genesis.label": "Mantle",
+  "generator.step.genesis.help": "Archean · 4.0–2.5 billion years ago. Mantle plumes raise the first land, convection moves it around.",
+  "generator.step.tectonics.label": "Plate tectonics",
+  "generator.step.tectonics.help": "Proterozoic · 2.5–0.54 billion years ago. Plates carry the land, hotspots build islands, mountains wear down.",
+  "generator.step.climate.label": "Climate",
+  "generator.step.climate.help": "Ocean currents, wind systems, temperature and rainfall. They also decide where the rain falls that erodes.",
+  "generator.step.erosion.label": "Erosion",
+  "generator.step.erosion.help": "Cenozoic · last 66 million years. Rivers carve valleys, carry sediment and build deltas.",
+  "generator.step.ecology.label": "Ecology",
+  "generator.step.ecology.help": "Vegetation, ores and everything else the land offers.",
+  "generator.step.migration.label": "Migration",
+  "generator.step.migration.help": "Where people settle and how they spread. Not part of the chain — it leaves the generator later.",
+  "generator.step.status.computed": "computed",
+  "generator.step.status.pending": "not computed"
 }

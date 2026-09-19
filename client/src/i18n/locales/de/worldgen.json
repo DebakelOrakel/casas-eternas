@@ -1,10 +1,4 @@
 {
-  "worldgen.panel.genesis.title": "Genesis",
-  "worldgen.panel.tectonics.title": "Tektonik",
-  "worldgen.panel.erosion.title": "Erosion",
-  "worldgen.panel.climate.title": "Klima",
-  "worldgen.panel.ecology.title": "Ökologie",
-  "worldgen.panel.migration.title": "Migration",
   "worldgen.panel.genesis.seed.placeholder": "Seed",
   "worldgen.action.randomizeSeed.label": "Seed würfeln",
   "worldgen.action.randomizeSeed.help": "Einen neuen Zufalls-Seed für die Welt würfeln.",
