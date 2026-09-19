@@ -43,6 +43,7 @@ import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleBar'
+import { keepWorldInBrowser } from '../../world/browserWorlds'
 import { getServerStatus, refreshServerStatus } from '../../server/serverStatus'
 import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
 import { createSavePanel } from '../../ui/worldPanels/SavePanel'
@@ -3102,6 +3103,27 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Hands the finished archive to its destination. Download is the fallback for
   // everything: a world that could not be uploaded must still not be lost.
   async function deliverArchive(blob: Blob, filename: string): Promise<void> {
+    if (pendingSaveTarget === 'browser') {
+      const kept = await keepWorldInBrowser(worldUid, blob, {
+        name: seedInput.value || 'world',
+        seed: seedInput.value,
+        revision: worldRevision,
+        erosionRun: erosionRunCount,
+        savedAt: new Date().toISOString(),
+        generator: BUILD_VERSION,
+      }, await makePreviewBlob())
+      if (kept) {
+        ctx.notifications.show({ message: t('notify.save.browser.stored'), icon: '/icons/ok.png', durationMs: 4000 })
+        markWorldEstablished()
+        return
+      }
+      // The archive still reaches the user, for the same reason a failed
+      // upload falls back to one: a world is the thing here that cannot be
+      // recomputed, so no failure path may end with it nowhere.
+      ctx.notifications.show({ message: t('notify.save.browser.failed'), icon: '/icons/warning.png', durationMs: 8000 })
+      downloadBlob(blob, filename)
+      return
+    }
     if (pendingSaveTarget !== 'server') {
       downloadBlob(blob, filename)
       markWorldEstablished()
@@ -3111,7 +3133,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     try {
       const outcome = await uploadWorld(worldUid, blob)
       if (outcome.ok) {
-        ctx.notifications.show({ message: t('common.notify.worldStored'), icon: '/icons/ok.png', durationMs: 4000 })
+        ctx.notifications.show({ message: t('notify.save.server.stored'), icon: '/icons/ok.png', durationMs: 4000 })
         markWorldEstablished()
         return
       }
@@ -3119,9 +3141,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         // Deliberately no automatic retry: overwriting is exactly what the
         // server's lock exists to prevent, and a world is the one thing here
         // that cannot be recomputed. The archive still reaches the user.
-        ctx.notifications.show({ message: t('common.notify.worldConflict'), icon: '/icons/warning.png', durationMs: 8000 })
+        ctx.notifications.show({ message: t('notify.save.server.conflict'), icon: '/icons/warning.png', durationMs: 8000 })
       } else {
-        ctx.notifications.show({ message: t('common.notify.worldUploadFailed'), icon: '/icons/warning.png', durationMs: 8000 })
+        ctx.notifications.show({ message: t('notify.save.server.failed'), icon: '/icons/warning.png', durationMs: 8000 })
         void serverIndicator.refresh()
       }
       downloadBlob(blob, filename)
@@ -3215,10 +3237,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   async function saveTo(target: SaveTarget): Promise<void> {
     pendingSaveTarget = target
     await saveWorld()
-    // After saveWorld, so a failed save does not claim a resting place. The
-    // download path is "local" as far as the bar is concerned: both mean the
-    // world is off the server, and the bar's job is where it can be found again.
-    lastSave = { target, at: new Date() }
+    // After saveWorld, so a failed save does not claim a resting place — and
+    // only for the two targets that ARE one. A download is an export: it hands
+    // the world to the user and nothing here holds it afterwards, so recording
+    // it would make the bar claim a place the world is not.
+    if (target !== 'download') lastSave = { target, at: new Date() }
     updateSaveIndicator()
     // Saving to the server is exactly what unblocks 8K, so the buttons are
     // re-evaluated here rather than leaving a greyed-out control that has just

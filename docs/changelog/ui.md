@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-19
+- **new** Save/Load: a world can be kept in the browser itself, beside storing it on the server and downloading it. `titlebar.save.browser`
 - **new** Layout: one title bar across the top of every screen — which world is open, where it was last saved, the language, and who is signed in. The title screen's flag buttons give way to it. `titlebar`
 
 ## 2026-08-17

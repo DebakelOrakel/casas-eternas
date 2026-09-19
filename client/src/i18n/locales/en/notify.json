@@ -1,0 +1,7 @@
+{
+  "notify.save.browser.stored": "World kept in this browser.",
+  "notify.save.browser.failed": "The browser refused the write, most likely for lack of space. Nothing was stored.",
+  "notify.save.server.stored": "World stored on the server.",
+  "notify.save.server.conflict": "The server holds a newer version of this world. Nothing was overwritten.",
+  "notify.save.server.failed": "Upload failed. The world was not stored."
+}

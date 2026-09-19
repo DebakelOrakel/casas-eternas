@@ -1,5 +1,6 @@
 import { getLocale, t } from '../../i18n/i18n'
 import { listWorlds } from '../../server/worldClient'
+import { canKeepWorldsInBrowser } from '../../world/browserWorlds'
 import { createPanel } from '../panel/Panel'
 import './worldPanels.css'
 
@@ -15,7 +16,11 @@ import './worldPanels.css'
 // remembered revision alone, because the remembered value is what this browser
 // last saw; the question being answered is what is there NOW.
 
-export type SaveTarget = 'download' | 'server'
+// Three places a world can come to rest, and they are not interchangeable:
+// the browser keeps it here but may clear it, the server keeps it anywhere you
+// sign in, and a download hands it to you and lets go. Each says so in its own
+// help text (titlebar.save.*).
+export type SaveTarget = 'download' | 'server' | 'browser'
 
 export interface SavePanelOptions {
   // The world being saved. Read on open rather than passed in once, since a
@@ -43,24 +48,32 @@ export function createSavePanel(host: HTMLElement, options: SavePanelOptions): S
   identity.className = 'save-identity'
   panel.body.appendChild(identity)
 
-  const toServer = document.createElement('button')
-  toServer.type = 'button'
-  toServer.className = 'app-panel-button'
-  toServer.addEventListener('click', () => {
-    panel.close()
-    options.onChoose('server')
-  })
+  // One shape for all three, so a target cannot quietly end up with a label but
+  // no help card, or a help card naming the wrong key.
+  const target = (name: SaveTarget, label: string): HTMLButtonElement => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'app-panel-button'
+    button.textContent = label
+    button.dataset.help = `titlebar.save.${name}`
+    button.addEventListener('click', () => {
+      panel.close()
+      options.onChoose(name)
+    })
+    return button
+  }
 
-  const download = document.createElement('button')
-  download.type = 'button'
-  download.className = 'app-panel-button'
-  download.textContent = t('common.panel.save.action.download')
-  download.addEventListener('click', () => {
-    panel.close()
-    options.onChoose('download')
-  })
+  const toServer = target('server', t('titlebar.save.server.label'))
+  const toBrowser = target('browser', t('titlebar.save.browser.label'))
+  const download = target('download', t('titlebar.save.download.label'))
 
-  panel.footer.append(download, toServer)
+  // Hidden, not disabled, where the browser cannot keep worlds at all: a
+  // greyed-out target invites a hunt for the condition that would enable it,
+  // and there is none — the browser either has OPFS or it does not.
+  toBrowser.hidden = true
+  void canKeepWorldsInBrowser().then((can) => { toBrowser.hidden = !can })
+
+  panel.footer.append(download, toBrowser, toServer)
 
   async function refresh(): Promise<void> {
     const current = options.currentWorld()
@@ -76,10 +89,10 @@ export function createSavePanel(host: HTMLElement, options: SavePanelOptions): S
     if (held) {
       const when = new Date(held.updatedAt).toLocaleString(getLocale(), { dateStyle: 'medium', timeStyle: 'short' })
       state.textContent = t('common.panel.save.onServer', { revision: held.revision, when })
-      toServer.textContent = t('common.panel.save.action.update')
+      toServer.textContent = t('titlebar.save.server.update')
     } else {
       state.textContent = t('common.panel.save.notOnServer')
-      toServer.textContent = t('common.panel.save.action.create')
+      toServer.textContent = t('titlebar.save.server.label')
     }
 
     // Hashes shortened for the eye, full value in the title. A world saved

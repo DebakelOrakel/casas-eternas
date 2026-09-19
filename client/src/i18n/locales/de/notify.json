@@ -1,0 +1,7 @@
+{
+  "notify.save.browser.stored": "Welt im Browser behalten.",
+  "notify.save.browser.failed": "Der Browser hat das Schreiben abgelehnt, wahrscheinlich aus Platzmangel. Es wurde nichts gespeichert.",
+  "notify.save.server.stored": "Welt auf dem Server gespeichert.",
+  "notify.save.server.conflict": "Auf dem Server liegt eine neuere Fassung dieser Welt. Es wurde nichts überschrieben.",
+  "notify.save.server.failed": "Hochladen fehlgeschlagen. Die Welt wurde nicht gespeichert."
+}
