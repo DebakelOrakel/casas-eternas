@@ -113,15 +113,6 @@
 /* Destructive actions that cannot be undone by recomputation — deleting a
    world, as opposed to dropping a cache entry. The colour is the only warning
    the button itself can carry; the confirmation is the panel's job. */
-.app-panel-button--danger {
-  border-color: rgba(150, 40, 30, 0.5);
-  color: #962819;
-}
-
-.app-panel-button--danger:hover {
-  border-color: rgba(150, 40, 30, 0.85);
-}
-
 .app-panel-empty {
   margin: 1.25rem 1rem;
   font-size: 0.85rem;

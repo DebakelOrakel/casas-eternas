@@ -29,15 +29,6 @@
   margin-bottom: 4px;
 }
 
-.gen-overlays__title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--dc-text2);
-}
-
 .gen-overlays__picks {
   display: flex;
   flex-direction: column;

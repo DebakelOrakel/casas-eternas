@@ -9,6 +9,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **fixed** Overlays: the readout's rainfall year puts the wet season where it really falls, instead of always in the local summer. `readout.chart`
 - **changed** Overlays: the legend folds into a button and starts closed. `overlay.legend`
 - **fixed** Overlays: the legend titles and the species names follow a language switch instead of staying English. `overlay.legend`
+- **fixed** Notifications: a continent colliding, breaking up or becoming a supercontinent says so in your language. `notify.event`
 - **changed** Overlays: the readout says how fast the wind blows, in metres per second. `readout.metresPerSecond`
 - **changed** Overlays: wind and currents in the readout are an arrow pointing where they go — no compass letters, because this world has no north. `readout.row.wind`
 - **fixed** Worldmap: a world opened from a save no longer classifies its coasts from a rainfall value that was never there. `worldmap`

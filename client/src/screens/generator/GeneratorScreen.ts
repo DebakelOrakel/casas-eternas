@@ -1743,11 +1743,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function eventText(ev: SimEvent): { message: string; icon: string } {
     switch (ev.type) {
       case 'continent_collided':
-        return { message: ev.nameA && ev.nameB ? `${ev.nameA} and ${ev.nameB} collided` : 'Two continents collided', icon: '/icons/continent.png' }
+        return { message: ev.nameA && ev.nameB ? t('notify.event.continentsCollidedNamed', { a: ev.nameA, b: ev.nameB }) : t('notify.event.continentsCollided'), icon: '/icons/continent.png' }
       case 'continent_broke_up':
-        return { message: ev.name ? `${ev.name} is breaking apart` : 'A continent is breaking apart', icon: '/icons/continent.png' }
+        return { message: ev.name ? t('notify.event.continentBreakupNamed', { name: ev.name }) : t('notify.event.continentBreakup'), icon: '/icons/continent.png' }
       case 'supercontinent_formed':
-        return { message: ev.name ? `Supercontinent ${ev.name} formed` : 'A supercontinent has formed', icon: '/icons/crown.png' }
+        return { message: ev.name ? t('notify.event.supercontinentFormedNamed', { name: ev.name }) : t('notify.event.supercontinentFormed'), icon: '/icons/crown.png' }
       default:
         return { message: '', icon: '/icons/ocean.png' }
     }

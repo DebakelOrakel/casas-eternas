@@ -11,11 +11,6 @@
   z-index: 10;
 }
 
-/* Seed field: no label, and a bit narrower than the slider fields. */
-.generator-screen .field--seed {
-  width: 150px;
-}
-
 .generator-screen .seed-input {
   flex: 1;
   min-width: 0;

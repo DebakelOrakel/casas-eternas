@@ -131,46 +131,6 @@
   display: block;
 }
 
-.map-chrome .text-button {
-  flex: none;
-  align-self: center;
-  border: 1px solid rgba(26, 26, 26, 0.4);
-  border-radius: 4px;
-  background: none;
-  padding: 0.3rem 0.6rem;
-  font-size: 0.8rem;
-  font-family: inherit;
-  color: #1a1a1a;
-  cursor: pointer;
-  opacity: 0.85;
-  transition: opacity 0.15s ease;
-}
-
-.map-chrome .text-button:hover:not(:disabled) {
-  opacity: 1;
-}
-
-/* Toggle chips (aria-pressed) — selection is a fill, not just opacity, so the
-   chosen one reads at a glance beside the button that acts on it. */
-.map-chrome .text-button[aria-pressed="true"] {
-  background: rgba(26, 26, 26, 0.8);
-  color: #ffffff;
-  opacity: 1;
-}
-
-.map-chrome .text-button:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.map-chrome .field--icon-row {
-  width: auto;
-}
-
-.map-chrome .field--icon-row .field-row {
-  align-items: center;
-}
-
 /* All range sliders fill their field's width (which is what sets their size)
    rather than the browser's intrinsic range-input width. */
 .map-chrome input[type="range"] {

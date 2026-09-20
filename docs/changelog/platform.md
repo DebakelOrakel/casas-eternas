@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-09-20
+- **dropped** Structure: the leftovers of the old chrome are gone — an unused catalog, the overlay toggle bar, the in-app changelog renderer, five orphaned style rules and six unreferenced icons.
 - **changed** Docs: the site is redrawn in the app's own type and palette, with a header bar and a per-page section list. `docs`
 - **new** Docs: a search field over every page, section heading and changelog line — ⌘K, and the status chips on an area page filter it. `docs`
 - **changed** Docs: a document's "updated" date is stated in its front matter, where it used to be read out of git and moved whenever a file was touched. `docs`

@@ -20,7 +20,7 @@
 
 export interface OverlayLayer {
   id: string
-  // Shown on the layer's toggle chip (see OverlayToggleBar).
+  // Shown on the layer's switch in the screen that owns the compositor.
   label: string
   enabled: boolean
   // Skip this layer in the toggle bar — it's still composited, but a screen
