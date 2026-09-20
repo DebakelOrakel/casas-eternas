@@ -131,10 +131,10 @@ const EVENT_MARKER_HALF_LENGTH = 90
 const COLLISION_COLOR = '220, 45, 45'
 const BREAKUP_COLOR = '235, 140, 30'
 
-// Fresh start for the hex-tile world generation approach — the sphere-
-// based version this replaces lives on under 'worldgen-sphere' (see
-// screens/worldgen-sphere/WorldGenScreen.ts), still reachable from the
-// title screen. Hex-tile generation code itself belongs in src/generator.
+// Fresh start for the hex-tile world generation approach. The sphere-based
+// version this replaced was kept beside it for a year and removed 2026-09-20,
+// unvisited; it is in the git history if it is ever wanted. Hex-tile generation
+// code itself belongs in src/generator.
 
 // World-space size of one toroidal period, independent of the plate
 // map's own pixel resolution — matches the map's 2:1 aspect for a simple
@@ -3277,7 +3277,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // precipitation layer, and the generator holds raw floats, so a value
       // written here would differ from the one every reader computes. A hash
       // that is subtly wrong is worse than an absent one; readers derive it
-      // from the save, as WorldMapScreen already does.
+      // from the save, the way the queryable reader does (world/save).
       '',
     ].join('\n')
   }
@@ -4774,8 +4774,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       mapView.dispose()
       worker.terminate()
       // scene.dispose() doesn't remove the camera module's own 'wheel'
-      // listener on the shared canvas — same reasoning as MarsScreen's
-      // dispose (see orbitSwoopCamera's equivalent comment).
+      // listener on the shared canvas, so the rig has to be disposed by hand
+      // (see orbitSwoopCamera's equivalent comment).
       disposeCamera()
       scene.dispose()
     },

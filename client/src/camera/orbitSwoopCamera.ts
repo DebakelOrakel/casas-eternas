@@ -7,9 +7,8 @@ import { PointerEventTypes } from '@babylonjs/core'
 // dead-ahead, perpendicular to the surface, so the camera ends up staring
 // straight down into whatever's nearest at every angle. A camera that
 // hovers above the surface with its own explicit, non-center look
-// direction is what actually shows a horizon — same conclusion
-// WorldGenScreen.ts already reached for the same reason (see its own
-// camera setup comments).
+// direction is what actually shows a horizon — the same conclusion the flat
+// generator's own camera rig reached for the same reason (generatorCamera.ts).
 //
 // Horizontal mouse drag spins the main object itself (viewPivot below)
 // rather than moving the camera, so "orbit" and "zoom" stay on entirely

@@ -51,8 +51,9 @@ export const AMPLIFY_BAKE_STAGES = [2]
 // stage whose bake is authoritative below macro scale. Its artifact carries
 // every coarser tier as a box-downsampled family member, so within the
 // family a tier swap changes resolution, never terrain; the fetch ladder IS
-// this constant plus the provisional stage-2 sketch (WorldMapScreen's
-// loadTiers), which replaced the old AMPLIFY_FETCH_STAGES list.
+// this constant plus a provisional stage-2 sketch, which replaced the old
+// AMPLIFY_FETCH_STAGES list. The sketch lived in the world map's `loadTiers`
+// and went with that screen on 2026-09-20; the ladder outlives it.
 //
 // 8K is also the DISPLAY ceiling, and that is a memory argument rather than
 // a taste one — holding one amplified raster costs width × height × 4 bytes

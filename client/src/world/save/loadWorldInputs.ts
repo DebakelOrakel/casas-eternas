@@ -9,8 +9,9 @@ import type { World } from '../query'
 // plus the baked layers (docs/decisions/queryable-world-save.md), deliberately
 // not through the generator's snapshot.
 //
-// Extracted from WorldMapScreen when the SERVER learned to bake. That is not
-// tidiness: the server-side baker has to read a save byte-for-byte the way the
+// Extracted from the world map screen when the SERVER learned to bake (that
+// screen was removed 2026-09-20; the reader was always the durable half). That
+// is not tidiness: the server-side baker has to read a save byte-for-byte the way the
 // browser does, because both write artifacts under a key derived from what
 // they read. Two readers that drift by one decoded layer would produce two
 // different worldIds for one world, and the cache would serve terrain from a

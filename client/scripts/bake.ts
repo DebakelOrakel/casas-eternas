@@ -358,7 +358,7 @@ async function main(): Promise<void> {
   const store = artifactStoreFor(job)
   if (!store) fail('neither artifactsDir nor artifactsUrl was given')
   // ROUNDS BELONGS IN THE VERSION. The client hashes
-  // `{...AMPLIFY_CONSTANTS, rounds}` (see WorldMapScreen), and it must: the
+  // `{...AMPLIFY_CONSTANTS, rounds}` (world/artifacts.ts), and it must: the
   // round budget changes the terrain, so two bakes that differ only in it are
   // different artifacts. Leaving it out here produced a version the client
   // would never look for — bakes succeeded, artifacts appeared, and not one

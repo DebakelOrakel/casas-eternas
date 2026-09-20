@@ -4,9 +4,6 @@ import { initI18n } from './i18n/i18n'
 import { AppStateManager } from './app/AppStateManager'
 import { createTitleScreen } from './screens/title/TitleScreen'
 import { createGeneratorScreen } from './screens/generator/GeneratorScreen'
-import { createWorldGenScreen as createWorldGenSphereScreen } from './screens/worldgen-sphere/WorldGenScreen'
-import { createWorldMapScreen } from './screens/worldmap/WorldMapScreen'
-import { createMarsScreen } from './screens/mars/MarsScreen'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#renderCanvas')!
 const overlay = document.querySelector<HTMLDivElement>('#overlay')!
@@ -17,9 +14,6 @@ initI18n()
 const app = new AppStateManager(engine, canvas, overlay, {
   title: createTitleScreen,
   generator: createGeneratorScreen,
-  'worldgen-sphere': createWorldGenSphereScreen,
-  worldmap: createWorldMapScreen,
-  mars: createMarsScreen,
 })
 
 app.goTo('title')

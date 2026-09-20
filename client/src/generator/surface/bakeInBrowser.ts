@@ -2,8 +2,9 @@ import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '
 
 // Running one amplification stage in a worker, as a promise.
 //
-// Extracted from WorldMapScreen when the GENERATOR gained bake buttons — a
-// second caller is the trigger, not tidiness. What was worth extracting is
+// Extracted from the world map screen when the GENERATOR gained bake buttons —
+// a second caller was the trigger, not tidiness. The map screen has since been
+// removed (2026-09-20) and the generator is the caller left. What was worth extracting is
 // small but easy to get subtly wrong twice: the macro raster must be COPIED
 // before transfer (later stages re-read it, and a transferred buffer is gone),
 // the worker must be terminated on every exit including the error path, and a

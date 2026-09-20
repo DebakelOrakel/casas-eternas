@@ -9,6 +9,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **fixed** Overlays: the readout's rainfall year puts the wet season where it really falls, instead of always in the local summer. `readout.chart`
 - **changed** Overlays: the legend folds into a button and starts closed. `overlay.legend`
 - **fixed** Overlays: the legend titles and the species names follow a language switch instead of staying English. `overlay.legend`
+- **dropped** Title screen: the world map, Sphere and Mars are gone — three screens that had stopped being worked on. The map will be built again from scratch. `common.title.nav`
 - **fixed** Notifications: a continent colliding, breaking up or becoming a supercontinent says so in your language. `notify.event`
 - **changed** Save/Load: file sizes are counted in thousands everywhere, so a world reads the same size here as on disk.
 - **changed** Overlays: the readout says how fast the wind blows, in metres per second. `readout.metresPerSecond`

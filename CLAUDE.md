@@ -15,22 +15,26 @@ client/src/
   generator/      the generator — has its own CLAUDE.md, read it before working there
   world/          a world's identity, spec, save format and artifacts — the layer that
                   knows WHICH world; everything below it does not
-  screens/        generator (the editor), worldmap, title
+  screens/        generator (the editor), title
   storage/        artifact stores (OPFS / HTTP / tiered), bytes at paths
   server/         client-side HTTP clients for the Go server
   map/ ui/ camera/ app/ i18n/
-  worldgen-sphere/ + screens/worldgen-sphere/, screens/mars/   ← see "parallel approaches"
 client/scripts/   the four harnesses (golden, pipeline, amplify, roundtrip) and
                   bake.ts → baker.mjs, the server-side bake bundle
 internal/ cmd/    the Go server
 docs/             see docs/README.md for the taxonomy
 ```
 
-**Parallel approaches.** The repo holds more than one world-generation attempt at
-once, which is why it looks confusing. `client/src/generator/` (flat torus) is the
-live one. `client/src/worldgen-sphere/`, `screens/worldgen-sphere/` and
-`screens/mars/` are the user's separate concerns — do not edit them, and do not
-treat their problems as the current task's problems.
+**One approach, since 2026-09-20.** The repo used to hold three world-generation
+attempts side by side — a sphere generator, a Mars screen and the flat-torus one
+— plus a world map screen that read a finished save. The first three were
+removed, and the world map with them: it is to be rebuilt rather than carried.
+`client/src/generator/` (flat torus) is what there is. The others are in the git
+history; do not reconstruct them from memory, read them there.
+
+What the removal left standing, deliberately: `map/` still holds the world map's
+rendering stack, and `world/save/loadWorldInputs`'s `biomeInputs` still assembles
+its classification inputs. Both wait for the screen to be written again.
 
 **Module layering — keep it acyclic.** `generator/` computes (params in, fields
 out), `storage/` moves bytes at paths, `server/` talks HTTP, `map/` draws. Those
