@@ -107,10 +107,13 @@ const FIELD_ICON: Record<EcologyFieldId, string> = {
 
 // The initial-migration races (icon toggles + distinct hues). Order = the race
 // index used in migrationOrigins / the worker's race field.
-const MIGRATION_RACES: { id: string; label: string; icon: string; rgb: [number, number, number] }[] = [
-  { id: 'human', label: 'Humans', icon: 'human', rgb: [86, 116, 200] },
-  { id: 'dwarf', label: 'Dwarves', icon: 'dwarf', rgb: [96, 176, 92] },
-  { id: 'beaver', label: 'Beavers', icon: 'beaver', rgb: [216, 76, 58] },
+// The name is NOT here: it is `species.<id>.label` in the catalogs, which the
+// toggles and the legend both read. Carrying a second English copy beside the id
+// is how the two drift apart, and only one of them can follow a language switch.
+const MIGRATION_RACES: { id: string; icon: string; rgb: [number, number, number] }[] = [
+  { id: 'human', icon: 'human', rgb: [86, 116, 200] },
+  { id: 'dwarf', icon: 'dwarf', rgb: [96, 176, 92] },
+  { id: 'beaver', icon: 'beaver', rgb: [216, 76, 58] },
 ]
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
@@ -1861,17 +1864,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     hotspots: () => ({ type: 'swatches', title: t('overlay.hotspots.legend.title'), items: [
       { label: t('overlay.hotspots.legend.plume'), rgb: [255, 140, 0], shape: 'ring' },
     ] }),
-    cratonAge: () => ({ type: 'gradient', title: 'Craton age', unit: '% of world age', stops: cratonAgeLegendStops }),
-    temperature: () => ({ type: 'gradient', title: 'Temperature', unit: '°C', stops: temperatureLegendStops }),
-    seasonality: () => ({ type: 'gradient', title: 'Seasonality', unit: '°C range', stops: amplitudeLegendStops }),
-    precipitation: () => ({ type: 'gradient', title: 'Precipitation', unit: 'mm/yr', stops: precipitationLegendStops }),
-    monsoon: () => ({ type: 'gradient', title: 'Monsoon index', unit: '', stops: monsoonLegendStops }),
+    cratonAge: () => ({ type: 'gradient', title: t('overlay.cratonAge.label'), unit: '% of world age', stops: cratonAgeLegendStops }),
+    temperature: () => ({ type: 'gradient', title: t('overlay.temperature.label'), unit: '°C', stops: temperatureLegendStops }),
+    seasonality: () => ({ type: 'gradient', title: t('overlay.seasonality.label'), unit: t('overlay.seasonality.legend.unit'), stops: amplitudeLegendStops }),
+    precipitation: () => ({ type: 'gradient', title: t('overlay.precipitation.label'), unit: 'mm/yr', stops: precipitationLegendStops }),
+    monsoon: () => ({ type: 'gradient', title: t('overlay.monsoon.legend.title'), unit: '', stops: monsoonLegendStops }),
     biomes: () => ({ type: 'swatches', title: t('overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) }),
     waterBalance: () => ({ type: 'swatches', title: t('overlay.waterBalance.label'), items: [
       { label: t('overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
       { label: t('overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
     ] }),
-    migration: () => ({ type: 'swatches', title: 'Peoples', items: MIGRATION_RACES.map((r) => ({ label: r.label, rgb: r.rgb })) }),
+    migration: () => ({ type: 'swatches', title: t('overlay.migration.legend.title'), items: MIGRATION_RACES.map((r) => ({ label: t(`species.${r.id}.label` as TKey), rgb: r.rgb })) }),
   }
 
   // Which layers are showing. Set from the step you enter (see steps.ts) and
