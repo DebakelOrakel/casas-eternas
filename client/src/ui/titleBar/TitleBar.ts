@@ -1,5 +1,6 @@
 import { getLocale, setLocale, t, type Locale, type TKey } from '../../i18n/i18n'
 import { hasSession, onSessionChange, signedInUser, signOut } from '../../server/session'
+import { getServerStatus } from '../../server/serverStatus'
 import '../theme/design.css'
 import './titleBar.css'
 
@@ -131,7 +132,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
         <button type="button" data-lang="de" data-help="titlebar.language.de">DE</button>
         <button type="button" data-lang="en" data-help="titlebar.language.en">EN</button>
       </div>
-      <div class="title-bar__divider"></div>
+      <div class="title-bar__divider" data-slot="account-divider"></div>
       <span data-slot="account"></span>
     </div>
   `
@@ -143,6 +144,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   const statusText = bar.querySelector<HTMLElement>('[data-slot="status"]')!
   const accountSlot = bar.querySelector<HTMLElement>('[data-slot="account"]')!
   const toolsSlot = bar.querySelector<HTMLElement>('[data-slot="tools"]')!
+  const accountDivider = bar.querySelector<HTMLElement>('[data-slot="account-divider"]')!
 
   // --- language -------------------------------------------------------------
 
@@ -170,8 +172,28 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
 
   // --- account --------------------------------------------------------------
 
+  // Whether this deployment has anywhere to sign IN to (`session/needsSignIn`
+  // minus the session half). Undefined until the first probe answers, which is
+  // why the button is painted twice: once on the answer we already have, once
+  // when it lands.
+  let canSignIn: boolean | undefined
+  void getServerStatus().then((status) => {
+    canSignIn = status.loginPath !== ''
+    paintAccount()
+  })
+
   function paintAccount(): void {
     accountSlot.textContent = ''
+    // Nothing to sign in to — no server at all, or one in `authMode: none`,
+    // where a synthetic local identity owns everything. Hidden rather than
+    // greyed out, for the reason the server indicator states beside it: a
+    // disabled control invites a hunt for the condition that would enable it,
+    // and there is none. It is a property of the deployment, not a moment.
+    // Undefined (the probe is still out) counts as "not yet", so the button
+    // cannot flash up and vanish on a local server.
+    accountDivider.hidden = !hasSession() && canSignIn !== true
+    // A divider with nothing after it is a line at the end of the bar.
+    if (accountDivider.hidden) return
     if (hasSession()) {
       const user = signedInUser()
       const chip = document.createElement('button')

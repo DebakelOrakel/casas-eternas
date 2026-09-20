@@ -1,5 +1,6 @@
 import { getLocale, t, type TKey } from '../../i18n/i18n'
-import { hasSession } from '../../server/session'
+import { needsSignIn } from '../../server/session'
+import { getServerStatus } from '../../server/serverStatus'
 import { listWorlds } from '../../server/worldClient'
 import { canKeepWorldsInBrowser } from '../../world/browserWorlds'
 import './saveMenu.css'
@@ -114,8 +115,10 @@ export function createSaveMenu(options: SaveMenuOptions): SaveMenu {
       if (row.id === 'open') return options.onOpenWorld()
       // Signed out, the server row leads to the sign-in rather than being a
       // dead control: the condition that blocks it is one click away, and a
-      // greyed-out row would leave you to find that out yourself.
-      if (row.id === 'server' && !hasSession()) return options.onSignIn()
+      // greyed-out row would leave you to find that out yourself. Asked of the
+      // SERVER, not of the session: under `authMode: none` there is nothing to
+      // sign in to and saving works as it stands.
+      if (row.id === 'server' && signInMissing) return options.onSignIn()
       options.onSave(row.id)
     })
     rows.set(row.id, {
@@ -137,6 +140,11 @@ export function createSaveMenu(options: SaveMenuOptions): SaveMenu {
 
   // --- what the rows say ----------------------------------------------------
 
+  // Whether a sign-in stands between this browser and the server. Held rather
+  // than asked at click time, so the row's own words and what it does cannot
+  // disagree; refreshed on every open, which is the only moment either is read.
+  let signInMissing = false
+
   // Set before the server answers and again after it: the first pass is what
   // the menu shows while the request is in flight, and it must already be
   // readable.
@@ -150,12 +158,13 @@ export function createSaveMenu(options: SaveMenuOptions): SaveMenu {
       }
       row.label.textContent = t(`titlebar.save.${id}.label` as TKey)
       row.sub.textContent = id === 'server'
-        ? t(hasSession() ? 'titlebar.save.server.sub.in' : 'titlebar.save.server.sub.out')
+        ? t(signInMissing ? 'titlebar.save.server.sub.out' : 'titlebar.save.server.sub.in')
         : t(`titlebar.save.${id}.sub` as TKey)
     }
   }
 
   async function refresh(): Promise<void> {
+    signInMissing = await needsSignIn()
     paint()
     identity.replaceChildren()
 
@@ -166,8 +175,14 @@ export function createSaveMenu(options: SaveMenuOptions): SaveMenu {
     browser.item.hidden = !(await canKeepWorldsInBrowser())
 
     const current = options.currentWorld()
+    // No server at all: the row is not a target, and no sign-in would make it
+    // one. Hidden for the same reason the browser row is where the browser
+    // keeps nothing — it is a property of the deployment, not of the moment.
+    // An unreachable server keeps its row: that IS a moment, and it passes.
     const server = rows.get('server')!
-    const worlds = hasSession() ? await listWorlds() : null
+    server.item.hidden = (await getServerStatus()).state === 'none'
+
+    const worlds = signInMissing ? null : await listWorlds()
     const held = worlds?.find((world) => world.uid === current.uid)
     if (held) {
       server.label.textContent = t('titlebar.save.server.update')

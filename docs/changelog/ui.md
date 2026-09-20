@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-20
+- **fixed** The sign-in button and the server's save target stay away where there is nothing to sign in to. `titlebar`
 - **changed** The sign-in window follows the new design: its own card on a dimmed page, with a line saying what an account is for. `signin`
 - **changed** Generator: saving and opening a world live in a menu in the title bar; the floppy, the folder and the unsaved badge are gone. `titlebar`
 - **changed** Generator: the title bar's name leads back to the title screen, and the world beside it is text again. `titlebar`
