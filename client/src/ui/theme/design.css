@@ -19,6 +19,11 @@
   --dc-lang-on: #f7f3eb;
   --dc-footer: #f7f3eb;
 
+  /* what floats above the page: a menu, and the shadow that lifts it */
+  --dc-menu-bg: #ffffff;
+  --dc-menu-line: #d6cdbb;
+  --dc-menu-shadow: rgba(70, 52, 24, 0.18);
+
   /* lines */
   --dc-line: #ddd5c5;
   --dc-line2: #d3cab8;

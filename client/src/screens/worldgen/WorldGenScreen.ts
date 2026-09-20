@@ -47,12 +47,10 @@ import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleBar'
+import { createSaveMenu, type SaveTarget } from '../../ui/titleBar/SaveMenu'
 import { keepWorldInBrowser } from '../../world/browserWorlds'
 import { getServerStatus, refreshServerStatus } from '../../server/serverStatus'
 import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
-import { createSavePanel } from '../../ui/worldPanels/SavePanel'
-import type { SaveTarget } from '../../ui/worldPanels/SavePanel'
-import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { createWorldChooser } from './WorldChooser'
 import { createStepBar } from './StepBar'
 import { createSidebar } from './Sidebar'
@@ -472,13 +470,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   root.innerHTML = `
     <div class="file-actions">
       <span data-slot="server-indicator"></span>
-      <button type="button" class="file-button" data-action="load-world" aria-label="${t('common.action.loadWorld.label')}" data-help="common.action.loadWorld">
-        <img src="/icons/folder.png" alt="" />
-      </button>
-      <button type="button" class="file-button" data-action="save-world" aria-label="${t('common.action.saveWorld.label')}" data-help="common.action.saveWorld">
-        <img src="/icons/floppy.png" alt="" />
-        <img class="file-button__badge" src="/icons/warning.png" alt="" />
-      </button>
       <button type="button" class="file-button cache-button" data-action="cache-manager" aria-label="${t('common.action.storage.label')}" data-help="common.action.storage">
         <img src="/icons/server_clean.png" alt="" />
       </button>
@@ -727,8 +718,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const resetClimateButton = root.querySelector<HTMLButtonElement>('[data-action="reset-climate"]')!
   const resetEcologyButton = root.querySelector<HTMLButtonElement>('[data-action="reset-ecology"]')!
   const resetMigrationButton = root.querySelector<HTMLButtonElement>('[data-action="reset-migration"]')!
-  const loadWorldButton = root.querySelector<HTMLButtonElement>('[data-action="load-world"]')!
-  const saveWorldButton = root.querySelector<HTMLButtonElement>('[data-action="save-world"]')!
   // The artifact cache is filled by the worldmap, but inspecting it is just
   // as wanted from here — a world tuned in this screen is what ends up
   // costing minutes to bake over there. Same centred window, un-localized
@@ -737,11 +726,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const serverIndicator = createServerIndicator(root)
   root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
 
-  // The title bar (ui/titleBar) — the first piece of the generator redesign to
-  // land, so it currently sits ABOVE the older chrome rather than replacing it:
-  // the folder/floppy/cache buttons keep working and move down past it. The
-  // save menu, the job list and the theme switch the design draws there arrive
-  // with the steps that own them.
+  // The title bar (ui/titleBar). It has taken over saving and opening from the
+  // older chrome — the floppy and the folder are gone, and what is left of the
+  // strip below it is the server indicator and the cache window, which the
+  // design keeps in the job list this screen does not have yet.
+  //
+  // The WORDMARK is the way out, not the world's name beside it: the name says
+  // which world is open, and a control that reads as a label is how you leave
+  // a world by accident. The world list is reached from the save menu now.
   //
   // onLocaleChange does NOT rebuild the screen, unlike the title and map
   // screens: a rebuild here throws away an unsaved world. The pieces redrawn
@@ -752,7 +744,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const titleBar = createTitleBar(root, {
     nameKey: 'generator.title',
     onSignIn: () => serverIndicator.openSignIn(),
-    onWorldClick: () => openWorldChooser(),
+    onHomeClick: () => ctx.goTo('title'),
     onLocaleChange: () => {
       // One call for the whole column: every step block in it carries its keys
       // rather than its strings (see i18n/relabel).
@@ -760,12 +752,25 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       sidebar.relabel()
       stepBar.relabel()
       worldChooser.relabel()
+      saveMenu.relabel()
       // The step statuses are words the screen chooses, not the bar's; this is
       // what puts the new language into them.
       updateNavState()
       sayScreen()
     },
   })
+
+  // Saving and opening hang in the bar's tool slot (ui/titleBar/SaveMenu),
+  // where the design draws them. It is the generator that owns them — the bar
+  // is chrome and knows no world — so the menu is built here and its four
+  // moves are this screen's own.
+  const saveMenu = createSaveMenu({
+    currentWorld: () => ({ uid: worldUid, seed: seedInput.value, revision: worldRevision }),
+    onSave: (target) => { void saveTo(target) },
+    onOpenWorld: () => openWorldChooser(),
+    onSignIn: () => serverIndicator.openSignIn(),
+  })
+  titleBar.tools.appendChild(saveMenu.element)
 
   const storagePanel = createStoragePanel(root)
   root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => storagePanel.open())
@@ -884,8 +889,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     resetClimateButton.disabled = busy
     resetEcologyButton.disabled = busy
     resetMigrationButton.disabled = busy
-    loadWorldButton.disabled = busy
-    saveWorldButton.disabled = busy
+    saveMenu.setEnabled(!busy)
     // Stop buttons of the active process stay enabled.
     toggleSimButton.disabled = busy && !tectonicsRunning
     erodeButton.disabled = busy && !erosionOpInFlight
@@ -2938,11 +2942,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   function updateSaveIndicator(): void {
-    const unsaved = worldSignature() !== savedSignature
-    saveWorldButton.classList.toggle('has-unsaved', unsaved)
-    // Same trick the server indicator uses: the hover card follows the state, so
-    // the badge is never a symbol with no explanation.
-    saveWorldButton.setAttribute('data-help', unsaved ? 'common.action.saveWorld.unsaved' : 'common.action.saveWorld')
+    // The title bar's status line IS the unsaved marker now. The badge on the
+    // floppy said the same thing twice, one of them in a symbol.
     titleBar.setSaveState(saveState())
     // Nothing while the chooser is up. The generator has already built a world
     // behind it, so there IS a seed to show — showing it would say a world is
@@ -3243,16 +3244,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const awaitCompute = (setResolver: (r: () => void) => void, request: () => void): Promise<void> =>
     new Promise((resolve) => { setResolver(resolve); request() })
 
-  // Save and load each open their own window rather than sharing one with
-  // tabs: a panel that answers a single question at a time beats a window that
-  // first asks which question you meant (docs/decisions/server-storage.md).
-  //
-  // Both fall back to the plain behaviour when there is no server — a window
-  // offering a single option is friction rather than choice.
-  const savePanel = createSavePanel(root, {
-    currentWorld: () => ({ uid: worldUid, seed: seedInput.value, revision: worldRevision }),
-    onChoose: (target) => { void saveTo(target) },
-  })
   // The generator's first screen (see WorldChooser). Built here, beside the
   // other two ways into a world, and opened at the foot of this function.
   const worldChooser = createWorldChooser(root, {
@@ -3294,13 +3285,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // The bar has been showing no world; now there is one to name.
     updateSaveIndicator()
   }
-
-  const loadPanel = createLoadPanel(root, {
-    // The panel chooses; the screen restores. Wrapping the archive as a File
-    // keeps loadWorldFromZip's signature — it only ever needed the bytes.
-    onOpenArchive: (archive) => { void loadWorldFromZip(new File([archive], 'world.zip')) },
-    onPickFile: () => pickLocalWorldFile(),
-  })
 
   async function saveTo(target: SaveTarget): Promise<void> {
     pendingSaveTarget = target
@@ -3604,13 +3588,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     input.click()
   }
 
-  saveWorldButton.addEventListener('click', () => {
-    void getServerStatus().then((status) => {
-      if (status.state === 'local' || status.state === 'remote') savePanel.open()
-      else void saveTo('download')
-    })
-  })
-
   async function saveWorld(): Promise<void> {
     // Neither phase may be stepping: a snapshot taken mid-epoch would capture a world
     // the simulation has already moved past.
@@ -3790,12 +3767,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, archean: archeanPayload as never })
   }
 
-  loadWorldButton.addEventListener('click', () => {
-    void getServerStatus().then((status) => {
-      if (status.state === 'local' || status.state === 'remote') loadPanel.open()
-      else pickLocalWorldFile()
-    })
-  })
 
   // Dragging the band slider live-recomputes the climate (debounced) once a
   // world exists — the worker no-ops if there's no elevation yet. Recomputes
@@ -4480,8 +4451,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       helpTooltip.dispose()
       storagePanel.dispose()
       serverIndicator.dispose()
-      savePanel.dispose()
-      loadPanel.dispose()
+      saveMenu.dispose()
       hoverTooltip?.dispose()
       riverLayer?.dispose()
       overlay.dispose()

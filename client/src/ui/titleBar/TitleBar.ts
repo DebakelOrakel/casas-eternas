@@ -49,11 +49,12 @@ export interface TitleBarOptions {
   // product's name. The generator names itself, because it is one workshop
   // inside it and the word is translated.
   nameKey?: TKey
-  // Leaving the world that is named here — the screen decides what that means
-  // (the generator reopens its world list). Optional: a screen that has no
-  // world to leave, or nowhere to go, leaves it out and the block stays plain
-  // text rather than a control that does nothing.
-  onWorldClick?(): void
+  // Leaving this screen for the title screen. It hangs off the WORDMARK, which
+  // is the one part of the bar that names where you are rather than what you
+  // are working on: a click on it goes up, as it does on any masthead. The
+  // world beside it is not a way out — it says which world is open, and a
+  // screen that gives no handler here keeps the mark as plain text.
+  onHomeClick?(): void
   // Called after the locale changed and the bar re-rendered itself. A screen
   // that can afford to rebuild says so here; one holding unsaved work (the
   // generator) leaves it out and stays in the old language until re-entered,
@@ -63,6 +64,11 @@ export interface TitleBarOptions {
 
 export interface TitleBar {
   element: HTMLElement
+  // Where a screen hangs its own tools — the save menu today, the job list and
+  // the theme switch the design draws beside it later. The bar does not own
+  // them: saving is the generator's business and the bar is chrome, so it
+  // offers the place rather than the buttons.
+  tools: HTMLElement
   setWorld(world: TitleBarWorld | null): void
   setSaveState(state: TitleBarSaveState): void
   dispose(): void
@@ -94,23 +100,33 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
 
   // The wordmark's globe is inline rather than an <img> so it takes the bar's
   // accent colour from the same token everything else here reads.
+  // The mark is a <button> only where it leads somewhere — see onHomeClick. A
+  // button that does nothing is worse than text: it takes a tab stop and
+  // promises a move.
+  const markTag = options.onHomeClick ? 'button' : 'div'
+  // The visible word is the screen's name ("Generator"), which does not say
+  // that clicking it leaves; the accessible name does.
+  const markAttrs = options.onHomeClick
+    ? ` type="button" data-help="titlebar.home" aria-label="${t('titlebar.home.label')}"`
+    : ''
   bar.innerHTML = `
-    <div class="title-bar__mark">
+    <${markTag} class="title-bar__mark"${markAttrs}>
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--dc-accent)" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
         <circle cx="12" cy="12" r="9.5" />
         <path d="M3 10c4 1 6-2 9-1s4 4 9 2" />
         <path d="M5 17c3-1 5 1 8 0s4-3 7-2" />
       </svg>
       <span class="title-bar__name">${options.nameKey ? t(options.nameKey) : APP_NAME}</span>
-    </div>
+    </${markTag}>
     <div class="title-bar__divider" data-slot="world-divider"></div>
-    <div class="title-bar__world" data-slot="world" data-help="titlebar.world" role="button" tabindex="0">
+    <div class="title-bar__world" data-slot="world" data-help="titlebar.world">
       <span class="title-bar__world-name" data-slot="world-name"></span>
       <span class="title-bar__seed" data-slot="seed"></span>
       <span class="title-bar__status" data-slot="status"></span>
     </div>
     <div class="title-bar__spacer"></div>
     <div class="title-bar__actions">
+      <span data-slot="tools"></span>
       <div class="title-bar__lang">
         <button type="button" data-lang="de" data-help="titlebar.language.de">DE</button>
         <button type="button" data-lang="en" data-help="titlebar.language.en">EN</button>
@@ -126,6 +142,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   const seedText = bar.querySelector<HTMLElement>('[data-slot="seed"]')!
   const statusText = bar.querySelector<HTMLElement>('[data-slot="status"]')!
   const accountSlot = bar.querySelector<HTMLElement>('[data-slot="account"]')!
+  const toolsSlot = bar.querySelector<HTMLElement>('[data-slot="tools"]')!
 
   // --- language -------------------------------------------------------------
 
@@ -190,23 +207,11 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   // never outlives the session it names.
   const stopWatchingSession = onSessionChange(() => paintAccount())
 
-  // --- leaving the world ----------------------------------------------------
+  // --- leaving the screen ---------------------------------------------------
 
-  if (options.onWorldClick) {
-    const leave = options.onWorldClick.bind(options)
-    worldGroup.classList.add('title-bar__world--action')
-    worldGroup.addEventListener('click', () => leave())
-    // A div with role=button is not a button: Enter and Space do not reach it
-    // on their own, and without this the only way out of a world would be the
-    // mouse.
-    worldGroup.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' && event.key !== ' ') return
-      event.preventDefault()
-      leave()
-    })
-  } else {
-    worldGroup.removeAttribute('role')
-    worldGroup.removeAttribute('tabindex')
+  if (options.onHomeClick) {
+    const home = options.onHomeClick.bind(options)
+    bar.querySelector<HTMLElement>('.title-bar__mark')!.addEventListener('click', () => home())
   }
 
   // --- world and save state -------------------------------------------------
@@ -245,6 +250,9 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
 
   function render(): void {
     bar.querySelector('.title-bar__name')!.textContent = options.nameKey ? t(options.nameKey) : APP_NAME
+    if (options.onHomeClick) {
+      bar.querySelector('.title-bar__mark')!.setAttribute('aria-label', t('titlebar.home.label'))
+    }
     paintLanguage()
     paintAccount()
     paintWorld()
@@ -256,6 +264,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
 
   return {
     element: bar,
+    tools: toolsSlot,
     setWorld(next) {
       world = next
       paintWorld()

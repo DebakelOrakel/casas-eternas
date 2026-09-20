@@ -47,10 +47,24 @@
 
 /* --- wordmark ------------------------------------------------------------ */
 
+/* One rule for both shapes the mark takes (see TitleBar's markTag): a <div> on
+   a screen that IS the product, a <button> on one that can go up to it. The
+   button resets are what keep the two looking identical. */
 .title-bar__mark {
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+button.title-bar__mark:hover {
+  background: var(--dc-hover);
 }
 
 .title-bar__mark svg {
@@ -230,21 +244,6 @@
    number itself stays in CSS and the widget only decides whether a bar is
    there. */
 
-/* The world block as a way out: only when a screen gave it somewhere to go.
-   It reads as text until the pointer is on it, because it names the world
-   first and is a control second. */
-.title-bar__world--action {
-  cursor: pointer;
-  border-radius: 6px;
-  padding: 4px 8px;
-  margin: -4px -8px;
-}
-
-.title-bar__world--action:hover {
-  background: var(--dc-hover);
-}
-
-.title-bar__world--action:focus-visible {
-  outline: 2px solid var(--dc-accent);
-  outline-offset: 0;
-}
+/* The world block is TEXT. It used to be the way back to the world list, and
+   that reading was wrong twice over: it named the world and led away from it,
+   and a masthead's own name is where "up" lives. The mark carries that now. */

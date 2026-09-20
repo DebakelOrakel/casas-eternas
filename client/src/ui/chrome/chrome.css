@@ -67,24 +67,8 @@
   display: block;
 }
 
-/* Unsaved-changes marker. A badge on the button rather than a notification: this
-   is a CONDITION that holds until you save, not an event, and the notification
-   area is cleared at exactly the three moments it would need to appear (loading,
-   regenerating, reset-sim). See docs/design/generator-pipeline.md.
-   Overhangs the corner so the floppy stays readable underneath. */
-.map-chrome .file-button__badge {
-  position: absolute;
-  right: -5px;
-  bottom: -5px;
-  width: 16px;
-  height: 16px;
-  display: none;
-  opacity: 1;
-}
-
-.map-chrome .file-button.has-unsaved .file-button__badge {
-  display: block;
-}
+/* The unsaved-changes badge that used to overhang the floppy is gone with the
+   floppy: the title bar states the same condition in words (ui/titleBar). */
 
 
 .map-chrome .panel-title {

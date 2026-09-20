@@ -4,6 +4,8 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-20
+- **changed** Generator: saving and opening a world live in a menu in the title bar; the floppy, the folder and the unsaved badge are gone. `titlebar`
+- **changed** Generator: the title bar's name leads back to the title screen, and the world beside it is text again. `titlebar`
 - **changed** The title bar carries the product's name, and says "Generator" only in the generator. `titlebar`
 - **changed** The title screen stands on the same paper as the generator's own screens, in place of white. `title`
 - **fixed** Generator: the map legend, the run buttons and the species names now follow a language switch. `generator`

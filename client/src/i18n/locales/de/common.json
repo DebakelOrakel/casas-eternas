@@ -1,10 +1,6 @@
 {
   "common.action.loadWorld.label": "Welt laden",
   "common.action.loadWorld.help": "Eine zuvor gespeicherte Welt aus einer .zip-Datei öffnen.",
-  "common.action.saveWorld.label": "Welt speichern",
-  "common.action.saveWorld.help": "Wähle, wo diese Welt bleiben soll.",
-  "common.action.saveWorld.unsaved.label": "Welt speichern — ungespeichert",
-  "common.action.saveWorld.unsaved.help": "Diese Welt hat sich seit dem letzten Speichern, Laden oder Neuerzeugen verändert.",
   "common.action.dismiss.label": "Schließen",
   "common.action.dismiss.help": "Diese Benachrichtigung schließen.",
   "common.unit.celsius": "°C",
@@ -33,7 +29,6 @@
   "common.panel.load.action.download": "Herunterladen",
   "common.panel.load.action.delete": "Löschen",
   "common.panel.load.action.deleteConfirm": "Wirklich löschen",
-  "common.panel.save.title": "Diese Welt speichern",
   "common.panel.save.onServer": "Auf dem Server: Revision {revision}, {when}",
   "common.panel.save.notOnServer": "Noch nicht auf dem Server.",
   "common.panel.storage.empty": "Noch nichts zwischengespeichert — eine Welt landet hier, sobald ihr Bake fertig ist.",

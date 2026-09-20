@@ -1,0 +1,127 @@
+/* The save menu in the title bar — design canvas (Main.dc.html), artboard
+   "Speichern-Menü". The button sits in the bar's tool slot and the list hangs
+   under it; the canvas draws the list 300 px wide with 52 px rows, which is
+   what makes room for a second line under each label. */
+.save-menu {
+  position: relative;
+  display: flex;
+}
+
+.save-menu__button {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text);
+  font-size: 13.5px;
+}
+
+.save-menu__button:hover {
+  background: var(--dc-hover);
+}
+
+/* Open is a pressed state, not a hover that happens to have stuck. */
+.save-menu__button[aria-expanded='true'] {
+  background: var(--dc-hover);
+}
+
+.save-menu__list {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 300px;
+  box-sizing: border-box;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Above the bar itself (4), since it hangs below the bar's own edge. */
+  z-index: 5;
+  border: 1px solid var(--dc-menu-line);
+  border-radius: 8px;
+  background: var(--dc-menu-bg);
+  box-shadow: 0 14px 36px var(--dc-menu-shadow);
+}
+
+/* `display: flex` outranks the user-agent rule for [hidden] — the same trap
+   the rest of this screen's stylesheets carry a line for. */
+.save-menu__list[hidden],
+.save-menu__item[hidden] {
+  display: none;
+}
+
+.save-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text);
+  font: inherit;
+  text-align: left;
+}
+
+.save-menu__item:hover {
+  background: var(--dc-hover);
+}
+
+.save-menu__mark {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--dc-line);
+  color: var(--dc-text2);
+}
+
+.save-menu__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.save-menu__label {
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+/* The one line that says what this target costs you. The long form is in the
+   row's hover card; this is what you read without asking. */
+.save-menu__sub {
+  font-size: 12px;
+  color: var(--dc-faint);
+}
+
+/* What is about to be written. Monospace because every line of it is an
+   identifier, and shortened because the full value is in the title attribute. */
+.save-menu__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding: 8px 10px 4px;
+  border-top: 1px solid var(--dc-line);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--dc-faint);
+}
+
+.save-menu__identity:empty {
+  display: none;
+}
+
+.save-menu__button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
