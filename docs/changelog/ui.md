@@ -4,6 +4,8 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-20
+- **changed** Generator: the overlay bar over the map is gone; every step offers its own layers in the sidebar, and a layer may belong to several steps. `generator.overlays`
+- **fixed** Generator: Tectonics now lists the mantle, the plumes and the volcanoes it was already showing. `generator.overlays`
 - **fixed** Generator: running the Archean no longer marks plate tectonics as computed, nor opens the climate step early. `generator.step`
 - **new** Generator: a step is blocked until the step before it has done enough — the world must be created, and the Archean must be half stabilised. `generator.step`
 - **new** Generator: the sidebar lists the current step's overlays as switches. `generator.overlays`

@@ -88,7 +88,9 @@
 .worldgen-flat-screen .compute-progress {
   position: fixed;
   bottom: calc(7.5rem + var(--step-bar-height, 0px));
-  left: 50%;
+  /* Centred on the MAP, not on the window: the column takes real width off the
+     left, so a plain 50% sits a sidebar's half to the left of the map's middle. */
+  left: calc(50% + var(--sidebar-width, 0px) / 2);
   transform: translateX(-50%);
   z-index: 3;
   width: 220px;
@@ -128,133 +130,10 @@
   100% { margin-left: 100%; }
 }
 
-/* Unified overlay toolbar: a persistent row of icon toggles, top-center, across
-   all panels. Off = dim, on = full, unavailable (data not computed yet) =
-   greyed + not clickable. */
-.worldgen-flat-screen .overlay-bar {
-  position: fixed;
-  /* Clears the title bar — see ui/titleBar. */
-  top: calc(1rem + var(--title-bar-height, 0px));
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 2;
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-}
-/* The bar wraps so the fold-out can sit on its own full-width line beneath the
-   category row, centred with it. */
-.worldgen-flat-screen .overlay-bar {
-  flex-flow: row wrap;
-  justify-content: center;
-}
-
-/* Fold-out: the open category's overlays, hanging under ITS OWN button rather than
-   centred on the bar — `left` is set per category in setOpenGroup and this centres the
-   panel on it. Out of flow on purpose, so the bar's row does not reflow when it opens.
-   
-   Taking it out of flow means the pointer crosses a gap between the two rows, which
-   fires mouseleave on the bar; the close grace period is what absorbs that (entering
-   the fold-out fires mouseenter on the bar again, because it is still a descendant). */
-.worldgen-flat-screen .overlay-foldout {
-  position: absolute;
-  top: 100%;
-  margin-top: 0.45rem;
-  transform: translateX(-50%);
-  /* Sized by its contents, not by the space left over inside the bar. Without this an
-     absolutely positioned box shrink-wraps to the AVAILABLE width — which here is the
-     bar (about seven icons wide) minus the offset of the button it hangs under, so
-     Climate's seven icons broke into rows of three and Ecology's fourteen into a
-     column. The edge clamp in positionFoldoutUnder is what keeps the wider ones on
-     screen. */
-  width: max-content;
-}
-.worldgen-flat-screen .overlay-foldout[hidden] {
-  display: none;
-}
-.worldgen-flat-screen .overlay-group-panel {
-  display: flex;
-  flex-flow: row nowrap;
-  justify-content: center;
-  gap: 0.4rem;
-}
-.worldgen-flat-screen .overlay-group-panel[hidden] {
-  display: none;
-}
-
-/* Two questions, two channels — they used to share the opacity ramp (0.4 off, 0.7
-   hover, 1 active, 0.15 unavailable), which made "has data" and "is showing" hard to
-   tell apart at a glance. Now COLOUR answers "does this layer have data" and the DOT
-   below answers "is it on the map". Hover therefore cannot use opacity either, so it
-   nudges the icon instead. */
-.worldgen-flat-screen .overlay-icon {
-  position: relative;
-  width: 32px;
-  flex: none;
-  border: none;
-  background: none;
-  padding: 0;
-  line-height: 0;
-  cursor: pointer;
-  opacity: 1;
-  transition: transform 0.15s ease, opacity 0.15s ease;
-}
-.worldgen-flat-screen .overlay-icon img {
-  width: 100%;
-  height: auto;
-  display: block;
-}
-.worldgen-flat-screen .overlay-icon:hover:not(.is-disabled) {
-  transform: scale(1.12);
-}
-/* Sits just clear of the fold-out row below (icons end at 3rem, the fold-out starts
-   at 3.45rem). On a category button it means "something in this group is showing". */
-.worldgen-flat-screen .overlay-icon.is-active::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: -0.3rem;
-  width: 4px;
-  height: 4px;
-  margin-left: -2px;
-  border-radius: 50%;
-  background: rgba(26, 26, 26, 0.7);
-}
-.worldgen-flat-screen .overlay-icon.is-disabled {
-  opacity: 0.15;
-  cursor: not-allowed;
-  filter: grayscale(1);
-}
-
-/* Fading backdrop behind the top overlay bar — mirror of the bottom panel's fade,
-   but narrower — so the icons read against a busy map. Behind the icons (z 2). */
-/* Grows while a fold-out is open so its icons read against white, and shrinks back
-   when it closes — the fold-out is only ever on screen while the pointer is on the
-   bar, so the extra height is never carried for long. */
-.worldgen-flat-screen .overlay-bar-backdrop.has-foldout {
-  height: 8.5rem;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.9) 45%, rgba(255, 255, 255, 0.85) 70%, rgba(255, 255, 255, 0) 100%);
-}
-
-.worldgen-flat-screen .overlay-bar-backdrop {
-  position: fixed;
-  /* Starts BELOW the title bar, not behind it: the bar is opaque, so a fade
-     running underneath it would only be a fade that starts invisible and
-     reaches less far down the map than it reads as. */
-  top: var(--title-bar-height, 0px);
-  left: 0;
-  right: 0;
-  height: 5rem;
-  z-index: 1;
-  pointer-events: none;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.8) 45%, rgba(255, 255, 255, 0) 100%);
-  transition: height 0.25s ease;
-}
-
-/* World age + phase hint, directly under the overlay bar. Not in the Genesis
-   panel: the age is true of the world in every phase, and the hint describes what
-   the map is doing rather than a control. Pointer-events off so it never blocks
-   the map underneath. */
+/* World age + phase hint over the map. Not in the Genesis step's controls: the
+   age is true of the world in every phase, and the hint describes what the map
+   is doing rather than a control. Pointer-events off so it never blocks the map
+   underneath. */
 /* Narration about the WORLD, as opposed to the panel below, which is about what
    you can DO. That split is the scheme this is the first instance of: anything the
    simulation wants to tell you about its own state belongs in this band.
@@ -266,7 +145,8 @@
 .worldgen-flat-screen .world-banner {
   position: fixed;
   bottom: 8.4rem;
-  left: 0;
+  /* Centred on the map — see .compute-progress. */
+  left: var(--sidebar-width, 0px);
   right: 0;
   z-index: 2;
   display: flex;
@@ -298,9 +178,12 @@
    pointer-events off so it never blocks the map. */
 .worldgen-flat-screen .overlay-legend {
   position: fixed;
-  /* Clears the title bar — see ui/titleBar. */
-  top: calc(5.25rem + var(--title-bar-height, 0px));
-  left: 1rem;
+  /* Clears the title bar — see ui/titleBar. It used to clear the overlay bar
+     below it as well; that bar is gone, so the legend moved up. */
+  top: calc(1rem + var(--title-bar-height, 0px));
+  /* Beside the column, not under it — the sidebar takes real width, and it
+     publishes it (see Sidebar). */
+  left: calc(1rem + var(--sidebar-width, 0px));
   z-index: 2;
   width: 168px;
   box-sizing: border-box;

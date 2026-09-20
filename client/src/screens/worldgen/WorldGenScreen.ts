@@ -20,7 +20,7 @@ const RUNOFF_COEFFICIENT = 0.35
 const DISCHARGE_TO_M3S = ((METERS_PER_CELL * METERS_PER_CELL * 1e-3) / 3.156e7) * RUNOFF_COEFFICIENT
 import JSZip from 'jszip'
 import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage } from '../../worldgen/pipeline/messages'
-import { STAGES, downstreamOf, stage } from '../../worldgen/pipeline/stages'
+import { downstreamOf, stage } from '../../worldgen/pipeline/stages'
 import type { StageId } from '../../worldgen/pipeline/stages'
 import { drawContinentLabels } from '../../worldgen/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../worldgen/render/continentLabelRenderer'
@@ -41,6 +41,8 @@ import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from '../../
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
 import { createOverlayList } from './OverlayList'
+import { OVERLAY_META, OVERLAY_IDS, type OverlayId } from './overlays'
+import { STEPS, STEP_IDS, step, type StepId } from './steps'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
@@ -77,7 +79,7 @@ import { needsSignIn } from '../../server/session'
 
 // The ecology per-field abundance weights persisted in world.yaml (keys `w_<field>`).
 // The one grouping of ecology resources — used by the panel's abundance fold-out, by
-// the overlay bar's Ecology category, and by the nesting in world.yaml.
+// the column's resource picker, and by the nesting in world.yaml.
 //
 // It was briefly two lists, and they had already drifted: the panel called the third
 // group `metals` and ordered prestige silver-gold-gems, the save called it `metal` and
@@ -938,28 +940,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Coarse climate rasters (from the worker's computeClimate step). Sampled up
   // to full map resolution in the overlay paint fns. null until computed / when
   // invalidated by an upstream reset.
-  // Panel order IS the pipeline chain — see the step bar further down for the rest
-  // of that argument. Hoisted here because the panel constants below derive from it.
+  // Step order IS the pipeline chain, plus step 0 in front of it — see steps.ts,
+  // which owns the table and checks it against the chain. Hoisted here because
+  // the panel constants below derive from it.
   //
-  // One stage has NO panel: hydrology. Its only control died with the density
-  // slider (erosion-v2 P4 made it a draw filter, the teardown removed it), and
-  // its readout — rivers, lakes, the salt repaint — belongs to the erosion
-  // panel, whose solve it measures. The STAGE still runs: automatically after
-  // each erosion pass, and on demand from ecology/migration/save as before.
-  type PanelStageId = Exclude<StageId, 'hydrology'>
-  const PANEL_STAGES: readonly PanelStageId[] = STAGES.map((s) => s.id).filter((id): id is PanelStageId => id !== 'hydrology')
-  // Throws rather than returning -1: a stage whose panel is missing would
+  // Throws rather than returning -1: a step whose panel is missing would
   // otherwise read as "panel before the first one" and quietly change every
   // comparison that uses it.
-  //
-  // STEP_IDS is what the screen navigates, and it is NOT the stage list: step 0
-  // ("world") gives the world its name, its seed and its shape, none of which
-  // the pipeline computes. It is a step to the person using the generator and
-  // no stage at all to the pipeline, so it is added here rather than smuggled
-  // into StageId, where every exhaustive switch would then have to answer for
-  // a stage that runs nothing.
-  type StepId = 'world' | PanelStageId
-  const STEP_IDS: readonly StepId[] = ['world', ...PANEL_STAGES]
   const panelIndexOf = (id: StepId): number => {
     const i = STEP_IDS.indexOf(id)
     if (i < 0) throw new Error(`no panel for step ${id}`)
@@ -1032,7 +1019,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastEcologyFields: Partial<Record<EcologyFieldId, Float32Array>> = {}
   let selectedEcologyField: EcologyFieldId = 'carryingCapacity'
   // Field currently previewed by hovering a panel slider/icon (null = not
-  // hovering). While non-null the ecology overlay shows even if its toolbar
+  // hovering). While non-null the ecology overlay shows even if its own
   // toggle is off, and reverts when the mouse leaves the panel.
   let ecologyHoverField: EcologyFieldId | null = null
   const ecologyLayerOn = (): boolean => (overlaysOn.ecology || ecologyHoverField !== null) && hasEcologyData()
@@ -1479,7 +1466,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // very sizes (a handful of cells) that matter most here.
   // Layer draw/list order: temperature first (a base tint), names last so labels
   // stay on top (always readable); the climate layers (temperature, wind) are
-  // hidden from the overlay bar — toggled from the climate panel instead. The
+  // not offered by every step — see steps.ts. The
   // 'events' layer has no static paint — it just gates the transient event
   // markers (added via overlay.addMarker).
   // Latest composited RGBA (retained for the save preview thumbnail).
@@ -1718,23 +1705,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
   }
 
-  // Shows/hides the temperature overlay and keeps its three visual states in
-  // sync: the panel's temp toggle button (icon), the overlay-bar chip, and the
-  // layer itself. The panel button and the overlay chip are two doors to the
-  // same switch.
   // The hover tooltip (created near setup end); refresh()ed whenever the data or
   // active overlays change so a stationary readout stays in sync.
   let hoverTooltip: ReturnType<typeof createMapHoverTooltip> | null = null
 
-  // Unified overlay toolbar (top-center, persistent across all panels). Every
-  // toggleable overlay is one icon button; a button is disabled until its data
-  // exists (its `available`), and shows an active state when on. 'rivers' bundles
-  // the scene-space river ribbons + the lake tint under one control. Events are
-  // NOT here — they're always on. Order = display order in the bar.
-  // A legend explains an overlay's colours; only overlays whose colour→meaning
-  // isn't self-evident carry one (names/cells/wind/rivers don't). 'gradient' = a
-  // continuous colour ramp with value labels; 'swatches' = discrete colour+label
-  // rows. Shown on the right whenever a legend-bearing overlay is active.
+  // THE OVERLAYS. Which layers exist, what they are called and which icon
+  // stands for them lives in overlays.ts; which of them a step offers lives in
+  // steps.ts; the two tables below say when a layer can be shown and what its
+  // legend says, because both read this screen's own data. 'rivers' bundles the
+  // scene-space river ribbons + the lake tint under one control. Events are not
+  // a layer you switch — they are always on.
+  //
+  // 'gradient' = a continuous colour ramp with value labels; 'swatches' =
+  // discrete colour+label rows. Shown on the right whenever a legend-bearing
+  // overlay is active.
   type LegendSpec =
     | { type: 'gradient'; title: string; unit: string; stops: { value: number; rgb: [number, number, number] }[] }
     | { type: 'swatches'; title: string; items: { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' | 'ring' }[] }
@@ -1744,203 +1728,85 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // `t(labelKey + '.label')` is the button's tooltip/aria text. The id and the key
   // slug match except 'ecology' → 'resources'. (Legend titles below are not yet
   // localized — a later step.)
-  const OVERLAY_DEFS: { id: string; icon: string; labelKey: string; available: () => boolean; legend?: LegendSpec | (() => LegendSpec) }[] = [
-    { id: 'terrain', icon: '/icons/colours.png', labelKey: 'world.overlay.terrain', available: () => lastColoredBase !== null },
-    // Plate outlines are meaningless during the Archean (no plates exist) and, in
-    // the tectonic phase, they redraw every epoch while running — which reads as
-    // flicker rather than information. Available only when something is paused.
-    // Available from the tectonic phase on, running or not — the plates are the thing
-    // you are watching there, and hiding them mid-run (which is what `!tectonicsRunning`
-    // used to do) removed them exactly when they were moving.
-    //
-    // In Genesis it appears only while the Archean is PAUSED, where it previews the
-    // plates a handover would produce (see the worker's convectionCellSeeds call).
-    // Running, it is deliberately gone: the convection reorganises every epoch, so a
-    // live preview would flicker between answers none of which the world has taken.
-    { id: 'boundaries', icon: '/icons/voronoi.png', labelKey: 'world.overlay.boundaries', available: () => lastBoundaryMask !== null && (archeanFinalised || !archeanRunning) },
+  // WHETHER a layer can be shown right now — one predicate per layer, keyed by
+  // the id, so a layer added to the vocabulary is a compile error here until it
+  // says when it exists. (The icons and the names live in overlays.ts; these
+  // read the screen's own data, which is why they stay.)
+  const overlayAvailable: Record<OverlayId, () => boolean> = {
+    terrain: () => lastColoredBase !== null,
+    // Available from the hand-over on, running or not — the plates are the thing
+    // you are watching in that step, and hiding them mid-run (which is what
+    // `!tectonicsRunning` used to do) removed them exactly when they were moving.
+    // The Archean clause is what keeps them off a world that has no plates yet.
+    boundaries: () => lastBoundaryMask !== null && (archeanFinalised || !archeanRunning),
     // Blocked during the Archean: proto-cratons are not continents yet, they merge
     // and fragment constantly, and naming something that dissolves ten epochs later
     // is noise. finalizeArchean names them all when plate tectonics begins.
-    { id: 'names', icon: '/icons/continent_name.png', labelKey: 'world.overlay.names', available: () => archeanFinalised && lastRaftLabels.length > 0 },
-    {
-      id: 'mantle', icon: '/icons/mantle.png', labelKey: 'world.overlay.mantle', available: () => lastMantle !== null,
-      legend: { type: 'swatches', title: t('world.overlay.mantle.legend.title'), items: [
-        { label: t('world.overlay.mantle.legend.upwelling'), rgb: [225, 85, 55] },
-        { label: t('world.overlay.mantle.legend.downwelling'), rgb: [55, 110, 210] },
-      ] },
-    },
+    names: () => archeanFinalised && lastRaftLabels.length > 0,
+    mantle: () => lastMantle !== null,
     // Split out of the mantle overlay. It used to carry the field tint, the volcanic
-    // cones and the plume rings under one button with one static legend — which in the
-    // Genesis panel promised a "Volcano" and a "Hotspot plume" that can never appear
-    // there, because the Archean has neither. Three buttons, three honest legends.
-    {
-      id: 'volcanoes', icon: '/icons/volcano.png', labelKey: 'world.overlay.volcanoes', available: () => lastVolcanoes.length > 0,
-      legend: { type: 'swatches', title: t('world.overlay.volcanoes.legend.title'), items: [
-        { label: t('world.overlay.volcanoes.legend.hotspot'), rgb: [220, 55, 30], shape: 'cone' },
-        { label: t('world.overlay.volcanoes.legend.arc'), rgb: [235, 120, 30], shape: 'cone' },
-        { label: t('world.overlay.volcanoes.legend.flood'), rgb: [120, 25, 20], shape: 'cone' },
-      ] },
-    },
-    {
-      id: 'hotspots', icon: '/icons/hotspot.png', labelKey: 'world.overlay.hotspots', available: () => lastHotspots.length > 0,
-      legend: { type: 'swatches', title: t('world.overlay.hotspots.legend.title'), items: [
-        { label: t('world.overlay.hotspots.legend.plume'), rgb: [255, 140, 0], shape: 'ring' },
-      ] },
-    },
-    {
-      id: 'cratonAge', icon: '/icons/craton.png', labelKey: 'world.overlay.cratonAge',
-      // Available as soon as any crust exists, which in the Archean is within a few
-      // epochs of the first upwelling standing still long enough.
-      available: () => lastCratonAge !== null && lastCratonAge.some((v) => v >= 0),
-      legend: { type: 'gradient', title: 'Craton age', unit: '% of world age', stops: cratonAgeLegendStops },
-    },
-    { id: 'temperature', icon: '/icons/temperature.png', labelKey: 'world.overlay.temperature', available: () => lastTemperature !== null, legend: { type: 'gradient', title: 'Temperature', unit: '°C', stops: temperatureLegendStops } },
-    { id: 'seasonality', icon: '/icons/seasonality.png', labelKey: 'world.overlay.seasonality', available: () => lastSeasonality !== null, legend: { type: 'gradient', title: 'Seasonality', unit: '°C range', stops: amplitudeLegendStops } },
-    { id: 'wind', icon: '/icons/wind.png', labelKey: 'world.overlay.wind', available: () => lastWind !== null },
-    { id: 'currents', icon: '/icons/gyres.png', labelKey: 'world.overlay.currents', available: () => lastCurrents !== null },
-    { id: 'precipitation', icon: '/icons/rain.png', labelKey: 'world.overlay.precipitation', available: () => lastPrecipitation !== null, legend: { type: 'gradient', title: 'Precipitation', unit: 'mm/yr', stops: precipitationLegendStops } },
-    { id: 'monsoon', icon: '/icons/weather.png', labelKey: 'world.overlay.monsoon', available: () => lastMonsoonIndex !== null, legend: { type: 'gradient', title: 'Monsoon index', unit: '', stops: monsoonLegendStops } },
-    { id: 'biomes', icon: '/icons/biomes.png', labelKey: 'world.overlay.biomes', available: () => lastBiomes !== null, legend: { type: 'swatches', title: t('world.overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) } },
-    { id: 'rivers', icon: '/icons/river.png', labelKey: 'world.overlay.rivers', available: () => lastRiverData !== null },
-    {
-      id: 'waterBalance', icon: '/icons/waterbilance.png', labelKey: 'world.overlay.waterBalance', available: () => lastTemperature !== null && lastPrecipitation !== null,
-      legend: { type: 'swatches', title: t('world.overlay.waterBalance.label'), items: [
-        { label: t('world.overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
-        { label: t('world.overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
-      ] },
-    },
-    { id: 'watersheds', icon: '/icons/watersheds.png', labelKey: 'world.overlay.watersheds', available: () => lastWatersheds !== null },
-    {
-      id: 'ecology', icon: '/icons/ecology.png', labelKey: 'world.overlay.resources', available: hasEcologyData,
-      legend: () => ({ type: 'gradient', title: ECOLOGY_FIELD_META[selectedEcologyField].label, unit: '', stops: ecologyFieldLegendStops(selectedEcologyField) }),
-    },
-    // TODO(icon): reuses the human species icon — a dedicated migration icon later.
-    {
-      id: 'migration', icon: '/icons/human.png', labelKey: 'world.overlay.migration', available: () => lastMigration !== null,
-      legend: { type: 'swatches', title: 'Peoples', items: MIGRATION_RACES.map((r) => ({ label: r.label, rgb: r.rgb })) },
-    },
-  ]
-  // Desired on/off per overlay (persists as availability comes and goes). Voronoi
-  // + names + mantle default on (they show as soon as their data exists); terrain
-  // default on too but is re-set per panel in showPanel (on for the shaping panels,
-  // off for the neutral data panels); other data overlays default off.
-  const overlaysOn: Record<string, boolean> = {}
-  for (const def of OVERLAY_DEFS) overlaysOn[def.id] = def.id === 'boundaries' || def.id === 'names' || def.id === 'terrain' || def.id === 'mantle'
-
-  // The bar carries one button per pipeline stage rather than one per overlay —
-  // fifteen icons in a row read as a wall, and most of them belong to a stage you are
-  // not looking at. Clicking a stage folds its overlays out beneath the bar; the
-  // Ecology panel's category fold-out is the model.
-  //
-  // `terrain` stays outside the grouping: it is not a data layer of any one stage but
-  // the map's own colouring, and it is the one people reach for constantly.
-  //
-  // A stage with a single overlay does NOT fold out — its button toggles that overlay
-  // directly. Otherwise opening a category would reveal one identical button, which is
-  // a click that buys nothing.
-  // `helpBase` is the hover-card key pair for the category button itself. The three
-  // fold-out categories whose label borrows a `…title` key (no `.help` sibling) carry
-  // their own `world.overlay.group.*` pair; the rest resolve from their labelKey
-  // below, so only the ones that genuinely need it spend keys.
-  const OVERLAY_GROUPS: { id: string; icon: string; labelKey: string; helpBase?: string; members: string[]; ecologyFields?: EcologyFieldId[] }[] = [
-    { id: 'genesis', icon: '/icons/mantle.png', labelKey: 'worldgen.panel.genesis.title', helpBase: 'world.overlay.group.genesis', members: ['mantle', 'cratonAge', 'volcanoes', 'hotspots'] },
-    { id: 'tectonics', icon: '/icons/tectonics.png', labelKey: 'worldgen.panel.tectonics.title', helpBase: 'world.overlay.group.tectonics', members: ['boundaries', 'names'] },
-    { id: 'climate', icon: '/icons/temperature.png', labelKey: 'worldgen.panel.climate.title', helpBase: 'world.overlay.group.climate', members: ['temperature', 'seasonality', 'wind', 'currents', 'precipitation', 'monsoon', 'biomes'] },
-    { id: 'hydrology', icon: '/icons/lake.png', labelKey: 'world.overlay.group.hydrology.label', helpBase: 'world.overlay.group.hydrology', members: ['rivers', 'waterBalance', 'watersheds'] },
-    // Ecology carries the aggregate plus every resource field. The fields duplicate
-    // the panel's own fold-out at the bottom, deliberately: down there they set
-    // ABUNDANCE, up here they choose what the map paints — same list, different job.
-    { id: 'ecology', icon: '/icons/ecology.png', labelKey: 'world.overlay.resources.label', members: [], ecologyFields: ['carryingCapacity', ...ECOLOGY_WEIGHT_FIELDS] },
-    { id: 'migration', icon: '/icons/human.png', labelKey: 'world.overlay.migration.label', members: ['migration'] },
-  ]
-  const defOf = (id: string): (typeof OVERLAY_DEFS)[number] => OVERLAY_DEFS.find((d) => d.id === id)!
-
-  const overlayBar = document.createElement('div')
-  overlayBar.className = 'overlay-bar'
-  const overlayButtons: Record<string, HTMLButtonElement> = {}
-  const groupButtons: Record<string, HTMLButtonElement> = {}
-  const groupPanels: Record<string, HTMLElement> = {}
-  const ecologyFieldButtons: Partial<Record<EcologyFieldId, HTMLButtonElement>> = {}
-  let openGroup: string | null = null
-
-  // `label` is the finished string; `helpBase` is the catalog prefix the hover help
-  // card reads its label+sentence from (null = no card). Split because a button's
-  // visible label and its help entry do not always live under the same key — see
-  // OVERLAY_GROUPS.helpBase, where the fold-out categories borrow a panel title for
-  // the label but need their own `.label`/`.help` pair for the card.
-  function makeIconButton(icon: string, label: string, helpBase: string | null, onClick: () => void): HTMLButtonElement {
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.className = 'overlay-icon'
-    btn.setAttribute('aria-label', label)
-    if (helpBase) btn.dataset.help = helpBase
-    const img = document.createElement('img')
-    img.src = icon
-    img.alt = ''
-    btn.appendChild(img)
-    btn.addEventListener('click', onClick)
-    return btn
+    // cones and the plume rings under one control with one static legend — which in the
+    // Genesis step promised a "Volcano" and a "Hotspot plume" that can never appear
+    // there, because the Archean has neither. Three layers, three honest legends.
+    volcanoes: () => lastVolcanoes.length > 0,
+    hotspots: () => lastHotspots.length > 0,
+    // Available as soon as any crust exists, which in the Archean is within a few
+    // epochs of the first upwelling standing still long enough.
+    cratonAge: () => lastCratonAge !== null && lastCratonAge.some((v) => v >= 0),
+    temperature: () => lastTemperature !== null,
+    seasonality: () => lastSeasonality !== null,
+    wind: () => lastWind !== null,
+    currents: () => lastCurrents !== null,
+    precipitation: () => lastPrecipitation !== null,
+    monsoon: () => lastMonsoonIndex !== null,
+    biomes: () => lastBiomes !== null,
+    rivers: () => lastRiverData !== null,
+    waterBalance: () => lastTemperature !== null && lastPrecipitation !== null,
+    watersheds: () => lastWatersheds !== null,
+    ecology: hasEcologyData,
+    migration: () => lastMigration !== null,
   }
 
-  const terrainDef = defOf('terrain')
-  overlayButtons.terrain = makeIconButton(terrainDef.icon, t(`${terrainDef.labelKey}.label` as TKey), terrainDef.labelKey, () => toggleOverlay('terrain'))
-  overlayBar.appendChild(overlayButtons.terrain)
-
-  // Opening is a CLICK, but once something is open, hovering a neighbour switches to
-  // it — the desktop menu-bar convention. Hover-to-open was considered and rejected:
-  // this bar sits over the map, so moving the pointer across it to reach a control
-  // would flash panels onto exactly what you are looking at, and with six buttons in a
-  // row every trip to the far one crosses all the others.
-  function setOpenGroup(id: string | null): void {
-    openGroup = id
-    for (const group of OVERLAY_GROUPS) {
-      const panel = groupPanels[group.id]
-      if (panel) panel.hidden = group.id !== id
-    }
-    overlayFoldout.hidden = id === null || !groupPanels[id]
-    if (id !== null && !overlayFoldout.hidden) positionFoldoutUnder(groupButtons[id])
-    // The backdrop has to reach past the fold-out or its icons would sit on the bare
-    // map; carrying that height permanently would wash the map out for nothing. Same
-    // mechanism the narration line uses on the bottom panel.
-    overlayBackdrop.classList.toggle('has-foldout', !overlayFoldout.hidden)
+  // A legend explains a layer's colours; only the layers whose colour→meaning is
+  // not self-evident carry one (names/boundaries/wind/rivers do not). May be a
+  // function so a layer (ecology) can vary its legend with the selected field —
+  // resolved at render time, see renderLegends.
+  const overlayLegend: Partial<Record<OverlayId, LegendSpec | (() => LegendSpec)>> = {
+    mantle: { type: 'swatches', title: t('world.overlay.mantle.legend.title'), items: [
+      { label: t('world.overlay.mantle.legend.upwelling'), rgb: [225, 85, 55] },
+      { label: t('world.overlay.mantle.legend.downwelling'), rgb: [55, 110, 210] },
+    ] },
+    volcanoes: { type: 'swatches', title: t('world.overlay.volcanoes.legend.title'), items: [
+      { label: t('world.overlay.volcanoes.legend.hotspot'), rgb: [220, 55, 30], shape: 'cone' },
+      { label: t('world.overlay.volcanoes.legend.arc'), rgb: [235, 120, 30], shape: 'cone' },
+      { label: t('world.overlay.volcanoes.legend.flood'), rgb: [120, 25, 20], shape: 'cone' },
+    ] },
+    hotspots: { type: 'swatches', title: t('world.overlay.hotspots.legend.title'), items: [
+      { label: t('world.overlay.hotspots.legend.plume'), rgb: [255, 140, 0], shape: 'ring' },
+    ] },
+    cratonAge: { type: 'gradient', title: 'Craton age', unit: '% of world age', stops: cratonAgeLegendStops },
+    temperature: { type: 'gradient', title: 'Temperature', unit: '°C', stops: temperatureLegendStops },
+    seasonality: { type: 'gradient', title: 'Seasonality', unit: '°C range', stops: amplitudeLegendStops },
+    precipitation: { type: 'gradient', title: 'Precipitation', unit: 'mm/yr', stops: precipitationLegendStops },
+    monsoon: { type: 'gradient', title: 'Monsoon index', unit: '', stops: monsoonLegendStops },
+    biomes: { type: 'swatches', title: t('world.overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) },
+    waterBalance: { type: 'swatches', title: t('world.overlay.waterBalance.label'), items: [
+      { label: t('world.overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
+      { label: t('world.overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
+    ] },
+    ecology: () => ({ type: 'gradient', title: ECOLOGY_FIELD_META[selectedEcologyField].label, unit: '', stops: ecologyFieldLegendStops(selectedEcologyField) }),
+    migration: { type: 'swatches', title: 'Peoples', items: MIGRATION_RACES.map((r) => ({ label: r.label, rgb: r.rgb })) },
   }
 
-  // Hangs the fold-out under its own category button, then pulls it back inside the
-  // viewport if that would push it off an edge — the Climate category carries seven
-  // icons, which is wider than the distance from an outer button to the screen edge.
-  function positionFoldoutUnder(button: HTMLButtonElement): void {
-    overlayFoldout.style.left = `${button.offsetLeft + button.offsetWidth / 2}px`
-    const box = overlayFoldout.getBoundingClientRect()
-    const margin = 8
-    const overshootRight = box.right - (window.innerWidth - margin)
-    const overshootLeft = margin - box.left
-    const correction = overshootRight > 0 ? -overshootRight : overshootLeft > 0 ? overshootLeft : 0
-    if (correction !== 0) overlayFoldout.style.left = `${button.offsetLeft + button.offsetWidth / 2 + correction}px`
-  }
+  // Which layers are showing. Set from the step you enter (see steps.ts) and
+  // changed by the switches in the column; a layer stays "wanted" while its data
+  // comes and goes, which is what lets a switch survive a recompute.
+  const overlaysOn: Record<OverlayId, boolean> = Object.fromEntries(OVERLAY_IDS.map((id) => [id, false])) as Record<OverlayId, boolean>
 
-  // Closing on mouse-leave keeps the map clear without a second click. The grace
-  // period is what makes it bearable: the pointer clips a corner constantly on the way
-  // from the category row to the row below it, and closing on every one of those would
-  // read as the panel fighting back. Bound to the whole BAR, not to single buttons —
-  // the fold-out is a child of it, so travelling between the two rows never leaves.
-  const FOLDOUT_CLOSE_GRACE_MS = 180
-  let foldoutCloseTimer: number | undefined
-  overlayBar.addEventListener('mouseenter', () => {
-    if (foldoutCloseTimer !== undefined) { clearTimeout(foldoutCloseTimer); foldoutCloseTimer = undefined }
-  })
-  overlayBar.addEventListener('mouseleave', () => {
-    if (openGroup === null) return
-    foldoutCloseTimer = window.setTimeout(() => { foldoutCloseTimer = undefined; setOpenGroup(null) }, FOLDOUT_CLOSE_GRACE_MS)
-  })
-
-  const overlayFoldout = document.createElement('div')
-  overlayFoldout.className = 'overlay-foldout'
-  overlayFoldout.hidden = true
-
-  // Picking a resource field turns the ecology layer on and points it at that field.
-  // Unlike every other overlay these are mutually exclusive — paintEcology renders ONE
-  // field over the whole land, so a second could only overwrite the first. Clicking the
-  // one already showing switches the layer off again.
+  // Picking a resource field points the ecology layer at that field. Unlike every
+  // other overlay these are mutually exclusive — paintEcology renders ONE field over
+  // the whole land, so a second could only overwrite the first. Picking the one
+  // already showing switches the layer off again.
   function selectEcologyField(field: EcologyFieldId): void {
     if (overlaysOn.ecology && selectedEcologyField === field) {
       overlaysOn.ecology = false
@@ -1951,55 +1817,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     updateOverlays()
   }
 
-  for (const group of OVERLAY_GROUPS) {
-    const single = group.members.length === 1 && !group.ecologyFields ? group.members[0] : null
-    // Own pair if it has one, else the labelKey's own base (which single-member and
-    // ecology categories do have, since theirs is a `world.overlay.*.label`).
-    const helpBase = group.helpBase ?? (group.labelKey.endsWith('.label') ? group.labelKey.replace(/\.label$/, '') : null)
-    const btn = makeIconButton(group.icon, t(group.labelKey as TKey), helpBase, () => {
-      if (single) toggleOverlay(single)
-      else setOpenGroup(openGroup === group.id ? null : group.id)
-    })
-    btn.addEventListener('mouseenter', () => {
-      if (openGroup !== null && !single) setOpenGroup(group.id)
-    })
-    groupButtons[group.id] = btn
-    overlayBar.appendChild(btn)
-    if (single) {
-      overlayButtons[single] = btn
-      continue
-    }
-    const panel = document.createElement('div')
-    panel.className = 'overlay-group-panel'
-    panel.hidden = true
-    for (const id of group.members) {
-      const def = defOf(id)
-      const memberBtn = makeIconButton(def.icon, t(`${def.labelKey}.label` as TKey), def.labelKey, () => toggleOverlay(id))
-      overlayButtons[id] = memberBtn
-      panel.appendChild(memberBtn)
-    }
-    for (const field of group.ecologyFields ?? []) {
-      const btn = makeIconButton(`/icons/${FIELD_ICON[field]}.png`, t(`world.resource.${field}.label` as TKey), `world.resource.${field}`, () => selectEcologyField(field))
-      ecologyFieldButtons[field] = btn
-      panel.appendChild(btn)
-    }
-    groupPanels[group.id] = panel
-    overlayFoldout.appendChild(panel)
-  }
-  overlayBar.appendChild(overlayFoldout)
-  root.appendChild(overlayBar)
-
-  // Fading backdrop behind the top overlay bar (mirrors the bottom panel's fade),
-  // so the icons read against a busy map.
-  const overlayBackdrop = document.createElement('div')
-  overlayBackdrop.className = 'overlay-bar-backdrop'
-  root.appendChild(overlayBackdrop)
-
   // The phase hint sits just above the compute bar, at the bottom. It used to sit
-  // under the overlay bar — until the bar grew a fold-out that landed on top of it —
-  // and the move turned out to be the better place anyway: the bar's three-stage
-  // COLOUR and this sentence come from the same archeanStage() call, so they say the
-  // same thing and had no business being at opposite edges of the screen.
+  // under the overlay bar that used to hang over the map, and the move turned out
+  // to be the better place anyway: the compute bar's three-stage COLOUR and this
+  // sentence come from the same archeanStage() call, so they say the same thing
+  // and had no business being at opposite edges of the screen.
   const worldBanner = document.createElement('div')
   worldBanner.className = 'world-banner'
   worldBanner.hidden = true
@@ -2008,11 +1830,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   worldBanner.appendChild(worldHintEl)
   root.appendChild(worldBanner)
 
-  // Right-side legend for the active overlay(s) that carry one (see OVERLAY_DEFS).
-  const overlayLegend = document.createElement('div')
-  overlayLegend.className = 'overlay-legend'
-  overlayLegend.hidden = true
-  root.appendChild(overlayLegend)
+  // Right-side legend for the active overlay(s) that carry one (see overlayLegend).
+  const legendPanel = document.createElement('div')
+  legendPanel.className = 'overlay-legend'
+  legendPanel.hidden = true
+  root.appendChild(legendPanel)
 
   function buildLegendBlock(spec: LegendSpec): HTMLElement {
     const block = document.createElement('div')
@@ -2073,81 +1895,64 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Rebuild the right-side legend from whichever legend-bearing overlays are
   // currently on + available (stacked; usually one or two). Hidden when none.
   function renderLegends(): void {
-    // Ecology's legend follows its EFFECTIVE state (toolbar toggle OR hover preview).
-    const active = OVERLAY_DEFS.filter((d) => d.legend && (d.id === 'ecology' ? ecologyLayerOn() : overlaysOn[d.id] && d.available()))
+    // Ecology's legend follows its EFFECTIVE state (the pick in the column OR a
+    // hover preview over one of its sliders).
+    const active = OVERLAY_IDS.filter((id) => overlayLegend[id] && overlayShown(id))
     if (active.length === 0) {
-      overlayLegend.hidden = true
-      overlayLegend.replaceChildren()
+      legendPanel.hidden = true
+      legendPanel.replaceChildren()
       return
     }
-    overlayLegend.replaceChildren(...active.map((d) => buildLegendBlock(typeof d.legend === 'function' ? d.legend() : d.legend!)))
-    overlayLegend.hidden = false
+    legendPanel.replaceChildren(...active.map((id) => {
+      const legend = overlayLegend[id]!
+      return buildLegendBlock(typeof legend === 'function' ? legend() : legend)
+    }))
+    legendPanel.hidden = false
   }
 
-  // Enable each layer per its wanted state AND availability; 'rivers' drives the
-  // scene ribbons + lake tint together. One composite at the end.
+  // Whether a layer is actually on the map: wanted AND available. Ecology is the
+  // one exception — it also shows while an abundance slider is hovered, which is
+  // a preview of what that slider does, not a state anybody switched on.
+  const overlayShown = (id: OverlayId): boolean =>
+    id === 'ecology' ? ecologyLayerOn() : overlaysOn[id] && overlayAvailable[id]()
+
+  // Enable each layer per overlayShown; 'rivers' drives the scene ribbons + lake
+  // tint together. One composite at the end.
   function applyOverlays(): void {
-    for (const def of OVERLAY_DEFS) {
-      // Ecology shows on its toolbar toggle OR while a panel slider is hovered.
-      const show = def.id === 'ecology' ? ecologyLayerOn() : overlaysOn[def.id] && def.available()
-      if (def.id === 'rivers') {
+    for (const id of OVERLAY_IDS) {
+      const show = overlayShown(id)
+      if (id === 'rivers') {
         riverLayer?.setEnabled(show)
         overlay.setLayerEnabled('lakes', show)
       } else {
-        overlay.setLayerEnabled(def.id, show)
+        overlay.setLayerEnabled(id, show)
       }
     }
     compositeOverlays()
     hoverTooltip?.refresh()
   }
 
-  // Sync every button's disabled (unavailable) + active (on) look, at all three
-  // levels: the standalone terrain button, the per-stage category buttons, and the
-  // members inside a fold-out.
-  function refreshOverlayBar(): void {
-    for (const def of OVERLAY_DEFS) {
-      // `ecology` has no button of its own — its fold-out offers the fields directly,
-      // and the layer is on whenever one of them is picked.
-      const btn = overlayButtons[def.id]
-      if (!btn) continue
-      const avail = def.available()
-      btn.disabled = !avail
-      btn.classList.toggle('is-disabled', !avail)
-      btn.classList.toggle('is-active', avail && overlaysOn[def.id])
-    }
-    const ecoAvailable = defOf('ecology').available()
-    for (const [field, btn] of Object.entries(ecologyFieldButtons) as [EcologyFieldId, HTMLButtonElement][]) {
-      btn.disabled = !ecoAvailable
-      btn.classList.toggle('is-disabled', !ecoAvailable)
-      btn.classList.toggle('is-active', ecoAvailable && overlaysOn.ecology && selectedEcologyField === field)
-    }
-    for (const group of OVERLAY_GROUPS) {
-      // A category is reachable when anything inside it is, and reads as active when
-      // anything inside it is showing — so a collapsed fold-out still tells you
-      // whether that stage is contributing to the map.
-      const ids = group.ecologyFields ? ['ecology'] : group.members
-      const avail = ids.some((id) => defOf(id).available())
-      const anyOn = ids.some((id) => overlaysOn[id] && defOf(id).available())
-      const btn = groupButtons[group.id]
-      btn.disabled = !avail
-      btn.classList.toggle('is-disabled', !avail)
-      btn.classList.toggle('is-active', anyOn)
-      if (!avail && openGroup === group.id) setOpenGroup(null)
-    }
-    overlayList.refresh((id) => ({ on: overlaysOn[id], available: defOf(id).available() }))
-  }
+  const isOverlayId = (id: string): id is OverlayId => id in OVERLAY_META
 
+  // The column's switches and picks, from the same state the map is drawn from.
+  // A resource field is reachable exactly when the ecology layer is, and checked
+  // when it is the one being painted.
+  function refreshOverlayList(): void {
+    const ecologyAvailable = overlayAvailable.ecology()
+    overlayList.refresh((id) => isOverlayId(id)
+      ? { on: overlaysOn[id], available: overlayAvailable[id]() }
+      : { on: overlaysOn.ecology && selectedEcologyField === id, available: ecologyAvailable })
+  }
   // Called whenever overlay data appears/disappears (climate/hydrology computed
-  // or invalidated, world re-rendered) so the bar + layers stay in sync.
+  // or invalidated, world re-rendered) so the column + layers stay in sync.
   function updateOverlays(): void {
     applyOverlays()
-    refreshOverlayBar()
+    refreshOverlayList()
     renderLegends()
   }
 
-  function toggleOverlay(id: string): void {
-    const def = OVERLAY_DEFS.find((d) => d.id === id)
-    if (!def || !def.available()) return
+  function toggleOverlay(id: OverlayId): void {
+    if (!overlayAvailable[id]()) return
     overlaysOn[id] = !overlaysOn[id]
     updateOverlays()
   }
@@ -2727,8 +2532,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     terrainTintCache = null // rebuilt lazily from the fresh colour render
     applyBase()
     handleSimEvents(message.events)
-    // Applies the current overlay states over the fresh base + syncs the bar
-    // (boundaries/names data now exists → their buttons become available).
+    // Applies the current overlay states over the fresh base + syncs the column
+    // (boundaries/names data now exists → their rows become available).
     updateOverlays()
 
     lastLandFraction = message.landFraction
@@ -4387,21 +4192,17 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Which overlays belong to a step: the stage that COMPUTES a layer owns it.
   // Erosion shows the hydrology group, because rivers and lakes are what the
   // solve produces; step 0 and Ecology show nothing, and the section hides.
-  const STEP_OVERLAY_GROUP: Partial<Record<StepId, string>> = {
-    genesis: 'genesis',
-    tectonics: 'tectonics',
-    climate: 'climate',
-    erosion: 'hydrology',
-    migration: 'migration',
-  }
-  const overlayList = createOverlayList({ onToggle: (id) => toggleOverlay(id) })
+  const overlayList = createOverlayList({
+    onToggle: (id) => toggleOverlay(id as OverlayId),
+    onPick: (id) => selectEcologyField(id as EcologyFieldId),
+  })
   // The steps whose controls have moved out of the panel row at the foot and
   // into the column. The rest follow one per step, in pipeline order.
   sidebar.body.append(overlayList.element, worldPanel, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX])
   relabel(sidebar.body)
 
   const stepBar = createStepBar(root, {
-    steps: STEP_IDS.map((id) => ({ id, aside: id === 'migration' })),
+    steps: STEPS.map((s) => ({ id: s.id, aside: s.aside === true })),
     onSelect: (index) => {
       if (index === panelIndex) return
       const reason = entryRequirementUnmet(index)
@@ -4495,38 +4296,23 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const showPanel = (index: number): void => {
     panelIndex = index
     sidebar.setStep(STEP_IDS[index])
-    const group = OVERLAY_GROUPS.find((g) => g.id === STEP_OVERLAY_GROUP[STEP_IDS[index]])
-    overlayList.setRows((group?.members ?? []).map((id) => {
-      const def = defOf(id)
-      return { id, helpBase: def.labelKey, icon: def.icon }
-    }))
+    // Which layers this step offers, and which of them are showing. Both come
+    // from the step table (steps.ts): this used to be a grouping over there plus
+    // ten lines of `overlaysOn.x = index === Y` here, which is how the column
+    // came to list layers the map was already showing.
+    const stepDef = step(STEP_IDS[index])
+    overlayList.setRows(
+      stepDef.overlays.map((id) => ({ id, helpBase: OVERLAY_META[id].labelKey, icon: OVERLAY_META[id].icon })),
+      stepDef.fields.map((field) => ({ id: field, helpBase: `world.resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
+    )
+    for (const id of OVERLAY_IDS) overlaysOn[id] = stepDef.defaults.includes(id)
+    // A step that paints a resource field starts on the first one it offers.
+    if (stepDef.fields.length > 0) selectedEcologyField = stepDef.fields[0]
+    ecologyHoverField = null // drop any stale hover preview when switching steps
     panels.forEach((panel, i) => {
       panel.hidden = i !== index
     })
     ensureDataFor(index)
-    // The terrain colour wash is panel-contextual: on for the shaping panels
-    // (Genesis/Tectonics/Erosion), off for the neutral data panels (Climate/
-    // Ecology/Migration). Still toggleable in the bar within a panel; resets
-    // on switch. Named stages, not index ranges: the climate panel moved
-    // BEFORE erosion (stage-2 coupling), which silently broke every "before
-    // erosion" comparison this block used to make.
-    const shaping = STEP_IDS[index] === 'genesis' || STEP_IDS[index] === 'tectonics' || STEP_IDS[index] === 'erosion'
-    overlaysOn.terrain = shaping
-    // The mantle overlay is on for Genesis/Tectonics (where you watch the plates
-    // drive), off elsewhere. Same per-panel reset.
-    overlaysOn.mantle = index <= TECTONICS_PANEL_INDEX
-    // Volcanism follows the mantle: both are the tectonic phase's story, and neither
-    // exists during Genesis (the Archean produces no features and no plumes).
-    overlaysOn.volcanoes = index === TECTONICS_PANEL_INDEX
-    // Plumes follow the mantle field into Genesis, because the Archean now has them
-    // too — and there they are worth more than in the tectonic phase: they mark where
-    // crust is about to nucleate, before anything is visible on the map.
-    overlaysOn.hotspots = index <= TECTONICS_PANEL_INDEX
-    // Craton age is on in Genesis only. There it is the point of the phase — the
-    // coastline alone cannot show that a continent grew by welding young crust onto
-    // an old core. From the Tectonics panel on, the same map has to carry plates,
-    // boundaries and names, so this stays available in the bar but off by default.
-    overlaysOn.cratonAge = index === panelIndexOf('genesis')
     // The narration band belongs to Genesis. It describes what the Archean is doing
     // right now ("cratons are forming and still moving"), which stops being true the
     // moment the phase is handed over — and it was previously only ever shown, never
@@ -4536,25 +4322,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // it. That panel is in the column now, so the band carries its own soft
     // backdrop instead (see .world-banner-hint).
     worldBanner.hidden = !genesis || worldHintEl.textContent === ''
-    // Temperature comes on when you enter the Climate panel — the same reasoning as
-    // rivers below, and the same mechanism: it is switched on even before the climate
-    // has been computed (the entry above requests it), and handleClimateData's
-    // updateOverlays() makes the layer visible the moment the data lands. Otherwise
-    // entering the panel computed a climate and then showed a blank map until you
-    // found the right button.
-    overlaysOn.temperature = index === CLIMATE_PANEL_INDEX
-    // Rivers/lakes come on automatically on the Erosion panel — they are the
-    // solve's readout since the hydrology panel folded into it — off elsewhere;
-    // same per-panel reset. Once the compute finishes (auto after a pass, or on
-    // entry), handleHydrologyData's updateOverlays() makes the layer visible.
-    overlaysOn.rivers = index === panelIndexOf('erosion')
-    // Carrying-capacity overlay comes on automatically in the Ecology panel (the
-    // reason you're there), off elsewhere. handleEcologyData's updateOverlays()
-    // makes it visible once the compute finishes.
-    overlaysOn.ecology = index === ECOLOGY_PANEL_INDEX
-    ecologyHoverField = null // drop any stale hover preview when switching panels
-    // Migration density fill + origin markers come on in the Migration panel.
-    overlaysOn.migration = index === MIGRATION_PANEL_INDEX
     if (lastColoredBase) updateOverlays()
     updateNavState()
   }

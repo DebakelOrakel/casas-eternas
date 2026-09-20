@@ -27,6 +27,16 @@
   color: var(--dc-text2);
 }
 
+/* The resource picker's heading, when a step has one. */
+.wg-overlays__picktitle {
+  margin-top: 14px;
+}
+
+.wg-overlays__picks {
+  display: flex;
+  flex-direction: column;
+}
+
 .wg-overlays__count {
   margin-left: auto;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
@@ -55,7 +65,8 @@
   opacity: 0.35;
 }
 
-.wg-overlay:has(.wg-overlay__switch:checked) .wg-overlay__icon {
+.wg-overlay:has(.wg-overlay__switch:checked) .wg-overlay__icon,
+.wg-overlay:has(.wg-overlay__pick:checked) .wg-overlay__icon {
   opacity: 1;
 }
 
@@ -65,7 +76,8 @@
   color: var(--dc-muted);
 }
 
-.wg-overlay:has(.wg-overlay__switch:checked) .wg-overlay__label {
+.wg-overlay:has(.wg-overlay__switch:checked) .wg-overlay__label,
+.wg-overlay:has(.wg-overlay__pick:checked) .wg-overlay__label {
   color: var(--dc-text);
 }
 
@@ -110,6 +122,40 @@
 }
 
 .wg-overlay__switch:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* A PICK, not a switch: one resource field paints, so the control has to say
+   that choosing this one drops the last. A dot, the shape everything else
+   uses for "one of these". */
+.wg-overlay__pick {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  border: 1.5px solid var(--dc-input-line);
+  background: transparent;
+  position: relative;
+  cursor: pointer;
+}
+
+.wg-overlay__pick:checked {
+  border-color: var(--dc-accent);
+}
+
+.wg-overlay__pick:checked::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 5px;
+  background: var(--dc-accent);
+}
+
+.wg-overlay__pick:disabled {
   cursor: default;
   opacity: 0.4;
 }
