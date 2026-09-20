@@ -37,9 +37,11 @@ import deReadout from './locales/de/readout.json'
 //
 // By WHAT THE STRING IS. `notify` is a line shown in the notification area;
 // `readout` is a line of the map's hover readout. Each reads as a set and is
-// worded against the rest of its set. Both are still filling: the older
-// `common.notify.*` keys move across as their call sites are touched, and the
-// readout lines wait for theirs — that code still holds English.
+// worded against the rest of its set — which is the argument for the grouping
+// INSIDE `notify`: a subject, then the case (`save.server.conflict`,
+// `bake.mismatch`), so a new line is written against its siblings and not
+// against the whole area. Both sets are complete as of 2026-09-20, when the
+// last nine `common.notify.*` keys moved across.
 //
 // By VOCABULARY — one branch per member of an enum the generator computes, the
 // branch named by the same id. `overlay` (a map layer, its legend included,

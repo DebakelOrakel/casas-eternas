@@ -1,7 +1,7 @@
 ---
-summary: Client UI text moves out of the code into JSON catalogs, EN + DE first. Keys are split into four AREAS by what the text NAMES, not which screen shows it — common / world / worldgen / game — so the durable "world vocabulary" the game will inherit is separated from the generator's throwaway operating chrome. Type-checked keys (a typo or a missing DE string breaks tsc). Adds a custom hover HELP tooltip (label + one-sentence explanation) on every icon/slider. Language switch lives on the title screen only.
+summary: Client UI text moves out of the code into JSON catalogs, EN + DE first. Keys are split into AREAS by what the text NAMES, not which screen shows it (the 2026-09-20 addendum restates the areas, which the reshuffle changed) so the durable "world vocabulary" the game will inherit is separated from the generator's throwaway operating chrome. Type-checked keys (a typo or a missing DE string breaks tsc). Adds a custom hover HELP tooltip (label + one-sentence explanation) on every icon/slider. Language switch lives on the title screen only.
 date: 2026-07-28
-updated: 2026-08-12
+updated: 2026-09-20
 area: ui
 stage: built
 status: decided 2026-07-28, BUILT 2026-07-29 (i18n runtime, tsc-gated EN/DE catalogs, title-screen switch); every worldgen panel wired incl. data-help tooltips 2026-08-06
@@ -188,3 +188,38 @@ The legacy `worldgen-sphere` and `mars` screens are out.
 - Building any of the above (this is a design decision, nothing is implemented yet).
 - The `race` → `species` identifier refactor (separate mechanical change, noted above).
 - Confirming/removing i18n from the worker import graph (open question above).
+
+## Addendum 2026-09-20 — the areas as they now stand
+
+The principle above held; the four areas it named did not. `world` and `worldgen`
+were taken apart, `game` was removed, and what was one drawer per LIFE-EXPECTANCY
+(durable world vocabulary versus throwaway generator chrome) is now a drawer per
+QUESTION the catalog answers. The old "Final key namespace" listing above is kept
+as the record of the first design; this is the one in use, and `i18n/i18n.ts`'s
+header carries the same split beside the code.
+
+| Catalog | Answers | Keys |
+|---|---|---|
+| `common` | shared words, units and the app frame | 59 |
+| `titlebar` | the one strip every screen wears | 37 |
+| `generator` | everything that screen says — load screen, steps, sections, panels, actions | 156 |
+| `notify` | a line in the notification area | 22 |
+| `readout` | a line of the map's hover readout | 32 |
+| `overlay` | a map layer, its legend included | 57 |
+| `biome` / `resource` / `species` | one branch per member of an enum the generator computes | 15 / 28 / 6 |
+
+Three of these group by SCREEN REGION, two by WHAT THE STRING IS, three by
+VOCABULARY. That is not untidiness: a key is looked for by the question its
+reader is holding, and those are the three questions this program's text
+actually answers.
+
+**Inside `notify` and `readout` the key is two levels, subject then case** —
+`notify.save.server.conflict`, `notify.bake.mismatch`, `readout.row.wind`. The
+reason is that both sets are read as sets: a new line is worded against its
+siblings, and a flat area makes the siblings hard to find. The last nine flat
+`common.notify.*` keys moved across on 2026-09-20, which is what closed this.
+
+Older changelog entries still carry `worldgen.*` and `common.notify.*` tags.
+Those are left alone deliberately: they name what the thing was called when the
+entry was written, the changelog parser does not resolve them, and rewriting
+them would smooth over the history rather than record it.

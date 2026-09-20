@@ -3671,7 +3671,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!inputs || !inputs.climate) {
       // No climate means no discharge, so the bake would stop after erosion
       // and produce a world with no rivers — which is the Archean case.
-      ctx.notifications.show({ message: t('common.notify.bakeFailed', { reason: '' }), icon: '/icons/warning.png', durationMs: 8000 })
+      ctx.notifications.show({ message: t('notify.bake.failed', { reason: '' }), icon: '/icons/warning.png', durationMs: 8000 })
       return
     }
 
@@ -3681,7 +3681,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (await amplificationArtifactExists(store, key).catch(() => false)) {
       // Already made, by this machine or another. Saying so beats spending
       // minutes to reproduce bytes that are addressed by content anyway.
-      ctx.notifications.show({ message: t('common.notify.bakeExists', { level }), icon: '/icons/ok.png', durationMs: 6000 })
+      ctx.notifications.show({ message: t('notify.bake.exists', { level }), icon: '/icons/ok.png', durationMs: 6000 })
       void adoptBestBakedRivers(inputs.worldUid, inputs.worldId)
       return
     }
@@ -3690,7 +3690,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // is what is true: the server holds the request until something is free to
     // take it, and where it will run is not yet a fact about the world.
     let toast = ctx.notifications.show({
-      message: t('common.notify.bakeWaiting', { level }),
+      message: t('notify.bake.waiting', { level }),
       icon: '/icons/server_load.png',
       sticky: true,
     })
@@ -3720,7 +3720,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       announcedRunning = true
       ctx.notifications.dismiss(toast)
       toast = ctx.notifications.show({
-        message: t('common.notify.bakeRunning', { level }),
+        message: t('notify.bake.running', { level }),
         icon: runningIcon,
         sticky: true,
       })
@@ -3732,26 +3732,26 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (onServer) {
       const order = await commissionBake(inputs.worldUid, factor, AMPLIFY_EROSION_ROUNDS)
       if (!order.ok) {
-        settle(order.reason === 'unknownWorld' ? t('common.notify.bakeNeedsUpload') : t('common.notify.bakeFailed', { reason: order.message ?? '' }), '/icons/warning.png', 12000)
+        settle(order.reason === 'unknownWorld' ? t('notify.bake.needsUpload') : t('notify.bake.failed', { reason: order.message ?? '' }), '/icons/warning.png', 12000)
         return
       }
       const outcome = await followBake(order.job.id, pipelineVersion, (job) => {
         if (!bakeIsWaiting(job)) announceRunning()
         ctx.notifications.update(toast, {
-          message: t(bakeIsWaiting(job) ? 'common.notify.bakeWaiting' : 'common.notify.bakeRunning', { level }),
+          message: t(bakeIsWaiting(job) ? 'notify.bake.waiting' : 'notify.bake.running', { level }),
           progress: bakeFraction(job),
         })
       })
       if (!outcome.ok) {
         settle(
           outcome.reason === 'mismatch'
-            ? t('common.notify.bakeMismatch', { serverVersion: outcome.serverVersion, clientVersion: outcome.clientVersion })
-            : t('common.notify.bakeFailed', { reason: outcome.message }),
+            ? t('notify.bake.mismatch', { serverVersion: outcome.serverVersion, clientVersion: outcome.clientVersion })
+            : t('notify.bake.failed', { reason: outcome.message }),
           '/icons/warning.png', 15000,
         )
         return
       }
-      settle(t('common.notify.bakeDone', { level, width: outcome.result.width, height: outcome.result.height, seconds: Math.round(outcome.result.durationMs / 1000) }), '/icons/server_clean.png', 15000)
+      settle(t('notify.bake.done', { level, width: outcome.result.width, height: outcome.result.height, seconds: Math.round(outcome.result.durationMs / 1000) }), '/icons/server_clean.png', 15000)
       void adoptBestBakedRivers(inputs.worldUid, inputs.worldId)
       return
     }
@@ -3784,16 +3784,16 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         },
         (phase, fraction) => {
           ctx.notifications.update(toast, {
-            message: t('common.notify.bakeRunning', { level }),
+            message: t('notify.bake.running', { level }),
             progress: amplifyPhaseFraction(phase, fraction),
           })
         },
       )
       await writeAmplificationArtifact(store, key, baked.artifact, baked.durationMs, inputs.seedText).catch(() => false)
       showBakedRivers(baked.artifact.riverPoints, baked.artifact.riverLengths, factor)
-      settle(t('common.notify.bakeDone', { level, width: baked.artifact.width, height: baked.artifact.height, seconds: Math.round(baked.durationMs / 1000) }), '/icons/server_clean.png', 15000)
+      settle(t('notify.bake.done', { level, width: baked.artifact.width, height: baked.artifact.height, seconds: Math.round(baked.durationMs / 1000) }), '/icons/server_clean.png', 15000)
     } catch {
-      settle(t('common.notify.bakeFailed', { reason: '' }), '/icons/warning.png', 12000)
+      settle(t('notify.bake.failed', { reason: '' }), '/icons/warning.png', 12000)
     }
   }
 
@@ -3968,7 +3968,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           : undefined
       }
     } catch {
-      ctx.notifications.show({ message: t('common.notify.invalidWorldFile'), icon: '/icons/folder.png', durationMs: 6000 })
+      ctx.notifications.show({ message: t('notify.open.invalidFile'), icon: '/icons/folder.png', durationMs: 6000 })
       return
     }
 

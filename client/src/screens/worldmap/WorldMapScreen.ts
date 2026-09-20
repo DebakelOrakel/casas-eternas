@@ -664,7 +664,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   })
 
   function notifyLoadFailed(): void {
-    ctx.notifications.show({ message: t('common.notify.invalidWorldFile'), icon: '/icons/folder.png', durationMs: 5000 })
+    ctx.notifications.show({ message: t('notify.open.invalidFile'), icon: '/icons/folder.png', durationMs: 5000 })
   }
 
   async function loadWorld(file: File): Promise<void> {

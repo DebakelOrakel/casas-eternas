@@ -31,7 +31,7 @@ export class AppStateManager {
     // back empty — and none of them names the cause. The indicator's badge
     // appears at the same moment; this is what makes someone look at it.
     onSessionLost(() => {
-      this.notifications.show({ message: t('common.notify.signedOut'), icon: '/icons/no.png', durationMs: 10000 })
+      this.notifications.show({ message: t('notify.session.signedOut'), icon: '/icons/no.png', durationMs: 10000 })
     })
   }
 
