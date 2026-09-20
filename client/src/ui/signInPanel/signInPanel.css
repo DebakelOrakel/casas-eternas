@@ -1,57 +1,146 @@
-/* The sign-in window's contents. The frame, backdrop, title bar and the button
-   style all come from the shared panel (ui/panel), so only the two fields are
-   here. */
-
-/* Narrower than the shared 640px, which is sized for lists of worlds: two
-   fields in a box that wide read as a form somebody forgot to finish. */
-.app-panel--signin {
-  width: min(23rem, calc(100vw - 3rem));
+/* The sign-in window — design canvas (Main.dc.html), artboard "Anmelden",
+   light theme. It brings its own frame: see the note at the head of
+   SignInPanel.ts for why it no longer wears the shared panel's. */
+.signin-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above everything the screens put on the page, the title bar (4) included:
+     a modal that something else can cover is not modal. */
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dc-backdrop);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
 }
 
-/* The body has no horizontal padding — panels whose contents are lists want to
-   run edge to edge — so a form supplies its own, matching the title bar's. */
-.signin-form {
+/* `display: flex` outranks the user-agent rule for [hidden]. */
+.signin-backdrop[hidden] {
+  display: none;
+}
+
+.signin-dialog {
+  width: min(400px, calc(100vw - 2rem));
+  box-sizing: border-box;
+  padding: 28px;
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
-  padding: 0.9rem 1rem 0.6rem;
+  gap: 16px;
+  border: 1px solid var(--dc-menu-line);
+  border-radius: 12px;
+  background: var(--dc-menu-bg);
+  box-shadow: 0 24px 60px var(--dc-dialog-shadow);
+  color: var(--dc-text);
+}
+
+.signin-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.signin-head__text {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.signin-title {
+  margin: 0;
+  font-family: 'Bricolage Grotesque', Georgia, serif;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--dc-strong);
+}
+
+/* What an account is FOR. The window is reached from a badge and from a menu
+   row, and in both cases the next question is what changes once you are in. */
+.signin-intro {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dc-muted);
+  text-wrap: pretty;
+}
+
+.signin-close {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text2);
+  cursor: pointer;
+}
+
+.signin-close:hover {
+  background: var(--dc-hover);
 }
 
 .signin-field {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  font-size: 0.8rem;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--dc-text2);
 }
 
-.signin-field > span {
-  opacity: 0.7;
-}
-
-/* Borrowed from the panel button's vocabulary — same border colour, same
-   radius, same restraint — so the window reads as one thing rather than as a
-   frame with a form pasted into it. */
 .signin-field input {
+  height: 44px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--dc-input-line);
+  border-radius: 6px;
+  background: var(--dc-bg);
+  color: var(--dc-text);
   font: inherit;
-  font-size: 0.9rem;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid rgba(26, 26, 26, 0.35);
-  border-radius: 4px;
-  background: #fff;
-  color: #1a1a1a;
+  font-size: 14px;
 }
 
 .signin-field input:focus-visible {
-  outline: none;
-  border-color: rgba(26, 26, 26, 0.7);
+  outline: 2px solid var(--dc-accent);
+  outline-offset: 1px;
 }
 
-/* role="alert" in the markup, so it is announced when it appears. The colour is
-   the destructive-button red the panels already use, not a second one. */
+.signin-submit {
+  height: 44px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.signin-submit:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.signin-submit:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.signin-close:focus-visible,
+.signin-submit:focus-visible {
+  outline: 2px solid var(--dc-accent);
+  outline-offset: 2px;
+}
+
+/* role="alert" in the markup, so it is announced when it appears. The red is
+   the canvas's own, the one its destructive text wears. */
 .signin-error {
   margin: 0;
-  font-size: 0.78rem;
-  color: #962819;
+  font-size: 13px;
+  color: var(--dc-red-text);
 }
 
 .signin-error[hidden] {
