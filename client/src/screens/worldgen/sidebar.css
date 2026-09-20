@@ -53,3 +53,181 @@
 .wg-sidebar__body:empty {
   display: none;
 }
+
+/* --- a step's own controls in the column ----------------------------------
+   Design canvas: a Params section, then whatever the step is computed with at
+   the very foot, where step 0 puts "Create world". */
+.wg-step {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  flex-grow: 1;
+}
+
+.wg-step[hidden] {
+  display: none;
+}
+
+.wg-section-title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dc-text2);
+}
+
+.wg-params {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.wg-param {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wg-param__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.wg-param__label {
+  flex-grow: 1;
+  font-size: 13.5px;
+  color: var(--dc-text2);
+}
+
+.wg-param__value {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12.5px;
+  color: var(--dc-text);
+}
+
+.wg-param__range {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--dc-accent);
+}
+
+/* Pushed to the foot of the column, so every step answers "and now?" in the
+   same place. */
+.wg-step__foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* The step's figures as tiles — design canvas, the Status section. Two
+   columns, because four of these read as a block and a single column would
+   make the column scroll for numbers. */
+.wg-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.wg-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--dc-line);
+  border-radius: 8px;
+}
+
+.wg-stat__label {
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--dc-muted);
+}
+
+.wg-stat__value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.wg-stat__num {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 19px;
+  color: var(--dc-strong);
+}
+
+.wg-stat__unit {
+  font-size: 11.5px;
+  color: var(--dc-faint);
+}
+
+.wg-stat__track {
+  height: 4px;
+  margin-top: 2px;
+  border-radius: 2px;
+  background: var(--dc-line2);
+  display: flex;
+}
+
+.wg-stat__bar {
+  width: 0;
+  border-radius: 2px;
+  background: var(--dc-accent);
+}
+
+.wg-step__actions {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.wg-action {
+  flex-grow: 1;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wg-action:hover {
+  filter: brightness(0.95);
+}
+
+.wg-action-icon {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.wg-action-icon:hover {
+  background: var(--dc-hover);
+}
+
+.wg-action-icon img {
+  width: 20px;
+  height: 20px;
+}
+
+.wg-action:disabled,
+.wg-action-icon:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

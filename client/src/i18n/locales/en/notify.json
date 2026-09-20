@@ -3,5 +3,7 @@
   "notify.save.browser.failed": "The browser refused the write, most likely for lack of space. Nothing was stored.",
   "notify.save.server.stored": "World stored on the server.",
   "notify.save.server.conflict": "The server holds a newer version of this world. Nothing was overwritten.",
-  "notify.save.server.failed": "Upload failed. The world was not stored."
+  "notify.save.server.failed": "Upload failed. The world was not stored.",
+  "notify.gate.needsWorld": "First create the world — step 1 works on the world step 0 names.",
+  "notify.gate.needsArchean": "First run the Archean to at least {min}% stabilised (now {current}%)."
 }

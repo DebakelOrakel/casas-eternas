@@ -56,5 +56,9 @@
   "generator.world.topology.sphere.help": "Umlauf in Ost-West-Richtung, Pole oben und unten.",
   "generator.world.create.label": "Welt erzeugen",
   "generator.world.create.help": "Legt die Welt an und öffnet den Schritt Erdmantel.",
-  "generator.step.status.set": "gesetzt"
+  "generator.step.status.set": "gesetzt",
+  "generator.overlays.label": "Overlays",
+  "generator.overlays.help": "Overlays zeigen einzelne Aspekte des aktuellen Schritts auf der Karte. Sie verändern die Simulation nicht und lassen sich beliebig kombinieren.",
+  "generator.params.label": "Parameter",
+  "generator.params.help": "Änderst du einen Parameter, müssen alle folgenden Schritte neu berechnet werden."
 }

@@ -56,5 +56,9 @@
   "generator.world.topology.sphere.help": "Wraps east to west, with poles at the top and bottom.",
   "generator.world.create.label": "Create world",
   "generator.world.create.help": "Lays out the world and opens the mantle step.",
-  "generator.step.status.set": "set"
+  "generator.step.status.set": "set",
+  "generator.overlays.label": "Overlays",
+  "generator.overlays.help": "Overlays show single aspects of the current step on the map. They do not change the simulation, and you can combine them.",
+  "generator.params.label": "Parameters",
+  "generator.params.help": "If you change a parameter, you must compute every later step again."
 }

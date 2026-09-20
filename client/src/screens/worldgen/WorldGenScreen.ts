@@ -40,6 +40,7 @@ import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecolo
 import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from '../../world/save/worldLayers'
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
+import { createOverlayList } from './OverlayList'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
@@ -439,6 +440,38 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
 
+  // The same declaration in the COLUMN's layout: name left, value right, the
+  // track under both (design canvas, the Params section). The panel row keeps
+  // its own variant above, where a slider has to fit beside five others.
+  // The strings sit on the elements as keys, so the column can be said again in
+  // another language without the screen being rebuilt (see i18n/relabel).
+  const paramField = (p: InputParam, cls: string, valueKey: string): string => {
+    declaredSliders.push({ param: p, cls, valueKey })
+    const label = t(`${p.i18n}.label` as TKey)
+    return `<div class="wg-param" data-help="${p.i18n}">
+        <div class="wg-param__head">
+          <span class="wg-param__label" data-t="${p.i18n}.label">${label}</span>
+          <span class="wg-param__value"><span data-value="${valueKey}">${p.default}</span>${p.unit ? `<span data-t="${p.unit}">${t(p.unit as TKey)}</span>` : ''}</span>
+        </div>
+        <input type="range" class="wg-param__range ${cls}" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.default}" aria-label="${label}" data-t-aria="${p.i18n}.label" />
+      </div>`
+  }
+
+  // One figure of a running simulation, as a tile (design canvas, the Status
+  // section): the name, the number with its unit, and — for a percentage — a
+  // bar under it, because "41 %" says more when you can see it against the
+  // whole. A count and an age have no whole to be a part of, so they get none.
+  const statTile = (labelKey: string, valueKey: string,
+    opts: { unit?: string; bar?: boolean } = {}): string => `
+    <div class="wg-stat">
+      <span class="wg-stat__label" data-t="${labelKey}">${t(labelKey as TKey)}</span>
+      <span class="wg-stat__value">
+        <span class="wg-stat__num" data-value="${valueKey}">–</span>
+        ${opts.unit ? `<span class="wg-stat__unit" data-t="${opts.unit}">${t(opts.unit as TKey)}</span>` : ''}
+      </span>
+      ${opts.bar ? `<span class="wg-stat__track"><span class="wg-stat__bar" data-value="${valueKey}-bar"></span></span>` : ''}
+    </div>`
+
   root.innerHTML = `
     <div class="file-actions">
       <span data-slot="server-indicator"></span>
@@ -493,25 +526,28 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       </div>
       <button type="button" class="world-create" data-action="create-world" data-help="generator.world.create" data-t="generator.world.create.label"></button>
     </div>
-    <div class="panel" data-stage="genesis">
-      <label class="field field--icon-row">
-        <span class="field-row">
-          <button type="button" class="icon-button" data-action="reset-archean" aria-label="${t('worldgen.action.resetArchean.label')}" data-help="worldgen.action.resetArchean">
+    <div class="wg-step" data-stage="genesis">
+      <section class="wg-params">
+        <h2 class="wg-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
+        ${paramField(ARCHEAN_INPUTS.mantleVigour, 'mantle-vigour-input', 'mantle-vigour-label')}
+        ${paramField(ARCHEAN_INPUTS.water, 'water-input', 'water-label')}
+      </section>
+      <div class="wg-step__foot">
+        <div class="wg-stats">
+          ${statTile('worldgen.panel.genesis.stat.stabilised', 'stat-stabilised', { unit: 'common.unit.percent', bar: true })}
+          ${statTile('worldgen.panel.genesis.stat.cratons', 'stat-cratons')}
+          ${statTile('worldgen.panel.genesis.stat.crust', 'stat-crust', { unit: 'common.unit.percent', bar: true })}
+          ${statTile('worldgen.panel.genesis.stat.age', 'stat-world-age')}
+        </div>
+        <div class="wg-step__actions">
+          <button type="button" class="wg-action-icon" data-action="reset-archean" data-t-aria="worldgen.action.resetArchean.label" data-help="worldgen.action.resetArchean">
             <img src="/icons/reset.png" alt="" />
           </button>
-          ${sliderField(ARCHEAN_INPUTS.mantleVigour, 'mantle-vigour-input', 'mantle-vigour-label', { tag: 'span', extraClass: 'field--inline' })}
-          ${sliderField(ARCHEAN_INPUTS.water, 'water-input', 'water-label', { tag: 'span', extraClass: 'field--inline' })}
-          <button type="button" class="icon-button" data-action="toggle-archean" aria-label="${t('worldgen.action.runArchean.label')}" data-help="worldgen.action.runArchean">
-            <img src="/icons/mantle_heavy.png" alt="" />
+          <button type="button" class="wg-action" data-action="toggle-archean" data-help="worldgen.action.runArchean">
+            <span class="wg-action__label"></span>
           </button>
-          <span class="tectonics-stats">
-            <span class="stat"><span class="stat-num"><span data-value="stat-crust">–</span><span class="stat-unit">${t('common.unit.percent')}</span></span><span class="stat-label">${t('worldgen.panel.genesis.stat.crust')}</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-cratons">–</span><span class="stat-label">${t('worldgen.panel.genesis.stat.cratons')}</span></span>
-            <span class="stat"><span class="stat-num"><span data-value="stat-stabilised">–</span><span class="stat-unit">${t('common.unit.percent')}</span></span><span class="stat-label">${t('worldgen.panel.genesis.stat.stabilised')}</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-world-age">–</span><span class="stat-label">${t('worldgen.panel.genesis.stat.age')}</span></span>
-          </span>
-        </span>
-      </label>
+        </div>
+      </div>
     </div>
     <div class="panel" data-stage="tectonics">
       <label class="field field--icon-row">
@@ -636,6 +672,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const statCratons = root.querySelector<HTMLElement>('[data-value="stat-cratons"]')!
   const statWorldAge = root.querySelector<HTMLElement>('[data-value="stat-world-age"]')!
   const statStabilised = root.querySelector<HTMLElement>('[data-value="stat-stabilised"]')!
+  const statCrustBar = root.querySelector<HTMLElement>('[data-value="stat-crust-bar"]')!
+  const statStabilisedBar = root.querySelector<HTMLElement>('[data-value="stat-stabilised-bar"]')!
   const randomizeButton = root.querySelector<HTMLButtonElement>('[data-action="randomize-seed"]')!
   const resetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-sim"]')!
   const toggleSimButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-sim"]')!
@@ -683,7 +721,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     onSignIn: () => serverIndicator.openSignIn(),
     onWorldClick: () => openWorldChooser(),
     onLocaleChange: () => {
-      relabel(worldPanel)
+      // One call for the whole column: every step block in it carries its keys
+      // rather than its strings (see i18n/relabel).
+      relabel(sidebar.body)
+      setArcheanRunning(archeanRunning)
       sidebar.relabel()
       stepBar.relabel()
       worldChooser.relabel()
@@ -743,6 +784,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // Archean epochs completed — carried into the world.yaml recipe and, after the
   // handover, into the world-age readout.
   let lastArcheanEpochs = 0
+  // Whether this screen holds a world at all: step 0 was answered with "Create
+  // world", or a world was opened from a file. Every later step is gated on it
+  // (see entryRequirementUnmet) — until then there is a map on screen, but it
+  // is the one the screen starts with, not one anybody asked for.
+  let worldCreated = false
   // Latest stabilised fraction, so updateProgress can render the bar without the
   // status message being in scope.
   let archeanStabilised = 0
@@ -2078,6 +2124,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       btn.classList.toggle('is-active', anyOn)
       if (!avail && openGroup === group.id) setOpenGroup(null)
     }
+    overlayList.refresh((id) => ({ on: overlaysOn[id], available: defOf(id).available() }))
   }
 
   // Called whenever overlay data appears/disappears (climate/hydrology computed
@@ -2761,9 +2808,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // --- Archean controls -----------------------------------------------------
   const setArcheanRunning = (running: boolean): void => {
     archeanRunning = running
-    toggleArcheanButton.querySelector('img')!.src = running ? '/icons/stop.png' : '/icons/mantle_heavy.png'
-    toggleArcheanButton.setAttribute('aria-label', t(running ? 'worldgen.action.runArchean.labelActive' : 'worldgen.action.runArchean.label'))
+    // The button says the state in words since it moved into the column, where
+    // there is room for them — no icon beside it, the same as "Create world" in
+    // step 0. Saying it again is also how the button follows a language switch.
+    const label = t(running ? 'worldgen.action.runArchean.labelActive' : 'worldgen.action.runArchean.label')
+    toggleArcheanButton.setAttribute('aria-label', label)
+    toggleArcheanButton.querySelector('.wg-action__label')!.textContent = label
   }
+  // Says the button for the first time: it starts stopped, and until this runs
+  // it carries an icon and an empty word.
+  setArcheanRunning(archeanRunning)
 
   toggleArcheanButton.addEventListener('click', () => {
     if (archeanRunning) {
@@ -2784,6 +2838,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     lastArcheanEpochs = 0
     archeanFinalised = false
     hasHandover = false
+    // The gate to plate tectonics reads this, so a restart has to close it
+    // again — the next status message will fill it in from the new run.
+    archeanStabilised = 0
+    updateNavState()
   })
 
   // The three-stage progress indicator. The stabilised fraction is the one quantity
@@ -2834,6 +2892,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     statCrust.textContent = String(Math.round(message.crustFraction * 100))
     statCratons.textContent = String(message.cratonCount)
     statStabilised.textContent = String(Math.round(message.stabilisedFraction * 100))
+    // The bar is the same number, drawn — set from the fraction rather than
+    // from the text, so rounding stays a matter of what is READ.
+    statCrustBar.style.width = `${Math.min(100, message.crustFraction * 100)}%`
+    statStabilisedBar.style.width = `${Math.min(100, message.stabilisedFraction * 100)}%`
     statWorldAge.textContent = formatWorldAge(message.worldAgeMa)
     // One source for both readouts: the gauge's colour and the banner's wording are
     // the same three-stage judgement, so they can never disagree.
@@ -2845,9 +2907,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // — the visibility rule then lives in one condition instead of in the timing of
     // two messages.
     worldBanner.hidden = panelIndex !== GENESIS_PANEL_INDEX
-    // The backdrop grows to carry the line and shrinks back when there is none.
-    panels[GENESIS_PANEL_INDEX].classList.toggle('has-banner', !worldBanner.hidden)
     updateProgress()
+    // The stabilised fraction is what opens the gate to plate tectonics, so the
+    // bar has to be repainted as it climbs — otherwise the next step stays
+    // greyed out until something else happens to ask.
+    updateNavState()
   }
 
   const stopSim = (): void => {
@@ -3744,6 +3808,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     }
 
     // Past the point where the archive can turn out not to be a world.
+    worldCreated = true
     closeWorldChooser()
     // An opened world lands on the mantle, NOT on step 0: that step warns that
     // changing it discards the simulation, and dropping someone there the
@@ -4222,6 +4287,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       worldNameInput.value = worldName
     }
     if (!seedInput.value.trim()) seedInput.value = randomSeed()
+    worldCreated = true
     regenerate()
     showPanel(GENESIS_PANEL_INDEX)
   })
@@ -4262,8 +4328,22 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // everything past Erosion needs at least one erosion pass. Returns why entry
   // is blocked, or null if allowed. Values are tunable.
   const MIN_TECTONIC_EPOCHS = 30
+  // The Archean's own gate. Half the world stabilised is well past the point
+  // where stopping is a choice rather than an accident: the narration calls
+  // 20% the opening of the window, and handing over below that leaves plate
+  // tectonics a world of proto-cratons that are still dissolving.
+  const MIN_ARCHEAN_STABILISED = 0.5
   const entryRequirementUnmet = (index: number): string | null => {
     const erosionPanel = panelIndexOf('erosion')
+    // Nothing exists before step 0 is answered — the steps after it all work on
+    // the world it names and seeds.
+    if (index > panelIndexOf('world') && !worldCreated) return t('notify.gate.needsWorld')
+    // Genesis hands its world to plate tectonics, so the hand-over is what
+    // every later step stands on. A world opened from a file has one already,
+    // which is what archeanFinalised/hasHandover answer.
+    if (index >= panelIndexOf('tectonics') && !archeanFinalised && !hasHandover && archeanStabilised < MIN_ARCHEAN_STABILISED) {
+      return t('notify.gate.needsArchean', { min: Math.round(MIN_ARCHEAN_STABILISED * 100), current: Math.round(archeanStabilised * 100) })
+    }
     // Climate sits BEFORE erosion since the stage-2 coupling (its sliders
     // shape the erosion's water forcing), so the tectonics gate covers both:
     // climate computes on the tectonic terrain and needs one to exist.
@@ -4289,7 +4369,29 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // this runs.
   const worldPanel = panels[panelIndexOf('world')]
   relabel(worldPanel)
-  sidebar.body.appendChild(worldPanel)
+
+  // The step's own overlays, as switches in the column (see OverlayList). The
+  // bar over the map stays for now: it is the only door to the terrain colour
+  // and to the Ecology fields, which pick ONE field rather than combining, so
+  // a row of switches would say something untrue about them. Both doors drive
+  // the same `overlaysOn`, and refreshOverlayBar paints both.
+  //
+  // Which overlays belong to a step: the stage that COMPUTES a layer owns it.
+  // Erosion shows the hydrology group, because rivers and lakes are what the
+  // solve produces; step 0 and Ecology show nothing, and the section hides.
+  const STEP_OVERLAY_GROUP: Partial<Record<StepId, string>> = {
+    genesis: 'genesis',
+    tectonics: 'tectonics',
+    climate: 'climate',
+    erosion: 'hydrology',
+    migration: 'migration',
+  }
+  const overlayList = createOverlayList({ onToggle: (id) => toggleOverlay(id) })
+  // Genesis is the first step whose controls move out of the panel row at the
+  // foot and into the column. The rest follow one per step.
+  const genesisPanel = panels[GENESIS_PANEL_INDEX]
+  sidebar.body.append(overlayList.element, worldPanel, genesisPanel)
+  relabel(sidebar.body)
 
   const stepBar = createStepBar(root, {
     steps: STEP_IDS.map((id) => ({ id, aside: id === 'migration' })),
@@ -4386,6 +4488,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const showPanel = (index: number): void => {
     panelIndex = index
     sidebar.setStep(STEP_IDS[index])
+    const group = OVERLAY_GROUPS.find((g) => g.id === STEP_OVERLAY_GROUP[STEP_IDS[index]])
+    overlayList.setRows((group?.members ?? []).map((id) => {
+      const def = defOf(id)
+      return { id, helpBase: def.labelKey, icon: def.icon }
+    }))
     panels.forEach((panel, i) => {
       panel.hidden = i !== index
     })
@@ -4418,8 +4525,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // moment the phase is handed over — and it was previously only ever shown, never
     // hidden, so the last Archean sentence stayed on screen for the rest of the run.
     const genesis = index === panelIndexOf('genesis')
+    // The line used to stand on the Genesis panel's fade, which grew to carry
+    // it. That panel is in the column now, so the band carries its own soft
+    // backdrop instead (see .world-banner-hint).
     worldBanner.hidden = !genesis || worldHintEl.textContent === ''
-    panels[GENESIS_PANEL_INDEX].classList.toggle('has-banner', !worldBanner.hidden)
     // Temperature comes on when you enter the Climate panel — the same reasoning as
     // rivers below, and the same mechanism: it is switched on even before the climate
     // has been computed (the entry above requests it), and handleClimateData's

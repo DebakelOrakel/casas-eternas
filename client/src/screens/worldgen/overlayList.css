@@ -1,0 +1,115 @@
+/* The sidebar's Overlays section — design canvas (Main.dc.html), light column.
+   The switch is the canvas's `.sw`: a 36x20 pill, because a stock checkbox
+   reads as a form field and these are lamps you turn on and off. */
+.wg-overlays {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wg-overlays[hidden] {
+  display: none;
+}
+
+.wg-overlays__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.wg-overlays__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dc-text2);
+}
+
+.wg-overlays__count {
+  margin-left: auto;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--dc-faint);
+}
+
+.wg-overlay {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.wg-overlay.is-disabled {
+  cursor: default;
+}
+
+.wg-overlay__icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  /* Off and unavailable both read as "not on the map"; the switch tells the
+     two apart, and a full-strength icon beside an off switch does not. */
+  opacity: 0.35;
+}
+
+.wg-overlay:has(.wg-overlay__switch:checked) .wg-overlay__icon {
+  opacity: 1;
+}
+
+.wg-overlay__label {
+  flex-grow: 1;
+  font-size: 14px;
+  color: var(--dc-muted);
+}
+
+.wg-overlay:has(.wg-overlay__switch:checked) .wg-overlay__label {
+  color: var(--dc-text);
+}
+
+.wg-overlay.is-disabled .wg-overlay__label {
+  color: var(--dc-faint);
+  opacity: 0.55;
+}
+
+.wg-overlay__switch {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--dc-line2);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.wg-overlay__switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--dc-faint);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.wg-overlay__switch:checked {
+  background: var(--dc-accent);
+}
+
+.wg-overlay__switch:checked::after {
+  transform: translateX(16px);
+  background: var(--dc-on-accent);
+}
+
+.wg-overlay__switch:disabled {
+  cursor: default;
+  opacity: 0.4;
+}

@@ -284,16 +284,6 @@
   transition: height 0.25s ease;
 }
 
-/* The Genesis panel's fade grows only while a narration line is showing, and shrinks
-   back when there is none — it has to reach past the sentence or the text would stand
-   on the map instead of on white, and carrying that extra height permanently would
-   wash out the map for no reason. This is also why the banner needs no background of
-   its own. Content is bottom-aligned, so the extra padding grows the fade upward
-   without moving a single control. */
-.worldgen-flat-screen .panel.has-banner {
-  padding-top: 7.5rem;
-}
-
 /* World age + phase hint, directly under the overlay bar. Not in the Genesis
    panel: the age is true of the world in every phase, and the hint describes what
    the map is doing rather than a control. Pointer-events off so it never blocks
@@ -323,12 +313,18 @@
 .worldgen-flat-screen .world-banner[hidden] {
   display: none;
 }
+/* Its own backdrop since Genesis moved into the column: the line used to stand
+   on that panel's fade, and on the bare map a pale sentence over pale relief is
+   not readable. */
 .worldgen-flat-screen .world-banner-hint {
   font-family: 'Cinzel', serif;
   font-weight: 400;
   font-size: 1.35rem;
   letter-spacing: 0.03em;
   color: rgba(26, 26, 26, 0.72);
+  padding: 0.35rem 1.1rem;
+  border-radius: 1.2rem;
+  background: rgba(251, 248, 242, 0.78);
 }
 
 /* Right-side legend for the active overlay(s) that carry one. Vertically centred;
@@ -443,6 +439,9 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
+  /* Takes the column's free height, which is what lets "Create world" sit at
+     the very foot (`margin-top: auto` below) rather than under the last field. */
+  flex-grow: 1;
 }
 
 .worldgen-flat-screen .world-panel[hidden] {
