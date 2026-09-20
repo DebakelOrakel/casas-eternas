@@ -1982,6 +1982,17 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
 
   const isOverlayId = (id: string): id is OverlayId => id in OVERLAY_META
 
+  // Pick one of the step's exclusive layers: it comes on, the rest of ITS group
+  // goes off. The group is read from the step table rather than kept a second
+  // time, and the state is the ordinary `overlaysOn` — a pick is a switch that
+  // turns its siblings off, not a second kind of thing to keep in sync.
+  function pickExclusiveOverlay(id: OverlayId): void {
+    const group = step(STEP_IDS[panelIndex]).exclusive
+    if (!group.includes(id)) return
+    for (const member of group) overlaysOn[member] = member === id
+    updateOverlays()
+  }
+
   // The column's switches and picks, from the same state the map is drawn from.
   // A resource field is reachable exactly when the ecology layer is, and checked
   // when it is the one being painted.
@@ -4209,7 +4220,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // solve produces; step 0 and Ecology show nothing, and the section hides.
   const overlayList = createOverlayList({
     onToggle: (id) => toggleOverlay(id as OverlayId),
-    onPick: (id) => selectEcologyField(id as EcologyFieldId),
+    // One pick group, two kinds of member: a layer the step shows one at a time,
+    // or — in Ecology — a resource field the one layer paints. The id says which.
+    onPick: (id) => (isOverlayId(id) ? pickExclusiveOverlay(id) : selectEcologyField(id as EcologyFieldId)),
   })
   // The steps whose controls have moved out of the panel row at the foot and
   // into the column. The rest follow one per step, in pipeline order.
@@ -4318,7 +4331,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const stepDef = step(STEP_IDS[index])
     overlayList.setRows(
       stepDef.overlays.map((id) => ({ id, helpBase: OVERLAY_META[id].labelKey, icon: OVERLAY_META[id].icon })),
-      stepDef.fields.map((field) => ({ id: field, helpBase: `world.resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
+      [
+        ...stepDef.exclusive.map((id) => ({ id, helpBase: OVERLAY_META[id].labelKey, icon: OVERLAY_META[id].icon })),
+        ...stepDef.fields.map((field) => ({ id: field, helpBase: `world.resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
+      ],
+      stepDef.pickTitle,
     )
     for (const id of OVERLAY_IDS) overlaysOn[id] = stepDef.defaults.includes(id)
     // A step that paints a resource field starts on the first one it offers.

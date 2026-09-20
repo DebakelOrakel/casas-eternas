@@ -96,6 +96,8 @@
   "world.overlay.watersheds.label": "Einzugsgebiete",
   "world.overlay.watersheds.help": "Das Einzugsgebiet jedes Flusssystems in eigener Farbe.",
   "world.hover.discharge": "Abfluss: {value}",
+  "world.overlay.climateFields.label": "Klimafelder",
+  "world.overlay.climateFields.help": "Diese Schichten zeigt die Karte einzeln, über der Temperatur, die immer liegt. Eine Auswahl ersetzt die vorige.",
   "world.overlay.resources.label": "Ökologie (Ressourcen)",
   "world.overlay.resources.help": "Färbt die Karte nach dem Vorkommen der gewählten Ressource.",
   "world.overlay.migration.label": "Migration",

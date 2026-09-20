@@ -34,9 +34,10 @@ export interface OverlayList {
   // The rows of the step just entered. `picks` are mutually exclusive — one
   // resource field paints, so they are radios in a section of their own, not
   // switches. Either list empty hides its section; both empty hides the lot.
-  setRows(rows: readonly OverlayListRow[], picks?: readonly OverlayListRow[]): void
+  setRows(rows: readonly OverlayListRow[], picks?: readonly OverlayListRow[], pickTitle?: string): void
   // Switch positions and the unavailable look, read from the same state the map
   // is drawn from rather than kept a second time here.
+  //
   refresh(stateOf: (id: string) => OverlayListState): void
   // Every string again, in the language that is active now — see i18n/relabel.
   relabel(): void
@@ -45,9 +46,9 @@ export interface OverlayList {
 // Above this many picks the list becomes a grid of icon tiles. A resource step
 // offers fourteen fields; fourteen full rows are two thirds of the column, and
 // the name beside each icon says nothing the icon and its hover card do not.
-// Below it a list reads better, because a short list of words is faster than a
-// short row of pictures.
-const PICK_GRID_MIN = 6
+// Up to three a list reads better, because a short list of words is faster than
+// a short row of pictures.
+const PICK_GRID_MIN = 4
 
 export function createOverlayList(options: {
   onToggle: (id: string) => void
@@ -77,6 +78,7 @@ export function createOverlayList(options: {
   `
   const overlaySection = host.querySelector<HTMLElement>('.wg-overlays')!
   const pickSection = host.querySelector<HTMLElement>('.wg-picks')!
+  const pickTitle = pickSection.querySelector<HTMLElement>('.wg-section-title')!
   const rowHost = host.querySelector<HTMLElement>('.wg-overlays__rows')!
   const pickHost = host.querySelector<HTMLElement>('.wg-overlays__picks')!
   const count = host.querySelector<HTMLElement>('.wg-overlays__count')!
@@ -116,13 +118,23 @@ export function createOverlayList(options: {
     return label
   }
 
-  function setRows(nextRows: readonly OverlayListRow[], nextPicks: readonly OverlayListRow[] = []): void {
+  // `title` is the pick section's catalog base, which the step names because the
+  // group is a different question in each one — a resource field in Ecology,
+  // which layer to paint in Climate. A step that gives none gets no heading:
+  // the section is still its own box, spaced by the column's gap.
+  function setRows(nextRows: readonly OverlayListRow[], nextPicks: readonly OverlayListRow[] = [], title?: string): void {
     rows = nextRows
     picks = nextPicks
     boxes.clear()
     rowHost.replaceChildren(...rows.map((row) => buildRow(row, 'checkbox', () => options.onToggle(row.id))))
     pickHost.replaceChildren(...picks.map((row) => buildRow(row, 'radio', () => options.onPick(row.id))))
     pickHost.classList.toggle('is-compact', picks.length >= PICK_GRID_MIN)
+    pickTitle.hidden = title === undefined
+    if (title !== undefined) {
+      pickTitle.dataset.t = `${title}.label`
+      pickTitle.dataset.help = title
+      pickTitle.textContent = t(`${title}.label` as TKey)
+    }
     overlaySection.hidden = rows.length === 0
     pickSection.hidden = picks.length === 0
     host.hidden = rows.length === 0 && picks.length === 0

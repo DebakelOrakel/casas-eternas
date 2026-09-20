@@ -4,7 +4,8 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-20
-- **changed** Generator: a step with many resource fields offers them as icon tiles instead of a long list. `generator.overlays`
+- **changed** Generator: the Climate step shows precipitation, seasonality, monsoon, biomes, wind and currents one at a time, over the temperature it always paints. `generator.overlays`
+- **changed** Generator: a step with more than three picks offers them as icon tiles instead of a list. `generator.overlays`
 - **removed** Generator: the resource layer has no legend any more — it paints one field from none to much. `generator.overlays`
 - **changed** Generator: the Ecology step offers the abundance of the resource it is painting, in place of the category fold-out. `generator.step`
 - **changed** Generator: the Ecology step's levers and its abundance nudges moved into the sidebar. `generator.step`

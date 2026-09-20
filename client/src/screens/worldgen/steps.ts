@@ -29,6 +29,19 @@ export interface Step {
   // appear in several steps — the mantle field is the Archean's subject and
   // still drives the plates afterwards.
   overlays: readonly OverlayId[]
+  // Layers the step shows ONE AT A TIME. Same shape as `fields` below — a pick,
+  // not a set of switches — but of ordinary layers. Two kinds of thing end up
+  // here: full-map washes, which physically cannot share the map (the later one
+  // covers the earlier, and what is left is a colour on no legend), and layers
+  // the step simply asks one at a time. The second is a reading decision, not a
+  // rendering one.
+  //
+  // Disjoint from `overlays`, and exactly one member is in `defaults` — there is
+  // no "none" in the group, so a step that has one always paints one.
+  exclusive: readonly OverlayId[]
+  // The catalog base for the pick group's heading. The group asks a different
+  // question in each step, so the step names it; unset means no heading.
+  pickTitle?: string
   // Of those, the ones showing when the step is entered. Entering a step is a
   // statement about what you want to look at, so this is a reset, not a memory.
   defaults: readonly OverlayId[]
@@ -54,6 +67,7 @@ export const STEPS: readonly Step[] = [
     // Nothing to look at yet: the step is about which world, not about what the
     // map is showing. The colour wash is offered so the map is not dead.
     overlays: ['terrain'],
+    exclusive: [],
     defaults: [],
     fields: [],
   },
@@ -65,6 +79,7 @@ export const STEPS: readonly Step[] = [
     // has no plates, and the preview of the ones a hand-over would produce is
     // an answer the world has not taken yet.
     overlays: ['terrain', 'mantle', 'hotspots', 'cratonAge'],
+    exclusive: [],
     defaults: ['terrain', 'mantle', 'hotspots', 'cratonAge'],
     fields: [],
   },
@@ -76,16 +91,28 @@ export const STEPS: readonly Step[] = [
     // outlines belong HERE ALONE — they are what this step makes, and on a
     // climate or a resource map they are a grid over somebody else's subject.
     overlays: ['terrain', 'boundaries', 'names', 'mantle', 'hotspots', 'volcanoes'],
+    exclusive: [],
     defaults: ['terrain', 'boundaries', 'names', 'mantle', 'hotspots', 'volcanoes'],
     fields: [],
   },
   {
     id: 'climate',
     stage: 'climate',
-    // No terrain wash by default: the climate layers are the point here, and a
-    // colour wash under a temperature ramp reads as a third colour.
-    overlays: ['terrain', 'names', 'temperature', 'seasonality', 'precipitation', 'monsoon', 'wind', 'currents', 'biomes'],
-    defaults: ['names', 'temperature'],
+    // TEMPERATURE IS THE STEP'S GROUND. It drives everything else here —
+    // seasonality is its annual amplitude, the biomes are classified from it —
+    // so it is a switch that stays on, not one answer among many.
+    //
+    // Everything else is one question at a time. For the washes that is forced:
+    // precipitation, seasonality, monsoon and biomes all paint the whole map.
+    // Wind and currents are strokes and could combine; they are in the group
+    // because the step asks them one at a time, which is a choice.
+    //
+    // No terrain wash by default: a colour wash under a temperature ramp reads
+    // as a third colour.
+    overlays: ['terrain', 'names', 'temperature'],
+    exclusive: ['precipitation', 'seasonality', 'monsoon', 'biomes', 'wind', 'currents'],
+    pickTitle: 'world.overlay.climateFields',
+    defaults: ['names', 'temperature', 'precipitation'],
     fields: [],
   },
   {
@@ -94,6 +121,7 @@ export const STEPS: readonly Step[] = [
     // The hydrology stage has no step: rivers and lakes are what this solve
     // produces, so they are offered here.
     overlays: ['terrain', 'names', 'rivers', 'waterBalance', 'watersheds', 'biomes'],
+    exclusive: [],
     defaults: ['terrain', 'names', 'rivers'],
     fields: [],
   },
@@ -101,20 +129,36 @@ export const STEPS: readonly Step[] = [
     id: 'ecology',
     stage: 'ecology',
     overlays: ['terrain', 'names', 'biomes', 'rivers'],
+    exclusive: [],
     // The resource layer comes on with the step — it is the reason you are
     // here — painting whichever field the picker below starts on.
     defaults: ['names', 'ecology'],
     fields: ['carryingCapacity', ...RESOURCE_FIELDS],
+    pickTitle: 'world.overlay.resources',
   },
   {
     id: 'migration',
     stage: 'migration',
     overlays: ['terrain', 'names', 'migration'],
+    exclusive: [],
     defaults: ['names', 'migration'],
     fields: [],
     aside: true,
   },
 ]
+
+// A pick group with no member on, or with two, is a radio that cannot say what
+// the map is showing; a layer that is both a switch and a pick is two answers to
+// one question. Checked here rather than left to the screen, for the same reason
+// the pipeline order is.
+for (const s of STEPS) {
+  const both = s.exclusive.filter((id) => s.overlays.includes(id))
+  if (both.length > 0) throw new Error(`generator step ${s.id} lists ${both} as both a switch and a pick`)
+  const chosen = s.exclusive.filter((id) => s.defaults.includes(id))
+  if (s.exclusive.length > 0 && chosen.length !== 1) {
+    throw new Error(`generator step ${s.id} must default to exactly one of its exclusive layers, not ${chosen.length}`)
+  }
+}
 
 export const STEP_IDS: readonly StepId[] = STEPS.map((s) => s.id)
 

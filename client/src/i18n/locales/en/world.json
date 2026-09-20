@@ -96,6 +96,8 @@
   "world.overlay.watersheds.label": "Watersheds",
   "world.overlay.watersheds.help": "Each river system's catchment in its own colour.",
   "world.hover.discharge": "Flow: {value}",
+  "world.overlay.climateFields.label": "Climate fields",
+  "world.overlay.climateFields.help": "The map shows these one at a time, over the temperature it always paints. A new choice replaces the last.",
   "world.overlay.resources.label": "Ecology (resources)",
   "world.overlay.resources.help": "Colour the map by the selected resource's abundance.",
   "world.overlay.migration.label": "Migration",
