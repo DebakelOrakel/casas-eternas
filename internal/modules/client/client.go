@@ -133,8 +133,14 @@ func (m *Module) spaHandler() http.Handler {
 		// require-corp any cross-origin SUBRESOURCE must opt in via CORP;
 		// API calls are unaffected either way, because fetch() runs in CORS
 		// mode, which COEP never restricts.
+		//
+		// CORP says of our own responses what is true of them: they are meant
+		// for this origin and no other. same-origin, not same-site. It is NOT
+		// what makes the generator's nested workers load in WebKit, which was
+		// the first guess and was wrong — see client/vite.config.ts.
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 		clean := filepath.Clean(r.URL.Path)
 		if _, err := os.Stat(filepath.Join(m.Dir(), clean)); err == nil {
 			// Fingerprinted build assets are safe to cache forever; the shell
