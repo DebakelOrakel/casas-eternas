@@ -9,14 +9,14 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **fixed** Overlays: the readout's rainfall year puts the wet season where it really falls, instead of always in the local summer. `readout.chart`
 - **changed** Overlays: the legend folds into a button and starts closed. `overlay.legend`
 - **fixed** Overlays: the legend titles and the species names follow a language switch instead of staying English. `overlay.legend`
-- **dropped** Title screen: the world map, Sphere and Mars are gone — three screens that had stopped being worked on. The map will be built again from scratch. `common.title.nav`
+- **dropped** Title screen: the world map, Sphere and Mars are gone — three screens that had stopped being worked on, the map to be built again from scratch. `common.title.nav`
 - **fixed** Notifications: a continent colliding, breaking up or becoming a supercontinent says so in your language. `notify.event`
 - **changed** Save/Load: file sizes are counted in thousands everywhere, so a world reads the same size here as on disk.
 - **changed** Overlays: the readout says how fast the wind blows, in metres per second. `readout.metresPerSecond`
 - **changed** Overlays: wind and currents in the readout are an arrow pointing where they go — no compass letters, because this world has no north. `readout.row.wind`
 - **fixed** Worldmap: a world opened from a save no longer classifies its coasts from a rainfall value that was never there. `worldmap`
 - **fixed** Generator: a world opened from a save no longer shows Climate and Ecology as uncomputed — the derived stages are recomputed as it arrives. `generator.step`
-- **added** Generator: leaving a world that is not saved — or closing the tab — asks first. `generator`
+- **new** Generator: leaving a world that is not saved — or closing the tab — asks first. `generator`
 - **changed** Generator: the save menu stays away while the world list is up. `titlebar`
 - **fixed** The sign-in button and the server's save target stay away where there is nothing to sign in to. `titlebar`
 - **changed** The sign-in window follows the new design: its own card on a dimmed page, with a line saying what an account is for. `signin`
@@ -27,7 +27,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **fixed** Generator: the map legend, the run buttons and the species names now follow a language switch. `generator`
 - **changed** Generator: the Climate step shows precipitation, seasonality, monsoon, biomes, wind and currents one at a time, over the temperature it always paints. `generator.overlays`
 - **changed** Generator: a step with more than three picks offers them as icon tiles instead of a list. `generator.overlays`
-- **removed** Generator: the resource layer has no legend any more — it paints one field from none to much. `generator.overlays`
+- **dropped** Generator: the resource layer has no legend any more — it paints one field from none to much. `generator.overlays`
 - **changed** Generator: the Ecology step offers the abundance of the resource it is painting, in place of the category fold-out. `generator.step`
 - **changed** Generator: the Ecology step's levers and its abundance nudges moved into the sidebar. `generator.step`
 - **changed** Generator: the Erosion step's levers, its run button and the detail bake moved into the sidebar. `generator.step`
