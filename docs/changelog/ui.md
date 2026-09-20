@@ -4,6 +4,10 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-20
+- **changed** Overlays: the map readout reports the step's own values, not one line per switched-on layer, and says them in your language. `readout`
+- **new** Overlays: the readout draws the year on the Climate step — a temperature curve and the monthly rainfall. `readout.chart`
+- **changed** Overlays: the legend folds into a button and starts closed. `overlay.legend`
+- **changed** Overlays: wind and currents in the readout are an arrow pointing where they go — no compass letters, because this world has no north. `readout.row.wind`
 - **fixed** Generator: a world opened from a save no longer shows Climate and Ecology as uncomputed — the derived stages are recomputed as it arrives. `generator.step`
 - **added** Generator: leaving a world that is not saved — or closing the tab — asks first. `generator`
 - **changed** Generator: the save menu stays away while the world list is up. `titlebar`

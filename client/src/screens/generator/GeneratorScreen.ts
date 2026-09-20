@@ -3,6 +3,8 @@ import { BUILD_VERSION } from '../../app/buildVersion'
 import { createGeneratorCamera } from '../../camera/generatorCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
+import { buildProbeCard } from '../../ui/mapProbe/probeCard'
+import type { ProbeChart, ProbeRow } from '../../ui/mapProbe/probeCard'
 import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
 import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
@@ -33,6 +35,8 @@ import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
 import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops } from '../../generator/climate/climateColors'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
+import { shiftedYNorm } from '../../generator/climate/climateField'
+import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
 import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../generator/climate/biomes'
 import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
@@ -1902,11 +1906,38 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   worldBanner.appendChild(worldHintEl)
   root.appendChild(worldBanner)
 
-  // Right-side legend for the active overlay(s) that carry one (see overlayLegend).
-  const legendPanel = document.createElement('div')
+  // The legend for the active overlay(s) that carry one (see overlayLegend), as
+  // a collapsible panel: a header button that names it and counts what is in it,
+  // and a body that opens under it. COLLAPSED BY DEFAULT — the map is the thing
+  // being looked at, and a standing column of swatches is an answer to a question
+  // most hovers do not ask.
+  //
+  // It stays at the left edge of the map rather than moving to the bottom-left
+  // corner the design puts it in: that corner is the parameter panel's, and its
+  // step title already sits there.
+  const legendPanel = document.createElement('section')
   legendPanel.className = 'overlay-legend'
-  legendPanel.hidden = true
+  const legendToggle = document.createElement('button')
+  legendToggle.type = 'button'
+  legendToggle.className = 'legend-toggle'
+  const legendToggleLabel = document.createElement('span')
+  legendToggleLabel.className = 'legend-toggle-label'
+  const legendCount = document.createElement('span')
+  legendCount.className = 'legend-toggle-count'
+  const legendChevron = document.createElement('span')
+  legendChevron.className = 'legend-toggle-chevron'
+  legendChevron.setAttribute('aria-hidden', 'true')
+  legendToggle.append(legendToggleLabel, legendCount, legendChevron)
+  const legendBody = document.createElement('div')
+  legendBody.className = 'legend-body'
+  legendPanel.append(legendToggle, legendBody)
   root.appendChild(legendPanel)
+
+  let legendOpen = false
+  legendToggle.addEventListener('click', () => {
+    legendOpen = !legendOpen
+    renderLegends()
+  })
 
   function buildLegendBlock(spec: LegendSpec): HTMLElement {
     const block = document.createElement('div')
@@ -1970,15 +2001,24 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Ecology's legend follows its EFFECTIVE state (the pick in the column OR a
     // hover preview over one of its sliders).
     const active = OVERLAY_IDS.filter((id) => overlayLegend[id] && overlayShown(id))
-    if (active.length === 0) {
-      legendPanel.hidden = true
-      legendPanel.replaceChildren()
+    legendToggleLabel.textContent = t('overlay.legend.title')
+    legendCount.textContent = String(active.length)
+    legendToggle.setAttribute('aria-expanded', String(legendOpen))
+    legendPanel.classList.toggle('overlay-legend--open', legendOpen)
+    if (!legendOpen) {
+      legendBody.replaceChildren()
       return
     }
-    legendPanel.replaceChildren(...active.map((id) => {
-      return buildLegendBlock(overlayLegend[id]!())
-    }))
-    legendPanel.hidden = false
+    if (active.length === 0) {
+      // Open and empty says something the closed button cannot: the layers on
+      // the map are ones whose colours explain themselves.
+      const empty = document.createElement('div')
+      empty.className = 'legend-empty'
+      empty.textContent = t('overlay.legend.empty')
+      legendBody.replaceChildren(empty)
+      return
+    }
+    legendBody.replaceChildren(...active.map((id) => buildLegendBlock(overlayLegend[id]!())))
   }
 
   // Whether a layer is actually on the map: wanted AND available. Ecology is the
@@ -2110,81 +2150,249 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
 
-  // 8-point compass for a (u,v) field vector — u east+, v toward the bottom
-  // ("south"), so north is −v. Names the direction the vector points toward.
-  function compass(u: number, v: number): string {
-    if (Math.hypot(u, v) < 1e-4) return '–'
-    const angle = Math.atan2(u, -v) // 0 = N, increasing clockwise
-    const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
-    const idx = Math.round((((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (Math.PI / 4)) % 8
-    return dirs[idx]
+  // A field vector as a bearing on the SCREEN, in degrees, clockwise from up.
+  //
+  // The readout draws the arrow and no letters. This world is a flat torus: it
+  // has no poles (the top and bottom edges are one glued seam — climateField.ts)
+  // and no meridian, so "north-east" is a word borrowed from a sphere and is not
+  // a fact about anything here. The arrow says all that is true — which way the
+  // air or the water goes across the map you are looking at.
+  //
+  // Hence the screen, not the raster, is the frame of reference. The raster the
+  // map wears reaches the screen MIRRORED VERTICALLY: +y in the raster is UP on
+  // screen, which is why the volcano cones draw their apex at +y to point up
+  // (drawVolcanoes). A layer painted into the raster is mirrored with it and
+  // stays consistent; this arrow is drawn in the page, outside that mirror, so
+  // it is put into the screen's frame here. That is not a correction of the
+  // picture — the picture IS the world as it is seen.
+  //
+  // So: u is eastward (+x) and reaches the screen as it is, while UP on screen
+  // is +v, not −v. atan2(u, v), with no further turn. Getting this wrong is not
+  // subtle to look at but it is easy to reason wrong about, so the check is in
+  // the arrow beside the map's own wind arrows: they must agree.
+  //
+  // Null where the vector is too short to point anywhere — a calm belt has no
+  // direction, and the row is left out rather than given a dash.
+  function bearing(u: number, v: number): number | null {
+    if (Math.hypot(u, v) < 1e-4) return null
+    const angle = Math.atan2(u, v) // 0 = up on screen, increasing clockwise
+    return ((((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) * 180) / Math.PI
   }
 
-  // Hover readout: the cell's height in metres, then one line per active climate
-  // overlay (the reusable MapHoverTooltip resolves the cell; here we map it to
-  // the coarse grids and read the computed fields). Null when there's nothing to
-  // report at all. mapX/mapY are full-res texels.
-  function describeClimateCell(mapX: number, mapY: number): string | null {
-    const lines: string[] = []
-    // Height first, and outside the climate guard — elevation exists from the
-    // first render, long before any climate does, and it's the readout that
-    // makes the metre calibration checkable by hovering (see elevationScale.ts).
-    if (lastCoarseElevation) {
-      const ex = Math.min(elevationResX - 1, Math.floor((mapX / MAP_WIDTH) * elevationResX))
-      const ey = Math.min(elevationResY - 1, Math.floor((mapY / MAP_HEIGHT) * elevationResY))
-      const m = Math.round(elevationToMeters(lastCoarseElevation[ey * elevationResX + ex]))
-      lines.push(m >= 0 ? `${m} m` : `${-m} m deep`)
-    }
-    if (climateResX === 0) return lines.length ? lines.join('\n') : null
-    const gx = Math.min(climateResX - 1, Math.floor((mapX / MAP_WIDTH) * climateResX))
-    const gy = Math.min(climateResY - 1, Math.floor((mapY / MAP_HEIGHT) * climateResY))
-    const i = gy * climateResX + gx
-    if (overlaysOn.ecology && lastEcologyFields[selectedEcologyField]) {
-      const v = lastEcologyFields[selectedEcologyField]![i]
-      lines.push(v === ECOLOGY_OCEAN ? 'Ocean' : `${ECOLOGY_FIELD_META[selectedEcologyField].label} ${Math.round(v * 100)}%`)
-    }
-    // Biomes are full-res, so they get the map texel rather than the climate
-    // cell `i` — the same index paintBiomes drew from, or the readout would name
-    // a different biome than the pixel under the cursor on every slope.
-    if (overlaysOn.biomes && lastBiomes) {
-      const bi = Math.min(MAP_HEIGHT - 1, Math.floor(mapY)) * MAP_WIDTH + Math.min(MAP_WIDTH - 1, Math.floor(mapX))
-      lines.push(t(biomeLabelKey(lastBiomes[bi]) as TKey))
-    }
-    if (overlaysOn.rivers && lastDischargeField && lastMaxDischarge > 0) {
-      const fi = Math.min(MAP_HEIGHT - 1, Math.floor(mapY)) * MAP_WIDTH + Math.min(MAP_WIDTH - 1, Math.floor(mapX))
-      // Only where there is a river worth reading — below 1% of the largest
-      // stream it is distributed rain, not a channel.
-      if (lastDischargeField[fi] / lastMaxDischarge >= 0.01) {
-        const m3s = lastDischargeField[fi] * DISCHARGE_TO_M3S
-        const value = m3s >= 100 ? `${Math.round(m3s).toLocaleString(getLocale())} m³/s` : `${m3s.toFixed(1)} m³/s`
-        lines.push(t('readout.discharge', { value }))
+  // ── The hover readout ──────────────────────────────────────────────────────
+  //
+  // WHAT a cell reports is decided by the STEP, not by which layers happen to be
+  // switched on. The readout used to append one line per active overlay, so the
+  // same point answered differently depending on the switch column — yet a point
+  // has its values whatever is painted over it. One row list per step; a step
+  // with nothing to add returns none and the card is the height line alone.
+  //
+  // EVERY ENTRY IS A FUNCTION, for the two reasons the legend table gives right
+  // above: t() must run at hover time, because the generator is the one screen
+  // that does not rebuild on a language switch, and the rows read live data.
+
+  // The hovered cell, resolved once per hover into every grid the rows need.
+  // `i` indexes the climate/ecology grid, `fine` the full-resolution rasters.
+  interface ProbeCell {
+    i: number
+    gx: number
+    gy: number
+    fine: number
+    land: boolean
+    metres: number
+  }
+
+  const rowsForStep: Record<StepId, (cell: ProbeCell) => ProbeRow[]> = {
+    // Step 0 is about which world, not about what is on the map.
+    world: () => [],
+    genesis: (cell) => {
+      const rows: ProbeRow[] = []
+      if (lastMantle && mantleResX > 0) {
+        // The buoyancy field has no unit a reader could check — what it says is
+        // which way the mantle moves and how strongly, so it is reported as the
+        // normalised ±1 the tint is drawn from rather than as a bare number.
+        const mi = mantleCellOf(cell)
+        const v = mantleNorm ? mantleNorm[mi] : lastMantle[mi]
+        const strength = Math.abs(v).toFixed(2)
+        rows.push({ label: t('readout.row.mantle'), value: v >= 0 ? t('readout.mantle.up', { v: strength }) : t('readout.mantle.down', { v: strength }) })
       }
-    }
-    if (overlaysOn.temperature && lastTemperature) lines.push(`${Math.round(lastTemperature[i])} °C`)
-    if (overlaysOn.precipitation && lastPrecipitation) {
-      const p = lastPrecipitation[i]
-      lines.push(p === OCEAN_PRECIP ? 'Ocean' : `${Math.round(p)} mm/yr`)
-    }
-    if (overlaysOn.seasonality && lastSeasonality) {
-      const a = lastSeasonality[i]
-      lines.push(a === OCEAN_AMPLITUDE ? 'Ocean' : `${Math.round(a)} °C range`)
-    }
-    if (overlaysOn.monsoon && lastMonsoonIndex) {
-      const m = lastMonsoonIndex[i]
-      lines.push(m === OCEAN_PRECIP ? 'Ocean' : `Monsoon ${m.toFixed(2)}`)
-    }
-    if (overlaysOn.wind && lastWind) {
-      lines.push(`Wind ${compass(lastWind[i * 2], lastWind[i * 2 + 1])}`)
-    }
-    if (overlaysOn.currents && lastCurrents) {
-      const u = lastCurrents[i * 2]
-      const v = lastCurrents[i * 2 + 1]
-      if (Math.hypot(u, v) > 0.02) {
-        const warm = v * (gy + 0.5 - climateResY / 2) > 0 // poleward = warm (see drawCurrents)
-        lines.push(`Current ${warm ? 'warm' : 'cold'} ${compass(u, v)}`)
+      const age = cratonAgeAt(cell)
+      if (age !== null) rows.push({ label: t('readout.row.crustAge'), value: t('readout.crustAge', { v: String(Math.round(age * 100)) }) })
+      return rows
+    },
+    tectonics: (cell) => {
+      const rows: ProbeRow[] = []
+      if (lastBoundaryMask) {
+        const bi = Math.min(lastBoundaryMask.length - 1, cell.fine)
+        rows.push({ label: t('readout.row.boundary'), value: lastBoundaryMask[bi] ? t('readout.boundary.yes') : t('readout.boundary.no') })
       }
+      const age = cratonAgeAt(cell)
+      if (age !== null) rows.push({ label: t('readout.row.crustAge'), value: t('readout.crustAge', { v: String(Math.round(age * 100)) }) })
+      return rows
+    },
+    climate: (cell) => {
+      const rows: ProbeRow[] = []
+      if (lastTemperature) rows.push({ label: t('readout.row.temperature'), value: t('readout.temperature', { v: String(Math.round(lastTemperature[cell.i])) }) })
+      if (lastSeasonality && lastSeasonality[cell.i] !== OCEAN_AMPLITUDE) {
+        // The field is the full peak-to-peak swing (seasonalTemperature adds
+        // ±half of it), so the ± figure is half the field.
+        rows.push({ label: t('readout.row.season'), value: t('readout.seasonSwing', { v: (lastSeasonality[cell.i] / 2).toFixed(1) }) })
+      }
+      if (lastPrecipitation && lastPrecipitation[cell.i] !== OCEAN_PRECIP) {
+        rows.push({ label: t('readout.row.precipitation'), value: t('readout.precipitation', { v: String(Math.round(lastPrecipitation[cell.i])) }) })
+      }
+      if (lastMonsoonIndex && lastMonsoonIndex[cell.i] !== OCEAN_PRECIP) {
+        rows.push({ label: t('readout.row.monsoon'), value: lastMonsoonIndex[cell.i].toFixed(2) })
+      }
+      if (lastWind) {
+        // The arrow alone. The field is a prescribed band pattern that tapers to
+        // zero at each cell edge (climate/wind.ts) — it carries a direction, not
+        // a speed in m/s, and printing its raw magnitude would read as one.
+        const b = bearing(lastWind[cell.i * 2], lastWind[cell.i * 2 + 1])
+        if (b !== null) rows.push({ label: t('readout.row.wind'), bearing: b })
+      }
+      if (lastCurrents && !cell.land) {
+        const u = lastCurrents[cell.i * 2]
+        const v = lastCurrents[cell.i * 2 + 1]
+        const b = bearing(u, v)
+        if (b !== null && Math.hypot(u, v) > 0.02) {
+          const warm = v * (cell.gy + 0.5 - climateResY / 2) > 0 // poleward = warm (see drawCurrents)
+          rows.push({ label: t('readout.row.current'), value: warm ? t('readout.current.warm') : t('readout.current.cold'), bearing: b })
+        }
+      }
+      if (lastBiomes) rows.push({ label: t('readout.row.biome'), value: t(biomeLabelKey(lastBiomes[cell.fine]) as TKey) })
+      return rows
+    },
+    erosion: (cell) => {
+      const rows: ProbeRow[] = []
+      if (lastDischargeField && lastMaxDischarge > 0 && lastDischargeField[cell.fine] / lastMaxDischarge >= 0.01) {
+        // Below 1% of the largest stream this is distributed rain, not a
+        // channel, and naming a flow there would invent a river.
+        const m3s = lastDischargeField[cell.fine] * DISCHARGE_TO_M3S
+        rows.push({ label: t('readout.row.discharge'), value: m3s >= 100 ? `${Math.round(m3s).toLocaleString(getLocale())} m³/s` : `${m3s.toFixed(1)} m³/s` })
+      }
+      if (lastLakeDepth && lastLakeDepth[cell.fine] > 0) {
+        rows.push({ label: t('readout.row.lakeDepth'), value: t('readout.metres', { v: String(Math.round(elevationToMeters(lastLakeDepth[cell.fine]) - elevationToMeters(0))) }) })
+      }
+      if (lastPrecipitationEffective && lastPrecipitationEffective[cell.i] !== OCEAN_PRECIP) {
+        rows.push({ label: t('readout.row.effectivePrecip'), value: t('readout.precipitation', { v: String(Math.round(lastPrecipitationEffective[cell.i])) }) })
+      }
+      return rows
+    },
+    ecology: (cell) => {
+      const rows: ProbeRow[] = []
+      if (lastBiomes) rows.push({ label: t('readout.row.biome'), value: t(biomeLabelKey(lastBiomes[cell.fine]) as TKey) })
+      // The picked field, which is the one the map is painting — the others are
+      // a column of numbers nobody asked for.
+      const field = lastEcologyFields[selectedEcologyField]
+      if (field && ecologyResX > 0) {
+        const ex = Math.min(ecologyResX - 1, Math.floor((cell.gx / Math.max(1, climateResX)) * ecologyResX))
+        const ey = Math.min(ecologyResY - 1, Math.floor((cell.gy / Math.max(1, climateResY)) * ecologyResY))
+        const v = field[ey * ecologyResX + ex]
+        if (v !== ECOLOGY_OCEAN) {
+          rows.push({ label: t(`resource.${selectedEcologyField}.label` as TKey), value: t('readout.percent', { v: String(Math.round(v * 100)) }) })
+        }
+      }
+      return rows
+    },
+    // Migration leaves the generator for a screen of its own; it keeps the
+    // height line until it does.
+    migration: () => [],
+  }
+
+  // Craton age 0..1 (1 = formed at epoch 0) on the mantle grid, or null where
+  // there is no crust — the field marks ocean with -1.
+  function cratonAgeAt(cell: ProbeCell): number | null {
+    if (!lastCratonAge || mantleResX === 0) return null
+    const v = lastCratonAge[mantleCellOf(cell)]
+    return v >= 0 ? v : null
+  }
+
+  function mantleCellOf(cell: ProbeCell): number {
+    const mx = Math.min(mantleResX - 1, Math.floor((cell.gx / Math.max(1, climateResX || mantleResX)) * mantleResX))
+    const my = Math.min(mantleResY - 1, Math.floor((cell.gy / Math.max(1, climateResY || mantleResY)) * mantleResY))
+    return my * mantleResX + mx
+  }
+
+  // Twelve months of temperature. This adds NOTHING to the model: the climate is
+  // an annual mean plus a seasonal amplitude (climate/seasonality.ts), which IS
+  // a sinusoid over the year — this draws the curve that was already computed.
+  // The top of the map is the northern hemisphere (see shiftedYNorm), warmest in
+  // July; the southern half runs the opposite way.
+  function temperatureYear(cell: ProbeCell): number[] | null {
+    if (!lastTemperature || !lastSeasonality) return null
+    const amp = lastSeasonality[cell.i]
+    if (amp === OCEAN_AMPLITUDE) return null
+    const mean = lastTemperature[cell.i]
+    const north = shiftedYNorm(cell.gy, climateResY, Number(equatorOffsetInput.value) / 100) < 0.5
+    const sign = north ? 1 : -1
+    // Index 6 = July, the northern peak; cos is 1 there.
+    return Array.from({ length: 12 }, (_, m) => mean + sign * (amp / 2) * Math.cos(((m - 6) / 12) * 2 * Math.PI))
+  }
+
+  // Twelve months of rainfall. The HEIGHTS are exact: the wet and dry season
+  // totals fall out of the two numbers the worker ships, because the monsoon
+  // index is (wet − dry) / (wet + dry + floor) and the annual field is their
+  // mean (climate/monsoon.ts). The PHASE is an assumption — monsoon.ts keeps the
+  // two seasons as max/min and throws away which one was the northern summer, so
+  // this puts the wet season in the local summer. That is right for the tropics
+  // and half a year wrong for a Mediterranean winter-rain climate. It becomes
+  // exact when the worker ships the seasons signed rather than sorted.
+  function precipitationYear(cell: ProbeCell): number[] | null {
+    if (!lastPrecipitation || !lastMonsoonIndex) return null
+    const annual = lastPrecipitation[cell.i]
+    const index = lastMonsoonIndex[cell.i]
+    if (annual === OCEAN_PRECIP || index === OCEAN_PRECIP) return null
+    const sum = 2 * annual
+    const spread = index * (sum + CLIMATE_TUNING.monsoonSeasonalityFloor)
+    const wet = (sum + spread) / 2
+    const dry = (sum - spread) / 2
+    const north = shiftedYNorm(cell.gy, climateResY, Number(equatorOffsetInput.value) / 100) < 0.5
+    const sign = north ? 1 : -1
+    return Array.from({ length: 12 }, (_, m) => {
+      const season = sign * Math.cos(((m - 6) / 12) * 2 * Math.PI) // +1 = local summer
+      return Math.max(0, ((wet + dry) / 2 + ((wet - dry) / 2) * season) / 12)
+    })
+  }
+
+  // Build the card for the cell under the cursor. Null when the map has not even
+  // an elevation to report, which is only true before the first render.
+  // mapX/mapY are full-res texels.
+  function describeCell(mapX: number, mapY: number): HTMLElement | null {
+    if (!lastCoarseElevation) return null
+    const ex = Math.min(elevationResX - 1, Math.floor((mapX / MAP_WIDTH) * elevationResX))
+    const ey = Math.min(elevationResY - 1, Math.floor((mapY / MAP_HEIGHT) * elevationResY))
+    const metres = Math.round(elevationToMeters(lastCoarseElevation[ey * elevationResX + ex]))
+    const fine = Math.min(MAP_HEIGHT - 1, Math.floor(mapY)) * MAP_WIDTH + Math.min(MAP_WIDTH - 1, Math.floor(mapX))
+    const cell: ProbeCell = {
+      gx: climateResX > 0 ? Math.min(climateResX - 1, Math.floor((mapX / MAP_WIDTH) * climateResX)) : 0,
+      gy: climateResY > 0 ? Math.min(climateResY - 1, Math.floor((mapY / MAP_HEIGHT) * climateResY)) : 0,
+      i: 0,
+      fine,
+      land: metres >= 0,
+      metres,
     }
-    return lines.length ? lines.join('\n') : null
+    cell.i = cell.gy * climateResX + cell.gx
+
+    const stepId = STEP_IDS[panelIndex]
+    const charts: ProbeChart[] = []
+    // The charts belong to the Climate step: they are the two fields it computes,
+    // and elsewhere they would be a year drawn beside rows about the mantle.
+    if (stepId === 'climate') {
+      const temp = temperatureYear(cell)
+      if (temp) charts.push({ label: t('readout.chart.temperature'), kind: 'line', values: temp })
+      const prec = precipitationYear(cell)
+      if (prec) charts.push({ label: t('readout.chart.precipitation'), kind: 'bars', values: prec })
+    }
+
+    return buildProbeCard({
+      heading: metres >= 0 ? t('readout.metres', { v: String(metres) }) : t('readout.metresDeep', { v: String(-metres) }),
+      kind: cell.land ? t('readout.kind.land') : t('readout.kind.ocean'),
+      land: cell.land,
+      rows: climateResX > 0 || stepId === 'genesis' || stepId === 'tectonics' ? rowsForStep[stepId](cell) : [],
+      months: t('readout.months').split(','),
+      charts,
+    })
   }
 
   function handleClimateData(message: WorkerClimateDataMessage): void {
@@ -4479,7 +4687,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     host: root,
     textureWidth: MAP_WIDTH,
     textureHeight: MAP_HEIGHT,
-    describe: describeClimateCell,
+    describe: describeCell,
   })
 
   // Control-help tooltips: one delegated listener on the screen root drives the

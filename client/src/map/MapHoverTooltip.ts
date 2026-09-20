@@ -11,11 +11,16 @@ export interface MapHoverTooltipOptions {
   // texture the map plane samples, so `cellX ∈ [0,textureWidth)` etc.
   textureWidth: number
   textureHeight: number
-  // Describe the map cell under the cursor. Return the tooltip text (\n = line
-  // break) or null/'' to hide it. Kept caller-supplied so this module stays
-  // domain-agnostic (worldgen passes climate/biome readouts; the game screen
-  // can pass whatever it wants). cellX/cellY are integer texel coordinates.
-  describe: (cellX: number, cellY: number) => string | null
+  // Describe the map cell under the cursor, or return null/'' to hide the
+  // card. Kept caller-supplied so this module stays domain-agnostic (the
+  // generator passes a built card, the world map a few lines of text).
+  // cellX/cellY are integer texel coordinates.
+  //
+  // Text (\n = line break) is the short form. An element is the rich form: the
+  // caller builds it (ui/mapProbe) and this module only places it, because
+  // WHAT a cell means was never this module's business and a card with charts
+  // is not expressible as lines.
+  describe: (cellX: number, cellY: number) => string | HTMLElement | null
 }
 
 export interface MapHoverTooltip {
@@ -55,17 +60,21 @@ export function createMapHoverTooltip(options: MapHoverTooltipOptions): MapHover
   }
 
   function show(cellX: number, cellY: number, clientX: number, clientY: number): void {
-    const text = describe(cellX, cellY)
-    if (!text) {
+    const described = describe(cellX, cellY)
+    if (!described) {
       hide()
       return
     }
-    // \n → separate lines; textContent per line keeps caller strings inert.
     card.el.textContent = ''
-    for (const line of text.split('\n')) {
-      const row = document.createElement('div')
-      row.textContent = line
-      card.el.appendChild(row)
+    if (typeof described === 'string') {
+      // \n → separate lines; textContent per line keeps caller strings inert.
+      for (const line of described.split('\n')) {
+        const row = document.createElement('div')
+        row.textContent = line
+        card.el.appendChild(row)
+      }
+    } else {
+      card.el.appendChild(described)
     }
     card.showAtPoint(clientX, clientY)
   }

@@ -113,8 +113,9 @@
   background: rgba(251, 248, 242, 0.78);
 }
 
-/* Right-side legend for the active overlay(s) that carry one. Vertically centred;
-   pointer-events off so it never blocks the map. */
+/* The overlay legend, at the left edge of the map: a header button that names it
+   and counts what is in it, and a body that opens under it. Closed it is the
+   button alone, which is the state it starts in — see GeneratorScreen. */
 .generator-screen .overlay-legend {
   position: fixed;
   /* Clears the title bar — see ui/titleBar. It used to clear the overlay bar
@@ -124,23 +125,80 @@
      publishes it (see Sidebar). */
   left: calc(1rem + var(--sidebar-width, 0px));
   z-index: 2;
-  width: 168px;
+  width: 178px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
   max-height: 82vh;
-  overflow: hidden;
-  padding: 0.6rem 0.7rem;
-  background: rgba(255, 255, 255, 0.82);
-  border-radius: 0.4rem;
-  color: #1a1a1a;
+  border: 1px solid var(--dc-line2, #d3cab8);
+  border-radius: 0.5rem;
+  background: rgba(251, 248, 242, 0.94);
+  color: var(--dc-text, #1f2328);
   font-family: sans-serif;
   font-size: 0.72rem;
-  pointer-events: none;
 }
-.generator-screen .overlay-legend[hidden] {
+
+.generator-screen .legend-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 34px;
+  padding: 0 0.6rem 0 0.7rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.generator-screen .legend-toggle-label {
+  flex-grow: 1;
+  text-align: left;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.generator-screen .legend-toggle-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--dc-faint, #6b727a);
+}
+
+/* A chevron drawn from two borders: down when closed, up when open. */
+.generator-screen .legend-toggle-chevron {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  margin-top: -3px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.generator-screen .overlay-legend--open .legend-toggle-chevron {
+  margin-top: 3px;
+  transform: rotate(-135deg);
+}
+
+/* Only there once the panel is open — an empty body would still draw its top
+   border under the closed button. */
+.generator-screen .overlay-legend--open .legend-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  overflow-y: auto;
+  padding: 0.6rem 0.7rem 0.7rem;
+  border-top: 1px solid var(--dc-line, #ddd5c5);
+}
+
+.generator-screen .legend-body {
   display: none;
+}
+
+.generator-screen .legend-empty {
+  color: var(--dc-muted, #5f6770);
+  line-height: 1.4;
 }
 .generator-screen .legend-block {
   display: flex;

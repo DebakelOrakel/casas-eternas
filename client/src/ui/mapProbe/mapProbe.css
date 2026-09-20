@@ -1,0 +1,139 @@
+/* The map readout's content, inside the shared floating card (ui/tooltip).
+   The card supplies the frame — background, border, shadow, placement; this
+   file only lays out what is in it. Colours come from the design tokens with a
+   fallback, because the card also serves screens that do not wear
+   `design-light` (ui/theme/design.css). */
+.probe {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 190px;
+}
+
+.probe-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.probe-heading {
+  font-size: 19px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--dc-strong, #15191d);
+}
+
+/* Land / Ocean, with a dot in front of it — the same two colours the map uses
+   for the two halves of the world. */
+.probe-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--dc-muted, #5f6770);
+}
+
+.probe-kind::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 4px;
+}
+
+.probe-kind--land::before {
+  background: #7d7361;
+}
+
+.probe-kind--ocean::before {
+  background: #4aa3e8;
+}
+
+/* Label left, value right, on one baseline. A two-column grid rather than a row
+   per pair: the values then line up at one right edge whatever the labels do. */
+.probe-rows {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 4px 14px;
+}
+
+.probe-row-label {
+  font-size: 11.5px;
+  color: var(--dc-muted, #5f6770);
+}
+
+.probe-row-value {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dc-text, #1f2328);
+}
+
+/* The direction arrow, beside the compass letters. Sized to the line rather
+   than to the row, so it reads as part of the value. */
+.probe-arrow {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.probe-arrow-path {
+  fill: none;
+  stroke: var(--dc-muted, #5f6770);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.probe-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 3px;
+  border-top: 1px solid var(--dc-line, #ddd5c5);
+}
+
+.probe-chart-label {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--dc-muted, #5f6770);
+}
+
+.probe-chart {
+  width: 240px;
+  height: 40px;
+  display: block;
+  overflow: visible;
+}
+
+.probe-chart-line {
+  fill: none;
+  stroke: #e07a3c;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.probe-chart-zero {
+  stroke: var(--dc-input-line, #bfb5a2);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.probe-chart-bar {
+  fill: #4aa3e8;
+}
+
+/* One column per month, so the initials sit under their own value in both
+   charts — the line chart samples at the column centre for the same reason. */
+.probe-chart-axis {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  width: 240px;
+  font-size: 9.5px;
+  text-align: center;
+  color: var(--dc-faint, #6b727a);
+}

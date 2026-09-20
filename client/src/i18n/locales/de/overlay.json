@@ -50,5 +50,7 @@
   "overlay.ecology.help": "Färbt die Karte nach dem Vorkommen der gewählten Ressource.",
   "overlay.migration.label": "Migration",
   "overlay.migration.help": "Zeigt, wie sich jede Spezies von ihrem Ursprung ausbreitet.",
-  "overlay.migration.legend.title": "Völker"
+  "overlay.migration.legend.title": "Völker",
+  "overlay.legend.title": "Legende",
+  "overlay.legend.empty": "Kein Layer mit Legende ist eingeschaltet."
 }
