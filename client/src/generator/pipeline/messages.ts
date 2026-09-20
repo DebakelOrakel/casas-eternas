@@ -1,6 +1,6 @@
 // The generator pipeline's message contract — every message that crosses the
 // worker boundary, in both directions. Kept apart from the pipeline itself so a
-// consumer (WorldGenScreen) can import the vocabulary without importing the
+// consumer (GeneratorScreen) can import the vocabulary without importing the
 // machine, and so the contract is readable as one document.
 //
 // See docs/design/generator-pipeline.md.
@@ -24,7 +24,7 @@ export interface WorkerTectonicsStopMessage {
 // live epoch-stepping: per docs/design/world-gen.md, geography is meant
 // to settle into a frozen shape once tectonics stops, and erosion is a
 // denudation pass over that settled shape, not a coupled per-epoch
-// process — WorldGenScreen.ts only enables the button while the sim is
+// process — GeneratorScreen.ts only enables the button while the sim is
 // stopped.
 export interface WorkerErosionStartMessage {
   type: 'erosionStart'
@@ -289,7 +289,7 @@ export interface WorkerRenderedMessage {
   // True for the once-per-round redraws an 'erosionStart' request posts while
   // it's still running (see runErodeRequest) — everything about the
   // message is otherwise a normal full render (map texture, stats), but
-  // WorldGenScreen.ts needs to know NOT to treat this one as "the
+  // GeneratorScreen.ts needs to know NOT to treat this one as "the
   // erosion operation is done" the way it would a plain render, or the
   // erode/reset-erosion buttons would re-enable and the status readout
   // would clear partway through. Always false/omitted for every other
@@ -308,7 +308,7 @@ export interface WorkerRenderedMessage {
 // Every compute handler has an early return for a missing upstream result, and
 // until now those returns were silent: the screen had set its in-flight flag,
 // disabled the controls and started waiting for a result that would never come.
-// WorldGenScreen carried a comment about exactly this ("the worker no-ops without
+// GeneratorScreen carried a comment about exactly this ("the worker no-ops without
 // it, which would leave ecologyInFlight stuck") and guarded ONE of the five cases
 // by mirroring the worker's state — which is the kind of guard that only holds
 // while both copies agree.
@@ -429,7 +429,7 @@ export interface WorkerMigrationDataMessage {
 
 // The data a world SAVE needs (see the save/load feature): the JSON-able sim
 // snapshot plus the two large float rasters carried as binary buffers. The
-// caller (WorldGenScreen) packages these into the zip alongside world.yaml.
+// caller (GeneratorScreen) packages these into the zip alongside world.yaml.
 export interface WorkerWorldDataMessage {
   type: 'worldData'
   // Present instead of `snapshot` when the world is still in the Archean — the phase is
@@ -460,7 +460,7 @@ export interface WorkerWorldDataMessage {
   forcingResY: number
 }
 
-// The other direction, which had no union at all: WorldGenScreen listed the twelve
+// The other direction, which had no union at all: GeneratorScreen listed the twelve
 // types by hand in its `onmessage` signature, so adding a thirteenth changed
 // nothing and compiled — the new message simply never reached a handler. The
 // inbound side has had `WorkerInboundMessage` and its exhaustive HANDLERS table

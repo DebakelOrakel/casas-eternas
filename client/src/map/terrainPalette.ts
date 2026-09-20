@@ -69,7 +69,7 @@ export const WATER_LINE_INK: [number, number, number] = [43, 64, 102]
 // ocean blue rather than the generator's data-view lake blue, so a lake reads
 // as the same water the ocean is, one tone deeper. The ramp saturates where
 // the generator's does — its 900 m sits just above the measured 99th-percentile
-// lake depth (859 m; see WorldGenScreen's LAKE_SHADE_SATURATION_M), so the ramp
+// lake depth (859 m; see GeneratorScreen's LAKE_SHADE_SATURATION_M), so the ramp
 // spends its range on depths lakes actually have.
 const LAKE_SHALLOW: [number, number, number] = [160, 196, 226]
 const LAKE_DEEP: [number, number, number] = [95, 140, 188]

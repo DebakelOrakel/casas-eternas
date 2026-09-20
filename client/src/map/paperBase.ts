@@ -1,7 +1,7 @@
 // The map's neutral "paper" base: the packed relief bytes (top bit = land,
 // low 7 bits = shade 0..127 — see generator/render/reliefShade.ts) expanded
 // into RGBA. Land = near-white grey, ocean = light blue, each modulated by
-// the hillshade so relief reads on water too. Extracted from WorldGenScreen
+// the hillshade so relief reads on water too. Extracted from GeneratorScreen
 // (2026-08-07) so the worldmap screen renders the identical paper from a
 // saved world's elevation raster.
 

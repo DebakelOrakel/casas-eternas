@@ -210,7 +210,7 @@ function clearResult(id: StageId): void {
 // every result that reads it — transitively — no longer describes this world.
 //
 // This used to be two hand-written helpers, and the same cascade was ALSO written
-// out in WorldGenScreen. Two copies of one rule, and they had drifted: the screen
+// out in GeneratorScreen. Two copies of one rule, and they had drifted: the screen
 // dropped the climate and the ecology on every topography change while this side
 // kept them, so the two disagreed about what a world currently was. Both now read
 // downstreamOf() from stages.ts.
@@ -233,7 +233,7 @@ function decline(stage: StageId, needs?: StageId): true {
 
 // Event markers no longer live here — they moved to the main thread as
 // wall-clock-faded overlay markers driven by the forwarded sim events (see
-// WorldGenScreen's event overlay). The worker just relays events; it does
+// GeneratorScreen's event overlay). The worker just relays events; it does
 // not track or bake any highlight state.
 
 
@@ -798,7 +798,7 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
   if (!climate) { decline('ecology', 'climate'); return }
   // Hydrology (discharge/lakes) is optional here — if it hasn't been computed
   // yet, fish falls back to its marine component; the ecology panel re-triggers
-  // this once hydrology lands (see WorldGenScreen's chaining).
+  // this once hydrology lands (see GeneratorScreen's chaining).
   const cratonAge = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, sim.width, sim.height)
   const eco = computeEcology({
     temperature: climate.temperature,

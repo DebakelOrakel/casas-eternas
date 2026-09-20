@@ -28,13 +28,13 @@ const APPLY_EROSION_DETAIL_TEXTURE = true
 // Event highlights (merge/rift/subduction markers) used to be baked into
 // the raster here as red plate-territory tints and distance-field halos.
 // They now live as main-thread overlay markers with proper geologic-line
-// geometry, driven by the sim's events (see WorldGenScreen's event overlay
+// geometry, driven by the sim's events (see GeneratorScreen's event overlay
 // and the raft SimEvent types) — so all of that baking machinery is gone.
 
 export interface SimulationRenderResult {
   // Base color raster ONLY — elevation shading, no boundaries/arrows/labels/
   // event markers baked in. Those are now separate, individually toggleable
-  // main-thread overlay layers composited on top (see WorldGenScreen); the
+  // main-thread overlay layers composited on top (see GeneratorScreen); the
   // three overlay-source fields below are the data they draw from.
   buffer: Uint8Array
   // Neutral relief base, one byte/pixel: top bit = land, low 7 bits = hillshade
@@ -61,7 +61,7 @@ export interface SimulationRenderResult {
   // pass (erosion.ts) needs to act on, not the display-squashed ones.
   rawElevations: Float32Array
   // The redistributed values actually used for elevationToColor — what a
-  // debug 3D heightmap preview (see WorldGenScreen.ts) should displace
+  // debug 3D heightmap preview (see GeneratorScreen.ts) should displace
   // by, so the relief it shows matches what the 2D color map is already
   // showing (a white "snow-capped" pixel should also be the tallest
   // point in 3D) rather than the pre-redistribution physical field.
@@ -204,7 +204,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
   // bits = shade (0..127). The screen expands it to RGBA (land → near-white grey,
   // ocean → light blue, each modulated by the shade so relief reads on water too).
   // Forward-difference hillshade lit from the top-left; exaggerated since
-  // normalized elevation deltas are tiny per pixel. See WorldGenScreen.
+  // normalized elevation deltas are tiny per pixel. See GeneratorScreen.
   const relief = new Uint8Array(width * height)
   let landPixelCount = 0
   for (let y = 0; y < height; y++) {

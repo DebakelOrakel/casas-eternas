@@ -149,7 +149,8 @@ export const NEAR_RENDERING_GROUP = 1
 // several wrap copies in frame at mid zoom. Fine: one vertex per raster
 // cell — the mesh stops being the blurrier partner of the texture, shown
 // only at deep zoom where at most a copy or two is in the frustum. Keep in
-// step with WorldGenScreen's RELIEF_DECIMATION / zoom thresholds.
+// step with RELIEF_DECIMATION and the zoom thresholds beside it
+// (mapSceneSettings), which the generator screen reads for the same view.
 const COARSE_SUBDIVISIONS_X = 1024
 const COARSE_SUBDIVISIONS_Y = 512
 const FINE_SUBDIVISIONS_X = 2048

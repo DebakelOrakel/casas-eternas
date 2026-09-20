@@ -3,7 +3,7 @@ import type { InputParam } from '../core/inputParams'
 // The genesis panel's two controls — the only inputs to the Archean run.
 //
 // Neither is used raw. `mantleVigour` becomes the per-epoch mantle diffusion
-// (WorldGenScreen's vigourToDiffusion), and `water` becomes BOTH a sea-level
+// (GeneratorScreen's vigourToDiffusion), and `water` becomes BOTH a sea-level
 // offset in metres and a land-fraction target (elevationScale.waterSliderToOffsetM,
 // landTarget.waterSliderToLandTarget). Those mappings are curves, not scales, so
 // they stay functions rather than a `toModel` here — but the RANGE is a property

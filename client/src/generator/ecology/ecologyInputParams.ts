@@ -39,7 +39,7 @@ export const ECOLOGY_ABUNDANCE = { min: 50, max: 200, step: 5, default: 100 }
 // How the abundance fields are GROUPED — both in the fold-out UI and, more
 // importantly, in the save: a field's group name is part of its yaml path
 // (`spec.ecology.<group>.<field>`), so this ordering is a format contract, not a
-// layout preference. It lived in WorldGenScreen next to the panel icons, which
+// layout preference. It lived in GeneratorScreen next to the panel icons, which
 // put a save-format decision inside a screen; the icons stay there and join on
 // `id`.
 //

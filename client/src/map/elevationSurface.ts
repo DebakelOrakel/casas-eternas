@@ -44,7 +44,7 @@ export function downsampleElevation(data: Float32Array, resX: number, resY: numb
 
 // heightScale converts one display-elevation unit (the -1..1 scale where 1.0
 // = ELEVATION_METERS) into world Y units — the caller owns that constant
-// since it knows the scene's metres-per-world-unit (see WorldGenScreen).
+// since it knows the scene's metres-per-world-unit (see GeneratorScreen).
 //
 // `clampAtSeaLevel` is the rendering behaviour described above and stays the
 // default. TRUTH consumers pass false: a marching-hexagons shoreline has to
