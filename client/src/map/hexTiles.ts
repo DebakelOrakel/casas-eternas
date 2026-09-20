@@ -1,4 +1,4 @@
-import { Biome } from '../worldgen/climate/biomes'
+import { Biome } from '../generator/climate/biomes'
 import { hexCenter, hexCorners, hexIdKey } from './hexGrid'
 import type { HexId } from './hexGrid'
 import { MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, UNITS_PER_METER } from './mapSceneSettings'

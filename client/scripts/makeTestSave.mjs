@@ -15,22 +15,22 @@ const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/ind
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' })
 const L = (p) => server.ssrLoadModule(p)
 const M = {
-  sim: await L('/src/worldgen/tectonics/plateSimulation.ts'),
-  field: await L('/src/worldgen/elevation/elevationField.ts'),
-  ridged: await L('/src/worldgen/elevation/ridgedNoise.ts'),
-  erosionForcing: await L('/src/worldgen/pipeline/erosionForcing.ts'),
-  erosionPassV2: await L('/src/worldgen/surface/erosionPassV2.ts'),
-  surfaceInputs: await L('/src/worldgen/surface/surfaceInputParams.ts'),
-  climateField: await L('/src/worldgen/climate/climateField.ts'),
-  temperature: await L('/src/worldgen/climate/temperature.ts'),
-  wind: await L('/src/worldgen/climate/wind.ts'),
-  currents: await L('/src/worldgen/climate/oceanCurrents.ts'),
-  seasonality: await L('/src/worldgen/climate/seasonality.ts'),
-  monsoon: await L('/src/worldgen/climate/monsoon.ts'),
+  sim: await L('/src/generator/tectonics/plateSimulation.ts'),
+  field: await L('/src/generator/elevation/elevationField.ts'),
+  ridged: await L('/src/generator/elevation/ridgedNoise.ts'),
+  erosionForcing: await L('/src/generator/pipeline/erosionForcing.ts'),
+  erosionPassV2: await L('/src/generator/surface/erosionPassV2.ts'),
+  surfaceInputs: await L('/src/generator/surface/surfaceInputParams.ts'),
+  climateField: await L('/src/generator/climate/climateField.ts'),
+  temperature: await L('/src/generator/climate/temperature.ts'),
+  wind: await L('/src/generator/climate/wind.ts'),
+  currents: await L('/src/generator/climate/oceanCurrents.ts'),
+  seasonality: await L('/src/generator/climate/seasonality.ts'),
+  monsoon: await L('/src/generator/climate/monsoon.ts'),
   layers: await L('/src/world/save/worldLayers.ts'),
-  archean: await L('/src/worldgen/archean/archeanState.ts'),
-  archeanStep: await L('/src/worldgen/archean/archeanStep.ts'),
-  finalize: await L('/src/worldgen/archean/finalizeArchean.ts'),
+  archean: await L('/src/generator/archean/archeanState.ts'),
+  archeanStep: await L('/src/generator/archean/archeanStep.ts'),
+  finalize: await L('/src/generator/archean/finalizeArchean.ts'),
 }
 
 process.stderr.write('building a real world … ')

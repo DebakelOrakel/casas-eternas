@@ -1,0 +1,350 @@
+/* Ghost dot that follows the cursor while dragging a migration origin. */
+.generator-screen .migration-origin-ghost {
+  position: fixed;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Seed field: no label, and a bit narrower than the slider fields. */
+.generator-screen .field--seed {
+  width: 150px;
+}
+
+.generator-screen .seed-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Compute-progress indicator, centered over the bottom panel (roughly the legend's
+   offset, from the bottom). A real 0..100 fill for erosion; an indeterminate sweep
+   for open-ended processes (tectonics/climate/hydrology). */
+.generator-screen .compute-progress {
+  position: fixed;
+  bottom: calc(7.5rem + var(--step-bar-height, 0px));
+  /* Centred on the MAP, not on the window: the column takes real width off the
+     left, so a plain 50% sits a sidebar's half to the left of the map's middle. */
+  left: calc(50% + var(--sidebar-width, 0px) / 2);
+  transform: translateX(-50%);
+  z-index: 3;
+  width: 220px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.14);
+  overflow: hidden;
+}
+.generator-screen .compute-progress[hidden] {
+  display: none;
+}
+.generator-screen .compute-progress-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #3a7a4a;
+  border-radius: 3px;
+  transition: width 0.15s ease;
+}
+/* The Archean runs the same indeterminate sweep as the tectonic stepper (it is
+   an open-ended process you stop, not one that finishes), but its fill is
+   coloured by the same three-stage judgement the banner text states: below 20%
+   nothing has settled, 20-70% is the window where separate cratons exist and
+   still move, above 70% continents assemble. Other phases leave data-stage
+   unset and keep the default. */
+.generator-screen .compute-progress-fill[data-stage='early'] { background: #7a8794; }
+.generator-screen .compute-progress-fill[data-stage='window'] { background: #4f9d5d; }
+.generator-screen .compute-progress-fill[data-stage='late'] { background: #c98a3c; }
+
+.generator-screen .compute-progress.is-indeterminate .compute-progress-fill {
+  width: 40%;
+  transition: none;
+  animation: generator-progress-sweep 1.1s ease-in-out infinite;
+}
+@keyframes generator-progress-sweep {
+  0% { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
+
+/* World age + phase hint over the map. Not in the Genesis step's controls: the
+   age is true of the world in every phase, and the hint describes what the map
+   is doing rather than a control. Pointer-events off so it never blocks the map
+   underneath. */
+/* Narration about the WORLD, as opposed to the panel below, which is about what
+   you can DO. That split is the scheme this is the first instance of: anything the
+   simulation wants to tell you about its own state belongs in this band.
+   
+   Cinzel, matching the panel title, so it reads as the same voice — but in mixed
+   case at weight 400, because a full sentence in the title's uppercase 600 is a
+   wall. Tracking is lighter than the title's 0.08em for the same reason: that
+   value is tuned for capitals. */
+.generator-screen .world-banner {
+  position: fixed;
+  bottom: 8.4rem;
+  /* Centred on the map — see .compute-progress. */
+  left: var(--sidebar-width, 0px);
+  right: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  text-align: center;
+}
+/* Needed because the rule above sets `display: flex`, which outranks the browser's
+   own `[hidden] { display: none }` — so without this the banner ignores `hidden`
+   entirely and the last Archean sentence stays on screen for the whole run. */
+.generator-screen .world-banner[hidden] {
+  display: none;
+}
+/* Its own backdrop since Genesis moved into the column: the line used to stand
+   on that panel's fade, and on the bare map a pale sentence over pale relief is
+   not readable. */
+.generator-screen .world-banner-hint {
+  font-family: 'Cinzel', serif;
+  font-weight: 400;
+  font-size: 1.35rem;
+  letter-spacing: 0.03em;
+  color: rgba(26, 26, 26, 0.72);
+  padding: 0.35rem 1.1rem;
+  border-radius: 1.2rem;
+  background: rgba(251, 248, 242, 0.78);
+}
+
+/* Right-side legend for the active overlay(s) that carry one. Vertically centred;
+   pointer-events off so it never blocks the map. */
+.generator-screen .overlay-legend {
+  position: fixed;
+  /* Clears the title bar — see ui/titleBar. It used to clear the overlay bar
+     below it as well; that bar is gone, so the legend moved up. */
+  top: calc(1rem + var(--title-bar-height, 0px));
+  /* Beside the column, not under it — the sidebar takes real width, and it
+     publishes it (see Sidebar). */
+  left: calc(1rem + var(--sidebar-width, 0px));
+  z-index: 2;
+  width: 168px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-height: 82vh;
+  overflow: hidden;
+  padding: 0.6rem 0.7rem;
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 0.4rem;
+  color: #1a1a1a;
+  font-family: sans-serif;
+  font-size: 0.72rem;
+  pointer-events: none;
+}
+.generator-screen .overlay-legend[hidden] {
+  display: none;
+}
+.generator-screen .legend-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.generator-screen .legend-title {
+  font-weight: 600;
+}
+.generator-screen .legend-gradient-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.generator-screen .legend-gradient-bar {
+  width: 100%;
+  height: 12px;
+  flex: none;
+  border-radius: 2px;
+}
+.generator-screen .legend-gradient-labels {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+}
+.generator-screen .legend-swatches {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.generator-screen .legend-swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.generator-screen .legend-swatch {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 2px;
+}
+/* Volcano cone marker in a legend row — a small upward triangle (border trick),
+   matching the map's volcano cones. Fill colour set inline via border-bottom-color. */
+.generator-screen .legend-cone {
+  width: 0;
+  height: 0;
+  flex: none;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 12px solid currentColor;
+}
+/* Hotspot-plume ring marker in a legend row — a hollow circle, matching the map. */
+.generator-screen .legend-ring {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  box-sizing: border-box;
+}
+
+/* --- step 0: the world's name, seed and shape -----------------------------
+   Lives in the sidebar, so it is a single 300px column and reads the design
+   tokens the column itself wears rather than the older paper look below. */
+.generator-screen .world-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  /* Takes the column's free height, which is what lets "Create world" sit at
+     the very foot (`margin-top: auto` below) rather than under the last field. */
+  flex-grow: 1;
+}
+
+.generator-screen .world-panel[hidden] {
+  display: none;
+}
+
+.generator-screen .world-panel__intro {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dc-muted);
+}
+
+.generator-screen .world-panel__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.generator-screen .world-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.generator-screen .world-field__label {
+  font-size: 13px;
+  color: var(--dc-text2);
+}
+
+.generator-screen .world-panel .field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.generator-screen .world-panel input[type='text'] {
+  flex-grow: 1;
+  min-width: 0;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--dc-input-line);
+  border-radius: 6px;
+  background: var(--dc-bg);
+  color: var(--dc-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.generator-screen .world-panel .icon-button {
+  width: 44px;
+  height: 40px;
+  flex-shrink: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.generator-screen .world-panel .icon-button img {
+  width: 18px;
+  height: 18px;
+}
+
+.generator-screen .world-panel .icon-button:hover {
+  background: var(--dc-hover);
+}
+
+.generator-screen .topology-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.generator-screen .topology {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--dc-line2);
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.generator-screen .topology[aria-pressed='true'] {
+  border-color: var(--dc-teal);
+  background: var(--dc-hover);
+}
+
+/* The shape that does not exist yet. aria-disabled rather than disabled, so
+   the row can still be read and pointed at — a control the pointer cannot
+   reach cannot explain itself. */
+.generator-screen .topology[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.generator-screen .topology__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dc-strong);
+}
+
+.generator-screen .topology__desc {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--dc-muted);
+  text-wrap: pretty;
+}
+
+.generator-screen .world-create {
+  margin-top: auto;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.generator-screen .world-create:hover {
+  filter: brightness(0.95);
+}

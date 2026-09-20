@@ -1,7 +1,7 @@
 ---
 summary: A plan for rebuilding the erosion step — macro pass, refined bakes and hydrology together — as one mass-conserving, equilibrium-seeking surface-process engine with tectonic forcing and a multithreaded solver. Written after a week of measurements located four structural roots under ~20 accumulated crutches; the crutch inventory, the literature grounding, the tectonics interface, the thread model, the phased build with go/no-go gates, and an honest outcome estimate are all here.
 date: 2026-08-16
-area: worldgen
+area: generator
 stage: idea
 status: plan agreed 2026-08-16; P0 prototype RUN the same day and its original gate FAILED — by design, cheaply, and informatively. The failure revised the plan (see "Refined bakes under v2, REVISED"): tier consistency cannot come from independent per-tier solves under ANY erosion model, it comes from one solve plus derived tiers — recorded as its own decision in decisions/derived-bake-tiers.md, valid for the current pipeline too. P0 is COMPLETE: cost measured, and the look question closed structurally — a full equilibrium erases its initial condition, so texture comes from finite landscape age + K contrast + U detail, not from scalar tuning (see the P0 section). The U-source fork below is narrowed but not closed.
 ---

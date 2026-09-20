@@ -42,7 +42,7 @@ Every doc in `decisions/` and `design/` starts with:
 ---
 summary: One or two sentences — enough to decide whether to open the doc.
 date: 2026-07-28   # creation date; "last updated" is derived from git, never maintained by hand
-area: worldgen     # worldgen | ui | mechanics | concepts | platform — the changelog's vocabulary
+area: generator    # generator | ui | mechanics | concepts | platform — the changelog's vocabulary
 stage: built       # idea | decided | building | built | superseded
 status: free-form and honest — the nuance stage cannot hold
 ---

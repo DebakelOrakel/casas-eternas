@@ -1,6 +1,6 @@
-import { periodicValueNoise2D } from '../../worldgen/elevation/ridgedNoise'
-import { UNINHABITABLE_BIOMES } from '../../worldgen/climate/biomes'
-import { SEA_LEVEL } from '../../worldgen/elevation/elevationScale'
+import { periodicValueNoise2D } from '../../generator/elevation/ridgedNoise'
+import { UNINHABITABLE_BIOMES } from '../../generator/climate/biomes'
+import { SEA_LEVEL } from '../../generator/elevation/elevationScale'
 
 // How much of the world the player KNOWS, as one scalar per place — the input
 // the watercolour map's three registers are bands of (see

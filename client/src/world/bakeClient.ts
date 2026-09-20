@@ -1,6 +1,6 @@
 import { apiBase } from '../server/worldClient'
 import { getServerStatus } from '../server/serverStatus'
-import { amplifyPhaseFraction } from '../worldgen/surface/bakeInBrowser'
+import { amplifyPhaseFraction } from '../generator/surface/bakeInBrowser'
 import { authFetch, hasSession } from '../server/session'
 
 // Commissioning a bake on the server, and following it until it lands.
@@ -81,7 +81,7 @@ const POLL_MS = 2000
 
 // The server reports progress WITHIN the current phase, so `erosion 84%` is
 // followed by `hydrology 0%`. The band table that makes that monotonic lives in
-// worldgen/surface/bakeInBrowser, shared with the generator's own bake — two
+// generator/surface/bakeInBrowser, shared with the generator's own bake — two
 // copies would drift, and a progress bar that runs backwards in one place and
 // not the other is exactly the kind of difference nobody notices until it is
 // confusing.

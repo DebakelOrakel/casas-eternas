@@ -23,7 +23,7 @@
 // registry is where it would land if it does.
 export type FieldGrid = 'world' | 'climate'
 
-import { ECOLOGY_FIELD_IDS } from '../../worldgen/ecology/ecologyField'
+import { ECOLOGY_FIELD_IDS } from '../../generator/ecology/ecologyField'
 
 export interface FieldSpec {
   name: string

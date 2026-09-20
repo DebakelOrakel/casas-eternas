@@ -19,7 +19,7 @@ export interface ToroidalMapViewOptions {
   // The pan focus in world coords (x, z). Uses the focus rather than raw
   // camera position deliberately: once the camera is tilted its position is
   // offset backward from where the view is actually centered (see
-  // worldgenCamera's tilt handling), so recentering off raw position would
+  // generatorCamera's tilt handling), so recentering off raw position would
   // drift.
   getFocus: () => { x: number; z: number }
   // Detail level to show this frame (see MapReliefDetail). Evaluated each

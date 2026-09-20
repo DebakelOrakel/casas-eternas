@@ -1,9 +1,9 @@
-import { MAP_WIDTH, METERS_PER_CELL } from '../worldgen/core/mapConfig'
-import { elevationToMeters, metersToElevation } from '../worldgen/elevation/elevationScale'
+import { MAP_WIDTH, METERS_PER_CELL } from '../generator/core/mapConfig'
+import { elevationToMeters, metersToElevation } from '../generator/elevation/elevationScale'
 // Worldgen's own width vocabulary — reading its units and pure values is what
 // the map→worldgen boundary allows (see the root CLAUDE.md), the same import
 // map/hexPorts.ts already makes.
-import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH } from '../worldgen/surface/hydrology'
+import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH } from '../generator/surface/hydrology'
 
 // WHERE THE WATER IS, as a field — step 1 of the near-field plan
 // (docs/design/hex-world-view.md, agreed 2026-08-14).

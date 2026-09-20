@@ -4,9 +4,9 @@ import { fieldSpec } from './save/fieldSpec'
 import type { FieldSpec } from './save/fieldSpec'
 import { readRecipeNumber, readRecipeValue } from './save/recipeYaml'
 import { deriveWorldId } from './identity'
-import { hashSeedString } from '../worldgen/core/rng'
-import { FINE_DETAIL_SEED_SALT } from '../worldgen/elevation/ridgedNoise'
-import { erosionLithoSeed } from '../worldgen/surface/erosionForcingFields'
+import { hashSeedString } from '../generator/core/rng'
+import { FINE_DETAIL_SEED_SALT } from '../generator/elevation/ridgedNoise'
+import { erosionLithoSeed } from '../generator/surface/erosionForcingFields'
 import type { ErosionControls, WorldManifest, WorldManifestLayer } from './save/loadWorldInputs'
 
 // ASKING A FINISHED WORLD WHAT IS TRUE AT A PLACE.

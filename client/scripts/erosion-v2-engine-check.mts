@@ -1,4 +1,4 @@
-// Port gate for the erosion-v2 engine core (src/worldgen/surface/erosionEngine.ts):
+// Port gate for the erosion-v2 engine core (src/generator/surface/erosionEngine.ts):
 // runs the TS engine and the measured threading spike (erosion-v2-spike.mjs)
 // on the same input, forcing and parameters, and compares the resulting
 // terrain BYTE FOR BYTE. The two implement the same algorithm to the same
@@ -15,13 +15,13 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ErosionEngine, DEFAULT_ENGINE_PARAMS } from '../src/worldgen/surface/erosionEngine'
-import { PooledErosionEngine, PipelinedErosionEngine } from '../src/worldgen/surface/erosionEnginePool'
+import { ErosionEngine, DEFAULT_ENGINE_PARAMS } from '../src/generator/surface/erosionEngine'
+import { PooledErosionEngine, PipelinedErosionEngine } from '../src/generator/surface/erosionEnginePool'
 import { Worker as NodeWorker } from 'node:worker_threads'
-import { fineDetailNoise } from '../src/worldgen/elevation/ridgedNoise'
-import { engineFlowRouting } from '../src/worldgen/surface/erosionEngineBridge'
-import { runErosionPassV2 } from '../src/worldgen/surface/erosionPassV2'
-import { accumulateDischarge, computeLakes } from '../src/worldgen/surface/hydrology'
+import { fineDetailNoise } from '../src/generator/elevation/ridgedNoise'
+import { engineFlowRouting } from '../src/generator/surface/erosionEngineBridge'
+import { runErosionPassV2 } from '../src/generator/surface/erosionPassV2'
+import { accumulateDischarge, computeLakes } from '../src/generator/surface/hydrology'
 
 const [artifactDir, resArg, itersArg] = process.argv.slice(2)
 if (!artifactDir) {
@@ -149,7 +149,7 @@ try {
 // worker count. Workers are Node worker_threads loading the TS entry —
 // execArgv is inherited from the tsx parent, which is what makes that
 // possible in this harness (the browser spawns the same file via ?worker).
-const workerUrl = new URL('../src/worldgen/surface/erosionEngineWorker.ts', import.meta.url)
+const workerUrl = new URL('../src/generator/surface/erosionEngineWorker.ts', import.meta.url)
 for (const workerCount of [2, 8]) {
   const pool = await PooledErosionEngine.create(
     RES_X, RES_Y, z, { uplift, erodibility },

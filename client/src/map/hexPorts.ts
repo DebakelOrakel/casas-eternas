@@ -3,7 +3,7 @@ import type { HexId, HexPoint } from './hexGrid'
 import { HEX_COL_SPACING, MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH } from './mapSceneSettings'
 // Worldgen's own width vocabulary — reading its units and pure values is what
 // the map→worldgen boundary allows (see the root CLAUDE.md).
-import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH } from '../worldgen/surface/hydrology'
+import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH } from '../generator/surface/hydrology'
 
 // Phase 3 of the hex build plan (docs/design/hex-world-view.md): the SEAM
 // vocabulary — how linear and areal features meet the grid.

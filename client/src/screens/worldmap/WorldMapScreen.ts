@@ -1,6 +1,6 @@
 import { Color3, Color4, MeshBuilder, PointerEventTypes, RawTexture, Scene, ShaderMaterial, Texture } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
-import { createWorldgenCamera } from '../../camera/worldgenCamera'
+import { createGeneratorCamera } from '../../camera/generatorCamera'
 import { NEAR_RENDERING_GROUP, createToroidalMapView } from '../../map/ToroidalMapView'
 import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import type { ToroidalMapView } from '../../map/ToroidalMapView'
@@ -28,8 +28,8 @@ import { createKnowledgeDebugPanel } from './knowledgeDebugPanel'
 import { createWatercolorPass } from './watercolorPass'
 import { MAP_EXAGGERATION, NEAR_EXAGGERATION, PAPER_TEXTURE_HEIGHT, PAPER_TEXTURE_WIDTH, HEX_COL_SPACING, HEX_ROW_SPACING, HEXGRID_FADE_HIGH_ALTITUDE, HEXGRID_FADE_LOW_ALTITUDE, MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, NEAR_MIN_ALTITUDE, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
 import { AMPLIFY_FINEST_STAGE } from '../../world/bakeSettings'
-import { elevationToMeters } from '../../worldgen/elevation/elevationScale'
-import { Biome, biomeLabelKey } from '../../worldgen/climate/biomes'
+import { elevationToMeters } from '../../generator/elevation/elevationScale'
+import { Biome, biomeLabelKey } from '../../generator/climate/biomes'
 import { t } from '../../i18n/i18n'
 import type { TKey } from '../../i18n/i18n'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
@@ -42,7 +42,7 @@ import { createTitleBar } from '../../ui/titleBar/TitleBar'
 import { createLoadPanel } from '../../ui/worldPanels/LoadPanel'
 import { getServerStatus } from '../../server/serverStatus'
 import { worldInputsFrom } from '../../world/save/loadWorldInputs'
-import { deriveRivers } from '../../worldgen/surface/runAmplification'
+import { deriveRivers } from '../../generator/surface/runAmplification'
 import { openWorld } from '../../world/query'
 import type { FieldView, World } from '../../world/query'
 import '../../ui/chrome/chrome.css'
@@ -86,7 +86,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     getNearBlend: getCameraNearBlend,
     getAltitude: getCameraAltitude,
     getViewWidth: getCameraViewWidth,
-  } = createWorldgenCamera({
+  } = createGeneratorCamera({
     scene,
     canvas: ctx.canvas,
     engine: ctx.engine,
@@ -94,7 +94,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     worldHeight: WORLD_HEIGHT,
     // Past the deepest map zoom the camera hands over to the perspective
     // NEAR regime — the descent toward the horizon view (Stage A of the
-    // world view; see worldgenCamera's header).
+    // world view; see generatorCamera's header).
     nearModeEnabled: true,
     nearMinAltitude: NEAR_MIN_ALTITUDE,
     // What the descent's altitude is measured FROM. The near ground the
@@ -390,7 +390,7 @@ export const createWorldMapScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     onClear: () => { knowledge?.fill(0); refreshKnowledge() },
     onReveal: () => { knowledge?.fill(1); refreshKnowledge() },
     // The map must not slide out from under a brush stroke — the camera
-    // exposes exactly this seam (see worldgenCamera's setPanEnabled).
+    // exposes exactly this seam (see generatorCamera's setPanEnabled).
     onBrushToggle: (active: boolean) => setCameraPanEnabled(!active),
     onClassesToggle: (active: boolean) => {
       hexClassesOn = active

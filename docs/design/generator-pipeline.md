@@ -3,7 +3,7 @@ summary: The generator's runtime pipeline — its state is already stage-shaped 
   declared, which is why invalidation is a set of hand-written rules. The target is the
   chain as data; this records the design, the reset taxonomy and the staged path there.
 date: 2026-08-09
-area: worldgen
+area: generator
 stage: built
 status: implemented — all five steps built 2026-08-09
 ---

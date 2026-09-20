@@ -1,14 +1,14 @@
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { bakeLayer, decodeLayer } from './save/worldLayers'
-import type { AmplificationArtifact } from '../worldgen/surface/bakeInBrowser'
+import type { AmplificationArtifact } from '../generator/surface/bakeInBrowser'
 
 export type { AmplificationArtifact }
 import type { Encoding } from './save/worldLayers'
-import { AMPLIFY_CONSTANTS } from '../worldgen/surface/amplify'
+import { AMPLIFY_CONSTANTS } from '../generator/surface/amplify'
 import { AMPLIFY_EROSION_ROUNDS, AMPLIFY_FINEST_STAGE } from './bakeSettings'
-import { metersToElevation } from '../worldgen/elevation/elevationScale'
-import { downsampleBox } from '../worldgen/core/field'
+import { metersToElevation } from '../generator/elevation/elevationScale'
+import { downsampleBox } from '../generator/core/field'
 
 // The PIPELINE half of an artifact's key, assembled in one place.
 //

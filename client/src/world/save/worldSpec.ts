@@ -1,14 +1,14 @@
-import type { InputParam } from '../../worldgen/core/inputParams'
-import { ARCHEAN_INPUTS } from '../../worldgen/archean/archeanInputParams'
-import { CLIMATE_INPUTS } from '../../worldgen/climate/climateInputParams'
-import { SURFACE_INPUTS } from '../../worldgen/surface/surfaceInputParams'
-import { ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS, ECOLOGY_INPUTS } from '../../worldgen/ecology/ecologyInputParams'
+import type { InputParam } from '../../generator/core/inputParams'
+import { ARCHEAN_INPUTS } from '../../generator/archean/archeanInputParams'
+import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
+import { SURFACE_INPUTS } from '../../generator/surface/surfaceInputParams'
+import { ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS, ECOLOGY_INPUTS } from '../../generator/ecology/ecologyInputParams'
 import { readRecipeNumber } from './recipeYaml'
 
 // The RECIPE half of a world save — `spec:` in world.yaml — as one ordered table
 // that both writes and reads it.
 //
-// It used to be two hand-maintained lists in WorldGenScreen: a `buildWorldYaml`
+// It used to be two hand-maintained lists in GeneratorScreen: a `buildWorldYaml`
 // that concatenated strings out of `input.value`, and a load path that pulled
 // the same keys back one regex at a time. Nothing tied them together, so a key
 // added to one and forgotten in the other would save fine and silently load its

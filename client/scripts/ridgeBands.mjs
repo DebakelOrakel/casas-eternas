@@ -27,15 +27,15 @@ const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/ind
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' })
 const L = (p) => server.ssrLoadModule(p)
 const M = {
-  sim: await L('/src/worldgen/tectonics/plateSimulation.ts'),
-  field: await L('/src/worldgen/elevation/elevationField.ts'),
-  ridged: await L('/src/worldgen/elevation/ridgedNoise.ts'),
-  erosionForcing: await L('/src/worldgen/pipeline/erosionForcing.ts'),
-  erosionPassV2: await L('/src/worldgen/surface/erosionPassV2.ts'),
-  scale: await L('/src/worldgen/elevation/elevationScale.ts'),
-  archean: await L('/src/worldgen/archean/archeanState.ts'),
-  archeanStep: await L('/src/worldgen/archean/archeanStep.ts'),
-  finalize: await L('/src/worldgen/archean/finalizeArchean.ts'),
+  sim: await L('/src/generator/tectonics/plateSimulation.ts'),
+  field: await L('/src/generator/elevation/elevationField.ts'),
+  ridged: await L('/src/generator/elevation/ridgedNoise.ts'),
+  erosionForcing: await L('/src/generator/pipeline/erosionForcing.ts'),
+  erosionPassV2: await L('/src/generator/surface/erosionPassV2.ts'),
+  scale: await L('/src/generator/elevation/elevationScale.ts'),
+  archean: await L('/src/generator/archean/archeanState.ts'),
+  archeanStep: await L('/src/generator/archean/archeanStep.ts'),
+  finalize: await L('/src/generator/archean/finalizeArchean.ts'),
 }
 
 // World width in km, for reporting octave wavelengths in something physical.

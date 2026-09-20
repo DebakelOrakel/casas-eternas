@@ -1,7 +1,7 @@
 ---
 summary: How the tectonics simulation actually produces terrain, mountain formation above all.
 date: 2026-07-20
-area: worldgen
+area: generator
 stage: built
 status: built — the doc grew with the sim, and several original choices were reworked in place (peak-weathering removed, subsidence replaced; crust type moved to the raft model, see continental-crust-rafts.md)
 ---

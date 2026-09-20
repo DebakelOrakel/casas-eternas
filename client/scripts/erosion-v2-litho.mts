@@ -4,7 +4,7 @@
 // baked out here once per resolution. Same constants as the spike's P.
 //   npx tsx scripts/erosion-v2-litho.mts <res> <outFile>
 import { writeFileSync } from 'node:fs'
-import { fineDetailNoise } from '../src/worldgen/elevation/ridgedNoise'
+import { fineDetailNoise } from '../src/generator/elevation/ridgedNoise'
 
 const RES_X = Number(process.argv[2])
 const RES_Y = RES_X / 2

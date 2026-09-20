@@ -5,8 +5,8 @@
 // knowledge of the generation algorithms. This module is the algorithm-free
 // contract: the layer specs, the quantiser (bake), and the sampler (lookup).
 
-import { metersToElevation } from '../../worldgen/elevation/elevationScale'
-import { sampleNearestWorld } from '../../worldgen/core/field'
+import { metersToElevation } from '../../generator/elevation/elevationScale'
+import { sampleNearestWorld } from '../../generator/core/field'
 import { ECOLOGY_FIELD_NAMES, fieldSpec } from './fieldSpec'
 import type { FieldSpec } from './fieldSpec'
 

@@ -1,4 +1,4 @@
-import { Biome } from '../worldgen/climate/biomes'
+import { Biome } from '../generator/climate/biomes'
 
 // The map's own TERRAIN palette, and how it is laid onto the paper.
 //

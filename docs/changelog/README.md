@@ -8,7 +8,7 @@ capability. It answers "*when* did this arrive", grouped by area. See the decisi
 
 | File | Covers |
 |---|---|
-| [worldgen.md](./worldgen.md) | Simulation layers: tectonics, crust, erosion, climate, hydrology, volcanism, ecology, elevation |
+| [generator.md](./generator.md) | Simulation layers: tectonics, crust, erosion, climate, hydrology, volcanism, ecology, elevation |
 | [ui.md](./ui.md) | Controls, overlays, rendering, save/load, notifications |
 | [mechanics.md](./mechanics.md) | Game mechanics — empty for now, grows from the game screen on |
 | [concepts.md](./concepts.md) | Setting & world concepts (species, factions) |
@@ -26,14 +26,14 @@ doc anchors (see [localization.md](../decisions/localization.md)).
 
 ```md
 ## 2026-07-28
-- **new** Genesis: Archean core — the genesis sliders start a short Archean simulation. `worldgen.panel.genesis`
+- **new** Genesis: Archean core — the genesis sliders start a short Archean simulation. `generator.panel.genesis`
 - **changed** Crust: the crust sink — land is now conserved instead of growing unbounded. `world.event`
 - **dropped** Erosion: Braun-Willett routing — too subtle against the existing clamp.
 ```
 
 The **label** is the pipeline concept or panel the entry belongs to — `Genesis`, `Tectonics`,
 `Crust`, `Volcanism`, `Erosion`, `Climate`, `Biomes`, `Hydrology`, `Ecology`, `Migration`,
-`Elevation`, `Topology` (worldgen); `Overlays`, `Rendering`, `Save/Load`, `Notifications`,
+`Elevation`, `Topology` (generator); `Overlays`, `Rendering`, `Save/Load`, `Notifications`,
 `Layout`, `Title screen` (ui); `Workers`, `Deploy`, `Performance`, `Structure`, `Build`
 (platform). Omit it only when an entry belongs to no single one.
 

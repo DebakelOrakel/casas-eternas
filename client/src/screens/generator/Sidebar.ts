@@ -1,0 +1,92 @@
+import { t, type TKey } from '../../i18n/i18n'
+import '../../ui/theme/design.css'
+import './sidebar.css'
+
+// The generator's left column — from the design canvas (Main.dc.html, the
+// `<aside>` between the title bar and the step bar), light theme.
+//
+// It names the step you are on and says what that step does. Until now the
+// generator never said either: the panel title was one word, and what a step
+// actually IS lived only in the tooltip on its chip.
+//
+// It takes real width rather than floating over the map. That is cheap here
+// and worth it: `main.ts` keeps a ResizeObserver on the canvas that calls
+// `engine.resize()`, and the camera derives its aspect from the render size
+// every frame — so publishing a width is the whole of it, and nothing in the
+// camera needs to learn about a sidebar.
+
+export interface Sidebar {
+  element: HTMLElement
+  // Where a step puts its own controls. Empty for the steps that still keep
+  // theirs in the panel row along the foot.
+  body: HTMLElement
+  // Which step the column is describing. The id keys `generator.step.<id>`,
+  // the same base the step bar reads, so a step's name exists once.
+  setStep(id: string): void
+  // Say the step's name and description again, in the language that is active
+  // now. The generator cannot be rebuilt on a language switch — see i18n/relabel.
+  relabel(): void
+  setVisible(visible: boolean): void
+  dispose(): void
+}
+
+// Published on the document element, not on the screen root: the canvas that
+// has to give up the width is a SIBLING of the overlay the screen lives in, so
+// a variable scoped to the screen would never reach it.
+const WIDTH_VAR = '--sidebar-width'
+const WIDTH = '300px'
+
+export function createSidebar(host: HTMLElement): Sidebar {
+  const aside = document.createElement('aside')
+  aside.className = 'gen-sidebar design-light'
+
+  const heading = document.createElement('h1')
+  heading.className = 'gen-sidebar__title'
+  const description = document.createElement('p')
+  description.className = 'gen-sidebar__desc'
+  const body = document.createElement('div')
+  body.className = 'gen-sidebar__body'
+
+  aside.append(heading, description, body)
+  host.appendChild(aside)
+
+  function publishWidth(width: string): void {
+    document.documentElement.style.setProperty(WIDTH_VAR, width)
+  }
+
+  publishWidth(WIDTH)
+
+  // Which step is being described, so the column can be said again in another
+  // language without the screen having to remember on its behalf.
+  let current = ''
+
+  function paint(): void {
+    if (!current) return
+    heading.textContent = t(`generator.step.${current}.label` as TKey)
+    // The same string the step bar shows in its hover card. Shown here for
+    // the step you are ON, where it is the answer to "what am I looking at";
+    // the card stays for the steps you are not on, where it is the answer to
+    // "what would this one be".
+    description.textContent = t(`generator.step.${current}.help` as TKey)
+  }
+
+  return {
+    element: aside,
+    body,
+    setStep(id) {
+      current = id
+      paint()
+    },
+    relabel: paint,
+    setVisible(visible) {
+      aside.hidden = !visible
+      // The map takes the width back while the column is away, rather than
+      // leaving a strip of nothing beside the load screen.
+      publishWidth(visible ? WIDTH : '0px')
+    },
+    dispose() {
+      aside.remove()
+      document.documentElement.style.removeProperty(WIDTH_VAR)
+    },
+  }
+}

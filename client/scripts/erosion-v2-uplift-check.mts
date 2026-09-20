@@ -27,15 +27,15 @@ const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/ind
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' })
 const L = (p: string) => server.ssrLoadModule(p)
 const M = {
-  sim: await L('/src/worldgen/tectonics/plateSimulation.ts'),
-  field: await L('/src/worldgen/elevation/elevationField.ts'),
-  ridged: await L('/src/worldgen/elevation/ridgedNoise.ts'),
-  uplift: await L('/src/worldgen/elevation/upliftField.ts'),
-  erodibility: await L('/src/worldgen/elevation/erodibilityField.ts'),
-  engine: await L('/src/worldgen/surface/erosionEngine.ts'),
-  archean: await L('/src/worldgen/archean/archeanState.ts'),
-  archeanStep: await L('/src/worldgen/archean/archeanStep.ts'),
-  finalize: await L('/src/worldgen/archean/finalizeArchean.ts'),
+  sim: await L('/src/generator/tectonics/plateSimulation.ts'),
+  field: await L('/src/generator/elevation/elevationField.ts'),
+  ridged: await L('/src/generator/elevation/ridgedNoise.ts'),
+  uplift: await L('/src/generator/elevation/upliftField.ts'),
+  erodibility: await L('/src/generator/elevation/erodibilityField.ts'),
+  engine: await L('/src/generator/surface/erosionEngine.ts'),
+  archean: await L('/src/generator/archean/archeanState.ts'),
+  archeanStep: await L('/src/generator/archean/archeanStep.ts'),
+  finalize: await L('/src/generator/archean/finalizeArchean.ts'),
 }
 
 process.stderr.write('building a real world … ')

@@ -1,6 +1,6 @@
 import { Color3, Mesh, StandardMaterial, VertexBuffer, VertexData } from '@babylonjs/core'
 import type { InstancedMesh, Scene } from '@babylonjs/core'
-import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH } from '../worldgen/surface/hydrology'
+import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH } from '../generator/surface/hydrology'
 import type { ElevationSurface } from './elevationSurface'
 import { UNITS_PER_METER } from './mapSceneSettings'
 import { RibbonWidthMaterialPlugin } from './ribbonWidthMaterialPlugin'

@@ -1,7 +1,7 @@
 ---
 summary: Spatial substrate and initial per-plate parameters for the tectonics simulation.
 date: 2026-07-20
-area: worldgen
+area: generator
 stage: built
 status: decided and implemented; the unit-sphere substrate was later reversed — see world-topology-torus.md
 ---

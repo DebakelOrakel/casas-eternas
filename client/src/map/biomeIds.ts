@@ -1,5 +1,5 @@
-import { Biome } from '../worldgen/climate/biomes'
-import { periodicValueNoise2D } from '../worldgen/elevation/ridgedNoise'
+import { Biome } from '../generator/climate/biomes'
+import { periodicValueNoise2D } from '../generator/elevation/ridgedNoise'
 
 // Getting biome ids onto the paper's grid — the step before anything is
 // coloured. What colour a place then takes is map/terrainPalette's business;

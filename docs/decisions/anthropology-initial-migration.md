@@ -1,7 +1,7 @@
 ---
 summary: PROTO — the first Anthropology output. Seeds the world's peoples via USER-PLACED origins (one per race, ~3 races, toggleable) and a least-cost dispersal over the Ecology suitability, producing a "migration arrow-tree" (Dijkstra predecessor tree, arrow width = accumulated population flow, colour = race) over a coarse population-density background. Steerable-deterministic: the user places origins, the spread is deterministic.
 date: 2026-07-26
-area: worldgen
+area: generator
 stage: built
 status: proto BUILT — all 5 themes decided, Phases 1–3 built (worker core, panel + drag origins, ribbon arrow-tree)
 ---

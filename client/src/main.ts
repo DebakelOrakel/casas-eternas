@@ -3,7 +3,7 @@ import { Engine } from '@babylonjs/core'
 import { initI18n } from './i18n/i18n'
 import { AppStateManager } from './app/AppStateManager'
 import { createTitleScreen } from './screens/title/TitleScreen'
-import { createWorldGenScreen } from './screens/worldgen/WorldGenScreen'
+import { createGeneratorScreen } from './screens/generator/GeneratorScreen'
 import { createWorldGenScreen as createWorldGenSphereScreen } from './screens/worldgen-sphere/WorldGenScreen'
 import { createWorldMapScreen } from './screens/worldmap/WorldMapScreen'
 import { createMarsScreen } from './screens/mars/MarsScreen'
@@ -16,7 +16,7 @@ initI18n()
 
 const app = new AppStateManager(engine, canvas, overlay, {
   title: createTitleScreen,
-  worldgen: createWorldGenScreen,
+  generator: createGeneratorScreen,
   'worldgen-sphere': createWorldGenSphereScreen,
   worldmap: createWorldMapScreen,
   mars: createMarsScreen,

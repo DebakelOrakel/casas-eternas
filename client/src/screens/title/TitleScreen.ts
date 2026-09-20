@@ -28,7 +28,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
       <p class="subtitle">Herederos del Mundo</p>
     </div> -->
     <nav class="title-nav">
-      <button class="text-link" data-action="worldgen">${t('common.title.nav.generator')}</button>
+      <button class="text-link" data-action="generator">${t('common.title.nav.generator')}</button>
       <button class="text-link" data-action="worldmap">${t('common.title.nav.map')}</button>
       &nbsp;
       <a class="text-link" href="/docs/" target="_blank" rel="noopener">${t('common.title.nav.documentation')}</a>
@@ -39,8 +39,8 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
       </div>
     </nav>
   `
-  root.querySelector('[data-action="worldgen"]')!.addEventListener('click', () => {
-    ctx.goTo('worldgen')
+  root.querySelector('[data-action="generator"]')!.addEventListener('click', () => {
+    ctx.goTo('generator')
   })
   root.querySelector('[data-action="worldmap"]')!.addEventListener('click', () => {
     ctx.goTo('worldmap')

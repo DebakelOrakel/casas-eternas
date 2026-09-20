@@ -1,7 +1,7 @@
 ---
 summary: Replace the Genesis sliders with a short, watchable Archean simulation — crust nucleates over oceanic mantle upwellings, drifts on the mantle flow with no plates, and stabilises into cratons; plate count and land fraction become emergent.
 date: 2026-07-28
-area: worldgen
+area: generator
 stage: built
 status: decided and BUILT 2026-07-28 (Archean core landed the same day); tuned repeatedly since — supercontinent timing, water offsets ±600 m, compaction and blob consolidation 2026-08-06
 ---

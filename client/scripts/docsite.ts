@@ -38,7 +38,7 @@ const OUT = join(REPO, 'client', 'docs-dist')
 // The five areas — deliberately the changelog's vocabulary, so one nav spine
 // carries timeline and documents alike.
 const AREAS = [
-  { id: 'worldgen', label: 'Worldgen' },
+  { id: 'generator', label: 'Generator' },
   { id: 'ui', label: 'UI' },
   { id: 'mechanics', label: 'Mechanics' },
   { id: 'concepts', label: 'Concepts' },

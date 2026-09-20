@@ -1,5 +1,5 @@
-import { fineDetailNoise } from '../worldgen/elevation/ridgedNoise'
-import { metersToElevation } from '../worldgen/elevation/elevationScale'
+import { fineDetailNoise } from '../generator/elevation/ridgedNoise'
+import { metersToElevation } from '../generator/elevation/elevationScale'
 import { createChannelSample } from './channelField'
 import type { ChannelField } from './channelField'
 import type { ElevationSurface } from './elevationSurface'

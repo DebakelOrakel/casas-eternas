@@ -1,7 +1,7 @@
 ---
 summary: The uplift deck saturates through an isostatic soft knee (linear to 3000 m, exponential toward 6000 m) instead of climbing to the 9000 m clamp — ultra-high plateaus (2.5% of land above 6000 m; Earth ~0.001%) and their brim-full ice-cold basin lakes disappear, while ridged crests keep riding the raw crustal thickness. Rare true 7-8 km summits are out of this knob's reach and wait on a thickness-side treatment in the tectonics sim.
 date: 2026-08-16
-area: worldgen
+area: generator
 stage: built
 status: decided and built 2026-08-16; calibrated on seed alpha with scripts/measureHydrology.mjs and a hypsometry decomposition
 ---

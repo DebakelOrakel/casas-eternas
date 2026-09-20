@@ -12,10 +12,10 @@ doc rather than trusting a summary here.
 
 ```
 client/src/
-  worldgen/       the generator — has its own CLAUDE.md, read it before working there
+  generator/      the generator — has its own CLAUDE.md, read it before working there
   world/          a world's identity, spec, save format and artifacts — the layer that
                   knows WHICH world; everything below it does not
-  screens/        worldgen (the editor), worldmap, title
+  screens/        generator (the editor), worldmap, title
   storage/        artifact stores (OPFS / HTTP / tiered), bytes at paths
   server/         client-side HTTP clients for the Go server
   map/ ui/ camera/ app/ i18n/
@@ -27,18 +27,18 @@ docs/             see docs/README.md for the taxonomy
 ```
 
 **Parallel approaches.** The repo holds more than one world-generation attempt at
-once, which is why it looks confusing. `client/src/worldgen/` (flat torus) is the
+once, which is why it looks confusing. `client/src/generator/` (flat torus) is the
 live one. `client/src/worldgen-sphere/`, `screens/worldgen-sphere/` and
 `screens/mars/` are the user's separate concerns — do not edit them, and do not
 treat their problems as the current task's problems.
 
-**Module layering — keep it acyclic.** `worldgen/` computes (params in, fields
+**Module layering — keep it acyclic.** `generator/` computes (params in, fields
 out), `storage/` moves bytes at paths, `server/` talks HTTP, `map/` draws. Those
 four are PEERS and should not import each other. Above them sits `world/`, which
 owns identity, the spec, the save format and the artifact keys, and may depend on
 all four. `screens/` sits above everything.
 
-`worldgen ↔ storage ↔ server` used to be a cycle; extracting `world/` resolved it
+`generator ↔ storage ↔ server` used to be a cycle; extracting `world/` resolved it
 (2026-08-09, see docs/design/architecture-unification.md part C). Do not
 reintroduce it. If something needs both a generator and a store, that is
 `world/`'s job, not a new edge.
@@ -48,11 +48,11 @@ Two peer edges are knowingly left.
 `storage → server`, because `HttpArtifactStore` asks the server module for the
 API base. Giving the store its base URL as configuration would remove it.
 
-`map → worldgen`, with a boundary that is meant to be checkable: **`map/` may
-read worldgen's units, its vocabulary and its pure field functions — it may not
+`map → generator`, with a boundary that is meant to be checkable: **`map/` may
+read the generator's units, its vocabulary and its pure field functions — it may not
 drive a simulation.** Reading `ELEVATION_METERS`, the `Biome` enum or
 `computeBiomesFine` is fine; importing anything that advances state is the
-violation. The edge is not a cycle (nothing in `worldgen/` imports `map/`) and
+violation. The edge is not a cycle (nothing in `generator/` imports `map/`) and
 it predates the rule being written down — `mapSceneSettings` cannot express a
 metre without it. Legitimised rather than broken 2026-08-11, when
 `mapPresentation` made it conspicuous: the alternative was a units-and-vocabulary

@@ -1,7 +1,7 @@
 /* Shared screen chrome for map-style screens (worldgen, worldmap): the
    bottom control panel with its gradient, the fixed top-left file buttons,
    the bottom panel title + nav arrows, and the generic field/button
-   controls that live inside the panel. Extracted from worldgen.css
+   controls that live inside the panel. Extracted from generator.css
    (2026-08-07) so both screens wear the same frame without drifting.
    Screens opt in by adding `map-chrome` to their root class list;
    screen-specific rules stay in the screen's own stylesheet under its own

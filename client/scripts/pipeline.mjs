@@ -78,7 +78,7 @@ let instanceCount = 0
 // at the end — so a message added to the contract cannot go untested unnoticed.
 const dispatchedTypes = new Set()
 async function freshPipeline() {
-  const rt = await server.ssrLoadModule(`/src/worldgen/pipeline/runtime.ts?instance=${instanceCount++}`)
+  const rt = await server.ssrLoadModule(`/src/generator/pipeline/runtime.ts?instance=${instanceCount++}`)
   const messages = []
   rt.setEmitter((message, transfer) => {
     // structuredClone with a transfer list DETACHES the originals, exactly as
@@ -180,7 +180,7 @@ test('the stage table agrees with the code around it', async () => {
   // every control checked against the modules that already exist. A declaration
   // nobody reads and nobody checks is a comment with syntax highlighting.
   const [stages, fields, spec] = await Promise.all([
-    server.ssrLoadModule('/src/worldgen/pipeline/stages.ts'),
+    server.ssrLoadModule('/src/generator/pipeline/stages.ts'),
     server.ssrLoadModule('/src/world/save/fieldSpec.ts'),
     server.ssrLoadModule('/src/world/save/worldSpec.ts'),
   ])
@@ -568,7 +568,7 @@ for (const { name, run } of TESTS) {
 }
 
 console.log('— coverage')
-const handled = (await server.ssrLoadModule('/src/worldgen/pipeline/runtime.ts')).HANDLED_MESSAGE_TYPES
+const handled = (await server.ssrLoadModule('/src/generator/pipeline/runtime.ts')).HANDLED_MESSAGE_TYPES
 const untested = handled.filter((t) => !dispatchedTypes.has(t))
 check(`every one of the ${handled.length} message types is exercised somewhere above`, untested.length === 0, untested.join(', '))
 

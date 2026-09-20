@@ -41,9 +41,9 @@ const server = await createServer({ root: CLIENT, server: { middlewareMode: true
 const L = (p) => server.ssrLoadModule(p)
 const M = {
   inputs: await L('/src/world/save/loadWorldInputs.ts'),
-  amplify: await L('/src/worldgen/surface/runAmplification.ts'),
-  plan: await L('/src/worldgen/surface/bakePlan.ts'),
-  scale: await L('/src/worldgen/elevation/elevationScale.ts'),
+  amplify: await L('/src/generator/surface/runAmplification.ts'),
+  plan: await L('/src/generator/surface/bakePlan.ts'),
+  scale: await L('/src/generator/elevation/elevationScale.ts'),
   settings: await L('/src/world/bakeSettings.ts'),
 }
 const { SEA_LEVEL } = M.scale

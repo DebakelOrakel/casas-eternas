@@ -1,5 +1,5 @@
-import { computeReliefBytes } from '../worldgen/render/reliefShade'
-import { upscaleBilinearToroidal } from '../worldgen/core/field'
+import { computeReliefBytes } from '../generator/render/reliefShade'
+import { upscaleBilinearToroidal } from '../generator/core/field'
 import { buildPaperBase, buildUnshadedPaperBase } from './paperBase'
 import { dilateLandBiomes, expandBiomeIds } from './biomeIds'
 import { applyLakeWash, applyTerrainWash, DEFAULT_TERRAIN_WASH } from './terrainPalette'
@@ -8,14 +8,14 @@ import { createElevationSurface, downsampleElevation } from './elevationSurface'
 import { createFineElevationSurface } from './fineElevationSurface'
 import type { ChannelField } from './channelField'
 import { RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from './mapSceneSettings'
-import { SEA_LEVEL, elevationToMeters } from '../worldgen/elevation/elevationScale'
-import { Biome, computeBiomesFine, HYDROLOGY_STATE_BIOMES, reduceTemperatureToSeaLevel } from '../worldgen/climate/biomes'
+import { SEA_LEVEL, elevationToMeters } from '../generator/elevation/elevationScale'
+import { Biome, computeBiomesFine, HYDROLOGY_STATE_BIOMES, reduceTemperatureToSeaLevel } from '../generator/climate/biomes'
 // The hydrology's width vocabulary — a pure value, the read the map→worldgen
 // boundary allows (see the root CLAUDE.md; channelField makes the same one).
 // Shoreline points carry the thinnest pen so the overlay draws them at its
 // cartographic floor.
-import { RIVER_MIN_WIDTH } from '../worldgen/surface/hydrology'
-import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../worldgen/climate/climateField'
+import { RIVER_MIN_WIDTH } from '../generator/surface/hydrology'
+import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../generator/climate/climateField'
 import type { ElevationSurface } from './elevationSurface'
 
 // How a world's FIELDS become what a map view eats: the paper texture bytes and

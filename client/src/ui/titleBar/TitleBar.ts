@@ -19,7 +19,7 @@ import './titleBar.css'
 
 export interface TitleBarWorld {
   // The world's own name, when it has one that is not simply the seed. The
-  // generator writes `metadata.name = seed` today (WorldGenScreen's
+  // generator writes `metadata.name = seed` today (GeneratorScreen's
   // buildWorldYaml), so a distinct name only exists for worlds that arrived
   // from elsewhere — hence optional rather than "" for the common case.
   name?: string

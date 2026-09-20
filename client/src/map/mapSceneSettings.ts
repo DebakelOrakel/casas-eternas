@@ -1,5 +1,5 @@
-import { ELEVATION_METERS } from '../worldgen/elevation/elevationScale'
-import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../worldgen/core/mapConfig'
+import { ELEVATION_METERS } from '../generator/elevation/elevationScale'
+import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../generator/core/mapConfig'
 
 // Shared scene scale + relief-preview settings for the flat map screens
 // (worldgen, worldmap). One module on purpose: both screens render the same
@@ -50,7 +50,7 @@ export const RELIEF_DECIMATION = 2
 // Eased zoom beyond which the displaced relief replaces the flat plane —
 // below it the displacement is subpixel while its triangles are at their
 // most multiplied (many wrap copies in frame). Zoom is exponential in t
-// (see worldgenCamera): 0.14 ≈ 14 world units of visible width, 0.31 ≈ 7.5.
+// (see generatorCamera): 0.14 ≈ 14 world units of visible width, 0.31 ≈ 7.5.
 export const RELIEF_MIN_ZOOM = 0.14
 // Eased zoom beyond which the FULL-res relief level takes over from the
 // half-res one (silhouettes at raster sharpness). Deep enough that the

@@ -32,7 +32,7 @@ const M = {
   key: await L('/src/world/identity.ts'),
   artifact: await L('/src/world/artifacts.ts'),
   memory: await L('/src/storage/MemoryArtifactStore.ts'),
-  amplify: await L('/src/worldgen/surface/amplify.ts'),
+  amplify: await L('/src/generator/surface/amplify.ts'),
   settings: await L('/src/world/bakeSettings.ts'),
 }
 const JSZip = (await import(`${CLIENT}/node_modules/jszip/dist/jszip.min.js`)).default

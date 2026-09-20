@@ -48,9 +48,9 @@ const server = await createServer({ root: CLIENT, server: { middlewareMode: true
 const L = (p) => server.ssrLoadModule(p)
 
 const M = {
-  amplify: await L('/src/worldgen/surface/runAmplification.ts'),
-  scale: await L('/src/worldgen/elevation/elevationScale.ts'),
-  plan: await L('/src/worldgen/surface/bakePlan.ts'),
+  amplify: await L('/src/generator/surface/runAmplification.ts'),
+  scale: await L('/src/generator/elevation/elevationScale.ts'),
+  plan: await L('/src/generator/surface/bakePlan.ts'),
 }
 
 let failures = 0

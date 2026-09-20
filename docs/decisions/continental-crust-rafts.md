@@ -1,7 +1,7 @@
 ---
 summary: Continental crust modeled as persistent "rafts" decoupled from the kinematic plates, so land/ocean ratio is emergent and conserved.
 date: 2026-07-24
-area: worldgen
+area: generator
 stage: built
 status: decided; Phases 1–5 implemented
 ---

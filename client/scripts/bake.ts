@@ -28,8 +28,8 @@ import { join, dirname } from 'node:path'
 import { Worker as NodeWorker, isMainThread } from 'node:worker_threads'
 import { availableParallelism } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
-import { runAmplification } from '../src/worldgen/surface/runAmplification'
-import type { WorkerLike } from '../src/worldgen/surface/erosionEnginePool'
+import { runAmplification } from '../src/generator/surface/runAmplification'
+import type { WorkerLike } from '../src/generator/surface/erosionEnginePool'
 import { amplificationPipelineVersion, writeAmplificationArtifact } from '../src/world/artifacts'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
 import { artifactKey } from '../src/storage/ArtifactStore'
@@ -397,5 +397,5 @@ async function main(): Promise<void> {
 if (isMainThread) {
   void main().catch((error: unknown) => fail(String(error)))
 } else {
-  void import('../src/worldgen/surface/erosionEngineWorker')
+  void import('../src/generator/surface/erosionEngineWorker')
 }
