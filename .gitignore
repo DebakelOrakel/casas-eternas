@@ -59,3 +59,7 @@ client/scripts/amplify-hashes.json
 # The generated documentation site and its bundled generator:
 client/docs-dist/
 client/scripts/.docsite.mjs
+
+# The bake pipeline bundled for Node. Built by `make baker` (and by the
+# Dockerfile itself), so a tracked copy is only ever stale.
+baker.mjs
