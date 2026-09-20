@@ -61,5 +61,10 @@
   "common.notify.signedOut": "Abgemeldet — der Server nimmt diese Sitzung nicht mehr an.",
   "common.title.nav.generator": "Generator",
   "common.title.nav.map": "Kartenansicht",
-  "common.title.nav.documentation": "Dokumentation"
+  "common.title.nav.documentation": "Dokumentation",
+  "common.confirm.action.cancel": "Abbrechen",
+  "common.confirm.discard.title": "Ungespeicherte Änderungen",
+  "common.confirm.discard.new": "Diese Welt ist noch nirgends gespeichert. Wenn du sie verlässt, ist sie fort.",
+  "common.confirm.discard.unsaved": "Diese Welt hat sich seit dem letzten Speichern verändert. Wenn du sie verlässt, sind die Änderungen fort.",
+  "common.confirm.discard.action.discard": "Verwerfen"
 }

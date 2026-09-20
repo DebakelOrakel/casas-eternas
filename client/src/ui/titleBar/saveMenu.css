@@ -7,6 +7,11 @@
   display: flex;
 }
 
+/* `display: flex` outranks the user-agent rule for [hidden]. */
+.save-menu[hidden] {
+  display: none;
+}
+
 .save-menu__button {
   height: 36px;
   display: flex;

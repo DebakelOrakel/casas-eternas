@@ -4,6 +4,8 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-20
+- **added** Generator: leaving a world that is not saved — or closing the tab — asks first. `generator`
+- **changed** Generator: the save menu stays away while the world list is up. `titlebar`
 - **fixed** The sign-in button and the server's save target stay away where there is nothing to sign in to. `titlebar`
 - **changed** The sign-in window follows the new design: its own card on a dimmed page, with a line saying what an account is for. `signin`
 - **changed** Generator: saving and opening a world live in a menu in the title bar; the floppy, the folder and the unsaved badge are gone. `titlebar`

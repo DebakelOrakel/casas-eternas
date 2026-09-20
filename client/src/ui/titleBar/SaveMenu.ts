@@ -42,6 +42,10 @@ export interface SaveMenu {
   // world the simulation has already moved past, which is why the old save
   // button was disabled for the same window.
   setEnabled(on: boolean): void
+  // Away entirely while the screen has no world to save — the generator hides
+  // it behind its world list, where the question on screen is still WHICH
+  // world. Distinct from setEnabled, which means "not just now".
+  setVisible(on: boolean): void
   // Every string again, in the language that is active now. The generator
   // cannot rebuild itself on a language switch — see i18n/relabel.
   relabel(): void
@@ -252,6 +256,10 @@ export function createSaveMenu(options: SaveMenuOptions): SaveMenu {
     element: host,
     setEnabled(on) {
       button.disabled = !on
+      if (!on) close()
+    },
+    setVisible(on) {
+      host.hidden = !on
       if (!on) close()
     },
     relabel() {

@@ -61,5 +61,10 @@
   "common.notify.signedOut": "Signed out — the server no longer accepts this session.",
   "common.title.nav.generator": "Generator",
   "common.title.nav.map": "Map View",
-  "common.title.nav.documentation": "Documentation"
+  "common.title.nav.documentation": "Documentation",
+  "common.confirm.action.cancel": "Cancel",
+  "common.confirm.discard.title": "Unsaved changes",
+  "common.confirm.discard.new": "This world is saved nowhere yet. If you leave it, it is gone.",
+  "common.confirm.discard.unsaved": "This world changed since the last save. If you leave it, the changes are gone.",
+  "common.confirm.discard.action.discard": "Discard"
 }

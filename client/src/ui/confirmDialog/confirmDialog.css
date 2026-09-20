@@ -1,0 +1,96 @@
+/* The confirm window. Same card as the sign-in dialog — one modal vocabulary,
+   not two — with its actions in a row at the foot instead of a form. */
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above the sign-in window (60) as well: this one guards against losing a
+     world, and nothing may cover it. */
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dc-backdrop);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+/* `display: flex` outranks the user-agent rule for [hidden]. */
+.confirm-backdrop[hidden] {
+  display: none;
+}
+
+.confirm-dialog {
+  width: min(400px, calc(100vw - 2rem));
+  box-sizing: border-box;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border: 1px solid var(--dc-menu-line);
+  border-radius: 12px;
+  background: var(--dc-menu-bg);
+  box-shadow: 0 24px 60px var(--dc-dialog-shadow);
+  color: var(--dc-text);
+}
+
+.confirm-title {
+  margin: 0;
+  font-family: 'Bricolage Grotesque', Georgia, serif;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--dc-strong);
+}
+
+.confirm-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dc-muted);
+  text-wrap: pretty;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-cancel,
+.confirm-go {
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Keeping the world is the quiet answer and the safe one, so it is an outline
+   rather than a fill — and it is the one that holds the focus. */
+.confirm-cancel {
+  border: 1px solid var(--dc-line2);
+  background: transparent;
+  color: var(--dc-text);
+}
+
+.confirm-cancel:hover {
+  background: var(--dc-hover);
+}
+
+/* Red, not the accent: the accent is what this app uses for "go on", and
+   throwing a world away is not that. */
+.confirm-go {
+  border: 0;
+  background: var(--dc-red);
+  color: var(--dc-on-red);
+}
+
+.confirm-go:hover {
+  filter: brightness(0.95);
+}
+
+.confirm-cancel:focus-visible,
+.confirm-go:focus-visible {
+  outline: 2px solid var(--dc-accent);
+  outline-offset: 2px;
+}

@@ -48,6 +48,7 @@ import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleBar'
 import { createSaveMenu, type SaveTarget } from '../../ui/titleBar/SaveMenu'
+import { createConfirmDialog } from '../../ui/confirmDialog/ConfirmDialog'
 import { keepWorldInBrowser } from '../../world/browserWorlds'
 import { getServerStatus, refreshServerStatus } from '../../server/serverStatus'
 import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
@@ -744,7 +745,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const titleBar = createTitleBar(root, {
     nameKey: 'generator.title',
     onSignIn: () => serverIndicator.openSignIn(),
-    onHomeClick: () => ctx.goTo('title'),
+    onHomeClick: () => { void leaveWorld(() => ctx.goTo('title')) },
     onLocaleChange: () => {
       // One call for the whole column: every step block in it carries its keys
       // rather than its strings (see i18n/relabel).
@@ -767,7 +768,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const saveMenu = createSaveMenu({
     currentWorld: () => ({ uid: worldUid, seed: seedInput.value, revision: worldRevision }),
     onSave: (target) => { void saveTo(target) },
-    onOpenWorld: () => openWorldChooser(),
+    onOpenWorld: () => { void leaveWorld(() => openWorldChooser()) },
     onSignIn: () => serverIndicator.openSignIn(),
   })
   titleBar.tools.appendChild(saveMenu.element)
@@ -2941,6 +2942,46 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     return { kind: lastSave.target === 'server' ? 'server' : 'local', at: lastSave.at }
   }
 
+  // --- leaving a world that is not saved ---------------------------------------
+
+  // The window that asks. Built once and reused: the question is the same
+  // wherever a world would be thrown away.
+  const confirmDialog = createConfirmDialog(root)
+
+  // Runs `go`, but asks first where the world would be lost by it.
+  //
+  // Both ways out of a world come through here — the wordmark and the save
+  // menu's "open world" — because the loss is the same either way and a guard
+  // written twice is a guard one of the two paths eventually loses. The state
+  // is the one the title bar shows: `new` is a world that was never written
+  // anywhere, `unsaved` one that moved since it was. The two other states are
+  // a world safely at rest, and those simply go.
+  async function leaveWorld(go: () => void): Promise<void> {
+    // Nothing to lose behind the world list: the world it covers is the one it
+    // is about to replace, and it was never chosen.
+    const kind = chooserOpen ? 'local' : saveState().kind
+    if (kind !== 'new' && kind !== 'unsaved') return go()
+    const discard = await confirmDialog.ask({
+      titleKey: 'common.confirm.discard.title',
+      bodyKey: kind === 'new' ? 'common.confirm.discard.new' : 'common.confirm.discard.unsaved',
+      confirmKey: 'common.confirm.discard.action.discard',
+    })
+    if (discard) go()
+  }
+
+  // Closing the tab loses the same world, and the browser will not let a page
+  // ask its own question there: setting `returnValue` is the whole API, and the
+  // wording is the browser's. So this only decides WHETHER to ask.
+  const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+    // Same exception as above: nothing is lost while the world list is up.
+    const kind = chooserOpen ? 'local' : saveState().kind
+    if (kind !== 'new' && kind !== 'unsaved') return
+    event.preventDefault()
+    // Firefox still wants the legacy assignment; every engine ignores the text.
+    event.returnValue = ''
+  }
+  window.addEventListener('beforeunload', onBeforeUnload)
+
   function updateSaveIndicator(): void {
     // The title bar's status line IS the unsaved marker now. The badge on the
     // floppy said the same thing twice, one of them in a symbol.
@@ -2949,6 +2990,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // behind it, so there IS a seed to show — showing it would say a world is
     // open when the question on screen is still which one.
     titleBar.setWorld(chooserOpen ? null : { name: worldName, seed: seedInput.value })
+    // Nor anything to save there: the world behind the list is the one the
+    // list is about to replace, and offering to write it would be offering to
+    // keep a world nobody has chosen yet.
+    saveMenu.setVisible(!chooserOpen)
   }
 
   // One delegated listener instead of one per control: every slider, including the
@@ -4452,6 +4497,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       storagePanel.dispose()
       serverIndicator.dispose()
       saveMenu.dispose()
+      confirmDialog.dispose()
+      window.removeEventListener('beforeunload', onBeforeUnload)
       hoverTooltip?.dispose()
       riverLayer?.dispose()
       overlay.dispose()
