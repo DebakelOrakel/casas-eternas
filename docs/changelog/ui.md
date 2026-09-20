@@ -4,6 +4,10 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-20
+- **changed** Generator: a step with many resource fields offers them as icon tiles instead of a long list. `generator.overlays`
+- **removed** Generator: the resource layer has no legend any more — it paints one field from none to much. `generator.overlays`
+- **changed** Generator: the Ecology step offers the abundance of the resource it is painting, in place of the category fold-out. `generator.step`
+- **changed** Generator: the Ecology step's levers and its abundance nudges moved into the sidebar. `generator.step`
 - **changed** Generator: the Erosion step's levers, its run button and the detail bake moved into the sidebar. `generator.step`
 - **changed** Generator: the Climate step's levers and its min/max readout moved into the sidebar. `generator.step`
 - **fixed** Safari: the generator's workers no longer fail on a reload, which left the map white. `generator`

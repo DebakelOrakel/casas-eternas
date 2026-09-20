@@ -35,7 +35,7 @@ import { OCEAN_PRECIP } from '../../worldgen/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../worldgen/climate/seasonality'
 import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../worldgen/climate/biomes'
 import { evaporationPotential } from '../../worldgen/surface/hydrology'
-import { ECOLOGY_FIELD_META, ecologyFieldColor, ecologyFieldLegendStops } from '../../worldgen/ecology/ecologyColors'
+import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../worldgen/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../worldgen/ecology/ecologyField'
 import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from '../../world/save/worldLayers'
 import { getLocale, t, type TKey } from '../../i18n/i18n'
@@ -85,19 +85,14 @@ import { needsSignIn } from '../../server/session'
 // group `metals` and ordered prestige silver-gold-gems, the save called it `metal` and
 // ordered it gold-silver-gems. One of them names a key in the save format, so a
 // divergence here is not cosmetic.
-// Icons only; the grouping itself (and therefore the save path of every field)
-// lives in ecology/ecologyInputParams.ts, joined on `id`. A save-format decision
-// has no business sitting next to a panel's artwork.
-const ECOLOGY_CATEGORY_ICONS: Record<string, string> = {
-  subsistence: 'wheat', material: 'stone_axe', metal: 'ecology', prestige: 'crown',
-}
-const ECOLOGY_CATEGORIES: readonly { readonly id: string; readonly icon: string; readonly fields: readonly EcologyFieldId[] }[] =
-  ECOLOGY_ABUNDANCE_GROUPS.map((g) => ({ id: g.id, icon: ECOLOGY_CATEGORY_ICONS[g.id], fields: g.fields }))
-// Flat list DERIVED from the grouping, so a field can never be in the save under one
-// group and in the UI under none.
-const ECOLOGY_WEIGHT_FIELDS: EcologyFieldId[] = ECOLOGY_CATEGORIES.flatMap((c) => [...c.fields])
+// The abundance groups are a SAVE-FORMAT fact (a field's group is part of its
+// yaml path) and they live where that is decided, in ecology/ecologyInputParams.
+// The column no longer shows them: it offers the abundance of the ONE resource
+// the map is painting, so there is nothing left to group. Still read here for
+// the flat field list and for the save path.
+const ECOLOGY_WEIGHT_FIELDS: EcologyFieldId[] = ECOLOGY_ABUNDANCE_GROUPS.flatMap((g) => [...g.fields])
 const ecologyWeightPath = (field: EcologyFieldId): string =>
-  `spec.ecology.${ECOLOGY_CATEGORIES.find((c) => c.fields.includes(field))!.id}.${field}`
+  `spec.ecology.${ECOLOGY_ABUNDANCE_GROUPS.find((g) => g.fields.includes(field))!.id}.${field}`
 // Per-field icon; every field has its own.
 const FIELD_ICON: Record<EcologyFieldId, string> = {
   carryingCapacity: 'ecology',
@@ -447,10 +442,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // its own variant above, where a slider has to fit beside five others.
   // The strings sit on the elements as keys, so the column can be said again in
   // another language without the screen being rebuilt (see i18n/relabel).
-  const paramField = (p: InputParam, cls: string, valueKey: string): string => {
+  const paramField = (p: InputParam, cls: string, valueKey: string, opts: { attrs?: string } = {}): string => {
     declaredSliders.push({ param: p, cls, valueKey })
     const label = t(`${p.i18n}.label` as TKey)
-    return `<div class="wg-param" data-help="${p.i18n}">
+    return `<div class="wg-param" data-help="${p.i18n}"${opts.attrs ?? ''}>
         <div class="wg-param__head">
           <span class="wg-param__label" data-t="${p.i18n}.label">${label}</span>
           <span class="wg-param__value"><span data-value="${valueKey}">${p.default}</span>${p.unit ? `<span data-t="${p.unit}">${t(p.unit as TKey)}</span>` : ''}</span>
@@ -627,19 +622,35 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </div>
       </div>
     </div>
-    <div class="panel" data-stage="ecology">
-      <button type="button" class="icon-button panel-reset" data-action="reset-ecology" aria-label="${t('worldgen.action.resetEcology.label')}" data-help="worldgen.action.resetEcology">
-        <img src="/icons/reset.png" alt="" />
-      </button>
-      ${sliderField(ECOLOGY_INPUTS.carryingCapacity, 'carrying-capacity-input', 'carrying-capacity-label', { attrs: ' data-ecofield="carryingCapacity"' })}
-      ${sliderField(ECOLOGY_INPUTS.concentration, 'concentration-input', 'concentration-label', { attrs: ' data-ecofield="carryingCapacity"' })}
-      ${sliderField(ECOLOGY_INPUTS.provinceStrength, 'province-input', 'province-label', { attrs: ' data-ecofield="carryingCapacity"' })}
-      <!-- Generated from ECOLOGY_CATEGORIES so the ids here cannot drift from the
-           ones the fold-out and world.yaml use; they already had once. -->
-      <span class="ecology-cat-buttons">${ECOLOGY_CATEGORIES.map((c) => `
-        <button type="button" class="icon-button ecology-cat" data-eco-cat="${c.id}" aria-label="${t(`worldgen.ecology.cat.${c.id}.label` as TKey)}" data-help="worldgen.ecology.cat.${c.id}"><img src="/icons/${c.icon}.png" alt="" /></button>`).join('')}
-      </span>
-      <div class="ecology-foldout" data-value="ecology-foldout" hidden></div>
+    <div class="wg-step" data-stage="ecology">
+      <section class="wg-params">
+        <h2 class="wg-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
+        <!-- How much of the resource you are LOOKING AT. One slider rather than
+             thirteen behind three category buttons: the column already lists
+             every resource once, as the picker that says which one the map
+             paints, and tuning the one you can see is how the work goes
+             anyway. Its name is set from that pick (see showAbundanceFor).
+             It comes FIRST, before the three levers that apply to all
+             resources at once. Hidden while the pick is the carrying-capacity
+             aggregate, which is not a resource and has those levers instead. -->
+        <div class="wg-param" data-value="abundance-row" hidden>
+          <div class="wg-param__head">
+            <span class="wg-param__label" data-value="abundance-label"></span>
+            <span class="wg-param__value"><span data-value="abundance-value">${ECOLOGY_ABUNDANCE.default}</span><span data-t="common.unit.percent">${t('common.unit.percent')}</span></span>
+          </div>
+          <input type="range" class="wg-param__range abundance-input" min="${ECOLOGY_ABUNDANCE.min}" max="${ECOLOGY_ABUNDANCE.max}" step="${ECOLOGY_ABUNDANCE.step}" value="${ECOLOGY_ABUNDANCE.default}" />
+        </div>
+        ${paramField(ECOLOGY_INPUTS.carryingCapacity, 'carrying-capacity-input', 'carrying-capacity-label', { attrs: ' data-ecofield="carryingCapacity"' })}
+        ${paramField(ECOLOGY_INPUTS.concentration, 'concentration-input', 'concentration-label', { attrs: ' data-ecofield="carryingCapacity"' })}
+        ${paramField(ECOLOGY_INPUTS.provinceStrength, 'province-input', 'province-label', { attrs: ' data-ecofield="carryingCapacity"' })}
+      </section>
+      <div class="wg-step__foot">
+        <div class="wg-step__actions">
+          <button type="button" class="wg-action-icon" data-action="reset-ecology" data-t-aria="worldgen.action.resetEcology.label" data-help="worldgen.action.resetEcology">
+            <img src="/icons/reset.png" alt="" />
+          </button>
+        </div>
+      </div>
     </div>
     <div class="panel" data-stage="migration">
       <button type="button" class="icon-button panel-reset" data-action="reset-migration" aria-label="${t('worldgen.action.resetMigration.label')}" data-help="worldgen.action.resetMigration">
@@ -1046,6 +1057,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // the panel selector, on an absolute 0..1 scale.
   let lastEcologyFields: Partial<Record<EcologyFieldId, Float32Array>> = {}
   let selectedEcologyField: EcologyFieldId = 'carryingCapacity'
+  // What the picker last CHOSE, as opposed to what a hover is momentarily
+  // showing. Leaving a hover returns here; it used to return to the aggregate,
+  // which silently threw the choice away — and since the abundance slider
+  // follows the choice, it threw the slider away with it.
+  let pickedEcologyField: EcologyFieldId = 'carryingCapacity'
   // Field currently previewed by hovering a panel slider/icon (null = not
   // hovering). While non-null the ecology overlay shows even if its own
   // toggle is off, and reverts when the mouse leaves the panel.
@@ -1799,6 +1815,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // not self-evident carry one (names/boundaries/wind/rivers do not). May be a
   // function so a layer (ecology) can vary its legend with the selected field —
   // resolved at render time, see renderLegends.
+  // NO ENTRY FOR `ecology`: a resource layer paints 0..100% of one field, and
+  // a ramp from "none" to "much" explains nothing the map does not already
+  // show. Which field it is stands in the column, on the row you picked.
   const overlayLegend: Partial<Record<OverlayId, LegendSpec | (() => LegendSpec)>> = {
     mantle: { type: 'swatches', title: t('world.overlay.mantle.legend.title'), items: [
       { label: t('world.overlay.mantle.legend.upwelling'), rgb: [225, 85, 55] },
@@ -1822,7 +1841,6 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       { label: t('world.overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
       { label: t('world.overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
     ] },
-    ecology: () => ({ type: 'gradient', title: ECOLOGY_FIELD_META[selectedEcologyField].label, unit: '', stops: ecologyFieldLegendStops(selectedEcologyField) }),
     migration: { type: 'swatches', title: 'Peoples', items: MIGRATION_RACES.map((r) => ({ label: r.label, rgb: r.rgb })) },
   }
 
@@ -1842,6 +1860,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       selectedEcologyField = field
       overlaysOn.ecology = true
     }
+    pickedEcologyField = selectedEcologyField
+    showAbundanceFor(pickedEcologyField)
     updateOverlays()
   }
 
@@ -1969,7 +1989,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const ecologyAvailable = overlayAvailable.ecology()
     overlayList.refresh((id) => isOverlayId(id)
       ? { on: overlaysOn[id], available: overlayAvailable[id]() }
-      : { on: overlaysOn.ecology && selectedEcologyField === id, available: ecologyAvailable })
+      // The PICK, not what a hover is showing: hovering a lever previews the
+      // aggregate, and the mark would leave the resource you chose.
+      : { on: overlaysOn.ecology && pickedEcologyField === id, available: ecologyAvailable })
   }
   // Called whenever overlay data appears/disappears (climate/hydrology computed
   // or invalidated, world re-rendered) so the column + layers stay in sync.
@@ -2449,7 +2471,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     ecologyInFlight = true
     updateControlsDisabled()
     updateProgress()
-    const w = (f: EcologyFieldId): number => (foldoutInputs[f] ? Number(foldoutInputs[f]!.value) / 100 : 1)
+    const w = (f: EcologyFieldId): number => (abundance.get(f) ?? ECOLOGY_ABUNDANCE.default) / 100
     postToWorker({
       type: 'ecologyRun',
       carryingCapacity: Number(carryingCapacityInput.value),
@@ -2846,8 +2868,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       const leaf = field.path.split('.').pop() as EcologyFieldId
       // The thirteen ecology abundance nudges share one declaration, so they have
       // no binding of their own and are found by their field id.
-      const input = sliderBindings.get(field.input)?.input ?? foldoutInputs[leaf]
-      values[field.path] = Number(input?.value ?? field.input.default)
+      const input = sliderBindings.get(field.input)?.input
+      values[field.path] = input ? Number(input.value) : (abundance.get(leaf) ?? field.input.default)
     }
     return { seed: seedInput.value, values }
   }
@@ -2967,11 +2989,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const c = Number(concentrationInput.value)
     concentrationLabel.textContent = c > 0 ? `+${c}` : String(c)
     provinceLabel.textContent = provinceInput.value
-    for (const f of ECOLOGY_WEIGHT_FIELDS) {
-      const lbl = foldoutLabels[f]
-      const inp = foldoutInputs[f]
-      if (lbl && inp) lbl.textContent = inp.value
-    }
+    showAbundanceFor(pickedEcologyField)
   }
 
   // Downscaled PNG of the current composited map, for the save's preview.png.
@@ -3741,10 +3759,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     carryingCapacityInput.value = String(spec.values['ecology.carryingCapacity'])
     concentrationInput.value = String(spec.values['ecology.concentration'])
     provinceInput.value = String(spec.values['ecology.provinceStrength'])
-    for (const f of ECOLOGY_WEIGHT_FIELDS) {
-      const inp = foldoutInputs[f]
-      if (inp) inp.value = String(spec.values[ecologyWeightPath(f).replace('spec.', '')])
-    }
+    for (const f of ECOLOGY_WEIGHT_FIELDS) abundance.set(f, Number(spec.values[ecologyWeightPath(f).replace('spec.', '')]))
     syncSliderLabels()
     erosionRunCount = Number(readYamlValue(yaml, 'status.erosionRun') ?? 0)
     // lastEpoch is set from the restore render's reported epoch (status
@@ -3823,74 +3838,52 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const clearPreview = (): void => {
     if (ecologyHoverField === null) return
     ecologyHoverField = null
-    selectedEcologyField = 'carryingCapacity'
+    selectedEcologyField = pickedEcologyField
     updateOverlays()
   }
 
-  // Fold-out: three category icon-buttons in the base row; clicking one reveals
-  // that category's per-field abundance sliders (each with its resource icon) in
-  // the full-width sub-row (radio-style — one category open at a time). Hovering a
-  // row previews that field.
-  const ecologyFoldout = root.querySelector<HTMLElement>('[data-value="ecology-foldout"]')!
-  const foldoutInputs: Partial<Record<EcologyFieldId, HTMLInputElement>> = {}
-  const foldoutLabels: Partial<Record<EcologyFieldId, HTMLElement>> = {}
-  const catPanels: Record<string, HTMLElement> = {}
-  for (const cat of ECOLOGY_CATEGORIES) {
-    const panel = document.createElement('div')
-    panel.className = 'ecology-cat-panel'
-    panel.hidden = true
-    for (const field of cat.fields) {
-      const row = document.createElement('label')
-      row.className = 'field ecology-nudge'
-      row.dataset.ecofield = field
-      const icon = document.createElement('img')
-      icon.className = 'ecology-nudge-icon'
-      icon.src = `/icons/${FIELD_ICON[field]}.png`
-      icon.alt = ''
-      const label = document.createElement('span')
-      label.className = 'field-label'
-      const name = document.createElement('span')
-      const fieldLabel = t(`world.resource.${field}.label` as TKey)
-      name.textContent = `${fieldLabel}: `
-      const val = document.createElement('span')
-      val.textContent = '100'
-      label.append(name, val)
-      const input = document.createElement('input')
-      input.type = 'range'
-      input.min = String(ECOLOGY_ABUNDANCE.min)
-      input.max = String(ECOLOGY_ABUNDANCE.max)
-      input.step = String(ECOLOGY_ABUNDANCE.step)
-      input.value = String(ECOLOGY_ABUNDANCE.default)
-      input.setAttribute('aria-label', t('worldgen.ecology.fieldAbundance', { label: fieldLabel }))
-      row.dataset.help = `world.resource.${field}`
-      input.addEventListener('input', () => { val.textContent = input.value; scheduleEcology() })
-      const body = document.createElement('span')
-      body.className = 'ecology-nudge-body'
-      body.append(label, input)
-      row.append(icon, body)
-      row.addEventListener('mouseenter', () => previewField(field))
-      panel.appendChild(row)
-      foldoutInputs[field] = input
-      foldoutLabels[field] = val
+  // THE ABUNDANCE NUDGES ARE VALUES, NOT CONTROLS. There are thirteen of them
+  // and one slider: the slider shows whichever resource the overlay picker is
+  // painting, and writes into this map. Thirteen hidden inputs would have done
+  // the same and made the DOM the store, which is what the fold-out was — three
+  // category buttons revealing up to four sliders, listing every resource a
+  // SECOND time next to the picker that already lists them all.
+  const abundance = new Map<EcologyFieldId, number>(ECOLOGY_WEIGHT_FIELDS.map((f) => [f, ECOLOGY_ABUNDANCE.default]))
+  const abundanceRow = root.querySelector<HTMLElement>('[data-value="abundance-row"]')!
+  const abundanceLabel = root.querySelector<HTMLElement>('[data-value="abundance-label"]')!
+  const abundanceValue = root.querySelector<HTMLElement>('[data-value="abundance-value"]')!
+  const abundanceInput = root.querySelector<HTMLInputElement>('.abundance-input')!
+
+  // Point the slider at a field. Called when the pick changes and when a save is
+  // read — never on hover, because hovering a lever previews the aggregate and
+  // the slider would flick away from the resource being tuned.
+  function showAbundanceFor(field: EcologyFieldId): void {
+    const value = abundance.get(field)
+    abundanceRow.hidden = value === undefined
+    if (value === undefined) {
+      // Emptied rather than left standing: the row is hidden, and a name left
+      // in it would be a stale answer to "which resource" the moment anything
+      // showed it again.
+      abundanceLabel.textContent = ''
+      return
     }
-    ecologyFoldout.appendChild(panel)
-    catPanels[cat.id] = panel
+    abundanceLabel.textContent = t('worldgen.ecology.fieldAbundance', { label: t(`world.resource.${field}.label` as TKey) })
+    abundanceRow.dataset.help = `world.resource.${field}`
+    abundanceInput.value = String(value)
+    abundanceValue.textContent = String(value)
   }
-  let activeCat: string | null = null
-  const setActiveCat = (id: string | null): void => {
-    activeCat = id
-    for (const cat of ECOLOGY_CATEGORIES) {
-      catPanels[cat.id].hidden = cat.id !== id
-      root.querySelector<HTMLButtonElement>(`[data-eco-cat="${cat.id}"]`)!.classList.toggle('is-active', cat.id === id)
-    }
-    ecologyFoldout.hidden = id === null
-  }
-  for (const cat of ECOLOGY_CATEGORIES) {
-    root.querySelector<HTMLButtonElement>(`[data-eco-cat="${cat.id}"]`)!.addEventListener('click', () => setActiveCat(activeCat === cat.id ? null : cat.id))
-  }
-  // Main sliders (direct children of the panel) preview the aggregate on hover.
-  const ecologyPanel = root.querySelector<HTMLElement>('.panel[data-stage="ecology"]')!
-  for (const el of ecologyPanel.querySelectorAll<HTMLElement>(':scope > .field[data-ecofield]')) {
+  abundanceInput.addEventListener('input', () => {
+    abundance.set(pickedEcologyField, Number(abundanceInput.value))
+    abundanceValue.textContent = abundanceInput.value
+    scheduleEcology()
+  })
+
+  // The three main levers preview the aggregate on hover. Told apart from the
+  // fold-out's nudge rows — which carry data-ecofield too — by the class the
+  // column's renderer gives them, not by their depth: they sit in a section
+  // now, so "direct child" stopped being true.
+  const ecologyPanel = root.querySelector<HTMLElement>('[data-stage="ecology"]')!
+  for (const el of ecologyPanel.querySelectorAll<HTMLElement>('.wg-param[data-ecofield]')) {
     el.addEventListener('mouseenter', () => previewField(el.dataset.ecofield as EcologyFieldId))
   }
   // Leaving the whole panel clears the preview (moving between sliders keeps it,
@@ -3940,13 +3933,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     resetInputs('ecology')
     // The thirteen abundance nudges are not named controls — they share one range
     // and reach the save as a group (ECOLOGY_ABUNDANCE_GROUPS), so they are not in
-    // the stage's `inputs` and get their own loop.
-    for (const f of ECOLOGY_WEIGHT_FIELDS) {
-      const inp = foldoutInputs[f]
-      const lbl = foldoutLabels[f]
-      if (inp) inp.value = '100'
-      if (lbl) lbl.textContent = '100'
-    }
+    // the stage's `inputs` and are reset here.
+    for (const f of ECOLOGY_WEIGHT_FIELDS) abundance.set(f, ECOLOGY_ABUNDANCE.default)
+    showAbundanceFor(pickedEcologyField)
     requestEcology()
   })
   resetMigrationButton.addEventListener('click', () => {
@@ -4224,7 +4213,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   })
   // The steps whose controls have moved out of the panel row at the foot and
   // into the column. The rest follow one per step, in pipeline order.
-  sidebar.body.append(overlayList.element, worldPanel, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX], panels[panelIndexOf('erosion')])
+  sidebar.body.append(overlayList.element, worldPanel, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX], panels[panelIndexOf('erosion')], panels[ECOLOGY_PANEL_INDEX])
   relabel(sidebar.body)
 
   const stepBar = createStepBar(root, {
@@ -4333,7 +4322,11 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     )
     for (const id of OVERLAY_IDS) overlaysOn[id] = stepDef.defaults.includes(id)
     // A step that paints a resource field starts on the first one it offers.
-    if (stepDef.fields.length > 0) selectedEcologyField = stepDef.fields[0]
+    if (stepDef.fields.length > 0) {
+      selectedEcologyField = stepDef.fields[0]
+      pickedEcologyField = selectedEcologyField
+      showAbundanceFor(pickedEcologyField)
+    }
     ecologyHoverField = null // drop any stale hover preview when switching steps
     panels.forEach((panel, i) => {
       panel.hidden = i !== index
@@ -4377,7 +4370,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // yet" rather than an empty strip waiting for the first slider to move.
   //
   // It has to run HERE, not beside createTitleBar and not beside the `input`
-  // listener: worldSignature() reads readSpec(), which reads `foldoutInputs` —
+  // listener: worldSignature() reads readSpec(), which reads `abundance` —
   // a `const` declared further down this function. Called any earlier it hits
   // that binding's temporal dead zone, the ReferenceError aborts the whole
   // screen build, and the generator comes up blank.

@@ -124,9 +124,3 @@ function rampColor(stops: { c: number; rgb: Rgb }[], value: number): Rgb {
 export function ecologyFieldColor(id: EcologyFieldId, fraction: number): Rgb {
   return rampColor(ECOLOGY_FIELD_META[id].stops, fraction)
 }
-
-// Legend gradient stops (value 0..100) matching a field's ramp, for the overlay
-// legend. Both scales read 0..100 (% of the lushest swatch / of land-max).
-export function ecologyFieldLegendStops(id: EcologyFieldId): { value: number; rgb: Rgb }[] {
-  return ECOLOGY_FIELD_META[id].stops.map((s) => ({ value: s.c * 100, rgb: s.rgb }))
-}

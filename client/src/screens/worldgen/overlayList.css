@@ -11,6 +11,17 @@
   display: none;
 }
 
+/* The two sections together, spaced by the column's section gap (.wg-step). */
+.wg-layers {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.wg-layers[hidden] {
+  display: none;
+}
+
 .wg-overlays__head {
   display: flex;
   align-items: center;
@@ -25,11 +36,6 @@
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--dc-text2);
-}
-
-/* The resource picker's heading, when a step has one. */
-.wg-overlays__picktitle {
-  margin-top: 14px;
 }
 
 .wg-overlays__picks {
@@ -158,4 +164,60 @@
 .wg-overlay__pick:disabled {
   cursor: default;
   opacity: 0.4;
+}
+
+/* --- many picks: a grid of icon tiles --------------------------------------
+   Over PICK_GRID_MIN fields the list becomes tiles (see OverlayList.ts). The
+   name is still in the markup, so it follows a language switch and the screen
+   reader still reads it; only the eye loses it, and the hover card gives it
+   back. The dot goes too: with one tile filled, "which one" is already said. */
+.wg-overlays__picks.is-compact {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wg-overlays__picks.is-compact .wg-overlay {
+  width: 44px;
+  height: 44px;
+  min-height: 0;
+  box-sizing: border-box;
+  justify-content: center;
+  gap: 0;
+  position: relative;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+}
+
+.wg-overlays__picks.is-compact .wg-overlay:hover:not(.is-disabled) {
+  background: var(--dc-hover);
+}
+
+.wg-overlays__picks.is-compact .wg-overlay:has(.wg-overlay__pick:checked) {
+  border-color: var(--dc-accent);
+  background: var(--dc-hover);
+}
+
+/* The input stays in the tile rather than being dropped: the tile has to be
+   clickable, focusable and checkable, and that is what the input is. */
+.wg-overlays__picks.is-compact .wg-overlay__pick {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.wg-overlays__picks.is-compact .wg-overlay:has(.wg-overlay__pick:focus-visible) {
+  outline: 2px solid var(--dc-accent);
+  outline-offset: 2px;
+}
+
+.wg-overlays__picks.is-compact .wg-overlay__label {
+  display: none;
+}
+
+.wg-overlays__picks.is-compact .wg-overlay__icon {
+  width: 22px;
+  height: 22px;
 }
