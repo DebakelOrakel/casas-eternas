@@ -32,7 +32,7 @@ export const ECOLOGY_INPUTS = {
 // The fold-out abundance sliders share one range and one default across all
 // thirteen resources, but NOT one label: each is `worldgen.ecology.fieldAbundance`
 // interpolated with the resource's name, and each carries its own
-// `world.resource.<id>` help key. So this declares the numbers only — the
+// `resource.<id>` help key. So this declares the numbers only — the
 // generic renderer cannot serve them until it can take a per-instance label.
 export const ECOLOGY_ABUNDANCE = { min: 50, max: 200, step: 5, default: 100 }
 

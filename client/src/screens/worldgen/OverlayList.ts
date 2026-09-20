@@ -66,13 +66,13 @@ export function createOverlayList(options: {
   host.innerHTML = `
     <section class="wg-overlays">
       <div class="wg-overlays__head">
-        <h2 class="wg-section-title" data-t="generator.overlays.label" data-help="generator.overlays"></h2>
+        <h2 class="wg-section-title" data-t="generator.section.overlays.label" data-help="generator.section.overlays"></h2>
         <span class="wg-overlays__count"></span>
       </div>
       <div class="wg-overlays__rows"></div>
     </section>
     <section class="wg-overlays wg-picks" hidden>
-      <h2 class="wg-section-title" data-t="world.overlay.resources.label" data-help="world.overlay.resources"></h2>
+      <h2 class="wg-section-title" hidden></h2>
       <div class="wg-overlays__picks"></div>
     </section>
   `

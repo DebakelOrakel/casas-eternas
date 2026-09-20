@@ -5,5 +5,11 @@
   "notify.save.server.conflict": "The server holds a newer version of this world. Nothing was overwritten.",
   "notify.save.server.failed": "Upload failed. The world was not stored.",
   "notify.gate.needsWorld": "First create the world — step 1 works on the world step 0 names.",
-  "notify.gate.needsArchean": "First run the Archean to at least {min}% stabilised (now {current}%)."
+  "notify.gate.needsArchean": "First run the Archean to at least {min}% stabilised (now {current}%).",
+  "notify.event.continentsCollidedNamed": "{a} and {b} collided",
+  "notify.event.continentsCollided": "Two continents collided",
+  "notify.event.continentBreakupNamed": "{name} is breaking apart",
+  "notify.event.continentBreakup": "A continent is breaking apart",
+  "notify.event.supercontinentFormedNamed": "Supercontinent {name} formed",
+  "notify.event.supercontinentFormed": "A supercontinent has formed"
 }

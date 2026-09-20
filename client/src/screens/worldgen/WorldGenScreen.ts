@@ -41,7 +41,7 @@ import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from '../../
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
 import { createOverlayList } from './OverlayList'
-import { OVERLAY_META, OVERLAY_IDS, type OverlayId } from './overlays'
+import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from './overlays'
 import { STEPS, STEP_IDS, step, type StepId } from './steps'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
@@ -756,13 +756,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       // One call for the whole column: every step block in it carries its keys
       // rather than its strings (see i18n/relabel).
       relabel(sidebar.body)
-      setArcheanRunning(archeanRunning)
       sidebar.relabel()
       stepBar.relabel()
       worldChooser.relabel()
       // The step statuses are words the screen chooses, not the bar's; this is
       // what puts the new language into them.
       updateNavState()
+      sayScreen()
     },
   })
 
@@ -1766,12 +1766,14 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   type LegendSpec =
     | { type: 'gradient'; title: string; unit: string; stops: { value: number; rgb: [number, number, number] }[] }
     | { type: 'swatches'; title: string; items: { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' | 'ring' }[] }
-  // `legend` may be a function so an overlay (ecology) can vary its legend with the
-  // selected field. Resolved at render time (see resolveLegend / renderLegends).
-  // `labelKey` is the world.overlay catalog key (see i18n/locales/en/world.json);
-  // `t(labelKey + '.label')` is the button's tooltip/aria text. The id and the key
-  // slug match except 'ecology' → 'resources'. (Legend titles below are not yet
-  // localized — a later step.)
+  // EVERY ENTRY IS A FUNCTION, and renderLegends calls it. Two reasons, and the
+  // first one was a bug: a spec written as a plain object runs its `t()` once,
+  // when the screen is built, so the legend kept the language the generator was
+  // entered in for as long as the world stayed open. The second is that a
+  // legend may depend on live state, which is what the ecology one used to do.
+  //
+  // The gradient titles and units below are still English in the code — they
+  // have no catalog key yet, and giving them one is its own step.
   // WHETHER a layer can be shown right now — one predicate per layer, keyed by
   // the id, so a layer added to the vocabulary is a compile error here until it
   // says when it exists. (The icons and the names live in overlays.ts; these
@@ -1812,36 +1814,44 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   }
 
   // A legend explains a layer's colours; only the layers whose colour→meaning is
-  // not self-evident carry one (names/boundaries/wind/rivers do not). May be a
-  // function so a layer (ecology) can vary its legend with the selected field —
-  // resolved at render time, see renderLegends.
+  // not self-evident carry one (names/boundaries/wind/rivers do not).
+  //
+  // EVERY ENTRY IS A FUNCTION, and renderLegends calls it. Two reasons, and the
+  // first was a bug: a spec written as a plain object runs its `t()` once, when
+  // the screen is built, so the legend kept the language the generator was
+  // entered in for as long as the world stayed open — a rebuild is what the
+  // other screens do on a language switch, and this one must not. The second is
+  // that a legend may depend on live state, which the ecology one used to do.
+  //
+  // The gradient titles and units below are still English in the code: they
+  // have no catalog key yet, and giving them one is its own step.
   // NO ENTRY FOR `ecology`: a resource layer paints 0..100% of one field, and
   // a ramp from "none" to "much" explains nothing the map does not already
   // show. Which field it is stands in the column, on the row you picked.
-  const overlayLegend: Partial<Record<OverlayId, LegendSpec | (() => LegendSpec)>> = {
-    mantle: { type: 'swatches', title: t('world.overlay.mantle.legend.title'), items: [
-      { label: t('world.overlay.mantle.legend.upwelling'), rgb: [225, 85, 55] },
-      { label: t('world.overlay.mantle.legend.downwelling'), rgb: [55, 110, 210] },
-    ] },
-    volcanoes: { type: 'swatches', title: t('world.overlay.volcanoes.legend.title'), items: [
-      { label: t('world.overlay.volcanoes.legend.hotspot'), rgb: [220, 55, 30], shape: 'cone' },
-      { label: t('world.overlay.volcanoes.legend.arc'), rgb: [235, 120, 30], shape: 'cone' },
-      { label: t('world.overlay.volcanoes.legend.flood'), rgb: [120, 25, 20], shape: 'cone' },
-    ] },
-    hotspots: { type: 'swatches', title: t('world.overlay.hotspots.legend.title'), items: [
-      { label: t('world.overlay.hotspots.legend.plume'), rgb: [255, 140, 0], shape: 'ring' },
-    ] },
-    cratonAge: { type: 'gradient', title: 'Craton age', unit: '% of world age', stops: cratonAgeLegendStops },
-    temperature: { type: 'gradient', title: 'Temperature', unit: '°C', stops: temperatureLegendStops },
-    seasonality: { type: 'gradient', title: 'Seasonality', unit: '°C range', stops: amplitudeLegendStops },
-    precipitation: { type: 'gradient', title: 'Precipitation', unit: 'mm/yr', stops: precipitationLegendStops },
-    monsoon: { type: 'gradient', title: 'Monsoon index', unit: '', stops: monsoonLegendStops },
-    biomes: { type: 'swatches', title: t('world.overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) },
-    waterBalance: { type: 'swatches', title: t('world.overlay.waterBalance.label'), items: [
-      { label: t('world.overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
-      { label: t('world.overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
-    ] },
-    migration: { type: 'swatches', title: 'Peoples', items: MIGRATION_RACES.map((r) => ({ label: r.label, rgb: r.rgb })) },
+  const overlayLegend: Partial<Record<OverlayId, () => LegendSpec>> = {
+    mantle: () => ({ type: 'swatches', title: t('overlay.mantle.legend.title'), items: [
+      { label: t('overlay.mantle.legend.upwelling'), rgb: [225, 85, 55] },
+      { label: t('overlay.mantle.legend.downwelling'), rgb: [55, 110, 210] },
+    ] }),
+    volcanoes: () => ({ type: 'swatches', title: t('overlay.volcanoes.legend.title'), items: [
+      { label: t('overlay.volcanoes.legend.hotspot'), rgb: [220, 55, 30], shape: 'cone' },
+      { label: t('overlay.volcanoes.legend.arc'), rgb: [235, 120, 30], shape: 'cone' },
+      { label: t('overlay.volcanoes.legend.flood'), rgb: [120, 25, 20], shape: 'cone' },
+    ] }),
+    hotspots: () => ({ type: 'swatches', title: t('overlay.hotspots.legend.title'), items: [
+      { label: t('overlay.hotspots.legend.plume'), rgb: [255, 140, 0], shape: 'ring' },
+    ] }),
+    cratonAge: () => ({ type: 'gradient', title: 'Craton age', unit: '% of world age', stops: cratonAgeLegendStops }),
+    temperature: () => ({ type: 'gradient', title: 'Temperature', unit: '°C', stops: temperatureLegendStops }),
+    seasonality: () => ({ type: 'gradient', title: 'Seasonality', unit: '°C range', stops: amplitudeLegendStops }),
+    precipitation: () => ({ type: 'gradient', title: 'Precipitation', unit: 'mm/yr', stops: precipitationLegendStops }),
+    monsoon: () => ({ type: 'gradient', title: 'Monsoon index', unit: '', stops: monsoonLegendStops }),
+    biomes: () => ({ type: 'swatches', title: t('overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) }),
+    waterBalance: () => ({ type: 'swatches', title: t('overlay.waterBalance.label'), items: [
+      { label: t('overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
+      { label: t('overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
+    ] }),
+    migration: () => ({ type: 'swatches', title: 'Peoples', items: MIGRATION_RACES.map((r) => ({ label: r.label, rgb: r.rgb })) }),
   }
 
   // Which layers are showing. Set from the step you enter (see steps.ts) and
@@ -1952,8 +1962,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       return
     }
     legendPanel.replaceChildren(...active.map((id) => {
-      const legend = overlayLegend[id]!
-      return buildLegendBlock(typeof legend === 'function' ? legend() : legend)
+      return buildLegendBlock(overlayLegend[id]!())
     }))
     legendPanel.hidden = false
   }
@@ -2134,7 +2143,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       if (lastDischargeField[fi] / lastMaxDischarge >= 0.01) {
         const m3s = lastDischargeField[fi] * DISCHARGE_TO_M3S
         const value = m3s >= 100 ? `${Math.round(m3s).toLocaleString(getLocale())} m³/s` : `${m3s.toFixed(1)} m³/s`
-        lines.push(t('world.hover.discharge', { value }))
+        lines.push(t('readout.discharge', { value }))
       }
     }
     if (overlaysOn.temperature && lastTemperature) lines.push(`${Math.round(lastTemperature[i])} °C`)
@@ -3878,8 +3887,8 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       abundanceLabel.textContent = ''
       return
     }
-    abundanceLabel.textContent = t('worldgen.ecology.fieldAbundance', { label: t(`world.resource.${field}.label` as TKey) })
-    abundanceRow.dataset.help = `world.resource.${field}`
+    abundanceLabel.textContent = t('worldgen.ecology.fieldAbundance', { label: t(`resource.${field}.label` as TKey) })
+    abundanceRow.dataset.help = `resource.${field}`
     abundanceInput.value = String(value)
     abundanceValue.textContent = String(value)
   }
@@ -3909,10 +3918,13 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     const btn = document.createElement('button')
     btn.type = 'button'
     btn.className = 'icon-button ecology-cat is-active'
-    // Species name + help from the catalog (world.species.*), and data-help so
+    // Species name + help from the catalog (species.*), and data-help so
     // the shared hover card explains what clicking one does.
-    btn.setAttribute('aria-label', t(`world.species.${race.id}.label` as TKey))
-    btn.dataset.help = `world.species.${race.id}`
+    // The key stays on the button, not just its answer, so a language switch
+    // finds it again (see i18n/relabel) — the icon carries no word of its own.
+    btn.dataset.tAria = `species.${race.id}.label`
+    btn.setAttribute('aria-label', t(`species.${race.id}.label` as TKey))
+    btn.dataset.help = `species.${race.id}`
     const img = document.createElement('img')
     img.src = `/icons/${race.icon}.png`
     img.alt = ''
@@ -3924,6 +3936,34 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     })
     migrationRacesContainer.appendChild(btn)
   })
+
+  // EVERYTHING THE SCREEN SAYS ITSELF, said again — what onLocaleChange calls
+  // after `relabel` has done the markup.
+  //
+  // A string that stands in the markup carries its key, and relabel finds it.
+  // A string the screen COMPOSES does not: a button that says whether it is
+  // running, a label built from two keys, the legend beside the map. Those
+  // exist only as the answer, and the one way back to the question is to ask it
+  // again.
+  //
+  // One function rather than a list inside onLocaleChange, because that list
+  // does not grow by itself. Three of these were missing, and the two run
+  // buttons carried a comment saying they followed a language switch while
+  // nobody called them.
+  function sayScreen(): void {
+    setArcheanRunning(archeanRunning)
+    sayTectonicsButton(tectonicsRunning)
+    sayErodeButton(erosionOpInFlight)
+    showAbundanceFor(pickedEcologyField)
+    // The species buttons are an icon and an accessible name, and they live in
+    // the old panel row, which relabel(sidebar.body) does not reach.
+    relabel(migrationRacesContainer)
+    // Only while it is saying something. The hint is the Archean's narration;
+    // deriving it from a stabilised fraction no run has set yet would put a
+    // sentence on a map that has none.
+    if (worldHintEl.textContent !== '') worldHintEl.textContent = archeanStage(archeanStabilised).hint
+    renderLegends()
+  }
   let migrationDebounce: ReturnType<typeof setTimeout> | undefined
   const scheduleMigration = (): void => {
     if (tectonicsRunning) return
@@ -4330,10 +4370,10 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     // came to list layers the map was already showing.
     const stepDef = step(STEP_IDS[index])
     overlayList.setRows(
-      stepDef.overlays.map((id) => ({ id, helpBase: OVERLAY_META[id].labelKey, icon: OVERLAY_META[id].icon })),
+      stepDef.overlays.map((id) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })),
       [
-        ...stepDef.exclusive.map((id) => ({ id, helpBase: OVERLAY_META[id].labelKey, icon: OVERLAY_META[id].icon })),
-        ...stepDef.fields.map((field) => ({ id: field, helpBase: `world.resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
+        ...stepDef.exclusive.map((id) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })),
+        ...stepDef.fields.map((field) => ({ id: field, helpBase: `resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
       ],
       stepDef.pickTitle,
     )

@@ -5,5 +5,11 @@
   "notify.save.server.conflict": "Auf dem Server liegt eine neuere Fassung dieser Welt. Es wurde nichts überschrieben.",
   "notify.save.server.failed": "Hochladen fehlgeschlagen. Die Welt wurde nicht gespeichert.",
   "notify.gate.needsWorld": "Erzeuge zuerst die Welt — Schritt 1 arbeitet an der Welt, die Schritt 0 benennt.",
-  "notify.gate.needsArchean": "Lass das Archaikum zuerst bis {min}% Stabilisierung laufen (jetzt {current}%)."
+  "notify.gate.needsArchean": "Lass das Archaikum zuerst bis {min}% Stabilisierung laufen (jetzt {current}%).",
+  "notify.event.continentsCollidedNamed": "{a} und {b} sind kollidiert",
+  "notify.event.continentsCollided": "Zwei Kontinente sind kollidiert",
+  "notify.event.continentBreakupNamed": "{name} zerbricht",
+  "notify.event.continentBreakup": "Ein Kontinent zerbricht",
+  "notify.event.supercontinentFormedNamed": "Superkontinent {name} ist entstanden",
+  "notify.event.supercontinentFormed": "Ein Superkontinent ist entstanden"
 }

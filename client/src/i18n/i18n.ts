@@ -3,33 +3,56 @@
 // No side effects on import: the active locale is a plain module variable that
 // defaults to 'en', so importing this from a worker bundle stays inert.
 import enCommon from './locales/en/common.json'
-import enWorld from './locales/en/world.json'
 import enWorldgen from './locales/en/worldgen.json'
 import enGame from './locales/en/game.json'
 import enTitleBar from './locales/en/titlebar.json'
 import enNotify from './locales/en/notify.json'
 import enGenerator from './locales/en/generator.json'
+import enOverlay from './locales/en/overlay.json'
+import enBiome from './locales/en/biome.json'
+import enResource from './locales/en/resource.json'
+import enSpecies from './locales/en/species.json'
+import enReadout from './locales/en/readout.json'
 import deCommon from './locales/de/common.json'
-import deWorld from './locales/de/world.json'
 import deWorldgen from './locales/de/worldgen.json'
 import deGame from './locales/de/game.json'
 import deTitleBar from './locales/de/titlebar.json'
 import deNotify from './locales/de/notify.json'
 import deGenerator from './locales/de/generator.json'
+import deOverlay from './locales/de/overlay.json'
+import deBiome from './locales/de/biome.json'
+import deResource from './locales/de/resource.json'
+import deSpecies from './locales/de/species.json'
+import deReadout from './locales/de/readout.json'
 
 // The area catalogs merged into one flat lookup. English is the type
 // source: TKey is every key that exists, so `t('typo.key')` fails to compile.
 //
-// Four of the seven are cut by DOMAIN. `titlebar` and `generator` are cut by
-// screen region — the title bar is the same strip on every screen and owns its
-// own vocabulary, and the generator's own chrome (its load screen, later its
-// steps and panels) is a surface being rebuilt as a whole. `notify` is cut by
-// what the string IS — a line shown in the notification area — because those
-// read as a set and are worded against each other. All three exist so `common`
-// does not become the place anything shared ends up. `notify` is still
-// filling: the older `common.notify.*` keys move across as their call sites
-// are touched.
-const en = { ...enCommon, ...enWorld, ...enWorldgen, ...enGame, ...enTitleBar, ...enNotify, ...enGenerator }
+// Eleven catalogs, cut three ways.
+//
+// By SCREEN REGION. `titlebar` is the same strip on every screen and owns its
+// own vocabulary. `generator` is the generator's own chrome — its load screen,
+// its steps, the sections of its sidebar. `worldgen` holds that screen's panels
+// and actions, and empties into `generator` as the steps move into the column.
+// `game` is the game screen.
+//
+// By WHAT THE STRING IS. `notify` is a line shown in the notification area;
+// `readout` is a line of the map's hover readout. Each reads as a set and is
+// worded against the rest of its set. Both are still filling: the older
+// `common.notify.*` keys move across as their call sites are touched, and the
+// readout lines wait for theirs — that code still holds English.
+//
+// By VOCABULARY — one branch per member of an enum the generator computes, the
+// branch named by the same id. `overlay` (a map layer, its legend included,
+// which is what lets the screen derive the key from the id rather than carry a
+// table of them), `biome`, `resource`, `species`.
+//
+// `common` is the rest: shared words and units. There used to be a `world`
+// catalog as well, which collected every list of names the world has — layers,
+// biomes, resources, species, readout lines, event lines. It held six unrelated
+// things because each was about "the world", which is true of everything here.
+// A drawer is not a namespace; it was taken apart 2026-09-20.
+const en = { ...enCommon, ...enWorldgen, ...enGame, ...enTitleBar, ...enNotify, ...enGenerator, ...enOverlay, ...enBiome, ...enResource, ...enSpecies, ...enReadout }
 
 export type Locale = 'en' | 'de'
 export type TKey = keyof typeof en
@@ -37,7 +60,7 @@ export type TKey = keyof typeof en
 // German is complete: typing it `Record<TKey, string>` makes a missing German
 // key a compile error (tsc is the completeness gate). `t()` still falls back to
 // English at runtime for safety.
-const de: Record<TKey, string> = { ...deCommon, ...deWorld, ...deWorldgen, ...deGame, ...deTitleBar, ...deNotify, ...deGenerator }
+const de: Record<TKey, string> = { ...deCommon, ...deWorldgen, ...deGame, ...deTitleBar, ...deNotify, ...deGenerator, ...deOverlay, ...deBiome, ...deResource, ...deSpecies, ...deReadout }
 
 const catalogs: Partial<Record<Locale, Record<string, string>>> = { en, de }
 let locale: Locale = 'en'

@@ -1,0 +1,17 @@
+{
+  "biome.ocean": "Ocean",
+  "biome.iceCap": "Ice cap",
+  "biome.tundra": "Tundra",
+  "biome.borealForest": "Boreal forest",
+  "biome.grassland": "Grassland",
+  "biome.woodland": "Woodland",
+  "biome.temperateForest": "Temperate forest",
+  "biome.temperateRainforest": "Temperate rainforest",
+  "biome.desert": "Desert",
+  "biome.savanna": "Savanna",
+  "biome.tropicalRainforest": "Tropical rainforest",
+  "biome.alpine": "Alpine tundra",
+  "biome.saltFlat": "Salt flat",
+  "biome.glacier": "Glacier",
+  "biome.unknown": "Unknown"
+}

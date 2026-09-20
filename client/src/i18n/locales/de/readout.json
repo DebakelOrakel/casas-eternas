@@ -1,0 +1,22 @@
+{
+  "readout.discharge": "Abfluss: {value}",
+  "readout.metres": "{v} m",
+  "readout.metresDeep": "{v} m tief",
+  "readout.temperature": "{v} °C",
+  "readout.precipitation": "{v} mm/Jahr",
+  "readout.seasonalRange": "{v} °C Spanne",
+  "readout.monsoon": "Monsun {v}",
+  "readout.wind": "Wind {dir}",
+  "readout.currentWarm": "Strömung warm {dir}",
+  "readout.currentCold": "Strömung kalt {dir}",
+  "readout.resourceAbundance": "{label} {v}%",
+  "readout.compass.none": "–",
+  "readout.compass.n": "N",
+  "readout.compass.ne": "NO",
+  "readout.compass.e": "O",
+  "readout.compass.se": "SO",
+  "readout.compass.s": "S",
+  "readout.compass.sw": "SW",
+  "readout.compass.w": "W",
+  "readout.compass.nw": "NW"
+}

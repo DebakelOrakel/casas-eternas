@@ -57,8 +57,12 @@
   "generator.world.create.label": "Create world",
   "generator.world.create.help": "Lays out the world and opens the mantle step.",
   "generator.step.status.set": "set",
-  "generator.overlays.label": "Overlays",
-  "generator.overlays.help": "Overlays show single aspects of the current step on the map. They do not change the simulation, and you can combine them.",
+  "generator.section.overlays.label": "Overlays",
+  "generator.section.overlays.help": "Overlays show single aspects of the current step on the map. They do not change the simulation, and you can combine them.",
+  "generator.section.climateFields.label": "Climate fields",
+  "generator.section.climateFields.help": "The map shows these one at a time, over the temperature it always paints. A new choice replaces the last.",
+  "generator.section.resources.label": "Ecology (resources)",
+  "generator.section.resources.help": "Which deposit the map paints — a new choice replaces the last.",
   "generator.params.label": "Parameters",
   "generator.params.help": "If you change a parameter, you must compute every later step again."
 }

@@ -79,27 +79,27 @@ export function biomeColor(id: number): [number, number, number] {
 // i18n catalog keys for the display names, NOT the names themselves
 // (2026-08-06). This module is imported by the simulation worker, so it must
 // not pull in the i18n runtime or hold UI language; the screen resolves these
-// keys through t(). The catalog side (world.biome.*) already existed — it was
+// keys through t(). The catalog side (biome.*) already existed — it was
 // simply never wired, so the legend and the hover readout stayed English.
 const BIOME_LABEL_KEYS: Record<number, string> = {
-  [Biome.Ocean]: 'world.biome.ocean',
-  [Biome.Ice]: 'world.biome.iceCap',
-  [Biome.Tundra]: 'world.biome.tundra',
-  [Biome.Boreal]: 'world.biome.borealForest',
-  [Biome.Grassland]: 'world.biome.grassland',
-  [Biome.Woodland]: 'world.biome.woodland',
-  [Biome.TemperateForest]: 'world.biome.temperateForest',
-  [Biome.TemperateRainforest]: 'world.biome.temperateRainforest',
-  [Biome.Desert]: 'world.biome.desert',
-  [Biome.Savanna]: 'world.biome.savanna',
-  [Biome.TropicalRainforest]: 'world.biome.tropicalRainforest',
-  [Biome.Alpine]: 'world.biome.alpine',
-  [Biome.SaltFlat]: 'world.biome.saltFlat',
-  [Biome.Glacier]: 'world.biome.glacier',
+  [Biome.Ocean]: 'biome.ocean',
+  [Biome.Ice]: 'biome.iceCap',
+  [Biome.Tundra]: 'biome.tundra',
+  [Biome.Boreal]: 'biome.borealForest',
+  [Biome.Grassland]: 'biome.grassland',
+  [Biome.Woodland]: 'biome.woodland',
+  [Biome.TemperateForest]: 'biome.temperateForest',
+  [Biome.TemperateRainforest]: 'biome.temperateRainforest',
+  [Biome.Desert]: 'biome.desert',
+  [Biome.Savanna]: 'biome.savanna',
+  [Biome.TropicalRainforest]: 'biome.tropicalRainforest',
+  [Biome.Alpine]: 'biome.alpine',
+  [Biome.SaltFlat]: 'biome.saltFlat',
+  [Biome.Glacier]: 'biome.glacier',
 }
 
 export function biomeLabelKey(id: number): string {
-  return BIOME_LABEL_KEYS[id] ?? 'world.biome.unknown'
+  return BIOME_LABEL_KEYS[id] ?? 'biome.unknown'
 }
 
 // Land biomes (excludes Ocean) as {labelKey, rgb} for the overlay legend, in a

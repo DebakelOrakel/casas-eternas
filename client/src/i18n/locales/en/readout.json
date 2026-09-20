@@ -1,0 +1,22 @@
+{
+  "readout.discharge": "Flow: {value}",
+  "readout.metres": "{v} m",
+  "readout.metresDeep": "{v} m deep",
+  "readout.temperature": "{v} °C",
+  "readout.precipitation": "{v} mm/yr",
+  "readout.seasonalRange": "{v} °C range",
+  "readout.monsoon": "Monsoon {v}",
+  "readout.wind": "Wind {dir}",
+  "readout.currentWarm": "Current warm {dir}",
+  "readout.currentCold": "Current cold {dir}",
+  "readout.resourceAbundance": "{label} {v}%",
+  "readout.compass.none": "–",
+  "readout.compass.n": "N",
+  "readout.compass.ne": "NE",
+  "readout.compass.e": "E",
+  "readout.compass.se": "SE",
+  "readout.compass.s": "S",
+  "readout.compass.sw": "SW",
+  "readout.compass.w": "W",
+  "readout.compass.nw": "NW"
+}

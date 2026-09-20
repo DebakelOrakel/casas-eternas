@@ -1,0 +1,8 @@
+{
+  "species.human.label": "Humans",
+  "species.human.help": "Toggle the humans and place their point of origin.",
+  "species.dwarf.label": "Dwarves",
+  "species.dwarf.help": "Toggle the dwarves and place their point of origin.",
+  "species.beaver.label": "Beavers",
+  "species.beaver.help": "Toggle the beavers and place their point of origin."
+}

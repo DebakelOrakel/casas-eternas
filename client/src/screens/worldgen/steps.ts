@@ -111,7 +111,7 @@ export const STEPS: readonly Step[] = [
     // as a third colour.
     overlays: ['terrain', 'names', 'temperature'],
     exclusive: ['precipitation', 'seasonality', 'monsoon', 'biomes', 'wind', 'currents'],
-    pickTitle: 'world.overlay.climateFields',
+    pickTitle: 'generator.section.climateFields',
     defaults: ['names', 'temperature', 'precipitation'],
     fields: [],
   },
@@ -134,7 +134,7 @@ export const STEPS: readonly Step[] = [
     // here — painting whichever field the picker below starts on.
     defaults: ['names', 'ecology'],
     fields: ['carryingCapacity', ...RESOURCE_FIELDS],
-    pickTitle: 'world.overlay.resources',
+    pickTitle: 'generator.section.resources',
   },
   {
     id: 'migration',
