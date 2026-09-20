@@ -57,11 +57,10 @@ interface Entry {
   savedAt: string
 }
 
-// Both formatters are deliberate copies of LoadPanel's, NOT an import: that
-// module is a panel, and a screen reaching into another screen fragment for a
-// string helper is the wrong direction. They are now written three times here
-// (LoadPanel, TitleBar, this) — which is the trigger to give them a home of
-// their own, as its own step.
+// The time and size formatters were copied per screen once, four times over,
+// on the reasoning that a screen must not reach into another screen's panel for
+// a string helper. That was right about the direction and wrong about the
+// remedy: they live in ui/format now, which is nobody's screen.
 function icon(path: string): SVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('viewBox', '0 0 24 24')
@@ -309,9 +308,8 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
       })()
     })
 
-    // Removal confirms IN PLACE, the way LoadPanel's does: the first click
-    // arms the button, the second within a few seconds deletes, and an
-    // accidental click disarms itself. A world is the one thing here that
+    // Removal confirms IN PLACE: the first click arms the button, the second
+    // within a few seconds deletes, and an accidental click disarms itself. A world is the one thing here that
     // cannot be recomputed, so it may not go on a single click — and it may
     // not need a dialog either.
     const remove = document.createElement('button')
