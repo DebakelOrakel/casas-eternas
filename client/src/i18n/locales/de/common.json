@@ -32,6 +32,7 @@
   "common.panel.storage.delete": "Löschen",
   "common.panel.storage.local": "Auf diesem Rechner",
   "common.panel.storage.server": "Auf dem Server",
+  "common.panel.storage.usage": "{used} von {quota} ({share} %)",
   "common.panel.storage.serverEmpty": "Noch nichts auf dem Server.",
   "common.panel.signIn.title": "Anmelden",
   "common.panel.signIn.intro": "Mit einem Konto speicherst du Welten auf dem Server und öffnest sie auf jedem Gerät.",

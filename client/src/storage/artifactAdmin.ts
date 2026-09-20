@@ -102,17 +102,3 @@ export function groupArtifacts(entries: StoredArtifact[]): CachedWorld[] {
   return worlds
 }
 
-// Deliberately reports the ORIGIN's usage rather than a tree-walked sum of
-// the cache's own files: for this app they are the same number to within
-// rounding, and the honest one is what the browser will actually enforce a
-// quota against. Null when the browser declines to estimate.
-export async function describeArtifactUsage(store: LocalArtifactStore): Promise<string | null> {
-  const usage = await store.usage()
-  if (!usage) return null
-  const mb = (bytes: number): string => `${(bytes / 1e6).toFixed(bytes < 1e8 ? 1 : 0)} MB`
-  // A quota of 0 means "not reported" (the memory store says so), in which
-  // case a share would be meaningless.
-  if (usage.quotaBytes <= 0) return mb(usage.usedBytes)
-  const share = (usage.usedBytes / usage.quotaBytes) * 100
-  return `${mb(usage.usedBytes)} / ${mb(usage.quotaBytes)} (${share.toFixed(share < 1 ? 2 : 0)}%)`
-}

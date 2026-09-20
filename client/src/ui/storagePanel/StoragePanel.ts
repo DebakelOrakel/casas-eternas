@@ -1,8 +1,9 @@
 import { t } from '../../i18n/i18n'
 import { getLocalArtifactStore } from '../../storage/artifactStoreProvider'
-import { clearArtifacts, describeArtifactUsage, groupArtifacts, resolutionLabel } from '../../storage/artifactAdmin'
+import { clearArtifacts, groupArtifacts, resolutionLabel } from '../../storage/artifactAdmin'
 import { formatBytes } from '../format'
 import type { CachedVersion, CachedWorld } from '../../storage/artifactAdmin'
+import type { StorageUsage } from '../../storage/ArtifactStore'
 import { listServerArtifacts, removeServerArtifact, removeServerWorldArtifacts } from '../../server/artifactsClient'
 import { createPanel } from '../panel/Panel'
 import type { Panel } from '../panel/Panel'
@@ -122,6 +123,24 @@ export function createStoragePanel(host: HTMLElement): StoragePanel {
     return paragraph
   }
 
+  // The cache's size, as a line. The store hands over two numbers and the
+  // wording is decided here, because this is the only place that knows who is
+  // reading it — the store used to return the finished English sentence.
+  //
+  // A quota of 0 means "not reported" (the memory store says so), in which case
+  // a share would be meaningless and the used size stands alone. The share gets
+  // two decimals below 1% so a nearly empty cache does not read as exactly 0.
+  function usageLine(usage: StorageUsage | null): string {
+    if (!usage) return ''
+    if (usage.quotaBytes <= 0) return formatBytes(usage.usedBytes)
+    const share = (usage.usedBytes / usage.quotaBytes) * 100
+    return t('common.panel.storage.usage', {
+      used: formatBytes(usage.usedBytes),
+      quota: formatBytes(usage.quotaBytes),
+      share: share.toFixed(share < 1 ? 2 : 0),
+    })
+  }
+
   async function refresh(): Promise<void> {
     panel.body.textContent = '…'
     const store = await getLocalArtifactStore()
@@ -129,11 +148,11 @@ export function createStoragePanel(host: HTMLElement): StoragePanel {
     // after the local walk would show the window jumping as it lands.
     const [localEntries, usage, server] = await Promise.all([
       store.list().catch(() => []),
-      describeArtifactUsage(store).catch(() => null),
+      store.usage().catch(() => null),
       listServerArtifacts().catch(() => null),
     ])
 
-    panel.status.textContent = usage ?? ''
+    panel.status.textContent = usageLine(usage)
     panel.body.replaceChildren()
 
     const localWorlds = groupArtifacts(localEntries)

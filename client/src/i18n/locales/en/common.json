@@ -32,6 +32,7 @@
   "common.panel.storage.delete": "Delete",
   "common.panel.storage.local": "On this machine",
   "common.panel.storage.server": "On the server",
+  "common.panel.storage.usage": "{used} of {quota} ({share} %)",
   "common.panel.storage.serverEmpty": "Nothing on the server yet.",
   "common.panel.signIn.title": "Sign in",
   "common.panel.signIn.intro": "With an account you can save worlds to the server and open them on any device.",

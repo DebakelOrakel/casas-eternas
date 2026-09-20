@@ -12,6 +12,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **dropped** Title screen: the world map, Sphere and Mars are gone — three screens that had stopped being worked on, the map to be built again from scratch. `common.title.nav`
 - **fixed** Notifications: a continent colliding, breaking up or becoming a supercontinent says so in your language. `notify.event`
 - **changed** Save/Load: file sizes are counted in thousands everywhere, so a world reads the same size here as on disk.
+- **fixed** Storage: the line saying how full the cache is now follows a language switch, and counts like every other size. `common.panel.storage.usage`
 - **changed** Overlays: the readout says how fast the wind blows, in metres per second. `readout.metresPerSecond`
 - **changed** Overlays: wind and currents in the readout are an arrow pointing where they go — no compass letters, because this world has no north. `readout.row.wind`
 - **fixed** Worldmap: a world opened from a save no longer classifies its coasts from a rainfall value that was never there. `worldmap`

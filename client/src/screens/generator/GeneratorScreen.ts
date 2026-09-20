@@ -3202,7 +3202,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   async function leaveWorld(go: () => void): Promise<void> {
     // Nothing to lose behind the world list: the world it covers is the one it
     // is about to replace, and it was never chosen.
-    const kind = chooserOpen ? 'local' : saveState().kind
+    if (chooserOpen) return go()
+    const { kind } = saveState()
     if (kind !== 'new' && kind !== 'unsaved') return go()
     const discard = await confirmDialog.ask({
       titleKey: 'common.confirm.discard.title',
@@ -3217,7 +3218,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // wording is the browser's. So this only decides WHETHER to ask.
   const onBeforeUnload = (event: BeforeUnloadEvent): void => {
     // Same exception as above: nothing is lost while the world list is up.
-    const kind = chooserOpen ? 'local' : saveState().kind
+    if (chooserOpen) return
+    const { kind } = saveState()
     if (kind !== 'new' && kind !== 'unsaved') return
     event.preventDefault()
     // Firefox still wants the legacy assignment; every engine ignores the text.
