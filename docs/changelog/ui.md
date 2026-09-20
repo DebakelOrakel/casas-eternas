@@ -4,6 +4,8 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-20
+- **changed** The title bar carries the product's name, and says "Generator" only in the generator. `titlebar`
+- **changed** The title screen stands on the same paper as the generator's own screens, in place of white. `title`
 - **fixed** Generator: the map legend, the run buttons and the species names now follow a language switch. `generator`
 - **changed** Generator: the Climate step shows precipitation, seasonality, monsoon, biomes, wind and currents one at a time, over the temperature it always paints. `generator.overlays`
 - **changed** Generator: a step with more than three picks offers them as icon tiles instead of a list. `generator.overlays`

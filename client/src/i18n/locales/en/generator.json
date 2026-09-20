@@ -1,4 +1,5 @@
 {
+  "generator.title": "Generator",
   "generator.load.title": "Choose a world",
   "generator.load.subtitle": "Continue with an existing world, upload a file, or create a new one.",
   "generator.load.new.label": "Create new world",

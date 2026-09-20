@@ -5,7 +5,10 @@
      distorted: full width, height follows the image's own ratio. On a tall
      window it simply ends partway up (white above); on a wide one the excess
      crops at the TOP, so the bottom edge always stays the bottom edge. */
-  background-color: #ffffff;
+  /* The paper of the generator's own screens (ui/theme/design.css), not white:
+     the artwork sits on the same ground the rest of the product stands on. The
+     screen wears `design-light` for it — see TitleScreen. */
+  background-color: var(--dc-bg);
   background-image: url('/background.png');
   background-repeat: no-repeat;
   background-position: center bottom;

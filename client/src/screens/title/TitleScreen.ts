@@ -4,6 +4,7 @@ import { t } from '../../i18n/i18n'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createTitleBar } from '../../ui/titleBar/TitleBar'
+import '../../ui/theme/design.css'
 import './title.css'
 
 // The changelog no longer renders here — the artwork owns the screen, and the
@@ -17,7 +18,9 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
   new ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 2.5, 6, Vector3.Zero(), scene)
 
   const root = document.createElement('div')
-  root.className = 'title-screen'
+  // `design-light` is how a screen opts into the redesign's palette (see
+  // ui/theme/design.css); here it is the background the artwork stands on.
+  root.className = 'title-screen design-light'
   root.innerHTML = `
     <span data-slot="server-indicator"></span>
     <!-- <div class="title-block">
@@ -31,8 +34,8 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
       <a class="text-link" href="/docs/" target="_blank" rel="noopener">${t('common.title.nav.documentation')}</a>
       &nbsp;
       <div class="title-nav-row">
-        <button class="text-link" style="color:white;" data-action="worldgen-sphere">Sphere</button>
-        <button class="text-link" style="color:white;" data-action="mars">Mars</button>
+        <button class="text-link" style="color:#f3efe6;" data-action="worldgen-sphere">Sphere</button>
+        <button class="text-link" style="color:#f3efe6;" data-action="mars">Mars</button>
       </div>
     </nav>
   `

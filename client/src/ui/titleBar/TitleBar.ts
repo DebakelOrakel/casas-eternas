@@ -34,11 +34,21 @@ export type TitleBarSaveState =
   | { kind: 'local'; at: Date }
   | { kind: 'server'; at: Date }
 
+// The product's name, which is a NAME: it is the same word in every language,
+// so it is a constant here and not a catalog key. A screen that stands for a
+// part of the product rather than the product itself says so with `nameKey`.
+const APP_NAME = 'Casas Eternas'
+
 export interface TitleBarOptions {
   // Opens the screen's sign-in panel. The bar does not own one: both screens
   // already build a SignInPanel for the server indicator, and a second one
   // would put two sign-in windows on the same screen.
   onSignIn(): void
+  // What the bar calls this screen, as a catalog key. Left out on a screen that
+  // IS the product — the title screen, the world map — which then shows the
+  // product's name. The generator names itself, because it is one workshop
+  // inside it and the word is translated.
+  nameKey?: TKey
   // Leaving the world that is named here — the screen decides what that means
   // (the generator reopens its world list). Optional: a screen that has no
   // world to leave, or nowhere to go, leaves it out and the block stays plain
@@ -91,7 +101,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
         <path d="M3 10c4 1 6-2 9-1s4 4 9 2" />
         <path d="M5 17c3-1 5 1 8 0s4-3 7-2" />
       </svg>
-      <span class="title-bar__name">${t('titlebar.appName')}</span>
+      <span class="title-bar__name">${options.nameKey ? t(options.nameKey) : APP_NAME}</span>
     </div>
     <div class="title-bar__divider" data-slot="world-divider"></div>
     <div class="title-bar__world" data-slot="world" data-help="titlebar.world" role="button" tabindex="0">
@@ -234,7 +244,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   }
 
   function render(): void {
-    bar.querySelector('.title-bar__name')!.textContent = t('titlebar.appName')
+    bar.querySelector('.title-bar__name')!.textContent = options.nameKey ? t(options.nameKey) : APP_NAME
     paintLanguage()
     paintAccount()
     paintWorld()

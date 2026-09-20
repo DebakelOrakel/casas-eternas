@@ -11353,20 +11353,20 @@ var BIOME_COLORS = {
   // pale glacier blue — bluer than Ice's near-white, reads as frozen WATER
 };
 var BIOME_LABEL_KEYS = {
-  [Biome.Ocean]: "world.biome.ocean",
-  [Biome.Ice]: "world.biome.iceCap",
-  [Biome.Tundra]: "world.biome.tundra",
-  [Biome.Boreal]: "world.biome.borealForest",
-  [Biome.Grassland]: "world.biome.grassland",
-  [Biome.Woodland]: "world.biome.woodland",
-  [Biome.TemperateForest]: "world.biome.temperateForest",
-  [Biome.TemperateRainforest]: "world.biome.temperateRainforest",
-  [Biome.Desert]: "world.biome.desert",
-  [Biome.Savanna]: "world.biome.savanna",
-  [Biome.TropicalRainforest]: "world.biome.tropicalRainforest",
-  [Biome.Alpine]: "world.biome.alpine",
-  [Biome.SaltFlat]: "world.biome.saltFlat",
-  [Biome.Glacier]: "world.biome.glacier"
+  [Biome.Ocean]: "biome.ocean",
+  [Biome.Ice]: "biome.iceCap",
+  [Biome.Tundra]: "biome.tundra",
+  [Biome.Boreal]: "biome.borealForest",
+  [Biome.Grassland]: "biome.grassland",
+  [Biome.Woodland]: "biome.woodland",
+  [Biome.TemperateForest]: "biome.temperateForest",
+  [Biome.TemperateRainforest]: "biome.temperateRainforest",
+  [Biome.Desert]: "biome.desert",
+  [Biome.Savanna]: "biome.savanna",
+  [Biome.TropicalRainforest]: "biome.tropicalRainforest",
+  [Biome.Alpine]: "biome.alpine",
+  [Biome.SaltFlat]: "biome.saltFlat",
+  [Biome.Glacier]: "biome.glacier"
 };
 
 // src/worldgen/ecology/ecologyTuneParams.ts

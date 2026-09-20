@@ -750,6 +750,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   // built — so they keep the language they were built in until the screen is
   // entered again. They follow as each one moves into the sidebar.
   const titleBar = createTitleBar(root, {
+    nameKey: 'generator.title',
     onSignIn: () => serverIndicator.openSignIn(),
     onWorldClick: () => openWorldChooser(),
     onLocaleChange: () => {
