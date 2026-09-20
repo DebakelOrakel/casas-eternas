@@ -1,4 +1,5 @@
-import { getLocale, t, type TKey } from '../../i18n/i18n'
+import { t, type TKey } from '../../i18n/i18n'
+import { formatBytes, formatWhen } from '../../ui/format'
 import { hasSession } from '../../server/session'
 import { deleteWorld, fetchWorld, fetchWorldPreview, listWorlds } from '../../server/worldClient'
 import { browserWorldThumbnail, forgetBrowserWorld, listBrowserWorlds, openBrowserWorld } from '../../world/browserWorlds'
@@ -61,17 +62,6 @@ interface Entry {
 // string helper is the wrong direction. They are now written three times here
 // (LoadPanel, TitleBar, this) — which is the trigger to give them a home of
 // their own, as its own step.
-function formatWhen(iso: string): string {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString(getLocale(), { dateStyle: 'medium', timeStyle: 'short' })
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 function icon(path: string): SVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('viewBox', '0 0 24 24')
@@ -296,7 +286,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     const metaText = document.createElement('span')
     metaText.textContent = [
       t(`generator.load.filter.${entry.where}.label` as TKey),
-      formatSize(entry.bytes),
+      formatBytes(entry.bytes),
       formatWhen(entry.savedAt),
     ].filter(Boolean).join(' · ')
     meta.appendChild(metaText)

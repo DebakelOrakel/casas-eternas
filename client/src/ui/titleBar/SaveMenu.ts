@@ -1,4 +1,5 @@
-import { getLocale, t, type TKey } from '../../i18n/i18n'
+import { t, type TKey } from '../../i18n/i18n'
+import { formatWhen } from '../format'
 import { needsSignIn } from '../../server/session'
 import { getServerStatus } from '../../server/serverStatus'
 import { listWorlds } from '../../server/worldClient'
@@ -62,12 +63,6 @@ const ROWS: readonly { id: RowId; icon: string }[] = [
   { id: 'server', icon: 'M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01' },
   { id: 'open', icon: 'M3 7h6l2 2h10v10H3z' },
 ]
-
-function formatWhen(iso: string): string {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString(getLocale(), { dateStyle: 'medium', timeStyle: 'short' })
-}
 
 export function createSaveMenu(options: SaveMenuOptions): SaveMenu {
   const host = document.createElement('div')

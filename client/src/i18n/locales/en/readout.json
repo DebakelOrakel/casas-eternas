@@ -30,5 +30,6 @@
   "readout.metresDeep": "{v} m deep",
   "readout.temperature": "{v} °C",
   "readout.metresPerSecond": "{v} m/s",
+  "readout.cubicMetresPerSecond": "{v} m³/s",
   "readout.precipitation": "{v} mm/yr"
 }

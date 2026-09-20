@@ -1,4 +1,5 @@
 import { getLocale, setLocale, t, type Locale, type TKey } from '../../i18n/i18n'
+import { formatWhen } from '../format'
 import { hasSession, onSessionChange, signedInUser, signOut } from '../../server/session'
 import { getServerStatus } from '../../server/serverStatus'
 import '../theme/design.css'
@@ -73,14 +74,6 @@ export interface TitleBar {
   setWorld(world: TitleBarWorld | null): void
   setSaveState(state: TitleBarSaveState): void
   dispose(): void
-}
-
-// Same format as the load and save windows show (LoadPanel's formatWhen), and
-// deliberately absolute where the design draws "2 min ago": one more way to
-// write a time is one more thing to keep consistent, and the relative form
-// would have to re-render on a timer to stay true.
-function formatWhen(at: Date): string {
-  return at.toLocaleString(getLocale(), { dateStyle: 'medium', timeStyle: 'short' })
 }
 
 // Up to two letters from the user name, for the account chip. Falls back to

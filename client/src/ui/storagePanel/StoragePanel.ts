@@ -1,6 +1,7 @@
 import { t } from '../../i18n/i18n'
 import { getLocalArtifactStore } from '../../storage/artifactStoreProvider'
-import { clearArtifacts, describeArtifactUsage, formatBytes, groupArtifacts, resolutionLabel } from '../../storage/artifactAdmin'
+import { clearArtifacts, describeArtifactUsage, groupArtifacts, resolutionLabel } from '../../storage/artifactAdmin'
+import { formatBytes } from '../format'
 import type { CachedVersion, CachedWorld } from '../../storage/artifactAdmin'
 import { listServerArtifacts, removeServerArtifact, removeServerWorldArtifacts } from '../../server/artifactsClient'
 import { createPanel } from '../panel/Panel'

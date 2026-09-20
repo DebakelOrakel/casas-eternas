@@ -2279,8 +2279,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (lastDischargeField && lastMaxDischarge > 0 && lastDischargeField[cell.fine] / lastMaxDischarge >= 0.01) {
         // Below 1% of the largest stream this is distributed rain, not a
         // channel, and naming a flow there would invent a river.
+        // Grouped thousands once a river is big enough to need them, one
+        // decimal while it is small enough for one to mean something.
         const m3s = lastDischargeField[cell.fine] * DISCHARGE_TO_M3S
-        rows.push({ label: t('readout.row.discharge'), value: m3s >= 100 ? `${Math.round(m3s).toLocaleString(getLocale())} m³/s` : `${m3s.toFixed(1)} m³/s` })
+        const flow = m3s >= 100 ? Math.round(m3s).toLocaleString(getLocale()) : m3s.toFixed(1)
+        rows.push({ label: t('readout.row.discharge'), value: t('readout.cubicMetresPerSecond', { v: flow }) })
       }
       if (lastLakeDepth && lastLakeDepth[cell.fine] > 0) {
         rows.push({ label: t('readout.row.lakeDepth'), value: t('readout.metres', { v: String(Math.round(elevationToMeters(lastLakeDepth[cell.fine]) - elevationToMeters(0))) }) })

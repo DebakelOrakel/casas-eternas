@@ -102,9 +102,6 @@ export function groupArtifacts(entries: StoredArtifact[]): CachedWorld[] {
   return worlds
 }
 
-export const formatBytes = (bytes: number): string =>
-  bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` : bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} kB`
-
 // Deliberately reports the ORIGIN's usage rather than a tree-walked sum of
 // the cache's own files: for this app they are the same number to within
 // rounding, and the honest one is what the browser will actually enforce a

@@ -1,4 +1,5 @@
-import { getLocale, t } from '../../i18n/i18n'
+import { t } from '../../i18n/i18n'
+import { formatBytes, formatWhen } from '../format'
 import { apiBase, deleteWorld, fetchWorld, fetchWorldPreview, listWorlds } from '../../server/worldClient'
 import type { WorldSummary } from '../../server/worldClient'
 import { createPanel } from '../panel/Panel'
@@ -26,17 +27,6 @@ export interface LoadPanelOptions {
 export interface LoadPanel {
   open(): void
   dispose(): void
-}
-
-function formatWhen(iso: string): string {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString(getLocale(), { dateStyle: 'medium', timeStyle: 'short' })
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export function createLoadPanel(host: HTMLElement, options: LoadPanelOptions): LoadPanel {
@@ -91,7 +81,7 @@ export function createLoadPanel(host: HTMLElement, options: LoadPanelOptions): L
     meta.className = 'world-meta'
     // Erosion count says how far the world was actually taken, which is the
     // one thing a thumbnail cannot show.
-    meta.textContent = [formatWhen(world.updatedAt), `${t('common.world.revision')} ${world.revision}`, `${world.erosionRun}×`, formatSize(world.size)]
+    meta.textContent = [formatWhen(world.updatedAt), `${t('common.world.revision')} ${world.revision}`, `${world.erosionRun}×`, formatBytes(world.size)]
       .filter(Boolean)
       .join(' · ')
     // The identity line: what exactly this entry is, for anyone comparing
