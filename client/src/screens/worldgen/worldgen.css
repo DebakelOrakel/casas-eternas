@@ -82,39 +82,6 @@
   min-width: 0;
 }
 
-/* Tectonics stats: a row of stat blocks (big number + small label), the Land one
-   also carrying a 0..100 fill bar — fills the otherwise-sparse panel. */
-.worldgen-flat-screen .tectonics-stats {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-end;
-  gap: 1.1rem;
-  margin-left: 0.6rem;
-  color: #1a1a1a;
-}
-.worldgen-flat-screen .stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.1rem;
-}
-.worldgen-flat-screen .stat-num {
-  font-size: 1.5rem;
-  font-weight: 600;
-  line-height: 1;
-}
-.worldgen-flat-screen .stat-unit {
-  font-size: 0.85rem;
-  font-weight: 400;
-  margin-left: 0.08rem;
-}
-.worldgen-flat-screen .stat-label {
-  font-size: 0.62rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  opacity: 0.65;
-}
-
 /* Compute-progress indicator, centered over the bottom panel (roughly the legend's
    offset, from the bottom). A real 0..100 fill for erosion; an indeterminate sweep
    for open-ended processes (tectonics/climate/hydrology). */

@@ -410,7 +410,9 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     width: archean.width,
     height: archean.height,
     landFraction: result.landFraction,
-    epoch: archean.epoch,
+    // No plate epoch has passed yet — see WorkerRenderedMessage.epoch. The
+    // Archean's own count travels in the genesisStatus below.
+    epoch: 0,
     boundaryMask: result.boundaryMask.buffer as ArrayBuffer,
     raftLabels: result.raftLabels,
     plateCount: 0,

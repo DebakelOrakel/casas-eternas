@@ -549,23 +549,23 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </div>
       </div>
     </div>
-    <div class="panel" data-stage="tectonics">
-      <label class="field field--icon-row">
-        <span class="field-row">
-          <button type="button" class="icon-button" data-action="reset-sim" aria-label="${t('worldgen.action.resetSim.label')}" data-help="worldgen.action.resetSim">
+    <div class="wg-step" data-stage="tectonics">
+      <div class="wg-step__foot">
+        <div class="wg-stats">
+          ${statTile('worldgen.panel.tectonics.stat.land', 'stat-land', { unit: 'common.unit.percent', bar: true })}
+          ${statTile('worldgen.panel.tectonics.stat.continents', 'stat-continents')}
+          ${statTile('worldgen.panel.tectonics.stat.plates', 'stat-plates')}
+          ${statTile('worldgen.panel.tectonics.stat.age', 'stat-tect-age')}
+        </div>
+        <div class="wg-step__actions">
+          <button type="button" class="wg-action-icon" data-action="reset-sim" data-t-aria="worldgen.action.resetSim.label" data-help="worldgen.action.resetSim">
             <img src="/icons/reset.png" alt="" />
           </button>
-          <button type="button" class="icon-button" data-action="toggle-sim" aria-label="${t('worldgen.action.runTectonics.label')}" data-help="worldgen.action.runTectonics">
-            <img src="/icons/tectonics_heavy.png" alt="" />
+          <button type="button" class="wg-action" data-action="toggle-sim" data-help="worldgen.action.runTectonics">
+            <span class="wg-action__label"></span>
           </button>
-          <span class="tectonics-stats">
-            <span class="stat"><span class="stat-num"><span data-value="stat-land">–</span><span class="stat-unit">${t('common.unit.percent')}</span></span><span class="stat-label">${t('worldgen.panel.tectonics.stat.land')}</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-continents">–</span><span class="stat-label">${t('worldgen.panel.tectonics.stat.continents')}</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-plates">–</span><span class="stat-label">${t('worldgen.panel.tectonics.stat.plates')}</span></span>
-            <span class="stat"><span class="stat-num" data-value="stat-tect-age">–</span><span class="stat-label">${t('worldgen.panel.tectonics.stat.age')}</span></span>
-          </span>
-        </span>
-      </label>
+        </div>
+      </div>
     </div>
     <div class="panel" data-stage="climate">
       <button type="button" class="icon-button panel-reset" data-action="reset-climate" aria-label="${t('worldgen.action.resetClimate.label')}" data-help="worldgen.action.resetClimate">
@@ -758,11 +758,20 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const tempMaxLabel = root.querySelector<HTMLElement>('[data-value="temp-max"]')!
   const tempMinLabel = root.querySelector<HTMLElement>('[data-value="temp-min"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
+  const statLandBar = root.querySelector<HTMLElement>('[data-value="stat-land-bar"]')!
   const statTectAge = root.querySelector<HTMLElement>('[data-value="stat-tect-age"]')!
   const statPlates = root.querySelector<HTMLElement>('[data-value="stat-plates"]')!
   const statContinents = root.querySelector<HTMLElement>('[data-value="stat-continents"]')!
   const erodeIcon = erodeButton.querySelector<HTMLImageElement>('img')!
-  const toggleSimIcon = toggleSimButton.querySelector<HTMLImageElement>('img')!
+  // Plate tectonics runs and stops from one button, which says which it is —
+  // the same shape the Archean's has since both moved into the column. Saying
+  // it again is also how the button follows a language switch.
+  const sayTectonicsButton = (running: boolean): void => {
+    const label = t(running ? 'worldgen.action.runTectonics.labelActive' : 'worldgen.action.runTectonics.label')
+    toggleSimButton.setAttribute('aria-label', label)
+    toggleSimButton.querySelector('.wg-action__label')!.textContent = label
+  }
+  sayTectonicsButton(false)
   const computeProgress = root.querySelector<HTMLElement>('[data-value="compute-progress"]')!
   const computeProgressFill = root.querySelector<HTMLElement>('[data-value="compute-progress-fill"]')!
 
@@ -881,6 +890,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   let lastContinentCount = 0
   const updateStats = (): void => {
     statLand.textContent = String(Math.round(lastLandFraction * 100))
+    statLandBar.style.width = `${Math.min(100, lastLandFraction * 100)}%`
     // The world clock runs across both phases — the Archean's epochs are worth
     // 5 Ma each and the tectonic ones 1 Ma, so this is not just the epoch count
     // rescaled. See core/worldTime.
@@ -2919,8 +2929,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     tectonicsRunning = false
     postToWorker({ type: 'tectonicsStop' })
     updateOverlays()
-    toggleSimIcon.src = '/icons/tectonics_heavy.png'
-    toggleSimButton.setAttribute('aria-label', t('worldgen.action.runTectonics.label'))
+    sayTectonicsButton(false)
     updateControlsDisabled()
     updateProgress()
   }
@@ -2938,8 +2947,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     invalidateAfter('tectonics')
     erosionRunCount = 0
     postToWorker({ type: 'tectonicsStart' })
-    toggleSimIcon.src = '/icons/stop.png'
-    toggleSimButton.setAttribute('aria-label', t('worldgen.action.runTectonics.labelActive'))
+    sayTectonicsButton(true)
     updateControlsDisabled()
     updateProgress()
   }
@@ -4387,10 +4395,9 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     migration: 'migration',
   }
   const overlayList = createOverlayList({ onToggle: (id) => toggleOverlay(id) })
-  // Genesis is the first step whose controls move out of the panel row at the
-  // foot and into the column. The rest follow one per step.
-  const genesisPanel = panels[GENESIS_PANEL_INDEX]
-  sidebar.body.append(overlayList.element, worldPanel, genesisPanel)
+  // The steps whose controls have moved out of the panel row at the foot and
+  // into the column. The rest follow one per step, in pipeline order.
+  sidebar.body.append(overlayList.element, worldPanel, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX])
   relabel(sidebar.body)
 
   const stepBar = createStepBar(root, {

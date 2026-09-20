@@ -4,9 +4,10 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-20
+- **fixed** Generator: running the Archean no longer marks plate tectonics as computed, nor opens the climate step early. `generator.step`
 - **new** Generator: a step is blocked until the step before it has done enough — the world must be created, and the Archean must be half stabilised. `generator.step`
 - **new** Generator: the sidebar lists the current step's overlays as switches. `generator.overlays`
-- **changed** Generator: the Genesis step moved from the panel row at the foot into the sidebar, with its parameters, its counts and its run button. `generator.step.genesis`
+- **changed** Generator: the Genesis and Tectonics steps moved from the panel row at the foot into the sidebar, with their parameters, their counts and their run buttons. `generator.step`
 
 ## 2026-09-19
 - **fixed** Generator: switching the language now also changes the load screen, the step bar, the sidebar and step 0, not the title bar alone. `generator`

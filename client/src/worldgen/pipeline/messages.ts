@@ -269,6 +269,10 @@ export interface WorkerRenderedMessage {
   width: number
   height: number
   landFraction: number
+  // PLATE epochs, thus 0 for every Archean render: the Archean counts its own
+  // epochs and reports them in genesisStatus. One counter carrying both was
+  // what let the screen call plate tectonics "computed" — and opened the
+  // climate gate, which asks for 30 epochs — while only the Archean had run.
   epoch: number
   // Overlay source data for the toggleable main-thread layers (no font or
   // Canvas2D in the worker, so nothing is drawn here — the screen composites
