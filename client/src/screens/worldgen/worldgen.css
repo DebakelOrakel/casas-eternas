@@ -263,14 +263,6 @@
   box-sizing: border-box;
 }
 
-.worldgen-flat-screen .erosion-status {
-  font-size: 0.75rem;
-  white-space: nowrap;
-  /* Reserves room for "100%" so the row doesn't reflow/jitter as the
-     digit count changes while erosion is running. */
-  min-width: 2.5em;
-}
-
 /* --- step 0: the world's name, seed and shape -----------------------------
    Lives in the sidebar, so it is a single 300px column and reads the design
    tokens the column itself wears rather than the older paper look below. */

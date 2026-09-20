@@ -193,6 +193,44 @@
   color: var(--dc-muted);
 }
 
+/* The detail bake: a width to pick, and the button that orders it. Its own row
+   above the step's actions, because it is not the step — it refines what the
+   step produced. */
+.wg-bake {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.wg-bake__tiers {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+}
+.wg-tier {
+  flex: 1;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.wg-tier:hover:not(:disabled) {
+  background: var(--dc-hover);
+}
+/* The chosen width is a fill, not a shade: it is a radio, and one of them is
+   always the answer. */
+.wg-tier[aria-pressed="true"] {
+  border-color: var(--dc-strong);
+  background: var(--dc-strong);
+  color: var(--dc-panel);
+}
+.wg-tier:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .wg-action {
   flex-grow: 1;
   height: 44px;

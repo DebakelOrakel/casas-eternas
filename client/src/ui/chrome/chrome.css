@@ -167,7 +167,7 @@
 }
 
 /* Toggle chips (aria-pressed) — selection is a fill, not just opacity, so the
-   chosen tiers read at a glance next to the start button that orders them. */
+   chosen one reads at a glance beside the button that acts on it. */
 .map-chrome .text-button[aria-pressed="true"] {
   background: rgba(26, 26, 26, 0.8);
   color: #ffffff;

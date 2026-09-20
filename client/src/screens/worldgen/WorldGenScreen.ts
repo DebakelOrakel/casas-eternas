@@ -594,26 +594,38 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </div>
       </div>
     </div>
-    <div class="panel" data-stage="erosion">
-      <button type="button" class="icon-button panel-reset" data-action="reset-erosion" aria-label="${t('worldgen.action.resetErosion.label')}" data-help="worldgen.action.resetErosion">
-        <img src="/icons/reset.png" alt="" />
-      </button>
-      ${sliderField(SURFACE_INPUTS.landscapeAge, 'erosion-age-input', 'erosion-age-label')}
-      ${sliderField(SURFACE_INPUTS.alluvium, 'erosion-alluvium-input', 'erosion-alluvium-label')}
-      ${sliderField(SURFACE_INPUTS.rockContrast, 'erosion-rock-input', 'erosion-rock-label')}
-      <label class="field field--icon-row">
-        <span class="field-row">
-          <button type="button" class="icon-button" data-action="erode" aria-label="${t('worldgen.action.runErosion.label')}" data-help="worldgen.action.runErosion">
-            <img src="/icons/erosion_heavy.png" alt="" />
-          </button>
-          <button type="button" class="text-button" data-bake-tier="8" aria-pressed="false" disabled data-help="worldgen.panel.erosion.bake16k">${t('worldgen.panel.erosion.bake16k.label')}</button>
-          <button type="button" class="text-button" data-bake-tier="4" aria-pressed="true" data-help="worldgen.panel.erosion.bake8k">${t('worldgen.panel.erosion.bake8k.label')}</button>
-          <button type="button" class="text-button" data-bake-tier="2" aria-pressed="false" data-help="worldgen.panel.erosion.bake4k">${t('worldgen.panel.erosion.bake4k.label')}</button>
-          <button type="button" class="icon-button" data-action="bake-detail" aria-label="${t('worldgen.action.runDetailBake.label')}" data-help="worldgen.action.runDetailBake">
+    <div class="wg-step" data-stage="erosion">
+      <section class="wg-params">
+        <h2 class="wg-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
+        ${paramField(SURFACE_INPUTS.landscapeAge, 'erosion-age-input', 'erosion-age-label')}
+        ${paramField(SURFACE_INPUTS.alluvium, 'erosion-alluvium-input', 'erosion-alluvium-label')}
+        ${paramField(SURFACE_INPUTS.rockContrast, 'erosion-rock-input', 'erosion-rock-label')}
+      </section>
+      <div class="wg-step__foot">
+        <!-- The detail bake: pick a width, then order it. It stands with the
+             step that makes its input, because a bake refines ERODED terrain
+             and nothing else. The design canvas gives it a place of its own
+             ("Feinsimulation", with the job list); it moves there when that
+             exists. -->
+        <div class="wg-bake">
+          <div class="wg-bake__tiers">
+            <button type="button" class="wg-tier" data-bake-tier="8" aria-pressed="false" disabled data-t="worldgen.panel.erosion.bake16k.label" data-help="worldgen.panel.erosion.bake16k">${t('worldgen.panel.erosion.bake16k.label')}</button>
+            <button type="button" class="wg-tier" data-bake-tier="4" aria-pressed="true" data-t="worldgen.panel.erosion.bake8k.label" data-help="worldgen.panel.erosion.bake8k">${t('worldgen.panel.erosion.bake8k.label')}</button>
+            <button type="button" class="wg-tier" data-bake-tier="2" aria-pressed="false" data-t="worldgen.panel.erosion.bake4k.label" data-help="worldgen.panel.erosion.bake4k">${t('worldgen.panel.erosion.bake4k.label')}</button>
+          </div>
+          <button type="button" class="wg-action-icon" data-action="bake-detail" data-t-aria="worldgen.action.runDetailBake.label" data-help="worldgen.action.runDetailBake">
             <img src="/icons/erosion_detail.png" alt="" />
           </button>
-        </span>
-      </label>
+        </div>
+        <div class="wg-step__actions">
+          <button type="button" class="wg-action-icon" data-action="reset-erosion" data-t-aria="worldgen.action.resetErosion.label" data-help="worldgen.action.resetErosion">
+            <img src="/icons/reset.png" alt="" />
+          </button>
+          <button type="button" class="wg-action" data-action="erode" data-help="worldgen.action.runErosion">
+            <span class="wg-action__label"></span>
+          </button>
+        </div>
+      </div>
     </div>
     <div class="panel" data-stage="ecology">
       <button type="button" class="icon-button panel-reset" data-action="reset-ecology" aria-label="${t('worldgen.action.resetEcology.label')}" data-help="worldgen.action.resetEcology">
@@ -771,7 +783,16 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   const statTectAge = root.querySelector<HTMLElement>('[data-value="stat-tect-age"]')!
   const statPlates = root.querySelector<HTMLElement>('[data-value="stat-plates"]')!
   const statContinents = root.querySelector<HTMLElement>('[data-value="stat-continents"]')!
-  const erodeIcon = erodeButton.querySelector<HTMLImageElement>('img')!
+  // A pass runs and stops from one button, which says which it is — the same
+  // shape the Archean's and the tectonic one have since they moved into the
+  // column, where a word fits and an icon says less. Saying it again is also
+  // how the button follows a language switch.
+  const sayErodeButton = (running: boolean): void => {
+    const label = t(running ? 'worldgen.action.runErosion.labelActive' : 'worldgen.action.runErosion.label')
+    erodeButton.setAttribute('aria-label', label)
+    erodeButton.querySelector('.wg-action__label')!.textContent = label
+  }
+  sayErodeButton(false)
   // Plate tectonics runs and stops from one button, which says which it is —
   // the same shape the Archean's has since both moved into the column. Saying
   // it again is also how the button follows a language switch.
@@ -2169,7 +2190,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
       case 'erosion':
         erosionOpInFlight = false
         erosionProgressFraction = 0
-        erodeIcon.src = '/icons/erode.png'
+        sayErodeButton(false)
         break
       case 'climate':
         climateInFlight = false
@@ -2586,8 +2607,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     if (!message.intermediate) {
       const erosionJustSettled = erosionOpInFlight
       erosionOpInFlight = false
-      erodeIcon.src = '/icons/erosion_heavy.png' // back from the stop icon
-      erodeButton.setAttribute('aria-label', t('worldgen.action.runErosion.label'))
+      sayErodeButton(false)
       updateControlsDisabled()
       updateProgress()
       // The rivers are the erosion panel's readout (the hydrology stage has no
@@ -2782,8 +2802,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
     erosionProgressFraction = 0
     erosionRunCount += 1
     invalidateAfter('tectonics')
-    erodeIcon.src = '/icons/stop.png'
-    erodeButton.setAttribute('aria-label', t('worldgen.action.runErosion.labelActive'))
+    sayErodeButton(true)
     updateControlsDisabled()
     updateProgress()
     updateNavState() // first erosion unlocks the panels past it (Ecology on)
@@ -4205,7 +4224,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   })
   // The steps whose controls have moved out of the panel row at the foot and
   // into the column. The rest follow one per step, in pipeline order.
-  sidebar.body.append(overlayList.element, worldPanel, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX])
+  sidebar.body.append(overlayList.element, worldPanel, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX], panels[panelIndexOf('erosion')])
   relabel(sidebar.body)
 
   const stepBar = createStepBar(root, {
