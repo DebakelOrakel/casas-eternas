@@ -1337,7 +1337,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
         const idx = lastMonsoonIndex[gy * climateResX + gx]
         if (idx === OCEAN_PRECIP) continue
-        const [r, g, b] = monsoonColor(idx)
+        // The strength, not the phase — the ramp runs 0..1 and a signed field
+        // would fold its two halves onto one colour (climate/monsoon.ts).
+        const [r, g, b] = monsoonColor(Math.abs(idx))
         const p = (y * MAP_WIDTH + x) * 4
         data[p] = data[p] * (1 - alpha) + r * alpha
         data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
@@ -2242,7 +2244,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         rows.push({ label: t('readout.row.precipitation'), value: t('readout.precipitation', { v: String(Math.round(lastPrecipitation[cell.i])) }) })
       }
       if (lastMonsoonIndex && lastMonsoonIndex[cell.i] !== OCEAN_PRECIP) {
-        rows.push({ label: t('readout.row.monsoon'), value: lastMonsoonIndex[cell.i].toFixed(2) })
+        // The magnitude. The sign is the phase, and the chart below draws that
+        // far better than a minus sign in front of a number would.
+        rows.push({ label: t('readout.row.monsoon'), value: Math.abs(lastMonsoonIndex[cell.i]).toFixed(2) })
       }
       if (lastWind) {
         // The arrow alone. The field is a prescribed band pattern that tapers to
@@ -2330,28 +2334,26 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return Array.from({ length: 12 }, (_, m) => mean + sign * (amp / 2) * Math.cos(((m - 6) / 12) * 2 * Math.PI))
   }
 
-  // Twelve months of rainfall. The HEIGHTS are exact: the wet and dry season
-  // totals fall out of the two numbers the worker ships, because the monsoon
-  // index is (wet − dry) / (wet + dry + floor) and the annual field is their
-  // mean (climate/monsoon.ts). The PHASE is an assumption — monsoon.ts keeps the
-  // two seasons as max/min and throws away which one was the northern summer, so
-  // this puts the wet season in the local summer. That is right for the tropics
-  // and half a year wrong for a Mediterranean winter-rain climate. It becomes
-  // exact when the worker ships the seasons signed rather than sorted.
+  // Twelve months of rainfall, and the whole year is now the model's own. The
+  // heights follow from the two numbers the worker ships, because the monsoon
+  // index is (precipN − precipS) / (precipN + precipS + floor) and the annual
+  // field is their mean (climate/monsoon.ts). The PHASE follows from that index's
+  // SIGN, which is why the hemisphere does not appear here: a positive index
+  // means the rain falls while the top hemisphere is in summer, wherever the cell
+  // lies. Until the index was signed this had to assume the wet season was the
+  // local summer — right for the tropics, half a year wrong for a Mediterranean
+  // winter-rain climate.
   function precipitationYear(cell: ProbeCell): number[] | null {
     if (!lastPrecipitation || !lastMonsoonIndex) return null
     const annual = lastPrecipitation[cell.i]
     const index = lastMonsoonIndex[cell.i]
     if (annual === OCEAN_PRECIP || index === OCEAN_PRECIP) return null
-    const sum = 2 * annual
-    const spread = index * (sum + CLIMATE_TUNING.monsoonSeasonalityFloor)
-    const wet = (sum + spread) / 2
-    const dry = (sum - spread) / 2
-    const north = shiftedYNorm(cell.gy, climateResY, Number(equatorOffsetInput.value) / 100) < 0.5
-    const sign = north ? 1 : -1
+    // Half the difference between the two seasons, signed like the index.
+    const half = (index * (2 * annual + CLIMATE_TUNING.monsoonSeasonalityFloor)) / 2
     return Array.from({ length: 12 }, (_, m) => {
-      const season = sign * Math.cos(((m - 6) / 12) * 2 * Math.PI) // +1 = local summer
-      return Math.max(0, ((wet + dry) / 2 + ((wet - dry) / 2) * season) / 12)
+      // Index 6 = July, the top hemisphere's summer, where cos is 1.
+      const northSummer = Math.cos(((m - 6) / 12) * 2 * Math.PI)
+      return Math.max(0, (annual + half * northSummer) / 12)
     })
   }
 

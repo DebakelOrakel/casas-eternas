@@ -1,7 +1,7 @@
 ---
 summary: Static, latitude-based climate (temperature + precipitation + wind + ocean currents) computed at world-gen time, feeding a Whittaker biome classification. No dynamic weather.
 date: 2026-07-24
-updated: 2026-08-12
+updated: 2026-09-20
 area: generator
 stage: built
 status: implemented (all 6 phases built); the "revisit if too coarse" note under Integration was revisited 2026-08-08 — the CLASSIFICATION moved to the world raster, the climate fields did not, and its coarse inputs were switched from nearest to interpolated 2026-08-09
@@ -237,6 +237,46 @@ overlays' values for the cell under the cursor.
    escape desert); seasonal amplitude splits continental grassland (>20 °C swing)
    from milder mediterranean woodland. Ocean = `elevation ≤ seaLevel`. Computed
    last in the worker's climate pass and surfaced as an opaque land-only overlay.
+
+## Addendum 2026-09-20 — the monsoon index carries its phase
+
+`monsoon.ts` runs the precipitation model twice, once per season, and used to
+store the pair sorted: `wet = max`, `dry = min`, with the index built from the
+difference. That kept HOW uneven the year is and threw away WHICH half of it is
+the wet one. The two are not the same climate: a monsoon and a Mediterranean
+winter-rain climate have the same index and opposite calendars.
+
+The index is now **signed**, `(precipN − precipS) / (precipN + precipS + floor)`,
+where `precipN` is the run with the top hemisphere in summer. Magnitude
+unchanged, so nothing that classifies vegetation moves; sign = the phase.
+
+Three consequences that are the actual content of this decision:
+
+- **The magnitude is taken on the whole field, not per value.** The classifier's
+  inputs are interpolated (see the 2026-08-09 bullet above), and two cells on
+  opposite sides of the ITCZ now carry opposite signs — blending them would
+  report an even year exactly in the belt where the wet-dry savanna lives.
+  `seasonalityMagnitude()` converts the field once, before it enters
+  `computeBiomes`/`computeBiomesFine`, which also keeps the `v >= 0` land test in
+  `sampleLandBilinear` able to tell dry-summer land from ocean. Measured: 0 of
+  32,768 coarse and 0 of 131,072 fine biome cells change.
+- **The floor keeps the ocean sentinel free.** `|index| < 1` holds strictly
+  because the denominator exceeds the numerator by `monsoonSeasonalityFloor`
+  (500 mm/yr), so the `-1` that marks ocean stays unreachable by a real value.
+  Measured maximum over a test world: 0.9717.
+- **The save needed no new version.** The layer's encoding moved to
+  `scale 2/255, offset -1`, and the manifest carries scale and offset per layer,
+  so an older save still decodes with the range it was written at — it simply has
+  no phase to report. Precision halves to 0.0078 per step, against thresholds
+  around 0.35.
+
+What it buys, beyond an honest readout: the rainfall year can be reconstructed
+from the two numbers that already ship. The generator's probe card draws twelve
+months from `annual` and `index` alone, exact in both height and phase. Measured
+against the assumption it replaces — wet season = local summer — that assumption
+was **half a year out on 31.2% of land cells, and on 36.8% of the strongly
+seasonal ones** (|index| > 0.2). It was right only where the ITCZ does follow the
+sun.
 
 ## Deferred / out of scope
 

@@ -65,7 +65,13 @@ export const WORLD_LAYERS: LayerSpec[] = [
   // and it is a mostly-flat id field, so DEFLATE takes most of it back.
   layer('biome', 'u8', 1, 0),
   layer('seasonalAmplitude', 'u8', 60 / 255, 0),
-  layer('monsoonIndex', 'u8', 1 / 255, 0),
+  // SIGNED since the index gained its phase (climate/monsoon.ts): the sign says
+  // which half of the year is the wet one, so the layer has to reach −1. The
+  // manifest carries scale/offset per layer, so an older save still decodes with
+  // the range it was written at — it simply has no phase to report. Half the
+  // steps of the old encoding, at 0.0078 per step over a field whose consumers
+  // compare it against thresholds like 0.35.
+  layer('monsoonIndex', 'u8', 2 / 255, -1),
   // Lake depth in elevation units. The range was 20 — off by nearly two orders
   // of magnitude, since a lake's depth is `filled - elevation` and the whole
   // elevation field only spans ±1. Measured over a real run: p50 0.004, p99

@@ -2,6 +2,7 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, sampleDryLandAtCell, sample
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL, isLandAt } from '../elevation/elevationScale'
 import { sampleBilinearWorld, wrapValue } from '../core/field'
+import { seasonalityMagnitude } from './monsoon'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -125,12 +126,18 @@ export function biomeLegend(): { labelKey: string; rgb: [number, number, number]
 }
 
 // Classify one cell. T = mean annual °C, P = annual precip mm/yr, amp = seasonal
-// TEMPERATURE amplitude °C, season = monsoon / precipitation-SEASONALITY index (0 =
-// even year-round, →1 = strong wet-dry / monsoonal; see monsoon.ts). Aridity is
-// implicit in the T bands (hotter needs more water to escape desert). The season axis
-// is what separates evergreen forest (rain spread through the year) from open wet-dry
-// vegetation (savanna, seasonal woodland) at the SAME annual total — the classic
-// monsoon boundary. Thresholds are the tunable part of the Whittaker mapping.
+// TEMPERATURE amplitude °C, season = the monsoon / precipitation-SEASONALITY index
+// as a MAGNITUDE (0 = even year-round, →1 = strong wet-dry / monsoonal), which is
+// what seasonalityMagnitude makes of monsoon.ts's signed field. Aridity is implicit in the T bands (hotter
+// needs more water to escape desert). The season axis is what separates evergreen
+// forest (rain spread through the year) from open wet-dry vegetation (savanna,
+// seasonal woodland) at the SAME annual total — the classic monsoon boundary.
+// Thresholds are the tunable part of the Whittaker mapping.
+//
+// Vegetation answers to how uneven the year is, never to which half of it is the
+// wet one — a savanna is a savanna in either hemisphere — so the phase is dropped
+// before this point and the thresholds below read the 0..1 field they were tuned
+// against.
 function classify(tempC: number, precipMm: number, amplitude: number, season: number): BiomeId {
   if (tempC < CLIMATE_TUNING.iceMaxC) return Biome.Ice
   if (tempC < CLIMATE_TUNING.tundraMaxC) return Biome.Tundra
@@ -271,6 +278,7 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
   seaLevelTemperature?: Float32Array,
 ): Uint8Array {
   const biomes = new Uint8Array(worldWidth * worldHeight)
+  const seasonality = seasonalityMagnitude(monsoonIndex)
   const seaLevelTemp = seaLevelTemperature ?? reduceTemperatureToSeaLevel(temperature, elevation, worldWidth, worldHeight, dryLand)
   for (let wy = 0; wy < worldHeight; wy++) {
     const gy = Math.min(RY - 1, Math.floor((wy / worldHeight) * RY))
@@ -290,7 +298,7 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
       const temp = reduced - CLIMATE_TUNING.lapseCPerElevation * (dry ? here - SEA_LEVEL : Math.max(0, here - SEA_LEVEL))
       const precip = sampleLandBilinear(precipitation, wx, wy, worldWidth, worldHeight, precipitation[cell])
       const amp = sampleLandBilinear(seasonalAmplitude, wx, wy, worldWidth, worldHeight, seasonalAmplitude[cell])
-      const season = sampleLandBilinear(monsoonIndex, wx, wy, worldWidth, worldHeight, monsoonIndex[cell])
+      const season = sampleLandBilinear(seasonality, wx, wy, worldWidth, worldHeight, seasonality[cell])
       const base = classify(temp, precip, amp, season)
       biomes[world] = here > CLIMATE_TUNING.alpineTreelineElevation && base !== Biome.Ice ? Biome.Alpine : base
     }
@@ -300,6 +308,7 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
 
 export function computeBiomes(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Uint8Array {
   const biomes = new Uint8Array(RX * RY)
+  const seasonality = seasonalityMagnitude(monsoonIndex)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
@@ -308,7 +317,7 @@ export function computeBiomes(temperature: Float32Array, precipitation: Float32A
         biomes[i] = Biome.Ocean
         continue
       }
-      const base = classify(temperature[i], precipitation[i], seasonalAmplitude[i], monsoonIndex[i])
+      const base = classify(temperature[i], precipitation[i], seasonalAmplitude[i], seasonality[i])
       biomes[i] = cellElevation > CLIMATE_TUNING.alpineTreelineElevation && base !== Biome.Ice ? Biome.Alpine : base
     }
   }

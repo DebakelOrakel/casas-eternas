@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-09-20
+- **changed** Climate: the world now knows which half of the year a place gets its rain in, not only how uneven the year is. `worldgen.panel.climate`
+
 ## 2026-08-17
 - **changed** Erosion: rebuilt on a mass-conserving engine — sediment now goes somewhere instead of vanishing, rain shapes where valleys carve, and the new Landscape age, Floodplains and Rock contrast sliders replace Strength and Drainage. `worldgen.panel.erosion`
 - **changed** Erosion: the 4K/8K detail bakes run the same engine — they now carve the world's own rock and rain (with floodplains along the valleys), and old bakes are re-baked on next view. `worldgen.panel.erosion.bake`

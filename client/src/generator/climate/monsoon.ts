@@ -5,7 +5,8 @@ import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
 
 // Seasonal precipitation + monsoons (see docs/decisions/climate-biomes.md). The base
 // precipitation model is an annual mean; here we run it for two opposite seasons and
-// derive the wet-/dry-season split + a monsoon (precipitation-seasonality) index. Two
+// derive a SIGNED monsoon (precipitation-seasonality) index from the difference — how
+// uneven the year is, and which half of it is the wet one. Two
 // physical drivers make a season differ from the annual mean:
 //   1. The ITCZ rain belt migrates toward the summer hemisphere (a seasonal shift of
 //      the same latitude band the annual model already uses).
@@ -58,11 +59,34 @@ export interface SeasonalPrecipitation {
   // Annual mean precip (mm/yr on land, OCEAN_PRECIP on ocean) — the mean of the two
   // seasons, so it stays comparable to the old single-field precipitation.
   annual: Float32Array
-  wet: Float32Array // wetter season's precip (land; OCEAN_PRECIP on ocean)
-  dry: Float32Array // drier season's precip
-  // Monsoon / precipitation-seasonality index: (wet − dry) / (wet + dry). 0 = even
-  // year-round, →1 = strongly seasonal (monsoonal). OCEAN_PRECIP on ocean.
+  // Monsoon / precipitation-seasonality index, SIGNED:
+  //   (precipN − precipS) / (precipN + precipS + monsoonSeasonalityFloor).
+  // Its MAGNITUDE is the seasonality — 0 = even year-round, →1 = strongly wet-dry
+  // (monsoonal) — and that is all a consumer asking "how seasonal is this place"
+  // wants; classify() in biomes.ts takes the absolute value once, for all of them.
+  // Its SIGN is the PHASE: + = the wet season falls while the TOP hemisphere is in
+  // summer, − = while the bottom one is. This field used to sort the two seasons
+  // into wet = max / dry = min, which kept the amplitude and threw the phase away,
+  // so a Mediterranean winter-rain climate was indistinguishable from a monsoon.
+  // The floor in the denominator keeps |index| < 1 STRICTLY, which is what leaves
+  // the OCEAN_PRECIP (−1) sentinel unreachable by a real value. OCEAN_PRECIP on ocean.
   index: Float32Array
+}
+
+// The seasonality field's MAGNITUDE — how uneven the year is, with the ocean
+// sentinel passed through. `index` is signed because the sign is the phase, and
+// everything that classifies vegetation asks only about the unevenness.
+//
+// This converts the WHOLE FIELD rather than each value where it is read, and that
+// is not a convenience: the consumers INTERPOLATE it. Two neighbouring cells on
+// opposite sides of the ITCZ carry opposite signs, so blending them first would
+// report an even year exactly in the belt where the wet-dry savanna lives. It also
+// keeps the `v >= 0` land test in biomes.ts's sampleLandBilinear able to tell a
+// dry-summer land cell from ocean.
+export function seasonalityMagnitude(index: Float32Array): Float32Array {
+  const out = new Float32Array(index.length)
+  for (let i = 0; i < index.length; i++) out[i] = index[i] === OCEAN_PRECIP ? OCEAN_PRECIP : Math.abs(index[i])
+  return out
 }
 
 // Runs the base precipitation model for the two opposite seasons (each with its shifted
@@ -90,23 +114,17 @@ export function computeSeasonalPrecipitation(
 
   const n = precipN.length
   const annual = new Float32Array(n)
-  const wet = new Float32Array(n)
-  const dry = new Float32Array(n)
   const index = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     if (precipN[i] === OCEAN_PRECIP || precipS[i] === OCEAN_PRECIP) {
       annual[i] = OCEAN_PRECIP
-      wet[i] = OCEAN_PRECIP
-      dry[i] = OCEAN_PRECIP
       index[i] = OCEAN_PRECIP
       continue
     }
     const a = precipN[i]
     const b = precipS[i]
     annual[i] = (a + b) / 2
-    wet[i] = Math.max(a, b)
-    dry[i] = Math.min(a, b)
-    index[i] = (wet[i] - dry[i]) / (wet[i] + dry[i] + CLIMATE_TUNING.monsoonSeasonalityFloor)
+    index[i] = (a - b) / (a + b + CLIMATE_TUNING.monsoonSeasonalityFloor)
   }
-  return { annual, wet, dry, index }
+  return { annual, index }
 }
