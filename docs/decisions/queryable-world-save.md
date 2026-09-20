@@ -1,7 +1,7 @@
 ---
 summary: Extend the world save into a self-describing, QUERYABLE dataset — every world aspect we generate is baked into field-layer rasters (+ vector layers) described by a manifest, so a game server can look up any value by sampling, with ZERO knowledge of the generation algorithms. The recipe (regenerate) and sim snapshot (continue) stay alongside, serving different consumers.
 date: 2026-07-26
-updated: 2026-08-12
+updated: 2026-09-20
 area: platform
 stage: building
 status: Phase 1 BUILT (2026-07-26) — main-thread bake from caches; see status note at end
@@ -140,8 +140,8 @@ showed — no recompute, no drift.
 
 - Per-field quantisation precision (which fields need `u16`/`f32` vs `u8`;
   discharge has a huge dynamic range → maybe log-encode or `f32`).
-- Sentinel vs. shared `landMask` per layer (some fields are ocean-valid: SST,
-  currents — those keep data over ocean; land-only fields use the mask/sentinel).
+- ~~Sentinel vs. shared `landMask` per layer~~ — **answered 2026-09-20, see the
+  addendum at the end.** The shared mask, restored at the reader.
 - Keep oceanAge? (marginal for gameplay — decide by whether the server needs it.)
 - River/vector on-disk shape (reuse `RiverPolylines` binary, or GeoJSON-ish JSON).
 - Bilinear vs nearest per layer (smooth climate → bilinear; biome/enum → nearest).
@@ -242,3 +242,33 @@ main thread reusing `requestClimate/Hydrology/Ecology` (no worker rewrite).
   restore, just not in the manifest — its resolution/gameplay value TBD).
 - Nearest-sampling only so far (biome wants nearest anyway; smooth fields could
   add bilinear in the sampler later).
+
+## Addendum 2026-09-20 — the shared mask wins, and the READER applies it
+
+The open question above ("sentinel vs. shared `landMask` per layer") had in
+practice been answered twice, differently, by two halves of the same format.
+
+`bakeLayer` clamps out-of-range values, so a land-only field that says −1 over
+water is stored as the bottom of its range. That was known and written down: the
+comment says consumers mask with `landMask`. But no consumer did, and one of them
+tells land from ocean BY the sentinel — `biomes.ts`'s `sampleLandBilinear` drops
+ocean corners with `v >= 0`, and it is what reclassifies a world opened from a
+save. It was therefore blending a fabricated 0 mm/yr into every coastal land
+cell: the 2026-08-09 fix for the live fields, undone by the round trip.
+
+**Decided: the shared mask, applied once at the save boundary.** Not a per-layer
+`sentinel` code in the manifest, which the original sketch proposed — that would
+put a second land/ocean truth beside `landMask` in every layer entry, and two
+truths about the same cells is what this whole format exists to avoid.
+`restoreLandOnlySentinel` puts the value back as the layers are acquired, so
+everything downstream sees the field the generator computed, and nothing below
+the reader has to know the save quantised anything.
+
+Measured on a test world, biomes reclassified from a round trip versus from the
+live fields: **397 land cells differed before (0.56% of land), 24 after
+(0.03%)** — and the remaining 24 are quantisation, which is the format working
+as designed. The roundtrip harness now holds the check, and it fails without the
+restoration.
+
+An older save that predates the `landMask` layer is left as it is rather than
+guessed at.

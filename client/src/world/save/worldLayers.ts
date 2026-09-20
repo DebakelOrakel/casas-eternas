@@ -154,6 +154,29 @@ export function bakeLayer(field: Float32Array | Uint8Array, spec: Encoding): Arr
   return out.buffer as ArrayBuffer
 }
 
+// Put a land-only layer's ocean sentinel back, from the landMask layer.
+//
+// This is the other half of the contract bakeLayer states. A field that says −1
+// over water is clamped into range on the way out, so it comes back saying
+// whatever the bottom of its range is — for most layers 0, which is an ordinary
+// value and not obviously wrong. The reader is supposed to mask with landMask;
+// this is that masking, done ONCE here at the save boundary rather than by each
+// consumer, so a field read from a save is the field the generator computed.
+//
+// It matters because one consumer tells land from ocean BY the sentinel:
+// biomes.ts's sampleLandBilinear drops ocean corners by `v >= 0`, and it is the
+// one that reclassifies a restored world. Without this it blended a fabricated 0
+// into every coastal land cell — the same bug the 2026-08-09 interpolation work
+// fixed for the live fields, reintroduced by the round trip.
+//
+// Copies rather than writes through: the decoded layers are cached and shared,
+// and `worldId` hashes one of them.
+export function restoreLandOnlySentinel(field: Float32Array, landMask: Float32Array, sentinel: number): Float32Array {
+  const out = new Float32Array(field.length)
+  for (let i = 0; i < field.length; i++) out[i] = landMask[i] > 0.5 ? field[i] : sentinel
+  return out
+}
+
 // Read a typed layer buffer as its numeric field (raw → value). Used to sample.
 export function decodeLayer(buffer: ArrayBuffer, spec: Encoding): Float32Array {
   const raw = spec.dtype === 'f32' ? new Float32Array(buffer) : spec.dtype === 'u16' ? new Uint16Array(buffer) : new Uint8Array(buffer)

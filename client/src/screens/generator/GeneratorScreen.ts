@@ -1864,10 +1864,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     hotspots: () => ({ type: 'swatches', title: t('overlay.hotspots.legend.title'), items: [
       { label: t('overlay.hotspots.legend.plume'), rgb: [255, 140, 0], shape: 'ring' },
     ] }),
-    cratonAge: () => ({ type: 'gradient', title: t('overlay.cratonAge.label'), unit: '% of world age', stops: cratonAgeLegendStops }),
-    temperature: () => ({ type: 'gradient', title: t('overlay.temperature.label'), unit: '°C', stops: temperatureLegendStops }),
+    cratonAge: () => ({ type: 'gradient', title: t('overlay.cratonAge.label'), unit: t('overlay.cratonAge.legend.unit'), stops: cratonAgeLegendStops }),
+    temperature: () => ({ type: 'gradient', title: t('overlay.temperature.label'), unit: t('overlay.temperature.legend.unit'), stops: temperatureLegendStops }),
     seasonality: () => ({ type: 'gradient', title: t('overlay.seasonality.label'), unit: t('overlay.seasonality.legend.unit'), stops: amplitudeLegendStops }),
-    precipitation: () => ({ type: 'gradient', title: t('overlay.precipitation.label'), unit: 'mm/yr', stops: precipitationLegendStops }),
+    precipitation: () => ({ type: 'gradient', title: t('overlay.precipitation.label'), unit: t('overlay.precipitation.legend.unit'), stops: precipitationLegendStops }),
     monsoon: () => ({ type: 'gradient', title: t('overlay.monsoon.legend.title'), unit: '', stops: monsoonLegendStops }),
     biomes: () => ({ type: 'swatches', title: t('overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) }),
     waterBalance: () => ({ type: 'swatches', title: t('overlay.waterBalance.label'), items: [

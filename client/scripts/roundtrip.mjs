@@ -213,12 +213,34 @@ for (let i = 0; i < zipUplift.length; i++) {
   zipHardness[i] = 1 + 0.4 * Math.cos(i * 0.21)
 }
 const forcingSpecs = Object.fromEntries(M.layers.FORCING_LAYERS.map((s) => [s.name, s]))
+
+// The land-only climate layers, half ocean. Their -1 ocean sentinel does not
+// survive quantisation (bakeLayer clamps it), so the reader has to put it back
+// from landMask — see restoreLandOnlySentinel. A consumer that tells land from
+// ocean by the sentinel (biomes.ts) otherwise classifies a fabricated 0.
+const specOf = (name) => M.layers.WORLD_LAYERS.find((s) => s.name === name)
+const isOcean = (i) => i % 2 === 1
+const zipLandMask = new Float32Array(W * H)
+const zipTemp = new Float32Array(W * H)
+const zipPrecipEff = new Float32Array(W * H)
+const zipAmplitude = new Float32Array(W * H)
+const zipMonsoon = new Float32Array(W * H)
+for (let i = 0; i < W * H; i++) {
+  zipLandMask[i] = isOcean(i) ? 0 : 1
+  zipTemp[i] = 12 + (i % 7)
+  zipPrecipEff[i] = isOcean(i) ? -1 : 900 + i
+  zipAmplitude[i] = isOcean(i) ? -1 : 8 + (i % 5)
+  zipMonsoon[i] = isOcean(i) ? -1 : (i % 9) / 10 - 0.4 // both signs, since the index is signed
+}
 const zip = new JSZip()
 zip.file('world.yaml', ['spec:', `  seed: "zip-welt"`, '  erosion:', '    landscapeAge: 25', '    alluvium: 60', '    rockContrast: 35', 'metadata:', '  uid: 0192abcd-0000-8000-8000-000000000000', ''].join('\n'))
 zip.file('layers/elevation.f32', zipElev.buffer)
 zip.file('layers/precipitation.u16', M.layers.bakeLayer(zipPrecip, precipSpec))
 zip.file('layers/uplift.f32', M.layers.bakeLayer(zipUplift, forcingSpecs.uplift))
 zip.file('layers/erodibility.f32', M.layers.bakeLayer(zipHardness, forcingSpecs.erodibility))
+for (const [name, field] of [['landMask', zipLandMask], ['temperature', zipTemp], ['precipitationEffective', zipPrecipEff], ['seasonalAmplitude', zipAmplitude], ['monsoonIndex', zipMonsoon]]) {
+  zip.file(`layers/${name}.bin`, M.layers.bakeLayer(field, specOf(name)))
+}
 zip.file('manifest.json', JSON.stringify({
   world: { width: W, height: H, topology: 'torus' },
   layers: [
@@ -226,6 +248,10 @@ zip.file('manifest.json', JSON.stringify({
     { name: 'precipitation', file: 'layers/precipitation.u16', kind: 'raster', resX: W, resY: H, dtype: precipSpec.dtype, encoding: { scale: precipSpec.scale, offset: precipSpec.offset } },
     { name: 'uplift', file: 'layers/uplift.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 } },
     { name: 'erodibility', file: 'layers/erodibility.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 } },
+    ...['landMask', 'temperature', 'precipitationEffective', 'seasonalAmplitude', 'monsoonIndex'].map((name) => {
+      const spec = specOf(name)
+      return { name, file: `layers/${name}.bin`, kind: 'raster', resX: W, resY: H, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset } }
+    }),
   ],
 }))
 const loaded = await M.inputs.readWorldInputs(await zip.generateAsync({ type: 'arraybuffer' }))
@@ -245,6 +271,28 @@ else {
     elevation: loaded.elevations, precipitation: loaded.climate?.data ?? null, landscapeAge: 25, alluvium: 60, rockContrast: 35,
   })
   check('reader and direct derivation agree on the worldId', loaded.worldId === direct, `${loaded.worldId} vs ${direct}`)
+
+  // The land-only climate layers carry their ocean sentinel again.
+  const bi = loaded.biomeInputs
+  const oceanCells = (f) => { let n = 0; for (let i = 0; i < f.length; i++) if (isOcean(i) && f[i] === -1) n++; return n }
+  const half = (W * H) / 2
+  check('a land-only layer says -1 over ocean again', bi !== null
+    && oceanCells(bi.precipitationEffective.data) === half
+    && oceanCells(bi.seasonalAmplitude.data) === half
+    && oceanCells(bi.monsoonIndex.data) === half)
+  // Land must be untouched by the restoration, to the layer's own precision.
+  const landOff = (f, want, tol) => { let m = 0; for (let i = 0; i < f.length; i++) if (!isOcean(i)) m = Math.max(m, Math.abs(f[i] - want[i])); return m <= tol }
+  check('the land values are left alone', bi !== null
+    && landOff(bi.precipitationEffective.data, zipPrecipEff, 0.2)
+    && landOff(bi.seasonalAmplitude.data, zipAmplitude, 0.2)
+    && landOff(bi.monsoonIndex.data, zipMonsoon, 0.01))
+  // Temperature is NOT land-only — it means something over water and keeps it.
+  check('temperature is not masked', bi !== null && bi.temperature.data[1] > 0)
+  // The signed monsoon index has to survive the round trip as a sign, which is
+  // what the -1 offset in its encoding is for.
+  check('the monsoon index keeps its sign', bi !== null
+    && [...bi.monsoonIndex.data].some((v, i) => !isOcean(i) && v < -0.05)
+    && [...bi.monsoonIndex.data].some((v, i) => !isOcean(i) && v > 0.05))
 }
 
 // A zip that is not a world must be refused, not half-read.

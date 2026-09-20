@@ -1,4 +1,7 @@
 import type { Dtype } from './worldLayers'
+import { restoreLandOnlySentinel } from './worldLayers'
+import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
+import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
 import { openWorld } from '../query'
 import type { World } from '../query'
 
@@ -148,8 +151,20 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
   const precipitationEffective = await world.acquire('precipitationEffective')
   const seasonalAmplitude = await world.acquire('seasonalAmplitude')
   const monsoonIndex = await world.acquire('monsoonIndex')
+  // The three land-only fields get their ocean sentinel back before anyone
+  // classifies with them — see restoreLandOnlySentinel. `temperature` is not one
+  // of them: it is meaningful over water (SST) and has no sentinel to restore.
+  // A save too old to carry landMask is left as it was rather than guessed at.
+  const landMask = await world.acquire('landMask')
+  const restore = (layer: GridLayer, sentinel: number): GridLayer =>
+    landMask ? { ...layer, data: restoreLandOnlySentinel(layer.data, landMask.data, sentinel) } : layer
   const biomeInputs = temperature && precipitationEffective && seasonalAmplitude && monsoonIndex
-    ? { temperature, precipitationEffective, seasonalAmplitude, monsoonIndex }
+    ? {
+      temperature,
+      precipitationEffective: restore(precipitationEffective, OCEAN_PRECIP),
+      seasonalAmplitude: restore(seasonalAmplitude, OCEAN_AMPLITUDE),
+      monsoonIndex: restore(monsoonIndex, OCEAN_PRECIP),
+    }
     : null
 
   return {

@@ -11,6 +11,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **fixed** Overlays: the legend titles and the species names follow a language switch instead of staying English. `overlay.legend`
 - **changed** Overlays: the readout says how fast the wind blows, in metres per second. `readout.metresPerSecond`
 - **changed** Overlays: wind and currents in the readout are an arrow pointing where they go — no compass letters, because this world has no north. `readout.row.wind`
+- **fixed** Worldmap: a world opened from a save no longer classifies its coasts from a rainfall value that was never there. `worldmap`
 - **fixed** Generator: a world opened from a save no longer shows Climate and Ecology as uncomputed — the derived stages are recomputed as it arrives. `generator.step`
 - **added** Generator: leaving a world that is not saved — or closing the tab — asks first. `generator`
 - **changed** Generator: the save menu stays away while the world list is up. `titlebar`
