@@ -1,6 +1,7 @@
 ---
 summary: What you are operating — one binary, targets, one configuration vocabulary, three auth modes.
 date: 2026-08-13
+updated: 2026-08-13
 group: overview
 order: 10
 ---

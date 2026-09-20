@@ -1,6 +1,7 @@
 ---
 summary: Running the server on your own machine — the zero-config local mode, the on-disk defaults, and how to try password mode locally.
 date: 2026-08-13
+updated: 2026-08-14
 group: installation
 order: 20
 ---

@@ -1,6 +1,7 @@
 ---
 summary: How the worldmap's amplification bake could stop costing seven minutes every load — tiling as the shared enabler, then caching (local first, server later), plus what could make the bake itself cheaper (basin decomposition, parallel workers, GPU). Analysis and options; the choices are not made.
 date: 2026-08-07
+updated: 2026-08-12
 area: platform
 stage: idea
 status: design discussion — options and analysis, nothing decided

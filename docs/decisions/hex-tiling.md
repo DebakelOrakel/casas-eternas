@@ -1,6 +1,7 @@
 ---
 summary: The three foundational forks for hex tiling, decided together — rivers run THROUGH the tile anchored at edge ports (not along edges), the hex is 300 m flat-to-flat and defined as identical to the shader lattice, and zoom stays one continuous axis where "stages" are thresholds, never detents.
 date: 2026-08-13
+updated: 2026-08-13
 area: ui
 stage: decided
 status: decided 2026-08-13; nothing built yet — the staged build plan lives in docs/design/hex-world-view.md

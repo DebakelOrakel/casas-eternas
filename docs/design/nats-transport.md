@@ -1,6 +1,7 @@
 ---
 summary: Findings from a hypothetical discussion of NATS as a message bus — where it would slot into the architecture, what it would buy, and why it does not make split bakes attractive.
 date: 2026-08-16
+updated: 2026-08-16
 area: platform
 stage: idea
 status: unfinished discussion notes — nothing decided, nothing built; triggers named at the end

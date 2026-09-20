@@ -1,6 +1,7 @@
 ---
 summary: The deployment map for the server's small files — what each one is (config, secret, or state), how often it is read and written, where it lives on a plain machine versus Kubernetes versus a split-target deployment, and which modules touch it. casas.yaml is the one true ConfigMap; the session key and TLS material are Secrets; auth.db is state on the auth volume, administered over the pod-local admin socket. Also records the finding that forced the auth target: buildAuth used to run per process.
 date: 2026-08-13
+updated: 2026-08-13
 area: platform
 stage: built
 status: agreed, built and made true in one day (2026-08-13, decisions/server-user-admin.md): auth target, admin socket and `auth user` CLI exist, htpasswd is gone, and every row of the map behaves identically on a plain machine and on the cluster. deploy/manifests.yaml matches.

@@ -1,6 +1,7 @@
 ---
 summary: The cluster deployment — what the manifests set up, the one Secret, bootstrapping users over pod exec, how bakes run as Jobs, and the run-once deadline trap.
 date: 2026-08-13
+updated: 2026-08-13
 group: installation
 order: 40
 ---

@@ -1,6 +1,7 @@
 ---
 summary: Reference for the .zip world save — what is inside (world.yaml recipe/status, state.json sim snapshot, .f32 rasters, preview.png) and how saving/loading flows through the worldgen screen.
 date: 2026-07-26
+updated: 2026-08-12
 area: platform
 stage: built
 status: describes the shipped format and is kept current as it evolves; the fork behind it is decided in ../decisions/world-save-format.md

@@ -1,6 +1,7 @@
 ---
 summary: One manifest convention (apiVersion/kind/metadata/spec/status) for stored objects, the exact shape of each kind, and which generated files move out of the world save into the artifact store.
 date: 2026-08-15
+updated: 2026-08-15
 area: platform
 stage: idea
 status: proposal — nothing built; the WorldLayers kind needs a pipeline version that does not exist yet (see Open)

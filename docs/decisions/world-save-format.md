@@ -1,6 +1,7 @@
 ---
 summary: A saved world is a .zip — a human-readable YAML recipe/status + a JSON sim snapshot + the two heavy float rasters + a preview, restorable instantly and offline.
 date: 2026-07-24
+updated: 2026-08-12
 area: platform
 stage: built
 status: implemented (v1alpha1)

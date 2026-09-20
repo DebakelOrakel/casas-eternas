@@ -1,6 +1,7 @@
 ---
 summary: Client UI text moves out of the code into JSON catalogs, EN + DE first. Keys are split into four AREAS by what the text NAMES, not which screen shows it — common / world / worldgen / game — so the durable "world vocabulary" the game will inherit is separated from the generator's throwaway operating chrome. Type-checked keys (a typo or a missing DE string breaks tsc). Adds a custom hover HELP tooltip (label + one-sentence explanation) on every icon/slider. Language switch lives on the title screen only.
 date: 2026-07-28
+updated: 2026-08-12
 area: ui
 stage: built
 status: decided 2026-07-28, BUILT 2026-07-29 (i18n runtime, tsc-gated EN/DE catalogs, title-screen switch); every worldgen panel wired incl. data-help tooltips 2026-08-06

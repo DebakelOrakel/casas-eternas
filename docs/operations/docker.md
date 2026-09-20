@@ -1,6 +1,7 @@
 ---
 summary: Running the container without a cluster — volumes, environment, password mode and the admin socket through docker exec.
 date: 2026-08-13
+updated: 2026-08-13
 group: installation
 order: 30
 ---

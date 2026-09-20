@@ -20,7 +20,6 @@
 // any internal link that does not resolve — the site is verified by its own
 // build, not by clicking around.
 
-import { execSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -51,7 +50,7 @@ type Stage = 'idea' | 'decided' | 'building' | 'built' | 'superseded'
 interface Doc {
   genre: Genre
   slug: string
-  sourcePath: string // absolute, for link resolution and git dates
+  sourcePath: string // absolute, for link resolution
   route: string // site-relative, e.g. "decisions/server-config.html"
   title: string
   area: string
@@ -150,15 +149,6 @@ function firstHeading(body: string, fallback: string): string {
   return match ? match[1].trim() : fallback
 }
 
-function gitUpdated(sourcePath: string, fallback: string): string {
-  try {
-    const out = execSync(`git log -1 --format=%cs -- "${sourcePath}"`, { cwd: REPO }).toString().trim()
-    return out || fallback
-  } catch {
-    return fallback
-  }
-}
-
 function collectDocs(): Doc[] {
   const docs: Doc[] = []
   for (const genre of ['decisions', 'design'] as Genre[]) {
@@ -180,7 +170,13 @@ function collectDocs(): Doc[] {
         status: String(meta.status ?? ''),
         supersededBy: meta['superseded-by'] ? String(meta['superseded-by']) : undefined,
         date,
-        updated: gitUpdated(sourcePath, date),
+        // Stated in the front matter, not read out of git. git says when the
+        // FILE moved, which is a different fact: a rename, a typo, or a change
+        // of one front-matter value redates a document nobody rewrote — one
+        // such pass redated seventeen at once. A writer who revises a doc says
+        // so; a doc that never says it keeps its creation date, which is true
+        // of a doc nobody has revised.
+        updated: String(meta.updated ?? date),
         body,
       })
     }
@@ -210,7 +206,7 @@ function collectOps(): OpsDoc[] {
       summary: String(meta.summary ?? ''),
       group,
       order: Number(meta.order ?? 99),
-      updated: gitUpdated(sourcePath, date),
+      updated: String(meta.updated ?? date),
       body,
     })
   }

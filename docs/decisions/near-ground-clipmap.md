@@ -1,6 +1,7 @@
 ---
 summary: How the ground's geometry is structured. Today a camera-following high-resolution patch lies over a world-sized low-resolution mesh, and the two meet on a seam that cannot be made to disappear. Decided — build only what is looked at: concentric rings around the camera from the descent down, tiles built on demand in the map register, and one sampling pyramid under both. The world-sized mesh goes.
 date: 2026-08-15
+updated: 2026-08-15
 area: ui
 stage: decided
 status: decided 2026-08-15; nothing built. A hex-lattice ring 0 was built and removed the same day — see "What ring 0 is". Supersedes the near-field detail patch and the world-sized relief levels in both registers. A prerequisite for showing a 16K bake, not a sequel to baking one.

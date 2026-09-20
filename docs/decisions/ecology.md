@@ -1,6 +1,7 @@
 ---
 summary: The Ecology panel — a derived resource/suitability layer after Hydrology, before the (later) Anthropology layer. Computes named resource fields (subsistence, material, prestige) from the existing physical world, aggregated into a carrying-capacity suitability field. Design decided across four themes; not built.
 date: 2026-07-26
+updated: 2026-08-12
 area: generator
 stage: built
 status: decided 2026-07-26 and BUILT within days (subsistence, material, metal and prestige fields + carrying capacity; the body's closing note declares ecology complete). The Anthropology half remains the open work

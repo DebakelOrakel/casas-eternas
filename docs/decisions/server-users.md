@@ -1,6 +1,7 @@
 ---
 summary: Who a user IS, as opposed to how they log in. A registry (users.json under auth.storage) holds stable uuid identities, MINTED AT FIRST LOGIN — htpasswd stays the one place users are administered, and the registry follows it. A session token's subject is the registry id from then on, never the login name; the name remains display data in the login response. Admins are login names on global.auth.admins whose sessions carry an `adm` claim — the decision travels in the token, so every process keeps verifying locally and none ever needs the registry. Step 1 of the access-control build order.
 date: 2026-08-12
+updated: 2026-08-13
 area: platform
 stage: built
 status: decided and BUILT 2026-08-12 — registry, session hook, admin claim, identity.Admin, deploy wiring. Steps 2–5 of docs/design/access-control.md build on it. 2026-08-13 — revised by server-user-admin.md: users.json merges into auth.db (bbolt) and LOCAL users become admin-provisioned there, knowingly reversing this doc's pre-provisioning rejection (its two reasons dissolve when identity and credential share one database). Minting-at-first-login stays the model for OIDC. Ids and the id-in-token rule stand unchanged; the admin claim's mechanics too — but its SOURCE moved the same day: global.auth.admins is gone, the role is a field on the user record, bound via `auth role bind` (the "policy an operator writes" reasoning below inverted once the admin socket became the operator's write channel — see server-user-admin.md's addendum).

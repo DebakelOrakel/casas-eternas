@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-09-20
+- **changed** Docs: a document's "updated" date is stated in its front matter, where it used to be read out of git and moved whenever a file was touched. `docs`
+
 ## 2026-08-14
 - **changed** Bake: a world's fine detail is seeded from the generator's own warp seed, so the bake's roughness and the near view finally draw one pattern — cached 4K and 8K artifacts are superseded and re-bake on next use.
 
