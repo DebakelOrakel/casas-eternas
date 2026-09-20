@@ -1,7 +1,7 @@
 ---
-summary: How the worldmap's amplification bake could stop costing seven minutes every load — tiling as the shared enabler, then caching (local first, server later), plus what could make the bake itself cheaper (basin decomposition, parallel workers, GPU). Analysis and options; the choices are not made.
+summary: How the worldmap's amplification bake could stop costing seven minutes every load — tiling as the shared enabler, then caching (local first, server later), plus what could make the bake itself cheaper (basin decomposition, parallel workers, GPU, an adaptive mesh as the last resort). Analysis and options; the choices are not made.
 date: 2026-08-07
-updated: 2026-08-12
+updated: 2026-09-20
 area: platform
 stage: idea
 status: design discussion — options and analysis, nothing decided
@@ -138,9 +138,34 @@ than new. Two caveats:
    regression is a **dev-server-only** problem, established 2026-08-07 —
    production builds run fine.)
 
+**Adaptive mesh (noted 2026-09-20, not planned).** The structural
+answer if the levers above still leave 8k out of reach: run erosion on
+an irregular point network (a periodic Delaunay triangulation on the
+torus, TIN) whose density follows relief and discharge — dense in
+mountains and along trunk rivers, sparse on plains, close to zero in
+the ocean. This is the form of the original landscape-evolution
+models (Braun & Sambridge 1997, CHILD), and the Braun–Willett O(n)
+solver runs on any graph. Cost and memory then scale with node count,
+not with area, which removes the 3 GB problem outright rather than
+dividing it. Two further effects, both on the result and not only on
+the budget: random TINs have no 8-direction grid bias in D8 routing,
+and density transitions can blunt valleys where they cross a jump.
+What it demands: the refinement must follow the drainage as it forms,
+so the mesh is rebuilt between rounds; every quantity counted in
+cells becomes an area or a length (Voronoi cell area for A, edge
+length for S, `riverDensity`, `deltaMinDrainageCells`, the talus/Kt
+rescaling per edge instead of per bake); the output is rasterised or
+draped at the end; the harnesses compare raster bytes. It is a rewrite
+of the erosion stage (`erosionEngine`, `flowRouting`, `hydrology`), not
+a change to it, and rests on stream power being scale-invariant at
+m = 0.5, n = 1 — exactly the property the per-cell-size rescaling
+above already depends on. Ocean masking and basin decomposition first;
+this only if those are not enough.
+
 Suggested order if this is picked up: memory audit → basin
 decomposition with workers → tiling + cache → GPU last, and only after
-the determinism question is answered.
+the determinism question is answered; an adaptive mesh after all of
+them, if they are not enough.
 
 ## Caching: local vs. server
 
