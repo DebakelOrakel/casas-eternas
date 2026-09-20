@@ -278,6 +278,38 @@ was **half a year out on 31.2% of land cells, and on 36.8% of the strongly
 seasonal ones** (|index| > 0.2). It was right only where the ITCZ does follow the
 sun.
 
+## Addendum 2026-09-20 — the wind gets a speed, by anchor not by derivation
+
+The wind field is a prescribed three-cell band pattern with a relative
+magnitude. Nothing in the model produces m/s: the two consumers, moisture
+advection and the wind-stress curl, read a direction and a relative strength,
+and `precipAdvectStep` is grid cells per iteration, with iterations that are not
+time. So a readout that wants to say a number has two ways to get one.
+
+**Taken: one calibration constant.** `windSpeedMsPerUnit = 8`, anchored on
+Earth — surface trades run ~6-8 m/s and the mid-latitude westerlies ~8-10 m/s,
+both at their band centre, which is where `windZonalStrength` is 1.0. Measured
+over the field: 8.6 m/s at every band centre (the meridional part included),
+0.2-0.6 m/s in the three calm belts, 5.5 m/s mean over all latitudes. No field
+changes, no harness moves; it converts a label.
+
+The number is a plausible magnitude with a stated anchor, not a prediction, and
+one place shows the seam: the polar easterlies read the same 8.6 m/s as the
+westerlies, because all three bands share one strength. On Earth they are
+weaker. That is the prescribed pattern speaking, not the anchor.
+
+**Not taken: physical units in the model.** Give the wind m/s and derive the
+advection from cell size (a climate cell is ~62 km) and a residence time. Then
+`precipAdvectStep` is no longer free, precipitation has to be re-tuned against a
+golden re-baseline, and the whole thing needs a visual pass. What it buys is the
+same number, earned — and a wind that could later feel a rotation rate or a
+pressure field. Worth doing the day this world has a day; not worth it to print
+a label.
+
+The ocean currents are in the same position and keep no speed for now. Their
+constant would be the second of this family, which is a reason to wait until
+there is a second caller rather than to invent the family now.
+
 ## Deferred / out of scope
 
 - Dynamic local weather (runtime/visual only; not for generation).

@@ -52,11 +52,26 @@ export const CLIMATE_TUNING = {
   // --- from wind.ts ---
 
   // Relative strengths — zonal (east/west) dominates the surface pattern, the
-  // meridional (toward/away from the equator) component is weaker. Dimensionless;
-  // the wind is used as a direction + relative-magnitude field (overlay arrows,
-  // and later moisture/current advection), not in physical m/s.
+  // meridional (toward/away from the equator) component is weaker. The model
+  // itself runs on these bare numbers: moisture advection and the wind-stress
+  // curl read a direction and a relative magnitude, never a speed.
   windZonalStrength: 1.0,
   windMeridionalStrength: 0.4,
+
+  // What one of those units is worth in m/s, for the one consumer that has to
+  // say a number out loud (the map readout). This is a CALIBRATION, not a
+  // result: the band pattern is prescribed rather than solved, so nothing in the
+  // model derives a speed, and the anchor is Earth's. Surface trade winds run
+  // ~6-8 m/s and the mid-latitude westerlies ~8-10 m/s, both at their band
+  // centre, where `windZonalStrength` is 1.0 — so one unit is 8 m/s, and a band
+  // centre reads hypot(8, 3.2) = 8.6 m/s with the meridional part included.
+  // Changing it moves no field; it moves a label.
+  //
+  // The alternative was to give the wind real units and derive the advection
+  // from cell size and a residence time, which would make the number earned
+  // instead of assigned — see the addendum in docs/decisions/climate-biomes.md
+  // for why that is a different piece of work.
+  windSpeedMsPerUnit: 8,
 
   // --- from seasonality.ts ---
 

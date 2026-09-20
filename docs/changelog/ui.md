@@ -8,6 +8,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **new** Overlays: the readout draws the year on the Climate step — a temperature curve and the monthly rainfall. `readout.chart`
 - **fixed** Overlays: the readout's rainfall year puts the wet season where it really falls, instead of always in the local summer. `readout.chart`
 - **changed** Overlays: the legend folds into a button and starts closed. `overlay.legend`
+- **changed** Overlays: the readout says how fast the wind blows, in metres per second. `readout.metresPerSecond`
 - **changed** Overlays: wind and currents in the readout are an arrow pointing where they go — no compass letters, because this world has no north. `readout.row.wind`
 - **fixed** Generator: a world opened from a save no longer shows Climate and Ecology as uncomputed — the derived stages are recomputed as it arrives. `generator.step`
 - **added** Generator: leaving a world that is not saved — or closing the tab — asks first. `generator`

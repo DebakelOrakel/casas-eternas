@@ -7,8 +7,9 @@ import './mapProbe.css'
 // stays "cursor → cell" only.
 export interface ProbeRow {
   label: string
-  // Left out where the bearing IS the whole answer — a wind has a direction and,
-  // in this model, no speed to print beside it.
+  // Left out where the bearing IS the whole answer, and a row may equally carry
+  // a value with no bearing. Both are optional because a row says as much as its
+  // field knows and no more.
   value?: string
   // Screen bearing in degrees, clockwise from up. The card draws a little arrow
   // at it — and NO letters, because this world is a flat torus with no poles and

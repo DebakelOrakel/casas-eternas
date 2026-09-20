@@ -2249,11 +2249,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         rows.push({ label: t('readout.row.monsoon'), value: Math.abs(lastMonsoonIndex[cell.i]).toFixed(2) })
       }
       if (lastWind) {
-        // The arrow alone. The field is a prescribed band pattern that tapers to
-        // zero at each cell edge (climate/wind.ts) — it carries a direction, not
-        // a speed in m/s, and printing its raw magnitude would read as one.
-        const b = bearing(lastWind[cell.i * 2], lastWind[cell.i * 2 + 1])
-        if (b !== null) rows.push({ label: t('readout.row.wind'), bearing: b })
+        const u = lastWind[cell.i * 2]
+        const v = lastWind[cell.i * 2 + 1]
+        const b = bearing(u, v)
+        // The raw magnitude is a relative one, so it goes out through the m/s
+        // anchor rather than as itself (CLIMATE_TUNING.windSpeedMsPerUnit). The
+        // band pattern tapers to zero at each cell edge (climate/wind.ts), so a
+        // calm belt reads 0.0 m/s and loses its arrow, which is the truth.
+        const speed = Math.hypot(u, v) * CLIMATE_TUNING.windSpeedMsPerUnit
+        rows.push({ label: t('readout.row.wind'), value: t('readout.metresPerSecond', { v: speed.toFixed(1) }), bearing: b ?? undefined })
       }
       if (lastCurrents && !cell.land) {
         const u = lastCurrents[cell.i * 2]
