@@ -303,6 +303,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // worldSignature() for what goes into the comparison.
   let savedSignature = ''
   let markCleanOnNextRender = false
+  // Set by the load path only. A world from a save arrives with its whole
+  // history in the recipe but with NONE of the derived stages in this screen:
+  // climate, hydrology and ecology are held as live rasters, and a restore
+  // brings back the terrain and the simulation, not them. Until this existed,
+  // the step bar called Climate and Ecology uncomputed on every world you
+  // opened — which is not a display fault, the screen really did not hold
+  // them, but it is a lie about the world.
+  let restoredFromSave = false
   // A world's STABLE identity and how many times it has been saved — written to
   // world.yaml's metadata/status, read back on load, and deliberately NOT
   // derived from anything: see identity.newWorldUid for why the terrain hash
@@ -2628,6 +2636,21 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       updateSaveIndicator()
     }
 
+    // Catch the derived stages up with the world that just arrived. Gated
+    // exactly as the steps are: a save taken before the tectonic minimum has no
+    // climate to restate, and one taken before erosion no ecology.
+    //
+    // The chain is driven here rather than left to ensureDataFor, which is the
+    // PANEL's version of this and stops short on purpose: hydrology only
+    // continues into ecology while the ecology panel is the one on screen (see
+    // handleHydrologyData), and after a load it is not. This is the same
+    // sequence compute-on-save runs, for the same reason — the stages are
+    // ordered, and each needs the one before it to have landed.
+    if (restoredFromSave && !message.intermediate) {
+      restoredFromSave = false
+      void catchUpAfterRestore()
+    }
+
     // Relief preview: re-sync the gate off the fresh erosion state, then pull
     // the matching elevation raster for the frame just shown. Intermediate
     // mid-erosion redraws are skipped — 8 MB a round for a surface the next
@@ -3331,6 +3354,31 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     updateSaveIndicator()
   }
 
+  // Recompute what a restored world does not carry: the derived stages exist
+  // only as live rasters in this screen, so a world read back from a save has
+  // a terrain and a simulation and nothing after them. Awaited step by step —
+  // climate feeds hydrology, both feed ecology — and quietly: nothing here is
+  // a user's request, it is the screen catching up with the world it was just
+  // handed. The step bar repaints as each lands (updateControlsDisabled).
+  async function catchUpAfterRestore(): Promise<void> {
+    // Each request is guarded against one already being in flight: landing on
+    // the Ecology step and loading a world there would otherwise have the
+    // panel's own chain and this one both post the same compute. Waiting is
+    // still right in that case — the resolver is called by whichever request
+    // lands, not by the one that asked.
+    if (lastEpoch < MIN_TECTONIC_EPOCHS) return
+    if (lastTemperature === null) {
+      await awaitCompute((r) => { climateResolve = r }, () => { if (!climateInFlight) requestClimate() })
+    }
+    if (erosionRunCount < 1) return
+    if (lastRiverData === null) {
+      await awaitCompute((r) => { hydrologyResolve = r }, () => { if (!hydrologyInFlight) requestHydrology() })
+    }
+    if (!hasEcologyData()) {
+      await awaitCompute((r) => { ecologyResolve = r }, () => { if (!ecologyInFlight) requestEcology() })
+    }
+  }
+
   async function saveTo(target: SaveTarget): Promise<void> {
     pendingSaveTarget = target
     await saveWorld()
@@ -3809,6 +3857,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // .tectonicsRun == the snapshot's epoch), so no need to set it here.
 
     markCleanOnNextRender = true
+    restoredFromSave = true
     postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, archean: archeanPayload as never })
   }
 

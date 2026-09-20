@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-20
+- **fixed** Generator: a world opened from a save no longer shows Climate and Ecology as uncomputed — the derived stages are recomputed as it arrives. `generator.step`
 - **added** Generator: leaving a world that is not saved — or closing the tab — asks first. `generator`
 - **changed** Generator: the save menu stays away while the world list is up. `titlebar`
 - **fixed** The sign-in button and the server's save target stay away where there is nothing to sign in to. `titlebar`
