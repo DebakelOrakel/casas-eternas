@@ -28,7 +28,7 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkRehype from 'remark-rehype'
 import rehypeStringify from 'rehype-stringify'
-import { parseChangelog, type ChangelogSection } from '../src/ui/changelog/parseChangelog'
+import { parseChangelog, type ChangelogSection } from './parseChangelog'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DOCS = join(REPO, 'docs')

@@ -4,6 +4,13 @@
 //   - **kind** Label: text with `key` / **bold** / *italic*
 // The file's H1 + intro paragraph (everything before the first `##`) is skipped.
 
+// It lives beside the doc site, its only caller, and not under `ui/` where it
+// started: it has no DOM, and `ui/` is for widgets. The in-app changelog it was
+// written for was removed on 2026-09-20 with the rest of the old chrome. The
+// OTHER half of this format — the inline markup inside an entry's text — is in
+// docsite.ts's `inlineHtml`, deliberately left there rather than merged in, so
+// the part that needs no HTML stays checkable without one.
+
 export type EntryKind = 'new' | 'changed' | 'dropped' | 'fixed'
 
 export interface ChangelogEntry {

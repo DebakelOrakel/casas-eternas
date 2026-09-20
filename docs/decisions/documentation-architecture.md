@@ -242,7 +242,9 @@ tones, the changelog kind-badge colors). Zero client-side JS in v1
 (details/summary carries the sidebar); Pagefind deferred until wanted. The
 changelog Markdown parser is EXTRACTED from ui/changelog into a pure
 parse step shared by the client viewer and the site emitter — same format,
-one parser.
+one parser. (The client viewer was removed 2026-09-20 without ever being
+shown, which left the parser as the site's alone; it now sits in `scripts/`
+beside it. The sharing was the right shape while there were two readers.)
 
 **Serving**: a `docs` module (client-shaped: serve a directory, nothing
 else) under the path prefix `/docs/`, its own target, config key

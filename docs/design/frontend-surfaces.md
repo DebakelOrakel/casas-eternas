@@ -92,8 +92,8 @@ deployable containing one form.
 
 **Named but deferred** — the changelog found its page 2026-08-13: the DOCS
 SITE (built — `npm run build:docs`, served by the `docs` module under
-/docs/) carries it per area; the parked in-client viewer (ui/changelog/)
-remains, should an in-game rendering ever be wanted again. Still deferred:
+/docs/) carries it per area. The in-client viewer that was kept beside it was
+removed 2026-09-20, unused since; its parser moved to `scripts/`. Still deferred:
 an operations/status view (running
 bakes, storage fill; today half of StoragePanel, really admin material),
 and the GAME SCREEN itself: under the one-running-world-per-server model it leans toward

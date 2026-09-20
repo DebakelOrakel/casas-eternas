@@ -9,8 +9,9 @@ import './title.css'
 
 // The changelog no longer renders here — the artwork owns the screen, and the
 // documentation (changelog included) lives on the docs site the nav links to
-// (/docs/, served by the docs module). The parked viewer in ui/changelog/
-// remains the in-client half, should one ever be wanted again.
+// (/docs/, served by the docs module). The in-client viewer was parked for a
+// year and removed 2026-09-20; its parser lives on beside the site that uses
+// it (scripts/parseChangelog.ts).
 
 export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   const scene = new Scene(ctx.engine)
