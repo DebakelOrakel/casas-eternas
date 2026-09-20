@@ -183,6 +183,16 @@
   gap: 8px;
 }
 
+/* What a step that has no run button puts in its place: the mark that says it
+   is computing. It takes the free width so the reset icon keeps the left edge
+   it has in every other step. */
+.wg-step__status {
+  flex: 1;
+  align-self: center;
+  font-size: 12px;
+  color: var(--dc-muted);
+}
+
 .wg-action {
   flex-grow: 1;
   height: 44px;

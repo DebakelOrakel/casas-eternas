@@ -569,23 +569,30 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
         </div>
       </div>
     </div>
-    <div class="panel" data-stage="climate">
-      <button type="button" class="icon-button panel-reset" data-action="reset-climate" aria-label="${t('worldgen.action.resetClimate.label')}" data-help="worldgen.action.resetClimate">
-        <img src="/icons/reset.png" alt="" />
-      </button>
-      ${sliderField(CLIMATE_INPUTS.tempOffset, 'temp-band-input', 'temp-band-label')}
-      ${sliderField(CLIMATE_INPUTS.equatorOffset, 'equator-offset-input', 'equator-offset-label')}
-      ${sliderField(CLIMATE_INPUTS.humidity, 'humidity-input', 'humidity-label')}
-      ${sliderField(CLIMATE_INPUTS.contrast, 'contrast-input', 'contrast-label')}
-      <label class="field field--icon-row">
-        <span class="field-row">
-          <span class="climate-readout">
-            <span>${t('worldgen.panel.climate.readout.min')}: <span data-value="temp-min">–</span>${t('common.unit.celsius')}</span>
-            <span>${t('worldgen.panel.climate.readout.max')}: <span data-value="temp-max">–</span>${t('common.unit.celsius')}</span>
-          </span>
-          <span class="erosion-status" data-value="climate-status"></span>
-        </span>
-      </label>
+    <div class="wg-step" data-stage="climate">
+      <section class="wg-params">
+        <h2 class="wg-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
+        ${paramField(CLIMATE_INPUTS.tempOffset, 'temp-band-input', 'temp-band-label')}
+        ${paramField(CLIMATE_INPUTS.equatorOffset, 'equator-offset-input', 'equator-offset-label')}
+        ${paramField(CLIMATE_INPUTS.humidity, 'humidity-input', 'humidity-label')}
+        ${paramField(CLIMATE_INPUTS.contrast, 'contrast-input', 'contrast-label')}
+      </section>
+      <div class="wg-step__foot">
+        <div class="wg-stats">
+          ${statTile('worldgen.panel.climate.readout.min', 'temp-min', { unit: 'common.unit.celsius' })}
+          ${statTile('worldgen.panel.climate.readout.max', 'temp-max', { unit: 'common.unit.celsius' })}
+        </div>
+        <div class="wg-step__actions">
+          <!-- No run button: the sliders recompute as they move, so the only
+               thing left to press is the reset. It keeps the place it has in
+               Genesis and Tectonics; the busy mark stands where their run
+               button would be. -->
+          <button type="button" class="wg-action-icon" data-action="reset-climate" data-t-aria="worldgen.action.resetClimate.label" data-help="worldgen.action.resetClimate">
+            <img src="/icons/reset.png" alt="" />
+          </button>
+          <span class="wg-step__status" data-value="climate-status"></span>
+        </div>
+      </div>
     </div>
     <div class="panel" data-stage="erosion">
       <button type="button" class="icon-button panel-reset" data-action="reset-erosion" aria-label="${t('worldgen.action.resetErosion.label')}" data-help="worldgen.action.resetErosion">
@@ -4198,7 +4205,7 @@ export const createWorldGenScreen: ScreenFactory = (ctx: ScreenContext): Screen 
   })
   // The steps whose controls have moved out of the panel row at the foot and
   // into the column. The rest follow one per step, in pipeline order.
-  sidebar.body.append(overlayList.element, worldPanel, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX])
+  sidebar.body.append(overlayList.element, worldPanel, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX])
   relabel(sidebar.body)
 
   const stepBar = createStepBar(root, {
