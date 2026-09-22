@@ -109,13 +109,18 @@ export function assembleFineForcing(
       }
     }
     const meanLand = landCount > 0 && landSum > 0 ? landSum / landCount : 1
-    for (let i = 0; i < n; i++) accumulationWeights[i] = accumulationWeights[i] / meanLand || 1
+    // A zero-precipitation cell contributes zero — that IS the coupling
+    // (the `|| 1` that used to sit here turned the driest cells into the
+    // uniform default, exactly where the climate should have bitten).
+    for (let i = 0; i < n; i++) accumulationWeights[i] = accumulationWeights[i] / meanLand
   } else {
     accumulationWeights.fill(1)
   }
 
   // The alluvium control scales the settling lengths (50 = the calibrated
-  // neutral); rock contrast is the σ applied above.
+  // neutral), and with them the shelf band the engine stays active in —
+  // the band is sized to the marine settling length, so the two move
+  // together. Rock contrast is the σ applied above.
   const alluvium = controls.alluvium ?? 50
   const settleScale = Math.pow(2, (50 - alluvium) / 50)
   const params: ErosionEngineParams = {
@@ -123,6 +128,7 @@ export function assembleFineForcing(
     settleXiKm: DEFAULT_ENGINE_PARAMS.settleXiKm * settleScale,
     settleFloorKm: DEFAULT_ENGINE_PARAMS.settleFloorKm * settleScale,
     settleMarineKm: DEFAULT_ENGINE_PARAMS.settleMarineKm * settleScale,
+    shelfBandKm: DEFAULT_ENGINE_PARAMS.shelfBandKm * settleScale,
   }
 
   return { forcing: { uplift, erodibility, coastMask, accumulationWeights }, params }

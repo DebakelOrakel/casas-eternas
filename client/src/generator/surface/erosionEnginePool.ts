@@ -1,10 +1,11 @@
 import {
+  buildEngineIndex,
   createTerrainViews,
   createRoutingViews,
   assembleViews,
+  expandActive,
   terrainBufferBytes,
   routingBufferBytes,
-  ENGINE_STRIPS,
   JOB_EXIT,
   JOB_UPLIFT,
   JOB_LTD_SCAN,
@@ -13,8 +14,6 @@ import {
   JOB_HILL_APPLY,
   JOB_MARINE_MOVES,
   JOB_MARINE_APPLY,
-  JOB_FLOOD_P1,
-  JOB_FLOOD_P2,
   JOB_STATUS_CLAMP,
   REFRESH_CMD,
   REFRESH_CMD_EXIT,
@@ -23,45 +22,40 @@ import {
   REFRESH_POPPED,
   REFRESH_SEQ,
   REFRESH_TARGET,
+  type EngineIndex,
   type EngineViews,
   type RoutingViews,
   type TerrainViews,
 } from './erosionEngineState'
+import { ELEVATION_METERS } from '../elevation/elevationScale'
 import {
   DEFAULT_ENGINE_PARAMS,
-  FLAG_HAS_COAST_MASK,
-  FLAG_HAS_ACCUM_WEIGHTS,
   FLAG_HAS_STATUS_MASK,
   kernelParamsFor,
+  shelfBandCells,
+  loadTerrain,
   createCoordinatorScratch,
-  computeOceanSeed,
-  solveBorderGraph,
-  mergePopOrder,
-  lambdaWalk,
-  accumulateFlowV2,
+  refreshRoutingOn,
   fluvialWalk,
   sedimentWalk,
   type CoordinatorScratch,
   type ErosionEngineParams,
   type ErosionForcing,
+  type KernelParams,
 } from './erosionEngine'
 
-// EROSION V2 — the worker-pool driver (docs/design/erosion-v2.md, P2
+// EROSION V2 — the worker-pool drivers (docs/design/erosion-v2.md, P2
 // threading). Same phases as the single-threaded ErosionEngine, with the
-// per-cell/per-strip kernels dispatched to workers over one
-// SharedArrayBuffer and the serial walks (border graph, merge, λ,
-// accumulation, fluvial, sediment) on the coordinator. Because every
-// parallel kernel is per-cell deterministic and the flood's strip count is
-// fixed, pooled output is BYTE-IDENTICAL to the single-threaded engine for
-// any worker count — scripts/erosion-v2-engine-check.mts gates exactly
-// that.
+// per-cell kernels dispatched to workers over one SharedArrayBuffer and
+// the serial walks (flood, λ, accumulation, fluvial, sediment) on the
+// coordinator. Because every parallel kernel is per-cell deterministic and
+// the flood is one serial pass, pooled output is BYTE-IDENTICAL to the
+// single-threaded engine for any worker count —
+// scripts/erosion-v2-engine-check.mts gates exactly that.
 //
 // The coordinator waits BLOCKING (Atomics.wait): its intended home is the
 // worldgen worker (itself a worker, allowed to block), and each wait spans
-// one kernel dispatch — milliseconds. The pipelined refresh (routing on
-// background workers while physics iterates on the previous routing —
-// the plan's answer to the measured serial wall) builds on this driver
-// but is NOT in it yet; it needs the routing state double-buffered.
+// one kernel dispatch — milliseconds.
 //
 // The caller supplies the worker factory, because spawning is
 // substrate-specific: the browser uses the `?worker` import form (nested
@@ -94,10 +88,52 @@ function onceReady(worker: WorkerLike): Promise<void> {
   })
 }
 
+// What every worker is told once (erosionEngineWorker.ts reads it).
+export interface WorkerInit {
+  terrain: SharedArrayBuffer
+  routingA: SharedArrayBuffer
+  routingB: SharedArrayBuffer
+  ctrl: SharedArrayBuffer
+  done: SharedArrayBuffer
+  activeCount: number
+  // 'stencil' runs the physics kernels on ctrl/done; 'refresh' runs the
+  // routing kernels on the same pair but reads the TARGET routing buffer
+  // (and its z-snapshot) selected in refreshCtrl; 'refreshCoordinator'
+  // drives the refresh group and runs the refresh's serial parts, waking
+  // on refreshCtrl. Synchronous pools spawn only 'stencil' workers with
+  // routingA === routingB.
+  role: 'stencil' | 'refresh' | 'refreshCoordinator'
+  refreshCtrl?: SharedArrayBuffer
+  workerId: number
+  workerCount: number
+  kernelParams: KernelParams
+}
+
+// The shared terrain section, built once by whichever driver creates it.
+function createSharedTerrain(width: number, height: number, initial: Float32Array, forcing: ErosionForcing, params: ErosionEngineParams): { index: EngineIndex; buffer: SharedArrayBuffer; terrain: TerrainViews } {
+  const n = width * height
+  if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
+    throw new Error('field size mismatch')
+  }
+  const index = buildEngineIndex(initial, width, height, shelfBandCells(width, params))
+  const buffer = new SharedArrayBuffer(terrainBufferBytes(index.activeCount))
+  const terrain = createTerrainViews(index.activeCount, buffer, index)
+  loadTerrain(index, terrain, initial, forcing)
+  return { index, buffer, terrain }
+}
+
+function waitAll(done: Int32Array, count: number): void {
+  let finished
+  while ((finished = Atomics.load(done, 0)) < count) {
+    Atomics.wait(done, 0, finished)
+  }
+}
+
 export class PooledErosionEngine {
   readonly width: number
   readonly height: number
   readonly params: ErosionEngineParams
+  readonly index: EngineIndex
   readonly views: EngineViews
   readonly workerCount: number
   poppedCount = 0
@@ -106,11 +142,14 @@ export class PooledErosionEngine {
   private readonly workers: WorkerLike[]
   private readonly ctrl: Int32Array
   private readonly done: Int32Array
+  private readonly kernelParams: KernelParams
+  private cursor = 0
 
   private constructor(
     width: number,
     height: number,
     params: ErosionEngineParams,
+    index: EngineIndex,
     views: EngineViews,
     workers: WorkerLike[],
     ctrl: Int32Array,
@@ -119,12 +158,14 @@ export class PooledErosionEngine {
     this.width = width
     this.height = height
     this.params = params
+    this.index = index
     this.views = views
     this.workers = workers
     this.workerCount = workers.length
     this.ctrl = ctrl
     this.done = done
-    this.scratch = createCoordinatorScratch(width, height)
+    this.scratch = createCoordinatorScratch(index.activeCount)
+    this.kernelParams = kernelParamsFor(width, params)
   }
 
   static async create(
@@ -136,30 +177,10 @@ export class PooledErosionEngine {
     workerCount: number,
     params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS,
   ): Promise<PooledErosionEngine> {
-    if (height % ENGINE_STRIPS !== 0) throw new Error(`height ${height} not divisible by ${ENGINE_STRIPS} strips`)
     if (workerCount < 1) throw new Error('workerCount must be >= 1')
-    const n = width * height
-    if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
-      throw new Error('field size mismatch')
-    }
-    const terrainBuffer = new SharedArrayBuffer(terrainBufferBytes(width, height))
-    const routingBuffer = new SharedArrayBuffer(routingBufferBytes(width, height))
-    const views = assembleViews(createTerrainViews(width, height, terrainBuffer), createRoutingViews(width, height, routingBuffer))
-    views.z.set(initial)
-    views.uplift.set(forcing.uplift)
-    views.erodibility.set(forcing.erodibility)
-    if (forcing.coastMask) {
-      views.coastMask.set(forcing.coastMask)
-      views.flags[FLAG_HAS_COAST_MASK] = 1
-    }
-    if (forcing.accumulationWeights) {
-      views.accumulationWeights.set(forcing.accumulationWeights)
-      views.flags[FLAG_HAS_ACCUM_WEIGHTS] = 1
-    }
-    if (forcing.statusMask) {
-      views.statusMask.set(forcing.statusMask)
-      views.flags[FLAG_HAS_STATUS_MASK] = 1
-    }
+    const { index, buffer: terrainBuffer, terrain } = createSharedTerrain(width, height, initial, forcing, params)
+    const routingBuffer = new SharedArrayBuffer(routingBufferBytes(index.activeCount))
+    const views = assembleViews(terrain, createRoutingViews(index.activeCount, routingBuffer))
     const ctrlBuffer = new SharedArrayBuffer(64)
     const doneBuffer = new SharedArrayBuffer(64)
     const kernelParams = kernelParamsFor(width, params)
@@ -169,42 +190,38 @@ export class PooledErosionEngine {
       const worker = createWorker()
       workers.push(worker)
       readies.push(onceReady(worker))
-      worker.postMessage({
+      const init: WorkerInit = {
         terrain: terrainBuffer,
         routingA: routingBuffer,
         routingB: routingBuffer,
         ctrl: ctrlBuffer,
         done: doneBuffer,
-        width,
-        height,
+        activeCount: index.activeCount,
         role: 'stencil',
         workerId,
         workerCount,
         kernelParams,
-      })
+      }
+      worker.postMessage(init)
     }
     await Promise.all(readies)
-    return new PooledErosionEngine(width, height, params, views, workers, new Int32Array(ctrlBuffer), new Int32Array(doneBuffer))
+    return new PooledErosionEngine(width, height, params, index, views, workers, new Int32Array(ctrlBuffer), new Int32Array(doneBuffer))
   }
 
   get z(): Float32Array {
     return this.views.z
   }
 
-  get filled(): Float32Array {
-    return this.views.filled
+  get erodedFluxM3(): number {
+    return this.scratch.erodedFlux[0]
   }
 
-  get flowTarget(): Int32Array {
-    return this.views.flowTarget
+  get exportedFluxM3(): number {
+    return this.scratch.exportedFlux[0]
   }
 
-  get accumulation(): Float32Array {
-    return this.views.accumulation
-  }
-
-  get popOrder(): Int32Array {
-    return this.views.popOrder
+  expandZ(frozenFrom: Float32Array): Float32Array {
+    return expandActive(this.index, this.views.z, frozenFrom)
   }
 
   private dispatch(job: number): void {
@@ -212,34 +229,18 @@ export class PooledErosionEngine {
     Atomics.store(this.ctrl, 1, job)
     Atomics.add(this.ctrl, 0, 1)
     Atomics.notify(this.ctrl, 0)
-    let finished
-    while ((finished = Atomics.load(this.done, 0)) < this.workerCount) {
-      Atomics.wait(this.done, 0, finished)
-    }
+    waitAll(this.done, this.workerCount)
   }
 
   refreshRouting(): void {
-    if (!computeOceanSeed(this.views, this.width, this.height, this.scratch)) {
-      this.poppedCount = 0
-      this.views.flowTarget.fill(-1)
-      this.views.accumulation.fill(1)
-      return
-    }
-    this.dispatch(JOB_FLOOD_P1)
-    solveBorderGraph(this.views, this.width, this.height, this.scratch)
-    this.dispatch(JOB_FLOOD_P2)
-    this.poppedCount = mergePopOrder(this.views, this.width, this.height)
-    this.dispatch(JOB_LTD_SCAN)
-    lambdaWalk(this.views, this.poppedCount, this.scratch)
-    this.dispatch(JOB_MFD)
-    accumulateFlowV2(this.views, this.width, this.height, this.poppedCount)
+    this.poppedCount = refreshRoutingOn(this.views, this.scratch, () => this.dispatch(JOB_LTD_SCAN), () => this.dispatch(JOB_MFD))
   }
 
   stepPhysics(): number {
     let maxStep = 0
     this.dispatch(JOB_UPLIFT)
-    maxStep = Math.max(maxStep, fluvialWalk(this.views, this.width, this.poppedCount, this.params))
-    maxStep = Math.max(maxStep, sedimentWalk(this.views, this.width, this.poppedCount, this.params, this.scratch))
+    maxStep = Math.max(maxStep, fluvialWalk(this.views, this.poppedCount, this.params, this.kernelParams.cellM))
+    maxStep = Math.max(maxStep, sedimentWalk(this.views, this.poppedCount, this.params, this.scratch, this.kernelParams.cellM))
     this.views.maxStepW.fill(0, 0, this.workerCount)
     this.dispatch(JOB_HILL_MOVES)
     this.dispatch(JOB_HILL_APPLY)
@@ -249,10 +250,8 @@ export class PooledErosionEngine {
     this.dispatch(JOB_MARINE_MOVES)
     this.dispatch(JOB_MARINE_APPLY)
     if (this.views.flags[FLAG_HAS_STATUS_MASK] !== 0) this.dispatch(JOB_STATUS_CLAMP)
-    return maxStep * 9000
+    return maxStep * ELEVATION_METERS
   }
-
-  private cursor = 0
 
   run(iterations: number, routingEvery = 4, onIteration?: (iteration: number, residualM: number) => void): number {
     let residual = Infinity
@@ -305,6 +304,7 @@ export class PipelinedErosionEngine {
   readonly height: number
   readonly params: ErosionEngineParams
   readonly options: PipelineOptions
+  readonly index: EngineIndex
   poppedCount = 0
 
   private readonly terrain: TerrainViews
@@ -316,6 +316,7 @@ export class PipelinedErosionEngine {
   private readonly doneA: Int32Array
   private readonly ctrlB: Int32Array
   private readonly refreshCtrl: Int32Array
+  private readonly kernelParams: KernelParams
   private activeIndex = -1
   private inFlight = false
   // Global iteration cursor — chunked run() calls must not reset the
@@ -328,6 +329,7 @@ export class PipelinedErosionEngine {
     height: number,
     params: ErosionEngineParams,
     options: PipelineOptions,
+    index: EngineIndex,
     terrain: TerrainViews,
     routing: readonly [RoutingViews, RoutingViews],
     workers: WorkerLike[],
@@ -340,6 +342,7 @@ export class PipelinedErosionEngine {
     this.height = height
     this.params = params
     this.options = options
+    this.index = index
     this.terrain = terrain
     this.routing = routing
     this.liveViews = [assembleViews(terrain, routing[0]), assembleViews(terrain, routing[1])]
@@ -348,7 +351,8 @@ export class PipelinedErosionEngine {
     this.doneA = doneA
     this.ctrlB = ctrlB
     this.refreshCtrl = refreshCtrl
-    this.scratch = createCoordinatorScratch(width, height)
+    this.scratch = createCoordinatorScratch(index.activeCount)
+    this.kernelParams = kernelParamsFor(width, params)
   }
 
   static async create(
@@ -360,37 +364,17 @@ export class PipelinedErosionEngine {
     options: PipelineOptions,
     params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS,
   ): Promise<PipelinedErosionEngine> {
-    if (height % ENGINE_STRIPS !== 0) throw new Error(`height ${height} not divisible by ${ENGINE_STRIPS} strips`)
     if (options.stencilWorkers < 1 || options.refreshWorkers < 1 || options.pipelineDepth < 1) {
       throw new Error('pipeline options must all be >= 1')
     }
-    const n = width * height
-    if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
-      throw new Error('field size mismatch')
-    }
-    const terrainBuffer = new SharedArrayBuffer(terrainBufferBytes(width, height))
-    const routingBufferA = new SharedArrayBuffer(routingBufferBytes(width, height))
-    const routingBufferB = new SharedArrayBuffer(routingBufferBytes(width, height))
-    const terrain = createTerrainViews(width, height, terrainBuffer)
+    const { index, buffer: terrainBuffer, terrain } = createSharedTerrain(width, height, initial, forcing, params)
+    const a = index.activeCount
+    const routingBufferA = new SharedArrayBuffer(routingBufferBytes(a))
+    const routingBufferB = new SharedArrayBuffer(routingBufferBytes(a))
     const routing: [RoutingViews, RoutingViews] = [
-      createRoutingViews(width, height, routingBufferA),
-      createRoutingViews(width, height, routingBufferB),
+      createRoutingViews(a, routingBufferA),
+      createRoutingViews(a, routingBufferB),
     ]
-    terrain.z.set(initial)
-    terrain.uplift.set(forcing.uplift)
-    terrain.erodibility.set(forcing.erodibility)
-    if (forcing.coastMask) {
-      terrain.coastMask.set(forcing.coastMask)
-      terrain.flags[FLAG_HAS_COAST_MASK] = 1
-    }
-    if (forcing.accumulationWeights) {
-      terrain.accumulationWeights.set(forcing.accumulationWeights)
-      terrain.flags[FLAG_HAS_ACCUM_WEIGHTS] = 1
-    }
-    if (forcing.statusMask) {
-      terrain.statusMask.set(forcing.statusMask)
-      terrain.flags[FLAG_HAS_STATUS_MASK] = 1
-    }
     const ctrlABuffer = new SharedArrayBuffer(64)
     const doneABuffer = new SharedArrayBuffer(64)
     const ctrlBBuffer = new SharedArrayBuffer(64)
@@ -399,19 +383,19 @@ export class PipelinedErosionEngine {
     const kernelParams = kernelParamsFor(width, params)
     const workers: WorkerLike[] = []
     const readies: Promise<void>[] = []
-    const spawn = (message: Record<string, unknown>): void => {
+    const spawn = (message: Omit<WorkerInit, 'terrain' | 'routingA' | 'routingB' | 'activeCount' | 'kernelParams'>): void => {
       const worker = createWorker()
       workers.push(worker)
       readies.push(onceReady(worker))
-      worker.postMessage({
+      const init: WorkerInit = {
         terrain: terrainBuffer,
         routingA: routingBufferA,
         routingB: routingBufferB,
-        width,
-        height,
+        activeCount: a,
         kernelParams,
         ...message,
-      })
+      }
+      worker.postMessage(init)
     }
     for (let workerId = 0; workerId < options.stencilWorkers; workerId++) {
       spawn({ role: 'stencil', ctrl: ctrlABuffer, done: doneABuffer, workerId, workerCount: options.stencilWorkers })
@@ -422,12 +406,24 @@ export class PipelinedErosionEngine {
     spawn({ role: 'refreshCoordinator', ctrl: ctrlBBuffer, done: doneBBuffer, refreshCtrl: refreshCtrlBuffer, workerId: 0, workerCount: options.refreshWorkers })
     await Promise.all(readies)
     return new PipelinedErosionEngine(
-      width, height, params, options, terrain, routing, workers,
+      width, height, params, options, index, terrain, routing, workers,
       new Int32Array(ctrlABuffer), new Int32Array(doneABuffer), new Int32Array(ctrlBBuffer), new Int32Array(refreshCtrlBuffer))
   }
 
   get z(): Float32Array {
     return this.terrain.z
+  }
+
+  get erodedFluxM3(): number {
+    return this.scratch.erodedFlux[0]
+  }
+
+  get exportedFluxM3(): number {
+    return this.scratch.exportedFlux[0]
+  }
+
+  expandZ(frozenFrom: Float32Array): Float32Array {
+    return expandActive(this.index, this.terrain.z, frozenFrom)
   }
 
   // The live-z assembly of the currently active routing buffer — what the
@@ -456,10 +452,7 @@ export class PipelinedErosionEngine {
     Atomics.store(this.ctrlA, 1, job)
     Atomics.add(this.ctrlA, 0, 1)
     Atomics.notify(this.ctrlA, 0)
-    let finished
-    while ((finished = Atomics.load(this.doneA, 0)) < this.options.stencilWorkers) {
-      Atomics.wait(this.doneA, 0, finished)
-    }
+    waitAll(this.doneA, this.options.stencilWorkers)
   }
 
   private startRefresh(target: number): void {
@@ -500,8 +493,8 @@ export class PipelinedErosionEngine {
   stepPhysics(): number {
     let maxStep = 0
     this.dispatchStencil(JOB_UPLIFT)
-    maxStep = Math.max(maxStep, fluvialWalk(this.activeViews, this.width, this.poppedCount, this.params))
-    maxStep = Math.max(maxStep, sedimentWalk(this.activeViews, this.width, this.poppedCount, this.params, this.scratch))
+    maxStep = Math.max(maxStep, fluvialWalk(this.activeViews, this.poppedCount, this.params, this.kernelParams.cellM))
+    maxStep = Math.max(maxStep, sedimentWalk(this.activeViews, this.poppedCount, this.params, this.scratch, this.kernelParams.cellM))
     this.terrain.maxStepW.fill(0, 0, this.options.stencilWorkers)
     this.dispatchStencil(JOB_HILL_MOVES)
     this.dispatchStencil(JOB_HILL_APPLY)
@@ -511,7 +504,7 @@ export class PipelinedErosionEngine {
     this.dispatchStencil(JOB_MARINE_MOVES)
     this.dispatchStencil(JOB_MARINE_APPLY)
     if (this.terrain.flags[FLAG_HAS_STATUS_MASK] !== 0) this.dispatchStencil(JOB_STATUS_CLAMP)
-    return maxStep * 9000
+    return maxStep * ELEVATION_METERS
   }
 
   run(iterations: number, onIteration?: (iteration: number, residualM: number) => void): number {

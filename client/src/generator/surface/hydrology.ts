@@ -1,6 +1,6 @@
 import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
 import { SURFACE_TUNING } from './surfaceTuneParams'
-import { wrapValue } from '../core/field'
+import { wrapValue, sampleNearestWorld } from '../core/field'
 import type { FlowRouting } from './flowRouting'
 import { Biome, computeBiomesFine } from '../climate/biomes'
 import { OCEAN_PRECIP } from '../climate/precipitation'
@@ -35,9 +35,7 @@ export const CANONICAL_RIVER_DENSITY = 55
 // ocean-sentinel precip (coarse cell reads as ocean at the coast) clamps to
 // 0 — the cell still passes upstream discharge along, it just adds none.
 function precipRunoffAt(precip: Float32Array, cx: number, cy: number, worldW: number, worldH: number, climateResX: number, climateResY: number): number {
-  const gx = Math.min(climateResX - 1, Math.floor((cx / worldW) * climateResX))
-  const gy = Math.min(climateResY - 1, Math.floor((cy / worldH) * climateResY))
-  const p = precip[gy * climateResX + gx]
+  const p = sampleNearestWorld(precip, climateResX, climateResY, cx, cy, worldW, worldH)
   return p > 0 ? p : 0
 }
 
@@ -67,9 +65,7 @@ export function evaporationPotential(tempC: number): number {
 }
 
 function tempAtCell(temperature: Float32Array, cx: number, cy: number, worldW: number, worldH: number, climateResX: number, climateResY: number): number {
-  const gx = Math.min(climateResX - 1, Math.floor((cx / worldW) * climateResX))
-  const gy = Math.min(climateResY - 1, Math.floor((cy / worldH) * climateResY))
-  return temperature[gy * climateResX + gx]
+  return sampleNearestWorld(temperature, climateResX, climateResY, cx, cy, worldW, worldH)
 }
 
 export interface LakeFields {
@@ -323,8 +319,10 @@ export function receiverSlope(routing: FlowRouting, elevation: Float32Array, cel
   const tx = target % width
   const ty = (target - tx) / width
   let dx = Math.abs(tx - x)
-  if (dx > width / 2) dx = width - dx // toroidal
-  const distance = Math.hypot(dx, ty - y) || 1
+  if (dx > width / 2) dx = width - dx // toroidal, both axes
+  let dy = Math.abs(ty - y)
+  if (dy > height / 2) dy = height - dy
+  const distance = Math.hypot(dx, dy) || 1
   const drop = elevation[cell] - elevation[target]
   return drop > 0 ? drop / distance : 0
 }

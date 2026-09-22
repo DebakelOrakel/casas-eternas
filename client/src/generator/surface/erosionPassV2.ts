@@ -5,35 +5,31 @@ import {
   type ErosionEngineParams,
   type ErosionForcing,
 } from './erosionEngine'
+import { expandActive } from './erosionEngineState'
 import { PipelinedErosionEngine, type PipelineOptions, type WorkerLike } from './erosionEnginePool'
 import { engineFlowRouting } from './erosionEngineBridge'
 
 // EROSION V2 — the pipeline-facing pass (docs/design/erosion-v2.md, the P2
-// switchover). Wraps the engine in v1's runErosionPass CONTRACT — the same
-// { elevations, routing, accumulation, preFillElevations } result — so the
-// generator pipeline swaps implementations without its consumers moving.
+// switchover). Wraps the engine in the pass CONTRACT the generator pipeline
+// and the bake consume — { elevations, routing, accumulation,
+// preFillElevations } on the full raster — so neither caller knows that
+// the engine computes on an active subset of it.
 //
-// Two deliberate contract SHIFTS, both improvements the caller must know:
+// Two contract properties worth knowing, both inherited from the v1 → v2
+// switchover:
 //
 //   - `elevations` is the engine's honest z: depressions are NOT baked to
-//     their spill (v1 returned the flood-filled surface and then needed
-//     the enclosed-water restore hack to dig sub-sea basins back out).
-//     Closed basins keep their true floor; lakes are the hydrology's job,
-//     via the routing this same result carries.
+//     their spill. Closed basins keep their true floor; lakes are the
+//     hydrology's job, via the routing this same result carries.
 //   - `preFillElevations` therefore equals `elevations` (a separate copy,
-//     since the pipeline hands them to different owners). Under v1 they
-//     differed by exactly the baked fill; the rivers/lakes pass keeps
-//     working because what it actually wants — basins intact — is now
-//     true of BOTH fields.
-//
-// The BAKE (runAmplification) deliberately stays on v1 until P3: bake
-// grids are untested memory territory for the engine's stride-8 MFD (see
-// erosionEngineState.ts's sizing note).
+//     since the pipeline hands them to different owners). The rivers/lakes
+//     pass keeps working because what it actually wants — basins intact —
+//     is true of BOTH fields.
 //
 // Age is iterations; the caller owns the mapping from its slider. Runs
 // pooled+pipelined when the caller supplies workers (the browser's worldgen
-// worker, behind cross-origin isolation), single-threaded otherwise (Node
-// harnesses, and any browser without SAB).
+// worker, behind cross-origin isolation; the Node baker), single-threaded
+// otherwise (Node harnesses, and any browser without SAB).
 
 export interface ErosionPassV2Result {
   elevations: Float32Array
@@ -84,15 +80,16 @@ export async function runErosionPassV2(
         const step = Math.min(chunkSize, options.age - done)
         engine.run(step, (iteration) => options.onProgress?.((done + iteration + 1) / options.age))
         done += step
-        if (options.onChunkComplete) await options.onChunkComplete(engine.z.slice(), done / chunkSize)
+        if (options.onChunkComplete) await options.onChunkComplete(engine.expandZ(rawElevations), done / chunkSize)
         if (options.shouldCancel?.()) break
       }
       const popped = engine.finalizeRouting()
+      const elevations = engine.expandZ(rawElevations)
       return {
-        elevations: engine.z.slice(),
-        preFillElevations: engine.z.slice(),
-        routing: engineFlowRouting(engine.activeEngineViews, width, height, popped),
-        accumulation: engine.activeEngineViews.accumulation,
+        elevations,
+        preFillElevations: engine.expandZ(rawElevations),
+        routing: engineFlowRouting(engine.activeEngineViews, engine.index, popped, elevations),
+        accumulation: expandActive(engine.index, engine.activeEngineViews.accumulation, 0),
       }
     } finally {
       await engine.close()
@@ -106,14 +103,15 @@ export async function runErosionPassV2(
     const step = Math.min(chunkSize, options.age - done)
     engine.run(step, routingEvery, (iteration) => options.onProgress?.((done + iteration + 1) / options.age))
     done += step
-    if (options.onChunkComplete) await options.onChunkComplete(engine.z.slice(), done / chunkSize)
+    if (options.onChunkComplete) await options.onChunkComplete(engine.expandZ(rawElevations), done / chunkSize)
     if (options.shouldCancel?.()) break
   }
   engine.refreshRouting()
+  const elevations = engine.expandZ(rawElevations)
   return {
-    elevations: engine.z.slice(),
-    preFillElevations: engine.z.slice(),
-    routing: engineFlowRouting(engine.views, width, height, engine.poppedCount),
-    accumulation: engine.views.accumulation,
+    elevations,
+    preFillElevations: engine.expandZ(rawElevations),
+    routing: engineFlowRouting(engine.views, engine.index, engine.poppedCount, elevations),
+    accumulation: expandActive(engine.index, engine.views.accumulation, 0),
   }
 }

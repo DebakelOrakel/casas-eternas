@@ -3,7 +3,7 @@ summary: The open points of the adaptive-mesh direction (design/adaptive-mesh.md
 date: 2026-09-22
 area: generator
 stage: decided
-status: decided 2026-09-22; nothing built. Twelve forks settled in one session, (1) and (8) amended the same day for the sediment record, (5) for a Te field and dynamic topography, (13) climate, (14) river course and (15) sediment added the same day, folds, cover and hydrogeology added to the build order the same day; the constants (spacings, tile budget, elastic thickness, hysteresis thresholds) are to be measured when the step is built, not decided here. Build order below; step 0 (ocean masking) is the first thing to start.
+status: decided 2026-09-22; step 0's first half BUILT the same day (ocean masking — the engine computes on an active set of land, basins and a shelf band, the deep ocean frozen; the strip flood retired for one serial flood over the active set); basin decomposition still open. Twelve forks settled in one session, (1) and (8) amended the same day for the sediment record, (5) for a Te field and dynamic topography, (13) climate, (14) river course and (15) sediment added the same day, folds, cover and hydrogeology added to the build order the same day; the constants (spacings, tile budget, elastic thickness, hysteresis thresholds) are to be measured when the step is built, not decided here. Build order below; step 0 (ocean masking) is the first thing to start.
 ---
 
 # The adaptive mesh, decided

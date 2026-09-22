@@ -366,6 +366,22 @@ bakes may come back onto the table.
 | MFD accumulation | level-parallel over the topological order | good | NOT built — serial 78 ms at refresh; the λ-walk (72 ms) is its sibling |
 | diffusion / thermal / marine | stencil ops | linear | BUILT: 4–8× on the scans (LTD facet scan 215→48, MFD 73→19); small stencils are dispatch-bound (~1.3×) |
 
+STATUS 2026-09-22 (ADAPTIVE_MESH_PLAN.md phase 0, ocean masking): the
+strip flood row above is history. The engine now computes on an ACTIVE
+SET — land, enclosed basins, a shelf band of ocean — with the deep ocean
+frozen and absent from every state array (`erosionEngineState.ts`,
+`EngineIndex`); kernels walk a per-cell neighbour table and never see a
+coordinate, which is the shape the mesh port (adaptive-mesh.md step 4)
+needs. The sixteen-strip Barnes flood, its spill graph and the pop-order
+merge were retired for ONE serial priority flood over the active set:
+with 11–15 % of the raster active it is cheaper than the strip machinery
+was, and it removes `ENGINE_STRIPS` from the result. Measured on the
+golden world at 2048, 20 iterations, routing every iteration:
+single-threaded 21.6 → 2.0 s, pool(8) 9.3 → 1.7 s, pipelined 4+2 at
+D=8 3.7 → 0.4 s; the golden harness dropped from ~13 min to 2.5 min. The
+serial walks are now the whole iteration; basin-parallel walks (the
+plan's next item) are where the next factor is.
+
 The P1 spike (scratchpad `p1-spike.mjs`, 2026-08-16) ran the P0 physics
 threaded end-to-end and byte-identical across worker counts. Three findings
 beyond the table:

@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-09-22
+- **changed** Performance: erosion computes on land, basins and a shelf band only — the deep ocean is frozen — so the generator's erosion pass and the bake's erosion phase run several times faster. `generator.panel.erosion`
+
 ## 2026-09-20
 - **dropped** Structure: the leftovers of the old chrome are gone — an unused catalog, the overlay toggle bar, the in-app changelog renderer, five orphaned style rules and six unreferenced icons.
 - **changed** Docs: the site is redrawn in the app's own type and palette, with a header bar and a per-page section list. `docs`

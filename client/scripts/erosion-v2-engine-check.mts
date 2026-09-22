@@ -1,19 +1,26 @@
-// Port gate for the erosion-v2 engine core (src/generator/surface/erosionEngine.ts):
-// runs the TS engine and the measured threading spike (erosion-v2-spike.mjs)
-// on the same input, forcing and parameters, and compares the resulting
-// terrain BYTE FOR BYTE. The two implement the same algorithm to the same
-// float-op order; any divergence is a port bug, not noise.
+// Gates for the erosion-v2 engine (src/generator/surface/erosionEngine.ts):
+// the shelf band's cost in sediment, byte parity of the worker pool with the
+// single-threaded engine, determinism of the pipelined engine across worker
+// splits, the hydrology bridge, and the pass adapter's contract.
 //
 //   npx tsx scripts/erosion-v2-engine-check.mts <artifactDir> [res] [iters]
 //
 // Defaults: 512×256, 20 iterations, routing refresh every iteration —
 // small enough to run freely (~10 s), long enough that a routing or
 // physics divergence has amplified into visible bytes (capture chaos
-// doubles any difference within a few iterations, which makes this gate
-// SHARP: after 20 iterations even a one-ulp deviation shows).
-import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+// doubles any difference within a few iterations, which makes the parity
+// gates SHARP: after 20 iterations even a one-ulp deviation shows).
+//
+// The input is a bake artifact directory (meta.json + elevation.u16) — a
+// real world with a drainage network; synthetic ridges shed water in
+// parallel sheets and never make a channel.
+//
+// History: until phase 0 of the adaptive-mesh plan this script also
+// compared the engine byte for byte against the P1 threading spike
+// (erosion-v2-spike.mjs). The spike floods in sixteen strips and the engine
+// no longer does, so that comparison ended with the strips; the spike stays
+// in the tree as the measured record it always was.
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ErosionEngine, DEFAULT_ENGINE_PARAMS } from '../src/generator/surface/erosionEngine'
 import { PooledErosionEngine, PipelinedErosionEngine } from '../src/generator/surface/erosionEnginePool'
@@ -33,7 +40,7 @@ const RES_Y = RES_X / 2
 const ITERS = Number(itersArg ?? 20)
 const n = RES_X * RES_Y
 
-// --- inputs, identical to the spike's own construction -----------------------
+// --- inputs ------------------------------------------------------------------
 const meta = JSON.parse(readFileSync(join(artifactDir, 'meta.json'), 'utf8'))
 const srcW = meta.width as number
 const raw = new Uint16Array(readFileSync(join(artifactDir, 'elevation.u16')).buffer.slice(0))
@@ -51,8 +58,7 @@ for (let y = 0; y < RES_Y; y++) {
 }
 
 // U forcing from the common 256×128 frame (the P0 stand-in for the tectonic
-// export), erodibility from the world-space lithology noise — both exactly
-// as the spike builds them.
+// export), erodibility from the world-space lithology noise.
 const FW = 256
 const FH = 128
 const uCoarse = new Float32Array(FW * FH)
@@ -102,45 +108,61 @@ for (let y = 0; y < RES_Y; y++) {
   }
 }
 
+const toU16 = (field: Float32Array): Uint16Array => {
+  const out = new Uint16Array(n)
+  for (let i = 0; i < n; i++) {
+    const v = Math.round(((field[i] + 1) / 2) * 65535)
+    out[i] = v < 0 ? 0 : v > 65535 ? 65535 : v
+  }
+  return out
+}
+const landStats = (field: Float32Array): { fraction: number; meanM: number } => {
+  let land = 0
+  let sum = 0
+  for (let i = 0; i < n; i++) if (field[i] > 0) { land++; sum += field[i] }
+  return { fraction: land / n, meanM: land > 0 ? (sum / land) * 9000 : 0 }
+}
+
 // --- the engine --------------------------------------------------------------
 const engine = new ErosionEngine(RES_X, RES_Y, z, { uplift, erodibility }, DEFAULT_ENGINE_PARAMS)
 const t0 = performance.now()
 const residual = engine.run(ITERS, 1)
 const engineMs = performance.now() - t0
-const engineU16 = new Uint16Array(n)
-for (let i = 0; i < n; i++) {
-  const v = Math.round(((engine.z[i] + 1) / 2) * 65535)
-  engineU16[i] = v < 0 ? 0 : v > 65535 ? 65535 : v
-}
+const engineZ = engine.expandZ(z)
+const engineU16 = toU16(engineZ)
+const active = engine.index.activeCount
+console.log(`engine: ${ITERS} iters at ${RES_X}×${RES_Y} in ${(engineMs / 1000).toFixed(1)} s, residual ${residual.toFixed(2)} m, active ${(100 * active / n).toFixed(1)} % of cells`)
 
-// --- the spike, same inputs --------------------------------------------------
-const work = mkdtempSync(join(tmpdir(), 'erosion-v2-check-'))
-try {
-  const lithoFile = join(work, 'litho.f32')
-  writeFileSync(lithoFile, Buffer.from(erodibility.buffer))
-  const outDir = join(work, 'spike-out')
-  execFileSync('node', [
-    join(import.meta.dirname, 'erosion-v2-spike.mjs'),
-    artifactDir, lithoFile, String(RES_X), String(ITERS), '0', outDir, '1',
-  ], { stdio: ['ignore', 'ignore', 'inherit'] })
-  const spikeU16 = new Uint16Array(readFileSync(join(outDir, 'elevation.u16')).buffer.slice(0))
-
-  let differing = 0
-  let maxDelta = 0
+// --- the shelf band: what the frozen ocean costs -----------------------------
+// The gate is the LAND: with the default band the engine must make,
+// statistically, the land it makes with the whole ocean active (bytes may
+// differ — the flood's epsilon chains and the marine tail both see the
+// band — but land fraction and mean land height must not). The export
+// past the rim is reported, not gated: marine deposition is capped per
+// iteration, so a trunk river's load runs on as a submarine fan far past
+// any band, and with the whole ocean active it only spread over the abyss.
+{
+  const exportShare = engine.erodedFluxM3 > 0 ? engine.exportedFluxM3 / engine.erodedFluxM3 : 0
+  const wide = new ErosionEngine(RES_X, RES_Y, z, { uplift, erodibility }, { ...DEFAULT_ENGINE_PARAMS, shelfBandKm: 1e9 })
+  const t1 = performance.now()
+  wide.run(ITERS, 1)
+  const wideMs = performance.now() - t1
+  const wideZ = wide.expandZ(z)
+  const a = landStats(engineZ)
+  const b = landStats(wideZ)
+  const wideU16 = toU16(wideZ)
+  let landDiffering = 0
+  let landCells = 0
   for (let i = 0; i < n; i++) {
-    const d = Math.abs(engineU16[i] - spikeU16[i])
-    if (d > 0) differing++
-    if (d > maxDelta) maxDelta = d
+    if (engineU16[i] <= 32767 && wideU16[i] <= 32767) continue
+    landCells++
+    if (wideU16[i] !== engineU16[i]) landDiffering++
   }
-  console.log(`engine: ${ITERS} iters at ${RES_X}×${RES_Y} in ${(engineMs / 1000).toFixed(1)} s, residual ${residual.toFixed(2)} m`)
-  if (differing === 0) {
-    console.log('PASS — engine output is byte-identical to the spike')
-  } else {
-    console.log(`FAIL — ${differing} of ${n} cells differ (max ${maxDelta} u16 quanta = ${(maxDelta * 2 * 9000 / 65535).toFixed(2)} m)`)
-    process.exitCode = 1
-  }
-} finally {
-  rmSync(work, { recursive: true, force: true })
+  const fractionOk = Math.abs(a.fraction - b.fraction) < 0.002
+  const meanOk = Math.abs(a.meanM - b.meanM) < 5
+  const ok = fractionOk && meanOk
+  console.log(`${ok ? 'PASS' : 'FAIL'} — shelf band ${DEFAULT_ENGINE_PARAMS.shelfBandKm} km: land ${(100 * a.fraction).toFixed(2)} % / mean ${a.meanM.toFixed(1)} m vs whole-ocean ${(100 * b.fraction).toFixed(2)} % / ${b.meanM.toFixed(1)} m (${landDiffering} of ${landCells} land cells differ; ${(engineMs / 1000).toFixed(1)} s vs ${(wideMs / 1000).toFixed(1)} s at ${(100 * wide.index.activeCount / n).toFixed(0)} % active); rim exports ${(100 * exportShare).toFixed(1)} % of the eroded volume`)
+  if (!ok) process.exitCode = 1
 }
 
 // --- the worker pool: byte parity across worker counts -----------------------
@@ -159,12 +181,9 @@ for (const workerCount of [2, 8]) {
   pool.run(ITERS, 1)
   const poolMs = performance.now() - t1
   await pool.close()
+  const poolU16 = toU16(pool.expandZ(z))
   let differing = 0
-  for (let i = 0; i < n; i++) {
-    const v = Math.round(((pool.z[i] + 1) / 2) * 65535)
-    const clamped = v < 0 ? 0 : v > 65535 ? 65535 : v
-    if (clamped !== engineU16[i]) differing++
-  }
+  for (let i = 0; i < n; i++) if (poolU16[i] !== engineU16[i]) differing++
   if (differing === 0) {
     console.log(`PASS — pool(${workerCount}) byte-identical to single-threaded (${(poolMs / 1000).toFixed(1)} s vs ${(engineMs / 1000).toFixed(1)} s)`)
   } else {
@@ -188,11 +207,7 @@ for (const [stencilWorkers, refreshWorkers] of [[2, 1], [4, 2]] as const) {
   pipeline.run(ITERS)
   const pipeMs = performance.now() - t2
   await pipeline.close()
-  const bytes = new Uint16Array(n)
-  for (let i = 0; i < n; i++) {
-    const v = Math.round(((pipeline.z[i] + 1) / 2) * 65535)
-    bytes[i] = v < 0 ? 0 : v > 65535 ? 65535 : v
-  }
+  const bytes = toU16(pipeline.expandZ(z))
   if (!pipelineReference) {
     pipelineReference = bytes
     let land = 0
@@ -214,23 +229,23 @@ for (const [stencilWorkers, refreshWorkers] of [[2, 1], [4, 2]] as const) {
   }
 }
 
-// --- the hydrology bridge: v1's lakes/discharge on the engine's own network --
-// Smoke gate, not physics: v1's hydrology must RUN on the engine's routing
+// --- the hydrology bridge: the lakes/discharge on the engine's own network --
+// Smoke gate, not physics: the hydrology must RUN on the engine's routing
 // via the bridge and produce a sane water world — positive discharge on
 // land, concentrated onto channels, and flooded depressions classified.
 {
-  const routing = engineFlowRouting(engine.views, RES_X, RES_Y, engine.poppedCount)
+  const routing = engineFlowRouting(engine.views, engine.index, engine.poppedCount, engineZ)
   const CRX = 256
   const CRY = 128
   const precip = new Float32Array(CRX * CRY).fill(800)
   const temperature = new Float32Array(CRX * CRY).fill(15)
-  const discharge = accumulateDischarge(routing, engine.z, precip, CRX, CRY)
-  const lakes = computeLakes(routing, discharge, engine.z, temperature, precip, CRX, CRY)
+  const discharge = accumulateDischarge(routing, engineZ, precip, CRX, CRY)
+  const lakes = computeLakes(routing, discharge, engineZ, temperature, precip, CRX, CRY)
   let landCells = 0
   let wetLand = 0
   let maxDischarge = 0
   for (let i = 0; i < n; i++) {
-    if (engine.z[i] > 0) {
+    if (engineZ[i] > 0) {
       landCells++
       if (discharge[i] > 0) wetLand++
       if (discharge[i] > maxDischarge) maxDischarge = discharge[i]
@@ -247,7 +262,7 @@ for (const [stencilWorkers, refreshWorkers] of [[2, 1], [4, 2]] as const) {
   if (!ok) process.exitCode = 1
 }
 
-// --- the pass adapter: v1's contract, both execution paths -------------------
+// --- the pass adapter: the pipeline's contract, both execution paths ---------
 {
   const single = await runErosionPassV2(z, RES_X, RES_Y, { uplift, erodibility }, { age: 8 })
   const pooled = await runErosionPassV2(z, RES_X, RES_Y, { uplift, erodibility }, {
@@ -258,7 +273,10 @@ for (const [stencilWorkers, refreshWorkers] of [[2, 1], [4, 2]] as const) {
     r.elevations.length === n && r.preFillElevations.length === n &&
     r.routing.poppedCount > 0 && r.routing.flowTarget.length === n &&
     r.accumulation.length === n && r.elevations !== r.preFillElevations
-  const ok = contractOk(single) && contractOk(pooled)
-  console.log(`${ok ? 'PASS' : 'FAIL'} — runErosionPassV2 contract holds on both paths (popped ${single.routing.poppedCount} / ${pooled.routing.poppedCount})`)
+  // Frozen ocean cells come back untouched, exactly as they went in.
+  let frozenMoved = 0
+  for (let i = 0; i < n; i++) if (engine.index.activeOf[i] < 0 && single.elevations[i] !== z[i]) frozenMoved++
+  const ok = contractOk(single) && contractOk(pooled) && frozenMoved === 0
+  console.log(`${ok ? 'PASS' : 'FAIL'} — runErosionPassV2 contract holds on both paths (popped ${single.routing.poppedCount} / ${pooled.routing.poppedCount}, ${frozenMoved} frozen cells moved)`)
   if (!ok) process.exitCode = 1
 }

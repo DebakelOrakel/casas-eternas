@@ -8,9 +8,9 @@ import type { AmplifyPhase } from './surface/runAmplification'
 // lifecycles. It is also spawned from a SCREEN, never from another worker,
 // so it stays clear of the nested-worker trouble the render pool has.
 //
-// Phase 1 does upsample + seed roughness only; erosion and the hydrology
-// re-run land here next, which is why the message shape already carries the
-// stage in its progress reports.
+// The whole bake runs here — upsample and seed roughness, the erosion
+// engine, the hydrology re-run — and the progress reports carry the phase
+// so the caller can map three phases of unequal length onto one bar.
 //
 // `self` is typed loosely rather than via `/// <reference lib="webworker" />`
 // — same reason as generatorWorker.ts: that lib's ambient globals clash

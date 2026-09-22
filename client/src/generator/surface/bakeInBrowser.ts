@@ -22,12 +22,14 @@ import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '
 // fraction WITHIN its current phase, so a bake reads `erosion 84%` and then
 // `hydrology 0%`, and a bar fed that directly empties itself near the end.
 // Each phase therefore owns a band of the whole. The widths come from the
-// measured run (stage 2, 79 s: ~70 s erosion against ~10 s hydrology, with
-// seeding too brief to sample) — honest proportions rather than equal thirds.
+// measured runs on the golden world with the pooled engine (2026-09-22,
+// after the erosion moved to the active set: stage 2 in 10.7 s as 5.3 s
+// seed / 1.1 s erosion / 4.0 s hydrology, stage 4 in 49 s as 24 / 5.5 /
+// 19) — honest proportions rather than equal thirds.
 export const AMPLIFY_PHASE_BANDS: Record<string, [number, number]> = {
-  seed: [0, 0.05],
-  erosion: [0.05, 0.9],
-  hydrology: [0.9, 1],
+  seed: [0, 0.5],
+  erosion: [0.5, 0.6],
+  hydrology: [0.6, 1],
 }
 
 // Undefined for a phase with no band — the cluster runner's `pending` and

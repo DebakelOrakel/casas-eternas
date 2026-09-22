@@ -239,8 +239,8 @@ for (const [name, forcing, erod] of [
   })
   const t0 = performance.now()
   const residual = engine.run(AGE, 4)
-  writeOut(name, engine.z, { engine: `erosion-v2 age ${AGE}, forcing ${name}`, residualM: residual })
-  console.log(`${name.padEnd(7)} age ${AGE}: ${stats(engine.z)}  residual ${residual.toFixed(1)} m  (${((performance.now() - t0) / 1000).toFixed(0)} s)`)
+  writeOut(name, engine.expandZ(z0), { engine: `erosion-v2 age ${AGE}, forcing ${name}`, residualM: residual })
+  console.log(`${name.padEnd(7)} age ${AGE}: ${stats(engine.expandZ(z0))}  residual ${residual.toFixed(1)} m  (${((performance.now() - t0) / 1000).toFixed(0)} s)`)
 }
 
 await server.close()

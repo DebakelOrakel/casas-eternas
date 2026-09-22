@@ -57,6 +57,10 @@ export class MinHeap {
   }
 
   pop(): void {
+    // Every caller guards with `length > 0`; an unguarded pop used to walk
+    // size negative and leave the last popped entry in place, a silent
+    // corruption rather than an error.
+    if (this.size === 0) throw new Error('MinHeap.pop on an empty heap')
     this.poppedKey = this.keys[0]
     this.poppedIndex = this.indices[0]
     this.size--
