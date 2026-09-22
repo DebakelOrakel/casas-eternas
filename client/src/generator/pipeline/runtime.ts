@@ -30,6 +30,8 @@ import { computeBiomes, computeBiomesFine } from '../climate/biomes'
 import { downsampleMax } from '../core/field'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import type { WaterBody } from '../surface/hydrology'
+import { buildRiverGraph, riverPolylinesFromGraph, serializeRiverGraph } from '../surface/riverGraph'
+import type { RiverGraph } from '../surface/riverGraph'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { computeEcology } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
@@ -93,6 +95,10 @@ let handoverSnapshot: PlateSimulationSnapshot | null = null
 let handoverOceanAge: Float32Array | null = null
 let handoverMantle: Float32Array | null = null
 let lastRawElevations: Float32Array | null = null
+// The last erosion pass's per-cell sediment flux (ErosionPassV2Result), the
+// river graph's sediment load. Null before any pass; stale after a restore
+// (the pass that made it is gone), which the graph tolerates as zero.
+let lastSedimentFlux: Float32Array | null = null
 // The DISPLAY-space elevations of the last render (redistributed values the
 // map colors were computed from, with their grid size) — retained for the
 // screen's 'requestElevationField' so its 3D relief displacement matches the
@@ -169,8 +175,12 @@ interface HydrologyResult {
   bodies: WaterBody[]
   level: Float32Array
   surface: Uint8Array
+  body: Int32Array
   maxDischarge: number
   meanRunoff: number
+  // The feature graph, built once per routing (after the riparian biomes,
+  // which it records as bank material); the ribbons derive from it.
+  graph: RiverGraph | null
 }
 let hydrology: HydrologyResult | null = null
 
@@ -509,6 +519,7 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
   // (nothing bakes the fill in any more); the hydrology contract is
   // unchanged. See lastLakeBasinElevations.
   lastLakeBasinElevations = erosionResult.preFillElevations
+  lastSedimentFlux = erosionResult.sedimentFlux
 }
 
 function stopTicking(): void {
@@ -755,8 +766,8 @@ function handleHydrologyRun(): void {
         await renderAndPost(terrain, false, 1, true)
         result = {
           routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
-          bodies: lakes.bodies, level: lakes.level, surface: waterLevelField(lakes.bodies, elevation, width, height).surface,
-          maxDischarge, meanRunoff,
+          bodies: lakes.bodies, level: lakes.level, surface: waterLevelField(lakes.bodies, elevation, width, height).surface, body: lakes.body,
+          maxDischarge, meanRunoff, graph: null,
         }
       }
       hydrology = result
@@ -767,7 +778,6 @@ function handleHydrologyRun(): void {
     // read. The density slider that used to threshold the drawing separately
     // died with its panel (erosion-v2 P4/teardown).
     const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), result.meanRunoff)
-    const rivers = extractRiverPolylines(result.routing, result.discharge, elevation, threshold, result.maxDischarge)
     // Lakes only change on a re-route; a repeat call sends an empty buffer.
     const lakeOut = rerouted ? result.lakeDepth.slice() : new Float32Array(0)
     const levelOut = rerouted ? result.level.slice() : new Float32Array(0)
@@ -787,7 +797,20 @@ function handleHydrologyRun(): void {
       // worldmap reclassify at bake resolution without re-running hydrology.
       biomesOut = riparian.biomes
       precipEffOut = riparian.precipEff
+      // THE FEATURE GRAPH (phase 2): the network as data, with the riparian
+      // biomes as bank material and the last erosion pass's sediment flux as
+      // load. The ribbons below derive from it.
+      result.graph = buildRiverGraph({
+        routing: result.routing, discharge: result.discharge, elevation, threshold, maxDischarge: result.maxDischarge,
+        bodies: result.bodies, body: result.body, lakeDepth: result.lakeDepth,
+        sedimentFlux: lastSedimentFlux && lastSedimentFlux.length === elevation.length ? lastSedimentFlux : undefined,
+        biomes: riparian.biomes,
+      })
     }
+    const rivers = result.graph
+      ? riverPolylinesFromGraph(result.graph, result.maxDischarge)
+      : extractRiverPolylines(result.routing, result.discharge, elevation, threshold, result.maxDischarge)
+    const graphOut = rerouted && result.graph ? serializeRiverGraph(result.graph) : null
     const hydrologyMessage: WorkerHydrologyDataMessage = {
       type: 'hydrologyData',
       riverPoints: rivers.points.buffer as ArrayBuffer,
@@ -801,8 +824,11 @@ function handleHydrologyRun(): void {
       waterBodies: rerouted ? result.bodies : null,
       waterLevel: levelOut.buffer as ArrayBuffer,
       waterSurface: surfaceOut.buffer as ArrayBuffer,
+      riverGraph: graphOut ? { json: graphOut.json, cells: graphOut.cells.slice().buffer as ArrayBuffer } : null,
     }
-    emit(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge, hydrologyMessage.waterLevel, hydrologyMessage.waterSurface])
+    const transfer = [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge, hydrologyMessage.waterLevel, hydrologyMessage.waterSurface]
+    if (hydrologyMessage.riverGraph) transfer.push(hydrologyMessage.riverGraph.cells)
+    emit(hydrologyMessage, transfer)
   })()
 }
 

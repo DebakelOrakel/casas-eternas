@@ -1,7 +1,7 @@
 import type { InputParam } from '../core/inputParams'
 
 // The erosion and hydrology panels' controls. They live together because both
-// panels drive this module — erosion.ts and hydrology.ts — even though the UI
+// panels drive this module — erosionPassV2.ts and hydrology.ts — even though the UI
 // shows them as two panels.
 //
 // All three reach the save, and the erosion pair reaches further than that: a

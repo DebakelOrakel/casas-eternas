@@ -1,5 +1,5 @@
 // One binary min-heap for the two places that need one: the priority flood in
-// erosion.ts and the Dijkstra in migration/migrationField.ts. They had grown
+// flowRouting.ts and the erosion engine, and the Dijkstra in migration/migrationField.ts. They had grown
 // separate implementations of the same structure — one typed-array-backed with a
 // fixed capacity, one plain-array-backed and growable — differing only in the
 // details each happened to need.

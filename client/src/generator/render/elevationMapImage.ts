@@ -58,7 +58,7 @@ export interface SimulationRenderResult {
   // Elevation exactly as the field query (or precomputedElevations, if
   // that path was taken) produced it, *before* applyMountainRedistribution's
   // cosmetic reshaping — the physically meaningful values a later erosion
-  // pass (erosion.ts) needs to act on, not the display-squashed ones.
+  // pass (erosionPassV2.ts) needs to act on, not the display-squashed ones.
   rawElevations: Float32Array
   // The redistributed values actually used for elevationToColor — what a
   // debug 3D heightmap preview (see GeneratorScreen.ts) should displace
@@ -71,7 +71,7 @@ export interface SimulationRenderResult {
 export interface RenderSimulationOptions {
   // Skip the elevation field query (baseline blend + pool.renderElevations
   // — together the ~88%+~15% of a normal render's cost) and use this
-  // array instead, e.g. the output of an erosion pass (erosion.ts) run
+  // array instead, e.g. the output of an erosion pass (erosionPassV2.ts) run
   // against a previous render's own rawElevations. Everything downstream
   // — redistribution, coloring, and the overlay-source passes — runs
   // exactly as it would on a freshly-queried field, since none of it

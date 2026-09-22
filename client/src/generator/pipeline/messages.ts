@@ -18,7 +18,7 @@ export interface WorkerTectonicsStartMessage {
 export interface WorkerTectonicsStopMessage {
   type: 'tectonicsStop'
 }
-// Runs a stream-power erosion pass (erosion.ts) once against the most
+// Runs a stream-power erosion pass (erosionPassV2.ts) once against the most
 // recently rendered raw elevation field and re-renders — a one-shot
 // action like 'reset', not a toggle, so there's only ever one message
 // type for it. Deliberately not something that keeps running alongside
@@ -417,6 +417,10 @@ export interface WorkerHydrologyDataMessage {
   waterBodies: WaterBody[] | null
   waterLevel: ArrayBuffer
   waterSurface: ArrayBuffer
+  // The river feature graph (surface/riverGraph.ts) the ribbons above were
+  // derived from — serialised: the JSON document and the reach cells as
+  // Int32 bytes. Re-route only; null means "unchanged".
+  riverGraph: { json: string; cells: ArrayBuffer } | null
 }
 
 // The computed ecology fields (coarse climate grid), keyed by field id so the

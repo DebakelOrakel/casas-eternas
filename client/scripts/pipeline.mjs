@@ -491,6 +491,8 @@ test('a repeat hydrology call reuses the routing instead of re-flooding', async 
   check('a repeat call does not re-flood', repeated.lakeDepth.byteLength === 0 && repeated.watersheds.byteLength === 0 && repeated.discharge.byteLength === 0)
   check('and does not re-derive the biomes', repeated.biomes.byteLength === 0)
   check('the river network is the same one', hash(repeated.riverPoints) === hash(routed.riverPoints))
+  // The feature graph rides with a re-route only, like the lakes.
+  check('a re-route carries the river graph, a repeat does not', routed.riverGraph !== null && routed.riverGraph.cells.byteLength > 0 && repeated.riverGraph === null)
 })
 
 test('erosion can be stopped mid-pass', async () => {
@@ -563,6 +565,7 @@ test('two pipelines given the same messages agree byte for byte', async () => {
   const ha = a.last('hydrologyData'), hb = b.last('hydrologyData')
   check('the water bodies are the same list', JSON.stringify(ha.waterBodies) === JSON.stringify(hb.waterBodies) && Array.isArray(ha.waterBodies))
   check('the water level field is byte-identical', hash(new Float32Array(ha.waterLevel)) === hash(new Float32Array(hb.waterLevel)) && ha.waterLevel.byteLength > 0)
+  check('the river graph is byte-identical', ha.riverGraph !== null && hb.riverGraph !== null && ha.riverGraph.json === hb.riverGraph.json && hash(new Int32Array(ha.riverGraph.cells)) === hash(new Int32Array(hb.riverGraph.cells)))
   check('a re-route carries the list, a repeat does not', ha.waterSurface.byteLength === ha.waterLevel.byteLength / 4)
 })
 

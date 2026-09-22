@@ -38,7 +38,7 @@ import { MinHeap } from '../core/minHeap'
 // resolved Promise: `await undefined` costs a microtask, not a timer.
 const YIELD_INTERVAL_MS = 50
 let lastYieldAt = 0
-export function maybeYield(): Promise<void> | undefined {
+function maybeYield(): Promise<void> | undefined {
   const now = performance.now()
   if (now - lastYieldAt < YIELD_INTERVAL_MS) return undefined
   lastYieldAt = now

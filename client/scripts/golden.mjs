@@ -99,6 +99,7 @@ const M = {
   surfaceInputs: await L('/src/generator/surface/surfaceInputParams.ts'),
   routing: await L('/src/generator/surface/flowRouting.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
+  graph: await L('/src/generator/surface/riverGraph.ts'),
   scale: await L('/src/generator/elevation/elevationScale.ts'),
   climateField: await L('/src/generator/climate/climateField.ts'),
   temperature: await L('/src/generator/climate/temperature.ts'),
@@ -268,6 +269,14 @@ async function buildWorld(seed) {
   discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
   maxDis = M.hydro.maxDischargeOverLand(discharge, el)
   lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, t2, precipitation, CRX, CRY)
+  // The feature graph (phase 2), exactly as the worker builds it after the
+  // lakes: the model's one channel threshold, the refined fine biomes as bank
+  // material, the erosion pass's sediment flux as load.
+  const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), meanRunoff)
+  const graph = M.graph.buildRiverGraph({
+    routing, discharge, elevation: el, threshold, maxDischarge: maxDis,
+    bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux: ero.sedimentFlux, biomes: biomesFine2,
+  })
 
   // Downstream reads the REFINED fields, exactly as the worker's
   // cacheAndPostClimate hands them on: v1 above only fed the refinement.
@@ -310,7 +319,7 @@ async function buildWorld(seed) {
     { spreadBudget: 400, seaCrossing: 0.3 },
   )
 
-  return { sim, raw, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, lakes, volcanoes, eco, mig, originCell, CRX, CRY }
+  return { sim, raw, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, lakes, graph, volcanoes, eco, mig, originCell, CRX, CRY }
 }
 
 // --- layer 1: invariants ---------------------------------------------------
@@ -363,6 +372,16 @@ function invariants(w) {
   const channels = countWhere(w.discharge, (v) => v >= 2000)
   if (channels === 0) fail('rivers', 'no channel cells')
 
+  // The feature graph's own invariants (phase 2 of the adaptive-mesh plan):
+  // acyclic, discharge monotone downstream, every mouth in water, reaches
+  // that terminate, bodies that exist, cell runs that tile the cell array.
+  // No baseline — a violation is a bug in the graph builder or the routing.
+  if (w.graph.reaches.length === 0) fail('riverGraph', 'no reaches')
+  if (!w.graph.nodes.some((node) => node.kind === 'mouth')) fail('riverGraph', 'no mouth')
+  for (const [name, count] of Object.entries(M.graph.riverGraphInvariants(w.graph, w.el))) {
+    if (count > 0) fail(`riverGraph.${name}`, `${count} violations`)
+  }
+
   // Every land cell must be classified, or the map renders a hole.
   //
   // This check used to read `w.biomes[i] < 0` and could never fire: the field
@@ -404,6 +423,8 @@ function invariants(w) {
 function metrics(w) {
   const out = {}
   const put = (name, value) => { out[name] = Number(value.toFixed(6)) }
+  put('river.reaches', w.graph.reaches.length)
+  put('river.mouths', w.graph.nodes.filter((node) => node.kind === 'mouth').length)
 
   put('tectonics.plates', w.sim.seeds.length)
   put('tectonics.rafts', w.sim.rafts.length)
@@ -510,6 +531,10 @@ function fingerprints(w) {
   put('climate.biomesFine', w.biomesFine)
 
   put('hydro.discharge', w.discharge)
+  // The serialised feature graph: the document (nodes, reaches, bodies) and
+  // the reach cells — "the serialised graph enters the hash guard".
+  put('river.graph', new TextEncoder().encode(M.graph.serializeRiverGraph(w.graph).json))
+  put('river.cells', w.graph.cells)
   put('hydro.lakeDepth', w.lakes.depth)
   put('hydro.saltFlat', w.lakes.saltFlat)
   put('hydro.dryBasin', w.lakes.dryBasin)

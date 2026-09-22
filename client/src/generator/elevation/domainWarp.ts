@@ -87,7 +87,7 @@ function fbmNoise(x: number, y: number, width: number, height: number, warpSeed:
 // allocating a {x, y} pair — this runs once per pixel per axis inside
 // the project's own hottest loop (elevationField.ts's computeElevation),
 // so avoiding a per-pixel object allocation here matters the same way it
-// does for erosion.ts's MinHeap pop.
+// does for the flood's MinHeap pop (core/minHeap.ts).
 export function domainWarpDelta(x: number, y: number, width: number, height: number, warpSeed: number, axis: 'x' | 'y'): number {
   const axisSalt = axis === 'x' ? ELEVATION_TUNING.axisSaltX : ELEVATION_TUNING.axisSaltY
   return fbmNoise(x, y, width, height, warpSeed, axisSalt) * ELEVATION_TUNING.warpAmplitudePx

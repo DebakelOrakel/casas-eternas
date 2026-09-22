@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-22
+- **new** Hydrology: the river network is data — reaches with discharge, width, slope, sediment load and bank material between sources, junctions, lake inlets, outlets and mouths, each mouth with its catchment; the drawn rivers follow it. `generator.panel.hydrology`
 - **new** Hydrology: every lake and terminal sea is saved as a water body with its level and outlet, and the lake layer follows from that list. `generator.panel.hydrology`
 
 ## 2026-09-20

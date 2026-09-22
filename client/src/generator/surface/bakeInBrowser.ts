@@ -1,5 +1,7 @@
 import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '../amplificationWorker'
 import type { WaterBody } from './hydrology'
+import { deserializeRiverGraph } from './riverGraph'
+import type { RiverGraph } from './riverGraph'
 
 // Running one amplification stage in a worker, as a promise.
 //
@@ -83,6 +85,10 @@ export interface AmplificationArtifact {
   // (see hydrology.WaterBody). Null when lakeDepth is, and for every artifact
   // written before the list existed.
   waterBodies: WaterBody[] | null
+  // The river feature graph on this artifact's grid; null for a region
+  // bake, a world without climate, a family member (its cells are indices
+  // of the finest raster) and every artifact written before it existed.
+  riverGraph: RiverGraph | null
 }
 
 export interface BrowserBakeResult {
@@ -124,6 +130,7 @@ export function bakeStageInBrowser(
           riverLengths: new Uint32Array(message.riverLengths),
           lakeDepth: message.lakeDepth ? new Float32Array(message.lakeDepth) : null,
           waterBodies: message.waterBodies ?? null,
+          riverGraph: message.riverGraphJson && message.riverGraphCells ? deserializeRiverGraph(message.riverGraphJson, new Int32Array(message.riverGraphCells)) : null,
         },
         durationMs: message.durationMs,
       })

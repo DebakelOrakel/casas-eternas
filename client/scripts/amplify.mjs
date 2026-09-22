@@ -52,6 +52,7 @@ const M = {
   scale: await L('/src/generator/elevation/elevationScale.ts'),
   plan: await L('/src/generator/surface/bakePlan.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
+  graph: await L('/src/generator/surface/riverGraph.ts'),
 }
 
 let failures = 0
@@ -137,6 +138,10 @@ async function bake(seed = 12345) {
     // path, which is exactly what an old save gets.
     lithoSeed: 4242,
     precipitation: precipitation(CLIMATE_RES_X, CLIMATE_RES_Y),
+    // A temperate, uniform climate: with it the bake floods its lakes and
+    // builds the feature graph (phase 1 and 2 of the adaptive-mesh plan),
+    // without it those two paths were never exercised here.
+    temperature: new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y).fill(15),
     climateResX: CLIMATE_RES_X,
     climateResY: CLIMATE_RES_Y,
   })
@@ -150,6 +155,8 @@ const fingerprints = (result) => ({
   riverPoints: hash(result.rivers.points),
   riverLengths: hash(result.rivers.lengths),
   waterBodies: hash(new TextEncoder().encode(JSON.stringify(result.waterBodies))),
+  riverGraph: hash(new TextEncoder().encode(result.riverGraph ? M.graph.serializeRiverGraph(result.riverGraph).json : '')),
+  riverGraphCells: hash(result.riverGraph ? result.riverGraph.cells : new Int32Array(0)),
 })
 
 console.log('')
@@ -173,6 +180,15 @@ console.log('— invariants')
     }
     check('the lake layer derives from the water-body list', off === 0, `${off} cells differ, worst ${worst.toExponential(2)}`)
     check('the list carries every kind it can', result.waterBodies.every((b) => ['lake', 'terminal', 'dry'].includes(b.kind)))
+    // The feature graph (phase 2): built on the bake's own grid, its
+    // invariants hold and the ribbons ARE its polylines.
+    check('the bake carries a river graph', result.riverGraph !== null && result.riverGraph.reaches.length > 0)
+    if (result.riverGraph) {
+      const violations = Object.entries(M.graph.riverGraphInvariants(result.riverGraph, result.elevation)).filter(([, n]) => n > 0)
+      check('the graph holds its invariants', violations.length === 0, violations.map(([k, n]) => `${k}:${n}`).join(' '))
+      const derived = M.graph.riverPolylinesFromGraph(result.riverGraph, 1) // the scale only sets widths; the line count is the check
+      check('the ribbons derive from the graph', result.rivers.lengths.length === derived.lengths.length)
+    }
   } else {
     check('the bake produced a water-body list with its lake layer', result.lakeDepth === null && result.waterBodies === null)
   }

@@ -28,7 +28,8 @@ crust/      continental crust as rafts — deliberately decoupled from the plate
             (docs/decisions/continental-crust-rafts.md); crustTuneParams holds the
             raft rules both eras pass in
 elevation/  elevationScale (what a height MEANS), elevationField, domainWarp, ridgedNoise
-surface/    flowRouting, erosion, hydrology, amplify
+surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), erosionPassV2,
+            hydrology, riverGraph (the feature graph), amplify, runAmplification
 climate/ ecology/ migration/ render/
 ```
 

@@ -36,6 +36,10 @@ export interface ErosionPassV2Result {
   routing: FlowRouting
   accumulation: Float32Array
   preFillElevations: Float32Array
+  // The ξ–q sediment flux through every cell in the LAST iteration, m³ —
+  // what the river graph records as a reach's sediment load. Zero on the
+  // frozen ocean.
+  sedimentFlux: Float32Array
 }
 
 export interface ErosionPassV2Options {
@@ -90,6 +94,7 @@ export async function runErosionPassV2(
         preFillElevations: engine.expandZ(rawElevations),
         routing: engineFlowRouting(engine.activeEngineViews, engine.index, popped, elevations),
         accumulation: expandActive(engine.index, engine.activeEngineViews.accumulation, 0),
+        sedimentFlux: expandActive(engine.index, engine.activeEngineViews.flux, 0),
       }
     } finally {
       await engine.close()
@@ -113,5 +118,6 @@ export async function runErosionPassV2(
     preFillElevations: engine.expandZ(rawElevations),
     routing: engineFlowRouting(engine.views, engine.index, engine.poppedCount, elevations),
     accumulation: expandActive(engine.index, engine.views.accumulation, 0),
+    sedimentFlux: expandActive(engine.index, engine.views.flux, 0),
   }
 }

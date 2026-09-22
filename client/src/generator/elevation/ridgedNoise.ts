@@ -13,7 +13,7 @@ import { wrapValue } from '../core/field'
 // separate and independently tuned: domainWarp perturbs query points at
 // continent scale, this shapes relief at range scale, and folding both
 // into one parameterized helper would read worse than a second small copy
-// (the same reasoning erosion.ts's own ridgeNoise01 records for not
+// (the same reasoning the v1 erosion pass's ridgeNoise01 recorded, gone with it, for not
 // sharing with domainWarp).
 
 function hashLatticePoint(ix: number, iy: number, seed: number): number {

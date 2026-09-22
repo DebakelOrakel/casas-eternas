@@ -2,6 +2,7 @@ import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../storage/Arti
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { bakeLayer, decodeLayer, LAKE_DEPTH_ENCODING } from './save/worldLayers'
 import type { WaterBody } from '../generator/surface/hydrology'
+import { deserializeRiverGraph, serializeRiverGraph } from '../generator/surface/riverGraph'
 import type { AmplificationArtifact } from '../generator/surface/bakeInBrowser'
 
 export type { AmplificationArtifact }
@@ -92,6 +93,10 @@ const FILES = {
   elevation: 'elevation.u16',
   lakeDepth: 'lakeDepth.u8',
   waterBodies: 'waterBodies.json',
+  // The river feature graph (phase 2): its JSON and its reach cells as raw
+  // Int32 bytes — flat names, because the server's listing walks one level.
+  riverGraph: 'riverGraph.json',
+  riverGraphCells: 'riverGraphCells.i32',
   meta: 'meta.json',
 } as const
 
@@ -126,6 +131,9 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
   const elevationBytes = new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING))
   const lakeBytes = artifact.lakeDepth ? new Uint8Array(bakeLayer(artifact.lakeDepth, LAKE_DEPTH_ENCODING)) : null
   const bodyBytes = artifact.waterBodies ? new TextEncoder().encode(JSON.stringify(artifact.waterBodies)) : null
+  const graph = artifact.riverGraph ? serializeRiverGraph(artifact.riverGraph) : null
+  const graphBytes = graph ? new TextEncoder().encode(graph.json) : null
+  const graphCellBytes = graph ? new Uint8Array(graph.cells.buffer, graph.cells.byteOffset, graph.cells.byteLength) : null
   // The designated finest stage writes its derived family beside itself:
   // box-downsampled on the RAW f32 field before quantisation, so a member
   // is exactly box(finest) and not box(quantised(finest)) — the family's
@@ -157,6 +165,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
       [FILES.elevation]: elevationBytes.byteLength,
       ...(lakeBytes ? { [FILES.lakeDepth]: lakeBytes.byteLength } : {}),
       ...(bodyBytes ? { [FILES.waterBodies]: bodyBytes.byteLength } : {}),
+      ...(graphBytes && graphCellBytes ? { [FILES.riverGraph]: graphBytes.byteLength, [FILES.riverGraphCells]: graphCellBytes.byteLength } : {}),
       [rivers.points]: artifact.riverPoints.byteLength,
       [rivers.lengths]: artifact.riverLengths.byteLength,
       ...Object.fromEntries(family.flatMap(({ member, elevation, lakeDepth }) => {
@@ -177,6 +186,8 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
     (await store.write(handle, FILES.elevation, elevationBytes)) &&
     (lakeBytes === null || (await store.write(handle, FILES.lakeDepth, lakeBytes))) &&
     (bodyBytes === null || (await store.write(handle, FILES.waterBodies, bodyBytes))) &&
+    (graphBytes === null || (await store.write(handle, FILES.riverGraph, graphBytes))) &&
+    (graphCellBytes === null || (await store.write(handle, FILES.riverGraphCells, graphCellBytes))) &&
     (await store.write(handle, rivers.points, artifact.riverPoints)) &&
     (await store.write(handle, rivers.lengths, artifact.riverLengths)) &&
     (await store.write(handle, FILES.meta, new TextEncoder().encode(JSON.stringify(meta))))
@@ -253,6 +264,13 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
       waterBodies = null
     }
   }
+  // The graph only at the finest tier: its reach cells index that raster.
+  let riverGraph = null as ReturnType<typeof deserializeRiverGraph>
+  if (!familyMember) {
+    const graphBytes = await store.read(handle, FILES.riverGraph)
+    const cellBytes = graphBytes ? await store.read(handle, FILES.riverGraphCells) : null
+    if (graphBytes && cellBytes) riverGraph = deserializeRiverGraph(new TextDecoder().decode(graphBytes), new Int32Array(cellBytes.slice(0)))
+  }
   const riverPoints = new Float32Array(pointBytes)
   if (memberScale !== 1) {
     // [x, y, widthPx] per vertex: positions live in the finest grid's
@@ -272,6 +290,7 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
       riverLengths: lengthBytes ? new Uint32Array(lengthBytes) : new Uint32Array(0),
       lakeDepth,
       waterBodies,
+      riverGraph,
     },
     bakeMs: meta.bakeMs,
   }

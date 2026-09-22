@@ -7,6 +7,8 @@ import { fillDepressionsAndRouteFlow } from './flowRouting'
 import { ABYSSAL_FLOOR, SEA_LEVEL } from '../elevation/elevationScale'
 import { accumulateDischarge, channelThreshold, computeLakes, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff, CANONICAL_RIVER_DENSITY } from './hydrology'
 import type { RiverPolylines, WaterBody } from './hydrology'
+import { buildRiverGraph, riverPolylinesFromGraph } from './riverGraph'
+import type { RiverGraph } from './riverGraph'
 
 // The amplification bake itself: upsample, seed roughness, erode, re-run
 // hydrology (docs/decisions/worldmap-amplification.md).
@@ -129,6 +131,10 @@ export interface AmplifyResult {
   // The basins behind that layer, on the amplified grid (texel coordinates
   // of this bake's raster) — null exactly when lakeDepth is.
   waterBodies: WaterBody[] | null
+  // The river feature graph on the amplified grid (surface/riverGraph.ts),
+  // which `rivers` derives from; null when the bake had no climate to
+  // route with, or owns only a region.
+  riverGraph: RiverGraph | null
 }
 
 export async function runAmplification(
@@ -144,6 +150,7 @@ export async function runAmplification(
   let field = request.region
     ? drownForeignLand(result.data, result.width, result.height, request.region)
     : result.data
+  let sedimentFlux: Float32Array | undefined
   if (request.erosionRounds > 0) {
     // The v2 engine on the seeded field (docs/design/erosion-v2.md, P3). The
     // engine's physical parameters (settling lengths in km, diffusivity in
@@ -183,6 +190,7 @@ export async function runAmplification(
       onProgress: (fraction) => onProgress('erosion', fraction),
     })
     field = eroded.elevations
+    sedimentFlux = eroded.sedimentFlux
   }
 
   // Hydrology RE-RUN on the amplified field: the save's rivers were routed on
@@ -191,6 +199,7 @@ export async function runAmplification(
   let rivers: RiverPolylines = { points: new Float32Array(0), lengths: new Uint32Array(0) }
   let lakeDepth: Float32Array | null = null
   let waterBodies: WaterBody[] | null = null
+  let riverGraph: RiverGraph | null = null
   if (request.precipitation && request.climateResX && request.climateResY) {
     onProgress('hydrology', 0)
     const derived = await deriveRivers(
@@ -204,17 +213,21 @@ export async function runAmplification(
         // from two different catchments — the same reasoning that hands a
         // split bake its discharge inputs instead of letting it derive them.
         temperature: request.region ? undefined : request.temperature,
+        sedimentFlux,
       },
       (fraction) => onProgress('hydrology', fraction),
     )
     rivers = derived.rivers
     lakeDepth = derived.lakeDepth
     waterBodies = derived.waterBodies
+    // A region bake's graph would be cut at the region's edge; only a whole
+    // world carries one.
+    riverGraph = request.region ? null : derived.riverGraph
     if (request.region) rivers = ownedRivers(rivers, request.region.owned, result.width)
     onProgress('hydrology', 1)
   }
 
-  return { elevation: field, width: result.width, height: result.height, rivers, lakeDepth, waterBodies }
+  return { elevation: field, width: result.width, height: result.height, rivers, lakeDepth, waterBodies, riverGraph }
 }
 
 // Route, accumulate and extract the river network of ONE elevation field —
@@ -245,9 +258,9 @@ export async function deriveRivers(
   // it (evaporation decides which basins stay wet), and everything else it
   // needs — the routing and the discharge — this function already has in hand.
   // Absent, the lake half is skipped and the caller keeps whatever it had.
-  options: { maxDischarge?: number; meanRunoff?: number; temperature?: Float32Array } = {},
+  options: { maxDischarge?: number; meanRunoff?: number; temperature?: Float32Array; sedimentFlux?: Float32Array } = {},
   onProgress: (fraction: number) => void = () => {},
-): Promise<{ rivers: RiverPolylines; lakeDepth: Float32Array | null; waterBodies: WaterBody[] | null }> {
+): Promise<{ rivers: RiverPolylines; lakeDepth: Float32Array | null; waterBodies: WaterBody[] | null; riverGraph: RiverGraph | null }> {
   const routing = await fillDepressionsAndRouteFlow(field, width, height, SEA_LEVEL)
   onProgress(0.6)
   const discharge = accumulateDischarge(routing, field, precipitation, climateResX, climateResY)
@@ -260,11 +273,19 @@ export async function deriveRivers(
   // carries the measurements behind the decision.
   const criticalArea = densityToCriticalArea(CANONICAL_RIVER_DENSITY)
   const threshold = channelThreshold(criticalArea, meanRunoff)
-  const rivers = extractRiverPolylines(routing, discharge, field, threshold, maxDischarge)
   const lakes = options.temperature
     ? computeLakes(routing, discharge, field, options.temperature, precipitation, climateResX, climateResY)
     : null
-  return { rivers, lakeDepth: lakes?.depth ?? null, waterBodies: lakes?.bodies ?? null }
+  // With lakes known the network becomes the feature graph and the ribbons
+  // derive from it; without them (no temperature) the old tracing stands in,
+  // since a graph needs to know where its reaches enter water.
+  const riverGraph = lakes
+    ? buildRiverGraph({ routing, discharge, elevation: field, threshold, maxDischarge, bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux: options.sedimentFlux })
+    : null
+  const rivers = riverGraph
+    ? riverPolylinesFromGraph(riverGraph, maxDischarge)
+    : extractRiverPolylines(routing, discharge, field, threshold, maxDischarge)
+  return { rivers, lakeDepth: lakes?.depth ?? null, waterBodies: lakes?.bodies ?? null, riverGraph }
 }
 
 // The rivers this region owns, by the HEAD of each polyline.

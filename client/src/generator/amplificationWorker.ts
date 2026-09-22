@@ -1,6 +1,7 @@
 import { runAmplification } from './surface/runAmplification'
 import type { AmplifyPhase } from './surface/runAmplification'
 import type { WaterBody } from './surface/hydrology'
+import { serializeRiverGraph } from './surface/riverGraph'
 
 // The amplification bake's worker (docs/decisions/worldmap-amplification.md).
 // Its own worker rather than a job on the generator pipeline: the bake needs
@@ -86,6 +87,10 @@ export interface AmplifyDoneMessage {
   lakeDepth?: ArrayBuffer
   // The basins behind lakeDepth, absent exactly when it is.
   waterBodies?: WaterBody[]
+  // The river feature graph, serialised (surface/riverGraph.ts); absent
+  // for a region bake or a world without climate.
+  riverGraphJson?: string
+  riverGraphCells?: ArrayBuffer
   // Wall-clock milliseconds, so the screen (and a human) can see what the
   // bake actually costs at this resolution.
   durationMs: number
@@ -149,8 +154,14 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
     waterBodies: result.waterBodies ?? undefined,
     durationMs: performance.now() - started,
   }
+  if (result.riverGraph) {
+    const serialised = serializeRiverGraph(result.riverGraph)
+    done.riverGraphJson = serialised.json
+    done.riverGraphCells = serialised.cells.buffer as ArrayBuffer
+  }
   const transfer: ArrayBuffer[] = [done.elevation, done.riverPoints, done.riverLengths]
   if (done.lakeDepth) transfer.push(done.lakeDepth)
+  if (done.riverGraphCells) transfer.push(done.riverGraphCells)
   self.postMessage(done, transfer)
 }
 
