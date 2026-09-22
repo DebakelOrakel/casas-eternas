@@ -100,6 +100,8 @@ const M = {
   routing: await L('/src/generator/surface/flowRouting.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
   graph: await L('/src/generator/surface/riverGraph.ts'),
+  engine: await L('/src/generator/surface/erosionEngine.ts'),
+  course: await L('/src/generator/surface/riverCourse.ts'),
   scale: await L('/src/generator/elevation/elevationScale.ts'),
   climateField: await L('/src/generator/climate/climateField.ts'),
   temperature: await L('/src/generator/climate/temperature.ts'),
@@ -277,6 +279,8 @@ async function buildWorld(seed) {
     routing, discharge, elevation: el, threshold, maxDischarge: maxDis,
     bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux: ero.sedimentFlux, biomes: biomesFine2,
   })
+  // The course (phase 3), seeded from the world like the worker does.
+  graph.courses = M.course.computeRiverCourses(graph, { cellM: M.engine.WORLD_WIDTH_METERS / W, seed: sim.warpSeed })
 
   // Downstream reads the REFINED fields, exactly as the worker's
   // cacheAndPostClimate hands them on: v1 above only fed the refinement.
@@ -381,6 +385,25 @@ function invariants(w) {
   for (const [name, count] of Object.entries(M.graph.riverGraphInvariants(w.graph, w.el))) {
     if (count > 0) fail(`riverGraph.${name}`, `${count} violations`)
   }
+  // The course's one statistical law (phase 3): the meander belt widens
+  // with discharge. Rank correlation over the meandering reaches, when
+  // there are enough of them to say anything.
+  {
+    const m = w.graph.courses.filter((c) => c.pattern === 'meandering' && c.beltWidthM > 0)
+    if (m.length >= 10) {
+      const rank = (values) => { const order = values.map((v, i) => [v, i]).sort((a, b) => a[0] - b[0]); const r = new Array(values.length); order.forEach(([, i], k) => { r[i] = k }); return r }
+      const rq = rank(m.map((c) => c.dischargeM3s)), rb = rank(m.map((c) => c.beltWidthM))
+      const mean = (m.length - 1) / 2
+      let num = 0, dq = 0, db = 0
+      for (let i = 0; i < m.length; i++) { num += (rq[i] - mean) * (rb[i] - mean); dq += (rq[i] - mean) ** 2; db += (rb[i] - mean) ** 2 }
+      const rho = num / Math.sqrt(dq * db)
+      if (!(rho > 0.2)) fail('riverCourse.beltWidth', `belt width does not grow with discharge (Spearman ${rho.toFixed(2)} over ${m.length} meandering reaches)`)
+    }
+    for (const c of w.graph.courses) {
+      if (!(c.sinuosity >= 0.99 && c.sinuosity < 4)) { fail('riverCourse.sinuosity', `reach ${c.reach}: ${c.sinuosity}`); break }
+      if (c.lines.some((l) => l.some((v) => !Number.isFinite(v)))) { fail('riverCourse.finite', `reach ${c.reach}`); break }
+    }
+  }
 
   // Every land cell must be classified, or the map renders a hole.
   //
@@ -425,6 +448,8 @@ function metrics(w) {
   const put = (name, value) => { out[name] = Number(value.toFixed(6)) }
   put('river.reaches', w.graph.reaches.length)
   put('river.mouths', w.graph.nodes.filter((node) => node.kind === 'mouth').length)
+  put('river.meandering', w.graph.courses.filter((c) => c.pattern === 'meandering').length)
+  put('river.braided', w.graph.courses.filter((c) => c.pattern === 'braided').length)
 
   put('tectonics.plates', w.sim.seeds.length)
   put('tectonics.rafts', w.sim.rafts.length)
@@ -535,6 +560,7 @@ function fingerprints(w) {
   // the reach cells — "the serialised graph enters the hash guard".
   put('river.graph', new TextEncoder().encode(M.graph.serializeRiverGraph(w.graph).json))
   put('river.cells', w.graph.cells)
+  put('river.course', M.graph.serializeRiverGraph(w.graph).coursePoints)
   put('hydro.lakeDepth', w.lakes.depth)
   put('hydro.saltFlat', w.lakes.saltFlat)
   put('hydro.dryBasin', w.lakes.dryBasin)

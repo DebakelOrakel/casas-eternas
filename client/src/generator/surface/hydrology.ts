@@ -39,6 +39,20 @@ function precipRunoffAt(precip: Float32Array, cx: number, cy: number, worldW: nu
   return p > 0 ? p : 0
 }
 
+// The hydrology's discharge unit is mm/yr summed over contributing cells;
+// × cell area × 1e-3 m/mm ÷ seconds-per-year gives m³/s, and a nominal
+// runoff coefficient (real basins deliver roughly a third of their rainfall
+// to the channel — the rest evaporates or seeps) keeps the number in the
+// range real rivers of this catchment size actually carry. Display-grade
+// realism, not a water-budget model; per cell size, so a bake's finer cells
+// convert their own units. (Moved here from the screen for the river
+// course's hydraulic geometry, 2026-09-22.)
+export const RUNOFF_COEFFICIENT = 0.35
+const SECONDS_PER_YEAR = 3.156e7
+export function dischargeToM3s(dischargeUnits: number, cellM: number): number {
+  return dischargeUnits * ((cellM * cellM * 1e-3) / SECONDS_PER_YEAR) * RUNOFF_COEFFICIENT
+}
+
 // Mean per-cell runoff over land — the reference the critical-area threshold
 // multiplies against (so "A cells of drainage" translates to a discharge value).
 export function meanLandRunoff(precip: Float32Array, elevation: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number): number {

@@ -12,16 +12,11 @@ import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS, AMPLIFY_FINEST_STAGE } fro
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../generator/core/mapConfig'
 
-// Discharge display conversion: the hydrology's unit is mm/yr summed over
-// contributing cells; × cell area × 1e-3 m/mm ÷ seconds-per-year gives m³/s,
-// and a nominal runoff coefficient (real basins deliver roughly a third of
-// their rainfall to the channel — the rest evaporates or seeps) keeps the
-// number in the range real rivers of this catchment size actually carry.
-// Display-grade realism, not a water-budget model.
-const RUNOFF_COEFFICIENT = 0.35
-const DISCHARGE_TO_M3S = ((METERS_PER_CELL * METERS_PER_CELL * 1e-3) / 3.156e7) * RUNOFF_COEFFICIENT
+// Discharge display conversion at the macro cell size (hydrology.dischargeToM3s).
+const DISCHARGE_TO_M3S = dischargeToM3s(1, METERS_PER_CELL)
 import JSZip from 'jszip'
 import type { WaterBody } from '../../generator/surface/hydrology'
+import { dischargeToM3s } from '../../generator/surface/hydrology'
 import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage } from '../../generator/pipeline/messages'
 import { downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'

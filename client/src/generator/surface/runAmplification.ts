@@ -8,6 +8,7 @@ import { ABYSSAL_FLOOR, SEA_LEVEL } from '../elevation/elevationScale'
 import { accumulateDischarge, channelThreshold, computeLakes, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff, CANONICAL_RIVER_DENSITY } from './hydrology'
 import type { RiverPolylines, WaterBody } from './hydrology'
 import { buildRiverGraph, riverPolylinesFromGraph } from './riverGraph'
+import { computeRiverCourses } from './riverCourse'
 import type { RiverGraph } from './riverGraph'
 
 // The amplification bake itself: upsample, seed roughness, erode, re-run
@@ -214,6 +215,7 @@ export async function runAmplification(
         // split bake its discharge inputs instead of letting it derive them.
         temperature: request.region ? undefined : request.temperature,
         sedimentFlux,
+        courseSeed: request.seed,
       },
       (fraction) => onProgress('hydrology', fraction),
     )
@@ -258,7 +260,7 @@ export async function deriveRivers(
   // it (evaporation decides which basins stay wet), and everything else it
   // needs — the routing and the discharge — this function already has in hand.
   // Absent, the lake half is skipped and the caller keeps whatever it had.
-  options: { maxDischarge?: number; meanRunoff?: number; temperature?: Float32Array; sedimentFlux?: Float32Array } = {},
+  options: { maxDischarge?: number; meanRunoff?: number; temperature?: Float32Array; sedimentFlux?: Float32Array; courseSeed?: number } = {},
   onProgress: (fraction: number) => void = () => {},
 ): Promise<{ rivers: RiverPolylines; lakeDepth: Float32Array | null; waterBodies: WaterBody[] | null; riverGraph: RiverGraph | null }> {
   const routing = await fillDepressionsAndRouteFlow(field, width, height, SEA_LEVEL)
@@ -282,6 +284,8 @@ export async function deriveRivers(
   const riverGraph = lakes
     ? buildRiverGraph({ routing, discharge, elevation: field, threshold, maxDischarge, bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux: options.sedimentFlux })
     : null
+  // The course (phase 3) on this grid, seeded from the world.
+  if (riverGraph && options.courseSeed !== undefined) riverGraph.courses = computeRiverCourses(riverGraph, { cellM: WORLD_WIDTH_METERS / width, seed: options.courseSeed })
   const rivers = riverGraph
     ? riverPolylinesFromGraph(riverGraph, maxDischarge)
     : extractRiverPolylines(routing, discharge, field, threshold, maxDischarge)

@@ -420,7 +420,7 @@ export interface WorkerHydrologyDataMessage {
   // The river feature graph (surface/riverGraph.ts) the ribbons above were
   // derived from — serialised: the JSON document and the reach cells as
   // Int32 bytes. Re-route only; null means "unchanged".
-  riverGraph: { json: string; cells: ArrayBuffer } | null
+  riverGraph: { json: string; cells: ArrayBuffer; coursePoints: ArrayBuffer } | null
 }
 
 // The computed ecology fields (coarse climate grid), keyed by field id so the

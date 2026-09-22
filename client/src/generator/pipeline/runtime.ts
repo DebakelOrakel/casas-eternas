@@ -31,6 +31,8 @@ import { downsampleMax } from '../core/field'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import type { WaterBody } from '../surface/hydrology'
 import { buildRiverGraph, riverPolylinesFromGraph, serializeRiverGraph } from '../surface/riverGraph'
+import { computeRiverCourses } from '../surface/riverCourse'
+import { WORLD_WIDTH_METERS } from '../surface/erosionEngine'
 import type { RiverGraph } from '../surface/riverGraph'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { computeEcology } from '../ecology/ecologyField'
@@ -806,6 +808,9 @@ function handleHydrologyRun(): void {
         sedimentFlux: lastSedimentFlux && lastSedimentFlux.length === elevation.length ? lastSedimentFlux : undefined,
         biomes: riparian.biomes,
       })
+      // THE RIVER COURSE (phase 3): pattern, meanders, braids and deltas per
+      // reach, seeded from the world so a world always gets the same bends.
+      result.graph.courses = computeRiverCourses(result.graph, { cellM: WORLD_WIDTH_METERS / width, seed: sim.warpSeed })
     }
     const rivers = result.graph
       ? riverPolylinesFromGraph(result.graph, result.maxDischarge)
@@ -824,10 +829,10 @@ function handleHydrologyRun(): void {
       waterBodies: rerouted ? result.bodies : null,
       waterLevel: levelOut.buffer as ArrayBuffer,
       waterSurface: surfaceOut.buffer as ArrayBuffer,
-      riverGraph: graphOut ? { json: graphOut.json, cells: graphOut.cells.slice().buffer as ArrayBuffer } : null,
+      riverGraph: graphOut ? { json: graphOut.json, cells: graphOut.cells.slice().buffer as ArrayBuffer, coursePoints: graphOut.coursePoints.buffer as ArrayBuffer } : null,
     }
     const transfer = [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge, hydrologyMessage.waterLevel, hydrologyMessage.waterSurface]
-    if (hydrologyMessage.riverGraph) transfer.push(hydrologyMessage.riverGraph.cells)
+    if (hydrologyMessage.riverGraph) transfer.push(hydrologyMessage.riverGraph.cells, hydrologyMessage.riverGraph.coursePoints)
     emit(hydrologyMessage, transfer)
   })()
 }

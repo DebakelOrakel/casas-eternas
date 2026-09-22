@@ -1,5 +1,9 @@
 {
   "calibration": {
+    "river.reaches": 1029,
+    "river.mouths": 232,
+    "river.meandering": 8,
+    "river.braided": 94,
     "tectonics.plates": 16,
     "tectonics.rafts": 13,
     "tectonics.features": 1552,
@@ -66,6 +70,10 @@
     "mig.meanCost": 22.198376
   },
   "alpha": {
+    "river.reaches": 403,
+    "river.mouths": 140,
+    "river.meandering": 4,
+    "river.braided": 18,
     "tectonics.plates": 11,
     "tectonics.rafts": 5,
     "tectonics.features": 1050,
@@ -132,6 +140,10 @@
     "mig.meanCost": 43.07592
   },
   "bravo": {
+    "river.reaches": 374,
+    "river.mouths": 98,
+    "river.meandering": 2,
+    "river.braided": 37,
     "tectonics.plates": 13,
     "tectonics.rafts": 15,
     "tectonics.features": 1764,

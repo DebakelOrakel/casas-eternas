@@ -3,6 +3,7 @@ import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
 import { buildChannelMask, RIVER_MAX_WIDTH, RIVER_MIN_WIDTH } from './hydrology'
 import type { RiverPolylines, WaterBody } from './hydrology'
 import { WORLD_WIDTH_METERS } from './erosionEngine'
+import type { RiverCourse } from './riverCourse'
 
 // THE FEATURE GRAPH — the erosion's output as data (ADAPTIVE_MESH_PLAN.md
 // phase 2, decision 10 of adaptive-mesh.md). Rivers are REACHES between
@@ -88,6 +89,9 @@ export interface RiverGraph {
   cells: Int32Array
   // The standing-water bodies the inlets and outlets refer to (phase 1).
   bodies: WaterBody[]
+  // The course of every reach wide enough to show one (phase 3,
+  // riverCourse.ts), in reach order; absent until computed.
+  courses?: RiverCourse[]
 }
 
 export interface RiverGraphInputs {
@@ -237,7 +241,9 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
     const lastOwn = cellsOut[cellsOut.length - 2]
     const dischargeIn = discharge[start]
     const dischargeOut = discharge[lastOwn]
-    const dropM = elevationToMeters(elevation[start]) - elevationToMeters(elevation[cur])
+    // Drop over the reach's OWN cells: a mouth's water cell is the sea floor
+    // or a lake bed, not the river's bed.
+    const dropM = elevationToMeters(elevation[start]) - elevationToMeters(elevation[lastOwn])
     let bank = -1
     if (biomes) {
       const counts = new Map<number, number>()
@@ -298,6 +304,12 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
   return { width, height, nodes, reaches, cells: Int32Array.from(cellsOut), bodies: bodies.slice() }
 }
 
+// Seam test for consecutive line points: a jump of more than half the
+// raster is the torus seam, whatever the point spacing.
+function seamStep(ax: number, ay: number, bx: number, by: number, width: number, height: number): boolean {
+  return Math.abs(bx - ax) > width / 2 || Math.abs(by - ay) > height / 2
+}
+
 // The ribbons the map draws, from the graph: chains of reaches along the
 // main stem (at a junction the tributary with the larger discharge
 // continues the line, the others end there with the junction point so the
@@ -306,9 +318,14 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
 // in to its out discharge, so the line thickens along the reach as the old
 // per-cell tracing did in steps.
 export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number): RiverPolylines {
-  const { width, nodes, reaches, cells } = graph
+  const { width, height, nodes, reaches, cells } = graph
   const points: number[] = []
   const lengths: number[] = []
+  // A reach with a course draws its course instead of its cell path: the
+  // first line continues the chain, the other lines (sub-channels,
+  // distributaries) and the oxbows are their own polylines.
+  const courseOf = new Map<number, RiverCourse>()
+  for (const c of graph.courses ?? []) courseOf.set(c.reach, c)
   // Which reach continues each node's line: the largest incoming reach.
   const continues = new Int32Array(nodes.length).fill(-1)
   const largestIn = new Float64Array(nodes.length).fill(-1)
@@ -327,12 +344,23 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number)
     else points.length -= len * 3
     len = 0
   }
-  const emit = (cell: number, w: number): void => {
-    const x = cell % width
-    const y = (cell - x) / width
-    points.push(x + 0.5, y + 0.5, w)
+  let prevX = -1
+  let prevY = -1
+  const emitXY = (x: number, y: number, w: number): void => {
+    if (prevX >= 0 && seamStep(prevX, prevY, x, y, width, height)) flush()
+    points.push(x, y, w)
+    prevX = x
+    prevY = y
     len++
   }
+  const emitLine = (line: Float32Array, wIn: number, wOut: number): void => {
+    const count = line.length / 2
+    for (let k = 0; k < count; k++) {
+      const t = count > 1 ? k / (count - 1) : 1
+      emitXY(line[k * 2], line[k * 2 + 1], wIn + (wOut - wIn) * t)
+    }
+  }
+  const extras: { line: Float32Array; w: number }[] = []
   for (const head of reaches) {
     if (drawn[head.id]) continue
     // Only start a line at a reach nothing continues INTO — the others are
@@ -340,23 +368,28 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number)
     if (continues[head.from] >= 0 && !drawn[continues[head.from]]) continue
     let r: RiverReach | null = head
     let prevCell = -1
+    prevX = -1
+    prevY = -1
     while (r && !drawn[r.id]) {
       drawn[r.id] = 1
       const wIn = riverWidth(r.dischargeIn, maxDischarge)
       const wOut = riverWidth(r.dischargeOut, maxDischarge)
-      for (let k = 0; k < r.cellCount; k++) {
-        const cell = cells[r.cellStart + k]
-        if (prevCell === cell) continue // the node cell shared with the previous reach
-        if (prevCell >= 0) {
-          const px = prevCell % width
-          const py = (prevCell - px) / width
-          const cx = cell % width
-          const cy = (cell - cx) / width
-          if (Math.abs(cx - px) > 1 || Math.abs(cy - py) > 1) flush() // a seam step
+      const course = courseOf.get(r.id)
+      if (course && course.lines.length > 0) {
+        emitLine(course.lines[0], wIn * course.lineWidth[0], wOut * course.lineWidth[0])
+        for (let i = 1; i < course.lines.length; i++) extras.push({ line: course.lines[i], w: riverWidth(r.dischargeOut * course.lineWidth[i] * course.lineWidth[i], maxDischarge) })
+        for (const o of course.oxbows) extras.push({ line: o, w: RIVER_MIN_WIDTH })
+        prevCell = cells[r.cellStart + r.cellCount - 1]
+      } else {
+        for (let k = 0; k < r.cellCount; k++) {
+          const cell = cells[r.cellStart + k]
+          if (prevCell === cell) continue // the node cell shared with the previous reach
+          const cx = (cell % width) + 0.5
+          const cy = Math.floor(cell / width) + 0.5
+          const t = r.cellCount > 1 ? k / (r.cellCount - 1) : 1
+          emitXY(cx, cy, wIn + (wOut - wIn) * t)
+          prevCell = cell
         }
-        const t = r.cellCount > 1 ? k / (r.cellCount - 1) : 1
-        emit(cell, wIn + (wOut - wIn) * t)
-        prevCell = cell
       }
       // Continue only if this reach is the main stem into its end node.
       const next: number = continues[r.to] === r.id ? outOf[r.to] : -1
@@ -364,6 +397,12 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number)
     }
     flush()
     prevCell = -1
+  }
+  for (const extra of extras) {
+    prevX = -1
+    prevY = -1
+    emitLine(extra.line, extra.w, extra.w)
+    flush()
   }
   return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) }
 }
@@ -374,18 +413,43 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number)
 export interface SerializedRiverGraph {
   json: string
   cells: Int32Array
+  // Every course line and oxbow, concatenated [x, y, …]; the JSON's courses
+  // carry (start, count) descriptors into it. Empty without courses.
+  coursePoints: Float32Array
 }
+
+// A course as it sits in the JSON: the lines and oxbows replaced by
+// descriptors into coursePoints.
+type SerializedCourse = Omit<RiverCourse, 'lines' | 'oxbows'> & { lines: [number, number][]; oxbows: [number, number][] }
 
 export function serializeRiverGraph(graph: RiverGraph): SerializedRiverGraph {
-  const { cells, ...rest } = graph
-  return { json: JSON.stringify(rest), cells }
+  const { cells, courses, ...rest } = graph
+  const chunks: Float32Array[] = []
+  let offset = 0
+  const describe = (line: Float32Array): [number, number] => {
+    const d: [number, number] = [offset, line.length / 2]
+    chunks.push(line)
+    offset += line.length / 2
+    return d
+  }
+  const serialCourses: SerializedCourse[] | undefined = courses?.map((c) => ({ ...c, lines: c.lines.map(describe), oxbows: c.oxbows.map(describe) }))
+  const coursePoints = new Float32Array(offset * 2)
+  let at = 0
+  for (const chunk of chunks) {
+    coursePoints.set(chunk, at)
+    at += chunk.length
+  }
+  return { json: JSON.stringify(serialCourses ? { ...rest, courses: serialCourses } : rest), cells, coursePoints }
 }
 
-export function deserializeRiverGraph(json: string, cells: Int32Array): RiverGraph | null {
+export function deserializeRiverGraph(json: string, cells: Int32Array, coursePoints: Float32Array = new Float32Array(0)): RiverGraph | null {
   try {
-    const parsed = JSON.parse(json) as Omit<RiverGraph, 'cells'>
+    const parsed = JSON.parse(json) as Omit<RiverGraph, 'cells' | 'courses'> & { courses?: SerializedCourse[] }
     if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.reaches) || !Array.isArray(parsed.bodies)) return null
-    return { ...parsed, cells }
+    const slice = ([start, count]: [number, number]): Float32Array => coursePoints.slice(start * 2, (start + count) * 2)
+    const courses = parsed.courses?.map((c) => ({ ...c, lines: c.lines.map(slice), oxbows: c.oxbows.map(slice) }))
+    const { courses: _dropped, ...rest } = parsed
+    return courses ? { ...rest, cells, courses } : { ...rest, cells }
   } catch {
     return null
   }

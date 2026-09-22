@@ -157,6 +157,7 @@ const fingerprints = (result) => ({
   waterBodies: hash(new TextEncoder().encode(JSON.stringify(result.waterBodies))),
   riverGraph: hash(new TextEncoder().encode(result.riverGraph ? M.graph.serializeRiverGraph(result.riverGraph).json : '')),
   riverGraphCells: hash(result.riverGraph ? result.riverGraph.cells : new Int32Array(0)),
+  riverCourse: hash(result.riverGraph ? M.graph.serializeRiverGraph(result.riverGraph).coursePoints : new Float32Array(0)),
 })
 
 console.log('')
@@ -188,6 +189,7 @@ console.log('— invariants')
       check('the graph holds its invariants', violations.length === 0, violations.map(([k, n]) => `${k}:${n}`).join(' '))
       const derived = M.graph.riverPolylinesFromGraph(result.riverGraph, 1) // the scale only sets widths; the line count is the check
       check('the ribbons derive from the graph', result.rivers.lengths.length === derived.lengths.length)
+      check('the graph carries courses', Array.isArray(result.riverGraph.courses))
     }
   } else {
     check('the bake produced a water-body list with its lake layer', result.lakeDepth === null && result.waterBodies === null)

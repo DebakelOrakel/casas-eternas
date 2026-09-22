@@ -91,6 +91,7 @@ export interface AmplifyDoneMessage {
   // for a region bake or a world without climate.
   riverGraphJson?: string
   riverGraphCells?: ArrayBuffer
+  riverGraphCoursePoints?: ArrayBuffer
   // Wall-clock milliseconds, so the screen (and a human) can see what the
   // bake actually costs at this resolution.
   durationMs: number
@@ -158,10 +159,12 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
     const serialised = serializeRiverGraph(result.riverGraph)
     done.riverGraphJson = serialised.json
     done.riverGraphCells = serialised.cells.buffer as ArrayBuffer
+    done.riverGraphCoursePoints = serialised.coursePoints.buffer as ArrayBuffer
   }
   const transfer: ArrayBuffer[] = [done.elevation, done.riverPoints, done.riverLengths]
   if (done.lakeDepth) transfer.push(done.lakeDepth)
   if (done.riverGraphCells) transfer.push(done.riverGraphCells)
+  if (done.riverGraphCoursePoints) transfer.push(done.riverGraphCoursePoints)
   self.postMessage(done, transfer)
 }
 

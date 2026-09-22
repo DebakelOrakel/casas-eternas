@@ -130,7 +130,7 @@ export function bakeStageInBrowser(
           riverLengths: new Uint32Array(message.riverLengths),
           lakeDepth: message.lakeDepth ? new Float32Array(message.lakeDepth) : null,
           waterBodies: message.waterBodies ?? null,
-          riverGraph: message.riverGraphJson && message.riverGraphCells ? deserializeRiverGraph(message.riverGraphJson, new Int32Array(message.riverGraphCells)) : null,
+          riverGraph: message.riverGraphJson && message.riverGraphCells ? deserializeRiverGraph(message.riverGraphJson, new Int32Array(message.riverGraphCells), message.riverGraphCoursePoints ? new Float32Array(message.riverGraphCoursePoints) : undefined) : null,
         },
         durationMs: message.durationMs,
       })

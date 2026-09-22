@@ -97,6 +97,7 @@ const FILES = {
   // Int32 bytes — flat names, because the server's listing walks one level.
   riverGraph: 'riverGraph.json',
   riverGraphCells: 'riverGraphCells.i32',
+  riverCoursePoints: 'riverCoursePoints.f32',
   meta: 'meta.json',
 } as const
 
@@ -134,6 +135,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
   const graph = artifact.riverGraph ? serializeRiverGraph(artifact.riverGraph) : null
   const graphBytes = graph ? new TextEncoder().encode(graph.json) : null
   const graphCellBytes = graph ? new Uint8Array(graph.cells.buffer, graph.cells.byteOffset, graph.cells.byteLength) : null
+  const courseBytes = graph ? new Uint8Array(graph.coursePoints.buffer, graph.coursePoints.byteOffset, graph.coursePoints.byteLength) : null
   // The designated finest stage writes its derived family beside itself:
   // box-downsampled on the RAW f32 field before quantisation, so a member
   // is exactly box(finest) and not box(quantised(finest)) — the family's
@@ -165,7 +167,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
       [FILES.elevation]: elevationBytes.byteLength,
       ...(lakeBytes ? { [FILES.lakeDepth]: lakeBytes.byteLength } : {}),
       ...(bodyBytes ? { [FILES.waterBodies]: bodyBytes.byteLength } : {}),
-      ...(graphBytes && graphCellBytes ? { [FILES.riverGraph]: graphBytes.byteLength, [FILES.riverGraphCells]: graphCellBytes.byteLength } : {}),
+      ...(graphBytes && graphCellBytes && courseBytes ? { [FILES.riverGraph]: graphBytes.byteLength, [FILES.riverGraphCells]: graphCellBytes.byteLength, [FILES.riverCoursePoints]: courseBytes.byteLength } : {}),
       [rivers.points]: artifact.riverPoints.byteLength,
       [rivers.lengths]: artifact.riverLengths.byteLength,
       ...Object.fromEntries(family.flatMap(({ member, elevation, lakeDepth }) => {
@@ -188,6 +190,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
     (bodyBytes === null || (await store.write(handle, FILES.waterBodies, bodyBytes))) &&
     (graphBytes === null || (await store.write(handle, FILES.riverGraph, graphBytes))) &&
     (graphCellBytes === null || (await store.write(handle, FILES.riverGraphCells, graphCellBytes))) &&
+    (courseBytes === null || (await store.write(handle, FILES.riverCoursePoints, courseBytes))) &&
     (await store.write(handle, rivers.points, artifact.riverPoints)) &&
     (await store.write(handle, rivers.lengths, artifact.riverLengths)) &&
     (await store.write(handle, FILES.meta, new TextEncoder().encode(JSON.stringify(meta))))
@@ -269,7 +272,8 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
   if (!familyMember) {
     const graphBytes = await store.read(handle, FILES.riverGraph)
     const cellBytes = graphBytes ? await store.read(handle, FILES.riverGraphCells) : null
-    if (graphBytes && cellBytes) riverGraph = deserializeRiverGraph(new TextDecoder().decode(graphBytes), new Int32Array(cellBytes.slice(0)))
+    const courseBytes = graphBytes ? await store.read(handle, FILES.riverCoursePoints) : null
+    if (graphBytes && cellBytes) riverGraph = deserializeRiverGraph(new TextDecoder().decode(graphBytes), new Int32Array(cellBytes.slice(0)), courseBytes ? new Float32Array(courseBytes.slice(0)) : undefined)
   }
   const riverPoints = new Float32Array(pointBytes)
   if (memberScale !== 1) {
