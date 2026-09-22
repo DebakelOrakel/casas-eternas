@@ -1,7 +1,7 @@
 ---
 summary: How the worldmap's amplification bake could stop costing seven minutes every load — tiling as the shared enabler, then caching (local first, server later), plus what could make the bake itself cheaper (basin decomposition, parallel workers, GPU, an adaptive mesh as the last resort). Analysis and options; the choices are not made.
 date: 2026-08-07
-updated: 2026-09-20
+updated: 2026-09-22
 area: platform
 stage: idea
 status: design discussion — options and analysis, nothing decided
@@ -160,7 +160,11 @@ of the erosion stage (`erosionEngine`, `flowRouting`, `hydrology`), not
 a change to it, and rests on stream power being scale-invariant at
 m = 0.5, n = 1 — exactly the property the per-cell-size rescaling
 above already depends on. Ocean masking and basin decomposition first;
-this only if those are not enough.
+this only if those are not enough. Developed further on 2026-09-22 into a
+direction of its own — one mesh from tectonics to the near ground, a
+feature graph as the erosion's product, tectonics coupled to erosion —
+in [adaptive-mesh.md](./adaptive-mesh.md); the cost ordering here
+stands.
 
 Suggested order if this is picked up: memory audit → basin
 decomposition with workers → tiling + cache → GPU last, and only after
