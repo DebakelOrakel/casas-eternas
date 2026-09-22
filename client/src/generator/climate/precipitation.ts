@@ -15,12 +15,12 @@ export const OCEAN_PRECIP = -1
 // increase) — this is what keeps the tropics humid and the cold poles dry, and
 // couples precipitation to the temperature slider (a warmer world is wetter).
 function evaporation(tempC: number): number {
-  const e = (tempC + 10) / 40
-  return e < 0.05 ? 0.05 : e > 1.2 ? 1.2 : e
+  const e = (tempC - CLIMATE_TUNING.precipEvapZeroC) / CLIMATE_TUNING.precipEvapSpanC
+  return e < CLIMATE_TUNING.precipEvapMin ? CLIMATE_TUNING.precipEvapMin : e > CLIMATE_TUNING.precipEvapMax ? CLIMATE_TUNING.precipEvapMax : e
 }
 
 function bandFactor(phi: number): number {
-  const f = 0.8 + 0.7 * Math.cos(3 * Math.PI * phi)
+  const f = CLIMATE_TUNING.precipBandBase + CLIMATE_TUNING.precipBandSwing * Math.cos(3 * Math.PI * phi)
   return f < CLIMATE_TUNING.precipBandFloor ? CLIMATE_TUNING.precipBandFloor : f
 }
 
@@ -71,7 +71,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
       const eHere = elevationAtWorld(elevation, wx, wy, worldW, worldH)
       const eUp = elevationAtWorld(elevation, wx - u * CLIMATE_TUNING.precipOrogSamplePx, wy - v * CLIMATE_TUNING.precipOrogSamplePx, worldW, worldH)
       const upslope = eUp > SEA_LEVEL ? Math.max(0, eHere - eUp) : 0
-      rainFrac[i] = Math.min(0.85, CLIMATE_TUNING.precipBaseRainout + CLIMATE_TUNING.precipOrographicRate * upslope)
+      rainFrac[i] = Math.min(CLIMATE_TUNING.precipRainoutMax, CLIMATE_TUNING.precipBaseRainout + CLIMATE_TUNING.precipOrographicRate * upslope)
     }
   }
 

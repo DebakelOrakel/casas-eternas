@@ -3,6 +3,7 @@
 // docs/decisions/climate-biomes.md). Elevation is read from the full-res field
 // where fine detail matters (lapse, and later orographic rain shadow).
 import { isLandAt } from '../elevation/elevationScale'
+import { torusDomain } from '../core/domain'
 
 export const CLIMATE_RES_X = 256
 export const CLIMATE_RES_Y = 128
@@ -25,8 +26,9 @@ export function shiftedYNorm(gridY: number, resY: number, equatorOffset: number)
 // "pole" seam on the torus, so the two hemispheres come out mirror-symmetric.
 // Uses the cell center (gy + 0.5). `equatorOffset` slides the band (see shiftedYNorm).
 export function latitudeAt(gridY: number, equatorOffset = 0): number {
-  const yNorm = shiftedYNorm(gridY, CLIMATE_RES_Y, equatorOffset)
-  return Math.abs(yNorm - 0.5) * 2
+  // The domain object (core/domain.ts) owns the mapping; this is its
+  // climate-grid reading.
+  return torusDomain(CLIMATE_RES_X, CLIMATE_RES_Y, equatorOffset).latitude((gridY + 0.5) / CLIMATE_RES_Y)
 }
 
 // Full-res elevation sample at a climate cell's center, for lapse etc. The

@@ -91,6 +91,14 @@ const otherField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'erosion.land
 check('a missing key falls back to its declared default',
   partial.values['genesis.water'] === 12 && partial.values['erosion.landscapeAge'] === otherField.input.default,
   `water=${partial.values['genesis.water']} landscapeAge=${partial.values['erosion.landscapeAge']} (want ${waterField ? 12 : '?'}/${otherField.input.default})`)
+// A control that moved stage (the temperature offset as the Planet's
+// greenhouse; the water, back with the genesis after a day on the planet)
+// reads its old path when the new one is absent, and the new one wins when
+// both are there.
+const moved = M.spec.specFromYaml('spec:\n  planet:\n    water: 33\n  climate:\n    tempOffset: -4\n', 'x')
+const both = M.spec.specFromYaml('spec:\n  planet:\n    water: 41\n  genesis:\n    water: 33\n', 'x')
+check('a moved control reads its legacy path', moved.values['genesis.water'] === 33 && moved.values['planet.greenhouse'] === -4, `water=${moved.values['genesis.water']} greenhouse=${moved.values['planet.greenhouse']}`)
+check('the current path wins over the legacy one', both.values['genesis.water'] === 33)
 
 // A key the file DOES carry but the spec no longer knows must be ignored, not
 // crash or leak: riverDensity left the spec with erosion-v2 P4, and every save
@@ -104,8 +112,9 @@ check('a retired key in an old save is simply ignored',
 const defaults = {}
 for (const f of M.spec.WORLD_SPEC_FIELDS) defaults[f.path] = f.input.default
 const layout = M.spec.specToYamlLines({ seed: 's', values: defaults })
+// The Planet stage opens the recipe since 2026-09-22 (F2), genesis follows it.
 check('layout: nesting and order unchanged',
-  layout[0] === '  seed: "s"' && layout[1] === '  genesis:' && layout[2].startsWith('    ')
+  layout[0] === '  seed: "s"' && layout[1] === '  planet:' && layout[2].startsWith('    ') && layout.some((l) => l === '  genesis:')
   && layout.some((l) => l === '    subsistence:') && layout.some((l) => l.startsWith('      arable: ')),
   layout.slice(0, 3).join(' | '))
 

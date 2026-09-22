@@ -19,7 +19,7 @@ import { ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputPa
 import type { EcologyFieldId } from '../../generator/ecology/ecologyField'
 import type { OverlayId } from './overlays'
 
-export type StepId = 'world' | 'genesis' | 'tectonics' | 'climate' | 'erosion' | 'ecology' | 'migration'
+export type StepId = 'world' | 'planet' | 'genesis' | 'tectonics' | 'climate' | 'erosion' | 'ecology' | 'migration'
 
 export interface Step {
   id: StepId
@@ -36,8 +36,9 @@ export interface Step {
   // the step simply asks one at a time. The second is a reading decision, not a
   // rendering one.
   //
-  // Disjoint from `overlays`, and exactly one member is in `defaults` — there is
-  // no "none" in the group, so a step that has one always paints one.
+  // Disjoint from `overlays`, and at most one member is in `defaults`: the
+  // group has a "none" (the screen adds it, first and selected), and since
+  // 2026-09-22 a step starts on it unless it names a layer.
   exclusive: readonly OverlayId[]
   // The catalog base for the pick group's heading. The group asks a different
   // question in each step, so the step names it; unset means no heading.
@@ -69,6 +70,19 @@ export const STEPS: readonly Step[] = [
     overlays: ['terrain'],
     exclusive: [],
     defaults: [],
+    fields: [],
+  },
+  {
+    // The planet acts through the climate, so the step shows the climate's
+    // own layers — on the sample world until the world has plates, then on
+    // the world itself. Temperature stays on like in the Climate step; the
+    // washes and the wind are one at a time.
+    id: 'planet',
+    stage: 'planet',
+    overlays: ['terrain', 'temperature'],
+    exclusive: ['precipitation', 'seasonality', 'monsoon', 'wind'],
+    pickTitle: 'generator.section.climateFields',
+    defaults: ['terrain', 'temperature'],
     fields: [],
   },
   {
@@ -112,7 +126,7 @@ export const STEPS: readonly Step[] = [
     overlays: ['terrain', 'names', 'temperature'],
     exclusive: ['precipitation', 'seasonality', 'monsoon', 'biomes', 'wind', 'currents'],
     pickTitle: 'generator.section.climateFields',
-    defaults: ['names', 'temperature', 'precipitation'],
+    defaults: ['names', 'temperature'],
     fields: [],
   },
   {
@@ -155,8 +169,8 @@ for (const s of STEPS) {
   const both = s.exclusive.filter((id) => s.overlays.includes(id))
   if (both.length > 0) throw new Error(`generator step ${s.id} lists ${both} as both a switch and a pick`)
   const chosen = s.exclusive.filter((id) => s.defaults.includes(id))
-  if (s.exclusive.length > 0 && chosen.length !== 1) {
-    throw new Error(`generator step ${s.id} must default to exactly one of its exclusive layers, not ${chosen.length}`)
+  if (chosen.length > 1) {
+    throw new Error(`generator step ${s.id} must default to at most one of its exclusive layers, not ${chosen.length}`)
   }
 }
 

@@ -9,10 +9,9 @@ import { metersToElevation } from './elevationScale'
 // Splitting a definition module to chase a hash it has no consumer for is the wrong
 // trade today; it wants its own decision.
 //
-// Also out: the EXPORTED constants of this module (RIDGE_MEAN, FINE_DETAIL_SEED_SALT,
-// LAND_TARGET_MIN/MAX). An export is a contract with other modules; this pass groups
-// what a module keeps to itself. LAND_TARGET_MIN/MAX are a slider's endpoints anyway —
-// input schema, not tuning.
+// Also out: the EXPORTED constants of this module (RIDGE_MEAN, FINE_DETAIL_SEED_SALT).
+// An export is a contract with other modules; this pass groups what a module keeps
+// to itself. (The land-target solver's search constants left with it, 2026-09-22.)
 
 export const ELEVATION_TUNING = {
   // --- from elevationField.ts ---
@@ -282,23 +281,6 @@ export const ELEVATION_TUNING = {
   axisSaltX: 0,
 
   axisSaltY: 97,
-
-  // --- from landTarget.ts ---
-  // The search range for the offset, which is wider than the old slider's ±1350 m and
-  // deliberately lopsided. Downward (less water, more land) there is room to spare —
-  // ABYSSAL_FLOOR sits at −0.633 against the −1 clamp, some 3300 m of headroom. Upward
-  // there is very little, because it is the land's own height that runs out: the
-  // continental interior anchor is only 360 m, so a few hundred metres of extra water
-  // already reaches it. The old symmetric range was sized against the wrong end.
-  offsetSearchMinM: -3000,
-
-  offsetSearchMaxM: 1350,
-
-  // Coarse grid for the search. An eighth was tried first and is NOT good enough: at low
-  // land fractions the coastline breaks into fragments that 62-km point sampling walks
-  // straight past, so the search stopped at a measured 3% that was really 6.15%. A
-  // quarter costs four times as much per step and tracks full resolution closely.
-  solveDivisor: 4,
 
   // --- from dynamicTopography.ts ---
   // Height per unit of mantle buoyancy anomaly (elevation units; the field

@@ -19,6 +19,7 @@
 //     not cleanup.
 import type { InputParam } from '../core/inputParams'
 import { ARCHEAN_INPUTS } from '../archean/archeanInputParams'
+import { PLANET_INPUTS } from '../planet/planetInputParams'
 import { SURFACE_INPUTS } from '../surface/surfaceInputParams'
 import { CLIMATE_INPUTS } from '../climate/climateInputParams'
 import { ECOLOGY_INPUTS } from '../ecology/ecologyInputParams'
@@ -30,7 +31,7 @@ import { MIGRATION_INPUTS } from '../migration/migrationInputParams'
 // `spec.genesis.*`. The module is `archean/` (the era) and the messages are
 // `archeanInit`/`archeanStart` (the implementation) — three names for one stage,
 // which step 3d is where it gets resolved, not here.
-export type StageId = 'genesis' | 'tectonics' | 'erosion' | 'climate' | 'hydrology' | 'ecology' | 'migration'
+export type StageId = 'planet' | 'genesis' | 'tectonics' | 'erosion' | 'climate' | 'hydrology' | 'ecology' | 'migration'
 
 // How a stage occupies time, which decides what controlling it looks like. This
 // is a real difference in kind, not an accident: a steppable stage runs on a
@@ -61,8 +62,25 @@ export interface Stage {
 
 export const STAGES: readonly Stage[] = [
   {
-    id: 'genesis',
+    // THE PLANET (ADAPTIVE_MESH_PLAN.md F2, decision 13): what depends on the
+    // planet and not on the relief. Computes nothing itself — its values are
+    // read by every climate pass (the forcing), and the genesis stands on the
+    // planet — so a change here makes the whole world stale, which is what a
+    // different planet is. Until phase 5 only the final climate reads the
+    // astronomical controls; the per-epoch climate will read the same.
+    id: 'planet',
     dependsOn: [],
+    kind: 'oneShot',
+    inputs: {
+      obliquity: PLANET_INPUTS.obliquity,
+      greenhouse: PLANET_INPUTS.greenhouse,
+      rotation: PLANET_INPUTS.rotation,
+    },
+    outputs: [],
+  },
+  {
+    id: 'genesis',
+    dependsOn: ['planet'],
     kind: 'steppable',
     inputs: { mantleVigour: ARCHEAN_INPUTS.mantleVigour, water: ARCHEAN_INPUTS.water },
     // The Archean's real product is the hand-over — the plate simulation the era
@@ -88,10 +106,10 @@ export const STAGES: readonly Stage[] = [
     // stale, not the other way round. The stage computes on the
     // pre-erosion terrain (the same input the forcing sees); the
     // post-erosion climate truth is the hydrology stage's refinement pass.
-    dependsOn: ['tectonics'],
+    dependsOn: ['planet', 'tectonics'],
     kind: 'oneShot',
+    // The temperature offset is the planet's greenhouse control now.
     inputs: {
-      tempOffset: CLIMATE_INPUTS.tempOffset,
       humidity: CLIMATE_INPUTS.humidity,
       contrast: CLIMATE_INPUTS.contrast,
       equatorOffset: CLIMATE_INPUTS.equatorOffset,

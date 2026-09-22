@@ -23,6 +23,12 @@
 
 // Wrap a value into [0, n) for any sign. The one-liner that had nine private
 // copies across eight files.
+// A wrapped 2-D index on a resX×resY grid — the helper oceanCurrents,
+// seasonality and monsoon each used to write for themselves (BUG_BOUNTY 34).
+export function wrapIndex2(x: number, y: number, resX: number, resY: number): number {
+  return wrapValue(y, resY) * resX + wrapValue(x, resX)
+}
+
 export function wrapValue(v: number, n: number): number {
   return ((v % n) + n) % n
 }

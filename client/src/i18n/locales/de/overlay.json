@@ -55,5 +55,7 @@
   "overlay.migration.help": "Zeigt, wie sich jede Spezies von ihrem Ursprung ausbreitet.",
   "overlay.migration.legend.title": "Völker",
   "overlay.legend.title": "Legende",
-  "overlay.legend.empty": "Kein Layer mit Legende ist eingeschaltet."
+  "overlay.legend.empty": "Kein Layer mit Legende ist eingeschaltet.",
+  "overlay.none.label": "Keine",
+  "overlay.none.help": "Keine dieser Schichten malen."
 }

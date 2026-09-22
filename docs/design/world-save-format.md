@@ -69,6 +69,14 @@ status:
   erosionRun: <count>      # how many on-demand erosion passes were applied
 ```
 
+The example above shows the SHAPE; the keys it lists are historical. The
+authoritative table is `client/src/world/save/worldSpec.ts`, whose order is
+the file order. Since 2026-09-22 the recipe opens with `planet:` (obliquity,
+greenhouse, rotation, water — the Planet stage), and one key moved there: `climate.tempOffset` is still READ from its old
+path as `planet.greenhouse` when the new one is absent (`SpecField.
+legacyPaths`), never written; `planet.water` is read the same way for the
+few saves written while the water sat on the planet.
+
 - **`kind: FlatWorld`** — the flat-torus generator (as opposed to the legacy sphere /
   Mars generators). Not validated on load, so older files with `kind: World` still load.
 - **`spec`** mirrors the generation controls. On load, each field is written back to its

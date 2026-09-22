@@ -17,7 +17,10 @@ Where this is going: [docs/design/generator-pipeline.md](../../../docs/design/ge
 
 ```
 pipeline/   messages (the worker contract), runtime (stage state + handlers)
-core/       mapConfig, toroidal, rng, field (the shared samplers), minHeap, interpolation
+core/       mapConfig, toroidal, rng, field (the shared samplers), minHeap, interpolation,
+            domain (the topology: latitude on the torus)
+planet/     the Planet stage's controls and their forcing (obliquity, orbit, sun, rotation) —
+            what depends on the planet and not on the relief; the climate reads it
 mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends only
             on core/ and crust/ and never on tectonics/
 archean/    the Archean era; hands over to tectonics via finalizeArchean.ts, which

@@ -1,6 +1,7 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { wrapValue } from '../core/field'
+import { wrapIndex2 } from '../core/field'
+import { DEFAULT_PLANET_FORCING, seasonalityFactor, type PlanetForcing } from '../planet/planetForcing'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -9,9 +10,7 @@ const RY = CLIMATE_RES_Y
 // land; the ocean's near-nil swing would just flood the overlay with one color).
 export const OCEAN_AMPLITUDE = -1
 
-function wrapIndex(x: number, y: number): number {
-  return wrapValue(y, RY) * RX + wrapValue(x, RX)
-}
+const wrapIndex = (x: number, y: number): number => wrapIndex2(x, y, RX, RY)
 
 // Continentality 0..1 = normalized distance to the nearest ocean cell
 // (multi-source BFS, 4-connected, toroidally wrapped). 0 at the coast/ocean,
@@ -57,13 +56,15 @@ function computeContinentality(elevation: Float32Array, worldWidth: number, worl
 // than maritime coasts); ocean cells stay low (thermal inertia). Biome
 // classification later reads T_mean ± amplitude/2 for cold-winter / growing-
 // season distinctions. See docs/decisions/climate-biomes.md.
-export function computeSeasonalAmplitude(elevation: Float32Array, worldWidth: number, worldHeight: number, equatorOffset = 0, dryLand?: Uint8Array): Float32Array {
+// `planet` (planet/planetForcing.ts): the tilt sets the swing, the orbit
+// biases one hemisphere's.
+export function computeSeasonalAmplitude(elevation: Float32Array, worldWidth: number, worldHeight: number, equatorOffset = 0, dryLand?: Uint8Array, planet: PlanetForcing = DEFAULT_PLANET_FORCING): Float32Array {
   const continentality = computeContinentality(elevation, worldWidth, worldHeight, dryLand)
   const amplitude = new Float32Array(RX * RY)
   for (let gy = 0; gy < RY; gy++) {
     const yNorm = shiftedYNorm(gy, RY, equatorOffset)
     const phi = Math.abs(yNorm - 0.5) * 2
-    const ampLat = CLIMATE_TUNING.seasonMaxAmplitude * phi
+    const ampLat = CLIMATE_TUNING.seasonMaxAmplitude * phi * seasonalityFactor(planet, yNorm < 0.5)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       const ocean = !isLandAtCell(elevation, dryLand, gx, gy, worldWidth, worldHeight)

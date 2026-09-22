@@ -19,7 +19,7 @@ import type { WaterBody } from '../../generator/surface/hydrology'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
-import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage } from '../../generator/pipeline/messages'
+import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from '../../generator/pipeline/messages'
 import { downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
 import { drawContinentLabels } from '../../generator/render/continentLabelRenderer'
@@ -44,6 +44,9 @@ import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
 import { createOverlayList } from './OverlayList'
 import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from './overlays'
+
+// The pick row that paints none of a step's exclusive layers (overlayList).
+const NO_PICK = 'none' as const
 import { STEPS, STEP_IDS, step, type StepId } from './steps'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
@@ -74,6 +77,8 @@ import { ECOLOGY_INPUTS, ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS } from '../
 import { WORLD_SPEC_FIELDS, specFromYaml, specToYamlLines } from '../../world/save/worldSpec'
 import type { WorldSpec } from '../../world/save/worldSpec'
 import { displayValue, type InputParam } from '../../generator/core/inputParams'
+import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
+import { DEFAULT_PLANET_FORCING } from '../../generator/planet/planetForcing'
 import './generator.css'
 import '../../ui/chrome/chrome.css'
 import { needsSignIn } from '../../server/session'
@@ -256,8 +261,16 @@ function randomSeed(): string {
 // catalog: they read the same in both languages, and a translator asked to
 // render "Aurelia" into German has nothing to do but make it worse.
 const WORLD_NAMES = [
-  'Aurelia', 'Kelduin', 'Tessarin', 'Orrivan', 'Nymbra', 'Skarn',
-  'Velmaris', 'Thanduor', 'Ishkar', 'Perenne', 'Volarin', 'Cassareth',
+  'Elvaris', 'Morvane', 'Quelthar', 'Sylvenne', 'Draketh', 'Ombrial',
+  'Zephyra', 'Kaldrin', 'Serathis', 'Valdoren', 'Ithryn', 'Corvessa',
+  'Thalassor', 'Veyrune', 'Astrakan', 'Lumeris', 'Brannoch', 'Estravel',
+  'Myrrhdal', 'Orendis', 'Galvarin', 'Solveth', 'Nerathis', 'Karvossa',
+  'Elduran', 'Vashtar', 'Pellucir', 'Ravenne', 'Ystrelle', 'Dornhal',
+  'Aethryn', 'Calvessor', 'Mirdane', 'Tovarak', 'Selunor', 'Hyrrin',
+  'Obsidra', 'Faerolin', 'Grimvald', 'Liraneth', 'Zarathul', 'Evendris',
+  'Quorvain', 'Talmyra', 'Ulthera', 'Brevanth', 'Sarnoth', 'Ilvessa',
+  'Xandrel', 'Morthain', 'Celestra', 'Vandaris', 'Yssolde', 'Kharvel',
+  'Novareth', 'Drummar', 'Aelindor', 'Pyrrhen', 'Wyndaris', 'Oltheim',
 ]
 
 function randomWorldName(): string {
@@ -528,6 +541,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       </div>
       <button type="button" class="world-create" data-action="create-world" data-help="generator.world.create" data-t="generator.world.create.label"></button>
     </div>
+    <div class="gen-step" data-stage="planet">
+      <section class="gen-params">
+        <h2 class="gen-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
+        ${paramField(PLANET_INPUTS.obliquity, 'obliquity-input', 'obliquity-label')}
+        ${paramField(PLANET_INPUTS.greenhouse, 'temp-band-input', 'temp-band-label')}
+        ${paramField(PLANET_INPUTS.rotation, 'rotation-input', 'rotation-label')}
+      </section>
+    </div>
     <div class="gen-step" data-stage="genesis">
       <section class="gen-params">
         <h2 class="gen-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
@@ -572,7 +593,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     <div class="gen-step" data-stage="climate">
       <section class="gen-params">
         <h2 class="gen-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
-        ${paramField(CLIMATE_INPUTS.tempOffset, 'temp-band-input', 'temp-band-label')}
         ${paramField(CLIMATE_INPUTS.equatorOffset, 'equator-offset-input', 'equator-offset-label')}
         ${paramField(CLIMATE_INPUTS.humidity, 'humidity-input', 'humidity-label')}
         ${paramField(CLIMATE_INPUTS.contrast, 'contrast-input', 'contrast-label')}
@@ -677,6 +697,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const mantleVigourLabel = root.querySelector<HTMLElement>('[data-value="mantle-vigour-label"]')!
   const waterInput = root.querySelector<HTMLInputElement>('.water-input')!
   const waterLabel = root.querySelector<HTMLElement>('[data-value="water-label"]')!
+  // The Planet stage's astronomical controls (planet/planetInputParams.ts).
+  const obliquityInput = root.querySelector<HTMLInputElement>('.obliquity-input')!
+  const obliquityLabel = root.querySelector<HTMLElement>('[data-value="obliquity-label"]')!
+  const rotationInput = root.querySelector<HTMLInputElement>('.rotation-input')!
+  const rotationLabel = root.querySelector<HTMLElement>('[data-value="rotation-label"]')!
   const resetArcheanButton = root.querySelector<HTMLButtonElement>('[data-action="reset-archean"]')!
   for (const { param, cls, valueKey } of declaredSliders) {
     const input = root.querySelector<HTMLInputElement>(`.${cls}`)
@@ -2028,9 +2053,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // goes off. The group is read from the step table rather than kept a second
   // time, and the state is the ordinary `overlaysOn` — a pick is a switch that
   // turns its siblings off, not a second kind of thing to keep in sync.
-  function pickExclusiveOverlay(id: OverlayId): void {
+  // `NO_PICK` switches the whole group off.
+  function pickExclusiveOverlay(id: OverlayId | typeof NO_PICK): void {
     const group = step(STEP_IDS[panelIndex]).exclusive
-    if (!group.includes(id)) return
+    if (id !== NO_PICK && !group.includes(id)) return
     for (const member of group) overlaysOn[member] = member === id
     updateOverlays()
   }
@@ -2042,6 +2068,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const ecologyAvailable = overlayAvailable.ecology()
     overlayList.refresh((id) => isOverlayId(id)
       ? { on: overlaysOn[id], available: overlayAvailable[id]() }
+      : id === NO_PICK
+        ? { on: !step(STEP_IDS[panelIndex]).exclusive.some((member) => overlaysOn[member]), available: true }
       // The PICK, not what a hover is showing: hovering a lever previews the
       // aggregate, and the mark would leave the resource you chose.
       : { on: overlaysOn.ecology && pickedEcologyField === id, available: ecologyAvailable })
@@ -2184,6 +2212,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const rowsForStep: Record<StepId, (cell: ProbeCell) => ProbeRow[]> = {
     // Step 0 is about which world, not about what is on the map.
     world: () => [],
+    // The planet acts through the stages after it; nothing of its own to probe.
+    planet: () => [],
     genesis: (cell) => {
       const rows: ProbeRow[] = []
       if (lastMantle && mantleResX > 0) {
@@ -2381,6 +2411,67 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     })
   }
 
+  // THE PLANET PREVIEW (planet/sampleWorld.ts): while the Planet step is
+  // open and the world has no plates yet, the map shows the sample world
+  // with the climate the controls make on it. The real base is kept aside
+  // and put back on leaving; the climate fields are the preview's for as
+  // long as it stands and are cleared with it, so nothing downstream ever
+  // sees them as the world's climate.
+  let planetPreviewShown = false
+  let planetPreviewRealBase: { base: Uint8ClampedArray; relief: Uint8Array } | null = null
+  let planetPreviewDebounce: ReturnType<typeof setTimeout> | undefined
+  function requestPlanetPreview(): void {
+    postToWorker({ type: 'planetPreview', width: MAP_WIDTH, height: MAP_HEIGHT, weather: weatherParams() })
+  }
+  // A Planet control moved: the world's own climate when it has plates to
+  // compute one on, the sample world's otherwise.
+  function requestPlanetForcing(): void {
+    if (archeanFinalised || hasHandover) {
+      if (tectonicsRunning) return
+      requestClimate()
+      return
+    }
+    clearTimeout(planetPreviewDebounce)
+    planetPreviewDebounce = setTimeout(requestPlanetPreview, 150)
+  }
+  function handlePlanetPreviewData(message: WorkerPlanetPreviewDataMessage): void {
+    if (STEP_IDS[panelIndex] !== 'planet') return // left the step while it computed
+    if (!planetPreviewShown) {
+      planetPreviewShown = true
+      planetPreviewRealBase = lastColoredBase && lastRelief ? { base: lastColoredBase, relief: lastRelief } : null
+    }
+    lastColoredBase = new Uint8ClampedArray(message.buffer)
+    lastRelief = new Uint8Array(message.relief)
+    simplifiedBaseCache = null
+    unshadedBaseCache = null
+    terrainTintCache = null
+    applyBase()
+    lastTemperature = new Float32Array(message.temperature)
+    lastWind = new Float32Array(message.wind)
+    lastCurrents = new Float32Array(message.currents)
+    lastPrecipitation = new Float32Array(message.precipitation)
+    lastSeasonality = new Float32Array(message.seasonalAmplitude)
+    lastMonsoonIndex = new Float32Array(message.monsoonIndex)
+    lastBiomes = new Uint8Array(message.biomes)
+    climateResX = message.resX
+    climateResY = message.resY
+    updateOverlays()
+  }
+  function leavePlanetPreview(): void {
+    if (!planetPreviewShown) return
+    planetPreviewShown = false
+    if (planetPreviewRealBase) {
+      lastColoredBase = planetPreviewRealBase.base
+      lastRelief = planetPreviewRealBase.relief
+      simplifiedBaseCache = null
+      unshadedBaseCache = null
+      terrainTintCache = null
+      applyBase()
+    }
+    planetPreviewRealBase = null
+    clearClimate()
+  }
+
   function handleClimateData(message: WorkerClimateDataMessage): void {
     lastTemperature = new Float32Array(message.temperature)
     lastWind = new Float32Array(message.wind)
@@ -2470,6 +2561,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   function clearStage(id: StageId): void {
     switch (id) {
+      case 'planet':
       case 'genesis':
       case 'tectonics':
       case 'erosion':
@@ -2585,6 +2677,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     temperatureContrast: Number(contrastInput.value) / 100,
     humidity: Number(humidityInput.value) / 100,
     equatorOffset: Number(equatorOffsetInput.value) / 100,
+    // The Planet stage's forcing, in model units (planet/planetForcing.ts).
+    planet: {
+      obliquityDeg: Number(obliquityInput.value),
+      eccentricity: DEFAULT_PLANET_FORCING.eccentricity,
+      precessionDeg: DEFAULT_PLANET_FORCING.precessionDeg,
+      solarConstant: DEFAULT_PLANET_FORCING.solarConstant,
+      rotationHours: Number(rotationInput.value),
+    },
   })
 
   // Posts a climate compute with the current band-slider offset. Fired on
@@ -2788,6 +2888,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       handleClimateData(message)
       return
     }
+    if (message.type === 'planetPreviewData') {
+      handlePlanetPreviewData(message)
+      return
+    }
 
     if (message.type === 'hydrologyData') {
       handleHydrologyData(message)
@@ -2807,10 +2911,25 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Retain the overlay source data + feed the base raster to the compositor
     // so a toggle can re-composite without a worker round-trip, then draw the
     // current layer set.
+    // A render arriving while the Planet preview stands (the world being
+    // made or remade under it — the water control regenerates the Archean)
+    // is the truth the preview is keeping aside: it goes into the stash and
+    // the sample world stays on the map until the step is left. Everything
+    // else the render carries (mantle, ages, counters) is taken as always.
+    const underPreview = planetPreviewShown && STEP_IDS[panelIndex] === 'planet'
+    if (planetPreviewShown && !underPreview) {
+      planetPreviewShown = false
+      planetPreviewRealBase = null
+      clearClimate()
+    }
     lastBoundaryMask = new Uint8Array(message.boundaryMask)
     lastRaftLabels = message.raftLabels
-    lastColoredBase = new Uint8ClampedArray(message.buffer)
-    lastRelief = new Uint8Array(message.relief)
+    if (underPreview) {
+      planetPreviewRealBase = { base: new Uint8ClampedArray(message.buffer), relief: new Uint8Array(message.relief) }
+    } else {
+      lastColoredBase = new Uint8ClampedArray(message.buffer)
+      lastRelief = new Uint8Array(message.relief)
+    }
     lastMantle = new Float32Array(message.mantle)
     mantleNorm = mantleTintNorm(lastMantle)
     lastCratonAge = new Float32Array(message.cratonAge)
@@ -3279,6 +3398,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function syncSliderLabels(): void {
     mantleVigourLabel.textContent = mantleVigourInput.value
     waterLabel.textContent = waterInput.value
+    obliquityLabel.textContent = obliquityInput.value
+    rotationLabel.textContent = rotationInput.value
     const t = Number(tempBandInput.value)
     tempBandLabel.textContent = t > 0 ? `+${t}` : String(t)
     humidityLabel.textContent = humidityInput.value
@@ -4061,6 +4182,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       .catch(() => undefined)
     mantleVigourInput.value = String(spec.values['genesis.mantleVigour'])
     waterInput.value = String(spec.values['genesis.water'])
+    obliquityInput.value = String(spec.values['planet.obliquity'])
+    rotationInput.value = String(spec.values['planet.rotation'])
     // How far the Archean got, read from whichever snapshot the file carries — the yaml
     // used to hold a second copy of this under spec. An Archean save reopens IN the
     // Archean, so the tectonics panel must still be able to finalise it.
@@ -4075,7 +4198,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // save is in.
     hasHandover = false
     setArcheanRunning(false)
-    tempBandInput.value = String(spec.values['climate.tempOffset'])
+    tempBandInput.value = String(spec.values['planet.greenhouse'])
     humidityInput.value = String(spec.values['climate.humidity'])
     contrastInput.value = String(spec.values['climate.contrast'])
     equatorOffsetInput.value = String(spec.values['climate.equatorOffset'])
@@ -4093,7 +4216,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
     markCleanOnNextRender = true
     restoredFromSave = true
-    postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, archean: archeanPayload as never })
+    postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, archean: archeanPayload as never, mantleDiffusion: vigourToDiffusion(Number(mantleVigourInput.value)) })
   }
 
 
@@ -4104,9 +4227,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   tempBandInput.addEventListener('input', () => {
     const v = Number(tempBandInput.value)
     tempBandLabel.textContent = v > 0 ? `+${v}` : String(v)
-    if (tectonicsRunning) return
     clearTimeout(climateDebounce)
-    climateDebounce = setTimeout(requestClimate, 150)
+    climateDebounce = setTimeout(requestPlanetForcing, 150)
   })
   // Humidity + contrast: percentage sliders, same debounced live-recompute.
   const wireClimateSlider = (input: HTMLInputElement, label: HTMLElement): void => {
@@ -4469,7 +4591,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!seedInput.value.trim()) seedInput.value = randomSeed()
     worldCreated = true
     regenerate()
-    showPanel(GENESIS_PANEL_INDEX)
+    showPanel(panelIndexOf('planet'))
   })
   mantleVigourInput.addEventListener('input', () => {
     mantleVigourLabel.textContent = mantleVigourInput.value
@@ -4479,6 +4601,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     waterLabel.textContent = waterInput.value
     regenerateDebounced()
   })
+  // The astronomical controls act on the climate: label, then the same
+  // debounced recompute the climate sliders use (which in turn marks the
+  // erosion stale, as its forcing reads the same chain).
+  for (const [input, label] of [[obliquityInput, obliquityLabel], [rotationInput, rotationLabel]] as const) {
+    input.addEventListener('input', () => {
+      label.textContent = input.value
+      requestPlanetForcing()
+    })
+  }
   // THE PANELS ARE THE STAGES. Back steps to the previous one or leaves for the
   // title screen; next steps forward and stops at the last.
   //
@@ -4563,11 +4694,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onToggle: (id) => toggleOverlay(id as OverlayId),
     // One pick group, two kinds of member: a layer the step shows one at a time,
     // or — in Ecology — a resource field the one layer paints. The id says which.
-    onPick: (id) => (isOverlayId(id) ? pickExclusiveOverlay(id) : selectEcologyField(id as EcologyFieldId)),
+    onPick: (id) => (isOverlayId(id) || id === NO_PICK ? pickExclusiveOverlay(id) : selectEcologyField(id as EcologyFieldId)),
   })
   // The steps whose controls have moved out of the panel row at the foot and
   // into the column. The rest follow one per step, in pipeline order.
-  sidebar.body.append(overlayList.element, worldPanel, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX], panels[panelIndexOf('erosion')], panels[ECOLOGY_PANEL_INDEX])
+  sidebar.body.append(overlayList.element, worldPanel, panels[panelIndexOf('planet')], panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX], panels[panelIndexOf('erosion')], panels[ECOLOGY_PANEL_INDEX])
   relabel(sidebar.body)
 
   const stepBar = createStepBar(root, {
@@ -4598,6 +4729,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Step 0 is never "computed" — it is answered. It counts as settled the
     // moment the world has both halves of its identity.
     world: () => worldName.trim() !== '' && seedInput.value.trim() !== '',
+    // Answered, like step 0: its values are set, not computed.
+    planet: () => worldCreated,
     genesis: () => lastArcheanEpochs > 0 || hasHandover,
     tectonics: () => lastEpoch > 0,
     climate: () => lastTemperature !== null,
@@ -4638,6 +4771,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // instead of being asked for twice. A generic loop would lose both, and there is
   // no harness on this side to notice. See docs/design/generator-pipeline.md.
   const ensureDataFor = (index: number): void => {
+    // The Planet step shows its controls on the climate: the world's own
+    // once it has plates, the sample world's before.
+    if (index === panelIndexOf('planet') && worldCreated && lastTemperature === null) requestPlanetForcing()
     if (index === CLIMATE_PANEL_INDEX && lastTemperature === null) requestClimate()
     // The erosion panel carries the hydrology readout: entering it with eroded
     // terrain but no rivers (a reopened session, a mid-chain revisit) computes
@@ -4663,6 +4799,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // overlay defaults for it — and since 2026-08-09 it does NOT commit anything:
   // the Archean hand-over moved to the gesture that means it (see commitGenesis).
   const showPanel = (index: number): void => {
+    if (STEP_IDS[index] !== 'planet') leavePlanetPreview()
     panelIndex = index
     sidebar.setStep(STEP_IDS[index])
     // Which layers this step offers, and which of them are showing. Both come
@@ -4673,6 +4810,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     overlayList.setRows(
       stepDef.overlays.map((id) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })),
       [
+        // The way out of a pick group, first and the default (2026-09-22): a
+        // step that paints one of its layers at a time starts painting none.
+        ...(stepDef.exclusive.length > 0 ? [{ id: NO_PICK, helpBase: 'overlay.none', icon: '/icons/clear.png' }] : []),
         ...stepDef.exclusive.map((id) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })),
         ...stepDef.fields.map((field) => ({ id: field, helpBase: `resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
       ],

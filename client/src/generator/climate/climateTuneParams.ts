@@ -20,6 +20,22 @@ import { ELEVATION_METERS, SLOPE_RECALIBRATION, metersToElevation } from '../ele
 const lapseCPerKm = 6.5
 
 export const CLIMATE_TUNING = {
+  // --- from precipitation.ts (BUG_BOUNTY 13, moved 2026-09-22) ---
+  // Evaporation as a fraction of the maximum: zero at this temperature,
+  // rising by one over this span, held between the floor and the cap — a
+  // Clausius-Clapeyron-ish increase that keeps the tropics humid and the
+  // cold poles dry.
+  precipEvapZeroC: -10,
+  precipEvapSpanC: 40,
+  precipEvapMin: 0.05,
+  precipEvapMax: 1.2,
+  // The three-cell rain belts: a cosine over the latitude with this mean
+  // and swing (the ITCZ and the polar front wet, the subtropics dry).
+  precipBandBase: 0.8,
+  precipBandSwing: 0.7,
+  // The most of a column's moisture one cell can rain out.
+  precipRainoutMax: 0.85,
+
   // --- from temperature.ts ---
 
   // Real-ish units (°C), so the later Whittaker biome thresholds are directly
@@ -91,8 +107,9 @@ export const CLIMATE_TUNING = {
   // --- from monsoon.ts ---
 
   // How far (fraction of map height) the ITCZ belt migrates toward the summer hemisphere.
-  // Real seasonal swing is ~10-15° of latitude (bigger over monsoon land); 0.12 of the
-  // map's pole-to-pole span is in that range on this 2:1 torus.
+  // Real seasonal swing is ~10-15° of latitude (bigger over monsoon land); 0.07 of the
+  // map's height is 12.6° on this 2:1 torus (it was cited as 0.12 here while the
+  // value stood at 0.07 — BUG_BOUNTY 58).
   monsoonItczSeasonalShift: 0.07,
 
   // Strength of the monsoon surface wind — a component up the seasonal-temperature

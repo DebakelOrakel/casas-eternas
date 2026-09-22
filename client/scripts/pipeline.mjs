@@ -516,6 +516,19 @@ test('erosion can be stopped mid-pass', async () => {
 
 // -------------------------------------------------------------- the whole table
 
+test('the Planet preview answers on the sample world and touches nothing', async () => {
+  const p = await freshPipeline()
+  p.dispatch({ type: 'planetPreview', width: ARCHEAN_INIT.width, height: ARCHEAN_INIT.height })
+  await until(() => p.count('planetPreviewData') >= 1, { label: 'the planet preview', timeout: 60000 })
+  const d = p.last('planetPreviewData')
+  check('the preview carries the sample world\'s render at its size', d.buffer.byteLength === ARCHEAN_INIT.width * ARCHEAN_INIT.height * 4)
+  check('the preview carries a climate at the climate grid', d.temperature.byteLength === d.resX * d.resY * 4 && d.precipitation.byteLength === d.resX * d.resY * 4)
+  // A cold pipeline has no climate; the preview must not have given it one.
+  p.dispatch({ type: 'hydrologyRun' })
+  await until(() => p.count('stageDeclined') >= 1, { label: 'hydrology declined' })
+  check('the preview cached no climate for the stages', p.count('climateData') === 0)
+})
+
 test('every message type is dispatchable from a cold start', async () => {
   // Not "does something sensible" — that is what the tests above are for. This
   // asks the cheaper question the HANDLERS table cannot: does any handler throw
@@ -525,6 +538,7 @@ test('every message type is dispatchable from a cold start', async () => {
     { type: 'tectonicsStop' }, { type: 'tectonicsStart' }, { type: 'erosionStop' }, { type: 'resetStage', stage: 'erosion' },
     { type: 'erosionStart' },
     { type: 'requestElevationField' },
+    { type: 'planetPreview', width: ARCHEAN_INIT.width, height: ARCHEAN_INIT.height },
     { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 },
     { type: 'hydrologyRun' },
     { type: 'ecologyRun' }, { type: 'migrationRun', origins: [] },

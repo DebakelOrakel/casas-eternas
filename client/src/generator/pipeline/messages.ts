@@ -1,4 +1,5 @@
 import type { WaterBody } from '../surface/hydrology'
+import type { PlanetForcing } from '../planet/planetForcing'
 import type { CoastReach } from '../surface/coastGraph'
 import type { SedimentBasin } from '../surface/sedimentBasins'
 // The generator pipeline's message contract — every message that crosses the
@@ -49,6 +50,7 @@ export interface WorkerErosionStartMessage {
     temperatureContrast: number
     humidity: number
     equatorOffset: number
+    planet?: PlanetForcing
   }
 }
 // PUT A STAGE BACK WHERE IT STARTED. One gesture for what used to be three
@@ -75,6 +77,39 @@ export interface WorkerErosionStopMessage {
 // Requests the climate step (temperature so far) be computed on the current,
 // possibly-eroded elevation — see docs/decisions/climate-biomes.md. Replies
 // with a WorkerClimateDataMessage.
+// THE PLANET PREVIEW: the climate chain on the sample world (planet/
+// sampleWorld.ts), so the Planet step can show what its controls do before
+// a world exists. Touches no pipeline state — nothing is cached, nothing
+// is invalidated; the screen shows the answer while the step is open and
+// drops it on leaving. Once a world has plates the screen asks for a real
+// climateRun instead.
+export interface WorkerPlanetPreviewMessage {
+  type: 'planetPreview'
+  width: number
+  height: number
+  weather?: WorkerErosionStartMessage['weather']
+}
+
+export interface WorkerPlanetPreviewDataMessage {
+  type: 'planetPreviewData'
+  width: number
+  height: number
+  // The sample world's colour render and relief, as a 'rendered' message
+  // carries them, for the map under the overlays.
+  buffer: ArrayBuffer
+  relief: ArrayBuffer
+  // The climate fields exactly as climateData carries them.
+  resX: number
+  resY: number
+  temperature: ArrayBuffer
+  wind: ArrayBuffer
+  currents: ArrayBuffer
+  precipitation: ArrayBuffer
+  seasonalAmplitude: ArrayBuffer
+  monsoonIndex: ArrayBuffer
+  biomes: ArrayBuffer
+}
+
 export interface WorkerClimateRunMessage {
   type: 'climateRun'
   // Global temperature offset in °C (greenhouse) — see computeTemperature.
@@ -88,6 +123,8 @@ export interface WorkerClimateRunMessage {
   // Lets a continent stuck at the cold pole seam be brought under the warm equator.
   // See climateField.shiftedYNorm.
   equatorOffset: number
+  // The Planet stage's forcing (planet/planetForcing.ts); Earth when absent.
+  planet?: PlanetForcing
 }
 // Requests a rivers/lakes (hydrology) compute on the current topography, using
 // the precipitation cached from the last computeClimate as the water source.
@@ -143,6 +180,10 @@ export interface WorkerRestoreWorldMessage {
   mantle?: ArrayBuffer
   // Set when the saved world was still in the Archean; `snapshot` is then unused.
   archean?: { snapshot: ArcheanSnapshot; mantle: ArrayBuffer; streak: ArrayBuffer }
+  // The Archean's mantle mixing from the save's recipe, so a loaded Archean
+  // world keeps stirring the way it was set (BUG_BOUNTY 63 — the restore
+  // used to leave the default in place).
+  mantleDiffusion?: number
   // The boundary-detection lattice's accumulated history, likewise optional for older
   // saves. Measured: mantle and lattice TOGETHER are exactly what a bit-identical
   // continuation needs — with only one of them restored, a loaded world drifts off
@@ -150,6 +191,7 @@ export interface WorkerRestoreWorldMessage {
   lattice?: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer }
 }
 export type WorkerInboundMessage =
+  | WorkerPlanetPreviewMessage
   | WorkerTectonicsStartMessage
   | WorkerTectonicsStopMessage
   | WorkerErosionStartMessage
@@ -500,6 +542,7 @@ export interface WorkerWorldDataMessage {
 // inbound side has had `WorkerInboundMessage` and its exhaustive HANDLERS table
 // all along; this is the same guarantee for results.
 export type WorkerOutboundMessage =
+  | WorkerPlanetPreviewDataMessage
   | WorkerRenderedMessage
   | WorkerErosionProgressMessage
   | WorkerClimateDataMessage

@@ -6,6 +6,8 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 ## 2026-09-22
 - **new** Hydrology: every river reach knows whether it flows all year, dries up in the dry season or only runs after rain — from its catchment's climate — and the map draws the last two dashed and dotted. `generator.panel.hydrology`
 - **fixed** Hydrology: server bakes now carry the water bodies and the river graph like browser bakes do. `generator.panel.hydrology`
+- **new** Planet: a step before the mantle sets the planet — axial tilt, greenhouse, day length and water — and the climate follows it: tilt sets the seasons and the pole-to-equator gradient, a slow spin widens the trade-wind belt. The step shows the climate layers on a sample world until the world has plates, then on the world itself. The greenhouse moved here from the climate step. `generator.step.planet`
+- **fixed** Climate: sea cells no longer carry a wrong-sign half-degree seasonal swing, which bent the monsoon winds on every coast. `generator.panel.climate`
 - **changed** Erosion: the landscape age reads in million years — one step of the engine is 20 000 years, so the slider runs from 0.2 to 8 Myr. `generator.panel.erosion.age`
 - **new** Hydrology: glaciers have a thickness — ice forms where the climate makes it and flows down the valleys as ice sheets and tongues, drawn as ice bodies on the map and carried by the 4K/8K bakes. `generator.panel.hydrology`
 - **new** Erosion: the sediment the pass lays down is listed as basins — floodplains, fans and marine wedges with their volume and the rock of the catchments that fed them — and saved with the world. `generator.panel.erosion`

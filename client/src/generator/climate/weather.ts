@@ -1,4 +1,5 @@
 import { computeTemperature } from './temperature'
+import { DEFAULT_PLANET_FORCING, type PlanetForcing } from '../planet/planetForcing'
 import { computeWind } from './wind'
 import { applyOceanSST, computeOceanCurrents } from './oceanCurrents'
 import { computeSeasonalAmplitude } from './seasonality'
@@ -27,6 +28,8 @@ export interface WeatherParams {
   humidity: number
   // Thermal-equator shift as a fraction of half-height.
   equatorOffset: number
+  // The Planet stage's forcing (planet/planetForcing.ts); Earth when absent.
+  planet?: PlanetForcing
 }
 
 // The declared slider defaults in MODEL units — what an untouched climate
@@ -54,11 +57,12 @@ export interface Weather {
 // those sub-sea cells count as land throughout, with an unclamped downward
 // lapse — see computeTemperature.
 export function computeWeather(elevation: Float32Array, width: number, height: number, params: WeatherParams, dryLand?: Uint8Array): Weather {
-  const temperature = computeTemperature(elevation, width, height, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, dryLand)
-  const wind = computeWind(params.equatorOffset)
+  const planet = params.planet ?? DEFAULT_PLANET_FORCING
+  const temperature = computeTemperature(elevation, width, height, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, dryLand, planet)
+  const wind = computeWind(params.equatorOffset, planet.rotationHours)
   const currents = computeOceanCurrents(elevation, wind, width, height, dryLand)
   applyOceanSST(temperature, currents, elevation, width, height, dryLand)
-  const seasonalAmplitude = computeSeasonalAmplitude(elevation, width, height, params.equatorOffset, dryLand)
+  const seasonalAmplitude = computeSeasonalAmplitude(elevation, width, height, params.equatorOffset, dryLand, planet)
   const seasonal = computeSeasonalPrecipitation(elevation, temperature, seasonalAmplitude, wind, width, height, params.humidity, params.equatorOffset, dryLand)
   return { temperature, wind, currents, seasonalAmplitude, seasonal }
 }

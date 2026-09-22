@@ -8,7 +8,6 @@ import type { Raft } from '../crust/raftTypes'
 import { generateDetectionLattice } from '../tectonics/boundaryLattice'
 import { createOceanAgeField } from '../tectonics/oceanAge'
 import { findPlumeSites } from '../tectonics/plumes'
-import { solveSeaLevelOffset } from '../elevation/landTarget'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { toroidalDistanceSq } from '../core/toroidal'
 import { assignRaftNames } from '../crust/raftNames'
@@ -109,11 +108,10 @@ function measureRaftLandAreas(rafts: Raft[], width: number, height: number): num
   return areas
 }
 
-// `landTarget` is the share of the map that should be land as tectonics begins; the
-// sea-level offset that produces it is solved for here, because this is the first
-// moment the crust exists to measure. Omitted, the Archean's own offset carries over
-// unchanged — which is what the golden harness and any older caller get.
-export function finalizeArchean(archean: ArcheanSimulation, landTarget?: number): PlateSimulation {
+// The Archean's sea-level offset carries over unchanged. (A land-fraction
+// target the offset would be solved for existed as dead code until
+// 2026-09-22 — BUG_BOUNTY 12; wiring one is a decision of its own.)
+export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
   const { width, height, random } = archean
   // Continents are named HERE, not during the Archean. Proto-cratons merge and
   // fragment constantly — splitDisconnectedRafts hands out a name every time a
@@ -122,9 +120,7 @@ export function finalizeArchean(archean: ArcheanSimulation, landTarget?: number)
   // becomes a continent, which is now.
   const named = assignRaftNames(archean.rafts, random, measureRaftLandAreas(archean.rafts, width, height))
   const oceanAge = createOceanAgeField(TECTONICS_TUNING.oceanAgeInit)
-  const seaLevelOffset = landTarget === undefined
-    ? archean.seaLevelOffset
-    : solveSeaLevelOffset(named, oceanAge, archean.warpSeed, landTarget, width, height).offset
+  const seaLevelOffset = archean.seaLevelOffset
   const seeds = convectionCellSeeds(archean.mantle, width, height)
   const lattice = generateDetectionLattice(width, height, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
 

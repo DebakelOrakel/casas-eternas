@@ -1,14 +1,12 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { sampleBilinearGrid } from '../core/field'
-import { wrapValue } from '../core/field'
+import { wrapIndex2 } from '../core/field'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
 
-function wrapIndex(x: number, y: number): number {
-  return wrapValue(y, RY) * RX + wrapValue(x, RX)
-}
+const wrapIndex = (x: number, y: number): number => wrapIndex2(x, y, RX, RY)
 
 // Wind-driven ocean surface currents as gyres, on the climate grid. Solves a
 // streamfunction ψ forced by the wind-stress curl with ψ=0 on land (so the

@@ -1,4 +1,6 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
+import { hadleyEdge } from '../planet/planetForcing'
+import { PLANET_INPUTS } from '../planet/planetInputParams'
 import { CLIMATE_TUNING } from './climateTuneParams'
 
 // Prevailing surface wind as the prescribed three-cell pattern per hemisphere
@@ -10,8 +12,12 @@ import { CLIMATE_TUNING } from './climateTuneParams'
 // latitudinal for now (no land/sea modulation). Returned interleaved
 // [u0,v0,u1,v1,…] on the climate grid: u = eastward (+x), v = toward the
 // bottom/"south" (+y). See docs/decisions/climate-biomes.md.
-export function computeWind(equatorOffset = 0): Float32Array {
+// `rotationHours` (planet/planetForcing.ts): the Hadley cell's edge moves
+// with the rotation period; the Ferrel cell takes half of what is left.
+export function computeWind(equatorOffset = 0, rotationHours = PLANET_INPUTS.rotation.default): Float32Array {
   const wind = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y * 2)
+  const e1 = hadleyEdge(rotationHours)
+  const e2 = (1 + e1) / 2
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     const yNorm = shiftedYNorm(gy, CLIMATE_RES_Y, equatorOffset)
     const sLat = (yNorm - 0.5) * 2 // signed latitude: −1 north(top) … +1 south(bottom)
@@ -21,18 +27,18 @@ export function computeWind(equatorOffset = 0): Float32Array {
     let uSign: number
     let poleward: boolean
     let local: number
-    if (phi < 1 / 3) {
+    if (phi < e1) {
       uSign = -1 // Hadley: trade easterlies, equatorward
       poleward = false
-      local = phi / (1 / 3)
-    } else if (phi < 2 / 3) {
+      local = phi / e1
+    } else if (phi < e2) {
       uSign = +1 // Ferrel: westerlies, poleward
       poleward = true
-      local = (phi - 1 / 3) / (1 / 3)
+      local = (phi - e1) / (e2 - e1)
     } else {
       uSign = -1 // Polar: easterlies, equatorward
       poleward = false
-      local = (phi - 2 / 3) / (1 / 3)
+      local = (phi - e2) / (1 - e2)
     }
     const taper = Math.sin(Math.PI * local) // 0 at the cell edges, 1 at its center
     const u = uSign * CLIMATE_TUNING.windZonalStrength * taper

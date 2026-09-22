@@ -1,4 +1,5 @@
-import { wrapValue } from '../core/field'
+import { wrapIndex2 } from '../core/field'
+import { OCEAN_AMPLITUDE } from './seasonality'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
 import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
@@ -31,7 +32,12 @@ function seasonalTemperature(annual: Float32Array, amplitude: Float32Array, equa
     const sign = north === warmNorth ? 0.5 : -0.5 // this hemisphere in summer → warmer
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      out[i] = annual[i] + sign * amplitude[i]
+      // The ocean carries the OCEAN_AMPLITUDE sentinel, not a swing: read it
+      // as the near-nil swing it stands for (BUG_BOUNTY 2 — it used to enter
+      // as −1 and put a wrong-sign half-degree on every sea cell, which
+      // bent the monsoon's ∇T on every coast).
+      const swing = amplitude[i] === OCEAN_AMPLITUDE ? 0 : amplitude[i]
+      out[i] = annual[i] + sign * swing
     }
   }
   return out
@@ -42,7 +48,7 @@ function seasonalTemperature(annual: Float32Array, amplitude: Float32Array, equa
 // and reverses in winter (offshore, dry). Interleaved [u, v] like computeWind.
 function computeMonsoonWind(base: Float32Array, seasonalTemp: Float32Array): Float32Array {
   const out = new Float32Array(base.length)
-  const wrap = (x: number, y: number): number => wrapValue(y, RY) * RX + wrapValue(x, RX)
+  const wrap = (x: number, y: number): number => wrapIndex2(x, y, RX, RY)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx

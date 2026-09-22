@@ -55,5 +55,7 @@
   "overlay.migration.help": "Show where each species spreads from its origin.",
   "overlay.migration.legend.title": "Peoples",
   "overlay.legend.title": "Legend",
-  "overlay.legend.empty": "No layer with a legend is showing."
+  "overlay.legend.empty": "No layer with a legend is showing.",
+  "overlay.none.label": "None",
+  "overlay.none.help": "Paint none of these layers."
 }

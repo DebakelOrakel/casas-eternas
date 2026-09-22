@@ -1,6 +1,7 @@
 import type { InputParam } from '../../generator/core/inputParams'
 import { ARCHEAN_INPUTS } from '../../generator/archean/archeanInputParams'
 import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
+import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
 import { SURFACE_INPUTS } from '../../generator/surface/surfaceInputParams'
 import { ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS, ECOLOGY_INPUTS } from '../../generator/ecology/ecologyInputParams'
 import { readRecipeNumber } from './recipeYaml'
@@ -25,6 +26,10 @@ export interface SpecField {
   // The control this value comes from — its default is what a save that predates
   // the key loads as.
   input: InputParam
+  // Paths the same value was written under before (a control that moved
+  // stage): read when the current path is absent, so an older save keeps the
+  // world it describes. Never written.
+  legacyPaths?: readonly string[]
 }
 
 const abundanceFields: SpecField[] = ECOLOGY_ABUNDANCE_GROUPS.flatMap((group) =>
@@ -36,15 +41,21 @@ const abundanceFields: SpecField[] = ECOLOGY_ABUNDANCE_GROUPS.flatMap((group) =>
 )
 
 export const WORLD_SPEC_FIELDS: readonly SpecField[] = [
+  // The Planet stage (2026-09-22, F2) opens the file: `greenhouse` lived
+  // under climate as tempOffset and is read back from there for the saves
+  // written before. (`water` visited the planet the same day and went back
+  // to the genesis; the alias reads the few saves written in between.)
+  { path: 'planet.obliquity', input: PLANET_INPUTS.obliquity },
+  { path: 'planet.greenhouse', input: PLANET_INPUTS.greenhouse, legacyPaths: ['climate.tempOffset'] },
+  { path: 'planet.rotation', input: PLANET_INPUTS.rotation },
   { path: 'genesis.mantleVigour', input: ARCHEAN_INPUTS.mantleVigour },
-  { path: 'genesis.water', input: ARCHEAN_INPUTS.water },
+  { path: 'genesis.water', input: ARCHEAN_INPUTS.water, legacyPaths: ['planet.water'] },
   { path: 'erosion.landscapeAge', input: SURFACE_INPUTS.landscapeAge },
   { path: 'erosion.alluvium', input: SURFACE_INPUTS.alluvium },
   { path: 'erosion.rockContrast', input: SURFACE_INPUTS.rockContrast },
   // Climate's file order is NOT the panel's order (the panel shows the equator
   // offset second). Kept as it was written, because changing it would rewrite
   // every save for no gain.
-  { path: 'climate.tempOffset', input: CLIMATE_INPUTS.tempOffset },
   { path: 'climate.humidity', input: CLIMATE_INPUTS.humidity },
   { path: 'climate.contrast', input: CLIMATE_INPUTS.contrast },
   { path: 'climate.equatorOffset', input: CLIMATE_INPUTS.equatorOffset },
@@ -94,7 +105,9 @@ export function specToYamlLines(spec: WorldSpec): string[] {
 export function specFromYaml(yaml: string, seed: string): WorldSpec {
   const values: Record<string, number> = {}
   for (const field of WORLD_SPEC_FIELDS) {
-    values[field.path] = readRecipeNumber(yaml, `spec.${field.path}`) ?? field.input.default
+    let value = readRecipeNumber(yaml, `spec.${field.path}`)
+    for (const legacy of field.legacyPaths ?? []) value ??= readRecipeNumber(yaml, `spec.${legacy}`)
+    values[field.path] = value ?? field.input.default
   }
   return { seed, values }
 }

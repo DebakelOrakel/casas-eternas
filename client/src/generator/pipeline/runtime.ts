@@ -1,4 +1,6 @@
 import { stepEpoch, serializePlateSimulation, deserializePlateSimulation } from '../tectonics/plateSimulation'
+import { sampleWorldElevation } from '../planet/sampleWorld'
+import type { PlanetForcing } from '../planet/planetForcing'
 import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulation'
 import { renderSimulationImage } from '../render/elevationMapImage'
 import type { RenderSimulationOptions } from '../render/elevationMapImage'
@@ -42,7 +44,7 @@ import { computeEcology } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
-import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerErosionProgressMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage } from './messages'
+import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerErosionProgressMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
 // tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
@@ -629,6 +631,7 @@ interface ClimateParams {
   temperatureContrast: number
   humidity: number
   equatorOffset: number
+  planet?: PlanetForcing
 }
 
 // One climate pass, v1 or v2: the full chain in its load-bearing order — base
@@ -701,6 +704,7 @@ function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climat
     temperatureContrast: message.temperatureContrast,
     humidity: message.humidity,
     equatorOffset: message.equatorOffset,
+    planet: message.planet,
   }
   cacheAndPostClimate(computeClimateChain(elevation, sim.width, sim.height, params), params)
   invalidateAfter('climate')
@@ -1055,6 +1059,7 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
     archean = deserializeArchean(message.archean.snapshot, new Float32Array(message.archean.mantle), new Int16Array(message.archean.streak))
     archeanSeed = message.seed
     archeanWater = archean.seaLevelOffset
+    if (message.mantleDiffusion !== undefined) archeanParams = { ...DEFAULT_ARCHEAN_PARAMS, diffusion: message.mantleDiffusion }
     archeanWidth = archean.width
     archeanHeight = archean.height
     lastRawElevations = new Float32Array(message.elevation)
@@ -1230,6 +1235,7 @@ function handleResetStage(message: Extract<WorkerInboundMessage, { type: 'resetS
 }
 
 const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMessage) => void } = {
+  planetPreview: (m) => { void handlePlanetPreview(m as Extract<WorkerInboundMessage, { type: 'planetPreview' }>) },
   tectonicsStart: () => handleTectonicsStart(),
   tectonicsStop: () => handleTectonicsStop(),
   erosionStart: (m) => handleErosionStart(m as Extract<WorkerInboundMessage, { type: 'erosionStart' }>),
@@ -1251,6 +1257,42 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
 // Every message type the pipeline answers to. Exported so a test can assert it
 // covers all of them rather than listing them by hand and quietly falling behind.
 export const HANDLED_MESSAGE_TYPES: readonly string[] = Object.keys(HANDLERS)
+
+// The sample world's terrain and colour render, made once per size; the
+// climate on it is recomputed per request (the controls change it).
+let sampleWorld: { width: number; height: number; elevation: Float32Array; buffer: Uint8Array; relief: Uint8Array } | null = null
+
+async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type: 'planetPreview' }>): Promise<void> {
+  const { width, height } = message
+  if (!sampleWorld || sampleWorld.width !== width || sampleWorld.height !== height) {
+    const elevation = sampleWorldElevation(width, height)
+    const rendered = await renderSimulationImage(
+      { width, height, seeds: [], rafts: [], features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: 0, seaLevelOffset: 0, mantle: new Float32Array(MANTLE_RES_X * MANTLE_RES_Y) },
+      renderPool(),
+      { precomputedElevations: elevation },
+    )
+    sampleWorld = { width, height, elevation, buffer: rendered.buffer, relief: rendered.relief }
+  }
+  const params: ClimateParams = message.weather ?? defaultWeatherParams()
+  const chain = computeClimateChain(sampleWorld.elevation, width, height, params)
+  const preview: WorkerPlanetPreviewDataMessage = {
+    type: 'planetPreviewData',
+    width,
+    height,
+    buffer: sampleWorld.buffer.slice().buffer as ArrayBuffer,
+    relief: sampleWorld.relief.slice().buffer as ArrayBuffer,
+    resX: CLIMATE_RES_X,
+    resY: CLIMATE_RES_Y,
+    temperature: chain.temperature.buffer as ArrayBuffer,
+    wind: chain.wind.buffer as ArrayBuffer,
+    currents: chain.currents.buffer as ArrayBuffer,
+    precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
+    seasonalAmplitude: chain.seasonalAmplitude.buffer as ArrayBuffer,
+    monsoonIndex: chain.seasonal.index.buffer as ArrayBuffer,
+    biomes: chain.biomesFine.buffer as ArrayBuffer,
+  }
+  emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, preview.currents, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.biomes])
+}
 
 export function dispatch(message: WorkerInboundMessage): void {
   HANDLERS[message.type](message)
