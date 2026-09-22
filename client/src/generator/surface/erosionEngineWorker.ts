@@ -11,6 +11,9 @@ import {
   JOB_MARINE_MOVES,
   JOB_MARINE_APPLY,
   JOB_STATUS_CLAMP,
+  JOB_FLUVIAL_LEAF,
+  JOB_SEDIMENT_LEAF,
+  CTRL_ACTIVE_ROUTING,
   REFRESH_CMD,
   REFRESH_CMD_EXIT,
   REFRESH_DONE,
@@ -30,6 +33,8 @@ import {
   kernelMarineMoves,
   kernelMarineApply,
   kernelStatusClamp,
+  kernelFluvialLeaf,
+  kernelSedimentLeaf,
 } from './erosionEngine'
 import type { WorkerInit } from './erosionEnginePool'
 
@@ -49,7 +54,7 @@ import type { WorkerInit } from './erosionEnginePool'
 // where the init message arrives from.
 
 function runLoop(init: WorkerInit, ready: () => void): void {
-  const { activeCount, workerId, workerCount, kernelParams } = init
+  const { activeCount, workerId, workerCount, kernelParams, params } = init
   const terrain = createTerrainViews(activeCount, init.terrain)
   const routingA = createRoutingViews(activeCount, init.routingA)
   const routingB = createRoutingViews(activeCount, init.routingB)
@@ -70,6 +75,10 @@ function runLoop(init: WorkerInit, ready: () => void): void {
     return
   }
 
+  // The walks' leaf jobs read the routing the main coordinator iterates on
+  // (live z, the active buffer — ctrl[CTRL_ACTIVE_ROUTING] names it).
+  const liveByBuffer: readonly [EngineViews, EngineViews] = [liveViews, assembleViews(terrain, routingB)]
+  const walkViews = (): EngineViews => liveByBuffer[Atomics.load(ctrl, CTRL_ACTIVE_ROUTING)]
   // Even partition of the active range for the per-cell jobs.
   const per = Math.ceil(activeCount / workerCount)
   const a0 = Math.min(activeCount, workerId * per)
@@ -108,6 +117,12 @@ function runLoop(init: WorkerInit, ready: () => void): void {
         break
       case JOB_STATUS_CLAMP:
         kernelStatusClamp(views, a0, a1)
+        break
+      case JOB_FLUVIAL_LEAF:
+        kernelFluvialLeaf(walkViews(), workerId, workerCount, params, kernelParams.cellM)
+        break
+      case JOB_SEDIMENT_LEAF:
+        kernelSedimentLeaf(walkViews(), workerId, workerCount, params, kernelParams.cellM)
         break
     }
     Atomics.add(done, 0, 1)

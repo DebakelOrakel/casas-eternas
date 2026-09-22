@@ -379,8 +379,17 @@ was, and it removes `ENGINE_STRIPS` from the result. Measured on the
 golden world at 2048, 20 iterations, routing every iteration:
 single-threaded 21.6 → 2.0 s, pool(8) 9.3 → 1.7 s, pipelined 4+2 at
 D=8 3.7 → 0.4 s; the golden harness dropped from ~13 min to 2.5 min. The
-serial walks are now the whole iteration; basin-parallel walks (the
-plan's next item) are where the next factor is.
+serial walks were then the whole iteration, so the same day the
+fluvial and sediment walks went BASIN-PARALLEL: the receiver forest is
+cut at every land→sea edge into segments (`buildSegments`), leaf
+segments (river basins, unfed ocean trees) walk on the workers, the fed
+ocean band and the enclosed basins in one serial stage each side —
+fluvial serial first (receivers first), sediment serial last (donors
+first, after the basins' mouth fluxes are delivered in segment order,
+which is what keeps the sum independent of the worker split). Row 2 of
+the table is therefore BUILT, in the coast-split form (b) above
+described; the flood stays serial by measurement (it is 14 % of the
+raster and off the iteration path).
 
 The P1 spike (scratchpad `p1-spike.mjs`, 2026-08-16) ran the P0 physics
 threaded end-to-end and byte-identical across worker counts. Three findings

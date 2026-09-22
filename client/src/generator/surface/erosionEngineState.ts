@@ -173,8 +173,18 @@ export interface TerrainViews {
   // coupling: upsampled provisional precipitation). Read only when
   // FLAG_HAS_ACCUM_WEIGHTS is set; uniform 1 otherwise.
   accumulationWeights: Float32Array
-  // Per-worker residual reduction slots.
+  // Sediment-walk scratch: flux arriving at a cell and the lowest donor
+  // floor above it, both reset per iteration; and per SEGMENT (see
+  // RoutingViews) what a leaf segment's root hands to its outlet — the
+  // coast-split stage's mailbox between the parallel and the serial walk.
+  flux: Float32Array
+  donorMin: Float32Array
+  mouthFlux: Float32Array
+  mouthZ: Float32Array
+  // Per-worker reduction slots: residual, eroded volume, exported volume.
   maxStepW: Float64Array
+  erodedW: Float64Array
+  exportedW: Float64Array
   // Scalar flags: FLAG_HAS_COAST_MASK, FLAG_HAS_ACCUM_WEIGHTS, FLAG_HAS_STATUS_MASK.
   flags: Int32Array
   buffer: ArrayBufferLike
@@ -212,6 +222,24 @@ export interface RoutingViews {
   mfdWeight: Float32Array
   // Ocean seeds of the flood (recomputed every refresh).
   seedMask: Uint8Array
+  // The receiver forest cut into SEGMENTS at every land→sea edge (of the z
+  // this routing was computed from): a segment is a maximal receiver
+  // subtree that crosses no such edge, so a river basin is one segment
+  // whose root is its mouth cell. A LEAF segment receives no mouth from
+  // another segment — the basins, and ocean trees no river feeds — and
+  // its fluvial and sediment walks are independent of every other leaf,
+  // which is what the pool runs in parallel; the rest (the fed ocean band,
+  // enclosed basins and the land below their spills) is the serial stage.
+  // `segOrder` lists every popped cell grouped by segment, receiver-first
+  // within the group (the root at segStart[seg]); `stage` is 0 for a leaf
+  // cell, 1 for a serial-stage cell.
+  segment: Int32Array
+  segOrder: Int32Array
+  segStart: Int32Array
+  segLeaf: Uint8Array
+  stage: Uint8Array
+  // [0] = segment count, [1] = cells in leaf segments.
+  routingMeta: Int32Array
   buffer: ArrayBufferLike
 }
 
@@ -243,17 +271,18 @@ function makeTaker(backing: ArrayBufferLike): { take: <T>(Type: TypedArrayCtor<T
 export function terrainBufferBytes(activeCount: number): number {
   const a = activeCount
   // i32: nbr (8a); f32: z, uplift, erodibility, moveE/S, erosionVolume,
-  // accumulationWeights (7a); u8: coastMask, statusMask (2a); i32 flags(16);
-  // f64 maxStepW(64); alignment slack.
-  return 8 * 4 * a + 7 * 4 * a + 2 * a + 16 * 4 + 64 * 8 + 1024
+  // accumulationWeights, flux, donorMin, mouthFlux, mouthZ (11a); u8:
+  // coastMask, statusMask (2a); i32 flags(16); f64 maxStepW, erodedW,
+  // exportedW (3 × 64); alignment slack.
+  return 8 * 4 * a + 11 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 1024
 }
 
 export function routingBufferBytes(activeCount: number): number {
   const a = activeCount
   // f32: zSnapshot, filled, accumulation, ltdDeltaC/D (5a) + mfdWeight (8a)
-  // i32: flowTarget, popOrder (2a)
-  // u8:  flowDir, ltdFacet, ltdFallback, ltdMode, mfdDegree, seedMask (6a) + mfdDirection (8a)
-  return (5 + 8) * 4 * a + 2 * 4 * a + (6 + 8) * a + 4096
+  // i32: flowTarget, popOrder, segment, segOrder (4a) + segStart (a + 1) + routingMeta (16)
+  // u8:  flowDir, ltdFacet, ltdFallback, ltdMode, mfdDegree, seedMask, segLeaf, stage (8a) + mfdDirection (8a)
+  return (5 + 8) * 4 * a + 5 * 4 * a + 4 + 16 * 4 + (8 + 8) * a + 4096
 }
 
 // The terrain section. `nbr` is copied in when an index is given (the
@@ -275,7 +304,13 @@ export function createTerrainViews(activeCount: number, buffer?: ArrayBufferLike
     moveSouth: take(Float32Array, a),
     erosionVolume: take(Float32Array, a),
     accumulationWeights: take(Float32Array, a),
+    flux: take(Float32Array, a),
+    donorMin: take(Float32Array, a),
+    mouthFlux: take(Float32Array, a),
+    mouthZ: take(Float32Array, a),
     maxStepW: take(Float64Array, 64),
+    erodedW: take(Float64Array, 64),
+    exportedW: take(Float64Array, 64),
     flags: take(Int32Array, 16),
     coastMask: take(Uint8Array, a),
     statusMask: take(Uint8Array, a),
@@ -300,12 +335,18 @@ export function createRoutingViews(activeCount: number, buffer?: ArrayBufferLike
     mfdWeight: take(Float32Array, 8 * a),
     flowTarget: take(Int32Array, a),
     popOrder: take(Int32Array, a),
+    segment: take(Int32Array, a),
+    segOrder: take(Int32Array, a),
+    segStart: take(Int32Array, a + 1),
+    routingMeta: take(Int32Array, 16),
     flowDir: take(Uint8Array, a),
     ltdFacet: take(Uint8Array, a),
     ltdFallback: take(Uint8Array, a),
     ltdMode: take(Uint8Array, a),
     mfdDegree: take(Uint8Array, a),
     seedMask: take(Uint8Array, a),
+    segLeaf: take(Uint8Array, a),
+    stage: take(Uint8Array, a),
     mfdDirection: take(Uint8Array, 8 * a),
     buffer: backing,
   }
@@ -328,7 +369,13 @@ export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFro
     moveSouth: terrain.moveSouth,
     erosionVolume: terrain.erosionVolume,
     accumulationWeights: terrain.accumulationWeights,
+    flux: terrain.flux,
+    donorMin: terrain.donorMin,
+    mouthFlux: terrain.mouthFlux,
+    mouthZ: terrain.mouthZ,
     maxStepW: terrain.maxStepW,
+    erodedW: terrain.erodedW,
+    exportedW: terrain.exportedW,
     flags: terrain.flags,
     zSnapshot: routing.zSnapshot,
     filled: routing.filled,
@@ -345,6 +392,12 @@ export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFro
     mfdDirection: routing.mfdDirection,
     mfdWeight: routing.mfdWeight,
     seedMask: routing.seedMask,
+    segment: routing.segment,
+    segOrder: routing.segOrder,
+    segStart: routing.segStart,
+    segLeaf: routing.segLeaf,
+    stage: routing.stage,
+    routingMeta: routing.routingMeta,
   }
 }
 
@@ -356,7 +409,11 @@ export function createEngineViews(index: EngineIndex): EngineViews {
 
 // Job ids for the worker protocol (erosionEnginePool.ts ↔
 // erosionEngineWorker.ts). ctrl[0] = job sequence number (bumped per
-// dispatch), ctrl[1] = job id; done[0] counts finished workers.
+// dispatch), ctrl[1] = job id, ctrl[CTRL_ACTIVE_ROUTING] = which routing
+// buffer the walks' leaf jobs read (the one the main coordinator iterates
+// on; a synchronous pool has only buffer 0); done[0] counts finished
+// workers.
+export const CTRL_ACTIVE_ROUTING = 2
 export const JOB_EXIT = 0
 export const JOB_UPLIFT = 1
 export const JOB_LTD_SCAN = 2
@@ -366,6 +423,8 @@ export const JOB_HILL_APPLY = 5
 export const JOB_MARINE_MOVES = 6
 export const JOB_MARINE_APPLY = 7
 export const JOB_STATUS_CLAMP = 8
+export const JOB_FLUVIAL_LEAF = 9
+export const JOB_SEDIMENT_LEAF = 10
 
 // The refresh-coordinator protocol (refreshCtrl, Int32Array):
 //   [0] command sequence (bumped to wake the refresh coordinator)

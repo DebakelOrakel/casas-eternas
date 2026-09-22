@@ -15,6 +15,9 @@ import {
   JOB_MARINE_MOVES,
   JOB_MARINE_APPLY,
   JOB_STATUS_CLAMP,
+  JOB_FLUVIAL_LEAF,
+  JOB_SEDIMENT_LEAF,
+  CTRL_ACTIVE_ROUTING,
   REFRESH_CMD,
   REFRESH_CMD_EXIT,
   REFRESH_CMD_RUN,
@@ -36,8 +39,9 @@ import {
   loadTerrain,
   createCoordinatorScratch,
   refreshRoutingOn,
-  fluvialWalk,
-  sedimentWalk,
+  fluvialSerial,
+  sedimentSerial,
+  collectWalkTallies,
   type CoordinatorScratch,
   type ErosionEngineParams,
   type ErosionForcing,
@@ -107,6 +111,7 @@ export interface WorkerInit {
   workerId: number
   workerCount: number
   kernelParams: KernelParams
+  params: ErosionEngineParams
 }
 
 // The shared terrain section, built once by whichever driver creates it.
@@ -201,6 +206,7 @@ export class PooledErosionEngine {
         workerId,
         workerCount,
         kernelParams,
+        params,
       }
       worker.postMessage(init)
     }
@@ -236,11 +242,23 @@ export class PooledErosionEngine {
     this.poppedCount = refreshRoutingOn(this.views, this.scratch, () => this.dispatch(JOB_LTD_SCAN), () => this.dispatch(JOB_MFD))
   }
 
+  // The fluvial and sediment walks: serial stages here, leaf stages on the
+  // workers. Returns the residual (normalized units).
+  private walks(v: EngineViews): number {
+    const cellM = this.kernelParams.cellM
+    let maxStep = fluvialSerial(v, this.poppedCount, this.params, cellM)
+    this.dispatch(JOB_FLUVIAL_LEAF)
+    for (let w = 0; w < this.workerCount; w++) maxStep = Math.max(maxStep, v.maxStepW[w])
+    this.dispatch(JOB_SEDIMENT_LEAF)
+    for (let w = 0; w < this.workerCount; w++) maxStep = Math.max(maxStep, v.maxStepW[w])
+    collectWalkTallies(v, this.workerCount, this.scratch)
+    return Math.max(maxStep, sedimentSerial(v, this.poppedCount, this.params, cellM, this.scratch))
+  }
+
   stepPhysics(): number {
     let maxStep = 0
     this.dispatch(JOB_UPLIFT)
-    maxStep = Math.max(maxStep, fluvialWalk(this.views, this.poppedCount, this.params, this.kernelParams.cellM))
-    maxStep = Math.max(maxStep, sedimentWalk(this.views, this.poppedCount, this.params, this.scratch, this.kernelParams.cellM))
+    maxStep = Math.max(maxStep, this.walks(this.views))
     this.views.maxStepW.fill(0, 0, this.workerCount)
     this.dispatch(JOB_HILL_MOVES)
     this.dispatch(JOB_HILL_APPLY)
@@ -383,7 +401,7 @@ export class PipelinedErosionEngine {
     const kernelParams = kernelParamsFor(width, params)
     const workers: WorkerLike[] = []
     const readies: Promise<void>[] = []
-    const spawn = (message: Omit<WorkerInit, 'terrain' | 'routingA' | 'routingB' | 'activeCount' | 'kernelParams'>): void => {
+    const spawn = (message: Omit<WorkerInit, 'terrain' | 'routingA' | 'routingB' | 'activeCount' | 'kernelParams' | 'params'>): void => {
       const worker = createWorker()
       workers.push(worker)
       readies.push(onceReady(worker))
@@ -393,6 +411,7 @@ export class PipelinedErosionEngine {
         routingB: routingBufferB,
         activeCount: a,
         kernelParams,
+        params,
         ...message,
       }
       worker.postMessage(init)
@@ -447,6 +466,21 @@ export class PipelinedErosionEngine {
     return this.poppedCount
   }
 
+  // The fluvial and sediment walks: serial stages here, leaf stages on the
+  // stencil workers, which read the ACTIVE routing buffer for them
+  // (refreshCtrl names it). Returns the residual (normalized units).
+  private walks(v: EngineViews): number {
+    const cellM = this.kernelParams.cellM
+    const workers = this.options.stencilWorkers
+    let maxStep = fluvialSerial(v, this.poppedCount, this.params, cellM)
+    this.dispatchStencil(JOB_FLUVIAL_LEAF)
+    for (let w = 0; w < workers; w++) maxStep = Math.max(maxStep, v.maxStepW[w])
+    this.dispatchStencil(JOB_SEDIMENT_LEAF)
+    for (let w = 0; w < workers; w++) maxStep = Math.max(maxStep, v.maxStepW[w])
+    collectWalkTallies(v, workers, this.scratch)
+    return Math.max(maxStep, sedimentSerial(v, this.poppedCount, this.params, cellM, this.scratch))
+  }
+
   private dispatchStencil(job: number): void {
     Atomics.store(this.doneA, 0, 0)
     Atomics.store(this.ctrlA, 1, job)
@@ -474,6 +508,8 @@ export class PipelinedErosionEngine {
     this.activeIndex = Atomics.load(this.refreshCtrl, REFRESH_TARGET)
     this.poppedCount = Atomics.load(this.refreshCtrl, REFRESH_POPPED)
     this.inFlight = false
+    // The stencil group's walk jobs follow the adopted buffer.
+    Atomics.store(this.ctrlA, CTRL_ACTIVE_ROUTING, this.activeIndex)
   }
 
   private boundary(): void {
@@ -493,8 +529,7 @@ export class PipelinedErosionEngine {
   stepPhysics(): number {
     let maxStep = 0
     this.dispatchStencil(JOB_UPLIFT)
-    maxStep = Math.max(maxStep, fluvialWalk(this.activeViews, this.poppedCount, this.params, this.kernelParams.cellM))
-    maxStep = Math.max(maxStep, sedimentWalk(this.activeViews, this.poppedCount, this.params, this.scratch, this.kernelParams.cellM))
+    maxStep = Math.max(maxStep, this.walks(this.activeViews))
     this.terrain.maxStepW.fill(0, 0, this.options.stencilWorkers)
     this.dispatchStencil(JOB_HILL_MOVES)
     this.dispatchStencil(JOB_HILL_APPLY)

@@ -1,7 +1,9 @@
 // Gates for the erosion-v2 engine (src/generator/surface/erosionEngine.ts):
 // the shelf band's cost in sediment, byte parity of the worker pool with the
-// single-threaded engine, determinism of the pipelined engine across worker
-// splits, the hydrology bridge, and the pass adapter's contract.
+// single-threaded engine (which is also what proves the basin-parallel walks
+// independent of the worker split), determinism of the pipelined engine
+// across worker splits, the hydrology bridge, and the pass adapter's
+// contract.
 //
 //   npx tsx scripts/erosion-v2-engine-check.mts <artifactDir> [res] [iters]
 //

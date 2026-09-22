@@ -28,11 +28,18 @@ import {
 // ACTIVE indices — per-cell deterministic, no cross-range accumulation, so
 // output is byte-identical for ANY worker count including one. The
 // ErosionEngine class below is the single-threaded driver over the same
-// kernels; erosionEnginePool.ts drives them across workers. The serial
-// walks (flood, λ, accumulation, fluvial, sediment) run on the coordinator
-// in both modes; the pipelined refresh (erosionEnginePool.ts) moves the
-// routing half of them off the iteration path, which is why refreshRouting
-// reads only z and stepPhysics never touches what the refresh writes.
+// kernels; erosionEnginePool.ts drives them across workers. The routing
+// walks (flood, λ, segments, accumulation) are serial on the coordinator;
+// the pipelined refresh (erosionEnginePool.ts) moves them off the
+// iteration path, which is why refreshRouting reads only z and stepPhysics
+// never touches what the refresh writes. The fluvial and sediment walks
+// run per SEGMENT (the receiver forest cut at the coast, see
+// buildSegments): leaf segments in parallel, the fed ocean band and the
+// enclosed basins in one serial stage each side of them — fluvial serial
+// first (receivers first), sediment serial last (donors first). Per-cell
+// arithmetic and the order every sum is taken in depend only on the
+// routing, never on the worker split, which is what keeps every driver
+// byte-identical to every other.
 //
 // THE ACTIVE SET (ADAPTIVE_MESH_PLAN.md phase 0): the engine computes on
 // land, enclosed basins and a shelf band of ocean; the deep ocean is frozen
@@ -400,8 +407,7 @@ export interface CoordinatorScratch {
   lambda: Float32Array
   contrib: Uint32Array
   bestInflow: Uint32Array
-  flux: Float32Array
-  donorMin: Float32Array
+  segCursor: Int32Array
   // Two run-long tallies, m³: what the fluvial walk cut loose, and what
   // crossed the shelf band's rim into the frozen ocean (or reached any
   // other cell without a receiver). The export is not small — measured
@@ -426,8 +432,7 @@ export function createCoordinatorScratch(activeCount: number): CoordinatorScratc
     lambda: new Float32Array(a),
     contrib: new Uint32Array(a),
     bestInflow: new Uint32Array(a),
-    flux: new Float32Array(a),
-    donorMin: new Float32Array(a),
+    segCursor: new Int32Array(a),
     erodedFlux: new Float64Array(1),
     exportedFlux: new Float64Array(1),
   }
@@ -591,81 +596,239 @@ export function accumulateFlowV2(v: EngineViews, popped: number): void {
   }
 }
 
-// Implicit stream power, receiver-first (popOrder forward): z' = (z +
+// Cut the receiver forest into segments (RoutingViews.segment and its
+// tables) — at every land→sea edge of the z this routing was computed
+// from, and at every terminal cell. Receiver-first over popOrder, so a
+// cell's segment is its receiver's unless the edge to it is a cut. A
+// segment is a LEAF when no cut edge points INTO it; leaf cells are the
+// parallel stage of the walks, everything else the serial stage.
+export function buildSegments(v: EngineViews, popped: number, s: CoordinatorScratch): void {
+  const { z, flowTarget, popOrder, segment, segOrder, segStart, segLeaf, stage, routingMeta } = v
+  const cursor = s.segCursor
+  let count = 0
+  for (let i = 0; i < popped; i++) {
+    const cell = popOrder[i]
+    const t = flowTarget[cell]
+    if (t < 0 || (z[cell] > 0 && z[t] <= 0)) segment[cell] = count++
+    else segment[cell] = segment[t]
+  }
+  segStart.fill(0, 0, count + 1)
+  for (let i = 0; i < popped; i++) segStart[segment[popOrder[i]] + 1]++
+  for (let seg = 0; seg < count; seg++) segStart[seg + 1] += segStart[seg]
+  cursor.set(segStart.subarray(0, count))
+  for (let i = 0; i < popped; i++) {
+    const cell = popOrder[i]
+    segOrder[cursor[segment[cell]]++] = cell
+  }
+  segLeaf.fill(1, 0, count)
+  for (let i = 0; i < popped; i++) {
+    const cell = popOrder[i]
+    const t = flowTarget[cell]
+    if (t >= 0 && segment[t] !== segment[cell]) segLeaf[segment[t]] = 0
+  }
+  let leafCells = 0
+  for (let seg = 0; seg < count; seg++) if (segLeaf[seg]) leafCells += segStart[seg + 1] - segStart[seg]
+  for (let i = 0; i < popped; i++) {
+    const cell = popOrder[i]
+    stage[cell] = segLeaf[segment[cell]] ? 0 : 1
+  }
+  routingMeta[0] = count
+  routingMeta[1] = leafCells
+}
+
+// Which leaf segments worker `workerId` of `workerCount` walks: contiguous
+// in segment id, balanced by cell count, and a function of the routing
+// alone — so any worker count walks every cell exactly once and the
+// per-cell result cannot depend on the split.
+function leafRange(v: EngineViews, workerId: number, workerCount: number): [number, number] {
+  const { segStart, segLeaf, routingMeta } = v
+  const count = routingMeta[0]
+  const total = routingMeta[1]
+  const lo = Math.floor((workerId * total) / workerCount)
+  const hi = Math.floor(((workerId + 1) * total) / workerCount)
+  let from = count
+  let to = count
+  let cum = 0
+  for (let seg = 0; seg < count; seg++) {
+    if (!segLeaf[seg]) continue
+    if (cum >= lo && from === count) from = seg
+    if (cum >= hi) { to = seg; break }
+    cum += segStart[seg + 1] - segStart[seg]
+  }
+  return [from, to]
+}
+
+// Implicit stream power for one cell, receiver-first: z' = (z +
 // F·z'_receiver)/(1 + F), only where the receiver is LOWER in raw z —
 // inside a filled depression routing runs uphill over the fill, and the
 // implicit form would PULL the cell up: a lake bed does not erode. Returns
-// the phase residual (normalized units).
-export function fluvialWalk(v: EngineViews, popped: number, params: ErosionEngineParams, cellM: number): number {
-  const { z, flowTarget, flowDir, accumulation, erodibility, erosionVolume, popOrder } = v
+// the cut (normalized units).
+function fluvialCell(v: EngineViews, cell: number, params: ErosionEngineParams, cellM: number, cellKm2: number): number {
+  const { z, flowTarget, flowDir, accumulation, erodibility, erosionVolume } = v
+  erosionVolume[cell] = 0
+  const old = z[cell]
+  if (old <= 0) return 0
+  const target = flowTarget[cell]
+  if (target < 0) return 0
+  const zr = z[target]
+  if (zr >= old) return 0
+  const distKm = (cellM / 1000) * (flowDir[cell] & 1 ? SQRT2 : 1)
+  const dischargeKm2 = accumulation[cell] * cellKm2 + params.baseAreaKm2
+  const F = (params.kappaDt * erodibility[cell] * Math.pow(dischargeKm2, params.m)) / distKm
+  const znew = (old + F * zr) / (1 + F)
+  const cut = old - znew
+  z[cell] = znew
+  erosionVolume[cell] = cut * ELEVATION_METERS * cellKm2 * 1e6
+  return cut
+}
+
+// The fluvial walk's serial stage: every serial-stage cell in popOrder
+// (receiver-first). Runs BEFORE the leaf kernel, because a leaf root's
+// receiver is a serial-stage cell and must hold its new z first. Returns
+// the residual (normalized units).
+export function fluvialSerial(v: EngineViews, popped: number, params: ErosionEngineParams, cellM: number): number {
+  const { popOrder, stage } = v
   const cellKm2 = (cellM / 1000) * (cellM / 1000)
   let maxStep = 0
   for (let i = 0; i < popped; i++) {
     const cell = popOrder[i]
-    erosionVolume[cell] = 0
-    const old = z[cell]
-    if (old <= 0) continue
-    const target = flowTarget[cell]
-    if (target < 0) continue
-    const zr = z[target]
-    if (zr >= old) continue
-    const distKm = (cellM / 1000) * (flowDir[cell] & 1 ? SQRT2 : 1)
-    const dischargeKm2 = accumulation[cell] * cellKm2 + params.baseAreaKm2
-    const F = (params.kappaDt * erodibility[cell] * Math.pow(dischargeKm2, params.m)) / distKm
-    const znew = (old + F * zr) / (1 + F)
-    const cut = old - znew
-    z[cell] = znew
-    erosionVolume[cell] = cut * ELEVATION_METERS * cellKm2 * 1e6
+    if (stage[cell] !== 1) continue
+    const cut = fluvialCell(v, cell, params, cellM, cellKm2)
     if (cut > maxStep) maxStep = cut
   }
   return maxStep
 }
 
-// ξ–q sediment routing, donor-first (popOrder backward): flux hands
-// downstream, a reach-integrated fraction settles, capped by the donor
-// floor (no deposit may dam the valley that feeds it) and, under water, by
-// the freeboard (a delta aggrades to the surface, then progrades). What
-// reaches a cell with no receiver — the band's rim, or a true sink — is
-// exported and tallied. Returns the phase residual (normalized units).
-export function sedimentWalk(v: EngineViews, popped: number, params: ErosionEngineParams, s: CoordinatorScratch, cellM: number): number {
-  const { z, flowTarget, accumulation, erosionVolume, popOrder } = v
-  const { flux, donorMin } = s
+// The fluvial walk's parallel stage: this worker's leaf segments,
+// receiver-first within each. Residual into the worker's maxStepW slot.
+export function kernelFluvialLeaf(v: EngineViews, workerId: number, workerCount: number, params: ErosionEngineParams, cellM: number): void {
+  const { segOrder, segStart, segLeaf, maxStepW } = v
+  const cellKm2 = (cellM / 1000) * (cellM / 1000)
+  const [from, to] = leafRange(v, workerId, workerCount)
+  let maxStep = 0
+  for (let seg = from; seg < to; seg++) {
+    if (!segLeaf[seg]) continue
+    for (let k = segStart[seg]; k < segStart[seg + 1]; k++) {
+      const cut = fluvialCell(v, segOrder[k], params, cellM, cellKm2)
+      if (cut > maxStep) maxStep = cut
+    }
+  }
+  maxStepW[workerId] = maxStep
+}
+
+// ξ–q sediment routing for one cell, donor-first: the flux that arrived
+// plus the cell's own cut hands downstream, a reach-integrated fraction
+// settles, capped by the donor floor (no deposit may dam the valley that
+// feeds it) and, under water, by the freeboard (a delta aggrades to the
+// surface, then progrades). Returns what leaves the cell; the caller
+// decides where it goes (the receiver, a mailbox, or the export tally).
+function sedimentCell(v: EngineViews, cell: number, params: ErosionEngineParams, cellM: number, cellKm2: number, columnM3: number, capLandM3: number, capMarineM3: number, residual: Float64Array): number {
+  const { z, accumulation, erosionVolume, flux, donorMin } = v
+  let carrying = flux[cell] + erosionVolume[cell]
+  if (carrying <= 0) return carrying
+  const land = z[cell] > 0
+  const settle = land
+    ? Math.max(params.settleFloorKm, params.settleXiKm * Math.sqrt(accumulation[cell] * cellKm2 + params.baseAreaKm2))
+    : params.settleMarineKm
+  // Exact exponential integration over the reach — scale-consistent
+  // for any dx/L, where a clamped linear fraction was not.
+  const dropFraction = 1 - Math.exp(-(cellM / 1000) / settle)
+  let deposit = carrying * dropFraction
+  const donorCap = donorMin[cell] - 1e-5
+  const cap = land ? donorCap : Math.min(donorCap, params.marineFreeboardM / ELEVATION_METERS)
+  const room = (cap - z[cell]) * columnM3
+  if (deposit > room) deposit = Math.max(0, room)
+  const capM3 = land ? capLandM3 : capMarineM3
+  if (deposit > capM3) deposit = capM3
+  if (deposit > 0) {
+    const dz = deposit / columnM3
+    z[cell] += dz
+    carrying -= deposit
+    if (land && dz > residual[0]) residual[0] = dz
+  }
+  return carrying
+}
+
+// The sediment walk's parallel stage: this worker's leaf segments,
+// donor-first within each; what leaves a segment's root goes into the
+// segment's mailbox (mouthFlux/mouthZ) for the serial stage, or, with no
+// receiver at all, is exported. Residual and tallies into the worker's
+// slots.
+export function kernelSedimentLeaf(v: EngineViews, workerId: number, workerCount: number, params: ErosionEngineParams, cellM: number): void {
+  const { z, flowTarget, erosionVolume, flux, donorMin, mouthFlux, mouthZ, segOrder, segStart, segLeaf, maxStepW, erodedW, exportedW } = v
   const cellKm2 = (cellM / 1000) * (cellM / 1000)
   const columnM3 = ELEVATION_METERS * cellKm2 * 1e6
   const capLandM3 = params.depositCapLandM * cellKm2 * 1e6
   const capMarineM3 = params.depositCapMarineM * cellKm2 * 1e6
-  let maxStep = 0
-  let exported = 0
+  const residual = new Float64Array(1)
+  const [from, to] = leafRange(v, workerId, workerCount)
   let eroded = 0
-  flux.fill(0)
-  donorMin.fill(Infinity)
+  let exported = 0
+  for (let seg = from; seg < to; seg++) {
+    if (!segLeaf[seg]) continue
+    const start = segStart[seg]
+    const end = segStart[seg + 1]
+    for (let k = start; k < end; k++) {
+      const cell = segOrder[k]
+      flux[cell] = 0
+      donorMin[cell] = Infinity
+      eroded += erosionVolume[cell]
+    }
+    for (let k = end - 1; k > start; k--) {
+      const cell = segOrder[k]
+      const carrying = sedimentCell(v, cell, params, cellM, cellKm2, columnM3, capLandM3, capMarineM3, residual)
+      const target = flowTarget[cell]
+      flux[target] += carrying
+      if (z[cell] < donorMin[target]) donorMin[target] = z[cell]
+    }
+    const root = segOrder[start]
+    const carrying = sedimentCell(v, root, params, cellM, cellKm2, columnM3, capLandM3, capMarineM3, residual)
+    if (flowTarget[root] >= 0) {
+      mouthFlux[seg] = carrying
+      mouthZ[seg] = z[root]
+    } else {
+      mouthFlux[seg] = 0
+      if (carrying > 0) exported += carrying
+    }
+  }
+  maxStepW[workerId] = residual[0]
+  erodedW[workerId] = eroded
+  exportedW[workerId] = exported
+}
+
+// The sediment walk's serial stage, AFTER the leaf kernel: every leaf
+// mailbox is delivered to its outlet (in segment order, so the sum is the
+// same for any worker split), then the serial-stage cells walk donor-first
+// in popOrder. Returns the residual; adds to the coordinator's tallies.
+export function sedimentSerial(v: EngineViews, popped: number, params: ErosionEngineParams, cellM: number, s: CoordinatorScratch): number {
+  const { z, flowTarget, erosionVolume, flux, donorMin, mouthFlux, mouthZ, popOrder, stage, segOrder, segStart, segLeaf, routingMeta } = v
+  const cellKm2 = (cellM / 1000) * (cellM / 1000)
+  const columnM3 = ELEVATION_METERS * cellKm2 * 1e6
+  const capLandM3 = params.depositCapLandM * cellKm2 * 1e6
+  const capMarineM3 = params.depositCapMarineM * cellKm2 * 1e6
+  const residual = new Float64Array(1)
+  let eroded = 0
+  let exported = 0
+  for (let i = 0; i < popped; i++) {
+    const cell = popOrder[i]
+    if (stage[cell] !== 1) continue
+    flux[cell] = 0
+    donorMin[cell] = Infinity
+    eroded += erosionVolume[cell]
+  }
+  const count = routingMeta[0]
+  for (let seg = 0; seg < count; seg++) {
+    if (!segLeaf[seg]) continue
+    const target = flowTarget[segOrder[segStart[seg]]]
+    if (target < 0) continue
+    flux[target] += mouthFlux[seg]
+    if (mouthZ[seg] < donorMin[target]) donorMin[target] = mouthZ[seg]
+  }
   for (let i = popped - 1; i >= 0; i--) {
     const cell = popOrder[i]
+    if (stage[cell] !== 1) continue
+    const carrying = sedimentCell(v, cell, params, cellM, cellKm2, columnM3, capLandM3, capMarineM3, residual)
     const target = flowTarget[cell]
-    eroded += erosionVolume[cell]
-    let carrying = flux[cell] + erosionVolume[cell]
-    if (carrying > 0) {
-      const land = z[cell] > 0
-      const settle = land
-        ? Math.max(params.settleFloorKm, params.settleXiKm * Math.sqrt(accumulation[cell] * cellKm2 + params.baseAreaKm2))
-        : params.settleMarineKm
-      // Exact exponential integration over the reach — scale-consistent
-      // for any dx/L, where a clamped linear fraction was not.
-      const dropFraction = 1 - Math.exp(-(cellM / 1000) / settle)
-      let deposit = carrying * dropFraction
-      const donorCap = donorMin[cell] - 1e-5
-      const cap = land ? donorCap : Math.min(donorCap, params.marineFreeboardM / ELEVATION_METERS)
-      const room = (cap - z[cell]) * columnM3
-      if (deposit > room) deposit = Math.max(0, room)
-      const capM3 = land ? capLandM3 : capMarineM3
-      if (deposit > capM3) deposit = capM3
-      if (deposit > 0) {
-        const dz = deposit / columnM3
-        z[cell] += dz
-        carrying -= deposit
-        if (land && dz > maxStep) maxStep = dz
-      }
-    }
     if (target >= 0) {
       flux[target] += carrying
       if (z[cell] < donorMin[target]) donorMin[target] = z[cell]
@@ -675,7 +838,15 @@ export function sedimentWalk(v: EngineViews, popped: number, params: ErosionEngi
   }
   s.erodedFlux[0] += eroded
   s.exportedFlux[0] += exported
-  return maxStep
+  return residual[0]
+}
+
+// Fold the workers' per-iteration slots into the run-long tallies.
+export function collectWalkTallies(v: EngineViews, workerCount: number, s: CoordinatorScratch): void {
+  for (let w = 0; w < workerCount; w++) {
+    s.erodedFlux[0] += v.erodedW[w]
+    s.exportedFlux[0] += v.exportedW[w]
+  }
 }
 
 // ------------------------------------------------------------------ driver
@@ -758,10 +929,16 @@ export class ErosionEngine {
   stepPhysics(): number {
     const v = this.views
     const a = this.index.activeCount
+    const cellM = this.kernelParams.cellM
     let maxStep = 0
     kernelUplift(v, 0, a, this.kernelParams)
-    maxStep = Math.max(maxStep, fluvialWalk(v, this.poppedCount, this.params, this.kernelParams.cellM))
-    maxStep = Math.max(maxStep, sedimentWalk(v, this.poppedCount, this.params, this.scratch, this.kernelParams.cellM))
+    maxStep = Math.max(maxStep, fluvialSerial(v, this.poppedCount, this.params, cellM))
+    kernelFluvialLeaf(v, 0, 1, this.params, cellM)
+    maxStep = Math.max(maxStep, v.maxStepW[0])
+    kernelSedimentLeaf(v, 0, 1, this.params, cellM)
+    maxStep = Math.max(maxStep, v.maxStepW[0])
+    collectWalkTallies(v, 1, this.scratch)
+    maxStep = Math.max(maxStep, sedimentSerial(v, this.poppedCount, this.params, cellM, this.scratch))
     kernelHillMoves(v, 0, a, this.kernelParams)
     kernelHillApply(v, 0, a, 0)
     maxStep = Math.max(maxStep, v.maxStepW[0])
@@ -828,6 +1005,7 @@ export function refreshRoutingOn(v: EngineViews, s: CoordinatorScratch, runLtdSc
   const popped = floodActive(v, s)
   runLtdScan()
   lambdaWalk(v, popped, s)
+  buildSegments(v, popped, s)
   runMfd()
   accumulateFlowV2(v, popped)
   return popped
