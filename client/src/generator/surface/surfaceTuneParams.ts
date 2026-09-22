@@ -76,6 +76,87 @@ export const SURFACE_TUNING = {
   petMinMm: 100,
   petMaxMm: 3000,
 
+  // FLOW REGIME per reach (ADAPTIVE_MESH_PLAN.md F6, the hydrogeology
+  // forerunner from climate alone): a reach is EPHEMERAL when its whole
+  // catchment is arid — precipitation over potential evaporation, both
+  // summed over the contributing cells, below the UNEP arid/semi-arid
+  // boundary of 0.2 — and INTERMITTENT when the dry half-year alone cannot
+  // keep it wet: the dry season's precipitation (annual × (1 − seasonality))
+  // over the same potential evaporation below the same 0.2. Everything else
+  // is perennial. A big river through a desert stays perennial because the
+  // ratio is summed over the catchment, headwaters included — the Nile
+  // rule. No storage term: groundwater buffering (a baseflow that bridges a
+  // dry season) waits for phase 5a, so a monsoon river with a wet-but-short
+  // year reads intermittent here.
+  //
+  // The potential evaporation is the lake model's open-water PET above
+  // (150 + 60/°C, floored at 100), which is low on cold land, and these
+  // worlds are cool and wet: measured 2026-09-22 on the golden world alpha
+  // (384 reaches), the catchment P/PET is p5 0.95, median 7.1 — no reach
+  // drains an arid catchment, so the ephemeral class comes from the wadis
+  // (riverGraph.ts) and from reaches under the channel threshold. The dry
+  // season's P/PET is p5 0.39, median 2.6; at 0.2 three reaches read
+  // intermittent, at 0.5 thirty-eight (10 %) — the value chosen, so the
+  // seasonal savanna and Mediterranean rivers of a world show it while the
+  // even-year majority stays perennial.
+  regimeAridBelow: 0.2,
+  regimeDrySeasonBelow: 0.5,
+
+  // COAST TYPE per reach (surface/coastGraph.ts, ADAPTIVE_MESH_PLAN.md F5):
+  // reaches every 40 cells (≈ 310 km at 7.8 km) unless a mouth cuts them;
+  // the fetch that saturates the wave energy (1500 km — beyond that the
+  // sea state is fully developed); how far a mouth's sediment feeds the
+  // coast (300 km — littoral drift carries a big river's sand hundreds of
+  // kilometres along a coast). The type thresholds read RELATIVE exposure
+  // and supply (0..1 against the world's 90th-percentile coast, clamped;
+  // measured 2026-09-22 on golden alpha, half the coasts are lee coasts
+  // with no fetch under a zonal wind) and absolute relief: a
+  // cliff needs 60 m of land within one cell (7.8 km — a real sea cliff is
+  // tens of metres, at this cell size a steep coastal slope) and waves of
+  // a fifth of the maximum on rock no softer than K 1.1; marsh needs calm
+  // water (under 0.15), flat land (under 40 m) and some sediment. Tune by
+  // eye; the coast process of phase 7 replaces the rules with rates.
+  coastReachCells: 40,
+  coastFetchCapKm: 1500,
+  coastSupplyReachKm: 300,
+  coastCliffReliefM: 60,
+  coastCliffExposure: 0.2,
+  coastCliffMaxK: 1.1,
+  coastCalmExposure: 0.15,
+  coastMarshReliefM: 40,
+  coastMarshSupply: 0.02,
+  coastBeachSupply: 0.1,
+
+  // SEDIMENT BASINS (surface/sedimentBasins.ts, ADAPTIVE_MESH_PLAN.md F1):
+  // a cell counts as a deposit when the erosion pass raised it by this
+  // much (5 m — below it the marine diffusion's smoothing and the plains
+  // micro-relief would make basins of noise), and a basin needs this many
+  // cells (4 — a single raised cell is not a feature).
+  sedimentBasinMinThicknessM: 5,
+  sedimentBasinMinCells: 4,
+
+  // ICE (surface/iceFlow.ts, ADAPTIVE_MESH_PLAN.md F4). Snow to ice: a
+  // metre of precipitation as snow makes this much ice (density 0.35 →
+  // 0.9). Melt: metres of ice per year per degree of mean annual
+  // temperature above the threshold — a degree-day rate on the annual
+  // mean; −8 °C is where an ice sheet's interior stops losing mass, so the
+  // ELA sits near the −8 °C mean-annual isotherm, about where it sits on
+  // Earth's ice sheets (the alpine ELA is warmer, at the −4 °C summer
+  // isotherm ≈ −7 °C annual). Flow: Γ = 2A(ρg)³/5 with A = 1e-16 Pa⁻³
+  // yr⁻¹ (temperate ice) and ρg = 8829 Pa/m → 2.8e-5 m⁻³ yr⁻¹; the minimum
+  // slope keeps the flat interior of a sheet from going infinitely thick
+  // (3 m/km, the slope of a sheet's summit region); the cap is Antarctica.
+  // Rounds of the balance-flux fixed point; the minimum thickness drops
+  // the film the fixed point leaves on the margins.
+  iceSnowToIce: 0.4,
+  iceMeltFromC: -8,
+  iceMeltPerDegC: 0.3,
+  iceFlowGamma: 2.8e-5,
+  iceMinSlope: 0.003,
+  iceMaxThicknessM: 4000,
+  iceFlowRounds: 12,
+  iceMinThicknessM: 5,
+
   // Peak precipitation bonus (mm/yr) a cell gets right at a full-strength river/lake
   // — enough to lift a hot desert (P<250) into savanna/forest (the Nile effect).
   maxRiparianMm: 900,

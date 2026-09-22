@@ -4,6 +4,14 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-22
+- **new** Hydrology: every river reach knows whether it flows all year, dries up in the dry season or only runs after rain — from its catchment's climate — and the map draws the last two dashed and dotted. `generator.panel.hydrology`
+- **fixed** Hydrology: server bakes now carry the water bodies and the river graph like browser bakes do. `generator.panel.hydrology`
+- **changed** Erosion: the landscape age reads in million years — one step of the engine is 20 000 years, so the slider runs from 0.2 to 8 Myr. `generator.panel.erosion.age`
+- **new** Hydrology: glaciers have a thickness — ice forms where the climate makes it and flows down the valleys as ice sheets and tongues, drawn as ice bodies on the map and carried by the 4K/8K bakes. `generator.panel.hydrology`
+- **new** Erosion: the sediment the pass lays down is listed as basins — floodplains, fans and marine wedges with their volume and the rock of the catchments that fed them — and saved with the world. `generator.panel.erosion`
+- **new** Coast: every stretch of shore knows what it is — cliff, beach, marsh, delta or bare rock — from the wind that reaches it, the land behind it and the rivers that feed it, and the map draws cliffs, beaches and marshes along the shore. `generator.panel.hydrology`
+- **new** Hydrology: dry valleys — wadis — appear in arid catchments where the rain that does fall has carved a valley, drawn dotted. `generator.panel.hydrology`
+- **new** Elevation: the mantle lifts the ground above its upwellings and lets it sag over downwellings — a broad swell of a few hundred metres under a continent that sits on hot mantle, gone when the upwelling moves on. `generator.panel.tectonics`
 - **new** Hydrology: rivers wide enough to show one get a course — a meander belt with oxbows where the ground is gentle, braided threads where it is steep, distributaries at a sediment-laden mouth — from their own discharge, slope and banks. `generator.panel.hydrology`
 - **new** Hydrology: the river network is data — reaches with discharge, width, slope, sediment load and bank material between sources, junctions, lake inlets, outlets and mouths, each mouth with its catchment; the drawn rivers follow it. `generator.panel.hydrology`
 - **new** Hydrology: every lake and terminal sea is saved as a water body with its level and outlet, and the lake layer follows from that list. `generator.panel.hydrology`

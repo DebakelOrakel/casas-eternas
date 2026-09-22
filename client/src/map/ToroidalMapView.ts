@@ -100,7 +100,9 @@ export interface ToroidalMapView {
   setWaterElevation(data: Float32Array, width: number, height: number): void
   // The per-cell level and surface kind from the hydrology
   // (hydrology.waterLevelField), or null for "the sea everywhere".
-  setWaterLevels(level: Float32Array | null, surface: Uint8Array | null): void
+  // `coast` is the coast type per cell (surface/coastGraph.ts) for the
+  // shore's own drawing; optional.
+  setWaterLevels(level: Float32Array | null, surface: Uint8Array | null, coast?: Uint8Array | null): void
   // Lakes follow the hydrology toggle; the sea is always drawn.
   setLakesVisible(visible: boolean): void
   // Pick the terrain THIS view renders, restricted to its own surfaces
@@ -620,8 +622,8 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     setWaterElevation(data: Float32Array, width: number, height: number): void {
       waterField.setElevation(data, width, height)
     },
-    setWaterLevels(level: Float32Array | null, surface: Uint8Array | null): void {
-      waterField.setLevels(level, surface)
+    setWaterLevels(level: Float32Array | null, surface: Uint8Array | null, coast: Uint8Array | null = null): void {
+      waterField.setLevels(level, surface, coast)
     },
     setLakesVisible(visible: boolean): void {
       waterPlugin.setLakesVisible(visible)

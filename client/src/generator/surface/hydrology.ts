@@ -415,6 +415,38 @@ export function accumulateDischarge(routing: FlowRouting, elevation: Float32Arra
   return discharge
 }
 
+// THE FLOW REGIME'S CLIMATE INPUTS (F6): what a reach's catchment could
+// evaporate and what it receives in the dry half-year, accumulated down the
+// same receivers as the discharge so the three compare per cell. `loss` is
+// the potential evaporation (evaporationPotential of the coarse temperature)
+// summed over the contributing cells; `dry` the dry season's precipitation —
+// annual × (1 − |seasonality|), the smaller of the two seasons (see
+// monsoon.ts's index) — summed the same way. The seasonality is optional:
+// without it the year is even and only aridity can dry a river. The ocean
+// sentinels (OCEAN_PRECIP, and |index| ≥ 1 which no land value reaches)
+// contribute nothing, like precipRunoffAt.
+export interface RegimeInputs {
+  loss: Float32Array
+  dry: Float32Array
+}
+
+export function accumulateRegimeInputs(routing: FlowRouting, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, monsoonIndex: Float32Array | undefined, climateResX: number, climateResY: number): RegimeInputs {
+  const n = climateResX * climateResY
+  const pet = new Float32Array(n)
+  const dryPrecip = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const p = precip[i]
+    if (p === OCEAN_PRECIP || p <= 0) continue
+    pet[i] = evaporationPotential(temperature[i])
+    const s = monsoonIndex ? Math.abs(monsoonIndex[i]) : 0
+    dryPrecip[i] = s < 1 ? p * (1 - s) : 0
+  }
+  return {
+    loss: accumulateDischarge(routing, elevation, pet, climateResX, climateResY),
+    dry: accumulateDischarge(routing, elevation, dryPrecip, climateResX, climateResY),
+  }
+}
+
 // Largest discharge anywhere on land — the reference for river WIDTH (the mouth
 // of the biggest river is the widest; everything scales down from it). Absolute,
 // so widths don't shift when the density knob moves.
@@ -578,7 +610,14 @@ export function buildChannelMask(routing: FlowRouting, elevation: Float32Array, 
 export interface RiverPolylines {
   points: Float32Array // [x, y, widthPx, …] in texel coords, all polylines concatenated
   lengths: Uint32Array // number of points in each polyline, in order
+  // The flow regime of each polyline (RIVER_REGIME_CODE), in order — a
+  // polyline never spans two regimes. All perennial from the cell tracer;
+  // the graph's polylines carry their reach's.
+  regimes: Uint8Array
 }
+
+// The regime as the ribbons carry it, one byte per polyline.
+export const RIVER_REGIME_CODE = { perennial: 0, intermittent: 1, ephemeral: 2 } as const
 
 export function extractRiverPolylines(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, threshold: number, maxDischarge: number): RiverPolylines {
   const { width, height, flowTarget } = routing
@@ -648,7 +687,7 @@ export function extractRiverPolylines(routing: FlowRouting, discharge: Float32Ar
     if (len >= 2) lengths.push(len)
     else points.length -= len * 3 // drop a lone point
   }
-  return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) }
+  return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths), regimes: new Uint8Array(lengths.length) }
 }
 
 // Watershed labels: every land cell tagged with the id of the river system

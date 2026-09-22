@@ -1,5 +1,6 @@
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { ELEVATION_TUNING } from './elevationTuneParams'
+import { capsuleWeight } from './capsule'
 import { wrappedDelta } from '../core/toroidal'
 import { buildFeatureBuckets } from './elevationField'
 import { wrapValue } from '../core/field'
@@ -22,11 +23,9 @@ import { wrapValue } from '../core/field'
 // submarine trenches inert there by construction; rift valleys on land
 // genuinely deepen, which is what a rift does.
 //
-// The capsule body deliberately mirrors computeElevation's (elevationField.ts)
-// — same segment clamp, same smoothstep, same max(1, weightSum) averaging —
-// so U rises exactly where the mountains it feeds actually stand. CHANGE THE
-// TWO TOGETHER. Not extracted into a shared helper yet: that refactor lands
-// with the P2 switchover, when the goldens are re-anchored anyway.
+// The capsule is computeElevation's (elevationField.ts) — the shared
+// capsule.ts since 2026-09-22 — with the same max(1, weightSum) averaging,
+// so U rises exactly where the mountains it feeds actually stand.
 //
 // Scale: the result is normalized so its largest magnitude is 1.0 — the
 // engine's upliftDt carries the physical rate, and the P2 calibration
@@ -86,19 +85,11 @@ export function computeUpliftField(
         for (let dx = -1; dx <= 1; dx++) {
           const bx = wrapValue(centerBx + dx, bucketsX)
           for (const feature of buckets.buckets[by * bucketsX + bx]) {
-            const offX = wrappedDelta(wx, feature.x, width)
-            const offY = wrappedDelta(wy, feature.y, height)
-            const along = offX * feature.tangentX + offY * feature.tangentY
-            const across = -offX * feature.tangentY + offY * feature.tangentX
             const isTrench = feature.kind === 'trench'
             const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
             const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
-            const clampedAlong = along < -halfLength ? -halfLength : along > halfLength ? halfLength : along
-            const overshoot = along - clampedAlong
-            const distance = Math.sqrt(overshoot * overshoot + across * across)
-            if (distance >= perpRadius) continue
-            const falloff = 1 - distance / perpRadius
-            const weight = falloff * falloff * (3 - 2 * falloff)
+            const weight = capsuleWeight(wrappedDelta(wx, feature.x, width), wrappedDelta(wy, feature.y, height), feature.tangentX, feature.tangentY, halfLength, perpRadius)
+            if (weight <= 0) continue
             const activity = Math.exp(-feature.epochsSinceDeposit * decayPerEpoch)
             upliftSum += feature.thickness * activity * weight
             weightSum += weight

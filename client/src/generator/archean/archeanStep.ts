@@ -71,7 +71,7 @@ export interface ArcheanParams {
 export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
   nucleation: DEFAULT_NUCLEATION_PARAMS,
   mantleRms: 0.4,
-  // Matches the tectonic phase's DIFFUSION_PASSES, so the default Archean stirs the
+  // Matches the tectonic phase's MANTLE_TUNING.diffusionPasses, so the default Archean stirs the
   // mantle exactly as hard as the tectonic phase does.
   diffusion: 1,
   // Swept over two seeds at 250 epochs. Largest contiguous landmass as a share of all

@@ -5,10 +5,11 @@ import { assembleFineForcing } from './erosionForcingFields'
 import type { PipelineOptions, WorkerLike } from './erosionEnginePool'
 import { fillDepressionsAndRouteFlow } from './flowRouting'
 import { ABYSSAL_FLOOR, SEA_LEVEL } from '../elevation/elevationScale'
-import { accumulateDischarge, channelThreshold, computeLakes, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff, CANONICAL_RIVER_DENSITY } from './hydrology'
+import { accumulateDischarge, channelThreshold, computeLakes, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff, CANONICAL_RIVER_DENSITY, accumulateRegimeInputs } from './hydrology'
 import type { RiverPolylines, WaterBody } from './hydrology'
 import { buildRiverGraph, riverPolylinesFromGraph } from './riverGraph'
 import { computeRiverCourses } from './riverCourse'
+import { computeIceThickness } from './iceFlow'
 import type { RiverGraph } from './riverGraph'
 
 // The amplification bake itself: upsample, seed roughness, erode, re-run
@@ -100,6 +101,9 @@ export interface AmplifyRequest {
   // Needed for LAKES only (evaporation decides which basins stay wet); rivers
   // run without it. Same coarse climate grid as precipitation.
   temperature?: Float32Array
+  // The precipitation seasonality (monsoon.ts's signed index) for the flow
+  // regime per reach (F6); without it the year is even. Same grid.
+  monsoonIndex?: Float32Array
   climateResX?: number
   climateResY?: number
   // The slice this bake owns. Absent means the whole world, which is what every
@@ -136,6 +140,10 @@ export interface AmplifyResult {
   // which `rivers` derives from; null when the bake had no climate to
   // route with, or owns only a region.
   riverGraph: RiverGraph | null
+  // Ice thickness in metres (surface/iceFlow.ts, F4): the shallow-ice
+  // flow once on the amplified terrain with the save's climate; null
+  // without temperature or for a region.
+  iceThickness: Float32Array | null
 }
 
 export async function runAmplification(
@@ -197,7 +205,7 @@ export async function runAmplification(
   // Hydrology RE-RUN on the amplified field: the save's rivers were routed on
   // the macro raster and would now lie beside the fine valleys this bake just
   // carved, so they are re-derived rather than carried over.
-  let rivers: RiverPolylines = { points: new Float32Array(0), lengths: new Uint32Array(0) }
+  let rivers: RiverPolylines = { points: new Float32Array(0), lengths: new Uint32Array(0), regimes: new Uint8Array(0) }
   let lakeDepth: Float32Array | null = null
   let waterBodies: WaterBody[] | null = null
   let riverGraph: RiverGraph | null = null
@@ -214,6 +222,7 @@ export async function runAmplification(
         // from two different catchments — the same reasoning that hands a
         // split bake its discharge inputs instead of letting it derive them.
         temperature: request.region ? undefined : request.temperature,
+        monsoonIndex: request.monsoonIndex,
         sedimentFlux,
         courseSeed: request.seed,
       },
@@ -228,8 +237,15 @@ export async function runAmplification(
     if (request.region) rivers = ownedRivers(rivers, request.region.owned, result.width)
     onProgress('hydrology', 1)
   }
+  // The ice (F4): a whole world with a climate gets its glaciers.
+  const iceThickness = request.precipitation && request.temperature && request.climateResX && request.climateResY && !request.region
+    ? computeIceThickness({
+      elevation: field, width: result.width, height: result.height, temperature: request.temperature, precipitation: request.precipitation,
+      climateResX: request.climateResX, climateResY: request.climateResY, cellM: WORLD_WIDTH_METERS / result.width,
+    }).thickness
+    : null
 
-  return { elevation: field, width: result.width, height: result.height, rivers, lakeDepth, waterBodies, riverGraph }
+  return { elevation: field, width: result.width, height: result.height, rivers, lakeDepth, waterBodies, riverGraph, iceThickness }
 }
 
 // Route, accumulate and extract the river network of ONE elevation field —
@@ -260,7 +276,7 @@ export async function deriveRivers(
   // it (evaporation decides which basins stay wet), and everything else it
   // needs — the routing and the discharge — this function already has in hand.
   // Absent, the lake half is skipped and the caller keeps whatever it had.
-  options: { maxDischarge?: number; meanRunoff?: number; temperature?: Float32Array; sedimentFlux?: Float32Array; courseSeed?: number } = {},
+  options: { maxDischarge?: number; meanRunoff?: number; temperature?: Float32Array; monsoonIndex?: Float32Array; sedimentFlux?: Float32Array; courseSeed?: number } = {},
   onProgress: (fraction: number) => void = () => {},
 ): Promise<{ rivers: RiverPolylines; lakeDepth: Float32Array | null; waterBodies: WaterBody[] | null; riverGraph: RiverGraph | null }> {
   const routing = await fillDepressionsAndRouteFlow(field, width, height, SEA_LEVEL)
@@ -281,8 +297,12 @@ export async function deriveRivers(
   // With lakes known the network becomes the feature graph and the ribbons
   // derive from it; without them (no temperature) the old tracing stands in,
   // since a graph needs to know where its reaches enter water.
-  const riverGraph = lakes
-    ? buildRiverGraph({ routing, discharge, elevation: field, threshold, maxDischarge, bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux: options.sedimentFlux })
+  const riverGraph = lakes && options.temperature
+    ? buildRiverGraph({
+      routing, discharge, elevation: field, threshold, maxDischarge, bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux: options.sedimentFlux,
+      regime: accumulateRegimeInputs(routing, field, options.temperature, precipitation, options.monsoonIndex, climateResX, climateResY),
+      criticalArea,
+    })
     : null
   // The course (phase 3) on this grid, seeded from the world.
   if (riverGraph && options.courseSeed !== undefined) riverGraph.courses = computeRiverCourses(riverGraph, { cellM: WORLD_WIDTH_METERS / width, seed: options.courseSeed })
@@ -310,16 +330,19 @@ export async function deriveRivers(
 function ownedRivers(rivers: RiverPolylines, owned: Uint8Array, width: number): RiverPolylines {
   const points: number[] = []
   const lengths: number[] = []
+  const regimes: number[] = []
   let read = 0
-  for (const length of rivers.lengths) {
+  for (let p = 0; p < rivers.lengths.length; p++) {
+    const length = rivers.lengths[p]
     const head = Math.floor(rivers.points[read + 1]) * width + Math.floor(rivers.points[read])
     if (owned[head]) {
       for (let i = 0; i < length * 3; i++) points.push(rivers.points[read + i])
       lengths.push(length)
+      regimes.push(rivers.regimes[p])
     }
     read += length * 3
   }
-  return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) }
+  return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths), regimes: Uint8Array.from(regimes) }
 }
 
 // The land/sea status rule's mask (erosion-v2 P3 ②): every cell pinned to

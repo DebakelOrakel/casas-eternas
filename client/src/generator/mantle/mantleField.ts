@@ -1,4 +1,5 @@
 import { toroidalDistanceSq } from '../core/toroidal'
+import { MANTLE_TUNING } from './mantleTuneParams'
 import { wrapValue } from '../core/field'
 import { sampleMembershipField } from '../crust/raftField'
 
@@ -28,28 +29,6 @@ export const MANTLE_RES_X = 128
 export const MANTLE_RES_Y = 64
 const RX = MANTLE_RES_X
 const RY = MANTLE_RES_Y
-
-// Continents add heat under themselves each epoch; ocean removes it. The
-// asymmetry (insulation vs. cooling) is what drives the cycle. Diffusion spreads
-// heat into broad convection cells; decay relaxes toward a zero mean so heat
-// never accumulates unbounded (and the periodic Poisson source stays solvable).
-const INSULATION_RATE = 0.05
-const OCEAN_COOL_RATE = 0.025
-// One gentle pass — enough to make broad cells, few enough that an upwelling
-// building under a continent stays peaked (over-diffusing flattened it and
-// starved the doming/breakup). That warning still holds for the TECTONIC phase,
-// which is why this stays the default; the Archean passes its own value (see
-// ArcheanParams.diffusion), where it is the mantle-mixing knob.
-const DIFFUSION_PASSES = 1
-// How much of a cell's value each pass replaces with its neighbours' mean.
-const DIFFUSION_WEIGHT = 0.5
-const DECAY_KEEP = 0.955
-const T_CLAMP = 2.5
-// Gauss-Seidel iterations for the Poisson flow solve.
-const SOLVE_ITERS = 260
-// Scales the raw ∇φ flow to world pixels/epoch — tuned so plate speeds land in a
-// reasonable range (see plateMotion's LINEAR_SPEED_*). Calibrated by harness.
-const FLOW_SPEED_SCALE = 110
 
 function wrapIdx(x: number, y: number): number {
   return wrapValue(y, RY) * RX + wrapValue(x, RX)
@@ -108,7 +87,7 @@ function zeroMean(field: Float32Array): Float32Array {
 }
 
 function clampField(field: Float32Array): Float32Array {
-  for (let i = 0; i < field.length; i++) field[i] = Math.max(-T_CLAMP, Math.min(T_CLAMP, field[i]))
+  for (let i = 0; i < field.length; i++) field[i] = Math.max(-MANTLE_TUNING.clamp, Math.min(MANTLE_TUNING.clamp, field[i]))
   return field
 }
 
@@ -122,25 +101,25 @@ export function evolveMantleField(
   membershipResY: number,
   worldWidth: number,
   worldHeight: number,
-  diffusionPasses: number = DIFFUSION_PASSES,
+  diffusionPasses: number = MANTLE_TUNING.diffusionPasses,
 ): Float32Array {
   for (let gy = 0; gy < RY; gy++) {
     const wy = ((gy + 0.5) / RY) * worldHeight
     for (let gx = 0; gx < RX; gx++) {
       const wx = ((gx + 0.5) / RX) * worldWidth
       const i = gy * RX + gx
-      if (sampleMembershipField(membership, membershipResX, membershipResY, wx, wy, worldWidth, worldHeight) > 0.5) field[i] += INSULATION_RATE
-      else field[i] -= OCEAN_COOL_RATE
+      if (sampleMembershipField(membership, membershipResX, membershipResY, wx, wy, worldWidth, worldHeight) > 0.5) field[i] += MANTLE_TUNING.insulationRate
+      else field[i] -= MANTLE_TUNING.oceanCoolRate
     }
   }
   // Fractional passes: whole ones at full weight, then a partial one for the
   // remainder. Integer passes alone would give the Archean's mixing knob three
   // usable positions (0, 1, 2 — it saturates past that), which is not a slider.
   const wholePasses = Math.floor(diffusionPasses)
-  for (let p = 0; p < wholePasses; p++) field = boxBlur(field, DIFFUSION_WEIGHT)
+  for (let p = 0; p < wholePasses; p++) field = boxBlur(field, MANTLE_TUNING.diffusionWeight)
   const remainder = diffusionPasses - wholePasses
-  if (remainder > 0) field = boxBlur(field, DIFFUSION_WEIGHT * remainder)
-  for (let i = 0; i < field.length; i++) field[i] *= DECAY_KEEP
+  if (remainder > 0) field = boxBlur(field, MANTLE_TUNING.diffusionWeight * remainder)
+  for (let i = 0; i < field.length; i++) field[i] *= MANTLE_TUNING.decayKeep
   return zeroMean(clampField(field))
 }
 
@@ -149,7 +128,7 @@ export function evolveMantleField(
 // evolveMantleField is written for a world that HAS continents: they insulate, the
 // ocean cools, and the difference between the two sustains the pattern. With no
 // crust at all the ocean term is uniform, zeroMean cancels it exactly, and all that
-// remains is DECAY_KEEP — so the field decays exponentially to nothing. Measured
+// remains is MANTLE_TUNING.decayKeep — so the field decays exponentially to nothing. Measured
 // with zero crust: peak amplitude 0.443 at epoch 0, 0.007 by epoch 60.
 //
 // That would make the Archean impossible by construction — crust needs upwellings,
@@ -169,7 +148,7 @@ export function sustainMantleVigour(field: Float32Array, targetRms: number): Flo
   const rms = Math.sqrt(sq / field.length)
   if (rms < 1e-6) return field
   const scale = targetRms / rms
-  for (let i = 0; i < field.length; i++) field[i] = Math.max(-T_CLAMP, Math.min(T_CLAMP, field[i] * scale))
+  for (let i = 0; i < field.length; i++) field[i] = Math.max(-MANTLE_TUNING.clamp, Math.min(MANTLE_TUNING.clamp, field[i] * scale))
   return field
 }
 
@@ -193,7 +172,7 @@ export function coolMantleAt(field: Float32Array, x: number, y: number, worldWid
       const d2 = toroidalDistanceSq(wx, wy, x, y, worldWidth, worldHeight)
       if (d2 > r2) continue
       const falloff = 1 - Math.sqrt(d2) / worldRadius
-      field[gy * RX + gx] = Math.max(-T_CLAMP, field[gy * RX + gx] - amount * falloff)
+      field[gy * RX + gx] = Math.max(-MANTLE_TUNING.clamp, field[gy * RX + gx] - amount * falloff)
     }
   }
 }
@@ -205,7 +184,7 @@ export function coolMantleAt(field: Float32Array, x: number, y: number, worldWid
 export function computeMantleFlow(field: Float32Array): Float32Array {
   const n = RX * RY
   const phi = new Float32Array(n)
-  for (let iter = 0; iter < SOLVE_ITERS; iter++) {
+  for (let iter = 0; iter < MANTLE_TUNING.solveIters; iter++) {
     for (let y = 0; y < RY; y++) {
       for (let x = 0; x < RX; x++) {
         const i = y * RX + x
@@ -220,8 +199,8 @@ export function computeMantleFlow(field: Float32Array): Float32Array {
       const i = y * RX + x
       const ux = (phi[wrapIdx(x + 1, y)] - phi[wrapIdx(x - 1, y)]) / 2
       const uy = (phi[wrapIdx(x, y + 1)] - phi[wrapIdx(x, y - 1)]) / 2
-      flow[i * 2] = ux * FLOW_SPEED_SCALE
-      flow[i * 2 + 1] = uy * FLOW_SPEED_SCALE
+      flow[i * 2] = ux * MANTLE_TUNING.flowSpeedScale
+      flow[i * 2 + 1] = uy * MANTLE_TUNING.flowSpeedScale
     }
   }
   return flow

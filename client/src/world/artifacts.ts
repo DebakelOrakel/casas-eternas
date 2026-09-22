@@ -1,6 +1,6 @@
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
-import { bakeLayer, decodeLayer, LAKE_DEPTH_ENCODING } from './save/worldLayers'
+import { bakeLayer, decodeLayer, ICE_THICKNESS_ENCODING, LAKE_DEPTH_ENCODING } from './save/worldLayers'
 import type { WaterBody } from '../generator/surface/hydrology'
 import { deserializeRiverGraph, serializeRiverGraph } from '../generator/surface/riverGraph'
 import type { AmplificationArtifact } from '../generator/surface/bakeInBrowser'
@@ -98,6 +98,8 @@ const FILES = {
   riverGraph: 'riverGraph.json',
   riverGraphCells: 'riverGraphCells.i32',
   riverCoursePoints: 'riverCoursePoints.f32',
+  // Ice thickness (F4), metres as u16, finest tier only like the graph.
+  ice: 'ice.u16',
   meta: 'meta.json',
 } as const
 
@@ -106,7 +108,7 @@ const FILES = {
 // reaches a bake), so the per-density suffixes — `rivers-55.f32` and its
 // siblings, which let slider positions coexist beside one terrain — are gone
 // with the freedom they encoded. identity.ts keeps the story.
-const RIVER_FILES = { points: 'rivers.f32', lengths: 'riverLengths.u32' } as const
+const RIVER_FILES = { points: 'rivers.f32', lengths: 'riverLengths.u32', regimes: 'riverRegimes.u8' } as const
 
 // The derived family (docs/decisions/derived-bake-tiers.md): the designated
 // finest bake carries every coarser tier as a box-downsample of itself,
@@ -131,6 +133,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
   const rivers = RIVER_FILES
   const elevationBytes = new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING))
   const lakeBytes = artifact.lakeDepth ? new Uint8Array(bakeLayer(artifact.lakeDepth, LAKE_DEPTH_ENCODING)) : null
+  const iceBytes = artifact.iceThickness ? new Uint16Array(bakeLayer(artifact.iceThickness, ICE_THICKNESS_ENCODING)) : null
   const bodyBytes = artifact.waterBodies ? new TextEncoder().encode(JSON.stringify(artifact.waterBodies)) : null
   const graph = artifact.riverGraph ? serializeRiverGraph(artifact.riverGraph) : null
   const graphBytes = graph ? new TextEncoder().encode(graph.json) : null
@@ -167,9 +170,11 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
       [FILES.elevation]: elevationBytes.byteLength,
       ...(lakeBytes ? { [FILES.lakeDepth]: lakeBytes.byteLength } : {}),
       ...(bodyBytes ? { [FILES.waterBodies]: bodyBytes.byteLength } : {}),
+      ...(iceBytes ? { [FILES.ice]: iceBytes.byteLength } : {}),
       ...(graphBytes && graphCellBytes && courseBytes ? { [FILES.riverGraph]: graphBytes.byteLength, [FILES.riverGraphCells]: graphCellBytes.byteLength, [FILES.riverCoursePoints]: courseBytes.byteLength } : {}),
       [rivers.points]: artifact.riverPoints.byteLength,
       [rivers.lengths]: artifact.riverLengths.byteLength,
+      [rivers.regimes]: artifact.riverRegimes.byteLength,
       ...Object.fromEntries(family.flatMap(({ member, elevation, lakeDepth }) => {
         const names = familyFiles(member)
         return [[names.elevation, elevation.byteLength] as const, ...(lakeDepth ? [[names.lakeDepth, lakeDepth.byteLength] as const] : [])]
@@ -188,11 +193,13 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
     (await store.write(handle, FILES.elevation, elevationBytes)) &&
     (lakeBytes === null || (await store.write(handle, FILES.lakeDepth, lakeBytes))) &&
     (bodyBytes === null || (await store.write(handle, FILES.waterBodies, bodyBytes))) &&
+    (iceBytes === null || (await store.write(handle, FILES.ice, iceBytes))) &&
     (graphBytes === null || (await store.write(handle, FILES.riverGraph, graphBytes))) &&
     (graphCellBytes === null || (await store.write(handle, FILES.riverGraphCells, graphCellBytes))) &&
     (courseBytes === null || (await store.write(handle, FILES.riverCoursePoints, courseBytes))) &&
     (await store.write(handle, rivers.points, artifact.riverPoints)) &&
     (await store.write(handle, rivers.lengths, artifact.riverLengths)) &&
+    (await store.write(handle, rivers.regimes, artifact.riverRegimes)) &&
     (await store.write(handle, FILES.meta, new TextEncoder().encode(JSON.stringify(meta))))
   )
 }
@@ -245,6 +252,10 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
   const pointBytes = await store.read(handle, rivers.points)
   if (!pointBytes) return null
   const lengthBytes = await store.read(handle, rivers.lengths)
+  // The regimes are OPTIONAL like the lakes: an entry written before F6 has
+  // none, and every river there is perennial (which is what the tracer
+  // said at the time).
+  const regimeBytes = await store.read(handle, rivers.regimes)
   // The lake layer is OPTIONAL, unlike the rivers above: a region bake makes
   // none, and neither did any bake before this layer existed. A wrong-sized
   // one is treated as absent rather than trusted — it would be from another
@@ -266,6 +277,13 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
     } catch {
       waterBodies = null
     }
+  }
+  // The ice (F4) at the finest tier only, like the graph; a wrong-sized
+  // raster reads as absent.
+  let iceThickness: Float32Array | null = null
+  if (!familyMember) {
+    const iceBytes = await store.read(handle, FILES.ice)
+    if (iceBytes && iceBytes.byteLength === expectedCells * 2) iceThickness = decodeLayer(iceBytes, ICE_THICKNESS_ENCODING)
   }
   // The graph only at the finest tier: its reach cells index that raster.
   let riverGraph = null as ReturnType<typeof deserializeRiverGraph>
@@ -292,9 +310,11 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
       height,
       riverPoints,
       riverLengths: lengthBytes ? new Uint32Array(lengthBytes) : new Uint32Array(0),
+      riverRegimes: regimeBytes && lengthBytes && regimeBytes.byteLength === lengthBytes.byteLength / 4 ? new Uint8Array(regimeBytes) : new Uint8Array(lengthBytes ? lengthBytes.byteLength / 4 : 0),
       lakeDepth,
       waterBodies,
       riverGraph,
+      iceThickness,
     },
     bakeMs: meta.bakeMs,
   }

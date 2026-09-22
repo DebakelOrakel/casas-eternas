@@ -1,3 +1,4 @@
+import { ITERATION_YEARS } from './erosionEngine'
 import type { InputParam } from '../core/inputParams'
 
 // The erosion and hydrology panels' controls. They live together because both
@@ -13,9 +14,13 @@ export const SURFACE_INPUTS = {
   // iterations. Young keeps the inherited tectonic relief and cuts sharp
   // dendritic valleys; old approaches the smooth denuded equilibrium
   // (measured: 25 crisp / 100 softened / 400 blob — erosion-v2.md).
+  // Shown in million years (F7, ITERATION_YEARS): the slider and the save
+  // stay in iterations, so no recipe changes meaning.
   landscapeAge: {
     min: 10, max: 400, step: 5, default: 40,
     i18n: 'generator.panel.erosion.age',
+    unit: 'common.unit.myr',
+    display: { scale: ITERATION_YEARS / 1e6, digits: 1 },
     inSpec: true,
   },
   // Settling-length scale: more alluvium settles sediment sooner — broader

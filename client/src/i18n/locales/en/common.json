@@ -5,6 +5,7 @@
   "common.action.dismiss.help": "Close this notification.",
   "common.unit.celsius": "°C",
   "common.unit.percent": "%",
+  "common.unit.myr": "Myr",
   "common.server.none.label": "No server",
   "common.server.none.help": "Worlds live only in this browser, which may clear them. Start a server to keep them as files.",
   "common.server.unreachable.label": "Server unreachable",

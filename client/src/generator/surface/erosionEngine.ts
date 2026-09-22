@@ -51,11 +51,37 @@ import {
 // nowhere lower to go is exported into it and tallied
 // (CoordinatorScratch.exportedFlux).
 
+// ONE ITERATION IN YEARS (ADAPTIVE_MESH_PLAN.md F7, calibration). The
+// engine's rates are per iteration and stay so; this names the iteration
+// so the age axis reads in years and phase 5 can turn an epoch's length
+// into iterations. Anchored on the uplift: at forcing 1 a cell rises
+// upliftDt × 9000 m = 19.8 m per iteration, and 1 mm/yr is the canonical
+// rate of an active orogen (0.1–10 mm/yr on Earth), so an iteration is
+// 20 000 years. What the other constants then say, at m = 0.5 with the
+// drainage area in m²:
+//
+//   stream power  kappaDt = K·Δt → K = 4.5e-7 /yr — inside the published
+//                 range for n = 1 (Stock & Montgomery 1999: 1e-7 … 1e-5)
+//   landscape age 40 iterations = 0.8 Myr, 400 = 8 Myr — the 1–10 Myr a
+//                 range needs to reach flux steady state (Whipple 2001)
+//   hillslope     hillDiffKm2 = D·Δt → D = 25 m²/yr, a thousand times a
+//                 soil diffusivity: at 7.8 km cells the term smooths
+//                 landscape-scale mass wasting, not soil creep — the known
+//                 scale caveat, unchanged by naming the years
+//
+// Anchoring on the Cenozoic instead (age 400 = 66 Myr, 165 kyr per
+// iteration) would make the uplift 0.12 mm/yr and K 5.5e-8, both at the
+// slow end; the uplift anchor keeps the ratio physical where phase 5
+// couples the two. Measured and chosen 2026-09-22; nothing in the engine
+// reads it, so no golden moved.
+export const ITERATION_YEARS = 20_000
+
 export interface ErosionEngineParams {
   // Stream-power area exponent (with n=1: a scale-invariant pair).
   m: number
-  // Fluvial coefficient per iteration ("dt·K" folded — time is arbitrary,
-  // the age axis is iterations). Units: (km²)^-m per km of reach.
+  // Fluvial coefficient per iteration ("dt·K" folded — time is arbitrary
+  // to the engine; ITERATION_YEARS names it). Units: (km²)^-m per km of
+  // reach.
   kappaDt: number
   // Sub-grid drainage closure: every cell is fed by this much unresolved
   // catchment, so headwater slopes stop depending on the cell size

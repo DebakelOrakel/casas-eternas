@@ -491,6 +491,7 @@ test('a repeat hydrology call reuses the routing instead of re-flooding', async 
   check('a repeat call does not re-flood', repeated.lakeDepth.byteLength === 0 && repeated.watersheds.byteLength === 0 && repeated.discharge.byteLength === 0)
   check('and does not re-derive the biomes', repeated.biomes.byteLength === 0)
   check('the river network is the same one', hash(repeated.riverPoints) === hash(routed.riverPoints))
+  check('the river regimes are the same ones', hash(new Uint8Array(repeated.riverRegimes)) === hash(new Uint8Array(routed.riverRegimes)) && new Uint8Array(routed.riverRegimes).length === new Uint32Array(routed.riverLengths).length)
   // The feature graph rides with a re-route only, like the lakes.
   check('a re-route carries the river graph, a repeat does not', routed.riverGraph !== null && routed.riverGraph.cells.byteLength > 0 && repeated.riverGraph === null)
 })
@@ -557,6 +558,10 @@ test('two pipelines given the same messages agree byte for byte', async () => {
   // adaptive-mesh plan): the save carries the list, so two runs of one world
   // must agree on every basin's level to the byte, not just on the terrain.
   for (const p of [a, b]) {
+    // Eroded first, so the sediment basins (F1) have deposits to list.
+    const settledBefore = p.settledRenders()
+    p.dispatch({ type: 'erosionStart' })
+    await until(() => p.settledRenders() > settledBefore, { label: 'the erosion pass to finish', timeout: 180000 })
     p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
     await until(() => p.count('climateData') >= 1, { label: 'climate' })
     p.dispatch({ type: 'hydrologyRun' })
@@ -568,6 +573,9 @@ test('two pipelines given the same messages agree byte for byte', async () => {
   check('the river graph is byte-identical', ha.riverGraph !== null && hb.riverGraph !== null && ha.riverGraph.json === hb.riverGraph.json && hash(new Int32Array(ha.riverGraph.cells)) === hash(new Int32Array(hb.riverGraph.cells)))
   check('the river courses are byte-identical', ha.riverGraph !== null && hb.riverGraph !== null && hash(new Float32Array(ha.riverGraph.coursePoints)) === hash(new Float32Array(hb.riverGraph.coursePoints)))
   check('a re-route carries the list, a repeat does not', ha.waterSurface.byteLength === ha.waterLevel.byteLength / 4)
+  check('the ice is byte-identical', hash(new Float32Array(ha.iceThickness)) === hash(new Float32Array(hb.iceThickness)) && ha.iceThickness.byteLength === ha.waterLevel.byteLength, `ice ${ha.iceThickness.byteLength} / ${hb.iceThickness.byteLength} bytes, level ${ha.waterLevel.byteLength}; hashes ${hash(new Float32Array(ha.iceThickness))} ${hash(new Float32Array(hb.iceThickness))}`)
+  check('the sediment basins are the same list', JSON.stringify(ha.sedimentBasins) === JSON.stringify(hb.sedimentBasins) && Array.isArray(ha.sedimentBasins) && ha.sedimentBasins.length > 0)
+  check('the coast is byte-identical', ha.coast !== null && hb.coast !== null && JSON.stringify(ha.coast.reaches) === JSON.stringify(hb.coast.reaches) && hash(new Uint8Array(ha.coastType)) === hash(new Uint8Array(hb.coastType)) && ha.coastType.byteLength > 0)
 })
 
 // ------------------------------------------------------------------------- run

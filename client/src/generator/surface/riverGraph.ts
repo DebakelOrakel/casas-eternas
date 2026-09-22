@@ -1,7 +1,8 @@
 import type { FlowRouting } from './flowRouting'
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
-import { buildChannelMask, RIVER_MAX_WIDTH, RIVER_MIN_WIDTH } from './hydrology'
-import type { RiverPolylines, WaterBody } from './hydrology'
+import { buildChannelMask, RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE } from './hydrology'
+import type { RegimeInputs, RiverPolylines, WaterBody } from './hydrology'
+import { SURFACE_TUNING } from './surfaceTuneParams'
 import { WORLD_WIDTH_METERS } from './erosionEngine'
 import type { RiverCourse } from './riverCourse'
 
@@ -78,7 +79,12 @@ export interface RiverReach {
   bank: number
   // Strahler order.
   order: number
+  // Flow regime from climate alone (F6; SURFACE_TUNING.regimeAridBelow and
+  // regimeDrySeasonBelow): perennial when the caller had no regime inputs.
+  regime: RiverRegime
 }
+
+export type RiverRegime = 'perennial' | 'intermittent' | 'ephemeral'
 
 export interface RiverGraph {
   width: number
@@ -108,6 +114,30 @@ export interface RiverGraphInputs {
   lakeDepth: Float32Array
   sedimentFlux?: Float32Array
   biomes?: Uint8Array
+  // The catchment's potential evaporation and dry-season precipitation,
+  // accumulated like the discharge (hydrology.accumulateRegimeInputs).
+  regime?: RegimeInputs
+  // The channel criterion's catchment, in cells (hydrology.densityToCriticalArea).
+  // With `regime`, it admits WADIS: a cell with that much catchment but too
+  // little runoff for a lasting channel, in an arid catchment, is a dry
+  // valley — carved by the rain that does fall, dry between rains. Without
+  // it the network is the discharge criterion's alone.
+  criticalArea?: number
+}
+
+// The regime rule (the reasoning sits with the two constants): the whole
+// catchment arid → ephemeral, the dry season alone too dry → intermittent.
+// Not "under the channel threshold → ephemeral": the channel criterion
+// admits steep cells below the discharge threshold (channelReferenceSlope),
+// so nearly half the headwater reaches sit under it and are real streams —
+// measured 2026-09-22, 427 of 1007 reaches on the golden calibration world.
+// A wadi's reach is ephemeral because its catchment is arid, which is the
+// condition that admitted it.
+export function classifyRegime(discharge: number, loss: number, dry: number): RiverRegime {
+  if (loss <= 0) return 'perennial'
+  if (discharge / loss < SURFACE_TUNING.regimeAridBelow) return 'ephemeral'
+  if (dry / loss < SURFACE_TUNING.regimeDrySeasonBelow) return 'intermittent'
+  return 'perennial'
 }
 
 const SQRT2 = Math.SQRT2
@@ -138,6 +168,36 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
   const n = width * height
   const cellKm = WORLD_WIDTH_METERS / width / 1000
   const channel = buildChannelMask(routing, elevation, discharge, threshold)
+  // Catchment sizes: land cells draining to each cell, all of them, not only
+  // channels — popOrder backward puts every donor before its receiver.
+  const area = new Int32Array(n)
+  for (let c = 0; c < n; c++) if (elevation[c] > SEA_LEVEL) area[c] = 1
+  for (let i = poppedCount - 1; i >= 0; i--) {
+    const c = popOrder[i]
+    const t = flowTarget[c]
+    if (t >= 0 && elevation[c] > SEA_LEVEL) area[t] += area[c]
+  }
+  // Wadis (F6): catchment enough for a valley, runoff too little for a
+  // channel, climate arid — a channel cell all the same, closed downstream
+  // to the water like the discharge network (the reach it starts is
+  // ephemeral by the rule, since its catchment is arid).
+  // Measured 2026-09-22 on the golden world alpha: 1335 cells sit under
+  // the threshold with a critical catchment, 135 of them in an arid
+  // catchment — the rest are humid valleys below a world-mean-scaled
+  // threshold, not dry valleys, and stay out.
+  if (input.regime && input.criticalArea !== undefined) {
+    const { loss } = input.regime
+    for (let c = 0; c < n; c++) {
+      if (channel[c] || elevation[c] <= SEA_LEVEL || area[c] < input.criticalArea) continue
+      if (loss[c] > 0 && discharge[c] / loss[c] < SURFACE_TUNING.regimeAridBelow) channel[c] = 1
+    }
+    for (let i = poppedCount - 1; i >= 0; i--) {
+      const c = popOrder[i]
+      if (!channel[c]) continue
+      const t = flowTarget[c]
+      if (t >= 0 && elevation[t] > SEA_LEVEL) channel[t] = 1
+    }
+  }
   // A wet body cell: under a lake's or a terminal sea's level AND inside the
   // body's recovered extent — a cell wet by an epsilon of fill but outside
   // the extent (the flood's fill sits an epsilon chain above the pour point)
@@ -150,16 +210,6 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
     if (!channel[c]) continue
     const t = flowTarget[c]
     if (t >= 0 && channel[t] && inDeg[t] < 255) inDeg[t]++
-  }
-
-  // Catchment sizes: land cells draining to each cell, all of them, not only
-  // channels — popOrder backward puts every donor before its receiver.
-  const area = new Int32Array(n)
-  for (let c = 0; c < n; c++) if (elevation[c] > SEA_LEVEL) area[c] = 1
-  for (let i = poppedCount - 1; i >= 0; i--) {
-    const c = popOrder[i]
-    const t = flowTarget[c]
-    if (t >= 0 && elevation[c] > SEA_LEVEL) area[t] += area[c]
   }
 
   // Node cells. A channel cell is a node when it starts a channel, joins
@@ -209,6 +259,7 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
   const cellsOut: number[] = []
   const sedimentFlux = input.sedimentFlux
   const biomes = input.biomes
+  const regime = input.regime
   for (const node of nodes) {
     const start = node.cell
     if (!channel[start]) continue // a mouth or inlet on water: nothing starts there
@@ -273,6 +324,7 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
       sedimentM3: sedimentFlux ? sedimentFlux[lastOwn] : 0,
       bank,
       order: 0,
+      regime: regime ? classifyRegime(dischargeOut, regime.loss[lastOwn], regime.dry[lastOwn]) : 'perennial',
     })
   }
 
@@ -321,6 +373,10 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number)
   const { width, height, nodes, reaches, cells } = graph
   const points: number[] = []
   const lengths: number[] = []
+  const regimes: number[] = []
+  // The regime of the line being emitted; a chain is cut where it changes,
+  // so every polyline carries one.
+  let regime: number = RIVER_REGIME_CODE.perennial
   // A reach with a course draws its course instead of its cell path: the
   // first line continues the chain, the other lines (sub-channels,
   // distributaries) and the oxbows are their own polylines.
@@ -340,8 +396,10 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number)
   const drawn = new Uint8Array(reaches.length)
   let len = 0
   const flush = (): void => {
-    if (len >= 2) lengths.push(len)
-    else points.length -= len * 3
+    if (len >= 2) {
+      lengths.push(len)
+      regimes.push(regime)
+    } else points.length -= len * 3
     len = 0
   }
   let prevX = -1
@@ -360,7 +418,7 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number)
       emitXY(line[k * 2], line[k * 2 + 1], wIn + (wOut - wIn) * t)
     }
   }
-  const extras: { line: Float32Array; w: number }[] = []
+  const extras: { line: Float32Array; w: number; regime: number }[] = []
   for (const head of reaches) {
     if (drawn[head.id]) continue
     // Only start a line at a reach nothing continues INTO — the others are
@@ -372,13 +430,20 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number)
     prevY = -1
     while (r && !drawn[r.id]) {
       drawn[r.id] = 1
+      const code = RIVER_REGIME_CODE[r.regime]
+      if (code !== regime) {
+        // A new line from the shared node cell, so the two regimes meet.
+        flush()
+        prevCell = -1
+        regime = code
+      }
       const wIn = riverWidth(r.dischargeIn, maxDischarge)
       const wOut = riverWidth(r.dischargeOut, maxDischarge)
       const course = courseOf.get(r.id)
       if (course && course.lines.length > 0) {
         emitLine(course.lines[0], wIn * course.lineWidth[0], wOut * course.lineWidth[0])
-        for (let i = 1; i < course.lines.length; i++) extras.push({ line: course.lines[i], w: riverWidth(r.dischargeOut * course.lineWidth[i] * course.lineWidth[i], maxDischarge) })
-        for (const o of course.oxbows) extras.push({ line: o, w: RIVER_MIN_WIDTH })
+        for (let i = 1; i < course.lines.length; i++) extras.push({ line: course.lines[i], w: riverWidth(r.dischargeOut * course.lineWidth[i] * course.lineWidth[i], maxDischarge), regime: code })
+        for (const o of course.oxbows) extras.push({ line: o, w: RIVER_MIN_WIDTH, regime: code })
         prevCell = cells[r.cellStart + r.cellCount - 1]
       } else {
         for (let k = 0; k < r.cellCount; k++) {
@@ -401,10 +466,11 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number)
   for (const extra of extras) {
     prevX = -1
     prevY = -1
+    regime = extra.regime
     emitLine(extra.line, extra.w, extra.w)
     flush()
   }
-  return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths) }
+  return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths), regimes: Uint8Array.from(regimes) }
 }
 
 // The graph's serialised form: one JSON document for everything but the
@@ -449,6 +515,9 @@ export function deserializeRiverGraph(json: string, cells: Int32Array, coursePoi
     const slice = ([start, count]: [number, number]): Float32Array => coursePoints.slice(start * 2, (start + count) * 2)
     const courses = parsed.courses?.map((c) => ({ ...c, lines: c.lines.map(slice), oxbows: c.oxbows.map(slice) }))
     const { courses: _dropped, ...rest } = parsed
+    // A graph written before F6 carries no regime: perennial, as the
+    // builder without regime inputs says.
+    for (const r of rest.reaches) if (r.regime === undefined) r.regime = 'perennial'
     return courses ? { ...rest, cells, courses } : { ...rest, cells }
   } catch {
     return null
@@ -460,7 +529,8 @@ export function deserializeRiverGraph(json: string, cells: Int32Array, coursePoi
 // asserts they are all zero.
 export function riverGraphInvariants(graph: RiverGraph, elevation: Float32Array): Record<string, number> {
   const { nodes, reaches, cells, bodies } = graph
-  const out: Record<string, number> = { acyclic: 0, dischargeMonotone: 0, mouthsInWater: 0, reachesTerminate: 0, bodiesKnown: 0, cellsContiguous: 0 }
+  const out: Record<string, number> = { acyclic: 0, dischargeMonotone: 0, mouthsInWater: 0, reachesTerminate: 0, bodiesKnown: 0, cellsContiguous: 0, regimeKnown: 0 }
+  for (const r of reaches) if (!(r.regime in RIVER_REGIME_CODE)) out.regimeKnown++
   const outOf = new Map<number, number[]>()
   for (const r of reaches) {
     const list = outOf.get(r.from)

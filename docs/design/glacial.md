@@ -3,7 +3,7 @@ summary: An ice model for the coupled terrain history — mass balance from the 
 date: 2026-09-22
 area: generator
 stage: idea
-status: sketched 2026-09-22 after the adaptive-mesh decision; wanted, not decided. Its forks are listed at the end for a session of its own after step 5 of decisions/adaptive-mesh.md. Nothing built. Today ice is a climate class (Ice below −10 °C) plus Glacier as a frozen lake — no thickness, no flow, no process.
+status: sketched 2026-09-22 after the adaptive-mesh decision; wanted, not decided. Its forks are listed at the end for a session of its own after step 5 of decisions/adaptive-mesh.md. The forerunner is BUILT 2026-09-22 (surface/iceFlow.ts — ice thickness on the final terrain by balance-flux inversion, in the bake and at 2048; ADAPTIVE_MESH_PLAN.md F4); the process is not. Ice as a climate class (Ice below −10 °C) and Glacier as a frozen lake stay until the process replaces them.
 ---
 
 # Ice as a process

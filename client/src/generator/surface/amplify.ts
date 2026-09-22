@@ -281,6 +281,9 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   petPerDegC: SURFACE_TUNING.petPerDegC,
   petMinMm: SURFACE_TUNING.petMinMm,
   petMaxMm: SURFACE_TUNING.petMaxMm,
+  // The flow regime per reach (F6) is a graph attribute the bake writes.
+  regimeAridBelow: SURFACE_TUNING.regimeAridBelow,
+  regimeDrySeasonBelow: SURFACE_TUNING.regimeDrySeasonBelow,
 }
 
 export interface AmplifiedField {

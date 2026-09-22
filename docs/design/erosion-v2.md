@@ -128,6 +128,21 @@ yield structural benches and knickpoints — relief classes the current model
 cannot produce at all. The ridged-octave garnish stays optional pending
 measurement; real range-scale carving may cover it.
 
+## Rates in years (F7, 2026-09-22)
+
+The engine counts iterations and its rate constants are per iteration.
+`ITERATION_YEARS` (erosionEngine.ts) names the iteration: 20 000 years,
+anchored on the uplift — 19.8 m per iteration at forcing 1 is 1 mm/yr,
+the canonical active-orogen rate. Everything else follows and is
+recorded there: K = 4.5e-7 /yr for m = 0.5, an age of 40 iterations is
+0.8 Myr and 400 is 8 Myr (the 1–10 Myr a range needs to reach flux
+steady state), the hillslope D is 25 m²/yr — landscape-scale mass
+wasting at 7.8 km cells, not soil creep. The Cenozoic anchor (age 400 =
+66 Myr) was weighed and rejected: it makes the uplift 0.12 mm/yr and K
+5.5e-8, both at the slow end. Nothing in the engine reads the constant;
+the age slider shows it (million years), and phase 5 turns an epoch's
+length into iterations with it.
+
 ## The tectonics interface (agreed 2026-08-16)
 
 Erosion "belongs to" tectonics only in the sense that it needs tectonics'

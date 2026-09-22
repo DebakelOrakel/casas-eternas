@@ -62,6 +62,8 @@ export interface BrowserBakeRequest {
   precipitation?: Float32Array
   // For the lake half of the hydrology re-run; rivers do not need it.
   temperature?: Float32Array
+  // For the flow regime per reach (F6); without it the year is even.
+  monsoonIndex?: Float32Array
   climateResX?: number
   climateResY?: number
 }
@@ -76,6 +78,9 @@ export interface AmplificationArtifact {
   height: number
   riverPoints: Float32Array
   riverLengths: Uint32Array
+  // One regime byte per polyline (hydrology.RIVER_REGIME_CODE); all zero
+  // (perennial) for an entry written before the regime existed.
+  riverRegimes: Uint8Array
   // Lake depth on the amplified grid, or null when this bake produced none
   // (no climate, or a region bake). Null means "keep the macro layer the save
   // carries", which is also what every artifact written before this layer
@@ -89,6 +94,9 @@ export interface AmplificationArtifact {
   // bake, a world without climate, a family member (its cells are indices
   // of the finest raster) and every artifact written before it existed.
   riverGraph: RiverGraph | null
+  // Ice thickness in metres on the amplified grid (surface/iceFlow.ts),
+  // null when the bake had no climate or owns only a region.
+  iceThickness?: Float32Array | null
 }
 
 export interface BrowserBakeResult {
@@ -128,9 +136,11 @@ export function bakeStageInBrowser(
           height: message.height,
           riverPoints: new Float32Array(message.riverPoints),
           riverLengths: new Uint32Array(message.riverLengths),
+          riverRegimes: new Uint8Array(message.riverRegimes),
           lakeDepth: message.lakeDepth ? new Float32Array(message.lakeDepth) : null,
           waterBodies: message.waterBodies ?? null,
           riverGraph: message.riverGraphJson && message.riverGraphCells ? deserializeRiverGraph(message.riverGraphJson, new Int32Array(message.riverGraphCells), message.riverGraphCoursePoints ? new Float32Array(message.riverGraphCoursePoints) : undefined) : null,
+          iceThickness: message.iceThickness ? new Float32Array(message.iceThickness) : null,
         },
         durationMs: message.durationMs,
       })
@@ -160,6 +170,7 @@ export function bakeStageInBrowser(
       forcingResY: request.forcingResY,
       precipitation: request.precipitation ? (request.precipitation.slice().buffer as ArrayBuffer) : undefined,
       temperature: request.temperature ? (request.temperature.slice().buffer as ArrayBuffer) : undefined,
+      monsoonIndex: request.monsoonIndex ? (request.monsoonIndex.slice().buffer as ArrayBuffer) : undefined,
       climateResX: request.climateResX,
       climateResY: request.climateResY,
     }

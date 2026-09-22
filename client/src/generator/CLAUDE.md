@@ -29,7 +29,8 @@ crust/      continental crust as rafts — deliberately decoupled from the plate
             raft rules both eras pass in
 elevation/  elevationScale (what a height MEANS), elevationField, domainWarp, ridgedNoise
 surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), erosionPassV2,
-            hydrology, riverGraph (the feature graph), amplify, runAmplification
+            hydrology, riverGraph (the feature graph), riverCourse, coastGraph, sedimentBasins,
+            iceFlow, amplify, runAmplification
 climate/ ecology/ migration/ render/
 ```
 

@@ -98,7 +98,7 @@
   "generator.action.resetErosion.label": "Auf Tektonik-Ergebnis zurücksetzen",
   "generator.action.resetErosion.help": "Die Erosion rückgängig machen und zum rohen tektonischen Gelände zurückkehren.",
   "generator.panel.erosion.age.label": "Landschaftsalter",
-  "generator.panel.erosion.age.help": "Wie lange die Erosion am Gelände arbeitet — jung behält das rohe tektonische Relief und schneidet scharfe Täler, alt trägt alles zu sanften Ebenen ab.",
+  "generator.panel.erosion.age.help": "Wie lange die Erosion am Gelände arbeitet, in Millionen Jahren — jung behält das rohe tektonische Relief und schneidet scharfe Täler, alt trägt alles zu sanften Ebenen ab.",
   "generator.panel.erosion.alluvium.label": "Schwemmland",
   "generator.panel.erosion.alluvium.help": "Wie bereitwillig Flüsse ihre Fracht ablegen — mehr baut breite Talböden und große Deltas, weniger trägt das Sediment bis ins Meer.",
   "generator.panel.erosion.rockContrast.label": "Gesteinskontrast",

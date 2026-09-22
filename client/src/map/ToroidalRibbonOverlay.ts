@@ -61,8 +61,10 @@ export interface ToroidalRibbonOverlay {
   // ribbon. The width component is the hydrology's cartographic width
   // (RIVER_MIN_WIDTH..RIVER_MAX_WIDTH, √ of relative discharge) — how the
   // ribbon actually widens per zoom is the width rule below. Empty clears the
-  // mesh.
-  setPolylines(points: Float32Array, lengths: Uint32Array): void
+  // mesh. `regimes` is one byte per polyline (hydrology.RIVER_REGIME_CODE):
+  // an intermittent river draws dashed, an ephemeral one dotted; absent, all
+  // are perennial.
+  setPolylines(points: Float32Array, lengths: Uint32Array, regimes?: Uint8Array): void
   // Drape the ribbons onto a terrain surface (the SAME decimated surface the
   // relief mesh displaces by — see elevationSurface.ts for why it must be the
   // same one), or back onto the flat plane with null. Rebuilds the current
@@ -214,6 +216,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
   // having to re-supply the polylines.
   let lastPoints: Float32Array | null = null
   let lastLengths: Uint32Array | null = null
+  let lastRegimes: Uint8Array | undefined
   let heightScale = 1
 
   function disposeMeshes(): void {
@@ -246,7 +249,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
   // vertices per point carrying opposite offset directions and the two
   // half-widths, two triangles per span. The actual widening happens in the
   // vertex shader.
-  function appendRibbon(cxArr: number[], czArr: number[], wArr: number[], positions: number[], dirs: number[], widths: number[], indices: number[]): void {
+  function appendRibbon(cxArr: number[], czArr: number[], wArr: number[], regime: number, positions: number[], dirs: number[], widths: number[], styles: number[], indices: number[]): void {
     const m = cxArr.length
     if (m < 2) return
     for (let pass = 0; pass < smoothingPasses; pass++) {
@@ -272,9 +275,13 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
 
     const count = sx.length
     const vertBase = positions.length / 3
+    // Arc length along the centreline in world units — the dash pattern's
+    // coordinate (ribbonWidthMaterialPlugin), per vertex like the widths.
+    let arc = 0
     for (let i = 0; i < count; i++) {
       const prev = Math.max(0, i - 1)
       const next = Math.min(count - 1, i + 1)
+      if (i > 0) arc += Math.hypot(sx[i] - sx[i - 1], sz[i] - sz[i - 1])
       let tx = sx[next] - sx[prev]
       let tz = sz[next] - sz[prev]
       const len = Math.hypot(tx, tz)
@@ -302,9 +309,11 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
       positions.push(sx[i], y, sz[i])
       dirs.push(nx, nz)
       widths.push(physHalf, cartoHalfPx, r)
+      styles.push(arc, regime)
       positions.push(sx[i], y, sz[i])
       dirs.push(-nx, -nz)
       widths.push(physHalf, cartoHalfPx, r)
+      styles.push(arc, regime)
     }
     for (let i = 0; i < count - 1; i++) {
       const a = vertBase + i * 2
@@ -312,9 +321,10 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
     }
   }
 
-  function setPolylines(points: Float32Array, lengths: Uint32Array): void {
+  function setPolylines(points: Float32Array, lengths: Uint32Array, regimes?: Uint8Array): void {
     lastPoints = points
     lastLengths = lengths
+    lastRegimes = regimes
     disposeMeshes()
     inkByBin = null
     if (lengths.length === 0) return
@@ -322,6 +332,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
     const positions: number[] = []
     const dirs: number[] = []
     const widths: number[] = []
+    const styles: number[] = []
     const indices: number[] = []
     const ink = new Float64Array(INK_BINS)
     let off = 0
@@ -346,7 +357,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
         }
       }
       off += m
-      appendRibbon(cx, cz, w, positions, dirs, widths, indices)
+      appendRibbon(cx, cz, w, regimes?.[p] ?? 0, positions, dirs, widths, styles, indices)
     }
     if (positions.length === 0) return
     if (options.presenceRule !== false) inkByBin = ink
@@ -360,6 +371,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
     const engine = scene.getEngine()
     base.setVerticesBuffer(new VertexBuffer(engine, Float32Array.from(dirs), 'ribbonDir', { size: 2 }))
     base.setVerticesBuffer(new VertexBuffer(engine, Float32Array.from(widths), 'ribbonWidths', { size: 3 }))
+    base.setVerticesBuffer(new VertexBuffer(engine, Float32Array.from(styles), 'ribbonStyle', { size: 2 }))
     base.material = material
     base.isPickable = false
     base.renderingGroupId = renderingGroupId
@@ -395,7 +407,7 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
     setHeightSurface(surface: ElevationSurface | null): void {
       if (surface === heightSurface) return
       heightSurface = surface
-      if (lastPoints && lastLengths) setPolylines(lastPoints, lastLengths)
+      if (lastPoints && lastLengths) setPolylines(lastPoints, lastLengths, lastRegimes)
     },
     setHeightScale(scale: number): void {
       if (scale === heightScale) return

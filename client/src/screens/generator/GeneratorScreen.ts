@@ -16,6 +16,8 @@ import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../generator/core/map
 const DISCHARGE_TO_M3S = dischargeToM3s(1, METERS_PER_CELL)
 import JSZip from 'jszip'
 import type { WaterBody } from '../../generator/surface/hydrology'
+import type { CoastReach } from '../../generator/surface/coastGraph'
+import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
 import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage } from '../../generator/pipeline/messages'
 import { downstreamOf, stage } from '../../generator/pipeline/stages'
@@ -71,7 +73,7 @@ import { SURFACE_INPUTS } from '../../generator/surface/surfaceInputParams'
 import { ECOLOGY_INPUTS, ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputParams'
 import { WORLD_SPEC_FIELDS, specFromYaml, specToYamlLines } from '../../world/save/worldSpec'
 import type { WorldSpec } from '../../world/save/worldSpec'
-import type { InputParam } from '../../generator/core/inputParams'
+import { displayValue, type InputParam } from '../../generator/core/inputParams'
 import './generator.css'
 import '../../ui/chrome/chrome.css'
 import { needsSignIn } from '../../server/session'
@@ -441,7 +443,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const tag = opts.tag ?? 'label'
     const label = t(`${p.i18n}.label` as TKey)
     return `<${tag} class="field${opts.extraClass ? ` ${opts.extraClass}` : ''}" data-help="${p.i18n}"${opts.attrs ?? ''}>
-        <span class="field-label">${label}: <span><span data-value="${valueKey}">${p.default}</span>${p.unit ? t(p.unit as TKey) : ''}</span></span>
+        <span class="field-label">${label}: <span><span data-value="${valueKey}">${displayValue(p, p.default)}</span>${p.unit ? t(p.unit as TKey) : ''}</span></span>
         <input type="range" class="${cls}" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.default}" aria-label="${label}" />
       </${tag}>`
   }
@@ -458,7 +460,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return `<div class="gen-param" data-help="${p.i18n}"${opts.attrs ?? ''}>
         <div class="gen-param__head">
           <span class="gen-param__label" data-t="${p.i18n}.label">${label}</span>
-          <span class="gen-param__value"><span data-value="${valueKey}">${p.default}</span>${p.unit ? `<span data-t="${p.unit}">${t(p.unit as TKey)}</span>` : ''}</span>
+          <span class="gen-param__value"><span data-value="${valueKey}">${displayValue(p, p.default)}</span>${p.unit ? `<span data-t="${p.unit}">${t(p.unit as TKey)}</span>` : ''}</span>
         </div>
         <input type="range" class="gen-param__range ${cls}" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.default}" aria-label="${label}" data-t-aria="${p.i18n}.label" />
       </div>`
@@ -698,7 +700,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const bound = sliderBindings.get(param)
       if (!bound) continue
       bound.input.value = String(param.default)
-      bound.label.textContent = String(param.default)
+      bound.label.textContent = displayValue(param, param.default)
     }
   }
 
@@ -723,7 +725,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const rockContrastInput = root.querySelector<HTMLInputElement>('.erosion-rock-input')!
   const alluviumLabel = root.querySelector<HTMLElement>('[data-value="erosion-alluvium-label"]')!
   const rockContrastLabel = root.querySelector<HTMLElement>('[data-value="erosion-rock-label"]')!
-  ageInput.addEventListener('input', () => { ageLabel.textContent = ageInput.value })
+  ageInput.addEventListener('input', () => { ageLabel.textContent = displayValue(SURFACE_INPUTS.landscapeAge, Number(ageInput.value)) })
   alluviumInput.addEventListener('input', () => { alluviumLabel.textContent = alluviumInput.value })
   rockContrastInput.addEventListener('input', () => { rockContrastLabel.textContent = rockContrastInput.value })
   const resetErosionButton = root.querySelector<HTMLButtonElement>('[data-action="reset-erosion"]')!
@@ -1025,7 +1027,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Rivers/lakes (hydrology) — a panel-less stage shown on the erosion panel.
   // River segments come from the worker's hydrology step; null until computed /
   // invalidated.
-  let lastRiverData: { points: Float32Array; lengths: Uint32Array } | null = null
+  let lastRiverData: { points: Float32Array; lengths: Uint32Array; regimes: Uint8Array } | null = null
   // A baked river network, shown INSTEAD of the 2k one when this world has an
   // amplified artifact. Display only, and kept apart from lastRiverData for a
   // concrete reason: that one is written into the save as layers/rivers.json,
@@ -1035,27 +1037,27 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   //
   // The 2048 raster stays the authority (docs/decisions/worldmap-amplification);
   // this only lets the generator PREVIEW what the world map will draw.
-  let bakedRiverDisplay: { points: Float32Array; lengths: Uint32Array } | null = null
+  let bakedRiverDisplay: { points: Float32Array; lengths: Uint32Array; regimes: Uint8Array } | null = null
 
   // Whichever network is current. One place, so the two sources cannot both
   // think they are on screen.
   function drawRivers(): void {
     const shown = bakedRiverDisplay ?? lastRiverData
-    if (shown) riverLayer?.setPolylines(shown.points, shown.lengths)
+    if (shown) riverLayer?.setPolylines(shown.points, shown.lengths, shown.regimes)
   }
 
   // Adopt a baked artifact's rivers for display, rescaled from the fine grid to
   // macro texel coordinates. Only x/y are divided: the third component is a
   // CARTOGRAPHIC width, sized to read as a line rather than measured in cells,
   // so scaling it would thin every river as the bake got finer.
-  function showBakedRivers(points: Float32Array, lengths: Uint32Array, factor: number): void {
+  function showBakedRivers(points: Float32Array, lengths: Uint32Array, regimes: Uint8Array, factor: number): void {
     const scaled = new Float32Array(points.length)
     for (let i = 0; i < points.length; i += 3) {
       scaled[i] = points[i] / factor
       scaled[i + 1] = points[i + 1] / factor
       scaled[i + 2] = points[i + 2]
     }
-    bakedRiverDisplay = { points: scaled, lengths }
+    bakedRiverDisplay = { points: scaled, lengths, regimes }
     drawRivers()
   }
   let lastWatersheds: Uint16Array | null = null
@@ -1067,6 +1069,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastWaterBodies: WaterBody[] | null = null
   let lastWaterLevel: Float32Array | null = null
   let lastWaterSurface: Uint8Array | null = null
+  // The coast (surface/coastGraph.ts): the type per cell the shore drawing
+  // reads, and the reach list the save carries.
+  let lastCoastType: Uint8Array | null = null
+  let lastCoast: { reaches: CoastReach[]; cells: Int32Array } | null = null
+  // The erosion pass's deposits as features (surface/sedimentBasins.ts).
+  let lastSedimentBasins: SedimentBasin[] | null = null
   // Precipitation INCLUDING the riparian bonus — what the biomes were actually
   // classified from, and the only extra a consumer needs to reclassify them at
   // its own resolution (see the precipitationEffective layer).
@@ -2506,14 +2514,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   function handleHydrologyData(message: WorkerHydrologyDataMessage): void {
-    lastRiverData = { points: new Float32Array(message.riverPoints), lengths: new Uint32Array(message.riverLengths) }
+    lastRiverData = { points: new Float32Array(message.riverPoints), lengths: new Uint32Array(message.riverLengths), regimes: new Uint8Array(message.riverRegimes) }
     drawRivers()
     // Lakes only arrive on a re-route (empty buffer = unchanged, keep the last).
     if (message.lakeDepth.byteLength > 0) lastLakeDepth = new Float32Array(message.lakeDepth)
     if (message.waterBodies) lastWaterBodies = message.waterBodies
     if (message.waterLevel.byteLength > 0) lastWaterLevel = new Float32Array(message.waterLevel)
     if (message.waterSurface.byteLength > 0) lastWaterSurface = new Uint8Array(message.waterSurface)
-    if (lastWaterLevel && lastWaterSurface) mapView.setWaterLevels(lastWaterLevel, lastWaterSurface)
+    if (message.coastType.byteLength > 0) lastCoastType = new Uint8Array(message.coastType)
+    if (message.coast) lastCoast = { reaches: message.coast.reaches, cells: new Int32Array(message.coast.cells) }
+    if (message.sedimentBasins) lastSedimentBasins = message.sedimentBasins
+    if (lastWaterLevel && lastWaterSurface) mapView.setWaterLevels(lastWaterLevel, lastWaterSurface, lastCoastType)
     if (message.watersheds.byteLength > 0) lastWatersheds = new Uint16Array(message.watersheds)
     if (message.discharge.byteLength > 0) lastDischargeField = new Float32Array(message.discharge)
     if (message.maxDischarge > 0) lastMaxDischarge = message.maxDischarge
@@ -2543,6 +2554,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastWaterBodies = null
     lastWaterLevel = null
     lastWaterSurface = null
+    lastCoastType = null
+    lastCoast = null
+    lastSedimentBasins = null
     mapView.setWaterLevels(null, null)
     // Derived from the channel set, so it stales with it.
     lastPrecipitationEffective = null
@@ -3270,7 +3284,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     humidityLabel.textContent = humidityInput.value
     contrastLabel.textContent = contrastInput.value
     equatorOffsetLabel.textContent = equatorOffsetInput.value
-    ageLabel.textContent = ageInput.value
+    ageLabel.textContent = displayValue(SURFACE_INPUTS.landscapeAge, Number(ageInput.value))
     alluviumLabel.textContent = alluviumInput.value
     rockContrastLabel.textContent = rockContrastInput.value
     carryingCapacityLabel.textContent = carryingCapacityInput.value
@@ -3381,6 +3395,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (lastWaterBodies) {
       zip.file('layers/waterBodies.json', JSON.stringify(lastWaterBodies))
       layers.push({ name: 'waterBodies', file: 'layers/waterBodies.json', kind: 'table' })
+    }
+    // The coast reaches (F5), the same way: a table, cells as indices into
+    // this raster.
+    if (lastCoast) {
+      zip.file('layers/coast.json', JSON.stringify({ reaches: lastCoast.reaches, cells: Array.from(lastCoast.cells) }))
+      layers.push({ name: 'coast', file: 'layers/coast.json', kind: 'table' })
+    }
+    // The sediment basins (F1): what this session's erosion deposited, with
+    // provenance — a loaded save cannot re-derive them, so the table is
+    // written only when the session has them.
+    if (lastSedimentBasins && lastSedimentBasins.length > 0) {
+      zip.file('layers/sedimentBasins.json', JSON.stringify(lastSedimentBasins))
+      layers.push({ name: 'sedimentBasins', file: 'layers/sedimentBasins.json', kind: 'table' })
     }
     const manifest = {
       formatVersion: 2,
@@ -3646,7 +3673,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const key = artifactKey(worldUidForLookup, worldIdForLookup, pipelineVersion, String(factor))
       const hit = await readAmplificationArtifact(store, key).catch(() => null)
       if (!hit) continue
-      showBakedRivers(hit.artifact.riverPoints, hit.artifact.riverLengths, factor)
+      showBakedRivers(hit.artifact.riverPoints, hit.artifact.riverLengths, hit.artifact.riverRegimes, factor)
       return
     }
   }
@@ -3770,6 +3797,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           forcingResX: inputs.uplift?.resX, forcingResY: inputs.uplift?.resY,
           precipitation: inputs.climate.data,
           temperature: inputs.temperature?.data,
+          monsoonIndex: inputs.biomeInputs?.monsoonIndex.data,
           climateResX: inputs.climate.resX, climateResY: inputs.climate.resY,
         },
         (phase, fraction) => {
@@ -3780,7 +3808,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         },
       )
       await writeAmplificationArtifact(store, key, baked.artifact, baked.durationMs, inputs.seedText).catch(() => false)
-      showBakedRivers(baked.artifact.riverPoints, baked.artifact.riverLengths, factor)
+      showBakedRivers(baked.artifact.riverPoints, baked.artifact.riverLengths, baked.artifact.riverRegimes, factor)
       settle(t('notify.bake.done', { level, width: baked.artifact.width, height: baked.artifact.height, seconds: Math.round(baked.durationMs / 1000) }), '/icons/server_clean.png', 15000)
     } catch {
       settle(t('notify.bake.failed', { reason: '' }), '/icons/warning.png', 12000)

@@ -20,6 +20,11 @@ const LAKE_DEPTH_RANGE = metersToElevation(3000)
 // to restate these numbers — BUG_BOUNTY 24).
 export const LAKE_DEPTH_ENCODING: Encoding = { dtype: 'u8', scale: LAKE_DEPTH_RANGE / 255, offset: 0 }
 
+// The bake's ice-thickness raster (surface/iceFlow.ts), METRES of ice up to
+// the model's cap of 4000 m — not an elevation-unit layer, and not in the
+// save: it is recomputable from the save's terrain and climate.
+export const ICE_THICKNESS_ENCODING: Encoding = { dtype: 'u16', scale: 4000 / 65535, offset: 0 }
+
 // A field layer's ON-DISK ENCODING, on top of what the field already is.
 // `value = raw * scale + offset`.
 //

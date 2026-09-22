@@ -143,6 +143,8 @@ const art = {
   width: 8, height: 5,
   riverPoints: Float32Array.from([1.5, 2.5, 3.5, 4.5, 10, 20]),
   riverLengths: Uint32Array.from([2, 1]),
+  riverRegimes: Uint8Array.from([0, 2]),
+  iceThickness: Float32Array.from({ length: 40 }, (_, i) => (i % 7 === 0 ? 120.5 + i : 0)),
 }
 // The feature graph rides in the artifact beside the rivers (phase 2): a
 // two-reach toy, round-tripped through JSON + raw cells.
@@ -154,8 +156,8 @@ art.riverGraph = {
     { id: 2, kind: 'mouth', cell: 27, x: 3.5, y: 3.5, body: -1, catchmentCells: 7 },
   ],
   reaches: [
-    { id: 0, kind: 'river', from: 0, to: 1, cellStart: 0, cellCount: 2, dischargeIn: 1, dischargeOut: 2, widthPx: 0.5, lengthKm: 11, dropM: 20, slope: 0.0018, sedimentM3: 0, bank: 3, order: 1 },
-    { id: 1, kind: 'river', from: 1, to: 2, cellStart: 2, cellCount: 2, dischargeIn: 2, dischargeOut: 5, widthPx: 0.7, lengthKm: 11, dropM: 15, slope: 0.0014, sedimentM3: 4, bank: 3, order: 1 },
+    { id: 0, kind: 'river', from: 0, to: 1, cellStart: 0, cellCount: 2, dischargeIn: 1, dischargeOut: 2, widthPx: 0.5, lengthKm: 11, dropM: 20, slope: 0.0018, sedimentM3: 0, bank: 3, order: 1, regime: 'intermittent' },
+    { id: 1, kind: 'river', from: 1, to: 2, cellStart: 2, cellCount: 2, dischargeIn: 2, dischargeOut: 5, widthPx: 0.7, lengthKm: 11, dropM: 15, slope: 0.0014, sedimentM3: 4, bank: 3, order: 1, regime: 'perennial' },
   ],
   cells: Int32Array.from([9, 18, 18, 27]),
   bodies: [],
@@ -172,6 +174,12 @@ else {
   check('elevation survives quantisation', worst <= 1 / 65535 + 1e-9, `worst ${worst.toExponential(3)}`)
   check('river points are exact', String(back.artifact.riverPoints) === String(art.riverPoints))
   check('river lengths are exact', String(back.artifact.riverLengths) === String(art.riverLengths))
+  check('river regimes are exact', String(back.artifact.riverRegimes) === String(art.riverRegimes))
+  {
+    let worstIce = 0
+    for (let i = 0; i < 40; i++) worstIce = Math.max(worstIce, Math.abs((back.artifact.iceThickness?.[i] ?? NaN) - art.iceThickness[i]))
+    check('ice thickness survives quantisation', worstIce <= 4000 / 65535 / 2 + 1e-6, `worst ${worstIce}`)
+  }
   check('dimensions and bake cost survive', back.artifact.width === 8 && back.artifact.height === 5 && back.bakeMs === 1234)
   check('the river graph comes back whole', back.artifact.riverGraph !== null
     && JSON.stringify({ ...back.artifact.riverGraph, cells: undefined }) === JSON.stringify({ ...art.riverGraph, cells: undefined })
@@ -189,6 +197,7 @@ else {
     width: 8, height: 4,
     riverPoints: Float32Array.from([2, 2, 3]),
     riverLengths: Uint32Array.from([1]),
+    riverRegimes: Uint8Array.from([1]),
     lakeDepth: Float32Array.from({ length: 8 * 4 }, (_, i) => (i % 5 === 0 ? 0.1 : 0)),
   }
   check('a family is written only by the finest stage', (await M.artifact.readAmplificationArtifact(store, key, 2)) === null)

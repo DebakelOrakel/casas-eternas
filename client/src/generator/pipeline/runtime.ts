@@ -21,17 +21,20 @@ import { stabilisedFraction } from '../crust/raftField'
 import { worldAgeMa, worldEpoch } from '../core/worldTime'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from '../tectonics/oceanAge'
 import type { FlowRouting } from '../surface/flowRouting'
-import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold, waterLevelField, CANONICAL_RIVER_DENSITY } from '../surface/hydrology'
+import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold, waterLevelField, CANONICAL_RIVER_DENSITY, accumulateRegimeInputs, SURFACE_ICE } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeWeather, defaultWeatherParams } from '../climate/weather'
 import type { WeatherParams } from '../climate/weather'
 import { computeBiomes, computeBiomesFine } from '../climate/biomes'
 import { downsampleMax } from '../core/field'
-import { SEA_LEVEL } from '../elevation/elevationScale'
+import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import type { WaterBody } from '../surface/hydrology'
 import { buildRiverGraph, riverPolylinesFromGraph, serializeRiverGraph } from '../surface/riverGraph'
 import { computeRiverCourses } from '../surface/riverCourse'
+import { buildCoastGraph, type CoastGraph } from '../surface/coastGraph'
+import { findSedimentBasins, type SedimentBasin } from '../surface/sedimentBasins'
+import { computeIceThickness } from '../surface/iceFlow'
 import { WORLD_WIDTH_METERS } from '../surface/erosionEngine'
 import type { RiverGraph } from '../surface/riverGraph'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
@@ -153,6 +156,8 @@ interface ClimateResult {
   biomes: Uint8Array
   // Ocean currents for the ecology step (fish upwelling reads them).
   currents: Float32Array
+  // The wind (climate/wind.ts, interleaved) — the coast's exposure reads it.
+  wind: Float32Array
 }
 let climate: ClimateResult | null = null
 
@@ -183,6 +188,15 @@ interface HydrologyResult {
   // The feature graph, built once per routing (after the riparian biomes,
   // which it records as bank material); the ribbons derive from it.
   graph: RiverGraph | null
+  // The coast reaches (surface/coastGraph.ts), built with the graph.
+  coast: CoastGraph | null
+  // The erosion pass's deposits as features (surface/sedimentBasins.ts),
+  // with provenance from the graph's catchments; empty for a world whose
+  // pre-erosion terrain is not known (a loaded save).
+  sedimentBasins: SedimentBasin[]
+  // Ice thickness in metres (surface/iceFlow.ts, F4) on this raster —
+  // the sheets and the largest valley glaciers at 7.8 km.
+  ice: Float32Array | null
 }
 let hydrology: HydrologyResult | null = null
 
@@ -402,7 +416,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     //
     // Seeds only drive the Voronoi mask; the elevation raster reads rafts, ocean age
     // and features, so previewing cannot disturb the terrain.
-    { width: archean.width, height: archean.height, seeds: previewSeeds, rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset },
+    { width: archean.width, height: archean.height, seeds: previewSeeds, rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset, mantle: archean.mantle },
     renderPool(),
     renderOptions,
   )
@@ -653,6 +667,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
     monsoonIndex: chain.seasonal.index.slice(),
     biomes: chain.biomes.slice(),
     currents: chain.currents.slice(),
+    wind: chain.wind.slice(),
   }
   const climateMessage: WorkerClimateDataMessage = {
     type: 'climateData',
@@ -769,7 +784,7 @@ function handleHydrologyRun(): void {
         result = {
           routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
           bodies: lakes.bodies, level: lakes.level, surface: waterLevelField(lakes.bodies, elevation, width, height).surface, body: lakes.body,
-          maxDischarge, meanRunoff, graph: null,
+          maxDischarge, meanRunoff, graph: null, coast: null, sedimentBasins: [], ice: null,
         }
       }
       hydrology = result
@@ -807,19 +822,57 @@ function handleHydrologyRun(): void {
         bodies: result.bodies, body: result.body, lakeDepth: result.lakeDepth,
         sedimentFlux: lastSedimentFlux && lastSedimentFlux.length === elevation.length ? lastSedimentFlux : undefined,
         biomes: riparian.biomes,
+        // The flow regime (F6) from the climate the lakes were flooded with.
+        regime: accumulateRegimeInputs(result.routing, elevation, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y),
+        criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
       })
       // THE RIVER COURSE (phase 3): pattern, meanders, braids and deltas per
       // reach, seeded from the world so a world always gets the same bends.
       result.graph.courses = computeRiverCourses(result.graph, { cellM: WORLD_WIDTH_METERS / width, seed: sim.warpSeed })
+      // THE COAST (F5): exposure from the wind, hardness from the erosion
+      // forcing's field, sediment from the graph's mouths — a type per reach.
+      const forcingFields = coarseForcingFields(sim, width, height)
+      result.coast = buildCoastGraph({
+        elevation, width, height, wind: weather.wind, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
+        hardness: forcingFields.hardness, graph: result.graph, cellM: WORLD_WIDTH_METERS / width,
+      })
+      // SEDIMENT BASINS (F1): what the last erosion pass deposited, with the
+      // provenance of the catchments feeding each basin. Needs the terrain
+      // the pass started from; a loaded save has none, and gets no basins.
+      result.sedimentBasins = preErosionElevations && preErosionElevations !== terrain && preErosionElevations.length === terrain.length
+        ? findSedimentBasins({
+          before: preErosionElevations, after: terrain, width, height, routing: result.routing, graph: result.graph, cellM: WORLD_WIDTH_METERS / width,
+          cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, width, height),
+          hardness: forcingFields.hardness, coarseResX: CLIMATE_RES_X, coarseResY: CLIMATE_RES_Y,
+        }).basins
+        : []
+      // THE ICE (F4): the shallow-ice flow once, with the refined climate.
+      result.ice = computeIceThickness({
+        elevation, width, height, temperature: weather.temperature, precipitation: weather.precipitation,
+        climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, cellM: WORLD_WIDTH_METERS / width,
+      }).thickness
     }
     const rivers = result.graph
       ? riverPolylinesFromGraph(result.graph, result.maxDischarge)
       : extractRiverPolylines(result.routing, result.discharge, elevation, threshold, result.maxDischarge)
+    // The glaciers (computed above with the graph) ride in the level field the shore drawing reads: an ice
+    // cell's level is its ice surface, its surface kind ice — the map
+    // paints them as ice bodies, thickness as depth.
+    if (rerouted && result.ice) {
+      for (let c = 0; c < levelOut.length; c++) {
+        if (result.ice[c] <= 0) continue
+        levelOut[c] = Math.max(levelOut[c], elevation[c] + metersToElevation(result.ice[c]))
+        surfaceOut[c] = SURFACE_ICE
+      }
+    }
+    const iceOut = rerouted && result.ice ? result.ice.slice() : new Float32Array(0)
     const graphOut = rerouted && result.graph ? serializeRiverGraph(result.graph) : null
+    const coastOut = rerouted && result.coast ? result.coast : null
     const hydrologyMessage: WorkerHydrologyDataMessage = {
       type: 'hydrologyData',
       riverPoints: rivers.points.buffer as ArrayBuffer,
       riverLengths: rivers.lengths.buffer as ArrayBuffer,
+      riverRegimes: rivers.regimes.buffer as ArrayBuffer,
       lakeDepth: lakeOut.buffer as ArrayBuffer,
       biomes: biomesOut.buffer as ArrayBuffer,
       precipitationEffective: precipEffOut.buffer as ArrayBuffer,
@@ -830,9 +883,15 @@ function handleHydrologyRun(): void {
       waterLevel: levelOut.buffer as ArrayBuffer,
       waterSurface: surfaceOut.buffer as ArrayBuffer,
       riverGraph: graphOut ? { json: graphOut.json, cells: graphOut.cells.slice().buffer as ArrayBuffer, coursePoints: graphOut.coursePoints.buffer as ArrayBuffer } : null,
+      coastType: coastOut ? coastOut.type.slice().buffer as ArrayBuffer : new Uint8Array(0).buffer as ArrayBuffer,
+      coast: coastOut ? { reaches: coastOut.reaches, cells: coastOut.cells.slice().buffer as ArrayBuffer } : null,
+      sedimentBasins: rerouted ? result.sedimentBasins : null,
+      iceThickness: iceOut.buffer as ArrayBuffer,
     }
-    const transfer = [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge, hydrologyMessage.waterLevel, hydrologyMessage.waterSurface]
+    const transfer = [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.riverRegimes, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge, hydrologyMessage.waterLevel, hydrologyMessage.waterSurface]
     if (hydrologyMessage.riverGraph) transfer.push(hydrologyMessage.riverGraph.cells, hydrologyMessage.riverGraph.coursePoints)
+    transfer.push(hydrologyMessage.coastType, hydrologyMessage.iceThickness)
+    if (hydrologyMessage.coast) transfer.push(hydrologyMessage.coast.cells)
     emit(hydrologyMessage, transfer)
   })()
 }

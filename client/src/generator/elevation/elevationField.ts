@@ -1,5 +1,6 @@
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { ELEVATION_TUNING } from './elevationTuneParams'
+import { capsuleWeight } from './capsule'
 import { wrappedDelta } from '../core/toroidal'
 import { domainWarpDelta } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
@@ -169,33 +170,13 @@ export function computeElevation(
     for (let dx = -1; dx <= 1; dx++) {
       const bx = wrapValue((centerBx + dx), bucketsX)
       for (const feature of buckets[by * bucketsX + bx]) {
-        // Capsule falloff: distance to the feature's finite boundary segment
-        // (± half-length along its tangent), then a perpendicular profile.
-        // The tangent's arbitrary orientation sign doesn't matter — the
-        // segment is symmetric about the feature.
-        const offX = wrappedDelta(wx, feature.x, width)
-        const offY = wrappedDelta(wy, feature.y, height)
-        const along = offX * feature.tangentX + offY * feature.tangentY
-        const across = -offX * feature.tangentY + offY * feature.tangentX
+        // Capsule falloff (capsule.ts): the tangent's arbitrary orientation
+        // sign doesn't matter — the segment is symmetric about the feature.
         const isTrench = feature.kind === 'trench'
         const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
         const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
-        // Within the segment (|along| <= halfLength) the nearest point is
-        // straight across, so distance is the perpendicular offset — a narrow
-        // crest. Past an end, the nearest point is that endpoint, so distance
-        // grows radially — a rounded cap that stops the feature overshooting
-        // into open ocean the way the old ellipse's long soft axis did.
-        const clampedAlong = along < -halfLength ? -halfLength : along > halfLength ? halfLength : along
-        const overshoot = along - clampedAlong
-        const distance = Math.sqrt(overshoot * overshoot + across * across)
-        if (distance >= perpRadius) continue
-        const falloff = 1 - distance / perpRadius
-        // Smoothstep (3t² - 2t³) rather than a plain square — both have
-        // zero slope right at the radius edge (no visible seam where a
-        // feature's influence cuts off), but smoothstep also flattens out
-        // near the crest instead of peaking sharply, reading as a rounder
-        // ridge profile.
-        const weight = falloff * falloff * (3 - 2 * falloff)
+        const weight = capsuleWeight(wrappedDelta(wx, feature.x, width), wrappedDelta(wy, feature.y, height), feature.tangentX, feature.tangentY, halfLength, perpRadius)
+        if (weight <= 0) continue
         upliftSum += feature.thickness * ELEVATION_TUNING.thicknessToElevationScale * weight
         weightSum += weight
       }
@@ -230,7 +211,7 @@ export function computeElevation(
   // ridgedMultifractal sample at this warped point.
   const detail = upliftRaw > 0 ? (ridgeValue - RIDGE_MEAN) * upliftRaw * ELEVATION_TUNING.ridgeRelativeStrength : 0
   let elevation = blendedBaseline + uplift + detail
-  if (fineValue !== 0 && elevation > 0) elevation += fineValue * Math.min(ELEVATION_TUNING.plainDetailMax, elevation * 0.5)
+  if (fineValue !== 0 && elevation > 0) elevation += fineValue * Math.min(ELEVATION_TUNING.plainDetailMax, elevation * ELEVATION_TUNING.plainDetailHeightFraction)
   return Math.max(-1, Math.min(1, elevation))
 }
 

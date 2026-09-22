@@ -5,6 +5,7 @@
   "common.action.dismiss.help": "Diese Benachrichtigung schließen.",
   "common.unit.celsius": "°C",
   "common.unit.percent": "%",
+  "common.unit.myr": "Myr",
   "common.server.none.label": "Kein Server",
   "common.server.none.help": "Welten liegen nur in diesem Browser und können dort gelöscht werden. Starte einen Server, um sie als Dateien zu behalten.",
   "common.server.unreachable.label": "Server nicht erreichbar",

@@ -1,4 +1,6 @@
 import type { WaterBody } from '../surface/hydrology'
+import type { CoastReach } from '../surface/coastGraph'
+import type { SedimentBasin } from '../surface/sedimentBasins'
 // The generator pipeline's message contract — every message that crosses the
 // worker boundary, in both directions. Kept apart from the pipeline itself so a
 // consumer (GeneratorScreen) can import the vocabulary without importing the
@@ -386,6 +388,9 @@ export interface WorkerHydrologyDataMessage {
   // `riverLengths` is Uint32 point-counts per polyline. See extractRiverPolylines.
   riverPoints: ArrayBuffer
   riverLengths: ArrayBuffer
+  // The flow regime per polyline (Uint8, hydrology.RIVER_REGIME_CODE), one
+  // entry per length above. See riverPolylinesFromGraph.
+  riverRegimes: ArrayBuffer
   // Lake water depth per full-res cell (Float32, 0 = dry). Only populated when the
   // hydrology was re-routed (lakes don't depend on the river-density knob); a
   // density-only re-extract sends an empty buffer, meaning "lakes unchanged". See
@@ -421,6 +426,18 @@ export interface WorkerHydrologyDataMessage {
   // derived from — serialised: the JSON document and the reach cells as
   // Int32 bytes. Re-route only; null means "unchanged".
   riverGraph: { json: string; cells: ArrayBuffer; coursePoints: ArrayBuffer } | null
+  // The coast (surface/coastGraph.ts): the type per cell (Uint8, full-res,
+  // COAST_TYPE_CODE, 0 off the coast) the shore drawing reads, and the
+  // reach list with its cells. Re-route only; empty / null mean "unchanged".
+  coastType: ArrayBuffer
+  coast: { reaches: CoastReach[]; cells: ArrayBuffer } | null
+  // The erosion pass's deposits as features with provenance
+  // (surface/sedimentBasins.ts). Re-route only; null means "unchanged".
+  sedimentBasins: SedimentBasin[] | null
+  // Ice thickness in metres (Float32, full-res, surface/iceFlow.ts); the
+  // level/surface fields above already carry the glaciers for the drawing.
+  // Re-route only; empty means "unchanged".
+  iceThickness: ArrayBuffer
 }
 
 // The computed ecology fields (coarse climate grid), keyed by field id so the

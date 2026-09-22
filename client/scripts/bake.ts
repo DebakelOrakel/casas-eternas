@@ -344,6 +344,7 @@ async function main(): Promise<void> {
     forcingResY: inputs.uplift?.resY,
     precipitation: inputs.climate?.data,
     temperature: inputs.temperature?.data,
+    monsoonIndex: inputs.biomeInputs?.monsoonIndex.data,
     climateResX: inputs.climate?.resX,
     climateResY: inputs.climate?.resY,
   }, (phase, fraction) => {
@@ -374,9 +375,15 @@ async function main(): Promise<void> {
     height: result.height,
     riverPoints: result.rivers.points,
     riverLengths: result.rivers.lengths,
+    riverRegimes: result.rivers.regimes,
     // Null for a region job (a basin across two jobs would flood twice) and
     // for a save without temperature; the reader then keeps the macro lakes.
     lakeDepth: result.lakeDepth,
+    // The bodies and the graph ride with the lakes, as the browser bake
+    // writes them (phases 1–2); the baker had left both out.
+    waterBodies: result.waterBodies,
+    riverGraph: result.riverGraph,
+    iceThickness: result.iceThickness,
   }, durationMs, inputs.seedText, job.erosionRounds)
   if (!stored) fail('could not write the artifact')
 

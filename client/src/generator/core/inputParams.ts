@@ -35,4 +35,16 @@ export interface InputParam {
   // Declared here rather than at the call site so the UI and the save agree on
   // one conversion instead of two.
   toModel?: (sliderValue: number) => number
+  // Slider units → the number SHOWN beside the control, when the model's
+  // unit is not the reader's: `shown = value × scale`, rounded to `digits`.
+  // The slider, the spec and the save keep the model's unit (the landscape
+  // age stays iterations in every recipe ever written); only the label
+  // reads in years. Absent means the value is shown as it is.
+  display?: { scale: number; digits: number }
+}
+
+// The number a control shows for a slider value (InputParam.display).
+export function displayValue(p: InputParam, value: number): string {
+  if (!p.display) return String(value)
+  return (value * p.display.scale).toFixed(p.display.digits)
 }

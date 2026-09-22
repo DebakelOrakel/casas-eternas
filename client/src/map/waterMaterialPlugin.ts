@@ -57,6 +57,8 @@ export class WaterField {
   private elevation: Float32Array | null = null
   private level: Float32Array | null = null
   private surface: Uint8Array | null = null
+  // The coast type per cell (coastGraph.COAST_TYPE_CODE), or null.
+  private coast: Uint8Array | null = null
   private packed: Float32Array | null = null
   private readonly scene: Scene
   width = 1
@@ -92,10 +94,15 @@ export class WaterField {
 
   // The per-cell level and surface kind (hydrology.waterLevelField), or null
   // for "the sea everywhere". Must match the elevation raster's shape.
-  setLevels(level: Float32Array | null, surface: Uint8Array | null): void {
+  //
+  // `coast` is the coast type per cell (surface/coastGraph.ts): the shore
+  // drawing hatches a cliff, sands a beach and greys a marsh on the land
+  // side of the shore line. Optional; absent, the shore is a plain line.
+  setLevels(level: Float32Array | null, surface: Uint8Array | null, coast: Uint8Array | null = null): void {
     const fits = level !== null && surface !== null && level.length === this.width * this.height
     this.level = fits ? level : null
     this.surface = fits ? surface : null
+    this.coast = coast !== null && coast.length === this.width * this.height ? coast : null
     if (this.elevation) this.upload()
   }
 
@@ -104,15 +111,20 @@ export class WaterField {
     const n = this.width * this.height
     if (!this.packed || this.packed.length !== 4 * n) this.packed = new Float32Array(4 * n)
     const out = this.packed
-    const { elevation, level, surface, width, height } = this
+    const { elevation, level, surface, coast, width, height } = this
+    // A: the shore flag (1 on a sea cell next to land) plus ten times the
+    // coast type — on the land coast cells their own, on the sea shore
+    // cells the commonest type among their land neighbours, so the band
+    // can be drawn on either side of the line.
     for (let i = 0; i < n; i++) {
       out[i * 4] = elevation[i]
       out[i * 4 + 1] = level ? level[i] : 0
       out[i * 4 + 2] = surface ? surface[i] : 0
-      out[i * 4 + 3] = 0
+      out[i * 4 + 3] = coast ? coast[i] * 10 : 0
     }
     // Shore cells of the sea: the same neighbourhood rule the renderer
     // paints shore by, so the two agree on which cells the shader owns.
+    const votes = new Int32Array(8)
     for (let y = 0; y < height; y++) {
       const up = ((y - 1 + height) % height) * width
       const down = ((y + 1) % height) * width
@@ -121,9 +133,18 @@ export class WaterField {
         if (elevation[row + x] > 0) continue
         const left = (x - 1 + width) % width
         const right = (x + 1) % width
-        if (elevation[row + left] > 0 || elevation[row + right] > 0 || elevation[up + x] > 0 || elevation[up + left] > 0 || elevation[up + right] > 0 || elevation[down + x] > 0 || elevation[down + left] > 0 || elevation[down + right] > 0) {
-          out[(row + x) * 4 + 3] = 1
+        const around = [row + left, row + right, up + x, up + left, up + right, down + x, down + left, down + right]
+        let shore = false
+        votes.fill(0)
+        for (const nb of around) {
+          if (elevation[nb] <= 0) continue
+          shore = true
+          if (coast) votes[coast[nb] & 7]++
         }
+        if (!shore) continue
+        let best = 0
+        for (let t = 1; t < 8; t++) if (votes[t] > votes[best]) best = t
+        out[(row + x) * 4 + 3] = 1 + best * 10
       }
     }
     if (this.texture) this.texture.update(out)
@@ -266,13 +287,32 @@ export class WaterMaterialPlugin extends MaterialPluginBase {
             #endif
             // The sea is the shader's only on shore cells (see the header);
             // the open sea keeps the texture and whatever is drawn on it.
-            bool shoreCell = cellData.r >= level || cellData.a > 0.5;
+            float coastType = floor(cellData.a / 10.0 + 0.05);
+            float shoreFlag = cellData.a - coastType * 10.0;
+            bool shoreCell = cellData.r >= level || shoreFlag > 0.5 || coastType > 0.5;
             bool paintable = surface >= ${glslFloat(SURFACE_SEA)} + 0.5 || shoreCell;
             float depth = level - e;
             // One-pixel antialiasing on the shore, from the height's own
             // screen-space gradient.
             float aa = max(fwidth(e), 1e-7);
             float coverage = smoothstep(-aa, aa, depth);
+            // The coast type (coastGraph.ts) on the LAND side of the line,
+            // sea cells only (the surface kind says sea): a cliff is a dark
+            // line two pixels wide, a beach a sand band and a marsh a
+            // grey-green one, each a few metres of height up the shore.
+            if (coastType > 1.5 && surface < ${glslFloat(SURFACE_SEA)} + 0.5 && depth < 0.0) {
+              float upM = -depth * waterParams.y;
+              if (coastType < 2.5) {
+                float line = 1.0 - smoothstep(aa, 3.0 * aa, -depth);
+                gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(72.0, 60.0, 50.0) / 255.0, 0.85 * line);
+              } else if (coastType < 3.5) {
+                float band = 1.0 - smoothstep(4.0, 8.0, upM);
+                gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(238.0, 224.0, 178.0) / 255.0, 0.9 * band);
+              } else if (coastType < 4.5) {
+                float band = 1.0 - smoothstep(2.0, 5.0, upM);
+                gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(150.0, 168.0, 130.0) / 255.0, 0.7 * band);
+              }
+            }
             if (paintable && coverage > 0.0) {
               float depthM = max(0.0, depth) * waterParams.y;
               float shade = min(1.0, depthM / waterParams.z);

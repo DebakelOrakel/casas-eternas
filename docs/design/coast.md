@@ -3,7 +3,7 @@ summary: A coastal process for the coupled terrain history — sea level per epo
 date: 2026-09-22
 area: generator
 stage: idea
-status: sketched 2026-09-22 after the adaptive-mesh decision; wanted, not decided, after the glacial process. Tides deferred — they need a moon, a Planet-stage parameter to look at later. Nothing built. Today a coast is the sea-level iso-line and nothing else.
+status: sketched 2026-09-22 after the adaptive-mesh decision; wanted, not decided, after the glacial process. Tides deferred — they need a moon, a Planet-stage parameter to look at later. The classification forerunner is BUILT 2026-09-22 (surface/coastGraph.ts — coast reaches with exposure, relief, hardness, supply and a type, drawn at the shore; ADAPTIVE_MESH_PLAN.md F5); the process is not.
 ---
 
 # The coast as a process

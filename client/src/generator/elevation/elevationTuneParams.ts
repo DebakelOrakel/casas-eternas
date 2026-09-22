@@ -204,6 +204,9 @@ export const ELEVATION_TUNING = {
   // per world; default 0 keeps old callers' fields bit-identical.
   // 20 m, in elevation units,
   plainDetailMax: metersToElevation(20),
+  // ... and never more than this fraction of the local height, so the
+  // relief fades to nothing at the shore instead of dimpling the coast.
+  plainDetailHeightFraction: 0.5,
 
   // Redistribution exponent (a standard procedural-terrain technique — e.g.
   // Sebastian Lague's terrain series applies the same curve to raw Perlin
@@ -265,8 +268,8 @@ export const ELEVATION_TUNING = {
 
   // --- from domainWarp.ts ---
   // How far, in pixels, a query point can be displaced — deliberately
-  // modest relative to FEATURE_FALLOFF_RADIUS (160) and
-  // BASELINE_BLEND_RADIUS (220) in elevationField.ts: this should read as
+  // modest relative to a feature's reach (rangeSegmentHalfLength 35 +
+  // rangePerpRadius 30 above): this should read as
   // "coastlines and ridgelines are a little ragged," not "the tectonic
   // shapes are dissolved into noise." Tune by eye — this is a visual call,
   // not something with a formula to derive it from.
@@ -296,4 +299,20 @@ export const ELEVATION_TUNING = {
   // straight past, so the search stopped at a measured 3% that was really 6.15%. A
   // quarter costs four times as much per step and tracks full resolution closely.
   solveDivisor: 4,
+
+  // --- from dynamicTopography.ts ---
+  // Height per unit of mantle buoyancy anomaly (elevation units; the field
+  // is the tectonic era's `sim.mantle`, zero-mean, clamped to ±2.5). The
+  // field is SKEWED — continents insulate, so upwellings peak under them
+  // while the ocean's cooling is broad and shallow: golden world alpha at
+  // epoch 50 has RMS 0.27, min −0.20, max +1.24. At 400 m per unit the
+  // term's RMS is about 110 m with a +500 m superswell and −80 m sags —
+  // the low end of Earth's residual topography (Hoggard et al. 2016: RMS a
+  // few hundred metres, peaks ±1 km), chosen because the swells sit under
+  // the continents and lift the whole hypsometry: measured 2026-09-22 the
+  // land fraction rises 10.96 → 11.6 % and the mean land height about
+  // +125 m; 1000 m per unit (Earth's RMS) would have cost +1.5 points of
+  // land and +300 m. Not in the land budget: the rafts' area is what the
+  // crust sink balances, and this is height, not crust.
+  dynamicTopographyPerUnit: metersToElevation(400),
 } as const

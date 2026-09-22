@@ -58,6 +58,8 @@ export interface AmplifyRequestMessage {
   // decides which basins stay wet). Absent, the bake returns rivers and no
   // lake layer, and the consumer keeps the save's macro one.
   temperature?: ArrayBuffer
+  // The precipitation seasonality, for the flow regime per reach (F6).
+  monsoonIndex?: ArrayBuffer
   climateResX?: number
   climateResY?: number
 }
@@ -81,6 +83,8 @@ export interface AmplifyDoneMessage {
   // must use as its texel space.
   riverPoints: ArrayBuffer
   riverLengths: ArrayBuffer
+  // One regime byte per polyline (hydrology.RIVER_REGIME_CODE).
+  riverRegimes: ArrayBuffer
   // Lakes re-flooded on the amplified field's own routing, on the same grid
   // as the elevation. Absent when the bake had no temperature to evaporate
   // with — which is NOT "no lakes", but "ask the save's macro layer".
@@ -92,6 +96,9 @@ export interface AmplifyDoneMessage {
   riverGraphJson?: string
   riverGraphCells?: ArrayBuffer
   riverGraphCoursePoints?: ArrayBuffer
+  // Ice thickness (F4), Float32 metres on the amplified grid; absent like
+  // the graph.
+  iceThickness?: ArrayBuffer
   // Wall-clock milliseconds, so the screen (and a human) can see what the
   // bake actually costs at this resolution.
   durationMs: number
@@ -140,6 +147,7 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
     forcingResY: message.forcingResY,
     precipitation: message.precipitation ? new Float32Array(message.precipitation) : undefined,
     temperature: message.temperature ? new Float32Array(message.temperature) : undefined,
+    monsoonIndex: message.monsoonIndex ? new Float32Array(message.monsoonIndex) : undefined,
     climateResX: message.climateResX,
     climateResY: message.climateResY,
   }, (phase, fraction) => reporters[phase](fraction))
@@ -151,20 +159,23 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
     height: result.height,
     riverPoints: result.rivers.points.buffer as ArrayBuffer,
     riverLengths: result.rivers.lengths.buffer as ArrayBuffer,
+    riverRegimes: result.rivers.regimes.buffer as ArrayBuffer,
     lakeDepth: result.lakeDepth ? (result.lakeDepth.buffer as ArrayBuffer) : undefined,
     waterBodies: result.waterBodies ?? undefined,
     durationMs: performance.now() - started,
   }
+  if (result.iceThickness) done.iceThickness = result.iceThickness.buffer as ArrayBuffer
   if (result.riverGraph) {
     const serialised = serializeRiverGraph(result.riverGraph)
     done.riverGraphJson = serialised.json
     done.riverGraphCells = serialised.cells.buffer as ArrayBuffer
     done.riverGraphCoursePoints = serialised.coursePoints.buffer as ArrayBuffer
   }
-  const transfer: ArrayBuffer[] = [done.elevation, done.riverPoints, done.riverLengths]
+  const transfer: ArrayBuffer[] = [done.elevation, done.riverPoints, done.riverLengths, done.riverRegimes]
   if (done.lakeDepth) transfer.push(done.lakeDepth)
   if (done.riverGraphCells) transfer.push(done.riverGraphCells)
   if (done.riverGraphCoursePoints) transfer.push(done.riverGraphCoursePoints)
+  if (done.iceThickness) transfer.push(done.iceThickness)
   self.postMessage(done, transfer)
 }
 

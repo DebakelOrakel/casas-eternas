@@ -25,6 +25,8 @@ const L = (p) => server.ssrLoadModule(p)
 const M = {
   sim: await L('/src/generator/tectonics/plateSimulation.ts'),
   field: await L('/src/generator/elevation/elevationField.ts'),
+  dynamic: await L('/src/generator/elevation/dynamicTopography.ts'),
+  mantle: await L('/src/generator/mantle/mantleField.ts'),
   ridged: await L('/src/generator/elevation/ridgedNoise.ts'),
   scale: await L('/src/generator/elevation/elevationScale.ts'),
   erosionForcing: await L('/src/generator/pipeline/erosionForcing.ts'),
@@ -57,6 +59,10 @@ for (let e = 0; e < 180; e++) M.archeanStep.archeanStep(archean)
 const sim = M.finalize.finalizeArchean(archean)
 for (let e = 0; e < 50; e++) M.sim.stepEpoch(sim)
 const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, W, H, sim.warpSeed)
+{ // dynamic topography (F3), as the pipeline adds it
+  const dyn = M.dynamic.dynamicTopographyField(sim.mantle, M.mantle.MANTLE_RES_X, M.mantle.MANTLE_RES_Y, W, H, W, H)
+  for (let i = 0; i < base.length; i++) base[i] += dyn[i]
+}
 const bk = M.field.buildFeatureBuckets(sim.features, W, H)
 const salt = (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0
 const raw = new Float32Array(W * H)

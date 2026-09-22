@@ -93,6 +93,8 @@ const M = {
   sim: await L('/src/generator/tectonics/plateSimulation.ts'),
   params: await L('/src/generator/tectonics/tectonicsTuneParams.ts'),
   field: await L('/src/generator/elevation/elevationField.ts'),
+  dynamic: await L('/src/generator/elevation/dynamicTopography.ts'),
+  mantle: await L('/src/generator/mantle/mantleField.ts'),
   ridged: await L('/src/generator/elevation/ridgedNoise.ts'),
   erosionForcing: await L('/src/generator/pipeline/erosionForcing.ts'),
   erosionPassV2: await L('/src/generator/surface/erosionPassV2.ts'),
@@ -100,6 +102,9 @@ const M = {
   routing: await L('/src/generator/surface/flowRouting.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
   graph: await L('/src/generator/surface/riverGraph.ts'),
+  coast: await L('/src/generator/surface/coastGraph.ts'),
+  basins: await L('/src/generator/surface/sedimentBasins.ts'),
+  ice: await L('/src/generator/surface/iceFlow.ts'),
   engine: await L('/src/generator/surface/erosionEngine.ts'),
   course: await L('/src/generator/surface/riverCourse.ts'),
   scale: await L('/src/generator/elevation/elevationScale.ts'),
@@ -203,6 +208,9 @@ async function buildWorld(seed) {
   for (let e = 0; e < EPOCHS; e++) M.sim.stepEpoch(sim)
 
   const baseline = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, W, H, sim.warpSeed)
+  // Dynamic topography (F3) on the baseline, as elevationMapImage adds it.
+  const dynamic = M.dynamic.dynamicTopographyField(sim.mantle, M.mantle.MANTLE_RES_X, M.mantle.MANTLE_RES_Y, W, H, W, H)
+  for (let i = 0; i < baseline.length; i++) baseline[i] += dynamic[i]
   const buckets = M.field.buildFeatureBuckets(sim.features, W, H)
   const fineSalt = (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0
   const raw = new Float32Array(W * H)
@@ -278,9 +286,17 @@ async function buildWorld(seed) {
   const graph = M.graph.buildRiverGraph({
     routing, discharge, elevation: el, threshold, maxDischarge: maxDis,
     bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux: ero.sedimentFlux, biomes: biomesFine2,
+    // The flow regime (F6) from the refined climate, like the worker.
+    regime: M.hydro.accumulateRegimeInputs(routing, el, t2, precipitation, sp2.index, CRX, CRY),
+    criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY),
   })
   // The course (phase 3), seeded from the world like the worker does.
   graph.courses = M.course.computeRiverCourses(graph, { cellM: M.engine.WORLD_WIDTH_METERS / W, seed: sim.warpSeed })
+  // The coast (F5), as the worker builds it after the graph.
+  const coast = M.coast.buildCoastGraph({
+    elevation: el, width: W, height: H, wind, climateResX: CRX, climateResY: CRY,
+    hardness: M.erosionForcing.coarseForcingFields(sim, W, H).hardness, graph, cellM: M.engine.WORLD_WIDTH_METERS / W,
+  })
 
   // Downstream reads the REFINED fields, exactly as the worker's
   // cacheAndPostClimate hands them on: v1 above only fed the refinement.
@@ -292,6 +308,13 @@ async function buildWorld(seed) {
   biomesFine = biomesFine2
 
   const cratonAge = M.rafts.computeCratonOldnessField(sim.rafts, sim.epoch, CRX, CRY, W, H)
+  // The ice (F4) on the eroded terrain with the refined climate.
+  const ice = M.ice.computeIceThickness({ elevation: el, width: W, height: H, temperature: t2, precipitation, climateResX: CRX, climateResY: CRY, cellM: M.engine.WORLD_WIDTH_METERS / W })
+  // The sediment basins (F1) of the erosion pass, with provenance.
+  const basins = M.basins.findSedimentBasins({
+    before: raw, after: el, width: W, height: H, routing, graph, cellM: M.engine.WORLD_WIDTH_METERS / W,
+    cratonAge, hardness: M.erosionForcing.coarseForcingFields(sim, W, H).hardness, coarseResX: CRX, coarseResY: CRY,
+  })
   // Real volcanoes and sutures, and real params — through the very function the
   // worker uses, not a copy of it. This used to pass empty arrays and `{}`,
   // which made carryingCapacity NaN on every land cell. Being JS, nothing
@@ -323,7 +346,7 @@ async function buildWorld(seed) {
     { spreadBudget: 400, seaCrossing: 0.3 },
   )
 
-  return { sim, raw, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, lakes, graph, volcanoes, eco, mig, originCell, CRX, CRY }
+  return { sim, raw, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, threshold, lakes, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
 }
 
 // --- layer 1: invariants ---------------------------------------------------
@@ -384,6 +407,36 @@ function invariants(w) {
   if (!w.graph.nodes.some((node) => node.kind === 'mouth')) fail('riverGraph', 'no mouth')
   for (const [name, count] of Object.entries(M.graph.riverGraphInvariants(w.graph, w.el))) {
     if (count > 0) fail(`riverGraph.${name}`, `${count} violations`)
+  }
+  // The regime rule (F6) holds against its own inputs: an ephemeral reach
+  // drains an arid catchment, a perennial one a wet dry season; and the
+  // ribbons carry one regime per polyline.
+  {
+    const regime = M.hydro.accumulateRegimeInputs(w.routing, w.el, w.temperature, w.precipitation, w.seasonalPrecip.index, w.CRX, w.CRY)
+    let wrong = 0
+    for (const r of w.graph.reaches) {
+      const last = w.graph.cells[r.cellStart + r.cellCount - 2]
+      if (M.graph.classifyRegime(r.dischargeOut, regime.loss[last], regime.dry[last]) !== r.regime) wrong++
+    }
+    if (wrong > 0) fail('riverGraph.regimeRule', `${wrong} reaches disagree with the rule`)
+    const lines = M.graph.riverPolylinesFromGraph(w.graph, w.maxDis)
+    if (lines.regimes.length !== lines.lengths.length) fail('riverGraph.polylineRegimes', `${lines.regimes.length} regimes for ${lines.lengths.length} polylines`)
+  }
+  // The coast (F5): every coast cell in exactly one reach, reaches
+  // contiguous, types known; and the coast is not empty on a world with sea.
+  if (w.coast.reaches.length === 0) fail('coast', 'no reaches')
+  for (const [name, count] of Object.entries(M.coast.coastGraphInvariants(w.coast, w.el))) {
+    if (count > 0) fail(`coast.${name}`, `${count} violations`)
+  }
+  // The sediment basins (F1): every labelled cell a deposit, counts match,
+  // numbers finite; an eroded world deposits somewhere.
+  if (w.basins.basins.length === 0) fail('sedimentBasins', 'no basins')
+  // The ice (F4): finite, non-negative, on land.
+  for (const [name, count] of Object.entries(M.ice.iceInvariants(w.ice, w.el))) {
+    if (count > 0) fail(`ice.${name}`, `${count} violations`)
+  }
+  for (const [name, count] of Object.entries(M.basins.sedimentBasinInvariants(w.basins, w.raw, w.el))) {
+    if (count > 0) fail(`sedimentBasins.${name}`, `${count} violations`)
   }
   // The course's one statistical law (phase 3): the meander belt widens
   // with discharge. Rank correlation over the meandering reaches, when
@@ -450,6 +503,17 @@ function metrics(w) {
   put('river.mouths', w.graph.nodes.filter((node) => node.kind === 'mouth').length)
   put('river.meandering', w.graph.courses.filter((c) => c.pattern === 'meandering').length)
   put('river.braided', w.graph.courses.filter((c) => c.pattern === 'braided').length)
+  put('ice.cells', countWhere(w.ice.thickness, (v) => v > 0))
+  put('ice.volumeKm3', (() => { let s = 0; for (const h of w.ice.thickness) s += h; return (s * 7.8 * 7.8) / 1000 })())
+  put('sediment.basins', w.basins.basins.length)
+  put('sediment.volumeKm3', w.basins.basins.reduce((s, b) => s + b.volumeKm3, 0))
+  put('sediment.fedBasins', w.basins.basins.filter((b) => b.mouthReaches.length > 0).length)
+  put('coast.reaches', w.coast.reaches.length)
+  put('coast.cliff', w.coast.reaches.filter((r) => r.type === 'cliff').length)
+  put('coast.beach', w.coast.reaches.filter((r) => r.type === 'beach').length)
+  put('coast.marsh', w.coast.reaches.filter((r) => r.type === 'marsh').length)
+  put('river.intermittent', w.graph.reaches.filter((r) => r.regime === 'intermittent').length)
+  put('river.ephemeral', w.graph.reaches.filter((r) => r.regime === 'ephemeral').length)
 
   put('tectonics.plates', w.sim.seeds.length)
   put('tectonics.rafts', w.sim.rafts.length)
@@ -561,6 +625,10 @@ function fingerprints(w) {
   put('river.graph', new TextEncoder().encode(M.graph.serializeRiverGraph(w.graph).json))
   put('river.cells', w.graph.cells)
   put('river.course', M.graph.serializeRiverGraph(w.graph).coursePoints)
+  put('coast.reaches', new TextEncoder().encode(JSON.stringify(w.coast.reaches)))
+  put('coast.type', w.coast.type)
+  put('sediment.basins', new TextEncoder().encode(JSON.stringify(w.basins.basins)))
+  put('ice.thickness', w.ice.thickness)
   put('hydro.lakeDepth', w.lakes.depth)
   put('hydro.saltFlat', w.lakes.saltFlat)
   put('hydro.dryBasin', w.lakes.dryBasin)

@@ -8,6 +8,7 @@ import type { ElevationRenderer } from './elevationRenderPool'
 import { upscaleBilinearToroidal } from '../core/field'
 import { computeOwnerField } from '../crust/raftField'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { dynamicTopographyField } from '../elevation/dynamicTopography'
 import { applyErosionDetailTexture } from './erosionDetailTexture'
 import { reliefShadeAt } from './reliefShade'
 
@@ -153,6 +154,9 @@ export interface RenderableWorld {
   oceanAge: Float32Array
   warpSeed: number
   seaLevelOffset: number
+  // The mantle buoyancy field (mantle/mantleField.ts's raster) — the
+  // dynamic-topography term reads it as it stands; both eras have one.
+  mantle: Float32Array
 }
 
 export async function renderSimulationImage(sim: RenderableWorld, pool: ElevationRenderer, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
@@ -183,6 +187,11 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
     const renderWidth = Math.floor(width / scale)
     const renderHeight = Math.floor(height / scale)
     const blendedBaselines = computeRaftBaseline(sim.rafts, sim.oceanAge, renderWidth, renderHeight, width, height, sim.warpSeed, sim.seaLevelOffset)
+    // Dynamic topography (elevation/dynamicTopography.ts): the mantle's
+    // anomaly as a height term on the deck, evaluated from the field as it
+    // stands now — instantaneous, never crustal.
+    const dynamic = dynamicTopographyField(sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, renderWidth, renderHeight, width, height)
+    for (let i = 0; i < blendedBaselines.length; i++) blendedBaselines[i] += dynamic[i]
     const rendered = await pool.renderElevations(renderWidth, renderHeight, width, height, blendedBaselines, sim.features, sim.warpSeed)
     elevations = scale === 1 ? rendered : upscaleBilinearToroidal(rendered, renderWidth, renderHeight, width, height)
   }

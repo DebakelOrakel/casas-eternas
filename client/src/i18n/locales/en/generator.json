@@ -98,7 +98,7 @@
   "generator.action.resetErosion.label": "Revert to tectonics result",
   "generator.action.resetErosion.help": "Undo erosion and return to the raw tectonic terrain.",
   "generator.panel.erosion.age.label": "Landscape age",
-  "generator.panel.erosion.age.help": "How long erosion works the terrain — young keeps the raw tectonic relief and cuts sharp valleys, old wears everything toward smooth plains.",
+  "generator.panel.erosion.age.help": "How long erosion works the terrain, in million years — young keeps the raw tectonic relief and cuts sharp valleys, old wears everything toward smooth plains.",
   "generator.panel.erosion.alluvium.label": "Floodplains",
   "generator.panel.erosion.alluvium.help": "How readily rivers drop their load — more builds broad valley floors and big deltas, less exports the sediment to the sea.",
   "generator.panel.erosion.rockContrast.label": "Rock contrast",

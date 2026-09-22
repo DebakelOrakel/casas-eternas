@@ -2,6 +2,7 @@ import type { Raft, Suture } from '../crust/raftTypes'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeCratonOldnessField } from '../crust/raftField'
 import { ELEVATION_TUNING } from './elevationTuneParams'
+import { capsuleWeight } from './capsule'
 import { wrappedDelta, toroidalDistanceSq } from '../core/toroidal'
 
 // The K(x) inputs — the erosion-v2 engine's erodibility, assembled from the
@@ -65,26 +66,6 @@ export const DEFAULT_ERODIBILITY_FIELD_PARAMS: ErodibilityFieldParams = {
   floodRadiusMin: 20,
   floodRadiusMax: 60,
   floodRadiusPerThickness: 2,
-}
-
-// Smoothstep capsule weight — the same footprint family the elevation and
-// uplift kernels use, local to this module because its radii differ.
-function capsuleWeight(
-  offX: number,
-  offY: number,
-  tangentX: number,
-  tangentY: number,
-  halfLength: number,
-  perpRadius: number,
-): number {
-  const along = offX * tangentX + offY * tangentY
-  const across = -offX * tangentY + offY * tangentX
-  const clamped = along < -halfLength ? -halfLength : along > halfLength ? halfLength : along
-  const overshoot = along - clamped
-  const distance = Math.sqrt(overshoot * overshoot + across * across)
-  if (distance >= perpRadius) return 0
-  const falloff = 1 - distance / perpRadius
-  return falloff * falloff * (3 - 2 * falloff)
 }
 
 // The smooth K-factor field at `outWidth`×`outHeight` over a world of
