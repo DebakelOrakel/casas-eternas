@@ -1,9 +1,9 @@
 ---
-summary: One adaptive mesh for the terrain, from tectonics to the near ground — an irregular node network whose density follows relief and discharge, carrying history in the macro and detail in the tiles; a feature graph (rivers, divides, shores) as the erosion's real product; a river-course generator below the channel head; and tectonics coupled to erosion as the final step. The direction agreed in conversation on 2026-09-22; the details and the decision are for a later session.
+summary: One adaptive mesh for the terrain, from tectonics to the near ground — an irregular node network whose density follows relief and discharge, carrying history in the macro and detail in the tiles; a feature graph (rivers, divides, shores) as the erosion's real product; a river-course generator below the channel head; and tectonics coupled to erosion as the final step. The direction agreed in conversation on 2026-09-22 and decided the same day in decisions/adaptive-mesh.md.
 date: 2026-09-22
 area: generator
-stage: idea
-status: direction agreed 2026-09-22 ("so machen wir's, noch nicht jetzt"); no decision doc yet, nothing built. Grew out of the adaptive-mesh note in amplification-artifacts.md. A follow-up session is to settle the open questions at the end and turn this into a decisions/ doc.
+stage: decided
+status: direction agreed and the open questions decided the same day, 2026-09-22, in decisions/adaptive-mesh.md; nothing built. Grew out of the adaptive-mesh note in amplification-artifacts.md. The list at the end is kept as it stood before the decision session; the processes noted for later were extended the same day by folds, cover and groundwater.
 ---
 
 # One adaptive mesh, history and detail
@@ -308,6 +308,10 @@ already orders them.
 
 ## Open for the decision session
 
+All twelve were settled on 2026-09-22 in
+[decisions/adaptive-mesh.md](../decisions/adaptive-mesh.md); the list
+stands as the session's agenda.
+
 - The density rule itself (which quantities, which spacing at which
   value), and how a change to it is versioned (it is part of every
   artifact's identity).
@@ -329,6 +333,82 @@ already orders them.
 - What happens to `map/`'s raster consumers (hillshade, biomes, the
   clipmap rings): rasterise per tile from the mesh, or sample the mesh
   directly.
+
+## Processes not modelled, noted for later
+
+Reviewed 2026-09-22 after the decision: the decisions cost little
+realism themselves; the gaps are processes the model does not contain.
+Each fits the agreed form as an epoch process on the same mesh or as a
+tile-level synthesis, and none needs the decisions reopened. Noted, not
+decided:
+
+- **Glacial** (noted, wanted; sketched in [glacial.md](./glacial.md)).
+  An ice process per epoch: mass balance from temperature and
+  precipitation, ice flow, erosion with sliding speed, moraines as a
+  sediment layer. U-valleys, cirques, fjords — the largest visible gain
+  in mountains. Needs the climate history of decision 13. No finer
+  mesh: ice flux counts as discharge in the density rule.
+- **Coast** (noted, wanted; sketched in [coast.md](./coast.md)). Wave
+  erosion at the sea-level iso-line (cliff retreat with exposure),
+  one-dimensional sediment drift along the coast graph, sea level per
+  epoch (eustasy) — rias, drowned valleys, terraces. Needs the same
+  climate history for the ice volume. Tides deferred (need a moon).
+- **Karst** (kept in mind, debatable). Needs carbonate layers from the
+  stratigraphy; dissolution instead of incision, closed depressions,
+  rivers that vanish and re-emerge as a node pair in the graph. Its
+  value is in the game (caves, underground rivers) more than in the
+  picture; its own session, after step 5.
+- Cheap and going in with step 5: mass wasting (critical slope from the
+  lithology, scree as a layer, landslide-dammed lakes as water levels)
+  and solifluction (hillslope kappa rising with cold). Lava flows on the
+  receiver graph and volcano forms as feature attributes once layers
+  exist. Dunes as a tile synthesis from wind, aridity and fine sediment.
+
+Three more, found on a second pass the same day and agreed to go in with
+the same form:
+
+- **Folds** (agreed, with step 5). The column per node stays a vertical
+  stack; a tilted layer is only a gradient of the layer interface across
+  neighbours, and the uplift already makes those gradients — at tens to
+  hundreds of kilometres. What is missing is the fold. At convergent
+  margins the uplift per epoch gets a periodic term across the
+  convergence direction, wavelength from the crust's layer thickness
+  (buckling, order 10–20 km), amplitude from the shortening. The erosion
+  on the stack does the rest: soft layers go faster, hard ones stand as
+  cuestas and hogbacks, anticlines are breached in their cores,
+  synclines carry the ridges; flat-lying strata give mesas, which is
+  right. Dip is not state: it is the interface gradient over the
+  neighbours, read by the tile. Resources follow: the layer at the
+  surface is known, so seams and ore beds run along strike. No thrusts
+  (stacked sequences); a feature later, if at all. Four kilometres in an
+  orogen give three to five nodes per wavelength, marginal; the
+  curvature term densifies there anyway.
+- **Cover** (agreed, with step 5, one of the first pieces of the
+  coupling because it costs nothing). From the per-epoch climate of
+  decision 13, today's biome classification on the coarse raster gives
+  a cover factor per node in [0, 1] — bare, desert and tundra low,
+  grass middle, forest high. Three effects, as in the usual landscape
+  models: fluvial erodibility falls with cover, the critical slope of
+  mass wasting rises with it, and the bank strength of decision 14 is
+  the same value. Hillslope kappa is left alone. With it, one moment on
+  the Planet-stage schedule: **land plants**, default from the start.
+  Before it everything is bare: rivers braid everywhere, sediment yield
+  is high, meanders appear only with the vegetation — the real history,
+  for one value on a schedule decision 13 already has.
+- **Groundwater** (agreed, after step 5; forerunner any time). No epoch
+  process: groundwater shapes the macro history only as karst, which is
+  deferred. What the game needs — springs, wells, oases, dry valleys —
+  is a classification at the end, from what step 5 leaves behind.
+  Springs as graph features where the surface cuts a layer contact
+  permeable over impermeable: the spring line, straight from the
+  stratigraphy and the grain classes. A regime per reach — perennial,
+  intermittent, ephemeral — from runoff minus infiltration (top layer
+  and cover) against the seasonality; dry valleys are reaches with a
+  valley and no lasting flow, wadis the same in arid climate. A water
+  table per node as a Dupuit estimate between the nearest channels from
+  recharge and permeability: one value for well depth, no flow solve.
+  Oases are springs in arid climate. Forerunner: the regime per reach
+  from climate alone, without layers.
 
 ## References
 
