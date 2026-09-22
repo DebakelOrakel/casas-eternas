@@ -551,6 +551,19 @@ test('two pipelines given the same messages agree byte for byte', async () => {
   await growWorld(a)
   await growWorld(b)
   check('the same seed and the same messages produce the same world', hash(a.last('rendered').elevation) === hash(b.last('rendered').elevation))
+  // The standing-water list and the level field it derives (phase 1 of the
+  // adaptive-mesh plan): the save carries the list, so two runs of one world
+  // must agree on every basin's level to the byte, not just on the terrain.
+  for (const p of [a, b]) {
+    p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+    await until(() => p.count('climateData') >= 1, { label: 'climate' })
+    p.dispatch({ type: 'hydrologyRun' })
+    await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
+  }
+  const ha = a.last('hydrologyData'), hb = b.last('hydrologyData')
+  check('the water bodies are the same list', JSON.stringify(ha.waterBodies) === JSON.stringify(hb.waterBodies) && Array.isArray(ha.waterBodies))
+  check('the water level field is byte-identical', hash(new Float32Array(ha.waterLevel)) === hash(new Float32Array(hb.waterLevel)) && ha.waterLevel.byteLength > 0)
+  check('a re-route carries the list, a repeat does not', ha.waterSurface.byteLength === ha.waterLevel.byteLength / 4)
 })
 
 // ------------------------------------------------------------------------- run

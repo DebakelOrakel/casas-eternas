@@ -21,6 +21,7 @@ import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../generator/core/map
 const RUNOFF_COEFFICIENT = 0.35
 const DISCHARGE_TO_M3S = ((METERS_PER_CELL * METERS_PER_CELL * 1e-3) / 3.156e7) * RUNOFF_COEFFICIENT
 import JSZip from 'jszip'
+import type { WaterBody } from '../../generator/surface/hydrology'
 import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage } from '../../generator/pipeline/messages'
 import { downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
@@ -1066,6 +1067,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastDischargeField: Float32Array | null = null
   let lastMaxDischarge = 0
   let lastLakeDepth: Float32Array | null = null
+  // The standing-water truth behind lastLakeDepth (hydrology.WaterBody): the
+  // save carries the list; the map draws shores against the per-cell level.
+  let lastWaterBodies: WaterBody[] | null = null
+  let lastWaterLevel: Float32Array | null = null
+  let lastWaterSurface: Uint8Array | null = null
   // Precipitation INCLUDING the riparian bonus — what the biomes were actually
   // classified from, and the only extra a consumer needs to reclassify them at
   // its own resolution (see the precipitationEffective layer).
@@ -1492,41 +1498,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Rivers are NOT a compositor (texture) layer — they're scene-space ribbon
   // geometry (riverLayer) so they stay crisp at any zoom. See handleHydrologyData.
 
-  // Lake depth at which the blue tint reaches full saturation. Set just above the
-  // measured 99th percentile (859 m) so the ramp spends its range on the depths
-  // lakes actually have, with only genuinely deep rift basins pinned at the end.
-  const LAKE_SHADE_SATURATION_M = 900
-
-  // Lakes ARE a texture layer (filled water areas, low-frequency — texture blur
-  // on zoom is far less objectionable than for thin rivers). Blue tint over cells
-  // with water depth, slightly deeper = darker. lakeDepth is full-res (= map
-  // resolution), so it indexes the pixel buffer directly.
-  function paintLakes(data: Uint8ClampedArray): void {
-    if (!lastLakeDepth) return
-    for (let i = 0; i < lastLakeDepth.length; i++) {
-      const d = lastLakeDepth[i]
-      if (d <= 0) continue
-      // Deeper → richer blue, saturating at LAKE_SHADE_SATURATION_M. Was a bare
-      // `d * 6`, i.e. full saturation at 0.167 elevation units — fine when land
-      // spanned most of the scale, but on the metre-anchored one that is 1500 m,
-      // and the measured 90th-percentile lake is 223 m deep, so nearly every lake
-      // would have rendered at the palest end of the ramp.
-      const shade = Math.min(1, elevationToMeters(d) / LAKE_SHADE_SATURATION_M)
-      // A frozen basin (Biome.Glacier — the riparian override, see
-      // LakeFields.frozen) paints as ice, not open water: pale blue-white,
-      // barely darkening with depth (crevasse blue), instead of the lake ramp.
-      const ice = lastBiomes !== null && lastBiomes[i] === Biome.Glacier
-      const r = ice ? 216 - 12 * shade : 60 - 25 * shade
-      const g = ice ? 230 - 10 * shade : 110 - 30 * shade
-      const b = ice ? 242 - 6 * shade : 170 - 20 * shade
-      const p = i * 4
-      const a = 0.75
-      data[p] = data[p] * (1 - a) + r * a
-      data[p + 1] = data[p + 1] * (1 - a) + g * a
-      data[p + 2] = data[p + 2] * (1 - a) + b * a
-    }
-  }
-
   // Debug marker, not a map layer: flat magenta on every cell the erosion pass lifted
   // from below sea level. Deliberately garish and unshaded — the job is "where did the
   // sediment go", and a tasteful tint would disappear against the ocean blue at the
@@ -1702,7 +1673,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     { id: 'boundaries', label: 'Boundaries', enabled: false, paintPixels: paintBoundaryMask },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
     { id: 'currents', label: 'Currents', enabled: false, hidden: true, paint: drawCurrents },
-    { id: 'lakes', label: 'Lakes', enabled: false, hidden: true, paintPixels: paintLakes },
     { id: 'waterBalance', label: 'Water balance', enabled: false, hidden: true, paintPixels: paintWaterBalance },
     { id: 'watersheds', label: 'Watersheds', enabled: false, hidden: true, paintPixels: paintWatersheds },
     // Events are always on — a persistent notification-coupled marker layer,
@@ -2032,14 +2002,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const overlayShown = (id: OverlayId): boolean =>
     id === 'ecology' ? ecologyLayerOn() : overlaysOn[id] && overlayAvailable[id]()
 
-  // Enable each layer per overlayShown; 'rivers' drives the scene ribbons + lake
-  // tint together. One composite at the end.
+  // Enable each layer per overlayShown; 'rivers' drives the scene ribbons and
+  // the lakes (drawn by the map's water plugin, not a layer) together. One
+  // composite at the end.
   function applyOverlays(): void {
     for (const id of OVERLAY_IDS) {
       const show = overlayShown(id)
       if (id === 'rivers') {
         riverLayer?.setEnabled(show)
-        overlay.setLayerEnabled('lakes', show)
+        mapView.setLakesVisible(show)
       } else {
         overlay.setLayerEnabled(id, show)
       }
@@ -2544,6 +2515,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     drawRivers()
     // Lakes only arrive on a re-route (empty buffer = unchanged, keep the last).
     if (message.lakeDepth.byteLength > 0) lastLakeDepth = new Float32Array(message.lakeDepth)
+    if (message.waterBodies) lastWaterBodies = message.waterBodies
+    if (message.waterLevel.byteLength > 0) lastWaterLevel = new Float32Array(message.waterLevel)
+    if (message.waterSurface.byteLength > 0) lastWaterSurface = new Uint8Array(message.waterSurface)
+    if (lastWaterLevel && lastWaterSurface) mapView.setWaterLevels(lastWaterLevel, lastWaterSurface)
     if (message.watersheds.byteLength > 0) lastWatersheds = new Uint16Array(message.watersheds)
     if (message.discharge.byteLength > 0) lastDischargeField = new Float32Array(message.discharge)
     if (message.maxDischarge > 0) lastMaxDischarge = message.maxDischarge
@@ -2570,11 +2545,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // nothing, because it looks authoritative.
     bakedRiverDisplay = null
     lastLakeDepth = null
+    lastWaterBodies = null
+    lastWaterLevel = null
+    lastWaterSurface = null
+    mapView.setWaterLevels(null, null)
     // Derived from the channel set, so it stales with it.
     lastPrecipitationEffective = null
     riverLayer?.setPolylines(new Float32Array(0), new Uint32Array(0))
     riverLayer?.setEnabled(false)
-    overlay.setLayerEnabled('lakes', false)
     compositeOverlays()
   }
 
@@ -2763,6 +2741,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       reliefCoarseSurface = createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE)
       reliefFineSurface = createElevationSurface(full, message.width, message.height, RELIEF_HEIGHT_SCALE)
       mapView.setReliefSurfaces(reliefCoarseSurface, reliefFineSurface)
+      // The shores are found on the PHYSICAL raster at draw time — the one
+      // the hydrology set its levels against, not the display copy.
+      mapView.setWaterElevation(new Float32Array(message.raw), message.width, message.height)
       // The surfaces are metre-true now; exaggeration is a view property
       // (see mapSceneSettings). This screen is a map register throughout —
       // and the ribbons must carry the same scale as the ground they drape
@@ -3325,7 +3306,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // main thread has cached (climate/hydrology/ecology from the panels visited);
   // layers absent from the cache are simply omitted from the manifest.
   function bakeQueryLayers(zip: JSZip, forcing: { uplift: Float32Array; erodibility: Float32Array; resX: number; resY: number } | null): void {
-    type ManifestLayer = { name: string; file: string; kind: 'raster' | 'vector'; resX?: number; resY?: number; dtype?: string; encoding?: { scale: number; offset: number }; unit?: string; landOnly?: boolean }
+    type ManifestLayer = { name: string; file: string; kind: 'raster' | 'vector' | 'table'; resX?: number; resY?: number; dtype?: string; encoding?: { scale: number; offset: number }; unit?: string; landOnly?: boolean }
     const layers: ManifestLayer[] = []
     // Elevation is always present (post-generation); carried raw as elevation.f32
     // (it doubles as the restore raster).
@@ -3397,8 +3378,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         })
       }
     }
+    // The standing-water list (ADAPTIVE_MESH_PLAN.md phase 1): a JSON table
+    // beside the rasters — the truth `lakeDepth` derives from
+    // (hydrology.lakeDepthFromBodies), in this raster's texel coordinates.
+    // Its arrival is what formatVersion 2 says; a version-1 reader simply
+    // does not see the entry.
+    if (lastWaterBodies) {
+      zip.file('layers/waterBodies.json', JSON.stringify(lastWaterBodies))
+      layers.push({ name: 'waterBodies', file: 'layers/waterBodies.json', kind: 'table' })
+    }
     const manifest = {
-      formatVersion: 1,
+      formatVersion: 2,
       // The same provenance string status.generator carries — a real build id
       // since 2026-08-11, where a static 'casas-eternas/v1alpha1' had stood
       // saying nothing.

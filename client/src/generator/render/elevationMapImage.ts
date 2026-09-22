@@ -104,6 +104,24 @@ export interface RenderSimulationOptions {
 const SALT_CRUST_COLOR: [number, number, number] = [236, 230, 218]
 const BASIN_ROCK_COLOR: [number, number, number] = [196, 178, 148]
 
+// The colour ramp's own shoreline stop: what a coastal sea cell paints as
+// (see the loop's comment).
+const SHORE_COLOR = elevationToColor(0)
+
+// Whether any of a cell's eight neighbours is land (above sea level, or a dry
+// basin floor that renders as land), wrapping across both seams.
+function touchesLand(elevations: Float32Array, width: number, height: number, x: number, y: number, dryBasin: Uint8Array | undefined): boolean {
+  for (let dy = -1; dy <= 1; dy++) {
+    const ny = (y + dy + height) % height
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue
+      const n = ny * width + ((x + dx + width) % width)
+      if (elevations[n] > 0 || (dryBasin !== undefined && dryBasin[n] === 1)) return true
+    }
+  }
+  return false
+}
+
 // Renders the simulation's current state into an RGBA buffer: elevation
 // (from the stateless distance-field query) determines every pixel's
 // color, except pixels right on a plate boundary — those stay a dark
@@ -219,9 +237,16 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
       if (elevation > 0 || dryFloor) landPixelCount++
       const shade = reliefShadeAt(elevations, width, height, x, y)
       relief[idx] = (elevation > 0 || dryFloor ? 128 : 0) | Math.round(shade * 127)
+      // A sea cell next to land paints as SHORE, not as water: the water
+      // itself is drawn at draw time as the iso-line of its level on the
+      // interpolated terrain (map/waterMaterialPlugin.ts), so what can show
+      // of this cell's own colour is the sliver of it the interpolation puts
+      // above the level — land, at the shoreline's height.
       const color = dryFloor
         ? (options.saltFlat !== undefined && options.saltFlat[idx] === 1 ? SALT_CRUST_COLOR : BASIN_ROCK_COLOR)
-        : elevationToColor(elevation)
+        : elevation <= 0 && touchesLand(elevations, width, height, x, y, options.dryBasin)
+          ? SHORE_COLOR
+          : elevationToColor(elevation)
       const pixelIndex = idx * 4
       buffer[pixelIndex] = color[0]
       buffer[pixelIndex + 1] = color[1]

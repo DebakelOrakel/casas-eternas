@@ -1,4 +1,5 @@
 import type { AmplificationInboundMessage, AmplificationOutboundMessage } from '../amplificationWorker'
+import type { WaterBody } from './hydrology'
 
 // Running one amplification stage in a worker, as a promise.
 //
@@ -78,6 +79,10 @@ export interface AmplificationArtifact {
   // carries", which is also what every artifact written before this layer
   // existed reads back as.
   lakeDepth: Float32Array | null
+  // The basins behind the lake layer, in this artifact's texel coordinates
+  // (see hydrology.WaterBody). Null when lakeDepth is, and for every artifact
+  // written before the list existed.
+  waterBodies: WaterBody[] | null
 }
 
 export interface BrowserBakeResult {
@@ -118,6 +123,7 @@ export function bakeStageInBrowser(
           riverPoints: new Float32Array(message.riverPoints),
           riverLengths: new Uint32Array(message.riverLengths),
           lakeDepth: message.lakeDepth ? new Float32Array(message.lakeDepth) : null,
+          waterBodies: message.waterBodies ?? null,
         },
         durationMs: message.durationMs,
       })

@@ -60,12 +60,49 @@ export function meanLandRunoff(precip: Float32Array, elevation: Float32Array, wo
 // mm/yr units as the discharge sum, so inflow and evaporation compare directly.
 // Tune by eye.
 export function evaporationPotential(tempC: number): number {
-  const pet = 150 + 60 * tempC
-  return pet < 100 ? 100 : pet > 3000 ? 3000 : pet
+  const pet = SURFACE_TUNING.petBaseMm + SURFACE_TUNING.petPerDegC * tempC
+  return pet < SURFACE_TUNING.petMinMm ? SURFACE_TUNING.petMinMm : pet > SURFACE_TUNING.petMaxMm ? SURFACE_TUNING.petMaxMm : pet
 }
 
 function tempAtCell(temperature: Float32Array, cx: number, cy: number, worldW: number, worldH: number, climateResX: number, climateResY: number): number {
   return sampleNearestWorld(temperature, climateResX, climateResY, cx, cy, worldW, worldH)
+}
+
+// One standing water body — or a basin that failed to hold one — as the
+// hydrology decided it (ADAPTIVE_MESH_PLAN.md phase 1, decision 9 of
+// adaptive-mesh.md): the LIST is the truth the save carries; the depth raster
+// and the shore are derived from it against whatever terrain is at hand.
+// Coordinates are texels of the raster the list was computed on (x + 0.5,
+// y + 0.5 is the cell centre), so a consumer at another resolution scales
+// them like river points.
+export interface WaterBody {
+  // Index in the list — what a raster of basin ids would carry.
+  id: number
+  // 'lake': an ordinary land basin brimming at its spill (river in, lake,
+  // river out). 'terminal': an enclosed basin with a sub-sea floor, standing
+  // at its climate balance level (the Caspian/Chad class). 'dry': a terminal
+  // basin whose balance lies at or below its floor — no water, a salt pan.
+  kind: 'lake' | 'terminal' | 'dry'
+  // The water surface, elevation units. For 'dry' the balance level anyway,
+  // at or below the floor, so nothing is wet.
+  level: number
+  // The pour point's ELEVATION — the lowest cell on the basin's rim, where
+  // it overflows — and the deepest cell's. The extent is everything below
+  // the pour point around the seed (basinCellsBelow). Not the flood's fill
+  // level: that sits an epsilon chain above the pour cell, and a recovery
+  // against it would run through the pour cell into the valley beyond.
+  spill: number
+  floor: number
+  // The deepest cell — the seed a consumer floods from to recover the
+  // basin's extent — and the pour cell itself.
+  seedX: number
+  seedY: number
+  outletX: number
+  outletY: number
+  // Flooded cells in the basin (its full extent up to the spill).
+  cells: number
+  // Frozen through: a glacier surface, see LakeFields.frozen.
+  frozen: boolean
 }
 
 export interface LakeFields {
@@ -90,6 +127,106 @@ export interface LakeFields {
   // maps paint ice. Decided per BASIN, not per cell — one lake is one
   // surface, and the mean temperature is already summed for the PET anyway.
   frozen: Uint8Array
+  // Every basin the flood found, wet or not — see WaterBody.
+  bodies: WaterBody[]
+  // The water level a shore is drawn against, per cell — see waterLevelField.
+  level: Float32Array
+  // Per cell, which body's level that is (WaterBody.id, or -1 for the sea).
+  body: Int32Array
+}
+
+// The sea's level: what every cell outside a basin is drawn against.
+export const SEA_WATER_LEVEL = SEA_LEVEL
+
+// The cells of one basin on a terrain: the 4-connected region below its
+// spill around its seed. The pour point itself sits AT the spill and is not
+// below it, so the region stops there and does not leak into the valley
+// beyond — the same set the flood marked (filled > elevation), recovered
+// from the list and the terrain alone, which is what lets a save consumer
+// (or the map, at draw time) derive the depth raster and the shore without
+// a drainage network. Returns cell indices.
+export function basinCellsBelow(elevation: Float32Array, width: number, height: number, body: WaterBody): Int32Array {
+  const seed = Math.floor(body.seedY) * width + Math.floor(body.seedX)
+  if (!(elevation[seed] < body.spill)) return Int32Array.of(seed)
+  const seen = new Uint8Array(width * height)
+  const queue: number[] = [seed]
+  seen[seed] = 1
+  for (let head = 0; head < queue.length; head++) {
+    const c = queue[head]
+    const cx = c % width
+    const cy = (c - cx) / width
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+      const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
+      if (seen[nb] || !(elevation[nb] < body.spill)) continue
+      seen[nb] = 1
+      queue.push(nb)
+    }
+  }
+  return Int32Array.from(queue)
+}
+
+// The level every cell's shore is drawn against, plus what surface stands
+// there (SURFACE_SEA / SURFACE_LAKE / SURFACE_ICE): a basin's level over its
+// whole extent AND its one-cell rim, the sea's elsewhere. The rim matters because a shore is found where the terrain,
+// interpolated between cell centres, crosses the level — so the cell on the
+// dry side of every shore must carry the same level as the wet side, or a
+// dry basin floor would grow a false sea sliver along its rim and a lake a
+// gap along its beach. Only rim cells AT OR ABOVE the level take it: a rim
+// cell below it is the valley just past the pour point, which would read as
+// a wet patch. A rim cell that is itself ocean keeps the sea; a rim cell
+// between two basins keeps the first written (basins come in list order).
+// Derived, never stored: the save carries the list.
+export const SURFACE_SEA = 0
+export const SURFACE_LAKE = 1
+export const SURFACE_ICE = 2
+
+export function waterLevelField(bodies: readonly WaterBody[], elevation: Float32Array, width: number, height: number): { level: Float32Array; body: Int32Array; surface: Uint8Array } {
+  const n = width * height
+  const level = new Float32Array(n).fill(SEA_WATER_LEVEL)
+  const body = new Int32Array(n).fill(-1)
+  const surface = new Uint8Array(n).fill(SURFACE_SEA)
+  const rim: number[] = []
+  for (const b of bodies) {
+    const cells = basinCellsBelow(elevation, width, height, b)
+    const kind = b.frozen ? SURFACE_ICE : SURFACE_LAKE
+    for (const c of cells) {
+      level[c] = b.level
+      body[c] = b.id
+      surface[c] = kind
+    }
+    rim.length = 0
+    for (const c of cells) {
+      const cx = c % width
+      const cy = (c - cx) / width
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
+          if (body[nb] === -1 && elevation[nb] > SEA_LEVEL && elevation[nb] >= b.level) rim.push(nb)
+        }
+      }
+    }
+    for (const c of rim) {
+      if (body[c] !== -1) continue
+      level[c] = b.level
+      body[c] = b.id
+      surface[c] = kind
+    }
+  }
+  return { level, body, surface }
+}
+
+// The depth raster from the list: level minus terrain over each basin's
+// extent, zero elsewhere — what the save's `lakeDepth` layer IS, so a reader
+// can check the layer against the list, or rebuild it on a finer terrain.
+export function lakeDepthFromBodies(bodies: readonly WaterBody[], elevation: Float32Array, width: number, height: number): Float32Array {
+  const depth = new Float32Array(width * height)
+  for (const b of bodies) {
+    if (b.kind === 'dry') continue
+    for (const c of basinCellsBelow(elevation, width, height, b)) {
+      if (elevation[c] <= b.level) depth[c] = b.level - elevation[c]
+    }
+  }
+  return depth
 }
 
 export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
@@ -101,6 +238,7 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
   const dryBasin = new Uint8Array(n)
   const frozen = new Uint8Array(n)
   const flooded = new Uint8Array(n)
+  const bodies: WaterBody[] = []
   for (let cell = 0; cell < n; cell++) {
     // Sub-sea-level cells count too now: with the flood seeded from the world
     // ocean only, an enclosed sea is a depression like any other, and its
@@ -119,6 +257,10 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
     seen[s] = 1
     const region: number[] = []
     let spill = -Infinity
+    // The pour point: the lowest cell on the region's rim. The flood's own
+    // fill level (`spill`, the max filled) sits an epsilon chain above it.
+    let pour = Infinity
+    let pourCell = s
     let inflow = 0
     let tempSum = 0
     while (head < tail) {
@@ -131,15 +273,30 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
       tempSum += tempAtCell(temperature, cx, cy, width, height, climateResX, climateResY)
       for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
         const nb = wrap(cx + dx, cy + dy)
-        if (flooded[nb] && !seen[nb]) {
-          seen[nb] = 1
-          queue[tail++] = nb
+        if (flooded[nb]) {
+          if (!seen[nb]) {
+            seen[nb] = 1
+            queue[tail++] = nb
+          }
+        } else if (elevation[nb] < pour) {
+          pour = elevation[nb]
+          pourCell = nb
         }
       }
     }
     let basinFloor = Infinity
-    for (const c of region) if (elevation[c] < basinFloor) basinFloor = elevation[c]
+    let floorCell = s
+    for (const c of region) if (elevation[c] < basinFloor) { basinFloor = elevation[c]; floorCell = c }
     const pet = evaporationPotential(tempSum / region.length)
+    const isFrozen = tempSum / region.length < SURFACE_TUNING.lakeFrozenBelowC
+    const record = (kind: WaterBody['kind'], level: number): void => {
+      bodies.push({
+        id: bodies.length, kind, level, spill: pour, floor: basinFloor,
+        seedX: (floorCell % width) + 0.5, seedY: Math.floor(floorCell / width) + 0.5,
+        outletX: (pourCell % width) + 0.5, outletY: Math.floor(pourCell / width) + 0.5,
+        cells: region.length, frozen: isFrozen,
+      })
+    }
     if (basinFloor < SEA_LEVEL) {
       // Direct precipitation ON the basin is part of its water budget — the
       // Volga is not the Caspian's only source, and without this every deep
@@ -174,34 +331,40 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
         }
       }
       const saltBandTop = level + metersToElevation(SURFACE_TUNING.saltBandM)
-      const isFrozen = tempSum / region.length < SURFACE_TUNING.lakeFrozenBelowC
+      let wet = 0
       for (const c of region) {
         if (elevation[c] <= level) {
           depth[c] = level - elevation[c]
           if (isFrozen) frozen[c] = 1
+          wet++
         } else if (elevation[c] <= SEA_LEVEL) {
           dryBasin[c] = 1
           if (elevation[c] <= saltBandTop) saltFlat[c] = 1
         }
       }
+      // The floor cell itself is always "wet" by the ≤ test (level ≥ floor);
+      // a basin is dry when the balance never rose above its floor.
+      record(level > basinFloor && wet > 0 ? 'terminal' : 'dry', level)
       continue
     }
     // Ordinary land basin: texture dimples are not lakes (see
     // SURFACE_TUNING.minLakeBasinReliefM), and a lake must OVERFLOW — river in, lake,
     // river out (user rule, 2026-08-06). A basin whose inflow cannot sustain
     // its full spill-level surface holds no lake at all; the terminal-sea
-    // branch above is the one deliberate exception to that rule.
+    // branch above is the one deliberate exception to that rule. Neither
+    // failure is a body: the basin is simply terrain.
     if (spill - basinFloor < metersToElevation(minBasinReliefM)) continue
     if (inflow < pet * region.length) continue
-    const isFrozen = tempSum / region.length < SURFACE_TUNING.lakeFrozenBelowC
     for (const c of region) {
       if (elevation[c] <= spill) {
         depth[c] = spill - elevation[c]
         if (isFrozen) frozen[c] = 1
       }
     }
+    record('lake', spill)
   }
-  return { depth, saltFlat, dryBasin, frozen }
+  const levels = waterLevelField(bodies, elevation, width, height)
+  return { depth, saltFlat, dryBasin, frozen, bodies, level: levels.level, body: levels.body }
 }
 
 // Precipitation-weighted discharge (relative water volume) per full-res cell,

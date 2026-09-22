@@ -15,6 +15,11 @@ export type Dtype = 'u8' | 'u16' | 'f32'
 // Deepest lake the u8 lakeDepth layer needs to represent, in elevation units.
 const LAKE_DEPTH_RANGE = metersToElevation(3000)
 
+// The lake layer's quantisation, exported because the amplification artifact
+// stores its own lakeDepth raster and must quantise it the SAME way (it used
+// to restate these numbers — BUG_BOUNTY 24).
+export const LAKE_DEPTH_ENCODING: Encoding = { dtype: 'u8', scale: LAKE_DEPTH_RANGE / 255, offset: 0 }
+
 // A field layer's ON-DISK ENCODING, on top of what the field already is.
 // `value = raw * scale + offset`.
 //
@@ -88,7 +93,7 @@ export const WORLD_LAYERS: LayerSpec[] = [
   // inflated to at least one coarse cell across. We were also throwing away
   // resolution we already had, for a field that is zero almost everywhere and
   // therefore nearly free once deflated.
-  layer('lakeDepth', 'u8', LAKE_DEPTH_RANGE / 255, 0),
+  layer('lakeDepth', LAKE_DEPTH_ENCODING.dtype, LAKE_DEPTH_ENCODING.scale, LAKE_DEPTH_ENCODING.offset),
   ...ECOLOGY_FIELD_NAMES.map((name) => layer(name, 'u8', 3 / 255, 0)),
 ]
 

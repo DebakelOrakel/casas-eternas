@@ -1,5 +1,6 @@
 import { runAmplification } from './surface/runAmplification'
 import type { AmplifyPhase } from './surface/runAmplification'
+import type { WaterBody } from './surface/hydrology'
 
 // The amplification bake's worker (docs/decisions/worldmap-amplification.md).
 // Its own worker rather than a job on the generator pipeline: the bake needs
@@ -83,6 +84,8 @@ export interface AmplifyDoneMessage {
   // as the elevation. Absent when the bake had no temperature to evaporate
   // with — which is NOT "no lakes", but "ask the save's macro layer".
   lakeDepth?: ArrayBuffer
+  // The basins behind lakeDepth, absent exactly when it is.
+  waterBodies?: WaterBody[]
   // Wall-clock milliseconds, so the screen (and a human) can see what the
   // bake actually costs at this resolution.
   durationMs: number
@@ -143,6 +146,7 @@ async function handleAmplify(message: AmplifyRequestMessage): Promise<void> {
     riverPoints: result.rivers.points.buffer as ArrayBuffer,
     riverLengths: result.rivers.lengths.buffer as ArrayBuffer,
     lakeDepth: result.lakeDepth ? (result.lakeDepth.buffer as ArrayBuffer) : undefined,
+    waterBodies: result.waterBodies ?? undefined,
     durationMs: performance.now() - started,
   }
   const transfer: ArrayBuffer[] = [done.elevation, done.riverPoints, done.riverLengths]

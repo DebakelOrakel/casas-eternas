@@ -51,6 +51,7 @@ const M = {
   amplify: await L('/src/generator/surface/runAmplification.ts'),
   scale: await L('/src/generator/elevation/elevationScale.ts'),
   plan: await L('/src/generator/surface/bakePlan.ts'),
+  hydro: await L('/src/generator/surface/hydrology.ts'),
 }
 
 let failures = 0
@@ -148,6 +149,7 @@ const fingerprints = (result) => ({
   elevation: hash(result.elevation),
   riverPoints: hash(result.rivers.points),
   riverLengths: hash(result.rivers.lengths),
+  waterBodies: hash(new TextEncoder().encode(JSON.stringify(result.waterBodies))),
 })
 
 console.log('')
@@ -157,6 +159,23 @@ const result = await bake()
 // --- 1. invariants -----------------------------------------------------------
 console.log('— invariants')
 {
+  // The lake layer IS the list: rebuilt from the bodies and the terrain it
+  // must agree with what the bake computed, cell by cell (phase 1 of the
+  // adaptive-mesh plan — a save consumer derives the layer the same way).
+  if (result.lakeDepth && result.waterBodies) {
+    const derived = M.hydro.lakeDepthFromBodies(result.waterBodies, result.elevation, result.width, result.height)
+    let off = 0
+    let worst = 0
+    for (let i = 0; i < derived.length; i++) {
+      const d = Math.abs(derived[i] - result.lakeDepth[i])
+      if (d > 2e-4) off++ // the flood's fill sits an epsilon chain above the pour point; cells inside that band are the tolerance
+      if (d > worst) worst = d
+    }
+    check('the lake layer derives from the water-body list', off === 0, `${off} cells differ, worst ${worst.toExponential(2)}`)
+    check('the list carries every kind it can', result.waterBodies.every((b) => ['lake', 'terminal', 'dry'].includes(b.kind)))
+  } else {
+    check('the bake produced a water-body list with its lake layer', result.lakeDepth === null && result.waterBodies === null)
+  }
   const { SEA_LEVEL } = M.scale
   const field = result.elevation
   check('the bake is the size it was asked for', result.width === MACRO_W * FACTOR && result.height === MACRO_H * FACTOR,

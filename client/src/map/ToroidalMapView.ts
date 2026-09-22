@@ -2,6 +2,7 @@ import { Color3, DirectionalLight, HemisphericLight, Mesh, MeshBuilder, RawTextu
 import type { AbstractMesh, InstancedMesh } from '@babylonjs/core'
 import type { ElevationSurface } from './elevationSurface'
 import { HexGridMaterialPlugin } from './hexGridMaterialPlugin'
+import { WaterField, WaterMaterialPlugin } from './waterMaterialPlugin'
 
 // Which representation the map should wear this frame — decided by the
 // caller (it owns the camera/zoom semantics):
@@ -93,6 +94,15 @@ export interface ToroidalMapView {
   // overlay; see HexGridMaterialPlugin.setClassOverlay for the encoding).
   // null clears it. No-op without a hexGrid.
   setHexClassOverlay(texture: RawTexture | null, window?: { col0: number; row0: number; cols: number; rows: number }): void
+  // Standing water drawn at draw time (waterMaterialPlugin.ts): the terrain
+  // the shores are found on, at the colour texture's resolution — re-supply
+  // whenever the terrain changes.
+  setWaterElevation(data: Float32Array, width: number, height: number): void
+  // The per-cell level and surface kind from the hydrology
+  // (hydrology.waterLevelField), or null for "the sea everywhere".
+  setWaterLevels(level: Float32Array | null, surface: Uint8Array | null): void
+  // Lakes follow the hydrology toggle; the sea is always drawn.
+  setLakesVisible(visible: boolean): void
   // Pick the terrain THIS view renders, restricted to its own surfaces
   // (flat plane, relief levels, near-detail patch) — a plain scene.pick can
   // land on any stray pickable mesh, and any surface that is not the
@@ -205,6 +215,11 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   const reliefMaterial = new StandardMaterial('mapReliefMaterial', scene)
   reliefMaterial.diffuseTexture = reliefTexture
   reliefMaterial.specularColor = new Color3(0, 0, 0)
+  // The flat plane wears the shaded paper (the screen's composite base), the
+  // relief meshes the unshaded one — the water plugin paints in each register.
+  const waterField = new WaterField(scene)
+  const waterPlugin = new WaterMaterialPlugin(material, 'paper', waterField)
+  const reliefWaterPlugin = new WaterMaterialPlugin(reliefMaterial, 'paperUnshaded', waterField)
   let hexGridPlugin: HexGridMaterialPlugin | null = null
   if (hexGrid) {
     hexGridPlugin = new HexGridMaterialPlugin(reliefMaterial)
@@ -602,6 +617,16 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     setHexClassOverlay(texture: RawTexture | null, window?: { col0: number; row0: number; cols: number; rows: number }): void {
       hexGridPlugin?.setClassOverlay(texture, window)
     },
+    setWaterElevation(data: Float32Array, width: number, height: number): void {
+      waterField.setElevation(data, width, height)
+    },
+    setWaterLevels(level: Float32Array | null, surface: Uint8Array | null): void {
+      waterField.setLevels(level, surface)
+    },
+    setLakesVisible(visible: boolean): void {
+      waterPlugin.setLakesVisible(visible)
+      reliefWaterPlugin.setLakesVisible(visible)
+    },
     pickGround(screenX: number, screenY: number): { x: number; z: number } | null {
       const isGround = (mesh: AbstractMesh): boolean => {
         // A custom predicate REPLACES scene.pick's default enabled/visible
@@ -636,6 +661,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       disposeLevel(fineLevel)
       for (const inst of wrapInstances) inst.dispose()
       tile.dispose()
+      waterField.dispose()
       material.dispose()
       texture.dispose()
       reliefMaterial.dispose()

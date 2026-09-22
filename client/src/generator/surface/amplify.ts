@@ -270,6 +270,17 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   // slider became a draw filter (P4) — so the density that shaped the baked
   // network is part of what the artifact IS.
   canonicalRiverDensity: CANONICAL_RIVER_DENSITY,
+  // The bake re-floods the lakes on the amplified field (deriveRivers), so
+  // every constant that decides which basin holds water, at what level and
+  // whether it freezes is part of what the artifact IS — none of them was in
+  // the key until 2026-09-22 (BUG_BOUNTY 4).
+  minLakeBasinReliefM: SURFACE_TUNING.minLakeBasinReliefM,
+  lakeFrozenBelowC: SURFACE_TUNING.lakeFrozenBelowC,
+  saltBandM: SURFACE_TUNING.saltBandM,
+  petBaseMm: SURFACE_TUNING.petBaseMm,
+  petPerDegC: SURFACE_TUNING.petPerDegC,
+  petMinMm: SURFACE_TUNING.petMinMm,
+  petMaxMm: SURFACE_TUNING.petMaxMm,
 }
 
 export interface AmplifiedField {

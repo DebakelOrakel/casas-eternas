@@ -1,3 +1,4 @@
+import type { WaterBody } from '../surface/hydrology'
 // The generator pipeline's message contract — every message that crosses the
 // worker boundary, in both directions. Kept apart from the pipeline itself so a
 // consumer (GeneratorScreen) can import the vocabulary without importing the
@@ -198,6 +199,10 @@ export interface WorkerRequestElevationFieldMessage { type: 'requestElevationFie
 export interface WorkerElevationFieldMessage {
   type: 'elevationField'
   elevation: ArrayBuffer
+  // The raw PHYSICAL field of the same render (Float32, same shape): what
+  // the hydrology's water levels are set against, so the map finds its
+  // shores on it (map/waterMaterialPlugin.ts), never on the display copy.
+  raw: ArrayBuffer
   width: number
   height: number
 }
@@ -404,6 +409,14 @@ export interface WorkerHydrologyDataMessage {
   watersheds: ArrayBuffer
   discharge: ArrayBuffer
   maxDischarge: number
+  // The standing-water truth (ADAPTIVE_MESH_PLAN.md phase 1): every basin
+  // as a WaterBody, the per-cell level a shore is drawn against (Float32,
+  // full-res, the sea's level outside basins) and what surface stands there
+  // (Uint8: SURFACE_SEA / SURFACE_LAKE / SURFACE_ICE). Re-route only, like
+  // lakeDepth: null / empty buffers mean "unchanged".
+  waterBodies: WaterBody[] | null
+  waterLevel: ArrayBuffer
+  waterSurface: ArrayBuffer
 }
 
 // The computed ecology fields (coarse climate grid), keyed by field id so the

@@ -1,13 +1,13 @@
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
-import { bakeLayer, decodeLayer } from './save/worldLayers'
+import { bakeLayer, decodeLayer, LAKE_DEPTH_ENCODING } from './save/worldLayers'
+import type { WaterBody } from '../generator/surface/hydrology'
 import type { AmplificationArtifact } from '../generator/surface/bakeInBrowser'
 
 export type { AmplificationArtifact }
 import type { Encoding } from './save/worldLayers'
 import { AMPLIFY_CONSTANTS } from '../generator/surface/amplify'
 import { AMPLIFY_EROSION_ROUNDS, AMPLIFY_FINEST_STAGE } from './bakeSettings'
-import { metersToElevation } from '../generator/elevation/elevationScale'
 import { downsampleBox } from '../generator/core/field'
 
 // The PIPELINE half of an artifact's key, assembled in one place.
@@ -82,17 +82,18 @@ const ELEVATION_ENCODING: Encoding = { dtype: 'u16', scale: 2 / 65535, offset: -
 // Rivers travel as raw binary rather than the save's JSON form: a baked
 // world's network runs to six figures of points, and JSON would be an order
 // of magnitude larger and slower to parse than the numbers it carries.
+// The lake layer takes the SAVE's own quantisation (worldLayers'
+// LAKE_DEPTH_ENCODING): one byte per cell over a 3,000 m range. A field that
+// is zero almost everywhere compresses to nearly nothing, and the artifact
+// stays half the size of its own elevation layer instead of double. The
+// basins behind it travel as JSON — a few hundred records, resolution-
+// agnostic apart from their texel coordinates.
 const FILES = {
   elevation: 'elevation.u16',
   lakeDepth: 'lakeDepth.u8',
+  waterBodies: 'waterBodies.json',
   meta: 'meta.json',
 } as const
-
-// The same quantisation the SAVE gives its lake layer (world/save/
-// worldLayers.ts): one byte per cell over a 3,000 m range. A field that is
-// zero almost everywhere compresses to nearly nothing, and the artifact stays
-// half the size of its own elevation layer instead of double.
-const LAKE_DEPTH_ENCODING: Encoding = { dtype: 'u8', scale: metersToElevation(3000) / 255, offset: 0 }
 
 // ONE river file set per artifact: extraction runs at the model's
 // CANONICAL_RIVER_DENSITY since P4 (the slider is a draw filter and never
@@ -124,6 +125,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
   const rivers = RIVER_FILES
   const elevationBytes = new Uint16Array(bakeLayer(artifact.elevation, ELEVATION_ENCODING))
   const lakeBytes = artifact.lakeDepth ? new Uint8Array(bakeLayer(artifact.lakeDepth, LAKE_DEPTH_ENCODING)) : null
+  const bodyBytes = artifact.waterBodies ? new TextEncoder().encode(JSON.stringify(artifact.waterBodies)) : null
   // The designated finest stage writes its derived family beside itself:
   // box-downsampled on the RAW f32 field before quantisation, so a member
   // is exactly box(finest) and not box(quantised(finest)) — the family's
@@ -154,6 +156,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
     files: {
       [FILES.elevation]: elevationBytes.byteLength,
       ...(lakeBytes ? { [FILES.lakeDepth]: lakeBytes.byteLength } : {}),
+      ...(bodyBytes ? { [FILES.waterBodies]: bodyBytes.byteLength } : {}),
       [rivers.points]: artifact.riverPoints.byteLength,
       [rivers.lengths]: artifact.riverLengths.byteLength,
       ...Object.fromEntries(family.flatMap(({ member, elevation, lakeDepth }) => {
@@ -173,6 +176,7 @@ export async function writeAmplificationArtifact(store: ArtifactStore, key: Arti
   return (
     (await store.write(handle, FILES.elevation, elevationBytes)) &&
     (lakeBytes === null || (await store.write(handle, FILES.lakeDepth, lakeBytes))) &&
+    (bodyBytes === null || (await store.write(handle, FILES.waterBodies, bodyBytes))) &&
     (await store.write(handle, rivers.points, artifact.riverPoints)) &&
     (await store.write(handle, rivers.lengths, artifact.riverLengths)) &&
     (await store.write(handle, FILES.meta, new TextEncoder().encode(JSON.stringify(meta))))
@@ -235,6 +239,20 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
   const lakeDepth = lakeBytes && lakeBytes.byteLength === expectedCells
     ? decodeLayer(lakeBytes, LAKE_DEPTH_ENCODING)
     : null
+  // The list rides with the lake layer: absent for an older entry, and a
+  // member reads the finest tier's list with its texel coordinates scaled,
+  // like the rivers below.
+  const bodyBytes = lakeDepth ? await store.read(handle, FILES.waterBodies) : null
+  let waterBodies: WaterBody[] | null = null
+  if (bodyBytes) {
+    try {
+      waterBodies = (JSON.parse(new TextDecoder().decode(bodyBytes)) as WaterBody[]).map((b) => ({
+        ...b, seedX: b.seedX * memberScale, seedY: b.seedY * memberScale, outletX: b.outletX * memberScale, outletY: b.outletY * memberScale,
+      }))
+    } catch {
+      waterBodies = null
+    }
+  }
   const riverPoints = new Float32Array(pointBytes)
   if (memberScale !== 1) {
     // [x, y, widthPx] per vertex: positions live in the finest grid's
@@ -253,6 +271,7 @@ export async function readAmplificationArtifact(store: ArtifactStore, key: Artif
       riverPoints,
       riverLengths: lengthBytes ? new Uint32Array(lengthBytes) : new Uint32Array(0),
       lakeDepth,
+      waterBodies,
     },
     bakeMs: meta.bakeMs,
   }

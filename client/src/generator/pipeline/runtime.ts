@@ -21,13 +21,15 @@ import { stabilisedFraction } from '../crust/raftField'
 import { worldAgeMa, worldEpoch } from '../core/worldTime'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from '../tectonics/oceanAge'
 import type { FlowRouting } from '../surface/flowRouting'
-import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold, CANONICAL_RIVER_DENSITY } from '../surface/hydrology'
+import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold, waterLevelField, CANONICAL_RIVER_DENSITY } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeWeather, defaultWeatherParams } from '../climate/weather'
 import type { WeatherParams } from '../climate/weather'
 import { computeBiomes, computeBiomesFine } from '../climate/biomes'
 import { downsampleMax } from '../core/field'
+import { SEA_LEVEL } from '../elevation/elevationScale'
+import type { WaterBody } from '../surface/hydrology'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { computeEcology } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
@@ -161,6 +163,12 @@ interface HydrologyResult {
   // Permanently frozen basins (LakeFields.frozen) — the Biome.Ice override's
   // source, and what excludes a glacier from the freshwater fishery below.
   frozen: Uint8Array | null
+  // The standing-water list and the per-cell level/frozen fields derived
+  // from it (LakeFields.bodies/level) — what the save carries and the
+  // screen draws shores against.
+  bodies: WaterBody[]
+  level: Float32Array
+  surface: Uint8Array
   maxDischarge: number
   meanRunoff: number
 }
@@ -704,7 +712,7 @@ function handleHydrologyRun(): void {
     let rerouted = false
     let result = hydrology
     if (!result) {
-      const routing = await fillDepressionsAndRouteFlow(elevation, width, height, 0)
+      const routing = await fillDepressionsAndRouteFlow(elevation, width, height, SEA_LEVEL)
       let discharge = accumulateDischarge(routing, elevation, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
       let maxDischarge = maxDischargeOverLand(discharge, elevation)
       let meanRunoff = meanLandRunoff(weather.precipitation, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
@@ -745,7 +753,11 @@ function handleHydrologyRun(): void {
         renderDryBasin = lakes.dryBasin
         renderSaltFlat = lakes.saltFlat
         await renderAndPost(terrain, false, 1, true)
-        result = { routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen, maxDischarge, meanRunoff }
+        result = {
+          routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
+          bodies: lakes.bodies, level: lakes.level, surface: waterLevelField(lakes.bodies, elevation, width, height).surface,
+          maxDischarge, meanRunoff,
+        }
       }
       hydrology = result
       rerouted = true
@@ -758,6 +770,8 @@ function handleHydrologyRun(): void {
     const rivers = extractRiverPolylines(result.routing, result.discharge, elevation, threshold, result.maxDischarge)
     // Lakes only change on a re-route; a repeat call sends an empty buffer.
     const lakeOut = rerouted ? result.lakeDepth.slice() : new Float32Array(0)
+    const levelOut = rerouted ? result.level.slice() : new Float32Array(0)
+    const surfaceOut = rerouted ? result.surface.slice() : new Uint8Array(0)
     // Watersheds + the raw discharge field: re-route only, same contract.
     const watershedsOut = rerouted ? computeWatersheds(result.routing, elevation) : new Uint16Array(0)
     const dischargeOut = rerouted ? result.discharge.slice() : new Float32Array(0)
@@ -784,8 +798,11 @@ function handleHydrologyRun(): void {
       watersheds: watershedsOut.buffer as ArrayBuffer,
       discharge: dischargeOut.buffer as ArrayBuffer,
       maxDischarge: result.maxDischarge,
+      waterBodies: rerouted ? result.bodies : null,
+      waterLevel: levelOut.buffer as ArrayBuffer,
+      waterSurface: surfaceOut.buffer as ArrayBuffer,
     }
-    emit(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge])
+    emit(hydrologyMessage, [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge, hydrologyMessage.waterLevel, hydrologyMessage.waterSurface])
   })()
 }
 
@@ -867,13 +884,18 @@ function handleMigrationRun(message: Extract<WorkerInboundMessage, { type: 'migr
 function handleRequestElevationField(): void {
   if (!lastDisplayElevations) return
   const elevation = lastDisplayElevations.data.slice()
+  // The physical raster beside the display one: the hydrology's levels are
+  // set against it, so the shores must be found on it too — the display
+  // copy carries the erosion detail texture, which is presentation.
+  const raw = lastRawElevations && lastRawElevations.length === elevation.length ? lastRawElevations.slice() : elevation.slice()
   const message: WorkerElevationFieldMessage = {
     type: 'elevationField',
     elevation: elevation.buffer as ArrayBuffer,
+    raw: raw.buffer as ArrayBuffer,
     width: lastDisplayElevations.width,
     height: lastDisplayElevations.height,
   }
-  emit(message, [message.elevation])
+  emit(message, [message.elevation, message.raw])
 }
 
 function handleSerializeWorld(): void {

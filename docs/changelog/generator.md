@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-09-22
+- **new** Hydrology: every lake and terminal sea is saved as a water body with its level and outlet, and the lake layer follows from that list. `generator.panel.hydrology`
+
 ## 2026-09-20
 - **changed** Climate: the world now knows which half of the year a place gets its rain in, not only how uneven the year is. `generator.panel.climate`
 

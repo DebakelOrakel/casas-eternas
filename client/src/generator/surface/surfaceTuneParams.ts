@@ -66,6 +66,16 @@ export const SURFACE_TUNING = {
   // by-eye pass.
   saltBandM: 75,
 
+  // Open-water evaporation potential (mm/yr) as a line in mean annual
+  // temperature, clamped: `petBaseMm + petPerDegC × °C` between petMinMm and
+  // petMaxMm. Warm basins lose far more water, which is what makes hot dry
+  // basins into shrunken salt lakes while cold/wet ones brim over. Tune by
+  // eye; the four are part of the bake's artifact key (AMPLIFY_CONSTANTS).
+  petBaseMm: 150,
+  petPerDegC: 60,
+  petMinMm: 100,
+  petMaxMm: 3000,
+
   // Peak precipitation bonus (mm/yr) a cell gets right at a full-strength river/lake
   // — enough to lift a hot desert (P<250) into savanna/forest (the Nile effect).
   maxRiparianMm: 900,

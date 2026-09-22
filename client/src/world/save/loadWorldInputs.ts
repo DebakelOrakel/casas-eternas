@@ -4,6 +4,7 @@ import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
 import { openWorld } from '../query'
 import type { World } from '../query'
+import type { WaterBody } from '../../generator/surface/hydrology'
 
 // Reading a saved world through the QUERYABLE side of its .zip — manifest.json
 // plus the baked layers (docs/decisions/queryable-world-save.md), deliberately
@@ -92,6 +93,11 @@ export interface WorldInputs {
   // save that predates the layer. Not part of the worldId: the id hashes its
   // own fixed set of fields, so reading one more layer moves nothing.
   lakeDepth: GridLayer | null
+  // The basins behind that layer (ADAPTIVE_MESH_PLAN.md phase 1): the save's
+  // standing-water truth, from which lakeDepth and every shore derive
+  // (hydrology.lakeDepthFromBodies, waterLevelField). Null for a save written
+  // before the list existed (manifest formatVersion 1).
+  waterBodies: WaterBody[] | null
   // Everything the Whittaker classification consumes, so a consumer can redo it
   // on ITS OWN terrain instead of upsampling the saved biome ids — which is how
   // the worldmap gets biomes that follow the amplification bake's ridges (see
@@ -143,6 +149,11 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
   const elevation = await world.acquire('elevation')
   if (!elevation) return null
 
+  // Not sentinel-restored like the three biome inputs below, although it is a
+  // land-only layer too: its consumers — the bake's discharge and the engine's
+  // water forcing — clamp at zero, so an ocean cell decoded as 0 mm/yr is
+  // exactly what they want, where OCEAN_PRECIP (−1) would have to be caught
+  // first. Stated so the asymmetry is not read as an oversight (BUG_BOUNTY 17).
   const climate = await world.acquire('precipitation')
   const uplift = await world.acquire('uplift')
   const erodibility = await world.acquire('erodibility')
@@ -157,6 +168,10 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
   // of them: it is meaningful over water (SST) and has no sentinel to restore.
   // A save too old to carry landMask is left as it was rather than guessed at.
   const landMask = await world.acquire('landMask')
+  const bodiesRaw = await world.table('waterBodies')
+  const waterBodies = Array.isArray(bodiesRaw) && bodiesRaw.every((b) => typeof b === 'object' && b !== null && typeof (b as WaterBody).level === 'number' && typeof (b as WaterBody).spill === 'number')
+    ? (bodiesRaw as WaterBody[])
+    : null
   const restore = (layer: GridLayer, sentinel: number): GridLayer =>
     landMask ? { ...layer, data: restoreLandOnlySentinel(layer.data, landMask.data, sentinel) } : layer
   const biomeInputs = temperature && precipitationEffective && seasonalAmplitude && monsoonIndex
@@ -182,6 +197,7 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
     temperature,
     biome,
     lakeDepth,
+    waterBodies,
     biomeInputs,
     worldId: await world.worldId(),
     worldUid: world.recipe.worldUid,

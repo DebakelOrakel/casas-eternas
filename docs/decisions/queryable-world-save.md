@@ -55,7 +55,7 @@ baked **layer files**. A consumer needs *only* the manifest + a ~50-line sampler
 
 ```jsonc
 {
-  "formatVersion": 1,
+  "formatVersion": 2,             // 2 since 2026-09-22: the manifest may list `table` entries
   "generatorVersion": "…",        // provenance; NOT needed to read
   "world": { "width": 2048, "height": 1024, "topology": "torus" },  // wraps x & y
   "layers": [
@@ -69,6 +69,11 @@ baked **layer files**. A consumer needs *only* the manifest + a ~50-line sampler
     { "name": "discharge", "file": "layers/discharge.u16", "kind": "raster",
       "resX": 2048, "resY": 1024, "dtype": "u16",
       "encoding": { "scale": 4, "offset": 0 }, "unit": "m3/s" },
+    // A TABLE: a JSON array of records rather than a raster. The first is
+    // the standing-water list (hydrology.WaterBody: every lake, terminal
+    // sea and dry basin with its level, pour point and extent, in texel
+    // coordinates of the world raster) — the truth `lakeDepth` derives from.
+    { "name": "waterBodies", "file": "layers/waterBodies.json", "kind": "table" },
     // …
   ]
 }
@@ -106,7 +111,8 @@ large raster (~4 MB as u16). All zip-compressed. Dequantise = one multiply-add
 
 `formatVersion` (sampler contract) + `generatorVersion` (provenance). The server
 reads any `formatVersion` it supports from the manifest alone; it never needs the
-generator that produced the world.
+generator that produced the world. Version 2 (2026-09-22) adds the `table` kind;
+a version-1 reader that ignores unknown kinds still reads every raster.
 
 ## The sampler (lookup contract)
 

@@ -34,6 +34,7 @@ const M = {
   memory: await L('/src/storage/MemoryArtifactStore.ts'),
   amplify: await L('/src/generator/surface/amplify.ts'),
   settings: await L('/src/world/bakeSettings.ts'),
+  hydro: await L('/src/generator/surface/hydrology.ts'),
 }
 const JSZip = (await import(`${CLIENT}/node_modules/jszip/dist/jszip.min.js`)).default
 
@@ -241,9 +242,19 @@ zip.file('layers/erodibility.f32', M.layers.bakeLayer(zipHardness, forcingSpecs.
 for (const [name, field] of [['landMask', zipLandMask], ['temperature', zipTemp], ['precipitationEffective', zipPrecipEff], ['seasonalAmplitude', zipAmplitude], ['monsoonIndex', zipMonsoon]]) {
   zip.file(`layers/${name}.bin`, M.layers.bakeLayer(field, specOf(name)))
 }
+// The standing-water list (phase 1 of the adaptive-mesh plan): a JSON table
+// beside the rasters, formatVersion 2. One lake and one dry basin, in texel
+// coordinates of this zip's raster.
+const zipBodies = [
+  { id: 0, kind: 'lake', level: 0.21, spill: 0.21, floor: 0.17, seedX: 3.5, seedY: 2.5, outletX: 4.5, outletY: 2.5, cells: 3, frozen: false },
+  { id: 1, kind: 'dry', level: -0.05, spill: 0.02, floor: -0.05, seedX: 9.5, seedY: 5.5, outletX: 9.5, outletY: 4.5, cells: 2, frozen: false },
+]
+zip.file('layers/waterBodies.json', JSON.stringify(zipBodies))
 zip.file('manifest.json', JSON.stringify({
+  formatVersion: 2,
   world: { width: W, height: H, topology: 'torus' },
   layers: [
+    { name: 'waterBodies', file: 'layers/waterBodies.json', kind: 'table' },
     { name: 'elevation', file: 'layers/elevation.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 } },
     { name: 'precipitation', file: 'layers/precipitation.u16', kind: 'raster', resX: W, resY: H, dtype: precipSpec.dtype, encoding: { scale: precipSpec.scale, offset: precipSpec.offset } },
     { name: 'uplift', file: 'layers/uplift.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 } },
@@ -260,6 +271,7 @@ else {
   check('elevation comes back byte-identical', String(loaded.elevations) === String(zipElev))
   check('the recipe is read', loaded.seedText === 'zip-welt' && loaded.erosionControls.landscapeAge === 25 && loaded.erosionControls.alluvium === 60 && loaded.erosionControls.rockContrast === 35)
   check('the uid is read rather than derived', loaded.worldUid === '0192abcd-0000-8000-8000-000000000000')
+  check('the water-body table comes back as written', JSON.stringify(loaded.waterBodies) === JSON.stringify(zipBodies))
   check('the forcing layers come back byte-identical, sign included',
     String(loaded.uplift?.data) === String(zipUplift) && String(loaded.erodibility?.data) === String(zipHardness))
   // The lithology seed is DERIVED (like detailSeed), so every reader of one
@@ -293,6 +305,31 @@ else {
   check('the monsoon index keeps its sign', bi !== null
     && [...bi.monsoonIndex.data].some((v, i) => !isOcean(i) && v < -0.05)
     && [...bi.monsoonIndex.data].some((v, i) => !isOcean(i) && v > 0.05))
+}
+
+// The lake layer derives from the list and the terrain: a bowl in a synthetic
+// raster, one body at its spill, and lakeDepthFromBodies must find exactly the
+// bowl — wet below the level, dry at the pour point, nothing beyond it.
+{
+  const bw = 12, bh = 6
+  const bowl = new Float32Array(bw * bh).fill(0.3)
+  const inBowl = (x, y) => x >= 3 && x <= 6 && y >= 2 && y <= 3
+  for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) if (inBowl(x, y)) bowl[y * bw + x] = 0.1 + 0.02 * (x - 3)
+  bowl[2 * bw + 7] = 0.2 // the pour point: at the spill, not below it
+  bowl[2 * bw + 8] = 0.05 // the valley beyond it, lower than the lake
+  const body = { id: 0, kind: 'lake', level: 0.2, spill: 0.2, floor: 0.1, seedX: 3.5, seedY: 2.5, outletX: 6.5, outletY: 2.5, cells: 8, frozen: false }
+  const depth = M.hydro.lakeDepthFromBodies([body], bowl, bw, bh)
+  let wet = 0, leaked = false
+  for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+    const d = depth[y * bw + x]
+    if (d > 0) wet++
+    if (d > 0 && !inBowl(x, y)) leaked = true
+  }
+  check('the derived lake fills its bowl and stops at the pour point', wet === 8 && !leaked, `${wet} wet, leaked ${leaked}`)
+  check('the derived depth is level minus terrain', Math.abs(depth[2 * bw + 3] - 0.1) < 1e-6)
+  const field = M.hydro.waterLevelField([body], bowl, bw, bh)
+  const near = (a, b) => Math.abs(a - b) < 1e-6
+  check('the level field carries the level onto the rim', near(field.level[2 * bw + 7], 0.2) && near(field.level[1 * bw + 3], 0.2) && field.level[0] === 0 && field.level[2 * bw + 8] === 0)
 }
 
 // A zip that is not a world must be refused, not half-read.

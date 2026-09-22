@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-09-22
+- **changed** Rendering: coasts and lake shores are drawn where the terrain crosses the water level, so the cell staircase at zoom is gone. `overlay.rivers`
+
 ## 2026-09-20
 - **changed** Overlays: the map readout reports the step's own values, not one line per switched-on layer, and says them in your language. `readout`
 - **new** Overlays: the readout draws the year on the Climate step — a temperature curve and the monthly rainfall. `readout.chart`

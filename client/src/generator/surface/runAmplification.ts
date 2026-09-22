@@ -6,7 +6,7 @@ import type { PipelineOptions, WorkerLike } from './erosionEnginePool'
 import { fillDepressionsAndRouteFlow } from './flowRouting'
 import { ABYSSAL_FLOOR, SEA_LEVEL } from '../elevation/elevationScale'
 import { accumulateDischarge, channelThreshold, computeLakes, densityToCriticalArea, extractRiverPolylines, maxDischargeOverLand, meanLandRunoff, CANONICAL_RIVER_DENSITY } from './hydrology'
-import type { RiverPolylines } from './hydrology'
+import type { RiverPolylines, WaterBody } from './hydrology'
 
 // The amplification bake itself: upsample, seed roughness, erode, re-run
 // hydrology (docs/decisions/worldmap-amplification.md).
@@ -126,6 +126,9 @@ export interface AmplifyResult {
   // temperature (or owns only a region). Null means "the consumer keeps the
   // macro layer the save carries" — not "there are no lakes".
   lakeDepth: Float32Array | null
+  // The basins behind that layer, on the amplified grid (texel coordinates
+  // of this bake's raster) — null exactly when lakeDepth is.
+  waterBodies: WaterBody[] | null
 }
 
 export async function runAmplification(
@@ -187,6 +190,7 @@ export async function runAmplification(
   // carved, so they are re-derived rather than carried over.
   let rivers: RiverPolylines = { points: new Float32Array(0), lengths: new Uint32Array(0) }
   let lakeDepth: Float32Array | null = null
+  let waterBodies: WaterBody[] | null = null
   if (request.precipitation && request.climateResX && request.climateResY) {
     onProgress('hydrology', 0)
     const derived = await deriveRivers(
@@ -205,11 +209,12 @@ export async function runAmplification(
     )
     rivers = derived.rivers
     lakeDepth = derived.lakeDepth
+    waterBodies = derived.waterBodies
     if (request.region) rivers = ownedRivers(rivers, request.region.owned, result.width)
     onProgress('hydrology', 1)
   }
 
-  return { elevation: field, width: result.width, height: result.height, rivers, lakeDepth }
+  return { elevation: field, width: result.width, height: result.height, rivers, lakeDepth, waterBodies }
 }
 
 // Route, accumulate and extract the river network of ONE elevation field —
@@ -242,8 +247,8 @@ export async function deriveRivers(
   // Absent, the lake half is skipped and the caller keeps whatever it had.
   options: { maxDischarge?: number; meanRunoff?: number; temperature?: Float32Array } = {},
   onProgress: (fraction: number) => void = () => {},
-): Promise<{ rivers: RiverPolylines; lakeDepth: Float32Array | null }> {
-  const routing = await fillDepressionsAndRouteFlow(field, width, height, 0)
+): Promise<{ rivers: RiverPolylines; lakeDepth: Float32Array | null; waterBodies: WaterBody[] | null }> {
+  const routing = await fillDepressionsAndRouteFlow(field, width, height, SEA_LEVEL)
   onProgress(0.6)
   const discharge = accumulateDischarge(routing, field, precipitation, climateResX, climateResY)
   const maxDischarge = options.maxDischarge ?? maxDischargeOverLand(discharge, field)
@@ -256,10 +261,10 @@ export async function deriveRivers(
   const criticalArea = densityToCriticalArea(CANONICAL_RIVER_DENSITY)
   const threshold = channelThreshold(criticalArea, meanRunoff)
   const rivers = extractRiverPolylines(routing, discharge, field, threshold, maxDischarge)
-  const lakeDepth = options.temperature
-    ? computeLakes(routing, discharge, field, options.temperature, precipitation, climateResX, climateResY).depth
+  const lakes = options.temperature
+    ? computeLakes(routing, discharge, field, options.temperature, precipitation, climateResX, climateResY)
     : null
-  return { rivers, lakeDepth }
+  return { rivers, lakeDepth: lakes?.depth ?? null, waterBodies: lakes?.bodies ?? null }
 }
 
 // The rivers this region owns, by the HEAD of each polyline.
@@ -317,7 +322,7 @@ async function coastStatusMask(
   for (let i = 0; i < field.length; i++) mask[i] = field[i] > SEA_LEVEL ? 1 : 2
   if (!request.precipitation || !request.climateResX || !request.climateResY) return mask
 
-  const routing = await fillDepressionsAndRouteFlow(field, width, height, 0)
+  const routing = await fillDepressionsAndRouteFlow(field, width, height, SEA_LEVEL)
   const discharge = accumulateDischarge(routing, field, request.precipitation, request.climateResX, request.climateResY)
   const meanRunoff = request.meanRunoff ?? meanLandRunoff(request.precipitation, field, width, height, request.climateResX, request.climateResY)
   const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), meanRunoff)

@@ -29,6 +29,7 @@ Five entries, assembled in `saveWorld` / read back in the load handler:
 | `elevation.f32` | Full-resolution, post-erosion elevation raster | **Yes** — injected as-is (no re-erosion) |
 | `oceanAge.f32` | Coarse ocean-floor age raster | **Yes** — restored into the sim |
 | `preview.png` | Thumbnail for the file/gallery | No — cosmetic, not read on load |
+| `manifest.json` + `layers/…` | The queryable layers (queryable-world-save.md); since `formatVersion` 2 also `layers/waterBodies.json`, the standing-water list every lake and shore derives from | No — read by consumers, not by restore |
 
 The four load-critical files (`world.yaml`, `state.json`, `oceanAge.f32`,
 `elevation.f32`) must all be present or the load is rejected as an invalid world

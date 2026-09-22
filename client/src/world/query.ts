@@ -93,6 +93,10 @@ export interface World {
   // a fabricated default.
   has(name: string): boolean
   acquire(name: string, purpose?: Purpose): Promise<FieldView | null>
+  // A JSON table the manifest lists (kind 'table') — the standing-water
+  // list is the first. Null when the save carries none or it does not parse;
+  // the caller checks the shape, this reader only knows it is JSON.
+  table(name: string): Promise<unknown | null>
   // WHICH TERRAIN this is — the artifact key, hashed from what a bake actually
   // consumes rather than from the recipe (which cannot tell two worlds stopped
   // at different tectonic epochs apart; see identity.ts). Async because it needs
@@ -159,7 +163,11 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     worldUid: readRecipeValue(yamlText, 'metadata.uid') ?? '',
   }
   const byName = new Map<string, WorldManifestLayer>()
-  for (const layer of manifest.layers) if (layer.kind === 'raster') byName.set(layer.name, layer)
+  const tables = new Map<string, WorldManifestLayer>()
+  for (const layer of manifest.layers) {
+    if (layer.kind === 'raster') byName.set(layer.name, layer)
+    else if (layer.kind === 'table') tables.set(layer.name, layer)
+  }
 
   // Decoded fields are kept, not re-read: a layer is megabytes and a caller that
   // acquires elevation for a tooltip and again for an overlay should pay once.
@@ -188,7 +196,19 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     width,
     height,
     recipe,
-    has: (name) => byName.has(name),
+    has: (name) => byName.has(name) || tables.has(name),
+
+    async table(name) {
+      const entry = tables.get(name)
+      if (!entry) return null
+      const text = await zip.file(entry.file)?.async('string')
+      if (!text) return null
+      try {
+        return JSON.parse(text) as unknown
+      } catch {
+        return null
+      }
+    },
 
     async worldId() {
       const elevation = await fromSave('elevation')
