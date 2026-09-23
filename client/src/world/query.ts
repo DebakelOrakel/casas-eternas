@@ -168,8 +168,11 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     lithoSeed: erosionLithoSeed(hashSeedString(`${seedText}:coastalWarp`)),
     erosionControls: {
       landscapeAge: readRecipeNumber(yamlText, 'spec.erosion.landscapeAge'),
-      alluvium: readRecipeNumber(yamlText, 'spec.erosion.alluvium'),
-      rockContrast: readRecipeNumber(yamlText, 'spec.erosion.rockContrast'),
+      // Since phase 5.1 under the tectonics; the erosion paths are the
+      // saves written before.
+      alluvium: readRecipeNumber(yamlText, 'spec.tectonics.alluvium') ?? readRecipeNumber(yamlText, 'spec.erosion.alluvium'),
+      rockContrast: readRecipeNumber(yamlText, 'spec.tectonics.rockContrast') ?? readRecipeNumber(yamlText, 'spec.erosion.rockContrast'),
+      epochLength: readRecipeNumber(yamlText, 'spec.tectonics.epochLength'),
     },
     worldUid: readRecipeValue(yamlText, 'metadata.uid') ?? '',
   }

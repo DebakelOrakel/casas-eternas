@@ -87,10 +87,10 @@ check(`${M.spec.WORLD_SPEC_FIELDS.length} fields survive write → read`, mismat
 // contract that lets a save written before a knob existed still open.
 const partial = M.spec.specFromYaml('spec:\n  genesis:\n    water: 12\n', 'x')
 const waterField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'genesis.water')
-const otherField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'erosion.landscapeAge')
+const otherField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'tectonics.epochLength')
 check('a missing key falls back to its declared default',
-  partial.values['genesis.water'] === 12 && partial.values['erosion.landscapeAge'] === otherField.input.default,
-  `water=${partial.values['genesis.water']} landscapeAge=${partial.values['erosion.landscapeAge']} (want ${waterField ? 12 : '?'}/${otherField.input.default})`)
+  partial.values['genesis.water'] === 12 && partial.values['tectonics.epochLength'] === otherField.input.default,
+  `water=${partial.values['genesis.water']} epochLength=${partial.values['tectonics.epochLength']} (want ${waterField ? 12 : '?'}/${otherField.input.default})`)
 // A control that moved stage (the temperature offset as the Planet's
 // greenhouse; the water, back with the genesis after a day on the planet)
 // reads its old path when the new one is absent, and the new one wins when
@@ -98,6 +98,10 @@ check('a missing key falls back to its declared default',
 const moved = M.spec.specFromYaml('spec:\n  planet:\n    water: 33\n  climate:\n    tempOffset: -4\n', 'x')
 const both = M.spec.specFromYaml('spec:\n  planet:\n    water: 41\n  genesis:\n    water: 33\n', 'x')
 check('a moved control reads its legacy path', moved.values['genesis.water'] === 33 && moved.values['planet.greenhouse'] === -4, `water=${moved.values['genesis.water']} greenhouse=${moved.values['planet.greenhouse']}`)
+// The erosion's material controls moved to the tectonics with the coupled
+// history (phase 5.1): a save from before reads them from their old place.
+const movedErosion = M.spec.specFromYaml('spec:\n  erosion:\n    alluvium: 70\n    rockContrast: 20\n', 'x')
+check('the erosion controls read their legacy paths', movedErosion.values['tectonics.alluvium'] === 70 && movedErosion.values['tectonics.rockContrast'] === 20, `alluvium=${movedErosion.values['tectonics.alluvium']} rockContrast=${movedErosion.values['tectonics.rockContrast']}`)
 check('the current path wins over the legacy one', both.values['genesis.water'] === 33)
 
 // A key the file DOES carry but the spec no longer knows must be ignored, not

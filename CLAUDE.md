@@ -132,7 +132,7 @@ cd client && npm run harness:roundtrip   # the save format; 0.2 s, run it freely
 cd client && npm run harness:mesh        # the adaptive mesh; ~5 s
 cd client && npm run harness:pipeline    # the generator pipeline's behaviour; ~50 s
 cd client && npm run harness:amplify     # the amplification bake; ~13 s
-cd client && npm run harness:golden      # the generator's fields; ~13 min
+cd client && npm run harness:golden      # the generator's fields; ~20 min
 
 ```
 

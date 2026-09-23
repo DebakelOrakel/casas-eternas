@@ -61,6 +61,12 @@ const HASHES = fileURLToPath(new URL('./golden-hashes.json', import.meta.url))
 const MODE = process.argv[2] ?? 'check'
 const SEEDS = ['calibration', 'alpha', 'bravo']
 const EPOCHS = 50
+// The last epochs run COUPLED (phase 5.1: the mesh drifts with the plates and
+// erodes inside the epoch); the ones before them are plain plate epochs. The
+// generator couples from the hand-over on, but a coupled epoch at 2048 is
+// ~25 s, and fifty of them would make this a two-hour harness. The erosion
+// metrics read what these last epochs did.
+const COUPLED_EPOCHS = 4
 const ARCHEAN_EPOCHS = 180
 const W = 2048, H = 1024
 
@@ -92,14 +98,12 @@ const L = (p) => server.ssrLoadModule(p)
 const M = {
   sim: await L('/src/generator/tectonics/plateSimulation.ts'),
   params: await L('/src/generator/tectonics/tectonicsTuneParams.ts'),
-  field: await L('/src/generator/elevation/elevationField.ts'),
-  dynamic: await L('/src/generator/elevation/dynamicTopography.ts'),
   mantle: await L('/src/generator/mantle/mantleField.ts'),
-  ridged: await L('/src/generator/elevation/ridgedNoise.ts'),
   erosionForcing: await L('/src/generator/pipeline/erosionForcing.ts'),
-  meshStage: await L('/src/generator/pipeline/meshErosionStage.ts'),
   meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
-  surfaceInputs: await L('/src/generator/surface/surfaceInputParams.ts'),
+  tectonicsInputs: await L('/src/generator/tectonics/tectonicsInputParams.ts'),
+  coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
+  meshRaster: await L('/src/generator/mesh/meshRaster.ts'),
   routing: await L('/src/generator/surface/flowRouting.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
   graph: await L('/src/generator/surface/riverGraph.ts'),
@@ -206,62 +210,53 @@ async function buildWorld(seed) {
   const archean = M.archean.createArcheanSimulation(seed, W, H)
   for (let e = 0; e < ARCHEAN_EPOCHS; e++) M.archeanStep.archeanStep(archean)
   const sim = M.finalize.finalizeArchean(archean)
-  for (let e = 0; e < EPOCHS; e++) M.sim.stepEpoch(sim)
+  for (let e = 0; e < EPOCHS - COUPLED_EPOCHS; e++) M.sim.stepEpoch(sim)
 
-  const baseline = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, W, H, sim.warpSeed)
-  // Dynamic topography (F3) on the baseline, as elevationMapImage adds it.
-  const dynamic = M.dynamic.dynamicTopographyField(sim.mantle, M.mantle.MANTLE_RES_X, M.mantle.MANTLE_RES_Y, W, H, W, H)
-  for (let i = 0; i < baseline.length; i++) baseline[i] += dynamic[i]
-  const buckets = M.field.buildFeatureBuckets(sim.features, W, H)
-  const fineSalt = (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0
-  const raw = new Float32Array(W * H)
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
-      raw[y * W + x] = M.field.computeElevation(s.wx, s.wy, baseline[y * W + x], buckets, W, H,
-        M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed),
-        M.ridged.fineDetailNoise(s.wx, s.wy, W, H, fineSalt))
-    }
-  }
-
-  // The V2 stage, exactly as the generator runs it: shared forcing assembly
-  // (erosionForcing.ts) + the engine at the sliders' declared defaults. The
-  // v1 pass is no longer the generator's path (it survives only inside the
-  // bake until P3) — gating it here would watch the wrong world.
+  // The coupled history, exactly as the generator runs it (pipeline/
+  // coupledEpoch.ts, HISTORY_DEFAULTS, the sliders' declared defaults): the
+  // mesh from the synthesis at this point of the plates' history, then
+  // COUPLED_EPOCHS epochs of drift, remesh and erosion. The rasters
+  // everything below reads are the terrain's rasterisation, like the
+  // worker's; `raw` is the last epoch's pre-erosion terrain (the sediment
+  // basins' "before"). The mesh itself is checked by harness:mesh.
   const CONTROLS = {
-    age: M.surfaceInputs.SURFACE_INPUTS.landscapeAge.default,
-    alluvium: M.surfaceInputs.SURFACE_INPUTS.alluvium.default,
-    rockContrast: M.surfaceInputs.SURFACE_INPUTS.rockContrast.default,
+    alluvium: M.tectonicsInputs.TECTONICS_INPUTS.alluvium.default,
+    rockContrast: M.tectonicsInputs.TECTONICS_INPUTS.rockContrast.default,
   }
-  // Since phase 4.3 the stage is pipeline/meshErosionStage.erodeOnMesh —
-  // the mesh from the point synthesis, the engine on it, a rasterisation
-  // for everything below. The result keeps the pass's contract (elevations,
-  // preFill = elevations, sedimentFlux, accumulation) so the metrics read
-  // as before; the mesh itself is checked by harness:mesh.
-  const staged = await M.meshStage.erodeOnMesh(sim, raw, W, H, { age: CONTROLS.age, controls: CONTROLS })
-  process.stderr.write(`(${staged.terrain.mesh.aliveVertices} mesh nodes) `)
-  const ero = { elevations: staged.elevations, preFillElevations: staged.elevations.slice(), sedimentFlux: staged.sedimentFlux, accumulation: staged.accumulation }
-  const el = ero.elevations
+  sim.epochMa = M.tectonicsInputs.TECTONICS_INPUTS.epochLength.default
+  const coupled = M.coupled.createCoupledTerrain(sim, M.coupled.HISTORY_DEFAULTS.budget)
+  for (let e = 0; e < COUPLED_EPOCHS; e++) {
+    await M.coupled.stepCoupledEpoch(sim, coupled, { ...M.coupled.HISTORY_DEFAULTS, controls: CONTROLS })
+  }
+  process.stderr.write(`(${coupled.mesh.aliveVertices} mesh nodes) `)
+  const raw = M.meshRaster.rasteriseNodeField(coupled.mesh, coupled.preErosionZ, W, H)
+  const el = M.meshRaster.rasteriseNodeField(coupled.mesh, coupled.z, W, H)
+  const staged = { terrain: coupled, before: raw }
+  const ero = {
+    elevations: el, preFillElevations: el.slice(),
+    sedimentFlux: M.meshRaster.rasteriseNodeField(coupled.mesh, coupled.sedimentFlux, W, H),
+    accumulation: M.meshRaster.rasteriseNodeField(coupled.mesh, coupled.routing.accumulation, W, H),
+  }
 
-  // Climate v1 on the PRE-EROSION terrain, mirroring the worker since the
-  // stage-2 coupling (climate sits before erosion; the erosion forcing
-  // evaluated the same chain on the same input above). The post-erosion
-  // climate truth is the terminal-basin refinement below, which runs on the
-  // eroded field exactly as the worker's hydrology handler does.
-  let temperature = M.temperature.computeTemperature(raw, W, H)
+  // Climate v1 on the CURRENT terrain, mirroring the worker: since the
+  // coupled history there is no pre-erosion terrain to run it on (the
+  // epochs' forcing evaluates the chain per epoch, on the mesh). The
+  // post-erosion climate truth is the terminal-basin refinement below,
+  // which runs on the same field exactly as the worker's hydrology handler.
+  let temperature = M.temperature.computeTemperature(el, W, H)
   const wind = M.wind.computeWind()
-  let currents = M.currents.computeOceanCurrents(raw, wind, W, H)
-  M.currents.applyOceanSST(temperature, currents, raw, W, H)
-  let seasonal = M.seasonality.computeSeasonalAmplitude(raw, W, H)
-  let seasonalPrecip = M.monsoon.computeSeasonalPrecipitation(raw, temperature, seasonal, wind, W, H, 1, 0)
+  let currents = M.currents.computeOceanCurrents(el, wind, W, H)
+  M.currents.applyOceanSST(temperature, currents, el, W, H)
+  let seasonal = M.seasonality.computeSeasonalAmplitude(el, W, H)
+  let seasonalPrecip = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, W, H, 1, 0)
   let precipitation = seasonalPrecip.annual
-  let biomes = M.biomes.computeBiomes(temperature, precipitation, seasonal, seasonalPrecip.index, raw, W, H)
+  let biomes = M.biomes.computeBiomes(temperature, precipitation, seasonal, seasonalPrecip.index, el, W, H)
   // The worker computes BOTH, and only the coarse one was guarded here. The
   // fine one is what the user sees and what the save bakes (worldLayers marks
   // `biome` fullRes), so leaving it out meant the harness watched the path with
   // the fewer consequences. Same arguments as above, deliberately — a
   // divergence between the two calls would be the harness's own bug.
-  let biomesFine = M.biomes.computeBiomesFine(temperature, precipitation, seasonal, seasonalPrecip.index, raw, W, H)
+  let biomesFine = M.biomes.computeBiomesFine(temperature, precipitation, seasonal, seasonalPrecip.index, el, W, H)
 
   const routing = await M.routing.fillDepressionsAndRouteFlow(el, W, H, 0)
   const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y

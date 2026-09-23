@@ -96,7 +96,7 @@ cd client && npm run harness:roundtrip       # the save format; 0.2 s
 cd client && npm run harness:mesh            # the adaptive mesh; ~5 s
 cd client && npm run harness:pipeline        # the pipeline's behaviour; ~50 s
 cd client && npm run harness:amplify         # the amplification bake; ~13 s
-cd client && npm run harness:golden          # the generator; ~13 min (4 world builds at 2048×1024)
+cd client && npm run harness:golden          # the generator; ~20 min (4 world builds at 2048×1024, 4 coupled epochs each)
 cd client && npm run harness:golden:record   # re-record the metric baseline, on purpose
 cd client && npm run harness:golden:hash     # arm the refactor guard (layer 4)
 ```
@@ -212,16 +212,21 @@ is a deliberate, documented unrealism; marine deltas are a separate shipped
 mechanism. A sediment-budget attempt failed because erosion and deposition only
 discriminate mountain from plain when they compete in one sweep.
 
-**The generator erodes on the mesh; the raster is a rasterisation** (phase 4.3,
-2026-09-23). `pipeline/meshErosionStage.erodeOnMesh` builds the mesh from
-`elevation/elevationSampler` (the synthesis at a point — the same functions the
-render worker runs per cell), erodes it, and rasterises z, sediment flux and
-accumulation to 2048 for the hydrology, the climate and the map. `elevation.f32`
+**The generator erodes on the mesh, inside the tectonics' epochs; the raster
+is a rasterisation** (phase 4.3 then 5.1, 2026-09-23). There is no erosion
+run: `pipeline/coupledEpoch.stepCoupledEpoch` moves the mesh's nodes with
+their plates, rebuilds and remeshes it, swaps the tectonic baseline under the
+relief and runs the engine for the epoch's length (`sim.epochMa`, the
+tectonics panel's `epochLength`; `HISTORY_DEFAULTS` holds the iterations,
+budget and uplift scale). The runtime rasterises z and sediment flux to 2048
+after every epoch for the hydrology, the climate and the map; `elevation.f32`
 in a save is therefore DERIVED; `mesh/` is the terrain, and a restored mesh
-must erode to the same bytes as the session's — which is why positions are
+must step to the same bytes as the session's — which is why positions are
 float32 on insert and the mesh is renumbered through the codec after every
-run (`mesh/meshSerial.compactMesh`). Do not hand the engine a mesh that has
-not been compacted and expect a reload to match.
+epoch (`mesh/meshSerial.compactMesh`). Do not hand the engine a mesh that has
+not been compacted and expect a reload to match. The erosion panel keeps its
+readout and the bakes; its former sliders are the tectonics panel's
+(`tectonics/tectonicsInputParams.ts`).
 
 **The hydrology runs over a flow substrate** (phase 4.3, 2026-09-23).
 `surface/flowSubstrate.ts` is the one interface the discharge, the lakes, the

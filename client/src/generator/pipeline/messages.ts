@@ -17,41 +17,27 @@ import type { StageId } from './stages'
 
 export interface WorkerTectonicsStartMessage {
   type: 'tectonicsStart'
+  // The coupled history's controls (phase 5.1), the tectonics panel's
+  // sliders: million years per epoch and the two material properties.
+  // Absent → the declared defaults.
+  epochLength?: number
+  alluvium?: number
+  rockContrast?: number
 }
 export interface WorkerTectonicsStopMessage {
   type: 'tectonicsStop'
 }
-// Runs a stream-power erosion pass (erosionPassV2.ts) once against the most
-// recently rendered raw elevation field and re-renders — a one-shot
-// action like 'reset', not a toggle, so there's only ever one message
-// type for it. Deliberately not something that keeps running alongside
-// live epoch-stepping: per docs/design/world-gen.md, geography is meant
-// to settle into a frozen shape once tectonics stops, and erosion is a
-// denudation pass over that settled shape, not a coupled per-epoch
-// process — GeneratorScreen.ts only enables the button while the sim is
-// stopped.
-export interface WorkerErosionStartMessage {
-  type: 'erosionStart'
-  // The v2 engine's landscape age in iterations — the central control: young
-  // keeps inherited relief and sharp valleys, old approaches the denuded
-  // equilibrium. Absent → the slider's declared default.
-  age?: number
-  // Settling-length scale 0..100 (50 neutral): more alluvium = broader
-  // valley floors and bigger deltas.
-  alluvium?: number
-  // Lithology contrast 0..100 (50 neutral = σ 1.4).
-  rockContrast?: number
-  // The climate panel's parameters in MODEL units (climate/weather.ts), the
-  // stage-2 coupling: the engine's water forcing evaluates the weather
-  // chain with these, so the panel's sliders shape where valleys carve.
-  // Absent → the declared defaults (an old caller, or a headless one).
-  weather?: {
-    temperatureOffset: number
-    temperatureContrast: number
-    humidity: number
-    equatorOffset: number
-    planet?: PlanetForcing
-  }
+// The climate panel's parameters in MODEL units (climate/weather.ts): what
+// the planet preview evaluates the weather chain with. The erosion's water
+// forcing used to take them from an 'erosionStart' request; since phase
+// 5.1 the erosion runs inside the tectonics' epochs at the declared
+// defaults (the stage-2 coupling's slider path is the climate stage's).
+export interface WorkerWeatherParams {
+  temperatureOffset: number
+  temperatureContrast: number
+  humidity: number
+  equatorOffset: number
+  planet?: PlanetForcing
 }
 // PUT A STAGE BACK WHERE IT STARTED. One gesture for what used to be three
 // unrelated messages (resetErosion, resetTectonics, archeanReset), because they
@@ -69,11 +55,6 @@ export interface WorkerResetStageMessage {
   type: 'resetStage'
   stage: StageId
 }
-// Requests the in-flight erosion pass stop at the next round boundary. The partial
-// result is kept (lastRawElevations), so a later 'erosionStart' continues from there.
-export interface WorkerErosionStopMessage {
-  type: 'erosionStop'
-}
 // Requests the climate step (temperature so far) be computed on the current,
 // possibly-eroded elevation — see docs/decisions/climate-biomes.md. Replies
 // with a WorkerClimateDataMessage.
@@ -87,7 +68,7 @@ export interface WorkerPlanetPreviewMessage {
   type: 'planetPreview'
   width: number
   height: number
-  weather?: WorkerErosionStartMessage['weather']
+  weather?: WorkerWeatherParams
 }
 
 export interface WorkerPlanetPreviewDataMessage {
@@ -207,9 +188,7 @@ export type WorkerInboundMessage =
   | WorkerPlanetPreviewMessage
   | WorkerTectonicsStartMessage
   | WorkerTectonicsStopMessage
-  | WorkerErosionStartMessage
   | WorkerResetStageMessage
-  | WorkerErosionStopMessage
   | WorkerRequestElevationFieldMessage
   | WorkerClimateRunMessage
   | WorkerHydrologyRunMessage
@@ -353,23 +332,18 @@ export interface WorkerRenderedMessage {
   // Sim events this render batch — the screen turns continent-scale ones
   // into notifications + geologic map markers (see the event overlay).
   events: SimEvent[]
-  // True for the once-per-round redraws an 'erosionStart' request posts while
-  // it's still running (see runErodeRequest) — everything about the
-  // message is otherwise a normal full render (map texture, stats), but
-  // GeneratorScreen.ts needs to know NOT to treat this one as "the
-  // erosion operation is done" the way it would a plain render, or the
-  // erode/reset-erosion buttons would re-enable and the status readout
-  // would clear partway through. Always false/omitted for every other
-  // render (init, epoch-driven, resetErosion, and the actual final
-  // render an erode request ends with).
+  // True for a render the pipeline will replace shortly on its own: the
+  // tectonics' epoch renders while the loop is still ticking (phase 5.1 —
+  // each epoch redraws the terrain, and the one after the stop is the
+  // settled one). Everything about the message is otherwise a normal full
+  // render (map texture, stats); the screen only holds back what it does
+  // once a run has SETTLED — the elevation field for the relief, the
+  // climate and rivers that follow — until the render that is not
+  // intermediate. Always false/omitted for every other render (init,
+  // hand-over, reset, restore).
   intermediate?: boolean
 }
 
-// Sent repeatedly (throttled to once per whole-percent change, not once
-// per engine onProgress callback — that would be one per
-// iteration) while an 'erosionStart' request is in flight; nothing is sent
-// for 'resetErosion', since that's a single already-computed render with
-// no meaningful sub-progress of its own.
 // A stage was asked to run and DECLINED, because something it reads is not there.
 //
 // Every compute handler has an early return for a missing upstream result, and
@@ -389,14 +363,6 @@ export interface WorkerStageDeclinedMessage {
   // Absent when the reason is not a missing result — the pipeline being busy, or
   // there being no world at all yet.
   needs?: StageId
-}
-
-// The v1 pass reported four named phases here; the v2 engine is one implicit
-// solve, so the fraction is the whole story (the `phase` field left with the
-// pass in the P5 teardown — the screen only ever drew the fraction).
-export interface WorkerErosionProgressMessage {
-  type: 'erosionProgress'
-  fraction: number
 }
 
 // The computed climate rasters (coarse grid — see climate/climateField.ts).
@@ -563,7 +529,6 @@ export interface WorkerWorldDataMessage {
 export type WorkerOutboundMessage =
   | WorkerPlanetPreviewDataMessage
   | WorkerRenderedMessage
-  | WorkerErosionProgressMessage
   | WorkerClimateDataMessage
   | WorkerHydrologyDataMessage
   | WorkerEcologyDataMessage

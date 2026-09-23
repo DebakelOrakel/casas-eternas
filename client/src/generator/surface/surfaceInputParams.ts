@@ -1,4 +1,3 @@
-import { ITERATION_YEARS } from './erosionEngine'
 import type { InputParam } from '../core/inputParams'
 
 // The erosion and hydrology panels' controls. They live together because both
@@ -9,36 +8,8 @@ import type { InputParam } from '../core/inputParams'
 // world's `spec.erosion.*` is read back by the amplification bake so a world
 // tuned for gentle incision does not come back carved like an aggressive one
 // (see docs/decisions/worldmap-amplification.md, rule 3).
-export const SURFACE_INPUTS = {
-  // The v2 engine's central axis: how long the transient runs, in engine
-  // iterations. Young keeps the inherited tectonic relief and cuts sharp
-  // dendritic valleys; old approaches the smooth denuded equilibrium
-  // (measured: 25 crisp / 100 softened / 400 blob — erosion-v2.md).
-  // Shown in million years (F7, ITERATION_YEARS): the slider and the save
-  // stay in iterations, so no recipe changes meaning.
-  landscapeAge: {
-    min: 10, max: 400, step: 5, default: 40,
-    i18n: 'generator.panel.erosion.age',
-    unit: 'common.unit.myr',
-    display: { scale: ITERATION_YEARS / 1e6, digits: 1 },
-    inSpec: true,
-  },
-  // Settling-length scale: more alluvium settles sediment sooner — broader
-  // valley floors, bigger deltas. 50 is the engine's calibrated neutral.
-  alluvium: {
-    min: 0, max: 100, step: 5, default: 50,
-    i18n: 'generator.panel.erosion.alluvium',
-    inSpec: true,
-  },
-  // Lithology contrast σ: how differently hard and soft rock erode. 50 is
-  // the calibrated neutral (σ 1.4); 0 is uniform rock.
-  rockContrast: {
-    min: 0, max: 100, step: 5, default: 50,
-    i18n: 'generator.panel.erosion.rockContrast',
-    inSpec: true,
-  },
-  // riverDensity is GONE (erosion-v2 P4 + teardown): drainage density is
-  // climate-driven, everything draws the one canonical channel set
-  // (hydrology.ts' CANONICAL_RIVER_DENSITY), and the hydrology panel that
-  // hosted the slider folded into the erosion panel.
-} satisfies Record<string, InputParam>
+// The erosion pass's sliders went with the pass (phase 5.1, decision 6):
+// `alluvium` and `rockContrast` are the tectonics' now
+// (tectonics/tectonicsInputParams.ts), `landscapeAge` has no successor.
+// The declaration stays for the surface's input namespace; it is empty.
+export const SURFACE_INPUTS = {} satisfies Record<string, InputParam>

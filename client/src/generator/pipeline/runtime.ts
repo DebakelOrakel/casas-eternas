@@ -1,4 +1,4 @@
-import { stepEpoch, serializePlateSimulation, deserializePlateSimulation } from '../tectonics/plateSimulation'
+import { serializePlateSimulation, deserializePlateSimulation } from '../tectonics/plateSimulation'
 import { sampleWorldElevation } from '../planet/sampleWorld'
 import type { PlanetForcing } from '../planet/planetForcing'
 import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulation'
@@ -8,13 +8,14 @@ import { ElevationRenderPool } from '../render/elevationRenderPool'
 import type { ElevationRenderer } from '../render/elevationRenderPool'
 import { downstreamOf } from './stages'
 import type { StageId } from './stages'
-import { erodeOnMesh, type MeshTerrain } from './meshErosionStage'
-import { decodeMesh, encodeMesh } from '../mesh/meshSerial'
-import { meshAreas, meshRouting, meshSubstrate, waterFieldsFromMesh } from '../mesh/meshHydrology'
+import type { MeshTerrain } from './meshErosionStage'
+import { createCoupledTerrain, decodeCoupledTerrain, HISTORY_DEFAULTS, stepCoupledEpoch, type CoupledTerrain } from './coupledEpoch'
+import { rasteriseNodeField } from '../mesh/meshRaster'
+import { TECTONICS_INPUTS } from '../tectonics/tectonicsInputParams'
+import { encodeMesh } from '../mesh/meshSerial'
+import { meshRouting, meshSubstrate, waterFieldsFromMesh } from '../mesh/meshHydrology'
 import { rasterCellAt } from '../surface/riverGraph'
-import { torusDomain } from '../core/domain'
 import type { MeshPayload } from './messages'
-import type { WorkerLike } from '../surface/erosionEnginePool'
 import { coarseForcingFields } from './erosionForcing'
 import { fillDepressionsAndRouteFlow } from '../surface/flowRouting'
 import type { ArcheanSimulation } from '../archean/archeanState'
@@ -33,7 +34,6 @@ import type { LakeFields } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeWeather, defaultWeatherParams } from '../climate/weather'
-import type { WeatherParams } from '../climate/weather'
 import { computeBiomes, computeBiomesFine } from '../climate/biomes'
 import { downsampleMax } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
@@ -50,7 +50,7 @@ import { computeEcology } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
-import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerErosionProgressMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
+import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
 // tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
@@ -96,11 +96,9 @@ let renderOptions: RenderSimulationOptions = {}
 let epochIntervalMs = 400
 let intervalId: ReturnType<typeof setInterval> | undefined
 let pendingEvents: SimEvent[] = []
-// The last render's pre-redistribution elevation field — physical input
-// an 'erosionStart' request needs (see WorkerErosionStartMessage). Kept up to date by
-// every renderAndPost call, not just ones that happen while stopped, so
-// erosion always has *something* to act on the first time it's used
-// without needing a dedicated "prepare for erosion" render first.
+// The last render's pre-redistribution elevation field, kept up to date by
+// every renderAndPost call: what the climate and the hydrology read when no
+// coupled terrain exists yet (a restored save without a mesh).
 // The hand-over state, kept so the tectonics panel can return to it. Snapshotted
 // rather than re-derived: finalizeArchean consumes the Archean's RNG and names the
 // continents as it goes, so calling it twice does not produce the same world.
@@ -128,10 +126,6 @@ let lastDisplayElevations: { data: Float32Array; width: number; height: number }
 // re-running the whole live epoch-stepping loop again, not an instant
 // revert. WorkerResetErosionMessage re-renders from this instead.
 let preErosionElevations: Float32Array | null = null
-// Set by a 'erosionStop' message; the in-flight runErosionPassV2 polls it at
-// each chunk boundary and returns its partial result (which then becomes
-// lastRawElevations).
-let erosionStopRequested = false
 
 // A STAGE'S RESULT IS ONE OBJECT — it exists or it does not, never half of it.
 //
@@ -229,9 +223,40 @@ let lastLakeBasinElevations: Float32Array | null = null
 // carries (`mesh/…`), and what a restore brings back. The raster fields
 // above are its rasterisation while the consumers still walk cells.
 let meshTerrain: MeshTerrain | null = null
+// THE COUPLED TERRAIN (phase 5.1): the mesh the tectonics carry through
+// their epochs — erosion runs inside each one (pipeline/coupledEpoch.ts).
+// `meshTerrain` above is this same object once an epoch has run (it then
+// has a routing); before the first epoch, and for a world restored
+// without a mesh, it is null and the hydrology walks the raster.
+let coupled: CoupledTerrain | null = null
+// The tectonics panel's controls for the history (tectonicsInputParams).
+let historyControls = { epochLength: TECTONICS_INPUTS.epochLength.default, alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default }
+let epochInFlight = false
+
+// The coupled terrain as what the hydrology reads (a routing is required
+// there): the same arrays, once an epoch or a restore has routed it.
+function asMeshTerrain(c: CoupledTerrain): MeshTerrain | null {
+  return c.routing ? { mesh: c.mesh, z: c.z, routing: c.routing, areas: c.areas, sedimentFlux: c.sedimentFlux } : null
+}
+
+// The terrain's rasterisation, rendered and posted: what every consumer
+// that still walks cells reads, and the map's texture. The climate runs on
+// the current terrain (there is no pre-erosion terrain any more); the
+// sediment basins read the last epoch's start (meshBefore, rasterised on
+// demand in the hydrology handler).
+async function renderTerrain(intermediate = false): Promise<void> {
+  if (!sim || !coupled) return
+  const elevations = rasteriseNodeField(coupled.mesh, coupled.z, sim.width, sim.height)
+  await renderAndPost(elevations, intermediate, 1)
+  preErosionElevations = null
+  lastLakeBasinElevations = elevations.slice()
+  lastSedimentFlux = coupled.sedimentFlux.length > 0 ? rasteriseNodeField(coupled.mesh, coupled.sedimentFlux, sim.width, sim.height) : null
+  meshBefore = null
+  meshPayloadCache = null
+}
 // The mesh's initial heights rasterised — the "before" of the last erosion
 // for the cell-walking consumers (the sediment basins), see
-// meshErosionStage.MeshErosionStageResult.before. Null when no erosion ran.
+// the coupled terrain's preErosionZ, rasterised on demand. Null when no epoch ran.
 let meshBefore: Float32Array | null = null
 // The mesh terrain's bytes for the screen and the save, encoded once per
 // terrain (a second's work on a million nodes) and reused.
@@ -247,10 +272,8 @@ function clearResult(id: StageId): void {
       // Live simulations, not cached results — they are replaced, never dropped.
       return
     case 'erosion':
-      lastLakeBasinElevations = null
-      meshTerrain = null
-      meshBefore = null
-      meshPayloadCache = null
+      // Since phase 5.1 the terrain is the tectonics' (coupled); the
+      // erosion stage owns no result of its own.
       return
     case 'climate':
       climate = null
@@ -348,8 +371,8 @@ let renderInFlight = false
 // loading quickly, before the initial render finished).
 let worldGeneration = 0
 
-// precomputedElevations, when passed, is an erosion pass's output (see
-// the 'erosionStart' handler below) — always explicitly set (even to undefined)
+// precomputedElevations, when passed, is the coupled terrain's rasterisation
+// (renderTerrain) or a restored raster — always explicitly set (even to undefined)
 // rather than left alone, since renderOptions is a shared, reused-every-
 // call object and an erosion-triggered call's value would otherwise leak
 // into the next ordinary epoch-driven render. intermediate marks a
@@ -512,66 +535,6 @@ function coarseElevation(elevations: Float32Array, worldWidth: number, worldHeig
   return out
 }
 
-// Runs one 'erosionStart' request end to end — extracted out of the onmessage
-// dispatcher (which stays a plain sync function) since the erosion pass is
-// itself async (its routing yields to a real macrotask boundary during
-// its long loops, which is what lets
-// its onProgress-driven postMessage calls below actually reach the main
-// thread live instead of arriving in one burst after the whole ~10+
-// second pass finishes).
-async function runErodeRequest(rawElevations: Float32Array, width: number, height: number, opts: { age?: number; alluvium?: number; rockContrast?: number; weather?: WeatherParams } = {}): Promise<void> {
-  if (!sim) return
-  const age = Math.round(opts.age ?? 40)
-
-  // Pooled + pipelined when cross-origin isolation grants SAB (the client
-  // and dev server send COOP/COEP); single-threaded otherwise — same
-  // physics either way, byte-identical per the engine-check's gates.
-  let pool: ({ createWorker: () => WorkerLike } & { stencilWorkers: number; refreshWorkers: number; pipelineDepth: number }) | undefined
-  if (typeof SharedArrayBuffer !== 'undefined' && (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true) {
-    const { default: EngineWorkerCtor } = await import('../surface/erosionEngineWorker?worker')
-    const cores = (globalThis as { navigator?: { hardwareConcurrency?: number } }).navigator?.hardwareConcurrency ?? 8
-    pool = {
-      createWorker: () => new EngineWorkerCtor() as WorkerLike,
-      ...(cores >= 8 ? { stencilWorkers: 4, refreshWorkers: 2 } : { stencilWorkers: 2, refreshWorkers: 1 }),
-      pipelineDepth: 8,
-    }
-  }
-
-  // The engine on the adaptive mesh (pipeline/meshErosionStage.ts, SHARED
-  // with the golden harness, which must gate exactly the world the player's
-  // erode runs on): the mesh is built from the tectonics' point synthesis,
-  // eroded, and rasterised for the consumers that still walk cells.
-  let lastReportedPercent = -1
-  const staged = await erodeOnMesh(sim, rawElevations, width, height, {
-    age,
-    controls: { alluvium: opts.alluvium, rockContrast: opts.rockContrast },
-    // The mesh build takes seconds before the first iteration: show the bar
-    // at zero rather than nothing.
-    onBuildProgress: (fraction) => { if (fraction === 0) emit({ type: 'erosionProgress', fraction: 0 } as WorkerErosionProgressMessage) },
-    weather: opts.weather ?? defaultWeatherParams(),
-    pool,
-    onProgress: (fraction) => {
-      const percent = Math.round(fraction * 100)
-      if (percent === lastReportedPercent) return
-      lastReportedPercent = percent
-      const progressMessage: WorkerErosionProgressMessage = { type: 'erosionProgress', fraction }
-      emit(progressMessage)
-    },
-    onChunkComplete: (chunkElevations) => renderAndPost(chunkElevations, true),
-    shouldCancel: () => erosionStopRequested,
-  })
-  await renderAndPost(staged.elevations)
-  // Keep the basins-intact terrain for the hydrology's lakes — set after
-  // renderAndPost, which clears it. Under v2 it equals the elevations
-  // (nothing bakes the fill in any more); the hydrology contract is
-  // unchanged. See lastLakeBasinElevations.
-  lastLakeBasinElevations = staged.elevations.slice()
-  lastSedimentFlux = staged.sedimentFlux
-  meshTerrain = staged.terrain
-  meshBefore = staged.before
-  meshPayloadCache = null
-}
-
 // The mesh payload, encoded once per terrain. A COPY per request: the
 // buffers are transferred to the screen, and a transferred buffer is gone.
 function meshPayload(): MeshPayload | undefined {
@@ -591,12 +554,6 @@ function serializeMeshTerrain(terrain: MeshTerrain): MeshPayload {
   return { count: serial.count, nodes: serial.nodes.buffer as ArrayBuffer, connectivity: serial.connectivity.buffer as ArrayBuffer, z: z.buffer as ArrayBuffer }
 }
 
-function restoreMeshTerrain(payload: MeshPayload, width: number, height: number): MeshTerrain {
-  const mesh = decodeMesh(torusDomain(width, height), { count: payload.count, nodes: new Float32Array(payload.nodes), connectivity: new Uint8Array(payload.connectivity) })
-  const z = new Float32Array(payload.z)
-  // The routing is derived, not carried: one refresh on the restored mesh.
-  return { mesh, z, routing: meshRouting(mesh, z), areas: meshAreas(mesh), sedimentFlux: new Float32Array(0) }
-}
 
 // THE HYDROLOGY ON THE MESH (phase 4.3): the lakes and the discharge over
 // the mesh's own routing, and the raster fields the cell-walking consumers
@@ -629,75 +586,73 @@ function stopTicking(): void {
 // temperature → wind → currents → precipitation → biomes, which is real domain
 // knowledge that was invisible inside a chain of `else if`s.
 
-function handleTectonicsStart(): void {
+
+function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'tectonicsStart' }>): void {
   if (intervalId !== undefined) return
-  intervalId = setInterval(() => {
-    if (!sim || renderInFlight) return
-    const tickEvents = stepEpoch(sim)
-    // Events are forwarded to the main thread (batched with the next
-    // render), which owns their notifications + faded map markers now.
-    pendingEvents.push(...tickEvents)
+  historyControls = {
+    epochLength: message.epochLength ?? TECTONICS_INPUTS.epochLength.default,
+    alluvium: message.alluvium ?? TECTONICS_INPUTS.alluvium.default,
+    rockContrast: message.rockContrast ?? TECTONICS_INPUTS.rockContrast.default,
+  }
+  if (sim) sim.epochMa = historyControls.epochLength
+  // THE COUPLED EPOCH (phase 5.1): the plates move, the mesh follows,
+  // erosion runs inside the epoch, the terrain is rasterised and drawn. An
+  // epoch is asynchronous (the engine) and takes what it takes; the interval
+  // only says how often to try, and a tick while one is in flight is
+  // skipped — the loop runs as fast as an epoch runs, never faster. The
+  // first epoch starts with the gesture rather than one interval later:
+  // a start followed by a stop is then exactly one epoch, which is what
+  // the pipeline harness's determinism check builds its two worlds with.
+  const tick = (): void => {
+    if (!sim || renderInFlight || epochInFlight) return
+    const currentSim = sim
+    epochInFlight = true
     renderInFlight = true
-    // Live preview renders at a coarser scale for speed (see
-    // PREVIEW_RENDER_SCALE); erosion/export force full res of their own.
-    renderAndPost(undefined, false, PREVIEW_RENDER_SCALE).finally(() => {
+    ;(async () => {
+      // A world restored without a mesh (a save from before the history)
+      // gets one from its own synthesis on the first epoch.
+      if (!coupled) coupled = createCoupledTerrain(currentSim, HISTORY_DEFAULTS.budget)
+      const stats = await stepCoupledEpoch(currentSim, coupled, {
+        iterationsPerEpoch: HISTORY_DEFAULTS.iterationsPerEpoch,
+        budget: HISTORY_DEFAULTS.budget,
+        upliftScale: HISTORY_DEFAULTS.upliftScale,
+        controls: { alluvium: historyControls.alluvium, rockContrast: historyControls.rockContrast },
+      })
+      // Events are forwarded to the main thread (batched with the next
+      // render), which owns their notifications + faded map markers now.
+      pendingEvents.push(...stats.events)
+      meshTerrain = asMeshTerrain(coupled)
+      // Intermediate while the loop still ticks: the next epoch replaces
+      // this render. The epoch that finishes after the stop is the settled
+      // one — the screen then pulls the elevation field and runs the chain.
+      await renderTerrain(intervalId !== undefined)
+    })().finally(() => {
+      epochInFlight = false
       renderInFlight = false
     })
-  }, epochIntervalMs)
+  }
+  intervalId = setInterval(tick, epochIntervalMs)
+  tick()
 }
 
 function handleTectonicsStop(): void {
   stopTicking()
-  // Re-render once at full resolution so the paused view is crisp (the
-  // live preview above renders coarser) and lastRawElevations is refreshed
-  // to a full-res field for any subsequent erode/export. Skipped if a
-  // render is still in flight (the erode handler forces full res anyway).
-  if (sim && !renderInFlight) {
+  // The settled render: the last epoch's, if one is still in flight (it
+  // sees the interval gone and renders as settled), otherwise the terrain
+  // as it stands, once more. NOT a render from the synthesis — that would
+  // replace the history's terrain with the fields'.
+  if (sim && coupled && !epochInFlight && !renderInFlight) {
     renderInFlight = true
-    renderAndPost(undefined, false, 1).finally(() => {
+    renderTerrain(false).finally(() => {
       renderInFlight = false
     })
   }
 }
 
-function handleErosionStart(message: Extract<WorkerInboundMessage, { type: 'erosionStart' }>): void {
-  if (!sim || !lastRawElevations) { decline('erosion', 'tectonics'); return }
-  // Busy rather than unsatisfied — no upstream stage is missing, so `needs` stays
-  // absent and the screen simply stops waiting.
-  if (renderInFlight) { decline('erosion'); return }
-  // Multi-second at this grid size (a 2048x1024 priority-flood plus the
-  // engine's age-many implicit iterations) — doesn't block the main UI
-  // thread regardless (this is a dedicated worker already separate
-  // from rendering/input), but see runErodeRequest's own comment for
-  // why it's async rather than a tight synchronous loop.
-  const currentSim = sim
-  renderInFlight = true
-  erosionStopRequested = false
-  ;(async () => {
-    // Refresh to a full-resolution field first: the live preview renders
-    // coarser (PREVIEW_RENDER_SCALE), so lastRawElevations may be an
-    // upscaled low-res field, and erosion must run on the crisp full-res
-    // elevation rather than a blurred preview. Marked intermediate so the screen
-    // does NOT treat this pre-erosion refresh as "erosion done" (which would clear
-    // the stop icon + progress bar the instant a pass starts — see the render handler).
-    await renderAndPost(undefined, true, 1)
-    if (lastRawElevations) await runErodeRequest(lastRawElevations, currentSim.width, currentSim.height, { age: message.age, alluvium: message.alluvium, rockContrast: message.rockContrast, weather: message.weather })
-  })().finally(() => {
-    renderInFlight = false
-  })
-}
 
-function handleErosionStop(): void {
-  // The in-flight runErosionPassV2 polls this and returns its partial result.
-  erosionStopRequested = true
-}
 
 function resetErosion(): void {
-  if (!sim || !preErosionElevations || renderInFlight) return
-  renderInFlight = true
-  renderAndPost(preErosionElevations).finally(() => {
-    renderInFlight = false
-  })
+  // Nothing to go back to: the terrain is the history's (phase 5.1).
 }
 
 // The climate levers of the last computeClimate — kept so the hydrology
@@ -944,9 +899,13 @@ function handleHydrologyRun(): void {
       // SEDIMENT BASINS (F1): what the last erosion pass deposited, with the
       // provenance of the catchments feeding each basin. Needs the terrain
       // the pass started from; a loaded save has none, and gets no basins.
-      result.sedimentBasins = preErosionElevations && preErosionElevations !== terrain && preErosionElevations.length === terrain.length
+      // The "before" of the last epoch's deposition: the heights that
+      // epoch's erosion started from, rasterised on demand (phase 5.1).
+      if (!meshBefore && coupled && coupled.preErosionZ.length > 0) meshBefore = rasteriseNodeField(coupled.mesh, coupled.preErosionZ, width, height)
+      const before = meshBefore ?? preErosionElevations
+      result.sedimentBasins = before && before !== terrain && before.length === terrain.length
         ? findSedimentBasins({
-          before: meshBefore ?? preErosionElevations, after: terrain, width, height, routing: result.routing, graph: result.graph, cellM: WORLD_WIDTH_METERS / width,
+          before, after: terrain, width, height, routing: result.routing, graph: result.graph, cellM: WORLD_WIDTH_METERS / width,
           cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, width, height),
           hardness: forcingFields.hardness, coarseResX: CLIMATE_RES_X, coarseResY: CLIMATE_RES_Y,
         }).basins
@@ -1203,7 +1162,18 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   preErosionElevations = lastRawElevations
   // The mesh the save carries, if it does: the terrain proper, so a save
   // after a load carries it on. The raster above is its rasterisation.
-  meshTerrain = message.mesh ? restoreMeshTerrain(message.mesh, sim.width, sim.height) : null
+  // The history's terrain from the save (phase 5.1): the mesh with its
+  // heights, the baseline from the restored sim, the routing derived. A
+  // save without a mesh restores the raster alone; the first epoch then
+  // builds the mesh from the synthesis.
+  if (message.mesh) {
+    coupled = decodeCoupledTerrain(sim, { nodes: new Float32Array(message.mesh.nodes), connectivity: new Uint8Array(message.mesh.connectivity), z: new Float32Array(message.mesh.z) })
+    coupled.routing = meshRouting(coupled.mesh, coupled.z)
+    meshTerrain = asMeshTerrain(coupled)
+  } else {
+    coupled = null
+    meshTerrain = null
+  }
   meshPayloadCache = null
   lastLakeBasinElevations = null
   // Render the injected (stored, post-erosion) elevation directly — no pool
@@ -1229,6 +1199,8 @@ function handleGenesisInit(message: Extract<WorkerInboundMessage, { type: 'genes
   archean = createArcheanSimulation(message.seed, message.width, message.height, archeanWater)
   lastRawElevations = null
   preErosionElevations = null
+  coupled = null
+  meshTerrain = null
   renderOptions = message.renderOptions
   epochIntervalMs = message.epochIntervalMs
   void renderArcheanAndPost()
@@ -1261,6 +1233,7 @@ function handleGenesisFinalize(): void {
   if (!archean) return
   stopTicking()
   sim = finalizeArchean(archean)
+  sim.epochMa = historyControls.epochLength
   // Deep-copied, because serializePlateSimulation hands back the sim's OWN arrays
   // (rafts, features, seeds, motions) rather than copies — fine for its real job,
   // where the result is written to a file immediately, but useless as a stored state:
@@ -1276,7 +1249,11 @@ function handleGenesisFinalize(): void {
   // announce at handover/reset; real continent events (collision/breakup/
   // supercontinent) only ever arrive from stepEpoch's own raft lifecycle.
   pendingEvents = []
-  void renderAndPost()
+  // The history's terrain starts here: the mesh from the synthesis at the
+  // hand-over (phase 5.1), drawn from its rasterisation.
+  coupled = createCoupledTerrain(sim, HISTORY_DEFAULTS.budget)
+  meshTerrain = null
+  void renderTerrain()
 }
 
 function resetTectonics(): void {
@@ -1287,6 +1264,7 @@ function resetTectonics(): void {
   // Fresh copies each time, so a second reset restores the same state as the first
   // rather than whatever the last run left in the buffers.
   sim = deserializePlateSimulation(handoverSnapshot, handoverOceanAge.slice(), handoverMantle.slice())
+  sim.epochMa = historyControls.epochLength
   lastRawElevations = null
   preErosionElevations = null
   // Was these two rules written out by hand, which is what the named helper
@@ -1299,16 +1277,25 @@ function resetTectonics(): void {
   // announce at handover/reset; real continent events (collision/breakup/
   // supercontinent) only ever arrive from stepEpoch's own raft lifecycle.
   pendingEvents = []
-  void renderAndPost()
+  // The history's terrain starts here: the mesh from the synthesis at the
+  // hand-over (phase 5.1), drawn from its rasterisation.
+  coupled = createCoupledTerrain(sim, HISTORY_DEFAULTS.budget)
+  meshTerrain = null
+  void renderTerrain()
 }
 
 function resetGenesis(): void {
+  // Nothing to go back to before the first genesisInit — and a 0×0 Archean
+  // would hand a 0×0 world to the terrain's synthesis at the finalize.
+  if (archeanWidth === 0) return
   stopTicking()
   worldGeneration += 1
   sim = null
   archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanWater)
   lastRawElevations = null
   preErosionElevations = null
+  coupled = null
+  meshTerrain = null
   void renderArcheanAndPost()
 }
 
@@ -1348,10 +1335,8 @@ function handleResetStage(message: Extract<WorkerInboundMessage, { type: 'resetS
 
 const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMessage) => void } = {
   planetPreview: (m) => { void handlePlanetPreview(m as Extract<WorkerInboundMessage, { type: 'planetPreview' }>) },
-  tectonicsStart: () => handleTectonicsStart(),
+  tectonicsStart: (m) => handleTectonicsStart(m as Extract<WorkerInboundMessage, { type: 'tectonicsStart' }>),
   tectonicsStop: () => handleTectonicsStop(),
-  erosionStart: (m) => handleErosionStart(m as Extract<WorkerInboundMessage, { type: 'erosionStart' }>),
-  erosionStop: () => handleErosionStop(),
   resetStage: (m) => handleResetStage(m as Extract<WorkerInboundMessage, { type: 'resetStage' }>),
   requestElevationField: () => handleRequestElevationField(),
   climateRun: (m) => handleClimateRun(m as Extract<WorkerInboundMessage, { type: 'climateRun' }>),

@@ -20,7 +20,7 @@
 import type { InputParam } from '../core/inputParams'
 import { ARCHEAN_INPUTS } from '../archean/archeanInputParams'
 import { PLANET_INPUTS } from '../planet/planetInputParams'
-import { SURFACE_INPUTS } from '../surface/surfaceInputParams'
+import { TECTONICS_INPUTS } from '../tectonics/tectonicsInputParams'
 import { CLIMATE_INPUTS } from '../climate/climateInputParams'
 import { ECOLOGY_INPUTS } from '../ecology/ecologyInputParams'
 import { ECOLOGY_FIELD_IDS } from '../ecology/ecologyField'
@@ -92,10 +92,10 @@ export const STAGES: readonly Stage[] = [
     id: 'tectonics',
     dependsOn: ['genesis'],
     kind: 'steppable',
-    // No controls at all. Its one knob, the epoch interval, is playback speed —
-    // it changes how fast you watch, never what is produced, so it is not an
-    // input in this sense and must never reach the spec.
-    inputs: {},
+    // The coupled history (phase 5.1): erosion runs inside every epoch, so
+    // its material controls and the epoch's length are this stage's. The
+    // epoch INTERVAL stays what it was — playback speed, never an input.
+    inputs: { epochLength: TECTONICS_INPUTS.epochLength, alluvium: TECTONICS_INPUTS.alluvium, rockContrast: TECTONICS_INPUTS.rockContrast },
     outputs: ['elevation'],
   },
   {
@@ -128,7 +128,10 @@ export const STAGES: readonly Stage[] = [
     // carved terrain.
     dependsOn: ['tectonics', 'climate'],
     kind: 'progressive',
-    inputs: { landscapeAge: SURFACE_INPUTS.landscapeAge, alluvium: SURFACE_INPUTS.alluvium, rockContrast: SURFACE_INPUTS.rockContrast },
+    // Since phase 5.1 the erosion has no run of its own — it happens in the
+    // tectonics' epochs. The stage stays for its panel (the bakes, the
+    // overlays) and its place in the invalidation order; it computes nothing.
+    inputs: {},
     outputs: ['elevation'],
   },
   {

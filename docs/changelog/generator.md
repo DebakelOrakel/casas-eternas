@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-23
+- **changed** Tectonics: the erosion runs inside every tectonic epoch — the terrain drifts with its plates, is rebuilt where crust is made or lost, and erodes as it goes; the erode button is gone, and the epoch length, floodplains and rock contrast sliders sit on the tectonics step. `generator.panel.tectonics`
 - **changed** Erosion: the erosion runs on an adaptive mesh built from the tectonics at every point, dense on ridges and along rivers, coarse at sea — the save carries the mesh, the map still shows its rasterisation. `generator.panel.erosion`
 - **changed** Hydrology: lakes and the river network are computed on the mesh the erosion carved, so a river follows the valley the erosion cut rather than a re-routing of the map's raster. `generator.panel.hydrology`
 - **changed** Rendering: the relief's shading reads the mesh's own slopes, so ridges finer than the relief grid still light and shade. `generator.overlay`

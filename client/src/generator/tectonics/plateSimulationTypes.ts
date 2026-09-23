@@ -19,6 +19,9 @@ import type { SeededRandom } from '../core/rng'
 export interface PlateSimulation {
   width: number
   height: number
+  // Million years one epoch spans (phase 5.1): the erosion's time per plate
+  // step, and the ocean floor's age in Ma for the subsidence.
+  epochMa: number
   // Plate count as configured at creation — the target the plate-count
   // homeostasis (PLATE_COUNT_PRESSURE_STRENGTH) steers back toward as
   // rift/merge events change seeds.length over time.
@@ -104,6 +107,8 @@ export interface PlateSimulation {
 // (carried separately as a binary float raster). The RNG's internal state is
 // stored so continuation is bit-identical.
 export interface PlateSimulationSnapshot {
+  // Absent in a save written before phase 5.1: one.
+  epochMa?: number
   // Absent in saves written before the Archean phase existed; treated as 0.
   archeanEpochs?: number
   // Absent in saves written before the water knob existed; treated as 0.

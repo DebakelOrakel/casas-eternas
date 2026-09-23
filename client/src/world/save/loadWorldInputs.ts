@@ -56,6 +56,9 @@ export interface ErosionControls {
   landscapeAge: number | undefined
   alluvium: number | undefined
   rockContrast: number | undefined
+  // Million years per tectonic epoch (phase 5.1); undefined for a save
+  // written before, which ran at one.
+  epochLength: number | undefined
 }
 
 export interface WorldInputs {

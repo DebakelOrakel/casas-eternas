@@ -76,7 +76,7 @@ import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, follow
 import { MIGRATION_INPUTS } from '../../generator/migration/migrationInputParams'
 import { ARCHEAN_INPUTS } from '../../generator/archean/archeanInputParams'
 import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
-import { SURFACE_INPUTS } from '../../generator/surface/surfaceInputParams'
+import { TECTONICS_INPUTS } from '../../generator/tectonics/tectonicsInputParams'
 import { ECOLOGY_INPUTS, ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputParams'
 import { WORLD_SPEC_FIELDS, specFromYaml, specToYamlLines } from '../../world/save/worldSpec'
 import type { WorldSpec } from '../../world/save/worldSpec'
@@ -315,9 +315,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let worldName = randomWorldName()
   let lastLandFraction = 0
   let lastEpoch = 0
-  // How many erosion passes have been applied to the current world (status
-  // .erosionRun in a save). Reset when the topography is remade (regenerate /
-  // running tectonics / reset-erosion), bumped per erode, set on load.
+  // How many eroding epochs the current world has been through (status
+  // .erosionRun in a save). Since the coupled history (phase 5.1) every
+  // tectonic epoch erodes, so this counts the epochs run since the hand-over:
+  // bumped per epoch render, zeroed when the topography is remade (regenerate /
+  // reset tectonics), set on load. The gates below ask only whether it is
+  // at least one — whether the terrain has been eroded at all.
   let erosionRunCount = 0
   // The world as it was last ESTABLISHED — saved, loaded, or freshly regenerated.
   // Growing it from there (stepping the Archean, running tectonics, eroding, moving
@@ -577,6 +580,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       </div>
     </div>
     <div class="gen-step" data-stage="tectonics">
+      <section class="gen-params">
+        <h2 class="gen-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
+        <!-- The history's controls (phase 5.1): erosion runs inside every
+             epoch, so what used to be the erosion panel's sliders shape the
+             epochs, and the epoch's length is what the erosion advances by. -->
+        ${paramField(TECTONICS_INPUTS.epochLength, 'tectonics-epoch-input', 'tectonics-epoch-label')}
+        ${paramField(TECTONICS_INPUTS.alluvium, 'tectonics-alluvium-input', 'tectonics-alluvium-label')}
+        ${paramField(TECTONICS_INPUTS.rockContrast, 'tectonics-rock-input', 'tectonics-rock-label')}
+      </section>
       <div class="gen-step__foot">
         <div class="gen-stats">
           ${statTile('generator.panel.tectonics.stat.land', 'stat-land', { unit: 'common.unit.percent', bar: true })}
@@ -619,12 +631,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       </div>
     </div>
     <div class="gen-step" data-stage="erosion">
-      <section class="gen-params">
-        <h2 class="gen-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
-        ${paramField(SURFACE_INPUTS.landscapeAge, 'erosion-age-input', 'erosion-age-label')}
-        ${paramField(SURFACE_INPUTS.alluvium, 'erosion-alluvium-input', 'erosion-alluvium-label')}
-        ${paramField(SURFACE_INPUTS.rockContrast, 'erosion-rock-input', 'erosion-rock-label')}
-      </section>
+      <!-- No sliders and no run button: since the coupled history (phase
+           5.1) the erosion happens inside the tectonics' epochs, and its
+           controls sit on that panel. What is left here is the readout
+           (the rivers) and the detail bake. -->
       <div class="gen-step__foot">
         <!-- The detail bake: pick a width, then order it. It stands with the
              step that makes its input, because a bake refines ERODED terrain
@@ -639,14 +649,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           </div>
           <button type="button" class="gen-action-icon" data-action="bake-detail" data-t-aria="generator.action.runDetailBake.label" data-help="generator.action.runDetailBake">
             <img src="/icons/erosion_detail.png" alt="" />
-          </button>
-        </div>
-        <div class="gen-step__actions">
-          <button type="button" class="gen-action-icon" data-action="reset-erosion" data-t-aria="generator.action.resetErosion.label" data-help="generator.action.resetErosion">
-            <img src="/icons/reset.png" alt="" />
-          </button>
-          <button type="button" class="gen-action" data-action="erode" data-help="generator.action.runErosion">
-            <span class="gen-action__label"></span>
           </button>
         </div>
       </div>
@@ -743,21 +745,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const randomizeButton = root.querySelector<HTMLButtonElement>('[data-action="randomize-seed"]')!
   const resetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-sim"]')!
   const toggleSimButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-sim"]')!
-  const erodeButton = root.querySelector<HTMLButtonElement>('[data-action="erode"]')!
-  // Erosion-strength multiplier (scales the fluvial time step — essentially free
-  // compute-wise, it just erodes more per step) and drainage-network refresh count
-  // (re-derives the river network within a round so channels migrate/capture — costs
-  // one extra priority-flood each, the only real time cost). See the erosion docs.
-  const ageInput = root.querySelector<HTMLInputElement>('.erosion-age-input')!
-  const ageLabel = root.querySelector<HTMLElement>('[data-value="erosion-age-label"]')!
-  const alluviumInput = root.querySelector<HTMLInputElement>('.erosion-alluvium-input')!
-  const rockContrastInput = root.querySelector<HTMLInputElement>('.erosion-rock-input')!
-  const alluviumLabel = root.querySelector<HTMLElement>('[data-value="erosion-alluvium-label"]')!
-  const rockContrastLabel = root.querySelector<HTMLElement>('[data-value="erosion-rock-label"]')!
-  ageInput.addEventListener('input', () => { ageLabel.textContent = displayValue(SURFACE_INPUTS.landscapeAge, Number(ageInput.value)) })
+  // The history's controls (tectonicsInputParams): read when a run starts,
+  // so a change while the plates move applies to the next run.
+  const epochLengthInput = root.querySelector<HTMLInputElement>('.tectonics-epoch-input')!
+  const epochLengthLabel = root.querySelector<HTMLElement>('[data-value="tectonics-epoch-label"]')!
+  const alluviumInput = root.querySelector<HTMLInputElement>('.tectonics-alluvium-input')!
+  const rockContrastInput = root.querySelector<HTMLInputElement>('.tectonics-rock-input')!
+  const alluviumLabel = root.querySelector<HTMLElement>('[data-value="tectonics-alluvium-label"]')!
+  const rockContrastLabel = root.querySelector<HTMLElement>('[data-value="tectonics-rock-label"]')!
+  epochLengthInput.addEventListener('input', () => { epochLengthLabel.textContent = displayValue(TECTONICS_INPUTS.epochLength, Number(epochLengthInput.value)) })
   alluviumInput.addEventListener('input', () => { alluviumLabel.textContent = alluviumInput.value })
   rockContrastInput.addEventListener('input', () => { rockContrastLabel.textContent = rockContrastInput.value })
-  const resetErosionButton = root.querySelector<HTMLButtonElement>('[data-action="reset-erosion"]')!
   const resetClimateButton = root.querySelector<HTMLButtonElement>('[data-action="reset-climate"]')!
   const resetEcologyButton = root.querySelector<HTMLButtonElement>('[data-action="reset-ecology"]')!
   const resetMigrationButton = root.querySelector<HTMLButtonElement>('[data-action="reset-migration"]')!
@@ -843,16 +841,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const statTectAge = root.querySelector<HTMLElement>('[data-value="stat-tect-age"]')!
   const statPlates = root.querySelector<HTMLElement>('[data-value="stat-plates"]')!
   const statContinents = root.querySelector<HTMLElement>('[data-value="stat-continents"]')!
-  // A pass runs and stops from one button, which says which it is — the same
-  // shape the Archean's and the tectonic one have since they moved into the
-  // column, where a word fits and an icon says less. Saying it again is also
-  // how the button follows a language switch.
-  const sayErodeButton = (running: boolean): void => {
-    const label = t(running ? 'generator.action.runErosion.labelActive' : 'generator.action.runErosion.label')
-    erodeButton.setAttribute('aria-label', label)
-    erodeButton.querySelector('.gen-action__label')!.textContent = label
-  }
-  sayErodeButton(false)
   // Plate tectonics runs and stops from one button, which says which it is —
   // the same shape the Archean's has since both moved into the column. Saying
   // it again is also how the button follows a language switch.
@@ -903,10 +891,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // tectonic world answers YES to the first and NO to the second, so one boolean
   // could not be right for both.
   let hasHandover = false
-  // Any worker computation in flight: tectonics ticking, an erosion pass, or a
-  // climate/hydrology compute. While busy, ALL bottom-panel controls are disabled
-  // except the ACTIVE process's stop button (the only allowed action).
-  let erosionOpInFlight = false
+  // Any worker computation in flight: tectonics ticking (which erodes as it
+  // goes) or a climate/hydrology compute. While busy, ALL bottom-panel controls
+  // are disabled except the ACTIVE process's stop button (the only allowed action).
   let climateInFlight = false
   let hydrologyInFlight = false
   let ecologyInFlight = false
@@ -919,8 +906,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // True while the save flow drives the compute chain — suppresses the ecology
   // panel's own auto-recompute so it doesn't double-fire.
   let saveChainActive = false
-  let erosionProgressFraction = 0
-  const isBusy = (): boolean => tectonicsRunning || erosionOpInFlight || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight
+  const isBusy = (): boolean => tectonicsRunning || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight
 
   // Disable every panel control while a compute runs; the running process keeps its
   // stop button live (tectonics = toggle-sim, erosion = erode, which becomes a stop).
@@ -928,32 +914,27 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const busy = isBusy()
     randomizeButton.disabled = busy
     resetButton.disabled = busy
-    resetErosionButton.disabled = busy
     resetClimateButton.disabled = busy
     resetEcologyButton.disabled = busy
     resetMigrationButton.disabled = busy
     saveMenu.setEnabled(!busy)
     // Stop buttons of the active process stay enabled.
     toggleSimButton.disabled = busy && !tectonicsRunning
-    erodeButton.disabled = busy && !erosionOpInFlight
-    // Genesis inputs (debounced-)regenerate the whole world, so lock them while busy;
-    // the erosion/climate/river sliders are left live for tuning (they only affect the
-    // next pass, not the one in flight).
-    for (const el of [seedInput, mantleVigourInput, waterInput]) el.disabled = busy
+    // Genesis inputs (debounced-)regenerate the whole world, so lock them while
+    // busy; the history's controls are read when a run starts, so they lock
+    // too — a slider that moves while the plates run and changes nothing
+    // would lie. The climate/river sliders are left live for tuning (they
+    // only affect the next compute, not the one in flight).
+    for (const el of [seedInput, mantleVigourInput, waterInput, epochLengthInput, alluviumInput, rockContrastInput]) el.disabled = busy
 
     updateNavState() // the step bar locks with it (see its own gating)
   }
 
-  // The centered progress indicator over the panel: a real 0..100 bar for erosion, an
-  // indeterminate sweep for the open-ended processes (tectonics runs until you stop it;
-  // climate/hydrology report no fraction). Hidden when idle.
+  // The centered progress indicator over the panel: an indeterminate sweep for
+  // the open-ended processes (tectonics runs until you stop it; climate/hydrology
+  // report no fraction). Hidden when idle.
   const updateProgress = (): void => {
-    if (erosionOpInFlight) {
-      computeProgress.hidden = false
-      computeProgress.classList.remove('is-indeterminate')
-      computeProgressFill.style.width = `${Math.round(erosionProgressFraction * 100)}%`
-      delete computeProgressFill.dataset.stage
-    } else if (archeanRunning) {
+    if (archeanRunning) {
       // The same continuous sweep as the tectonic stepper (user's call,
       // 2026-08-06 — a filling bar reads as "almost done", but the Archean is
       // an open-ended process you STOP, not one that finishes). The stabilised
@@ -2533,9 +2514,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function handleStageDeclined(message: WorkerStageDeclinedMessage): void {
     switch (message.stage) {
       case 'erosion':
-        erosionOpInFlight = false
-        erosionProgressFraction = 0
-        sayErodeButton(false)
+        // No run of its own since phase 5.1; nothing was waiting.
         break
       case 'climate':
         climateInFlight = false
@@ -2888,12 +2867,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       return
     }
 
-    if (message.type === 'erosionProgress') {
-      erosionProgressFraction = message.fraction
-      updateProgress()
-      return
-    }
-
     if (message.type === 'worldData') {
       void handleWorldData(message)
       return
@@ -2965,6 +2938,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     updateOverlays()
 
     lastLandFraction = message.landFraction
+    // Every epoch erodes (phase 5.1): an epoch render while the plates run is
+    // one eroding epoch more on this world. Counted here, off the render that
+    // reports it, rather than at the start gesture — the count is what the
+    // relief, the bake and the panels past erosion gate on, and it must say
+    // what the map shows.
+    if (tectonicsRunning && message.epoch > lastEpoch) erosionRunCount += 1
     lastEpoch = message.epoch
     lastPlateCount = message.plateCount
     lastContinentCount = message.raftLabels.length
@@ -3014,26 +2993,24 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       stopSim()
     }
 
-    // Intermediate renders (see WorkerRenderedMessage.intermediate) are
-    // one of 5 in-progress redraws an 'erosionStart' request posts mid-flight —
-    // the map/stats above should still reflect them live, but they're
-    // not the operation finishing, so the buttons/status readout stay as
-    // they are until the actual final render arrives.
+    // Intermediate renders (see WorkerRenderedMessage.intermediate) are the
+    // epoch redraws while the plates still run — the map/stats above reflect
+    // them live, but the run has not settled, so what follows a settled
+    // terrain waits for the render that is not intermediate.
     if (!message.intermediate) {
-      const erosionJustSettled = erosionOpInFlight
-      erosionOpInFlight = false
-      sayErodeButton(false)
+      const runJustSettled = tectonicsSettling
+      tectonicsSettling = false
       updateControlsDisabled()
       updateProgress()
       // The rivers are the erosion panel's readout (the hydrology stage has no
-      // panel of its own): when a pass settles — including a stopped one, whose
-      // partial terrain is just as real — run the chain right away instead of
-      // waiting for a panel switch that no longer exists. The render above has
-      // just invalidated climate and hydrology (every fresh topography does),
-      // so both are posted, in pipeline order. erosionRunCount 0 is the
-      // erosion RESET's revert render — reverted terrain gets no rivers, same
-      // as un-eroded. The save chain sequences its own computes.
-      if (erosionJustSettled && erosionRunCount >= 1 && !saveChainActive) {
+      // panel of its own): when the run settles — the plates stopped, the last
+      // epoch's erosion in — run the chain right away instead of waiting for
+      // a panel switch. The render above has just invalidated climate and
+      // hydrology (every fresh topography does), so both are posted, in
+      // pipeline order. erosionRunCount 0 is a run that stopped before its
+      // first epoch — un-eroded terrain gets no rivers. The save chain
+      // sequences its own computes.
+      if (runJustSettled && erosionRunCount >= 1 && !saveChainActive) {
         if (lastTemperature === null) requestClimate()
         if (lastRiverData === null) requestHydrology()
       }
@@ -3171,9 +3148,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     updateNavState()
   }
 
+  // True from the stop gesture until the settled render arrives (the last
+  // epoch's, or the stop's own) — what lets the 'rendered' handler tell the
+  // settle of a run from any other plain render.
+  let tectonicsSettling = false
   const stopSim = (): void => {
     if (!tectonicsRunning) return
     tectonicsRunning = false
+    tectonicsSettling = true
     postToWorker({ type: 'tectonicsStop' })
     updateOverlays()
     sayTectonicsButton(false)
@@ -3190,10 +3172,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // handler), so restarting after a stop halts again 100 epochs later.
     autoStopAtEpoch = lastEpoch + MAX_TECTONICS_EPOCHS
     // Running tectonics will change the topography → any computed climate is
-    // stale, and prior erosion no longer applies.
+    // stale. The eroded terrain is NOT dropped: the epochs erode it on (phase
+    // 5.1), so the count of eroding epochs carries on from where it was.
     invalidateAfter('tectonics')
-    erosionRunCount = 0
-    postToWorker({ type: 'tectonicsStart' })
+    postToWorker({ type: 'tectonicsStart', epochLength: Number(epochLengthInput.value), alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value) })
     sayTectonicsButton(true)
     updateControlsDisabled()
     updateProgress()
@@ -3202,37 +3184,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   toggleSimButton.addEventListener('click', () => {
     if (tectonicsRunning) stopSim()
     else startSim()
-  })
-
-  erodeButton.addEventListener('click', () => {
-    // While a pass is running the erode button IS the stop button (see the icon swap
-    // below); clicking it cancels — the worker keeps the partial result so a later
-    // click continues from there.
-    if (erosionOpInFlight) {
-      postToWorker({ type: 'erosionStop' })
-      return
-    }
-    if (isBusy()) return
-    erosionOpInFlight = true
-    erosionProgressFraction = 0
-    erosionRunCount += 1
-    invalidateAfter('tectonics')
-    sayErodeButton(true)
-    updateControlsDisabled()
-    updateProgress()
-    updateNavState() // first erosion unlocks the panels past it (Ecology on)
-    postToWorker({ type: 'erosionStart', age: Number(ageInput.value), alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value), weather: weatherParams() })
-  })
-
-  resetErosionButton.addEventListener('click', () => {
-    if (isBusy()) return
-    erosionOpInFlight = true
-    erosionRunCount = 0
-    invalidateAfter('tectonics')
-    updateControlsDisabled()
-    updateProgress()
-    updateNavState() // reverting erosion re-locks the panels past it
-    postToWorker({ type: 'resetStage', stage: 'erosion' })
   })
 
   // Micro-tile debug inspector: re-simulates a window around the largest river
@@ -3420,7 +3371,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     humidityLabel.textContent = humidityInput.value
     contrastLabel.textContent = contrastInput.value
     equatorOffsetLabel.textContent = equatorOffsetInput.value
-    ageLabel.textContent = displayValue(SURFACE_INPUTS.landscapeAge, Number(ageInput.value))
+    epochLengthLabel.textContent = displayValue(TECTONICS_INPUTS.epochLength, Number(epochLengthInput.value))
     alluviumLabel.textContent = alluviumInput.value
     rockContrastLabel.textContent = rockContrastInput.value
     carryingCapacityLabel.textContent = carryingCapacityInput.value
@@ -4237,9 +4188,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     humidityInput.value = String(spec.values['climate.humidity'])
     contrastInput.value = String(spec.values['climate.contrast'])
     equatorOffsetInput.value = String(spec.values['climate.equatorOffset'])
-    ageInput.value = String(spec.values['erosion.landscapeAge'])
-    alluviumInput.value = String(spec.values['erosion.alluvium'])
-    rockContrastInput.value = String(spec.values['erosion.rockContrast'])
+    epochLengthInput.value = String(spec.values['tectonics.epochLength'])
+    alluviumInput.value = String(spec.values['tectonics.alluvium'])
+    rockContrastInput.value = String(spec.values['tectonics.rockContrast'])
     carryingCapacityInput.value = String(spec.values['ecology.carryingCapacity'])
     concentrationInput.value = String(spec.values['ecology.concentration'])
     provinceInput.value = String(spec.values['ecology.provinceStrength'])
@@ -4411,7 +4362,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function sayScreen(): void {
     setArcheanRunning(archeanRunning)
     sayTectonicsButton(tectonicsRunning)
-    sayErodeButton(erosionOpInFlight)
     showAbundanceFor(pickedEcologyField)
     // The species buttons are an icon and an accessible name, and they live in
     // the old panel row, which relabel(sidebar.body) does not reach.

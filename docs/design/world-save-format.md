@@ -107,6 +107,8 @@ state. Serialized by `serializePlateSimulation` (`plateSimulation.ts`), restored
   rafts:   Raft[],               // continental crust (metaball blob rafts, named)
   features: TerrainFeature[],    // mountain/rift/trench/volcanic deposits
   epoch,                         // tectonic epoch reached
+  epochMa,                       // the epoch's length in Myr (the tectonics panel's
+                                 // epochLength; absent in older saves → 1)
   warpSeed,                      // domain-warp seed for the elevation field
   supercontinentActive,          // latch for the supercontinent milestone event
   continentalRiftCooldownUntil,  // breakup staging-interval bookkeeping

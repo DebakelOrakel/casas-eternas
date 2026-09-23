@@ -2,7 +2,7 @@ import type { InputParam } from '../../generator/core/inputParams'
 import { ARCHEAN_INPUTS } from '../../generator/archean/archeanInputParams'
 import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
 import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
-import { SURFACE_INPUTS } from '../../generator/surface/surfaceInputParams'
+import { TECTONICS_INPUTS } from '../../generator/tectonics/tectonicsInputParams'
 import { ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS, ECOLOGY_INPUTS } from '../../generator/ecology/ecologyInputParams'
 import { readRecipeNumber } from './recipeYaml'
 
@@ -50,9 +50,14 @@ export const WORLD_SPEC_FIELDS: readonly SpecField[] = [
   { path: 'planet.rotation', input: PLANET_INPUTS.rotation },
   { path: 'genesis.mantleVigour', input: ARCHEAN_INPUTS.mantleVigour },
   { path: 'genesis.water', input: ARCHEAN_INPUTS.water, legacyPaths: ['planet.water'] },
-  { path: 'erosion.landscapeAge', input: SURFACE_INPUTS.landscapeAge },
-  { path: 'erosion.alluvium', input: SURFACE_INPUTS.alluvium },
-  { path: 'erosion.rockContrast', input: SURFACE_INPUTS.rockContrast },
+  // The coupled history (2026-09-23, phase 5.1): the epoch length is new,
+  // the two material controls moved from the erosion pass to the tectonics
+  // and are read back from their old paths. `erosion.landscapeAge` is no
+  // longer written — the pass it timed is gone; a save that has it keeps
+  // its world id (identity.ts still hashes it when present).
+  { path: 'tectonics.epochLength', input: TECTONICS_INPUTS.epochLength },
+  { path: 'tectonics.alluvium', input: TECTONICS_INPUTS.alluvium, legacyPaths: ['erosion.alluvium'] },
+  { path: 'tectonics.rockContrast', input: TECTONICS_INPUTS.rockContrast, legacyPaths: ['erosion.rockContrast'] },
   // Climate's file order is NOT the panel's order (the panel shows the equator
   // offset second). Kept as it was written, because changing it would rewrite
   // every save for no gain.

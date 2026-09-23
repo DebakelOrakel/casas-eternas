@@ -140,6 +140,7 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
     // separately so the world-age readout stays continuous (see core/worldTime).
     epoch: 0,
     archeanEpochs: archean.epoch,
+    epochMa: 1,
     seaLevelOffset,
     random,
     warpSeed: archean.warpSeed,

@@ -56,9 +56,11 @@ import { coarseForcingFields } from './erosionForcing'
 // a rift starts as sea floor and a node densifying an orogen inherits the
 // orogen.
 //
-// THE TIME. An epoch is TECTONIC_MA_PER_EPOCH; the engine's calibrated
-// iteration is ITERATION_YEARS, fifty to the epoch — too many to run
-// live. The loop runs `iterationsPerEpoch` LONGER iterations with the
+// THE TIME. An epoch is `sim.epochMa` (the tectonics panel's epochLength;
+// TECTONIC_MA_PER_EPOCH, 1, is what the world clock and the ocean age's
+// depth still count in — the slider is the EROSION's clock for now, the
+// plates step as they always did). The engine's calibrated iteration is
+// ITERATION_YEARS, fifty to a 1 Myr epoch — too many to run live. The loop runs `iterationsPerEpoch` LONGER iterations with the
 // rates scaled to the step (erosionForcingFields.scaleEngineParamsForDt),
 // which is the calibration question phase 5 opens, measured here and
 // decided later. The water forcing is uniform until the climate runs per
@@ -70,7 +72,15 @@ export interface CoupledTerrain {
   z: Float32Array
   // The tectonic baseline at each node's position, as last evaluated.
   baseline: Float32Array
+  // The last epoch's routing, areas and sediment flux — what the hydrology
+  // reads of a mesh terrain (meshErosionStage.MeshTerrain); null before the
+  // first epoch.
   routing: MeshRouting | null
+  areas: Float32Array
+  sedimentFlux: Float32Array
+  // The heights the last epoch's erosion started from (after the motion
+  // and the baseline swap) — the "before" of what that epoch deposited.
+  preErosionZ: Float32Array
 }
 
 export interface CoupledEpochOptions {
@@ -115,6 +125,8 @@ export interface CoupledEpochStats {
   landVolume: number
   erodedFluxM3: number
   exportedFluxM3: number
+  // Milliseconds per phase, the calibration's cost side.
+  timing: { membership: number; tectonics: number; rebuild: number; remesh: number; baseline: number; forcing: number; erosion: number }
 }
 
 function baselineAt(sim: PlateSimulation, x: number, y: number): number {
@@ -131,7 +143,13 @@ export function createCoupledTerrain(sim: PlateSimulation, budget = 1): CoupledT
   const z = permute(built.state.get(MESH_Z), order)
   const baseline = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
-  return { mesh, z, baseline, routing: null }
+  return { mesh, z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: z.slice() }
+}
+
+function meshAreasOf(mesh: PeriodicTriangulation): Float32Array {
+  const areas = new Float32Array(mesh.vertexSlots)
+  for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v]) areas[v] = mesh.voronoiArea(v)
+  return areas
 }
 
 // One epoch: tectonics, motion, rebuild and remesh, baseline swap, erosion.
@@ -140,6 +158,9 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const domain: Domain = terrain.mesh.domain
   const mesh0 = terrain.mesh
   const nodesBefore = mesh0.aliveVertices
+  const timing = { membership: 0, tectonics: 0, rebuild: 0, remesh: 0, baseline: 0, forcing: 0, erosion: 0 }
+  let tick = performance.now()
+  const lap = (): number => { const now = performance.now(); const dt = now - tick; tick = now; return dt }
   // Plate membership BEFORE the plates move: nearest seed.
   const host = new Int32Array(mesh0.vertexSlots).fill(-1)
   for (let v = 0; v < mesh0.vertexSlots; v++) {
@@ -152,7 +173,9 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     }
     host[v] = best
   }
+  timing.membership = lap()
   const events = stepEpoch(sim)
+  timing.tectonics = lap()
   // The nodes move with their plates; their relief goes with them.
   const count = nodesBefore
   const xs = new Float64Array(count)
@@ -170,6 +193,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // The mesh from the moved nodes, then the remesh: crowded nodes go
   // (subduction), gaps fill (rifting).
   const rebuilt = triangulatePoints(domain, xs, ys, count, MESH_TUNING.oceanSpacingM / METERS_PER_CELL)
+  timing.rebuild = lap()
   const mesh1 = rebuilt.mesh
   const state = new MeshState(mesh1.vertexSlots * 2)
   // The relief is a thickness over the baseline: EXTENSIVE, so a node
@@ -181,6 +205,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // position plus the relief.
   const z = state.add(MESH_Z, 'intensive')
   for (let v = 0; v < mesh1.vertexSlots; v++) if (mesh1.vAlive[v]) z[v] = baselineAt(sim, mesh1.vx[v], mesh1.vy[v]) + h[v]
+  timing.baseline = lap()
   const target = densityTarget(state, options.budget ?? 1)
   const c = coarsen(mesh1, state, target)
   const r = refine(mesh1, state, target, {
@@ -194,31 +219,46 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       state.get(MESH_Z)[v] = baselineAt(sim, x, y) + hv[v]
     },
   })
+  timing.remesh = lap()
   const { mesh, order } = compactMesh(mesh1)
   const hCanon = permute(state.get('h'), order)
   const baseline = new Float32Array(mesh.vertexSlots)
   const zCanon = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) {
     baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
-    zCanon[v] = baseline[v] + hCanon[v]
+    // The elevation scale's range, as the synthesis clamps it
+    // (elevationField.computeElevation): a trench node carries a relief of
+    // −3000 m under an abyssal baseline, and a baseline that subsides
+    // under it would take z past the floor the whole pipeline assumes.
+    zCanon[v] = Math.max(-1, Math.min(1, baseline[v] + hCanon[v]))
   }
   // Erosion for the epoch, with the tectonics' forcing at the nodes and
   // the rates scaled to the step.
+  timing.baseline += lap()
   const { uplift, hardness } = coarseForcingFields(sim, width, height)
-  const areas = new Float32Array(mesh.vertexSlots)
-  for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v]) areas[v] = mesh.voronoiArea(v)
+  const areas = meshAreasOf(mesh)
   const { forcing, params } = assembleNodeForcing({
     uplift, hardness, forcingResX: CLIMATE_RES_X, forcingResY: CLIMATE_RES_Y,
     water: null, waterResX: 1, waterResY: 1, lithoSeed: erosionLithoSeed(sim.warpSeed),
   }, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, zCanon, areas, width, height, options.controls ?? {})
-  const dtScale = (TECTONIC_MA_PER_EPOCH * 1e6 / options.iterationsPerEpoch) / ITERATION_YEARS
+  const epochMa = sim.epochMa || TECTONIC_MA_PER_EPOCH
+  const dtScale = (epochMa * 1e6 / options.iterationsPerEpoch) / ITERATION_YEARS
   const scaled = scaleEngineParamsForDt({ ...params, epsM: 0 }, dtScale)
   scaled.upliftDt *= options.upliftScale ?? 1
+  timing.forcing = lap()
   const result = await runMeshErosion(mesh, zCanon, forcing, { age: options.iterationsPerEpoch, params: scaled, pool: options.pool, routingEvery: Math.max(1, Math.min(4, options.iterationsPerEpoch)) })
+  // The same range after the engine (marine diffusion can take a floor
+  // node a few metres under it); the relief the next epoch carries is
+  // read from this z, so the clamp is the terrain's, not a display one.
+  for (let v = 0; v < mesh.vertexSlots; v++) result.z[v] = Math.max(-1, Math.min(1, result.z[v]))
+  timing.erosion = lap()
   terrain.mesh = mesh
   terrain.z = result.z
   terrain.baseline = baseline
   terrain.routing = result.routing
+  terrain.areas = areas
+  terrain.sedimentFlux = result.sedimentFlux
+  terrain.preErosionZ = zCanon
   let landCells = 0
   let landVolume = 0
   for (let v = 0; v < mesh.vertexSlots; v++) {
@@ -226,7 +266,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     landCells += areas[v]
     landVolume += result.z[v] * areas[v]
   }
-  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3 }
+  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, timing }
 }
 
 // The terrain's bytes for a save or a harness hash.
@@ -242,5 +282,5 @@ export function decodeCoupledTerrain(sim: PlateSimulation, bytes: { nodes: Float
   const mesh = decodeMesh(torusDomain(sim.width, sim.height), { count: bytes.z.length, nodes: bytes.nodes, connectivity: bytes.connectivity })
   const baseline = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
-  return { mesh, z: bytes.z, baseline, routing: null }
+  return { mesh, z: bytes.z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: bytes.z.slice() }
 }

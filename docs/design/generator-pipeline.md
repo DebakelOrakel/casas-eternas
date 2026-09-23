@@ -164,7 +164,9 @@ the `self`-typing note belongs to the transport, not to the pipeline.
 means "start tectonics" only by convention, and sits next to `handleArcheanStart`.
 The stage table forces a stage identifier per message anyway, so
 `start → tectonicsStart` and `erode → erosionStart` fall out of that step instead of
-being a rename for its own sake.
+being a rename for its own sake. (`erosionStart` went again with the coupled
+history, 2026-09-23: the erosion runs inside the tectonics' epochs and has no
+message of its own.)
 
 **`sustainMantleVigour` is two quantities under one word.** It renormalises the
 mantle field's *amplitude* (`targetRms`), while the `mantleVigour` slider becomes

@@ -97,10 +97,9 @@ async function freshPipeline() {
     },
     messages,
     count: (type) => messages.filter((m) => m.type === type).length,
-    // An erosion pass redraws once per round (those carry `intermediate`) and once
-    // at the end (that one does not) — so a settled render is how a pass says it is
-    // done. This used to watch for the `deltaMask` debug message, which was removed
-    // with the delta marker on 2026-08-09.
+    // The tectonics redraw once per epoch while they tick (those carry
+    // `intermediate`) and once after the stop (that one does not) — so a
+    // settled render is how a run says it is done.
     settledRenders: () => messages.filter((m) => m.type === 'rendered' && !m.intermediate).length,
     last: (type) => messages.filter((m) => m.type === type).at(-1),
     types: () => messages.map((m) => m.type),
@@ -149,6 +148,33 @@ async function growWorld(p, { epochs = ARCHEAN_EPOCHS } = {}) {
   const before = p.count('rendered')
   p.dispatch({ type: 'genesisFinalize' })
   await until(() => p.count('rendered') > before, { label: 'the hand-over render' })
+  await quiet(p)
+}
+
+// The tectonics for AT LEAST n epochs, then the stop and its settled render.
+// Since the coupled history (phase 5.1) every epoch erodes: this is how a
+// harness world gets its eroded terrain. "At least", because an epoch the
+// tick started just before the stop finishes and renders as the settled one
+// — a test that needs an exact count uses runOneEpoch.
+async function runEpochs(p, n) {
+  const settledBefore = p.settledRenders()
+  const renders = p.count('rendered')
+  p.dispatch({ type: 'tectonicsStart' })
+  await until(() => p.count('rendered') >= renders + n, { label: `${n} eroding epoch${n === 1 ? '' : 's'}`, timeout: 180000 })
+  p.dispatch({ type: 'tectonicsStop' })
+  await until(() => p.settledRenders() > settledBefore, { label: 'the settled render', timeout: 180000 })
+  await quiet(p)
+}
+
+// EXACTLY one epoch: the start runs its first epoch with the gesture, the
+// stop right behind it clears the interval before a second could start,
+// and that one epoch renders as the settled one. For the determinism test,
+// where two worlds must have run the same number of epochs.
+async function runOneEpoch(p) {
+  const settledBefore = p.settledRenders()
+  p.dispatch({ type: 'tectonicsStart' })
+  p.dispatch({ type: 'tectonicsStop' })
+  await until(() => p.settledRenders() > settledBefore, { label: 'the settled render', timeout: 180000 })
   await quiet(p)
 }
 
@@ -388,9 +414,7 @@ test('REGRESSION: resetTectonics on a loaded world is a no-op', async () => {
 test('the stages compute, in order, on one world', async () => {
   const p = await freshPipeline()
   await growWorld(p)
-  const settledBefore = p.settledRenders()
-  p.dispatch({ type: 'erosionStart' })
-  await until(() => p.settledRenders() > settledBefore, { label: 'the erosion pass to finish', timeout: 180000 })
+  await runEpochs(p, 2)
 
   p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
@@ -409,7 +433,7 @@ test('the stages compute, in order, on one world', async () => {
   check('migration ran off the ecology it was handed', p.count('migrationData') >= 1)
 })
 
-test('INVALIDATION: eroding stales everything downstream, per the declared chain', async () => {
+test('INVALIDATION: the epochs stale everything downstream, per the declared chain', async () => {
   // stages.ts says climate, hydrology, ecology and migration all sit downstream of
   // erosion. Before 3c this side dropped only the hydrology while WorldGenScreen
   // dropped the climate too, so the two halves of one pipeline disagreed about
@@ -424,10 +448,8 @@ test('INVALIDATION: eroding stales everything downstream, per the declared chain
   const beforeDischarge = hash(p.last('hydrologyData').discharge)
 
   const climateRuns = p.count('climateData')
-  const settledBefore = p.settledRenders()
-  p.dispatch({ type: 'erosionStart', age: 80 })
-  await until(() => p.settledRenders() > settledBefore, { label: 'the erosion pass to finish', timeout: 180000 })
-  check('erosion does not silently recompute the climate', p.count('climateData') === climateRuns)
+  await runEpochs(p, 1)
+  check('an epoch does not silently recompute the climate', p.count('climateData') === climateRuns)
 
   // The eroded terrain is not the one that climate was computed on, so asking for
   // rivers now must refuse rather than route over a climate that describes a world
@@ -453,10 +475,9 @@ test('a stage that cannot run says so instead of going quiet', async () => {
   p.dispatch({ type: 'hydrologyRun' })
   p.dispatch({ type: 'ecologyRun' })
   p.dispatch({ type: 'migrationRun', origins: [] })
-  p.dispatch({ type: 'erosionStart' })
   await settle(200)
   const declined = p.messages.filter((m) => m.type === 'stageDeclined')
-  check('all five refuse on a world that does not exist yet', declined.length === 5, declined.map((d) => d.stage).join(', '))
+  check('all four refuse on a world that does not exist yet', declined.length === 4, declined.map((d) => d.stage).join(', '))
   check('each names the world itself as what is missing', declined.every((d) => d.needs === 'tectonics'), JSON.stringify(declined.map((d) => d.needs)))
 
   // And once there IS a world, the refusal is specific: the climate is what
@@ -496,22 +517,30 @@ test('a repeat hydrology call reuses the routing instead of re-flooding', async 
   check('a re-route carries the river graph, a repeat does not', routed.riverGraph !== null && routed.riverGraph.cells.byteLength > 0 && repeated.riverGraph === null)
 })
 
-test('erosion can be stopped mid-pass', async () => {
+test('the epochs erode, the stop settles, the resets go where they say', async () => {
+  // The coupled history (phase 5.1): the terrain is the mesh the tectonics
+  // carry, eroded inside every epoch. The hand-over draws it un-eroded; the
+  // epochs change it; a stop ends with one settled render; the erosion reset
+  // has nothing to revert (it renders nothing); the tectonics reset is back
+  // at the hand-over's terrain, byte for byte.
   const p = await freshPipeline()
   await growWorld(p)
-  const unEroded = hash(p.last('rendered').elevation)
-  const settledBefore = p.settledRenders()
-  p.dispatch({ type: 'erosionStart' })
-  await until(() => p.count('erosionProgress') >= 1, { label: 'erosion to start', timeout: 180000 })
-  p.dispatch({ type: 'erosionStop' })
-  await until(() => p.settledRenders() > settledBefore, { label: 'the partial result', timeout: 180000 })
-  check('a stopped pass still delivers what it had', hash(p.last('rendered').elevation) !== unEroded)
+  const handover = hash(p.last('rendered').elevation)
+  const intermediateBefore = p.count('rendered') - p.settledRenders()
+  await runEpochs(p, 2)
+  check('the epochs erode the terrain', hash(p.last('rendered').elevation) !== handover)
+  check('the renders while the plates ran were intermediate', p.count('rendered') - p.settledRenders() > intermediateBefore)
+  check('the last render is the settled one', !p.last('rendered').intermediate)
+  check('a settled render carries the mesh terrain', p.last('rendered').epoch >= 1)
 
-  const partial = hash(p.last('rendered').elevation)
-  const afterStop = p.count('rendered')
+  const renders = p.count('rendered')
   p.dispatch({ type: 'resetStage', stage: 'erosion' })
-  await until(() => p.count('rendered') > afterStop, { label: 'the revert render' })
-  check('resetErosion reverts what the partial pass carved', hash(p.last('rendered').elevation) !== partial)
+  await settle(300)
+  check('the erosion reset has nothing to render', p.count('rendered') === renders)
+
+  p.dispatch({ type: 'resetStage', stage: 'tectonics' })
+  await until(() => p.count('rendered') > renders, { label: 'the hand-over render' })
+  check('the tectonics reset is back at the hand-over terrain', hash(p.last('rendered').elevation) === handover)
 })
 
 // -------------------------------------------------------------- the whole table
@@ -535,8 +564,7 @@ test('every message type is dispatchable from a cold start', async () => {
   // when the state it expects is not there. A cold pipeline is the state every
   // one of them can actually meet, since the screen sends on user gestures.
   const cold = [
-    { type: 'tectonicsStop' }, { type: 'tectonicsStart' }, { type: 'erosionStop' }, { type: 'resetStage', stage: 'erosion' },
-    { type: 'erosionStart' },
+    { type: 'tectonicsStop' }, { type: 'tectonicsStart' }, { type: 'resetStage', stage: 'erosion' },
     { type: 'requestElevationField' },
     { type: 'planetPreview', width: ARCHEAN_INIT.width, height: ARCHEAN_INIT.height },
     { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 },
@@ -572,15 +600,16 @@ test('two pipelines given the same messages agree byte for byte', async () => {
   // adaptive-mesh plan): the save carries the list, so two runs of one world
   // must agree on every basin's level to the byte, not just on the terrain.
   for (const p of [a, b]) {
-    // Eroded first, so the sediment basins (F1) have deposits to list.
-    const settledBefore = p.settledRenders()
-    p.dispatch({ type: 'erosionStart' })
-    await until(() => p.settledRenders() > settledBefore, { label: 'the erosion pass to finish', timeout: 180000 })
+    // Eroded first, so the sediment basins (F1) have deposits to list — by
+    // exactly one epoch each, so the two worlds are comparable.
+    await runOneEpoch(p)
     p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
     await until(() => p.count('climateData') >= 1, { label: 'climate' })
     p.dispatch({ type: 'hydrologyRun' })
     await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
   }
+  check('both worlds ran the same number of epochs', a.last('rendered').epoch === b.last('rendered').epoch, `${a.last('rendered').epoch} vs ${b.last('rendered').epoch}`)
+  check('the eroded terrains agree byte for byte', hash(a.last('rendered').elevation) === hash(b.last('rendered').elevation))
   const ha = a.last('hydrologyData'), hb = b.last('hydrologyData')
   check('the water bodies are the same list', JSON.stringify(ha.waterBodies) === JSON.stringify(hb.waterBodies) && Array.isArray(ha.waterBodies))
   check('the water level field is byte-identical', hash(new Float32Array(ha.waterLevel)) === hash(new Float32Array(hb.waterLevel)) && ha.waterLevel.byteLength > 0)
