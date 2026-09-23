@@ -7,6 +7,10 @@ import { buildProbeCard } from '../../ui/mapProbe/probeCard'
 import type { ProbeChart, ProbeRow } from '../../ui/mapProbe/probeCard'
 import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
+import { createMeshSurface } from '../../map/meshSurface'
+import { createMeshSampler } from '../../generator/mesh/meshSampler'
+import { decodeMesh } from '../../generator/mesh/meshSerial'
+import { torusDomain } from '../../generator/core/domain'
 import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
 import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS, AMPLIFY_FINEST_STAGE } from '../../world/bakeSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
@@ -2843,12 +2847,23 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (message.type === 'elevationField') {
       // Canonical surfaces shared between the displaced map plane and the
       // draped river ribbons, so they agree everywhere by construction (see
-      // elevationSurface.ts): the decimated one drives the half-res mesh,
-      // the full raster the fine mesh at deep zoom.
-      const full = new Float32Array(message.elevation)
-      const decimated = downsampleElevation(full, message.width, message.height, RELIEF_DECIMATION)
-      reliefCoarseSurface = createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE)
-      reliefFineSurface = createElevationSurface(full, message.width, message.height, RELIEF_HEIGHT_SCALE)
+      // elevationSurface.ts). With a MESH (phase 4.4: an eroded or restored
+      // world) both levels and the ribbons read the mesh itself through
+      // map/meshSurface — its gradient lights the relief with ridges the
+      // grid's vertices cannot hold. Without one (the tectonic preview),
+      // the decimated raster drives the half-res mesh and the full raster
+      // the fine mesh, as before.
+      if (message.mesh) {
+        const decoded = decodeMesh(torusDomain(message.width, message.height), { count: message.mesh.count, nodes: new Float32Array(message.mesh.nodes), connectivity: new Uint8Array(message.mesh.connectivity) })
+        const surface = createMeshSurface(createMeshSampler(decoded, new Float32Array(message.mesh.z)), RELIEF_HEIGHT_SCALE)
+        reliefCoarseSurface = surface
+        reliefFineSurface = surface
+      } else {
+        const full = new Float32Array(message.elevation)
+        const decimated = downsampleElevation(full, message.width, message.height, RELIEF_DECIMATION)
+        reliefCoarseSurface = createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE)
+        reliefFineSurface = createElevationSurface(full, message.width, message.height, RELIEF_HEIGHT_SCALE)
+      }
       mapView.setReliefSurfaces(reliefCoarseSurface, reliefFineSurface)
       // The shores are found on the PHYSICAL raster at draw time — the one
       // the hydrology set its levels against, not the display copy.

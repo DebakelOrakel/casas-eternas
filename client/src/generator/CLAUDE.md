@@ -26,7 +26,9 @@ mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay 
             meshBuild (fields in, mesh out), meshErosion (the erosion engine's graph index
             from the triangulation, the run adapter), meshRaster (node fields sampled on a
             grid), meshSerial (the save's form: Hilbert numbering, varint connectivity,
-            the canonical rebuild). The generator's erosion stage runs on it
+            the canonical rebuild), meshSampler (point location over a hint grid,
+            heights, fields and normals at a point — what map/ reads the mesh through).
+            The generator's erosion stage runs on it
             (pipeline/meshErosionStage.ts), the lakes and the river graph run on it
             (meshHydrology: the flow substrate) and the save carries it; the map and the
             raster consumers still read its 2048 rasterisation until 4.4

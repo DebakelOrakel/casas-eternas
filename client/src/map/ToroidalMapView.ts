@@ -311,12 +311,24 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     }
     const epsU = 0.5 / level.subdivisionsX
     const epsV = 0.5 / level.subdivisionsY
+    // A surface with its own gradient (the mesh's) lights the relief with
+    // the terrain's real slope at the vertex — finer than the grid the
+    // vertices stand on; a raster surface gets finite differences.
+    const gradient = new Float64Array(2)
     for (let vi = 0, pi = 0; vi < uvs.length; vi += 2, pi += 3) {
       const u = uvs[vi]
       const v = uvs[vi + 1]
       positions[pi + 1] = surface.heightAtUV(u, v)
-      const dhdx = (surface.heightAtUV(u + epsU, v) - surface.heightAtUV(u - epsU, v)) / (2 * epsU * dxdu)
-      const dhdz = (surface.heightAtUV(u, v + epsV) - surface.heightAtUV(u, v - epsV)) / (2 * epsV * dzdv)
+      let dhdx: number
+      let dhdz: number
+      if (surface.gradientAtUV) {
+        surface.gradientAtUV(u, v, gradient)
+        dhdx = gradient[0] * Math.sign(dxdu)
+        dhdz = gradient[1] * Math.sign(dzdv)
+      } else {
+        dhdx = (surface.heightAtUV(u + epsU, v) - surface.heightAtUV(u - epsU, v)) / (2 * epsU * dxdu)
+        dhdz = (surface.heightAtUV(u, v + epsV) - surface.heightAtUV(u, v - epsV)) / (2 * epsV * dzdv)
+      }
       const inv = 1 / Math.hypot(dhdx, 1, dhdz)
       normals[pi] = -dhdx * inv
       normals[pi + 1] = inv

@@ -66,6 +66,9 @@ const M = {
   raster: await L('/src/generator/mesh/meshRaster.ts'),
   serial: await L('/src/generator/mesh/meshSerial.ts'),
   meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
+  sampler: await L('/src/generator/mesh/meshSampler.ts'),
+  surface: await L('/src/map/meshSurface.ts'),
+  sceneSettings: await L('/src/map/mapSceneSettings.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
   graph: await L('/src/generator/surface/riverGraph.ts'),
   engine: await L('/src/generator/surface/erosionEngine.ts'),
@@ -488,6 +491,61 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check('a mesh graph round-trips through its serialisation with positions', back !== null && back.cellX.length === graph.cellX.length && back.cellX[5] === graph.cellX[5])
   const again = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature, precip, CRX, CRY)
   check('the lakes are deterministic', JSON.stringify(again.bodies) === JSON.stringify(lakes.bodies))
+}
+
+// Sampling the mesh at a point (phase 4.4): the hint grid finds the right
+// triangle from anywhere, heights and fields interpolate exactly at the
+// nodes, normals are unit and upright, and the map surface's gradient is
+// the finite difference of its own heights.
+{
+  const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
+  const { mesh, order } = M.serial.compactMesh(built.mesh)
+  const z = M.serial.permute(built.state.get('z'), order)
+  const sampler = M.sampler.createMeshSampler(mesh, z)
+  let offNode = 0
+  for (let v = 0; v < mesh.vertexSlots; v += 37) if (Math.abs(sampler.heightAt(mesh.vx[v], mesh.vy[v]) - z[v]) > 1e-6) offNode++
+  check('the height at a node is the node\'s', offNode === 0, `${offNode} off`)
+  const rng = M.rng.mulberry32(99)
+  let outside = 0, walkBefore = mesh.walkSteps, queries = 0
+  const bary = new Float64Array(3)
+  for (let i = 0; i < 20000; i++) {
+    const x = rng() * W, y = rng() * H
+    const t = sampler.triangleAt(x, y)
+    M.remesh.barycentric(mesh, t, x, y, bary)
+    if (bary[0] < -1e-9 || bary[1] < -1e-9 || bary[2] < -1e-9) outside++
+    queries++
+  }
+  check('the hint grid locates every random point in its triangle', outside === 0, `${outside} outside, ${((mesh.walkSteps - walkBefore) / queries).toFixed(2)} walk steps per query`)
+  const linear = new Float32Array(mesh.vertexSlots)
+  for (let v = 0; v < mesh.vertexSlots; v++) linear[v] = 3 * mesh.vx[v] + 2
+  let linErr = 0
+  for (let i = 0; i < 2000; i++) { const x = 8 + rng() * (W - 16), y = rng() * H; linErr = Math.max(linErr, Math.abs(sampler.sampleAt(linear, x, y) - (3 * x + 2))) }
+  check('a linear field interpolates exactly (away from the seam)', linErr < 1e-3, `max error ${linErr.toExponential(1)}`)
+  const n = new Float64Array(3)
+  let badNormal = 0
+  for (let i = 0; i < 2000; i++) { sampler.normalAt(rng() * W, rng() * H, n); if (Math.abs(Math.hypot(n[0], n[1], n[2]) - 1) > 1e-6 || n[1] <= 0) badNormal++ }
+  check('normals are unit and point up', badNormal === 0, `${badNormal}`)
+  const flat = new Float32Array(mesh.vertexSlots).fill(0.1)
+  const flatSampler = M.sampler.createMeshSampler(mesh, flat)
+  flatSampler.normalAt(W / 2, H / 2, n)
+  check('a flat field has a vertical normal', Math.abs(n[1] - 1) < 1e-9)
+  // The map surface: its gradient against finite differences of its heights.
+  const surface = M.surface.createMeshSurface(sampler, M.sceneSettings.RELIEF_HEIGHT_SCALE, false)
+  const g = new Float64Array(2)
+  let worst = 0, sumRel = 0, count = 0
+  for (let i = 0; i < 3000; i++) {
+    const u = rng(), v = rng()
+    if (sampler.heightAt(u * W - 0.5, v * H - 0.5) <= 0) continue
+    surface.gradientAtUV(u, v, g)
+    const eps = 0.02 / W
+    const dhdx = (surface.heightAtUV(u + eps, v) - surface.heightAtUV(u - eps, v)) / (2 * eps * M.sceneSettings.MAP_WORLD_WIDTH)
+    const dhdz = (surface.heightAtUV(u, v + eps) - surface.heightAtUV(u, v - eps)) / (2 * eps * M.sceneSettings.MAP_WORLD_HEIGHT)
+    const err = Math.hypot(g[0] - dhdx, g[1] - dhdz), mag = Math.hypot(dhdx, dhdz)
+    if (mag > 1e-4) { sumRel += err / mag; count++; worst = Math.max(worst, err / mag) }
+  }
+  // Vertex normals are smoothed over the star, so the two differ on a
+  // crest; the mean relative error says they agree in sign and size.
+  check('the mesh surface\'s gradient agrees with finite differences of its heights', count > 100 && sumRel / count < 0.5, `mean relative error ${(sumRel / count).toFixed(2)} over ${count} land samples`)
 }
 
 // ------------------------------------------------------------ determinism

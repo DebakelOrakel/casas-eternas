@@ -16,6 +16,11 @@ export interface ElevationSurface {
   // step with the raster's row order (texel coords / texture size; see
   // MapHoverTooltip's identical convention).
   heightAtUV(u: number, v: number): number
+  // The surface's slope at (u, v) as (dh/dx, dh/dz) in world units per
+  // world unit, into out[0..1] — for a surface that knows its own normals
+  // (the mesh's, meshSurface.ts). Absent, the relief takes finite
+  // differences of heightAtUV.
+  gradientAtUV?(u: number, v: number, out: Float64Array): void
 }
 
 // Box-filter downsample by an integer factor (both axes). The relief preview

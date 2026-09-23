@@ -255,6 +255,11 @@ export interface WorkerRequestElevationFieldMessage { type: 'requestElevationFie
 // physical field — so a mesh displaced by it matches the 2D picture.
 export interface WorkerElevationFieldMessage {
   type: 'elevationField'
+  // The mesh the terrain IS since phase 4.3, when the world has one (after
+  // an erosion, or restored from a save): the map drapes its relief on
+  // this (map/meshSurface.ts), not on the raster below, which is then the
+  // mesh's rasterisation for the texture and the water plugin.
+  mesh?: MeshPayload
   elevation: ArrayBuffer
   // The raw PHYSICAL field of the same render (Float32, same shape): what
   // the hydrology's water levels are set against, so the map finds its

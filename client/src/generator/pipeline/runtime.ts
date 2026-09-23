@@ -233,6 +233,9 @@ let meshTerrain: MeshTerrain | null = null
 // for the cell-walking consumers (the sediment basins), see
 // meshErosionStage.MeshErosionStageResult.before. Null when no erosion ran.
 let meshBefore: Float32Array | null = null
+// The mesh terrain's bytes for the screen and the save, encoded once per
+// terrain (a second's work on a million nodes) and reused.
+let meshPayloadCache: MeshPayload | null = null
 
 // Where a stage's result is kept, and nowhere else. Exhaustive over StageId on
 // purpose: adding a stage to the table makes this a compile error, which is the
@@ -247,6 +250,7 @@ function clearResult(id: StageId): void {
       lastLakeBasinElevations = null
       meshTerrain = null
       meshBefore = null
+      meshPayloadCache = null
       return
     case 'climate':
       climate = null
@@ -565,6 +569,16 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
   lastSedimentFlux = staged.sedimentFlux
   meshTerrain = staged.terrain
   meshBefore = staged.before
+  meshPayloadCache = null
+}
+
+// The mesh payload, encoded once per terrain. A COPY per request: the
+// buffers are transferred to the screen, and a transferred buffer is gone.
+function meshPayload(): MeshPayload | undefined {
+  if (!meshTerrain) return undefined
+  if (!meshPayloadCache) meshPayloadCache = serializeMeshTerrain(meshTerrain)
+  const c = meshPayloadCache
+  return { count: c.count, nodes: c.nodes.slice(0), connectivity: c.connectivity.slice(0), z: c.z.slice(0) }
 }
 
 // The mesh terrain as the save's bytes (mesh/meshSerial.ts). The mesh is
@@ -1071,12 +1085,15 @@ function handleRequestElevationField(): void {
   const raw = lastRawElevations && lastRawElevations.length === elevation.length ? lastRawElevations.slice() : elevation.slice()
   const message: WorkerElevationFieldMessage = {
     type: 'elevationField',
+    mesh: meshPayload(),
     elevation: elevation.buffer as ArrayBuffer,
     raw: raw.buffer as ArrayBuffer,
     width: lastDisplayElevations.width,
     height: lastDisplayElevations.height,
   }
-  emit(message, [message.elevation, message.raw])
+  const transfers = [message.elevation, message.raw]
+  if (message.mesh) transfers.push(message.mesh.nodes, message.mesh.connectivity, message.mesh.z)
+  emit(message, transfers)
 }
 
 function handleSerializeWorld(): void {
@@ -1134,7 +1151,7 @@ function handleSerializeWorld(): void {
     erodibility: hardness.buffer as ArrayBuffer,
     forcingResX: CLIMATE_RES_X,
     forcingResY: CLIMATE_RES_Y,
-    mesh: meshTerrain ? serializeMeshTerrain(meshTerrain) : undefined,
+    mesh: meshPayload(),
   }
   const transfers = [worldMessage.mantle, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge, worldMessage.elevation, worldMessage.uplift, worldMessage.erodibility]
   if (worldMessage.mesh) transfers.push(worldMessage.mesh.nodes, worldMessage.mesh.connectivity, worldMessage.mesh.z)
@@ -1187,6 +1204,7 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   // The mesh the save carries, if it does: the terrain proper, so a save
   // after a load carries it on. The raster above is its rasterisation.
   meshTerrain = message.mesh ? restoreMeshTerrain(message.mesh, sim.width, sim.height) : null
+  meshPayloadCache = null
   lastLakeBasinElevations = null
   // Render the injected (stored, post-erosion) elevation directly — no pool
   // query, no re-erosion.
