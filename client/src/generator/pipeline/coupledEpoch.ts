@@ -75,9 +75,33 @@ export interface CoupledTerrain {
 
 export interface CoupledEpochOptions {
   iterationsPerEpoch: number
+  // The density rule's budget scalar during the history (decision 1: the
+  // macro mesh and the tiles are one rule with a budget each). 1 is the
+  // end state's density; 2 doubles the spacing for the epochs — the
+  // relief the history carries, at a quarter of the nodes.
+  budget?: number
+  // A scale on the tectonics' uplift forcing — the calibration's knob
+  // against the erosion rates, 1 = the engine's calibrated ratio.
+  upliftScale?: number
   controls?: ErosionControlsV2
   pool?: { createWorker: () => WorkerLike } & PipelineOptions
 }
+
+// The history's interim setting, from the first calibration round
+// (scripts/calibrateHistory.mjs, 2026-09-23; the table is in
+// ADAPTIVE_MESH_PLAN.md phase 5.1): budget 2 (the history at half the
+// end state's density — a 512×256 world grows 41 k → 65 k nodes over
+// 16 Ma at 2 s an epoch, where budget 1 grew 40 k → 310 k), four
+// iterations per epoch (rates ×12.5; pure erosion lowers a 365 m plain
+// by 30 % in 16 Ma — sane), and the uplift at a quarter. The quarter is
+// the finding, not a tuning: the tectonics' uplift field lifts 88–98 %
+// of the land with a mean of 0.4–0.5 (it was made for a 0.8 Myr
+// transient), so at 1 the mean land rises 200 m an epoch and the whole
+// continent stands 4 km high after 16 Ma. The balance belongs to 5.3
+// (flexural compensation) and to a U field confined to the orogens;
+// until then the quarter keeps a 50 Ma history in the range of a
+// world (mean land +0.5 km, orogens to 3 km at 16 Ma).
+export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 2, upliftScale: 0.25 } as const
 
 export interface CoupledEpochStats {
   events: SimEvent[]
@@ -100,9 +124,9 @@ function baselineAt(sim: PlateSimulation, x: number, y: number): number {
 
 // The terrain at the start of the history: the mesh from the synthesis,
 // the baseline evaluated at every node, the relief the difference.
-export function createCoupledTerrain(sim: PlateSimulation): CoupledTerrain {
+export function createCoupledTerrain(sim: PlateSimulation, budget = 1): CoupledTerrain {
   const domain = torusDomain(sim.width, sim.height)
-  const built = buildMesh(domain, synthesisSampler(sim), { seed: sim.warpSeed })
+  const built = buildMesh(domain, synthesisSampler(sim), { seed: sim.warpSeed, budget })
   const { mesh, order } = compactMesh(built.mesh)
   const z = permute(built.state.get(MESH_Z), order)
   const baseline = new Float32Array(mesh.vertexSlots)
@@ -157,7 +181,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // position plus the relief.
   const z = state.add(MESH_Z, 'intensive')
   for (let v = 0; v < mesh1.vertexSlots; v++) if (mesh1.vAlive[v]) z[v] = baselineAt(sim, mesh1.vx[v], mesh1.vy[v]) + h[v]
-  const target = densityTarget(state)
+  const target = densityTarget(state, options.budget ?? 1)
   const c = coarsen(mesh1, state, target)
   const r = refine(mesh1, state, target, {
     seed: (sim.warpSeed ^ sim.epoch) >>> 0,
@@ -189,6 +213,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   }, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, zCanon, areas, width, height, options.controls ?? {})
   const dtScale = (TECTONIC_MA_PER_EPOCH * 1e6 / options.iterationsPerEpoch) / ITERATION_YEARS
   const scaled = scaleEngineParamsForDt({ ...params, epsM: 0 }, dtScale)
+  scaled.upliftDt *= options.upliftScale ?? 1
   const result = await runMeshErosion(mesh, zCanon, forcing, { age: options.iterationsPerEpoch, params: scaled, pool: options.pool, routingEvery: Math.max(1, Math.min(4, options.iterationsPerEpoch)) })
   terrain.mesh = mesh
   terrain.z = result.z

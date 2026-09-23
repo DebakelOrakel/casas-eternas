@@ -33,6 +33,8 @@ mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay 
             pipeline/coupledEpoch.ts is phase 5's loop over it: z = baseline + relief
             per node, nodes drift with their plates, the mesh is rebuilt and remeshed
             each epoch (subduction and rifting), erosion runs inside the epoch.
+            `node scripts/calibrateHistory.mjs key=value …` prints what a setting does
+            to a world over N epochs — the calibration's instrument, not a gate.
             The generator's erosion stage runs on it
             (pipeline/meshErosionStage.ts), the lakes and the river graph run on it
             (meshHydrology: the flow substrate) and the save carries it; the map and the
