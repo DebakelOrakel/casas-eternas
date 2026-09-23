@@ -62,7 +62,8 @@ surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), e
             iceFlow, cover (phase 5.5: the vegetation's hold per biome — one table for the
             erodibility, the critical slope and the river banks), hydrogeology (phase 5a:
             springs, the regime with baseflow, the water table — a classification over the
-            column, no process), amplify, runAmplification
+            column, no process), glacial (phase 6: the epoch's ice on the mesh at its
+            steady state, the cut it does, the till it leaves), amplify, runAmplification
 climate/ ecology/ migration/ render/
 ```
 

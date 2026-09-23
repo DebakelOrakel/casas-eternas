@@ -105,6 +105,7 @@ const M = {
   tectonicsInputs: await L('/src/generator/tectonics/tectonicsInputParams.ts'),
   coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
   ground: await L('/src/generator/surface/hydrogeology.ts'),
+  surfaceTune: await L('/src/generator/surface/surfaceTuneParams.ts'),
   cover: await L('/src/generator/surface/cover.ts'),
   meshRaster: await L('/src/generator/mesh/meshRaster.ts'),
   routing: await L('/src/generator/surface/flowRouting.ts'),
@@ -341,7 +342,11 @@ async function buildWorld(seed) {
 
   const cratonAge = M.rafts.computeCratonOldnessField(sim.rafts, sim.epoch, CRX, CRY, W, H)
   // The ice (F4) on the eroded terrain with the refined climate.
-  const ice = M.ice.computeIceThickness({ elevation: el, width: W, height: H, temperature: t2, precipitation, climateResX: CRX, climateResY: CRY, cellM: M.engine.WORLD_WIDTH_METERS / W })
+  // The ice: the history's last epoch on the mesh (phase 6), rasterised as
+  // the worker does; the ice body is the Glacier biome.
+  const ice = { thickness: M.meshRaster.rasteriseNodeField(coupled.mesh, coupled.ice, W, H) }
+  for (let c = 0; c < ice.thickness.length; c++) if (el[c] <= 0 || ice.thickness[c] < M.surfaceTune.SURFACE_TUNING.iceMinThicknessM) ice.thickness[c] = 0
+  for (let c = 0; c < biomesFine2.length; c++) if (ice.thickness[c] > 0 && el[c] > 0) biomesFine2[c] = M.biomes.Biome.Glacier
   // The sediment basins (F1) of the erosion pass, with provenance.
   const basins = M.basins.findSedimentBasins({
     before: staged.before, after: el, width: W, height: H, routing, graph, cellM: M.engine.WORLD_WIDTH_METERS / W,

@@ -197,6 +197,23 @@ export const SURFACE_TUNING = {
   iceMaxThicknessM: 4000,
   iceFlowRounds: 12,
   iceMinThicknessM: 5,
+  // GLACIAL EROSION (surface/glacial.ts, phase 6): metres of rock per year
+  // per metre of sliding (thickness × ice-surface slope) — Hallet's rule.
+  // At 2e-5 a trunk glacier 1800 m thick on a 0.5 % surface slope cuts
+  // 0.2 mm/yr (180 m an epoch) and its 200 m-thick margins a tenth of
+  // that, which is what turns a V into a U; at 1e-4 the whole valley hit
+  // the per-epoch cap and lowered as one (the harness's V stayed a V).
+  // The cap is a fjord's rate. The buzzsaw: the extra factor at the ELA
+  // (a Gaussian in height, the band's half-width in metres). Till splits
+  // into coarse and fine at the terminus. All unmeasured.
+  glacialErosionPerSliding: 2e-5,
+  // The steepest an ice surface falls across the ice, m/m: a trunk
+  // glacier's surface carried out over the valley walls (surface/glacial.ts).
+  iceSurfaceMaxSlope: 0.03,
+  glacialErosionMaxM: 800,
+  glacialBuzzsawBoost: 1,
+  glacialBuzzsawBandM: 300,
+  glacialTillCoarse: 0.5,
 
   // Peak precipitation bonus (mm/yr) a cell gets right at a full-strength river/lake
   // — enough to lift a hot desert (P<250) into savanna/forest (the Nile effect).

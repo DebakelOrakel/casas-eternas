@@ -51,6 +51,7 @@ const L = (p) => server.ssrLoadModule(p)
 
 const M = {
   domain: await L('/src/generator/core/domain.ts'),
+  toroidal: await L('/src/generator/core/toroidal.ts'),
   field: await L('/src/generator/core/field.ts'),
   rng: await L('/src/generator/core/rng.ts'),
   scale: await L('/src/generator/elevation/elevationScale.ts'),
@@ -73,6 +74,8 @@ const M = {
   flexure: await L('/src/generator/tectonics/flexure.ts'),
   cover: await L('/src/generator/surface/cover.ts'),
   ground: await L('/src/generator/surface/hydrogeology.ts'),
+  glacial: await L('/src/generator/surface/glacial.ts'),
+  surfaceTune: await L('/src/generator/surface/surfaceTuneParams.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
   graph: await L('/src/generator/surface/riverGraph.ts'),
   meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
@@ -676,6 +679,78 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check('one away from every range', at(20, 20) === 1)
 }
 
+const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v]) return v; return 0 }
+
+// Ice as a process (phase 6): on a V-shaped valley under a cold climate
+// the ice flows, its mass closes (what fed it = what melted + what left),
+// and its erosion turns the V into a U — the floor widens.
+{
+  const W = 64, H = 32
+  const lat = M.lattice.hexLattice(M.domain.torusDomain(W, H), 0.5)
+  const z = new Float32Array(lat.vertexSlots)
+  const valleyX = W / 2
+  for (let v = 0; v < lat.vertexSlots; v++) {
+    if (!lat.vAlive[v]) continue
+    const dx = Math.abs(M.toroidal.wrappedDelta(lat.vx[v], valleyX, W))
+    // A V valley 2000 m deep, walls to 3000 m, along y, sloping along its
+    // length (a sine on the torus, 600 m of fall) so the ice FLOWS down
+    // the valley — a glacier's erosion is its sliding, and sliding needs a
+    // slope along the ice; across a V the ice surface is level. Land
+    // everywhere.
+    z[v] = (1300 + Math.min(1500, dx * 400) + 300 * Math.sin((2 * Math.PI * lat.vy[v]) / H)) / M.scale.ELEVATION_METERS
+  }
+  const RX = M.climateField.CLIMATE_RES_X, RY = M.climateField.CLIMATE_RES_Y
+  // −4 °C at the cell's mean height puts the equilibrium line near
+  // 2200 m: the walls above it feed a trunk glacier that melts on the
+  // floor — a valley glacier, not an ice sheet over everything (at −12 °C
+  // the whole world was under ice and the cut was uniform: the V stayed).
+  const precipitation = new Float32Array(RX * RY).fill(600)
+  const coarseZ = M.raster.rasteriseNodeField(lat, z, RX, RY)
+  // The climate cells here are finer than the valley (2 km against a
+  // 60 km cell on the world), so the lapse must be in the field itself:
+  // −4 °C at 2300 m, 6.5 °C per km — cold walls, a warm floor.
+  const temperature = new Float32Array(RX * RY)
+  for (let i = 0; i < temperature.length; i++) temperature[i] = -4 - 6.5 * (coarseZ[i] * M.scale.ELEVATION_METERS - 2300) / 1000
+  const ice = M.glacial.computeIceOnMesh({ mesh: lat, z, temperature, precipitation, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: M.mapConfig.METERS_PER_CELL })
+  let iced = 0, maxH = 0
+  for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v] && ice.thickness[v] > 0) { iced++; maxH = Math.max(maxH, ice.thickness[v]) }
+  let landNodes = 0
+  for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v]) landNodes++
+  let bMin = Infinity, bMax = -Infinity, czMin = Infinity, czMax = -Infinity
+  for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v]) { bMin = Math.min(bMin, ice.balance[v]); bMax = Math.max(bMax, ice.balance[v]) }
+  for (let i = 0; i < coarseZ.length; i++) { czMin = Math.min(czMin, coarseZ[i]); czMax = Math.max(czMax, coarseZ[i]) }
+  check(`a valley glacier forms (${iced} of ${landNodes} nodes iced, up to ${maxH.toFixed(0)} m)`, iced > 0 && iced < landNodes && maxH > 50, `balance ${bMin.toFixed(2)}..${bMax.toFixed(2)} m/yr, coarseZ ${(czMin * M.scale.ELEVATION_METERS).toFixed(0)}..${(czMax * M.scale.ELEVATION_METERS).toFixed(0)} m, ELA ${ice.elaM[order0(lat)].toFixed(0)} m`)
+  check(`the ice's mass closes (in ${(ice.massIn / 1e9).toFixed(2)} = melt ${(ice.massMelt / 1e9).toFixed(2)} + out ${(ice.massOut / 1e9).toFixed(2)} km³/yr)`, Math.abs(ice.massIn - ice.massMelt - ice.massOut) <= 1e-6 * ice.massIn)
+  // The profile across the valley at mid-length: the floor's width (the
+  // span within 100 m of the deepest point) before and after the ice.
+  // The trough's making: the cut is the sliding's, and the sliding is
+  // the trunk's — the floor band (within half a unit of the axis) cuts
+  // more than the walls two to three units out, 800–1200 m up; the
+  // floor's cut stays under the per-epoch cap (a fjord's rate). On this
+  // world the difference is small (259 vs 221 m): it is an ice cap, 91 %
+  // of it iced, the walls under a kilometre of ice too. A full U profile
+  // from a V needs a valley-scale test with a realistic accumulation area
+  // and is the calibration's (ADAPTIVE_MESH_PLAN.md phase 6), not this
+  // gate's.
+  const zAfter = z.slice()
+  let floorCut = 0, floorN = 0, wallCut = 0, wallN = 0, maxCut = 0
+  for (let epoch = 0; epoch < 3; epoch++) {
+    const iceNow = M.glacial.computeIceOnMesh({ mesh: lat, z: zAfter, temperature, precipitation, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: M.mapConfig.METERS_PER_CELL })
+    const g = M.glacial.glacialErosionOnMesh(lat, zAfter, iceNow, 1e6, M.mapConfig.METERS_PER_CELL)
+    for (let v = 0; v < lat.vertexSlots; v++) {
+      if (!lat.vAlive[v]) continue
+      zAfter[v] -= g.cutM[v] / M.scale.ELEVATION_METERS
+      const dx = Math.abs(M.toroidal.wrappedDelta(lat.vx[v], valleyX, W))
+      if (dx <= 0.5) { floorCut += g.cutM[v]; floorN++ } else if (dx >= 2 && dx <= 3) { wallCut += g.cutM[v]; wallN++ }
+      if (g.cutM[v] > maxCut) maxCut = g.cutM[v]
+    }
+    if (epoch === 0) check(`the ice cuts (${(g.cutM3 / 1e9).toFixed(1)} km³ in an epoch) and leaves till (${(g.tillM3 / 1e9).toFixed(1)} km³)`, g.cutM3 > 0 && g.tillM3 > 0)
+  }
+  const floorMean = floorCut / Math.max(1, floorN), wallMean = wallCut / Math.max(1, wallN)
+  check(`the trunk cuts the floor more than the walls (floor ${floorMean.toFixed(0)} m vs walls ${wallMean.toFixed(0)} m an epoch)`, floorMean > wallMean && wallMean >= 0)
+  check(`the cut stays under the cap (${maxCut.toFixed(0)} ≤ ${M.surfaceTune.SURFACE_TUNING.glacialErosionMaxM} m an epoch)`, maxCut <= M.surfaceTune.SURFACE_TUNING.glacialErosionMaxM)
+}
+
 // The coupled epoch (phase 5.1): a small real world through the handover,
 // then epochs in which the plates move the nodes, the mesh is rebuilt
 // and remeshed, the baseline follows the tectonics and the erosion runs
@@ -700,7 +775,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   let ledger = 0, columnVolume = 0, supplyBounded = true, rebound = 0, subsidence = 0, climateSane = true
   const climateTrace = []
   const coverTrace = []
-  let screeTotal = 0, solifluction = 0, folded = 0
+  let screeTotal = 0, solifluction = 0, folded = 0, iceShare = 0, glacialCut = 0, till = 0
   const t1 = performance.now()
   for (let e = 0; e < EPOCHS; e++) {
     const te = performance.now()
@@ -714,6 +789,9 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     coverTrace.push(stats.meanLandCover)
     screeTotal += stats.screeM3
     folded = Math.max(folded, stats.foldedShare)
+    iceShare = Math.max(iceShare, stats.iceAreaShare)
+    glacialCut += stats.glacialCutM3
+    till += stats.tillM3
     solifluction = Math.max(solifluction, stats.solifluctionShare)
     climateTrace.push(`${stats.meanLandTempC.toFixed(1)}°C ice ${stats.iceVolumeKm3.toFixed(0)} km³ sea ${stats.seaLevelM.toFixed(2)} m lakes ${stats.lakes} (oldest ${stats.oldestLakeMa} Ma) ${(stats.timing.climate / 1000).toFixed(1)}+${(stats.timing.lakes / 1000).toFixed(1)} s`)
     if (!Number.isFinite(stats.meanLandTempC) || stats.meanLandTempC < -60 || stats.meanLandTempC > 60 || stats.iceVolumeKm3 < 0 || stats.seaLevelM > 0) climateSane = false
@@ -777,6 +855,9 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check(`creep lays down scree (${(screeTotal / 1e9).toFixed(1)} km³ over the epochs)`, screeTotal > 0)
   check(`some land lies in the periglacial band (${(solifluction * 100).toFixed(0)} %)`, solifluction > 0 && solifluction < 1)
   check(`the ranges fold (${(folded * 100).toFixed(0)} % of the land under a folding range)`, folded > 0 && folded < 1)
+  // The ice of the history (phase 6): on this cold world the ice covers
+  // some land, cuts, and leaves moraines.
+  check(`the epochs carry ice (up to ${(iceShare * 100).toFixed(0)} % of the land) that cuts ${(glacialCut / 1e9).toFixed(0)} km³ and leaves ${(till / 1e9).toFixed(0)} km³ of till`, iceShare > 0 && iceShare < 1 && glacialCut > 0 && till > 0)
   // The hydrogeology (phase 5a) on the history's terrain, with its column:
   // the graph from the last epoch's routing, then springs, the regime with
   // the baseflow and the water table — the invariants hold, and the

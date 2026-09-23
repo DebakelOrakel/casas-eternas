@@ -4,6 +4,8 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-23
+- **new** Tectonics: ice is part of the history — each epoch's climate grows glaciers and ice sheets that carve troughs and fjords, plane summits at the snowline, leave moraines at their ends and draw the sea down while they stand; the ice you see at the end is that epoch's, and land under it is glacier. `generator.panel.tectonics`
+- **changed** Climate: the coldest climate class is a polar desert, not an ice cap — ice is what the glaciers make of it. `biome.iceCap`
 - **new** Hydrology: the ground has water — springs where gravel lies on clay or rock, oases where they surface in the desert, rivers that keep flowing through the dry season on permeable ground, and a water table with a well's depth everywhere. `generator.panel.hydrology`
 - **new** Tectonics: a young range rises as a train of parallel ridges and valleys — the crust buckles across the collision — before any river has cut one. `generator.panel.tectonics`
 - **new** Tectonics: slopes fail by their rock — hard rock stands steeper, soft fill slumps — creep lays down scree at the foot of a slope as a layer of its own, and in the cold the ground itself creeps downhill. `generator.panel.tectonics`

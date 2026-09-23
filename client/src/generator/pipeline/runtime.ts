@@ -12,6 +12,8 @@ import type { MeshTerrain } from './meshErosionStage'
 import { createCoupledTerrain, decodeCoupledTerrain, HISTORY_DEFAULTS, stepCoupledEpoch, type CoupledTerrain } from './coupledEpoch'
 import { encodeColumn } from '../mesh/meshColumn'
 import { rasteriseNodeField } from '../mesh/meshRaster'
+import { Biome } from '../climate/biomes'
+import { SURFACE_TUNING } from '../surface/surfaceTuneParams'
 import { computeHydrogeology } from '../surface/hydrogeology'
 import { coverField } from '../surface/cover'
 import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
@@ -950,11 +952,24 @@ function handleHydrologyRun(): void {
           hardness: forcingFields.hardness, coarseResX: CLIMATE_RES_X, coarseResY: CLIMATE_RES_Y,
         }).basins
         : []
-      // THE ICE (F4): the shallow-ice flow once, with the refined climate.
-      result.ice = computeIceThickness({
-        elevation, width, height, temperature: weather.temperature, precipitation: weather.precipitation,
-        climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, cellM: WORLD_WIDTH_METERS / width,
-      }).thickness
+      // THE ICE: the history's own (phase 6, the last epoch's steady state
+      // on the mesh) when the terrain has been through an epoch, rasterised;
+      // otherwise F4's shallow-ice flow once, with the refined climate (a
+      // restored world before its next epoch, a world without a mesh).
+      if (coupled && meshTerrain && coupled.mesh === meshTerrain.mesh && coupled.ice.length === coupled.mesh.vertexSlots) {
+        const ice = rasteriseNodeField(coupled.mesh, coupled.ice, width, height)
+        for (let c = 0; c < ice.length; c++) if (elevation[c] <= 0 || ice[c] < SURFACE_TUNING.iceMinThicknessM) ice[c] = 0
+        result.ice = ice
+      } else {
+        result.ice = computeIceThickness({
+          elevation, width, height, temperature: weather.temperature, precipitation: weather.precipitation,
+          climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, cellM: WORLD_WIDTH_METERS / width,
+        }).thickness
+      }
+      // THE ICE BODY IS A BIOME (phase 6, decided 2026-09-23: the climate
+      // class Ice stays, Glacier is the ice with a thickness): under ice the
+      // cell's biome is Glacier, whatever the climate said.
+      for (let c = 0; c < biomesOut.length; c++) if (result.ice[c] > 0 && elevation[c] > 0) biomesOut[c] = Biome.Glacier
     }
     const rivers = result.graph
       ? riverPolylinesFromGraph(result.graph, result.maxDischarge)

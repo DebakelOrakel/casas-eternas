@@ -45,8 +45,9 @@ export interface IceFlowInputs {
 export interface IceFlowResult {
   // Ice thickness per cell, metres, 0 where there is none.
   thickness: Float32Array
-  // The net mass balance per cell, m/yr, for the harness and the picture.
-  balance: Float32Array
+  // The net mass balance per cell, m/yr, for the harness and the picture;
+  // absent when the ice is the history's, rasterised (phase 6).
+  balance?: Float32Array
 }
 
 const D8: [number, number][] = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]]
@@ -146,7 +147,8 @@ export function iceInvariants(result: IceFlowResult, elevation: Float32Array): R
   const out: Record<string, number> = { nonNegative: 0, finite: 0, onLand: 0 }
   for (let c = 0; c < result.thickness.length; c++) {
     const h = result.thickness[c]
-    if (!Number.isFinite(h) || !Number.isFinite(result.balance[c])) out.finite++
+    // The history's ice (phase 6) comes rasterised without a balance.
+    if (!Number.isFinite(h) || (result.balance && !Number.isFinite(result.balance[c]))) out.finite++
     if (h < 0) out.nonNegative++
     if (h > 0 && elevation[c] <= SEA_LEVEL) out.onLand++
   }
