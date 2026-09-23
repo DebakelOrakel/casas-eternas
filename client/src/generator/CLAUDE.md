@@ -18,7 +18,13 @@ Where this is going: [docs/design/generator-pipeline.md](../../../docs/design/ge
 ```
 pipeline/   messages (the worker contract), runtime (stage state + handlers)
 core/       mapConfig, toroidal, rng, field (the shared samplers), minHeap, interpolation,
-            domain (the topology: latitude on the torus)
+            domain (the topology: periodicity, distance and latitude on the torus)
+mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay (the
+            triangulation on a domain), lattice (the bootstrap), hilbert (the insertion
+            order), meshDensity (the ONE density rule, MESH_TUNING), meshState (per-node
+            fields that survive remeshing), meshRelief, remesh (hysteresis insert/remove),
+            meshBuild (fields in, mesh out). Depends on core/ and elevation/ only; nothing
+            runs on it yet — the engine port is phase 4.2
 planet/     the Planet stage's controls and their forcing (obliquity, orbit, sun, rotation) —
             what depends on the planet and not on the relief; the climate reads it
 mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends only
@@ -73,6 +79,7 @@ not assume; look up which one the field you touched uses.
 
 ```
 cd client && npm run harness:roundtrip       # the save format; 0.2 s
+cd client && npm run harness:mesh            # the adaptive mesh; ~5 s
 cd client && npm run harness:pipeline        # the pipeline's behaviour; ~50 s
 cd client && npm run harness:amplify         # the amplification bake; ~13 s
 cd client && npm run harness:golden          # the generator; ~13 min (4 world builds at 2048×1024)
@@ -110,6 +117,11 @@ process. The baseline is machine-local and gitignored; record it where you work.
   agree byte for byte) and, opt-in, a byte baseline. The artifact KEY is guarded
   separately — `npm run harness:roundtrip` checks that every constant
   AMPLIFY_CONSTANTS lists actually moves the pipeline version.
+- It does **not** cover the adaptive mesh — `npm run harness:mesh` does, in seconds
+  on a synthetic world: the triangulation's structure, the density rule's
+  convergence inside its hysteresis band, state conservation through a
+  remesh, determinism. Its `measure <save.zip>` mode reports node counts on
+  a real save; that is how MESH_TUNING's constants were set.
 - It does **not** cover the save format. That is `npm run harness:roundtrip`'s job —
   quantisation, the recipe's layout, the identity hashes, the artifact bytes and
   the shared zip reader, in 0.2 s. Run it after touching anything under

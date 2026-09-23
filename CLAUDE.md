@@ -19,7 +19,7 @@ client/src/
   storage/        artifact stores (OPFS / HTTP / tiered), bytes at paths
   server/         client-side HTTP clients for the Go server
   map/ ui/ camera/ app/ i18n/
-client/scripts/   the four harnesses (golden, pipeline, amplify, roundtrip) and
+client/scripts/   the five harnesses (golden, pipeline, amplify, roundtrip, mesh) and
                   bake.ts → baker.mjs, the server-side bake bundle
 internal/ cmd/    the Go server
 docs/             see docs/README.md for the taxonomy
@@ -123,12 +123,13 @@ reason.
 
 ```
 make lint      # tsc --noEmit, gofmt, go vet
-make test      # go test plus all four harnesses (~14 min, nearly all of it golden)
+make test      # go test plus the harnesses (~14 min, nearly all of it golden)
 make run       # build baker + client, then start the server locally
 cd client && npm run dev   # the usual loop
 
-# The four harnesses, cheapest first — each guards what the others cannot.
+# The five harnesses, cheapest first — each guards what the others cannot.
 cd client && npm run harness:roundtrip   # the save format; 0.2 s, run it freely
+cd client && npm run harness:mesh        # the adaptive mesh; ~5 s
 cd client && npm run harness:pipeline    # the generator pipeline's behaviour; ~50 s
 cd client && npm run harness:amplify     # the amplification bake; ~13 s
 cd client && npm run harness:golden      # the generator's fields; ~13 min
