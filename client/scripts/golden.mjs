@@ -98,6 +98,7 @@ const M = {
   ridged: await L('/src/generator/elevation/ridgedNoise.ts'),
   erosionForcing: await L('/src/generator/pipeline/erosionForcing.ts'),
   meshStage: await L('/src/generator/pipeline/meshErosionStage.ts'),
+  meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
   surfaceInputs: await L('/src/generator/surface/surfaceInputParams.ts'),
   routing: await L('/src/generator/surface/flowRouting.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
@@ -273,7 +274,19 @@ async function buildWorld(seed) {
   // final climate and biome fields come from. The refined biomes replace
   // the v1 classification for everything downstream, exactly as
   // cacheAndPostClimate does in the worker.
-  let lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, temperature, precipitation, CRX, CRY)
+  // The lakes on the MESH (phase 4.3), exactly as the worker's
+  // hydrologyOnMesh: the mesh's own routing, discharge and basins, and
+  // the raster fields the cell-walking consumers read recovered from the
+  // body list. `meshLakes` keeps the per-node fields for the graph.
+  const terrain = staged.terrain
+  const meshSub = M.meshHydro.meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
+  let meshDischarge, meshLakes
+  const lakesOnMesh = (temp, precip) => {
+    meshDischarge = M.hydro.accumulateDischargeOn(meshSub, terrain.z, precip, CRX, CRY)
+    meshLakes = M.hydro.computeLakesOn(meshSub, meshDischarge, terrain.z, temp, precip, CRX, CRY)
+    return { ...M.meshHydro.waterFieldsFromMesh(terrain.mesh, meshLakes.body, meshLakes.bodies, el, W, H), bodies: meshLakes.bodies }
+  }
+  let lakes = lakesOnMesh(temperature, precipitation)
   const t2 = M.temperature.computeTemperature(el, W, H, 0, 1, 0, lakes.dryBasin)
   const c2 = M.currents.computeOceanCurrents(el, wind, W, H, lakes.dryBasin)
   M.currents.applyOceanSST(t2, c2, el, W, H, lakes.dryBasin)
@@ -283,17 +296,23 @@ async function buildWorld(seed) {
   const biomes2 = M.biomes.computeBiomes(t2, precipitation, s2, sp2.index, el, W, H, lakes.dryBasin)
   const biomesFine2 = M.biomes.computeBiomesFine(t2, precipitation, s2, sp2.index, el, W, H, lakes.dryBasin)
   discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
-  maxDis = M.hydro.maxDischargeOverLand(discharge, el)
-  lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, t2, precipitation, CRX, CRY)
-  // The feature graph (phase 2), exactly as the worker builds it after the
-  // lakes: the model's one channel threshold, the refined fine biomes as bank
-  // material, the erosion pass's sediment flux as load.
+  lakes = lakesOnMesh(t2, precipitation)
+  // The graph's discharge scale is the mesh's, like the worker's.
+  maxDis = M.hydro.maxDischargeOverLand(meshDischarge, terrain.z)
+  // The feature graph (phase 2) on the mesh (phase 4.3), exactly as the
+  // worker builds it after the lakes: the model's one channel threshold,
+  // the refined fine biomes sampled at the nodes as bank material, the
+  // erosion's sediment flux per node as load.
   const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), meanRunoff)
+  const bankAtNode = new Uint8Array(terrain.mesh.vertexSlots)
+  for (let v = 0; v < bankAtNode.length; v++) if (terrain.mesh.vAlive[v]) bankAtNode[v] = biomesFine2[M.graph.rasterCellAt(terrain.mesh.vx[v], terrain.mesh.vy[v], W, H)]
+  // The flow regime (F6) from the refined climate, like the worker — on
+  // the graph's substrate, and kept for the invariant that re-applies it.
+  const graphRegime = M.hydro.accumulateRegimeInputsOn(meshSub, terrain.z, t2, precipitation, sp2.index, CRX, CRY)
   const graph = M.graph.buildRiverGraph({
-    routing, discharge, elevation: el, threshold, maxDischarge: maxDis,
-    bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux: ero.sedimentFlux, biomes: biomesFine2,
-    // The flow regime (F6) from the refined climate, like the worker.
-    regime: M.hydro.accumulateRegimeInputs(routing, el, t2, precipitation, sp2.index, CRX, CRY),
+    substrate: meshSub, discharge: meshDischarge, elevation: terrain.z, threshold, maxDischarge: maxDis,
+    bodies: meshLakes.bodies, body: meshLakes.body, lakeDepth: meshLakes.depth, sedimentFlux: terrain.sedimentFlux, biomes: bankAtNode,
+    regime: graphRegime,
     criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY),
   })
   // The course (phase 3), seeded from the world like the worker does.
@@ -352,7 +371,7 @@ async function buildWorld(seed) {
     { spreadBudget: 400, seaCrossing: 0.3 },
   )
 
-  return { sim, raw, before: staged.before, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, threshold, lakes, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
+  return { sim, raw, before: staged.before, terrain: staged.terrain, graphRegime, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, threshold, lakes, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
 }
 
 // --- layer 1: invariants ---------------------------------------------------
@@ -411,14 +430,14 @@ function invariants(w) {
   // No baseline — a violation is a bug in the graph builder or the routing.
   if (w.graph.reaches.length === 0) fail('riverGraph', 'no reaches')
   if (!w.graph.nodes.some((node) => node.kind === 'mouth')) fail('riverGraph', 'no mouth')
-  for (const [name, count] of Object.entries(M.graph.riverGraphInvariants(w.graph, w.el))) {
+  for (const [name, count] of Object.entries(M.graph.riverGraphInvariants(w.graph, w.graph.substrate === 'mesh' ? w.terrain.z : w.el))) {
     if (count > 0) fail(`riverGraph.${name}`, `${count} violations`)
   }
   // The regime rule (F6) holds against its own inputs: an ephemeral reach
   // drains an arid catchment, a perennial one a wet dry season; and the
   // ribbons carry one regime per polyline.
   {
-    const regime = M.hydro.accumulateRegimeInputs(w.routing, w.el, w.temperature, w.precipitation, w.seasonalPrecip.index, w.CRX, w.CRY)
+    const regime = w.graphRegime
     let wrong = 0
     for (const r of w.graph.reaches) {
       const last = w.graph.cells[r.cellStart + r.cellCount - 2]

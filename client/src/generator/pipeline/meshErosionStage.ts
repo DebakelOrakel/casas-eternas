@@ -1,7 +1,7 @@
 import { torusDomain } from '../core/domain'
 import { synthesisSampler, type SynthesisSources } from '../elevation/elevationSampler'
 import { buildMesh, MESH_Z } from '../mesh/meshBuild'
-import { runMeshErosion, type MeshErosionResult } from '../mesh/meshErosion'
+import { runMeshErosion, type MeshErosionResult, type MeshRouting } from '../mesh/meshErosion'
 import { rasteriseNodeField } from '../mesh/meshRaster'
 import { compactMesh, permute } from '../mesh/meshSerial'
 import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
@@ -38,6 +38,15 @@ export interface MeshTerrain {
   mesh: PeriodicTriangulation
   // Heights per vertex (canonical numbering), elevation units.
   z: Float32Array
+  // The routing of `z` on the mesh (derived: the engine's last refresh, or
+  // mesh/meshHydrology.meshRouting after a restore) and every node's
+  // Voronoi area in cells — what the hydrology reads the mesh through
+  // (meshHydrology.meshSubstrate).
+  routing: MeshRouting
+  areas: Float32Array
+  // The last iteration's sediment flux per node, m³; empty after a
+  // restore (not carried by the save).
+  sedimentFlux: Float32Array
 }
 
 export interface MeshErosionStageOptions {
@@ -85,7 +94,7 @@ export async function erodeOnMesh(
   // Canonical numbering before anything reads the mesh.
   const { mesh, order } = compactMesh(built.mesh)
   const z = permute(built.state.get(MESH_Z), order)
-  const areas = new Float64Array(mesh.vertexSlots)
+  const areas = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v]) areas[v] = mesh.voronoiArea(v)
   const { uplift, hardness } = coarseForcingFields(sources, width, height)
   const water = computeWeather(rawElevations, width, height, options.weather ?? defaultWeatherParams()).seasonal.annual
@@ -106,7 +115,7 @@ export async function erodeOnMesh(
     shouldCancel: options.shouldCancel,
   })
   return {
-    terrain: { mesh, z: result.z },
+    terrain: { mesh, z: result.z, routing: result.routing, areas, sedimentFlux: result.sedimentFlux },
     before: rasteriseNodeField(mesh, z, width, height),
     elevations: rasteriseNodeField(mesh, result.z, width, height),
     sedimentFlux: rasteriseNodeField(mesh, result.sedimentFlux, width, height),

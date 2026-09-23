@@ -2,6 +2,7 @@ import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import { wrapValue, sampleNearestWorld } from '../core/field'
 import type { FlowRouting } from './flowRouting'
+import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
 import { Biome, computeBiomesFine } from '../climate/biomes'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 
@@ -244,13 +245,30 @@ export function lakeDepthFromBodies(bodies: readonly WaterBody[], elevation: Flo
 }
 
 export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
-  const { width, height, filled } = routing
-  const n = width * height
+  const { width, height } = routing
+  const on = computeLakesOn(rasterSubstrate(routing), discharge, elevation, temperature, precip, climateResX, climateResY, minBasinReliefM)
+  // The raster's level and body fields carry the rim (waterLevelField), as
+  // they did before the substrate existed.
+  const levels = waterLevelField(on.bodies, elevation, width, height)
+  return { depth: on.depth, saltFlat: on.saltFlat, dryBasin: on.dryBasin, frozen: on.frozen, bodies: on.bodies, level: levels.level, body: levels.body }
+}
+
+// The lakes over ANY substrate (flowSubstrate.ts) — the raster's
+// computeLakes above and the mesh's (mesh/meshHydrology.ts) are this one
+// function. Per element: depth, the evaporite band, the dry terminal
+// floor, the frozen surface, and the body an element's water belongs to
+// (-1 for none; the raster wrapper replaces `body`/`level` by the rim-aware
+// raster fields). Areas are the elements' (a cell counts 1), so the
+// balance `inflow < pet × area` reads the same on a mesh.
+export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
+  const { width, height, filled, count: n } = sub
   const EPS = 1e-5
   const depth = new Float32Array(n)
   const saltFlat = new Uint8Array(n)
   const dryBasin = new Uint8Array(n)
   const frozen = new Uint8Array(n)
+  const body = new Int32Array(n).fill(-1)
+  const level = new Float32Array(n).fill(SEA_WATER_LEVEL)
   const flooded = new Uint8Array(n)
   const bodies: WaterBody[] = []
   for (let cell = 0; cell < n; cell++) {
@@ -259,9 +277,9 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
     // basin must be gathered as one region with its above-sea shores.
     if (filled[cell] > elevation[cell] + EPS) flooded[cell] = 1
   }
-  const wrap = (x: number, y: number): number => wrapValue(y, height) * width + wrapValue(x, width)
   const seen = new Uint8Array(n)
   const queue = new Int32Array(n)
+  const nb = new Int32Array(256)
   for (let s = 0; s < n; s++) {
     if (!flooded[s] || seen[s]) continue
     // Gather the connected flooded region (one basin).
@@ -270,6 +288,7 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
     queue[tail++] = s
     seen[s] = 1
     const region: number[] = []
+    let regionArea = 0
     let spill = -Infinity
     // The pour point: the lowest cell on the region's rim. The flood's own
     // fill level (`spill`, the max filled) sits an epsilon chain above it.
@@ -280,36 +299,45 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
     while (head < tail) {
       const c = queue[head++]
       region.push(c)
+      regionArea += sub.area(c)
       if (filled[c] > spill) spill = filled[c]
       if (discharge[c] > inflow) inflow = discharge[c]
-      const cx = c % width
-      const cy = (c - cx) / width
-      tempSum += tempAtCell(temperature, cx, cy, width, height, climateResX, climateResY)
-      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-        const nb = wrap(cx + dx, cy + dy)
-        if (flooded[nb]) {
-          if (!seen[nb]) {
-            seen[nb] = 1
-            queue[tail++] = nb
+      tempSum += tempAtCell(temperature, sub.px(c), sub.py(c), width, height, climateResX, climateResY) * sub.area(c)
+      const k = sub.facetNeighbours(c, nb)
+      for (let i = 0; i < k; i++) {
+        const o = nb[i]
+        if (flooded[o]) {
+          if (!seen[o]) {
+            seen[o] = 1
+            queue[tail++] = o
           }
-        } else if (elevation[nb] < pour) {
-          pour = elevation[nb]
-          pourCell = nb
+        } else if (elevation[o] < pour) {
+          pour = elevation[o]
+          pourCell = o
         }
       }
     }
     let basinFloor = Infinity
     let floorCell = s
     for (const c of region) if (elevation[c] < basinFloor) { basinFloor = elevation[c]; floorCell = c }
-    const pet = evaporationPotential(tempSum / region.length)
-    const isFrozen = tempSum / region.length < SURFACE_TUNING.lakeFrozenBelowC
-    const record = (kind: WaterBody['kind'], level: number): void => {
+    const meanTemp = tempSum / regionArea
+    const pet = evaporationPotential(meanTemp)
+    const isFrozen = meanTemp < SURFACE_TUNING.lakeFrozenBelowC
+    const record = (kind: WaterBody['kind'], lvl: number): void => {
+      const id = bodies.length
       bodies.push({
-        id: bodies.length, kind, level, spill: pour, floor: basinFloor,
-        seedX: (floorCell % width) + 0.5, seedY: Math.floor(floorCell / width) + 0.5,
-        outletX: (pourCell % width) + 0.5, outletY: Math.floor(pourCell / width) + 0.5,
-        cells: region.length, frozen: isFrozen,
+        id, kind, level: lvl, spill: pour, floor: basinFloor,
+        seedX: sub.x(floorCell), seedY: sub.y(floorCell),
+        outletX: sub.x(pourCell), outletY: sub.y(pourCell),
+        cells: regionArea, frozen: isFrozen,
       })
+      // The whole basin is the body's — its dry floor too (a terminal
+      // basin's salt pan is the body without water), as the raster's
+      // extent below the spill is; the depth says what is wet.
+      for (const c of region) {
+        body[c] = id
+        level[c] = lvl
+      }
     }
     if (basinFloor < SEA_LEVEL) {
       // Direct precipitation ON the basin is part of its water budget — the
@@ -319,10 +347,7 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
       // over the whole region: rain on the wet surface feeds the balance,
       // rain on the dry floor runs down to it.
       let basinRain = 0
-      for (const c of region) {
-        const cx = c % width
-        basinRain += precipRunoffAt(precip, cx, (c - cx) / width, width, height, climateResX, climateResY)
-      }
+      for (const c of region) basinRain += precipRunoffAt(precip, sub.px(c), sub.py(c), width, height, climateResX, climateResY) * sub.area(c)
       inflow += basinRain
       // TERMINAL SEA (the Caspian/Chad class): an enclosed basin whose floor
       // lies below sea level — a landlocked ocean remnant or deep rift graben.
@@ -331,24 +356,24 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
       // applies here: the water settles where inflow matches evaporation.
       // Whatever sub-sea-level floor stays dry is a salt flat — evaporation
       // concentrated everything the rivers ever carried in.
-      let level = spill
-      if (inflow < pet * region.length) {
+      let lvl = spill
+      if (inflow < pet * regionArea) {
         const sorted = region.slice().sort((a, b) => elevation[a] - elevation[b])
         let area = 0
-        level = basinFloor
+        lvl = basinFloor
         for (const c of sorted) {
-          area++
+          area += sub.area(c)
           if (pet * area >= inflow) {
-            level = elevation[c]
+            lvl = elevation[c]
             break
           }
         }
       }
-      const saltBandTop = level + metersToElevation(SURFACE_TUNING.saltBandM)
+      const saltBandTop = lvl + metersToElevation(SURFACE_TUNING.saltBandM)
       let wet = 0
       for (const c of region) {
-        if (elevation[c] <= level) {
-          depth[c] = level - elevation[c]
+        if (elevation[c] <= lvl) {
+          depth[c] = lvl - elevation[c]
           if (isFrozen) frozen[c] = 1
           wet++
         } else if (elevation[c] <= SEA_LEVEL) {
@@ -358,7 +383,7 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
       }
       // The floor cell itself is always "wet" by the ≤ test (level ≥ floor);
       // a basin is dry when the balance never rose above its floor.
-      record(level > basinFloor && wet > 0 ? 'terminal' : 'dry', level)
+      record(lvl > basinFloor && wet > 0 ? 'terminal' : 'dry', lvl)
       continue
     }
     // Ordinary land basin: texture dimples are not lakes (see
@@ -368,7 +393,7 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
     // branch above is the one deliberate exception to that rule. Neither
     // failure is a body: the basin is simply terrain.
     if (spill - basinFloor < metersToElevation(minBasinReliefM)) continue
-    if (inflow < pet * region.length) continue
+    if (inflow < pet * regionArea) continue
     for (const c of region) {
       if (elevation[c] <= spill) {
         depth[c] = spill - elevation[c]
@@ -377,8 +402,7 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
     }
     record('lake', spill)
   }
-  const levels = waterLevelField(bodies, elevation, width, height)
-  return { depth, saltFlat, dryBasin, frozen, bodies, level: levels.level, body: levels.body }
+  return { depth, saltFlat, dryBasin, frozen, bodies, level, body }
 }
 
 // Precipitation-weighted discharge (relative water volume) per full-res cell,
@@ -391,13 +415,17 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
 // with lake evaporation later. popOrder is upstream-first in reverse, so a cell's
 // upstream contributions are already summed in before it pushes downstream.
 export function accumulateDischarge(routing: FlowRouting, elevation: Float32Array, precip: Float32Array, climateResX: number, climateResY: number): Float32Array {
-  const { width, height, flowTarget, popOrder, poppedCount } = routing
-  const discharge = new Float32Array(width * height)
-  for (let cell = 0; cell < width * height; cell++) {
+  return accumulateDischargeOn(rasterSubstrate(routing), elevation, precip, climateResX, climateResY)
+}
+
+// Over any substrate: an element's own runoff is its sampled precipitation
+// times its area in cells, so the unit stays "mm/yr summed over cells".
+export function accumulateDischargeOn(sub: FlowSubstrate, elevation: Float32Array, precip: Float32Array, climateResX: number, climateResY: number): Float32Array {
+  const { width, height, flowTarget, popOrder, poppedCount, count } = sub
+  const discharge = new Float32Array(count)
+  for (let cell = 0; cell < count; cell++) {
     if (elevation[cell] <= SEA_LEVEL) continue // ocean is a sink, no runoff
-    const cx = cell % width
-    const cy = (cell - cx) / width
-    discharge[cell] = precipRunoffAt(precip, cx, cy, width, height, climateResX, climateResY)
+    discharge[cell] = precipRunoffAt(precip, sub.px(cell), sub.py(cell), width, height, climateResX, climateResY) * sub.area(cell)
   }
   for (let i = poppedCount - 1; i >= 0; i--) {
     const cell = popOrder[i]
@@ -431,6 +459,10 @@ export interface RegimeInputs {
 }
 
 export function accumulateRegimeInputs(routing: FlowRouting, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, monsoonIndex: Float32Array | undefined, climateResX: number, climateResY: number): RegimeInputs {
+  return accumulateRegimeInputsOn(rasterSubstrate(routing), elevation, temperature, precip, monsoonIndex, climateResX, climateResY)
+}
+
+export function accumulateRegimeInputsOn(sub: FlowSubstrate, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, monsoonIndex: Float32Array | undefined, climateResX: number, climateResY: number): RegimeInputs {
   const n = climateResX * climateResY
   const pet = new Float32Array(n)
   const dryPrecip = new Float32Array(n)
@@ -442,8 +474,8 @@ export function accumulateRegimeInputs(routing: FlowRouting, elevation: Float32A
     dryPrecip[i] = s < 1 ? p * (1 - s) : 0
   }
   return {
-    loss: accumulateDischarge(routing, elevation, pet, climateResX, climateResY),
-    dry: accumulateDischarge(routing, elevation, dryPrecip, climateResX, climateResY),
+    loss: accumulateDischargeOn(sub, elevation, pet, climateResX, climateResY),
+    dry: accumulateDischargeOn(sub, elevation, dryPrecip, climateResX, climateResY),
   }
 }
 
@@ -520,18 +552,14 @@ export const CHANNEL_SLOPE_EXPONENT = 0.5
 // longer, hence the distance divisor — without it every diagonal reads as
 // steeper than it is, which would bias the boost along the diagonals.
 export function receiverSlope(routing: FlowRouting, elevation: Float32Array, cell: number): number {
-  const { width, height, flowTarget } = routing
-  const target = flowTarget[cell]
-  if (target < 0 || target >= width * height) return 0
-  const x = cell % width
-  const y = (cell - x) / width
-  const tx = target % width
-  const ty = (target - tx) / width
-  let dx = Math.abs(tx - x)
-  if (dx > width / 2) dx = width - dx // toroidal, both axes
-  let dy = Math.abs(ty - y)
-  if (dy > height / 2) dy = height - dy
-  const distance = Math.hypot(dx, dy) || 1
+  return receiverSlopeOn(rasterSubstrate(routing), elevation, cell)
+}
+
+// Rise over run to the receiver, in elevation units per cell.
+export function receiverSlopeOn(sub: FlowSubstrate, elevation: Float32Array, cell: number): number {
+  const target = sub.flowTarget[cell]
+  if (target < 0 || target >= sub.count) return 0
+  const distance = sub.step(cell, target)
   const drop = elevation[cell] - elevation[target]
   return drop > 0 ? drop / distance : 0
 }
@@ -542,10 +570,14 @@ export function receiverSlope(routing: FlowRouting, elevation: Float32Array, cel
 // roughly the same number of channels, they simply move to where the water
 // actually concentrates. It also makes exponent 0 exactly today's behaviour.
 export function channelReferenceSlope(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number): number {
+  return channelReferenceSlopeOn(rasterSubstrate(routing), elevation, discharge, threshold)
+}
+
+export function channelReferenceSlopeOn(sub: FlowSubstrate, elevation: Float32Array, discharge: Float32Array, threshold: number): number {
   const slopes: number[] = []
-  for (let cell = 0; cell < discharge.length; cell++) {
+  for (let cell = 0; cell < sub.count; cell++) {
     if (elevation[cell] <= SEA_LEVEL || discharge[cell] < threshold) continue
-    slopes.push(receiverSlope(routing, elevation, cell))
+    slopes.push(receiverSlopeOn(sub, elevation, cell))
   }
   if (slopes.length === 0) return 1
   slopes.sort((a, b) => a - b)
@@ -559,8 +591,12 @@ export function channelReferenceSlope(routing: FlowRouting, elevation: Float32Ar
 // extractor and by the riparian biomes — they disagreed silently before, which
 // would have drawn mountain rivers with no green along them.
 export function isChannelCell(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, cell: number, threshold: number, referenceSlope: number): boolean {
+  return isChannelCellOn(rasterSubstrate(routing), elevation, discharge, cell, threshold, referenceSlope)
+}
+
+export function isChannelCellOn(sub: FlowSubstrate, elevation: Float32Array, discharge: Float32Array, cell: number, threshold: number, referenceSlope: number): boolean {
   if (elevation[cell] <= SEA_LEVEL) return false
-  const boost = Math.pow(Math.max(receiverSlope(routing, elevation, cell), 1e-7) / referenceSlope, CHANNEL_SLOPE_EXPONENT)
+  const boost = Math.pow(Math.max(receiverSlopeOn(sub, elevation, cell), 1e-7) / referenceSlope, CHANNEL_SLOPE_EXPONENT)
   return discharge[cell] * boost >= threshold
 }
 
@@ -577,13 +613,17 @@ export function isChannelCell(routing: FlowRouting, elevation: Float32Array, dis
 // One pass over popOrder REVERSED (donors before receivers) is enough: each
 // channel cell marks its receiver, and the mark rides the chain to the coast.
 export function buildChannelMask(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number): Uint8Array {
-  const referenceSlope = channelReferenceSlope(routing, elevation, discharge, threshold)
-  const n = discharge.length
+  return buildChannelMaskOn(rasterSubstrate(routing), elevation, discharge, threshold)
+}
+
+export function buildChannelMaskOn(sub: FlowSubstrate, elevation: Float32Array, discharge: Float32Array, threshold: number): Uint8Array {
+  const referenceSlope = channelReferenceSlopeOn(sub, elevation, discharge, threshold)
+  const n = sub.count
   const channel = new Uint8Array(n)
   for (let cell = 0; cell < n; cell++) {
-    if (isChannelCell(routing, elevation, discharge, cell, threshold, referenceSlope)) channel[cell] = 1
+    if (isChannelCellOn(sub, elevation, discharge, cell, threshold, referenceSlope)) channel[cell] = 1
   }
-  const { popOrder, poppedCount, flowTarget } = routing
+  const { popOrder, poppedCount, flowTarget } = sub
   for (let k = poppedCount - 1; k >= 0; k--) {
     const cell = popOrder[k]
     if (!channel[cell]) continue

@@ -1,7 +1,7 @@
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
 import { toroidalDistanceSq } from '../core/toroidal'
 import { SURFACE_TUNING } from './surfaceTuneParams'
-import type { RiverGraph } from './riverGraph'
+import { rasterCellAt, type RiverGraph } from './riverGraph'
 
 // THE COAST AS A FEATURE (ADAPTIVE_MESH_PLAN.md F5, docs/design/coast.md
 // "Forerunner"): the shoreline cut into REACHES with attributes like a
@@ -102,6 +102,23 @@ function normaliseToP90(field: Float32Array, coast: Uint8Array): void {
   }
 }
 
+// The nearest coast cell to `cell` within `radius` cells (rings outward,
+// the first hit), or `cell` itself when none is.
+function nearestCoastCell(coast: Uint8Array, cell: number, width: number, height: number, radius: number): number {
+  const cx = cell % width
+  const cy = (cell - cx) / width
+  for (let r = 1; r <= radius; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
+        const c = (((cy + dy) % height + height) % height) * width + (((cx + dx) % width + width) % width)
+        if (coast[c]) return c
+      }
+    }
+  }
+  return cell
+}
+
 export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
   const { elevation, width, height, wind, climateResX, climateResY, hardness, graph, cellM } = input
   const n = width * height
@@ -130,8 +147,15 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
     for (const c of graph.courses ?? []) courseOf.set(c.reach, c.lobeAges.length > 0)
     for (const r of graph.reaches) {
       const node = graph.nodes[r.to]
-      if (node.kind !== 'mouth' || !isSea(node.cell)) continue
-      const last = graph.cells[r.cellStart + r.cellCount - 2]
+      // Graph places as raster cells: the graph may be the mesh's
+      // (phase 4.3), so its ids are read through their positions.
+      if (node.kind !== 'mouth' || !isSea(rasterCellAt(node.x, node.y, width, height))) continue
+      const k = r.cellStart + r.cellCount - 2
+      let last = k >= r.cellStart ? rasterCellAt(graph.cellX[k], graph.cellY[k], width, height) : undefined
+      // A mesh reach's last land node need not sit ON a raster coast cell
+      // (its nodes stand kilometres apart): the nearest coast cell within
+      // three cells is the mouth's.
+      if (last !== undefined && !coast[last]) last = nearestCoastCell(coast, last, width, height, 3)
       if (last === undefined || !coast[last]) continue
       if (mouthAt[last] < 0 || graph.reaches[mouthAt[last]].dischargeOut < r.dischargeOut) mouthAt[last] = r.id
       if (courseOf.get(r.id)) deltaAt[last] = 1

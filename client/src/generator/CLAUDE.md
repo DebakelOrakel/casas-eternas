@@ -27,8 +27,9 @@ mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay 
             from the triangulation, the run adapter), meshRaster (node fields sampled on a
             grid), meshSerial (the save's form: Hilbert numbering, varint connectivity,
             the canonical rebuild). The generator's erosion stage runs on it
-            (pipeline/meshErosionStage.ts) and the save carries it; the map and the
-            hydrology still read its 2048 rasterisation until 4.4
+            (pipeline/meshErosionStage.ts), the lakes and the river graph run on it
+            (meshHydrology: the flow substrate) and the save carries it; the map and the
+            raster consumers still read its 2048 rasterisation until 4.4
 planet/     the Planet stage's controls and their forcing (obliquity, orbit, sun, rotation) —
             what depends on the planet and not on the relief; the climate reads it
 mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends only
@@ -212,6 +213,14 @@ must erode to the same bytes as the session's — which is why positions are
 float32 on insert and the mesh is renumbered through the codec after every
 run (`mesh/meshSerial.compactMesh`). Do not hand the engine a mesh that has
 not been compacted and expect a reload to match.
+
+**The hydrology runs over a flow substrate** (phase 4.3, 2026-09-23).
+`surface/flowSubstrate.ts` is the one interface the discharge, the lakes, the
+channel criterion, the regime and the river graph read; the raster routing and
+the mesh are its instances. Write a new hydrology rule against the substrate
+(`…On(sub, …)`), never against `width`/`height` and cell arithmetic, and read a
+graph node's place from `node.x/y` or `cellX/cellY`, never from `cell` as a
+raster index — a mesh graph's cells are vertex ids.
 
 **The erosion engine runs on a graph, not on a grid** (phase 4.2, 2026-09-23).
 `EngineIndex` is a CSR neighbour table with a reach length, a Voronoi facet and

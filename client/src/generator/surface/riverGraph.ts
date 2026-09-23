@@ -1,6 +1,7 @@
 import type { FlowRouting } from './flowRouting'
+import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
-import { buildChannelMask, RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE } from './hydrology'
+import { buildChannelMaskOn, RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE } from './hydrology'
 import type { RegimeInputs, RiverPolylines, WaterBody } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import { WORLD_WIDTH_METERS } from './erosionEngine'
@@ -18,13 +19,16 @@ import type { RiverCourse } from './riverCourse'
 // catchment is recorded, which is the divide as data: the cells of the
 // world that drain to that mouth.
 //
-// Derived from the raster (the routing, the discharge, the water bodies)
-// deterministically, so it lives in the artifact store keyed like a bake
-// until the save IS the mesh (phase 4). The river ribbons the generator
-// draws are DERIVED from it (riverPolylinesFromGraph) rather than traced
-// from the D8 receivers a second time; where the graph agrees with the old
-// tracing the picture is the same, and where the old tracing broke a line
-// at an arbitrary trunk it now follows the main stem.
+// Derived from a FLOW SUBSTRATE (flowSubstrate.ts) — the raster's routing
+// or the mesh's (phase 4.3) — deterministically. A reach's `cells` are
+// that substrate's element ids (raster cells, or mesh vertex ids), and
+// every consumer that needs a place reads `cellX`/`cellY`, the elements'
+// texel positions carried beside them, never the id as a raster index.
+// The river ribbons the generator draws are DERIVED from it
+// (riverPolylinesFromGraph) rather than traced from the D8 receivers a
+// second time; where the graph agrees with the old tracing the picture is
+// the same, and where the old tracing broke a line at an arbitrary trunk
+// it now follows the main stem.
 //
 // One deliberate carry-over: a river still runs THROUGH a lake as a reach
 // of kind 'lake' from the inlet to the outlet, so the picture keeps the
@@ -89,10 +93,15 @@ export type RiverRegime = 'perennial' | 'intermittent' | 'ephemeral'
 export interface RiverGraph {
   width: number
   height: number
+  // Which substrate the cell ids index: raster cells or mesh vertices.
+  substrate: 'raster' | 'mesh'
   nodes: RiverNode[]
   reaches: RiverReach[]
   // Every reach's cells, concatenated in reach order (see RiverReach.cellStart).
   cells: Int32Array
+  // The texel position of every entry in `cells`.
+  cellX: Float32Array
+  cellY: Float32Array
   // The standing-water bodies the inlets and outlets refer to (phase 1).
   bodies: WaterBody[]
   // The course of every reach wide enough to show one (phase 3,
@@ -101,7 +110,9 @@ export interface RiverGraph {
 }
 
 export interface RiverGraphInputs {
-  routing: FlowRouting
+  // The raster's routing, or any substrate (the mesh's) — one of the two.
+  routing?: FlowRouting
+  substrate?: FlowSubstrate
   discharge: Float32Array
   elevation: Float32Array
   // The channel criterion, as the hydrology derives it (channelThreshold).
@@ -140,38 +151,29 @@ export function classifyRegime(discharge: number, loss: number, dry: number): Ri
   return 'perennial'
 }
 
-const SQRT2 = Math.SQRT2
 
 function riverWidth(discharge: number, maxDischarge: number): number {
   const scale = maxDischarge > 0 ? maxDischarge : 1
   return Math.min(RIVER_MAX_WIDTH, RIVER_MIN_WIDTH + (RIVER_MAX_WIDTH - RIVER_MIN_WIDTH) * Math.sqrt(discharge / scale))
 }
 
-// A step between two D8 neighbours on the torus: its length factor, or 0
-// when the two are not neighbours (which only a seam step looks like to a
-// naive difference — handled by wrapping).
-function stepFactor(a: number, b: number, width: number, height: number): number {
-  const ax = a % width
-  const ay = (a - ax) / width
-  const bx = b % width
-  const by = (b - bx) / width
-  let dx = Math.abs(bx - ax)
-  if (dx > width / 2) dx = width - dx
-  let dy = Math.abs(by - ay)
-  if (dy > height / 2) dy = height - dy
-  return dx && dy ? SQRT2 : 1
-}
 
 export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
-  const { routing, discharge, elevation, threshold, maxDischarge, bodies, body, lakeDepth } = input
-  const { width, height, flowTarget, popOrder, poppedCount } = routing
-  const n = width * height
+  const { discharge, elevation, threshold, maxDischarge, bodies, body, lakeDepth } = input
+  const sub = input.substrate ?? (input.routing ? rasterSubstrate(input.routing) : null)
+  if (!sub) throw new Error('buildRiverGraph: a routing or a substrate is needed')
+  const { width, height, flowTarget, popOrder, poppedCount, count: n } = sub
   const cellKm = WORLD_WIDTH_METERS / width / 1000
-  const channel = buildChannelMask(routing, elevation, discharge, threshold)
-  // Catchment sizes: land cells draining to each cell, all of them, not only
-  // channels — popOrder backward puts every donor before its receiver.
-  const area = new Int32Array(n)
-  for (let c = 0; c < n; c++) if (elevation[c] > SEA_LEVEL) area[c] = 1
+  const channel = buildChannelMaskOn(sub, elevation, discharge, threshold)
+  // Catchment sizes in CELLS: the land area draining to each element, all
+  // of it, not only channels — popOrder backward puts every donor before
+  // its receiver. An element's own area is the substrate's (a cell counts
+  // one; a mesh node its Voronoi cell), so the critical catchment reads
+  // the same on both — counting nodes made every headwater a wadi on the
+  // mesh, whose nodes stand four times closer than cells (×10 ephemeral
+  // reaches on the first golden run).
+  const area = new Float32Array(n)
+  for (let c = 0; c < n; c++) if (elevation[c] > SEA_LEVEL) area[c] = sub.area(c)
   for (let i = poppedCount - 1; i >= 0; i--) {
     const c = popOrder[i]
     const t = flowTarget[c]
@@ -220,10 +222,8 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
   const nodes: RiverNode[] = []
   const addNode = (cell: number, kind: RiverNodeKind, bodyId: number): number => {
     if (nodeAt[cell] >= 0) return nodeAt[cell]
-    const x = cell % width
-    const y = (cell - x) / width
     const id = nodes.length
-    nodes.push({ id, kind, cell, x: x + 0.5, y: y + 0.5, body: bodyId, catchmentCells: kind === 'mouth' || kind === 'inlet' ? area[cell] : 0 })
+    nodes.push({ id, kind, cell, x: sub.x(cell), y: sub.y(cell), body: bodyId, catchmentCells: kind === 'mouth' || kind === 'inlet' ? area[cell] : 0 })
     nodeAt[cell] = id
     return id
   }
@@ -277,7 +277,7 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
     for (;;) {
       const t = flowTarget[cur]
       if (t < 0) break
-      lengthKm += stepFactor(cur, t, width, height) * cellKm
+      lengthKm += sub.step(cur, t) * cellKm
       cellsOut.push(t)
       cur = t
       if (nodeAt[t] >= 0) break
@@ -353,7 +353,23 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
     if (--pending[next] === 0) queue.push(next)
   }
 
-  return { width, height, nodes, reaches, cells: Int32Array.from(cellsOut), bodies: bodies.slice() }
+  const cells = Int32Array.from(cellsOut)
+  const cellX = new Float32Array(cells.length)
+  const cellY = new Float32Array(cells.length)
+  for (let k = 0; k < cells.length; k++) {
+    cellX[k] = sub.x(cells[k])
+    cellY[k] = sub.y(cells[k])
+  }
+  return { width, height, substrate: sub.kind, nodes, reaches, cells, cellX, cellY, bodies: bodies.slice() }
+}
+
+// The raster cell under a texel position — how a raster consumer (the
+// coast, the sediment basins) places a graph node or reach cell, whatever
+// substrate the graph came from. On a raster graph it is the cell itself.
+export function rasterCellAt(x: number, y: number, width: number, height: number): number {
+  const cx = ((Math.floor(x) % width) + width) % width
+  const cy = ((Math.floor(y) % height) + height) % height
+  return cy * width + cx
 }
 
 // Seam test for consecutive line points: a jump of more than half the
@@ -449,8 +465,8 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number)
         for (let k = 0; k < r.cellCount; k++) {
           const cell = cells[r.cellStart + k]
           if (prevCell === cell) continue // the node cell shared with the previous reach
-          const cx = (cell % width) + 0.5
-          const cy = Math.floor(cell / width) + 0.5
+          const cx = graph.cellX[r.cellStart + k]
+          const cy = graph.cellY[r.cellStart + k]
           const t = r.cellCount > 1 ? k / (r.cellCount - 1) : 1
           emitXY(cx, cy, wIn + (wOut - wIn) * t)
           prevCell = cell
@@ -482,6 +498,10 @@ export interface SerializedRiverGraph {
   // Every course line and oxbow, concatenated [x, y, …]; the JSON's courses
   // carry (start, count) descriptors into it. Empty without courses.
   coursePoints: Float32Array
+  // The cells' texel positions, x y interleaved — only for a mesh graph
+  // (a raster graph's positions follow from its cells and are not
+  // written, so the artifact layout of the raster bake is unchanged).
+  positions?: Float32Array
 }
 
 // A course as it sits in the JSON: the lines and oxbows replaced by
@@ -489,7 +509,7 @@ export interface SerializedRiverGraph {
 type SerializedCourse = Omit<RiverCourse, 'lines' | 'oxbows'> & { lines: [number, number][]; oxbows: [number, number][] }
 
 export function serializeRiverGraph(graph: RiverGraph): SerializedRiverGraph {
-  const { cells, courses, ...rest } = graph
+  const { cells, cellX, cellY, courses, ...rest } = graph
   const chunks: Float32Array[] = []
   let offset = 0
   const describe = (line: Float32Array): [number, number] => {
@@ -505,12 +525,20 @@ export function serializeRiverGraph(graph: RiverGraph): SerializedRiverGraph {
     coursePoints.set(chunk, at)
     at += chunk.length
   }
-  return { json: JSON.stringify(serialCourses ? { ...rest, courses: serialCourses } : rest), cells, coursePoints }
+  let positions: Float32Array | undefined
+  if (graph.substrate === 'mesh') {
+    positions = new Float32Array(cells.length * 2)
+    for (let k = 0; k < cells.length; k++) {
+      positions[2 * k] = cellX[k]
+      positions[2 * k + 1] = cellY[k]
+    }
+  }
+  return { json: JSON.stringify(serialCourses ? { ...rest, courses: serialCourses } : rest), cells, coursePoints, positions }
 }
 
-export function deserializeRiverGraph(json: string, cells: Int32Array, coursePoints: Float32Array = new Float32Array(0)): RiverGraph | null {
+export function deserializeRiverGraph(json: string, cells: Int32Array, coursePoints: Float32Array = new Float32Array(0), positions?: Float32Array): RiverGraph | null {
   try {
-    const parsed = JSON.parse(json) as Omit<RiverGraph, 'cells' | 'courses'> & { courses?: SerializedCourse[] }
+    const parsed = JSON.parse(json) as Omit<RiverGraph, 'cells' | 'cellX' | 'cellY' | 'courses'> & { courses?: SerializedCourse[] }
     if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.reaches) || !Array.isArray(parsed.bodies)) return null
     const slice = ([start, count]: [number, number]): Float32Array => coursePoints.slice(start * 2, (start + count) * 2)
     const courses = parsed.courses?.map((c) => ({ ...c, lines: c.lines.map(slice), oxbows: c.oxbows.map(slice) }))
@@ -518,7 +546,25 @@ export function deserializeRiverGraph(json: string, cells: Int32Array, coursePoi
     // A graph written before F6 carries no regime: perennial, as the
     // builder without regime inputs says.
     for (const r of rest.reaches) if (r.regime === undefined) r.regime = 'perennial'
-    return courses ? { ...rest, cells, courses } : { ...rest, cells }
+    // A graph written before phase 4.3 is a raster graph; its positions
+    // follow from its cells. A mesh graph carries them.
+    const substrate = rest.substrate ?? 'raster'
+    const cellX = new Float32Array(cells.length)
+    const cellY = new Float32Array(cells.length)
+    if (substrate === 'raster') {
+      for (let k = 0; k < cells.length; k++) {
+        cellX[k] = (cells[k] % rest.width) + 0.5
+        cellY[k] = Math.floor(cells[k] / rest.width) + 0.5
+      }
+    } else if (positions && positions.length === cells.length * 2) {
+      for (let k = 0; k < cells.length; k++) {
+        cellX[k] = positions[2 * k]
+        cellY[k] = positions[2 * k + 1]
+      }
+    } else return null
+    const graph: RiverGraph = { ...rest, substrate, cells, cellX, cellY }
+    if (courses) graph.courses = courses
+    return graph
   } catch {
     return null
   }

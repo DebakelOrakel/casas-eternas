@@ -1,7 +1,7 @@
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import type { FlowRouting } from './flowRouting'
-import type { RiverGraph } from './riverGraph'
+import { rasterCellAt, type RiverGraph } from './riverGraph'
 
 // SEDIMENT BASINS AS FEATURES (ADAPTIVE_MESH_PLAN.md F1, decision 4a of
 // adaptive-mesh.md): where the erosion pass left material — the
@@ -151,8 +151,10 @@ export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinRes
   // coarse fields per mouth and hand each basin its mouths' catchments.
   if (graph && basins.length > 0) {
     const { flowTarget, popOrder, poppedCount } = routing
+    // Graph places as raster cells: the graph may be the mesh's (phase
+    // 4.3), so its ids are read through their positions.
     const mouthAt = new Int32Array(n).fill(-1)
-    for (const node of graph.nodes) if (node.kind === 'mouth') mouthAt[node.cell] = node.id
+    for (const node of graph.nodes) if (node.kind === 'mouth') mouthAt[rasterCellAt(node.x, node.y, width, height)] = node.id
     const drainsTo = new Int32Array(n).fill(-1)
     for (let k = 0; k < poppedCount; k++) {
       const c = popOrder[k]
@@ -175,8 +177,9 @@ export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinRes
     for (const r of graph.reaches) {
       const node = graph.nodes[r.to]
       if (node.kind !== 'mouth') continue
-      const last = graph.cells[r.cellStart + r.cellCount - 2]
-      const b = label[node.cell] || (last !== undefined ? label[last] : 0)
+      const k = r.cellStart + r.cellCount - 2
+      const last = k >= r.cellStart ? rasterCellAt(graph.cellX[k], graph.cellY[k], width, height) : undefined
+      const b = label[rasterCellAt(node.x, node.y, width, height)] || (last !== undefined ? label[last] : 0)
       if (!b) continue
       basins[b - 1].mouthReaches.push(r.id)
       fed[b - 1].cells += count[node.id]

@@ -105,14 +105,13 @@ export function classifyPattern(dischargeM3s: number, slope: number, lengthM: nu
 
 // The reach's cell path as a polyline in metres, unwrapped across the seams.
 function unwrappedPath(graph: RiverGraph, reach: RiverReach, cellM: number): Float64Array {
-  const { width, height, cells } = graph
+  const { width, height } = graph
   const out = new Float64Array(reach.cellCount * 2)
   let px = 0
   let py = 0
   for (let k = 0; k < reach.cellCount; k++) {
-    const cell = cells[reach.cellStart + k]
-    let x = (cell % width) + 0.5
-    let y = Math.floor(cell / width) + 0.5
+    let x = graph.cellX[reach.cellStart + k]
+    let y = graph.cellY[reach.cellStart + k]
     if (k > 0) {
       // Follow the previous point across the seam instead of jumping back.
       const dx = x - px

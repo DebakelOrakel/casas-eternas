@@ -65,6 +65,9 @@ const M = {
   erosion: await L('/src/generator/mesh/meshErosion.ts'),
   raster: await L('/src/generator/mesh/meshRaster.ts'),
   serial: await L('/src/generator/mesh/meshSerial.ts'),
+  meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
+  hydro: await L('/src/generator/surface/hydrology.ts'),
+  graph: await L('/src/generator/surface/riverGraph.ts'),
   engine: await L('/src/generator/surface/erosionEngine.ts'),
   forcing: await L('/src/generator/surface/erosionForcingFields.ts'),
   passV2: await L('/src/generator/surface/erosionPassV2.ts'),
@@ -437,6 +440,54 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   let differ = 0
   for (let v = 0; v < serial.count; v++) if (a.z[v] !== b.z[v]) differ++
   check('a reloaded mesh erodes to the session mesh\'s bytes', differ === 0, `${differ} nodes differ`)
+}
+
+// The hydrology on the mesh (phase 4.3, second half): discharge, lakes
+// and the river graph over the mesh's own routing, and the graph's
+// invariants (the phase-2 harness layer) on it.
+{
+  const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
+  const { mesh, order } = M.serial.compactMesh(built.mesh)
+  const z0 = M.serial.permute(built.state.get('z'), order)
+  const uplift = new Float32Array(mesh.vertexSlots)
+  const erodibility = new Float32Array(mesh.vertexSlots).fill(1)
+  const eroded = await M.erosion.runMeshErosion(mesh, z0, { uplift, erodibility }, { age: 12, routingEvery: 2 })
+  const areas = M.meshHydro.meshAreas(mesh)
+  const sub = M.meshHydro.meshSubstrate(mesh, eroded.routing, areas)
+  // A climate: uniform 1000 mm/yr, 15 °C, on a 16×8 climate grid.
+  const CRX = 16, CRY = 8
+  const precip = new Float32Array(CRX * CRY).fill(1000)
+  const temperature = new Float32Array(CRX * CRY).fill(15)
+  const discharge = M.hydro.accumulateDischargeOn(sub, eroded.z, precip, CRX, CRY)
+  let landArea = 0, maxQ = 0
+  for (const v of aliveVertices(mesh)) if (eroded.z[v] > 0) { landArea += areas[v]; maxQ = Math.max(maxQ, discharge[v]) }
+  check('the largest discharge is at most the land\'s whole runoff', maxQ <= 1000 * landArea * (1 + 1e-6) && maxQ > 0, `max ${maxQ.toFixed(0)} of ${(1000 * landArea).toFixed(0)}`)
+  const lakes = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature, precip, CRX, CRY)
+  let badLevel = 0, badSeed = 0
+  for (const b of lakes.bodies) {
+    if (!(b.level >= b.floor) || !(b.spill >= b.floor)) badLevel++
+    const t = mesh.locate(b.seedX, b.seedY)
+    const a = mesh.tris[3 * t], bb = mesh.tris[3 * t + 1], c = mesh.tris[3 * t + 2]
+    if (Math.min(eroded.z[a], eroded.z[bb], eroded.z[c]) > b.spill) badSeed++
+  }
+  check(`the lakes (${lakes.bodies.length} bodies) have levels between floor and spill and seeds in their basins`, badLevel === 0 && badSeed === 0, `${badLevel} levels, ${badSeed} seeds`)
+  const meanRunoff = 1000
+  const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), meanRunoff)
+  const maxDischarge = M.hydro.maxDischargeOverLand(discharge, eroded.z)
+  const graph = M.graph.buildRiverGraph({ substrate: sub, discharge, elevation: eroded.z, threshold, maxDischarge, bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux: eroded.sedimentFlux })
+  const violations = M.graph.riverGraphInvariants(graph, eroded.z)
+  const broken = Object.entries(violations).filter(([, n]) => n > 0)
+  check(`the river graph (${graph.reaches.length} reaches, ${graph.nodes.length} nodes) holds its invariants`, broken.length === 0 && graph.reaches.length > 0, broken.map(([k, n]) => `${k}:${n}`).join(' '))
+  check('the graph is the mesh\'s and carries positions', graph.substrate === 'mesh' && graph.cellX.length === graph.cells.length)
+  const lines = M.graph.riverPolylinesFromGraph(graph, maxDischarge)
+  let inside = true
+  for (let i = 0; i < lines.points.length; i += 3) if (lines.points[i] < 0 || lines.points[i] >= W || lines.points[i + 1] < 0 || lines.points[i + 1] >= H) inside = false
+  check(`the ribbons (${lines.lengths.length} lines) lie in the world`, inside && lines.lengths.length > 0)
+  const serial = M.graph.serializeRiverGraph(graph)
+  const back = M.graph.deserializeRiverGraph(serial.json, serial.cells, serial.coursePoints, serial.positions)
+  check('a mesh graph round-trips through its serialisation with positions', back !== null && back.cellX.length === graph.cellX.length && back.cellX[5] === graph.cellX[5])
+  const again = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature, precip, CRX, CRY)
+  check('the lakes are deterministic', JSON.stringify(again.bodies) === JSON.stringify(lakes.bodies))
 }
 
 // ------------------------------------------------------------ determinism

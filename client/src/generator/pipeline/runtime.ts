@@ -10,6 +10,8 @@ import { downstreamOf } from './stages'
 import type { StageId } from './stages'
 import { erodeOnMesh, type MeshTerrain } from './meshErosionStage'
 import { decodeMesh, encodeMesh } from '../mesh/meshSerial'
+import { meshAreas, meshRouting, meshSubstrate, waterFieldsFromMesh } from '../mesh/meshHydrology'
+import { rasterCellAt } from '../surface/riverGraph'
 import { torusDomain } from '../core/domain'
 import type { MeshPayload } from './messages'
 import type { WorkerLike } from '../surface/erosionEnginePool'
@@ -26,7 +28,8 @@ import { stabilisedFraction } from '../crust/raftField'
 import { worldAgeMa, worldEpoch } from '../core/worldTime'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from '../tectonics/oceanAge'
 import type { FlowRouting } from '../surface/flowRouting'
-import { accumulateDischarge, extractRiverPolylines, computeLakes, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold, waterLevelField, CANONICAL_RIVER_DENSITY, accumulateRegimeInputs, SURFACE_ICE } from '../surface/hydrology'
+import { accumulateDischarge, accumulateDischargeOn, extractRiverPolylines, computeLakes, computeLakesOn, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold, waterLevelField, CANONICAL_RIVER_DENSITY, accumulateRegimeInputs, accumulateRegimeInputsOn, SURFACE_ICE } from '../surface/hydrology'
+import type { LakeFields } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeWeather, defaultWeatherParams } from '../climate/weather'
@@ -202,6 +205,9 @@ interface HydrologyResult {
   // Ice thickness in metres (surface/iceFlow.ts, F4) on this raster —
   // the sheets and the largest valley glaciers at 7.8 km.
   ice: Float32Array | null
+  // The mesh's own hydrology when the world has a mesh (phase 4.3); the
+  // raster fields above are then its recovery.
+  onMesh: MeshHydrology | null
 }
 let hydrology: HydrologyResult | null = null
 
@@ -573,7 +579,28 @@ function serializeMeshTerrain(terrain: MeshTerrain): MeshPayload {
 
 function restoreMeshTerrain(payload: MeshPayload, width: number, height: number): MeshTerrain {
   const mesh = decodeMesh(torusDomain(width, height), { count: payload.count, nodes: new Float32Array(payload.nodes), connectivity: new Uint8Array(payload.connectivity) })
-  return { mesh, z: new Float32Array(payload.z) }
+  const z = new Float32Array(payload.z)
+  // The routing is derived, not carried: one refresh on the restored mesh.
+  return { mesh, z, routing: meshRouting(mesh, z), areas: meshAreas(mesh), sedimentFlux: new Float32Array(0) }
+}
+
+// THE HYDROLOGY ON THE MESH (phase 4.3): the lakes and the discharge over
+// the mesh's own routing, and the raster fields the cell-walking consumers
+// (the climate refinement, the riparian biomes, the map) still read,
+// rasterised from the nodes' bodies (meshHydrology.waterFieldsFromMesh) —
+// one truth, the bodies, two representations.
+interface MeshHydrology {
+  discharge: Float32Array
+  lakes: LakeFields
+  // The raster recovery of the bodies.
+  raster: { depth: Float32Array; saltFlat: Uint8Array; dryBasin: Uint8Array; frozen: Uint8Array; level: Float32Array; body: Int32Array; surface: Uint8Array }
+}
+
+function hydrologyOnMesh(terrain: MeshTerrain, elevationRaster: Float32Array, width: number, height: number, weather: ClimateResult): MeshHydrology {
+  const sub = meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
+  const discharge = accumulateDischargeOn(sub, terrain.z, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
+  const lakes = computeLakesOn(sub, discharge, terrain.z, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
+  return { discharge, lakes, raster: waterFieldsFromMesh(terrain.mesh, lakes.body, lakes.bodies, elevationRaster, width, height) }
 }
 
 function stopTicking(): void {
@@ -785,7 +812,10 @@ function handleHydrologyRun(): void {
       let maxDischarge = maxDischargeOverLand(discharge, elevation)
       let meanRunoff = meanLandRunoff(weather.precipitation, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
       {
-        let lakes = computeLakes(routing, discharge, elevation, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
+        // With the mesh, the lakes are the mesh's (hydrologyOnMesh); the
+        // raster routing above still serves the cell-walking consumers.
+        let onMesh = meshTerrain ? hydrologyOnMesh(meshTerrain, elevation, width, height, weather) : null
+        let lakes = onMesh ? { ...onMesh.raster, bodies: onMesh.lakes.bodies } : computeLakes(routing, discharge, elevation, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
         // CLIMATE REFINEMENT (v2, k=1): climate v1 was computed on the
         // PRE-EROSION terrain with the optimistic mask (every sub-sea cell =
         // water) — the stage sits before erosion since the stage-2 coupling.
@@ -812,8 +842,11 @@ function handleHydrologyRun(): void {
           discharge = accumulateDischarge(routing, elevation, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
           maxDischarge = maxDischargeOverLand(discharge, elevation)
           meanRunoff = meanLandRunoff(weather.precipitation, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
-          lakes = computeLakes(routing, discharge, elevation, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
+          onMesh = meshTerrain ? hydrologyOnMesh(meshTerrain, elevation, width, height, weather) : null
+          lakes = onMesh ? { ...onMesh.raster, bodies: onMesh.lakes.bodies } : computeLakes(routing, discharge, elevation, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
         }
+        // The graph's discharge scale: the substrate it is built on.
+        if (onMesh && meshTerrain) maxDischarge = maxDischargeOverLand(onMesh.discharge, meshTerrain.z)
         // Terrain truth: repaint the map with the dry basin floors as land
         // (salt band + basin rock, real hillshade). skipInvalidation — this
         // render shows the hydrology we JUST computed; dropping the result here
@@ -823,8 +856,9 @@ function handleHydrologyRun(): void {
         await renderAndPost(terrain, false, 1, true)
         result = {
           routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
-          bodies: lakes.bodies, level: lakes.level, surface: waterLevelField(lakes.bodies, elevation, width, height).surface, body: lakes.body,
+          bodies: lakes.bodies, level: lakes.level, surface: onMesh ? onMesh.raster.surface : waterLevelField(lakes.bodies, elevation, width, height).surface, body: lakes.body,
           maxDischarge, meanRunoff, graph: null, coast: null, sedimentBasins: [], ice: null,
+          onMesh,
         }
       }
       hydrology = result
@@ -857,15 +891,32 @@ function handleHydrologyRun(): void {
       // THE FEATURE GRAPH (phase 2): the network as data, with the riparian
       // biomes as bank material and the last erosion pass's sediment flux as
       // load. The ribbons below derive from it.
-      result.graph = buildRiverGraph({
-        routing: result.routing, discharge: result.discharge, elevation, threshold, maxDischarge: result.maxDischarge,
-        bodies: result.bodies, body: result.body, lakeDepth: result.lakeDepth,
-        sedimentFlux: lastSedimentFlux && lastSedimentFlux.length === elevation.length ? lastSedimentFlux : undefined,
-        biomes: riparian.biomes,
-        // The flow regime (F6) from the climate the lakes were flooded with.
-        regime: accumulateRegimeInputs(result.routing, elevation, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y),
-        criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
-      })
+      if (result.onMesh && meshTerrain) {
+        // On the mesh (phase 4.3): the graph from the mesh's own routing,
+        // discharge and lakes; the bank material sampled from the raster
+        // riparian biomes at each node.
+        const sub = meshSubstrate(meshTerrain.mesh, meshTerrain.routing, meshTerrain.areas)
+        const bankAtNode = new Uint8Array(meshTerrain.mesh.vertexSlots)
+        for (let v = 0; v < bankAtNode.length; v++) if (meshTerrain.mesh.vAlive[v]) bankAtNode[v] = riparian.biomes[rasterCellAt(meshTerrain.mesh.vx[v], meshTerrain.mesh.vy[v], width, height)]
+        result.graph = buildRiverGraph({
+          substrate: sub, discharge: result.onMesh.discharge, elevation: meshTerrain.z, threshold, maxDischarge: result.maxDischarge,
+          bodies: result.onMesh.lakes.bodies, body: result.onMesh.lakes.body, lakeDepth: result.onMesh.lakes.depth,
+          sedimentFlux: meshTerrain.sedimentFlux.length === meshTerrain.mesh.vertexSlots ? meshTerrain.sedimentFlux : undefined,
+          biomes: bankAtNode,
+          regime: accumulateRegimeInputsOn(sub, meshTerrain.z, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y),
+          criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
+        })
+      } else {
+        result.graph = buildRiverGraph({
+          routing: result.routing, discharge: result.discharge, elevation, threshold, maxDischarge: result.maxDischarge,
+          bodies: result.bodies, body: result.body, lakeDepth: result.lakeDepth,
+          sedimentFlux: lastSedimentFlux && lastSedimentFlux.length === elevation.length ? lastSedimentFlux : undefined,
+          biomes: riparian.biomes,
+          // The flow regime (F6) from the climate the lakes were flooded with.
+          regime: accumulateRegimeInputs(result.routing, elevation, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y),
+          criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
+        })
+      }
       // THE RIVER COURSE (phase 3): pattern, meanders, braids and deltas per
       // reach, seeded from the world so a world always gets the same bends.
       result.graph.courses = computeRiverCourses(result.graph, { cellM: WORLD_WIDTH_METERS / width, seed: sim.warpSeed })
