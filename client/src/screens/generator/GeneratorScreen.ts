@@ -2666,6 +2666,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       eccentricity: DEFAULT_PLANET_FORCING.eccentricity,
       precessionDeg: DEFAULT_PLANET_FORCING.precessionDeg,
       solarConstant: DEFAULT_PLANET_FORCING.solarConstant,
+      landPlantsFromMa: DEFAULT_PLANET_FORCING.landPlantsFromMa,
       rotationHours: Number(rotationInput.value),
     },
   })

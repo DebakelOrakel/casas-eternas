@@ -58,7 +58,8 @@ crust/      continental crust as rafts — deliberately decoupled from the plate
 elevation/  elevationScale (what a height MEANS), elevationField, domainWarp, ridgedNoise
 surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), erosionPassV2,
             hydrology, riverGraph (the feature graph), riverCourse, coastGraph, sedimentBasins,
-            iceFlow, amplify, runAmplification
+            iceFlow, cover (phase 5.5: the vegetation's hold per biome — one table for the
+            erodibility, the critical slope and the river banks), amplify, runAmplification
 climate/ ecology/ migration/ render/
 ```
 

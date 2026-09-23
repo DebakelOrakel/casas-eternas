@@ -1,3 +1,4 @@
+import { COVER_TUNING } from './cover'
 import { MinHeap } from '../core/minHeap'
 import { MAP_WIDTH, METERS_PER_CELL } from '../core/mapConfig'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
@@ -209,6 +210,9 @@ export interface ErosionForcing {
   // to record volumes alone (the raster drivers do).
   cratonAge?: Float32Array
   rockHard?: Float32Array
+  // The vegetation cover per node in [0, 1] (phase 5.5, surface/cover.ts);
+  // the hillslope's critical slope rises with it. Omit to run bare.
+  cover?: Float32Array
 }
 
 const EPSILON_FLOOD_STEP = 1e-7
@@ -249,6 +253,8 @@ export interface KernelParams {
   upliftDt: number
   hillDiffKm2: number
   criticalSlope: number
+  // The critical slope's rise under a full cover (COVER_TUNING).
+  coverSlopeRise: number
   marineDiffDt: number
   cellM: number
 }
@@ -258,6 +264,7 @@ export function kernelParamsFor(refM: number, params: ErosionEngineParams): Kern
     upliftDt: params.upliftDt,
     hillDiffKm2: params.hillDiffKm2,
     criticalSlope: params.criticalSlope,
+    coverSlopeRise: COVER_TUNING.criticalSlopeRise,
     marineDiffDt: params.marineDiffDt,
     cellM: refM,
   }
@@ -411,7 +418,7 @@ export function kernelUplift(v: EngineViews, a0: number, a1: number, kp: KernelP
 // sea from both sides; on the raster (GRID8) when the lower-indexed
 // endpoint is land, the old east/south rule (see the module comment).
 export function kernelHillMoves(v: EngineViews, a0: number, a1: number, kp: KernelParams): void {
-  const { z, nbr, nbrStart, diffFactor, lenRel, areaRel, edgeMove, flags } = v
+  const { z, nbr, nbrStart, diffFactor, lenRel, areaRel, edgeMove, flags, cover } = v
   const grid8 = flags[FLAG_GRID8] !== 0
   const refM2 = kp.cellM * kp.cellM
   const diffM2 = kp.hillDiffKm2 * 1e6
@@ -437,7 +444,9 @@ export function kernelHillMoves(v: EngineViews, a0: number, a1: number, kp: Kern
         continue
       }
       const slope = (Math.abs(dz) * ELEVATION_METERS) / (kp.cellM * lenRel[e])
-      const ratio = Math.min(0.95, slope / kp.criticalSlope)
+      // A rooted face holds steeper (phase 5.5): the critical slope rises
+      // with the node's cover; bare (cover 0) is exactly the old rule.
+      const ratio = Math.min(0.95, slope / (kp.criticalSlope * (1 + kp.coverSlopeRise * cover[cell])))
       const boost = 1 / (1 - ratio * ratio)
       const coefficient = Math.min(diffM2 * geom * Math.min(boost, 12), DIFFUSION_PAIR_CAP * Math.min(ownArea, areaRel[nb] * refM2))
       edgeMove[e] = coefficient * dz
@@ -1257,6 +1266,7 @@ export function loadTerrain(index: EngineIndex, views: Omit<TerrainViews, 'buffe
   }
   if (forcing.cratonAge) gatherActive(index, forcing.cratonAge, views.cratonAge)
   if (forcing.rockHard) gatherActive(index, forcing.rockHard, views.rockHard)
+  if (forcing.cover) gatherActive(index, forcing.cover, views.cover)
 }
 
 // The routing refresh in one place for every driver: seeds, flood, the

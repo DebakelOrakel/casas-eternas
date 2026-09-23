@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-23
+- **new** Tectonics: vegetation holds the ground — forested land erodes less and stands steeper than bare rock, desert and tundra barely more than bare, and a river's banks are held by the same cover. `generator.panel.tectonics`
 - **new** Tectonics: the climate runs with the history — every epoch has its own weather on the terrain of the moment, the rain of that epoch is what carves it, ice grows where the epoch is cold and draws the sea down while it stands, lakes remember how long they have stood, and every sediment layer keeps the climate it formed under. `generator.panel.tectonics`
 - **new** Tectonics: the crust floats — a range that erodes rises back, a basin that fills sinks, and the weight of a range bends the plate beside it into a foreland basin; old cratons bend least, young ocean floor most. `generator.panel.tectonics`
 - **new** Tectonics: rivers carry gravel and mud apart — torrents shed the coarse, which settles in fans near the range and wears to fine on its way, while the fine runs far — and a deposit may dam its valley into a lake that silts up to a plain. `generator.panel.tectonics`

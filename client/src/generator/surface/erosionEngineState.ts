@@ -280,6 +280,10 @@ export interface TerrainViews {
   fluxCoarse: Float32Array
   mouthCoarse: Float32Array
   depositCoarse: Float32Array
+  // The vegetation cover per node in [0, 1] (phase 5.5, surface/cover.ts):
+  // the hillslope's critical slope rises with it. Zero when the caller
+  // passes none (the raster drivers) — the kernels then read as before.
+  cover: Float32Array
   // Per-worker reduction slots: residual, eroded volume, exported volume.
   maxStepW: Float64Array
   erodedW: Float64Array
@@ -381,10 +385,10 @@ export function terrainBufferBytes(activeCount: number, edgeCount: number): numb
   // erosionVolume, accumulationWeights, flux, donorMin, mouthFlux, mouthZ,
   // cutVolume, depositVolume, depositCraton, depositHard, fluxCraton,
   // fluxHard, mouthCraton, mouthHard, cratonAge, rockHard, erosionCoarse,
-  // fluxCoarse, mouthCoarse, depositCoarse (24a); u8: coastMask,
+  // fluxCoarse, mouthCoarse, depositCoarse, cover (25a); u8: coastMask,
   // statusMask (2a); i32 flags(16); f64 maxStepW, erodedW, exportedW
   // (3 × 64); alignment slack.
-  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 24 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
+  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 25 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
 }
 
 export function routingBufferBytes(activeCount: number, edgeCount: number): number {
@@ -440,6 +444,7 @@ export function createTerrainViews(activeCount: number, edgeCount: number, buffe
     fluxCoarse: take(Float32Array, a),
     mouthCoarse: take(Float32Array, a),
     depositCoarse: take(Float32Array, a),
+    cover: take(Float32Array, a),
     maxStepW: take(Float64Array, 64),
     erodedW: take(Float64Array, 64),
     exportedW: take(Float64Array, 64),
@@ -535,6 +540,7 @@ export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFro
     fluxCoarse: terrain.fluxCoarse,
     mouthCoarse: terrain.mouthCoarse,
     depositCoarse: terrain.depositCoarse,
+    cover: terrain.cover,
     maxStepW: terrain.maxStepW,
     erodedW: terrain.erodedW,
     exportedW: terrain.exportedW,

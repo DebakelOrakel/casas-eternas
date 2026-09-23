@@ -15,6 +15,10 @@ import { computeCratonOldnessField } from '../crust/raftField'
 import { deflectionAt, elasticThicknessKm, flexuralResponse } from '../tectonics/flexure'
 import { sampleOceanAge } from '../tectonics/oceanAge'
 import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
+import { computeBiomes } from '../climate/biomes'
+import { coverField, COVER_TUNING } from '../surface/cover'
+import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
+import { worldAgeMa } from '../core/worldTime'
 import { computeIceThickness } from '../surface/iceFlow'
 import { rasteriseNodeField } from '../mesh/meshRaster'
 import { meshSubstrate } from '../mesh/meshHydrology'
@@ -165,6 +169,9 @@ export interface CoupledEpochStats {
   seaLevelM: number
   lakes: number
   oldestLakeMa: number
+  // The vegetation cover's mean over the land (phase 5.5), 0 before the
+  // land-plants moment.
+  meanLandCover: number
   events: SimEvent[]
   nodesBefore: number
   nodesAfter: number
@@ -336,6 +343,13 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // taken out of the ocean's area — applied to z after the erosion below.
   const seaLevelM = oceanCells > 0 ? -(iceVolumeM3 * 0.917) / (oceanCells * climateCellM2) : 0
   const meanLandTempC = landClimateCells > 0 ? landTempSum / landClimateCells : 0
+  // THE COVER (phase 5.5): the epoch's coarse biomes, as the vegetation
+  // that holds the ground — once the planet's schedule has land plants.
+  const weatherParams = options.weather ?? defaultWeatherParams()
+  const plantsFromMa = (weatherParams.planet ?? DEFAULT_PLANET_FORCING).landPlantsFromMa
+  const plantsPresent = worldAgeMa(sim.archeanEpochs, sim.epoch) >= plantsFromMa
+  const biomes = computeBiomes(weather.temperature, precipitation, weather.seasonalAmplitude, weather.seasonal.index, coarseZ, CLIMATE_RES_X, CLIMATE_RES_Y)
+  const cover = coverField(biomes, plantsPresent)
   timing.climate = lap()
   // Erosion for the epoch, with the tectonics' forcing at the nodes, the
   // epoch's water, and the rates scaled to the step.
@@ -352,15 +366,25 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const cratonField = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, width, height)
   const cratonAge = new Float32Array(mesh.vertexSlots)
   const rockHard = new Float32Array(mesh.vertexSlots)
+  const nodeCover = new Float32Array(mesh.vertexSlots)
   const layers = column.epochs.length
+  let coverSum = 0
+  let coverArea = 0
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
     cratonAge[v] = upsampleAt(cratonField, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
     rockHard[v] = upsampleAt(hardness, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
-    forcing.erodibility[v] = erodibilityOver(column.data, v, layers, forcing.erodibility[v])
+    // The cover holds the ground: the erodibility falls with it, after the
+    // column's word (a fill under forest is soft fill, held).
+    const c = zCanon[v] > 0 ? upsampleAt(cover, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height) : 0
+    nodeCover[v] = c
+    forcing.erodibility[v] = erodibilityOver(column.data, v, layers, forcing.erodibility[v]) * (1 - COVER_TUNING.erodibilityDrop * c)
+    if (zCanon[v] > 0) { coverSum += c * areas[v]; coverArea += areas[v] }
   }
+  const meanLandCover = coverArea > 0 ? coverSum / coverArea : 0
   forcing.cratonAge = cratonAge
   forcing.rockHard = rockHard
+  forcing.cover = nodeCover
   const epochMa = sim.epochMa || TECTONIC_MA_PER_EPOCH
   const dtScale = (epochMa * 1e6 / options.iterationsPerEpoch) / ITERATION_YEARS
   const scaled = scaleEngineParamsForDt({ ...params, epsM: 0 }, dtScale)
@@ -512,7 +536,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   }
   const areaM2 = new Float64Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) areaM2[v] = areas[v] * cellM2
-  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, meanLandTempC, iceVolumeKm3, seaLevelM, lakes: ages.length, oldestLakeMa, timing }
+  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, meanLandTempC, iceVolumeKm3, seaLevelM, lakes: ages.length, oldestLakeMa, meanLandCover, timing }
 }
 
 // The terrain's bytes for a save or a harness hash.

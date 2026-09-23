@@ -14,6 +14,10 @@ export interface PlanetForcing {
   // Fraction of Earth's solar constant.
   solarConstant: number
   rotationHours: number
+  // THE LAND-PLANTS MOMENT (phase 5.5, the Planet stage's schedule): the
+  // world age in Myr from which vegetation covers the land (surface/
+  // cover.ts). Zero — from the start — until the schedule is a control.
+  landPlantsFromMa: number
 }
 
 // The orbit is not a control (planetInputParams.ts): Earth's eccentricity
@@ -30,6 +34,7 @@ export const DEFAULT_PLANET_FORCING: PlanetForcing = {
   precessionDeg: EQUINOX_PERIHELION_DEG,
   solarConstant: EARTH_SOLAR_CONSTANT,
   rotationHours: PLANET_INPUTS.rotation.default,
+  landPlantsFromMa: 0,
 }
 
 const RAD = Math.PI / 180

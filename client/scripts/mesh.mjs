@@ -71,6 +71,10 @@ const M = {
   coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
   column: await L('/src/generator/mesh/meshColumn.ts'),
   flexure: await L('/src/generator/tectonics/flexure.ts'),
+  cover: await L('/src/generator/surface/cover.ts'),
+  biomes: await L('/src/generator/climate/biomes.ts'),
+  weather: await L('/src/generator/climate/weather.ts'),
+  planet: await L('/src/generator/planet/planetForcing.ts'),
   archean: await L('/src/generator/archean/archeanState.ts'),
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
   finalize: await L('/src/generator/archean/finalizeArchean.ts'),
@@ -665,6 +669,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   let valid = true, finite = true
   let ledger = 0, columnVolume = 0, supplyBounded = true, rebound = 0, subsidence = 0, climateSane = true
   const climateTrace = []
+  const coverTrace = []
   const t1 = performance.now()
   for (let e = 0; e < EPOCHS; e++) {
     const te = performance.now()
@@ -675,6 +680,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     columnVolume = stats.columnVolumeM3
     if (stats.reboundMaxM > rebound) rebound = stats.reboundMaxM
     if (stats.subsidenceMaxM > subsidence) subsidence = stats.subsidenceMaxM
+    coverTrace.push(stats.meanLandCover)
     climateTrace.push(`${stats.meanLandTempC.toFixed(1)}°C ice ${stats.iceVolumeKm3.toFixed(0)} km³ sea ${stats.seaLevelM.toFixed(2)} m lakes ${stats.lakes} (oldest ${stats.oldestLakeMa} Ma) ${(stats.timing.climate / 1000).toFixed(1)}+${(stats.timing.lakes / 1000).toFixed(1)} s`)
     if (!Number.isFinite(stats.meanLandTempC) || stats.meanLandTempC < -60 || stats.meanLandTempC > 60 || stats.iceVolumeKm3 < 0 || stats.seaLevelM > 0) climateSane = false
     // No aggradation from nothing (the 2026-07-27 mode): what the walk
@@ -725,6 +731,16 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   // climate products read back as the temperature it formed under.
   console.log(`       ${climateTrace.join(' | ')}`)
   check('every epoch has a sane climate (land temperature, ice ≥ 0, sea level ≤ 0)', climateSane)
+  // The cover (phase 5.5): from the start, the land carries vegetation
+  // that holds it; a world whose plants are still to come runs bare.
+  check(`the land carries a cover (mean ${coverTrace.map((c) => c.toFixed(2)).join(' ')})`, coverTrace.every((c) => c > 0.05 && c <= 1))
+  check('a forest holds more than a desert', M.cover.COVER_BY_BIOME[M.biomes.Biome.TemperateForest] > M.cover.COVER_BY_BIOME[M.biomes.Biome.Desert])
+  {
+    const simBare = await world()
+    const bare = M.coupled.createCoupledTerrain(simBare)
+    const st = await M.coupled.stepCoupledEpoch(simBare, bare, { iterationsPerEpoch: ITER, weather: { ...M.weather.defaultWeatherParams(), planet: { ...M.planet.DEFAULT_PLANET_FORCING, landPlantsFromMa: 1e9 } } })
+    check('before the land-plants moment the land is bare', st.meanLandCover === 0)
+  }
   check(`the sim records the climate history (${sim.climateHistory.length} epochs)`, sim.climateHistory.length === EPOCHS && sim.climateHistory.every((r) => Number.isFinite(r.meanLandTempC) && r.iceVolumeKm3 >= 0))
   check(`the sea level is the ice's (${sim.eustaticM.toFixed(3)} m)`, sim.eustaticM <= 0 && sim.eustaticM === sim.climateHistory[sim.climateHistory.length - 1].seaLevelM)
   check(`no lake is older than the history (${sim.lakeAges.length} lakes)`, sim.lakeAges.every((l) => l.ageMa > 0 && l.ageMa <= EPOCHS * sim.epochMa))

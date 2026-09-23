@@ -1,5 +1,5 @@
+import { COVER_BY_BIOME } from './cover'
 import { mulberry32 } from '../core/rng'
-import { Biome } from '../climate/biomes'
 import { dischargeToM3s } from './hydrology'
 import type { RiverGraph, RiverReach } from './riverGraph'
 
@@ -75,11 +75,9 @@ export interface RiverCourseOptions {
 
 // Bank strength by biome: what vegetation does to a bank's erodibility. A
 // first table, by eye; the cover factor of phase 5 replaces it.
-const BANK_STRENGTH: Record<number, number> = {
-  [Biome.Ocean]: 0.2, [Biome.Ice]: 0.2, [Biome.Tundra]: 0.35, [Biome.Boreal]: 0.7, [Biome.Grassland]: 0.5,
-  [Biome.Woodland]: 0.7, [Biome.TemperateForest]: 0.85, [Biome.TemperateRainforest]: 0.9, [Biome.Desert]: 0.2,
-  [Biome.Savanna]: 0.45, [Biome.TropicalRainforest]: 0.9, [Biome.Alpine]: 0.4, [Biome.SaltFlat]: 0.2, [Biome.Glacier]: 0.2,
-}
+// The bank strength IS the cover (surface/cover.ts, phase 5.5): one table
+// for the banks, the fluvial erodibility and the critical slope.
+const BANK_STRENGTH = COVER_BY_BIOME
 
 // Hydraulic geometry (Leopold & Maddock): width and depth as powers of the
 // bankfull discharge, metres for m³/s.
