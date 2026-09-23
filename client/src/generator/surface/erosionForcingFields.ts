@@ -111,6 +111,7 @@ export function engineParamsFor(controls: ErosionControlsV2): ErosionEngineParam
     settleXiKm: DEFAULT_ENGINE_PARAMS.settleXiKm * settleScale,
     settleFloorKm: DEFAULT_ENGINE_PARAMS.settleFloorKm * settleScale,
     settleMarineKm: DEFAULT_ENGINE_PARAMS.settleMarineKm * settleScale,
+    settleCoarseKm: DEFAULT_ENGINE_PARAMS.settleCoarseKm * settleScale,
     shelfBandKm: DEFAULT_ENGINE_PARAMS.shelfBandKm * settleScale,
   }
 }

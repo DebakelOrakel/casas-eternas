@@ -110,6 +110,8 @@ state. Serialized by `serializePlateSimulation` (`plateSimulation.ts`), restored
   epoch,                         // tectonic epoch reached
   epochMa,                       // the epoch's length in Myr (the tectonics panel's
                                  // epochLength; absent in older saves → 1)
+  sedimentExportM3,              // sediment the history exported to the deep ocean, m³
+                                 // (phase 5.2b tally; absent in older saves → 0)
   warpSeed,                      // domain-warp seed for the elevation field
   supercontinentActive,          // latch for the supercontinent milestone event
   continentalRiftCooldownUntil,  // breakup staging-interval bookkeeping

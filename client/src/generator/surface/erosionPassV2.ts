@@ -5,7 +5,7 @@ import {
   type ErosionEngineParams,
   type ErosionForcing,
 } from './erosionEngine'
-import { expandActive } from './erosionEngineState'
+import { expandActive, type EngineIndex } from './erosionEngineState'
 import { PipelinedErosionEngine, type PipelineOptions, type WorkerLike } from './erosionEnginePool'
 import { engineFlowRouting } from './erosionEngineBridge'
 
@@ -94,7 +94,7 @@ export async function runErosionPassV2(
         preFillElevations: engine.expandZ(rawElevations),
         routing: engineFlowRouting(engine.activeEngineViews, engine.index, popped, elevations),
         accumulation: expandActive(engine.index, engine.activeEngineViews.accumulation, 0),
-        sedimentFlux: expandActive(engine.index, engine.activeEngineViews.flux, 0),
+        sedimentFlux: totalFlux(engine.index, engine.activeEngineViews),
       }
     } finally {
       await engine.close()
@@ -118,6 +118,14 @@ export async function runErosionPassV2(
     preFillElevations: engine.expandZ(rawElevations),
     routing: engineFlowRouting(engine.views, engine.index, engine.poppedCount, elevations),
     accumulation: expandActive(engine.index, engine.views.accumulation, 0),
-    sedimentFlux: expandActive(engine.index, engine.views.flux, 0),
+    sedimentFlux: totalFlux(engine.index, engine.views),
   }
+}
+
+// The flux through every cell, both classes (phase 5.2b: `flux` is the
+// fine class, `fluxCoarse` the coarse), on the full raster.
+function totalFlux(index: EngineIndex, views: { flux: Float32Array; fluxCoarse: Float32Array }): Float32Array {
+  const sum = new Float32Array(views.flux.length)
+  for (let i = 0; i < sum.length; i++) sum[i] = views.flux[i] + views.fluxCoarse[i]
+  return expandActive(index, sum, 0)
 }

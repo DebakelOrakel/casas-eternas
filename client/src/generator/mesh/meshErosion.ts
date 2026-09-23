@@ -61,6 +61,8 @@ export interface MeshErosionResult {
   // source hardness) — the column's input (mesh/meshColumn.ts).
   cutM3: Float32Array
   depositM3: Float32Array
+  // The coarse part of the deposit (phase 5.2b), m³.
+  depositCoarseM3: Float32Array
   depositCraton: Float32Array
   depositHard: Float32Array
 }
@@ -319,8 +321,11 @@ export async function runMeshErosion(mesh: PeriodicTriangulation, initial: Float
   return collect(engine.views, index, engine.poppedCount, initial, engine.erodedFluxM3, engine.exportedFluxM3)
 }
 
-function collect(views: { z: Float32Array; filled: Float32Array; flowTarget: Int32Array; accumulation: Float32Array; popOrder: Int32Array; flux: Float32Array; cutVolume: Float32Array; depositVolume: Float32Array; depositCraton: Float32Array; depositHard: Float32Array }, index: EngineIndex, popped: number, initial: Float32Array, eroded: number, exported: number): MeshErosionResult {
+function collect(views: { z: Float32Array; filled: Float32Array; flowTarget: Int32Array; accumulation: Float32Array; popOrder: Int32Array; flux: Float32Array; fluxCoarse: Float32Array; cutVolume: Float32Array; depositVolume: Float32Array; depositCoarse: Float32Array; depositCraton: Float32Array; depositHard: Float32Array }, index: EngineIndex, popped: number, initial: Float32Array, eroded: number, exported: number): MeshErosionResult {
   const { active, activeCount } = index
+  // Both classes: the consumers read one flux.
+  const flux = new Float32Array(activeCount)
+  for (let a = 0; a < activeCount; a++) flux[a] = views.flux[a] + views.fluxCoarse[a]
   const flowTarget = new Int32Array(index.cellCount).fill(-1)
   for (let a = 0; a < activeCount; a++) {
     const t = views.flowTarget[a]
@@ -337,12 +342,13 @@ function collect(views: { z: Float32Array; filled: Float32Array; flowTarget: Int
       popOrder,
       poppedCount: popped,
     },
-    sedimentFlux: expandActive(index, views.flux, 0),
+    sedimentFlux: expandActive(index, flux, 0),
     erodedFluxM3: eroded,
     exportedFluxM3: exported,
     index,
     cutM3: expandActive(index, views.cutVolume, 0),
     depositM3: expandActive(index, views.depositVolume, 0),
+    depositCoarseM3: expandActive(index, views.depositCoarse, 0),
     depositCraton: expandActive(index, views.depositCraton, 0),
     depositHard: expandActive(index, views.depositHard, 0),
   }

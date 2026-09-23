@@ -318,9 +318,17 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     const depositM3 = result.depositM3[v]
     if (depositM3 > 0) {
       depositedM3 += depositM3
-      deposit(column, v, depositM3 / areaM2, result.depositCraton[v] / depositM3, result.depositHard[v] / depositM3)
+      const craton = result.depositCraton[v] / depositM3
+      const hard = result.depositHard[v] / depositM3
+      const coarseM3 = result.depositCoarseM3[v]
+      deposit(column, v, (depositM3 - coarseM3) / areaM2, craton, hard, false)
+      deposit(column, v, coarseM3 / areaM2, craton, hard, true)
     }
   }
+  // The export tally (decision C of 5.2, 2026-09-23): what left the shelf
+  // band for the deep ocean, summed over the history on the sim — the
+  // crust takes it as a load in 5.3; nothing feeds back yet.
+  sim.sedimentExportM3 += result.exportedFluxM3
   timing.erosion = lap()
   terrain.mesh = mesh
   terrain.column = column

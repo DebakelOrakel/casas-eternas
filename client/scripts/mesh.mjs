@@ -634,7 +634,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const EPOCHS = 5, ITER = 4
   const trace = []
   let valid = true, finite = true
-  let ledger = 0, columnVolume = 0
+  let ledger = 0, columnVolume = 0, supplyBounded = true
   const t1 = performance.now()
   for (let e = 0; e < EPOCHS; e++) {
     const te = performance.now()
@@ -643,6 +643,9 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && !Number.isFinite(terrain.z[v])) finite = false
     ledger += stats.depositedM3 - stats.reErodedM3
     columnVolume = stats.columnVolumeM3
+    // No aggradation from nothing (the 2026-07-27 mode): what the walk
+    // lays down plus what leaves the world is at most what came loose.
+    if (stats.depositedM3 + stats.exportedFluxM3 > stats.erodedFluxM3 * 1.001 + 1) supplyBounded = false
     trace.push(`${stats.nodesAfter}n −${stats.removed} +${stats.inserted} land ${(stats.landCells / (CW * CH) * 100).toFixed(1)}% vol ${(stats.landVolume * 9).toFixed(0)} col ${(stats.columnVolumeM3 / 1e9).toFixed(1)} km³ ${(performance.now() - te).toFixed(0)}ms`)
   }
   const perEpoch = (performance.now() - t1) / EPOCHS
@@ -664,12 +667,33 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     // provenance products never exceed their thickness (oldness and the
     // hardness story are ≤ ~2, so the ratio stays in range).
     let negative = 0
+    const byValue = [0, 0, 0, 0]
+    let worst = 0
     const d = terrain.column.data
     for (let v = 0; v < terrain.mesh.vertexSlots; v++) {
       if (!terrain.mesh.vAlive[v]) continue
-      for (let k = 0; k < M.column.COLUMN_DEPTH; k++) if (d[v * M.column.COLUMN_DEPTH + k] < 0) negative++
+      for (let k = 0; k < M.column.COLUMN_DEPTH; k++) {
+        const x = d[v * M.column.COLUMN_DEPTH + k]
+        if (x < 0) { negative++; byValue[k % M.column.COLUMN_VALUES]++; if (x < worst) worst = x }
+      }
     }
-    check('no layer value goes negative', negative === 0, `${negative}`)
+    check('no layer value goes negative', negative === 0, `${negative} (fine/coarse/craton/hard ${byValue.join('/')}, worst ${worst})`)
+  }
+  check('every epoch\'s deposits are bounded by its supply (no aggradation from nothing)', supplyBounded)
+  {
+    // Two classes (5.2b): the torrents shed coarse, the plains fine; both
+    // reach the column, the fine the larger part.
+    let fine = 0, coarse = 0
+    const d = terrain.column.data
+    for (let v = 0; v < terrain.mesh.vertexSlots; v++) {
+      if (!terrain.mesh.vAlive[v]) continue
+      for (let layer = 0; layer < terrain.column.epochs.length; layer++) {
+        fine += d[v * M.column.COLUMN_DEPTH + layer * M.column.COLUMN_VALUES]
+        coarse += d[v * M.column.COLUMN_DEPTH + layer * M.column.COLUMN_VALUES + 1]
+      }
+    }
+    check(`the column holds both classes (coarse ${(coarse / (fine + coarse) * 100).toFixed(1)} % of the thickness)`, fine > 0 && coarse > 0)
+    check(`the export tally grows on the sim (${(sim.sedimentExportM3 / 1e9).toFixed(1)} km³)`, sim.sedimentExportM3 > 0)
   }
   // Determinism: the same world, the same epochs, the same bytes.
   const sim2 = await world()

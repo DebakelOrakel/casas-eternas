@@ -22,6 +22,10 @@ export interface PlateSimulation {
   // Million years one epoch spans (phase 5.1): the erosion's time per plate
   // step, and the ocean floor's age in Ma for the subsidence.
   epochMa: number
+  // Sediment the history exported past the shelf band into the deep ocean,
+  // m³, summed over the coupled epochs (phase 5.2b) — a tally until the
+  // crust takes it as a load (5.3).
+  sedimentExportM3: number
   // Plate count as configured at creation — the target the plate-count
   // homeostasis (PLATE_COUNT_PRESSURE_STRENGTH) steers back toward as
   // rift/merge events change seeds.length over time.
@@ -109,6 +113,8 @@ export interface PlateSimulation {
 export interface PlateSimulationSnapshot {
   // Absent in a save written before phase 5.1: one.
   epochMa?: number
+  // Absent in a save written before phase 5.2b: zero.
+  sedimentExportM3?: number
   // Absent in saves written before the Archean phase existed; treated as 0.
   archeanEpochs?: number
   // Absent in saves written before the water knob existed; treated as 0.

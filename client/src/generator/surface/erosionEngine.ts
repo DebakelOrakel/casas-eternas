@@ -120,6 +120,15 @@ export interface ErosionEngineParams {
   settleXiKm: number
   settleFloorKm: number
   settleMarineKm: number
+  // TWO GRAIN CLASSES (phase 5.2b, decision 15): a cut's coarse share is
+  // the channel slope over `coarseSlope` (steep torrents shed gravel,
+  // rivers on a plain shed mud), the coarse class settles over the short
+  // `settleCoarseKm` on land and under water alike (fans at the range
+  // front, sand at the coast), and abrades into the fine class along the
+  // way — Sternberg, an e-folding over `abrasionKm` of reach.
+  settleCoarseKm: number
+  coarseSlope: number
+  abrasionKm: number
   // A delta plain aggrades to just above the waterline, then progrades.
   marineFreeboardM: number
   // Per-iteration deposition caps, metres of column — numerics, not
@@ -158,6 +167,9 @@ export const DEFAULT_ENGINE_PARAMS: ErosionEngineParams = {
   settleXiKm: 1.0,
   settleFloorKm: 20,
   settleMarineKm: 8,
+  settleCoarseKm: 8,
+  coarseSlope: 0.05,
+  abrasionKm: 200,
   marineFreeboardM: 2,
   depositCapLandM: 10,
   depositCapMarineM: 30,
@@ -804,6 +816,10 @@ function leafRange(v: EngineViews, workerId: number, workerCount: number): [numb
 function fluvialCell(v: EngineViews, cell: number, params: ErosionEngineParams, cellM: number, cellKm2: number): number {
   const { z, flowTarget, flowDir, nbrStart, lenRel, areaRel, accumulation, erodibility, erosionVolume } = v
   erosionVolume[cell] = 0
+  // Reset with it: a cell that cuts nothing this iteration must not hand
+  // the walk last iteration's coarse share (measured as sediment from
+  // nothing on the harness world).
+  v.erosionCoarse[cell] = 0
   const old = z[cell]
   if (old <= 0) return 0
   const target = flowTarget[cell]
@@ -818,6 +834,10 @@ function fluvialCell(v: EngineViews, cell: number, params: ErosionEngineParams, 
   z[cell] = znew
   erosionVolume[cell] = cut * ELEVATION_METERS * cellKm2 * areaRel[cell] * 1e6
   v.cutVolume[cell] += erosionVolume[cell]
+  // The coarse share of what came loose: the channel slope over the
+  // coarse slope, one at a torrent, near zero on a plain.
+  const slope = ((old - zr) * ELEVATION_METERS) / (distKm * 1000)
+  v.erosionCoarse[cell] = erosionVolume[cell] * Math.min(1, slope / params.coarseSlope)
   return cut
 }
 
@@ -861,19 +881,40 @@ export function kernelFluvialLeaf(v: EngineViews, workerId: number, workerCount:
 // feeds it) and, under water, by the freeboard (a delta aggrades to the
 // surface, then progrades). Returns what leaves the cell; the caller
 // decides where it goes (the receiver, a mailbox, or the export tally).
-// The provenance rides with the flux as products (fluxCraton/fluxHard, the
-// cut adds its node's own); a deposit takes its share of both, the rest
-// goes on. `carry` is the walk's scratch: [0] the residual, [1] and [2]
-// the products leaving the cell — read by the caller right after.
+// Two classes ride the walk (phase 5.2b): `flux` is the FINE class,
+// `fluxCoarse` the coarse; the cut adds its own split (erosionCoarse); the
+// coarse abrades into the fine over the reach (Sternberg) and settles
+// short. The provenance rides with the total as products (fluxCraton/
+// fluxHard, the cut adds its node's own); a deposit takes its share of
+// both classes and of the products, the rest goes on. `carry` is the
+// walk's scratch: [0] the residual, [1] and [2] the products leaving the
+// cell, [3] the coarse part of what leaves — read by the caller right
+// after; the return is the total leaving.
+//
+// THE CAP (decision 15): on the raster (GRID8) the donor floor — no
+// deposit may dam the valley that feeds it, since a dammed valley would
+// be a lake the raster's router cannot see — and under water the
+// freeboard. On the mesh the donor floor goes: a fan may dam its valley,
+// the flood then sees the basin and its level (`filled`, the spill), and
+// a node under that level fills to it plus the freeboard and no further —
+// a lake silts up to a plain, it does not aggrade without bound.
 function sedimentCell(v: EngineViews, cell: number, params: ErosionEngineParams, cellM: number, cellKm2: number, columnM3: number, capLandM3: number, capMarineM3: number, carry: Float64Array): number {
-  const { z, flowTarget, flowDir, nbrStart, lenRel, areaRel, accumulation, erosionVolume, flux, donorMin, flags } = v
-  let carrying = flux[cell] + erosionVolume[cell]
+  const { z, filled, flowTarget, flowDir, nbrStart, lenRel, areaRel, accumulation, erosionVolume, erosionCoarse, flux, fluxCoarse, donorMin, flags } = v
+  // Float32 rounding of the two classes' sum and difference along the walk
+  // can leave a class a hair under zero; clamped here, or a deposit's
+  // share of the total would exceed one and the provenance products would
+  // run away (measured: −1e11 on the harness world before the clamp).
+  let fine = Math.max(0, flux[cell] + erosionVolume[cell] - erosionCoarse[cell])
+  let coarse = Math.max(0, fluxCoarse[cell] + erosionCoarse[cell])
+  let carrying = fine + coarse
   let pCraton = v.fluxCraton[cell] + erosionVolume[cell] * v.cratonAge[cell]
   let pHard = v.fluxHard[cell] + erosionVolume[cell] * v.rockHard[cell]
   carry[1] = pCraton
   carry[2] = pHard
+  carry[3] = coarse
   if (carrying <= 0) return carrying
   const land = z[cell] > 0
+  const grid8 = flags[FLAG_GRID8] !== 0
   const settle = land
     ? Math.max(params.settleFloorKm, params.settleXiKm * Math.sqrt(accumulation[cell] * cellKm2 + params.baseAreaKm2))
     : params.settleMarineKm
@@ -882,31 +923,56 @@ function sedimentCell(v: EngineViews, cell: number, params: ErosionEngineParams,
   // node (no receiver) settles over one reference length; so does every
   // raster cell (GRID8), diagonal or not — the old rule, see the module
   // comment.
-  const reachKm = (cellM / 1000) * (flowTarget[cell] >= 0 && flags[FLAG_GRID8] === 0 ? lenRel[nbrStart[cell] + flowDir[cell]] : 1)
-  const dropFraction = 1 - Math.exp(-reachKm / settle)
-  let deposit = carrying * dropFraction
+  const reachKm = (cellM / 1000) * (flowTarget[cell] >= 0 && !grid8 ? lenRel[nbrStart[cell] + flowDir[cell]] : 1)
+  // Abrasion first: the coarse that becomes fine over this reach travels
+  // on as fine from here.
+  if (coarse > 0) {
+    const abraded = coarse * (1 - Math.exp(-reachKm / params.abrasionKm))
+    coarse -= abraded
+    fine += abraded
+  }
+  let depositFine = fine * (1 - Math.exp(-reachKm / settle))
+  let depositCoarse = coarse * (1 - Math.exp(-reachKm / params.settleCoarseKm))
+  let deposit = depositFine + depositCoarse
   const area = areaRel[cell]
   const column = columnM3 * area
-  const donorCap = donorMin[cell] - 1e-5
-  const cap = land ? donorCap : Math.min(donorCap, params.marineFreeboardM / ELEVATION_METERS)
+  const freeboard = params.marineFreeboardM / ELEVATION_METERS
+  let cap: number
+  if (grid8) {
+    const donorCap = donorMin[cell] - 1e-5
+    cap = land ? donorCap : Math.min(donorCap, freeboard)
+  } else if (land) {
+    cap = filled[cell] > z[cell] + 1e-6 ? filled[cell] + freeboard : Infinity
+  } else {
+    cap = freeboard
+  }
   const room = (cap - z[cell]) * column
-  if (deposit > room) deposit = Math.max(0, room)
   const capM3 = (land ? capLandM3 : capMarineM3) * area
-  if (deposit > capM3) deposit = capM3
+  const allowed = Math.min(Math.max(0, room), capM3)
+  if (deposit > allowed) {
+    const scale = deposit > 0 ? allowed / deposit : 0
+    depositFine *= scale
+    depositCoarse *= scale
+    deposit = allowed
+  }
   if (deposit > 0) {
     const dz = deposit / column
     z[cell] += dz
-    const share = deposit / carrying
+    const share = Math.min(1, deposit / carrying)
     v.depositVolume[cell] += deposit
+    v.depositCoarse[cell] += depositCoarse
     v.depositCraton[cell] += pCraton * share
     v.depositHard[cell] += pHard * share
     pCraton -= pCraton * share
     pHard -= pHard * share
     carry[1] = pCraton
     carry[2] = pHard
+    fine -= depositFine
+    coarse -= depositCoarse
     carrying -= deposit
     if (land && dz > carry[0]) carry[0] = dz
   }
+  carry[3] = coarse
   return carrying
 }
 
@@ -916,12 +982,12 @@ function sedimentCell(v: EngineViews, cell: number, params: ErosionEngineParams,
 // receiver at all, is exported. Residual and tallies into the worker's
 // slots.
 export function kernelSedimentLeaf(v: EngineViews, workerId: number, workerCount: number, params: ErosionEngineParams, cellM: number): void {
-  const { z, flowTarget, erosionVolume, flux, donorMin, mouthFlux, mouthZ, fluxCraton, fluxHard, mouthCraton, mouthHard, segOrder, segStart, segLeaf, maxStepW, erodedW, exportedW } = v
+  const { z, flowTarget, erosionVolume, flux, fluxCoarse, donorMin, mouthFlux, mouthCoarse, mouthZ, fluxCraton, fluxHard, mouthCraton, mouthHard, segOrder, segStart, segLeaf, maxStepW, erodedW, exportedW } = v
   const cellKm2 = (cellM / 1000) * (cellM / 1000)
   const columnM3 = ELEVATION_METERS * cellKm2 * 1e6
   const capLandM3 = params.depositCapLandM * cellKm2 * 1e6
   const capMarineM3 = params.depositCapMarineM * cellKm2 * 1e6
-  const residual = new Float64Array(3)
+  const residual = new Float64Array(4)
   const [from, to] = leafRange(v, workerId, workerCount)
   let eroded = 0
   let exported = 0
@@ -932,6 +998,7 @@ export function kernelSedimentLeaf(v: EngineViews, workerId: number, workerCount
     for (let k = start; k < end; k++) {
       const cell = segOrder[k]
       flux[cell] = 0
+      fluxCoarse[cell] = 0
       fluxCraton[cell] = 0
       fluxHard[cell] = 0
       donorMin[cell] = Infinity
@@ -941,7 +1008,8 @@ export function kernelSedimentLeaf(v: EngineViews, workerId: number, workerCount
       const cell = segOrder[k]
       const carrying = sedimentCell(v, cell, params, cellM, cellKm2, columnM3, capLandM3, capMarineM3, residual)
       const target = flowTarget[cell]
-      flux[target] += carrying
+      flux[target] += carrying - residual[3]
+      fluxCoarse[target] += residual[3]
       fluxCraton[target] += residual[1]
       fluxHard[target] += residual[2]
       if (z[cell] < donorMin[target]) donorMin[target] = z[cell]
@@ -949,12 +1017,14 @@ export function kernelSedimentLeaf(v: EngineViews, workerId: number, workerCount
     const root = segOrder[start]
     const carrying = sedimentCell(v, root, params, cellM, cellKm2, columnM3, capLandM3, capMarineM3, residual)
     if (flowTarget[root] >= 0) {
-      mouthFlux[seg] = carrying
+      mouthFlux[seg] = carrying - residual[3]
+      mouthCoarse[seg] = residual[3]
       mouthCraton[seg] = residual[1]
       mouthHard[seg] = residual[2]
       mouthZ[seg] = z[root]
     } else {
       mouthFlux[seg] = 0
+      mouthCoarse[seg] = 0
       mouthCraton[seg] = 0
       mouthHard[seg] = 0
       if (carrying > 0) exported += carrying
@@ -970,18 +1040,19 @@ export function kernelSedimentLeaf(v: EngineViews, workerId: number, workerCount
 // same for any worker split), then the serial-stage cells walk donor-first
 // in popOrder. Returns the residual; adds to the coordinator's tallies.
 export function sedimentSerial(v: EngineViews, popped: number, params: ErosionEngineParams, cellM: number, s: CoordinatorScratch): number {
-  const { z, flowTarget, erosionVolume, flux, donorMin, mouthFlux, mouthZ, fluxCraton, fluxHard, mouthCraton, mouthHard, popOrder, stage, segOrder, segStart, segLeaf, routingMeta } = v
+  const { z, flowTarget, erosionVolume, flux, fluxCoarse, donorMin, mouthFlux, mouthCoarse, mouthZ, fluxCraton, fluxHard, mouthCraton, mouthHard, popOrder, stage, segOrder, segStart, segLeaf, routingMeta } = v
   const cellKm2 = (cellM / 1000) * (cellM / 1000)
   const columnM3 = ELEVATION_METERS * cellKm2 * 1e6
   const capLandM3 = params.depositCapLandM * cellKm2 * 1e6
   const capMarineM3 = params.depositCapMarineM * cellKm2 * 1e6
-  const residual = new Float64Array(3)
+  const residual = new Float64Array(4)
   let eroded = 0
   let exported = 0
   for (let i = 0; i < popped; i++) {
     const cell = popOrder[i]
     if (stage[cell] !== 1) continue
     flux[cell] = 0
+    fluxCoarse[cell] = 0
     fluxCraton[cell] = 0
     fluxHard[cell] = 0
     donorMin[cell] = Infinity
@@ -993,6 +1064,7 @@ export function sedimentSerial(v: EngineViews, popped: number, params: ErosionEn
     const target = flowTarget[segOrder[segStart[seg]]]
     if (target < 0) continue
     flux[target] += mouthFlux[seg]
+    fluxCoarse[target] += mouthCoarse[seg]
     fluxCraton[target] += mouthCraton[seg]
     fluxHard[target] += mouthHard[seg]
     if (mouthZ[seg] < donorMin[target]) donorMin[target] = mouthZ[seg]
@@ -1003,7 +1075,8 @@ export function sedimentSerial(v: EngineViews, popped: number, params: ErosionEn
     const carrying = sedimentCell(v, cell, params, cellM, cellKm2, columnM3, capLandM3, capMarineM3, residual)
     const target = flowTarget[cell]
     if (target >= 0) {
-      flux[target] += carrying
+      flux[target] += carrying - residual[3]
+      fluxCoarse[target] += residual[3]
       fluxCraton[target] += residual[1]
       fluxHard[target] += residual[2]
       if (z[cell] < donorMin[target]) donorMin[target] = z[cell]

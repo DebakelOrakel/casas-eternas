@@ -141,6 +141,7 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
     epoch: 0,
     archeanEpochs: archean.epoch,
     epochMa: 1,
+    sedimentExportM3: 0,
     seaLevelOffset,
     random,
     warpSeed: archean.warpSeed,

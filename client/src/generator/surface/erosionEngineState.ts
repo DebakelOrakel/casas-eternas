@@ -273,6 +273,13 @@ export interface TerrainViews {
   mouthHard: Float32Array
   cratonAge: Float32Array
   rockHard: Float32Array
+  // The coarse class (phase 5.2b): the coarse part of a node's cut this
+  // iteration, the coarse flux arriving (`flux` is the fine class), the
+  // leaf mailboxes' coarse part, and the run-long coarse deposit.
+  erosionCoarse: Float32Array
+  fluxCoarse: Float32Array
+  mouthCoarse: Float32Array
+  depositCoarse: Float32Array
   // Per-worker reduction slots: residual, eroded volume, exported volume.
   maxStepW: Float64Array
   erodedW: Float64Array
@@ -373,10 +380,11 @@ export function terrainBufferBytes(activeCount: number, edgeCount: number): numb
   // mfdFactor, edgeMove (4e), areaRel, z, uplift, erodibility,
   // erosionVolume, accumulationWeights, flux, donorMin, mouthFlux, mouthZ,
   // cutVolume, depositVolume, depositCraton, depositHard, fluxCraton,
-  // fluxHard, mouthCraton, mouthHard, cratonAge, rockHard (20a); u8:
-  // coastMask, statusMask (2a); i32 flags(16); f64 maxStepW, erodedW,
-  // exportedW (3 × 64); alignment slack.
-  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 20 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
+  // fluxHard, mouthCraton, mouthHard, cratonAge, rockHard, erosionCoarse,
+  // fluxCoarse, mouthCoarse, depositCoarse (24a); u8: coastMask,
+  // statusMask (2a); i32 flags(16); f64 maxStepW, erodedW, exportedW
+  // (3 × 64); alignment slack.
+  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 24 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
 }
 
 export function routingBufferBytes(activeCount: number, edgeCount: number): number {
@@ -428,6 +436,10 @@ export function createTerrainViews(activeCount: number, edgeCount: number, buffe
     mouthHard: take(Float32Array, a),
     cratonAge: take(Float32Array, a),
     rockHard: take(Float32Array, a),
+    erosionCoarse: take(Float32Array, a),
+    fluxCoarse: take(Float32Array, a),
+    mouthCoarse: take(Float32Array, a),
+    depositCoarse: take(Float32Array, a),
     maxStepW: take(Float64Array, 64),
     erodedW: take(Float64Array, 64),
     exportedW: take(Float64Array, 64),
@@ -519,6 +531,10 @@ export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFro
     mouthHard: terrain.mouthHard,
     cratonAge: terrain.cratonAge,
     rockHard: terrain.rockHard,
+    erosionCoarse: terrain.erosionCoarse,
+    fluxCoarse: terrain.fluxCoarse,
+    mouthCoarse: terrain.mouthCoarse,
+    depositCoarse: terrain.depositCoarse,
     maxStepW: terrain.maxStepW,
     erodedW: terrain.erodedW,
     exportedW: terrain.exportedW,
