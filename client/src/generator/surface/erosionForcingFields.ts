@@ -207,3 +207,24 @@ export function assembleNodeForcing(
   }
   return { forcing: { uplift, erodibility, coastMask, accumulationWeights }, params: engineParamsFor(controls) }
 }
+
+// The engine's rates for an iteration LONGER than the calibrated one
+// (erosionEngine.ITERATION_YEARS): every per-iteration rate scales with
+// the step, the caps with it — the coupled history (phase 5) runs a few
+// long iterations per epoch where the pass ran forty short ones. The
+// implicit stream power is stable at any step; the explicit hillslope and
+// marine exchange are capped per pair (erosionEngine.DIFFUSION_PAIR_CAP),
+// so at a large step they saturate rather than blow up — a bias the
+// calibration measures, not a fault. `dtScale` is the step over the
+// calibrated one.
+export function scaleEngineParamsForDt(params: ErosionEngineParams, dtScale: number): ErosionEngineParams {
+  return {
+    ...params,
+    kappaDt: params.kappaDt * dtScale,
+    upliftDt: params.upliftDt * dtScale,
+    hillDiffKm2: params.hillDiffKm2 * dtScale,
+    marineDiffDt: params.marineDiffDt * dtScale,
+    depositCapLandM: params.depositCapLandM * dtScale,
+    depositCapMarineM: params.depositCapMarineM * dtScale,
+  }
+}

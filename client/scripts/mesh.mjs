@@ -68,6 +68,10 @@ const M = {
   meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
   sampler: await L('/src/generator/mesh/meshSampler.ts'),
   bake: await L('/src/generator/pipeline/meshBakeStage.ts'),
+  coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
+  archean: await L('/src/generator/archean/archeanState.ts'),
+  archeanStep: await L('/src/generator/archean/archeanStep.ts'),
+  finalize: await L('/src/generator/archean/finalizeArchean.ts'),
   artifacts: await L('/src/world/meshArtifacts.ts'),
   memory: await L('/src/storage/MemoryArtifactStore.ts'),
   store: await L('/src/storage/ArtifactStore.ts'),
@@ -606,6 +610,58 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const back = read ? M.artifacts.meshLevelMesh(read.artifact, W, H) : null
   check('the level artifact writes and reads back to the same mesh and heights', wrote && read !== null && back !== null && meshHash(back) === meshHash(level.mesh) && read.artifact.z.every((v, i) => v === level.z[i]) && (read.artifact.graph?.reaches.length ?? -1) === level.graph.reaches.length)
   check('the mesh pipeline version carries the density rule', M.artifacts.meshPipelineVersion(1, 4) !== M.artifacts.meshPipelineVersion(1, 5) && M.artifacts.meshPipelineVersion(1, 4) !== M.artifacts.meshPipelineVersion(2, 4))
+}
+
+// The coupled epoch (phase 5.1): a small real world through the handover,
+// then epochs in which the plates move the nodes, the mesh is rebuilt
+// and remeshed, the baseline follows the tectonics and the erosion runs
+// on the relief — every epoch valid, finite, deterministic.
+{
+  const CW = 256, CH = 128
+  const world = async () => {
+    const archean = M.archean.createArcheanSimulation('coupled', CW, CH)
+    for (let e = 0; e < 60; e++) M.archeanStep.archeanStep(archean)
+    return M.finalize.finalizeArchean(archean)
+  }
+  const sim = await world()
+  const t0 = performance.now()
+  const terrain = M.coupled.createCoupledTerrain(sim)
+  const buildMs = performance.now() - t0
+  check(`the coupled terrain starts as a valid mesh (${terrain.mesh.aliveVertices} nodes, ${buildMs.toFixed(0)} ms)`, terrain.mesh.validate().length === 0)
+  let land0 = 0
+  for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && terrain.z[v] > 0) land0++
+  const EPOCHS = 5, ITER = 4
+  const trace = []
+  let valid = true, finite = true
+  const t1 = performance.now()
+  for (let e = 0; e < EPOCHS; e++) {
+    const te = performance.now()
+    const stats = await M.coupled.stepCoupledEpoch(sim, terrain, { iterationsPerEpoch: ITER })
+    if (terrain.mesh.validate().length > 0) valid = false
+    for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && !Number.isFinite(terrain.z[v])) finite = false
+    trace.push(`${stats.nodesAfter}n −${stats.removed} +${stats.inserted} land ${(stats.landCells / (CW * CH) * 100).toFixed(1)}% vol ${(stats.landVolume * 9).toFixed(0)} ${(performance.now() - te).toFixed(0)}ms`)
+  }
+  const perEpoch = (performance.now() - t1) / EPOCHS
+  check(`${EPOCHS} coupled epochs keep the mesh valid`, valid)
+  check('every height stays finite', finite)
+  console.log(`       ${trace.join(' | ')}`)
+  check(`an epoch costs under 20 s at this size (${perEpoch.toFixed(0)} ms, ${ITER} iterations)`, perEpoch < 20000)
+  let landN = 0
+  for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && terrain.z[v] > 0) landN++
+  check(`land persists through the epochs (${land0} → ${landN} land nodes)`, landN > land0 * 0.5)
+  // Determinism: the same world, the same epochs, the same bytes.
+  const sim2 = await world()
+  const terrain2 = M.coupled.createCoupledTerrain(sim2)
+  for (let e = 0; e < EPOCHS; e++) await M.coupled.stepCoupledEpoch(sim2, terrain2, { iterationsPerEpoch: ITER })
+  const a = M.coupled.encodeCoupledTerrain(terrain), b = M.coupled.encodeCoupledTerrain(terrain2)
+  check('the same history gives the same terrain bytes', a.z.length === b.z.length && a.z.every((v, i) => v === b.z[i]) && a.nodes.every((v, i) => v === b.nodes[i]), `${a.z.length} vs ${b.z.length} nodes`)
+  // A terrain restored from its bytes continues identically for one epoch.
+  const restored = M.coupled.decodeCoupledTerrain(sim2, b)
+  const simA = sim, simB = sim2
+  const sa = await M.coupled.stepCoupledEpoch(simA, terrain, { iterationsPerEpoch: ITER })
+  const sb = await M.coupled.stepCoupledEpoch(simB, restored, { iterationsPerEpoch: ITER })
+  const za = terrain.z, zb = restored.z
+  check('a restored terrain steps to the same bytes', za.length === zb.length && za.every((v, i) => v === zb[i]) && sa.nodesAfter === sb.nodesAfter)
 }
 
 // ------------------------------------------------------------ determinism

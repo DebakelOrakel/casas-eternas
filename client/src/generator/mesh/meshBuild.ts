@@ -61,6 +61,22 @@ export function densityTarget(state: MeshState, budget = 1, unitsToM = METERS_PE
   }
 }
 
+// A triangulation of a given point set — the coupled loop's rebuild after
+// the nodes moved with their plates (pipeline/coupledEpoch.ts): the same
+// nodes, in the given order, so vertex i of the result is point i (a
+// point coinciding with an earlier one collapses onto it and maps to that
+// vertex — `mapping` says which). Built by insertion into the bootstrap
+// lattice in the order given, the lattice removed after; the caller runs
+// the remesh for what the motion crowded or stretched.
+export function triangulatePoints(domain: Domain, xs: ArrayLike<number>, ys: ArrayLike<number>, count: number, latticeSpacing: number): { mesh: PeriodicTriangulation; mapping: Int32Array } {
+  const mesh = hexLattice(domain, latticeSpacing)
+  const latticeCount = mesh.vertexSlots
+  const mapping = new Int32Array(count)
+  for (let i = 0; i < count; i++) mapping[i] = mesh.insert(xs[i], ys[i])
+  for (let v = 0; v < latticeCount; v++) if (mesh.vAlive[v]) mesh.remove(v)
+  return { mesh, mapping }
+}
+
 export function buildMesh(domain: Domain, sampler: FieldSampler, options: BuildOptions, unitsToM = METERS_PER_CELL): BuiltMesh {
   const budget = options.budget ?? 1
   const mesh = hexLattice(domain, (MESH_TUNING.oceanSpacingM * budget) / unitsToM)

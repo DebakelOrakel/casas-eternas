@@ -50,5 +50,6 @@
   "common.confirm.discard.title": "Unsaved changes",
   "common.confirm.discard.new": "This world is saved nowhere yet. If you leave it, it is gone.",
   "common.confirm.discard.unsaved": "This world changed since the last save. If you leave it, the changes are gone.",
-  "common.confirm.discard.action.discard": "Discard"
+  "common.confirm.discard.action.discard": "Discard",
+  "common.unit.millionYears": "Myr"
 }
