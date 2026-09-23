@@ -1,4 +1,3 @@
-import { COVER_TUNING } from './cover'
 import { MinHeap } from '../core/minHeap'
 import { MAP_WIDTH, METERS_PER_CELL } from '../core/mapConfig'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
@@ -210,9 +209,11 @@ export interface ErosionForcing {
   // to record volumes alone (the raster drivers do).
   cratonAge?: Float32Array
   rockHard?: Float32Array
-  // The vegetation cover per node in [0, 1] (phase 5.5, surface/cover.ts);
-  // the hillslope's critical slope rises with it. Omit to run bare.
-  cover?: Float32Array
+  // The hillslope's per-node scales (phases 5.5, 5.6): the critical slope's
+  // multiplier (cover and lithology) and the diffusivity's (solifluction).
+  // Omit for one everywhere — the kernel as it was.
+  slopeScale?: Float32Array
+  diffScale?: Float32Array
 }
 
 const EPSILON_FLOOD_STEP = 1e-7
@@ -253,8 +254,6 @@ export interface KernelParams {
   upliftDt: number
   hillDiffKm2: number
   criticalSlope: number
-  // The critical slope's rise under a full cover (COVER_TUNING).
-  coverSlopeRise: number
   marineDiffDt: number
   cellM: number
 }
@@ -264,7 +263,6 @@ export function kernelParamsFor(refM: number, params: ErosionEngineParams): Kern
     upliftDt: params.upliftDt,
     hillDiffKm2: params.hillDiffKm2,
     criticalSlope: params.criticalSlope,
-    coverSlopeRise: COVER_TUNING.criticalSlopeRise,
     marineDiffDt: params.marineDiffDt,
     cellM: refM,
   }
@@ -418,7 +416,7 @@ export function kernelUplift(v: EngineViews, a0: number, a1: number, kp: KernelP
 // sea from both sides; on the raster (GRID8) when the lower-indexed
 // endpoint is land, the old east/south rule (see the module comment).
 export function kernelHillMoves(v: EngineViews, a0: number, a1: number, kp: KernelParams): void {
-  const { z, nbr, nbrStart, diffFactor, lenRel, areaRel, edgeMove, flags, cover } = v
+  const { z, nbr, nbrStart, diffFactor, lenRel, areaRel, edgeMove, flags, slopeScale, diffScale } = v
   const grid8 = flags[FLAG_GRID8] !== 0
   const refM2 = kp.cellM * kp.cellM
   const diffM2 = kp.hillDiffKm2 * 1e6
@@ -444,11 +442,11 @@ export function kernelHillMoves(v: EngineViews, a0: number, a1: number, kp: Kern
         continue
       }
       const slope = (Math.abs(dz) * ELEVATION_METERS) / (kp.cellM * lenRel[e])
-      // A rooted face holds steeper (phase 5.5): the critical slope rises
-      // with the node's cover; bare (cover 0) is exactly the old rule.
-      const ratio = Math.min(0.95, slope / (kp.criticalSlope * (1 + kp.coverSlopeRise * cover[cell])))
+      // The node's own scales (phases 5.5, 5.6): a rooted or hard face
+      // holds steeper, a cold one creeps faster; one is exactly the old rule.
+      const ratio = Math.min(0.95, slope / (kp.criticalSlope * slopeScale[cell]))
       const boost = 1 / (1 - ratio * ratio)
-      const coefficient = Math.min(diffM2 * geom * Math.min(boost, 12), DIFFUSION_PAIR_CAP * Math.min(ownArea, areaRel[nb] * refM2))
+      const coefficient = Math.min(diffM2 * diffScale[cell] * geom * Math.min(boost, 12), DIFFUSION_PAIR_CAP * Math.min(ownArea, areaRel[nb] * refM2))
       edgeMove[e] = coefficient * dz
     }
   }
@@ -458,7 +456,7 @@ export function kernelHillMoves(v: EngineViews, a0: number, a1: number, kp: Kern
 // and received, over its area; the residual goes to the caller's maxStepW
 // slot.
 export function kernelHillApply(v: EngineViews, a0: number, a1: number, kp: KernelParams, workerId: number): void {
-  const { z, nbr, nbrStart, edgeRev, areaRel, edgeMove, maxStepW } = v
+  const { z, nbr, nbrStart, edgeRev, areaRel, edgeMove, maxStepW, hillNet } = v
   const refM2 = kp.cellM * kp.cellM
   let maxStep = 0
   for (let cell = a0; cell < a1; cell++) {
@@ -473,6 +471,7 @@ export function kernelHillApply(v: EngineViews, a0: number, a1: number, kp: Kern
     if (volume !== 0) {
       const delta = volume / (areaRel[cell] * refM2)
       z[cell] += delta
+      hillNet[cell] += volume * ELEVATION_METERS
       const step = Math.abs(delta)
       if (z[cell] > 0 && step > maxStep) maxStep = step
     }
@@ -1266,7 +1265,10 @@ export function loadTerrain(index: EngineIndex, views: Omit<TerrainViews, 'buffe
   }
   if (forcing.cratonAge) gatherActive(index, forcing.cratonAge, views.cratonAge)
   if (forcing.rockHard) gatherActive(index, forcing.rockHard, views.rockHard)
-  if (forcing.cover) gatherActive(index, forcing.cover, views.cover)
+  if (forcing.slopeScale) gatherActive(index, forcing.slopeScale, views.slopeScale)
+  else views.slopeScale.fill(1)
+  if (forcing.diffScale) gatherActive(index, forcing.diffScale, views.diffScale)
+  else views.diffScale.fill(1)
 }
 
 // The routing refresh in one place for every driver: seeds, flood, the

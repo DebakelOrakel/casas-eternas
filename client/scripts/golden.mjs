@@ -460,13 +460,18 @@ function invariants(w) {
     if (count > 0) fail(`sedimentBasins.${name}`, `${count} violations`)
   }
   // The course's one statistical law (phase 3): the meander belt widens
-  // with discharge. Rank correlation over the meandering reaches, when
-  // there are enough of them to say anything.
+  // with discharge, the banks held equal — the belt also goes with the
+  // bank's weakness (riverCourse.meander: the migration rate is
+  // 1.2 − bankStrength, a 3× range across the biomes), and since the cover
+  // (phase 5.5) sets the banks per epoch that second factor is as strong
+  // as the first over a score of reaches. Rank correlation of the belt
+  // per unit of bank weakness against the discharge, over the meandering
+  // reaches, when there are enough of them to say anything.
   {
     const m = w.graph.courses.filter((c) => c.pattern === 'meandering' && c.beltWidthM > 0)
     if (m.length >= 10) {
       const rank = (values) => { const order = values.map((v, i) => [v, i]).sort((a, b) => a[0] - b[0]); const r = new Array(values.length); order.forEach(([, i], k) => { r[i] = k }); return r }
-      const rq = rank(m.map((c) => c.dischargeM3s)), rb = rank(m.map((c) => c.beltWidthM))
+      const rq = rank(m.map((c) => c.dischargeM3s)), rb = rank(m.map((c) => c.beltWidthM / (1.2 - c.bankStrength)))
       const mean = (m.length - 1) / 2
       let num = 0, dq = 0, db = 0
       for (let i = 0; i < m.length; i++) { num += (rq[i] - mean) * (rb[i] - mean); dq += (rq[i] - mean) ** 2; db += (rb[i] - mean) ** 2 }

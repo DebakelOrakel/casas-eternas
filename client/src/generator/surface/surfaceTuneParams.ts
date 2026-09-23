@@ -13,6 +13,19 @@
 // AMPLIFY_CONSTANTS, which already exists as its own hashed set.
 
 export const SURFACE_TUNING = {
+  // HILLSLOPE ADDITIONS (ADAPTIVE_MESH_PLAN.md phase 5.6, the coupled
+  // loop's per-node scales on the engine's Roering kernel). The critical
+  // slope from the lithology: S_c × K^(−exponent) — hard rock (a low
+  // erodibility K) stands steeper, soft fill lies flatter; with the
+  // cover's rise (surface/cover.ts) on top. Solifluction: the hillslope
+  // diffusivity rises with cold, up to solifluctionBoost× at
+  // solifluctionSpanC below solifluctionBelowC (the periglacial regime
+  // moves regolith by freeze and thaw where nothing else does). All three
+  // unmeasured.
+  massWastingLithoExponent: 0.25,
+  solifluctionBelowC: 0,
+  solifluctionSpanC: 15,
+  solifluctionBoost: 3,
   // --- from hydrology.ts ---
   // Lake water depth per full-res cell (0 = dry). Climate-aware / endorheic:
   // priority-flood `filled` marks every depression's cells (filled > raw) and its

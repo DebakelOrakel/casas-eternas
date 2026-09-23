@@ -17,6 +17,7 @@ import { sampleOceanAge } from '../tectonics/oceanAge'
 import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
 import { computeBiomes } from '../climate/biomes'
 import { coverField, COVER_TUNING } from '../surface/cover'
+import { SURFACE_TUNING } from '../surface/surfaceTuneParams'
 import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
 import { worldAgeMa } from '../core/worldTime'
 import { computeIceThickness } from '../surface/iceFlow'
@@ -172,6 +173,10 @@ export interface CoupledEpochStats {
   // The vegetation cover's mean over the land (phase 5.5), 0 before the
   // land-plants moment.
   meanLandCover: number
+  // The hillslope's ledger (phase 5.6): the scree creep laid down, m³, and
+  // the share of the land in the periglacial band this epoch.
+  screeM3: number
+  solifluctionShare: number
   events: SimEvent[]
   nodesBefore: number
   nodesAfter: number
@@ -366,10 +371,12 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const cratonField = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, width, height)
   const cratonAge = new Float32Array(mesh.vertexSlots)
   const rockHard = new Float32Array(mesh.vertexSlots)
-  const nodeCover = new Float32Array(mesh.vertexSlots)
+  const slopeScale = new Float32Array(mesh.vertexSlots)
+  const diffScale = new Float32Array(mesh.vertexSlots)
   const layers = column.epochs.length
   let coverSum = 0
   let coverArea = 0
+  let solifluctionArea = 0
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
     cratonAge[v] = upsampleAt(cratonField, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
@@ -377,14 +384,26 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     // The cover holds the ground: the erodibility falls with it, after the
     // column's word (a fill under forest is soft fill, held).
     const c = zCanon[v] > 0 ? upsampleAt(cover, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height) : 0
-    nodeCover[v] = c
-    forcing.erodibility[v] = erodibilityOver(column.data, v, layers, forcing.erodibility[v]) * (1 - COVER_TUNING.erodibilityDrop * c)
-    if (zCanon[v] > 0) { coverSum += c * areas[v]; coverArea += areas[v] }
+    const bedrockK = forcing.erodibility[v]
+    const k = erodibilityOver(column.data, v, layers, bedrockK)
+    forcing.erodibility[v] = k * (1 - COVER_TUNING.erodibilityDrop * c)
+    // THE HILLSLOPE'S SCALES (phase 5.6): the critical slope from the
+    // lithology (hard stands steeper, a fill lies flatter) and the cover's
+    // hold; the diffusivity from the cold — solifluction in the
+    // periglacial band, where freeze and thaw move regolith that nothing
+    // else would.
+    slopeScale[v] = Math.pow(k, -SURFACE_TUNING.massWastingLithoExponent) * (1 + COVER_TUNING.criticalSlopeRise * c)
+    const tempC = upsampleAt(weather.temperature, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
+    const cold = Math.min(1, Math.max(0, (SURFACE_TUNING.solifluctionBelowC - tempC) / SURFACE_TUNING.solifluctionSpanC))
+    diffScale[v] = 1 + (SURFACE_TUNING.solifluctionBoost - 1) * cold
+    if (zCanon[v] > 0) { coverSum += c * areas[v]; coverArea += areas[v]; if (cold > 0) solifluctionArea += areas[v] }
   }
   const meanLandCover = coverArea > 0 ? coverSum / coverArea : 0
+  const solifluctionShare = coverArea > 0 ? solifluctionArea / coverArea : 0
   forcing.cratonAge = cratonAge
   forcing.rockHard = rockHard
-  forcing.cover = nodeCover
+  forcing.slopeScale = slopeScale
+  forcing.diffScale = diffScale
   const epochMa = sim.epochMa || TECTONIC_MA_PER_EPOCH
   const dtScale = (epochMa * 1e6 / options.iterationsPerEpoch) / ITERATION_YEARS
   const scaled = scaleEngineParamsForDt({ ...params, epsM: 0 }, dtScale)
@@ -397,18 +416,30 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   for (let v = 0; v < mesh.vertexSlots; v++) result.z[v] = Math.max(-1, Math.min(1, result.z[v]))
   // The column's ledger from the run's record: the cut comes off the top
   // of the column first (the remainder was bedrock), the deposit goes into
-  // this epoch's layer with the provenance the walk carried to it. Uplift
-  // and hillslope creep move no column — creep moves regolith, which the
-  // column does not model — so the column can only understate a fill.
+  // this epoch's layer with the provenance the walk carried to it. The
+  // creep's ledger too (phase 5.6): what a node lost to creep comes off
+  // its column first, what it gained is SCREE — a coarse layer of the
+  // node's own rock, formed under the epoch's climate. Uplift moves no
+  // column.
   const cellM2 = METERS_PER_CELL * METERS_PER_CELL
   let depositedM3 = 0
   let reErodedM3 = 0
+  let screeM3 = 0
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
     const areaM2 = areas[v] * cellM2
     if (areaM2 <= 0) continue
-    const cutM = result.cutM3[v] / areaM2
+    const hill = result.hillNetM3[v]
+    const cutM = (result.cutM3[v] + (hill < 0 ? -hill : 0)) / areaM2
     if (cutM > 0) reErodedM3 += cut(column, v, cutM) * areaM2
+    if (hill > 0) {
+      // Tallied apart from the walk's deposits: the scree's supply is the
+      // creep's loss, not the cut, and the harness closes both ledgers.
+      screeM3 += hill
+      const tempC = upsampleAt(weather.temperature, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
+      const precip = Math.max(0, upsampleAt(precipitation, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height))
+      deposit(column, v, hill / areaM2, cratonAge[v], rockHard[v], tempC, precip, true)
+    }
     const depositM3 = result.depositM3[v]
     if (depositM3 > 0) {
       depositedM3 += depositM3
@@ -536,7 +567,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   }
   const areaM2 = new Float64Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) areaM2[v] = areas[v] * cellM2
-  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, meanLandTempC, iceVolumeKm3, seaLevelM, lakes: ages.length, oldestLakeMa, meanLandCover, timing }
+  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, meanLandTempC, iceVolumeKm3, seaLevelM, lakes: ages.length, oldestLakeMa, meanLandCover, screeM3, solifluctionShare, timing }
 }
 
 // The terrain's bytes for a save or a harness hash.

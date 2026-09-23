@@ -670,17 +670,20 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   let ledger = 0, columnVolume = 0, supplyBounded = true, rebound = 0, subsidence = 0, climateSane = true
   const climateTrace = []
   const coverTrace = []
+  let screeTotal = 0, solifluction = 0
   const t1 = performance.now()
   for (let e = 0; e < EPOCHS; e++) {
     const te = performance.now()
     const stats = await M.coupled.stepCoupledEpoch(sim, terrain, { iterationsPerEpoch: ITER })
     if (terrain.mesh.validate().length > 0) valid = false
     for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && !Number.isFinite(terrain.z[v])) finite = false
-    ledger += stats.depositedM3 - stats.reErodedM3
+    ledger += stats.depositedM3 + stats.screeM3 - stats.reErodedM3
     columnVolume = stats.columnVolumeM3
     if (stats.reboundMaxM > rebound) rebound = stats.reboundMaxM
     if (stats.subsidenceMaxM > subsidence) subsidence = stats.subsidenceMaxM
     coverTrace.push(stats.meanLandCover)
+    screeTotal += stats.screeM3
+    solifluction = Math.max(solifluction, stats.solifluctionShare)
     climateTrace.push(`${stats.meanLandTempC.toFixed(1)}°C ice ${stats.iceVolumeKm3.toFixed(0)} km³ sea ${stats.seaLevelM.toFixed(2)} m lakes ${stats.lakes} (oldest ${stats.oldestLakeMa} Ma) ${(stats.timing.climate / 1000).toFixed(1)}+${(stats.timing.lakes / 1000).toFixed(1)} s`)
     if (!Number.isFinite(stats.meanLandTempC) || stats.meanLandTempC < -60 || stats.meanLandTempC > 60 || stats.iceVolumeKm3 < 0 || stats.seaLevelM > 0) climateSane = false
     // No aggradation from nothing (the 2026-07-27 mode): what the walk
@@ -701,7 +704,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   // against the column's volume to within what the remesh loses (new
   // nodes interpolate, a rift's fresh floor starts with none).
   check(`the column holds the epochs' deposits (${(columnVolume / 1e9).toFixed(1)} km³, ${terrain.column.epochs.length} layers)`, columnVolume > 0 && terrain.column.epochs.length === EPOCHS)
-  check(`the column's ledger closes (deposited − re-eroded ${(ledger / 1e9).toFixed(1)} km³ vs column ${(columnVolume / 1e9).toFixed(1)} km³)`, Math.abs(ledger - columnVolume) <= 0.1 * Math.max(ledger, columnVolume))
+  check(`the column's ledger closes (deposited + scree − re-eroded ${(ledger / 1e9).toFixed(1)} km³ vs column ${(columnVolume / 1e9).toFixed(1)} km³)`, Math.abs(ledger - columnVolume) <= 0.1 * Math.max(ledger, columnVolume))
   {
     // A cut that comes off the column: no layer is ever negative, and the
     // provenance products never exceed their thickness (oldness and the
@@ -735,6 +738,10 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   // that holds it; a world whose plants are still to come runs bare.
   check(`the land carries a cover (mean ${coverTrace.map((c) => c.toFixed(2)).join(' ')})`, coverTrace.every((c) => c > 0.05 && c <= 1))
   check('a forest holds more than a desert', M.cover.COVER_BY_BIOME[M.biomes.Biome.TemperateForest] > M.cover.COVER_BY_BIOME[M.biomes.Biome.Desert])
+  // The hillslope additions (phase 5.6): creep lays down scree as a layer,
+  // and the cold band exists on this world.
+  check(`creep lays down scree (${(screeTotal / 1e9).toFixed(1)} km³ over the epochs)`, screeTotal > 0)
+  check(`some land lies in the periglacial band (${(solifluction * 100).toFixed(0)} %)`, solifluction > 0 && solifluction < 1)
   {
     const simBare = await world()
     const bare = M.coupled.createCoupledTerrain(simBare)

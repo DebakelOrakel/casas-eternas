@@ -280,10 +280,15 @@ export interface TerrainViews {
   fluxCoarse: Float32Array
   mouthCoarse: Float32Array
   depositCoarse: Float32Array
-  // The vegetation cover per node in [0, 1] (phase 5.5, surface/cover.ts):
-  // the hillslope's critical slope rises with it. Zero when the caller
-  // passes none (the raster drivers) — the kernels then read as before.
-  cover: Float32Array
+  // THE HILLSLOPE'S PER-NODE SCALES (phases 5.5 and 5.6): the critical
+  // slope's multiplier (the cover's hold, the lithology's stand) and the
+  // diffusivity's (solifluction with cold). One when the caller passes
+  // none (the raster drivers) — the kernel then reads exactly as before.
+  // And the kernel's run-long ledger: the net volume creep handed a node,
+  // m³ (negative where it lost), for the column (scree is a layer).
+  slopeScale: Float32Array
+  diffScale: Float32Array
+  hillNet: Float32Array
   // Per-worker reduction slots: residual, eroded volume, exported volume.
   maxStepW: Float64Array
   erodedW: Float64Array
@@ -385,10 +390,10 @@ export function terrainBufferBytes(activeCount: number, edgeCount: number): numb
   // erosionVolume, accumulationWeights, flux, donorMin, mouthFlux, mouthZ,
   // cutVolume, depositVolume, depositCraton, depositHard, fluxCraton,
   // fluxHard, mouthCraton, mouthHard, cratonAge, rockHard, erosionCoarse,
-  // fluxCoarse, mouthCoarse, depositCoarse, cover (25a); u8: coastMask,
-  // statusMask (2a); i32 flags(16); f64 maxStepW, erodedW, exportedW
-  // (3 × 64); alignment slack.
-  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 25 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
+  // fluxCoarse, mouthCoarse, depositCoarse, slopeScale, diffScale, hillNet
+  // (27a); u8: coastMask, statusMask (2a); i32 flags(16); f64 maxStepW,
+  // erodedW, exportedW (3 × 64); alignment slack.
+  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 27 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
 }
 
 export function routingBufferBytes(activeCount: number, edgeCount: number): number {
@@ -444,7 +449,9 @@ export function createTerrainViews(activeCount: number, edgeCount: number, buffe
     fluxCoarse: take(Float32Array, a),
     mouthCoarse: take(Float32Array, a),
     depositCoarse: take(Float32Array, a),
-    cover: take(Float32Array, a),
+    slopeScale: take(Float32Array, a),
+    diffScale: take(Float32Array, a),
+    hillNet: take(Float32Array, a),
     maxStepW: take(Float64Array, 64),
     erodedW: take(Float64Array, 64),
     exportedW: take(Float64Array, 64),
@@ -540,7 +547,9 @@ export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFro
     fluxCoarse: terrain.fluxCoarse,
     mouthCoarse: terrain.mouthCoarse,
     depositCoarse: terrain.depositCoarse,
-    cover: terrain.cover,
+    slopeScale: terrain.slopeScale,
+    diffScale: terrain.diffScale,
+    hillNet: terrain.hillNet,
     maxStepW: terrain.maxStepW,
     erodedW: terrain.erodedW,
     exportedW: terrain.exportedW,
