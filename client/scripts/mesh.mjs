@@ -663,7 +663,8 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const EPOCHS = 5, ITER = 4
   const trace = []
   let valid = true, finite = true
-  let ledger = 0, columnVolume = 0, supplyBounded = true, rebound = 0, subsidence = 0
+  let ledger = 0, columnVolume = 0, supplyBounded = true, rebound = 0, subsidence = 0, climateSane = true
+  const climateTrace = []
   const t1 = performance.now()
   for (let e = 0; e < EPOCHS; e++) {
     const te = performance.now()
@@ -674,6 +675,8 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     columnVolume = stats.columnVolumeM3
     if (stats.reboundMaxM > rebound) rebound = stats.reboundMaxM
     if (stats.subsidenceMaxM > subsidence) subsidence = stats.subsidenceMaxM
+    climateTrace.push(`${stats.meanLandTempC.toFixed(1)}°C ice ${stats.iceVolumeKm3.toFixed(0)} km³ sea ${stats.seaLevelM.toFixed(2)} m lakes ${stats.lakes} (oldest ${stats.oldestLakeMa} Ma) ${(stats.timing.climate / 1000).toFixed(1)}+${(stats.timing.lakes / 1000).toFixed(1)} s`)
+    if (!Number.isFinite(stats.meanLandTempC) || stats.meanLandTempC < -60 || stats.meanLandTempC > 60 || stats.iceVolumeKm3 < 0 || stats.seaLevelM > 0) climateSane = false
     // No aggradation from nothing (the 2026-07-27 mode): what the walk
     // lays down plus what leaves the world is at most what came loose.
     if (stats.depositedM3 + stats.exportedFluxM3 > stats.erodedFluxM3 * 1.001 + 1) supplyBounded = false
@@ -697,21 +700,49 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     // A cut that comes off the column: no layer is ever negative, and the
     // provenance products never exceed their thickness (oldness and the
     // hardness story are ≤ ~2, so the ratio stays in range).
+    // The temperature product may be negative (a layer laid down below
+    // freezing); every other value is a thickness or a thickness times a
+    // non-negative quantity.
     let negative = 0
-    const byValue = [0, 0, 0, 0]
+    const byValue = new Array(M.column.COLUMN_VALUES).fill(0)
     let worst = 0
     const d = terrain.column.data
     for (let v = 0; v < terrain.mesh.vertexSlots; v++) {
       if (!terrain.mesh.vAlive[v]) continue
       for (let k = 0; k < M.column.COLUMN_DEPTH; k++) {
+        if (k % M.column.COLUMN_VALUES === 4) continue
         const x = d[v * M.column.COLUMN_DEPTH + k]
         if (x < 0) { negative++; byValue[k % M.column.COLUMN_VALUES]++; if (x < worst) worst = x }
       }
     }
-    check('no layer value goes negative', negative === 0, `${negative} (fine/coarse/craton/hard ${byValue.join('/')}, worst ${worst})`)
+    check('no layer value goes negative (the temperature product aside)', negative === 0, `${negative} (${byValue.join('/')}, worst ${worst})`)
   }
   check('every epoch\'s deposits are bounded by its supply (no aggradation from nothing)', supplyBounded)
   check(`the plate answers the epochs' loads (rebound up to ${rebound.toFixed(0)} m, subsidence up to ${subsidence.toFixed(0)} m)`, rebound > 0 && subsidence > 0)
+  // The climate per epoch (phase 5.4): a sane land temperature, an ice
+  // volume and a sea level the ice lowers, every epoch on the record; the
+  // lakes matched between epochs never older than the history; a layer's
+  // climate products read back as the temperature it formed under.
+  console.log(`       ${climateTrace.join(' | ')}`)
+  check('every epoch has a sane climate (land temperature, ice ≥ 0, sea level ≤ 0)', climateSane)
+  check(`the sim records the climate history (${sim.climateHistory.length} epochs)`, sim.climateHistory.length === EPOCHS && sim.climateHistory.every((r) => Number.isFinite(r.meanLandTempC) && r.iceVolumeKm3 >= 0))
+  check(`the sea level is the ice's (${sim.eustaticM.toFixed(3)} m)`, sim.eustaticM <= 0 && sim.eustaticM === sim.climateHistory[sim.climateHistory.length - 1].seaLevelM)
+  check(`no lake is older than the history (${sim.lakeAges.length} lakes)`, sim.lakeAges.every((l) => l.ageMa > 0 && l.ageMa <= EPOCHS * sim.epochMa))
+  {
+    let inRange = true, sampled = 0
+    const d = terrain.column.data, D = M.column.COLUMN_DEPTH, V = M.column.COLUMN_VALUES
+    for (let v = 0; v < terrain.mesh.vertexSlots && sampled < 5000; v++) {
+      if (!terrain.mesh.vAlive[v]) continue
+      for (let layer = 0; layer < terrain.column.epochs.length; layer++) {
+        const t = d[v * D + layer * V] + d[v * D + layer * V + 1]
+        if (t <= 1) continue
+        sampled++
+        const temp = d[v * D + layer * V + 4] / t
+        if (!(temp > -60 && temp < 60)) inRange = false
+      }
+    }
+    check(`a layer's climate reads back as a temperature (${sampled} layers sampled)`, sampled > 0 && inRange)
+  }
   {
     // Two classes (5.2b): the torrents shed coarse, the plains fine; both
     // reach the column, the fine the larger part.
@@ -734,6 +765,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const a = M.coupled.encodeCoupledTerrain(terrain), b = M.coupled.encodeCoupledTerrain(terrain2)
   check('the same history gives the same terrain bytes', a.z.length === b.z.length && a.z.every((v, i) => v === b.z[i]) && a.nodes.every((v, i) => v === b.nodes[i]), `${a.z.length} vs ${b.z.length} nodes`)
   check('and the same column bytes', a.column.length === b.column.length && a.column.every((v, i) => v === b.column[i]), `${a.column.length} bytes`)
+  check('and the same climate history', JSON.stringify(sim.climateHistory) === JSON.stringify(sim2.climateHistory) && JSON.stringify(sim.lakeAges) === JSON.stringify(sim2.lakeAges))
   // A terrain restored from its bytes continues identically for one epoch.
   const restored = M.coupled.decodeCoupledTerrain(sim2, b)
   const simA = sim, simB = sim2

@@ -3175,7 +3175,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // stale. The eroded terrain is NOT dropped: the epochs erode it on (phase
     // 5.1), so the count of eroding epochs carries on from where it was.
     invalidateAfter('tectonics')
-    postToWorker({ type: 'tectonicsStart', epochLength: Number(epochLengthInput.value), alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value) })
+    postToWorker({ type: 'tectonicsStart', epochLength: Number(epochLengthInput.value), alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value), weather: weatherParams() })
     sayTectonicsButton(true)
     updateControlsDisabled()
     updateProgress()
@@ -3500,7 +3500,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // proper, from which `elevation.f32` is rasterised. Three files under
     // `mesh/`, described by one manifest entry; `formatVersion` 3 says a
     // save may carry one, 4 that it may carry the sediment column as a
-    // fourth (phase 5.2). A world whose history has not run carries none.
+    // fourth (phase 5.2), 5 that the column's layers carry the climate at
+    // deposition (phase 5.4). A world whose history has not run carries none.
     if (mesh) {
       zip.file('mesh/nodes.f32', mesh.nodes)
       zip.file('mesh/connectivity.bin', mesh.connectivity)
@@ -3508,7 +3509,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (mesh.column) zip.file('mesh/column.bin', mesh.column)
     }
     const manifest = {
-      formatVersion: 4,
+      formatVersion: 5,
       // The same provenance string status.generator carries — a real build id
       // since 2026-08-11, where a static 'casas-eternas/v1alpha1' had stood
       // saying nothing.

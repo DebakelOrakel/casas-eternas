@@ -60,13 +60,14 @@ const OUT = fileURLToPath(new URL('./golden.json', import.meta.url))
 const HASHES = fileURLToPath(new URL('./golden-hashes.json', import.meta.url))
 const MODE = process.argv[2] ?? 'check'
 const SEEDS = ['calibration', 'alpha', 'bravo']
-const EPOCHS = 50
-// The last epochs run COUPLED (phase 5.1: the mesh drifts with the plates and
-// erodes inside the epoch); the ones before them are plain plate epochs. The
-// generator couples from the hand-over on, but a coupled epoch at 2048 is
-// ~25 s, and fifty of them would make this a two-hour harness. The erosion
-// metrics read what these last epochs did.
-const COUPLED_EPOCHS = 4
+// The history runs COUPLED from the hand-over (phase 5.1: the mesh drifts
+// with the plates and erodes inside the epoch), as the generator runs it —
+// no plain plate epochs first. Measured 2026-09-23: 46 plain epochs made a
+// world the generator never makes any more (9 km peaks, a 2.5 km mean),
+// and an epoch from the hand-over costs 5–15 s, not the 25 s of a matured
+// save, so twenty of them cost what the old mix did.
+const EPOCHS = 0
+const COUPLED_EPOCHS = 20
 const ARCHEAN_EPOCHS = 180
 const W = 2048, H = 1024
 

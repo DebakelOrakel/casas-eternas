@@ -31,7 +31,7 @@ Five entries, assembled in `saveWorld` / read back in the load handler:
 | `preview.png` | Thumbnail for the file/gallery | No — cosmetic, not read on load |
 | `manifest.json` + `layers/…` | The queryable layers (queryable-world-save.md); since `formatVersion` 2 also `layers/waterBodies.json`, the standing-water list every lake and shore derives from | No — read by consumers, not by restore |
 | `mesh/nodes.f32`, `mesh/connectivity.bin`, `mesh/z.f32` | The adaptive mesh the erosion ran on (ADAPTIVE_MESH_PLAN.md phase 4.3): node positions, neighbours as varint deltas in Hilbert numbering, eroded heights — the terrain proper since 2026-09-23, from which `elevation.f32` is rasterised. Present since `formatVersion` 3 when the world was eroded; the manifest's `mesh` entry names the files and the node count | **Yes** — restored into the worker so a later save carries it on; a save without one restores the raster alone |
-| `mesh/column.bin` | The sediment column per node (ADAPTIVE_MESH_PLAN.md phase 5.2, `mesh/meshColumn.ts`): the layer count, each layer's epoch, then per node and layer four floats — fine and coarse thickness in metres and the provenance products thickness × craton oldness, thickness × source hardness. Present since `formatVersion` 4 when the history ran; named by the manifest's `mesh.files.column` | **Yes** — restored with the mesh; a save without one restores an empty column |
+| `mesh/column.bin` | The sediment column per node (ADAPTIVE_MESH_PLAN.md phase 5.2, `mesh/meshColumn.ts`): the layer count, each layer's epoch, then per node and layer six floats — fine and coarse thickness in metres and the products thickness × craton oldness, × source hardness, × temperature at deposition, × precipitation at deposition (the last two since `formatVersion` 5; a version-4 file has four per layer, read off the byte length). Present since `formatVersion` 4 when the history ran; named by the manifest's `mesh.files.column` | **Yes** — restored with the mesh; a save without one restores an empty column |
 
 The four load-critical files (`world.yaml`, `state.json`, `oceanAge.f32`,
 `elevation.f32`) must all be present or the load is rejected as an invalid world
@@ -112,6 +112,10 @@ state. Serialized by `serializePlateSimulation` (`plateSimulation.ts`), restored
                                  // epochLength; absent in older saves → 1)
   sedimentExportM3,              // sediment the history exported to the deep ocean, m³
                                  // (phase 5.2b tally; absent in older saves → 0)
+  eustaticM,                     // the sea level the ice locks up, m ≤ 0 (phase 5.4; absent → 0)
+  climateHistory,                // per epoch {epoch, meanLandTempC, iceVolumeKm3, seaLevelM},
+                                 // the last 512 (phase 5.4; absent → [])
+  lakeAges,                      // the standing lakes {x, y, level, ageMa} (phase 5.4; absent → [])
   warpSeed,                      // domain-warp seed for the elevation field
   supercontinentActive,          // latch for the supercontinent milestone event
   continentalRiftCooldownUntil,  // breakup staging-interval bookkeeping

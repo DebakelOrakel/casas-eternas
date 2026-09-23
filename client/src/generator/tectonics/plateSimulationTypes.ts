@@ -26,6 +26,14 @@ export interface PlateSimulation {
   // m³, summed over the coupled epochs (phase 5.2b) — a tally until the
   // crust takes it as a load (5.3).
   sedimentExportM3: number
+  // THE CLIMATE HISTORY (phase 5.4): the sea as a global water level —
+  // the eustatic offset the ice locks up, metres (≤ 0, lowers the sea, so
+  // the solid surface stands higher against it), the per-epoch record
+  // the history is judged on, and the standing lakes' ages, matched from
+  // epoch to epoch by their seed.
+  eustaticM: number
+  climateHistory: ClimateEpochRecord[]
+  lakeAges: LakeAgeRecord[]
   // Plate count as configured at creation — the target the plate-count
   // homeostasis (PLATE_COUNT_PRESSURE_STRENGTH) steers back toward as
   // rift/merge events change seeds.length over time.
@@ -110,11 +118,30 @@ export interface PlateSimulation {
 // or merge just needs to re-lock over a few epochs, cheap), and `oceanAge`
 // (carried separately as a binary float raster). The RNG's internal state is
 // stored so continuation is bit-identical.
+export interface ClimateEpochRecord {
+  epoch: number
+  meanLandTempC: number
+  iceVolumeKm3: number
+  seaLevelM: number
+}
+
+export interface LakeAgeRecord {
+  // The lake's seed (its deepest node) in world units, and its level.
+  x: number
+  y: number
+  level: number
+  ageMa: number
+}
+
 export interface PlateSimulationSnapshot {
   // Absent in a save written before phase 5.1: one.
   epochMa?: number
   // Absent in a save written before phase 5.2b: zero.
   sedimentExportM3?: number
+  // Absent in a save written before phase 5.4: zero, empty, empty.
+  eustaticM?: number
+  climateHistory?: ClimateEpochRecord[]
+  lakeAges?: LakeAgeRecord[]
   // Absent in saves written before the Archean phase existed; treated as 0.
   archeanEpochs?: number
   // Absent in saves written before the water knob existed; treated as 0.

@@ -22,7 +22,7 @@ import type { PeriodicTriangulation } from './periodicDelaunay'
 // boundary between the two oldest epochs is lost — the record stays fine
 // at the top, where the resource layer reads it, and coarsens downward.
 //
-// Per layer four EXTENSIVE values, all in metres of column so that every
+// Per layer six EXTENSIVE values, all in metres of column so that every
 // one of them interpolates and merges linearly:
 //   tFine    the fine class (mud, floodplain and marine wedge)
 //   tCoarse  the coarse class (fans; written by phase 5.2b, zero until then)
@@ -31,6 +31,11 @@ import type { PeriodicTriangulation } from './periodicDelaunay'
 //            the mean provenance, and the product stays linear under
 //            interpolation where a mean would not
 //   pHard    thickness × source hardness (the crust-history K story)
+//   pTemp    thickness × the mean annual temperature at deposition, °C
+//   pPrecip  thickness × the annual precipitation at deposition (the
+//            climate grid's units) — the climate of a layer (phase 5.4:
+//            coal from swamps, evaporites from arid closed basins) as the
+//            same kind of product
 
 export const COLUMN_TUNING = {
   // Layers per node; when full the two oldest merge.
@@ -45,13 +50,15 @@ export const COLUMN_TUNING = {
 } as const
 
 export const MESH_COLUMN = 'column'
-export const COLUMN_VALUES = 4
+export const COLUMN_VALUES = 6
 export const COLUMN_DEPTH = COLUMN_TUNING.layerCap * COLUMN_VALUES
 
 const T_FINE = 0
 const T_COARSE = 1
 const P_CRATON = 2
 const P_HARD = 3
+const P_TEMP = 4
+const P_PRECIP = 5
 
 // The column over a mesh: the stacked field (node-major, COLUMN_DEPTH per
 // slot) and the epoch of every layer in use, oldest first.
@@ -125,13 +132,15 @@ export function erodibilityOver(data: Float32Array, v: number, layers: number, b
 }
 
 // A deposit of `thicknessM` into the TOP layer, with its provenance.
-export function deposit(column: SedimentColumn, v: number, thicknessM: number, craton: number, hard: number, coarse = false): void {
+export function deposit(column: SedimentColumn, v: number, thicknessM: number, craton: number, hard: number, tempC: number, precip: number, coarse = false): void {
   if (!(thicknessM > 0)) return
   const top = v * COLUMN_DEPTH + (column.epochs.length - 1) * COLUMN_VALUES
   const d = column.data
   d[top + (coarse ? T_COARSE : T_FINE)] += thicknessM
   d[top + P_CRATON] += thicknessM * craton
   d[top + P_HARD] += thicknessM * hard
+  d[top + P_TEMP] += thicknessM * tempC
+  d[top + P_PRECIP] += thicknessM * precip
 }
 
 // A cut of `thicknessM` taken from the column top down, layer by layer;
@@ -191,19 +200,27 @@ export function encodeColumn(column: SedimentColumn, count: number): Uint8Array 
   return bytes
 }
 
+// The values per layer are read off the byte length: a save from before
+// the climate products (formatVersion 4, four per layer) restores with
+// those two at zero.
 export function decodeColumn(bytes: Uint8Array, count: number, slots: number): SedimentColumn {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const layers = view.getUint32(0, true)
   if (layers > COLUMN_TUNING.layerCap) throw new Error(`column: ${layers} layers over the cap`)
-  const values = layers * COLUMN_VALUES
-  if (bytes.byteLength !== 4 + 4 * layers + 4 * count * values) throw new Error('column: byte length does not match the node count')
   const column = createColumn(slots)
   for (let k = 0; k < layers; k++) column.epochs.push(view.getInt32(4 + 4 * k, true))
+  if (layers === 0 || count === 0) return column
+  const body = bytes.byteLength - 4 - 4 * layers
+  const perLayer = body / (4 * count * layers)
+  if (perLayer !== 4 && perLayer !== COLUMN_VALUES) throw new Error('column: byte length does not match the node count')
+  const values = layers * perLayer
   // Copied through a DataView: the bytes need not be 4-aligned.
   const at = 4 + 4 * layers
   for (let v = 0; v < count; v++) {
     const dst = v * COLUMN_DEPTH
-    for (let k = 0; k < values; k++) column.data[dst + k] = view.getFloat32(at + 4 * (v * values + k), true)
+    for (let layer = 0; layer < layers; layer++) {
+      for (let k = 0; k < perLayer; k++) column.data[dst + layer * COLUMN_VALUES + k] = view.getFloat32(at + 4 * (v * values + layer * perLayer + k), true)
+    }
   }
   return column
 }

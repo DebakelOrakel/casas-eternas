@@ -14,6 +14,12 @@ import { addColumnField, columnVolumeM3, createColumn, cut, decodeColumn, deposi
 import { computeCratonOldnessField } from '../crust/raftField'
 import { deflectionAt, elasticThicknessKm, flexuralResponse } from '../tectonics/flexure'
 import { sampleOceanAge } from '../tectonics/oceanAge'
+import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
+import { computeIceThickness } from '../surface/iceFlow'
+import { rasteriseNodeField } from '../mesh/meshRaster'
+import { meshSubstrate } from '../mesh/meshHydrology'
+import { accumulateDischargeOn, computeLakesOn } from '../surface/hydrology'
+import type { LakeAgeRecord } from '../tectonics/plateSimulationTypes'
 import { worldEpoch } from '../core/worldTime'
 import { runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
 import { compactMesh, decodeMesh, encodeMesh, permute } from '../mesh/meshSerial'
@@ -93,6 +99,10 @@ export interface CoupledTerrain {
 }
 
 export interface CoupledEpochOptions {
+  // The climate panel's parameters (phase 5.4): the climate runs per epoch
+  // on the coarse raster of the pre-erosion terrain and forces the water;
+  // absent → the declared defaults.
+  weather?: WeatherParams
   iterationsPerEpoch: number
   // The density rule's budget scalar during the history (decision 1: the
   // macro mesh and the tiles are one rule with a budget each). 1 is the
@@ -126,6 +136,13 @@ export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 2, upliftScale:
 // flexural parameter is tens to a hundred-odd km, and the kernel wants a
 // few cells across it.
 const FLEXURE_CELL = 4
+// The climate history kept on the sim: the last this many epochs.
+const CLIMATE_HISTORY_CAP = 512
+// A lake is the same lake next epoch when its seed lies within this many
+// macro cells (47 km) and its level within this many metres of last
+// epoch's — the seed drifts with the plate and jumps with the remesh.
+const LAKE_MATCH_CELLS = 6
+const LAKE_MATCH_LEVEL_M = 300
 
 export interface CoupledEpochStats {
   // The column's ledger for the epoch, m³: what the walk laid down, what
@@ -140,6 +157,14 @@ export interface CoupledEpochStats {
   // basins sink).
   reboundMaxM: number
   subsidenceMaxM: number
+  // The epoch's climate (phase 5.4): the land's mean annual temperature,
+  // the ice the coarse balance-flux inversion holds, the sea level the ice
+  // locks up (≤ 0), and the standing lakes with the oldest's age.
+  meanLandTempC: number
+  iceVolumeKm3: number
+  seaLevelM: number
+  lakes: number
+  oldestLakeMa: number
   events: SimEvent[]
   nodesBefore: number
   nodesAfter: number
@@ -152,12 +177,17 @@ export interface CoupledEpochStats {
   erodedFluxM3: number
   exportedFluxM3: number
   // Milliseconds per phase, the calibration's cost side.
-  timing: { membership: number; tectonics: number; rebuild: number; remesh: number; baseline: number; forcing: number; erosion: number; flexure: number }
+  timing: { membership: number; tectonics: number; rebuild: number; remesh: number; baseline: number; forcing: number; erosion: number; flexure: number; climate: number; lakes: number }
 }
 
+// The baseline: the raft profile over the ocean floor, the mantle's
+// dynamic topography, and the sea the ice lowered (phase 5.4: sim.eustaticM
+// ≤ 0 is the sea level against the ice-free one, so the solid surface
+// stands that much higher against it).
 function baselineAt(sim: PlateSimulation, x: number, y: number): number {
   return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.width, sim.height, sim.warpSeed, sim.seaLevelOffset)
     + dynamicTopographyAt(sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, x, y, sim.width, sim.height)
+    - sim.eustaticM / ELEVATION_METERS
 }
 
 // The terrain at the start of the history: the mesh from the synthesis,
@@ -184,7 +214,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const domain: Domain = terrain.mesh.domain
   const mesh0 = terrain.mesh
   const nodesBefore = mesh0.aliveVertices
-  const timing = { membership: 0, tectonics: 0, rebuild: 0, remesh: 0, baseline: 0, forcing: 0, erosion: 0, flexure: 0 }
+  const timing = { membership: 0, tectonics: 0, rebuild: 0, remesh: 0, baseline: 0, forcing: 0, erosion: 0, flexure: 0, climate: 0, lakes: 0 }
   let tick = performance.now()
   const lap = (): number => { const now = performance.now(); const dt = now - tick; tick = now; return dt }
   // Plate membership BEFORE the plates move: nearest seed.
@@ -278,14 +308,42 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     // under it would take z past the floor the whole pipeline assumes.
     zCanon[v] = Math.max(-1, Math.min(1, baseline[v] + hCanon[v]))
   }
-  // Erosion for the epoch, with the tectonics' forcing at the nodes and
-  // the rates scaled to the step.
   timing.baseline += lap()
+  // THE CLIMATE OF THE EPOCH (phase 5.4, decision 13): the weather chain
+  // on the coarse raster of the pre-erosion terrain — the same chain the
+  // climate stage runs, at its own resolution, with the panel's parameters
+  // — is the erosion's water forcing this epoch, the ice's balance, the
+  // sea level's, and what a deposit records. The final full-resolution
+  // climate stays the last stage.
+  const coarseZ = rasteriseNodeField(mesh, zCanon, CLIMATE_RES_X, CLIMATE_RES_Y)
+  const weather = computeWeather(coarseZ, CLIMATE_RES_X, CLIMATE_RES_Y, options.weather ?? defaultWeatherParams())
+  const precipitation = weather.seasonal.annual
+  const climateCellM = (width / CLIMATE_RES_X) * METERS_PER_CELL
+  const climateCellM2 = climateCellM * ((height / CLIMATE_RES_Y) * METERS_PER_CELL)
+  // The ice on the coarse raster: the balance-flux inversion of F4 at
+  // climate cells — sheets and the largest tongues, enough for a volume.
+  const ice = computeIceThickness({ elevation: coarseZ, width: CLIMATE_RES_X, height: CLIMATE_RES_Y, temperature: weather.temperature, precipitation, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, cellM: climateCellM })
+  let iceVolumeM3 = 0
+  let oceanCells = 0
+  let landTempSum = 0
+  let landClimateCells = 0
+  for (let i = 0; i < coarseZ.length; i++) {
+    iceVolumeM3 += ice.thickness[i] * climateCellM2
+    if (coarseZ[i] <= 0) oceanCells++
+    else { landTempSum += weather.temperature[i]; landClimateCells++ }
+  }
+  // The sea as a global water level: the ice's water, at its density,
+  // taken out of the ocean's area — applied to z after the erosion below.
+  const seaLevelM = oceanCells > 0 ? -(iceVolumeM3 * 0.917) / (oceanCells * climateCellM2) : 0
+  const meanLandTempC = landClimateCells > 0 ? landTempSum / landClimateCells : 0
+  timing.climate = lap()
+  // Erosion for the epoch, with the tectonics' forcing at the nodes, the
+  // epoch's water, and the rates scaled to the step.
   const { uplift, hardness } = coarseForcingFields(sim, width, height)
   const areas = meshAreasOf(mesh)
   const { forcing, params } = assembleNodeForcing({
     uplift, hardness, forcingResX: CLIMATE_RES_X, forcingResY: CLIMATE_RES_Y,
-    water: null, waterResX: 1, waterResY: 1, lithoSeed: erosionLithoSeed(sim.warpSeed),
+    water: precipitation, waterResX: CLIMATE_RES_X, waterResY: CLIMATE_RES_Y, lithoSeed: erosionLithoSeed(sim.warpSeed),
   }, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, zCanon, areas, width, height, options.controls ?? {})
   // The column's word on the forcing: a node under a fill erodes as
   // sediment, not as its bedrock; and what a cut hands to the walk carries
@@ -333,8 +391,11 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       const craton = result.depositCraton[v] / depositM3
       const hard = result.depositHard[v] / depositM3
       const coarseM3 = result.depositCoarseM3[v]
-      deposit(column, v, (depositM3 - coarseM3) / areaM2, craton, hard, false)
-      deposit(column, v, coarseM3 / areaM2, craton, hard, true)
+      // The climate the layer formed under: the epoch's, at the node.
+      const tempC = upsampleAt(weather.temperature, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
+      const precip = Math.max(0, upsampleAt(precipitation, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height))
+      deposit(column, v, (depositM3 - coarseM3) / areaM2, craton, hard, tempC, precip, false)
+      deposit(column, v, coarseM3 / areaM2, craton, hard, tempC, precip, true)
     }
   }
   // The export tally (decision C of 5.2, 2026-09-23): what left the shelf
@@ -383,6 +444,57 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     result.z[v] = Math.max(-1, Math.min(1, result.z[v] + wM / ELEVATION_METERS))
   }
   timing.flexure = lap()
+  // THE SEA LEVEL'S CHANGE, applied now: the solid surface stands higher
+  // against a sea the ice lowered (or lower against one it released), and
+  // the baseline it is measured from moves with it, so the relief is
+  // untouched and a restore — which evaluates the baseline with the sea
+  // level now in force — reproduces this z exactly.
+  const seaShift = -(seaLevelM - sim.eustaticM) / ELEVATION_METERS
+  sim.eustaticM = seaLevelM
+  if (seaShift !== 0) {
+    // The baseline re-evaluated rather than shifted: a shift added in
+    // float32 differs from the direct evaluation by an ulp, and a restore
+    // evaluates directly — the bytes must agree.
+    for (let v = 0; v < mesh.vertexSlots; v++) {
+      if (!mesh.vAlive[v]) continue
+      result.z[v] = Math.max(-1, Math.min(1, result.z[v] + seaShift))
+      baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
+    }
+  }
+  // THE LAKES' AGES (phase 5.4, decision B of 5.2): the standing water on
+  // the epoch's terrain, each body matched to the nearest of last epoch's
+  // by its seed (within LAKE_MATCH_CELLS macro cells — the seed drifts with
+  // its plate and the remesh — and a level within LAKE_MATCH_LEVEL_M) and
+  // aged by the epoch; a body with no match is new. The hydrology stage
+  // recomputes the bodies at full detail after the stop; these carry the
+  // history.
+  const sub = meshSubstrate(mesh, result.routing, areas)
+  const discharge = accumulateDischargeOn(sub, result.z, precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
+  const lakes = computeLakesOn(sub, discharge, result.z, weather.temperature, precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
+  const epochMaForAges = sim.epochMa || TECTONIC_MA_PER_EPOCH
+  const previous = sim.lakeAges
+  const ages: LakeAgeRecord[] = []
+  let oldestLakeMa = 0
+  for (const body of lakes.bodies) {
+    if (body.kind === 'dry') continue
+    let ageMa = epochMaForAges
+    let bestSq = LAKE_MATCH_CELLS * LAKE_MATCH_CELLS
+    for (const p of previous) {
+      if (Math.abs(p.level - body.level) * ELEVATION_METERS > LAKE_MATCH_LEVEL_M) continue
+      const dSq = toroidalDistanceSq(p.x, p.y, body.seedX, body.seedY, width, height)
+      if (dSq >= bestSq) continue
+      bestSq = dSq
+      ageMa = p.ageMa + epochMaForAges
+    }
+    if (ageMa > oldestLakeMa) oldestLakeMa = ageMa
+    ages.push({ x: body.seedX, y: body.seedY, level: body.level, ageMa })
+  }
+  sim.lakeAges = ages
+  timing.lakes = lap()
+  // The history's record of the epoch.
+  const iceVolumeKm3 = iceVolumeM3 / 1e9
+  sim.climateHistory.push({ epoch: sim.epoch, meanLandTempC, iceVolumeKm3, seaLevelM })
+  if (sim.climateHistory.length > CLIMATE_HISTORY_CAP) sim.climateHistory.splice(0, sim.climateHistory.length - CLIMATE_HISTORY_CAP)
   terrain.mesh = mesh
   terrain.column = column
   terrain.z = result.z
@@ -400,7 +512,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   }
   const areaM2 = new Float64Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) areaM2[v] = areas[v] * cellM2
-  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, timing }
+  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, meanLandTempC, iceVolumeKm3, seaLevelM, lakes: ages.length, oldestLakeMa, timing }
 }
 
 // The terrain's bytes for a save or a harness hash.

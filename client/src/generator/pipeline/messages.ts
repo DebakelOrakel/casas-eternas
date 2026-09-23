@@ -23,6 +23,10 @@ export interface WorkerTectonicsStartMessage {
   epochLength?: number
   alluvium?: number
   rockContrast?: number
+  // The climate panel's parameters (phase 5.4: the climate runs per epoch
+  // on the coarse raster and forces the erosion's water). Absent → the
+  // declared defaults.
+  weather?: WorkerWeatherParams
 }
 export interface WorkerTectonicsStopMessage {
   type: 'tectonicsStop'

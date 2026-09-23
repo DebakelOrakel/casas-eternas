@@ -34,7 +34,7 @@ import { accumulateDischarge, accumulateDischargeOn, extractRiverPolylines, comp
 import type { LakeFields } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
-import { computeWeather, defaultWeatherParams } from '../climate/weather'
+import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
 import { computeBiomes, computeBiomesFine } from '../climate/biomes'
 import { downsampleMax } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
@@ -231,7 +231,7 @@ let meshTerrain: MeshTerrain | null = null
 // without a mesh, it is null and the hydrology walks the raster.
 let coupled: CoupledTerrain | null = null
 // The tectonics panel's controls for the history (tectonicsInputParams).
-let historyControls = { epochLength: TECTONICS_INPUTS.epochLength.default, alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default }
+let historyControls: { epochLength: number; alluvium: number; rockContrast: number; weather: WeatherParams } = { epochLength: TECTONICS_INPUTS.epochLength.default, alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default, weather: defaultWeatherParams() }
 let epochInFlight = false
 
 // The coupled terrain as what the hydrology reads (a routing is required
@@ -597,6 +597,7 @@ function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'te
     epochLength: message.epochLength ?? TECTONICS_INPUTS.epochLength.default,
     alluvium: message.alluvium ?? TECTONICS_INPUTS.alluvium.default,
     rockContrast: message.rockContrast ?? TECTONICS_INPUTS.rockContrast.default,
+    weather: message.weather ?? defaultWeatherParams(),
   }
   if (sim) sim.epochMa = historyControls.epochLength
   // THE COUPLED EPOCH (phase 5.1): the plates move, the mesh follows,
@@ -621,6 +622,7 @@ function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'te
         budget: HISTORY_DEFAULTS.budget,
         upliftScale: HISTORY_DEFAULTS.upliftScale,
         controls: { alluvium: historyControls.alluvium, rockContrast: historyControls.rockContrast },
+        weather: historyControls.weather,
       })
       // Events are forwarded to the main thread (batched with the next
       // render), which owns their notifications + faded map markers now.
