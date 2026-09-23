@@ -39,13 +39,14 @@
 // constants hash (decision 2) once the mesh produces one (the save and
 // the bake switch in phases 4.3–4.5; until then no key depends on them).
 //
-// Measured 2026-09-23 on a saved 2048×1024 world with 11 % land
+// Measured 2026-09-23 on a saved 2048×1024 world with 26 % land
 // (relief and discharge from the save's rasters, sampled bilinearly):
 //
-//     minSpacingM   deepOceanBelowM   nodes      land       ocean    build
-//        2000           -1000         1.91 M     1.01 M     0.90 M    14 s
-//        2000            -300         1.35 M     1.03 M     0.32 M    10 s   <- chosen
-//        3900            -300         0.89 M     0.66 M     0.23 M     7 s
+//     minSpacingM  maxSpacingM  deepOceanBelowM   nodes     land      ocean   build
+//        2000        16000          -1000         1.91 M    1.01 M    0.90 M   14 s
+//        2000        16000           -300         1.35 M    1.03 M    0.32 M   10 s
+//        3900        16000           -300         0.89 M    0.66 M    0.23 M    7 s
+//        2000         7800           -300         1.67 M    1.34 M    0.33 M   19 s   <- chosen
 //
 // with the relief term active under the sea (no deep-ocean cut-off) the
 // first build had 4.1 M nodes, 3.1 M of them on the ocean floor. The
@@ -56,11 +57,20 @@
 // 1 % (nodes the refine placed under the removal threshold of a
 // neighbour's target); the second one moves nothing — the hysteresis
 // band holds.
+//
+// The ceiling is ONE MACRO CELL (METERS_PER_CELL) and not the 16 km the
+// first measurements ran with: the plains' micro-relief (elevationField's
+// fineValue, 20 m) has a 15.6 km octave that the raster samples at 7.8 km
+// and a 16 km node spacing would alias away — and it is what makes lowland
+// drainage dendritic (elevationTuneParams.plainDetailMax). While the
+// consumers still read a 2048 rasterisation of the mesh, the mesh is
+// nowhere coarser than that raster on land; the price was +25 % nodes.
+// The golden worlds (35 % land at most) build 1.6–4.2 M nodes.
 export const MESH_TUNING = {
   // Spacing floor and ceiling on land (the shelf and the continental slope
   // count as land here), and the one spacing of the deep ocean floor.
   minSpacingM: 2000,
-  maxSpacingM: 16000,
+  maxSpacingM: 7800,
   oceanSpacingM: 40000,
   deepOceanBelowM: -300,
   reliefPerNodeM: 100,

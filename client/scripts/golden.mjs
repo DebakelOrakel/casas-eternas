@@ -97,7 +97,7 @@ const M = {
   mantle: await L('/src/generator/mantle/mantleField.ts'),
   ridged: await L('/src/generator/elevation/ridgedNoise.ts'),
   erosionForcing: await L('/src/generator/pipeline/erosionForcing.ts'),
-  erosionPassV2: await L('/src/generator/surface/erosionPassV2.ts'),
+  meshStage: await L('/src/generator/pipeline/meshErosionStage.ts'),
   surfaceInputs: await L('/src/generator/surface/surfaceInputParams.ts'),
   routing: await L('/src/generator/surface/flowRouting.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
@@ -232,8 +232,14 @@ async function buildWorld(seed) {
     alluvium: M.surfaceInputs.SURFACE_INPUTS.alluvium.default,
     rockContrast: M.surfaceInputs.SURFACE_INPUTS.rockContrast.default,
   }
-  const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, raw, W, H, CONTROLS)
-  const ero = await M.erosionPassV2.runErosionPassV2(raw, W, H, forcing, { age: CONTROLS.age, params })
+  // Since phase 4.3 the stage is pipeline/meshErosionStage.erodeOnMesh —
+  // the mesh from the point synthesis, the engine on it, a rasterisation
+  // for everything below. The result keeps the pass's contract (elevations,
+  // preFill = elevations, sedimentFlux, accumulation) so the metrics read
+  // as before; the mesh itself is checked by harness:mesh.
+  const staged = await M.meshStage.erodeOnMesh(sim, raw, W, H, { age: CONTROLS.age, controls: CONTROLS })
+  process.stderr.write(`(${staged.terrain.mesh.aliveVertices} mesh nodes) `)
+  const ero = { elevations: staged.elevations, preFillElevations: staged.elevations.slice(), sedimentFlux: staged.sedimentFlux, accumulation: staged.accumulation }
   const el = ero.elevations
 
   // Climate v1 on the PRE-EROSION terrain, mirroring the worker since the
@@ -312,7 +318,7 @@ async function buildWorld(seed) {
   const ice = M.ice.computeIceThickness({ elevation: el, width: W, height: H, temperature: t2, precipitation, climateResX: CRX, climateResY: CRY, cellM: M.engine.WORLD_WIDTH_METERS / W })
   // The sediment basins (F1) of the erosion pass, with provenance.
   const basins = M.basins.findSedimentBasins({
-    before: raw, after: el, width: W, height: H, routing, graph, cellM: M.engine.WORLD_WIDTH_METERS / W,
+    before: staged.before, after: el, width: W, height: H, routing, graph, cellM: M.engine.WORLD_WIDTH_METERS / W,
     cratonAge, hardness: M.erosionForcing.coarseForcingFields(sim, W, H).hardness, coarseResX: CRX, coarseResY: CRY,
   })
   // Real volcanoes and sutures, and real params — through the very function the
@@ -346,7 +352,7 @@ async function buildWorld(seed) {
     { spreadBudget: 400, seaCrossing: 0.3 },
   )
 
-  return { sim, raw, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, threshold, lakes, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
+  return { sim, raw, before: staged.before, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, threshold, lakes, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
 }
 
 // --- layer 1: invariants ---------------------------------------------------
@@ -435,7 +441,7 @@ function invariants(w) {
   for (const [name, count] of Object.entries(M.ice.iceInvariants(w.ice, w.el))) {
     if (count > 0) fail(`ice.${name}`, `${count} violations`)
   }
-  for (const [name, count] of Object.entries(M.basins.sedimentBasinInvariants(w.basins, w.raw, w.el))) {
+  for (const [name, count] of Object.entries(M.basins.sedimentBasinInvariants(w.basins, w.before, w.el))) {
     if (count > 0) fail(`sedimentBasins.${name}`, `${count} violations`)
   }
   // The course's one statistical law (phase 3): the meander belt widens
@@ -535,7 +541,9 @@ function metrics(w) {
   // Cells the pass raised from below sea level — the delta signal, and the one
   // the delta-gate rescaling moved.
   let deltaCells = 0
-  for (let i = 0; i < w.el.length; i++) if (w.raw[i] <= SEA && w.el[i] > w.raw[i] + 1e-6) deltaCells++
+  // Deposition in the sea, against the mesh's own rasterised start — the
+  // synthesis raster is metres off it between deep-ocean nodes.
+  for (let i = 0; i < w.el.length; i++) if (w.before[i] <= SEA && w.el[i] > w.before[i] + 1e-6) deltaCells++
   put('erosion.deltaCells', deltaCells)
 
   const temp = stats(w.temperature)

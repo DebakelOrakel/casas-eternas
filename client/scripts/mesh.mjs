@@ -64,6 +64,7 @@ const M = {
   build: await L('/src/generator/mesh/meshBuild.ts'),
   erosion: await L('/src/generator/mesh/meshErosion.ts'),
   raster: await L('/src/generator/mesh/meshRaster.ts'),
+  serial: await L('/src/generator/mesh/meshSerial.ts'),
   engine: await L('/src/generator/surface/erosionEngine.ts'),
   forcing: await L('/src/generator/surface/erosionForcingFields.ts'),
   passV2: await L('/src/generator/surface/erosionPassV2.ts'),
@@ -275,10 +276,15 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     const v = index.active[a]
     const n = mesh.neighbours(v, nb)
     if (index.nbrStart[a + 1] - index.nbrStart[a] !== n) runsOk = false
+    // The run is the star rotated to start at the smallest vertex id.
+    let offset = 0
+    for (let s = 1; s < n; s++) if (nb[s] < nb[offset]) offset = s
     for (let s = 0; s < n; s++) {
       const e = index.nbrStart[a] + s
       const j = index.nbr[e]
-      if (j >= 0 && index.active[j] !== nb[s]) runsOk = false
+      const expected = nb[(offset + s) % n]
+      if (j >= 0 && index.active[j] !== expected) runsOk = false
+      if (j < 0 && index.activeOf[expected] >= 0) runsOk = false
       if (j >= 0) {
         const r = index.edgeRev[e]
         if (r < index.nbrStart[j] || r >= index.nbrStart[j + 1] || index.nbr[r] !== a) revOk = false
@@ -355,7 +361,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const grid = M.raster.rasteriseNodeField(mesh, z1, W, H)
   let rasterErr = 0
   for (let py = 0; py < H; py += 7) for (let px = 0; px < W; px += 7) {
-    const t = mesh.locate((px + 0.5), (py + 0.5))
+    const t = mesh.locate(px, py)
     const a = mesh.tris[3 * t], b = mesh.tris[3 * t + 1], c = mesh.tris[3 * t + 2]
     const lo = Math.min(z1[a], z1[b], z1[c]), hi = Math.max(z1[a], z1[b], z1[c])
     const g = grid[py * W + px]
@@ -389,6 +395,48 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     for (let a = 0; a < index.activeCount; a++) if (pool.z[a] !== single.z[a]) poolDiffer++
     check(`a pool of ${workers} workers gives the single-threaded bytes`, poolDiffer === 0, `${poolDiffer} nodes differ`)
   }
+}
+
+// The save's form of the mesh (phase 4.3): canonical numbering, the codec,
+// and the property everything rests on — a mesh that went through the save
+// erodes to the same bytes as the one that did not.
+{
+  const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
+  const { mesh, order } = M.serial.compactMesh(built.mesh)
+  const z = M.serial.permute(built.state.get('z'), order)
+  check('the compacted mesh is valid and Hilbert-numbered without holes', mesh.validate().length === 0 && mesh.vertexSlots === mesh.aliveVertices && mesh.aliveVertices === built.mesh.aliveVertices, `${mesh.aliveVertices} nodes`)
+  let ordered = true
+  for (let v = 1; v < mesh.vertexSlots; v++) if (M.hilbert.hilbertKey(mesh.vx[v], mesh.vy[v], W, H) < M.hilbert.hilbertKey(mesh.vx[v - 1], mesh.vy[v - 1], W, H)) ordered = false
+  check('vertex ids follow the Hilbert curve', ordered)
+  // Same triangle set as the original, up to numbering.
+  const triKey = (m, a, b, c, map) => { const t = [map(a), map(b), map(c)].sort((x, y) => x - y); return t.join(',') }
+  const inv = new Int32Array(built.mesh.vertexSlots).fill(-1)
+  for (let i = 0; i < order.length; i++) inv[order[i]] = i
+  const before = new Set(), after = new Set()
+  for (let t = 0; t < built.mesh.triSlots; t++) if (built.mesh.tAlive[t]) before.add(triKey(built.mesh, built.mesh.tris[3 * t], built.mesh.tris[3 * t + 1], built.mesh.tris[3 * t + 2], (v) => inv[v]))
+  for (let t = 0; t < mesh.triSlots; t++) if (mesh.tAlive[t]) after.add(triKey(mesh, mesh.tris[3 * t], mesh.tris[3 * t + 1], mesh.tris[3 * t + 2], (v) => v))
+  let missing = 0
+  for (const k of before) if (!after.has(k)) missing++
+  check('the compacted mesh has exactly the original triangles', missing === 0 && before.size === after.size, `${missing} missing, ${before.size} vs ${after.size}`)
+  // Through the codec and back: identical bytes.
+  const identity = new Int32Array(mesh.vertexSlots)
+  for (let i = 0; i < identity.length; i++) identity[i] = i
+  const serial = M.serial.encodeMesh(mesh, identity)
+  const back = M.serial.decodeMesh(domain, serial)
+  const bytesPerNode = serial.connectivity.length / serial.count
+  check(`the codec round-trips positions and triangles (${bytesPerNode.toFixed(1)} connectivity bytes per node)`,
+    meshHash(back) === meshHash(mesh), `${meshHash(mesh)} vs ${meshHash(back)}`)
+  // The property: erode the session's mesh and the reloaded mesh — same bytes.
+  const uplift = new Float32Array(mesh.vertexSlots)
+  const erodibility = new Float32Array(mesh.vertexSlots).fill(1)
+  for (let v = 0; v < mesh.vertexSlots; v++) uplift[v] = gauss(mesh.vx[v], mesh.vy[v], 200, 120, 30, 8)
+  const zReloaded = new Float32Array(serial.count)
+  zReloaded.set(z.subarray(0, serial.count))
+  const a = await M.erosion.runMeshErosion(mesh, z, { uplift, erodibility }, { age: 6, routingEvery: 2 })
+  const b = await M.erosion.runMeshErosion(back, zReloaded, { uplift, erodibility }, { age: 6, routingEvery: 2 })
+  let differ = 0
+  for (let v = 0; v < serial.count; v++) if (a.z[v] !== b.z[v]) differ++
+  check('a reloaded mesh erodes to the session mesh\'s bytes', differ === 0, `${differ} nodes differ`)
 }
 
 // ------------------------------------------------------------ determinism
@@ -441,9 +489,12 @@ if (MODE === 'measure') {
   const qFile = zip.file('layers/discharge.u16')
   const q = qFile ? M.layers.decodeLayer(await qFile.async('arraybuffer'), M.layers.DISCHARGE_LAYER) : null
   const real = M.domain.torusDomain(RW, RH)
+  // The raster's cell px holds the field at world x = px (the synthesis
+  // convention, mesh/meshRaster.ts), so the grid sampler — not the
+  // world one, whose centres sit at +0.5.
   const sampler = {
-    heightAt: (x, y) => M.field.sampleBilinearWorld(z, RW, RH, x, y, RW, RH),
-    dischargeAt: q ? (x, y) => M.field.sampleBilinearWorld(q, RW, RH, x, y, RW, RH) : undefined,
+    heightAt: (x, y) => M.field.sampleBilinearGrid(z, RW, RH, x, y),
+    dischargeAt: q ? (x, y) => M.field.sampleBilinearGrid(q, RW, RH, x, y) : undefined,
   }
   console.log(`\n[measure] ${path} ${RW}×${RH}, constants`, JSON.stringify(T))
   const t0 = performance.now()

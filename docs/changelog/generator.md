@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-09-23
+- **changed** Erosion: the erosion runs on an adaptive mesh built from the tectonics at every point, dense on ridges and along rivers, coarse at sea — the save carries the mesh, the map still shows its rasterisation. `generator.panel.erosion`
+
 ## 2026-09-22
 - **new** Hydrology: every river reach knows whether it flows all year, dries up in the dry season or only runs after rain — from its catchment's climate — and the map draws the last two dashed and dotted. `generator.panel.hydrology`
 - **fixed** Hydrology: server bakes now carry the water bodies and the river graph like browser bakes do. `generator.panel.hydrology`

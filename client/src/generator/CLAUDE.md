@@ -25,8 +25,10 @@ mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay 
             fields that survive remeshing), meshRelief, remesh (hysteresis insert/remove),
             meshBuild (fields in, mesh out), meshErosion (the erosion engine's graph index
             from the triangulation, the run adapter), meshRaster (node fields sampled on a
-            grid). Depends on core/, elevation/ and surface/'s engine; the pipeline does
-            not run on it yet — the save and the map switch in 4.3/4.4
+            grid), meshSerial (the save's form: Hilbert numbering, varint connectivity,
+            the canonical rebuild). The generator's erosion stage runs on it
+            (pipeline/meshErosionStage.ts) and the save carries it; the map and the
+            hydrology still read its 2048 rasterisation until 4.4
 planet/     the Planet stage's controls and their forcing (obliquity, orbit, sun, rotation) —
             what depends on the planet and not on the relief; the climate reads it
 mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends only
@@ -199,6 +201,17 @@ dev-server only; production builds are fine.)
 is a deliberate, documented unrealism; marine deltas are a separate shipped
 mechanism. A sediment-budget attempt failed because erosion and deposition only
 discriminate mountain from plain when they compete in one sweep.
+
+**The generator erodes on the mesh; the raster is a rasterisation** (phase 4.3,
+2026-09-23). `pipeline/meshErosionStage.erodeOnMesh` builds the mesh from
+`elevation/elevationSampler` (the synthesis at a point — the same functions the
+render worker runs per cell), erodes it, and rasterises z, sediment flux and
+accumulation to 2048 for the hydrology, the climate and the map. `elevation.f32`
+in a save is therefore DERIVED; `mesh/` is the terrain, and a restored mesh
+must erode to the same bytes as the session's — which is why positions are
+float32 on insert and the mesh is renumbered through the codec after every
+run (`mesh/meshSerial.compactMesh`). Do not hand the engine a mesh that has
+not been compacted and expect a reload to match.
 
 **The erosion engine runs on a graph, not on a grid** (phase 4.2, 2026-09-23).
 `EngineIndex` is a CSR neighbour table with a reach length, a Voronoi facet and

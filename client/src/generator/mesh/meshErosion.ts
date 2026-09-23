@@ -63,7 +63,14 @@ export interface MeshErosionOptions {
   params?: ErosionEngineParams
   pool?: { createWorker: () => WorkerLike } & PipelineOptions
   onProgress?: (fraction: number) => void
+  // The node heights every ~eighth of the run (a copy), for a redraw —
+  // the pass adapter's cadence (erosionPassV2.ts).
+  onChunkComplete?: (z: Float32Array, chunk: number) => void | Promise<void>
+  // Checked between chunks; true stops early with the partial result.
+  shouldCancel?: () => boolean
 }
+
+const PROGRESS_CHUNKS = 8
 
 // The engine index over the mesh for a terrain z (per vertex slot).
 export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Array, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS, refM = METERS_PER_CELL): EngineIndex {
@@ -202,10 +209,16 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
   for (let k = 0; k < activeCount; k++) {
     const v = active[k]
     const n = mesh.outgoing(v, outgoing)
+    // The run starts at the neighbour with the smallest vertex id, so the
+    // order every kernel sums in is a function of the mesh's vertex
+    // numbering alone — not of which triangle happens to hold the
+    // vertex's edge pointer, which a rebuild from a save need not repeat.
+    let first = 0
+    for (let s = 1; s < n; s++) if (mesh.to(outgoing[s]) < mesh.to(outgoing[first])) first = s
     const base = nbrStart[k]
     areaRel[k] = mesh.voronoiArea(v)
     for (let s = 0; s < n; s++) {
-      const e = outgoing[s]
+      const e = outgoing[(first + s) % n]
       const u = mesh.to(e)
       slotEdge[base + s] = e
       nbr[base + s] = activeOf[u]
@@ -268,12 +281,23 @@ function cotAtApex(mesh: PeriodicTriangulation, e: number, f: Float64Array): num
 export async function runMeshErosion(mesh: PeriodicTriangulation, initial: Float32Array, forcing: ErosionForcing, options: MeshErosionOptions): Promise<MeshErosionResult> {
   const params = options.params ?? DEFAULT_ENGINE_PARAMS
   const index = buildMeshEngineIndex(mesh, initial, params)
-  const report = (done: number): void => options.onProgress?.(done / options.age)
+  const chunkSize = Math.max(1, Math.ceil(options.age / PROGRESS_CHUNKS))
+  const chunks = async (run: (step: number, done: number) => void, expand: () => Float32Array): Promise<void> => {
+    let done = 0
+    while (done < options.age) {
+      const step = Math.min(chunkSize, options.age - done)
+      run(step, done)
+      done += step
+      if (options.onChunkComplete) await options.onChunkComplete(expand(), done / chunkSize)
+      if (options.shouldCancel?.()) break
+    }
+  }
+  const report = (done: number, iteration: number): void => options.onProgress?.((done + iteration + 1) / options.age)
   if (options.pool) {
     const { createWorker, ...pipeline } = options.pool
     const engine = await PipelinedErosionEngine.create(0, 0, initial, forcing, createWorker, pipeline, params, index)
     try {
-      engine.run(options.age, (iteration) => report(iteration + 1))
+      await chunks((step, done) => engine.run(step, (iteration) => report(done, iteration)), () => engine.expandZ(initial))
       const popped = engine.finalizeRouting()
       return collect(engine.activeEngineViews, index, popped, initial, engine.erodedFluxM3, engine.exportedFluxM3)
     } finally {
@@ -281,7 +305,8 @@ export async function runMeshErosion(mesh: PeriodicTriangulation, initial: Float
     }
   }
   const engine = ErosionEngine.onIndex(index, initial, forcing, params)
-  engine.run(options.age, options.routingEvery ?? 4, (iteration) => report(iteration + 1))
+  const routingEvery = options.routingEvery ?? 4
+  await chunks((step, done) => engine.run(step, routingEvery, (iteration) => report(done, iteration)), () => engine.expandZ(initial))
   engine.refreshRouting()
   return collect(engine.views, index, engine.poppedCount, initial, engine.erodedFluxM3, engine.exportedFluxM3)
 }

@@ -1,7 +1,7 @@
 ---
-summary: Reference for the .zip world save — what is inside (world.yaml recipe/status, state.json sim snapshot, .f32 rasters, preview.png) and how saving/loading flows through the worldgen screen.
+summary: Reference for the .zip world save — what is inside (world.yaml recipe/status, state.json sim snapshot, .f32 rasters, the adaptive mesh, preview.png) and how saving/loading flows through the worldgen screen.
 date: 2026-07-26
-updated: 2026-08-12
+updated: 2026-09-23
 area: platform
 stage: built
 status: describes the shipped format and is kept current as it evolves; the fork behind it is decided in ../decisions/world-save-format.md
@@ -30,14 +30,17 @@ Five entries, assembled in `saveWorld` / read back in the load handler:
 | `oceanAge.f32` | Coarse ocean-floor age raster | **Yes** — restored into the sim |
 | `preview.png` | Thumbnail for the file/gallery | No — cosmetic, not read on load |
 | `manifest.json` + `layers/…` | The queryable layers (queryable-world-save.md); since `formatVersion` 2 also `layers/waterBodies.json`, the standing-water list every lake and shore derives from | No — read by consumers, not by restore |
+| `mesh/nodes.f32`, `mesh/connectivity.bin`, `mesh/z.f32` | The adaptive mesh the erosion ran on (ADAPTIVE_MESH_PLAN.md phase 4.3): node positions, neighbours as varint deltas in Hilbert numbering, eroded heights — the terrain proper since 2026-09-23, from which `elevation.f32` is rasterised. Present since `formatVersion` 3 when the world was eroded; the manifest's `mesh` entry names the files and the node count | **Yes** — restored into the worker so a later save carries it on; a save without one restores the raster alone |
 
 The four load-critical files (`world.yaml`, `state.json`, `oceanAge.f32`,
 `elevation.f32`) must all be present or the load is rejected as an invalid world
 file; `preview.png` is optional.
 
 Restore is a **rehydrate, not a replay**: `state.json` rebuilds the plate
-simulation, `elevation.f32` is dropped in as the finished (eroded) terrain, and
-`oceanAge.f32` restores the ocean floor — nothing re-steps or re-erodes. Climate and
+simulation, `elevation.f32` is dropped in as the finished (eroded) terrain, the
+mesh files rebuild the triangulation (bit for bit — the codec is the canonical
+form, see `mesh/meshSerial.ts`), and `oceanAge.f32` restores the ocean floor —
+nothing re-steps or re-erodes. Climate and
 hydrology are *not* stored; they're recomputed on demand from the restored terrain
 when their panels are opened.
 

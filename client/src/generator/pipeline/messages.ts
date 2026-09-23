@@ -169,9 +169,22 @@ export interface WorkerSerializeWorldMessage {
 // inject the stored (post-erosion) elevation, and render it — no replay, no
 // re-erosion. `seed` is the original seed string, carried in the save format
 // (currently unused by the worker on restore, kept for forward compatibility).
+// The adaptive mesh as the save carries it (mesh/meshSerial.ts): the node
+// positions, the connectivity, the heights — the world's terrain since
+// ADAPTIVE_MESH_PLAN.md phase 4.3. Absent when the world was never eroded
+// on the mesh (a save written before the format carried one, or a world
+// whose erosion has not run).
+export interface MeshPayload {
+  count: number
+  nodes: ArrayBuffer
+  connectivity: ArrayBuffer
+  z: ArrayBuffer
+}
+
 export interface WorkerRestoreWorldMessage {
   type: 'restoreWorld'
   seed: string
+  mesh?: MeshPayload
   snapshot: PlateSimulationSnapshot
   oceanAge: ArrayBuffer
   elevation: ArrayBuffer
@@ -534,6 +547,7 @@ export interface WorkerWorldDataMessage {
   erodibility: ArrayBuffer
   forcingResX: number
   forcingResY: number
+  mesh?: MeshPayload
 }
 
 // The other direction, which had no union at all: GeneratorScreen listed the twelve

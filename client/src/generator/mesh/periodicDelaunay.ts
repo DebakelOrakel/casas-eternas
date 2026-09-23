@@ -33,6 +33,11 @@ import type { Domain } from '../core/domain'
 // same order give the same arrays byte for byte, which the mesh harness
 // checks. Insertion ORDER is the caller's (Hilbert, see hilbert.ts).
 //
+// Positions are stored ROUNDED TO FLOAT32 (`Math.fround` on every insert):
+// the save carries them as f32 (mesh/meshSerial.ts), and a mesh that
+// continues in the session must be the mesh a reload rebuilds, bit for
+// bit — so the session never holds a position the save cannot.
+//
 // Robustness: predicates are plain doubles. A configuration too close to
 // degenerate may leave a locally non-Delaunay edge (the in-circle test has
 // a relative tolerance so two rounding-equal circles cannot flip back and
@@ -380,8 +385,8 @@ export class PeriodicTriangulation {
       this.ensureVertexCapacity(this.vertexSlots + 1)
       v = this.vertexSlots++
     }
-    this.vx[v] = this.domain.wrapX(x)
-    this.vy[v] = this.domain.wrapY(y)
+    this.vx[v] = this.domain.wrapX(Math.fround(this.domain.wrapX(x)))
+    this.vy[v] = this.domain.wrapY(Math.fround(this.domain.wrapY(y)))
     this.vAlive[v] = 1
     this.aliveVertices++
     return v
@@ -757,8 +762,8 @@ export function buildFromTriangles(domain: Domain, xs: ArrayLike<number>, ys: Ar
   mesh.vertexSlots = count
   mesh.aliveVertices = count
   for (let v = 0; v < count; v++) {
-    mesh.vx[v] = domain.wrapX(xs[v])
-    mesh.vy[v] = domain.wrapY(ys[v])
+    mesh.vx[v] = domain.wrapX(Math.fround(domain.wrapX(xs[v])))
+    mesh.vy[v] = domain.wrapY(Math.fround(domain.wrapY(ys[v])))
     mesh.vAlive[v] = 1
   }
   const triCount = (triangles.length / 3) | 0
@@ -797,19 +802,28 @@ export function buildFromTriangles(domain: Domain, xs: ArrayLike<number>, ys: Ar
   }
   mesh.triSlots = triCount
   mesh.aliveTriangles = triCount
-  const byPair = new Map<number, number>()
-  for (let e = 0; e < triCount * 3; e++) {
+  // Twins by a per-vertex table of outgoing halfedges (counting sort) —
+  // not a Map keyed by the pair, which tops out at 2^24 entries and a
+  // world mesh has more directed edges than that.
+  const edgeCount = triCount * 3
+  const outStart = new Int32Array(count + 1)
+  for (let e = 0; e < edgeCount; e++) outStart[mesh.tris[e] + 1]++
+  for (let v = 0; v < count; v++) outStart[v + 1] += outStart[v]
+  const outEdges = new Int32Array(edgeCount)
+  const cursor = outStart.slice(0, count)
+  for (let e = 0; e < edgeCount; e++) outEdges[cursor[mesh.tris[e]]++] = e
+  const dest = (e: number): number => mesh.tris[e % 3 === 2 ? e - 2 : e + 1]
+  for (let e = 0; e < edgeCount; e++) {
     const from = mesh.tris[e]
-    const to = mesh.tris[e % 3 === 2 ? e - 2 : e + 1]
-    const key = from * count + to
-    if (byPair.has(key)) throw new Error(`buildFromTriangles: edge ${from}→${to} appears twice`)
-    byPair.set(key, e)
-  }
-  for (let e = 0; e < triCount * 3; e++) {
-    const from = mesh.tris[e]
-    const to = mesh.tris[e % 3 === 2 ? e - 2 : e + 1]
-    const w = byPair.get(to * count + from)
-    if (w === undefined) throw new Error(`buildFromTriangles: edge ${from}→${to} has no twin`)
+    const to = dest(e)
+    let w = -1
+    for (let k = outStart[to]; k < outStart[to + 1]; k++) {
+      if (dest(outEdges[k]) === from) {
+        if (w >= 0) throw new Error(`buildFromTriangles: edge ${to}→${from} appears twice`)
+        w = outEdges[k]
+      }
+    }
+    if (w < 0) throw new Error(`buildFromTriangles: edge ${from}→${to} has no twin`)
     mesh.twin[e] = w
   }
   mesh.lastTri = 0

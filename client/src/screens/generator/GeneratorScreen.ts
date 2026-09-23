@@ -19,7 +19,7 @@ import type { WaterBody } from '../../generator/surface/hydrology'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
-import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from '../../generator/pipeline/messages'
+import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
 import { downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
 import { drawContinentLabels } from '../../generator/render/continentLabelRenderer'
@@ -3435,7 +3435,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // up any world value by sampling, with no generation code. Bakes whatever the
   // main thread has cached (climate/hydrology/ecology from the panels visited);
   // layers absent from the cache are simply omitted from the manifest.
-  function bakeQueryLayers(zip: JSZip, forcing: { uplift: Float32Array; erodibility: Float32Array; resX: number; resY: number } | null): void {
+  function bakeQueryLayers(zip: JSZip, forcing: { uplift: Float32Array; erodibility: Float32Array; resX: number; resY: number } | null, mesh: MeshPayload | undefined): void {
     type ManifestLayer = { name: string; file: string; kind: 'raster' | 'vector' | 'table'; resX?: number; resY?: number; dtype?: string; encoding?: { scale: number; offset: number }; unit?: string; landOnly?: boolean }
     const layers: ManifestLayer[] = []
     // Elevation is always present (post-generation); carried raw as elevation.f32
@@ -3530,14 +3530,24 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       zip.file('layers/sedimentBasins.json', JSON.stringify(lastSedimentBasins))
       layers.push({ name: 'sedimentBasins', file: 'layers/sedimentBasins.json', kind: 'table' })
     }
+    // The adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4.3): the terrain
+    // proper, from which `elevation.f32` is rasterised. Three files under
+    // `mesh/`, described by one manifest entry; `formatVersion` 3 says a
+    // save may carry one. A world whose erosion has not run carries none.
+    if (mesh) {
+      zip.file('mesh/nodes.f32', mesh.nodes)
+      zip.file('mesh/connectivity.bin', mesh.connectivity)
+      zip.file('mesh/z.f32', mesh.z)
+    }
     const manifest = {
-      formatVersion: 2,
+      formatVersion: 3,
       // The same provenance string status.generator carries — a real build id
       // since 2026-08-11, where a static 'casas-eternas/v1alpha1' had stood
       // saying nothing.
       generatorVersion: BUILD_VERSION,
       world: { width: MAP_WIDTH, height: MAP_HEIGHT, topology: 'torus' },
       layers,
+      mesh: mesh ? { nodes: mesh.count, files: { nodes: 'mesh/nodes.f32', connectivity: 'mesh/connectivity.bin', z: 'mesh/z.f32' } } : undefined,
     }
     zip.file('manifest.json', JSON.stringify(manifest, null, 2))
   }
@@ -3647,7 +3657,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     zip.file('elevation.f32', message.elevation)
     bakeQueryLayers(zip, message.forcingResX > 0
       ? { uplift: new Float32Array(message.uplift), erodibility: new Float32Array(message.erodibility), resX: message.forcingResX, resY: message.forcingResY }
-      : null)
+      : null, message.mesh)
     const preview = await makePreviewBlob()
     if (preview) zip.file('preview.png', preview)
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
@@ -4072,6 +4082,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     let archeanPayload: { snapshot: unknown; mantle: ArrayBuffer; streak: ArrayBuffer } | undefined
     let mantle: ArrayBuffer | undefined
     let lattice: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer } | undefined
+    // The mesh terrain (formatVersion 3); a save without one restores the
+    // raster alone, as every save did before.
+    let meshPayload: MeshPayload | undefined
     try {
       zip = await JSZip.loadAsync(file)
       const yamlFile = zip.file('world.yaml')
@@ -4105,6 +4118,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         lattice = accFile && lockFile && clsFile
           ? { accumulated: await accFile.async('arraybuffer'), lockedEpochs: await lockFile.async('arraybuffer'), lastClassCode: await clsFile.async('arraybuffer') }
           : undefined
+        const nodesFile = zip.file('mesh/nodes.f32')
+        const connFile = zip.file('mesh/connectivity.bin')
+        const zFile = zip.file('mesh/z.f32')
+        if (nodesFile && connFile && zFile) {
+          const nodes = await nodesFile.async('arraybuffer')
+          meshPayload = { count: nodes.byteLength / 8, nodes, connectivity: await connFile.async('arraybuffer'), z: await zFile.async('arraybuffer') }
+        }
       }
     } catch {
       ctx.notifications.show({ message: t('notify.open.invalidFile'), icon: '/icons/folder.png', durationMs: 6000 })
@@ -4216,7 +4236,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
     markCleanOnNextRender = true
     restoredFromSave = true
-    postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, archean: archeanPayload as never, mantleDiffusion: vigourToDiffusion(Number(mantleVigourInput.value)) })
+    postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: vigourToDiffusion(Number(mantleVigourInput.value)) })
   }
 
 

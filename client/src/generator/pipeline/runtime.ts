@@ -8,9 +8,12 @@ import { ElevationRenderPool } from '../render/elevationRenderPool'
 import type { ElevationRenderer } from '../render/elevationRenderPool'
 import { downstreamOf } from './stages'
 import type { StageId } from './stages'
-import { runErosionPassV2 } from '../surface/erosionPassV2'
+import { erodeOnMesh, type MeshTerrain } from './meshErosionStage'
+import { decodeMesh, encodeMesh } from '../mesh/meshSerial'
+import { torusDomain } from '../core/domain'
+import type { MeshPayload } from './messages'
 import type { WorkerLike } from '../surface/erosionEnginePool'
-import { assembleErosionForcing, coarseForcingFields } from './erosionForcing'
+import { coarseForcingFields } from './erosionForcing'
 import { fillDepressionsAndRouteFlow } from '../surface/flowRouting'
 import type { ArcheanSimulation } from '../archean/archeanState'
 import { createArcheanSimulation } from '../archean/archeanState'
@@ -215,6 +218,16 @@ let ecology: EcologyResult | null = null
 // hydrology falls back to the final elevations (few lakes — erosion drains them).
 let lastLakeBasinElevations: Float32Array | null = null
 
+// The world's terrain since phase 4.3: the adaptive mesh the last erosion
+// ran on, with its eroded heights, in canonical numbering. What the save
+// carries (`mesh/…`), and what a restore brings back. The raster fields
+// above are its rasterisation while the consumers still walk cells.
+let meshTerrain: MeshTerrain | null = null
+// The mesh's initial heights rasterised — the "before" of the last erosion
+// for the cell-walking consumers (the sediment basins), see
+// meshErosionStage.MeshErosionStageResult.before. Null when no erosion ran.
+let meshBefore: Float32Array | null = null
+
 // Where a stage's result is kept, and nowhere else. Exhaustive over StageId on
 // purpose: adding a stage to the table makes this a compile error, which is the
 // only reliable way to be told that a new result needs somewhere to be dropped.
@@ -226,6 +239,8 @@ function clearResult(id: StageId): void {
       return
     case 'erosion':
       lastLakeBasinElevations = null
+      meshTerrain = null
+      meshBefore = null
       return
     case 'climate':
       climate = null
@@ -496,10 +511,6 @@ function coarseElevation(elevations: Float32Array, worldWidth: number, worldHeig
 // second pass finishes).
 async function runErodeRequest(rawElevations: Float32Array, width: number, height: number, opts: { age?: number; alluvium?: number; rockContrast?: number; weather?: WeatherParams } = {}): Promise<void> {
   if (!sim) return
-  // The forcing and control mapping live in erosionForcing.ts, SHARED with
-  // the golden harness — the harness must gate exactly the inputs the
-  // player's erode runs on.
-  const { forcing, params } = assembleErosionForcing(sim, rawElevations, width, height, opts, opts.weather ?? defaultWeatherParams())
   const age = Math.round(opts.age ?? 40)
 
   // Pooled + pipelined when cross-origin isolation grants SAB (the client
@@ -516,10 +527,18 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
     }
   }
 
+  // The engine on the adaptive mesh (pipeline/meshErosionStage.ts, SHARED
+  // with the golden harness, which must gate exactly the world the player's
+  // erode runs on): the mesh is built from the tectonics' point synthesis,
+  // eroded, and rasterised for the consumers that still walk cells.
   let lastReportedPercent = -1
-  const erosionResult = await runErosionPassV2(rawElevations, width, height, forcing, {
+  const staged = await erodeOnMesh(sim, rawElevations, width, height, {
     age,
-    params,
+    controls: { alluvium: opts.alluvium, rockContrast: opts.rockContrast },
+    // The mesh build takes seconds before the first iteration: show the bar
+    // at zero rather than nothing.
+    onBuildProgress: (fraction) => { if (fraction === 0) emit({ type: 'erosionProgress', fraction: 0 } as WorkerErosionProgressMessage) },
+    weather: opts.weather ?? defaultWeatherParams(),
     pool,
     onProgress: (fraction) => {
       const percent = Math.round(fraction * 100)
@@ -531,13 +550,30 @@ async function runErodeRequest(rawElevations: Float32Array, width: number, heigh
     onChunkComplete: (chunkElevations) => renderAndPost(chunkElevations, true),
     shouldCancel: () => erosionStopRequested,
   })
-  await renderAndPost(erosionResult.elevations)
+  await renderAndPost(staged.elevations)
   // Keep the basins-intact terrain for the hydrology's lakes — set after
   // renderAndPost, which clears it. Under v2 it equals the elevations
   // (nothing bakes the fill in any more); the hydrology contract is
   // unchanged. See lastLakeBasinElevations.
-  lastLakeBasinElevations = erosionResult.preFillElevations
-  lastSedimentFlux = erosionResult.sedimentFlux
+  lastLakeBasinElevations = staged.elevations.slice()
+  lastSedimentFlux = staged.sedimentFlux
+  meshTerrain = staged.terrain
+  meshBefore = staged.before
+}
+
+// The mesh terrain as the save's bytes (mesh/meshSerial.ts). The mesh is
+// canonical already, so the identity numbering is the Hilbert one.
+function serializeMeshTerrain(terrain: MeshTerrain): MeshPayload {
+  const order = new Int32Array(terrain.mesh.aliveVertices)
+  for (let i = 0; i < order.length; i++) order[i] = i
+  const serial = encodeMesh(terrain.mesh, order)
+  const z = terrain.z.slice(0, serial.count)
+  return { count: serial.count, nodes: serial.nodes.buffer as ArrayBuffer, connectivity: serial.connectivity.buffer as ArrayBuffer, z: z.buffer as ArrayBuffer }
+}
+
+function restoreMeshTerrain(payload: MeshPayload, width: number, height: number): MeshTerrain {
+  const mesh = decodeMesh(torusDomain(width, height), { count: payload.count, nodes: new Float32Array(payload.nodes), connectivity: new Uint8Array(payload.connectivity) })
+  return { mesh, z: new Float32Array(payload.z) }
 }
 
 function stopTicking(): void {
@@ -845,7 +881,7 @@ function handleHydrologyRun(): void {
       // the pass started from; a loaded save has none, and gets no basins.
       result.sedimentBasins = preErosionElevations && preErosionElevations !== terrain && preErosionElevations.length === terrain.length
         ? findSedimentBasins({
-          before: preErosionElevations, after: terrain, width, height, routing: result.routing, graph: result.graph, cellM: WORLD_WIDTH_METERS / width,
+          before: meshBefore ?? preErosionElevations, after: terrain, width, height, routing: result.routing, graph: result.graph, cellM: WORLD_WIDTH_METERS / width,
           cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, width, height),
           hardness: forcingFields.hardness, coarseResX: CLIMATE_RES_X, coarseResY: CLIMATE_RES_Y,
         }).basins
@@ -1047,8 +1083,11 @@ function handleSerializeWorld(): void {
     erodibility: hardness.buffer as ArrayBuffer,
     forcingResX: CLIMATE_RES_X,
     forcingResY: CLIMATE_RES_Y,
+    mesh: meshTerrain ? serializeMeshTerrain(meshTerrain) : undefined,
   }
-  emit(worldMessage, [worldMessage.mantle, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge, worldMessage.elevation, worldMessage.uplift, worldMessage.erodibility])
+  const transfers = [worldMessage.mantle, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge, worldMessage.elevation, worldMessage.uplift, worldMessage.erodibility]
+  if (worldMessage.mesh) transfers.push(worldMessage.mesh.nodes, worldMessage.mesh.connectivity, worldMessage.mesh.z)
+  emit(worldMessage, transfers)
 }
 
 function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'restoreWorld' }>): void {
@@ -1094,6 +1133,10 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   // No stored pre-erosion field — a reset-erosion after a load just reverts
   // to the loaded state.
   preErosionElevations = lastRawElevations
+  // The mesh the save carries, if it does: the terrain proper, so a save
+  // after a load carries it on. The raster above is its rasterisation.
+  meshTerrain = message.mesh ? restoreMeshTerrain(message.mesh, sim.width, sim.height) : null
+  lastLakeBasinElevations = null
   // Render the injected (stored, post-erosion) elevation directly — no pool
   // query, no re-erosion.
   renderAndPost(lastRawElevations, false, 1)
