@@ -70,6 +70,7 @@ const M = {
   bake: await L('/src/generator/pipeline/meshBakeStage.ts'),
   coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
   column: await L('/src/generator/mesh/meshColumn.ts'),
+  flexure: await L('/src/generator/tectonics/flexure.ts'),
   archean: await L('/src/generator/archean/archeanState.ts'),
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
   finalize: await L('/src/generator/archean/finalizeArchean.ts'),
@@ -613,6 +614,34 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check('the mesh pipeline version carries the density rule', M.artifacts.meshPipelineVersion(1, 4) !== M.artifacts.meshPipelineVersion(1, 5) && M.artifacts.meshPipelineVersion(1, 4) !== M.artifacts.meshPipelineVersion(2, 4))
 }
 
+// Flexural isostasy (phase 5.3): the plate's answer to a load on a flat
+// raster — a ridge's weight sinks the plate under AND beside it (the
+// foreland basin, no feature rule), the whole answer compensates the
+// load by ρ_crust/ρ_mantle, and a stiffer plate spreads it wider and
+// shallower.
+{
+  const RX = 128, RY = 64, cellKm = 31
+  const ridge = (teKm) => {
+    const load = new Float32Array(RX * RY)
+    const te = new Float32Array(RX * RY).fill(teKm)
+    for (let y = 0; y < RY; y++) for (let x = 62; x <= 65; x++) load[y * RX + x] = 2000
+    return { load, te, w: M.flexure.flexuralResponse(load, te, RX, RY, cellKm) }
+  }
+  const soft = ridge(20), stiff = ridge(70)
+  const row = (r, x) => r.w[32 * RX + x]
+  const sum = (r) => { let s = 0; for (let i = 0; i < r.w.length; i++) s += r.w[i]; return s }
+  const loadSum = (r) => { let s = 0; for (let i = 0; i < r.load.length; i++) s += r.load[i]; return s }
+  const alpha20 = M.flexure.flexuralAlphaKm(20), alpha70 = M.flexure.flexuralAlphaKm(70)
+  console.log(`       α(Te 20 km) = ${alpha20.toFixed(0)} km, α(Te 70 km) = ${alpha70.toFixed(0)} km`)
+  check('the plate sinks under the ridge', row(soft, 63) < -100, `${row(soft, 63).toFixed(0)} m`)
+  check('and beside it — a foreland basin with no feature rule', row(soft, 68) < -10 && row(soft, 68) > row(soft, 63), `${row(soft, 68).toFixed(0)} m at 5 cells`)
+  check('far away the plate is level', Math.abs(row(soft, 20)) < 1, `${row(soft, 20).toFixed(2)} m`)
+  const ratio = -sum(soft) / loadSum(soft)
+  check('the load is compensated by ρ_crust/ρ_mantle', Math.abs(ratio - 2700 / 3300) < 0.01, ratio.toFixed(3))
+  check('a stiffer plate answers wider and shallower', row(stiff, 63) > row(soft, 63) && row(stiff, 75) < row(soft, 75), `under: ${row(stiff, 63).toFixed(0)} vs ${row(soft, 63).toFixed(0)} m; at 12 cells: ${row(stiff, 75).toFixed(1)} vs ${row(soft, 75).toFixed(1)} m`)
+  check('Te grows with craton oldness and with ocean age', M.flexure.elasticThicknessKm(true, 1, 0) > M.flexure.elasticThicknessKm(true, 0, 0) && M.flexure.elasticThicknessKm(false, 0, 100) > M.flexure.elasticThicknessKm(false, 0, 1))
+}
+
 // The coupled epoch (phase 5.1): a small real world through the handover,
 // then epochs in which the plates move the nodes, the mesh is rebuilt
 // and remeshed, the baseline follows the tectonics and the erosion runs
@@ -634,7 +663,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const EPOCHS = 5, ITER = 4
   const trace = []
   let valid = true, finite = true
-  let ledger = 0, columnVolume = 0, supplyBounded = true
+  let ledger = 0, columnVolume = 0, supplyBounded = true, rebound = 0, subsidence = 0
   const t1 = performance.now()
   for (let e = 0; e < EPOCHS; e++) {
     const te = performance.now()
@@ -643,6 +672,8 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && !Number.isFinite(terrain.z[v])) finite = false
     ledger += stats.depositedM3 - stats.reErodedM3
     columnVolume = stats.columnVolumeM3
+    if (stats.reboundMaxM > rebound) rebound = stats.reboundMaxM
+    if (stats.subsidenceMaxM > subsidence) subsidence = stats.subsidenceMaxM
     // No aggradation from nothing (the 2026-07-27 mode): what the walk
     // lays down plus what leaves the world is at most what came loose.
     if (stats.depositedM3 + stats.exportedFluxM3 > stats.erodedFluxM3 * 1.001 + 1) supplyBounded = false
@@ -680,6 +711,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     check('no layer value goes negative', negative === 0, `${negative} (fine/coarse/craton/hard ${byValue.join('/')}, worst ${worst})`)
   }
   check('every epoch\'s deposits are bounded by its supply (no aggradation from nothing)', supplyBounded)
+  check(`the plate answers the epochs' loads (rebound up to ${rebound.toFixed(0)} m, subsidence up to ${subsidence.toFixed(0)} m)`, rebound > 0 && subsidence > 0)
   {
     // Two classes (5.2b): the torrents shed coarse, the plains fine; both
     // reach the column, the fine the larger part.

@@ -5,13 +5,15 @@ import { TECTONIC_MA_PER_EPOCH } from '../core/worldTime'
 import { raftField } from '../crust/raftField'
 import { dynamicTopographyAt } from '../elevation/dynamicTopography'
 import { raftBaselineAt } from '../elevation/elevationField'
-import { marginParameter } from '../elevation/elevationScale'
+import { ELEVATION_METERS, marginParameter } from '../elevation/elevationScale'
 import { synthesisSampler } from '../elevation/elevationSampler'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { buildMesh, densityTarget, MESH_Z, triangulatePoints } from '../mesh/meshBuild'
 import { MESH_TUNING } from '../mesh/meshDensity'
 import { addColumnField, columnVolumeM3, createColumn, cut, decodeColumn, deposit, encodeColumn, erodibilityOver, MESH_COLUMN, COLUMN_DEPTH, openLayer, permuteColumn, type SedimentColumn } from '../mesh/meshColumn'
 import { computeCratonOldnessField } from '../crust/raftField'
+import { deflectionAt, elasticThicknessKm, flexuralResponse } from '../tectonics/flexure'
+import { sampleOceanAge } from '../tectonics/oceanAge'
 import { worldEpoch } from '../core/worldTime'
 import { runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
 import { compactMesh, decodeMesh, encodeMesh, permute } from '../mesh/meshSerial'
@@ -120,6 +122,11 @@ export interface CoupledEpochOptions {
 // world (mean land +0.5 km, orogens to 3 km at 16 Ma).
 export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 2, upliftScale: 0.25 } as const
 
+// The flexure raster's cell in macro cells: 4 (31 km at 2048) — the
+// flexural parameter is tens to a hundred-odd km, and the kernel wants a
+// few cells across it.
+const FLEXURE_CELL = 4
+
 export interface CoupledEpochStats {
   // The column's ledger for the epoch, m³: what the walk laid down, what
   // the cut took back out of sediment (the rest was bedrock), and the
@@ -128,6 +135,11 @@ export interface CoupledEpochStats {
   depositedM3: number
   reErodedM3: number
   columnVolumeM3: number
+  // The flexural answer to the epoch's load change (phase 5.3), metres:
+  // the largest lift (unloaded ranges rise) and the deepest sag (loaded
+  // basins sink).
+  reboundMaxM: number
+  subsidenceMaxM: number
   events: SimEvent[]
   nodesBefore: number
   nodesAfter: number
@@ -140,7 +152,7 @@ export interface CoupledEpochStats {
   erodedFluxM3: number
   exportedFluxM3: number
   // Milliseconds per phase, the calibration's cost side.
-  timing: { membership: number; tectonics: number; rebuild: number; remesh: number; baseline: number; forcing: number; erosion: number }
+  timing: { membership: number; tectonics: number; rebuild: number; remesh: number; baseline: number; forcing: number; erosion: number; flexure: number }
 }
 
 function baselineAt(sim: PlateSimulation, x: number, y: number): number {
@@ -172,7 +184,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const domain: Domain = terrain.mesh.domain
   const mesh0 = terrain.mesh
   const nodesBefore = mesh0.aliveVertices
-  const timing = { membership: 0, tectonics: 0, rebuild: 0, remesh: 0, baseline: 0, forcing: 0, erosion: 0 }
+  const timing = { membership: 0, tectonics: 0, rebuild: 0, remesh: 0, baseline: 0, forcing: 0, erosion: 0, flexure: 0 }
   let tick = performance.now()
   const lap = (): number => { const now = performance.now(); const dt = now - tick; tick = now; return dt }
   // Plate membership BEFORE the plates move: nearest seed.
@@ -330,6 +342,47 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // crust takes it as a load in 5.3; nothing feeds back yet.
   sim.sedimentExportM3 += result.exportedFluxM3
   timing.erosion = lap()
+  // FLEXURAL ISOSTASY (phase 5.3, tectonics/flexure.ts): the epoch's
+  // load change — rock cut, sediment laid down — binned by area onto a
+  // coarse raster, the plate's deflection computed there with the
+  // elastic thickness of each cell, and read back at the nodes. Crust
+  // moves; the column does not (it rides on the crust), and the relief
+  // takes the deflection as height over the baseline.
+  const flexResX = Math.max(16, Math.round(width / FLEXURE_CELL))
+  const flexResY = Math.max(8, Math.round(height / FLEXURE_CELL))
+  const flexCellKm = ((width / flexResX) * METERS_PER_CELL) / 1000
+  const flexCellM2 = (flexCellKm * 1000) * (flexCellKm * 1000)
+  const loadM = new Float32Array(flexResX * flexResY)
+  for (let v = 0; v < mesh.vertexSlots; v++) {
+    if (!mesh.vAlive[v]) continue
+    const dv = result.depositM3[v] - result.cutM3[v]
+    if (dv === 0) continue
+    const cx = (((Math.floor((mesh.vx[v] / width) * flexResX) % flexResX) + flexResX) % flexResX)
+    const cy = (((Math.floor((mesh.vy[v] / height) * flexResY) % flexResY) + flexResY) % flexResY)
+    loadM[cy * flexResX + cx] += dv / flexCellM2
+  }
+  const teKm = new Float32Array(flexResX * flexResY)
+  for (let cy = 0; cy < flexResY; cy++) {
+    for (let cx = 0; cx < flexResX; cx++) {
+      const x = ((cx + 0.5) / flexResX) * width
+      const y = ((cy + 0.5) / flexResY) * height
+      const continental = raftField(x, y, sim.rafts, width, height) > 0.5
+      const oldness = upsampleAt(cratonField, CLIMATE_RES_X, CLIMATE_RES_Y, x, y, width, height)
+      const ageMa = sampleOceanAge(sim.oceanAge, x, y, width, height) * (sim.epochMa || TECTONIC_MA_PER_EPOCH)
+      teKm[cy * flexResX + cx] = elasticThicknessKm(continental, oldness, ageMa)
+    }
+  }
+  const deflection = flexuralResponse(loadM, teKm, flexResX, flexResY, flexCellKm)
+  let reboundMaxM = 0
+  let subsidenceMaxM = 0
+  for (let v = 0; v < mesh.vertexSlots; v++) {
+    if (!mesh.vAlive[v]) continue
+    const wM = deflectionAt(deflection, flexResX, flexResY, mesh.vx[v], mesh.vy[v], width, height)
+    if (wM > reboundMaxM) reboundMaxM = wM
+    if (-wM > subsidenceMaxM) subsidenceMaxM = -wM
+    result.z[v] = Math.max(-1, Math.min(1, result.z[v] + wM / ELEVATION_METERS))
+  }
+  timing.flexure = lap()
   terrain.mesh = mesh
   terrain.column = column
   terrain.z = result.z
@@ -347,7 +400,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   }
   const areaM2 = new Float64Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) areaM2[v] = areas[v] * cellM2
-  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), timing }
+  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, timing }
 }
 
 // The terrain's bytes for a save or a harness hash.

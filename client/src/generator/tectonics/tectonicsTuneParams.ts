@@ -360,4 +360,27 @@ export const TECTONICS_TUNING = {
   // below SEA_LEVEL. That is the real blocker, and it was hidden before behind a
   // baseline on which "above sea level" stretched 3 km up.
   riftBasinFloorThickness: -0.9,
+
+  // FLEXURAL ISOSTASY (tectonics/flexure.ts, ADAPTIVE_MESH_PLAN.md phase
+  // 5.3, decision 5 of docs/decisions/adaptive-mesh.md). The elastic
+  // thickness Te is a FIELD: on a raft between the young-orogen and the
+  // craton value by the craton oldness (crust/raftField), in the ocean
+  // from the lithosphere's age like its depth (GDH1's isotherm depth,
+  // ~√age). Densities and the plate's elastic constants as on Earth;
+  // measured here is only what the kernel makes of them (the flexural
+  // parameter α, tens to a hundred-odd km). Deflection scale
+  // flexureDeflectionScale is the one calibration knob: 1 is full
+  // compensation of the load spread over α; a kernel narrower than the
+  // real flexural profile over-deepens under the load, so it may end
+  // under one when measured at 2048.
+  flexureTeYoungKm: 20,
+  flexureTeCratonKm: 70,
+  flexureTeOceanFloorKm: 5,
+  flexureTeOceanAgeKm: 3,
+  flexureTeOceanMaxKm: 50,
+  flexureCrustDensity: 2700,
+  flexureMantleDensity: 3300,
+  flexureYoungsModulusGPa: 70,
+  flexurePoisson: 0.25,
+  flexureDeflectionScale: 1,
 } as const
