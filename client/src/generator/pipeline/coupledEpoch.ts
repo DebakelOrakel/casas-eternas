@@ -13,6 +13,8 @@ import { MESH_TUNING } from '../mesh/meshDensity'
 import { addColumnField, columnVolumeM3, createColumn, cut, decodeColumn, deposit, encodeColumn, erodibilityOver, MESH_COLUMN, COLUMN_DEPTH, openLayer, permuteColumn, type SedimentColumn } from '../mesh/meshColumn'
 import { computeCratonOldnessField } from '../crust/raftField'
 import { deflectionAt, elasticThicknessKm, flexuralResponse } from '../tectonics/flexure'
+import { foldFactorAt } from '../tectonics/folds'
+import { buildFeatureBuckets } from '../elevation/elevationField'
 import { sampleOceanAge } from '../tectonics/oceanAge'
 import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
 import { computeBiomes } from '../climate/biomes'
@@ -177,6 +179,8 @@ export interface CoupledEpochStats {
   // the share of the land in the periglacial band this epoch.
   screeM3: number
   solifluctionShare: number
+  // The share of the land under a folding range this epoch (phase 5.7).
+  foldedShare: number
   events: SimEvent[]
   nodesBefore: number
   nodesAfter: number
@@ -369,6 +373,10 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // the craton oldness and the crust hardness under the node (the coarse
   // fields at the node's position), so a deposit knows its source.
   const cratonField = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, width, height)
+  // THE FOLDS (phase 5.7): the uplift modulated across every range by the
+  // buckling train — the same features the uplift field is built from.
+  const featureBuckets = buildFeatureBuckets(sim.features, width, height)
+  let foldedArea = 0
   const cratonAge = new Float32Array(mesh.vertexSlots)
   const rockHard = new Float32Array(mesh.vertexSlots)
   const slopeScale = new Float32Array(mesh.vertexSlots)
@@ -384,6 +392,10 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     // The cover holds the ground: the erodibility falls with it, after the
     // column's word (a fill under forest is soft fill, held).
     const c = zCanon[v] > 0 ? upsampleAt(cover, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height) : 0
+    if (forcing.uplift[v] > 0) {
+      const fold = foldFactorAt(featureBuckets, mesh.vx[v], mesh.vy[v], width, height)
+      if (fold !== 1) { forcing.uplift[v] *= fold; if (zCanon[v] > 0) foldedArea += areas[v] }
+    }
     const bedrockK = forcing.erodibility[v]
     const k = erodibilityOver(column.data, v, layers, bedrockK)
     forcing.erodibility[v] = k * (1 - COVER_TUNING.erodibilityDrop * c)
@@ -400,6 +412,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   }
   const meanLandCover = coverArea > 0 ? coverSum / coverArea : 0
   const solifluctionShare = coverArea > 0 ? solifluctionArea / coverArea : 0
+  const foldedShare = coverArea > 0 ? foldedArea / coverArea : 0
   forcing.cratonAge = cratonAge
   forcing.rockHard = rockHard
   forcing.slopeScale = slopeScale
@@ -567,7 +580,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   }
   const areaM2 = new Float64Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) areaM2[v] = areas[v] * cellM2
-  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, meanLandTempC, iceVolumeKm3, seaLevelM, lakes: ages.length, oldestLakeMa, meanLandCover, screeM3, solifluctionShare, timing }
+  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, meanLandTempC, iceVolumeKm3, seaLevelM, lakes: ages.length, oldestLakeMa, meanLandCover, screeM3, solifluctionShare, foldedShare, timing }
 }
 
 // The terrain's bytes for a save or a harness hash.

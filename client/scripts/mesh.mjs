@@ -72,6 +72,10 @@ const M = {
   column: await L('/src/generator/mesh/meshColumn.ts'),
   flexure: await L('/src/generator/tectonics/flexure.ts'),
   cover: await L('/src/generator/surface/cover.ts'),
+  folds: await L('/src/generator/tectonics/folds.ts'),
+  mapConfig: await L('/src/generator/core/mapConfig.ts'),
+  field: await L('/src/generator/elevation/elevationField.ts'),
+  tectonicsTune: await L('/src/generator/tectonics/tectonicsTuneParams.ts'),
   biomes: await L('/src/generator/climate/biomes.ts'),
   weather: await L('/src/generator/climate/weather.ts'),
   planet: await L('/src/generator/planet/planetForcing.ts'),
@@ -646,6 +650,27 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check('Te grows with craton oldness and with ocean age', M.flexure.elasticThicknessKm(true, 1, 0) > M.flexure.elasticThicknessKm(true, 0, 0) && M.flexure.elasticThicknessKm(false, 0, 100) > M.flexure.elasticThicknessKm(false, 0, 1))
 }
 
+// Folds (phase 5.7): across one range the uplift's multiplier is a train
+// with the buckling wavelength, an anticline on the axis, mean one over a
+// period; along the range it is constant; away from every range it is one.
+{
+  const W = 256, H = 128
+  const feature = { x: 128, y: 64, thickness: 1, tangentX: 1, tangentY: 0, kind: 'range', subsides: false, plateA: 0, plateB: 1, movesWithPlate: 0, epochsSinceDeposit: 0 }
+  const buckets = M.field.buildFeatureBuckets([feature], W, H)
+  const T = M.tectonicsTune.TECTONICS_TUNING
+  const lambda = (T.foldWavelengthKm * 1000) / M.mapConfig.METERS_PER_CELL
+  const at = (x, y) => M.folds.foldFactorAt(buckets, x, y, W, H)
+  check('the axis is an anticline', Math.abs(at(128, 64) - (1 + T.foldAmplitude)) < 1e-6, at(128, 64).toFixed(3))
+  check('half a wavelength across, a syncline', Math.abs(at(128, 64 + lambda / 2) - (1 - T.foldAmplitude)) < 1e-6, at(128, 64 + lambda / 2).toFixed(3))
+  check('one wavelength across, the next anticline', Math.abs(at(128, 64 + lambda) - (1 + T.foldAmplitude)) < 1e-6)
+  check('constant along the range', Math.abs(at(120, 64 + lambda / 4) - at(136, 64 + lambda / 4)) < 1e-6)
+  let mean = 0
+  const N = 200
+  for (let i = 0; i < N; i++) mean += at(128, 64 + (i / N) * lambda)
+  check('mean one over a period', Math.abs(mean / N - 1) < 1e-3, (mean / N).toFixed(4))
+  check('one away from every range', at(20, 20) === 1)
+}
+
 // The coupled epoch (phase 5.1): a small real world through the handover,
 // then epochs in which the plates move the nodes, the mesh is rebuilt
 // and remeshed, the baseline follows the tectonics and the erosion runs
@@ -670,7 +695,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   let ledger = 0, columnVolume = 0, supplyBounded = true, rebound = 0, subsidence = 0, climateSane = true
   const climateTrace = []
   const coverTrace = []
-  let screeTotal = 0, solifluction = 0
+  let screeTotal = 0, solifluction = 0, folded = 0
   const t1 = performance.now()
   for (let e = 0; e < EPOCHS; e++) {
     const te = performance.now()
@@ -683,6 +708,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     if (stats.subsidenceMaxM > subsidence) subsidence = stats.subsidenceMaxM
     coverTrace.push(stats.meanLandCover)
     screeTotal += stats.screeM3
+    folded = Math.max(folded, stats.foldedShare)
     solifluction = Math.max(solifluction, stats.solifluctionShare)
     climateTrace.push(`${stats.meanLandTempC.toFixed(1)}°C ice ${stats.iceVolumeKm3.toFixed(0)} km³ sea ${stats.seaLevelM.toFixed(2)} m lakes ${stats.lakes} (oldest ${stats.oldestLakeMa} Ma) ${(stats.timing.climate / 1000).toFixed(1)}+${(stats.timing.lakes / 1000).toFixed(1)} s`)
     if (!Number.isFinite(stats.meanLandTempC) || stats.meanLandTempC < -60 || stats.meanLandTempC > 60 || stats.iceVolumeKm3 < 0 || stats.seaLevelM > 0) climateSane = false
@@ -742,6 +768,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   // and the cold band exists on this world.
   check(`creep lays down scree (${(screeTotal / 1e9).toFixed(1)} km³ over the epochs)`, screeTotal > 0)
   check(`some land lies in the periglacial band (${(solifluction * 100).toFixed(0)} %)`, solifluction > 0 && solifluction < 1)
+  check(`the ranges fold (${(folded * 100).toFixed(0)} % of the land under a folding range)`, folded > 0 && folded < 1)
   {
     const simBare = await world()
     const bare = M.coupled.createCoupledTerrain(simBare)

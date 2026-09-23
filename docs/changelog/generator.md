@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-23
+- **new** Tectonics: a young range rises as a train of parallel ridges and valleys — the crust buckles across the collision — before any river has cut one. `generator.panel.tectonics`
 - **new** Tectonics: slopes fail by their rock — hard rock stands steeper, soft fill slumps — creep lays down scree at the foot of a slope as a layer of its own, and in the cold the ground itself creeps downhill. `generator.panel.tectonics`
 - **new** Tectonics: vegetation holds the ground — forested land erodes less and stands steeper than bare rock, desert and tundra barely more than bare, and a river's banks are held by the same cover. `generator.panel.tectonics`
 - **new** Tectonics: the climate runs with the history — every epoch has its own weather on the terrain of the moment, the rain of that epoch is what carves it, ice grows where the epoch is cold and draws the sea down while it stands, lakes remember how long they have stood, and every sediment layer keeps the climate it formed under. `generator.panel.tectonics`

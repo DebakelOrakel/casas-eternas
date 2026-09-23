@@ -51,7 +51,8 @@ archean/    the Archean era; hands over to tectonics via finalizeArchean.ts, whi
 tectonics/  plate*, boundary*, oceanAge, terrainFeatures, volcanoes,
             tectonicsTuneParams (tuning constants), epoch/ (the per-epoch phases),
             flexure (phase 5.3: Te as a field, the plate's deflection to a load
-            change on a coarse raster, read back at the mesh's nodes)
+            change on a coarse raster, read back at the mesh's nodes), folds (phase
+            5.7: the buckling train across a range as a modulation of the uplift)
 crust/      continental crust as rafts — deliberately decoupled from the plates
             (docs/decisions/continental-crust-rafts.md); crustTuneParams holds the
             raft rules both eras pass in

@@ -383,4 +383,13 @@ export const TECTONICS_TUNING = {
   flexureYoungsModulusGPa: 70,
   flexurePoisson: 0.25,
   flexureDeflectionScale: 1,
+
+  // FOLDS (tectonics/folds.ts, phase 5.7): the buckling wavelength across
+  // a convergent margin and the modulation of the uplift over it (±
+  // amplitude around the range's mean). Both to be measured: the
+  // wavelength against the mesh's spacing in an orogen (a train the mesh
+  // cannot resolve is noise), the amplitude against the ridge-and-valley
+  // relief a young range shows before its rivers cut.
+  foldWavelengthKm: 15,
+  foldAmplitude: 0.5,
 } as const
