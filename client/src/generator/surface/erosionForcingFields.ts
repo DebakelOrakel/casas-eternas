@@ -63,7 +63,7 @@ export interface ErosionControlsV2 {
 }
 
 // Torus-wrapped bilinear sample of a coarse field at a fine-grid cell.
-function upsampleAt(coarse: Float32Array, resX: number, resY: number, x: number, y: number, width: number, height: number): number {
+export function upsampleAt(coarse: Float32Array, resX: number, resY: number, x: number, y: number, width: number, height: number): number {
   const u = (x / width) * resX
   const v = (y / height) * resY
   const x0 = Math.floor(u)

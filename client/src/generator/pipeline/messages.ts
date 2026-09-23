@@ -160,6 +160,9 @@ export interface MeshPayload {
   nodes: ArrayBuffer
   connectivity: ArrayBuffer
   z: ArrayBuffer
+  // The sediment column (phase 5.2, mesh/meshColumn.ts; `mesh/column.bin`,
+  // formatVersion 4). Absent in a save from before it.
+  column?: ArrayBuffer
 }
 
 export interface WorkerRestoreWorldMessage {

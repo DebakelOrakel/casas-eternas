@@ -20,8 +20,8 @@
 //                  curvature, so a crest or a valley floor is resolved
 //                  across, not only along.
 //   h_column     = columnSpacingM where the sediment column is thicker
-//                  than columnThresholdM, else unbounded — inert until
-//                  phase 5 puts columns on the nodes.
+//                  than columnThresholdM, else unbounded (live since
+//                  phase 5.2, mesh/meshColumn.ts).
 //
 // Below `deepOceanBelowM` none of the terms applies and the spacing is
 // `oceanSpacingM` outright: the engine never computes there (the deep

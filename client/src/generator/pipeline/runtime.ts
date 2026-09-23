@@ -10,6 +10,7 @@ import { downstreamOf } from './stages'
 import type { StageId } from './stages'
 import type { MeshTerrain } from './meshErosionStage'
 import { createCoupledTerrain, decodeCoupledTerrain, HISTORY_DEFAULTS, stepCoupledEpoch, type CoupledTerrain } from './coupledEpoch'
+import { encodeColumn } from '../mesh/meshColumn'
 import { rasteriseNodeField } from '../mesh/meshRaster'
 import { TECTONICS_INPUTS } from '../tectonics/tectonicsInputParams'
 import { encodeMesh } from '../mesh/meshSerial'
@@ -541,7 +542,7 @@ function meshPayload(): MeshPayload | undefined {
   if (!meshTerrain) return undefined
   if (!meshPayloadCache) meshPayloadCache = serializeMeshTerrain(meshTerrain)
   const c = meshPayloadCache
-  return { count: c.count, nodes: c.nodes.slice(0), connectivity: c.connectivity.slice(0), z: c.z.slice(0) }
+  return { count: c.count, nodes: c.nodes.slice(0), connectivity: c.connectivity.slice(0), z: c.z.slice(0), column: c.column?.slice(0) }
 }
 
 // The mesh terrain as the save's bytes (mesh/meshSerial.ts). The mesh is
@@ -551,7 +552,10 @@ function serializeMeshTerrain(terrain: MeshTerrain): MeshPayload {
   for (let i = 0; i < order.length; i++) order[i] = i
   const serial = encodeMesh(terrain.mesh, order)
   const z = terrain.z.slice(0, serial.count)
-  return { count: serial.count, nodes: serial.nodes.buffer as ArrayBuffer, connectivity: serial.connectivity.buffer as ArrayBuffer, z: z.buffer as ArrayBuffer }
+  // The column rides along when the terrain is the coupled one (it always
+  // is once an epoch has run — the hydrology's view of it is `terrain`).
+  const column = coupled && coupled.mesh === terrain.mesh ? encodeColumn(coupled.column, serial.count) : undefined
+  return { count: serial.count, nodes: serial.nodes.buffer as ArrayBuffer, connectivity: serial.connectivity.buffer as ArrayBuffer, z: z.buffer as ArrayBuffer, column: column ? column.buffer as ArrayBuffer : undefined }
 }
 
 
@@ -1167,7 +1171,7 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   // save without a mesh restores the raster alone; the first epoch then
   // builds the mesh from the synthesis.
   if (message.mesh) {
-    coupled = decodeCoupledTerrain(sim, { nodes: new Float32Array(message.mesh.nodes), connectivity: new Uint8Array(message.mesh.connectivity), z: new Float32Array(message.mesh.z) })
+    coupled = decodeCoupledTerrain(sim, { nodes: new Float32Array(message.mesh.nodes), connectivity: new Uint8Array(message.mesh.connectivity), z: new Float32Array(message.mesh.z), column: message.mesh.column ? new Uint8Array(message.mesh.column) : undefined })
     coupled.routing = meshRouting(coupled.mesh, coupled.z)
     meshTerrain = asMeshTerrain(coupled)
   } else {

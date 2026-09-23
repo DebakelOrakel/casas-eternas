@@ -252,6 +252,27 @@ export interface TerrainViews {
   donorMin: Float32Array
   mouthFlux: Float32Array
   mouthZ: Float32Array
+  // THE SEDIMENT RECORD (phase 5.2): what the run did to every node's
+  // column, for the caller that keeps one (mesh/meshColumn.ts). Run-long
+  // tallies per node, m³ — the fluvial cut (cutVolume) and what the
+  // sediment walk laid down (depositVolume) — and the deposit's
+  // PROVENANCE as products, volume × craton oldness and volume × source
+  // hardness (depositCraton, depositHard), carried down the walk with the
+  // flux as fluxCraton/fluxHard (reset per iteration with the flux) and
+  // through the leaf mailboxes (mouthCraton/mouthHard). The forcing's
+  // craton and hardness per node (cratonAge, rockHard) are what a cut
+  // hands in; zero when the caller passes none, and the record is then
+  // volumes alone.
+  cutVolume: Float32Array
+  depositVolume: Float32Array
+  depositCraton: Float32Array
+  depositHard: Float32Array
+  fluxCraton: Float32Array
+  fluxHard: Float32Array
+  mouthCraton: Float32Array
+  mouthHard: Float32Array
+  cratonAge: Float32Array
+  rockHard: Float32Array
   // Per-worker reduction slots: residual, eroded volume, exported volume.
   maxStepW: Float64Array
   erodedW: Float64Array
@@ -350,10 +371,12 @@ export function terrainBufferBytes(activeCount: number, edgeCount: number): numb
   const e = edgeCount
   // i32: nbrStart (a + 1), nbr, edgeRev (2e); f32: lenRel, diffFactor,
   // mfdFactor, edgeMove (4e), areaRel, z, uplift, erodibility,
-  // erosionVolume, accumulationWeights, flux, donorMin, mouthFlux, mouthZ
-  // (10a); u8: coastMask, statusMask (2a); i32 flags(16); f64 maxStepW,
-  // erodedW, exportedW (3 × 64); alignment slack.
-  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 10 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
+  // erosionVolume, accumulationWeights, flux, donorMin, mouthFlux, mouthZ,
+  // cutVolume, depositVolume, depositCraton, depositHard, fluxCraton,
+  // fluxHard, mouthCraton, mouthHard, cratonAge, rockHard (20a); u8:
+  // coastMask, statusMask (2a); i32 flags(16); f64 maxStepW, erodedW,
+  // exportedW (3 × 64); alignment slack.
+  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 20 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
 }
 
 export function routingBufferBytes(activeCount: number, edgeCount: number): number {
@@ -395,6 +418,16 @@ export function createTerrainViews(activeCount: number, edgeCount: number, buffe
     donorMin: take(Float32Array, a),
     mouthFlux: take(Float32Array, a),
     mouthZ: take(Float32Array, a),
+    cutVolume: take(Float32Array, a),
+    depositVolume: take(Float32Array, a),
+    depositCraton: take(Float32Array, a),
+    depositHard: take(Float32Array, a),
+    fluxCraton: take(Float32Array, a),
+    fluxHard: take(Float32Array, a),
+    mouthCraton: take(Float32Array, a),
+    mouthHard: take(Float32Array, a),
+    cratonAge: take(Float32Array, a),
+    rockHard: take(Float32Array, a),
     maxStepW: take(Float64Array, 64),
     erodedW: take(Float64Array, 64),
     exportedW: take(Float64Array, 64),
@@ -476,6 +509,16 @@ export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFro
     donorMin: terrain.donorMin,
     mouthFlux: terrain.mouthFlux,
     mouthZ: terrain.mouthZ,
+    cutVolume: terrain.cutVolume,
+    depositVolume: terrain.depositVolume,
+    depositCraton: terrain.depositCraton,
+    depositHard: terrain.depositHard,
+    fluxCraton: terrain.fluxCraton,
+    fluxHard: terrain.fluxHard,
+    mouthCraton: terrain.mouthCraton,
+    mouthHard: terrain.mouthHard,
+    cratonAge: terrain.cratonAge,
+    rockHard: terrain.rockHard,
     maxStepW: terrain.maxStepW,
     erodedW: terrain.erodedW,
     exportedW: terrain.exportedW,

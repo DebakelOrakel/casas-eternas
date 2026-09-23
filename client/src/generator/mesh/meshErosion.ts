@@ -55,6 +55,14 @@ export interface MeshErosionResult {
   erodedFluxM3: number
   exportedFluxM3: number
   index: EngineIndex
+  // THE SEDIMENT RECORD of the run per vertex slot (phase 5.2, the
+  // engine's per-node tallies): the fluvial cut and the deposit in m³,
+  // and the deposit's provenance as products (m³ × craton oldness, m³ ×
+  // source hardness) — the column's input (mesh/meshColumn.ts).
+  cutM3: Float32Array
+  depositM3: Float32Array
+  depositCraton: Float32Array
+  depositHard: Float32Array
 }
 
 export interface MeshErosionOptions {
@@ -311,7 +319,7 @@ export async function runMeshErosion(mesh: PeriodicTriangulation, initial: Float
   return collect(engine.views, index, engine.poppedCount, initial, engine.erodedFluxM3, engine.exportedFluxM3)
 }
 
-function collect(views: { z: Float32Array; filled: Float32Array; flowTarget: Int32Array; accumulation: Float32Array; popOrder: Int32Array; flux: Float32Array }, index: EngineIndex, popped: number, initial: Float32Array, eroded: number, exported: number): MeshErosionResult {
+function collect(views: { z: Float32Array; filled: Float32Array; flowTarget: Int32Array; accumulation: Float32Array; popOrder: Int32Array; flux: Float32Array; cutVolume: Float32Array; depositVolume: Float32Array; depositCraton: Float32Array; depositHard: Float32Array }, index: EngineIndex, popped: number, initial: Float32Array, eroded: number, exported: number): MeshErosionResult {
   const { active, activeCount } = index
   const flowTarget = new Int32Array(index.cellCount).fill(-1)
   for (let a = 0; a < activeCount; a++) {
@@ -333,5 +341,9 @@ function collect(views: { z: Float32Array; filled: Float32Array; flowTarget: Int
     erodedFluxM3: eroded,
     exportedFluxM3: exported,
     index,
+    cutM3: expandActive(index, views.cutVolume, 0),
+    depositM3: expandActive(index, views.depositVolume, 0),
+    depositCraton: expandActive(index, views.depositCraton, 0),
+    depositHard: expandActive(index, views.depositHard, 0),
   }
 }

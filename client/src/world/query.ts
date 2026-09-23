@@ -118,6 +118,9 @@ export interface SavedMesh {
   nodes: Float32Array
   connectivity: Uint8Array
   z: Float32Array
+  // The sediment column's bytes (formatVersion 4, mesh/meshColumn.ts);
+  // undefined in a save from before it.
+  column?: Uint8Array
 }
 
 // Null when the archive is not a readable world — same contract as
@@ -251,13 +254,14 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     },
 
     async mesh() {
-      const files = (manifest as { mesh?: { nodes: number; files: { nodes: string; connectivity: string; z: string } } }).mesh
+      const files = (manifest as { mesh?: { nodes: number; files: { nodes: string; connectivity: string; z: string; column?: string } } }).mesh
       if (!files) return null
       const nodes = await zip.file(files.files.nodes)?.async('arraybuffer')
       const connectivity = await zip.file(files.files.connectivity)?.async('arraybuffer')
       const z = await zip.file(files.files.z)?.async('arraybuffer')
       if (!nodes || !connectivity || !z || nodes.byteLength !== files.nodes * 8 || z.byteLength !== files.nodes * 4) return null
-      return { count: files.nodes, nodes: new Float32Array(nodes), connectivity: new Uint8Array(connectivity), z: new Float32Array(z) }
+      const column = files.files.column ? await zip.file(files.files.column)?.async('arraybuffer') : undefined
+      return { count: files.nodes, nodes: new Float32Array(nodes), connectivity: new Uint8Array(connectivity), z: new Float32Array(z), column: column ? new Uint8Array(column) : undefined }
     },
     addAmplifiedElevation(data, resX, resY) {
       amplified.push({ data, resX, resY })

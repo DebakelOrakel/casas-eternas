@@ -31,6 +31,7 @@ Five entries, assembled in `saveWorld` / read back in the load handler:
 | `preview.png` | Thumbnail for the file/gallery | No — cosmetic, not read on load |
 | `manifest.json` + `layers/…` | The queryable layers (queryable-world-save.md); since `formatVersion` 2 also `layers/waterBodies.json`, the standing-water list every lake and shore derives from | No — read by consumers, not by restore |
 | `mesh/nodes.f32`, `mesh/connectivity.bin`, `mesh/z.f32` | The adaptive mesh the erosion ran on (ADAPTIVE_MESH_PLAN.md phase 4.3): node positions, neighbours as varint deltas in Hilbert numbering, eroded heights — the terrain proper since 2026-09-23, from which `elevation.f32` is rasterised. Present since `formatVersion` 3 when the world was eroded; the manifest's `mesh` entry names the files and the node count | **Yes** — restored into the worker so a later save carries it on; a save without one restores the raster alone |
+| `mesh/column.bin` | The sediment column per node (ADAPTIVE_MESH_PLAN.md phase 5.2, `mesh/meshColumn.ts`): the layer count, each layer's epoch, then per node and layer four floats — fine and coarse thickness in metres and the provenance products thickness × craton oldness, thickness × source hardness. Present since `formatVersion` 4 when the history ran; named by the manifest's `mesh.files.column` | **Yes** — restored with the mesh; a save without one restores an empty column |
 
 The four load-critical files (`world.yaml`, `state.json`, `oceanAge.f32`,
 `elevation.f32`) must all be present or the load is rejected as an invalid world

@@ -16,14 +16,17 @@ import type { PeriodicTriangulation } from './periodicDelaunay'
 //              one inherits — the neighbours' Voronoi cells grow into the
 //              hole, and thickness times area is conserved exactly.
 //
-// Layer-wise inheritance (a column of epoch-indexed layers) waits for
-// phase 5; until then a column is one thickness and this is the whole
-// rule.
+// A STACKED field holds `depth` values per node, laid out node-major
+// (`data[v * depth + k]`): the sediment column's layers (mesh/meshColumn.ts,
+// phase 5.2), every layer indexed by epoch across the whole mesh, so the
+// k-th value of one node and the k-th of its neighbour are the same layer
+// and inherit value by value under the same rule as a plain field.
 export type FieldKind = 'intensive' | 'extensive'
 
 export interface MeshField {
   readonly name: string
   readonly kind: FieldKind
+  readonly depth: number
   data: Float32Array
 }
 
@@ -36,9 +39,10 @@ export class MeshState {
     this.capacity = Math.max(16, capacity)
   }
 
-  add(name: string, kind: FieldKind): Float32Array {
+  add(name: string, kind: FieldKind, depth = 1): Float32Array {
     if (this.byName.has(name)) throw new Error(`MeshState: field ${name} exists`)
-    const field: MeshField = { name, kind, data: new Float32Array(this.capacity) }
+    if (!(depth >= 1)) throw new Error(`MeshState: depth ${depth}`)
+    const field: MeshField = { name, kind, depth, data: new Float32Array(this.capacity * depth) }
     this.fields.push(field)
     this.byName.set(name, field)
     return field.data
@@ -62,7 +66,7 @@ export class MeshState {
     let cap = this.capacity
     while (cap < mesh.vertexSlots) cap *= 2
     for (const f of this.fields) {
-      const data = new Float32Array(cap)
+      const data = new Float32Array(cap * f.depth)
       data.set(f.data)
       f.data = data
     }
@@ -73,7 +77,12 @@ export class MeshState {
   inheritInsert(v: number, a: number, b: number, c: number, wa: number, wb: number, wc: number): void {
     for (const f of this.fields) {
       const d = f.data
-      d[v] = wa * d[a] + wb * d[b] + wc * d[c]
+      const depth = f.depth
+      if (depth === 1) {
+        d[v] = wa * d[a] + wb * d[b] + wc * d[c]
+        continue
+      }
+      for (let k = 0; k < depth; k++) d[v * depth + k] = wa * d[a * depth + k] + wb * d[b * depth + k] + wc * d[c * depth + k]
     }
   }
 
@@ -85,12 +94,16 @@ export class MeshState {
     for (const f of this.fields) {
       if (f.kind !== 'extensive') continue
       const d = f.data
-      const amount = d[v] * areaV
-      for (let i = 0; i < n; i++) {
-        const gained = after[i] - before[i]
-        if (gained <= 0 || after[i] <= 0) continue
-        const u = neighbours[i]
-        d[u] = (d[u] * before[i] + amount * (gained / areaV)) / after[i]
+      const depth = f.depth
+      for (let k = 0; k < depth; k++) {
+        const amount = d[v * depth + k] * areaV
+        if (amount === 0) continue
+        for (let i = 0; i < n; i++) {
+          const gained = after[i] - before[i]
+          if (gained <= 0 || after[i] <= 0) continue
+          const u = neighbours[i] * depth + k
+          d[u] = (d[u] * before[i] + amount * (gained / areaV)) / after[i]
+        }
       }
     }
   }

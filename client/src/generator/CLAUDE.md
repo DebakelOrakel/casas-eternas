@@ -29,7 +29,10 @@ mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay 
             the canonical rebuild), meshSampler (point location over a hint grid,
             heights, fields and normals at a point — what map/ reads the mesh through),
             meshRefine (one rung of the ladder: a parent refined to a finer budget,
-            parents kept, new nodes from the parent surface plus synthesis).
+            parents kept, new nodes from the parent surface plus synthesis),
+            meshColumn (phase 5.2: the sediment column per node as epoch-indexed
+            layers with provenance — a stacked MeshState field, cut from the top,
+            the save's mesh/column.bin).
             pipeline/coupledEpoch.ts is phase 5's loop over it: z = baseline + relief
             per node, nodes drift with their plates, the mesh is rebuilt and remeshed
             each epoch (subduction and rifting), erosion runs inside the epoch.

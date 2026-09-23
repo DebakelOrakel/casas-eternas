@@ -2,6 +2,7 @@ import { METERS_PER_CELL } from '../core/mapConfig'
 import type { Domain } from '../core/domain'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import { hexLattice } from './lattice'
+import { COLUMN_TUNING, columnThickness, MESH_COLUMN } from './meshColumn'
 import { MESH_TUNING, targetSpacingM } from './meshDensity'
 import { reliefAt } from './meshRelief'
 import { MeshState } from './meshState'
@@ -52,10 +53,16 @@ export function densityTarget(state: MeshState, budget = 1, unitsToM = METERS_PE
   return (mesh, targets) => {
     const z = state.get(MESH_Z)
     const q = state.has(MESH_DISCHARGE) ? state.get(MESH_DISCHARGE) : null
+    // The sediment column (phase 5.2): where a fill lies, h_column of the
+    // density rule is live. The layers in use are not known here; the
+    // thickness over the whole stack is the same number, the unused layers
+    // being zero.
+    const column = state.has(MESH_COLUMN) ? state.get(MESH_COLUMN) : null
     for (let v = 0; v < mesh.vertexSlots; v++) {
       if (!mesh.vAlive[v]) continue
       reliefAt(mesh, z, v, unitsToM, ELEVATION_METERS, relief)
-      const h = targetSpacingM(relief[0], q ? q[v] : 0, relief[1], 0, z[v] * ELEVATION_METERS, budget)
+      const columnM = column ? columnThickness(column, v, COLUMN_TUNING.layerCap) : 0
+      const h = targetSpacingM(relief[0], q ? q[v] : 0, relief[1], columnM, z[v] * ELEVATION_METERS, budget)
       targets[v] = h / unitsToM
     }
   }

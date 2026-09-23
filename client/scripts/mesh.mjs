@@ -69,6 +69,7 @@ const M = {
   sampler: await L('/src/generator/mesh/meshSampler.ts'),
   bake: await L('/src/generator/pipeline/meshBakeStage.ts'),
   coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
+  column: await L('/src/generator/mesh/meshColumn.ts'),
   archean: await L('/src/generator/archean/archeanState.ts'),
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
   finalize: await L('/src/generator/archean/finalizeArchean.ts'),
@@ -633,13 +634,16 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const EPOCHS = 5, ITER = 4
   const trace = []
   let valid = true, finite = true
+  let ledger = 0, columnVolume = 0
   const t1 = performance.now()
   for (let e = 0; e < EPOCHS; e++) {
     const te = performance.now()
     const stats = await M.coupled.stepCoupledEpoch(sim, terrain, { iterationsPerEpoch: ITER })
     if (terrain.mesh.validate().length > 0) valid = false
     for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && !Number.isFinite(terrain.z[v])) finite = false
-    trace.push(`${stats.nodesAfter}n −${stats.removed} +${stats.inserted} land ${(stats.landCells / (CW * CH) * 100).toFixed(1)}% vol ${(stats.landVolume * 9).toFixed(0)} ${(performance.now() - te).toFixed(0)}ms`)
+    ledger += stats.depositedM3 - stats.reErodedM3
+    columnVolume = stats.columnVolumeM3
+    trace.push(`${stats.nodesAfter}n −${stats.removed} +${stats.inserted} land ${(stats.landCells / (CW * CH) * 100).toFixed(1)}% vol ${(stats.landVolume * 9).toFixed(0)} col ${(stats.columnVolumeM3 / 1e9).toFixed(1)} km³ ${(performance.now() - te).toFixed(0)}ms`)
   }
   const perEpoch = (performance.now() - t1) / EPOCHS
   check(`${EPOCHS} coupled epochs keep the mesh valid`, valid)
@@ -649,12 +653,31 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   let landN = 0
   for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && terrain.z[v] > 0) landN++
   check(`land persists through the epochs (${land0} → ${landN} land nodes)`, landN > land0 * 0.5)
+  // The sediment column (phase 5.2): the epochs' deposits as layers. The
+  // ledger — deposited minus re-eroded, summed over the epochs — closes
+  // against the column's volume to within what the remesh loses (new
+  // nodes interpolate, a rift's fresh floor starts with none).
+  check(`the column holds the epochs' deposits (${(columnVolume / 1e9).toFixed(1)} km³, ${terrain.column.epochs.length} layers)`, columnVolume > 0 && terrain.column.epochs.length === EPOCHS)
+  check(`the column's ledger closes (deposited − re-eroded ${(ledger / 1e9).toFixed(1)} km³ vs column ${(columnVolume / 1e9).toFixed(1)} km³)`, Math.abs(ledger - columnVolume) <= 0.1 * Math.max(ledger, columnVolume))
+  {
+    // A cut that comes off the column: no layer is ever negative, and the
+    // provenance products never exceed their thickness (oldness and the
+    // hardness story are ≤ ~2, so the ratio stays in range).
+    let negative = 0
+    const d = terrain.column.data
+    for (let v = 0; v < terrain.mesh.vertexSlots; v++) {
+      if (!terrain.mesh.vAlive[v]) continue
+      for (let k = 0; k < M.column.COLUMN_DEPTH; k++) if (d[v * M.column.COLUMN_DEPTH + k] < 0) negative++
+    }
+    check('no layer value goes negative', negative === 0, `${negative}`)
+  }
   // Determinism: the same world, the same epochs, the same bytes.
   const sim2 = await world()
   const terrain2 = M.coupled.createCoupledTerrain(sim2)
   for (let e = 0; e < EPOCHS; e++) await M.coupled.stepCoupledEpoch(sim2, terrain2, { iterationsPerEpoch: ITER })
   const a = M.coupled.encodeCoupledTerrain(terrain), b = M.coupled.encodeCoupledTerrain(terrain2)
   check('the same history gives the same terrain bytes', a.z.length === b.z.length && a.z.every((v, i) => v === b.z[i]) && a.nodes.every((v, i) => v === b.nodes[i]), `${a.z.length} vs ${b.z.length} nodes`)
+  check('and the same column bytes', a.column.length === b.column.length && a.column.every((v, i) => v === b.column[i]), `${a.column.length} bytes`)
   // A terrain restored from its bytes continues identically for one epoch.
   const restored = M.coupled.decodeCoupledTerrain(sim2, b)
   const simA = sim, simB = sim2
@@ -662,6 +685,8 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const sb = await M.coupled.stepCoupledEpoch(simB, restored, { iterationsPerEpoch: ITER })
   const za = terrain.z, zb = restored.z
   check('a restored terrain steps to the same bytes', za.length === zb.length && za.every((v, i) => v === zb[i]) && sa.nodesAfter === sb.nodesAfter)
+  const ca = M.coupled.encodeCoupledTerrain(terrain).column, cb = M.coupled.encodeCoupledTerrain(restored).column
+  check('and to the same column', ca.length === cb.length && ca.every((v, i) => v === cb[i]))
 }
 
 // ------------------------------------------------------------ determinism

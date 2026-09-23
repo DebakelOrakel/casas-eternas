@@ -3499,21 +3499,23 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4.3): the terrain
     // proper, from which `elevation.f32` is rasterised. Three files under
     // `mesh/`, described by one manifest entry; `formatVersion` 3 says a
-    // save may carry one. A world whose erosion has not run carries none.
+    // save may carry one, 4 that it may carry the sediment column as a
+    // fourth (phase 5.2). A world whose history has not run carries none.
     if (mesh) {
       zip.file('mesh/nodes.f32', mesh.nodes)
       zip.file('mesh/connectivity.bin', mesh.connectivity)
       zip.file('mesh/z.f32', mesh.z)
+      if (mesh.column) zip.file('mesh/column.bin', mesh.column)
     }
     const manifest = {
-      formatVersion: 3,
+      formatVersion: 4,
       // The same provenance string status.generator carries — a real build id
       // since 2026-08-11, where a static 'casas-eternas/v1alpha1' had stood
       // saying nothing.
       generatorVersion: BUILD_VERSION,
       world: { width: MAP_WIDTH, height: MAP_HEIGHT, topology: 'torus' },
       layers,
-      mesh: mesh ? { nodes: mesh.count, files: { nodes: 'mesh/nodes.f32', connectivity: 'mesh/connectivity.bin', z: 'mesh/z.f32' } } : undefined,
+      mesh: mesh ? { nodes: mesh.count, files: { nodes: 'mesh/nodes.f32', connectivity: 'mesh/connectivity.bin', z: 'mesh/z.f32', column: mesh.column ? 'mesh/column.bin' : undefined } } : undefined,
     }
     zip.file('manifest.json', JSON.stringify(manifest, null, 2))
   }
@@ -4089,7 +4091,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const zFile = zip.file('mesh/z.f32')
         if (nodesFile && connFile && zFile) {
           const nodes = await nodesFile.async('arraybuffer')
-          meshPayload = { count: nodes.byteLength / 8, nodes, connectivity: await connFile.async('arraybuffer'), z: await zFile.async('arraybuffer') }
+          const columnFile = zip.file('mesh/column.bin')
+          meshPayload = { count: nodes.byteLength / 8, nodes, connectivity: await connFile.async('arraybuffer'), z: await zFile.async('arraybuffer'), column: columnFile ? await columnFile.async('arraybuffer') : undefined }
         }
       }
     } catch {

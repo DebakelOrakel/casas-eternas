@@ -10,6 +10,9 @@ import { synthesisSampler } from '../elevation/elevationSampler'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { buildMesh, densityTarget, MESH_Z, triangulatePoints } from '../mesh/meshBuild'
 import { MESH_TUNING } from '../mesh/meshDensity'
+import { addColumnField, columnVolumeM3, createColumn, cut, decodeColumn, deposit, encodeColumn, erodibilityOver, MESH_COLUMN, COLUMN_DEPTH, openLayer, permuteColumn, type SedimentColumn } from '../mesh/meshColumn'
+import { computeCratonOldnessField } from '../crust/raftField'
+import { worldEpoch } from '../core/worldTime'
 import { runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
 import { compactMesh, decodeMesh, encodeMesh, permute } from '../mesh/meshSerial'
 import { MeshState } from '../mesh/meshState'
@@ -17,7 +20,7 @@ import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
 import { coarsen, refine } from '../mesh/remesh'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../climate/climateField'
 import type { PipelineOptions, WorkerLike } from '../surface/erosionEnginePool'
-import { assembleNodeForcing, erosionLithoSeed, scaleEngineParamsForDt, type ErosionControlsV2 } from '../surface/erosionForcingFields'
+import { assembleNodeForcing, erosionLithoSeed, scaleEngineParamsForDt, upsampleAt, type ErosionControlsV2 } from '../surface/erosionForcingFields'
 import { advancePointByMotion } from '../tectonics/plateMotion'
 import { stepEpoch, type PlateSimulation, type SimEvent } from '../tectonics/plateSimulation'
 import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
@@ -81,6 +84,10 @@ export interface CoupledTerrain {
   // The heights the last epoch's erosion started from (after the motion
   // and the baseline swap) — the "before" of what that epoch deposited.
   preErosionZ: Float32Array
+  // The sediment column per node (phase 5.2, mesh/meshColumn.ts): the
+  // epochs' deposits as layers over the bedrock, moved and remeshed with
+  // the relief, cut from the top by the erosion.
+  column: SedimentColumn
 }
 
 export interface CoupledEpochOptions {
@@ -114,6 +121,13 @@ export interface CoupledEpochOptions {
 export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 2, upliftScale: 0.25 } as const
 
 export interface CoupledEpochStats {
+  // The column's ledger for the epoch, m³: what the walk laid down, what
+  // the cut took back out of sediment (the rest was bedrock), and the
+  // column's volume after — the harness closes deposited − re-eroded
+  // against the volume's change, remesh included.
+  depositedM3: number
+  reErodedM3: number
+  columnVolumeM3: number
   events: SimEvent[]
   nodesBefore: number
   nodesAfter: number
@@ -143,7 +157,7 @@ export function createCoupledTerrain(sim: PlateSimulation, budget = 1): CoupledT
   const z = permute(built.state.get(MESH_Z), order)
   const baseline = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
-  return { mesh, z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: z.slice() }
+  return { mesh, z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: z.slice(), column: createColumn(mesh.vertexSlots) }
 }
 
 function meshAreasOf(mesh: PeriodicTriangulation): Float32Array {
@@ -181,6 +195,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const xs = new Float64Array(count)
   const ys = new Float64Array(count)
   const hMoved = new Float32Array(count)
+  const columnMoved = new Float32Array(count * COLUMN_DEPTH)
   let k = 0
   for (let v = 0; v < mesh0.vertexSlots; v++) {
     if (!mesh0.vAlive[v]) continue
@@ -188,6 +203,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     xs[k] = moved.x
     ys[k] = moved.y
     hMoved[k] = terrain.z[v] - terrain.baseline[v]
+    for (let j = 0; j < COLUMN_DEPTH; j++) columnMoved[k * COLUMN_DEPTH + j] = terrain.column.data[v * COLUMN_DEPTH + j]
     k++
   }
   // The mesh from the moved nodes, then the remesh: crowded nodes go
@@ -201,6 +217,12 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // and the landscape's volume is conserved through the remesh.
   const h = state.add('h', 'extensive')
   for (let i = 0; i < count; i++) h[rebuilt.mapping[i]] = hMoved[i]
+  // The column, the same way: layers are thickness per area, extensive.
+  const col = addColumnField(state)
+  for (let i = 0; i < count; i++) {
+    const dst = rebuilt.mapping[i] * COLUMN_DEPTH
+    for (let j = 0; j < COLUMN_DEPTH; j++) col[dst + j] = columnMoved[i * COLUMN_DEPTH + j]
+  }
   // z on the rebuilt mesh, for the density rule: baseline at the new
   // position plus the relief.
   const z = state.add(MESH_Z, 'intensive')
@@ -214,14 +236,26 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       // A new node: relief inherited from the neighbours, scaled by the
       // margin — fresh sea floor at a rift starts with none.
       const t = marginParameter(raftField(x, y, sim.rafts, width, height))
+      const scale = Math.min(1, Math.max(0, t))
       const hv = state.get('h')
-      hv[v] *= Math.min(1, Math.max(0, t))
+      hv[v] *= scale
+      const cv = state.get(MESH_COLUMN)
+      for (let j = 0; j < COLUMN_DEPTH; j++) cv[v * COLUMN_DEPTH + j] *= scale
       state.get(MESH_Z)[v] = baselineAt(sim, x, y) + hv[v]
     },
   })
   timing.remesh = lap()
   const { mesh, order } = compactMesh(mesh1)
   const hCanon = permute(state.get('h'), order)
+  const column: SedimentColumn = { data: permuteColumn(state.get(MESH_COLUMN), order), epochs: terrain.column.epochs }
+  if (column.data.length < mesh.vertexSlots * COLUMN_DEPTH) {
+    const grown = new Float32Array(mesh.vertexSlots * COLUMN_DEPTH)
+    grown.set(column.data)
+    column.data = grown
+  }
+  // This epoch's deposits get a layer of their own (the oldest two merge
+  // when the cap is reached).
+  openLayer(column, sim.epoch, mesh.vertexSlots)
   const baseline = new Float32Array(mesh.vertexSlots)
   const zCanon = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) {
@@ -241,6 +275,22 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     uplift, hardness, forcingResX: CLIMATE_RES_X, forcingResY: CLIMATE_RES_Y,
     water: null, waterResX: 1, waterResY: 1, lithoSeed: erosionLithoSeed(sim.warpSeed),
   }, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, zCanon, areas, width, height, options.controls ?? {})
+  // The column's word on the forcing: a node under a fill erodes as
+  // sediment, not as its bedrock; and what a cut hands to the walk carries
+  // the craton oldness and the crust hardness under the node (the coarse
+  // fields at the node's position), so a deposit knows its source.
+  const cratonField = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, width, height)
+  const cratonAge = new Float32Array(mesh.vertexSlots)
+  const rockHard = new Float32Array(mesh.vertexSlots)
+  const layers = column.epochs.length
+  for (let v = 0; v < mesh.vertexSlots; v++) {
+    if (!mesh.vAlive[v]) continue
+    cratonAge[v] = upsampleAt(cratonField, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
+    rockHard[v] = upsampleAt(hardness, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
+    forcing.erodibility[v] = erodibilityOver(column.data, v, layers, forcing.erodibility[v])
+  }
+  forcing.cratonAge = cratonAge
+  forcing.rockHard = rockHard
   const epochMa = sim.epochMa || TECTONIC_MA_PER_EPOCH
   const dtScale = (epochMa * 1e6 / options.iterationsPerEpoch) / ITERATION_YEARS
   const scaled = scaleEngineParamsForDt({ ...params, epsM: 0 }, dtScale)
@@ -251,8 +301,29 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // node a few metres under it); the relief the next epoch carries is
   // read from this z, so the clamp is the terrain's, not a display one.
   for (let v = 0; v < mesh.vertexSlots; v++) result.z[v] = Math.max(-1, Math.min(1, result.z[v]))
+  // The column's ledger from the run's record: the cut comes off the top
+  // of the column first (the remainder was bedrock), the deposit goes into
+  // this epoch's layer with the provenance the walk carried to it. Uplift
+  // and hillslope creep move no column — creep moves regolith, which the
+  // column does not model — so the column can only understate a fill.
+  const cellM2 = METERS_PER_CELL * METERS_PER_CELL
+  let depositedM3 = 0
+  let reErodedM3 = 0
+  for (let v = 0; v < mesh.vertexSlots; v++) {
+    if (!mesh.vAlive[v]) continue
+    const areaM2 = areas[v] * cellM2
+    if (areaM2 <= 0) continue
+    const cutM = result.cutM3[v] / areaM2
+    if (cutM > 0) reErodedM3 += cut(column, v, cutM) * areaM2
+    const depositM3 = result.depositM3[v]
+    if (depositM3 > 0) {
+      depositedM3 += depositM3
+      deposit(column, v, depositM3 / areaM2, result.depositCraton[v] / depositM3, result.depositHard[v] / depositM3)
+    }
+  }
   timing.erosion = lap()
   terrain.mesh = mesh
+  terrain.column = column
   terrain.z = result.z
   terrain.baseline = baseline
   terrain.routing = result.routing
@@ -266,21 +337,25 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     landCells += areas[v]
     landVolume += result.z[v] * areas[v]
   }
-  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, timing }
+  const areaM2 = new Float64Array(mesh.vertexSlots)
+  for (let v = 0; v < mesh.vertexSlots; v++) areaM2[v] = areas[v] * cellM2
+  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), timing }
 }
 
 // The terrain's bytes for a save or a harness hash.
-export function encodeCoupledTerrain(terrain: CoupledTerrain): { nodes: Float32Array; connectivity: Uint8Array; z: Float32Array } {
+export function encodeCoupledTerrain(terrain: CoupledTerrain): { nodes: Float32Array; connectivity: Uint8Array; z: Float32Array; column: Uint8Array } {
   const order = new Int32Array(terrain.mesh.aliveVertices)
   for (let i = 0; i < order.length; i++) order[i] = i
   const serial = encodeMesh(terrain.mesh, order)
-  return { nodes: serial.nodes, connectivity: serial.connectivity, z: terrain.z.slice(0, serial.count) }
+  return { nodes: serial.nodes, connectivity: serial.connectivity, z: terrain.z.slice(0, serial.count), column: encodeColumn(terrain.column, serial.count) }
 }
 
 // A terrain restored from its bytes: the baseline re-evaluated from the sim.
-export function decodeCoupledTerrain(sim: PlateSimulation, bytes: { nodes: Float32Array; connectivity: Uint8Array; z: Float32Array }): CoupledTerrain {
+// A save from before the column (formatVersion 3) restores with an empty one.
+export function decodeCoupledTerrain(sim: PlateSimulation, bytes: { nodes: Float32Array; connectivity: Uint8Array; z: Float32Array; column?: Uint8Array }): CoupledTerrain {
   const mesh = decodeMesh(torusDomain(sim.width, sim.height), { count: bytes.z.length, nodes: bytes.nodes, connectivity: bytes.connectivity })
   const baseline = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
-  return { mesh, z: bytes.z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: bytes.z.slice() }
+  const column = bytes.column ? decodeColumn(bytes.column, bytes.z.length, mesh.vertexSlots) : createColumn(mesh.vertexSlots)
+  return { mesh, z: bytes.z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: bytes.z.slice(), column }
 }
