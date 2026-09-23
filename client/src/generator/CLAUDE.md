@@ -179,7 +179,8 @@ the input's schema, so they belong with `xyInputParams`.
 
 **A hash belongs to the consumer, not to the module.** Do not add a canonical
 `hashParams()` anywhere. `world/identity.ts` explains why in detail, and it
-was learned expensively: `deriveWorldId` hashes the output *rasters* rather than
+was learned expensively: `deriveWorldId` hashes the output *rasters* (and, since
+phase 5.8, the mesh snapshot's own bytes when the save carries one) rather than
 the recipe, because the recipe cannot distinguish two worlds stopped at different
 tectonic epochs; and `riverDensity` is deliberately excluded from the key even
 though the bake reads it, because including it orphaned 17–67 MB of artifact per

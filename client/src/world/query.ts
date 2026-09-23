@@ -231,12 +231,14 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
       const elevation = await fromSave('elevation')
       if (!elevation) throw new Error('a world without elevation has no identity')
       const precipitation = await fromSave('precipitation')
+      const mesh = await world.mesh()
       return deriveWorldId({
         elevation: elevation.data,
         precipitation: precipitation?.data ?? null,
         landscapeAge: recipe.erosionControls.landscapeAge,
         alluvium: recipe.erosionControls.alluvium,
         rockContrast: recipe.erosionControls.rockContrast,
+        mesh: mesh ? { nodes: mesh.nodes, z: mesh.z, column: mesh.column } : null,
       })
     },
 

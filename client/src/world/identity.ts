@@ -65,6 +65,17 @@ export interface BakeInputs {
   landscapeAge?: number
   alluvium?: number
   rockContrast?: number
+  // THE SNAPSHOT (ADAPTIVE_MESH_PLAN.md phase 5.8): since the coupled
+  // history the mesh IS the terrain and `elevation` its rasterisation, so
+  // the identity hashes the mesh's own bytes when the save carries them —
+  // the node positions, the heights and the sediment column (the
+  // connectivity is a function of the positions through the canonical
+  // rebuild and adds nothing). Two worlds with one rasterisation but
+  // different columns are different worlds to every job that reads the
+  // layers; and a checkpoint's identity must be the checkpoint's, not its
+  // picture's. Absent for a save from before the mesh: the rasters alone,
+  // as before, so those ids stand.
+  mesh?: { nodes: Float32Array; z: Float32Array; column?: Uint8Array } | null
 }
 
 // riverDensity is DELIBERATELY absent, and it used to be here — twice removed.
@@ -99,7 +110,12 @@ export function deriveWorldId(inputs: BakeInputs): string {
   const scalars = new TextEncoder().encode(
     `|a=${inputs.landscapeAge ?? 'd'}|al=${inputs.alluvium ?? 'd'}|rc=${inputs.rockContrast ?? 'd'}`,
   )
-  const [sa, sb] = hashBytes(scalars, a, b)
+  let [sa, sb] = hashBytes(scalars, a, b)
+  if (inputs.mesh) {
+    ;[sa, sb] = hashBytes(inputs.mesh.nodes, sa, sb)
+    ;[sa, sb] = hashBytes(inputs.mesh.z, sa, sb)
+    if (inputs.mesh.column) [sa, sb] = hashBytes(inputs.mesh.column, sa, sb)
+  }
   return `${hex8(sa)}${hex8(sb)}`
 }
 

@@ -135,6 +135,17 @@ const precip = new Float32Array(16 * 8).fill(800)
 // deliberate id break (ALGO v11 had already orphaned every older artifact).
 const id = M.key.deriveWorldId({ elevation: elev, precipitation: precip, landscapeAge: 40, alluvium: 50, rockContrast: 50 })
 check('deriveWorldId is stable for fixed bytes', id === '79f9328a6cf7c80c', `got ${id}`)
+// The snapshot (phase 5.8): a save that carries the mesh is identified by
+// the mesh's bytes too — a different column under the same rasterisation is
+// a different world; a save without one keeps the raster id above.
+{
+  const nodes = new Float32Array([1, 2, 3, 4]), z = new Float32Array([0.1, 0.2])
+  const withMesh = M.key.deriveWorldId({ elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50, mesh: { nodes, z } })
+  const withColumn = M.key.deriveWorldId({ elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50, mesh: { nodes, z, column: new Uint8Array([1, 0, 0, 0]) } })
+  const otherColumn = M.key.deriveWorldId({ elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50, mesh: { nodes, z, column: new Uint8Array([2, 0, 0, 0]) } })
+  check('a mesh enters the identity', withMesh !== M.key.deriveWorldId({ elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50 }))
+  check('the column enters the identity', withColumn !== withMesh && withColumn !== otherColumn)
+}
 check('the id is a pure 16-hex hash (label dropped 2026-08-12)', /^[0-9a-f]{16}$/.test(id), id)
 
 // Every constant the pipeline version LISTS must actually move it. This does not
