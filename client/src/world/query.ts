@@ -107,6 +107,17 @@ export interface World {
   // per session and they are never persisted, so the world learns about them
   // rather than finding them.
   addAmplifiedElevation(data: Float32Array, resX: number, resY: number): void
+  // The adaptive mesh the save carries (formatVersion 3, `mesh/…`, see
+  // mesh/meshSerial.ts) — the terrain proper since phase 4.3; null for a
+  // save written before it or a world never eroded on one.
+  mesh(): Promise<SavedMesh | null>
+}
+
+export interface SavedMesh {
+  count: number
+  nodes: Float32Array
+  connectivity: Uint8Array
+  z: Float32Array
 }
 
 // Null when the archive is not a readable world — same contract as
@@ -236,6 +247,15 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
       return fromSave(name)
     },
 
+    async mesh() {
+      const files = (manifest as { mesh?: { nodes: number; files: { nodes: string; connectivity: string; z: string } } }).mesh
+      if (!files) return null
+      const nodes = await zip.file(files.files.nodes)?.async('arraybuffer')
+      const connectivity = await zip.file(files.files.connectivity)?.async('arraybuffer')
+      const z = await zip.file(files.files.z)?.async('arraybuffer')
+      if (!nodes || !connectivity || !z || nodes.byteLength !== files.nodes * 8 || z.byteLength !== files.nodes * 4) return null
+      return { count: files.nodes, nodes: new Float32Array(nodes), connectivity: new Uint8Array(connectivity), z: new Float32Array(z) }
+    },
     addAmplifiedElevation(data, resX, resY) {
       amplified.push({ data, resX, resY })
     },

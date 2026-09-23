@@ -31,6 +31,8 @@ import { readWorldInputs } from '../src/world/save/loadWorldInputs'
 import { runAmplification } from '../src/generator/surface/runAmplification'
 import type { WorkerLike } from '../src/generator/surface/erosionEnginePool'
 import { amplificationPipelineVersion, writeAmplificationArtifact } from '../src/world/artifacts'
+import { bakeMeshLevel, levelBudget } from '../src/generator/pipeline/meshBakeStage'
+import { meshLevelStage, meshLevelToArtifact, meshPipelineVersion, writeMeshLevelArtifact } from '../src/world/meshArtifacts'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
 import { artifactKey } from '../src/storage/ArtifactStore'
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../src/storage/ArtifactStore'
@@ -54,7 +56,11 @@ interface Job {
   worldZip?: string
   // …or its URL, when it is not. Exactly one of the two.
   worldUrl?: string
-  // Amplification factor: 2 → 4096, 4 → 8192.
+  // Amplification factor: 2 → 4096, 4 → 8192 — the raster bake. Stage 1 is
+  // the MESH bake's level 1 (ADAPTIVE_MESH_PLAN.md phase 4.5): the save's
+  // mesh refined to twice the density and eroded for `erosionRounds`; the
+  // artifact is the level (world/meshArtifacts.ts). The two share the
+  // field while the raster bake still exists; it goes with phase 4.
   stage: number
   erosionRounds: number
   // Root of the artifact store as a directory…
@@ -304,7 +310,7 @@ async function main(): Promise<void> {
   // them. That happened once. This makes an image's pipeline version something
   // you can read off it in a second rather than infer from a missing cache hit.
   if (raw === '--version') {
-    process.stdout.write(`${JSON.stringify({ pipelineVersion: amplificationPipelineVersion() })}\n`)
+    process.stdout.write(`${JSON.stringify({ pipelineVersion: amplificationPipelineVersion(), meshPipelineVersion: meshPipelineVersion(1) })}\n`)
     return
   }
   if (!raw) fail('usage: baker.mjs \'<job JSON>\'  |  baker.mjs --version')
@@ -327,6 +333,35 @@ async function main(): Promise<void> {
   // line no matter how chatty the pipeline gets.
   let lastPercent = -1
   const report = progressReporter(job)
+  const onProgress = (phase: string, fraction: number): void => {
+    const percent = Math.floor(fraction * 100)
+    if (percent === lastPercent) return
+    lastPercent = percent
+    process.stderr.write(`${JSON.stringify({ phase, percent })}\n`)
+    report(phase, percent)
+  }
+  if (job.stage === 1) {
+    if (!inputs.mesh) fail('the world carries no mesh (a save from before formatVersion 3, or never eroded) — nothing to refine')
+    const level = await bakeMeshLevel({
+      mesh: inputs.mesh, width: inputs.width, height: inputs.height,
+      detailSeed: inputs.detailSeed, lithoSeed: inputs.lithoSeed,
+      controls: { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast },
+      uplift: inputs.uplift?.data ?? null, erodibility: inputs.erodibility?.data ?? null,
+      forcingResX: inputs.uplift?.resX ?? 0, forcingResY: inputs.uplift?.resY ?? 0,
+      precipitation: inputs.climate?.data ?? null, temperature: inputs.temperature?.data ?? null,
+      monsoonIndex: inputs.biomeInputs?.monsoonIndex.data ?? null,
+      climateResX: inputs.climate?.resX ?? 0, climateResY: inputs.climate?.resY ?? 0,
+    }, { level: 1, budget: levelBudget(1), rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
+    const durationMs = Date.now() - started
+    const store = artifactStoreFor(job)
+    if (!store) fail('neither artifactsDir nor artifactsUrl was given')
+    const pipelineVersion = meshPipelineVersion(1, job.erosionRounds)
+    const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshLevelStage(1))
+    const artifact = meshLevelToArtifact(level)
+    if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) fail('could not write the artifact')
+    process.stdout.write(`${JSON.stringify({ worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs })}\n`)
+    return
+  }
   const result = await runAmplification({
     elevation: inputs.elevations,
     macroWidth: inputs.width,
@@ -347,13 +382,7 @@ async function main(): Promise<void> {
     monsoonIndex: inputs.biomeInputs?.monsoonIndex.data,
     climateResX: inputs.climate?.resX,
     climateResY: inputs.climate?.resY,
-  }, (phase, fraction) => {
-    const percent = Math.floor(fraction * 100)
-    if (percent === lastPercent) return
-    lastPercent = percent
-    process.stderr.write(`${JSON.stringify({ phase, percent })}\n`)
-    report(phase, percent)
-  })
+  }, onProgress)
 
   const durationMs = Date.now() - started
   const store = artifactStoreFor(job)

@@ -2,7 +2,7 @@ import type { Dtype } from './worldLayers'
 import { restoreLandOnlySentinel } from './worldLayers'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
-import { openWorld } from '../query'
+import { openWorld, type SavedMesh } from '../query'
 import type { World } from '../query'
 import type { WaterBody } from '../../generator/surface/hydrology'
 
@@ -113,6 +113,9 @@ export interface WorldInputs {
     seasonalAmplitude: GridLayer
     monsoonIndex: GridLayer
   } | null
+  // The adaptive mesh (phase 4.3), the terrain the mesh bake refines; null
+  // for a save without one.
+  mesh: SavedMesh | null
   // What the bake actually consumes, hashed — the artifact key. Derived here
   // rather than by the caller so every reader of a save agrees on it.
   worldId: string
@@ -199,6 +202,7 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
     lakeDepth,
     waterBodies,
     biomeInputs,
+    mesh: await world.mesh(),
     worldId: await world.worldId(),
     worldUid: world.recipe.worldUid,
   }

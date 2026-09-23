@@ -67,6 +67,10 @@ const M = {
   serial: await L('/src/generator/mesh/meshSerial.ts'),
   meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
   sampler: await L('/src/generator/mesh/meshSampler.ts'),
+  bake: await L('/src/generator/pipeline/meshBakeStage.ts'),
+  artifacts: await L('/src/world/meshArtifacts.ts'),
+  memory: await L('/src/storage/MemoryArtifactStore.ts'),
+  store: await L('/src/storage/ArtifactStore.ts'),
   surface: await L('/src/map/meshSurface.ts'),
   sceneSettings: await L('/src/map/mapSceneSettings.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
@@ -548,6 +552,62 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check('the mesh surface\'s gradient agrees with finite differences of its heights', count > 100 && sumRel / count < 0.5, `mean relative error ${(sumRel / count).toFixed(2)} over ${count} land samples`)
 }
 
+// The mesh bake, level 1 (phase 4.5): the parent refined to twice the
+// density under the same rule, parents kept, the transient with the
+// coast pinned, the level's hydrology and graph, and the artifact that
+// carries it — written and read back identical.
+{
+  const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
+  const { mesh: parentMesh, order } = M.serial.compactMesh(built.mesh)
+  const parentZ = M.serial.permute(built.state.get('z'), order)
+  const parentSerial = M.serial.encodeMesh(parentMesh, Int32Array.from({ length: parentMesh.vertexSlots }, (_, i) => i))
+  const CRX = 16, CRY = 8
+  const precip = new Float32Array(CRX * CRY).fill(1000)
+  const temperature = new Float32Array(CRX * CRY).fill(15)
+  const inputs = {
+    mesh: { count: parentSerial.count, nodes: parentSerial.nodes, connectivity: parentSerial.connectivity, z: parentZ.slice(0, parentSerial.count) },
+    width: W, height: H, detailSeed: 1234, lithoSeed: 77, controls: {},
+    uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
+    precipitation: precip, temperature, monsoonIndex: null, climateResX: CRX, climateResY: CRY,
+  }
+  const parentSampler = M.sampler.createMeshSampler(parentMesh, parentZ)
+  const t0 = performance.now()
+  const level = await M.bake.bakeMeshLevel(inputs, { level: 1, budget: M.bake.levelBudget(1), rounds: 4 })
+  const ms = performance.now() - t0
+  const split = (m, zz) => { let land = 0, sea = 0; for (let v = 0; v < m.vertexSlots; v++) if (m.vAlive[v]) { if (zz[v] > 0) land++; else sea++ } ; return `${land} land / ${sea} sea` }
+  check(`level 1 is valid and denser (${parentMesh.aliveVertices} → ${level.mesh.aliveVertices} nodes, ${ms.toFixed(0)} ms)`, level.mesh.validate().length === 0 && level.mesh.aliveVertices > parentMesh.aliveVertices * 2, `parent ${split(parentMesh, parentZ)}, level ${split(level.mesh, level.z)}`)
+  // Every parent node is still a node of the level, at its position.
+  const sampler = M.sampler.createMeshSampler(level.mesh, level.z)
+  let lost = 0
+  for (let v = 0; v < parentMesh.vertexSlots; v += 13) {
+    const t = level.mesh.locate(parentMesh.vx[v], parentMesh.vy[v])
+    if (level.mesh.atVertex < 0) lost++
+  }
+  check('every parent node is a node of the level', lost === 0, `${lost} lost`)
+  // The coast is the parent's: land stays land, sea stays sea.
+  let crossed = 0, land = 0
+  for (let v = 0; v < level.mesh.vertexSlots; v++) {
+    const parentH = parentSampler.heightAt(level.mesh.vx[v], level.mesh.vy[v])
+    if ((parentH > 0) !== (level.z[v] > 0)) crossed++
+    if (level.z[v] > 0) land++
+  }
+  check('no node crossed the coastline', crossed === 0, `${crossed} of ${level.mesh.vertexSlots}`)
+  check('the level has a river graph with reaches', level.graph !== null && level.graph.reaches.length > 0, `${level.graph?.reaches.length ?? 0} reaches`)
+  // Determinism, and the artifact round trip.
+  const again = await M.bake.bakeMeshLevel(inputs, { level: 1, budget: M.bake.levelBudget(1), rounds: 4 })
+  let differ = 0
+  for (let v = 0; v < level.mesh.vertexSlots; v++) if (again.z[v] !== level.z[v]) differ++
+  check('the same save bakes the same level', differ === 0 && meshHash(again.mesh) === meshHash(level.mesh), `${differ} heights differ`)
+  const store = M.memory.createMemoryArtifactStore()
+  const key = M.store.artifactKey('uid', 'world', M.artifacts.meshPipelineVersion(1, 4), M.artifacts.meshLevelStage(1))
+  const artifact = M.artifacts.meshLevelToArtifact(level)
+  const wrote = await M.artifacts.writeMeshLevelArtifact(store, key, artifact, ms, 'synthetic', 4)
+  const read = await M.artifacts.readMeshLevelArtifact(store, key)
+  const back = read ? M.artifacts.meshLevelMesh(read.artifact, W, H) : null
+  check('the level artifact writes and reads back to the same mesh and heights', wrote && read !== null && back !== null && meshHash(back) === meshHash(level.mesh) && read.artifact.z.every((v, i) => v === level.z[i]) && (read.artifact.graph?.reaches.length ?? -1) === level.graph.reaches.length)
+  check('the mesh pipeline version carries the density rule', M.artifacts.meshPipelineVersion(1, 4) !== M.artifacts.meshPipelineVersion(1, 5) && M.artifacts.meshPipelineVersion(1, 4) !== M.artifacts.meshPipelineVersion(2, 4))
+}
+
 // ------------------------------------------------------------ determinism
 
 console.log('\n[2] determinism')
@@ -689,6 +749,24 @@ if (MODE === 'measure') {
     }
     console.log(`  on land: RMS(mesh − raster) ${Math.sqrt(sq / n).toFixed(1)} m; RMS change raster ${Math.sqrt(sqCut / n).toFixed(1)} m, mesh ${Math.sqrt(sqCutM / n).toFixed(1)} m`)
     console.log(`  mesh sediment budget: eroded ${(meshRun.erodedFluxM3 / 1e9).toFixed(0)} km³, exported past the shelf band ${(meshRun.exportedFluxM3 / 1e9).toFixed(0)} km³`)
+
+    // Level 1 of the ladder (phase 4.5) on this world's eroded mesh: node
+    // count and time, the numbers the ladder's levels are set by.
+    if (process.env.MESH_LEVEL !== '0') {
+      const rounds = Number(process.env.MESH_LEVEL_ROUNDS ?? 4)
+      const serial = M.serial.encodeMesh(mesh, Int32Array.from({ length: mesh.vertexSlots }, (_, i) => i))
+      const t2 = performance.now()
+      const level = await M.bake.bakeMeshLevel({
+        mesh: { count: serial.count, nodes: serial.nodes, connectivity: serial.connectivity, z: meshRun.z.slice(0, serial.count) },
+        width: RW, height: RH, detailSeed: inputs.detailSeed, lithoSeed: inputs.lithoSeed, controls,
+        uplift: inputs.uplift.data, erodibility: inputs.erodibility?.data ?? null, forcingResX: inputs.uplift.resX, forcingResY: inputs.uplift.resY,
+        precipitation: inputs.climate.data, temperature: inputs.temperature?.data ?? null, monsoonIndex: inputs.biomeInputs?.monsoonIndex.data ?? null,
+        climateResX: inputs.climate.resX, climateResY: inputs.climate.resY,
+      }, { level: 1, budget: M.bake.levelBudget(1), rounds, onProgress: (phase, f) => { if (f === 0 || f === 1) console.log(`    ${phase} ${f === 0 ? 'start' : 'done'} ${((performance.now() - t2) / 1000).toFixed(0)} s`) } })
+      let land = 0
+      for (let v = 0; v < level.mesh.vertexSlots; v++) if (level.mesh.vAlive[v] && level.z[v] > 0) land++
+      console.log(`  level 1 (${rounds} rounds): ${level.mesh.aliveVertices} nodes (${land} land) from ${mesh.aliveVertices}, ×${(level.mesh.aliveVertices / mesh.aliveVertices).toFixed(1)}, ${((performance.now() - t2) / 1000).toFixed(0)} s; ${level.graph?.reaches.length ?? 0} reaches, ${level.waterBodies.length} bodies`)
+    }
   }
 }
 

@@ -60,7 +60,7 @@ export function seedRoughnessAmplitude(elevation: number): number {
 // the fine grid's own Nyquist limit — noise below ~3 px is aliasing, not
 // detail, and erosion cannot act on it either.
 const MIN_OCTAVE_PIXELS = 3
-const CASCADE_FALLOFF = 0.55
+export const CASCADE_FALLOFF = 0.55
 
 export function seedCascadeScales(resX: number): number[] {
   const scales: number[] = []
@@ -174,11 +174,11 @@ const RIDGE_OCTAVE_AMPLITUDES = [1, 0.5, 0.25]
 // the generator's own RIDGE_RELATIVE_STRENGTH; 0.8 measured sharper still
 // (146 m) but starts to fight the macro shape, which the authority rule
 // says wins.
-const RIDGE_STRENGTH = 0.5
+export const RIDGE_STRENGTH = 0.5
 // Mean of the ridged field, subtracted so ridgelines add height and gullies
 // cut down with no net elevation bias — the same centring, and the same
 // measured constant, as ridgedNoise.RIDGE_MEAN.
-const RIDGE_FIELD_MEAN = 0.47
+export const RIDGE_FIELD_MEAN = 0.47
 // Neighbourhood radius for "how far does this cell stand above its
 // surroundings", as a fraction of the grid width. ~1/64 of the world is a
 // few hundred km — wide enough that a whole range counts as raised, narrow
@@ -296,7 +296,7 @@ export interface AmplifiedField {
 // RIDGE_OCTAVE_CELLS), in [0, 1). Each octave folds value noise into a ridge
 // and squares it to sharpen the crest, exactly as ridgedNoise does; the
 // table is local because the shared one is tuned for range scale.
-function ridgedAt(x: number, y: number, width: number, height: number, seed: number): number {
+export function ridgedAt(x: number, y: number, width: number, height: number, seed: number): number {
   let sum = 0
   let norm = 0
   for (let i = 0; i < RIDGE_OCTAVE_CELLS.length; i++) {
@@ -315,7 +315,7 @@ function ridgedAt(x: number, y: number, width: number, height: number, seed: num
 // Sampled on a coarse ring rather than a full window: this only has to say
 // "is this raised ground", and a full min-filter at this radius would cost
 // more than the rest of the bake.
-function localRelief(field: Float32Array, width: number, height: number): Float32Array {
+export function localRelief(field: Float32Array, width: number, height: number): Float32Array {
   const radius = Math.max(1, Math.round(width * RELIEF_RADIUS_FRACTION))
   const out = new Float32Array(field.length)
   const wrap = (v: number, n: number): number => ((v % n) + n) % n

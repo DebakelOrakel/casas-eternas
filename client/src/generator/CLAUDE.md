@@ -27,7 +27,9 @@ mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay 
             from the triangulation, the run adapter), meshRaster (node fields sampled on a
             grid), meshSerial (the save's form: Hilbert numbering, varint connectivity,
             the canonical rebuild), meshSampler (point location over a hint grid,
-            heights, fields and normals at a point — what map/ reads the mesh through).
+            heights, fields and normals at a point — what map/ reads the mesh through),
+            meshRefine (one rung of the ladder: a parent refined to a finer budget,
+            parents kept, new nodes from the parent surface plus synthesis).
             The generator's erosion stage runs on it
             (pipeline/meshErosionStage.ts), the lakes and the river graph run on it
             (meshHydrology: the flow substrate) and the save carries it; the map and the
