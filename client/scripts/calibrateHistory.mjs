@@ -84,12 +84,12 @@ const stats = (terrain) => {
 }
 const s0 = stats(terrain)
 console.log(`build ${((performance.now() - t) / 1000).toFixed(1)} s: ${s0.nodes} nodes, land ${(s0.land * 100).toFixed(1)} %, mean ${s0.mean.toFixed(0)} m, p90 ${s0.p90.toFixed(0)} m, max ${s0.max.toFixed(0)} m`)
-console.log('epoch  nodes   removed inserted  land%   mean   p50   p90    max  cut km³ dep km³ exp km³ col km³ coarse% rebound subs.    s  (erosion/flexure/remesh s)')
+console.log('epoch  nodes   removed inserted  land%   mean   p50   p90    max  cut km³ dep km³ exp km³ col km³ coarse% rebound subs.    s  (seconds per phase)')
 for (let e = 0; e < opt.epochs; e++) {
   t = performance.now()
   const st = await M.coupled.stepCoupledEpoch(sim, terrain, { iterationsPerEpoch: opt.iterations, budget: opt.budget, upliftScale: opt.uplift })
   const s = stats(terrain)
   const km3 = (m3) => (m3 / 1e9).toFixed(0).padStart(7)
-  console.log(`${String(e + 1).padStart(5)} ${String(s.nodes).padStart(7)} ${String(st.removed).padStart(8)} ${String(st.inserted).padStart(8)}  ${(s.land * 100).toFixed(1).padStart(5)} ${s.mean.toFixed(0).padStart(6)} ${s.p50.toFixed(0).padStart(5)} ${s.p90.toFixed(0).padStart(5)} ${s.max.toFixed(0).padStart(6)} ${km3(st.erodedFluxM3)} ${km3(st.depositedM3)} ${km3(st.exportedFluxM3)} ${km3(st.columnVolumeM3)} ${(s.coarseShare * 100).toFixed(0).padStart(7)} ${st.reboundMaxM.toFixed(0).padStart(7)} ${st.subsidenceMaxM.toFixed(0).padStart(5)} ${((performance.now() - t) / 1000).toFixed(1).padStart(5)}  (${(st.timing.erosion / 1000).toFixed(1)}/${(st.timing.flexure / 1000).toFixed(1)}/${(st.timing.remesh / 1000).toFixed(1)})`)
+  console.log(`${String(e + 1).padStart(5)} ${String(s.nodes).padStart(7)} ${String(st.removed).padStart(8)} ${String(st.inserted).padStart(8)}  ${(s.land * 100).toFixed(1).padStart(5)} ${s.mean.toFixed(0).padStart(6)} ${s.p50.toFixed(0).padStart(5)} ${s.p90.toFixed(0).padStart(5)} ${s.max.toFixed(0).padStart(6)} ${km3(st.erodedFluxM3)} ${km3(st.depositedM3)} ${km3(st.exportedFluxM3)} ${km3(st.columnVolumeM3)} ${(s.coarseShare * 100).toFixed(0).padStart(7)} ${st.reboundMaxM.toFixed(0).padStart(7)} ${st.subsidenceMaxM.toFixed(0).padStart(5)} ${((performance.now() - t) / 1000).toFixed(1).padStart(5)}  (${['membership', 'tectonics', 'rebuild', 'remesh', 'baseline', 'climate', 'forcing', 'erosion', 'flexure', 'lakes'].map((k) => `${k.slice(0, 4)} ${(st.timing[k] / 1000).toFixed(1)}`).join(' ')})`)
 }
 await server.close()

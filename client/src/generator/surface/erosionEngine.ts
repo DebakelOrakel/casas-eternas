@@ -902,10 +902,16 @@ export function kernelFluvialLeaf(v: EngineViews, workerId: number, workerCount:
 // THE CAP (decision 15): on the raster (GRID8) the donor floor — no
 // deposit may dam the valley that feeds it, since a dammed valley would
 // be a lake the raster's router cannot see — and under water the
-// freeboard. On the mesh the donor floor goes: a fan may dam its valley,
-// the flood then sees the basin and its level (`filled`, the spill), and
-// a node under that level fills to it plus the freeboard and no further —
-// a lake silts up to a plain, it does not aggrade without bound.
+// freeboard. On the mesh the donor floor goes ON LAND: a fan may dam its
+// valley, the flood then sees the basin and its level (`filled`, the
+// spill), and a node under that level fills to it plus the freeboard and
+// no further — a lake silts up to a plain, it does not aggrade without
+// bound. UNDER WATER the donor floor stays on the mesh too: it is what
+// makes a delta prograde from the coast outward, node by node, each no
+// higher than the one feeding it; without it every shelf node within a
+// settling length rose to the freeboard at once and the whole shelf band
+// emerged as a plain (seen 2026-09-23, "grey plains around the
+// continents, lakes in the ocean").
 function sedimentCell(v: EngineViews, cell: number, params: ErosionEngineParams, cellM: number, cellKm2: number, columnM3: number, capLandM3: number, capMarineM3: number, carry: Float64Array): number {
   const { z, filled, flowTarget, flowDir, nbrStart, lenRel, areaRel, accumulation, erosionVolume, erosionCoarse, flux, fluxCoarse, donorMin, flags } = v
   // Float32 rounding of the two classes' sum and difference along the walk
@@ -952,7 +958,7 @@ function sedimentCell(v: EngineViews, cell: number, params: ErosionEngineParams,
   } else if (land) {
     cap = filled[cell] > z[cell] + 1e-6 ? filled[cell] + freeboard : Infinity
   } else {
-    cap = freeboard
+    cap = Math.min(donorMin[cell] - 1e-5, freeboard)
   }
   const room = (cap - z[cell]) * column
   const capM3 = (land ? capLandM3 : capMarineM3) * area
