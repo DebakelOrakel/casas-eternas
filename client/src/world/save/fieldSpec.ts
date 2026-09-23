@@ -61,6 +61,9 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
   climate('seasonalAmplitude', '°C', true),
   climate('monsoonIndex', '', true),
   world('lakeDepth', 'depth', true),
+  // The water table's depth below the surface, metres (phase 5a); 0 at a
+  // channel or a seep, the depth of a well elsewhere.
+  world('waterTable', 'm', true),
   ...ECOLOGY_FIELD_NAMES.map((name) => climate(name, '', true)),
   world('discharge', 'm3/s', false),
   // The erosion engine's coarse forcing (docs/design/erosion-v2.md): uplift

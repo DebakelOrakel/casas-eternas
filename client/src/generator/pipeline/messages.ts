@@ -471,6 +471,10 @@ export interface WorkerHydrologyDataMessage {
   // level/surface fields above already carry the glaciers for the drawing.
   // Re-route only; empty means "unchanged".
   iceThickness: ArrayBuffer
+  // The water table's depth below the surface, metres (Float32, full-res,
+  // surface/hydrogeology.ts, phase 5a; −1 under water). Re-route only;
+  // empty means "unchanged". The springs ride in the river graph's json.
+  waterTable: ArrayBuffer
 }
 
 // The computed ecology fields (coarse climate grid), keyed by field id so the

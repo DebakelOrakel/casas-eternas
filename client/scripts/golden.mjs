@@ -104,6 +104,8 @@ const M = {
   meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
   tectonicsInputs: await L('/src/generator/tectonics/tectonicsInputParams.ts'),
   coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
+  ground: await L('/src/generator/surface/hydrogeology.ts'),
+  cover: await L('/src/generator/surface/cover.ts'),
   meshRaster: await L('/src/generator/mesh/meshRaster.ts'),
   routing: await L('/src/generator/surface/flowRouting.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
@@ -311,6 +313,15 @@ async function buildWorld(seed) {
     regime: graphRegime,
     criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY),
   })
+  // The hydrogeology (phase 5a), as the worker runs it after the graph: the
+  // column's materials, the springs, the regime with the baseflow, the
+  // water table — kept for the invariants below.
+  const ground = M.ground.computeHydrogeology({
+    sub: meshSub, elevation: terrain.z, graph, column: coupled.column,
+    hardness: M.erosionForcing.coarseForcingFields(sim, W, H).hardness, climateResX: CRX, climateResY: CRY,
+    precipitation, temperature: t2, monsoonIndex: sp2.index, cover: M.cover.coverField(biomes2, true),
+    regime: graphRegime, discharge: meshDischarge, cellM: M.engine.WORLD_WIDTH_METERS / W,
+  })
   // The course (phase 3), seeded from the world like the worker does.
   graph.courses = M.course.computeRiverCourses(graph, { cellM: M.engine.WORLD_WIDTH_METERS / W, seed: sim.warpSeed })
   // The coast (F5), as the worker builds it after the graph.
@@ -367,7 +378,7 @@ async function buildWorld(seed) {
     { spreadBudget: 400, seaCrossing: 0.3 },
   )
 
-  return { sim, raw, before: staged.before, terrain: staged.terrain, graphRegime, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, threshold, lakes, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
+  return { sim, raw, before: staged.before, terrain: staged.terrain, graphRegime, ground, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, threshold, lakes, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
 }
 
 // --- layer 1: invariants ---------------------------------------------------
@@ -429,17 +440,23 @@ function invariants(w) {
   for (const [name, count] of Object.entries(M.graph.riverGraphInvariants(w.graph, w.graph.substrate === 'mesh' ? w.terrain.z : w.el))) {
     if (count > 0) fail(`riverGraph.${name}`, `${count} violations`)
   }
-  // The regime rule (F6) holds against its own inputs: an ephemeral reach
-  // drains an arid catchment, a perennial one a wet dry season; and the
-  // ribbons carry one regime per polyline.
+  // The regime rule (F6, re-judged by the hydrogeology of 5a) holds
+  // against its own inputs: an ephemeral reach drains an arid catchment, a
+  // perennial one a wet dry season or a spring; and the ribbons carry one
+  // regime per polyline.
   {
     const regime = w.graphRegime
     let wrong = 0
     for (const r of w.graph.reaches) {
       const last = w.graph.cells[r.cellStart + r.cellCount - 2]
-      if (M.graph.classifyRegime(r.dischargeOut, regime.loss[last], regime.dry[last]) !== r.regime) wrong++
+      if (M.ground.classifyRegimeWithBaseflow(r.springFed, r.dischargeOut, regime.loss[last], r.runoffOut) !== r.regime) wrong++
     }
     if (wrong > 0) fail('riverGraph.regimeRule', `${wrong} reaches disagree with the rule`)
+    // The hydrogeology's own invariants (phase 5a): springs on land off the
+    // channels, no ephemeral spring-fed reach, a table in range.
+    for (const [name, count] of Object.entries(M.ground.hydrogeologyInvariants(w.ground, w.graph, w.terrain.z))) {
+      if (count > 0) fail(`hydrogeology.${name}`, `${count} violations`)
+    }
     const lines = M.graph.riverPolylinesFromGraph(w.graph, w.maxDis)
     if (lines.regimes.length !== lines.lengths.length) fail('riverGraph.polylineRegimes', `${lines.regimes.length} regimes for ${lines.lengths.length} polylines`)
   }
@@ -565,6 +582,17 @@ function metrics(w) {
   // synthesis raster is metres off it between deep-ocean nodes.
   for (let i = 0; i < w.el.length; i++) if (w.before[i] <= SEA && w.el[i] > w.before[i] + 1e-6) deltaCells++
   put('erosion.deltaCells', deltaCells)
+  // The hydrogeology (phase 5a): how many springs, how many of them oases,
+  // the spring-fed share of the reaches, and the table's land median.
+  put('ground.springs', w.ground.springs.length)
+  put('ground.oases', w.ground.springs.filter((s) => s.oasis).length)
+  put('ground.springFedReaches', w.graph.reaches.filter((r) => r.springFed).length)
+  {
+    const depths = []
+    for (let c = 0; c < w.ground.waterTableDepthM.length; c++) if (w.ground.waterTableDepthM[c] > 0) depths.push(w.ground.waterTableDepthM[c])
+    depths.sort((a, b) => a - b)
+    put('ground.tableMedianM', depths.length ? depths[depths.length >> 1] : 0)
+  }
 
   const temp = stats(w.temperature)
   put('climate.tempMeanC', temp.mean)
@@ -633,6 +661,8 @@ function fingerprints(w) {
   put('elevation.eroded', w.el)
   put('elevation.preFill', w.ero.preFillElevations)
   put('erosion.accumulation', w.ero.accumulation)
+  // The hydrogeology's table (phase 5a), for the byte guard.
+  put('ground.waterTable', w.ground.waterTableDepthM)
 
   put('climate.wind', w.wind)
   put('climate.currents', w.currents)

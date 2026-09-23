@@ -72,6 +72,11 @@ const M = {
   column: await L('/src/generator/mesh/meshColumn.ts'),
   flexure: await L('/src/generator/tectonics/flexure.ts'),
   cover: await L('/src/generator/surface/cover.ts'),
+  ground: await L('/src/generator/surface/hydrogeology.ts'),
+  hydro: await L('/src/generator/surface/hydrology.ts'),
+  graph: await L('/src/generator/surface/riverGraph.ts'),
+  meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
+  climateField: await L('/src/generator/climate/climateField.ts'),
   folds: await L('/src/generator/tectonics/folds.ts'),
   mapConfig: await L('/src/generator/core/mapConfig.ts'),
   field: await L('/src/generator/elevation/elevationField.ts'),
@@ -772,6 +777,30 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check(`creep lays down scree (${(screeTotal / 1e9).toFixed(1)} km³ over the epochs)`, screeTotal > 0)
   check(`some land lies in the periglacial band (${(solifluction * 100).toFixed(0)} %)`, solifluction > 0 && solifluction < 1)
   check(`the ranges fold (${(folded * 100).toFixed(0)} % of the land under a folding range)`, folded > 0 && folded < 1)
+  // The hydrogeology (phase 5a) on the history's terrain, with its column:
+  // the graph from the last epoch's routing, then springs, the regime with
+  // the baseflow and the water table — the invariants hold, and the
+  // column's gravel gives this world its springs.
+  {
+    const RX = M.climateField.CLIMATE_RES_X, RY = M.climateField.CLIMATE_RES_Y
+    const sub = M.meshHydro.meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
+    const coarseZ = M.raster.rasteriseNodeField(terrain.mesh, terrain.z, RX, RY)
+    const weather = M.weather.computeWeather(coarseZ, RX, RY, M.weather.defaultWeatherParams())
+    const precip = weather.seasonal.annual
+    const discharge = M.hydro.accumulateDischargeOn(sub, terrain.z, precip, RX, RY)
+    const lakes = M.hydro.computeLakesOn(sub, discharge, terrain.z, weather.temperature, precip, RX, RY)
+    const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), M.hydro.meanLandRunoff(precip, coarseZ, RX, RY, RX, RY))
+    const regime = M.hydro.accumulateRegimeInputsOn(sub, terrain.z, weather.temperature, precip, weather.seasonal.index, RX, RY)
+    const graph = M.graph.buildRiverGraph({ substrate: sub, discharge, elevation: terrain.z, threshold, maxDischarge: M.hydro.maxDischargeOverLand(discharge, terrain.z), bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, regime, criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY) })
+    const biomes = M.biomes.computeBiomes(weather.temperature, precip, weather.seasonalAmplitude, weather.seasonal.index, coarseZ, RX, RY)
+    const ground = M.ground.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, climateResX: RX, climateResY: RY, precipitation: precip, temperature: weather.temperature, monsoonIndex: weather.seasonal.index, cover: M.cover.coverField(biomes, true), regime, discharge, cellM: M.mapConfig.METERS_PER_CELL })
+    const broken = Object.entries(M.ground.hydrogeologyInvariants(ground, graph, terrain.z)).filter(([, n]) => n > 0)
+    check(`the hydrogeology holds its invariants (${ground.springs.length} springs, ${graph.reaches.filter((r) => r.springFed).length} spring-fed of ${graph.reaches.length} reaches)`, broken.length === 0, broken.map(([k, n]) => `${k}:${n}`).join(' '))
+    let land = 0, wet = 0, sum = 0
+    for (let v = 0; v < terrain.mesh.vertexSlots; v++) { if (!terrain.mesh.vAlive[v] || terrain.z[v] <= 0) continue; const d = ground.waterTableDepthM[v]; if (d < 0) continue; land++; sum += d; if (d === 0) wet++ }
+    check(`the water table lies under the land (mean ${(sum / Math.max(1, land)).toFixed(0)} m, ${(wet / Math.max(1, land) * 100).toFixed(0)} % at the surface)`, land > 0 && sum / land > 0 && wet < land)
+    check('a spring-fed reach is perennial', graph.reaches.every((r) => !r.springFed || r.regime === 'perennial'))
+  }
   {
     const simBare = await world()
     const bare = M.coupled.createCoupledTerrain(simBare)

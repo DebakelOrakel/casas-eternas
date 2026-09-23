@@ -1074,6 +1074,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastDischargeField: Float32Array | null = null
   let lastMaxDischarge = 0
   let lastLakeDepth: Float32Array | null = null
+  // The water table's depth below the surface (phase 5a), a save layer.
+  let lastWaterTable: Float32Array | null = null
   // The standing-water truth behind lastLakeDepth (hydrology.WaterBody): the
   // save carries the list; the map draws shores against the per-cell level.
   let lastWaterBodies: WaterBody[] | null = null
@@ -2593,6 +2595,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     drawRivers()
     // Lakes only arrive on a re-route (empty buffer = unchanged, keep the last).
     if (message.lakeDepth.byteLength > 0) lastLakeDepth = new Float32Array(message.lakeDepth)
+    if (message.waterTable.byteLength > 0) lastWaterTable = new Float32Array(message.waterTable)
     if (message.waterBodies) lastWaterBodies = message.waterBodies
     if (message.waterLevel.byteLength > 0) lastWaterLevel = new Float32Array(message.waterLevel)
     if (message.waterSurface.byteLength > 0) lastWaterSurface = new Uint8Array(message.waterSurface)
@@ -2626,6 +2629,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // nothing, because it looks authoritative.
     bakedRiverDisplay = null
     lastLakeDepth = null
+    lastWaterTable = null
     lastWaterBodies = null
     lastWaterLevel = null
     lastWaterSurface = null
@@ -3436,6 +3440,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         seasonalAmplitude: lastSeasonality ?? undefined,
         monsoonIndex: lastMonsoonIndex ?? undefined,
         lakeDepth: lastLakeDepth ?? undefined,
+        waterTable: lastWaterTable ?? undefined,
       }
       for (const f of Object.keys(lastEcologyFields) as EcologyFieldId[]) sources[f] = lastEcologyFields[f]
       for (const spec of WORLD_LAYERS) {

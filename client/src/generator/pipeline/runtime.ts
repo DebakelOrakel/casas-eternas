@@ -12,6 +12,10 @@ import type { MeshTerrain } from './meshErosionStage'
 import { createCoupledTerrain, decodeCoupledTerrain, HISTORY_DEFAULTS, stepCoupledEpoch, type CoupledTerrain } from './coupledEpoch'
 import { encodeColumn } from '../mesh/meshColumn'
 import { rasteriseNodeField } from '../mesh/meshRaster'
+import { computeHydrogeology } from '../surface/hydrogeology'
+import { coverField } from '../surface/cover'
+import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
+import { rasterSubstrate } from '../surface/flowSubstrate'
 import { TECTONICS_INPUTS } from '../tectonics/tectonicsInputParams'
 import { encodeMesh } from '../mesh/meshSerial'
 import { meshRouting, meshSubstrate, waterFieldsFromMesh } from '../mesh/meshHydrology'
@@ -200,6 +204,9 @@ interface HydrologyResult {
   // Ice thickness in metres (surface/iceFlow.ts, F4) on this raster —
   // the sheets and the largest valley glaciers at 7.8 km.
   ice: Float32Array | null
+  // The water table's depth below the surface on the world raster, metres
+  // (phase 5a, surface/hydrogeology.ts); −1 under water.
+  waterTable: Float32Array | null
   // The mesh's own hydrology when the world has a mesh (phase 4.3); the
   // raster fields above are then its recovery.
   onMesh: MeshHydrology | null
@@ -832,7 +839,7 @@ function handleHydrologyRun(): void {
         result = {
           routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
           bodies: lakes.bodies, level: lakes.level, surface: onMesh ? onMesh.raster.surface : waterLevelField(lakes.bodies, elevation, width, height).surface, body: lakes.body,
-          maxDischarge, meanRunoff, graph: null, coast: null, sedimentBasins: [], ice: null,
+          maxDischarge, meanRunoff, graph: null, coast: null, sedimentBasins: [], ice: null, waterTable: null,
           onMesh,
         }
       }
@@ -866,6 +873,11 @@ function handleHydrologyRun(): void {
       // THE FEATURE GRAPH (phase 2): the network as data, with the riparian
       // biomes as bank material and the last erosion pass's sediment flux as
       // load. The ribbons below derive from it.
+      // The forcing's hardness: the coast's and the hydrogeology's input.
+      const forcingFields = coarseForcingFields(sim, width, height)
+      // The cover (phase 5.5) from the coarse biomes, for the infiltration.
+      const plantsFromMa = (historyControls.weather.planet ?? DEFAULT_PLANET_FORCING).landPlantsFromMa
+      const cover = coverField(weather.biomes, worldAgeMa(sim.archeanEpochs, sim.epoch) >= plantsFromMa)
       if (result.onMesh && meshTerrain) {
         // On the mesh (phase 4.3): the graph from the mesh's own routing,
         // discharge and lakes; the bank material sampled from the raster
@@ -873,31 +885,53 @@ function handleHydrologyRun(): void {
         const sub = meshSubstrate(meshTerrain.mesh, meshTerrain.routing, meshTerrain.areas)
         const bankAtNode = new Uint8Array(meshTerrain.mesh.vertexSlots)
         for (let v = 0; v < bankAtNode.length; v++) if (meshTerrain.mesh.vAlive[v]) bankAtNode[v] = riparian.biomes[rasterCellAt(meshTerrain.mesh.vx[v], meshTerrain.mesh.vy[v], width, height)]
+        const regime = accumulateRegimeInputsOn(sub, meshTerrain.z, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y)
         result.graph = buildRiverGraph({
           substrate: sub, discharge: result.onMesh.discharge, elevation: meshTerrain.z, threshold, maxDischarge: result.maxDischarge,
           bodies: result.onMesh.lakes.bodies, body: result.onMesh.lakes.body, lakeDepth: result.onMesh.lakes.depth,
           sedimentFlux: meshTerrain.sedimentFlux.length === meshTerrain.mesh.vertexSlots ? meshTerrain.sedimentFlux : undefined,
           biomes: bankAtNode,
-          regime: accumulateRegimeInputsOn(sub, meshTerrain.z, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y),
+          regime,
           criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
         })
+        // THE HYDROGEOLOGY (phase 5a): the column's materials, the springs
+        // on the graph, the regime re-judged with the baseflow, the water
+        // table — on the mesh, then the table rasterised for the layer.
+        const ground = computeHydrogeology({
+          sub, elevation: meshTerrain.z, graph: result.graph,
+          column: coupled && coupled.mesh === meshTerrain.mesh ? coupled.column : null,
+          hardness: forcingFields.hardness, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
+          precipitation: weather.precipitation, temperature: weather.temperature, monsoonIndex: weather.monsoonIndex,
+          cover, regime, discharge: result.onMesh.discharge, cellM: WORLD_WIDTH_METERS / width,
+        })
+        const table = rasteriseNodeField(meshTerrain.mesh, ground.waterTableDepthM, width, height)
+        for (let c = 0; c < table.length; c++) if (elevation[c] <= 0 || table[c] < 0) table[c] = -1
+        result.waterTable = table
       } else {
+        const regime = accumulateRegimeInputs(result.routing, elevation, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y)
         result.graph = buildRiverGraph({
           routing: result.routing, discharge: result.discharge, elevation, threshold, maxDischarge: result.maxDischarge,
           bodies: result.bodies, body: result.body, lakeDepth: result.lakeDepth,
           sedimentFlux: lastSedimentFlux && lastSedimentFlux.length === elevation.length ? lastSedimentFlux : undefined,
           biomes: riparian.biomes,
           // The flow regime (F6) from the climate the lakes were flooded with.
-          regime: accumulateRegimeInputs(result.routing, elevation, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y),
+          regime,
           criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
         })
+        // The hydrogeology on the raster: bedrock everywhere (no column).
+        const ground = computeHydrogeology({
+          sub: rasterSubstrate(result.routing), elevation, graph: result.graph, column: null,
+          hardness: forcingFields.hardness, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
+          precipitation: weather.precipitation, temperature: weather.temperature, monsoonIndex: weather.monsoonIndex,
+          cover, regime, discharge: result.discharge, cellM: WORLD_WIDTH_METERS / width,
+        })
+        result.waterTable = ground.waterTableDepthM
       }
       // THE RIVER COURSE (phase 3): pattern, meanders, braids and deltas per
       // reach, seeded from the world so a world always gets the same bends.
       result.graph.courses = computeRiverCourses(result.graph, { cellM: WORLD_WIDTH_METERS / width, seed: sim.warpSeed })
       // THE COAST (F5): exposure from the wind, hardness from the erosion
       // forcing's field, sediment from the graph's mouths — a type per reach.
-      const forcingFields = coarseForcingFields(sim, width, height)
       result.coast = buildCoastGraph({
         elevation, width, height, wind: weather.wind, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
         hardness: forcingFields.hardness, graph: result.graph, cellM: WORLD_WIDTH_METERS / width,
@@ -936,6 +970,7 @@ function handleHydrologyRun(): void {
       }
     }
     const iceOut = rerouted && result.ice ? result.ice.slice() : new Float32Array(0)
+    const waterTableOut = rerouted && result.waterTable ? result.waterTable.slice() : new Float32Array(0)
     const graphOut = rerouted && result.graph ? serializeRiverGraph(result.graph) : null
     const coastOut = rerouted && result.coast ? result.coast : null
     const hydrologyMessage: WorkerHydrologyDataMessage = {
@@ -957,10 +992,11 @@ function handleHydrologyRun(): void {
       coast: coastOut ? { reaches: coastOut.reaches, cells: coastOut.cells.slice().buffer as ArrayBuffer } : null,
       sedimentBasins: rerouted ? result.sedimentBasins : null,
       iceThickness: iceOut.buffer as ArrayBuffer,
+      waterTable: waterTableOut.buffer as ArrayBuffer,
     }
     const transfer = [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.riverRegimes, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge, hydrologyMessage.waterLevel, hydrologyMessage.waterSurface]
     if (hydrologyMessage.riverGraph) transfer.push(hydrologyMessage.riverGraph.cells, hydrologyMessage.riverGraph.coursePoints)
-    transfer.push(hydrologyMessage.coastType, hydrologyMessage.iceThickness)
+    transfer.push(hydrologyMessage.coastType, hydrologyMessage.iceThickness, hydrologyMessage.waterTable)
     if (hydrologyMessage.coast) transfer.push(hydrologyMessage.coast.cells)
     emit(hydrologyMessage, transfer)
   })()

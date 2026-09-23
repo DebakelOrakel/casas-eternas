@@ -1,3 +1,4 @@
+import type { SpringFeature } from './hydrogeology'
 import type { FlowRouting } from './flowRouting'
 import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
@@ -85,7 +86,14 @@ export interface RiverReach {
   order: number
   // Flow regime from climate alone (F6; SURFACE_TUNING.regimeAridBelow and
   // regimeDrySeasonBelow): perennial when the caller had no regime inputs.
+  // The hydrogeology (phase 5a, surface/hydrogeology.ts) re-judges it with
+  // the ground's baseflow and sets the two below.
   regime: RiverRegime
+  // The dry-season flow the regime was judged on once the hydrogeology ran
+  // (quick runoff plus baseflow, the discharge's unit); 0 before.
+  runoffOut: number
+  // A spring feeds this reach or one upstream of it (perennial by rule).
+  springFed: boolean
 }
 
 export type RiverRegime = 'perennial' | 'intermittent' | 'ephemeral'
@@ -107,6 +115,8 @@ export interface RiverGraph {
   // The course of every reach wide enough to show one (phase 3,
   // riverCourse.ts), in reach order; absent until computed.
   courses?: RiverCourse[]
+  // The springs (phase 5a, surface/hydrogeology.ts); absent until computed.
+  springs?: SpringFeature[]
 }
 
 export interface RiverGraphInputs {
@@ -325,6 +335,8 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
       bank,
       order: 0,
       regime: regime ? classifyRegime(dischargeOut, regime.loss[lastOwn], regime.dry[lastOwn]) : 'perennial',
+      runoffOut: 0,
+      springFed: false,
     })
   }
 
@@ -546,6 +558,8 @@ export function deserializeRiverGraph(json: string, cells: Int32Array, coursePoi
     // A graph written before F6 carries no regime: perennial, as the
     // builder without regime inputs says.
     for (const r of rest.reaches) if (r.regime === undefined) r.regime = 'perennial'
+    // A graph written before phase 5a carries no hydrogeology.
+    for (const r of rest.reaches) { if (r.runoffOut === undefined) r.runoffOut = 0; if (r.springFed === undefined) r.springFed = false }
     // A graph written before phase 4.3 is a raster graph; its positions
     // follow from its cells. A mesh graph carries them.
     const substrate = rest.substrate ?? 'raster'

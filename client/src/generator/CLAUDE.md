@@ -60,7 +60,9 @@ elevation/  elevationScale (what a height MEANS), elevationField, domainWarp, ri
 surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), erosionPassV2,
             hydrology, riverGraph (the feature graph), riverCourse, coastGraph, sedimentBasins,
             iceFlow, cover (phase 5.5: the vegetation's hold per biome — one table for the
-            erodibility, the critical slope and the river banks), amplify, runAmplification
+            erodibility, the critical slope and the river banks), hydrogeology (phase 5a:
+            springs, the regime with baseflow, the water table — a classification over the
+            column, no process), amplify, runAmplification
 climate/ ecology/ migration/ render/
 ```
 

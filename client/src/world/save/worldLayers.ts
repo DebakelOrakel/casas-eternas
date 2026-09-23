@@ -99,6 +99,8 @@ export const WORLD_LAYERS: LayerSpec[] = [
   // resolution we already had, for a field that is zero almost everywhere and
   // therefore nearly free once deflated.
   layer('lakeDepth', LAKE_DEPTH_ENCODING.dtype, LAKE_DEPTH_ENCODING.scale, LAKE_DEPTH_ENCODING.offset),
+  // Metres to 1000, in 1.5 cm steps — a well is never deeper here.
+  layer('waterTable', 'u16', 1000 / 65535, 0),
   ...ECOLOGY_FIELD_NAMES.map((name) => layer(name, 'u8', 3 / 255, 0)),
 ]
 

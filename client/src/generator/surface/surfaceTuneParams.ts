@@ -13,6 +13,34 @@
 // AMPLIFY_CONSTANTS, which already exists as its own hashed set.
 
 export const SURFACE_TUNING = {
+  // HYDROGEOLOGY (surface/hydrogeology.ts, ADAPTIVE_MESH_PLAN.md phase 5a;
+  // a classification, nothing moves). Permeability of the top material in
+  // [0, 1]: coarse fill, fine fill, bedrock at neutral hardness (divided by
+  // the crust-history hardness, clamped). A column layer thinner than
+  // hydrogeologyLayerMinM is no material. The infiltration is the
+  // permeability times the cover's hold (bare ground infiltrates
+  // infiltrationBare of it, a full cover all), capped. A spring needs a
+  // permeable top over a sealed base and springMinBaseflow of accumulated
+  // infiltration above it (the discharge's unit: mm/yr over cells). The
+  // water table rises from the nearest channel by aquiferRiseBase metres
+  // per metre of flow distance on tight ground at the reference recharge,
+  // less by aquiferRisePermeableDrop × permeability where the ground
+  // drains, scaled by the recharge (capped). All unmeasured.
+  hydrogeologyLayerMinM: 2,
+  permeabilityCoarse: 0.9,
+  permeabilityFine: 0.1,
+  permeabilityBedrock: 0.35,
+  permeabilityBedrockMin: 0.1,
+  permeabilityBedrockMax: 0.7,
+  infiltrationBare: 0.5,
+  infiltrationMax: 0.9,
+  springPermeableAbove: 0.6,
+  springSealedBelow: 0.4,
+  springMinBaseflow: 500,
+  aquiferRiseBase: 0.05,
+  aquiferRisePermeableDrop: 0.9,
+  aquiferRechargeRefMm: 1000,
+  aquiferRechargeCap: 2,
   // HILLSLOPE ADDITIONS (ADAPTIVE_MESH_PLAN.md phase 5.6, the coupled
   // loop's per-node scales on the engine's Roering kernel). The critical
   // slope from the lithology: S_c × K^(−exponent) — hard rock (a low
