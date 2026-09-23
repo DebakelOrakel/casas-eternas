@@ -6,10 +6,16 @@ import {
   createEngineViews,
   expandActive,
   gatherActive,
+  FLAG_GRID8,
+  FLAG_HAS_ACCUM_WEIGHTS,
+  FLAG_HAS_COAST_MASK,
+  FLAG_HAS_STATUS_MASK,
   type EngineIndex,
   type EngineViews,
   type TerrainViews,
 } from './erosionEngineState'
+
+export { FLAG_HAS_ACCUM_WEIGHTS, FLAG_HAS_COAST_MASK, FLAG_HAS_STATUS_MASK } from './erosionEngineState'
 
 // EROSION V2 — the engine core (docs/design/erosion-v2.md, phase P2; the
 // pipeline's erosion since the P2 switchover, the bake's since P3).
@@ -50,6 +56,25 @@ import {
 // the frozen ocean, and sediment that reaches the band's outer rim with
 // nowhere lower to go is exported into it and tallied
 // (CoordinatorScratch.exportedFlux).
+//
+// THE SUBSTRATE IS A GRAPH (phase 4.2): the raster and the adaptive mesh
+// (mesh/meshErosion.ts) are two instances of one index, and every kernel
+// below is written in FINITE-VOLUME form over it — a reach has a length
+// and a facet, a node has an area, and nothing is counted in cells. Two
+// rules differ between the instances, marked GRID8 where they sit, and
+// both are the raster's OLD behaviour kept on purpose, not the mesh's:
+// the raster's hillslope exchanges a pair when the lower-indexed endpoint
+// is land (the east/south two-pass it replaces exchanged a land cell with
+// any east/south neighbour but with a west/north one only if that was
+// land too — a direction bias the mesh has no reason to inherit, so the
+// mesh's rule is "either endpoint is land"), and the raster settles
+// sediment over one cell on every reach where the mesh settles over the
+// reach's own length. Changing the raster's two rules moved the golden
+// metrics the coastline feeds (coast reaches −15 %, marsh −74 % on one
+// seed) — a visible change that belongs to its own step, decided, not to
+// the port. What the port does change for the raster is bits: the sums
+// run in slot order over every neighbour, the reach factors are stored
+// float32. The golden metrics gate it.
 
 // ONE ITERATION IN YEARS (ADAPTIVE_MESH_PLAN.md F7, calibration). The
 // engine's rates are per iteration and stay so; this names the iteration
@@ -173,6 +198,11 @@ const EPSILON_FLOOD_STEP = 1e-7
 const SQRT2 = Math.SQRT2
 const QUARTER_TURN = Math.PI / 4
 const NO_SLOT = 255
+// The per-pair stability cap of the diffusive stencils: no node may hand
+// more than this fraction of a height difference to one neighbour in one
+// iteration (explicit diffusion; over ½ it overshoots, the margin is for
+// the six-to-eight neighbours that move at once).
+const DIFFUSION_PAIR_CAP = 0.2
 // D8-LTD facets as [cardinal slot, diagonal slot, orientation] over the
 // D8_OFFSETS slot order (flowRouting.ts): N, NE, E, SE, S, SW, W, NW. A
 // diagonal slot is odd, which is how the walks tell a √2 reach from a
@@ -181,14 +211,6 @@ const LTD_FACETS: ReadonlyArray<readonly [number, number, number]> = [
   [0, 1, +1], [2, 1, -1], [2, 3, +1], [4, 3, -1],
   [4, 5, +1], [6, 5, -1], [6, 7, +1], [0, 7, -1],
 ]
-const SLOT_N = 0
-const SLOT_E = 2
-const SLOT_S = 4
-const SLOT_W = 6
-
-export const FLAG_HAS_COAST_MASK = 0
-export const FLAG_HAS_ACCUM_WEIGHTS = 1
-export const FLAG_HAS_STATUS_MASK = 2
 
 // Where a status-clamped cell lands, in metres off sea level: a pinned land
 // cell driven under resurfaces just above the line, a pinned sea cell built
@@ -203,7 +225,9 @@ export const STATUS_CLAMP_M = 0.5
 export const WORLD_WIDTH_METERS = MAP_WIDTH * METERS_PER_CELL
 
 // The subset of params the parallel kernels need (a plain object so the
-// pool can structured-clone it to workers once).
+// pool can structured-clone it to workers once). `cellM` is the index's
+// reference length (EngineIndex.refM): the cell size on a raster, the
+// macro cell on a mesh.
 export interface KernelParams {
   upliftDt: number
   hillDiffKm2: number
@@ -212,14 +236,19 @@ export interface KernelParams {
   cellM: number
 }
 
-export function kernelParamsFor(width: number, params: ErosionEngineParams): KernelParams {
+export function kernelParamsFor(refM: number, params: ErosionEngineParams): KernelParams {
   return {
     upliftDt: params.upliftDt,
     hillDiffKm2: params.hillDiffKm2,
     criticalSlope: params.criticalSlope,
     marineDiffDt: params.marineDiffDt,
-    cellM: WORLD_WIDTH_METERS / width,
+    cellM: refM,
   }
+}
+
+// A raster grid's cell size in metres.
+export function rasterCellM(width: number): number {
+  return WORLD_WIDTH_METERS / width
 }
 
 // The shelf band in cells for a grid — the index builder's unit.
@@ -229,15 +258,37 @@ export function shelfBandCells(width: number, params: ErosionEngineParams): numb
 
 // ------------------------------------------------------------------- scans
 
-// Per-cell LTD facet scan (Orlandini 2003, D8-LTD — same method as
+// Per-node receiver scan, active indices [a0, a1). On the raster
+// (FLAG_GRID8) the LTD facet scan (Orlandini 2003, D8-LTD — same method as
 // flowRouting.computeLtdFlowTargets, split scan/walk so the scan runs
-// per-cell parallel). Active indices [a0, a1). A facet with a frozen member
-// is skipped; the steepest-descent fallback still considers every present
-// neighbour.
+// per-cell parallel): a facet with a frozen member is skipped, the
+// steepest-descent fallback still considers every present neighbour. On a
+// mesh, the steepest descent over the star, gradient per reach length —
+// a random star has no eight directions to correct (design/adaptive-mesh.md),
+// so mode 0 and the fallback IS the receiver.
 export function kernelLtdScan(v: EngineViews, a0: number, a1: number): void {
-  const { filled, nbr, ltdFacet, ltdFallback, ltdDeltaC, ltdDeltaD, ltdMode } = v
+  const { filled, nbr, nbrStart, lenRel, ltdFacet, ltdFallback, ltdDeltaC, ltdDeltaD, ltdMode, flags } = v
+  if (flags[FLAG_GRID8] === 0) {
+    for (let cell = a0; cell < a1; cell++) {
+      const own = filled[cell]
+      const start = nbrStart[cell]
+      const end = nbrStart[cell + 1]
+      let bestGradient = 0
+      let fallback = NO_SLOT
+      for (let e = start; e < end; e++) {
+        const nb = nbr[e]
+        if (nb < 0) continue
+        const g = (own - filled[nb]) / lenRel[e]
+        if (g > bestGradient) { bestGradient = g; fallback = e - start }
+      }
+      ltdFallback[cell] = fallback
+      ltdFacet[cell] = NO_SLOT
+      ltdMode[cell] = 0
+    }
+    return
+  }
   for (let cell = a0; cell < a1; cell++) {
-    const base = cell * 8
+    const base = nbrStart[cell]
     const own = filled[cell]
     let bestSlope = 0
     let bestFacet = -1
@@ -283,22 +334,25 @@ export function kernelLtdScan(v: EngineViews, a0: number, a1: number): void {
   }
 }
 
-// MFD edges (Freeman/Quinn linear weighting), fixed stride-8. Active
-// indices [a0, a1).
+// MFD edges over the node's run: weight = drop × mfdFactor — Freeman's
+// drop over length on the raster, drop × facet / length (a flux through
+// the Voronoi facet) on the mesh. Active indices [a0, a1).
 export function kernelMfd(v: EngineViews, a0: number, a1: number): void {
-  const { filled, nbr, mfdDegree, mfdDirection, mfdWeight } = v
+  const { filled, nbr, nbrStart, mfdFactor, mfdDegree, mfdDirection, mfdWeight } = v
   for (let cell = a0; cell < a1; cell++) {
-    const base = cell * 8
+    const base = nbrStart[cell]
+    const end = nbrStart[cell + 1]
     const own = filled[cell]
     let count = 0
     let weightSum = 0
-    for (let slot = 0; slot < 8; slot++) {
-      const neighbor = nbr[base + slot]
+    for (let e = base; e < end; e++) {
+      const neighbor = nbr[e]
       if (neighbor < 0) continue
       const drop = own - filled[neighbor]
       if (drop <= 0) continue
-      const weight = drop / (slot & 1 ? SQRT2 : 1)
-      mfdDirection[base + count] = slot
+      const weight = drop * mfdFactor[e]
+      if (weight <= 0) continue
+      mfdDirection[base + count] = e - base
       mfdWeight[base + count] = weight
       weightSum += weight
       count++
@@ -328,44 +382,70 @@ export function kernelUplift(v: EngineViews, a0: number, a1: number, kp: KernelP
   }
 }
 
-// Roering hillslope diffusion, pass 1: each land cell's east/south moves.
+// Roering hillslope diffusion, pass 1: the volume moved along every edge
+// whose lower-indexed endpoint lies in [a0, a1), from that endpoint's
+// side (positive = away from it). Finite volume over the Voronoi facet:
+// V = D·Δt · (facet/length) · Δz, the height change at a node being
+// V over its area — on the raster (facet = length, area = cell²) this is
+// exactly the old per-pair fraction D·Δt/cell². Roering's nonlinear boost
+// on the pair's slope; capped so neither endpoint hands more than
+// DIFFUSION_PAIR_CAP of the difference across one edge. A pair exchanges
+// when either endpoint is land — symmetric, the coast diffuses into the
+// sea from both sides; on the raster (GRID8) when the lower-indexed
+// endpoint is land, the old east/south rule (see the module comment).
 export function kernelHillMoves(v: EngineViews, a0: number, a1: number, kp: KernelParams): void {
-  const { z, nbr, moveEast, moveSouth } = v
-  const cellKm2 = (kp.cellM / 1000) * (kp.cellM / 1000)
+  const { z, nbr, nbrStart, diffFactor, lenRel, areaRel, edgeMove, flags } = v
+  const grid8 = flags[FLAG_GRID8] !== 0
+  const refM2 = kp.cellM * kp.cellM
+  const diffM2 = kp.hillDiffKm2 * 1e6
   for (let cell = a0; cell < a1; cell++) {
-    let east = 0
-    let south = 0
-    if (z[cell] > 0) {
-      const eastCell = nbr[cell * 8 + SLOT_E]
-      const southCell = nbr[cell * 8 + SLOT_S]
-      for (const [nb, isEast] of [[eastCell, 1], [southCell, 0]] as const) {
-        if (nb < 0) continue
-        const dz = z[cell] - z[nb]
-        if (dz === 0) continue
-        const slope = (Math.abs(dz) * ELEVATION_METERS) / kp.cellM
-        const ratio = Math.min(0.95, slope / kp.criticalSlope)
-        const boost = 1 / (1 - ratio * ratio)
-        const fraction = Math.min(0.2, (kp.hillDiffKm2 / cellKm2) * Math.min(boost, 12))
-        const move = fraction * dz
-        if (isEast) east = move
-        else south = move
+    const start = nbrStart[cell]
+    const end = nbrStart[cell + 1]
+    const own = z[cell]
+    const ownArea = areaRel[cell] * refM2
+    for (let e = start; e < end; e++) {
+      const nb = nbr[e]
+      if (nb < cell) {
+        edgeMove[e] = 0
+        continue
       }
+      const geom = diffFactor[e]
+      if (geom === 0 || (grid8 ? own <= 0 : own <= 0 && z[nb] <= 0)) {
+        edgeMove[e] = 0
+        continue
+      }
+      const dz = own - z[nb]
+      if (dz === 0) {
+        edgeMove[e] = 0
+        continue
+      }
+      const slope = (Math.abs(dz) * ELEVATION_METERS) / (kp.cellM * lenRel[e])
+      const ratio = Math.min(0.95, slope / kp.criticalSlope)
+      const boost = 1 / (1 - ratio * ratio)
+      const coefficient = Math.min(diffM2 * geom * Math.min(boost, 12), DIFFUSION_PAIR_CAP * Math.min(ownArea, areaRel[nb] * refM2))
+      edgeMove[e] = coefficient * dz
     }
-    moveEast[cell] = east
-    moveSouth[cell] = south
   }
 }
 
-// Hillslope pass 2: combine own and incoming moves; track the residual in
-// the caller's maxStepW slot.
-export function kernelHillApply(v: EngineViews, a0: number, a1: number, workerId: number): void {
-  const { z, nbr, moveEast, moveSouth, maxStepW } = v
+// Hillslope pass 2: a node's height changes by the volumes it handed out
+// and received, over its area; the residual goes to the caller's maxStepW
+// slot.
+export function kernelHillApply(v: EngineViews, a0: number, a1: number, kp: KernelParams, workerId: number): void {
+  const { z, nbr, nbrStart, edgeRev, areaRel, edgeMove, maxStepW } = v
+  const refM2 = kp.cellM * kp.cellM
   let maxStep = 0
   for (let cell = a0; cell < a1; cell++) {
-    const west = nbr[cell * 8 + SLOT_W]
-    const north = nbr[cell * 8 + SLOT_N]
-    const delta = -(moveEast[cell] + moveSouth[cell]) + (west >= 0 ? moveEast[west] : 0) + (north >= 0 ? moveSouth[north] : 0)
-    if (delta !== 0) {
+    const start = nbrStart[cell]
+    const end = nbrStart[cell + 1]
+    let volume = 0
+    for (let e = start; e < end; e++) {
+      const nb = nbr[e]
+      if (nb < 0) continue
+      volume += nb > cell ? -edgeMove[e] : edgeMove[edgeRev[e]]
+    }
+    if (volume !== 0) {
+      const delta = volume / (areaRel[cell] * refM2)
       z[cell] += delta
       const step = Math.abs(delta)
       if (z[cell] > 0 && step > maxStep) maxStep = step
@@ -374,31 +454,52 @@ export function kernelHillApply(v: EngineViews, a0: number, a1: number, workerId
   maxStepW[workerId] = maxStep
 }
 
-// Marine diffusion, pass 1: water-to-water east/south moves. The frozen
-// ocean beyond the band exchanges nothing (no neighbour, no move).
+// Marine diffusion, pass 1: water-to-water moves along every edge whose
+// lower-indexed endpoint lies in [a0, a1). The exchange fraction
+// `marineDiffDt` is per pair at the REFERENCE area (the raster's cell —
+// what the constant was calibrated on), so on a mesh a fine shelf node
+// moves the same volume per pair as a macro cell would and the cap keeps
+// it stable. The frozen ocean beyond the band exchanges nothing (no
+// neighbour, no move).
 export function kernelMarineMoves(v: EngineViews, a0: number, a1: number, kp: KernelParams): void {
-  const { z, nbr, moveEast, moveSouth } = v
+  const { z, nbr, nbrStart, diffFactor, areaRel, edgeMove } = v
+  const refM2 = kp.cellM * kp.cellM
   for (let cell = a0; cell < a1; cell++) {
-    let east = 0
-    let south = 0
-    if (z[cell] <= 0) {
-      const eastCell = nbr[cell * 8 + SLOT_E]
-      const southCell = nbr[cell * 8 + SLOT_S]
-      if (eastCell >= 0 && z[eastCell] <= 0) east = kp.marineDiffDt * (z[cell] - z[eastCell])
-      if (southCell >= 0 && z[southCell] <= 0) south = kp.marineDiffDt * (z[cell] - z[southCell])
+    const start = nbrStart[cell]
+    const end = nbrStart[cell + 1]
+    const own = z[cell]
+    const ownArea = areaRel[cell] * refM2
+    for (let e = start; e < end; e++) {
+      const nb = nbr[e]
+      if (nb < cell) {
+        edgeMove[e] = 0
+        continue
+      }
+      const geom = diffFactor[e]
+      if (geom === 0 || own > 0 || z[nb] > 0) {
+        edgeMove[e] = 0
+        continue
+      }
+      const coefficient = Math.min(kp.marineDiffDt * geom * refM2, DIFFUSION_PAIR_CAP * Math.min(ownArea, areaRel[nb] * refM2))
+      edgeMove[e] = coefficient * (own - z[nb])
     }
-    moveEast[cell] = east
-    moveSouth[cell] = south
   }
 }
 
 // Marine pass 2: combine (no residual tracking — matches the P0 physics).
-export function kernelMarineApply(v: EngineViews, a0: number, a1: number): void {
-  const { z, nbr, moveEast, moveSouth } = v
+export function kernelMarineApply(v: EngineViews, a0: number, a1: number, kp: KernelParams): void {
+  const { z, nbr, nbrStart, edgeRev, areaRel, edgeMove } = v
+  const refM2 = kp.cellM * kp.cellM
   for (let cell = a0; cell < a1; cell++) {
-    const west = nbr[cell * 8 + SLOT_W]
-    const north = nbr[cell * 8 + SLOT_N]
-    z[cell] += -(moveEast[cell] + moveSouth[cell]) + (west >= 0 ? moveEast[west] : 0) + (north >= 0 ? moveSouth[north] : 0)
+    const start = nbrStart[cell]
+    const end = nbrStart[cell + 1]
+    let volume = 0
+    for (let e = start; e < end; e++) {
+      const nb = nbr[e]
+      if (nb < 0) continue
+      volume += nb > cell ? -edgeMove[e] : edgeMove[edgeRev[e]]
+    }
+    if (volume !== 0) z[cell] += volume / (areaRel[cell] * refM2)
   }
 }
 
@@ -464,16 +565,17 @@ export function createCoordinatorScratch(activeCount: number): CoordinatorScratc
   }
 }
 
-// The flood's seeds: the world ocean's active part. Every 4-connected
-// component of active ≤ 0 cells that touches the frozen ocean is world
-// ocean (the frozen cells ARE the ocean's interior, so any component
-// connected to it is connected to all of it). With no frozen cell at all
-// — a world whose largest water body fits inside the band — the rule
-// falls back to the largest component, which is what the raster flood
-// seeded by (an enclosed basin is a depression, not a sea; same rule as
-// flowRouting's largestWaterComponent, 2026-08-06).
+// The flood's seeds: the world ocean's active part. Every facet-connected
+// component of active ≤ 0 nodes (4-connected on the raster: the cells that
+// share a side) that touches the frozen ocean is world ocean (the frozen
+// nodes ARE the ocean's interior, so any component connected to it is
+// connected to all of it). With no frozen node at all — a world whose
+// largest water body fits inside the band — the rule falls back to the
+// largest component, which is what the raster flood seeded by (an
+// enclosed basin is a depression, not a sea; same rule as flowRouting's
+// largestWaterComponent, 2026-08-06).
 export function computeOceanSeed(v: EngineViews, s: CoordinatorScratch): boolean {
-  const { z, nbr, seedMask, activeCount } = v
+  const { z, nbr, nbrStart, diffFactor, seedMask, activeCount } = v
   const label = s.componentLabel
   const stack = s.componentStack
   label.fill(-1)
@@ -491,13 +593,14 @@ export function computeOceanSeed(v: EngineViews, s: CoordinatorScratch): boolean
     while (sp > 0) {
       const i = stack[--sp]
       size++
-      const base = i * 8
-      for (let slot = 0; slot < 8; slot += 2) {
-        const nb = nbr[base + slot]
+      const end = nbrStart[i + 1]
+      for (let e = nbrStart[i]; e < end; e++) {
+        const nb = nbr[e]
         if (nb < 0) {
           touches = true
           continue
         }
+        if (diffFactor[e] === 0) continue
         if (z[nb] <= 0 && label[nb] === -1) {
           label[nb] = id
           stack[sp++] = nb
@@ -525,7 +628,7 @@ export function computeOceanSeed(v: EngineViews, s: CoordinatorScratch): boolean
 // cell the flood never reaches (no path to a seed) gets filled = Infinity
 // and no place in the order. Returns the popped count.
 export function floodActive(v: EngineViews, s: CoordinatorScratch): number {
-  const { z, nbr, seedMask, filled, popOrder, activeCount } = v
+  const { z, nbr, nbrStart, lenRel, seedMask, filled, popOrder, activeCount } = v
   const visited = s.visited
   const heap = s.floodHeap
   visited.fill(0)
@@ -541,12 +644,12 @@ export function floodActive(v: EngineViews, s: CoordinatorScratch): number {
     heap.pop()
     const current = heap.poppedIndex
     popOrder[popped++] = current
-    const base = current * 8
-    for (let slot = 0; slot < 8; slot++) {
-      const nb = nbr[base + slot]
+    const end = nbrStart[current + 1]
+    for (let e = nbrStart[current]; e < end; e++) {
+      const nb = nbr[e]
       if (nb < 0 || visited[nb]) continue
       visited[nb] = 1
-      filled[nb] = Math.max(z[nb], filled[current]) + EPSILON_FLOOD_STEP * (slot & 1 ? SQRT2 : 1)
+      filled[nb] = Math.max(z[nb], filled[current]) + EPSILON_FLOOD_STEP * lenRel[e]
       heap.push(filled[nb], nb)
     }
   }
@@ -558,7 +661,7 @@ export function floodActive(v: EngineViews, s: CoordinatorScratch): number {
 // transverse deviation, inheriting λ from the largest contributor at
 // confluences. Serial by nature (popOrder backward).
 export function lambdaWalk(v: EngineViews, popped: number, s: CoordinatorScratch): void {
-  const { nbr, flowTarget, flowDir, ltdFacet, ltdDeltaC, ltdDeltaD, ltdFallback, ltdMode, popOrder } = v
+  const { nbr, nbrStart, flowTarget, flowDir, ltdFacet, ltdDeltaC, ltdDeltaD, ltdFallback, ltdMode, popOrder } = v
   const { lambda, contrib, bestInflow } = s
   flowTarget.fill(-1)
   flowDir.fill(NO_SLOT)
@@ -587,7 +690,7 @@ export function lambdaWalk(v: EngineViews, popped: number, s: CoordinatorScratch
       else if (diagonalDown) { slot = facet[1]; delta = ltdDeltaD[cell] }
     }
     if (slot === NO_SLOT) continue
-    const target = nbr[cell * 8 + slot]
+    const target = nbr[nbrStart[cell] + slot]
     flowTarget[cell] = target
     flowDir[cell] = slot
     const area = contrib[cell] + 1
@@ -599,22 +702,26 @@ export function lambdaWalk(v: EngineViews, popped: number, s: CoordinatorScratch
   }
 }
 
-// Drainage-area accumulation over the MFD edges, popOrder backward. When
-// FLAG_HAS_ACCUM_WEIGHTS is set, each cell contributes
-// views.accumulationWeights[i] instead of 1 — the hydrology merge's
-// climate coupling: upsampled provisional precipitation makes the engine's
-// Q water, not area (decided 2026-08-17: fixed default-parameter forcing
-// at the switchover; live climate coupling is its own later stage-order
-// step). In the views so every refresh path — single-threaded, pooled,
-// and the pipelined refresh coordinator — applies it identically.
+// Drainage-area accumulation over the MFD edges, popOrder backward, in
+// units of the reference area: each node contributes its own area
+// (areaRel — 1 per cell on the raster). When FLAG_HAS_ACCUM_WEIGHTS is
+// set, that contribution is scaled by views.accumulationWeights[i] — the
+// hydrology merge's climate coupling: upsampled provisional precipitation
+// makes the engine's Q water, not area (decided 2026-08-17: fixed
+// default-parameter forcing at the switchover; live climate coupling is
+// its own later stage-order step). In the views so every refresh path —
+// single-threaded, pooled, and the pipelined refresh coordinator —
+// applies it identically.
 export function accumulateFlowV2(v: EngineViews, popped: number): void {
-  const { nbr, accumulation, mfdDegree, mfdDirection, mfdWeight, popOrder, flags } = v
-  if (flags[FLAG_HAS_ACCUM_WEIGHTS]) accumulation.set(v.accumulationWeights)
-  else accumulation.fill(1)
+  const { nbr, nbrStart, areaRel, accumulation, mfdDegree, mfdDirection, mfdWeight, popOrder, flags, activeCount } = v
+  if (flags[FLAG_HAS_ACCUM_WEIGHTS]) {
+    const w = v.accumulationWeights
+    for (let i = 0; i < activeCount; i++) accumulation[i] = w[i] * areaRel[i]
+  } else accumulation.set(areaRel)
   for (let i = popped - 1; i >= 0; i--) {
     const cell = popOrder[i]
     const amount = accumulation[cell]
-    const base = cell * 8
+    const base = nbrStart[cell]
     const degree = mfdDegree[cell]
     for (let e = 0; e < degree; e++) {
       accumulation[nbr[base + mfdDirection[base + e]]] += amount * mfdWeight[base + e]
@@ -690,7 +797,7 @@ function leafRange(v: EngineViews, workerId: number, workerCount: number): [numb
 // implicit form would PULL the cell up: a lake bed does not erode. Returns
 // the cut (normalized units).
 function fluvialCell(v: EngineViews, cell: number, params: ErosionEngineParams, cellM: number, cellKm2: number): number {
-  const { z, flowTarget, flowDir, accumulation, erodibility, erosionVolume } = v
+  const { z, flowTarget, flowDir, nbrStart, lenRel, areaRel, accumulation, erodibility, erosionVolume } = v
   erosionVolume[cell] = 0
   const old = z[cell]
   if (old <= 0) return 0
@@ -698,13 +805,13 @@ function fluvialCell(v: EngineViews, cell: number, params: ErosionEngineParams, 
   if (target < 0) return 0
   const zr = z[target]
   if (zr >= old) return 0
-  const distKm = (cellM / 1000) * (flowDir[cell] & 1 ? SQRT2 : 1)
+  const distKm = (cellM / 1000) * lenRel[nbrStart[cell] + flowDir[cell]]
   const dischargeKm2 = accumulation[cell] * cellKm2 + params.baseAreaKm2
   const F = (params.kappaDt * erodibility[cell] * Math.pow(dischargeKm2, params.m)) / distKm
   const znew = (old + F * zr) / (1 + F)
   const cut = old - znew
   z[cell] = znew
-  erosionVolume[cell] = cut * ELEVATION_METERS * cellKm2 * 1e6
+  erosionVolume[cell] = cut * ELEVATION_METERS * cellKm2 * areaRel[cell] * 1e6
   return cut
 }
 
@@ -749,7 +856,7 @@ export function kernelFluvialLeaf(v: EngineViews, workerId: number, workerCount:
 // surface, then progrades). Returns what leaves the cell; the caller
 // decides where it goes (the receiver, a mailbox, or the export tally).
 function sedimentCell(v: EngineViews, cell: number, params: ErosionEngineParams, cellM: number, cellKm2: number, columnM3: number, capLandM3: number, capMarineM3: number, residual: Float64Array): number {
-  const { z, accumulation, erosionVolume, flux, donorMin } = v
+  const { z, flowTarget, flowDir, nbrStart, lenRel, areaRel, accumulation, erosionVolume, flux, donorMin, flags } = v
   let carrying = flux[cell] + erosionVolume[cell]
   if (carrying <= 0) return carrying
   const land = z[cell] > 0
@@ -757,17 +864,23 @@ function sedimentCell(v: EngineViews, cell: number, params: ErosionEngineParams,
     ? Math.max(params.settleFloorKm, params.settleXiKm * Math.sqrt(accumulation[cell] * cellKm2 + params.baseAreaKm2))
     : params.settleMarineKm
   // Exact exponential integration over the reach — scale-consistent
-  // for any dx/L, where a clamped linear fraction was not.
-  const dropFraction = 1 - Math.exp(-(cellM / 1000) / settle)
+  // for any dx/L, where a clamped linear fraction was not. A terminal
+  // node (no receiver) settles over one reference length; so does every
+  // raster cell (GRID8), diagonal or not — the old rule, see the module
+  // comment.
+  const reachKm = (cellM / 1000) * (flowTarget[cell] >= 0 && flags[FLAG_GRID8] === 0 ? lenRel[nbrStart[cell] + flowDir[cell]] : 1)
+  const dropFraction = 1 - Math.exp(-reachKm / settle)
   let deposit = carrying * dropFraction
+  const area = areaRel[cell]
+  const column = columnM3 * area
   const donorCap = donorMin[cell] - 1e-5
   const cap = land ? donorCap : Math.min(donorCap, params.marineFreeboardM / ELEVATION_METERS)
-  const room = (cap - z[cell]) * columnM3
+  const room = (cap - z[cell]) * column
   if (deposit > room) deposit = Math.max(0, room)
-  const capM3 = land ? capLandM3 : capMarineM3
+  const capM3 = (land ? capLandM3 : capMarineM3) * area
   if (deposit > capM3) deposit = capM3
   if (deposit > 0) {
-    const dz = deposit / columnM3
+    const dz = deposit / column
     z[cell] += dz
     carrying -= deposit
     if (land && dz > residual[0]) residual[0] = dz
@@ -894,25 +1007,35 @@ export class ErosionEngine {
   private readonly scratch: CoordinatorScratch
   private readonly kernelParams: KernelParams
 
+  // On a raster: the index is built here from the initial terrain. On any
+  // other substrate, build the index yourself and use `onIndex`.
   constructor(
     width: number,
     height: number,
     initial: Float32Array,
     forcing: ErosionForcing,
     params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS,
+    index?: EngineIndex,
   ) {
-    const n = width * height
-    if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
-      throw new Error('field size mismatch')
-    }
+    const built = index ?? buildRasterIndex(width, height, initial, forcing, params)
     this.width = width
     this.height = height
     this.params = params
-    this.index = buildEngineIndex(initial, width, height, shelfBandCells(width, params))
-    this.views = createEngineViews(this.index)
-    loadTerrain(this.index, this.views, initial, forcing)
-    this.scratch = createCoordinatorScratch(this.index.activeCount)
-    this.kernelParams = kernelParamsFor(width, params)
+    this.index = built
+    this.views = createEngineViews(built)
+    loadTerrain(built, this.views, initial, forcing)
+    this.scratch = createCoordinatorScratch(built.activeCount)
+    this.kernelParams = kernelParamsFor(built.refM, params)
+  }
+
+  // The engine over a prepared index (a mesh, mesh/meshErosion.ts): the
+  // initial terrain and the forcing are in the index's full layout
+  // (cellCount entries or more), exactly as a raster caller's arrays are.
+  static onIndex(index: EngineIndex, initial: Float32Array, forcing: ErosionForcing, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS): ErosionEngine {
+    if (initial.length < index.cellCount || forcing.uplift.length < index.cellCount || forcing.erodibility.length < index.cellCount) {
+      throw new Error('field size mismatch')
+    }
+    return new ErosionEngine(index.width, index.height, initial, forcing, params, index)
   }
 
   // The evolving terrain in ACTIVE space (normalized z, mutated in place by
@@ -966,10 +1089,10 @@ export class ErosionEngine {
     collectWalkTallies(v, 1, this.scratch)
     maxStep = Math.max(maxStep, sedimentSerial(v, this.poppedCount, this.params, cellM, this.scratch))
     kernelHillMoves(v, 0, a, this.kernelParams)
-    kernelHillApply(v, 0, a, 0)
+    kernelHillApply(v, 0, a, this.kernelParams, 0)
     maxStep = Math.max(maxStep, v.maxStepW[0])
     kernelMarineMoves(v, 0, a, this.kernelParams)
-    kernelMarineApply(v, 0, a)
+    kernelMarineApply(v, 0, a, this.kernelParams)
     if (v.flags[FLAG_HAS_STATUS_MASK] !== 0) kernelStatusClamp(v, 0, a)
     return maxStep * ELEVATION_METERS
   }
@@ -993,8 +1116,18 @@ export class ErosionEngine {
   }
 }
 
+// The raster index for a run: the size check and the shelf band in cells.
+// One function for every driver.
+export function buildRasterIndex(width: number, height: number, initial: Float32Array, forcing: ErosionForcing, params: ErosionEngineParams): EngineIndex {
+  const n = width * height
+  if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
+    throw new Error('field size mismatch')
+  }
+  return buildEngineIndex(initial, width, height, shelfBandCells(width, params), rasterCellM(width))
+}
+
 // The terrain section's initial contents, gathered from the caller's full
-// rasters — copied, never aliased, so the caller's arrays are not reshaped
+// arrays — copied, never aliased, so the caller's arrays are not reshaped
 // as a side effect. One function for every driver (single-threaded, pool,
 // pipelined), so the three cannot disagree on what a flag means.
 export function loadTerrain(index: EngineIndex, views: Omit<TerrainViews, 'buffer'>, initial: Float32Array, forcing: ErosionForcing): void {

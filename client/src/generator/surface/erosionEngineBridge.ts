@@ -23,8 +23,8 @@ import type { EngineIndex, EngineViews } from './erosionEngineState'
 // aggrade a sub-sea-level terminal basin toward +2 m; its own water level
 // should cap it instead.)
 //
-// The MFD edges convert from the engine's fixed stride-8 layout to the CSR
-// form FlowRouting declares. Hydrology never reads them (it is
+// The MFD edges convert from the engine's per-run layout (the node's
+// neighbour run, phase 4.2) to the CSR form FlowRouting declares. Hydrology never reads them (it is
 // deliberately single-flow), but the contract is honest rather than
 // stubbed — a consumer that walks routing.mfd gets the real edges.
 
@@ -47,7 +47,7 @@ export function engineFlowRouting(views: EngineViews, index: EngineIndex, popped
   const outEdgeDirections = new Uint8Array(total)
   const outEdgeWeights = new Float32Array(total)
   for (let a = 0; a < activeCount; a++) {
-    const base = a * 8
+    const base = views.nbrStart[a]
     const start = outEdgeStart[active[a]]
     const degree = views.mfdDegree[a]
     for (let e = 0; e < degree; e++) {

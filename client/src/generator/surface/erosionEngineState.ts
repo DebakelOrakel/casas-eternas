@@ -1,28 +1,43 @@
 import { D8_OFFSETS, d8Neighbor, largestWaterComponent } from './flowRouting'
 
 // EROSION V2 — the engine's state layout (docs/design/erosion-v2.md, P2;
-// ADAPTIVE_MESH_PLAN.md phase 0).
+// ADAPTIVE_MESH_PLAN.md phases 0 and 4.2).
 //
-// The engine runs on an ACTIVE SET of cells, not on the raster: land, every
+// The engine runs on an ACTIVE SET of nodes, not on a raster: land, every
 // enclosed sub-sea basin, and a shelf band of ocean around the land where
 // deltas prograde and marine diffusion reaches. The deep ocean beyond the
 // band is FROZEN — never read by a kernel, never written, absent from every
-// state array. On a real world that is most of the raster (phase 0 was
-// measured on a world with 11 % land), so every per-cell array here is
-// sized to the active count A, not to width × height.
+// state array. On a real world that is most of the substrate (phase 0 was
+// measured on a world with 11 % land), so every per-node array here is
+// sized to the active count A.
 //
-// Cells are addressed by ACTIVE INDEX (0..A-1, ascending cell id), and the
-// eight D8 neighbours of every active cell are a table (`nbr`, slot order
-// D8_OFFSETS, -1 where the neighbour is frozen). No kernel does wrap
-// arithmetic or knows a cell's (x, y): a kernel walks the table. That is
-// what lets the same kernels run on the mesh later (adaptive-mesh.md step 4:
-// neighbours become graph edges), and it is what makes the frozen boundary
-// a wall by construction — a missing slot is simply no neighbour.
+// THE SUBSTRATE IS A GRAPH (phase 4.2). Nodes are addressed by ACTIVE INDEX
+// (0..A-1), and every node's neighbours are a run in a CSR table (`nbrStart`,
+// `nbr`; -1 where the neighbour is frozen — a missing slot is simply no
+// neighbour, which is what makes the frozen boundary a wall by
+// construction). Per directed edge the index carries what a finite-volume
+// kernel needs and nothing a coordinate would say: the reach length
+// (`lenRel`, in units of the reference length `refM`), the Voronoi facet
+// over the reach (`diffFactor` = facet/length, the geometric factor of a
+// diffusive flux; 0 where two nodes share no facet), the MFD weight base
+// (`mfdFactor`), and the reverse edge (`edgeRev`, for the two-pass
+// stencils). Per node, its Voronoi area (`areaRel`, in refM²). No kernel
+// does wrap arithmetic or knows a node's position: a kernel walks the table.
+//
+// The RASTER is one instance of this graph: eight neighbours per cell in
+// D8_OFFSETS order (so `nbrStart[i] = 8 i`, and the D8-LTD scan can still
+// read its facets by slot when FLAG_GRID8 is set), reach lengths 1 and √2,
+// a facet only across the four cardinal edges (the cell is a square), area
+// 1. The MESH (mesh/meshErosion.ts) is the other: a Delaunay star per node,
+// facets from the circumcentres, areas from the Voronoi cells. Same
+// kernels, same walks, same drivers — the raster's MFD keeps Freeman's
+// weights (drop over length, diagonals included) for the transition, which
+// is what `mfdFactor` exists to express separately from `diffFactor`.
 //
 // The state is TWO sections with different lifetimes:
 //
-//   TERRAIN — the neighbour table, z, the forcing, stencil scratch: one
-//   copy, mutated by the physics iterations.
+//   TERRAIN — the graph tables, z, the forcing, stencil scratch: one copy,
+//   mutated by the physics iterations.
 //   ROUTING — everything a routing refresh produces (filled, receivers,
 //   MFD, accumulation, the pop order) plus the z-SNAPSHOT it was computed
 //   from: the pipelined refresh keeps TWO of these and swaps on a fixed
@@ -40,33 +55,60 @@ import { D8_OFFSETS, d8Neighbor, largestWaterComponent } from './flowRouting'
 // strip count was part of the result, and the basin partition of phase 0's
 // second half is the parallel unit that replaces it).
 
-// Which cells the engine computes on, and how they connect. Built once per
-// run from the initial terrain (buildEngineIndex); the frozen set never
+// Which nodes the engine computes on, and how they connect. Built once per
+// run from the initial terrain (buildEngineIndex for a raster,
+// mesh/meshErosion.buildMeshEngineIndex for a mesh); the frozen set never
 // changes during a run.
 export interface EngineIndex {
+  kind: 'raster' | 'mesh'
+  // The raster's dimensions; 0 for a mesh (the bridge to the raster
+  // hydrology is raster-only).
   width: number
   height: number
+  // How many cells (raster) or vertex slots (mesh) the FULL arrays the
+  // caller hands in and gets back are laid out for.
+  cellCount: number
   activeCount: number
-  // Cell id of every active index, ascending.
+  // Cell id (raster) or vertex id (mesh) of every active index, ascending.
   active: Int32Array
-  // Active index of every cell, -1 when frozen. Coordinator-side only
-  // (expansion back to the raster); kernels never touch it.
+  // Active index of every cell / vertex, -1 when frozen or absent.
+  // Coordinator-side only (expansion back to the caller's layout);
+  // kernels never touch it.
   activeOf: Int32Array
-  // 8 slots per active index in D8_OFFSETS order: the neighbour's active
-  // index, or -1 when that neighbour is frozen.
-  nbr: Int32Array
   // How many cells are frozen. Zero means the world has no deep ocean and
   // the flood falls back to seeding from the largest water body.
   frozenCount: number
+  // CSR neighbour table over active indices: node i's directed edges are
+  // nbr[nbrStart[i] .. nbrStart[i+1]), each the neighbour's active index
+  // or -1 when frozen. The order within a run is the substrate's (D8 slot
+  // order on the raster, counter-clockwise on the mesh) and is part of the
+  // result — every sum a kernel takes runs in it.
+  nbrStart: Int32Array
+  nbr: Int32Array
+  edgeCount: number
+  // Per directed edge: the index of the opposite directed edge (-1 when
+  // the neighbour is frozen), the reach length over refM, the diffusive
+  // geometric factor facet/length (0 = no shared facet), the MFD weight
+  // base.
+  edgeRev: Int32Array
+  lenRel: Float32Array
+  diffFactor: Float32Array
+  mfdFactor: Float32Array
+  // Per node: the Voronoi area over refM².
+  areaRel: Float32Array
+  // The reference length in metres: the cell size on a raster, the macro
+  // cell (METERS_PER_CELL) on a mesh. Every length-bearing constant of the
+  // engine is read against it.
+  refM: number
 }
 
-// The active set: everything that is not deep world ocean. `bandCells` is
-// how many D8 steps of world ocean stay active around any non-ocean cell —
-// the shelf band, measured in the engine's own units by the caller
-// (params.shelfBandKm over the cell size). The world ocean is the largest
-// 4-connected ≤ 0 component, the same rule the flood seeds by; an enclosed
-// basin is not ocean and stays active whatever its depth.
-export function buildEngineIndex(z: Float32Array, width: number, height: number, bandCells: number): EngineIndex {
+// The raster's active set: everything that is not deep world ocean.
+// `bandCells` is how many D8 steps of world ocean stay active around any
+// non-ocean cell — the shelf band, measured in the engine's own units by the
+// caller (params.shelfBandKm over the cell size). The world ocean is the
+// largest 4-connected ≤ 0 component, the same rule the flood seeds by; an
+// enclosed basin is not ocean and stays active whatever its depth.
+export function buildEngineIndex(z: Float32Array, width: number, height: number, bandCells: number, cellM: number): EngineIndex {
   const n = width * height
   const ocean = largestWaterComponent(z, width, height, 0)
   const frozen = new Uint8Array(n)
@@ -115,32 +157,51 @@ export function buildEngineIndex(z: Float32Array, width: number, height: number,
     activeOf[i] = a
     active[a++] = i
   }
-  const nbr = new Int32Array(8 * activeCount)
+  const edgeCount = 8 * activeCount
+  const nbrStart = new Int32Array(activeCount + 1)
+  const nbr = new Int32Array(edgeCount)
+  const edgeRev = new Int32Array(edgeCount)
+  const lenRel = new Float32Array(edgeCount)
+  const diffFactor = new Float32Array(edgeCount)
+  const mfdFactor = new Float32Array(edgeCount)
   for (let k = 0; k < activeCount; k++) {
+    nbrStart[k] = k * 8
     const cell = active[k]
     const x = cell % width
     const y = (cell - x) / width
     for (let slot = 0; slot < 8; slot++) {
       const [dx, dy] = D8_OFFSETS[slot]
-      nbr[k * 8 + slot] = activeOf[d8Neighbor(x, y, dx, dy, width, height)]
+      const e = k * 8 + slot
+      const j = activeOf[d8Neighbor(x, y, dx, dy, width, height)]
+      nbr[e] = j
+      // The opposite slot of the same pair sits in the neighbour's run.
+      edgeRev[e] = j >= 0 ? j * 8 + ((slot + 4) % 8) : -1
+      const diagonal = (slot & 1) === 1
+      lenRel[e] = diagonal ? Math.SQRT2 : 1
+      diffFactor[e] = diagonal ? 0 : 1
+      mfdFactor[e] = diagonal ? 1 / Math.SQRT2 : 1
     }
   }
-  return { width, height, activeCount, active, activeOf, nbr, frozenCount }
+  nbrStart[activeCount] = edgeCount
+  const areaRel = new Float32Array(activeCount).fill(1)
+  return { kind: 'raster', width, height, cellCount: n, activeCount, active, activeOf, frozenCount, nbrStart, nbr, edgeCount, edgeRev, lenRel, diffFactor, mfdFactor, areaRel, refM: cellM }
 }
 
-// Active-space array → full raster. Frozen cells take `fill`: a raster to
-// copy them from (the initial terrain, for z) or one constant.
+// Active-space array → the caller's full layout. Frozen entries take
+// `fill`: an array to copy them from (the initial terrain, for z) or one
+// constant. A caller's array may be longer than the layout (a MeshState
+// field is over-allocated for growth); only the layout's entries count.
 export function expandActive(index: EngineIndex, src: ArrayLike<number>, fill: Float32Array | number, out?: Float32Array): Float32Array {
-  const n = index.width * index.height
+  const n = index.cellCount
   const result = out ?? new Float32Array(n)
   if (typeof fill === 'number') result.fill(fill)
-  else result.set(fill)
+  else result.set(fill.length > n ? fill.subarray(0, n) : fill)
   const { active, activeCount } = index
   for (let a = 0; a < activeCount; a++) result[active[a]] = src[a]
   return result
 }
 
-// Full raster → active-space array.
+// The caller's full layout → active-space array.
 export function gatherActive<T extends Float32Array | Uint8Array>(index: EngineIndex, src: ArrayLike<number>, out: T): T {
   const { active, activeCount } = index
   for (let a = 0; a < activeCount; a++) out[a] = src[active[a]]
@@ -148,10 +209,18 @@ export function gatherActive<T extends Float32Array | Uint8Array>(index: EngineI
 }
 
 export interface TerrainViews {
-  // The active-set size every view here is laid out for.
+  // The active-set size and the directed-edge count every view here is laid
+  // out for.
   activeCount: number
-  // The neighbour table (read-only after init) — see EngineIndex.nbr.
+  edgeCount: number
+  // The graph tables (read-only after init) — see EngineIndex.
+  nbrStart: Int32Array
   nbr: Int32Array
+  edgeRev: Int32Array
+  lenRel: Float32Array
+  diffFactor: Float32Array
+  mfdFactor: Float32Array
+  areaRel: Float32Array
   // Terrain (physics writes), normalized z, 1.0 = ELEVATION_METERS.
   z: Float32Array
   // Forcing (read-only after init).
@@ -164,16 +233,18 @@ export interface TerrainViews {
   // FLAG_HAS_STATUS_MASK is set — the bake's macro-coastline authority; the
   // generator never sets it (its coasts are free by decision).
   statusMask: Uint8Array
-  // Stencil scratch (hillslope/marine two-pass form).
-  moveEast: Float32Array
-  moveSouth: Float32Array
+  // Stencil scratch (hillslope/marine two-pass form): the volume moved
+  // along each directed edge from the lower-indexed endpoint, written by
+  // the moves pass at that endpoint's run and read by the apply pass
+  // through edgeRev.
+  edgeMove: Float32Array
   // Fluvial cut volumes for the sediment walk.
   erosionVolume: Float32Array
-  // Per-cell base contribution for drainage accumulation (the climate-Q
+  // Per-node base contribution for drainage accumulation (the climate-Q
   // coupling: upsampled provisional precipitation). Read only when
   // FLAG_HAS_ACCUM_WEIGHTS is set; uniform 1 otherwise.
   accumulationWeights: Float32Array
-  // Sediment-walk scratch: flux arriving at a cell and the lowest donor
+  // Sediment-walk scratch: flux arriving at a node and the lowest donor
   // floor above it, both reset per iteration; and per SEGMENT (see
   // RoutingViews) what a leaf segment's root hands to its outlet — the
   // coast-split stage's mailbox between the parallel and the serial walk.
@@ -185,7 +256,8 @@ export interface TerrainViews {
   maxStepW: Float64Array
   erodedW: Float64Array
   exportedW: Float64Array
-  // Scalar flags: FLAG_HAS_COAST_MASK, FLAG_HAS_ACCUM_WEIGHTS, FLAG_HAS_STATUS_MASK.
+  // Scalar flags: FLAG_HAS_COAST_MASK, FLAG_HAS_ACCUM_WEIGHTS,
+  // FLAG_HAS_STATUS_MASK, FLAG_GRID8.
   flags: Int32Array
   buffer: ArrayBufferLike
 }
@@ -197,26 +269,31 @@ export interface RoutingViews {
   // mode ignores it and routes on live z.
   zSnapshot: Float32Array
   filled: Float32Array
-  // Single-flow receiver: active index, or -1 (terminal — an unrouted cell,
+  // Single-flow receiver: active index, or -1 (terminal — an unrouted node,
   // or one whose only way down is a frozen neighbour). `flowDir` is the
-  // receiver's D8 slot (255 when none), which is what the walks need for
-  // the reach length: no cell coordinates anywhere in the engine.
+  // receiver's SLOT in the node's neighbour run (255 when none), which is
+  // what the walks need for the reach length: no coordinates anywhere in
+  // the engine.
   flowTarget: Int32Array
   flowDir: Uint8Array
   accumulation: Float32Array
-  // Cells in the order the flood popped them — a topological order of the
+  // Nodes in the order the flood popped them — a topological order of the
   // flow graph (only the first poppedCount entries are valid).
   popOrder: Int32Array
   // LTD facet-scan outputs (per-cell, parallel) for the serial λ-walk: the
   // best facet (index into LTD_FACETS, 255 = none), the steepest-descent
   // fallback SLOT (255 = none), the two transverse deviations, and the mode
-  // bits (4 = facet valid, 1 = cardinal lower, 2 = diagonal lower).
+  // bits (4 = facet valid, 1 = cardinal lower, 2 = diagonal lower). On a
+  // mesh only the fallback is written (mode 0): a random star has no
+  // direction bias to correct.
   ltdFacet: Uint8Array
   ltdFallback: Uint8Array
   ltdDeltaC: Float32Array
   ltdDeltaD: Float32Array
   ltdMode: Uint8Array
-  // MFD edges, fixed stride 8 per cell: degree, the target's SLOT, weight.
+  // MFD edges in the node's neighbour run: degree, the target's SLOT, weight
+  // — laid out per directed edge, the first `mfdDegree[i]` entries of
+  // node i's run used.
   mfdDegree: Uint8Array
   mfdDirection: Uint8Array
   mfdWeight: Float32Array
@@ -225,20 +302,20 @@ export interface RoutingViews {
   // The receiver forest cut into SEGMENTS at every land→sea edge (of the z
   // this routing was computed from): a segment is a maximal receiver
   // subtree that crosses no such edge, so a river basin is one segment
-  // whose root is its mouth cell. A LEAF segment receives no mouth from
+  // whose root is its mouth. A LEAF segment receives no mouth from
   // another segment — the basins, and ocean trees no river feeds — and
   // its fluvial and sediment walks are independent of every other leaf,
   // which is what the pool runs in parallel; the rest (the fed ocean band,
   // enclosed basins and the land below their spills) is the serial stage.
-  // `segOrder` lists every popped cell grouped by segment, receiver-first
+  // `segOrder` lists every popped node grouped by segment, receiver-first
   // within the group (the root at segStart[seg]); `stage` is 0 for a leaf
-  // cell, 1 for a serial-stage cell.
+  // node, 1 for a serial-stage node.
   segment: Int32Array
   segOrder: Int32Array
   segStart: Int32Array
   segLeaf: Uint8Array
   stage: Uint8Array
-  // [0] = segment count, [1] = cells in leaf segments.
+  // [0] = segment count, [1] = nodes in leaf segments.
   routingMeta: Int32Array
   buffer: ArrayBufferLike
 }
@@ -268,40 +345,50 @@ function makeTaker(backing: ArrayBufferLike): { take: <T>(Type: TypedArrayCtor<T
   }
 }
 
-export function terrainBufferBytes(activeCount: number): number {
+export function terrainBufferBytes(activeCount: number, edgeCount: number): number {
   const a = activeCount
-  // i32: nbr (8a); f32: z, uplift, erodibility, moveE/S, erosionVolume,
-  // accumulationWeights, flux, donorMin, mouthFlux, mouthZ (11a); u8:
-  // coastMask, statusMask (2a); i32 flags(16); f64 maxStepW, erodedW,
-  // exportedW (3 × 64); alignment slack.
-  return 8 * 4 * a + 11 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 1024
+  const e = edgeCount
+  // i32: nbrStart (a + 1), nbr, edgeRev (2e); f32: lenRel, diffFactor,
+  // mfdFactor, edgeMove (4e), areaRel, z, uplift, erodibility,
+  // erosionVolume, accumulationWeights, flux, donorMin, mouthFlux, mouthZ
+  // (10a); u8: coastMask, statusMask (2a); i32 flags(16); f64 maxStepW,
+  // erodedW, exportedW (3 × 64); alignment slack.
+  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 10 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
 }
 
-export function routingBufferBytes(activeCount: number): number {
+export function routingBufferBytes(activeCount: number, edgeCount: number): number {
   const a = activeCount
-  // f32: zSnapshot, filled, accumulation, ltdDeltaC/D (5a) + mfdWeight (8a)
+  const e = edgeCount
+  // f32: zSnapshot, filled, accumulation, ltdDeltaC/D (5a) + mfdWeight (e)
   // i32: flowTarget, popOrder, segment, segOrder (4a) + segStart (a + 1) + routingMeta (16)
-  // u8:  flowDir, ltdFacet, ltdFallback, ltdMode, mfdDegree, seedMask, segLeaf, stage (8a) + mfdDirection (8a)
-  return (5 + 8) * 4 * a + 5 * 4 * a + 4 + 16 * 4 + (8 + 8) * a + 4096
+  // u8:  flowDir, ltdFacet, ltdFallback, ltdMode, mfdDegree, seedMask, segLeaf, stage (8a) + mfdDirection (e)
+  return 5 * 4 * a + 4 * e + 5 * 4 * a + 4 + 16 * 4 + 8 * a + e + 4096
 }
 
-// The terrain section. `nbr` is copied in when an index is given (the
-// coordinator's construction); a worker passes none and reads the table the
-// coordinator wrote into the shared bytes.
-export function createTerrainViews(activeCount: number, buffer?: ArrayBufferLike, index?: EngineIndex): TerrainViews {
+// The terrain section. The graph tables are copied in when an index is
+// given (the coordinator's construction); a worker passes none and reads
+// the tables the coordinator wrote into the shared bytes.
+export function createTerrainViews(activeCount: number, edgeCount: number, buffer?: ArrayBufferLike, index?: EngineIndex): TerrainViews {
   const a = activeCount
-  const bytes = terrainBufferBytes(a)
+  const e = edgeCount
+  const bytes = terrainBufferBytes(a, e)
   const backing = buffer ?? new ArrayBuffer(bytes)
   if (backing.byteLength < bytes) throw new Error(`terrain buffer too small: ${backing.byteLength} < ${bytes}`)
   const { take } = makeTaker(backing)
   const views: TerrainViews = {
     activeCount: a,
-    nbr: take(Int32Array, 8 * a),
+    edgeCount: e,
+    nbrStart: take(Int32Array, a + 1),
+    nbr: take(Int32Array, e),
+    edgeRev: take(Int32Array, e),
+    lenRel: take(Float32Array, e),
+    diffFactor: take(Float32Array, e),
+    mfdFactor: take(Float32Array, e),
+    edgeMove: take(Float32Array, e),
+    areaRel: take(Float32Array, a),
     z: take(Float32Array, a),
     uplift: take(Float32Array, a),
     erodibility: take(Float32Array, a),
-    moveEast: take(Float32Array, a),
-    moveSouth: take(Float32Array, a),
     erosionVolume: take(Float32Array, a),
     accumulationWeights: take(Float32Array, a),
     flux: take(Float32Array, a),
@@ -316,13 +403,23 @@ export function createTerrainViews(activeCount: number, buffer?: ArrayBufferLike
     statusMask: take(Uint8Array, a),
     buffer: backing,
   }
-  if (index) views.nbr.set(index.nbr)
+  if (index) {
+    views.nbrStart.set(index.nbrStart)
+    views.nbr.set(index.nbr)
+    views.edgeRev.set(index.edgeRev)
+    views.lenRel.set(index.lenRel)
+    views.diffFactor.set(index.diffFactor)
+    views.mfdFactor.set(index.mfdFactor)
+    views.areaRel.set(index.areaRel)
+    views.flags[FLAG_GRID8] = index.kind === 'raster' ? 1 : 0
+  }
   return views
 }
 
-export function createRoutingViews(activeCount: number, buffer?: ArrayBufferLike): RoutingViews {
+export function createRoutingViews(activeCount: number, edgeCount: number, buffer?: ArrayBufferLike): RoutingViews {
   const a = activeCount
-  const bytes = routingBufferBytes(a)
+  const e = edgeCount
+  const bytes = routingBufferBytes(a, e)
   const backing = buffer ?? new ArrayBuffer(bytes)
   if (backing.byteLength < bytes) throw new Error(`routing buffer too small: ${backing.byteLength} < ${bytes}`)
   const { take } = makeTaker(backing)
@@ -332,7 +429,7 @@ export function createRoutingViews(activeCount: number, buffer?: ArrayBufferLike
     accumulation: take(Float32Array, a),
     ltdDeltaC: take(Float32Array, a),
     ltdDeltaD: take(Float32Array, a),
-    mfdWeight: take(Float32Array, 8 * a),
+    mfdWeight: take(Float32Array, e),
     flowTarget: take(Int32Array, a),
     popOrder: take(Int32Array, a),
     segment: take(Int32Array, a),
@@ -347,7 +444,7 @@ export function createRoutingViews(activeCount: number, buffer?: ArrayBufferLike
     seedMask: take(Uint8Array, a),
     segLeaf: take(Uint8Array, a),
     stage: take(Uint8Array, a),
-    mfdDirection: take(Uint8Array, 8 * a),
+    mfdDirection: take(Uint8Array, e),
     buffer: backing,
   }
 }
@@ -359,14 +456,20 @@ export function createRoutingViews(activeCount: number, buffer?: ArrayBufferLike
 export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFromSnapshot = false): EngineViews {
   return {
     activeCount: terrain.activeCount,
+    edgeCount: terrain.edgeCount,
+    nbrStart: terrain.nbrStart,
     nbr: terrain.nbr,
+    edgeRev: terrain.edgeRev,
+    lenRel: terrain.lenRel,
+    diffFactor: terrain.diffFactor,
+    mfdFactor: terrain.mfdFactor,
+    areaRel: terrain.areaRel,
     z: zFromSnapshot ? routing.zSnapshot : terrain.z,
     uplift: terrain.uplift,
     erodibility: terrain.erodibility,
     coastMask: terrain.coastMask,
     statusMask: terrain.statusMask,
-    moveEast: terrain.moveEast,
-    moveSouth: terrain.moveSouth,
+    edgeMove: terrain.edgeMove,
     erosionVolume: terrain.erosionVolume,
     accumulationWeights: terrain.accumulationWeights,
     flux: terrain.flux,
@@ -404,8 +507,16 @@ export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFro
 // Single-allocation form: one plain buffer per section — what the
 // single-threaded engine uses.
 export function createEngineViews(index: EngineIndex): EngineViews {
-  return assembleViews(createTerrainViews(index.activeCount, undefined, index), createRoutingViews(index.activeCount))
+  return assembleViews(createTerrainViews(index.activeCount, index.edgeCount, undefined, index), createRoutingViews(index.activeCount, index.edgeCount))
 }
+
+// Flag slots (the terrain section's `flags`). FLAG_GRID8 marks the raster
+// substrate: eight neighbours per node in D8 slot order, which the LTD
+// scan needs and nothing else may assume.
+export const FLAG_HAS_COAST_MASK = 0
+export const FLAG_HAS_ACCUM_WEIGHTS = 1
+export const FLAG_HAS_STATUS_MASK = 2
+export const FLAG_GRID8 = 3
 
 // Job ids for the worker protocol (erosionEnginePool.ts ↔
 // erosionEngineWorker.ts). ctrl[0] = job sequence number (bumped per

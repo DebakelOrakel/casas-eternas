@@ -5,12 +5,13 @@
 //   npx tsx scripts/erosion-v2-litho.mts <res> <outFile>
 import { writeFileSync } from 'node:fs'
 import { fineDetailNoise } from '../src/generator/elevation/ridgedNoise'
+import { EROSION_LITHO_SEED_SALT } from '../src/generator/surface/erosionForcingFields'
 
 const RES_X = Number(process.argv[2])
 const RES_Y = RES_X / 2
 const out = process.argv[3]
 const lithoSigma = 1.4
-const lithoSeed = 0x51702e77
+const lithoSeed = EROSION_LITHO_SEED_SALT
 
 const litho = new Float32Array(RES_X * RES_Y)
 for (let y = 0; y < RES_Y; y++) {

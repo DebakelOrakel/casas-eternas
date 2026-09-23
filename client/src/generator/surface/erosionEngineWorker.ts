@@ -54,10 +54,10 @@ import type { WorkerInit } from './erosionEnginePool'
 // where the init message arrives from.
 
 function runLoop(init: WorkerInit, ready: () => void): void {
-  const { activeCount, workerId, workerCount, kernelParams, params } = init
-  const terrain = createTerrainViews(activeCount, init.terrain)
-  const routingA = createRoutingViews(activeCount, init.routingA)
-  const routingB = createRoutingViews(activeCount, init.routingB)
+  const { activeCount, edgeCount, workerId, workerCount, kernelParams, params } = init
+  const terrain = createTerrainViews(activeCount, edgeCount, init.terrain)
+  const routingA = createRoutingViews(activeCount, edgeCount, init.routingA)
+  const routingB = createRoutingViews(activeCount, edgeCount, init.routingB)
   // Stencil kernels never read routing state, so their assembly's routing
   // half is arbitrary; the refresh group reads the snapshot-z assembly of
   // whichever buffer refreshCtrl names.
@@ -107,13 +107,13 @@ function runLoop(init: WorkerInit, ready: () => void): void {
         kernelHillMoves(views, a0, a1, kernelParams)
         break
       case JOB_HILL_APPLY:
-        kernelHillApply(views, a0, a1, workerId)
+        kernelHillApply(views, a0, a1, kernelParams, workerId)
         break
       case JOB_MARINE_MOVES:
         kernelMarineMoves(views, a0, a1, kernelParams)
         break
       case JOB_MARINE_APPLY:
-        kernelMarineApply(views, a0, a1)
+        kernelMarineApply(views, a0, a1, kernelParams)
         break
       case JOB_STATUS_CLAMP:
         kernelStatusClamp(views, a0, a1)

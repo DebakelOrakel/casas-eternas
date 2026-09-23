@@ -23,8 +23,10 @@ mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay 
             triangulation on a domain), lattice (the bootstrap), hilbert (the insertion
             order), meshDensity (the ONE density rule, MESH_TUNING), meshState (per-node
             fields that survive remeshing), meshRelief, remesh (hysteresis insert/remove),
-            meshBuild (fields in, mesh out). Depends on core/ and elevation/ only; nothing
-            runs on it yet — the engine port is phase 4.2
+            meshBuild (fields in, mesh out), meshErosion (the erosion engine's graph index
+            from the triangulation, the run adapter), meshRaster (node fields sampled on a
+            grid). Depends on core/, elevation/ and surface/'s engine; the pipeline does
+            not run on it yet — the save and the map switch in 4.3/4.4
 planet/     the Planet stage's controls and their forcing (obliquity, orbit, sun, rotation) —
             what depends on the planet and not on the relief; the climate reads it
 mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends only
@@ -197,3 +199,14 @@ dev-server only; production builds are fine.)
 is a deliberate, documented unrealism; marine deltas are a separate shipped
 mechanism. A sediment-budget attempt failed because erosion and deposition only
 discriminate mountain from plain when they compete in one sweep.
+
+**The erosion engine runs on a graph, not on a grid** (phase 4.2, 2026-09-23).
+`EngineIndex` is a CSR neighbour table with a reach length, a Voronoi facet and
+a reverse edge per directed edge and an area per node; the raster is one
+instance (eight D8 slots, facets only across the four sides, area 1 —
+`FLAG_GRID8` is the one place a kernel may assume the slot order, the LTD
+scan), the mesh the other (`mesh/meshErosion.ts`). A kernel that indexes
+`nbr[cell * 8 + slot]` or counts in cells is wrong on the mesh even if the
+raster harnesses pass; walk `nbrStart[i]..nbrStart[i + 1]` and multiply by
+`areaRel` / `lenRel`. `harness:mesh` runs the engine on a mesh and checks the
+sediment budget closes; `harness:amplify` and golden run it on the raster.

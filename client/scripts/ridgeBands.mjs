@@ -36,10 +36,11 @@ const M = {
   archean: await L('/src/generator/archean/archeanState.ts'),
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
   finalize: await L('/src/generator/archean/finalizeArchean.ts'),
+  config: await L('/src/generator/core/mapConfig.ts'),
 }
 
 // World width in km, for reporting octave wavelengths in something physical.
-const WORLD_KM = (W * 7800) / 1000 // METERS_PER_CELL
+const WORLD_KM = (W * M.config.METERS_PER_CELL) / 1000
 
 const CANDIDATES = [
   { name: 'A shipped         ', cells: [32, 64, 128, 256], amps: [1, 0.5, 0.25, 0.125] },
@@ -76,7 +77,7 @@ function measureMean(cells, amps, seed) {
 }
 
 function crestMetrics(el) {
-  const M9000 = 9000
+  const M9000 = M.scale.ELEVATION_METERS
   const sea = M.scale.SEA_LEVEL
   let peaks = 0, sharpness = 0, land = 0
   for (let y = 1; y < H - 1; y++) {

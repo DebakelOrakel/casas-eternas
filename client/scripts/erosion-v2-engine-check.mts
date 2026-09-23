@@ -28,6 +28,8 @@ import { ErosionEngine, DEFAULT_ENGINE_PARAMS } from '../src/generator/surface/e
 import { PooledErosionEngine, PipelinedErosionEngine } from '../src/generator/surface/erosionEnginePool'
 import { Worker as NodeWorker } from 'node:worker_threads'
 import { fineDetailNoise } from '../src/generator/elevation/ridgedNoise'
+import { ELEVATION_METERS } from '../src/generator/elevation/elevationScale'
+import { EROSION_LITHO_SEED_SALT } from '../src/generator/surface/erosionForcingFields'
 import { engineFlowRouting } from '../src/generator/surface/erosionEngineBridge'
 import { runErosionPassV2 } from '../src/generator/surface/erosionPassV2'
 import { accumulateDischarge, computeLakes } from '../src/generator/surface/hydrology'
@@ -101,7 +103,7 @@ for (let y = 0; y < RES_Y; y++) {
   }
 }
 const LITHO_SIGMA = 1.4
-const LITHO_SEED = 0x51702e77
+const LITHO_SEED = EROSION_LITHO_SEED_SALT
 const erodibility = new Float32Array(n)
 for (let y = 0; y < RES_Y; y++) {
   for (let x = 0; x < RES_X; x++) {
@@ -122,7 +124,7 @@ const landStats = (field: Float32Array): { fraction: number; meanM: number } => 
   let land = 0
   let sum = 0
   for (let i = 0; i < n; i++) if (field[i] > 0) { land++; sum += field[i] }
-  return { fraction: land / n, meanM: land > 0 ? (sum / land) * 9000 : 0 }
+  return { fraction: land / n, meanM: land > 0 ? (sum / land) * ELEVATION_METERS : 0 }
 }
 
 // --- the engine --------------------------------------------------------------

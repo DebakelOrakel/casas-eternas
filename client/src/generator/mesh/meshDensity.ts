@@ -36,7 +36,8 @@
 // 4.1): `npm run harness:mesh measure <save.zip>` reports node counts on
 // a real save, and the numbers here are what those measurements settled
 // on. They will be part of every artifact's identity through the
-// constants hash (decision 2) once the mesh produces one (phase 4.2).
+// constants hash (decision 2) once the mesh produces one (the save and
+// the bake switch in phases 4.3–4.5; until then no key depends on them).
 //
 // Measured 2026-09-23 on a saved 2048×1024 world with 11 % land
 // (relief and discharge from the save's rasters, sampled bilinearly):

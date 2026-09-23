@@ -47,7 +47,7 @@ const M = {
   settings: await L('/src/world/bakeSettings.ts'),
 }
 const { SEA_LEVEL } = M.scale
-const METRES = 9000
+const METRES = M.scale.ELEVATION_METERS
 
 const raw = readFileSync(zipPath)
 const inputs = await M.inputs.readWorldInputs(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength))

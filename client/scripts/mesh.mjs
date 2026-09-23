@@ -21,7 +21,12 @@
 //                   summing to the domain, the remesh converging inside
 //                   its hysteresis band, extensive state conserved by a
 //                   coarsen, intensive state interpolated within
-//                   tolerance. No baseline; a failure is a bug.
+//                   tolerance; and of the EROSION on it (phase 4.2): the
+//                   graph index consistent with the mesh, the sediment
+//                   budget closed (uplift in, export out, the rest on the
+//                   nodes), the receiver graph acyclic with every terminal
+//                   at the sea, no node moved that the engine froze. No
+//                   baseline; a failure is a bug.
 //   2. DETERMINISM  the same fields, seed and operations built twice in
 //                   one process, hashed against each other — the
 //                   property the tile bakes of phase 4.5 depend on
@@ -57,7 +62,13 @@ const M = {
   state: await L('/src/generator/mesh/meshState.ts'),
   remesh: await L('/src/generator/mesh/remesh.ts'),
   build: await L('/src/generator/mesh/meshBuild.ts'),
+  erosion: await L('/src/generator/mesh/meshErosion.ts'),
+  raster: await L('/src/generator/mesh/meshRaster.ts'),
+  engine: await L('/src/generator/surface/erosionEngine.ts'),
+  forcing: await L('/src/generator/surface/erosionForcingFields.ts'),
+  passV2: await L('/src/generator/surface/erosionPassV2.ts'),
   layers: await L('/src/world/save/worldLayers.ts'),
+  inputs: await L('/src/world/save/loadWorldInputs.ts'),
 }
 
 let failures = 0
@@ -246,6 +257,140 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check(`intensive field interpolated within 5 % of amplitude over ${r.inserted} inserted nodes`, maxErr < 0.05, `max error ${maxErr.toFixed(4)}`)
 }
 
+// Erosion on the mesh: the engine index, the budget, the routing.
+{
+  const { mesh, state } = M.build.buildMesh(domain, synthetic, { seed: 42 })
+  const z0 = state.get('z').slice()
+  const alive = aliveVertices(mesh)
+  // Uplift on the sharp range, neutral rock, uniform water.
+  const uplift = new Float32Array(mesh.vertexSlots)
+  const erodibility = new Float32Array(mesh.vertexSlots).fill(1)
+  for (const v of alive) uplift[v] = gauss(mesh.vx[v], mesh.vy[v], 200, 120, 30, 8)
+  const index = M.erosion.buildMeshEngineIndex(mesh, z0)
+  // Index consistency: every active node's run is its star, reverse edges
+  // point back, every edge has a facet, areas match the cells.
+  let runsOk = true, revOk = true, facets = 0, areaErr = 0
+  const nb = new Int32Array(256)
+  for (let a = 0; a < index.activeCount; a++) {
+    const v = index.active[a]
+    const n = mesh.neighbours(v, nb)
+    if (index.nbrStart[a + 1] - index.nbrStart[a] !== n) runsOk = false
+    for (let s = 0; s < n; s++) {
+      const e = index.nbrStart[a] + s
+      const j = index.nbr[e]
+      if (j >= 0 && index.active[j] !== nb[s]) runsOk = false
+      if (j >= 0) {
+        const r = index.edgeRev[e]
+        if (r < index.nbrStart[j] || r >= index.nbrStart[j + 1] || index.nbr[r] !== a) revOk = false
+      }
+      if (index.diffFactor[e] > 0) facets++
+    }
+    areaErr = Math.max(areaErr, Math.abs(index.areaRel[a] - mesh.voronoiArea(v)) / mesh.voronoiArea(v))
+  }
+  check(`engine index: ${index.activeCount} active of ${alive.length} nodes, ${index.frozenCount} frozen deep ocean`, index.frozenCount > 0 && index.activeCount + index.frozenCount === alive.length)
+  check('every active node\'s neighbour run is its Delaunay star', runsOk)
+  check('every reverse edge points back', revOk)
+  check('nearly every edge carries a facet (cot α + cot β > 0)', facets >= index.edgeCount * 0.99, `${facets} of ${index.edgeCount}`)
+  check('node areas are the Voronoi cells', areaErr < 1e-6, `max relative error ${areaErr.toExponential(1)}`)
+
+  const AGE = 12
+  const t0 = performance.now()
+  const result = await M.erosion.runMeshErosion(mesh, z0, { uplift, erodibility }, { age: AGE, routingEvery: 2, params: { ...M.engine.DEFAULT_ENGINE_PARAMS, epsM: 0 } })
+  const ms = performance.now() - t0
+  const z1 = result.z
+  let nan = 0, out = 0, frozenMoved = 0, landMoved = 0
+  for (const v of alive) {
+    if (!Number.isFinite(z1[v])) nan++
+    if (z1[v] < -1 || z1[v] > 1) out++
+    if (index.activeOf[v] < 0 && z1[v] !== z0[v]) frozenMoved++
+    if (z1[v] !== z0[v] && z0[v] > 0) landMoved++
+  }
+  check(`${AGE} iterations ran (${ms.toFixed(0)} ms), every height finite and in range`, nan === 0 && out === 0, `${nan} NaN, ${out} out of range`)
+  check('the frozen ocean did not move', frozenMoved === 0, `${frozenMoved}`)
+  check('the land did', landMoved > alive.length * 0.05, `${landMoved} nodes`)
+  // The budget: what the nodes gained in volume equals the uplift added
+  // minus what left over the rim — erosion moves material, it does not
+  // make or lose it. Volumes in m³ over the Voronoi areas.
+  const unitM = M.config.METERS_PER_CELL
+  const upliftDt = M.engine.DEFAULT_ENGINE_PARAMS.upliftDt
+  let dV = 0
+  let addedV = 0
+  for (let a = 0; a < index.activeCount; a++) {
+    const v = index.active[a]
+    const areaM2 = index.areaRel[a] * unitM * unitM
+    dV += (z1[v] - z0[v]) * M.scale.ELEVATION_METERS * areaM2
+  }
+  // Uplift is applied per iteration to land, capped at z = 1; replay it
+  // on the trajectory is impossible here, so bound it instead: the
+  // budget must close to within the uplift's own total.
+  for (let a = 0; a < index.activeCount; a++) addedV += upliftDt * uplift[index.active[a]] * M.scale.ELEVATION_METERS * index.areaRel[a] * unitM * unitM * AGE
+  const closure = dV + result.exportedFluxM3
+  check('the sediment budget closes: Δvolume + export ≈ uplift', Math.abs(closure - addedV) <= addedV * 0.05 + 1e6, `Δ ${(dV / 1e9).toFixed(2)} + export ${(result.exportedFluxM3 / 1e9).toFixed(2)} vs uplift ${(addedV / 1e9).toFixed(2)} km³`)
+  check('some sediment reached the deep ocean', result.exportedFluxM3 > 0)
+  // Routing: acyclic (every receiver popped before its donor), terminals
+  // only at the sea, accumulation grows downstream along the receivers.
+  const pos = new Int32Array(mesh.vertexSlots).fill(-1)
+  for (let i = 0; i < result.routing.poppedCount; i++) pos[result.routing.popOrder[i]] = i
+  let cycles = 0, badTerminal = 0, notLower = 0, routed = 0, splitAway = 0
+  for (const v of alive) {
+    const t = result.routing.flowTarget[v]
+    if (t < 0) {
+      if (index.activeOf[v] >= 0 && z1[v] > 0 && pos[v] >= 0) badTerminal++
+      continue
+    }
+    routed++
+    if (pos[t] < 0 || pos[t] >= pos[v]) cycles++
+    if (!(result.routing.filled[t] < result.routing.filled[v])) notLower++
+    // Not an invariant, a property to know: the MFD splits the drainage
+    // over every downslope neighbour by facet, the single receiver is the
+    // steepest by length — where the two disagree the receiver carries
+    // less than its donor.
+    if (result.routing.accumulation[t] < result.routing.accumulation[v]) splitAway++
+  }
+  check(`the receiver graph is acyclic (${routed} routed nodes)`, cycles === 0, `${cycles} back edges`)
+  check('every receiver is strictly lower in filled', notLower === 0, `${notLower}`)
+  check('no land node is a terminal', badTerminal === 0, `${badTerminal}`)
+  console.log(`       (MFD sends most of the water past the steepest receiver at ${splitAway} of ${routed} nodes)`)
+  // The rasterisation reproduces the node heights it passes through.
+  const grid = M.raster.rasteriseNodeField(mesh, z1, W, H)
+  let rasterErr = 0
+  for (let py = 0; py < H; py += 7) for (let px = 0; px < W; px += 7) {
+    const t = mesh.locate((px + 0.5), (py + 0.5))
+    const a = mesh.tris[3 * t], b = mesh.tris[3 * t + 1], c = mesh.tris[3 * t + 2]
+    const lo = Math.min(z1[a], z1[b], z1[c]), hi = Math.max(z1[a], z1[b], z1[c])
+    const g = grid[py * W + px]
+    if (g < lo - 1e-6 || g > hi + 1e-6) rasterErr++
+  }
+  check('the rasterised field stays inside each triangle\'s range', rasterErr === 0, `${rasterErr} samples`)
+  // Determinism of the run.
+  const again = await M.erosion.runMeshErosion(mesh, z0, { uplift, erodibility }, { age: AGE, routingEvery: 2, params: { ...M.engine.DEFAULT_ENGINE_PARAMS, epsM: 0 } })
+  let differ = 0
+  for (const v of alive) if (again.z[v] !== z1[v]) differ++
+  check('the same run gives the same bytes', differ === 0, `${differ} nodes differ`)
+  // The pool over the mesh: the same kernels on worker ranges of the active
+  // set must give the single-threaded bytes — the two-pass stencils read
+  // reverse edges across range borders, which is exactly what this gates.
+  const { Worker } = await import('node:worker_threads')
+  const hostUrl = new URL('./engineWorkerHost.mjs', import.meta.url)
+  const spawn = () => {
+    const w = new Worker(hostUrl)
+    // A worker that dies would leave the pool waiting forever: say so.
+    w.on('error', (e) => { console.log(`  worker error: ${e?.message ?? e}`); process.exit(1) })
+    return w
+  }
+  const P = await L('/src/generator/surface/erosionEnginePool.ts')
+  const single = M.engine.ErosionEngine.onIndex(index, z0, { uplift, erodibility }, { ...M.engine.DEFAULT_ENGINE_PARAMS, epsM: 0 })
+  single.run(AGE, 2)
+  for (const workers of [3]) {
+    const pool = await P.PooledErosionEngine.create(0, 0, z0, { uplift, erodibility }, spawn, workers, { ...M.engine.DEFAULT_ENGINE_PARAMS, epsM: 0 }, index)
+    pool.run(AGE, 2)
+    await pool.close()
+    let poolDiffer = 0
+    for (let a = 0; a < index.activeCount; a++) if (pool.z[a] !== single.z[a]) poolDiffer++
+    check(`a pool of ${workers} workers gives the single-threaded bytes`, poolDiffer === 0, `${poolDiffer} nodes differ`)
+  }
+}
+
 // ------------------------------------------------------------ determinism
 
 console.log('\n[2] determinism')
@@ -331,6 +476,60 @@ if (MODE === 'measure') {
   console.log(`  remesh on the unchanged state: +${again.inserted} −${again.removed}`)
   const errs = mesh.validate()
   console.log(`  valid: ${errs.length === 0 ? 'yes' : errs[0]}`)
+
+  // The engine on the mesh against the engine on the raster, same terrain,
+  // same forcing (the save's layers, as the bake assembles them), same age
+  // — rasterised to the save's grid for the comparison (decision 4).
+  const inputs = await M.inputs.readWorldInputs(readFileSync(path))
+  if (!inputs || !inputs.uplift || !inputs.climate) {
+    console.log('  (no forcing layers in the save — engine comparison skipped)')
+  } else {
+    const AGE = Number(process.env.MESH_AGE ?? 40)
+    const coarse = {
+      uplift: inputs.uplift.data, hardness: inputs.erodibility?.data ?? null,
+      forcingResX: inputs.uplift.resX, forcingResY: inputs.uplift.resY,
+      water: inputs.climate.data, waterResX: inputs.climate.resX, waterResY: inputs.climate.resY,
+      lithoSeed: inputs.lithoSeed,
+    }
+    const controls = { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast }
+    // The mesh: its own z (sampled from the save), forcing at the nodes.
+    const meshZ0 = state.get('z').slice()
+    const areas = new Float64Array(mesh.vertexSlots)
+    for (const v of aliveVertices(mesh)) areas[v] = mesh.voronoiArea(v)
+    const nodeForcing = M.forcing.assembleNodeForcing(coarse, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, meshZ0, areas, RW, RH, controls)
+    let t1 = performance.now()
+    const meshRun = await M.erosion.runMeshErosion(mesh, meshZ0, nodeForcing.forcing, { age: AGE, params: nodeForcing.params })
+    const meshMs = performance.now() - t1
+    // The raster: the save's elevation, the bake's forcing assembly.
+    const rasterForcing = M.forcing.assembleFineForcing(coarse, z, RW, RH, controls)
+    t1 = performance.now()
+    const rasterRun = await M.passV2.runErosionPassV2(z, RW, RH, rasterForcing.forcing, { age: AGE, params: rasterForcing.params })
+    const rasterMs = performance.now() - t1
+    const meshGrid = M.raster.rasteriseNodeField(mesh, meshRun.z, RW, RH)
+    const stats = (field, name) => {
+      let land = 0, sum = 0, n = 0
+      const hs = []
+      for (let i = 0; i < field.length; i++) if (field[i] > 0) { land++; sum += field[i]; hs.push(field[i]) }
+      hs.sort((a, b) => a - b)
+      const p = (x) => (hs[Math.floor(x * (hs.length - 1))] * M.scale.ELEVATION_METERS).toFixed(0)
+      console.log(`  ${name}: land ${(100 * land / field.length).toFixed(2)} %, mean land ${(sum / land * M.scale.ELEVATION_METERS).toFixed(0)} m, p50 ${p(0.5)} p90 ${p(0.9)} p99 ${p(0.99)} max ${p(1)} m`)
+    }
+    console.log(`  engine comparison, age ${AGE}: mesh ${(meshMs / 1000).toFixed(1)} s (${meshRun.index.activeCount} active nodes), raster ${(rasterMs / 1000).toFixed(1)} s`)
+    stats(z, 'before      ')
+    stats(rasterRun.elevations, 'raster after')
+    stats(meshGrid, 'mesh after  ')
+    let sq = 0, n = 0, sqCut = 0, sqCutM = 0
+    for (let i = 0; i < z.length; i++) {
+      if (z[i] <= 0) continue
+      const d = (meshGrid[i] - rasterRun.elevations[i]) * M.scale.ELEVATION_METERS
+      sq += d * d; n++
+      const cr = (z[i] - rasterRun.elevations[i]) * M.scale.ELEVATION_METERS
+      const cm = (z[i] - meshGrid[i]) * M.scale.ELEVATION_METERS
+      sqCut += cr * cr; sqCutM += cm * cm
+    }
+    console.log(`  on land: RMS(mesh − raster) ${Math.sqrt(sq / n).toFixed(1)} m; RMS change raster ${Math.sqrt(sqCut / n).toFixed(1)} m, mesh ${Math.sqrt(sqCutM / n).toFixed(1)} m`)
+    console.log(`  mesh sediment budget: eroded ${(meshRun.erodedFluxM3 / 1e9).toFixed(0)} km³, exported past the shelf band ${(meshRun.exportedFluxM3 / 1e9).toFixed(0)} km³`)
+  }
 }
 
 await server.close()

@@ -1,5 +1,4 @@
 import {
-  buildEngineIndex,
   createTerrainViews,
   createRoutingViews,
   assembleViews,
@@ -35,7 +34,7 @@ import {
   DEFAULT_ENGINE_PARAMS,
   FLAG_HAS_STATUS_MASK,
   kernelParamsFor,
-  shelfBandCells,
+  buildRasterIndex,
   loadTerrain,
   createCoordinatorScratch,
   refreshRoutingOn,
@@ -100,6 +99,7 @@ export interface WorkerInit {
   ctrl: SharedArrayBuffer
   done: SharedArrayBuffer
   activeCount: number
+  edgeCount: number
   // 'stencil' runs the physics kernels on ctrl/done; 'refresh' runs the
   // routing kernels on the same pair but reads the TARGET routing buffer
   // (and its z-snapshot) selected in refreshCtrl; 'refreshCoordinator'
@@ -114,15 +114,15 @@ export interface WorkerInit {
   params: ErosionEngineParams
 }
 
-// The shared terrain section, built once by whichever driver creates it.
-function createSharedTerrain(width: number, height: number, initial: Float32Array, forcing: ErosionForcing, params: ErosionEngineParams): { index: EngineIndex; buffer: SharedArrayBuffer; terrain: TerrainViews } {
-  const n = width * height
-  if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
+// The shared terrain section, built once by whichever driver creates it —
+// over a raster (the index built here) or over a prepared index (a mesh).
+function createSharedTerrain(width: number, height: number, initial: Float32Array, forcing: ErosionForcing, params: ErosionEngineParams, prepared?: EngineIndex): { index: EngineIndex; buffer: SharedArrayBuffer; terrain: TerrainViews } {
+  const index = prepared ?? buildRasterIndex(width, height, initial, forcing, params)
+  if (initial.length < index.cellCount || forcing.uplift.length < index.cellCount || forcing.erodibility.length < index.cellCount) {
     throw new Error('field size mismatch')
   }
-  const index = buildEngineIndex(initial, width, height, shelfBandCells(width, params))
-  const buffer = new SharedArrayBuffer(terrainBufferBytes(index.activeCount))
-  const terrain = createTerrainViews(index.activeCount, buffer, index)
+  const buffer = new SharedArrayBuffer(terrainBufferBytes(index.activeCount, index.edgeCount))
+  const terrain = createTerrainViews(index.activeCount, index.edgeCount, buffer, index)
   loadTerrain(index, terrain, initial, forcing)
   return { index, buffer, terrain }
 }
@@ -170,9 +170,11 @@ export class PooledErosionEngine {
     this.ctrl = ctrl
     this.done = done
     this.scratch = createCoordinatorScratch(index.activeCount)
-    this.kernelParams = kernelParamsFor(width, params)
+    this.kernelParams = kernelParamsFor(index.refM, params)
   }
 
+  // `prepared` runs the pool over a ready index (a mesh) instead of
+  // building the raster's.
   static async create(
     width: number,
     height: number,
@@ -181,14 +183,15 @@ export class PooledErosionEngine {
     createWorker: () => WorkerLike,
     workerCount: number,
     params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS,
+    prepared?: EngineIndex,
   ): Promise<PooledErosionEngine> {
     if (workerCount < 1) throw new Error('workerCount must be >= 1')
-    const { index, buffer: terrainBuffer, terrain } = createSharedTerrain(width, height, initial, forcing, params)
-    const routingBuffer = new SharedArrayBuffer(routingBufferBytes(index.activeCount))
-    const views = assembleViews(terrain, createRoutingViews(index.activeCount, routingBuffer))
+    const { index, buffer: terrainBuffer, terrain } = createSharedTerrain(width, height, initial, forcing, params, prepared)
+    const routingBuffer = new SharedArrayBuffer(routingBufferBytes(index.activeCount, index.edgeCount))
+    const views = assembleViews(terrain, createRoutingViews(index.activeCount, index.edgeCount, routingBuffer))
     const ctrlBuffer = new SharedArrayBuffer(64)
     const doneBuffer = new SharedArrayBuffer(64)
-    const kernelParams = kernelParamsFor(width, params)
+    const kernelParams = kernelParamsFor(index.refM, params)
     const workers: WorkerLike[] = []
     const readies: Promise<void>[] = []
     for (let workerId = 0; workerId < workerCount; workerId++) {
@@ -202,6 +205,7 @@ export class PooledErosionEngine {
         ctrl: ctrlBuffer,
         done: doneBuffer,
         activeCount: index.activeCount,
+        edgeCount: index.edgeCount,
         role: 'stencil',
         workerId,
         workerCount,
@@ -370,9 +374,11 @@ export class PipelinedErosionEngine {
     this.ctrlB = ctrlB
     this.refreshCtrl = refreshCtrl
     this.scratch = createCoordinatorScratch(index.activeCount)
-    this.kernelParams = kernelParamsFor(width, params)
+    this.kernelParams = kernelParamsFor(index.refM, params)
   }
 
+  // `prepared` runs the pipeline over a ready index (a mesh) instead of
+  // building the raster's.
   static async create(
     width: number,
     height: number,
@@ -381,27 +387,29 @@ export class PipelinedErosionEngine {
     createWorker: () => WorkerLike,
     options: PipelineOptions,
     params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS,
+    prepared?: EngineIndex,
   ): Promise<PipelinedErosionEngine> {
     if (options.stencilWorkers < 1 || options.refreshWorkers < 1 || options.pipelineDepth < 1) {
       throw new Error('pipeline options must all be >= 1')
     }
-    const { index, buffer: terrainBuffer, terrain } = createSharedTerrain(width, height, initial, forcing, params)
+    const { index, buffer: terrainBuffer, terrain } = createSharedTerrain(width, height, initial, forcing, params, prepared)
     const a = index.activeCount
-    const routingBufferA = new SharedArrayBuffer(routingBufferBytes(a))
-    const routingBufferB = new SharedArrayBuffer(routingBufferBytes(a))
+    const e = index.edgeCount
+    const routingBufferA = new SharedArrayBuffer(routingBufferBytes(a, e))
+    const routingBufferB = new SharedArrayBuffer(routingBufferBytes(a, e))
     const routing: [RoutingViews, RoutingViews] = [
-      createRoutingViews(a, routingBufferA),
-      createRoutingViews(a, routingBufferB),
+      createRoutingViews(a, e, routingBufferA),
+      createRoutingViews(a, e, routingBufferB),
     ]
     const ctrlABuffer = new SharedArrayBuffer(64)
     const doneABuffer = new SharedArrayBuffer(64)
     const ctrlBBuffer = new SharedArrayBuffer(64)
     const doneBBuffer = new SharedArrayBuffer(64)
     const refreshCtrlBuffer = new SharedArrayBuffer(64)
-    const kernelParams = kernelParamsFor(width, params)
+    const kernelParams = kernelParamsFor(index.refM, params)
     const workers: WorkerLike[] = []
     const readies: Promise<void>[] = []
-    const spawn = (message: Omit<WorkerInit, 'terrain' | 'routingA' | 'routingB' | 'activeCount' | 'kernelParams' | 'params'>): void => {
+    const spawn = (message: Omit<WorkerInit, 'terrain' | 'routingA' | 'routingB' | 'activeCount' | 'edgeCount' | 'kernelParams' | 'params'>): void => {
       const worker = createWorker()
       workers.push(worker)
       readies.push(onceReady(worker))
@@ -410,6 +418,7 @@ export class PipelinedErosionEngine {
         routingA: routingBufferA,
         routingB: routingBufferB,
         activeCount: a,
+        edgeCount: e,
         kernelParams,
         params,
         ...message,

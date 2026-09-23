@@ -252,7 +252,7 @@ console.log('— invariants')
   let above = 0
   let worst = 0
   let worstBelowSea = 0
-  const overM = (v) => v * 9000
+  const overM = (v) => v * M.scale.ELEVATION_METERS
   for (let i = 0; i < field.length; i++) {
     const over = field[i] - ceiling.elevation[i]
     if (over <= 1e-6) continue

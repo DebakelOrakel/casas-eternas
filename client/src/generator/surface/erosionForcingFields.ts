@@ -74,6 +74,47 @@ function upsampleAt(coarse: Float32Array, resX: number, resY: number, x: number,
   return (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy
 }
 
+// The forcing at ONE point: U upsampled, erodibility as the lithology
+// lattice's log-normal contrast times the crust hardness, both evaluated
+// at (x, y) of a grid `width` × `height` cells wide. A raster passes its
+// cell indices and its own size; the mesh passes world coordinates and
+// the world's size (mesh/meshErosion.ts) — the lattice and the coarse
+// fields are world-space either way, so the same rock band runs under a
+// cell and under the node that sits on it. Writes [uplift, erodibility]
+// into `out`.
+export function forcingAt(coarse: CoarseForcingInputs, sigma: number, x: number, y: number, width: number, height: number, out: Float64Array): void {
+  out[0] = coarse.uplift ? upsampleAt(coarse.uplift, coarse.forcingResX, coarse.forcingResY, x, y, width, height) : 0
+  out[1] = Math.exp(sigma * fineDetailNoise((x * LITHO_LATTICE_X) / width, (y * LITHO_LATTICE_Y) / height, LITHO_LATTICE_X, LITHO_LATTICE_Y, coarse.lithoSeed))
+    * (coarse.hardness ? upsampleAt(coarse.hardness, coarse.forcingResX, coarse.forcingResY, x, y, width, height) : 1)
+}
+
+// The water forcing at one point, before normalisation (0 where the
+// caller has no water field — the caller then fills 1).
+export function waterAt(coarse: CoarseForcingInputs, x: number, y: number, width: number, height: number): number {
+  return coarse.water ? Math.max(0, upsampleAt(coarse.water, coarse.waterResX, coarse.waterResY, x, y, width, height)) : 1
+}
+
+export function rockContrastSigma(controls: ErosionControlsV2): number {
+  return ROCK_CONTRAST_SIGMA_MAX * ((controls.rockContrast ?? 50) / 100)
+}
+
+// The engine parameters for a run under the controls: the alluvium
+// control scales the settling lengths (50 = the calibrated neutral), and
+// with them the shelf band the engine stays active in — the band is sized
+// to the marine settling length, so the two move together. Rock contrast
+// is the σ applied in forcingAt.
+export function engineParamsFor(controls: ErosionControlsV2): ErosionEngineParams {
+  const alluvium = controls.alluvium ?? 50
+  const settleScale = Math.pow(2, (50 - alluvium) / 50)
+  return {
+    ...DEFAULT_ENGINE_PARAMS,
+    settleXiKm: DEFAULT_ENGINE_PARAMS.settleXiKm * settleScale,
+    settleFloorKm: DEFAULT_ENGINE_PARAMS.settleFloorKm * settleScale,
+    settleMarineKm: DEFAULT_ENGINE_PARAMS.settleMarineKm * settleScale,
+    shelfBandKm: DEFAULT_ENGINE_PARAMS.shelfBandKm * settleScale,
+  }
+}
+
 export function assembleFineForcing(
   coarse: CoarseForcingInputs,
   rawElevations: Float32Array,
@@ -82,20 +123,26 @@ export function assembleFineForcing(
   controls: ErosionControlsV2 = {},
 ): { forcing: ErosionForcing; params: ErosionEngineParams } {
   const n = width * height
-  const sigma = ROCK_CONTRAST_SIGMA_MAX * ((controls.rockContrast ?? 50) / 100)
+  const sigma = rockContrastSigma(controls)
   const uplift = new Float32Array(n)
   const erodibility = new Float32Array(n)
   const coastMask = new Uint8Array(n)
+  const pair = new Float64Array(2)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
-      if (coarse.uplift) uplift[i] = upsampleAt(coarse.uplift, coarse.forcingResX, coarse.forcingResY, x, y, width, height)
-      erodibility[i] = Math.exp(sigma * fineDetailNoise((x * LITHO_LATTICE_X) / width, (y * LITHO_LATTICE_Y) / height, LITHO_LATTICE_X, LITHO_LATTICE_Y, coarse.lithoSeed))
-        * (coarse.hardness ? upsampleAt(coarse.hardness, coarse.forcingResX, coarse.forcingResY, x, y, width, height) : 1)
+      forcingAt(coarse, sigma, x, y, width, height, pair)
+      uplift[i] = pair[0]
+      erodibility[i] = pair[1]
       if (rawElevations[i] > 0) coastMask[i] = 1
     }
   }
 
+  // The water weights normalised to mean 1 over land (the mean taken in
+  // double before the weights are stored). A zero-precipitation cell
+  // contributes zero — that IS the coupling (the `|| 1` that used to sit
+  // here turned the driest cells into the uniform default, exactly where
+  // the climate should have bitten).
   const accumulationWeights = new Float32Array(n)
   if (coarse.water) {
     let landSum = 0
@@ -103,33 +150,60 @@ export function assembleFineForcing(
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const i = y * width + x
-        const weight = Math.max(0, upsampleAt(coarse.water, coarse.waterResX, coarse.waterResY, x, y, width, height))
+        const weight = waterAt(coarse, x, y, width, height)
         accumulationWeights[i] = weight
         if (rawElevations[i] > 0) { landSum += weight; landCount++ }
       }
     }
     const meanLand = landCount > 0 && landSum > 0 ? landSum / landCount : 1
-    // A zero-precipitation cell contributes zero — that IS the coupling
-    // (the `|| 1` that used to sit here turned the driest cells into the
-    // uniform default, exactly where the climate should have bitten).
     for (let i = 0; i < n; i++) accumulationWeights[i] = accumulationWeights[i] / meanLand
   } else {
     accumulationWeights.fill(1)
   }
 
-  // The alluvium control scales the settling lengths (50 = the calibrated
-  // neutral), and with them the shelf band the engine stays active in —
-  // the band is sized to the marine settling length, so the two move
-  // together. Rock contrast is the σ applied above.
-  const alluvium = controls.alluvium ?? 50
-  const settleScale = Math.pow(2, (50 - alluvium) / 50)
-  const params: ErosionEngineParams = {
-    ...DEFAULT_ENGINE_PARAMS,
-    settleXiKm: DEFAULT_ENGINE_PARAMS.settleXiKm * settleScale,
-    settleFloorKm: DEFAULT_ENGINE_PARAMS.settleFloorKm * settleScale,
-    settleMarineKm: DEFAULT_ENGINE_PARAMS.settleMarineKm * settleScale,
-    shelfBandKm: DEFAULT_ENGINE_PARAMS.shelfBandKm * settleScale,
-  }
+  return { forcing: { uplift, erodibility, coastMask, accumulationWeights }, params: engineParamsFor(controls) }
+}
 
-  return { forcing: { uplift, erodibility, coastMask, accumulationWeights }, params }
+// The same forcing on a POINT SET — the mesh's nodes (mesh/meshErosion.ts):
+// `xs`/`ys` in world coordinates on a world `worldWidth` × `worldHeight`
+// units wide, `alive` marking the slots that hold a node, `areas` the
+// nodes' areas for the water normalisation. Arrays come back in the
+// point set's slot layout.
+export function assembleNodeForcing(
+  coarse: CoarseForcingInputs,
+  xs: ArrayLike<number>,
+  ys: ArrayLike<number>,
+  alive: Uint8Array,
+  count: number,
+  z: Float32Array,
+  areas: ArrayLike<number>,
+  worldWidth: number,
+  worldHeight: number,
+  controls: ErosionControlsV2 = {},
+): { forcing: ErosionForcing; params: ErosionEngineParams } {
+  const sigma = rockContrastSigma(controls)
+  const uplift = new Float32Array(count)
+  const erodibility = new Float32Array(count)
+  const coastMask = new Uint8Array(count)
+  const accumulationWeights = new Float32Array(count)
+  const pair = new Float64Array(2)
+  // The water mean over land is AREA-weighted here — a node stands for
+  // its Voronoi cell, where a raster cell stood for one cell.
+  let landSum = 0
+  let landArea = 0
+  for (let i = 0; i < count; i++) {
+    if (!alive[i]) continue
+    forcingAt(coarse, sigma, xs[i], ys[i], worldWidth, worldHeight, pair)
+    uplift[i] = pair[0]
+    erodibility[i] = pair[1]
+    if (z[i] > 0) coastMask[i] = 1
+    const weight = waterAt(coarse, xs[i], ys[i], worldWidth, worldHeight)
+    accumulationWeights[i] = weight
+    if (z[i] > 0) { landSum += weight * areas[i]; landArea += areas[i] }
+  }
+  if (coarse.water) {
+    const meanLand = landArea > 0 && landSum > 0 ? landSum / landArea : 1
+    for (let i = 0; i < count; i++) accumulationWeights[i] = accumulationWeights[i] / meanLand
+  }
+  return { forcing: { uplift, erodibility, coastMask, accumulationWeights }, params: engineParamsFor(controls) }
 }
