@@ -159,6 +159,22 @@ export const SURFACE_TUNING = {
   // eye; the coast process of phase 7 replaces the rules with rates.
   coastReachCells: 40,
   coastFetchCapKm: 1500,
+  // THE COAST PROCESS (surface/coastal.ts, phase 7). The wave base: the
+  // sea cuts a shore node down to this depth below sea level (the
+  // platform). The shore retreats coastRetreatPerYr metres a year at
+  // full exposure over the rock's hardness (a kilometre an epoch on an
+  // exposed neutral coast — the fast end of real cliff coasts; a node
+  // half retreated is half cut). The drift's capacity per year at full
+  // exposure and the best wave angle (the largest real longshore
+  // transports are a million m³/yr), the deposit's freeboard (a beach
+  // stands this much above the sea) and the depth it can build up from
+  // (the nearshore; what falls off the shelf is exported). All
+  // unmeasured.
+  coastWaveBaseM: 10,
+  coastRetreatPerYr: 0.001,
+  coastDriftCapacityM3PerYr: 5e5,
+  coastDepositFreeboardM: 2,
+  coastDepositMaxDepthM: 30,
   coastSupplyReachKm: 300,
   coastCliffReliefM: 60,
   coastCliffExposure: 0.2,

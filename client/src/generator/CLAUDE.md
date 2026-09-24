@@ -63,7 +63,9 @@ surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), e
             erodibility, the critical slope and the river banks), hydrogeology (phase 5a:
             springs, the regime with baseflow, the water table — a classification over the
             column, no process), glacial (phase 6: the epoch's ice on the mesh at its
-            steady state, the cut it does, the till it leaves), amplify, runAmplification
+            steady state, the cut it does, the till it leaves), coastal (phase 7: the
+            waves' cut at the shore and the one-line drift along it), amplify,
+            runAmplification
 climate/ ecology/ migration/ render/
 ```
 

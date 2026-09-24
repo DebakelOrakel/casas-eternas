@@ -75,6 +75,8 @@ const M = {
   cover: await L('/src/generator/surface/cover.ts'),
   ground: await L('/src/generator/surface/hydrogeology.ts'),
   glacial: await L('/src/generator/surface/glacial.ts'),
+  coastal: await L('/src/generator/surface/coastal.ts'),
+  wind: await L('/src/generator/climate/wind.ts'),
   surfaceTune: await L('/src/generator/surface/surfaceTuneParams.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
   graph: await L('/src/generator/surface/riverGraph.ts'),
@@ -679,6 +681,59 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check('one away from every range', at(20, 20) === 1)
 }
 
+// The coast as a process (phase 7): on a straight shore with a headland
+// under a steady alongshore wind, the waves cut the exposed headland, the
+// drift carries the sand along the shore and lays it down in the
+// headland's lee — land that grows in the drift direction, a spit, with no
+// rule that says so; the ledger closes (cut + supplied = deposited +
+// exported).
+{
+  const W = 64, H = 32
+  const lat = M.lattice.hexLattice(M.domain.torusDomain(W, H), 0.5)
+  const z = new Float32Array(lat.vertexSlots)
+  // Land in the upper half (y < 14), sea below; a headland reaching to
+  // y = 20 between x = 28 and 36.
+  const shoreY = (x) => (x >= 28 && x <= 36 ? 20 : 14)
+  for (let v = 0; v < lat.vertexSlots; v++) {
+    if (!lat.vAlive[v]) continue
+    const land = lat.vy[v] < shoreY(lat.vx[v])
+    // A shelf 20 m deep within four units of the shore, deep water beyond.
+    const offshore = lat.vy[v] - shoreY(lat.vx[v])
+    z[v] = land ? (50 + 10 * (shoreY(lat.vx[v]) - lat.vy[v])) / M.scale.ELEVATION_METERS : (offshore < 4 ? -20 : -200) / M.scale.ELEVATION_METERS
+  }
+  const RX = M.climateField.CLIMATE_RES_X, RY = M.climateField.CLIMATE_RES_Y
+  const wind = new Float32Array(RX * RY * 2)
+  // A steady wind from the west-south-west: along the shore eastward, a
+  // little onshore (the sea lies to the south, +y).
+  for (let i = 0; i < RX * RY; i++) { wind[2 * i] = 8; wind[2 * i + 1] = -4 }
+  const coarseZ = M.raster.rasteriseNodeField(lat, z, RX, RY)
+  const areas = new Float32Array(lat.vertexSlots)
+  for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v]) areas[v] = lat.voronoiArea(v)
+  const hardness = new Float32Array(lat.vertexSlots).fill(1)
+  const flux = new Float32Array(lat.vertexSlots)
+  const zNow = z.slice()
+  let land0 = 0, leeLand0 = 0
+  // Where the drift builds: against the headland's updrift flank first
+  // (the waves run straight onto it, the capacity is nil there — sand
+  // piles up updrift of an obstacle, as against a groyne) and in its lee;
+  // both are "beside the headland", and both are land that was sea.
+  const lee = (v) => lat.vx[v] > 20 && lat.vx[v] < 44 && lat.vy[v] >= 14 && lat.vy[v] < 21
+  for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v] && z[v] > 0) { land0++; if (lee(v)) leeLand0++ }
+  let ledgerOk = true, cutTotal = 0, depTotal = 0
+  for (let epoch = 0; epoch < 4; epoch++) {
+    const r = M.coastal.computeCoastal({ mesh: lat, z: zNow, areas, wind, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: M.mapConfig.METERS_PER_CELL, hardness, sedimentFlux: flux, iterations: 4, epochYears: 1e6 })
+    if (Math.abs(r.erodedM3 + r.suppliedM3 - r.depositedM3 - r.exportedM3) > 1e-6 * Math.max(1, r.erodedM3 + r.suppliedM3)) ledgerOk = false
+    cutTotal += r.erodedM3; depTotal += r.depositedM3
+    for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v]) zNow[v] += (r.depositM[v] - r.cutM[v]) / M.scale.ELEVATION_METERS
+    if (epoch === 0) check(`the shore is found and exposed (${r.shoreNodes} shore nodes, cut ${(r.erodedM3 / 1e6).toFixed(1)} Mm³, deposited ${(r.depositedM3 / 1e6).toFixed(1)} Mm³, exported ${(r.exportedM3 / 1e6).toFixed(1)} Mm³)`, r.shoreNodes > 0 && r.erodedM3 > 0)
+  }
+  check('the coast\'s ledger closes every epoch (cut + supplied = deposited + exported)', ledgerOk)
+  let land1 = 0, leeLand1 = 0
+  for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v] && zNow[v] > 0) { land1++; if (lee(v)) leeLand1++ }
+  check(`land grows beside the headland where the drift stalls (${leeLand0} → ${leeLand1} land nodes there)`, leeLand1 > leeLand0)
+  console.log(`       land ${land0} → ${land1} nodes, ${(cutTotal / 1e9).toFixed(2)} km³ cut, ${(depTotal / 1e9).toFixed(2)} km³ laid down over 4 epochs`)
+}
+
 const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v]) return v; return 0 }
 
 // Ice as a process (phase 6): on a V-shaped valley under a cold climate
@@ -775,7 +830,7 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   let ledger = 0, columnVolume = 0, supplyBounded = true, rebound = 0, subsidence = 0, climateSane = true
   const climateTrace = []
   const coverTrace = []
-  let screeTotal = 0, solifluction = 0, folded = 0, iceShare = 0, glacialCut = 0, till = 0
+  let screeTotal = 0, solifluction = 0, folded = 0, iceShare = 0, glacialCut = 0, till = 0, coastCut = 0, coastDep = 0, shore = 0
   const t1 = performance.now()
   for (let e = 0; e < EPOCHS; e++) {
     const te = performance.now()
@@ -790,6 +845,7 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
     screeTotal += stats.screeM3
     folded = Math.max(folded, stats.foldedShare)
     iceShare = Math.max(iceShare, stats.iceAreaShare)
+    coastCut += stats.coastCutM3; coastDep += stats.coastDepositM3; shore = stats.shoreNodes
     glacialCut += stats.glacialCutM3
     till += stats.tillM3
     solifluction = Math.max(solifluction, stats.solifluctionShare)
@@ -858,6 +914,9 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   // The ice of the history (phase 6): on this cold world the ice covers
   // some land, cuts, and leaves moraines.
   check(`the epochs carry ice (up to ${(iceShare * 100).toFixed(0)} % of the land) that cuts ${(glacialCut / 1e9).toFixed(0)} km³ and leaves ${(till / 1e9).toFixed(0)} km³ of till`, iceShare > 0 && iceShare < 1 && glacialCut > 0 && till > 0)
+  // The coast (phase 7): the waves work the shore and the drift lays
+  // sand down along it, every epoch.
+  check(`the waves work the shore (${shore} shore nodes, ${(coastCut / 1e9).toFixed(1)} km³ cut, ${(coastDep / 1e9).toFixed(1)} km³ laid down over the epochs)`, shore > 0 && coastCut > 0 && coastDep > 0)
   // The hydrogeology (phase 5a) on the history's terrain, with its column:
   // the graph from the last epoch's routing, then springs, the regime with
   // the baseflow and the water table — the invariants hold, and the

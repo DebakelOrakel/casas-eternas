@@ -23,6 +23,7 @@ import { SURFACE_TUNING } from '../surface/surfaceTuneParams'
 import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
 import { worldAgeMa } from '../core/worldTime'
 import { computeIceOnMesh, glacialErosionOnMesh } from '../surface/glacial'
+import { computeCoastal } from '../surface/coastal'
 import { rasteriseNodeField } from '../mesh/meshRaster'
 import { meshSubstrate } from '../mesh/meshHydrology'
 import { accumulateDischargeOn, computeLakesOn } from '../surface/hydrology'
@@ -192,6 +193,12 @@ export interface CoupledEpochStats {
   glacialCutM3: number
   tillM3: number
   elaMeanM: number
+  // The coast of the epoch (phase 7): shore nodes, what the waves cut,
+  // what the drift laid down and what it exported, m³.
+  shoreNodes: number
+  coastCutM3: number
+  coastDepositM3: number
+  coastExportM3: number
   events: SimEvent[]
   nodesBefore: number
   nodesAfter: number
@@ -204,7 +211,7 @@ export interface CoupledEpochStats {
   erodedFluxM3: number
   exportedFluxM3: number
   // Milliseconds per phase, the calibration's cost side.
-  timing: { membership: number; tectonics: number; rebuild: number; remesh: number; baseline: number; forcing: number; erosion: number; flexure: number; climate: number; lakes: number; ice: number }
+  timing: { membership: number; tectonics: number; rebuild: number; remesh: number; baseline: number; forcing: number; erosion: number; flexure: number; climate: number; lakes: number; ice: number; coast: number }
 }
 
 // The baseline: the raft profile over the ocean floor, the mantle's
@@ -241,7 +248,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const domain: Domain = terrain.mesh.domain
   const mesh0 = terrain.mesh
   const nodesBefore = mesh0.aliveVertices
-  const timing = { membership: 0, tectonics: 0, rebuild: 0, remesh: 0, baseline: 0, forcing: 0, erosion: 0, flexure: 0, climate: 0, lakes: 0, ice: 0 }
+  const timing = { membership: 0, tectonics: 0, rebuild: 0, remesh: 0, baseline: 0, forcing: 0, erosion: 0, flexure: 0, climate: 0, lakes: 0, ice: 0, coast: 0 }
   let tick = performance.now()
   const lap = (): number => { const now = performance.now(); const dt = now - tick; tick = now; return dt }
   // Plate membership BEFORE the plates move: nearest seed.
@@ -517,6 +524,32 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // crust takes it as a load in 5.3; nothing feeds back yet.
   sim.sedimentExportM3 += result.exportedFluxM3
   timing.erosion = lap()
+  // THE COAST (phase 7, surface/coastal.ts): the waves cut the shore
+  // towards the wave base, the drift carries what they and the rivers
+  // supply along the shore and lays it down where the capacity falls —
+  // beaches, spits. The cut comes off the column first; the deposit is a
+  // sand layer (coarse) under the epoch's climate. Both move z now, so
+  // the plate answers to them below and the lakes see the new shore.
+  const coastal = computeCoastal({
+    mesh, z: result.z, areas, wind: weather.wind, coarseZ, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, width, height, cellM: METERS_PER_CELL,
+    hardness: rockHard, sedimentFlux: result.sedimentFlux, iterations: options.iterationsPerEpoch, epochYears: (sim.epochMa || TECTONIC_MA_PER_EPOCH) * 1e6,
+  })
+  for (let v = 0; v < mesh.vertexSlots; v++) {
+    if (!mesh.vAlive[v]) continue
+    const cutM = coastal.cutM[v]
+    if (cutM > 0) {
+      cut(column, v, cutM)
+      result.z[v] = Math.max(-1, result.z[v] - cutM / ELEVATION_METERS)
+    }
+    const depM = coastal.depositM[v]
+    if (depM > 0) {
+      const tempC = upsampleAt(weather.temperature, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
+      const precipHere = Math.max(0, upsampleAt(precipitation, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height))
+      deposit(column, v, depM, cratonAge[v], rockHard[v], tempC, precipHere, true)
+      result.z[v] = Math.min(1, result.z[v] + depM / ELEVATION_METERS)
+    }
+  }
+  timing.coast = lap()
   // FLEXURAL ISOSTASY (phase 5.3, tectonics/flexure.ts): the epoch's
   // load change — rock cut, sediment laid down — binned by area onto a
   // coarse raster, the plate's deflection computed there with the
@@ -532,7 +565,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     if (!mesh.vAlive[v]) continue
     // The epoch's load change: the walk's deposits and cuts, the ice's
     // cut and till, and the ice itself at its density over the rock's.
-    const dv = result.depositM3[v] - result.cutM3[v] + (glacial.tillM[v] - glacial.cutM[v] + ice.thickness[v] * (917 / TECTONICS_TUNING.flexureCrustDensity)) * areas[v] * cellM2
+    const dv = result.depositM3[v] - result.cutM3[v] + (glacial.tillM[v] - glacial.cutM[v] + coastal.depositM[v] - coastal.cutM[v] + ice.thickness[v] * (917 / TECTONICS_TUNING.flexureCrustDensity)) * areas[v] * cellM2
     if (dv === 0) continue
     const cx = (((Math.floor((mesh.vx[v] / width) * flexResX) % flexResX) + flexResX) % flexResX)
     const cy = (((Math.floor((mesh.vy[v] / height) * flexResY) % flexResY) + flexResY) % flexResY)
@@ -629,7 +662,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   }
   const areaM2 = new Float64Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) areaM2[v] = areas[v] * cellM2
-  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, meanLandTempC, iceVolumeKm3, seaLevelM, lakes: ages.length, oldestLakeMa, meanLandCover, screeM3, solifluctionShare, foldedShare, iceAreaShare, glacialCutM3: glacial.cutM3, tillM3: glacial.tillM3, elaMeanM, timing }
+  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, meanLandTempC, iceVolumeKm3, seaLevelM, lakes: ages.length, oldestLakeMa, meanLandCover, screeM3, solifluctionShare, foldedShare, iceAreaShare, glacialCutM3: glacial.cutM3, tillM3: glacial.tillM3, elaMeanM, shoreNodes: coastal.shoreNodes, coastCutM3: coastal.erodedM3, coastDepositM3: coastal.depositedM3, coastExportM3: coastal.exportedM3, timing }
 }
 
 // The terrain's bytes for a save or a harness hash.
