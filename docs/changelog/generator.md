@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-09-25
+- **changed** Tectonics: the history runs on a coarser mesh in the generator — an epoch takes about a tenth of the time, the land looks the same; the full density is the bake's. `generator.panel.tectonics`
+
 ## 2026-09-23
 - **new** Tectonics: the sea works the coast through the history — waves cut exposed shores back into cliffs and platforms, and the sand they and the rivers supply drifts along the shore into beaches, bars and spits where the coast turns. `generator.panel.tectonics`
 - **new** Tectonics: ice is part of the history — each epoch's climate grows glaciers and ice sheets that carve troughs and fjords, plane summits at the snowline, leave moraines at their ends and draw the sea down while they stand; the ice you see at the end is that epoch's, and land under it is glacier. `generator.panel.tectonics`

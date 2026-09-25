@@ -118,8 +118,8 @@ export interface CoupledEpochOptions {
   iterationsPerEpoch: number
   // The density rule's budget scalar during the history (decision 1: the
   // macro mesh and the tiles are one rule with a budget each). 1 is the
-  // end state's density; 2 doubles the spacing for the epochs — the
-  // relief the history carries, at a quarter of the nodes.
+  // end state's density; 4 quadruples the spacing for the epochs — the
+  // relief the history carries, at a sixteenth of the nodes.
   budget?: number
   // A scale on the tectonics' uplift forcing — the calibration's knob
   // against the erosion rates, 1 = the engine's calibrated ratio.
@@ -130,9 +130,14 @@ export interface CoupledEpochOptions {
 
 // The history's interim setting, from the first calibration round
 // (scripts/calibrateHistory.mjs, 2026-09-23; the table is in
-// ADAPTIVE_MESH_PLAN.md phase 5.1): budget 2 (the history at half the
-// end state's density — a 512×256 world grows 41 k → 65 k nodes over
-// 16 Ma at 2 s an epoch, where budget 1 grew 40 k → 310 k), four
+// ADAPTIVE_MESH_PLAN.md phase 5.1): budget 4 for the LIVE loop (decided
+// 2026-09-25, the first lever of the performance round: on 2048×1024
+// budget 2 ran 190–390 k nodes at 5–11 s an epoch, budget 4 runs
+// 54–111 k at 0.7–1.2 s with the land statistics the same — mean land
+// 403–420 against 414–427 m, peaks 1.6–2.8 km both; the full density is
+// the level-1 job's, which continues the same history from the last
+// checkpoint, never a re-run — a re-run at another density is a
+// sibling world), four
 // iterations per epoch (rates ×12.5; pure erosion lowers a 365 m plain
 // by 30 % in 16 Ma — sane), and the uplift at a quarter. The quarter is
 // the finding, not a tuning: the tectonics' uplift field lifts 88–98 %
@@ -142,7 +147,7 @@ export interface CoupledEpochOptions {
 // (flexural compensation) and to a U field confined to the orogens;
 // until then the quarter keeps a 50 Ma history in the range of a
 // world (mean land +0.5 km, orogens to 3 km at 16 Ma).
-export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 2, upliftScale: 0.25 } as const
+export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 0.25 } as const
 
 // The flexure raster's cell in macro cells: 4 (31 km at 2048) — the
 // flexural parameter is tens to a hundred-odd km, and the kernel wants a

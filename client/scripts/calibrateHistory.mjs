@@ -37,7 +37,7 @@ const M = {
   climate: await L('/src/generator/climate/climateField.ts'),
   column: await L('/src/generator/mesh/meshColumn.ts'),
 }
-const opt = { seed: 'harness', width: 256, height: 128, archean: 60, epochs: 20, iterations: 4, budget: 1, uplift: 1, flex: 1, sedK: 3, plain: 0 }
+const opt = { seed: 'harness', width: 256, height: 128, archean: 60, epochs: 20, iterations: 4, budget: 1, buildBudget: 0, uplift: 1, flex: 1, sedK: 3, plain: 0 }
 for (const arg of process.argv.slice(2)) { const [k, v] = arg.split('='); if (k in opt) opt[k] = k === 'seed' ? v : Number(v) }
 console.log(JSON.stringify(opt))
 M.tune.TECTONICS_TUNING.flexureDeflectionScale = opt.flex
@@ -64,7 +64,9 @@ for (let e = 0; e < opt.plain; e++) M.sim.stepEpoch(sim)
   console.log(`uplift forcing over land after ${opt.plain} plain epochs: mean ${(sum / Math.max(1, land)).toFixed(2)}, forced ${(forced / Math.max(1, land) * 100).toFixed(0)} %, above a half ${(strong / Math.max(1, land) * 100).toFixed(0)} %`)
 }
 let t = performance.now()
-const terrain = M.coupled.createCoupledTerrain(sim, opt.budget)
+// buildBudget: the mesh built at another budget than the epochs run at —
+// a save from before a budget change, coarsened by the remesh.
+const terrain = M.coupled.createCoupledTerrain(sim, opt.buildBudget || opt.budget)
 const stats = (terrain) => {
   const { mesh, z, column } = terrain
   const hs = []
