@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-25
+- **fixed** Hydrology: lakes no longer appear in the ocean after a history — the water bodies are read from the terrain as the epoch left it, not from before the coast and the sea level moved it. `generator.panel.hydrology`
 - **changed** Tectonics: the history runs on a coarser mesh in the generator — an epoch takes about a tenth of the time, the land looks the same; the full density is the bake's. `generator.panel.tectonics`
 
 ## 2026-09-23

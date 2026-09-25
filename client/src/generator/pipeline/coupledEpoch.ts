@@ -25,7 +25,7 @@ import { worldAgeMa } from '../core/worldTime'
 import { computeIceOnMesh, glacialErosionOnMesh } from '../surface/glacial'
 import { computeCoastal } from '../surface/coastal'
 import { rasteriseNodeField } from '../mesh/meshRaster'
-import { meshSubstrate } from '../mesh/meshHydrology'
+import { meshRouting, meshSubstrate } from '../mesh/meshHydrology'
 import { accumulateDischargeOn, computeLakesOn } from '../surface/hydrology'
 import type { LakeAgeRecord } from '../tectonics/plateSimulationTypes'
 import { worldEpoch } from '../core/worldTime'
@@ -615,6 +615,14 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
     }
   }
+  // THE ROUTING ON THE TERRAIN AS THE EPOCH LEAVES IT. The erosion's
+  // routing ran on the z before the coast, the flexure and the sea level
+  // moved it, so its flood stood above the moved surface — measured
+  // 2026-09-25 on the calibration seed after 20 epochs: one "terminal"
+  // body of 53 k nodes from −2.7 km to +430 m, painted as a lake over
+  // 41 k ocean cells (the "lakes in the ocean" of the picture check).
+  // The lakes below and the hydrology stage read this one instead.
+  const routing = meshRouting(mesh, result.z, scaled)
   // THE LAKES' AGES (phase 5.4, decision B of 5.2): the standing water on
   // the epoch's terrain, each body matched to the nearest of last epoch's
   // by its seed (within LAKE_MATCH_CELLS macro cells — the seed drifts with
@@ -622,7 +630,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // aged by the epoch; a body with no match is new. The hydrology stage
   // recomputes the bodies at full detail after the stop; these carry the
   // history.
-  const sub = meshSubstrate(mesh, result.routing, areas)
+  const sub = meshSubstrate(mesh, routing, areas)
   const discharge = accumulateDischargeOn(sub, result.z, precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
   const lakes = computeLakesOn(sub, discharge, result.z, weather.temperature, precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
   const epochMaForAges = sim.epochMa || TECTONIC_MA_PER_EPOCH
@@ -654,7 +662,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   terrain.ice = ice.thickness
   terrain.z = result.z
   terrain.baseline = baseline
-  terrain.routing = result.routing
+  terrain.routing = routing
   terrain.areas = areas
   terrain.sedimentFlux = result.sedimentFlux
   terrain.preErosionZ = zCanon

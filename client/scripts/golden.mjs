@@ -634,7 +634,11 @@ function metrics(w) {
       if (field[i] > 0.5) rich++
     }
     put(`eco.${name}.mean`, scored > 0 ? sum / scored : 0)
-    put(`eco.${name}.rich`, rich)
+    // The rich count of the gems is dropped for the same reason as `.max`:
+    // gems are rare (30 cells on one seed of three before 2026-09-25, none
+    // after the epoch's routing was corrected), and a count that is zero
+    // on every seed guards nothing. The mean still watches the field.
+    if (name !== 'gems') put(`eco.${name}.rich`, rich)
   }
 
   put('mig.reached', countWhere(w.mig.density, (v) => v > 0))
@@ -750,7 +754,7 @@ if (constant.length === 0) {
   console.log(`  ok    all ${Object.keys(measured[SEEDS[0]]).length} metrics vary across seeds`)
 } else {
   failed += constant.length
-  for (const name of constant) console.log(`  FAIL  ${name} is identical on all ${SEEDS.length} seeds and guards nothing`)
+  for (const name of constant) console.log(`  FAIL  ${name} is identical on all ${SEEDS.length} seeds (${measured[SEEDS[0]][name]}) and guards nothing`)
 }
 
 console.log('\n— determinism —')
