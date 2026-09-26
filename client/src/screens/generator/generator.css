@@ -19,93 +19,89 @@
 /* Compute-progress indicator, centered over the bottom panel (roughly the legend's
    offset, from the bottom). A real 0..100 fill for erosion; an indeterminate sweep
    for open-ended processes (tectonics/climate/hydrology). */
+/* The progress pill over the map — design canvas Fortschritt.dc.html,
+   variant C "Plume und Füllstand" (2026-09-26): what runs, a line under it,
+   a 22 px disc. Endless states let rings rise out of the centre; measured
+   ones fill the disc from the bottom under a wave (GeneratorScreen's
+   progressFillPath). Centred on the MAP, not on the window: the column takes
+   real width off the left, so a plain 50% sits a sidebar's half to the left
+   of the map's middle. */
 .generator-screen .compute-progress {
   position: fixed;
-  bottom: calc(7.5rem + var(--step-bar-height, 0px));
-  /* Centred on the MAP, not on the window: the column takes real width off the
-     left, so a plain 50% sits a sidebar's half to the left of the map's middle. */
+  bottom: calc(1.25rem + var(--step-bar-height, 0px));
   left: calc(50% + var(--sidebar-width, 0px) / 2);
   transform: translateX(-50%);
   z-index: 3;
-  width: 220px;
-  height: 5px;
-  border-radius: 3px;
-  background: rgba(0, 0, 0, 0.14);
-  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  padding: 0 8px 0 16px;
+  border-radius: 22px;
+  background: rgba(251, 248, 242, 0.94);
+  border: 1px solid var(--dc-line2, #d3cab8);
+  box-shadow: 0 8px 22px rgba(70, 52, 24, 0.16);
+  color: var(--dc-strong, #15191d);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  pointer-events: none;
 }
 .generator-screen .compute-progress[hidden] {
   display: none;
 }
-.generator-screen .compute-progress-fill {
-  display: block;
-  height: 100%;
-  width: 0;
-  background: #3a7a4a;
-  border-radius: 3px;
-  transition: width 0.15s ease;
-}
-/* The Archean runs the same indeterminate sweep as the tectonic stepper (it is
-   an open-ended process you stop, not one that finishes), but its fill is
-   coloured by the same three-stage judgement the banner text states: below 20%
-   nothing has settled, 20-70% is the window where separate cratons exist and
-   still move, above 70% continents assemble. Other phases leave data-stage
-   unset and keep the default. */
-.generator-screen .compute-progress-fill[data-stage='early'] { background: #7a8794; }
-.generator-screen .compute-progress-fill[data-stage='window'] { background: #4f9d5d; }
-.generator-screen .compute-progress-fill[data-stage='late'] { background: #c98a3c; }
-
-.generator-screen .compute-progress.is-indeterminate .compute-progress-fill {
-  width: 40%;
-  transition: none;
-  animation: generator-progress-sweep 1.1s ease-in-out infinite;
-}
-@keyframes generator-progress-sweep {
-  0% { margin-left: -40%; }
-  100% { margin-left: 100%; }
-}
-
-/* World age + phase hint over the map. Not in the Genesis step's controls: the
-   age is true of the world in every phase, and the hint describes what the map
-   is doing rather than a control. Pointer-events off so it never blocks the map
-   underneath. */
-/* Narration about the WORLD, as opposed to the panel below, which is about what
-   you can DO. That split is the scheme this is the first instance of: anything the
-   simulation wants to tell you about its own state belongs in this band.
-   
-   Cinzel, matching the panel title, so it reads as the same voice — but in mixed
-   case at weight 400, because a full sentence in the title's uppercase 600 is a
-   wall. Tracking is lighter than the title's 0.08em for the same reason: that
-   value is tuned for capitals. */
-.generator-screen .world-banner {
-  position: fixed;
-  bottom: 8.4rem;
-  /* Centred on the map — see .compute-progress. */
-  left: var(--sidebar-width, 0px);
-  right: 0;
-  z-index: 2;
+.generator-screen .compute-progress__text {
   display: flex;
-  justify-content: center;
-  pointer-events: none;
-  text-align: center;
+  flex-direction: column;
+  gap: 1px;
 }
-/* Needed because the rule above sets `display: flex`, which outranks the browser's
-   own `[hidden] { display: none }` — so without this the banner ignores `hidden`
-   entirely and the last Archean sentence stays on screen for the whole run. */
-.generator-screen .world-banner[hidden] {
+.generator-screen .compute-progress__label {
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.generator-screen .compute-progress__sub {
+  font-size: 11px;
+  color: var(--dc-faint, #6b727a);
+  white-space: nowrap;
+}
+.generator-screen .compute-progress__sub[hidden] {
   display: none;
 }
-/* Its own backdrop since Genesis moved into the column: the line used to stand
-   on that panel's fade, and on the bare map a pale sentence over pale relief is
-   not readable. */
-.generator-screen .world-banner-hint {
-  font-family: 'Cinzel', serif;
-  font-weight: 400;
-  font-size: 1.35rem;
-  letter-spacing: 0.03em;
-  color: rgba(26, 26, 26, 0.72);
-  padding: 0.35rem 1.1rem;
-  border-radius: 1.2rem;
-  background: rgba(251, 248, 242, 0.78);
+/* The disc uses the pill's height: 34 of 44 px (the canvas drew 22; user's
+   call 2026-09-26 — the wave is the display, let it show). */
+.generator-screen .compute-progress__disc {
+  width: 34px;
+  height: 34px;
+  display: block;
+  flex-shrink: 0;
+}
+.generator-screen .compute-progress__track {
+  fill: none;
+  stroke: var(--dc-line2, #d3cab8);
+  stroke-width: 5;
+}
+.generator-screen .compute-progress__pulse {
+  fill: none;
+  stroke: var(--dc-accent, #d8912e);
+  stroke-width: 5;
+  animation: generator-progress-pulse 1.8s ease-out infinite;
+}
+@keyframes generator-progress-pulse {
+  0% { r: 8; opacity: 0.85; }
+  100% { r: 42; opacity: 0; }
+}
+/* The fill's colour is the same three-stage judgement the banner text states
+   (below 20% of the Archean nothing has settled, 20-70% is the window where
+   separate cratons exist and still move, above 70% continents assemble; the
+   tectonics grey below the epochs the climate needs, green above). */
+.generator-screen .compute-progress__fill {
+  fill: var(--dc-accent, #d8912e);
+  opacity: 0.9;
+}
+.generator-screen .compute-progress[data-stage='early'] .compute-progress__fill { fill: #7a8794; }
+.generator-screen .compute-progress[data-stage='window'] .compute-progress__fill { fill: #4f9d5d; }
+.generator-screen .compute-progress[data-stage='late'] .compute-progress__fill { fill: #c98a3c; }
+@media (prefers-reduced-motion: reduce) {
+  .generator-screen .compute-progress__pulse { animation: none; }
 }
 
 /* The overlay legend, at the left edge of the map: a header button that names it

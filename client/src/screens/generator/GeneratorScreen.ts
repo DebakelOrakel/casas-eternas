@@ -513,8 +513,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         <img src="/icons/server_clean.png" alt="" />
       </button>
     </div>
-    <div class="compute-progress" data-value="compute-progress" hidden>
-      <span class="compute-progress-fill" data-value="compute-progress-fill"></span>
+    <div class="compute-progress" data-value="compute-progress" role="status" hidden>
+      <span class="compute-progress__text">
+        <span class="compute-progress__label" data-value="compute-progress-label"></span>
+        <span class="compute-progress__sub" data-value="compute-progress-sub" hidden></span>
+      </span>
+      <svg class="compute-progress__disc" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="compute-progress__track" cx="60" cy="60" r="44"/>
+        <g data-value="compute-progress-plume">
+          <circle class="compute-progress__pulse" cx="60" cy="60" r="10"/>
+          <circle class="compute-progress__pulse" cx="60" cy="60" r="10" style="animation-delay: 0.55s"/>
+          <circle class="compute-progress__pulse" cx="60" cy="60" r="10" style="animation-delay: 1.1s"/>
+        </g>
+        <path class="compute-progress__fill" data-value="compute-progress-fill" d=""/>
+      </svg>
     </div>
     <div class="temp-scale"><canvas data-value="temp-scale" role="img"></canvas></div>
     <div class="world-panel" data-stage="world">
@@ -855,7 +867,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   sayTectonicsButton(false)
   const computeProgress = root.querySelector<HTMLElement>('[data-value="compute-progress"]')!
-  const computeProgressFill = root.querySelector<HTMLElement>('[data-value="compute-progress-fill"]')!
+  const computeProgressLabel = root.querySelector<HTMLElement>('[data-value="compute-progress-label"]')!
+  const computeProgressSub = root.querySelector<HTMLElement>('[data-value="compute-progress-sub"]')!
+  const computeProgressPlume = root.querySelector<SVGGElement>('[data-value="compute-progress-plume"]')!
+  const computeProgressFill = root.querySelector<SVGPathElement>('[data-value="compute-progress-fill"]')!
 
   // Simulation and rendering both happen inside this worker (see
   // generator/pipeline/runtime.ts) — stepping an epoch and rendering the full
@@ -934,29 +949,108 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     updateNavState() // the step bar locks with it (see its own gating)
   }
 
-  // The centered progress indicator over the panel: an indeterminate sweep for
-  // the open-ended processes (tectonics runs until you stop it; climate/hydrology
-  // report no fraction). Hidden when idle.
+  // THE PROGRESS PILL over the map (design canvas, Fortschritt.dc.html,
+  // variant C "Plume und Füllstand", 2026-09-26): a line, a disc, and
+  // under the Archean's line its advice — the state ("crust still
+  // forming") over what to do about it ("keep running"); the tectonics'
+  // epoch and age, the name of a stage that runs outside its step, stand
+  // alone (user's call). Where the run has a measure the disc
+  // FILLS from the bottom with a wave for a surface — the Archean by its
+  // stabilised fraction, the tectonics by this run's epochs towards the
+  // safety stop — coloured by the same three-stage judgement the banner
+  // states (archeanStage; the tectonics grey below the minimum the climate
+  // needs, green above). Where there is none — the climate, the rivers,
+  // the ecology, the migration — rings rise out of the centre like a
+  // plume. No percentage is written (user's call). Hidden when idle —
+  // except in the Genesis step, where the Archean's pill STANDS after the
+  // stop, wave and clock still, with its narration and its disc: that is
+  // the moment the judgement is needed (run on, or hand over).
+  //
+  // The fraction is a position, not a promise: the Archean and the
+  // tectonics are processes you STOP (the 2026-08-06 objection to a
+  // filling bar); the disc says how far along the window you are, the
+  // banner says what that means.
+  const PROGRESS_R = 44
+  const PROGRESS_CY = 60
+  let progressTicker: ReturnType<typeof setInterval> | undefined
+  let progressWavePhase = 0
+  let progressPaused = false
+  // The fill: the disc below a wavy water line at `fraction` of its height,
+  // as one closed path — the wave across the chord, the circle's lower arc
+  // back to the start.
+  const progressFillPath = (fraction: number, phase: number): string => {
+    const f = Math.min(0.985, Math.max(0.015, fraction))
+    const level = PROGRESS_CY + PROGRESS_R - 2 * PROGRESS_R * f
+    const half = Math.sqrt(Math.max(0, PROGRESS_R * PROGRESS_R - (level - PROGRESS_CY) * (level - PROGRESS_CY)))
+    const x0 = 60 - half
+    const x1 = 60 + half
+    const amplitude = Math.min(3.5, half * 0.12)
+    const points: string[] = []
+    const steps = 24
+    for (let i = 0; i <= steps; i++) {
+      const x = x0 + ((x1 - x0) * i) / steps
+      const y = level + amplitude * Math.sin(((x - 60) / 22) + phase)
+      points.push(`${i === 0 ? 'M' : 'L'}${x.toFixed(2)} ${y.toFixed(2)}`)
+    }
+    const yEnd = level + amplitude * Math.sin(((x1 - 60) / 22) + phase)
+    const yStart = level + amplitude * Math.sin(((x0 - 60) / 22) + phase)
+    return `${points.join(' ')} L${x1.toFixed(2)} ${yEnd.toFixed(2)} A${PROGRESS_R} ${PROGRESS_R} 0 0 1 60 ${PROGRESS_CY + PROGRESS_R} A${PROGRESS_R} ${PROGRESS_R} 0 0 1 ${x0.toFixed(2)} ${yStart.toFixed(2)} Z`
+  }
   const updateProgress = (): void => {
-    if (archeanRunning) {
-      // The same continuous sweep as the tectonic stepper (user's call,
-      // 2026-08-06 — a filling bar reads as "almost done", but the Archean is
-      // an open-ended process you STOP, not one that finishes). The stabilised
-      // fraction still speaks through the fill's three-stage colour, which is
-      // the same judgement the banner text states, from the same call.
-      computeProgress.hidden = false
-      computeProgress.classList.add('is-indeterminate')
-      computeProgressFill.style.width = ''
-      computeProgressFill.dataset.stage = archeanStage(archeanStabilised).stage
-    } else if (tectonicsRunning || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight) {
-      computeProgress.hidden = false
-      computeProgress.classList.add('is-indeterminate')
-      computeProgressFill.style.width = ''
-      // Not the Archean's sweep — drop its stage colour instead of letting it
-      // linger into the tectonic phase's bar.
-      delete computeProgressFill.dataset.stage
+    let label = ''
+    let sub: string | null = null
+    let fraction: number | null = null
+    let stage: 'early' | 'window' | 'late' | null = null
+    const archeanStanding = archeanNarrated && !archeanFinalised && !hasHandover && panelIndex === GENESIS_PANEL_INDEX
+    progressPaused = false
+    if (archeanRunning || archeanStanding) {
+      const judged = archeanStage(archeanStabilised)
+      label = judged.hint
+      sub = judged.advice
+      fraction = archeanStabilised
+      stage = judged.stage
+      progressPaused = !archeanRunning
+    } else if (tectonicsRunning) {
+      label = t('generator.progress.epoch', { epoch: lastEpoch, age: formatWorldAge(worldAgeMa(lastArcheanEpochs, lastEpoch)) })
+      fraction = 1 - Math.max(0, autoStopAtEpoch - lastEpoch) / MAX_TECTONICS_EPOCHS
+      stage = lastEpoch < MIN_TECTONIC_EPOCHS ? 'early' : 'window'
+    } else if (climateInFlight) {
+      label = t('generator.step.climate.label')
+    } else if (hydrologyInFlight) {
+      label = t('generator.progress.hydrology')
+    } else if (ecologyInFlight) {
+      label = t('generator.step.ecology.label')
+    } else if (migrationInFlight) {
+      label = t('generator.step.migration.label')
     } else {
       computeProgress.hidden = true
+      if (progressTicker !== undefined) { clearInterval(progressTicker); progressTicker = undefined }
+      return
+    }
+    computeProgress.hidden = false
+    computeProgressLabel.textContent = label
+    computeProgressSub.textContent = sub ?? ''
+    computeProgressSub.hidden = sub === null
+    if (fraction === null) {
+      computeProgressPlume.style.display = ''
+      computeProgressFill.setAttribute('d', '')
+      delete computeProgress.dataset.stage
+      computeProgress.setAttribute('aria-label', t('generator.progress.ariaRunning', { step: label }))
+    } else {
+      computeProgressPlume.style.display = 'none'
+      computeProgressFill.setAttribute('d', progressFillPath(fraction, progressWavePhase))
+      if (stage) computeProgress.dataset.stage = stage
+      else delete computeProgress.dataset.stage
+      computeProgress.setAttribute('aria-label', t('generator.progress.aria', { step: label, percent: `${Math.round(fraction * 100)} %` }))
+    }
+    // The wave moves while the pill shows — once a second is enough, and
+    // not at all when motion is reduced or the Archean stands.
+    if (progressTicker === undefined) {
+      const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+      progressTicker = setInterval(() => {
+        if (!still && !progressPaused) progressWavePhase += 0.6
+        updateProgress()
+      }, 1000)
     }
   }
 
@@ -1911,13 +2005,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // to be the better place anyway: the compute bar's three-stage COLOUR and this
   // sentence come from the same archeanStage() call, so they say the same thing
   // and had no business being at opposite edges of the screen.
-  const worldBanner = document.createElement('div')
-  worldBanner.className = 'world-banner'
-  worldBanner.hidden = true
-  const worldHintEl = document.createElement('span')
-  worldHintEl.className = 'world-banner-hint'
-  worldBanner.appendChild(worldHintEl)
-  root.appendChild(worldBanner)
+  // The Archean's narration ("crust forms and dissolves", "drifting", …)
+  // is the progress pill's line since 2026-09-26; the band it stood in
+  // over the map is gone. True once a status has said something.
+  let archeanNarrated = false
 
   // The legend for the active overlay(s) that carry one (see overlayLegend), as
   // a collapsible panel: a header button that names it and counts what is in it,
@@ -3044,6 +3135,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastPlateCount = message.plateCount
     lastContinentCount = message.raftLabels.length
     updateStats()
+    updateProgress()
     updateNavState() // epoch progress may unlock the Erosion panel
     // The counters this render just reported are what the baseline is made of, so
     // a load or a regenerate takes its reading here rather than before the round
@@ -3213,10 +3305,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // when the largest landmass is measurably assembling. The measured band
   // table above predates that re-verification; its numbers are stale but its
   // three-band judgement still holds.
-  const archeanStage = (stabilised: number): { hint: string; stage: 'early' | 'window' | 'late' } => {
-    if (stabilised < 0.2) return { stage: 'early', hint: t('generator.panel.genesis.stage.early') }
-    if (stabilised < 0.7) return { stage: 'window', hint: t('generator.panel.genesis.stage.window') }
-    return { stage: 'late', hint: t('generator.panel.genesis.stage.late') }
+  // The state and its advice are two lines of one judgement: what the
+  // Archean is doing, and what a stop now would give (or that it is too
+  // early for one).
+  const archeanStage = (stabilised: number): { hint: string; advice: string; stage: 'early' | 'window' | 'late' } => {
+    if (stabilised < 0.2) return { stage: 'early', hint: t('generator.panel.genesis.stage.early'), advice: t('generator.panel.genesis.stage.early.advice') }
+    if (stabilised < 0.7) return { stage: 'window', hint: t('generator.panel.genesis.stage.window'), advice: t('generator.panel.genesis.stage.window.advice') }
+    return { stage: 'late', hint: t('generator.panel.genesis.stage.late'), advice: t('generator.panel.genesis.stage.late.advice') }
   }
 
   function handleGenesisStatus(message: WorkerGenesisStatusMessage): void {
@@ -3230,16 +3325,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     statCrustBar.style.width = `${Math.min(100, message.crustFraction * 100)}%`
     statStabilisedBar.style.width = `${Math.min(100, message.stabilisedFraction * 100)}%`
     statWorldAge.textContent = formatWorldAge(message.worldAgeMa)
-    // One source for both readouts: the gauge's colour and the banner's wording are
-    // the same three-stage judgement, so they can never disagree.
-    const { hint } = archeanStage(message.stabilisedFraction)
+    // One source for both readouts: the disc's colour and the pill's wording
+    // are the same three-stage judgement, so they can never disagree.
     archeanStabilised = message.stabilisedFraction
-    worldHintEl.textContent = hint
-    // Genesis only, same rule the panel switch applies. Guarded here too rather than
-    // trusting that no Archean status can arrive once the phase has been handed over
-    // — the visibility rule then lives in one condition instead of in the timing of
-    // two messages.
-    worldBanner.hidden = panelIndex !== GENESIS_PANEL_INDEX
+    archeanNarrated = true
     updateProgress()
     // The stabilised fraction is what opens the gate to plate tectonics, so the
     // bar has to be repainted as it climbs — otherwise the next step stays
@@ -4467,10 +4556,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The species buttons are an icon and an accessible name, and they live in
     // the old panel row, which relabel(sidebar.body) does not reach.
     relabel(migrationRacesContainer)
-    // Only while it is saying something. The hint is the Archean's narration;
-    // deriving it from a stabilised fraction no run has set yet would put a
-    // sentence on a map that has none.
-    if (worldHintEl.textContent !== '') worldHintEl.textContent = archeanStage(archeanStabilised).hint
+    // The pill's words are read from the catalog on every update.
+    updateProgress()
     renderLegends()
   }
   let migrationDebounce: ReturnType<typeof setTimeout> | undefined
@@ -4916,15 +5003,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       panel.hidden = i !== index
     })
     ensureDataFor(index)
-    // The narration band belongs to Genesis. It describes what the Archean is doing
-    // right now ("cratons are forming and still moving"), which stops being true the
-    // moment the phase is handed over — and it was previously only ever shown, never
-    // hidden, so the last Archean sentence stayed on screen for the rest of the run.
-    const genesis = index === panelIndexOf('genesis')
-    // The line used to stand on the Genesis panel's fade, which grew to carry
-    // it. That panel is in the column now, so the band carries its own soft
-    // backdrop instead (see .world-banner-hint).
-    worldBanner.hidden = !genesis || worldHintEl.textContent === ''
+    // The Archean's narration in the pill belongs to the Genesis step: it
+    // describes what the Archean is doing right now, which stops being true
+    // the moment the phase is handed over (see updateProgress).
+    updateProgress()
     if (lastColoredBase) updateOverlays()
     updateNavState()
   }
