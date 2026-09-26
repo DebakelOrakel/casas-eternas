@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-09-26
+- **changed** Tectonics: the history's live picture and its climate refresh every third epoch, the epochs between reuse the last weather — about half the wait per epoch; the full-density bake keeps every epoch. `generator.panel.tectonics`
+
 ## 2026-09-25
 - **fixed** Hydrology: lakes no longer appear in the ocean after a history — the water bodies are read from the terrain as the epoch left it, not from before the coast and the sea level moved it. `generator.panel.hydrology`
 - **changed** Tectonics: the history runs on a coarser mesh in the generator — an epoch takes about a tenth of the time, the land looks the same; the full density is the bake's. `generator.panel.tectonics`

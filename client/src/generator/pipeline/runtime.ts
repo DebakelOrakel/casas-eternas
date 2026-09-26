@@ -102,6 +102,9 @@ let archeanHeight = 0
 let renderOptions: RenderSimulationOptions = {}
 let epochIntervalMs = 400
 let intervalId: ReturnType<typeof setInterval> | undefined
+// Epochs run since the last intermediate picture (HISTORY_DEFAULTS.renderEvery);
+// starts at the count so the first epoch of a run draws.
+let epochsSinceRender: number = HISTORY_DEFAULTS.renderEvery
 let pendingEvents: SimEvent[] = []
 // The last render's pre-redistribution elevation field, kept up to date by
 // every renderAndPost call: what the climate and the hydrology read when no
@@ -629,6 +632,7 @@ function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'te
       const stats = await stepCoupledEpoch(currentSim, coupled, {
         iterationsPerEpoch: HISTORY_DEFAULTS.iterationsPerEpoch,
         budget: HISTORY_DEFAULTS.budget,
+        climateEvery: HISTORY_DEFAULTS.climateEvery,
         upliftScale: HISTORY_DEFAULTS.upliftScale,
         controls: { alluvium: historyControls.alluvium, rockContrast: historyControls.rockContrast },
         weather: historyControls.weather,
@@ -637,15 +641,22 @@ function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'te
       // render), which owns their notifications + faded map markers now.
       pendingEvents.push(...stats.events)
       meshTerrain = asMeshTerrain(coupled)
-      // Intermediate while the loop still ticks: the next epoch replaces
-      // this render. The epoch that finishes after the stop is the settled
-      // one — the screen then pulls the elevation field and runs the chain.
-      await renderTerrain(intervalId !== undefined)
+      // Intermediate while the loop still ticks, and only every
+      // HISTORY_DEFAULTS.renderEvery-th epoch (the first always): the next
+      // picture replaces this one. The epoch that finishes after the stop
+      // is the settled one — drawn whatever the count, the screen then
+      // pulls the elevation field and runs the chain.
+      epochsSinceRender++
+      if (intervalId === undefined || epochsSinceRender >= HISTORY_DEFAULTS.renderEvery) {
+        epochsSinceRender = 0
+        await renderTerrain(intervalId !== undefined)
+      }
     })().finally(() => {
       epochInFlight = false
       renderInFlight = false
     })
   }
+  epochsSinceRender = HISTORY_DEFAULTS.renderEvery
   intervalId = setInterval(tick, epochIntervalMs)
   tick()
 }

@@ -16,7 +16,7 @@ import { deflectionAt, elasticThicknessKm, flexuralResponse } from '../tectonics
 import { foldFactorAt } from '../tectonics/folds'
 import { buildFeatureBuckets } from '../elevation/elevationField'
 import { sampleOceanAge } from '../tectonics/oceanAge'
-import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
+import { computeWeather, defaultWeatherParams, type Weather, type WeatherParams } from '../climate/weather'
 import { computeBiomes } from '../climate/biomes'
 import { coverField, COVER_TUNING } from '../surface/cover'
 import { SURFACE_TUNING } from '../surface/surfaceTuneParams'
@@ -97,6 +97,13 @@ export interface CoupledTerrain {
   routing: MeshRouting | null
   areas: Float32Array
   sedimentFlux: Float32Array
+  // The last epoch's weather on the coarse raster, kept for the epochs
+  // between two climate runs (CoupledEpochOptions.climateEvery) — with
+  // the epoch it was computed in and the parameters it was computed
+  // with, so a moved slider recomputes. Null before the first epoch and
+  // after a restore: the continuation after a restore runs its climate
+  // on its first epoch, an unbroken run on its scheduled one.
+  weather: { epoch: number; params: string; result: Weather } | null
   // The heights the last epoch's erosion started from (after the motion
   // and the baseline swap) — the "before" of what that epoch deposited.
   preErosionZ: Float32Array
@@ -121,6 +128,12 @@ export interface CoupledEpochOptions {
   // end state's density; 4 quadruples the spacing for the epochs — the
   // relief the history carries, at a sixteenth of the nodes.
   budget?: number
+  // The climate runs every this many epochs (1: every epoch) and the
+  // epochs between reuse the last weather on the terrain of the moment —
+  // the ice, the sea level, the forcing and the ledger read it as if it
+  // were the epoch's. A preview economy: the weather chain costs a
+  // second an epoch at any node count.
+  climateEvery?: number
   // A scale on the tectonics' uplift forcing — the calibration's knob
   // against the erosion rates, 1 = the engine's calibrated ratio.
   upliftScale?: number
@@ -147,7 +160,12 @@ export interface CoupledEpochOptions {
 // (flexural compensation) and to a U field confined to the orogens;
 // until then the quarter keeps a 50 Ma history in the range of a
 // world (mean land +0.5 km, orogens to 3 km at 16 Ma).
-export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 0.25 } as const
+// climateEvery and renderEvery (2026-09-26, the second lever of the
+// performance round, profiled on 2048×1024 at budget 4: of ~3 s an epoch
+// the weather chain was 1.0 and the intermediate picture 1.0, the erosion
+// 0.1): the live loop runs the climate and draws every third epoch. The
+// full-density job (5.8b) runs both every epoch — the time is the job's.
+export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 0.25, climateEvery: 3, renderEvery: 3 } as const
 
 // The flexure raster's cell in macro cells: 4 (31 km at 2048) — the
 // flexural parameter is tens to a hundred-odd km, and the kernel wants a
@@ -238,7 +256,7 @@ export function createCoupledTerrain(sim: PlateSimulation, budget = 1): CoupledT
   const z = permute(built.state.get(MESH_Z), order)
   const baseline = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
-  return { mesh, z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: z.slice(), column: createColumn(mesh.vertexSlots), ice: new Float32Array(0) }
+  return { mesh, z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: z.slice(), column: createColumn(mesh.vertexSlots), ice: new Float32Array(0), weather: null }
 }
 
 function meshAreasOf(mesh: PeriodicTriangulation): Float32Array {
@@ -355,7 +373,16 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // sea level's, and what a deposit records. The final full-resolution
   // climate stays the last stage.
   const coarseZ = rasteriseNodeField(mesh, zCanon, CLIMATE_RES_X, CLIMATE_RES_Y)
-  const weather = computeWeather(coarseZ, CLIMATE_RES_X, CLIMATE_RES_Y, options.weather ?? defaultWeatherParams())
+  const weatherParams = options.weather ?? defaultWeatherParams()
+  const climateEvery = Math.max(1, options.climateEvery ?? 1)
+  // The parameters compared by value: a caller without a panel passes a
+  // fresh default object every epoch, and an identity check would run the
+  // chain every epoch and never say so.
+  const paramsKey = JSON.stringify(weatherParams)
+  const cached = terrain.weather
+  const climateDue = !cached || cached.params !== paramsKey || sim.epoch - cached.epoch >= climateEvery
+  const weather = climateDue ? computeWeather(coarseZ, CLIMATE_RES_X, CLIMATE_RES_Y, weatherParams) : cached.result
+  if (climateDue) terrain.weather = { epoch: sim.epoch, params: paramsKey, result: weather }
   const precipitation = weather.seasonal.annual
   const climateCellM = (width / CLIMATE_RES_X) * METERS_PER_CELL
   const climateCellM2 = climateCellM * ((height / CLIMATE_RES_Y) * METERS_PER_CELL)
@@ -412,7 +439,6 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const meanLandTempC = landClimateCells > 0 ? landTempSum / landClimateCells : 0
   // THE COVER (phase 5.5): the epoch's coarse biomes, as the vegetation
   // that holds the ground — once the planet's schedule has land plants.
-  const weatherParams = options.weather ?? defaultWeatherParams()
   const plantsFromMa = (weatherParams.planet ?? DEFAULT_PLANET_FORCING).landPlantsFromMa
   const plantsPresent = worldAgeMa(sim.archeanEpochs, sim.epoch) >= plantsFromMa
   const biomes = computeBiomes(weather.temperature, precipitation, weather.seasonalAmplitude, weather.seasonal.index, coarseZ, CLIMATE_RES_X, CLIMATE_RES_Y)
@@ -693,5 +719,5 @@ export function decodeCoupledTerrain(sim: PlateSimulation, bytes: { nodes: Float
   const baseline = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
   const column = bytes.column ? decodeColumn(bytes.column, bytes.z.length, mesh.vertexSlots) : createColumn(mesh.vertexSlots)
-  return { mesh, z: bytes.z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: bytes.z.slice(), column, ice: new Float32Array(0) }
+  return { mesh, z: bytes.z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: bytes.z.slice(), column, ice: new Float32Array(0), weather: null }
 }

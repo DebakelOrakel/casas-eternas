@@ -2980,11 +2980,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
 
     // Relief preview: re-sync the gate off the fresh erosion state, then pull
-    // the matching elevation raster for the frame just shown. Intermediate
-    // mid-erosion redraws are skipped — 8 MB a round for a surface the next
-    // round replaces.
+    // the matching elevation raster for the frame just shown — for the
+    // intermediate epoch pictures too. They used to be skipped (8 MB a
+    // round), which left the water's height raster at the run's start
+    // while the picture moved on: the shores drew as a ghost outline of
+    // an older coast (picture check 2026-09-26). The pictures come every
+    // HISTORY_DEFAULTS.renderEvery-th epoch now, so the round is rare.
     syncReliefGate()
-    if (erosionRunCount >= 1 && !message.intermediate) {
+    if (erosionRunCount >= 1) {
       postToWorker({ type: 'requestElevationField' })
     }
 

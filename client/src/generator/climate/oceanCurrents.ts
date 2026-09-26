@@ -37,15 +37,28 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
     }
   }
 
-  // ∇²ψ = curl, ψ = 0 on land, wrapped. Gauss-Seidel in place.
+  // ∇²ψ = curl, ψ = 0 on land, wrapped. Gauss-Seidel in place. The four
+  // wrapped neighbours of every cell are indexed once: at 700 sweeps the
+  // wrapping's modulos were 0.6 s of every history epoch (profiled
+  // 2026-09-26); the sum's order is unchanged, so the result is bit for bit.
   const psi = new Float32Array(n)
+  const left = new Int32Array(n)
+  const right = new Int32Array(n)
+  const up = new Int32Array(n)
+  const down = new Int32Array(n)
+  for (let gy = 0; gy < RY; gy++) {
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      left[i] = wrapIndex(gx - 1, gy)
+      right[i] = wrapIndex(gx + 1, gy)
+      up[i] = wrapIndex(gx, gy - 1)
+      down[i] = wrapIndex(gx, gy + 1)
+    }
+  }
   for (let iter = 0; iter < CLIMATE_TUNING.currentsSolveIters; iter++) {
-    for (let gy = 0; gy < RY; gy++) {
-      for (let gx = 0; gx < RX; gx++) {
-        const i = gy * RX + gx
-        if (land[i]) continue
-        psi[i] = (psi[wrapIndex(gx - 1, gy)] + psi[wrapIndex(gx + 1, gy)] + psi[wrapIndex(gx, gy - 1)] + psi[wrapIndex(gx, gy + 1)] - curl[i]) / 4
-      }
+    for (let i = 0; i < n; i++) {
+      if (land[i]) continue
+      psi[i] = (psi[left[i]] + psi[right[i]] + psi[up[i]] + psi[down[i]] - curl[i]) / 4
     }
   }
 
