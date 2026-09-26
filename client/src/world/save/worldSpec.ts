@@ -63,7 +63,9 @@ export const WORLD_SPEC_FIELDS: readonly SpecField[] = [
   // every save for no gain.
   { path: 'climate.humidity', input: CLIMATE_INPUTS.humidity },
   { path: 'climate.contrast', input: CLIMATE_INPUTS.contrast },
-  { path: 'climate.equatorOffset', input: CLIMATE_INPUTS.equatorOffset },
+  // climate.equatorOffset left the spec 2026-09-26 with its slider; a save
+  // that carries the line is read the partial-spec way, the value ignored
+  // (the world id never hashed it, so the id stands).
   // hydrology.riverDensity left the spec with erosion-v2 P4: the slider is a
   // draw filter now, and a spec field would dirty the save for a display
   // choice. Old saves carrying the key are read the usual partial-spec way —

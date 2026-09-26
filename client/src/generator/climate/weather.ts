@@ -41,7 +41,9 @@ export function defaultWeatherParams(): WeatherParams {
     temperatureOffset: CLIMATE_INPUTS.tempOffset.default,
     temperatureContrast: CLIMATE_INPUTS.contrast.toModel(CLIMATE_INPUTS.contrast.default),
     humidity: CLIMATE_INPUTS.humidity.toModel(CLIMATE_INPUTS.humidity.default),
-    equatorOffset: CLIMATE_INPUTS.equatorOffset.toModel(CLIMATE_INPUTS.equatorOffset.default),
+    // The thermal equator stays at the map's middle (the shift slider went
+    // 2026-09-26, see climateInputParams.ts).
+    equatorOffset: 0,
   }
 }
 

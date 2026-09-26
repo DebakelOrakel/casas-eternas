@@ -23,6 +23,7 @@
   "overlay.cratonAge.label": "Kratonalter",
   "overlay.cratonAge.help": "Färbt die Kruste nach Alter — blass, wo sie eben entstand, tief, wo sie so alt ist wie die Welt.",
   "overlay.cratonAge.legend.unit": "% des Weltalters",
+  "overlay.temperature.scale": "Jahresmittel auf Meereshöhe",
   "overlay.temperature.label": "Temperatur",
   "overlay.temperature.help": "Färbt die Karte nach der mittleren Jahrestemperatur.",
   "overlay.temperature.legend.unit": "°C",

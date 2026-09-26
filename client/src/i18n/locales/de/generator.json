@@ -124,8 +124,6 @@
   "generator.action.runDetailBake.help": "Führt die Erosion dieser Welt in der gewählten Auflösung aus und speichert das Ergebnis. Die 2K-Welt bleibt die Autorität — ein Bake verfeinert sie und fliesst nie zurück. Braucht zuerst mindestens einen Erosionslauf.",
   "generator.action.resetClimate.label": "Klima auf Standard zurücksetzen",
   "generator.action.resetClimate.help": "Alle Klimaregler auf ihren Standard zurücksetzen.",
-  "generator.panel.climate.equator.label": "Äquator",
-  "generator.panel.climate.equator.help": "Den Warmgürtel nördlich oder südlich der Kartenmitte verschieben.",
   "generator.panel.climate.humidity.label": "Feuchtigkeit",
   "generator.panel.climate.humidity.help": "Den globalen Niederschlag hoch- oder herunterskalieren.",
   "generator.panel.climate.contrast.label": "Kontrast",

@@ -15,14 +15,11 @@ export const CLIMATE_INPUTS = {
     unit: 'common.unit.celsius',
     inSpec: true,
   },
-  // Shifts the thermal equator north/south as a percentage of half-height.
-  equatorOffset: {
-    min: -50, max: 50, step: 5, default: 0,
-    i18n: 'generator.panel.climate.equator',
-    unit: 'common.unit.percent',
-    inSpec: true,
-    toModel: (v: number) => v / 100,
-  },
+  // The thermal-equator shift (equatorOffset, ±50 % of the half-height) was
+  // a slider here until 2026-09-26. Since the climate runs inside the
+  // history (ADAPTIVE_MESH_PLAN.md phase 5.4) a shift set afterwards left
+  // the terrain eroded under one climate and coloured by another; the
+  // model keeps the parameter at 0 and the map draws the equator instead.
   // Global moisture supply, 100 % = neutral.
   humidity: {
     min: 40, max: 200, step: 5, default: 100,

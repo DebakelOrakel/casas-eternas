@@ -34,6 +34,7 @@ import type { SimEvent, PlateSimulationSnapshot } from '../../generator/tectonic
 import { eventCategory } from '../../generator/tectonics/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
+import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
 import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops } from '../../generator/climate/climateColors'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
@@ -362,6 +363,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let ribbonLevel: 'flat' | 'coarse' | 'fine' = 'flat'
 
   // The flat map plane + its toroidal 3x3 recentering (see ToroidalMapView).
+  // The temperature scale follows the camera: checked per frame, redrawn
+  // only when the view or its inputs changed (see renderTemperatureScale).
+  scene.onBeforeRenderObservable.add(() => renderTemperatureScale())
+
   const mapView = createToroidalMapView({
     scene,
     worldWidth: WORLD_WIDTH,
@@ -511,6 +516,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     <div class="compute-progress" data-value="compute-progress" hidden>
       <span class="compute-progress-fill" data-value="compute-progress-fill"></span>
     </div>
+    <div class="temp-scale"><canvas data-value="temp-scale" role="img"></canvas></div>
     <div class="world-panel" data-stage="world">
       <p class="world-panel__intro" data-t="generator.world.intro"></p>
       <div class="world-panel__fields">
@@ -609,7 +615,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     <div class="gen-step" data-stage="climate">
       <section class="gen-params">
         <h2 class="gen-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
-        ${paramField(CLIMATE_INPUTS.equatorOffset, 'equator-offset-input', 'equator-offset-label')}
         ${paramField(CLIMATE_INPUTS.humidity, 'humidity-input', 'humidity-label')}
         ${paramField(CLIMATE_INPUTS.contrast, 'contrast-input', 'contrast-label')}
       </section>
@@ -794,6 +799,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       stepBar.relabel()
       worldChooser.relabel()
       saveMenu.relabel()
+      tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
       // The step statuses are words the screen chooses, not the bar's; this is
       // what puts the new language into them.
       updateNavState()
@@ -822,8 +828,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const humidityLabel = root.querySelector<HTMLElement>('[data-value="humidity-label"]')!
   const contrastInput = root.querySelector<HTMLInputElement>('.contrast-input')!
   const contrastLabel = root.querySelector<HTMLElement>('[data-value="contrast-label"]')!
-  const equatorOffsetInput = root.querySelector<HTMLInputElement>('.equator-offset-input')!
-  const equatorOffsetLabel = root.querySelector<HTMLElement>('[data-value="equator-offset-label"]')!
   const carryingCapacityInput = root.querySelector<HTMLInputElement>('.carrying-capacity-input')!
   const carryingCapacityLabel = root.querySelector<HTMLElement>('[data-value="carrying-capacity-label"]')!
   const concentrationInput = root.querySelector<HTMLInputElement>('.concentration-input')!
@@ -1552,6 +1556,22 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // makes the overflow reappear on the opposite edge, so it stitches back together across
   // the seam. (Full-raster paintPixels layers already cover the whole canvas, so only the
   // shape/text `paint` layers need this.) See the [[project_worldgen_canvas_flip]] note.
+  // The equator: the map's middle row, about which the climate is symmetric
+  // (the thermal-equator shift is 0 since 2026-09-26). A faint dashed line,
+  // drawn across the wrapped copies like the map's other lines.
+  function drawEquator(c: CanvasRenderingContext2D): void {
+    const y = MAP_HEIGHT / 2
+    c.save()
+    c.strokeStyle = 'rgba(44, 62, 96, 0.32)'
+    c.lineWidth = 2
+    c.setLineDash([20, 16])
+    c.beginPath()
+    c.moveTo(0, y)
+    c.lineTo(MAP_WIDTH, y)
+    c.stroke()
+    c.restore()
+  }
+
   const paintWrapped = (c: CanvasRenderingContext2D, fn: (c: CanvasRenderingContext2D) => void): void => {
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
@@ -1686,6 +1706,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // this is the result and covers only the crust.
     { id: 'cratonAge', label: 'Craton age', enabled: false, hidden: true, paintPixels: paintCratonAge },
     { id: 'boundaries', label: 'Boundaries', enabled: false, paintPixels: paintBoundaryMask },
+    // The equator is always drawn, like the events — a property of the map,
+    // not a user toggle (decided 2026-09-26 on the picture check).
+    { id: 'equator', label: 'Equator', enabled: true, paint: (c) => paintWrapped(c, drawEquator) },
     { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
     { id: 'currents', label: 'Currents', enabled: false, hidden: true, paint: drawCurrents },
     { id: 'waterBalance', label: 'Water balance', enabled: false, hidden: true, paintPixels: paintWaterBalance },
@@ -2067,6 +2090,72 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     applyOverlays()
     refreshOverlayList()
     renderLegends()
+    renderTemperatureScale(true)
+  }
+
+  // THE TEMPERATURE SCALE beside the map (2026-09-26): a strip between the
+  // column and the map, coloured like the temperature wash with the
+  // sea-level band of the latitude each screen row looks at — the band the
+  // climate's own function gives (climate/temperature.ts), with the
+  // greenhouse, the contrast and the planet's forcing as they stand, and
+  // nothing of the terrain. A reading aid, not a field: it follows the
+  // camera, since a row's latitude does, and stands in every step (decided
+  // 2026-09-26). The pick is the map view's own ground pick per sampled row.
+  const tempScale = root.querySelector<HTMLCanvasElement>('[data-value="temp-scale"]')!
+  tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
+  const TEMP_SCALE_SAMPLES = 96
+  let tempScaleSeen = ''
+  function renderTemperatureScale(force = false): void {
+    const focus = getCameraFocus()
+    const key = `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${getCameraZoom().toFixed(4)},${tempBandInput.value},${contrastInput.value},${obliquityInput.value},${tempScale.clientHeight}`
+    if (!force && key === tempScaleSeen) return
+    tempScaleSeen = key
+    const params = weatherParams()
+    const band = seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet)
+    const rect = tempScale.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
+    const w = Math.max(1, Math.round(rect.width * dpr))
+    const h = Math.max(1, Math.round(rect.height * dpr))
+    if (tempScale.width !== w || tempScale.height !== h) { tempScale.width = w; tempScale.height = h }
+    const c = tempScale.getContext('2d')
+    if (!c) return
+    c.clearRect(0, 0, w, h)
+    const bandW = Math.round(10 * dpr)
+    const pickX = rect.right + 2
+    const values: (number | null)[] = []
+    for (let i = 0; i <= TEMP_SCALE_SAMPLES; i++) {
+      const screenY = rect.top + (rect.height * i) / TEMP_SCALE_SAMPLES
+      const ground = mapView.pickGround(pickX, screenY)
+      if (!ground) { values.push(null); continue }
+      // The map's plane is centred on the origin (ToroidalMapView places
+      // the copies at centerZ ± worldHeight), so z = 0 is the equator and
+      // the poles lie at ±H/2: half a turn from the row fraction.
+      const v = (((ground.z / WORLD_HEIGHT + 0.5) % 1) + 1) % 1
+      const row = Math.min(band.length - 1, Math.max(0, Math.floor(v * band.length)))
+      values.push(band[row])
+    }
+    const step = h / TEMP_SCALE_SAMPLES
+    for (let i = 0; i < TEMP_SCALE_SAMPLES; i++) {
+      const v = values[i]
+      if (v === null) continue
+      const [r, g, b] = temperatureColor(v)
+      c.fillStyle = `rgb(${r},${g},${b})`
+      c.fillRect(0, Math.floor(i * step), bandW, Math.ceil(step) + 1)
+    }
+    // Ticks where the band crosses a multiple of 10 °C between two samples.
+    c.fillStyle = 'rgba(31, 35, 40, 0.85)'
+    c.font = `${Math.round(9 * dpr)}px 'IBM Plex Sans', system-ui, sans-serif`
+    c.textBaseline = 'middle'
+    for (let i = 0; i < TEMP_SCALE_SAMPLES; i++) {
+      const a = values[i]
+      const b = values[i + 1]
+      if (a === null || b === null) continue
+      const lo = Math.ceil(Math.min(a, b) / 10) * 10
+      if (lo > Math.max(a, b) || lo === Math.min(a, b)) continue
+      const y = Math.round(step * (i + (lo - a) / (b - a || 1)))
+      c.fillRect(bandW, y, Math.round(4 * dpr), 1)
+      c.fillText(String(lo), bandW + Math.round(6 * dpr), y)
+    }
   }
 
   function toggleOverlay(id: OverlayId): void {
@@ -2329,7 +2418,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const amp = lastSeasonality[cell.i]
     if (amp === OCEAN_AMPLITUDE) return null
     const mean = lastTemperature[cell.i]
-    const north = shiftedYNorm(cell.gy, climateResY, Number(equatorOffsetInput.value) / 100) < 0.5
+    const north = shiftedYNorm(cell.gy, climateResY, 0) < 0.5
     const sign = north ? 1 : -1
     // Index 6 = July, the northern peak; cos is 1 there.
     return Array.from({ length: 12 }, (_, m) => mean + sign * (amp / 2) * Math.cos(((m - 6) / 12) * 2 * Math.PI))
@@ -2663,7 +2752,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     temperatureOffset: Number(tempBandInput.value),
     temperatureContrast: Number(contrastInput.value) / 100,
     humidity: Number(humidityInput.value) / 100,
-    equatorOffset: Number(equatorOffsetInput.value) / 100,
+    // The thermal equator sits at the map's middle since 2026-09-26 (the
+    // shift slider is gone; the map draws the equator instead).
+    equatorOffset: 0,
     // The Planet stage's forcing, in model units (planet/planetForcing.ts).
     planet: {
       obliquityDeg: Number(obliquityInput.value),
@@ -3378,7 +3469,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     tempBandLabel.textContent = t > 0 ? `+${t}` : String(t)
     humidityLabel.textContent = humidityInput.value
     contrastLabel.textContent = contrastInput.value
-    equatorOffsetLabel.textContent = equatorOffsetInput.value
     epochLengthLabel.textContent = displayValue(TECTONICS_INPUTS.epochLength, Number(epochLengthInput.value))
     alluviumLabel.textContent = alluviumInput.value
     rockContrastLabel.textContent = rockContrastInput.value
@@ -4200,7 +4290,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     tempBandInput.value = String(spec.values['planet.greenhouse'])
     humidityInput.value = String(spec.values['climate.humidity'])
     contrastInput.value = String(spec.values['climate.contrast'])
-    equatorOffsetInput.value = String(spec.values['climate.equatorOffset'])
     epochLengthInput.value = String(spec.values['tectonics.epochLength'])
     alluviumInput.value = String(spec.values['tectonics.alluvium'])
     rockContrastInput.value = String(spec.values['tectonics.rockContrast'])
@@ -4240,7 +4329,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   wireClimateSlider(humidityInput, humidityLabel)
   wireClimateSlider(contrastInput, contrastLabel)
-  wireClimateSlider(equatorOffsetInput, equatorOffsetLabel)
 
   // Ecology top sliders (carrying capacity + concentration): live-recompute
   // (debounced) — cheap (a single pass over the coarse climate grid). Concentration

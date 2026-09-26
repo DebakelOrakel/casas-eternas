@@ -134,6 +134,9 @@ export interface CoupledEpochOptions {
   // were the epoch's. A preview economy: the weather chain costs a
   // second an epoch at any node count.
   climateEvery?: number
+  // The coarsen and refine run every this many epochs (1: every epoch);
+  // the triangulation is rebuilt from the moved nodes every epoch.
+  remeshEvery?: number
   // A scale on the tectonics' uplift forcing — the calibration's knob
   // against the erosion rates, 1 = the engine's calibrated ratio.
   upliftScale?: number
@@ -165,7 +168,9 @@ export interface CoupledEpochOptions {
 // the weather chain was 1.0 and the intermediate picture 1.0, the erosion
 // 0.1): the live loop runs the climate and draws every third epoch. The
 // full-density job (5.8b) runs both every epoch — the time is the job's.
-export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 0.25, climateEvery: 3, renderEvery: 3 } as const
+// remeshEvery 3 the same day (the coarsen and refine were 0.22 s of the
+// remaining 1.6; the rebuild stays per epoch).
+export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 0.25, climateEvery: 3, remeshEvery: 3, renderEvery: 3 } as const
 
 // The flexure raster's cell in macro cells: 4 (31 km at 2048) — the
 // flexural parameter is tens to a hundred-odd km, and the kernel wants a
@@ -327,9 +332,15 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const z = state.add(MESH_Z, 'intensive')
   for (let v = 0; v < mesh1.vertexSlots; v++) if (mesh1.vAlive[v]) z[v] = baselineAt(sim, mesh1.vx[v], mesh1.vy[v]) + h[v]
   timing.baseline = lap()
-  const target = densityTarget(state, options.budget ?? 1)
-  const c = coarsen(mesh1, state, target)
-  const r = refine(mesh1, state, target, {
+  // The coarsen and the refine every remeshEvery-th epoch (the rebuild
+  // from the moved nodes is every epoch — the drift needs it): the density
+  // targets move with the column and the relief, slowly; a fourth of an
+  // epoch's second at every epoch for a change the next two would undo.
+  const remeshEvery = Math.max(1, options.remeshEvery ?? 1)
+  const remeshDue = sim.epoch % remeshEvery === 0
+  const target = remeshDue ? densityTarget(state, options.budget ?? 1) : null
+  const c = target ? coarsen(mesh1, state, target) : { removed: 0 }
+  const r = !target ? { inserted: 0 } : refine(mesh1, state, target, {
     seed: (sim.warpSeed ^ sim.epoch) >>> 0,
     sample: (v, x, y) => {
       // A new node: relief inherited from the neighbours, scaled by the

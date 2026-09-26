@@ -23,6 +23,7 @@
   "overlay.cratonAge.label": "Craton age",
   "overlay.cratonAge.help": "Colour the crust by age — pale where it just formed, deep where it is as old as the world.",
   "overlay.cratonAge.legend.unit": "% of world age",
+  "overlay.temperature.scale": "Annual mean at sea level",
   "overlay.temperature.label": "Temperature",
   "overlay.temperature.help": "Colour the map by mean annual air temperature.",
   "overlay.temperature.legend.unit": "°C",

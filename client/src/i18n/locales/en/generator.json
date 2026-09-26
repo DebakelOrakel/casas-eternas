@@ -124,8 +124,6 @@
   "generator.action.runDetailBake.help": "Runs this world's erosion at the selected resolution and stores the result. The 2K world stays the authority — a bake refines it and never feeds back. Needs at least one erosion pass first.",
   "generator.action.resetClimate.label": "Reset climate to defaults",
   "generator.action.resetClimate.help": "Return every climate lever to its default.",
-  "generator.panel.climate.equator.label": "Equator",
-  "generator.panel.climate.equator.help": "Shift the warm belt north or south of the map's middle.",
   "generator.panel.climate.humidity.label": "Humidity",
   "generator.panel.climate.humidity.help": "Scale global rainfall up or down.",
   "generator.panel.climate.contrast.label": "Contrast",

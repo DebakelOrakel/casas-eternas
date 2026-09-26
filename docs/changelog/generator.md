@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-26
+- **changed** Climate: the equator is drawn on the map and a temperature scale stands beside it; the slider that shifted the warm belt is gone — the climate runs inside the history now, and a belt moved afterwards no longer matched the land it had shaped. `generator.panel.climate`
 - **changed** Tectonics: the history's live picture and its climate refresh every third epoch, the epochs between reuse the last weather — about half the wait per epoch; the full-density bake keeps every epoch. `generator.panel.tectonics`
 
 ## 2026-09-25

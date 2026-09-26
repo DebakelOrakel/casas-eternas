@@ -21,17 +21,33 @@ import { DEFAULT_PLANET_FORCING, obliquityContrast, solarTemperatureOffsetC, typ
 // regardless of the bathymetry below).
 // `planet` (planet/planetForcing.ts): the sun's strength shifts the mean, the
 // tilt sets the annual gradient the contrast knob then scales.
-export function computeTemperature(elevation: Float32Array, worldWidth: number, worldHeight: number, offsetC = 0, contrast = 1, equatorOffset = 0, dryLand?: Uint8Array, planet: PlanetForcing = DEFAULT_PLANET_FORCING): Float32Array {
-  const temperature = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+// The latitudinal base at a latitude (−1 pole … 0 equator … 1 pole), °C,
+// before the global offset: the mean of the equator and pole temperatures
+// plus the contrast-scaled deviation (+ at the equator, − at the pole), so
+// contrast 0 is a uniform mean and 1 the original span. The tilt scales the
+// gradient too (planet/planetForcing.ts).
+export function baseTemperatureAtLatitude(lat: number, contrast: number, planet: PlanetForcing): number {
   const meanC = (CLIMATE_TUNING.tempEquatorC + CLIMATE_TUNING.tempPoleC) / 2
   const gradient = contrast * obliquityContrast(planet.obliquityDeg)
+  const deviation = (CLIMATE_TUNING.tempEquatorC - CLIMATE_TUNING.tempPoleC) * (Math.cos((lat * Math.PI) / 2) - 0.5)
+  return meanC + gradient * deviation
+}
+
+// The sea-level temperature per climate row, °C, offset included — what the
+// generator's temperature scale beside the map shows: the band a flat sea
+// would have at each latitude, nothing of the terrain.
+export function seaLevelTemperatureBand(offsetC: number, contrast: number, planet: PlanetForcing = DEFAULT_PLANET_FORCING): Float32Array {
+  const band = new Float32Array(CLIMATE_RES_Y)
+  const offset = offsetC + solarTemperatureOffsetC(planet.solarConstant)
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) band[gy] = baseTemperatureAtLatitude(latitudeAt(gy, 0), contrast, planet) + offset
+  return band
+}
+
+export function computeTemperature(elevation: Float32Array, worldWidth: number, worldHeight: number, offsetC = 0, contrast = 1, equatorOffset = 0, dryLand?: Uint8Array, planet: PlanetForcing = DEFAULT_PLANET_FORCING): Float32Array {
+  const temperature = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   const offset = offsetC + solarTemperatureOffsetC(planet.solarConstant)
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    const lat = latitudeAt(gy, equatorOffset)
-    // Deviation from the mean at this latitude (+ at the equator, − at the pole);
-    // contrast scales it, so contrast 0 → uniform mean, 1 → the original span.
-    const deviation = (CLIMATE_TUNING.tempEquatorC - CLIMATE_TUNING.tempPoleC) * (Math.cos((lat * Math.PI) / 2) - 0.5)
-    const base = meanC + gradient * deviation
+    const base = baseTemperatureAtLatitude(latitudeAt(gy, equatorOffset), contrast, planet)
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const e = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
       const dry = sampleDryLandAtCell(dryLand, gx, gy, worldWidth, worldHeight)

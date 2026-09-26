@@ -112,7 +112,6 @@ export const STAGES: readonly Stage[] = [
     inputs: {
       humidity: CLIMATE_INPUTS.humidity,
       contrast: CLIMATE_INPUTS.contrast,
-      equatorOffset: CLIMATE_INPUTS.equatorOffset,
     },
     // Wind and ocean currents are computed and cached here too, and are neither
     // registered fields nor saved — the ecology step is their only consumer.

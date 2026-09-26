@@ -621,10 +621,16 @@ function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'te
   // a start followed by a stop is then exactly one epoch, which is what
   // the pipeline harness's determinism check builds its two worlds with.
   const tick = (): void => {
+    // A tick after the stop is no tick: the seamless tick below queues one
+    // with a zero delay, and a stop message queued during the epoch is
+    // handled before it — without this line that tick ran an epoch behind
+    // the settled picture (pipeline harness, "a stop between two epochs").
+    if (intervalId === undefined) return
     if (!sim || renderInFlight || epochInFlight) return
     const currentSim = sim
     epochInFlight = true
     renderInFlight = true
+    const startedAt = performance.now()
     ;(async () => {
       // A world restored without a mesh (a save from before the history)
       // gets one from its own synthesis on the first epoch.
@@ -633,6 +639,7 @@ function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'te
         iterationsPerEpoch: HISTORY_DEFAULTS.iterationsPerEpoch,
         budget: HISTORY_DEFAULTS.budget,
         climateEvery: HISTORY_DEFAULTS.climateEvery,
+        remeshEvery: HISTORY_DEFAULTS.remeshEvery,
         upliftScale: HISTORY_DEFAULTS.upliftScale,
         controls: { alluvium: historyControls.alluvium, rockContrast: historyControls.rockContrast },
         weather: historyControls.weather,
@@ -654,6 +661,10 @@ function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'te
     })().finally(() => {
       epochInFlight = false
       renderInFlight = false
+      // The interval is the pacing's minimum, not a wait: an epoch that
+      // outlasted it starts the next one now rather than at the interval's
+      // next beat (up to a beat idle per epoch, measured 2026-09-26).
+      if (intervalId !== undefined && performance.now() - startedAt >= epochIntervalMs) setTimeout(tick, 0)
     })
   }
   epochsSinceRender = HISTORY_DEFAULTS.renderEvery

@@ -106,7 +106,7 @@ not assume; look up which one the field you touched uses.
 ```
 cd client && npm run harness:roundtrip       # the save format; 0.2 s
 cd client && npm run harness:mesh            # the adaptive mesh; ~5 s
-cd client && npm run harness:pipeline        # the pipeline's behaviour; ~50 s
+cd client && npm run harness:pipeline        # the pipeline's behaviour; ~3 min
 cd client && npm run harness:amplify         # the amplification bake; ~13 s
 cd client && npm run harness:golden          # the generator; ~20 min (4 world builds at 2048×1024, 4 coupled epochs each)
 cd client && npm run harness:golden:record   # re-record the metric baseline, on purpose

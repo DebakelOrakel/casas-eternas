@@ -306,7 +306,10 @@ test('the hand-over is what resetTectonics goes back to', async () => {
 
   let base = p.count('rendered')
   p.dispatch({ type: 'tectonicsStart' })
-  await until(() => p.count('rendered') >= base + 4, { label: 'a few tectonic epochs' })
+  // Four pictures are ten epochs since the loop draws every third one
+  // (HISTORY_DEFAULTS.renderEvery, 2026-09-26) — a few seconds each on this
+  // world, where the uplift field's cost does not shrink with the size.
+  await until(() => p.count('rendered') >= base + 4, { label: 'a few tectonic epochs', timeout: 180000 })
   p.dispatch({ type: 'tectonicsStop' })
   await quiet(p)
   check('tectonics moves the world off the hand-over', hash(p.last('rendered').elevation) !== handover)
@@ -321,7 +324,7 @@ test('the hand-over is what resetTectonics goes back to', async () => {
   // the same place — an uncopied one drifts along with the world it preserves.
   base = p.count('rendered')
   p.dispatch({ type: 'tectonicsStart' })
-  await until(() => p.count('rendered') >= base + 4, { label: 'more epochs' })
+  await until(() => p.count('rendered') >= base + 4, { label: 'more epochs', timeout: 180000 })
   p.dispatch({ type: 'tectonicsStop' })
   await quiet(p)
   const second = p.count('rendered')
@@ -602,7 +605,14 @@ test('two pipelines given the same messages agree byte for byte', async () => {
   for (const p of [a, b]) {
     // Eroded first, so the sediment basins (F1) have deposits to list — by
     // exactly one epoch each, so the two worlds are comparable.
+    const epochBefore = p.last('rendered').epoch
+    const settledBefore = p.settledRenders()
     await runOneEpoch(p)
+    // A stop is a stop: the epoch in flight settles, and nothing runs after
+    // it. The seamless tick (2026-09-26) once outlived the stop and ran one
+    // more epoch behind the settled picture — the rivers of N+1 over the
+    // land of N.
+    check('a start and a stop are exactly one epoch and one settled render', p.last('rendered').epoch === epochBefore + 1 && p.settledRenders() === settledBefore + 1, `epochs +${p.last('rendered').epoch - epochBefore}, settled +${p.settledRenders() - settledBefore}`)
     p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
     await until(() => p.count('climateData') >= 1, { label: 'climate' })
     p.dispatch({ type: 'hydrologyRun' })
@@ -619,6 +629,36 @@ test('two pipelines given the same messages agree byte for byte', async () => {
   check('the ice is byte-identical', hash(new Float32Array(ha.iceThickness)) === hash(new Float32Array(hb.iceThickness)) && ha.iceThickness.byteLength === ha.waterLevel.byteLength, `ice ${ha.iceThickness.byteLength} / ${hb.iceThickness.byteLength} bytes, level ${ha.waterLevel.byteLength}; hashes ${hash(new Float32Array(ha.iceThickness))} ${hash(new Float32Array(hb.iceThickness))}`)
   check('the sediment basins are the same list', JSON.stringify(ha.sedimentBasins) === JSON.stringify(hb.sedimentBasins) && Array.isArray(ha.sedimentBasins) && ha.sedimentBasins.length > 0)
   check('the coast is byte-identical', ha.coast !== null && hb.coast !== null && JSON.stringify(ha.coast.reaches) === JSON.stringify(hb.coast.reaches) && hash(new Uint8Array(ha.coastType)) === hash(new Uint8Array(hb.coastType)) && ha.coastType.byteLength > 0)
+})
+
+// -------------------------------------------------------------------- stopping
+
+// A stop that lands BETWEEN two epochs — as the screen's does: the message
+// waits in the worker's queue while an epoch runs. No epoch may START after
+// it: one settled render follows, of the epoch that was running or the
+// terrain as it stands — at most renderEvery epochs past the last picture,
+// since the pictures come every renderEvery-th epoch and the epochs between
+// are never shown. The seamless tick (2026-09-26) once ran epochs past the
+// stop here (renders 1i 2s 3s …), and the hydrology then drew the rivers
+// of N+1 over the land of N.
+test('a stop between two epochs runs no epoch after it', async () => {
+  const p = await freshPipeline()
+  await growWorld(p)
+  const settledBefore = p.settledRenders()
+  const renders = p.count('rendered')
+  p.dispatch({ type: 'tectonicsStart' })
+  await until(() => p.count('rendered') > renders, { label: 'the first epoch picture', timeout: 180000 })
+  const shown = p.last('rendered').epoch
+  // Queued as the screen's message would be: a macrotask that lands before
+  // the tick the epoch's end may have scheduled with a zero delay.
+  await new Promise((r) => setTimeout(() => { p.dispatch({ type: 'tectonicsStop' }); r() }, 0))
+  await until(() => p.settledRenders() > settledBefore, { label: 'the settled render', timeout: 180000 })
+  await quiet(p)
+  const settled = p.messages.filter((m) => m.type === 'rendered' && !m.intermediate).at(-1)
+  const sequence = p.messages.filter((m) => m.type === 'rendered').slice(renders).map((m) => `${m.epoch}${m.intermediate ? 'i' : 's'}`).join(' ')
+  const renderEvery = (await server.ssrLoadModule('/src/generator/pipeline/coupledEpoch.ts')).HISTORY_DEFAULTS.renderEvery
+  check('no epoch starts after the stop', settled.epoch >= shown && settled.epoch <= shown + renderEvery, `shown epoch ${shown}, settled epoch ${settled.epoch}; renders: ${sequence}`)
+  check('exactly one settled render follows the stop', p.settledRenders() === settledBefore + 1, `+${p.settledRenders() - settledBefore}`)
 })
 
 // ------------------------------------------------------------------------- run
