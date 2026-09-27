@@ -494,6 +494,11 @@ func (s *Store) Delete(ctx context.Context, uid string) error {
 	mu := s.lock(uid)
 	mu.Lock()
 	defer mu.Unlock()
+	// The mutex leaves with the world, or the map grows by one entry per
+	// world ever touched. Dropped while still held: a writer already waiting
+	// on it proceeds after us and finds the world gone; a writer arriving
+	// after the drop gets a fresh mutex for what is by then a new world.
+	defer s.locks.Delete(uid)
 
 	if _, err := s.readMeta(uid); err != nil {
 		return err

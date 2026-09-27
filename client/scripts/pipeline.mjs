@@ -506,6 +506,27 @@ test('a stage that cannot run says so instead of going quiet', async () => {
   check('ecology names the climate once a world exists', q.last('stageDeclined').needs === 'climate', JSON.stringify(q.last('stageDeclined')))
 })
 
+test('a hydrology pass overtaken by a reset publishes nothing', async () => {
+  // The pass awaits its routing; the onmessage handler does not. A reset
+  // that lands in that gap drops the climate and moves the terrain back to
+  // the hand-over — the pass that started before it must not come back and
+  // publish rivers for a terrain that is gone (bounty 9).
+  const p = await freshPipeline()
+  await growWorld(p)
+  p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+  await until(() => p.count('climateData') >= 1, { label: 'climate' })
+  p.dispatch({ type: 'hydrologyRun' })
+  p.dispatch({ type: 'resetStage', stage: 'tectonics' })
+  await settle(3000)
+  check('the overtaken pass stays silent', p.count('hydrologyData') === 0, `${p.count('hydrologyData')} published`)
+  // ... and does not leave the stage jammed: the next pass runs.
+  p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+  await until(() => p.count('climateData') >= 2, { label: 'the climate again' })
+  p.dispatch({ type: 'hydrologyRun' })
+  await until(() => p.count('hydrologyData') >= 1, { label: 'the pass after the reset' })
+  check('the pass after the reset publishes', p.count('hydrologyData') === 1)
+})
+
 test('a repeat hydrology call reuses the routing instead of re-flooding', async () => {
   // The expensive half (priority-flood routing, discharge, lakes) is cached.
   // The contract is visible from outside: a re-route sends lakes, watersheds,

@@ -88,12 +88,19 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	} else if targets.Has(config.TargetAuth) {
 		slog.Info("auth target selected, but nothing to log in to", "mode", authMode)
 	}
+	// Once the auth module owns the registry (below), its Close releases the
+	// store's lock on shutdown. Until then every failed return here must, or
+	// the bbolt lock outlives the failed start for an in-process caller —
+	// one deferred close for all of them, disarmed when the wiring succeeds.
+	wired := false
+	defer func() {
+		if !wired && registry != nil {
+			registry.Close()
+		}
+	}()
 
 	caller, tokens, err := buildIdentity(authMode, cfg)
 	if err != nil {
-		if registry != nil {
-			registry.Close()
-		}
 		return nil, nil, err
 	}
 
@@ -108,7 +115,6 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 			Registry: registry,
 		})
 		if err != nil {
-			registry.Close()
 			return nil, nil, err
 		}
 		modules = append(modules, login)
@@ -194,6 +200,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	// is already known — the server package deliberately knows about none of
 	// them, and the alternative of repeating three string literals is how a path
 	// stops being exempt without anyone deciding that it should.
+	wired = true
 	return modules, server.Gate(caller, []string{
 		client.ConfigPath,       // where the API is and how to log in
 		server.CapabilitiesPath, // "is this server answering", asked while logged out

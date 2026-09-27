@@ -111,9 +111,12 @@ type Grants struct {
 	Users map[string]string `json:"users,omitempty"`
 }
 
-// LevelOf ranks a caller against these grants. Unknown role names in the
-// file rank as None here — ParseLevel's loud path belongs to the grants
-// API that writes the file, not to every read on the request path.
+// LevelOf ranks a caller against these grants. An unknown role name in the
+// file grants nothing — ParseLevel's loud path belongs to the grants API
+// that writes the file, not to every read on the request path — but it
+// does not take anything away either: the caller then ranks as any other
+// authenticated user does, Viewer on a public world. A typo in the file
+// must not leave a named collaborator seeing less than a stranger.
 func (g Grants) LevelOf(callerID string) Level {
 	if callerID == "" {
 		return None
@@ -125,7 +128,6 @@ func (g Grants) LevelOf(callerID string) Level {
 		if level, err := ParseLevel(name); err == nil {
 			return level
 		}
-		return None
 	}
 	if g.Public {
 		return Viewer

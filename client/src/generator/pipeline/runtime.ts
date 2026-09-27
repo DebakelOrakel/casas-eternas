@@ -227,6 +227,12 @@ interface HydrologyResult {
   onMesh: MeshHydrology | null
 }
 let hydrology: HydrologyResult | null = null
+// Bumped whenever the hydrology result is dropped (an epoch, a reset, a
+// climate change) and read by the hydrology pass across its awaits: the
+// onmessage handler is sync, so nothing else stops a pass that started on a
+// terrain the world has since moved off from publishing onto the new one.
+let hydrologyGeneration = 0
+let hydrologyInFlight = false
 
 interface EcologyResult {
   // Cached from the last computeEcology — the initial-migration step reads it as
@@ -303,6 +309,7 @@ function clearResult(id: StageId): void {
       return
     case 'hydrology':
       hydrology = null
+      hydrologyGeneration += 1
       return
     case 'ecology':
       ecology = null
@@ -802,6 +809,9 @@ function handleHydrologyRun(): void {
   // Needs the current topography + a computed climate (rivers' water source).
   if (!sim || !lastRawElevations) { decline('hydrology', 'tectonics'); return }
   if (!climate) { decline('hydrology', 'climate'); return }
+  // One pass at a time: a second call while one runs would route the same
+  // terrain twice and publish twice. The running pass answers for both.
+  if (hydrologyInFlight) return
   const terrain = lastRawElevations
   const width = sim.width
   const height = sim.height
@@ -813,6 +823,13 @@ function handleHydrologyRun(): void {
   // Bound now: the refinement below replaces the module's climate, and the rest
   // of this pass must keep reading the one it started from unless it rebinds.
   let weather = climate
+  // What this pass answers for. After each await below the pass asks whether
+  // that is still the world's question — a world replaced under it, or a
+  // result dropped by an epoch or a reset, and it stops without publishing.
+  const world = worldGeneration
+  const generation = hydrologyGeneration
+  const stale = (): boolean => world !== worldGeneration || generation !== hydrologyGeneration
+  hydrologyInFlight = true
   // Async (the priority-flood routing is a Promise); the onmessage handler is
   // sync, so run it in an IIFE like the erode branch does.
   ;(async () => {
@@ -823,6 +840,7 @@ function handleHydrologyRun(): void {
     let result = hydrology
     if (!result) {
       const routing = await fillDepressionsAndRouteFlow(elevation, width, height, SEA_LEVEL)
+      if (stale()) return
       let discharge = accumulateDischarge(routing, elevation, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
       let maxDischarge = maxDischargeOverLand(discharge, elevation)
       let meanRunoff = meanLandRunoff(weather.precipitation, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
@@ -869,6 +887,7 @@ function handleHydrologyRun(): void {
         renderDryBasin = lakes.dryBasin
         renderSaltFlat = lakes.saltFlat
         await renderAndPost(terrain, false, 1, true)
+        if (stale()) return
         result = {
           routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
           bodies: lakes.bodies, level: lakes.level, surface: onMesh ? onMesh.raster.surface : waterLevelField(lakes.bodies, elevation, width, height).surface, body: lakes.body,
@@ -1045,7 +1064,7 @@ function handleHydrologyRun(): void {
     transfer.push(hydrologyMessage.coastType, hydrologyMessage.iceThickness, hydrologyMessage.waterTable)
     if (hydrologyMessage.coast) transfer.push(hydrologyMessage.coast.cells)
     emit(hydrologyMessage, transfer)
-  })()
+  })().finally(() => { hydrologyInFlight = false })
 }
 
 function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecologyRun' }>): void {

@@ -37,7 +37,12 @@ function fnv1a32(words: Uint32Array, offsetBasis: number, prime: number): number
 // A byte view hashed as words, tolerating a length that is not a multiple of
 // four (the tail is folded in separately rather than dropped).
 function hashBytes(view: ArrayBufferView, seedA: number, seedB: number): [number, number] {
-  const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength)
+  // A word view over an offset that is not a multiple of four throws; a
+  // subarray of a packed buffer can land on one. Copying realigns it, and
+  // the hash is over the bytes either way.
+  const bytes = view.byteOffset % 4 === 0
+    ? new Uint8Array(view.buffer, view.byteOffset, view.byteLength)
+    : new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice()
   const wordCount = bytes.byteLength >>> 2
   const words = new Uint32Array(bytes.buffer, bytes.byteOffset, wordCount)
   let a = fnv1a32(words, seedA, 0x01000193)

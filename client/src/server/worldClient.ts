@@ -45,7 +45,14 @@ export type UploadOutcome =
   | { ok: false; reason: 'offline' }
 
 function rememberedRevision(uid: string): number {
-  const raw = localStorage.getItem(REVISION_KEY_PREFIX + uid)
+  let raw: string | null = null
+  try {
+    raw = localStorage.getItem(REVISION_KEY_PREFIX + uid)
+  } catch {
+    // A private window or blocked site data throws on the READ as well as
+    // on the write; the writes below already tolerate it, and a save must
+    // not fail on the memory aid — it costs a redundant 409 at worst.
+  }
   const value = raw === null ? 0 : Number(raw)
   return Number.isInteger(value) && value > 0 ? value : 0
 }

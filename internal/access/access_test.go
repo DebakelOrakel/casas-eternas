@@ -76,6 +76,12 @@ func TestUnknownRoleNameRanksAsNone(t *testing.T) {
 	if got := grants.LevelOf("x"); got != None {
 		t.Errorf("emperor ranked as %v", got)
 	}
+	// ... and no lower than a stranger: on a public world the bad name is a
+	// viewer like everyone else, not locked out by the typo.
+	grants.Public = true
+	if got := grants.LevelOf("x"); got != Viewer {
+		t.Errorf("emperor on a public world ranked as %v, want Viewer", got)
+	}
 	if _, err := ParseLevel("emperor"); err == nil {
 		t.Error("ParseLevel accepted an unknown role")
 	}
