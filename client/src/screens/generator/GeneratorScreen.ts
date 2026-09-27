@@ -1011,9 +1011,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       stage = judged.stage
       progressPaused = !archeanRunning
     } else if (tectonicsRunning) {
-      label = t('generator.progress.epoch', { epoch: lastEpoch, age: formatWorldAge(worldAgeMa(lastArcheanEpochs, lastEpoch)) })
+      // The same two lines as the Archean's: the state over the advice.
+      // Early until the climate's minimum, late within the last epochs
+      // before the safety stop, the window between.
+      const judged = tectonicsStage(lastEpoch)
+      label = judged.hint
+      sub = judged.advice
       fraction = 1 - Math.max(0, autoStopAtEpoch - lastEpoch) / MAX_TECTONICS_EPOCHS
-      stage = lastEpoch < MIN_TECTONIC_EPOCHS ? 'early' : 'window'
+      stage = judged.stage
     } else if (climateInFlight) {
       label = t('generator.step.climate.label')
     } else if (hydrologyInFlight) {
@@ -3305,6 +3310,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // when the largest landmass is measurably assembling. The measured band
   // table above predates that re-verification; its numbers are stale but its
   // three-band judgement still holds.
+  // The tectonics' judgement, the Archean's twin: the climate step needs
+  // MIN_TECTONIC_EPOCHS, and the run stops itself at autoStopAtEpoch.
+  const TECTONICS_LATE_EPOCHS = 10
+  const tectonicsStage = (epoch: number): { hint: string; advice: string; stage: 'early' | 'window' | 'late' } => {
+    if (epoch < MIN_TECTONIC_EPOCHS) return { stage: 'early', hint: t('generator.panel.tectonics.stage.early'), advice: t('generator.panel.tectonics.stage.early.advice', { min: MIN_TECTONIC_EPOCHS }) }
+    if (epoch >= autoStopAtEpoch - TECTONICS_LATE_EPOCHS) return { stage: 'late', hint: t('generator.panel.tectonics.stage.late'), advice: t('generator.panel.tectonics.stage.late.advice', { epoch: autoStopAtEpoch }) }
+    return { stage: 'window', hint: t('generator.panel.tectonics.stage.window'), advice: t('generator.panel.tectonics.stage.window.advice') }
+  }
+
   // The state and its advice are two lines of one judgement: what the
   // Archean is doing, and what a stop now would give (or that it is too
   // early for one).
