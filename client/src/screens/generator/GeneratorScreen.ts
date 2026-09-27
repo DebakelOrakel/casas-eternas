@@ -1922,7 +1922,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // overlay is active.
   type LegendSpec =
     | { type: 'gradient'; title: string; unit: string; stops: { value: number; rgb: [number, number, number] }[] }
-    | { type: 'swatches'; title: string; items: { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' | 'ring' }[] }
+    | { type: 'swatches'; title: string; items: { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' | 'ring' | 'line'; dash?: 'solid' | 'dashed' | 'dotted' }[] }
   // EVERY ENTRY IS A FUNCTION, and renderLegends calls it. Two reasons, and the
   // first one was a bug: a spec written as a plain object runs its `t()` once,
   // when the screen is built, so the legend kept the language the generator was
@@ -2004,6 +2004,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     precipitation: () => ({ type: 'gradient', title: t('overlay.precipitation.label'), unit: t('overlay.precipitation.legend.unit'), stops: precipitationLegendStops }),
     monsoon: () => ({ type: 'gradient', title: t('overlay.monsoon.legend.title'), unit: '', stops: monsoonLegendStops }),
     biomes: () => ({ type: 'swatches', title: t('overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) }),
+    // The colours are the map's: the ribbon overlay's river blue, the water
+    // shader's lake, ice and coast tints (map/waterMaterialPlugin.ts).
+    rivers: () => ({ type: 'swatches', title: t('overlay.rivers.label'), items: [
+      { label: t('overlay.rivers.legend.perennial'), rgb: [45, 95, 175], shape: 'line', dash: 'solid' },
+      { label: t('overlay.rivers.legend.intermittent'), rgb: [45, 95, 175], shape: 'line', dash: 'dashed' },
+      { label: t('overlay.rivers.legend.ephemeral'), rgb: [45, 95, 175], shape: 'line', dash: 'dotted' },
+      { label: t('overlay.rivers.legend.lake'), rgb: [60, 110, 170] },
+      { label: t('overlay.rivers.legend.ice'), rgb: [216, 230, 242] },
+      { label: t('overlay.rivers.legend.cliff'), rgb: [72, 60, 50], shape: 'line', dash: 'solid' },
+      { label: t('overlay.rivers.legend.beach'), rgb: [238, 224, 178] },
+      { label: t('overlay.rivers.legend.marsh'), rgb: [150, 168, 130] },
+    ] }),
     waterBalance: () => ({ type: 'swatches', title: t('overlay.waterBalance.label'), items: [
       { label: t('overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
       { label: t('overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
@@ -2117,6 +2129,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           // Match the map's hotspot-plume marker (an orange ring).
           sw.className = 'legend-ring'
           sw.style.borderColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
+        } else if (it.shape === 'line') {
+          // A drawn line: the rivers' regimes (solid, dashed, dotted — the
+          // ribbon shader's convention) and the coast's cliff line.
+          sw.className = 'legend-line'
+          sw.style.borderTopStyle = it.dash ?? 'solid'
+          sw.style.borderTopColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
         } else {
           sw.className = 'legend-swatch'
           sw.style.background = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`

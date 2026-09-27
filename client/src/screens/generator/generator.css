@@ -241,6 +241,14 @@
   border-right: 6px solid transparent;
   border-bottom: 12px solid currentColor;
 }
+/* A drawn line in a legend row — the rivers' regimes and the cliff coast; the
+   dash style and colour are set inline on the top border. */
+.generator-screen .legend-line {
+  width: 22px;
+  height: 0;
+  flex: none;
+  border-top: 2px solid currentColor;
+}
 /* Hotspot-plume ring marker in a legend row — a hollow circle, matching the map. */
 .generator-screen .legend-ring {
   width: 10px;
