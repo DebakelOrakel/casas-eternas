@@ -70,6 +70,17 @@ export interface WorkerPlanetPreviewMessage {
   height: number
   weather?: WorkerWeatherParams
 }
+// THE SAMPLE WORLD ITSELF (2026-09-27): a real world's elevation, handed
+// over once by the screen (public/sample/, decoded with the save's own
+// layer), at its own size — the worker resamples it to the map on the next
+// preview. Without it the preview runs on planet/sampleWorld.ts's three
+// domes. Sent once, not with every preview: the buffer is two megabytes.
+export interface WorkerPlanetSampleMessage {
+  type: 'planetSample'
+  width: number
+  height: number
+  elevation: ArrayBuffer
+}
 
 export interface WorkerPlanetPreviewDataMessage {
   type: 'planetPreviewData'
@@ -192,6 +203,7 @@ export interface WorkerRestoreWorldMessage {
 }
 export type WorkerInboundMessage =
   | WorkerPlanetPreviewMessage
+  | WorkerPlanetSampleMessage
   | WorkerTectonicsStartMessage
   | WorkerTectonicsStopMessage
   | WorkerResetStageMessage

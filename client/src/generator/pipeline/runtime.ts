@@ -42,7 +42,7 @@ import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
 import { computeBiomes, computeBiomesFine } from '../climate/biomes'
-import { downsampleMax } from '../core/field'
+import { downsampleMax, sampleBilinearWorld } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import type { WaterBody } from '../surface/hydrology'
 import { buildRiverGraph, riverPolylinesFromGraph, serializeRiverGraph } from '../surface/riverGraph'
@@ -1449,6 +1449,7 @@ function handleResetStage(message: Extract<WorkerInboundMessage, { type: 'resetS
 
 const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMessage) => void } = {
   planetPreview: (m) => { void handlePlanetPreview(m as Extract<WorkerInboundMessage, { type: 'planetPreview' }>) },
+  planetSample: (m) => handlePlanetSample(m as Extract<WorkerInboundMessage, { type: 'planetSample' }>),
   tectonicsStart: (m) => handleTectonicsStart(m as Extract<WorkerInboundMessage, { type: 'tectonicsStart' }>),
   tectonicsStop: () => handleTectonicsStop(),
   resetStage: (m) => handleResetStage(m as Extract<WorkerInboundMessage, { type: 'resetStage' }>),
@@ -1473,10 +1474,29 @@ export const HANDLED_MESSAGE_TYPES: readonly string[] = Object.keys(HANDLERS)
 // climate on it is recomputed per request (the controls change it).
 let sampleWorld: { width: number; height: number; elevation: Float32Array; buffer: Uint8Array; relief: Uint8Array } | null = null
 
+// The elevation the preview runs on when the screen has supplied one (a
+// real world, at its own size), else the synthetic sample. Resampled to the
+// map at the preview's size, bilinear in world coordinates.
+let planetSample: { width: number; height: number; elevation: Float32Array } | null = null
+function handlePlanetSample(message: Extract<WorkerInboundMessage, { type: 'planetSample' }>): void {
+  planetSample = { width: message.width, height: message.height, elevation: new Float32Array(message.elevation) }
+  sampleWorld = null
+}
+function previewElevation(width: number, height: number): Float32Array {
+  if (!planetSample) return sampleWorldElevation(width, height)
+  const out = new Float32Array(width * height)
+  const { elevation, width: sw, height: sh } = planetSample
+  for (let y = 0; y < height; y++) {
+    const wy = ((y + 0.5) / height) * sh
+    for (let x = 0; x < width; x++) out[y * width + x] = sampleBilinearWorld(elevation, sw, sh, ((x + 0.5) / width) * sw, wy, sw, sh)
+  }
+  return out
+}
+
 async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type: 'planetPreview' }>): Promise<void> {
   const { width, height } = message
   if (!sampleWorld || sampleWorld.width !== width || sampleWorld.height !== height) {
-    const elevation = sampleWorldElevation(width, height)
+    const elevation = previewElevation(width, height)
     const rendered = await renderSimulationImage(
       { width, height, seeds: [], rafts: [], features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: 0, seaLevelOffset: 0, mantle: new Float32Array(MANTLE_RES_X * MANTLE_RES_Y) },
       renderPool(),

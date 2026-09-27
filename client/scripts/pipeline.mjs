@@ -611,6 +611,15 @@ test('the Planet preview answers on the sample world and touches nothing', async
   p.dispatch({ type: 'hydrologyRun' })
   await until(() => p.count('stageDeclined') >= 1, { label: 'hydrology declined' })
   check('the preview cached no climate for the stages', p.count('climateData') === 0)
+  // A supplied sample (2026-09-27) replaces the synthetic one: a flat ocean
+  // at a quarter of the size, resampled to the map — a different picture.
+  const before = d.buffer
+  const flat = new Float32Array((ARCHEAN_INIT.width / 2) * (ARCHEAN_INIT.height / 2)).fill(-0.5)
+  p.dispatch({ type: 'planetSample', width: ARCHEAN_INIT.width / 2, height: ARCHEAN_INIT.height / 2, elevation: flat.buffer })
+  p.dispatch({ type: 'planetPreview', width: ARCHEAN_INIT.width, height: ARCHEAN_INIT.height })
+  await until(() => p.count('planetPreviewData') >= 2, { label: 'the preview on the supplied sample', timeout: 60000 })
+  const after = p.last('planetPreviewData').buffer
+  check('the preview runs on the supplied sample', after.byteLength === before.byteLength && hash(after) !== hash(before))
 })
 
 test('every message type is dispatchable from a cold start', async () => {
@@ -622,6 +631,7 @@ test('every message type is dispatchable from a cold start', async () => {
     { type: 'tectonicsStop' }, { type: 'tectonicsStart' }, { type: 'resetStage', stage: 'erosion' },
     { type: 'requestElevationField' },
     { type: 'planetPreview', width: ARCHEAN_INIT.width, height: ARCHEAN_INIT.height },
+    { type: 'planetSample', width: 2, height: 1, elevation: new Float32Array(2).buffer },
     { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 },
     { type: 'hydrologyRun' },
     { type: 'ecologyRun' }, { type: 'migrationRun', origins: [] },

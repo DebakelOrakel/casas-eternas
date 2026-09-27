@@ -1,12 +1,15 @@
 import { metersToElevation, ABYSSAL_FLOOR } from '../elevation/elevationScale'
 import { toroidalDistanceSq } from '../core/toroidal'
 
-// THE SAMPLE WORLD — a fixed terrain the Planet step shows its controls on
-// before any world exists: three continents, a coastal range across the
-// westerlies (the rain shadow), an island arc in the trades. Deterministic,
-// no simulation, the same on every screen; the climate chain runs on it as
-// it runs on a real world, so what the overlays show is the model, not a
-// sketch of it. Once a world has plates the step shows that world instead.
+// THE SAMPLE WORLD'S FALLBACK — a fixed terrain the Planet step shows its
+// controls on before any world exists: three continents, a coastal range
+// across the westerlies (the rain shadow), an island arc in the trades.
+// Deterministic, no simulation, the same on every screen; the climate chain
+// runs on it as it runs on a real world, so what the overlays show is the
+// model, not a sketch of it. Once a world has plates the step shows that
+// world instead. Since 2026-09-27 the screen hands the worker a real world
+// for this (public/sample/, scripts/sampleWorld.mjs), and this one stands in
+// where that file is missing or fails to load — and in the harnesses.
 export function sampleWorldElevation(width: number, height: number): Float32Array {
   const out = new Float32Array(width * height).fill(ABYSSAL_FLOOR)
   // Continents as smooth domes: centre (fractions of the map), radius

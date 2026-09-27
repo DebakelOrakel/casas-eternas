@@ -78,7 +78,9 @@ interface ArtifactMeta {
 // An ENCODING, not a world field: this is the amplified 4k/8k raster, which is
 // derived presentation and never a queryable layer (worldmap-amplification.md,
 // rule 4). It borrows the save's quantiser, not its field registry.
-const ELEVATION_ENCODING: Encoding = { dtype: 'u16', scale: 2 / 65535, offset: -1 }
+// Exported for the Planet step's sample world (scripts/sampleWorld.mjs writes
+// it, the screen reads it): the same u16 the bake's elevation is stored in.
+export const ELEVATION_ENCODING: Encoding = { dtype: 'u16', scale: 2 / 65535, offset: -1 }
 
 // Rivers travel as raw binary rather than the save's JSON form: a baked
 // world's network runs to six figures of points, and JSON would be an order

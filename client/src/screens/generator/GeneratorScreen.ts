@@ -44,7 +44,7 @@ import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../generator/c
 import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
-import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from '../../world/save/worldLayers'
+import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer, decodeLayer } from '../../world/save/worldLayers'
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
 import { createOverlayList } from './OverlayList'
@@ -69,7 +69,7 @@ import { readRecipeValue as readYamlValue } from '../../world/save/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { artifactKey } from '../../storage/ArtifactStore'
-import { amplificationArtifactExists, amplificationPipelineVersion, readAmplificationArtifact, writeAmplificationArtifact } from '../../world/artifacts'
+import { ELEVATION_ENCODING, amplificationArtifactExists, amplificationPipelineVersion, readAmplificationArtifact, writeAmplificationArtifact } from '../../world/artifacts'
 import { readWorldInputs } from '../../world/save/loadWorldInputs'
 import { openWorld } from '../../world/query'
 import { amplifyPhaseFraction, bakeStageInBrowser } from '../../generator/surface/bakeInBrowser'
@@ -2196,6 +2196,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // one and a loaded one start every step on its defaults.
   interface OverlayMemory { on: Record<OverlayId, boolean>; field: EcologyFieldId | null }
   const overlayMemory = new Map<StepId, OverlayMemory>()
+  // Whether the panel on screen belongs to the world on screen — false until
+  // the first showPanel, and again after forgetOverlays. Declared HERE, above
+  // the first initArchean: that call runs while the screen is still being
+  // built, and a `let` further down would be in its temporal dead zone — a
+  // ReferenceError that aborts the build and leaves the chooser on white.
+  let panelEverShown = false
   const rememberOverlays = (): void => {
     overlayMemory.set(STEP_IDS[panelIndex], { on: { ...overlaysOn }, field: pickedEcologyField })
   }
@@ -2768,7 +2774,36 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let planetPreviewShown = false
   let planetPreviewRealBase: { base: Uint8ClampedArray; relief: Uint8Array } | null = null
   let planetPreviewDebounce: ReturnType<typeof setTimeout> | undefined
+  // THE SAMPLE WORLD IS A REAL ONE (2026-09-27): Astrakan's elevation at half
+  // the map, baked by scripts/sampleWorld.mjs into public/sample/ and fetched
+  // the first time the preview is asked for — a megabyte that never enters
+  // the bundle. Decoded with the bake artifacts' elevation encoding, handed
+  // to the worker once; a missing or malformed file leaves the worker on its
+  // synthetic sample, which is what the preview was before.
+  const PLANET_SAMPLE_URL = '/sample/astrakan-elevation.u16'
+  const PLANET_SAMPLE_WIDTH = MAP_WIDTH / 2
+  const PLANET_SAMPLE_HEIGHT = MAP_HEIGHT / 2
+  let planetSampleRequested = false
+  function loadPlanetSample(): void {
+    if (planetSampleRequested) return
+    planetSampleRequested = true
+    void (async () => {
+      try {
+        const response = await fetch(PLANET_SAMPLE_URL, { cache: 'force-cache' })
+        if (!response.ok) return
+        const bytes = await response.arrayBuffer()
+        if (bytes.byteLength !== PLANET_SAMPLE_WIDTH * PLANET_SAMPLE_HEIGHT * 2) return
+        const elevation = decodeLayer(bytes, ELEVATION_ENCODING)
+        worker.postMessage({ type: 'planetSample', width: PLANET_SAMPLE_WIDTH, height: PLANET_SAMPLE_HEIGHT, elevation: elevation.buffer }, [elevation.buffer])
+        // The preview already drawn is the synthetic world's; redraw on the real one.
+        if (STEP_IDS[panelIndex] === 'planet' && !(archeanFinalised || hasHandover)) requestPlanetPreview()
+      } catch {
+        // offline, or a dev server without the file: the fallback stands
+      }
+    })()
+  }
   function requestPlanetPreview(): void {
+    loadPlanetSample()
     postToWorker({ type: 'planetPreview', width: MAP_WIDTH, height: MAP_HEIGHT, weather: weatherParams() })
   }
   // A Planet control moved: the world's own climate when it has plates to
@@ -5196,9 +5231,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Show a panel. It navigates, asks for the data that panel needs, and sets the
   // overlay defaults for it — and since 2026-08-09 it does NOT commit anything:
   // the Archean hand-over moved to the gesture that means it (see commitGenesis).
-  // Whether the panel on screen belongs to the world on screen — false until
-  // the first showPanel, and again after forgetOverlays.
-  let panelEverShown = false
   const showPanel = (index: number): void => {
     if (STEP_IDS[index] !== 'planet') leavePlanetPreview()
     // Leaving a step: what it showed is what it shows next time.
