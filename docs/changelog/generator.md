@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-27
+- **fixed** Hydrology: coasts that drop straight into deep water no longer show lakes at the shore — the water there could not reach the sea in the model's own graph and stood at the land's next spill. `generator.panel.hydrology`
 - **new** Hydrology: the rivers and lakes overlay has a legend — perennial, seasonal and ephemeral rivers, lakes, ice, and the cliff, beach and marsh coasts. `overlay.rivers`
 - **new** Generator: a scale bar at the map's lower right, a round length in kilometres that follows the zoom. `generator.scaleBar`
 

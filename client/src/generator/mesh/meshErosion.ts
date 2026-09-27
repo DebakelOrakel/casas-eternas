@@ -181,11 +181,26 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
         e = mesh.rotateCcw(e)
       } while (e !== start)
     }
+    // The first ring of ocean nodes around land is ALWAYS active, whatever
+    // its distance: the deep ocean's nodes stand oceanSpacingM × budget
+    // apart (160 km at budget 4), farther than the band is wide, so a
+    // coast that drops straight into deep water had every ocean neighbour
+    // frozen — a wall the flood could not drain through, and the coast
+    // filled to its next land spill as a "lake" with a pour point on the
+    // sea floor (134 of 5256 coastal nodes on seed 985192350, 2026-09-27;
+    // the raster's band is at least one D8 step for the same reason).
     for (let v = 0; v < slots; v++) {
-      if (mesh.vAlive[v] && label[v] === oceanId && dist[v] > bandUnits) {
-        frozen[v] = 1
-        frozenCount++
-      }
+      if (!mesh.vAlive[v] || label[v] !== oceanId || dist[v] <= bandUnits) continue
+      let touchesLand = false
+      const start = mesh.vEdge[v]
+      let e = start
+      do {
+        if (label[mesh.to(e)] !== oceanId) { touchesLand = true; break }
+        e = mesh.rotateCcw(e)
+      } while (e !== start)
+      if (touchesLand) continue
+      frozen[v] = 1
+      frozenCount++
     }
   }
   // Active indices in vertex order.
