@@ -4,6 +4,7 @@
   "common.action.dismiss.label": "Dismiss",
   "common.action.dismiss.help": "Close this notification.",
   "common.unit.celsius": "°C",
+  "common.unit.kilometres": "km",
   "common.unit.percent": "%",
   "common.unit.myr": "Myr",
   "common.unit.degrees": "°",

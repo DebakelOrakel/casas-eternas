@@ -1,4 +1,4 @@
-import { Color4, PointerEventTypes, Scene } from '@babylonjs/core'
+import { Color4, Matrix, PointerEventTypes, Scene } from '@babylonjs/core'
 import { BUILD_VERSION } from '../../app/buildVersion'
 import { createGeneratorCamera } from '../../camera/generatorCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
@@ -363,9 +363,32 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let ribbonLevel: 'flat' | 'coarse' | 'fine' = 'flat'
 
   // The flat map plane + its toroidal 3x3 recentering (see ToroidalMapView).
-  // The temperature scale follows the camera: checked per frame, redrawn
-  // only when the view or its inputs changed (see renderTemperatureScale).
-  scene.onBeforeRenderObservable.add(() => renderTemperatureScale())
+  // The temperature scale and the scale bar follow the camera — but only
+  // once it has come to rest: both read the map through ground picks (a
+  // ray against the relief meshes and their wrapped copies, a hundred of
+  // them for the scale), and doing that every frame of a pan made the pan
+  // crawl (picture check 2026-09-27). The view's key is compared per
+  // frame, which is cheap; the redraw waits VIEW_SETTLE_MS after the last
+  // change.
+  const VIEW_SETTLE_MS = 60
+  let viewKeySeen = ''
+  let viewChangedAt = 0
+  let viewDirty = true
+  scene.onBeforeRenderObservable.add(() => {
+    const focus = getCameraFocus()
+    const key = `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${getCameraZoom().toFixed(4)},${getCameraYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`
+    if (key !== viewKeySeen) {
+      viewKeySeen = key
+      viewChangedAt = performance.now()
+      viewDirty = true
+      return
+    }
+    if (viewDirty && performance.now() - viewChangedAt >= VIEW_SETTLE_MS) {
+      viewDirty = false
+      renderTemperatureScale()
+      renderScaleBar()
+    }
+  })
 
   const mapView = createToroidalMapView({
     scene,
@@ -529,6 +552,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       </svg>
     </div>
     <div class="temp-scale"><canvas data-value="temp-scale" role="img"></canvas></div>
+    <div class="scale-bar" data-value="scale-bar" role="img" hidden>
+      <span class="scale-bar__label" data-value="scale-bar-label"></span>
+      <span class="scale-bar__bar" data-value="scale-bar-bar"></span>
+    </div>
     <div class="world-panel" data-stage="world">
       <p class="world-panel__intro" data-t="generator.world.intro"></p>
       <div class="world-panel__fields">
@@ -2196,10 +2223,73 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // greenhouse, the contrast and the planet's forcing as they stand, and
   // nothing of the terrain. A reading aid, not a field: it follows the
   // camera, since a row's latitude does, and stands in every step (decided
-  // 2026-09-26). The pick is the map view's own ground pick per sampled row.
+  // 2026-09-26). The pick is the plane pick above, per sampled row.
+  // THE SCALE BAR at the map's lower right (2026-09-27): a bar of a round
+  // length — 1, 2 or 5 × 10ⁿ km — sized to the metres a screen pixel spans
+  // where the bar stands. The span is read from the map view's own ground
+  // pick at two points a hundred pixels apart on the bar's row (the
+  // torus's shorter way between them), so the bar is right at any zoom,
+  // tilt and place, and says nothing while the ray misses the plane.
+  // The ground for the two scales: the map's PLANE (y = 0), met by the
+  // picking ray analytically — microseconds, where a mesh pick against the
+  // fine relief and its wrapped copies cost milliseconds each and made a
+  // slow pan stutter at high zoom (2026-09-27). For a latitude and for a
+  // map scale the plane is the right reference anyway; the relief's
+  // exaggeration is a view property.
+  function pickPlane(screenX: number, screenY: number): { x: number; z: number } | null {
+    const camera = scene.activeCamera
+    if (!camera) return null
+    const ray = scene.createPickingRay(screenX, screenY, Matrix.Identity(), camera)
+    if (Math.abs(ray.direction.y) < 1e-6) return null
+    const t = -ray.origin.y / ray.direction.y
+    if (t <= 0) return null
+    return { x: ray.origin.x + ray.direction.x * t, z: ray.origin.z + ray.direction.z * t }
+  }
+  const scaleBar = root.querySelector<HTMLElement>('[data-value="scale-bar"]')!
+  const scaleBarLabel = root.querySelector<HTMLElement>('[data-value="scale-bar-label"]')!
+  const scaleBarBar = root.querySelector<HTMLElement>('[data-value="scale-bar-bar"]')!
+  const SCALE_BAR_PROBE_PX = 100
+  const SCALE_BAR_MIN_PX = 70
+  const SCALE_BAR_MAX_PX = 170
+  const metresPerWorldUnit = (METERS_PER_CELL * MAP_WIDTH) / WORLD_WIDTH
+  let scaleBarSeen = ''
+  function renderScaleBar(): void {
+    const focus = getCameraFocus()
+    const key = `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${getCameraZoom().toFixed(4)},${getCameraYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`
+    if (key === scaleBarSeen) return
+    scaleBarSeen = key
+    const rect = scaleBar.getBoundingClientRect()
+    const y = scaleBar.hidden ? window.innerHeight - 40 : rect.top + rect.height / 2
+    const xRight = scaleBar.hidden ? window.innerWidth - 24 : rect.right - 8
+    const a = pickPlane(xRight - SCALE_BAR_PROBE_PX, y)
+    const b = pickPlane(xRight, y)
+    if (!a || !b) { scaleBar.hidden = true; return }
+    let dx = Math.abs(b.x - a.x) % WORLD_WIDTH
+    if (dx > WORLD_WIDTH / 2) dx = WORLD_WIDTH - dx
+    let dz = Math.abs(b.z - a.z) % WORLD_HEIGHT
+    if (dz > WORLD_HEIGHT / 2) dz = WORLD_HEIGHT - dz
+    const metresPerPx = (Math.hypot(dx, dz) * metresPerWorldUnit) / SCALE_BAR_PROBE_PX
+    if (!(metresPerPx > 0)) { scaleBar.hidden = true; return }
+    // The round length whose bar fits the band, the largest such.
+    let lengthKm = 0
+    for (let exp = 0; exp <= 5 && lengthKm === 0; exp++) {
+      for (const m of [1, 2, 5]) {
+        const km = m * 10 ** exp
+        const px = (km * 1000) / metresPerPx
+        if (px >= SCALE_BAR_MIN_PX && px <= SCALE_BAR_MAX_PX) { lengthKm = km; break }
+        if (px > SCALE_BAR_MAX_PX) break
+      }
+    }
+    if (lengthKm === 0) { scaleBar.hidden = true; return }
+    scaleBar.hidden = false
+    scaleBarBar.style.width = `${Math.round((lengthKm * 1000) / metresPerPx)}px`
+    scaleBarLabel.textContent = `${lengthKm} ${t('common.unit.kilometres')}`
+    scaleBar.setAttribute('aria-label', `${lengthKm} ${t('common.unit.kilometres')}`)
+  }
+
   const tempScale = root.querySelector<HTMLCanvasElement>('[data-value="temp-scale"]')!
   tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
-  const TEMP_SCALE_SAMPLES = 96
+  const TEMP_SCALE_SAMPLES = 64
   let tempScaleSeen = ''
   function renderTemperatureScale(force = false): void {
     const focus = getCameraFocus()
@@ -2221,7 +2311,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const values: (number | null)[] = []
     for (let i = 0; i <= TEMP_SCALE_SAMPLES; i++) {
       const screenY = rect.top + (rect.height * i) / TEMP_SCALE_SAMPLES
-      const ground = mapView.pickGround(pickX, screenY)
+      const ground = pickPlane(pickX, screenY)
       if (!ground) { values.push(null); continue }
       // The map's plane is centred on the origin (ToroidalMapView places
       // the copies at centerZ ± worldHeight), so z = 0 is the equator and

@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-09-27
+- **new** Generator: a scale bar at the map's lower right, a round length in kilometres that follows the zoom. `generator.scaleBar`
+
 ## 2026-09-26
 - **changed** Generator: the progress indicator names what is being computed; the Archean and the tectonics fill a disc as they advance through their window, the other stages let rings rise like a plume; the Archean's narration moved from its band over the map into the pill and stands there after the stop. `generator.progress`
 - **changed** Climate: the equator is drawn on the map and a temperature scale stands beside it; the slider that shifted the warm belt is gone — the climate runs inside the history now, and a belt moved afterwards no longer matched the land it had shaped. `generator.panel.climate`
