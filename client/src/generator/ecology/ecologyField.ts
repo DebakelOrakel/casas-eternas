@@ -14,6 +14,7 @@ import { OCEAN_PRECIP } from '../climate/precipitation'
 import { clamp01, smoothstep } from '../core/interpolation'
 import { downsampleMax, wrapValue } from '../core/field'
 import { ECOLOGY_TUNING, PASTURE_BY_BIOME, TIMBER_BY_BIOME } from './ecologyTuneParams'
+import type { Volcano } from '../tectonics/volcanoes'
 import type { LandBiomeId } from './ecologyTuneParams'
 
 // Ocean sentinel for the output fields (matches the climate fields' convention):
@@ -59,13 +60,6 @@ export interface EcologyFields {
   resX: number
   resY: number
   fields: Record<EcologyFieldId, Float32Array>
-}
-
-export interface Volcano {
-  x: number
-  y: number
-  thickness: number
-  kind: 'hotspot' | 'flood' | 'arc'
 }
 
 // Everything the ecology step reads. Climate fields are on the coarse grid;

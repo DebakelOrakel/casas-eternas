@@ -77,6 +77,7 @@ import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, follow
 import { MIGRATION_INPUTS } from '../../generator/migration/migrationInputParams'
 import { ARCHEAN_INPUTS } from '../../generator/archean/archeanInputParams'
 import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
+import { wrapValue } from '../../generator/core/field'
 import { TECTONICS_INPUTS } from '../../generator/tectonics/tectonicsInputParams'
 import { ECOLOGY_INPUTS, ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputParams'
 import { WORLD_SPEC_FIELDS, specFromYaml, specToYamlLines } from '../../world/save/worldSpec'
@@ -1592,11 +1593,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const y0 = Math.floor(fy)
     const tx = fx - x0
     const ty = fy - y0
-    const wrap = (a: number, n: number): number => ((a % n) + n) % n
-    const xa = wrap(x0, climateResX)
-    const xb = wrap(x0 + 1, climateResX)
-    const ya = wrap(y0, climateResY)
-    const yb = wrap(y0 + 1, climateResY)
+    const xa = wrapValue(x0, climateResX)
+    const xb = wrapValue(x0 + 1, climateResX)
+    const ya = wrapValue(y0, climateResY)
+    const yb = wrapValue(y0 + 1, climateResY)
     const at = (xw: number, yw: number, comp: number): number => lastCurrents![(yw * climateResX + xw) * 2 + comp]
     const lerp2 = (comp: number): number =>
       (at(xa, ya, comp) * (1 - tx) + at(xb, ya, comp) * tx) * (1 - ty) + (at(xa, yb, comp) * (1 - tx) + at(xb, yb, comp) * tx) * ty
@@ -1631,8 +1631,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           path.moveTo(x, y)
           path.lineTo(nx, ny)
           // Wrap for the next sample; a seam-crossing segment just clips.
-          x = ((nx % MAP_WIDTH) + MAP_WIDTH) % MAP_WIDTH
-          y = ((ny % MAP_HEIGHT) + MAP_HEIGHT) % MAP_HEIGHT
+          x = wrapValue(nx, MAP_WIDTH)
+          y = wrapValue(ny, MAP_HEIGHT)
         }
       }
     }
@@ -4757,15 +4757,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!cc) return -1
     const rx = ecologyResX
     const ry = ecologyResY
-    const wrap = (i: number, m: number): number => ((i % m) + m) % m
-    const gx0 = wrap(Math.floor((mx / MAP_WIDTH) * rx), rx)
-    const gy0 = wrap(Math.floor((my / MAP_HEIGHT) * ry), ry)
+    const gx0 = wrapValue(Math.floor((mx / MAP_WIDTH) * rx), rx)
+    const gy0 = wrapValue(Math.floor((my / MAP_HEIGHT) * ry), ry)
     const isLand = (i: number): boolean => cc[i] !== ECOLOGY_OCEAN
     if (isLand(gy0 * rx + gx0)) return gy0 * rx + gx0
     for (let r = 1; r < Math.max(rx, ry); r++) {
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
-        const ni = wrap(gy0 + dy, ry) * rx + wrap(gx0 + dx, rx)
+        const ni = wrapValue(gy0 + dy, ry) * rx + wrapValue(gx0 + dx, rx)
         if (isLand(ni)) return ni
       }
     }

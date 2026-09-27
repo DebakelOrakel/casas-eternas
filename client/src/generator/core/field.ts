@@ -22,7 +22,11 @@
 // plus oceanAge's own bilinear-in-world-coordinates sampler -> sampleBilinearWorld.
 
 // Wrap a value into [0, n) for any sign. The one-liner that had nine private
-// copies across eight files.
+// copies across eight files. What deliberately stays inline is the wrapped
+// RASTER INDEX in the per-cell loops (`((y + h) % h) * w + ((x + w) % w)` and
+// kin, in the flow routing, the coast graph, the raft scatter …): a call per
+// cell there is a performance lever, and the idiom is the same six characters
+// wherever it appears.
 // A wrapped 2-D index on a resX×resY grid — the helper oceanCurrents,
 // seasonality and monsoon each used to write for themselves (BUG_BOUNTY 34).
 export function wrapIndex2(x: number, y: number, resX: number, resY: number): number {

@@ -1,4 +1,5 @@
 import { smoothstep } from '../core/interpolation'
+import { wrapValue } from '../core/field'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { metersToElevation } from './elevationScale'
 
@@ -38,10 +39,8 @@ function periodicValueNoise(x: number, y: number, cellsX: number, cellsY: number
   const y0 = Math.floor(y)
   const fx = smoothstep(x - x0)
   const fy = smoothstep(y - y0)
-  const wrapX = (i: number): number => ((i % cellsX) + cellsX) % cellsX
-  const wrapY = (i: number): number => ((i % cellsY) + cellsY) % cellsY
-  const x0w = wrapX(x0), x1w = wrapX(x0 + 1)
-  const y0w = wrapY(y0), y1w = wrapY(y0 + 1)
+  const x0w = wrapValue(x0, cellsX), x1w = wrapValue(x0 + 1, cellsX)
+  const y0w = wrapValue(y0, cellsY), y1w = wrapValue(y0 + 1, cellsY)
   const n00 = hashLatticePoint(x0w, y0w, seed)
   const n10 = hashLatticePoint(x1w, y0w, seed)
   const n01 = hashLatticePoint(x0w, y1w, seed)

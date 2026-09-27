@@ -20,12 +20,12 @@ export interface Volcano {
 // flooding the marker layer. Hotspots/flood basalts are few, so they're never thinned.
 const ARC_MARKER_CELL = 60
 
-export // Volcanic markers for the mantle overlay: hotspot cones (plateB -1) + flood-basalt
+// Volcanic markers for the mantle overlay: hotspot cones (plateB -1) + flood-basalt
 // provinces (plateB -2), both always shown, plus ACTIVE volcanic arcs (subduction/
 // island arcs still being fed at their boundary — epochsSinceDeposit small — with real
 // relief), grid-thinned so a busy world doesn't send thousands. See TerrainFeature.volcanic.
-function collectVolcanoes(features: TerrainFeature[]): { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[] {
-  const out: { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[] = []
+export function collectVolcanoes(features: TerrainFeature[]): Volcano[] {
+  const out: Volcano[] = []
   const arcByCell = new Map<number, TerrainFeature>()
   for (const f of features) {
     if (f.plateB === -1) out.push({ x: f.x, y: f.y, thickness: Math.abs(f.thickness), kind: 'hotspot' })

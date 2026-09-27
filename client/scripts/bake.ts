@@ -143,9 +143,22 @@ function createFsArtifactStore(root: string): ArtifactStore {
           return null
         }
       }
-      let files: string[] = []
+      // One nested level, as the OPFS store lists: the family members'
+      // files live a directory down (`family-1/elevation.u16`,
+      // world/artifacts.ts), and a top-level-only listing reported every
+      // baked family as missing them.
+      const files: string[] = []
       try {
-        files = (await readdir(join(root, uid))).filter((name) => !name.startsWith('.tmp-'))
+        for (const entry of await readdir(join(root, uid), { withFileTypes: true })) {
+          if (entry.name.startsWith('.tmp-')) continue
+          if (entry.isFile()) files.push(entry.name)
+          else if (entry.isDirectory()) {
+            for (const inner of await readdir(join(root, uid, entry.name), { withFileTypes: true })) {
+              if (inner.isFile() && !inner.name.startsWith('.tmp-')) files.push(`${entry.name}/${inner.name}`)
+            }
+          }
+        }
+        files.sort()
       } catch {
         // an empty, freshly minted entry
       }

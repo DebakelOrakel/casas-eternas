@@ -1,6 +1,5 @@
 import { apiBase } from './worldClient'
 import { authFetch } from './session'
-import type { StoredArtifact } from '../storage/ArtifactStore'
 
 // Inspecting and pruning the SERVER's artifact store.
 //
@@ -16,10 +15,28 @@ import type { StoredArtifact } from '../storage/ArtifactStore'
 // bytes are recomputable by this machine, server bytes are what every other
 // client is currently relying on.
 
+// One entry of the server's listing (GET /v1/artifacts). Written out here
+// rather than imported from storage/: the wire format is this module's
+// contract, and server/ and storage/ are peers that must not import each
+// other (the type import was the last edge of that cycle). It is kept
+// field-for-field the shape the local store lists (storage/ArtifactStore
+// StoredArtifact), so one grouping function serves both tiers by structure
+// — the compiler checks the match at the call (artifactAdmin.groupArtifacts).
+export interface ServerArtifact {
+  artifactUid: string
+  bytes: number
+  worldUid: string
+  worldId: string
+  pipelineVersion: string
+  stage: string
+  label: string
+  width: number
+  height: number
+  bakeMs: number
+}
+
 export interface ServerArtifacts {
-  // Flat, the same shape the local store lists — one grouping function serves
-  // both tiers (artifactAdmin.groupArtifacts).
-  artifacts: StoredArtifact[]
+  artifacts: ServerArtifact[]
   bytes: number
 }
 
@@ -31,7 +48,7 @@ export async function listServerArtifacts(): Promise<ServerArtifacts | null> {
   try {
     const response = await authFetch(`${base}/artifacts`, { cache: 'no-store' })
     if (!response.ok) return null
-    const body = (await response.json()) as { artifacts?: StoredArtifact[] | null; bytes?: number }
+    const body = (await response.json()) as { artifacts?: ServerArtifact[] | null; bytes?: number }
     return { artifacts: body.artifacts ?? [], bytes: body.bytes ?? 0 }
   } catch {
     return null
