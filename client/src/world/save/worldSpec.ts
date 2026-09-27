@@ -88,17 +88,24 @@ export interface WorldSpec {
 // changes, which is what reproduces the nesting without a second description of
 // it — the table's order is the only thing that decides the layout.
 export function specToYamlLines(spec: WorldSpec): string[] {
-  const lines = [`  seed: "${spec.seed}"`]
+  return [`  seed: "${spec.seed}"`, ...valuesToYamlLines(WORLD_SPEC_FIELDS, spec.values, 1)]
+}
+
+// The nested block for a set of fields, `depth` levels in (1 = under a
+// top-level key). Shared with the run history (worldHistory.ts), which
+// writes a subset of the same fields under each run.
+export function valuesToYamlLines(fields: readonly SpecField[], values: Record<string, number>, depth: number): string[] {
+  const lines: string[] = []
   let open: string[] = []
-  for (const field of WORLD_SPEC_FIELDS) {
+  for (const field of fields) {
     const parts = field.path.split('.')
     const parents = parts.slice(0, -1)
-    for (let depth = 0; depth < parents.length; depth++) {
-      if (open[depth] === parents[depth] && open.length > depth) continue
-      lines.push(`${'  '.repeat(depth + 1)}${parents[depth]}:`)
-      open = [...parents.slice(0, depth), parents[depth]]
+    for (let level = 0; level < parents.length; level++) {
+      if (open[level] === parents[level] && open.length > level) continue
+      lines.push(`${'  '.repeat(depth + level)}${parents[level]}:`)
+      open = [...parents.slice(0, level), parents[level]]
     }
-    lines.push(`${'  '.repeat(parents.length + 1)}${parts[parts.length - 1]}: ${spec.values[field.path]}`)
+    lines.push(`${'  '.repeat(depth + parents.length)}${parts[parts.length - 1]}: ${values[field.path]}`)
   }
   return lines
 }

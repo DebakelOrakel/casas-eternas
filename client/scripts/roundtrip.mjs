@@ -35,6 +35,7 @@ const M = {
   amplify: await L('/src/generator/surface/amplify.ts'),
   settings: await L('/src/world/bakeSettings.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
+  history: await L('/src/world/save/worldHistory.ts'),
 }
 const JSZip = (await import(`${CLIENT}/node_modules/jszip/dist/jszip.min.js`)).default
 
@@ -121,6 +122,42 @@ check('layout: nesting and order unchanged',
   layout[0] === '  seed: "s"' && layout[1] === '  planet:' && layout[2].startsWith('    ') && layout.some((l) => l === '  genesis:')
   && layout.some((l) => l === '    subsistence:') && layout.some((l) => l.startsWith('      arable: ')),
   layout.slice(0, 3).join(' | '))
+
+// --- 2b. the run history -----------------------------------------------------
+//
+// The block that says which values each run had (worldHistory.ts): it goes
+// round through the same dotted-path reader as the spec, so numbered maps
+// stand in for lists, and a save without the block reads as no runs.
+console.log('\n— run history —')
+{
+  const H = M.history
+  const genesisValues = H.runValues(H.GENESIS_RUN_FIELDS, values)
+  const tectonicsValues = H.runValues(H.TECTONICS_RUN_FIELDS, values)
+  const history = H.emptyWorldHistory()
+  H.openRun(history.genesis, genesisValues, 'build-a')
+  H.tallyRun(history.genesis, 120, genesisValues, 'build-a')
+  H.openRun(history.tectonics, tectonicsValues, 'build-a')
+  H.tallyRun(history.tectonics, 45, tectonicsValues, 'build-a')
+  // The same values again extend the run; changed values open the next one.
+  H.openRun(history.tectonics, tectonicsValues, 'build-a')
+  H.tallyRun(history.tectonics, 5, tectonicsValues, 'build-a')
+  const changed = { ...tectonicsValues, 'tectonics.alluvium': tectonicsValues['tectonics.alluvium'] + 1 }
+  H.openRun(history.tectonics, changed, 'build-a')
+  H.tallyRun(history.tectonics, 12, changed, 'build-a')
+  check('a run with the same values extends the entry', history.tectonics.length === 2 && history.tectonics[0].epochs === 50, JSON.stringify(history.tectonics.map((r) => r.epochs)))
+  // A new build opens a run too — the seam between two generators is data.
+  H.openRun(history.tectonics, changed, 'build-b')
+  check('a new build opens a run of its own', history.tectonics.length === 3 && history.tectonics[2].generator === 'build-b')
+  const yaml = ['spec:', ...M.spec.specToYamlLines({ seed: 's', values }), 'status:', '  erosionRun: 1', ...H.historyToYamlLines(history)].join('\n')
+  const back = H.historyFromYaml(yaml)
+  const same = JSON.stringify(back) === JSON.stringify(history)
+  check('the history survives write → read', same, same ? '' : JSON.stringify(back).slice(0, 200))
+  check('a save without the block has no runs', H.historyFromYaml(yaml.slice(0, yaml.indexOf('history:'))).tectonics.length === 0)
+  check('nothing run writes no block', H.historyToYamlLines(H.emptyWorldHistory()).length === 0)
+  // A control added after the run was written reads as its default, as in the spec.
+  const older = H.historyFromYaml('history:\n  tectonics:\n    0:\n      epochs: 3\n      generator: x\n      values:\n        tectonics:\n          alluvium: 70\n')
+  check('a value the run did not record reads as the default', older.tectonics[0].values['tectonics.alluvium'] === 70 && older.tectonics[0].values['climate.humidity'] === M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'climate.humidity').input.default)
+}
 
 // --- 3. identity -------------------------------------------------------------
 //

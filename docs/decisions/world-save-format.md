@@ -51,6 +51,12 @@ spec:
   humidity: <int>           # …and the rest of the climate / erosion / ecology sliders
 status:
   erosionRun: <passes>
+history:                    # since 2026-09-27; absent while no run has happened
+  genesis:
+    0: { epochs: 120, generator: <build>, values: { genesis: {…} } }
+  tectonics:
+    0: { epochs: 45, generator: <build>, values: { planet: {…}, tectonics: {…}, climate: {…} } }
+    1: { epochs: 12, generator: <build>, values: {…} }
 ```
 
 `spec` is the human-editable recipe. The four sliders that used to sit there —
@@ -65,6 +71,15 @@ is genuinely load-bearing. `apiVersion` versions the *generator*: while worldgen
 development, a save only guarantees a faithful reload against the same code
 version — bump the version on breaking generation changes so old saves are
 recognizably out of date.
+
+`history` records HOW the world came about: one entry per run of the Archean
+and of the tectonics, with the slider values the run read, its epoch count and
+the build that ran it. `spec` holds only the end values, and a world whose
+sliders moved between runs was made by values the spec no longer shows. Runs
+with unchanged values and build extend the last entry; a tectonics reset empties
+the tectonics list, a fresh Archean both. Numbered maps rather than YAML
+sequences, because the recipe reader walks dotted paths and knows no lists.
+Documentation, not replay: nothing re-runs it (see `world/save/worldHistory.ts`).
 
 ## What's stored vs regenerated
 

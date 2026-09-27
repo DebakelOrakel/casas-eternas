@@ -80,6 +80,7 @@ import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
 import { TECTONICS_INPUTS } from '../../generator/tectonics/tectonicsInputParams'
 import { ECOLOGY_INPUTS, ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputParams'
 import { WORLD_SPEC_FIELDS, specFromYaml, specToYamlLines } from '../../world/save/worldSpec'
+import { GENESIS_RUN_FIELDS, TECTONICS_RUN_FIELDS, emptyWorldHistory, historyFromYaml, historyToYamlLines, openRun, runValues, tallyRun } from '../../world/save/worldHistory'
 import type { WorldSpec } from '../../world/save/worldSpec'
 import { displayValue, type InputParam } from '../../generator/core/inputParams'
 import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
@@ -913,6 +914,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Archean epochs completed — carried into the world.yaml recipe and, after the
   // handover, into the world-age readout.
   let lastArcheanEpochs = 0
+  // The runs this world was made by (world/save/worldHistory.ts): opened at
+  // each start gesture with the values the worker is sent, counted on from
+  // the epochs the worker reports back. genesisTallied is the Archean epoch
+  // the count has reached — its own variable, because lastArcheanEpochs also
+  // gates the step bar and is not reset on every path that replaces the world.
+  let history = emptyWorldHistory()
+  let genesisTallied = 0
   // Whether this screen holds a world at all: step 0 was answered with "Create
   // world", or a world was opened from a file. Every later step is gated on it
   // (see entryRequirementUnmet) — until then there is a map on screen, but it
@@ -3239,7 +3247,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // reports it, rather than at the start gesture — the count is what the
     // relief, the bake and the panels past erosion gate on, and it must say
     // what the map shows.
-    if (tectonicsRunning && message.epoch > lastEpoch) erosionRunCount += 1
+    if (tectonicsRunning && message.epoch > lastEpoch) {
+      erosionRunCount += 1
+      tallyRun(history.tectonics, message.epoch - lastEpoch, runValues(TECTONICS_RUN_FIELDS, readSpec().values), BUILD_VERSION)
+    }
     lastEpoch = message.epoch
     lastPlateCount = message.plateCount
     lastContinentCount = message.raftLabels.length
@@ -3322,6 +3333,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const initArchean = (seed: string, vigour: number, water: number): void => {
     lastEpoch = 0
     archeanRunning = false
+    // A new world: nothing has run on it yet.
+    history = emptyWorldHistory()
+    genesisTallied = 0
     postToWorker({
       type: 'genesisInit',
       seed,
@@ -3361,6 +3375,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       updateProgress()
       return
     }
+    openRun(history.genesis, runValues(GENESIS_RUN_FIELDS, readSpec().values), BUILD_VERSION)
     postToWorker({ type: 'genesisStart' })
     setArcheanRunning(true)
     updateOverlays()
@@ -3370,6 +3385,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     postToWorker({ type: 'resetStage', stage: 'genesis' })
     setArcheanRunning(false)
     lastArcheanEpochs = 0
+    history = emptyWorldHistory()
+    genesisTallied = 0
     archeanFinalised = false
     hasHandover = false
     // The gate to plate tectonics reads this, so a restart has to close it
@@ -3433,6 +3450,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   function handleGenesisStatus(message: WorkerGenesisStatusMessage): void {
+    tallyRun(history.genesis, message.epoch - genesisTallied, runValues(GENESIS_RUN_FIELDS, readSpec().values), BUILD_VERSION)
+    genesisTallied = message.epoch
     lastArcheanEpochs = message.epoch
     updateSaveIndicator()
     statCrust.textContent = String(Math.round(message.crustFraction * 100))
@@ -3481,6 +3500,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // stale. The eroded terrain is NOT dropped: the epochs erode it on (phase
     // 5.1), so the count of eroding epochs carries on from where it was.
     invalidateAfter('tectonics')
+    openRun(history.tectonics, runValues(TECTONICS_RUN_FIELDS, readSpec().values), BUILD_VERSION)
     postToWorker({ type: 'tectonicsStart', alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value), weather: weatherParams() })
     sayTectonicsButton(true)
     updateControlsDisabled()
@@ -3661,6 +3681,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // written here would differ from the one every reader computes. A hash
       // that is subtly wrong is worse than an absent one; readers derive it
       // from the save, the way the queryable reader does (world/save).
+      // The runs the world was made by, values and epochs per run — what
+      // spec's end values cannot say (world/save/worldHistory.ts). Absent
+      // while no run has happened.
+      ...historyToYamlLines(history),
       '',
     ].join('\n')
   }
@@ -4504,6 +4528,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     for (const f of ECOLOGY_WEIGHT_FIELDS) abundance.set(f, Number(spec.values[ecologyWeightPath(f).replace('spec.', '')]))
     syncSliderLabels()
     erosionRunCount = Number(readYamlValue(yaml, 'status.erosionRun') ?? 0)
+    // The runs behind the file, carried on from here; a file from before the
+    // block starts with none and the next run opens its first entry.
+    history = historyFromYaml(yaml)
+    genesisTallied = lastArcheanEpochs
     // lastEpoch is set from the restore render's reported epoch (status
     // .tectonicsRun == the snapshot's epoch), so no need to set it here.
 
@@ -4839,6 +4867,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     invalidateAfter('tectonics')
     migrationOrigins = []
     erosionRunCount = 0
+    // Back at the hand-over: the tectonics runs are undone, the Archean's stand.
+    history.tectonics = []
     postToWorker({ type: 'resetStage', stage: 'tectonics' })
     updateNavState() // topography is back to the hand-over → re-lock erosion onwards
   })
