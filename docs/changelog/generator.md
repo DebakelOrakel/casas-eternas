@@ -4,6 +4,9 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-27
+- **changed** Generator: the hover readout lists what the step's layers say at the point, and the legend what is on — both from one table per layer, so a step cannot offer a layer the readout does not know. `generator.readout`
+- **new** Generator: each step remembers which layers you had on; a new or a loaded world starts every step on its defaults. `generator.overlays`
+- **new** Ecology: an off entry among the resource picks; while nothing or the carrying capacity is picked the panel shows the three levers, a picked resource shows its own slider. `generator.panel.ecology`
 - **new** Save: world.yaml records every run of the Archean and the tectonics — the slider values it ran on, its epochs and the build — under `history`. `generator.save`
 - **changed** Tectonics: an epoch is one million years, fixed — the epoch-length slider is gone. `generator.panel.tectonics`
 - **fixed** Hydrology: coasts that drop straight into deep water no longer show lakes at the shore — the water there could not reach the sea in the model's own graph and stood at the land's next spill. `generator.panel.hydrology`

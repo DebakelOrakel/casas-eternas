@@ -1916,10 +1916,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // THE OVERLAYS. Which layers exist, what they are called and which icon
   // stands for them lives in overlays.ts; which of them a step offers lives in
-  // steps.ts; the two tables below say when a layer can be shown and what its
-  // legend says, because both read this screen's own data. 'rivers' bundles the
-  // scene-space river ribbons + the lake tint under one control. Events are not
-  // a layer you switch — they are always on.
+  // steps.ts; the table below (overlayReadout) says when a layer can be shown,
+  // what its legend says and what it reads out, because all three read this
+  // screen's own data. Events are not a layer you switch — they are always on.
   //
   // 'gradient' = a continuous colour ramp with value labels; 'swatches' =
   // discrete colour+label rows. Shown on the right whenever a legend-bearing
@@ -1927,110 +1926,295 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   type LegendSpec =
     | { type: 'gradient'; title: string; unit: string; stops: { value: number; rgb: [number, number, number] }[] }
     | { type: 'swatches'; title: string; items: { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' | 'ring' | 'line'; dash?: 'solid' | 'dashed' | 'dotted' }[] }
-  // EVERY ENTRY IS A FUNCTION, and renderLegends calls it. Two reasons, and the
-  // first one was a bug: a spec written as a plain object runs its `t()` once,
-  // when the screen is built, so the legend kept the language the generator was
-  // entered in for as long as the world stayed open. The second is that a
-  // legend may depend on live state, which is what the ecology one used to do.
+  // ONE ROW PER LAYER, and every layer must fill it in (a layer added to
+  // overlays.ts is a compile error here until it does): whether it can be
+  // shown right now, what its legend says, and what it reads out at a hovered
+  // cell. `null` is an answer — a legend that would explain nothing (names,
+  // boundaries, wind), a readout the layer has no per-cell value for.
   //
-  // The gradient titles and units below are still English in the code — they
-  // have no catalog key yet, and giving them one is its own step.
-  // WHETHER a layer can be shown right now — one predicate per layer, keyed by
-  // the id, so a layer added to the vocabulary is a compile error here until it
-  // says when it exists. (The icons and the names live in overlays.ts; these
-  // read the screen's own data, which is why they stay.)
-  const overlayAvailable: Record<OverlayId, () => boolean> = {
-    terrain: () => lastColoredBase !== null,
+  // The tooltip and the legend both DERIVE from this and from the step table:
+  // the legend shows the entries of the layers that are on, the readout the
+  // rows of the layers the step OFFERS (see probeRowsFor). It used to be three
+  // tables — availability by layer, legends by layer as a Partial, readout
+  // rows by STEP, hand-written — and nothing tied a step's layers to the rows
+  // its tooltip had: the Planet step offered five climate layers and read out
+  // none of them, Tectonics read out the crust age it does not offer.
+  //
+  // EVERY ENTRY IS A FUNCTION, and the callers call it at use. Two reasons,
+  // and the first was a bug: a spec written as a plain object runs its `t()`
+  // once, when the screen is built, so the legend kept the language the
+  // generator was entered in for as long as the world stayed open — a rebuild
+  // is what the other screens do on a language switch, and this one must not.
+  // The second is that legend and readout read live data.
+  interface OverlayReadout {
+    available: () => boolean
+    legend: (() => LegendSpec) | null
+    probe: ((cell: ProbeCell) => ProbeRow[]) | null
+    // A year's course at the cell, drawn under the rows (the two fields the
+    // climate computes as a year).
+    chart?: (cell: ProbeCell) => ProbeChart | null
+  }
+  const overlayReadout: Record<OverlayId, OverlayReadout> = {
+    terrain: { available: () => lastColoredBase !== null, legend: null, probe: null },
     // Available from the hand-over on, running or not — the plates are the thing
     // you are watching in that step, and hiding them mid-run (which is what
     // `!tectonicsRunning` used to do) removed them exactly when they were moving.
     // The Archean clause is what keeps them off a world that has no plates yet.
-    boundaries: () => lastBoundaryMask !== null && (archeanFinalised || !archeanRunning),
+    boundaries: {
+      available: () => lastBoundaryMask !== null && (archeanFinalised || !archeanRunning),
+      legend: null,
+      probe: (cell) => {
+        if (!lastBoundaryMask) return []
+        const bi = Math.min(lastBoundaryMask.length - 1, cell.fine)
+        return [{ label: t('readout.row.boundary'), value: lastBoundaryMask[bi] ? t('readout.boundary.yes') : t('readout.boundary.no') }]
+      },
+    },
     // Blocked during the Archean: proto-cratons are not continents yet, they merge
     // and fragment constantly, and naming something that dissolves ten epochs later
     // is noise. finalizeArchean names them all when plate tectonics begins.
-    names: () => archeanFinalised && lastRaftLabels.length > 0,
-    mantle: () => lastMantle !== null,
+    names: { available: () => archeanFinalised && lastRaftLabels.length > 0, legend: null, probe: null },
+    mantle: {
+      available: () => lastMantle !== null,
+      legend: () => ({ type: 'swatches', title: t('overlay.mantle.legend.title'), items: [
+        { label: t('overlay.mantle.legend.upwelling'), rgb: [225, 85, 55] },
+        { label: t('overlay.mantle.legend.downwelling'), rgb: [55, 110, 210] },
+      ] }),
+      probe: (cell) => {
+        if (!lastMantle || mantleResX <= 0) return []
+        // The buoyancy field has no unit a reader could check — what it says is
+        // which way the mantle moves and how strongly, so it is reported as the
+        // normalised ±1 the tint is drawn from rather than as a bare number.
+        const mi = mantleCellOf(cell)
+        const v = mantleNorm ? mantleNorm[mi] : lastMantle[mi]
+        const strength = Math.abs(v).toFixed(2)
+        return [{ label: t('readout.row.mantle'), value: v >= 0 ? t('readout.mantle.up', { v: strength }) : t('readout.mantle.down', { v: strength }) }]
+      },
+    },
     // Split out of the mantle overlay. It used to carry the field tint, the volcanic
     // cones and the plume rings under one control with one static legend — which in the
     // Genesis step promised a "Volcano" and a "Hotspot plume" that can never appear
     // there, because the Archean has neither. Three layers, three honest legends.
-    volcanoes: () => lastVolcanoes.length > 0,
-    hotspots: () => lastHotspots.length > 0,
+    volcanoes: {
+      available: () => lastVolcanoes.length > 0,
+      legend: () => ({ type: 'swatches', title: t('overlay.volcanoes.legend.title'), items: [
+        { label: t('overlay.volcanoes.legend.hotspot'), rgb: [220, 55, 30], shape: 'cone' },
+        { label: t('overlay.volcanoes.legend.arc'), rgb: [235, 120, 30], shape: 'cone' },
+        { label: t('overlay.volcanoes.legend.flood'), rgb: [120, 25, 20], shape: 'cone' },
+      ] }),
+      probe: null,
+    },
+    hotspots: {
+      available: () => lastHotspots.length > 0,
+      legend: () => ({ type: 'swatches', title: t('overlay.hotspots.legend.title'), items: [
+        { label: t('overlay.hotspots.legend.plume'), rgb: [255, 140, 0], shape: 'ring' },
+      ] }),
+      probe: null,
+    },
     // Available as soon as any crust exists, which in the Archean is within a few
     // epochs of the first upwelling standing still long enough.
-    cratonAge: () => lastCratonAge !== null && lastCratonAge.some((v) => v >= 0),
-    temperature: () => lastTemperature !== null,
-    seasonality: () => lastSeasonality !== null,
-    wind: () => lastWind !== null,
-    currents: () => lastCurrents !== null,
-    precipitation: () => lastPrecipitation !== null,
-    monsoon: () => lastMonsoonIndex !== null,
-    biomes: () => lastBiomes !== null,
-    rivers: () => lastRiverData !== null,
-    waterBalance: () => lastTemperature !== null && lastPrecipitation !== null,
-    watersheds: () => lastWatersheds !== null,
-    ecology: hasEcologyData,
-    migration: () => lastMigration !== null,
+    cratonAge: {
+      available: () => lastCratonAge !== null && lastCratonAge.some((v) => v >= 0),
+      legend: () => ({ type: 'gradient', title: t('overlay.cratonAge.label'), unit: t('overlay.cratonAge.legend.unit'), stops: cratonAgeLegendStops }),
+      probe: (cell) => {
+        const age = cratonAgeAt(cell)
+        return age === null ? [] : [{ label: t('readout.row.crustAge'), value: t('readout.crustAge', { v: String(Math.round(age * 100)) }) }]
+      },
+    },
+    temperature: {
+      available: () => lastTemperature !== null,
+      legend: () => ({ type: 'gradient', title: t('overlay.temperature.label'), unit: t('overlay.temperature.legend.unit'), stops: temperatureLegendStops }),
+      probe: (cell) => lastTemperature ? [{ label: t('readout.row.temperature'), value: t('readout.temperature', { v: String(Math.round(lastTemperature[cell.i])) }) }] : [],
+      chart: (cell) => {
+        const year = temperatureYear(cell)
+        return year ? { label: t('readout.chart.temperature'), kind: 'line', values: year } : null
+      },
+    },
+    seasonality: {
+      available: () => lastSeasonality !== null,
+      legend: () => ({ type: 'gradient', title: t('overlay.seasonality.label'), unit: t('overlay.seasonality.legend.unit'), stops: amplitudeLegendStops }),
+      // The field is the full peak-to-peak swing (seasonalTemperature adds
+      // ±half of it), so the ± figure is half the field.
+      probe: (cell) => lastSeasonality && lastSeasonality[cell.i] !== OCEAN_AMPLITUDE
+        ? [{ label: t('readout.row.season'), value: t('readout.seasonSwing', { v: (lastSeasonality[cell.i] / 2).toFixed(1) }) }]
+        : [],
+    },
+    wind: {
+      available: () => lastWind !== null,
+      legend: null,
+      probe: (cell) => {
+        if (!lastWind) return []
+        const u = lastWind[cell.i * 2]
+        const v = lastWind[cell.i * 2 + 1]
+        // The raw magnitude is a relative one, so it goes out through the m/s
+        // anchor rather than as itself (CLIMATE_TUNING.windSpeedMsPerUnit). The
+        // band pattern tapers to zero at each cell edge (climate/wind.ts), so a
+        // calm belt reads 0.0 m/s and loses its arrow, which is the truth.
+        const speed = Math.hypot(u, v) * CLIMATE_TUNING.windSpeedMsPerUnit
+        return [{ label: t('readout.row.wind'), value: t('readout.metresPerSecond', { v: speed.toFixed(1) }), bearing: bearing(u, v) ?? undefined }]
+      },
+    },
+    currents: {
+      available: () => lastCurrents !== null,
+      legend: null,
+      probe: (cell) => {
+        if (!lastCurrents || cell.land) return []
+        const u = lastCurrents[cell.i * 2]
+        const v = lastCurrents[cell.i * 2 + 1]
+        const b = bearing(u, v)
+        if (b === null || Math.hypot(u, v) <= 0.02) return []
+        const warm = v * (cell.gy + 0.5 - climateResY / 2) > 0 // poleward = warm (see drawCurrents)
+        return [{ label: t('readout.row.current'), value: warm ? t('readout.current.warm') : t('readout.current.cold'), bearing: b }]
+      },
+    },
+    precipitation: {
+      available: () => lastPrecipitation !== null,
+      legend: () => ({ type: 'gradient', title: t('overlay.precipitation.label'), unit: t('overlay.precipitation.legend.unit'), stops: precipitationLegendStops }),
+      probe: (cell) => lastPrecipitation && lastPrecipitation[cell.i] !== OCEAN_PRECIP
+        ? [{ label: t('readout.row.precipitation'), value: t('readout.precipitation', { v: String(Math.round(lastPrecipitation[cell.i])) }) }]
+        : [],
+      chart: (cell) => {
+        const year = precipitationYear(cell)
+        return year ? { label: t('readout.chart.precipitation'), kind: 'bars', values: year } : null
+      },
+    },
+    monsoon: {
+      available: () => lastMonsoonIndex !== null,
+      legend: () => ({ type: 'gradient', title: t('overlay.monsoon.legend.title'), unit: '', stops: monsoonLegendStops }),
+      // The magnitude. The sign is the phase, and the chart draws that far
+      // better than a minus sign in front of a number would.
+      probe: (cell) => lastMonsoonIndex && lastMonsoonIndex[cell.i] !== OCEAN_PRECIP
+        ? [{ label: t('readout.row.monsoon'), value: Math.abs(lastMonsoonIndex[cell.i]).toFixed(2) }]
+        : [],
+    },
+    biomes: {
+      available: () => lastBiomes !== null,
+      legend: () => ({ type: 'swatches', title: t('overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) }),
+      probe: (cell) => lastBiomes ? [{ label: t('readout.row.biome'), value: t(biomeLabelKey(lastBiomes[cell.fine]) as TKey) }] : [],
+    },
+    // 'rivers' bundles the scene-space river ribbons + the lake tint under one
+    // control. The colours are the map's: the ribbon overlay's river blue, the
+    // water shader's lake, ice and coast tints (map/waterMaterialPlugin.ts).
+    rivers: {
+      available: () => lastRiverData !== null,
+      legend: () => ({ type: 'swatches', title: t('overlay.rivers.label'), items: [
+        { label: t('overlay.rivers.legend.perennial'), rgb: [45, 95, 175], shape: 'line', dash: 'solid' },
+        { label: t('overlay.rivers.legend.intermittent'), rgb: [45, 95, 175], shape: 'line', dash: 'dashed' },
+        { label: t('overlay.rivers.legend.ephemeral'), rgb: [45, 95, 175], shape: 'line', dash: 'dotted' },
+        { label: t('overlay.rivers.legend.lake'), rgb: [60, 110, 170] },
+        { label: t('overlay.rivers.legend.ice'), rgb: [216, 230, 242] },
+        { label: t('overlay.rivers.legend.cliff'), rgb: [72, 60, 50], shape: 'line', dash: 'solid' },
+        { label: t('overlay.rivers.legend.beach'), rgb: [238, 224, 178] },
+        { label: t('overlay.rivers.legend.marsh'), rgb: [150, 168, 130] },
+      ] }),
+      probe: (cell) => {
+        const rows: ProbeRow[] = []
+        if (lastDischargeField && lastMaxDischarge > 0 && lastDischargeField[cell.fine] / lastMaxDischarge >= 0.01) {
+          // Below 1% of the largest stream this is distributed rain, not a
+          // channel, and naming a flow there would invent a river.
+          // Grouped thousands once a river is big enough to need them, one
+          // decimal while it is small enough for one to mean something.
+          const m3s = lastDischargeField[cell.fine] * DISCHARGE_TO_M3S
+          const flow = m3s >= 100 ? Math.round(m3s).toLocaleString(getLocale()) : m3s.toFixed(1)
+          rows.push({ label: t('readout.row.discharge'), value: t('readout.cubicMetresPerSecond', { v: flow }) })
+        }
+        if (lastLakeDepth && lastLakeDepth[cell.fine] > 0) {
+          rows.push({ label: t('readout.row.lakeDepth'), value: t('readout.metres', { v: String(Math.round(elevationToMeters(lastLakeDepth[cell.fine]) - elevationToMeters(0))) }) })
+        }
+        return rows
+      },
+    },
+    waterBalance: {
+      available: () => lastTemperature !== null && lastPrecipitation !== null,
+      legend: () => ({ type: 'swatches', title: t('overlay.waterBalance.label'), items: [
+        { label: t('overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
+        { label: t('overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
+      ] }),
+      probe: (cell) => lastPrecipitationEffective && lastPrecipitationEffective[cell.i] !== OCEAN_PRECIP
+        ? [{ label: t('readout.row.effectivePrecip'), value: t('readout.precipitation', { v: String(Math.round(lastPrecipitationEffective[cell.i])) }) }]
+        : [],
+    },
+    // A basin's colour is its identity, not a value: nothing to read out.
+    watersheds: { available: () => lastWatersheds !== null, legend: null, probe: null },
+    // NO LEGEND: a resource layer paints 0..100% of one field, and a ramp from
+    // "none" to "much" explains nothing the map does not already show. Which
+    // field it is stands in the column, on the row you picked — and in the
+    // readout, which names the picked field (the others are a column of
+    // numbers nobody asked for).
+    ecology: {
+      available: hasEcologyData,
+      legend: null,
+      probe: (cell) => {
+        const field = lastEcologyFields[selectedEcologyField]
+        if (!field || ecologyResX <= 0) return []
+        const ex = Math.min(ecologyResX - 1, Math.floor((cell.gx / Math.max(1, climateResX)) * ecologyResX))
+        const ey = Math.min(ecologyResY - 1, Math.floor((cell.gy / Math.max(1, climateResY)) * ecologyResY))
+        const v = field[ey * ecologyResX + ex]
+        return v === ECOLOGY_OCEAN ? [] : [{ label: t(`resource.${selectedEcologyField}.label` as TKey), value: t('readout.percent', { v: String(Math.round(v * 100)) }) }]
+      },
+    },
+    // Migration leaves the generator for a screen of its own; until then the
+    // layer has a legend and no readout.
+    migration: {
+      available: () => lastMigration !== null,
+      legend: () => ({ type: 'swatches', title: t('overlay.migration.legend.title'), items: MIGRATION_RACES.map((r) => ({ label: t(`species.${r.id}.label` as TKey), rgb: r.rgb })) }),
+      probe: null,
+    },
   }
+  const overlayAvailable = (id: OverlayId): boolean => overlayReadout[id].available()
 
-  // A legend explains a layer's colours; only the layers whose colour→meaning is
-  // not self-evident carry one (names/boundaries/wind/rivers do not).
-  //
-  // EVERY ENTRY IS A FUNCTION, and renderLegends calls it. Two reasons, and the
-  // first was a bug: a spec written as a plain object runs its `t()` once, when
-  // the screen is built, so the legend kept the language the generator was
-  // entered in for as long as the world stayed open — a rebuild is what the
-  // other screens do on a language switch, and this one must not. The second is
-  // that a legend may depend on live state, which the ecology one used to do.
-  //
-  // The gradient titles and units below are still English in the code: they
-  // have no catalog key yet, and giving them one is its own step.
-  // NO ENTRY FOR `ecology`: a resource layer paints 0..100% of one field, and
-  // a ramp from "none" to "much" explains nothing the map does not already
-  // show. Which field it is stands in the column, on the row you picked.
-  const overlayLegend: Partial<Record<OverlayId, () => LegendSpec>> = {
-    mantle: () => ({ type: 'swatches', title: t('overlay.mantle.legend.title'), items: [
-      { label: t('overlay.mantle.legend.upwelling'), rgb: [225, 85, 55] },
-      { label: t('overlay.mantle.legend.downwelling'), rgb: [55, 110, 210] },
-    ] }),
-    volcanoes: () => ({ type: 'swatches', title: t('overlay.volcanoes.legend.title'), items: [
-      { label: t('overlay.volcanoes.legend.hotspot'), rgb: [220, 55, 30], shape: 'cone' },
-      { label: t('overlay.volcanoes.legend.arc'), rgb: [235, 120, 30], shape: 'cone' },
-      { label: t('overlay.volcanoes.legend.flood'), rgb: [120, 25, 20], shape: 'cone' },
-    ] }),
-    hotspots: () => ({ type: 'swatches', title: t('overlay.hotspots.legend.title'), items: [
-      { label: t('overlay.hotspots.legend.plume'), rgb: [255, 140, 0], shape: 'ring' },
-    ] }),
-    cratonAge: () => ({ type: 'gradient', title: t('overlay.cratonAge.label'), unit: t('overlay.cratonAge.legend.unit'), stops: cratonAgeLegendStops }),
-    temperature: () => ({ type: 'gradient', title: t('overlay.temperature.label'), unit: t('overlay.temperature.legend.unit'), stops: temperatureLegendStops }),
-    seasonality: () => ({ type: 'gradient', title: t('overlay.seasonality.label'), unit: t('overlay.seasonality.legend.unit'), stops: amplitudeLegendStops }),
-    precipitation: () => ({ type: 'gradient', title: t('overlay.precipitation.label'), unit: t('overlay.precipitation.legend.unit'), stops: precipitationLegendStops }),
-    monsoon: () => ({ type: 'gradient', title: t('overlay.monsoon.legend.title'), unit: '', stops: monsoonLegendStops }),
-    biomes: () => ({ type: 'swatches', title: t('overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) }),
-    // The colours are the map's: the ribbon overlay's river blue, the water
-    // shader's lake, ice and coast tints (map/waterMaterialPlugin.ts).
-    rivers: () => ({ type: 'swatches', title: t('overlay.rivers.label'), items: [
-      { label: t('overlay.rivers.legend.perennial'), rgb: [45, 95, 175], shape: 'line', dash: 'solid' },
-      { label: t('overlay.rivers.legend.intermittent'), rgb: [45, 95, 175], shape: 'line', dash: 'dashed' },
-      { label: t('overlay.rivers.legend.ephemeral'), rgb: [45, 95, 175], shape: 'line', dash: 'dotted' },
-      { label: t('overlay.rivers.legend.lake'), rgb: [60, 110, 170] },
-      { label: t('overlay.rivers.legend.ice'), rgb: [216, 230, 242] },
-      { label: t('overlay.rivers.legend.cliff'), rgb: [72, 60, 50], shape: 'line', dash: 'solid' },
-      { label: t('overlay.rivers.legend.beach'), rgb: [238, 224, 178] },
-      { label: t('overlay.rivers.legend.marsh'), rgb: [150, 168, 130] },
-    ] }),
-    waterBalance: () => ({ type: 'swatches', title: t('overlay.waterBalance.label'), items: [
-      { label: t('overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
-      { label: t('overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
-    ] }),
-    migration: () => ({ type: 'swatches', title: t('overlay.migration.legend.title'), items: MIGRATION_RACES.map((r) => ({ label: t(`species.${r.id}.label` as TKey), rgb: r.rgb })) }),
+  // The layers a step's tooltip reads out: the ones the step OFFERS, switched
+  // on or not — a point has its values whatever is painted over it — and, in
+  // a step that paints a resource field, that layer. The order is the column's.
+  function probedLayers(stepId: StepId): OverlayId[] {
+    const s = step(stepId)
+    return [...s.overlays, ...s.exclusive, ...(s.fields.length > 0 ? ['ecology' as const] : [])]
+  }
+  function probeRowsFor(stepId: StepId, cell: ProbeCell): ProbeRow[] {
+    return probedLayers(stepId).flatMap((id) => {
+      const r = overlayReadout[id]
+      return r.probe && r.available() ? r.probe(cell) : []
+    })
+  }
+  function probeChartsFor(stepId: StepId, cell: ProbeCell): ProbeChart[] {
+    return probedLayers(stepId).flatMap((id) => {
+      const r = overlayReadout[id]
+      const chart = r.chart && r.available() ? r.chart(cell) : null
+      return chart ? [chart] : []
+    })
   }
 
   // Which layers are showing. Set from the step you enter (see steps.ts) and
   // changed by the switches in the column; a layer stays "wanted" while its data
   // comes and goes, which is what lets a switch survive a recompute.
   const overlaysOn: Record<OverlayId, boolean> = Object.fromEntries(OVERLAY_IDS.map((id) => [id, false])) as Record<OverlayId, boolean>
+
+  // WHAT EACH STEP SHOWED WHEN YOU LEFT IT (2026-09-27): the switches, the
+  // pick and the resource field. Entering a step used to be a reset to its
+  // defaults, and re-entering Climate after a look at the rivers meant
+  // finding the wash you had chosen again. Per step, in memory only — a
+  // view preference, not the world's — and dropped with the world: a new
+  // one and a loaded one start every step on its defaults.
+  interface OverlayMemory { on: Record<OverlayId, boolean>; field: EcologyFieldId | null }
+  const overlayMemory = new Map<StepId, OverlayMemory>()
+  const rememberOverlays = (): void => {
+    overlayMemory.set(STEP_IDS[panelIndex], { on: { ...overlaysOn }, field: pickedEcologyField })
+  }
+  // A new or a loaded world: nothing remembered, and the step on screen goes
+  // back to its defaults — it belongs to the world that is gone, so it is
+  // not worth remembering either (the next showPanel must not file it).
+  const forgetOverlays = (): void => {
+    overlayMemory.clear()
+    if (!panelEverShown) return
+    panelEverShown = false
+    const current = step(STEP_IDS[panelIndex])
+    for (const id of OVERLAY_IDS) overlaysOn[id] = current.defaults.includes(id)
+    if (current.fields.length > 0) {
+      selectedEcologyField = current.fields[0]
+      pickedEcologyField = selectedEcologyField
+      showAbundanceFor(pickedEcologyField)
+    }
+    if (lastColoredBase) updateOverlays()
+  }
 
   // Picking a resource field points the ecology layer at that field. Unlike every
   // other overlay these are mutually exclusive — paintEcology renders ONE field over
@@ -2158,7 +2342,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function renderLegends(): void {
     // Ecology's legend follows its EFFECTIVE state (the pick in the column OR a
     // hover preview over one of its sliders).
-    const active = OVERLAY_IDS.filter((id) => overlayLegend[id] && overlayShown(id))
+    const active = OVERLAY_IDS.filter((id) => overlayReadout[id].legend && overlayShown(id))
     legendToggleLabel.textContent = t('overlay.legend.title')
     legendCount.textContent = String(active.length)
     legendToggle.setAttribute('aria-expanded', String(legendOpen))
@@ -2176,14 +2360,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       legendBody.replaceChildren(empty)
       return
     }
-    legendBody.replaceChildren(...active.map((id) => buildLegendBlock(overlayLegend[id]!())))
+    legendBody.replaceChildren(...active.map((id) => buildLegendBlock(overlayReadout[id].legend!())))
   }
 
   // Whether a layer is actually on the map: wanted AND available. Ecology is the
   // one exception — it also shows while an abundance slider is hovered, which is
   // a preview of what that slider does, not a state anybody switched on.
   const overlayShown = (id: OverlayId): boolean =>
-    id === 'ecology' ? ecologyLayerOn() : overlaysOn[id] && overlayAvailable[id]()
+    id === 'ecology' ? ecologyLayerOn() : overlaysOn[id] && overlayAvailable(id)
 
   // Enable each layer per overlayShown; 'rivers' drives the scene ribbons and
   // the lakes (drawn by the map's water plugin, not a layer) together. One
@@ -2210,9 +2394,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // turns its siblings off, not a second kind of thing to keep in sync.
   // `NO_PICK` switches the whole group off.
   function pickExclusiveOverlay(id: OverlayId | typeof NO_PICK): void {
-    const group = step(STEP_IDS[panelIndex]).exclusive
+    const current = step(STEP_IDS[panelIndex])
+    const group = current.exclusive
     if (id !== NO_PICK && !group.includes(id)) return
     for (const member of group) overlaysOn[member] = member === id
+    // In a step that paints a resource field, `NO_PICK` is the field picks'
+    // way out as well: the ecology layer goes off.
+    if (id === NO_PICK && current.fields.length > 0) overlaysOn.ecology = false
     updateOverlays()
   }
 
@@ -2220,11 +2408,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // A resource field is reachable exactly when the ecology layer is, and checked
   // when it is the one being painted.
   function refreshOverlayList(): void {
-    const ecologyAvailable = overlayAvailable.ecology()
+    const ecologyAvailable = overlayAvailable('ecology')
     overlayList.refresh((id) => isOverlayId(id)
-      ? { on: overlaysOn[id], available: overlayAvailable[id]() }
+      ? { on: overlaysOn[id], available: overlayAvailable(id) }
       : id === NO_PICK
-        ? { on: !step(STEP_IDS[panelIndex]).exclusive.some((member) => overlaysOn[member]), available: true }
+        ? { on: !step(STEP_IDS[panelIndex]).exclusive.some((member) => overlaysOn[member]) && !(step(STEP_IDS[panelIndex]).fields.length > 0 && overlaysOn.ecology), available: true }
       // The PICK, not what a hover is showing: hovering a lever previews the
       // aggregate, and the mark would leave the resource you chose.
       : { on: overlaysOn.ecology && pickedEcologyField === id, available: ecologyAvailable })
@@ -2233,6 +2421,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // or invalidated, world re-rendered) so the column + layers stay in sync.
   function updateOverlays(): void {
     applyOverlays()
+    syncEcologyPanel()
     refreshOverlayList()
     renderLegends()
     renderTemperatureScale(true)
@@ -2367,7 +2556,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   function toggleOverlay(id: OverlayId): void {
-    if (!overlayAvailable[id]()) return
+    if (!overlayAvailable(id)) return
     overlaysOn[id] = !overlaysOn[id]
     updateOverlays()
   }
@@ -2472,16 +2661,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // ── The hover readout ──────────────────────────────────────────────────────
   //
-  // WHAT a cell reports is decided by the STEP, not by which layers happen to be
-  // switched on. The readout used to append one line per active overlay, so the
-  // same point answered differently depending on the switch column — yet a point
-  // has its values whatever is painted over it. One row list per step; a step
-  // with nothing to add returns none and the card is the height line alone.
+  // The height line always; under it the rows of the layers the step offers
+  // (overlayReadout, probeRowsFor) and, where a layer draws a year, its chart.
   //
-  // EVERY ENTRY IS A FUNCTION, for the two reasons the legend table gives right
-  // above: t() must run at hover time, because the generator is the one screen
-  // that does not rebuild on a language switch, and the rows read live data.
-
   // The hovered cell, resolved once per hover into every grid the rows need.
   // `i` indexes the climate/ecology grid, `fine` the full-resolution rasters.
   interface ProbeCell {
@@ -2493,114 +2675,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     metres: number
   }
 
-  const rowsForStep: Record<StepId, (cell: ProbeCell) => ProbeRow[]> = {
-    // Step 0 is about which world, not about what is on the map.
-    world: () => [],
-    // The planet acts through the stages after it; nothing of its own to probe.
-    planet: () => [],
-    genesis: (cell) => {
-      const rows: ProbeRow[] = []
-      if (lastMantle && mantleResX > 0) {
-        // The buoyancy field has no unit a reader could check — what it says is
-        // which way the mantle moves and how strongly, so it is reported as the
-        // normalised ±1 the tint is drawn from rather than as a bare number.
-        const mi = mantleCellOf(cell)
-        const v = mantleNorm ? mantleNorm[mi] : lastMantle[mi]
-        const strength = Math.abs(v).toFixed(2)
-        rows.push({ label: t('readout.row.mantle'), value: v >= 0 ? t('readout.mantle.up', { v: strength }) : t('readout.mantle.down', { v: strength }) })
-      }
-      const age = cratonAgeAt(cell)
-      if (age !== null) rows.push({ label: t('readout.row.crustAge'), value: t('readout.crustAge', { v: String(Math.round(age * 100)) }) })
-      return rows
-    },
-    tectonics: (cell) => {
-      const rows: ProbeRow[] = []
-      if (lastBoundaryMask) {
-        const bi = Math.min(lastBoundaryMask.length - 1, cell.fine)
-        rows.push({ label: t('readout.row.boundary'), value: lastBoundaryMask[bi] ? t('readout.boundary.yes') : t('readout.boundary.no') })
-      }
-      const age = cratonAgeAt(cell)
-      if (age !== null) rows.push({ label: t('readout.row.crustAge'), value: t('readout.crustAge', { v: String(Math.round(age * 100)) }) })
-      return rows
-    },
-    climate: (cell) => {
-      const rows: ProbeRow[] = []
-      if (lastTemperature) rows.push({ label: t('readout.row.temperature'), value: t('readout.temperature', { v: String(Math.round(lastTemperature[cell.i])) }) })
-      if (lastSeasonality && lastSeasonality[cell.i] !== OCEAN_AMPLITUDE) {
-        // The field is the full peak-to-peak swing (seasonalTemperature adds
-        // ±half of it), so the ± figure is half the field.
-        rows.push({ label: t('readout.row.season'), value: t('readout.seasonSwing', { v: (lastSeasonality[cell.i] / 2).toFixed(1) }) })
-      }
-      if (lastPrecipitation && lastPrecipitation[cell.i] !== OCEAN_PRECIP) {
-        rows.push({ label: t('readout.row.precipitation'), value: t('readout.precipitation', { v: String(Math.round(lastPrecipitation[cell.i])) }) })
-      }
-      if (lastMonsoonIndex && lastMonsoonIndex[cell.i] !== OCEAN_PRECIP) {
-        // The magnitude. The sign is the phase, and the chart below draws that
-        // far better than a minus sign in front of a number would.
-        rows.push({ label: t('readout.row.monsoon'), value: Math.abs(lastMonsoonIndex[cell.i]).toFixed(2) })
-      }
-      if (lastWind) {
-        const u = lastWind[cell.i * 2]
-        const v = lastWind[cell.i * 2 + 1]
-        const b = bearing(u, v)
-        // The raw magnitude is a relative one, so it goes out through the m/s
-        // anchor rather than as itself (CLIMATE_TUNING.windSpeedMsPerUnit). The
-        // band pattern tapers to zero at each cell edge (climate/wind.ts), so a
-        // calm belt reads 0.0 m/s and loses its arrow, which is the truth.
-        const speed = Math.hypot(u, v) * CLIMATE_TUNING.windSpeedMsPerUnit
-        rows.push({ label: t('readout.row.wind'), value: t('readout.metresPerSecond', { v: speed.toFixed(1) }), bearing: b ?? undefined })
-      }
-      if (lastCurrents && !cell.land) {
-        const u = lastCurrents[cell.i * 2]
-        const v = lastCurrents[cell.i * 2 + 1]
-        const b = bearing(u, v)
-        if (b !== null && Math.hypot(u, v) > 0.02) {
-          const warm = v * (cell.gy + 0.5 - climateResY / 2) > 0 // poleward = warm (see drawCurrents)
-          rows.push({ label: t('readout.row.current'), value: warm ? t('readout.current.warm') : t('readout.current.cold'), bearing: b })
-        }
-      }
-      if (lastBiomes) rows.push({ label: t('readout.row.biome'), value: t(biomeLabelKey(lastBiomes[cell.fine]) as TKey) })
-      return rows
-    },
-    erosion: (cell) => {
-      const rows: ProbeRow[] = []
-      if (lastDischargeField && lastMaxDischarge > 0 && lastDischargeField[cell.fine] / lastMaxDischarge >= 0.01) {
-        // Below 1% of the largest stream this is distributed rain, not a
-        // channel, and naming a flow there would invent a river.
-        // Grouped thousands once a river is big enough to need them, one
-        // decimal while it is small enough for one to mean something.
-        const m3s = lastDischargeField[cell.fine] * DISCHARGE_TO_M3S
-        const flow = m3s >= 100 ? Math.round(m3s).toLocaleString(getLocale()) : m3s.toFixed(1)
-        rows.push({ label: t('readout.row.discharge'), value: t('readout.cubicMetresPerSecond', { v: flow }) })
-      }
-      if (lastLakeDepth && lastLakeDepth[cell.fine] > 0) {
-        rows.push({ label: t('readout.row.lakeDepth'), value: t('readout.metres', { v: String(Math.round(elevationToMeters(lastLakeDepth[cell.fine]) - elevationToMeters(0))) }) })
-      }
-      if (lastPrecipitationEffective && lastPrecipitationEffective[cell.i] !== OCEAN_PRECIP) {
-        rows.push({ label: t('readout.row.effectivePrecip'), value: t('readout.precipitation', { v: String(Math.round(lastPrecipitationEffective[cell.i])) }) })
-      }
-      return rows
-    },
-    ecology: (cell) => {
-      const rows: ProbeRow[] = []
-      if (lastBiomes) rows.push({ label: t('readout.row.biome'), value: t(biomeLabelKey(lastBiomes[cell.fine]) as TKey) })
-      // The picked field, which is the one the map is painting — the others are
-      // a column of numbers nobody asked for.
-      const field = lastEcologyFields[selectedEcologyField]
-      if (field && ecologyResX > 0) {
-        const ex = Math.min(ecologyResX - 1, Math.floor((cell.gx / Math.max(1, climateResX)) * ecologyResX))
-        const ey = Math.min(ecologyResY - 1, Math.floor((cell.gy / Math.max(1, climateResY)) * ecologyResY))
-        const v = field[ey * ecologyResX + ex]
-        if (v !== ECOLOGY_OCEAN) {
-          rows.push({ label: t(`resource.${selectedEcologyField}.label` as TKey), value: t('readout.percent', { v: String(Math.round(v * 100)) }) })
-        }
-      }
-      return rows
-    },
-    // Migration leaves the generator for a screen of its own; it keeps the
-    // height line until it does.
-    migration: () => [],
-  }
 
   // Craton age 0..1 (1 = formed at epoch 0) on the mantle grid, or null where
   // there is no crust — the field marks ocean with -1.
@@ -2675,23 +2749,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     cell.i = cell.gy * climateResX + cell.gx
 
     const stepId = STEP_IDS[panelIndex]
-    const charts: ProbeChart[] = []
-    // The charts belong to the Climate step: they are the two fields it computes,
-    // and elsewhere they would be a year drawn beside rows about the mantle.
-    if (stepId === 'climate') {
-      const temp = temperatureYear(cell)
-      if (temp) charts.push({ label: t('readout.chart.temperature'), kind: 'line', values: temp })
-      const prec = precipitationYear(cell)
-      if (prec) charts.push({ label: t('readout.chart.precipitation'), kind: 'bars', values: prec })
-    }
-
     return buildProbeCard({
       heading: metres >= 0 ? t('readout.metres', { v: String(metres) }) : t('readout.metresDeep', { v: String(-metres) }),
       kind: cell.land ? t('readout.kind.land') : t('readout.kind.ocean'),
       land: cell.land,
-      rows: climateResX > 0 || stepId === 'genesis' || stepId === 'tectonics' ? rowsForStep[stepId](cell) : [],
+      rows: probeRowsFor(stepId, cell),
       months: t('readout.months').split(','),
-      charts,
+      charts: probeChartsFor(stepId, cell),
     })
   }
 
@@ -3333,9 +3397,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const initArchean = (seed: string, vigour: number, water: number): void => {
     lastEpoch = 0
     archeanRunning = false
-    // A new world: nothing has run on it yet.
+    // A new world: nothing has run on it yet, and no step has been looked at.
     history = emptyWorldHistory()
     genesisTallied = 0
+    forgetOverlays()
     postToWorker({
       type: 'genesisInit',
       seed,
@@ -4436,6 +4501,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // An opened world lands on the mantle, NOT on step 0: that step warns that
     // changing it discards the simulation, and dropping someone there the
     // moment they open a finished world is an invitation to destroy it.
+    forgetOverlays()
     showPanel(GENESIS_PANEL_INDEX)
 
     stopSim()
@@ -4634,6 +4700,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     abundanceRow.dataset.help = `resource.${field}`
     abundanceInput.value = String(value)
     abundanceValue.textContent = String(value)
+  }
+  // THE PANEL FOLLOWS THE PICK (2026-09-27). A resource picked: its abundance
+  // slider alone. Nothing picked (the off entry) or the carrying capacity:
+  // the three levers — they shape exactly that map and nothing else
+  // (concentrationPipeline in ecologyField.ts scales, concentrates and
+  // provinces the aggregate; the resource fields never see them), so beside
+  // a resource they were three controls for a map you were not looking at.
+  // Queried at call time rather than held: updateOverlays runs from handlers
+  // that may fire before this part of the screen is built.
+  function syncEcologyPanel(): void {
+    const resourcePicked = overlaysOn.ecology && pickedEcologyField !== 'carryingCapacity'
+    for (const lever of root.querySelectorAll<HTMLElement>('[data-stage="ecology"] .gen-param[data-ecofield]')) lever.hidden = resourcePicked
+    const row = root.querySelector<HTMLElement>('[data-value="abundance-row"]')
+    if (row) row.hidden = !resourcePicked || abundance.get(pickedEcologyField) === undefined
   }
   abundanceInput.addEventListener('input', () => {
     abundance.set(pickedEcologyField, Number(abundanceInput.value))
@@ -5116,8 +5196,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Show a panel. It navigates, asks for the data that panel needs, and sets the
   // overlay defaults for it — and since 2026-08-09 it does NOT commit anything:
   // the Archean hand-over moved to the gesture that means it (see commitGenesis).
+  // Whether the panel on screen belongs to the world on screen — false until
+  // the first showPanel, and again after forgetOverlays.
+  let panelEverShown = false
   const showPanel = (index: number): void => {
     if (STEP_IDS[index] !== 'planet') leavePlanetPreview()
+    // Leaving a step: what it showed is what it shows next time.
+    if (panelEverShown && index !== panelIndex) rememberOverlays()
+    panelEverShown = true
     panelIndex = index
     sidebar.setStep(STEP_IDS[index])
     // Which layers this step offers, and which of them are showing. Both come
@@ -5130,16 +5216,21 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       [
         // The way out of a pick group, first and the default (2026-09-22): a
         // step that paints one of its layers at a time starts painting none.
-        ...(stepDef.exclusive.length > 0 ? [{ id: NO_PICK, helpBase: 'overlay.none', icon: '/icons/clear.png' }] : []),
+        // The resource picks have it too (2026-09-27): it is how the ecology
+        // layer goes off, and the panel shows the levers of the whole map
+        // while nothing is picked.
+        ...(stepDef.exclusive.length > 0 || stepDef.fields.length > 0 ? [{ id: NO_PICK, helpBase: 'overlay.none', icon: '/icons/clear.png' }] : []),
         ...stepDef.exclusive.map((id) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })),
         ...stepDef.fields.map((field) => ({ id: field, helpBase: `resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
       ],
       stepDef.pickTitle,
     )
-    for (const id of OVERLAY_IDS) overlaysOn[id] = stepDef.defaults.includes(id)
+    // As you left it, or — the first time on this world — the step's defaults.
+    const remembered = overlayMemory.get(stepDef.id)
+    for (const id of OVERLAY_IDS) overlaysOn[id] = remembered ? remembered.on[id] : stepDef.defaults.includes(id)
     // A step that paints a resource field starts on the first one it offers.
     if (stepDef.fields.length > 0) {
-      selectedEcologyField = stepDef.fields[0]
+      selectedEcologyField = remembered?.field ?? stepDef.fields[0]
       pickedEcologyField = selectedEcologyField
       showAbundanceFor(pickedEcologyField)
     }
