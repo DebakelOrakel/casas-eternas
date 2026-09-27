@@ -16,6 +16,8 @@ import { sampleNearestWorld, wrapValue } from '../core/field'
 // because the query is called millions of times per render while the lifecycle
 // runs a handful of times per epoch.
 
+// Metaball kernel: (1 - (d/r)²)² inside the blob, 0 outside. Smooth, finite
+// support (so a query only sums nearby blobs), peaks at 1 at the center.
 function blobKernel(distSq: number, radius: number): number {
   const r2 = radius * radius
   if (distSq >= r2) return 0

@@ -78,6 +78,3 @@ export interface RaftSplitEvent {
   axisX: number
   axisY: number
 }
-
-// Metaball kernel: (1 - (d/r)²)² inside the blob, 0 outside. Smooth, finite
-// support (so a query only sums nearby blobs), peaks at 1 at the center.

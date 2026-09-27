@@ -26,8 +26,8 @@ import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
 //
 // **This is what makes the plate count emergent.** It is not a slider any more: the
 // number of plates falls out of how many convection cells the mantle organised
-// itself into, which in turn follows from the vigour knob (createMantleField's
-// initial smoothing). A finer-grained mantle gives more, smaller cells and
+// itself into, which in turn follows from the vigour knob (ArcheanParams.diffusion,
+// the mantle's per-epoch mixing). A finer-grained mantle gives more, smaller cells and
 // therefore more, smaller plates.
 // Swept against the resulting plate count over 5 seeds. The pair below yields
 // 9-12 plates, which brackets the hand-tuned slider default of 12 that this

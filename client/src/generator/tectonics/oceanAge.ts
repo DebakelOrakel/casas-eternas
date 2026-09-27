@@ -7,7 +7,8 @@ import { sampleMembershipField } from '../crust/raftField'
 // Ocean-floor age as a coarse full-surface field (Phase 3, see
 // docs/decisions/continental-crust-rafts.md). Oceanic crust deepens as it ages
 // away from the ridge that formed it (the real √age depth law), so the ocean
-// baseline is OCEANIC_BASELINE − k·√age (elevationField.ts). This is a
+// baseline follows GDH1's age-depth curve (elevationField.ts, the gdh1*
+// entries of ELEVATION_TUNING). This is a
 // deliberate, bounded exception to the "no full-surface accumulator" stance:
 // it's only the ocean-age scalar, which is smooth and large-scale, so a coarse
 // grid is plenty. The field is advected with plate motion each epoch and reset

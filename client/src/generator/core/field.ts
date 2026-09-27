@@ -131,10 +131,6 @@ export function sampleNearestWorld(
   return field[gy * resX + gx]
 }
 
-// Full-resolution raster down to a coarse grid, taking the MAXIMUM over each
-// footprint rather than a mean or a centre sample. For thin features — rivers,
-// lakes — a footprint max is the only reduction that doesn't lose them entirely
-// between coarse cell centres.
 // Full-resolution raster down to a coarse grid by the MEAN over each
 // footprint — the right reduction for a continuous field like elevation,
 // where downsampleMax would raise every coarse cell to its highest peak.
@@ -158,6 +154,10 @@ export function downsampleBox(fullRes: Float32Array, fullW: number, fullH: numbe
   return out
 }
 
+// Full-resolution raster down to a coarse grid, taking the MAXIMUM over each
+// footprint rather than a mean or a centre sample. For thin features — rivers,
+// lakes — a footprint max is the only reduction that doesn't lose them entirely
+// between coarse cell centres.
 export function downsampleMax(fullRes: Float32Array, fullW: number, fullH: number, resX: number, resY: number): Float32Array {
   const out = new Float32Array(resX * resY)
   const fw = fullW / resX

@@ -1,10 +1,12 @@
 // THE PIPELINE, AS DATA. One entry per stage: what it depends on, how it runs,
 // which controls shape it, which fields it produces.
 //
-// Nothing reads this yet — it is declared first, on purpose, so it can be checked
-// against the code that already exists (npm run harness:pipeline verifies every
-// edge, every field name and every control against the save's own spec table)
-// before anything depends on it. See docs/design/generator-pipeline.md.
+// Declared first, on purpose, so it could be checked against the code that
+// already existed (npm run harness:pipeline verifies every edge, every field
+// name and every control against the save's own spec table) before anything
+// depended on it. Read since by the runtime's invalidation (downstreamOf), the
+// screen's step bar and its stage gates (screens/generator/steps.ts).
+// See docs/design/generator-pipeline.md.
 //
 // WHY IT EXISTS. runtime.ts holds each stage's live state as module-level `let`s,
 // and "this result is stale" is expressed by setting fields to null. That makes

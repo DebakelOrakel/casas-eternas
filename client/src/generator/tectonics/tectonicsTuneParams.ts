@@ -355,10 +355,11 @@ export const TECTONICS_TUNING = {
   // (~360 m), where the old scale nominally allowed far more. That is not a loss of
   // realism but the arrival of it — the real Baikal and Tanganyika have floors well
   // BELOW sea level, and representing those needs the hydrology to tell an enclosed
-  // sub-sea-level basin (Caspian, Dead Sea) apart from connected ocean, which
-  // fillDepressionsAndRouteFlow currently cannot: it seeds from every cell at or
-  // below SEA_LEVEL. That is the real blocker, and it was hidden before behind a
-  // baseline on which "above sea level" stretched 3 km up.
+  // sub-sea-level basin (Caspian, Dead Sea) apart from connected ocean. The
+  // routing could not until adaptive-mesh phase 0: it seeded from every cell
+  // at or below SEA_LEVEL; since then it seeds the ocean from the largest
+  // water component alone (flowRouting.largestWaterComponent), and a
+  // sub-sea basin fills as a lake. The value stayed where it was.
   riftBasinFloorThickness: -0.9,
 
   // FLEXURAL ISOSTASY (tectonics/flexure.ts, ADAPTIVE_MESH_PLAN.md phase

@@ -163,7 +163,7 @@ type DocsConfig struct {
 }
 
 // AuthConfig is the auth SUBSYSTEM's own section — state only the process
-// running login touches, today the user registry (users.json). Shaped like
+// running login touches, today the credential registry (bbolt, auth.db). Shaped like
 // every other target section (storage union) because that is what auth is on
 // its way to becoming — docs/design/access-control.md, "an auth target".
 // Distinct from Global.Auth, which every process reads.

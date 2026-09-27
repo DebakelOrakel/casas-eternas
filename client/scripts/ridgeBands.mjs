@@ -43,10 +43,10 @@ const M = {
 const WORLD_KM = (W * M.config.METERS_PER_CELL) / 1000
 
 const CANDIDATES = [
-  { name: 'A shipped         ', cells: [32, 64, 128, 256], amps: [1, 0.5, 0.25, 0.125] },
+  { name: 'A former          ', cells: [32, 64, 128, 256], amps: [1, 0.5, 0.25, 0.125] },
   { name: 'C crest-weighted  ', cells: [32, 64, 128, 256, 512], amps: [0.4, 0.5, 0.7, 1, 0.7] },
   { name: 'F crest-heavy     ', cells: [32, 64, 128, 256, 512], amps: [0.2, 0.25, 0.4, 1, 1] },
-  { name: 'G crest-heaviest  ', cells: [32, 64, 128, 256, 512], amps: [0.15, 0.2, 0.3, 0.7, 1] },
+  { name: 'G shipped         ', cells: [32, 64, 128, 256, 512], amps: [0.15, 0.2, 0.3, 0.7, 1] },
   { name: 'E finest-dominant ', cells: [256, 512], amps: [1, 0.5] },
 ]
 

@@ -19,10 +19,9 @@ import (
 
 // The artifact store on disk — FLAT since 2026-08-12:
 //
-//	{dir}/{artifactUid}/elevation.u16
-//	                   /rivers-{density}.f32
-//	                   /riverLengths-{density}.u32
-//	                   /meta.json
+//	{dir}/{artifactUid}/meta.json
+//	                   /<the stage's files, named by the client — world/artifacts.ts>
+//	                   /<one directory level of them, e.g. family-1/elevation.u16>
 //
 // The artifact uid is a minted uuid and means nothing; meta.json is the ONLY
 // truth about what an entry is. The logical key — worldUid, worldId,

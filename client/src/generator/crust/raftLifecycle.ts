@@ -45,25 +45,6 @@ export function advanceRafts(rafts: Raft[], seeds: PlateSeed[], motions: PlateMo
   }
 }
 
-// Accretion: grow the continent nearest (x, y) by welding a small margin blob
-// there — new continental crust added to the overriding plate at a subduction
-// arc (Andean-type arc magmatism). Guarded two ways so a subduction margin
-// advances the raft outward without exploding the blob count or attaching to a
-// far-off continent: skip if an existing blob of the nearest raft already
-// covers the spot (minGapSq), and skip if the nearest raft is too far to weld
-// onto (maxAttachSq). Returns whether crust was added.
-// Destroys continental crust that has not yet stabilised and is sitting over a
-// mantle downwelling — the counterweight to accreteToNearestRaft below.
-//
-// Returns how many blobs were recycled. Rafts left with no blobs are dropped, so
-// callers never see an empty raft (advanceRaftsOnFlow and advanceRafts both index
-// blobs[0], and blobArea would divide by nothing).
-//
-// The age gate is the whole mechanism: a blob younger than `stabilisationEpochs`
-// can be destroyed, an older one never can. Production therefore continues
-// unchanged while the *destructible pool* stays bounded, which is what converts
-// the runaway into an equilibrium rather than just slowing it down. See
-// STABILISATION_EPOCHS for the measurements that motivated it.
 // Drifts rafts on the mantle flow directly, with no plates involved — the Archean
 // counterpart to advanceRafts below, which picks a host plate and rotates the raft
 // with it.
@@ -267,6 +248,19 @@ export function consolidateRaftBlobs(rafts: Raft[], epoch: number, stabilisation
   return merged
 }
 
+// Destroys continental crust that has not yet stabilised and is sitting over a
+// mantle downwelling — the counterweight to accreteToNearestRaft below.
+//
+// Returns how many blobs were recycled. Rafts left with no blobs are dropped, so
+// callers never see an empty raft (advanceRaftsOnFlow and advanceRafts both index
+// blobs[0], and blobArea would divide by nothing).
+//
+// The age gate is the whole mechanism: a blob younger than `stabilisationEpochs`
+// can be destroyed, an older one never can. Production therefore continues
+// unchanged while the *destructible pool* stays bounded, which is what converts
+// the runaway into an equilibrium rather than just slowing it down. See
+// DEFAULT_ARCHEAN_PARAMS.stabilisationEpochs (archean/archeanStep.ts) for the
+// measurements that motivated it.
 export function recycleUnstabilisedCrust(
   rafts: Raft[],
   mantle: Float32Array,
@@ -295,6 +289,13 @@ export function recycleUnstabilisedCrust(
   return recycled
 }
 
+// Accretion: grow the continent nearest (x, y) by welding a small margin blob
+// there — new continental crust added to the overriding plate at a subduction
+// arc (Andean-type arc magmatism). Guarded two ways so a subduction margin
+// advances the raft outward without exploding the blob count or attaching to a
+// far-off continent: skip if an existing blob of the nearest raft already
+// covers the spot (minGapSq), and skip if the nearest raft is too far to weld
+// onto (maxAttachSq). Returns whether crust was added.
 export function accreteToNearestRaft(
   rafts: Raft[],
   x: number,
@@ -539,7 +540,3 @@ export function splitDisconnectedRafts(rafts: Raft[], connectFactor: number, ran
   rafts.push(...result)
   return created
 }
-
-// Blobs per craton and their size spread (as a fraction of the craton's
-// own reach) — several jittered blobs give an irregular, non-circular
-// continent once unioned.

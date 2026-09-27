@@ -96,7 +96,8 @@ export interface TerrainFeature {
 // to deposit onto it rather than spawning a new one — keeps feature
 // count bounded to roughly one cluster per active stretch of boundary,
 // instead of a new feature at every lattice point every epoch. Kept well
-// below computeElevation's along-tangent reach (RANGE_ALONG_RADIUS) so
+// below computeElevation's along-tangent reach (ELEVATION_TUNING's range
+// along-axis radii, elevationTuneParams.ts) so
 // consecutive features along one boundary overlap heavily and blend into
 // a continuous ridge rather than reading as separate lumps.
 const MERGE_RADIUS = 40

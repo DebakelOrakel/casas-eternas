@@ -1,5 +1,5 @@
-// Minimal i18n runtime. English only for now; German (locales/de) and a
-// title-screen language switch come later — see docs/decisions/localization.md.
+// Minimal i18n runtime: two catalogs (locales/en, locales/de), a language
+// switch in the title bar — see docs/decisions/localization.md.
 // No side effects on import: the active locale is a plain module variable that
 // defaults to 'en', so importing this from a worker bundle stays inert.
 import enCommon from './locales/en/common.json'

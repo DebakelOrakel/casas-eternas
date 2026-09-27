@@ -9,6 +9,7 @@ import type { SedimentBasin } from '../surface/sedimentBasins'
 //
 // See docs/design/generator-pipeline.md.
 import type { SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulation'
+import type { Volcano } from '../tectonics/volcanoes'
 import type { RenderSimulationOptions } from '../render/elevationMapImage'
 import type { ContinentLabelPlacement } from '../render/continentLabelRenderer'
 import type { ArcheanSnapshot } from '../archean/archeanSnapshot'
@@ -57,9 +58,6 @@ export interface WorkerResetStageMessage {
   type: 'resetStage'
   stage: StageId
 }
-// Requests the climate step (temperature so far) be computed on the current,
-// possibly-eroded elevation — see docs/decisions/climate-biomes.md. Replies
-// with a WorkerClimateDataMessage.
 // THE PLANET PREVIEW: the climate chain on the sample world (planet/
 // sampleWorld.ts), so the Planet step can show what its controls do before
 // a world exists. Touches no pipeline state — nothing is cached, nothing
@@ -93,6 +91,9 @@ export interface WorkerPlanetPreviewDataMessage {
   biomes: ArrayBuffer
 }
 
+// Requests the climate step (temperature so far) be computed on the current,
+// possibly-eroded elevation — see docs/decisions/climate-biomes.md. Replies
+// with a WorkerClimateDataMessage.
 export interface WorkerClimateRunMessage {
   type: 'climateRun'
   // Global temperature offset in °C (greenhouse) — see computeTemperature.
@@ -315,8 +316,8 @@ export interface WorkerRenderedMessage {
   // Volcanic features for distinct markers: hotspot cones (plateB = -1), flood-basalt
   // provinces (plateB = -2), and volcanic arcs (the `volcanic` range features — Andes/
   // island-arc chains). `kind` picks the marker style; `thickness` sizes it. See
-  // plateSimulation.ts.
-  volcanoes: { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[]
+  // tectonics/volcanoes.ts (collectVolcanoes).
+  volcanoes: Volcano[]
   width: number
   height: number
   landFraction: number
