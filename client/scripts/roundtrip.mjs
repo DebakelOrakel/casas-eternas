@@ -87,10 +87,10 @@ check(`${M.spec.WORLD_SPEC_FIELDS.length} fields survive write → read`, mismat
 // contract that lets a save written before a knob existed still open.
 const partial = M.spec.specFromYaml('spec:\n  genesis:\n    water: 12\n', 'x')
 const waterField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'genesis.water')
-const otherField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'tectonics.epochLength')
+const otherField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'tectonics.alluvium')
 check('a missing key falls back to its declared default',
-  partial.values['genesis.water'] === 12 && partial.values['tectonics.epochLength'] === otherField.input.default,
-  `water=${partial.values['genesis.water']} epochLength=${partial.values['tectonics.epochLength']} (want ${waterField ? 12 : '?'}/${otherField.input.default})`)
+  partial.values['genesis.water'] === 12 && partial.values['tectonics.alluvium'] === otherField.input.default,
+  `water=${partial.values['genesis.water']} alluvium=${partial.values['tectonics.alluvium']} (want ${waterField ? 12 : '?'}/${otherField.input.default})`)
 // A control that moved stage (the temperature offset as the Planet's
 // greenhouse; the water, back with the genesis after a day on the planet)
 // reads its old path when the new one is absent, and the new one wins when

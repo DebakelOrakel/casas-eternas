@@ -630,7 +630,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         <!-- The history's controls (phase 5.1): erosion runs inside every
              epoch, so what used to be the erosion panel's sliders shape the
              epochs, and the epoch's length is what the erosion advances by. -->
-        ${paramField(TECTONICS_INPUTS.epochLength, 'tectonics-epoch-input', 'tectonics-epoch-label')}
         ${paramField(TECTONICS_INPUTS.alluvium, 'tectonics-alluvium-input', 'tectonics-alluvium-label')}
         ${paramField(TECTONICS_INPUTS.rockContrast, 'tectonics-rock-input', 'tectonics-rock-label')}
       </section>
@@ -791,13 +790,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const toggleSimButton = root.querySelector<HTMLButtonElement>('[data-action="toggle-sim"]')!
   // The history's controls (tectonicsInputParams): read when a run starts,
   // so a change while the plates move applies to the next run.
-  const epochLengthInput = root.querySelector<HTMLInputElement>('.tectonics-epoch-input')!
-  const epochLengthLabel = root.querySelector<HTMLElement>('[data-value="tectonics-epoch-label"]')!
   const alluviumInput = root.querySelector<HTMLInputElement>('.tectonics-alluvium-input')!
   const rockContrastInput = root.querySelector<HTMLInputElement>('.tectonics-rock-input')!
   const alluviumLabel = root.querySelector<HTMLElement>('[data-value="tectonics-alluvium-label"]')!
   const rockContrastLabel = root.querySelector<HTMLElement>('[data-value="tectonics-rock-label"]')!
-  epochLengthInput.addEventListener('input', () => { epochLengthLabel.textContent = displayValue(TECTONICS_INPUTS.epochLength, Number(epochLengthInput.value)) })
   alluviumInput.addEventListener('input', () => { alluviumLabel.textContent = alluviumInput.value })
   rockContrastInput.addEventListener('input', () => { rockContrastLabel.textContent = rockContrastInput.value })
   const resetClimateButton = root.querySelector<HTMLButtonElement>('[data-action="reset-climate"]')!
@@ -971,7 +967,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // too — a slider that moves while the plates run and changes nothing
     // would lie. The climate/river sliders are left live for tuning (they
     // only affect the next compute, not the one in flight).
-    for (const el of [seedInput, mantleVigourInput, waterInput, epochLengthInput, alluviumInput, rockContrastInput]) el.disabled = busy
+    for (const el of [seedInput, mantleVigourInput, waterInput, alluviumInput, rockContrastInput]) el.disabled = busy
 
     updateNavState() // the step bar locks with it (see its own gating)
   }
@@ -3485,7 +3481,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // stale. The eroded terrain is NOT dropped: the epochs erode it on (phase
     // 5.1), so the count of eroding epochs carries on from where it was.
     invalidateAfter('tectonics')
-    postToWorker({ type: 'tectonicsStart', epochLength: Number(epochLengthInput.value), alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value), weather: weatherParams() })
+    postToWorker({ type: 'tectonicsStart', alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value), weather: weatherParams() })
     sayTectonicsButton(true)
     updateControlsDisabled()
     updateProgress()
@@ -3680,7 +3676,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     tempBandLabel.textContent = t > 0 ? `+${t}` : String(t)
     humidityLabel.textContent = humidityInput.value
     contrastLabel.textContent = contrastInput.value
-    epochLengthLabel.textContent = displayValue(TECTONICS_INPUTS.epochLength, Number(epochLengthInput.value))
     alluviumLabel.textContent = alluviumInput.value
     rockContrastLabel.textContent = rockContrastInput.value
     carryingCapacityLabel.textContent = carryingCapacityInput.value
@@ -4501,7 +4496,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     tempBandInput.value = String(spec.values['planet.greenhouse'])
     humidityInput.value = String(spec.values['climate.humidity'])
     contrastInput.value = String(spec.values['climate.contrast'])
-    epochLengthInput.value = String(spec.values['tectonics.epochLength'])
     alluviumInput.value = String(spec.values['tectonics.alluvium'])
     rockContrastInput.value = String(spec.values['tectonics.rockContrast'])
     carryingCapacityInput.value = String(spec.values['ecology.carryingCapacity'])

@@ -18,9 +18,7 @@ import type { StageId } from './stages'
 export interface WorkerTectonicsStartMessage {
   type: 'tectonicsStart'
   // The coupled history's controls (phase 5.1), the tectonics panel's
-  // sliders: million years per epoch and the two material properties.
-  // Absent → the declared defaults.
-  epochLength?: number
+  // sliders: the two material properties. Absent → the declared defaults.
   alluvium?: number
   rockContrast?: number
   // The climate panel's parameters (phase 5.4: the climate runs per epoch

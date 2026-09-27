@@ -33,7 +33,7 @@ import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from '../archean/archeanStep'
 import { convectionCellSeeds, finalizeArchean } from '../archean/finalizeArchean'
 import { findPlumeSites } from '../tectonics/plumes'
 import { stabilisedFraction } from '../crust/raftField'
-import { worldAgeMa, worldEpoch } from '../core/worldTime'
+import { TECTONIC_MA_PER_EPOCH, worldAgeMa, worldEpoch } from '../core/worldTime'
 import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from '../tectonics/oceanAge'
 import type { FlowRouting } from '../surface/flowRouting'
 import { accumulateDischarge, accumulateDischargeOn, extractRiverPolylines, computeLakes, computeLakesOn, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold, waterLevelField, CANONICAL_RIVER_DENSITY, accumulateRegimeInputs, accumulateRegimeInputsOn, SURFACE_ICE } from '../surface/hydrology'
@@ -243,7 +243,7 @@ let meshTerrain: MeshTerrain | null = null
 // without a mesh, it is null and the hydrology walks the raster.
 let coupled: CoupledTerrain | null = null
 // The tectonics panel's controls for the history (tectonicsInputParams).
-let historyControls: { epochLength: number; alluvium: number; rockContrast: number; weather: WeatherParams } = { epochLength: TECTONICS_INPUTS.epochLength.default, alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default, weather: defaultWeatherParams() }
+let historyControls: { alluvium: number; rockContrast: number; weather: WeatherParams } = { alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default, weather: defaultWeatherParams() }
 let epochInFlight = false
 
 // The coupled terrain as what the hydrology reads (a routing is required
@@ -606,12 +606,11 @@ function stopTicking(): void {
 function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'tectonicsStart' }>): void {
   if (intervalId !== undefined) return
   historyControls = {
-    epochLength: message.epochLength ?? TECTONICS_INPUTS.epochLength.default,
     alluvium: message.alluvium ?? TECTONICS_INPUTS.alluvium.default,
     rockContrast: message.rockContrast ?? TECTONICS_INPUTS.rockContrast.default,
     weather: message.weather ?? defaultWeatherParams(),
   }
-  if (sim) sim.epochMa = historyControls.epochLength
+  if (sim) sim.epochMa = TECTONIC_MA_PER_EPOCH
   // THE COUPLED EPOCH (phase 5.1): the plates move, the mesh follows,
   // erosion runs inside the epoch, the terrain is rasterised and drawn. An
   // epoch is asynchronous (the engine) and takes what it takes; the interval
@@ -1312,7 +1311,7 @@ function handleGenesisFinalize(): void {
   if (!archean) return
   stopTicking()
   sim = finalizeArchean(archean)
-  sim.epochMa = historyControls.epochLength
+  sim.epochMa = TECTONIC_MA_PER_EPOCH
   // Deep-copied, because serializePlateSimulation hands back the sim's OWN arrays
   // (rafts, features, seeds, motions) rather than copies — fine for its real job,
   // where the result is written to a file immediately, but useless as a stored state:
@@ -1343,7 +1342,7 @@ function resetTectonics(): void {
   // Fresh copies each time, so a second reset restores the same state as the first
   // rather than whatever the last run left in the buffers.
   sim = deserializePlateSimulation(handoverSnapshot, handoverOceanAge.slice(), handoverMantle.slice())
-  sim.epochMa = historyControls.epochLength
+  sim.epochMa = TECTONIC_MA_PER_EPOCH
   lastRawElevations = null
   preErosionElevations = null
   // Was these two rules written out by hand, which is what the named helper

@@ -175,7 +175,6 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
       // saves written before.
       alluvium: readRecipeNumber(yamlText, 'spec.tectonics.alluvium') ?? readRecipeNumber(yamlText, 'spec.erosion.alluvium'),
       rockContrast: readRecipeNumber(yamlText, 'spec.tectonics.rockContrast') ?? readRecipeNumber(yamlText, 'spec.erosion.rockContrast'),
-      epochLength: readRecipeNumber(yamlText, 'spec.tectonics.epochLength'),
     },
     worldUid: readRecipeValue(yamlText, 'metadata.uid') ?? '',
   }

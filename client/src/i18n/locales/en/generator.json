@@ -112,8 +112,6 @@
   "generator.panel.tectonics.stat.plates": "Plates",
   "generator.panel.tectonics.stat.continents": "Continents",
   "generator.panel.tectonics.stat.land": "Land",
-  "generator.panel.tectonics.epochLength.label": "Epoch length",
-  "generator.panel.tectonics.epochLength.help": "How much time one tectonic epoch spans — longer epochs let erosion work each uplift down further before the next moves the plates.",
   "generator.panel.tectonics.alluvium.label": "Floodplains",
   "generator.panel.tectonics.alluvium.help": "How readily rivers drop their load — more builds broad valley floors and big deltas, less exports the sediment to the sea. Acts through the whole history now, not on a final pass.",
   "generator.panel.tectonics.rockContrast.label": "Rock contrast",

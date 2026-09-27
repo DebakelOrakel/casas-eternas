@@ -11,16 +11,12 @@ import type { InputParam } from '../core/inputParams'
 // quiet epochs after its orogeny, and running more epochs is how a world
 // gets older.
 export const TECTONICS_INPUTS = {
-  // Million years per tectonic epoch. The plates' step per epoch is the
-  // tectonics' own constant (TECTONICS_TUNING.epochAngleStep); the epoch
-  // length scales the erosion's time against it, and the ocean floor's
-  // age — read in Ma by GDH1 (elevationField.oceanFloorAtAge).
-  epochLength: {
-    min: 0.5, max: 4, step: 0.5, default: 1,
-    i18n: 'generator.panel.tectonics.epochLength',
-    unit: 'common.unit.millionYears',
-    inSpec: true,
-  },
+  // The epoch's length (million years per tectonic epoch) was a slider
+  // here from phase 5.1 until 2026-09-27. It scaled the erosion, the
+  // coast's retreat, the ice's cut and the lakes' ages against one plate
+  // step at once, and the explicit engine grew restless at 4 Ma; it is
+  // the world clock's constant now (core/worldTime.TECTONIC_MA_PER_EPOCH),
+  // the same one the age readout always used.
   // Settling-length scale: more alluvium settles sediment sooner — broader
   // valley floors, bigger deltas. 50 = the engine's calibrated neutral.
   alluvium: {

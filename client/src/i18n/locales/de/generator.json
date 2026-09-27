@@ -112,8 +112,6 @@
   "generator.panel.tectonics.stat.plates": "Platten",
   "generator.panel.tectonics.stat.continents": "Kontinente",
   "generator.panel.tectonics.stat.land": "Land",
-  "generator.panel.tectonics.epochLength.label": "Epochenlänge",
-  "generator.panel.tectonics.epochLength.help": "Wie viel Zeit eine tektonische Epoche umfasst — längere Epochen lassen die Erosion jede Hebung weiter abtragen, bevor die nächste die Platten bewegt.",
   "generator.panel.tectonics.alluvium.label": "Schwemmland",
   "generator.panel.tectonics.alluvium.help": "Wie bereitwillig Flüsse ihre Fracht ablegen — mehr baut breite Talböden und große Deltas, weniger trägt das Sediment bis ins Meer. Wirkt jetzt über die ganze Geschichte, nicht in einem Schlussdurchgang.",
   "generator.panel.tectonics.rockContrast.label": "Gesteinskontrast",

@@ -55,7 +55,9 @@ export const WORLD_SPEC_FIELDS: readonly SpecField[] = [
   // and are read back from their old paths. `erosion.landscapeAge` is no
   // longer written — the pass it timed is gone; a save that has it keeps
   // its world id (identity.ts still hashes it when present).
-  { path: 'tectonics.epochLength', input: TECTONICS_INPUTS.epochLength },
+  // tectonics.epochLength left the spec 2026-09-27 with its slider (the
+  // epoch is the world clock's constant); a save carrying the line is read
+  // the partial-spec way, the value ignored.
   { path: 'tectonics.alluvium', input: TECTONICS_INPUTS.alluvium, legacyPaths: ['erosion.alluvium'] },
   { path: 'tectonics.rockContrast', input: TECTONICS_INPUTS.rockContrast, legacyPaths: ['erosion.rockContrast'] },
   // Climate's file order is NOT the panel's order (the panel shows the equator

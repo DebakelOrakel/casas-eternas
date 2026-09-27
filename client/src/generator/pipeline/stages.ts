@@ -95,7 +95,7 @@ export const STAGES: readonly Stage[] = [
     // The coupled history (phase 5.1): erosion runs inside every epoch, so
     // its material controls and the epoch's length are this stage's. The
     // epoch INTERVAL stays what it was — playback speed, never an input.
-    inputs: { epochLength: TECTONICS_INPUTS.epochLength, alluvium: TECTONICS_INPUTS.alluvium, rockContrast: TECTONICS_INPUTS.rockContrast },
+    inputs: { alluvium: TECTONICS_INPUTS.alluvium, rockContrast: TECTONICS_INPUTS.rockContrast },
     outputs: ['elevation'],
   },
   {

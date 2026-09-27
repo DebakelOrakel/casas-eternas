@@ -75,7 +75,7 @@ import { coarseForcingFields } from './erosionForcing'
 // a rift starts as sea floor and a node densifying an orogen inherits the
 // orogen.
 //
-// THE TIME. An epoch is `sim.epochMa` (the tectonics panel's epochLength;
+// THE TIME. An epoch is `sim.epochMa` (the world clock's TECTONIC_MA_PER_EPOCH since 2026-09-27, a slider before;
 // TECTONIC_MA_PER_EPOCH, 1, is what the world clock and the ocean age's
 // depth still count in — the slider is the EROSION's clock for now, the
 // plates step as they always did). The engine's calibrated iteration is

@@ -229,8 +229,8 @@ discriminate mountain from plain when they compete in one sweep.
 is a rasterisation** (phase 4.3 then 5.1, 2026-09-23). There is no erosion
 run: `pipeline/coupledEpoch.stepCoupledEpoch` moves the mesh's nodes with
 their plates, rebuilds and remeshes it, swaps the tectonic baseline under the
-relief and runs the engine for the epoch's length (`sim.epochMa`, the
-tectonics panel's `epochLength`; `HISTORY_DEFAULTS` holds the iterations,
+relief and runs the engine for the epoch's length (`sim.epochMa`, the world
+clock's `TECTONIC_MA_PER_EPOCH`; `HISTORY_DEFAULTS` holds the iterations,
 budget and uplift scale). The runtime rasterises z and sediment flux to 2048
 after every epoch for the hydrology, the climate and the map; `elevation.f32`
 in a save is therefore DERIVED; `mesh/` is the terrain, and a restored mesh

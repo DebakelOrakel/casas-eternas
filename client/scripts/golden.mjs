@@ -103,6 +103,7 @@ const M = {
   erosionForcing: await L('/src/generator/pipeline/erosionForcing.ts'),
   meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
   tectonicsInputs: await L('/src/generator/tectonics/tectonicsInputParams.ts'),
+  worldTime: await L('/src/generator/core/worldTime.ts'),
   coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
   ground: await L('/src/generator/surface/hydrogeology.ts'),
   surfaceTune: await L('/src/generator/surface/surfaceTuneParams.ts'),
@@ -227,7 +228,7 @@ async function buildWorld(seed) {
     alluvium: M.tectonicsInputs.TECTONICS_INPUTS.alluvium.default,
     rockContrast: M.tectonicsInputs.TECTONICS_INPUTS.rockContrast.default,
   }
-  sim.epochMa = M.tectonicsInputs.TECTONICS_INPUTS.epochLength.default
+  sim.epochMa = M.worldTime.TECTONIC_MA_PER_EPOCH
   const coupled = M.coupled.createCoupledTerrain(sim, M.coupled.HISTORY_DEFAULTS.budget)
   for (let e = 0; e < COUPLED_EPOCHS; e++) {
     await M.coupled.stepCoupledEpoch(sim, coupled, { ...M.coupled.HISTORY_DEFAULTS, controls: CONTROLS })
