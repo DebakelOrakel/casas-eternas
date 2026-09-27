@@ -23,6 +23,7 @@
   "common.action.storage.label": "Storage",
   "common.action.storage.help": "Worlds kept on the server, and the baked terrain cached on this machine.",
   "common.action.close.label": "Close",
+  "common.notification.dismiss": "Dismiss",
   "common.panel.save.onServer": "On the server: revision {revision}, {when}",
   "common.panel.save.notOnServer": "Not on the server yet.",
   "common.panel.storage.empty": "Nothing cached yet — a world is stored once its bake finishes.",

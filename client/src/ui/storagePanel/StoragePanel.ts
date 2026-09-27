@@ -62,6 +62,7 @@ export function createStoragePanel(host: HTMLElement): StoragePanel {
   const panel: Panel = createPanel(host, {
     variant: 'storage',
     title: t('common.action.storage.label'),
+    closeLabel: t('common.action.close.label'),
   })
 
   const clearAll = document.createElement('button')

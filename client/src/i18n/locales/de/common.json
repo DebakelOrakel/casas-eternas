@@ -23,6 +23,7 @@
   "common.action.storage.label": "Speicher",
   "common.action.storage.help": "Welten auf dem Server und das auf diesem Rechner zwischengespeicherte Gelände.",
   "common.action.close.label": "Schließen",
+  "common.notification.dismiss": "Ausblenden",
   "common.panel.save.onServer": "Auf dem Server: Revision {revision}, {when}",
   "common.panel.save.notOnServer": "Noch nicht auf dem Server.",
   "common.panel.storage.empty": "Noch nichts zwischengespeichert — eine Welt landet hier, sobald ihr Bake fertig ist.",

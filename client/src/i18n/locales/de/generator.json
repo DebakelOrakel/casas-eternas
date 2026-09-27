@@ -167,6 +167,7 @@
   "generator.progress.ariaRunning": "{step} läuft",
   "generator.notify.needsTectonics": "Erst die Tektonik bis mindestens Epoche {min} laufen lassen (jetzt {current}).",
   "generator.notify.needsErosion": "Erst mindestens einmal Erosion laufen lassen — Flüsse, Ökologie und Migration brauchen das erodierte Gelände.",
+  "generator.notify.nothingToReset": "Nichts zum Zurücksetzen — diese Welt wurde geladen, nicht hier erzeugt.",
   "generator.panel.erosion.bake4k.label": "4K",
   "generator.panel.erosion.bake4k.help": "4096×2048 — feinere Täler und ein dichteres Flussnetz. Backt auf dem Server, wenn die Welt dort liegt, sonst in diesem Browser. Ein schnelles Provisorium: sobald ein 8K existiert, leiten sich alle gröberen Ansichten von ihm ab.",
   "generator.panel.erosion.bake8k.label": "8K",

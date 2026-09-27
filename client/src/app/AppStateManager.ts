@@ -22,7 +22,7 @@ export class AppStateManager {
     this.canvas = canvas
     this.overlay = overlay
     this.factories = factories
-    this.notifications = new NotificationManager(overlay)
+    this.notifications = new NotificationManager(overlay, () => t('common.notification.dismiss'))
     // Said once, here, rather than by whichever request happened to discover it.
     //
     // A session dies quietly: the token expires, or the server comes back with a

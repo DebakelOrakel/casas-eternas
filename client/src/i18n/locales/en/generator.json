@@ -167,6 +167,7 @@
   "generator.progress.ariaRunning": "{step} running",
   "generator.notify.needsTectonics": "First run tectonics to at least epoch {min} (now {current}).",
   "generator.notify.needsErosion": "First run erosion at least once — rivers, ecology and migration need the eroded terrain.",
+  "generator.notify.nothingToReset": "Nothing to reset to — this world was loaded, not generated here.",
   "generator.panel.erosion.bake4k.label": "4K",
   "generator.panel.erosion.bake4k.help": "4096×2048 — finer valleys and a denser river network. Bakes on the server when this world is stored there, otherwise in this browser. A quick stand-in: once an 8K exists, every coarser view derives from it instead.",
   "generator.panel.erosion.bake8k.label": "8K",

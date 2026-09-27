@@ -20,6 +20,9 @@ export interface PanelOptions {
   // Read out by assistive tech for the dialog itself; usually the same as the
   // title, but separate because a title may later carry markup.
   ariaLabel?: string
+  // The close button's accessible name. Passed in, translated, because this
+  // widget is DOM only and imports nothing outside ui/ — the catalog included.
+  closeLabel: string
 }
 
 export interface Panel {
@@ -49,7 +52,7 @@ export function createPanel(host: HTMLElement, options: PanelOptions): Panel {
       <header class="app-panel-head">
         <h2 data-value="title"></h2>
         <span class="app-panel-status" data-value="status"></span>
-        <button type="button" class="app-panel-close" data-action="close" aria-label="Close">×</button>
+        <button type="button" class="app-panel-close" data-action="close">×</button>
       </header>
       <div class="app-panel-body" data-value="body"></div>
       <footer class="app-panel-foot" data-value="footer"></footer>
@@ -60,6 +63,7 @@ export function createPanel(host: HTMLElement, options: PanelOptions): Panel {
   // The label is set as an attribute, not interpolated into the markup above:
   // a title is caller text, and text goes in as text.
   root.querySelector<HTMLElement>('.app-panel')!.setAttribute('aria-label', options.ariaLabel ?? options.title)
+  root.querySelector<HTMLElement>('[data-action="close"]')!.setAttribute('aria-label', options.closeLabel)
   const titleEl = root.querySelector<HTMLElement>('[data-value="title"]')!
   const body = root.querySelector<HTMLElement>('[data-value="body"]')!
   const status = root.querySelector<HTMLElement>('[data-value="status"]')!

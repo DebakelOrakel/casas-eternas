@@ -4830,7 +4830,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // letting the button look broken; a control that silently does nothing is the
     // same defect the Genesis save button had.
     if (!hasHandover) {
-      ctx.notifications.show({ message: 'Nothing to reset to — this world was loaded, not generated here', icon: '/icons/reset.png', durationMs: 5000 })
+      ctx.notifications.show({ message: t('generator.notify.nothingToReset'), icon: '/icons/reset.png', durationMs: 5000 })
       return
     }
     stopSim()

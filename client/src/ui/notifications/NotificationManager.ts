@@ -61,7 +61,13 @@ export class NotificationManager {
   private activeNotifications = new Map<string, ActiveNotification>()
   private nextId = 1
 
-  constructor(parentOverlay: HTMLElement) {
+  // The dismiss button's accessible name comes from outside, as a getter
+  // rather than a string so a toast shown after a language switch reads the
+  // new one: this widget is DOM only and imports nothing outside ui/, the
+  // catalog included.
+  private readonly dismissLabel: () => string
+  constructor(parentOverlay: HTMLElement, dismissLabel: () => string) {
+    this.dismissLabel = dismissLabel
     this.parentOverlay = parentOverlay
     this.container = document.createElement('div')
     this.container.className = 'notification-container'
@@ -108,7 +114,7 @@ export class NotificationManager {
     const closeBtn = document.createElement('button')
     closeBtn.type = 'button'
     closeBtn.className = 'notification-toast__close'
-    closeBtn.setAttribute('aria-label', 'Dismiss')
+    closeBtn.setAttribute('aria-label', this.dismissLabel())
     closeBtn.innerHTML = '&times;'
     closeBtn.addEventListener('click', () => this.dismiss(id))
     toast.appendChild(closeBtn)
