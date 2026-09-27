@@ -99,12 +99,3 @@ export interface ArtifactInventory {
 }
 
 export type LocalArtifactStore = ArtifactStore & ArtifactInventory
-
-// Splits a path into its directory segments plus the final name. Exported
-// because it is the one piece of path handling with an off-by-one in it, and
-// it is worth being able to test without a browser.
-export function splitPath(path: string): { directories: string[]; name: string } {
-  const segments = path.split('/').filter((segment) => segment.length > 0)
-  const name = segments.pop() ?? ''
-  return { directories: segments, name }
-}

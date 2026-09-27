@@ -1818,35 +1818,35 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   overlay.setLayers([
     // Muted terrain wash first (bottom-most tint, over the relief base).
-    { id: 'terrain', label: 'Terrain', enabled: false, hidden: true, paintPixels: paintTerrain },
-    { id: 'temperature', label: 'Temp', enabled: false, hidden: true, paintPixels: paintTemperature },
-    { id: 'precipitation', label: 'Precipitation', enabled: false, hidden: true, paintPixels: paintPrecipitation },
-    { id: 'monsoon', label: 'Monsoon', enabled: false, hidden: true, paintPixels: paintMonsoon },
-    { id: 'seasonality', label: 'Seasonality', enabled: false, hidden: true, paintPixels: paintSeasonality },
-    { id: 'biomes', label: 'Biomes', enabled: false, hidden: true, paintPixels: paintBiomes },
-    { id: 'ecology', label: 'Ecology', enabled: false, hidden: true, paintPixels: paintEcology },
+    { id: 'terrain', enabled: false, paintPixels: paintTerrain },
+    { id: 'temperature', enabled: false, paintPixels: paintTemperature },
+    { id: 'precipitation', enabled: false, paintPixels: paintPrecipitation },
+    { id: 'monsoon', enabled: false, paintPixels: paintMonsoon },
+    { id: 'seasonality', enabled: false, paintPixels: paintSeasonality },
+    { id: 'biomes', enabled: false, paintPixels: paintBiomes },
+    { id: 'ecology', enabled: false, paintPixels: paintEcology },
     // Migration: race-tinted density fill (paintPixels) + origin markers (paint).
-    { id: 'migration', label: 'Migration', enabled: false, hidden: true, paintPixels: paintMigration, paint: (c) => paintWrapped(c, (cc) => { drawMigrationArrows(cc); drawMigrationOrigins(cc) }) },
+    { id: 'migration', enabled: false, paintPixels: paintMigration, paint: (c) => paintWrapped(c, (cc) => { drawMigrationArrows(cc); drawMigrationOrigins(cc) }) },
     // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
-    { id: 'mantle', label: 'Mantle', enabled: false, hidden: true, paintPixels: paintMantle },
-    { id: 'volcanoes', label: 'Volcanoes', enabled: false, hidden: true, paint: (c) => paintWrapped(c, drawVolcanoes) },
-    { id: 'hotspots', label: 'Hotspots', enabled: false, hidden: true, paint: (c) => paintWrapped(c, drawHotspots) },
+    { id: 'mantle', enabled: false, paintPixels: paintMantle },
+    { id: 'volcanoes', enabled: false, paint: (c) => paintWrapped(c, drawVolcanoes) },
+    { id: 'hotspots', enabled: false, paint: (c) => paintWrapped(c, drawHotspots) },
     // After 'mantle', so on land the crust's own age wins over the tint of the
     // mantle beneath it — the mantle field is the cause and covers the whole map,
     // this is the result and covers only the crust.
-    { id: 'cratonAge', label: 'Craton age', enabled: false, hidden: true, paintPixels: paintCratonAge },
-    { id: 'boundaries', label: 'Boundaries', enabled: false, paintPixels: paintBoundaryMask },
+    { id: 'cratonAge', enabled: false, paintPixels: paintCratonAge },
+    { id: 'boundaries', enabled: false, paintPixels: paintBoundaryMask },
     // The equator is always drawn, like the events — a property of the map,
     // not a user toggle (decided 2026-09-26 on the picture check).
-    { id: 'equator', label: 'Equator', enabled: true, paint: (c) => paintWrapped(c, drawEquator) },
-    { id: 'wind', label: 'Wind', enabled: false, hidden: true, paint: drawWind },
-    { id: 'currents', label: 'Currents', enabled: false, hidden: true, paint: drawCurrents },
-    { id: 'waterBalance', label: 'Water balance', enabled: false, hidden: true, paintPixels: paintWaterBalance },
-    { id: 'watersheds', label: 'Watersheds', enabled: false, hidden: true, paintPixels: paintWatersheds },
+    { id: 'equator', enabled: true, paint: (c) => paintWrapped(c, drawEquator) },
+    { id: 'wind', enabled: false, paint: drawWind },
+    { id: 'currents', enabled: false, paint: drawCurrents },
+    { id: 'waterBalance', enabled: false, paintPixels: paintWaterBalance },
+    { id: 'watersheds', enabled: false, paintPixels: paintWatersheds },
     // Events are always on — a persistent notification-coupled marker layer,
     // not a user toggle.
-    { id: 'events', label: 'Events', enabled: true },
-    { id: 'names', label: 'Names', enabled: false, paint: (c) => paintWrapped(c, (cc) => drawContinentLabels(cc, lastRaftLabels)) },
+    { id: 'events', enabled: true },
+    { id: 'names', enabled: false, paint: (c) => paintWrapped(c, (cc) => drawContinentLabels(cc, lastRaftLabels)) },
   ])
   // Same layer OBJECTS in both compositors — toggles/enabled flags are
   // shared state, only the base differs (shaded vs. unshaded paper).

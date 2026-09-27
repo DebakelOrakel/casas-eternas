@@ -214,10 +214,6 @@ export function slopeFromAngle(degrees: number): number {
   return Math.tan((degrees * Math.PI) / 180) * (METERS_PER_CELL / ELEVATION_METERS)
 }
 
-export function angleFromSlope(slope: number): number {
-  return (Math.atan(slope * (ELEVATION_METERS / METERS_PER_CELL)) * 180) / Math.PI
-}
-
 // How much gentler land slopes became under the recalibration, measured rather
 // than derived: identical seed and epoch count, land-cell elevation differences
 // over a 4 px step, before vs after. Interior land (coastal cells excluded, so

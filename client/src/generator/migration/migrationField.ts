@@ -45,10 +45,9 @@ export interface MigrationFields {
 // discounted on coast/river corridors. Water: rises with depth; beyond the
 // sea-crossing max depth it's Infinity (a hard barrier). Land bridges are just
 // land, so they're always passable regardless of seaCrossing.
-function buildCostField(precipitation: Float32Array, elevation: Float32Array, coarseDischarge: Float32Array | null, maxDischarge: number, seaCrossing: number, worldWidth: number, worldHeight: number): { cost: Float32Array; land: Uint8Array } {
+function buildCostField(precipitation: Float32Array, elevation: Float32Array, coarseDischarge: Float32Array | null, maxDischarge: number, seaCrossing: number, worldWidth: number, worldHeight: number): Float32Array {
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const cost = new Float32Array(n)
-  const land = new Uint8Array(n)
   const maxDepth = MIGRATION_TUNING.seaCrossingMaxDepth * Math.max(0, Math.min(1, seaCrossing))
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
@@ -60,7 +59,6 @@ function buildCostField(precipitation: Float32Array, elevation: Float32Array, co
         cost[i] = depth <= maxDepth ? MIGRATION_TUNING.waterBase + MIGRATION_TUNING.waterDepthCost * Math.max(0, depth) : Infinity
         continue
       }
-      land[i] = 1
       const eE = sampleElevationAtCell(elevation, wrapValue(gx + 1, CLIMATE_RES_X), gy, worldWidth, worldHeight)
       const eS = sampleElevationAtCell(elevation, gx, wrapValue(gy + 1, CLIMATE_RES_Y), worldWidth, worldHeight)
       const slope = Math.hypot(eE - e, eS - e)
@@ -76,7 +74,7 @@ function buildCostField(precipitation: Float32Array, elevation: Float32Array, co
       cost[i] = c
     }
   }
-  return { cost, land }
+  return cost
 }
 
 // 8-neighbour offsets (with movement distance for the diagonals).
@@ -102,7 +100,7 @@ export function computeMigration(
   const ry = CLIMATE_RES_Y
   const n = rx * ry
   const budget = params.spreadBudget
-  const { cost: cellCost } = buildCostField(precipitation, elevation, coarseDischarge, maxDischarge, params.seaCrossing, worldWidth, worldHeight)
+  const cellCost = buildCostField(precipitation, elevation, coarseDischarge, maxDischarge, params.seaCrossing, worldWidth, worldHeight)
 
   const cost = new Float32Array(n).fill(Infinity)
   const race = new Int8Array(n).fill(-1)

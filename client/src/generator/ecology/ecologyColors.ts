@@ -2,11 +2,7 @@ import type { EcologyFieldId } from './ecologyField'
 
 type Rgb = [number, number, number]
 
-export type EcologyRole = 'aggregate' | 'subsistence' | 'material' | 'prestige'
-
 export interface EcologyFieldMeta {
-  label: string
-  role: EcologyRole
   // Carrying capacity is shown on an ABSOLUTE scale (its gain knob must be
   // visible as the whole map dimming/greening). Per-resource fields are relative
   // abundance maps → normalised to their own land-max at paint time.
@@ -20,85 +16,76 @@ export interface EcologyFieldMeta {
   stops: { c: number; rgb: Rgb }[]
 }
 
-// The registry the selector, overlay paint, legend and tooltip all read. Grows as
-// later sub-steps add fields (fish, material, prestige) — order here is the
-// selector's display order within each role group.
+// The registry the overlay paint, legend and tooltip read; the selector's
+// order and labels come from the catalog (ecologyInputParams' groups).
 export const ECOLOGY_FIELD_META: Record<EcologyFieldId, EcologyFieldMeta> = {
   carryingCapacity: {
-    label: 'Carrying capacity', role: 'aggregate', absolute: true,
+    absolute: true,
     stops: [
       { c: 0.0, rgb: [222, 210, 180] }, { c: 0.25, rgb: [206, 200, 128] },
       { c: 0.5, rgb: [150, 190, 96] }, { c: 0.75, rgb: [74, 158, 78] }, { c: 1.0, rgb: [22, 104, 58] },
     ],
   },
   arable: {
-    label: 'Arable land', role: 'subsistence', absolute: false,
+    absolute: false,
     stops: [
       { c: 0.0, rgb: [214, 196, 158] }, { c: 0.5, rgb: [176, 190, 96] }, { c: 1.0, rgb: [70, 150, 60] },
     ],
   },
   fish: {
-    label: 'Fish', role: 'subsistence', absolute: false,
+    absolute: false,
     stops: [
       { c: 0.0, rgb: [206, 224, 226] }, { c: 0.5, rgb: [96, 174, 200] }, { c: 1.0, rgb: [30, 96, 168] },
     ],
   },
   game: {
-    label: 'Game / forage', role: 'subsistence', absolute: false,
+    absolute: false,
     stops: [
       { c: 0.0, rgb: [206, 200, 176] }, { c: 0.5, rgb: [150, 168, 100] }, { c: 1.0, rgb: [58, 118, 66] },
     ],
   },
   pasture: {
-    label: 'Pasture', role: 'subsistence', absolute: false,
+    absolute: false,
     stops: [
       { c: 0.0, rgb: [228, 216, 150] }, { c: 0.5, rgb: [206, 198, 96] }, { c: 1.0, rgb: [150, 180, 78] },
     ],
   },
   timber: {
-    label: 'Timber', role: 'material', absolute: false,
+    absolute: false,
     stops: [{ c: 0.0, rgb: [214, 206, 180] }, { c: 0.5, rgb: [140, 138, 82] }, { c: 1.0, rgb: [72, 92, 40] }],
   },
   salt: {
-    label: 'Salt', role: 'material', absolute: false,
+    absolute: false,
     stops: [{ c: 0.0, rgb: [236, 232, 238] }, { c: 0.5, rgb: [186, 150, 202] }, { c: 1.0, rgb: [120, 72, 150] }],
   },
   toolStone: {
-    label: 'Tool-stone', role: 'material', absolute: false,
+    absolute: false,
     stops: [{ c: 0.0, rgb: [214, 214, 218] }, { c: 0.5, rgb: [126, 126, 134] }, { c: 1.0, rgb: [52, 52, 60] }],
   },
   copper: {
-    label: 'Copper', role: 'material', absolute: false, fadeZero: true,
+    absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [232, 214, 194] }, { c: 0.5, rgb: [210, 140, 80] }, { c: 1.0, rgb: [176, 84, 40] }],
   },
   tin: {
-    label: 'Tin', role: 'material', absolute: false, fadeZero: true,
+    absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [226, 228, 232] }, { c: 0.5, rgb: [168, 178, 190] }, { c: 1.0, rgb: [104, 116, 134] }],
   },
   iron: {
-    label: 'Iron', role: 'material', absolute: false, fadeZero: true,
+    absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [230, 212, 202] }, { c: 0.5, rgb: [200, 118, 88] }, { c: 1.0, rgb: [148, 54, 38] }],
   },
   gold: {
-    label: 'Gold', role: 'prestige', absolute: false, fadeZero: true,
+    absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [240, 232, 198] }, { c: 0.5, rgb: [228, 196, 84] }, { c: 1.0, rgb: [198, 150, 24] }],
   },
   silver: {
-    label: 'Silver', role: 'prestige', absolute: false, fadeZero: true,
+    absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [240, 242, 245] }, { c: 0.5, rgb: [198, 204, 212] }, { c: 1.0, rgb: [150, 160, 176] }],
   },
   gems: {
-    label: 'Gems', role: 'prestige', absolute: false, fadeZero: true,
+    absolute: false, fadeZero: true,
     stops: [{ c: 0.0, rgb: [240, 222, 236] }, { c: 0.5, rgb: [214, 108, 170] }, { c: 1.0, rgb: [166, 38, 112] }],
   },
-}
-
-// Selector groups, in display order.
-export const ECOLOGY_ROLE_LABELS: Record<EcologyRole, string> = {
-  aggregate: 'Aggregate',
-  subsistence: 'Subsistence',
-  material: 'Material',
-  prestige: 'Prestige',
 }
 
 function rampColor(stops: { c: number; rgb: Rgb }[], value: number): Rgb {
