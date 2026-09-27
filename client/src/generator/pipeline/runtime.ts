@@ -622,6 +622,10 @@ function stopTicking(): void {
 
 function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'tectonicsStart' }>): void {
   if (intervalId !== undefined) return
+  // No plates yet: the Archean has not been handed over. Said out loud rather
+  // than armed anyway — the interval is one variable for both phases, so a
+  // loop of idle ticks here kept the next genesisStart from starting at all.
+  if (!sim) { decline('tectonics', 'genesis'); return }
   historyControls = {
     alluvium: message.alluvium ?? TECTONICS_INPUTS.alluvium.default,
     rockContrast: message.rockContrast ?? TECTONICS_INPUTS.rockContrast.default,

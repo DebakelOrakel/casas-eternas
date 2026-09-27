@@ -527,6 +527,23 @@ test('a hydrology pass overtaken by a reset publishes nothing', async () => {
   check('the pass after the reset publishes', p.count('hydrologyData') === 1)
 })
 
+test('tectonics on an Archean world is refused, and the Archean still starts', async () => {
+  // The two phases share one interval handle. A tectonicsStart before the
+  // hand-over used to arm it with ticks that found no plates — and the
+  // genesisStart after it saw the handle taken and did nothing (bounty 61).
+  const p = await freshPipeline()
+  p.dispatch({ ...ARCHEAN_INIT })
+  await until(() => p.count('rendered') >= 1, { label: 'the first Archean render' })
+  p.dispatch({ type: 'tectonicsStart' })
+  await until(() => p.count('stageDeclined') >= 1, { label: 'the refusal' })
+  check('the start is declined, naming the genesis', p.last('stageDeclined').stage === 'tectonics' && p.last('stageDeclined').needs === 'genesis', JSON.stringify(p.last('stageDeclined')))
+  p.dispatch({ type: 'genesisStart' })
+  await until(() => p.count('genesisStatus') >= 2, { label: 'Archean epochs after the refused start', timeout: 20000 })
+  p.dispatch({ type: 'genesisStop' })
+  await quiet(p)
+  check('the Archean runs on', p.count('genesisStatus') >= 2)
+})
+
 test('a repeat hydrology call reuses the routing instead of re-flooding', async () => {
   // The expensive half (priority-flood routing, discharge, lakes) is cached.
   // The contract is visible from outside: a re-route sends lakes, watersheds,
