@@ -115,6 +115,16 @@ let pendingEvents: SimEvent[] = []
 let handoverSnapshot: PlateSimulationSnapshot | null = null
 let handoverOceanAge: Float32Array | null = null
 let handoverMantle: Float32Array | null = null
+// The hand-over belongs to the world that was grown here. Whatever REPLACES
+// that world (a fresh Archean, a restored save) drops it, so a later reset
+// cannot rewind a loaded world onto the previous session's continents. The
+// screen refuses that reset on its own flag as well; this is the runtime's
+// own guarantee, not a second copy of the screen's.
+function dropHandover(): void {
+  handoverSnapshot = null
+  handoverOceanAge = null
+  handoverMantle = null
+}
 let lastRawElevations: Float32Array | null = null
 // The last erosion pass's per-cell sediment flux (ErosionPassV2Result), the
 // river graph's sediment load. Null before any pass; stale after a restore
@@ -1198,6 +1208,7 @@ function handleSerializeWorld(): void {
 function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'restoreWorld' }>): void {
   stopTicking()
   worldGeneration += 1
+  dropHandover()
   if (message.archean) {
     sim = null
     archean = deserializeArchean(message.archean.snapshot, new Float32Array(message.archean.mantle), new Int16Array(message.archean.streak))
@@ -1268,6 +1279,7 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
 function handleGenesisInit(message: Extract<WorkerInboundMessage, { type: 'genesisInit' }>): void {
   stopTicking()
   worldGeneration += 1
+  dropHandover()
   sim = null
   archeanSeed = message.seed
   archeanParams = { ...DEFAULT_ARCHEAN_PARAMS, diffusion: message.mantleDiffusion ?? DEFAULT_ARCHEAN_PARAMS.diffusion }
@@ -1368,6 +1380,7 @@ function resetGenesis(): void {
   if (archeanWidth === 0) return
   stopTicking()
   worldGeneration += 1
+  dropHandover()
   sim = null
   archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanWater)
   lastRawElevations = null

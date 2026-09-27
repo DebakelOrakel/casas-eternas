@@ -45,7 +45,7 @@ export function createPanel(host: HTMLElement, options: PanelOptions): Panel {
   root.className = 'app-panel-backdrop'
   root.hidden = true
   root.innerHTML = `
-    <div class="app-panel app-panel--${options.variant}" role="dialog" aria-modal="true" aria-label="${options.ariaLabel ?? options.title}">
+    <div class="app-panel app-panel--${options.variant}" role="dialog" aria-modal="true">
       <header class="app-panel-head">
         <h2 data-value="title"></h2>
         <span class="app-panel-status" data-value="status"></span>
@@ -57,6 +57,9 @@ export function createPanel(host: HTMLElement, options: PanelOptions): Panel {
   `
   host.appendChild(root)
 
+  // The label is set as an attribute, not interpolated into the markup above:
+  // a title is caller text, and text goes in as text.
+  root.querySelector<HTMLElement>('.app-panel')!.setAttribute('aria-label', options.ariaLabel ?? options.title)
   const titleEl = root.querySelector<HTMLElement>('[data-value="title"]')!
   const body = root.querySelector<HTMLElement>('[data-value="body"]')!
   const status = root.querySelector<HTMLElement>('[data-value="status"]')!

@@ -34,15 +34,28 @@ export interface StoragePanel {
   dispose(): void
 }
 
+// Every text in this panel is artifact metadata — a label another user wrote
+// on a shared server, a uid, a hash, a version string — so each goes in as
+// TEXT through this one constructor, never interpolated into markup.
+function span(className: string, text: string, title?: string): HTMLSpanElement {
+  const el = document.createElement('span')
+  el.className = className
+  el.textContent = text
+  if (title !== undefined) el.title = title
+  return el
+}
+
 // The version's line: the algo+constants chip first, then the resolutions it
 // has produced — [v6] [4K] [8K].
-function chipRow(line: CachedVersion): string {
+function chipRow(line: CachedVersion): HTMLSpanElement[] {
   const versionShort = line.pipelineVersion.split('-')[0] || line.pipelineVersion
-  const version = `<span class="cache-chip cache-chip--version" title="${line.pipelineVersion}">${versionShort}</span>`
-  const stages = line.stages
-    .map((s) => `<span class="cache-chip" title="${t('common.panel.storage.chipTitle', { width: s.width, height: s.height, seconds: (s.bakeMs / 1000).toFixed(0) })}">${s.width > 0 ? resolutionLabel(s.width) : '?'}</span>`)
-    .join('')
-  return version + (stages || '<span class="cache-chip cache-chip--empty">—</span>')
+  const chips = [span('cache-chip cache-chip--version', versionShort, line.pipelineVersion)]
+  for (const s of line.stages) {
+    const title = t('common.panel.storage.chipTitle', { width: s.width, height: s.height, seconds: (s.bakeMs / 1000).toFixed(0) })
+    chips.push(span('cache-chip', s.width > 0 ? resolutionLabel(s.width) : '?', title))
+  }
+  if (line.stages.length === 0) chips.push(span('cache-chip cache-chip--empty', '—'))
+  return chips
 }
 
 export function createStoragePanel(host: HTMLElement): StoragePanel {
@@ -66,7 +79,7 @@ export function createStoragePanel(host: HTMLElement): StoragePanel {
   function section(title: string, usage: string): HTMLElement {
     const head = document.createElement('div')
     head.className = 'cache-section'
-    head.innerHTML = `<span class="cache-section-title">${title}</span><span class="cache-section-usage">${usage}</span>`
+    head.append(span('cache-section-title', title), span('cache-section-usage', usage))
     return head
   }
 
@@ -78,28 +91,31 @@ export function createStoragePanel(host: HTMLElement): StoragePanel {
     group.className = 'cache-world'
     const head = document.createElement('div')
     head.className = 'cache-world-head'
-    head.innerHTML = `
-      <span class="cache-world-label" title="${t('common.world.uid')}: ${world.worldUid}">${world.label}</span>
-      <span class="cache-row-size">${formatBytes(world.bytes)}</span>
-      <button type="button" class="app-panel-button cache-row-delete" aria-label="${t('common.panel.storage.delete')}">${t('common.panel.storage.delete')}</button>
-    `
-    head.querySelector('.cache-row-delete')!.addEventListener('click', () => {
+    head.append(
+      span('cache-world-label', world.label, `${t('common.world.uid')}: ${world.worldUid}`),
+      span('cache-row-size', formatBytes(world.bytes)),
+    )
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.className = 'app-panel-button cache-row-delete'
+    remove.setAttribute('aria-label', t('common.panel.storage.delete'))
+    remove.textContent = t('common.panel.storage.delete')
+    remove.addEventListener('click', () => {
       void (async () => {
         await onDelete()
         await refresh()
       })()
     })
+    head.appendChild(remove)
     group.appendChild(head)
     let lines = 0
     for (const terrain of world.terrains) {
       for (const line of terrain.versions) {
         const row = document.createElement('div')
         row.className = 'cache-line'
-        row.innerHTML = `
-          <span class="cache-line-hash" title="${terrain.worldId}">${terrain.worldId.slice(0, 8)}</span>
-          <span class="cache-row-chips">${chipRow(line)}</span>
-          <span class="cache-row-size">${formatBytes(line.bytes)}</span>
-        `
+        const chips = span('cache-row-chips', '')
+        chips.append(...chipRow(line))
+        row.append(span('cache-line-hash', terrain.worldId.slice(0, 8), terrain.worldId), chips, span('cache-row-size', formatBytes(line.bytes)))
         group.appendChild(row)
         lines++
       }
@@ -110,7 +126,9 @@ export function createStoragePanel(host: HTMLElement): StoragePanel {
     if (lines === 0) {
       const row = document.createElement('div')
       row.className = 'cache-line'
-      row.innerHTML = '<span class="cache-row-chips"><span class="cache-chip cache-chip--empty">—</span></span>'
+      const chips = span('cache-row-chips', '')
+      chips.appendChild(span('cache-chip cache-chip--empty', '—'))
+      row.appendChild(chips)
       group.appendChild(row)
     }
     return group

@@ -410,6 +410,20 @@ test('REGRESSION: resetTectonics on a loaded world is a no-op', async () => {
   await settle(300)
   check('resetTectonics declines when there is no hand-over', p.count('rendered') === before)
   check('the loaded world is untouched', hash(p.last('rendered').elevation) === loaded)
+
+  // The same load into the pipeline that GREW the world: that one holds a
+  // hand-over, and it must go with the world it belonged to — a reset after
+  // the load rewound the loaded world onto the previous session's continents
+  // (bounty 5), which only the screen's own flag was hiding.
+  const grown = source.count('rendered')
+  source.dispatch(asRestore(worldData))
+  await until(() => source.count('rendered') > grown, { label: 'the load render on the grower' })
+  await quiet(source)
+  const reloaded = source.count('rendered')
+  source.dispatch({ type: 'resetStage', stage: 'tectonics' })
+  await settle(300)
+  check('a load drops the hand-over of the world it replaced', source.count('rendered') === reloaded)
+  check('the world loaded over a grown one is untouched', hash(source.last('rendered').elevation) === loaded)
 })
 
 // ------------------------------------------------------------- the stage chain
