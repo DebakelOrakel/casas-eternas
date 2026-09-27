@@ -2958,8 +2958,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // whose water forcing evaluates the same weather chain with them.
   const weatherParams = () => ({
     temperatureOffset: Number(tempBandInput.value),
-    temperatureContrast: Number(contrastInput.value) / 100,
-    humidity: Number(humidityInput.value) / 100,
+    temperatureContrast: CLIMATE_INPUTS.contrast.toModel(Number(contrastInput.value)),
+    humidity: CLIMATE_INPUTS.humidity.toModel(Number(humidityInput.value)),
     // The thermal equator sits at the map's middle since 2026-09-26 (the
     // shift slider is gone; the map draws the equator instead).
     equatorOffset: 0,
@@ -3099,12 +3099,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ecologyInFlight = true
     updateControlsDisabled()
     updateProgress()
-    const w = (f: EcologyFieldId): number => (abundance.get(f) ?? ECOLOGY_ABUNDANCE.default) / 100
+    const w = (f: EcologyFieldId): number => ECOLOGY_ABUNDANCE.toModel(abundance.get(f) ?? ECOLOGY_ABUNDANCE.default)
     postToWorker({
       type: 'ecologyRun',
       carryingCapacity: Number(carryingCapacityInput.value),
       concentration: Number(concentrationInput.value),
-      provinceStrength: Number(provinceInput.value) / 100,
+      provinceStrength: ECOLOGY_INPUTS.provinceStrength.toModel(Number(provinceInput.value)),
       tinRarity: 0,
       weights: {
         arable: w('arable'), fish: w('fish'), game: w('game'), pasture: w('pasture'),

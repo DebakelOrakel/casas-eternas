@@ -173,7 +173,7 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // blocks under 2 km terrain. A cached v6 artifact has neither.
 // v8 (2026-08-14): the world's fine-detail SEED changed. It used to be a djb2
 // hash of the seed text, invented by the save reader; it is now the
-// generator's own `warpSeed` (itself `hashSeedString(seed + ":coastalWarp")`,
+// generator's own `warpSeed` (itself `coastalWarpSeed(seed)`, archean/archeanState.ts,
 // so derivable from the same seed text) xor the shared FINE_DETAIL_SEED_SALT.
 // One field family per world instead of three unrelated ones — the bake's seed
 // roughness, the near-field cascade and the generator's own fine relief now

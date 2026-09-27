@@ -18,9 +18,9 @@ export const ECOLOGY_INPUTS = {
     i18n: 'generator.panel.ecology.concentration',
     inSpec: true,
   },
-  // Volcanic-province fertility strength. The model wants 0..1; the default
-  // matches ecologyField's DEFAULT_PROVINCE_STRENGTH, which is where it has to
-  // stay until this declaration is the one the module reads.
+  // Volcanic-province fertility strength. The model wants 0..1 (toModel);
+  // this declaration is the default's only home — computeEcology takes the
+  // value and holds no fallback of its own.
   provinceStrength: {
     min: 0, max: 100, step: 5, default: 45,
     i18n: 'generator.panel.ecology.provinces',
@@ -34,7 +34,7 @@ export const ECOLOGY_INPUTS = {
 // interpolated with the resource's name, and each carries its own
 // `resource.<id>` help key. So this declares the numbers only — the
 // generic renderer cannot serve them until it can take a per-instance label.
-export const ECOLOGY_ABUNDANCE = { min: 50, max: 200, step: 5, default: 100 }
+export const ECOLOGY_ABUNDANCE = { min: 50, max: 200, step: 5, default: 100, toModel: (v: number) => v / 100 }
 
 // How the abundance fields are GROUPED — both in the fold-out UI and, more
 // importantly, in the save: a field's group name is part of its yaml path

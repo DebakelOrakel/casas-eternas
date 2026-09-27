@@ -127,6 +127,7 @@ const M = {
   monsoon: await L('/src/generator/climate/monsoon.ts'),
   biomes: await L('/src/generator/climate/biomes.ts'),
   ecology: await L('/src/generator/ecology/ecologyField.ts'),
+  ecologyInputs: await L('/src/generator/ecology/ecologyInputParams.ts'),
   migration: await L('/src/generator/migration/migrationField.ts'),
   rafts: await L('/src/generator/crust/raftField.ts'),
   volcanoes: await L('/src/generator/tectonics/volcanoes.ts'),
@@ -366,7 +367,7 @@ async function buildWorld(seed) {
     discharge, maxDischarge: maxDis, lakeDepth: lakes.depth.map((d, i) => (lakes.frozen[i] ? 0 : d)), volcanoes,
     orogenPoints: sim.sutures.map((s) => ({ x: s.x, y: s.y })),
     cratonAge, warpSeed: sim.warpSeed, worldWidth: W, worldHeight: H,
-  }, { carryingCapacity: 100, concentration: 0 })
+  }, { carryingCapacity: 100, concentration: 0, provinceStrength: M.ecologyInputs.ECOLOGY_INPUTS.provinceStrength.toModel(M.ecologyInputs.ECOLOGY_INPUTS.provinceStrength.default) })
 
   // The origin has to be picked FROM the world, not fixed by index. It used to
   // be cell CRX*CRY*0.4, and at 3-11% land that cell was ocean on all three

@@ -1,4 +1,4 @@
-import { metersToElevation } from './elevationScale'
+import { ABYSSAL_FLOOR, ELEVATION_METERS, RIDGE_CREST, SEA_LEVEL, SHELF_BREAK, metersToElevation } from './elevationScale'
 
 type Rgb = [number, number, number]
 
@@ -21,19 +21,23 @@ type Rgb = [number, number, number]
 // kilometres wide, and this is what actually paints it.
 const stop = (meters: number, color: Rgb): { elevation: number; color: Rgb } => ({ elevation: metersToElevation(meters), color })
 
+// The stops that ARE a scale anchor read the anchor, so the palette follows
+// the model when an anchor moves; the others are the palette's own.
+const at = (elevation: number, color: Rgb): { elevation: number; color: Rgb } => ({ elevation, color })
+
 const COLOR_STOPS: { elevation: number; color: Rgb }[] = [
-  stop(-9000, [8, 28, 76]), // trench
-  stop(-5700, [20, 52, 112]), // abyssal plain (ABYSSAL_FLOOR)
-  stop(-2600, [36, 88, 158]), // mid-ocean ridge crest (RIDGE_CREST)
+  stop(-ELEVATION_METERS, [8, 28, 76]), // trench, the scale's floor
+  at(ABYSSAL_FLOOR, [20, 52, 112]), // abyssal plain
+  at(RIDGE_CREST, [36, 88, 158]), // mid-ocean ridge crest
   stop(-600, [70, 130, 190]), // continental slope
-  stop(-140, [98, 160, 210]), // shelf break (SHELF_BREAK) — shallow water above here
-  stop(0, [222, 208, 158]), // shoreline
+  at(SHELF_BREAK, [98, 160, 210]), // shelf break — shallow water above here
+  at(SEA_LEVEL, [222, 208, 158]), // shoreline
   stop(200, [92, 150, 68]), // lowland green
   stop(1200, [72, 122, 58]), // upland
   stop(2500, [122, 108, 66]), // highland brown
   stop(4200, [128, 118, 108]), // bare rock
   stop(6000, [250, 250, 250]), // permanent snow
-  stop(9000, [255, 255, 255]),
+  stop(ELEVATION_METERS, [255, 255, 255]), // the scale's ceiling
 ]
 
 function lerpChannel(a: number, b: number, t: number): number {

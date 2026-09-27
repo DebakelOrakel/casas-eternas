@@ -35,7 +35,8 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
-// defaultErosionRounds mirrors the client's AMPLIFY_EROSION_ROUNDS (since
+// defaultErosionRounds mirrors the client's AMPLIFY_EROSION_ROUNDS
+// (mirrors_test.go checks the two agree; since
 // erosion-v2 P3 these are ENGINE ITERATIONS — the measurement behind the
 // value lives beside the client constant). A request that omits the field
 // gets this rather than zero: "no rounds" would silently produce a world
@@ -46,7 +47,7 @@ const defaultErosionRounds = 12
 // measurement (~2.6 GB) with headroom, since running out mid-bake wastes the
 // minutes already spent. The cluster Job pins the same number by hand in
 // bake-job.yaml's command line (the template has no value for it) — change
-// the two together.
+// the two together; mirrors_test.go fails when they differ.
 //
 // IT DOES NOT BOUND THIS WORKLOAD, and that is worth knowing before anyone
 // raises it to fix a memory problem. Measured 2026-08-15 on a 16384² bake, the

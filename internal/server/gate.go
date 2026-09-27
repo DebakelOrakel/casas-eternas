@@ -10,7 +10,7 @@ import (
 // apiPrefix is what the gate protects. Everything outside it is the browser
 // application — the shell, its assets and /config.json — which has to load
 // before anyone can log in at all.
-const apiPrefix = "/v1/"
+const apiPrefix = APIPrefix + "/"
 
 // Gate refuses any API request it cannot attribute to somebody.
 //

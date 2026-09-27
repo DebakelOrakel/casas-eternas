@@ -42,9 +42,11 @@ export interface EcologyParams {
   // Spatial structure, -100..100. 0 = physics as-is; +ve clumps, -ve evens.
   // Mean-preserving (shape only). See ecology.md Theme 1 (L1).
   concentration: number
-  // L2 "province" strength (volcanic-soil fertility + light noise). Mean-1
-  // multiplicative. Fold-out knob (0 = off).
-  provinceStrength?: number
+  // L2 "province" strength (volcanic-soil fertility + light noise), 0..1. Mean-1
+  // multiplicative. Fold-out knob (0 = off). Required: its default is the
+  // input declaration's (ecologyInputParams.provinceStrength), which this
+  // module does not read — a default here would be a second copy of it.
+  provinceStrength: number
   // Per-field abundance multipliers (fold-out nudges), default 1. Applied to the
   // field itself; for subsistence + salt it also scales their carrying-capacity
   // contribution. Metals share one "ore richness" knob (set on copper/tin/iron).
@@ -391,13 +393,6 @@ function provinceNoise(u: number, v: number, freqX: number, freqY: number, seed:
   return (top + (bottom - top) * fy) * 2 - 1
 }
 
-// Deliberately NOT in ecologyTuneParams: this is the default of a USER slider
-// (the province-strength fold-out), not a tuning constant. It is the input's
-// schema, so it belongs in an ecologyInputParams declaration once part B4 builds
-// one — and it must never enter a tuning hash, or moving a slider would look
-// like the algorithm changed.
-const DEFAULT_PROVINCE_STRENGTH = 0.45
-
 // Rasterises a soft Gaussian "influence" field (0..1, union-max) around a set of
 // world-space points into the climate grid — reused for volcanic-soil provinces,
 // copper (arc volcanoes), tin (sutures), obsidian, etc. Radius as a fraction of
@@ -447,7 +442,7 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: 
   const l1Scale = meanShaped > 0 ? meanNorm / meanShaped : 1
   for (let i = 0; i < n; i++) if (land[i]) shaped[i] *= l1Scale
 
-  const strength = params.provinceStrength ?? DEFAULT_PROVINCE_STRENGTH
+  const strength = params.provinceStrength
   const volcanic = rasterisePointField(volcanoes, ECOLOGY_TUNING.volcanicProvinceRadiusFrac, worldWidth, worldHeight)
   const dev = new Float32Array(n)
   for (let i = 0; i < n; i++) {
