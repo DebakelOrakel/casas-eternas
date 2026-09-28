@@ -1222,7 +1222,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastRefined: RefinedClimate | null = null
   // A loaded save's refinement, held until the catch-up has computed the
   // climate it refines: that fresh climate would drop it otherwise.
-  let restoredRefinement: RefinedClimate | null = null
+  let restoredRefinement = false
+  // Called when a requested refinement has landed, the refined climate
+  // included (the restore's catch-up waits on it).
+  let refineResolve: (() => void) | null = null
   // The month the climate layers show: 0 the year's mean, 1–12 January to
   // December. Read only while a refinement exists.
   let climateMonth = 0
@@ -3214,7 +3217,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // so the ecology overlay went on showing values computed from a climate that
     // no longer existed. The hydrology's own refinement is exempt: it carries
     // `refinement`, and the pass that sent it is recomputing that work itself.
-    if (!message.refinement) {
+    // The step's refinement put in place stales the rivers and the ecology
+    // like any new climate, and keeps itself; any other new climate drops it.
+    // The refined climate follows its refinement message, so a caller
+    // waiting on a refinement is released here, with both in place.
+    if (message.refined) {
+      invalidateAfter('climate')
+      refineResolve?.()
+      refineResolve = null
+    } else if (!message.refinement) {
       invalidateAfter('climate')
       dropRefinement()
     }
@@ -4531,13 +4542,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (lastTemperature === null) {
       await awaitCompute((r) => { climateResolve = r }, () => { if (!climateInFlight) requestClimate() })
     }
-    // The climate is the one the save's refinement was made on (the same
-    // world, the same levers), so the refinement goes back on top of it.
-    if (restoredRefinement && lastTemperature !== null) {
-      lastRefined = restoredRefinement
-      restoredRefinement = null
-      updateControlsDisabled()
-      updateOverlays()
+    // A save that was refined is refined again here, before the rivers: the
+    // worker's climate must be the refined one they run on, and the
+    // refinement is deterministic, so this is the saved one. (The save's
+    // refinement layers are for readers without the generator.)
+    if (restoredRefinement && lastTemperature !== null && lastRefined === null) {
+      restoredRefinement = false
+      await awaitCompute((r) => { refineResolve = r }, () => {
+        refineInFlight = true
+        refineShare = 0
+        updateControlsDisabled()
+        postToWorker({ type: 'climateRefine' })
+      })
     }
     if (erosionRunCount < 1) return
     if (lastRiverData === null) {
@@ -4956,7 +4972,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ctx.notifications.clearAll()
     overlay.clearMarkers()
     invalidateAfter('tectonics')
-    restoredRefinement = await readRefinement(zip)
+    restoredRefinement = (await readRefinement(zip)) !== null
 
     const seed = readYamlValue(yaml, 'spec.seed') ?? ''
     // One read of the recipe instead of a regex per key, with every gap filled by
@@ -5254,9 +5270,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     updateProgress()
     postToWorker({ type: 'climateRefine' })
   })
+  // The worker holds the refined climate in the history's place, so the
+  // reset computes the history's again (which drops the refinement here).
   resetClimateButton.addEventListener('click', () => {
     if (isBusy()) return
     dropRefinement()
+    requestClimate()
   })
   climateMonthInput.addEventListener('input', () => {
     climateMonth = Number(climateMonthInput.value)

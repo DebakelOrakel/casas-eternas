@@ -3,7 +3,8 @@ import { CLIMATE_TUNING } from './climateTuneParams'
 import { koppenFromMonths, reduceTemperatureToSeaLevel } from './biomes'
 import { computePressureWind, REFINED_MONTHS } from './pressure'
 import { seasonalCycle } from './energyBalance'
-import { computePrecipitation } from './precipitation'
+import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
+import { OCEAN_AMPLITUDE } from './seasonality'
 import { applyOceanSST, computeOceanCurrents, computeUpwelling, eastwardInBasin } from './oceanCurrents'
 import { computeTemperature } from './temperature'
 import type { WeatherParams } from './weather'
@@ -119,4 +120,50 @@ export function refineClimate(
 
   const koppen = koppenFromMonths(monthly, precipitation, REFINED_MONTHS)
   return { months: REFINED_MONTHS, temperature: monthly, precipitation, koppen, pressure, wind, currents, currentAnomaly, upwelling }
+}
+
+// The annual fields of a refinement, in the forms the history's climate
+// has them (weather.computeWeather), so everything that reads a climate
+// reads this one unchanged: the mean temperature; the mean rain (a mean of
+// rates), OCEAN_PRECIP on the sea; the seasonal range (warmest month minus
+// coldest), OCEAN_AMPLITUDE on the sea; the signed monsoon index from the
+// two halves of the year, (P_top − P_bottom) / (P_top + P_bottom + floor)
+// with each half as its own annual rate, + where the rain falls in the top
+// hemisphere's summer (April–September), OCEAN_PRECIP on the sea.
+export function annualFromMonths(r: RefinedClimate): { temperature: Float32Array; precipitation: Float32Array; seasonalAmplitude: Float32Array; monsoonIndex: Float32Array } {
+  const n = CLIMATE_RES_X * CLIMATE_RES_Y
+  const temperature = new Float32Array(n)
+  const precipitation = new Float32Array(n)
+  const seasonalAmplitude = new Float32Array(n)
+  const monsoonIndex = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    let mean = 0
+    let lo = Infinity
+    let hi = -Infinity
+    for (let m = 0; m < r.months; m++) {
+      const t = r.temperature[m * n + i]
+      mean += t / r.months
+      lo = Math.min(lo, t)
+      hi = Math.max(hi, t)
+    }
+    temperature[i] = mean
+    if (r.precipitation[i] < 0) {
+      precipitation[i] = OCEAN_PRECIP
+      seasonalAmplitude[i] = OCEAN_AMPLITUDE
+      monsoonIndex[i] = OCEAN_PRECIP
+      continue
+    }
+    let top = 0
+    let bottom = 0
+    for (let m = 0; m < r.months; m++) {
+      const p = r.precipitation[m * n + i]
+      const summerTop = m >= 3 && m < 9
+      if (summerTop) top += (2 * p) / r.months
+      else bottom += (2 * p) / r.months
+    }
+    precipitation[i] = (top + bottom) / 2
+    seasonalAmplitude[i] = hi - lo
+    monsoonIndex[i] = (top - bottom) / (top + bottom + CLIMATE_TUNING.monsoonSeasonalityFloor)
+  }
+  return { temperature, precipitation, seasonalAmplitude, monsoonIndex }
 }

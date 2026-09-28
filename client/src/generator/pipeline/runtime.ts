@@ -41,8 +41,8 @@ import type { LakeFields } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
-import { computeBiomes, computeBiomesFine, computeKoppenField } from '../climate/biomes'
-import { refineClimate } from '../climate/refinement'
+import { computeBiomes, computeBiomesFine, computeBiomesFromMonths, computeBiomesFineFromMonths, computeKoppenField } from '../climate/biomes'
+import { annualFromMonths, refineClimate } from '../climate/refinement'
 import { downsampleMax, sampleBilinearWorld } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import type { WaterBody } from '../surface/hydrology'
@@ -181,6 +181,11 @@ interface ClimateResult {
   currents: Float32Array
   // The wind (climate/wind.ts, interleaved) — the coast's exposure reads it.
   wind: Float32Array
+  // Set when this is the climate step's refinement (handleClimateRefine):
+  // the real months the annual fields above were derived from. The riparian
+  // biomes classify from them, and the hydrology's own climate pass (the
+  // dry-basin v2) leaves such a climate alone.
+  months?: { temperature: Float32Array; precipitation: Float32Array; count: number }
 }
 let climate: ClimateResult | null = null
 
@@ -811,25 +816,66 @@ function handleClimateRefine(): void {
   const elevation = preErosionElevations ?? lastRawElevations
   if (!sim || !elevation) { decline('climate', 'tectonics'); return }
   if (!climate) { decline('climate', 'climate'); return }
-  const r = refineClimate(elevation, sim.width, sim.height, climate.params, climate.temperature, climate.wind, (share) => {
-    const progress: WorkerClimateRefineProgressMessage = { type: 'climateRefineProgress', share }
+  const { width, height } = sim
+  const r = refineClimate(elevation, width, height, climate.params, climate.temperature, climate.wind, (share) => {
+    const progress: WorkerClimateRefineProgressMessage = { type: 'climateRefineProgress', share: share * 0.85 }
     emit(progress)
   })
+
+  // The refined climate takes the history's place (build step 5b): its
+  // annual fields derived from the months, its biomes classified from them.
+  // Everything downstream is then stale — the rivers run on the new rain.
+  const n = CLIMATE_RES_X * CLIMATE_RES_Y
+  const annual = annualFromMonths(r)
+  const biomes = computeBiomesFromMonths(r.temperature, r.precipitation, r.months, annual.precipitation, elevation, width, height)
+  const biomesFine = computeBiomesFineFromMonths(r.temperature, r.precipitation, r.months, annual.temperature, annual.precipitation, elevation, width, height)
+  const annualWind = new Float32Array(n * 2)
+  for (let m = 0; m < r.months; m++) for (let i = 0; i < n * 2; i++) annualWind[i] += r.wind[m * n * 2 + i] / r.months
+  climate = {
+    params: climate.params,
+    temperature: annual.temperature,
+    precipitation: annual.precipitation,
+    seasonalAmplitude: annual.seasonalAmplitude,
+    monsoonIndex: annual.monsoonIndex,
+    biomes,
+    currents: r.currents,
+    wind: annualWind,
+    months: { temperature: r.temperature, precipitation: r.precipitation, count: r.months },
+  }
+
   const reply: WorkerClimateRefinedMessage = {
     type: 'climateRefined',
     resX: CLIMATE_RES_X,
     resY: CLIMATE_RES_Y,
     months: r.months,
-    temperature: r.temperature.buffer as ArrayBuffer,
-    precipitation: r.precipitation.buffer as ArrayBuffer,
-    koppen: r.koppen.buffer as ArrayBuffer,
+    temperature: r.temperature.slice().buffer as ArrayBuffer,
+    precipitation: r.precipitation.slice().buffer as ArrayBuffer,
+    koppen: r.koppen.slice().buffer as ArrayBuffer,
     pressure: r.pressure.buffer as ArrayBuffer,
     wind: r.wind.buffer as ArrayBuffer,
-    currents: r.currents.buffer as ArrayBuffer,
-    currentAnomaly: r.currentAnomaly.buffer as ArrayBuffer,
+    currents: r.currents.slice().buffer as ArrayBuffer,
+    currentAnomaly: r.currentAnomaly.slice().buffer as ArrayBuffer,
     upwelling: r.upwelling.buffer as ArrayBuffer,
   }
   emit(reply, [reply.temperature, reply.precipitation, reply.koppen, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling])
+  // The screen's annual fields follow, as a climate of its own kind.
+  const climateMessage: WorkerClimateDataMessage = {
+    type: 'climateData',
+    refined: true,
+    resX: CLIMATE_RES_X,
+    resY: CLIMATE_RES_Y,
+    temperature: annual.temperature.slice().buffer as ArrayBuffer,
+    wind: annualWind.slice().buffer as ArrayBuffer,
+    currents: r.currents.slice().buffer as ArrayBuffer,
+    currentAnomaly: r.currentAnomaly.buffer as ArrayBuffer,
+    precipitation: annual.precipitation.slice().buffer as ArrayBuffer,
+    seasonalAmplitude: annual.seasonalAmplitude.slice().buffer as ArrayBuffer,
+    monsoonIndex: annual.monsoonIndex.slice().buffer as ArrayBuffer,
+    koppen: r.koppen.buffer as ArrayBuffer,
+    biomes: biomesFine.buffer as ArrayBuffer,
+  }
+  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.koppen, climateMessage.biomes])
+  invalidateAfter('climate')
 }
 
 // The lake depths with frozen basins zeroed — what the ecology (fish) and the
@@ -902,7 +948,10 @@ function handleHydrologyRun(): void {
         // Deliberately ONE refinement step, mirroring the riparian pattern:
         // iterate further and this becomes a fixed-point solver for a
         // second-decimal correction nobody can see.
-        {
+        // Not over the step's refinement: it is computed on the step's own
+        // land mask, without the dry-basin override, and recomputing the
+        // cheap chain here would put the history's climate back in its place.
+        if (!weather.months) {
           const chain = computeClimateChain(terrain, width, height, weather.params, lakes.dryBasin)
           // Update the caches + screen WITHOUT invalidateAfter('climate'):
           // the very next lines recompute the dependent hydrology themselves,
@@ -954,7 +1003,7 @@ function handleHydrologyRun(): void {
     let biomesOut: Uint8Array = new Uint8Array(0)
     let precipEffOut: Float32Array = new Float32Array(0)
     if (rerouted) {
-      const riparian = computeRiparianBiomes(result.routing, terrain, result.discharge, threshold, result.maxDischarge, result.lakeDepth, weather.precipitation, weather.temperature, weather.seasonalAmplitude, weather.monsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, result.saltFlat ?? undefined, result.dryBasin ?? undefined, result.frozen ?? undefined)
+      const riparian = computeRiparianBiomes(result.routing, terrain, result.discharge, threshold, result.maxDischarge, result.lakeDepth, weather.precipitation, weather.temperature, weather.seasonalAmplitude, weather.monsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, result.saltFlat ?? undefined, result.dryBasin ?? undefined, result.frozen ?? undefined, weather.months)
       // The riparian-effective precipitation rides along: it is what lets the
       // worldmap reclassify at bake resolution without re-running hydrology.
       biomesOut = riparian.biomes

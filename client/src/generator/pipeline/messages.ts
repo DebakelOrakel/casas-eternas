@@ -405,6 +405,11 @@ export interface WorkerClimateDataMessage {
   // downstream work itself, right now. Without the distinction the screen would
   // tear down its own river display in the middle of building it.
   refinement?: boolean
+  // Set when this is the climate step's refinement put in the history's
+  // place (build step 5b): the annual fields derived from its months. It
+  // stales everything downstream like a fresh climate, but it is not a new
+  // climate the refinement was made on, so the screen keeps the refinement.
+  refined?: boolean
   resX: number
   resY: number
   // Temperature in °C, Float32, resX*resY row-major.

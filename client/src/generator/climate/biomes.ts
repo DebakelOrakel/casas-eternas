@@ -4,6 +4,7 @@ import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL, isLandAt } from '../elevation/elevationScale'
 import { sampleBilinearWorld, wrapValue } from '../core/field'
 import { seasonalityMagnitude } from './monsoon'
+import { OCEAN_PRECIP } from './precipitation'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -157,7 +158,7 @@ export function biomeFromKoppen(id: number, map: number, amp: number, season: nu
   switch (code) {
     case 'Af': return Biome.TropicalRainforest
     case 'Am': return Biome.TropicalDryForest
-    case 'Aw': case 'As': return map >= T.hotSavannaMaxPrecipMm ? Biome.TropicalDryForest : Biome.Savanna
+    case 'Aw': case 'As': return map >= T.savannaMaxPrecipMm ? Biome.TropicalDryForest : Biome.Savanna
     case 'BWh': return Biome.Desert
     case 'BWk': return Biome.ColdDesert
     case 'BSh': case 'BSk': return Biome.Steppe
@@ -403,4 +404,139 @@ export function koppenFromMonths(temperature: Float32Array, precipitation: Float
     out[i] = classifyKoppen(t, p)
   }
   return out
+}
+
+// THE REFINEMENT'S BIOMES (build step 5b): from real months rather than
+// synthesized ones. `monthsT` °C and `monthsP` mm/yr rates, month-major on
+// the climate grid, rain OCEAN_PRECIP on the sea. `precipitation` is the
+// annual rain the classification should see — the months' own mean, or the
+// hydrology's effective rain (the riparian bonus): each cell's months are
+// scaled by its ratio to the months' mean, so the bonus keeps the season's
+// shape.
+
+// One cell from its twelve months: the class, then the class's biome, with
+// the range and the rain's unevenness read off the same months.
+function classifyMonths(t: Float64Array, p: Float64Array): BiomeId {
+  const koppen = classifyKoppen(t, p)
+  let lo = Infinity
+  let hi = -Infinity
+  let map = 0
+  let top = 0
+  for (let m = 0; m < 12; m++) {
+    lo = Math.min(lo, t[m])
+    hi = Math.max(hi, t[m])
+    map += p[m]
+    if (m >= 3 && m < 9) top += p[m]
+  }
+  // The monsoon index's magnitude, from the two halves of the year as
+  // monsoon.ts defines it (the floor keeps an arid year from reading uneven).
+  const season = Math.abs(top - (map - top)) / (map + CLIMATE_TUNING.monsoonSeasonalityFloor / 2)
+  return biomeFromKoppen(koppen, map, hi - lo, season)
+}
+
+// The months scaled to `precipitation`'s annual total, per cell; the sea
+// keeps its mark.
+function scaledMonths(monthsP: Float32Array, months: number, precipitation: Float32Array): Float32Array {
+  const n = RX * RY
+  const out = new Float32Array(monthsP.length)
+  for (let i = 0; i < n; i++) {
+    if (precipitation[i] < 0 || monthsP[i] < 0) {
+      for (let m = 0; m < months; m++) out[m * n + i] = OCEAN_PRECIP
+      continue
+    }
+    let mean = 0
+    for (let m = 0; m < months; m++) mean += monthsP[m * n + i] / months
+    const k = mean > 0 ? precipitation[i] / mean : 1
+    for (let m = 0; m < months; m++) out[m * n + i] = monthsP[m * n + i] * k
+  }
+  return out
+}
+
+// Coarse, per climate cell: the ecology's and the cover's biomes.
+export function computeBiomesFromMonths(monthsT: Float32Array, monthsP: Float32Array, months: number, precipitation: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Uint8Array {
+  const n = RX * RY
+  const rain = scaledMonths(monthsP, months, precipitation)
+  const biomes = new Uint8Array(n)
+  const t = new Float64Array(12)
+  const p = new Float64Array(12)
+  for (let gy = 0; gy < RY; gy++) {
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      if (!isLandAtCell(elevation, dryLand, gx, gy, worldWidth, worldHeight) || rain[i] < 0) {
+        biomes[i] = Biome.Ocean
+        continue
+      }
+      for (let m = 0; m < 12; m++) {
+        t[m] = monthsT[m * n + i]
+        p[m] = rain[m * n + i] / months
+      }
+      const base = classifyMonths(t, p)
+      const cellElevation = sampleElevationAtCell(elevation, gx, gy, worldWidth, worldHeight)
+      biomes[i] = cellElevation > CLIMATE_TUNING.alpineTreelineElevation && base !== Biome.Ice ? Biome.Alpine : base
+    }
+  }
+  return biomes
+}
+
+// Fine, per world pixel, as computeBiomesFine does from annual figures: each
+// month's temperature reduced to sea level, interpolated, given this pixel's
+// own lapse; each month's rain interpolated over the land corners only.
+// `annualTemperature` is the months' mean, which carries the coarse lapse the
+// reduction removes (the lapse is the same in every month).
+export function computeBiomesFineFromMonths(monthsT: Float32Array, monthsP: Float32Array, months: number, annualTemperature: Float32Array, precipitation: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Uint8Array {
+  const n = RX * RY
+  const lapseBack = reduceTemperatureToSeaLevel(annualTemperature, elevation, worldWidth, worldHeight, dryLand)
+  const seaT = new Float32Array(monthsT.length)
+  for (let m = 0; m < months; m++) {
+    for (let i = 0; i < n; i++) seaT[m * n + i] = monthsT[m * n + i] + (lapseBack[i] - annualTemperature[i])
+  }
+  const rain = scaledMonths(monthsP, months, precipitation)
+  const biomes = new Uint8Array(worldWidth * worldHeight)
+  const t = new Float64Array(12)
+  const p = new Float64Array(12)
+  const corners = [0, 0, 0, 0]
+  const weights = [0, 0, 0, 0]
+  for (let wy = 0; wy < worldHeight; wy++) {
+    const fy = ((wy + 0.5) / worldHeight) * RY - 0.5
+    const y0 = Math.floor(fy)
+    const ty = fy - y0
+    const r0 = wrapValue(y0, RY) * RX
+    const r1 = wrapValue(y0 + 1, RY) * RX
+    for (let wx = 0; wx < worldWidth; wx++) {
+      const world = wy * worldWidth + wx
+      const here = elevation[world]
+      const dry = !!(dryLand && dryLand[world])
+      if (!isLandAt(here, dry)) {
+        biomes[world] = Biome.Ocean
+        continue
+      }
+      const fx = ((wx + 0.5) / worldWidth) * RX - 0.5
+      const x0 = Math.floor(fx)
+      const tx = fx - x0
+      const c0 = wrapValue(x0, RX)
+      const c1 = wrapValue(x0 + 1, RX)
+      corners[0] = r0 + c0; corners[1] = r0 + c1; corners[2] = r1 + c0; corners[3] = r1 + c1
+      weights[0] = (1 - tx) * (1 - ty); weights[1] = tx * (1 - ty); weights[2] = (1 - tx) * ty; weights[3] = tx * ty
+      // Land corners for the rain; with none, the nearest cell's own.
+      let landWeight = 0
+      for (let k = 0; k < 4; k++) if (rain[corners[k]] >= 0) landWeight += weights[k]
+      const lapse = CLIMATE_TUNING.lapseCPerElevation * (dry ? here - SEA_LEVEL : Math.max(0, here - SEA_LEVEL))
+      const nearest = Math.min(RY - 1, Math.floor((wy / worldHeight) * RY)) * RX + Math.min(RX - 1, Math.floor((wx / worldWidth) * RX))
+      for (let m = 0; m < 12; m++) {
+        const base = m * n
+        t[m] = seaT[base + corners[0]] * weights[0] + seaT[base + corners[1]] * weights[1] + seaT[base + corners[2]] * weights[2] + seaT[base + corners[3]] * weights[3] - lapse
+        let sum = 0
+        if (landWeight > 0) {
+          for (let k = 0; k < 4; k++) if (rain[corners[k]] >= 0) sum += rain[base + corners[k]] * weights[k]
+          sum /= landWeight
+        } else {
+          sum = Math.max(0, rain[base + nearest])
+        }
+        p[m] = sum / months
+      }
+      const cls = classifyMonths(t, p)
+      biomes[world] = here > CLIMATE_TUNING.alpineTreelineElevation && cls !== Biome.Ice ? Biome.Alpine : cls
+    }
+  }
+  return biomes
 }

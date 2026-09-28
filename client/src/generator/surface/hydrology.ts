@@ -3,7 +3,7 @@ import { SURFACE_TUNING } from './surfaceTuneParams'
 import { wrapValue, sampleNearestWorld } from '../core/field'
 import type { FlowRouting } from './flowRouting'
 import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
-import { Biome, computeBiomesFine } from '../climate/biomes'
+import { Biome, computeBiomesFine, computeBiomesFineFromMonths } from '../climate/biomes'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 
 // Rivers & lakes on the post-erosion topography. Reuses the erosion module's
@@ -785,7 +785,12 @@ export function computeWatersheds(routing: FlowRouting, elevation: Float32Array,
 // amplification bake needs, since re-deriving routing and discharge there just
 // to learn that a river passes by would cost seconds per load to recompute
 // something regional (see docs/decisions/worldmap-amplification.md).
-export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array, frozen?: Uint8Array): { biomes: Uint8Array; precipEff: Float32Array } {
+// `months`: the climate step's refinement, when the climate is refined — the
+// biomes are then classified from its real months, the riparian bonus
+// scaling each month's rain (biomes.computeBiomesFineFromMonths).
+export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array, frozen?: Uint8Array,
+  months?: { temperature: Float32Array; precipitation: Float32Array; count: number },
+): { biomes: Uint8Array; precipEff: Float32Array } {
   const scale = maxDischarge > 0 ? maxDischarge : 1
   // The same downstream-closed mask the polyline extractor draws — the two
   // disagreed silently once before, which drew mountain rivers with no green
@@ -834,7 +839,9 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
   // full-res: it is a regional wetting, and bleeding it at world resolution
   // would be a different model rather than a sharper one. Only the
   // classification moves, which is the part that reads elevation.
-  const biomes = computeBiomesFine(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, worldW, worldH, dryLand)
+  const biomes = months
+    ? computeBiomesFineFromMonths(months.temperature, months.precipitation, months.count, temperature, precipEff, elevation, worldW, worldH, dryLand)
+    : computeBiomesFine(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, worldW, worldH, dryLand)
   // Salt-flat override (see computeLakes' LakeFields.saltFlat): a terminal
   // basin's exposed floor is a hydrology state, not a climate — it wins over
   // whatever the Whittaker mapping said.

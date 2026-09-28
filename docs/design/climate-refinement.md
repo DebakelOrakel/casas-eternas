@@ -248,8 +248,19 @@ physics.
    for all made Astrakan 15–17 % Cs. After: synthesized Cs 4 %, refined Cs
    6 %, D 21 %, wet-to-dry month 4.8 : 1 at the median. Savanna (Aw) is
    short in the refined path (4 % against Af 12 %; Earth has Aw above Af).
-   5b open: biomes from the refinement's real months, together with the
-   hydrology rerun on the refined climate (fork 2).
+   5b BUILT 2026-09-28: the refined climate takes the history's place in
+   the worker (annual fields derived from the months, refinement.
+   annualFromMonths), its biomes classified per pixel from the twelve
+   interpolated months (biomes.computeBiomesFineFromMonths, 0.14 s at
+   2048), everything downstream stale so rivers, lakes and ecology run on
+   it; the riparian bonus scales each month's rain. The hydrology's dry-basin
+   climate pass (v2) leaves a refined climate alone, so the refinement does
+   not see the dry-basin override. A load refines again rather than reading
+   its layers back (deterministic, and the worker needs the climate).
+   Savanna had vanished (Aw went all to dry forest at the Whittaker bound of
+   600 mm, below Köppen's own dry limit of ~780 mm); its own bound
+   savannaMaxPrecipMm = 1400 brings it back: Astrakan synthesized 9.8 %,
+   real months 4.8 %.
 6. C1: fog coasts, föhn.
 7. Reliability field.
 8. C2–C4.

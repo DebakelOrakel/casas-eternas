@@ -399,5 +399,11 @@ export const CLIMATE_TUNING = {
   // total is high.
   hotDesertMaxPrecipMm: 250,
   hotSavannaMaxPrecipMm: 600,
+  // Köppen Aw/As: savanna below this annual rain, tropical dry forest above
+  // (the wet end of Aw). Not hotSavannaMaxPrecipMm: that is a Whittaker
+  // bound, and Köppen already calls anything under ~780 mm at 25 °C dry (B),
+  // so every Aw cell passed 600 and the savanna was gone (Astrakan 0.2 %).
+  // Real savannas reach 1300–1500 mm.
+  savannaMaxPrecipMm: 1400,
   tropicalSavannaSeason: 0.45,
 } as const

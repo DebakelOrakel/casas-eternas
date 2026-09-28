@@ -478,6 +478,16 @@ test('the climate refinement answers with twelve months, and declines without a 
   let ok = currents.length === 2 * n && anomaly.length === n && upwelling.length === n
   for (const a of [currents, anomaly, upwelling]) for (const v of a) if (!Number.isFinite(v)) ok = false
   check('the refined currents, their anomaly and the upwelling are whole and finite', ok)
+  // 5b: the refined climate takes the history's place, and the rivers run
+  // on it without the hydrology's own climate pass putting the old back.
+  await until(() => p.messages.some((m) => m.type === 'climateData' && m.refined), { label: 'the refined climate' })
+  const refinedClimate = p.messages.filter((m) => m.type === 'climateData' && m.refined).at(-1)
+  const koppen = new Uint8Array(refinedClimate.koppen)
+  check('the refined climate carries the refinement\'s classes', koppen.length === n && koppen.some((v) => v > 0))
+  const before = p.messages.length
+  p.dispatch({ type: 'hydrologyRun' })
+  await until(() => p.messages.slice(before).some((m) => m.type === 'hydrologyData'), { label: 'rivers on the refined climate' })
+  check('the rivers do not replace the refined climate', !p.messages.slice(before).some((m) => m.type === 'climateData'))
 })
 
 test('INVALIDATION: the epochs stale everything downstream, per the declared chain', async () => {
