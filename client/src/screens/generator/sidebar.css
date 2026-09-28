@@ -12,9 +12,6 @@
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  padding: 20px 18px;
-  overflow-y: auto;
   border-right: 1px solid var(--dc-line);
   background: var(--dc-panel);
   color: var(--dc-text);
@@ -23,6 +20,28 @@
 
 /* `display: flex` outranks the user-agent rule for [hidden]. */
 .gen-sidebar[hidden] {
+  display: none;
+}
+
+.gen-sidebar__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 20px 18px;
+}
+
+/* The step's figures and buttons, pinned above the step bar. */
+.gen-sidebar__foot {
+  flex-shrink: 0;
+  padding: 14px 18px 18px;
+  border-top: 1px solid var(--dc-line);
+}
+
+/* No step shown has a foot (Migration): no empty strip with a rule on it. */
+.gen-sidebar__foot:not(:has(> :not([hidden]))) {
   display: none;
 }
 
@@ -119,13 +138,17 @@
   accent-color: var(--dc-accent);
 }
 
-/* Pushed to the foot of the column, so every step answers "and now?" in the
+/* A step's figures and buttons. Written inside the step's markup, moved into
+   the column's foot by the screen, so every step answers "and now?" in the
    same place. */
 .gen-step__foot {
-  margin-top: auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.gen-step__foot[hidden] {
+  display: none;
 }
 
 /* The step's figures as tiles — design canvas, the Status section. Two

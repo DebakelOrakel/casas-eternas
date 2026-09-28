@@ -29,7 +29,6 @@
   "common.panel.storage.empty": "Noch nichts zwischengespeichert — eine Welt landet hier, sobald ihr Bake fertig ist.",
   "common.panel.storage.clearAll": "Lokale Daten löschen",
   "common.panel.storage.chipTitle": "{width}×{height}, gebacken in {seconds}s",
-  "common.world.seed": "Seed",
   "common.world.uid": "UID",
   "common.world.revision": "Revision",
   "common.world.checksum": "Prüfsumme",

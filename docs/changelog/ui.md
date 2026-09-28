@@ -3,6 +3,15 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-09-28
+- **dropped** Generator: closing the tab no longer asks first; leaving through the title bar still does. `generator`
+- **changed** Generator: a step's figures and its buttons stay at the foot of the column while the sliders scroll. `generator`
+- **changed** Generator: the Planet step is gone; its sliders are in the World step, with a reset of their own. `generator.action.resetPlanet`
+- **changed** Generator: humidity and contrast moved from the Climate step to the World step, set before the history they shape. `generator.action.resetPlanet`
+- **changed** Generator: the World step offers the ocean currents among its climate layers, and no terrain colour. `overlay.currents`
+- **changed** Overlays: wind is drawn as streaks of moving air, and ocean currents as broad arrows that close into circuits around the gyres. `overlay.wind`
+- **fixed** Overlays: a current is warm or cold by what it does to the sea's temperature, on the map and in the readout, not by the way it runs. `overlay.currents`
+
 ## 2026-09-22
 - **new** Overlays: every group of layers the map paints one at a time starts on none of them, and can go back to none. `overlay.none`
 - **changed** Rendering: coasts and lake shores are drawn where the terrain crosses the water level, so the cell staircase at zoom is gone. `overlay.rivers`

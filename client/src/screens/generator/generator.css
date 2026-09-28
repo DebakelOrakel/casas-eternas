@@ -266,20 +266,10 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
-  /* Takes the column's free height, which is what lets "Create world" sit at
-     the very foot (`margin-top: auto` below) rather than under the last field. */
-  flex-grow: 1;
 }
 
 .generator-screen .world-panel[hidden] {
   display: none;
-}
-
-.generator-screen .world-panel__intro {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--dc-muted);
 }
 
 .generator-screen .world-panel__fields {
@@ -387,7 +377,8 @@
 }
 
 .generator-screen .world-create {
-  margin-top: auto;
+  /* Beside the reset icon, the width the run button has in the other steps. */
+  flex-grow: 1;
   height: 44px;
   display: flex;
   align-items: center;

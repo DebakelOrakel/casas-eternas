@@ -29,7 +29,7 @@ export interface SaveMenuOptions {
   // The world about to be written. Read on open rather than passed in once,
   // since a load or a regenerate replaces it while the menu exists. `uid` is
   // empty before the first save; `revision` is the LOCAL save counter.
-  currentWorld(): { uid: string; seed: string; revision: number }
+  currentWorld(): { uid: string; revision: number }
   onSave(target: SaveTarget): void
   // "Open world …" — the screen decides what that means (the generator opens
   // its load window, or the file picker when no server is there).
@@ -194,9 +194,9 @@ export function createSaveMenu(options: SaveMenuOptions): SaveMenu {
     }
 
     // Hashes shortened for the eye, full value in the title. A world saved
-    // before the fields existed simply shows fewer lines.
+    // before the fields existed simply shows fewer lines. No seed: the title
+    // bar already shows it, next to the button that opens this menu.
     const lines: [string, string, string?][] = [
-      [t('common.world.seed'), current.seed, undefined],
       [t('common.world.uid'), current.uid ? current.uid.slice(0, 8) : '', current.uid],
       [t('common.world.revision'), current.revision > 0 ? String(current.revision) : '', undefined],
       [t('common.world.checksum'), held?.contentHash ? held.contentHash.slice(0, 8) : '', held?.contentHash],

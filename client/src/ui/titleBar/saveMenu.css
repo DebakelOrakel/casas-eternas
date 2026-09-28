@@ -12,7 +12,12 @@
   display: none;
 }
 
+/* A fixed width, for the same reason as the sign-in button (titleBar.css):
+   "Save" and "Speichern" differ, and a button sized to its label would move
+   the right-hand group on every language switch. Fits "Speichern" at 13.5px
+   plus the icon, the chevron, their gaps and the padding. */
 .save-menu__button {
+  width: 140px;
   height: 36px;
   display: flex;
   align-items: center;
@@ -129,4 +134,11 @@
 .save-menu__button:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* The label takes the free width and centres in it, so the chevron keeps
+   the right edge. */
+.save-menu__button-label {
+  flex-grow: 1;
+  text-align: center;
 }

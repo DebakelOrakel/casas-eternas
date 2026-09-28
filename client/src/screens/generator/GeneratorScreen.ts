@@ -85,6 +85,7 @@ import { GENESIS_RUN_FIELDS, TECTONICS_RUN_FIELDS, emptyWorldHistory, historyFro
 import type { WorldSpec } from '../../world/save/worldSpec'
 import { displayValue, type InputParam } from '../../generator/core/inputParams'
 import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
+import { traceFlowLines, drawComets, drawArrowRibbons, type FlowLine } from '../../map/flowLines'
 import { DEFAULT_PLANET_FORCING } from '../../generator/planet/planetForcing'
 import './generator.css'
 import '../../ui/chrome/chrome.css'
@@ -559,7 +560,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       <span class="scale-bar__bar" data-value="scale-bar-bar"></span>
     </div>
     <div class="world-panel" data-stage="world">
-      <p class="world-panel__intro" data-t="generator.world.intro"></p>
       <div class="world-panel__fields">
         <label class="world-field">
           <span class="world-field__label" data-help="generator.world.name" data-t="generator.world.name.label"></span>
@@ -593,15 +593,34 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           </div>
         </div>
       </div>
-      <button type="button" class="world-create" data-action="create-world" data-help="generator.world.create" data-t="generator.world.create.label"></button>
     </div>
-    <div class="gen-step" data-stage="planet">
+    <!-- Step 0's second part: the planet's sliders and the step's foot. Apart
+         from the fields above because the column puts the overlays between
+         them — the world's identity first, then what the map shows, then the
+         planet. Shown and hidden with the step, see showPanel. -->
+    <div class="gen-step" data-stage-part="world">
       <section class="gen-params">
         <h2 class="gen-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
         ${paramField(PLANET_INPUTS.obliquity, 'obliquity-input', 'obliquity-label')}
+        <!-- The climate's two levers stand with the planet (2026-09-28): the
+             tectonics' history erodes under the weather they shape, and takes
+             them when it starts, so they are set before it like the planet
+             is — not in a step after the run they already formed. The
+             stage table still counts them as the climate's inputs. Contrast
+             sits under the greenhouse: both set the temperatures. -->
         ${paramField(PLANET_INPUTS.greenhouse, 'temp-band-input', 'temp-band-label')}
+        ${paramField(CLIMATE_INPUTS.contrast, 'contrast-input', 'contrast-label')}
         ${paramField(PLANET_INPUTS.rotation, 'rotation-input', 'rotation-label')}
+        ${paramField(CLIMATE_INPUTS.humidity, 'humidity-input', 'humidity-label')}
       </section>
+      <div class="gen-step__foot">
+        <div class="gen-step__actions">
+          <button type="button" class="gen-action-icon" data-action="reset-planet" data-t-aria="generator.action.resetPlanet.label" data-help="generator.action.resetPlanet">
+            <img src="/icons/reset.png" alt="" />
+          </button>
+          <button type="button" class="world-create" data-action="create-world" data-help="generator.world.create" data-t="generator.world.create.label"></button>
+        </div>
+      </div>
     </div>
     <div class="gen-step" data-stage="genesis">
       <section class="gen-params">
@@ -653,24 +672,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       </div>
     </div>
     <div class="gen-step" data-stage="climate">
-      <section class="gen-params">
-        <h2 class="gen-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
-        ${paramField(CLIMATE_INPUTS.humidity, 'humidity-input', 'humidity-label')}
-        ${paramField(CLIMATE_INPUTS.contrast, 'contrast-input', 'contrast-label')}
-      </section>
       <div class="gen-step__foot">
         <div class="gen-stats">
           ${statTile('generator.panel.climate.readout.min', 'temp-min', { unit: 'common.unit.celsius' })}
           ${statTile('generator.panel.climate.readout.max', 'temp-max', { unit: 'common.unit.celsius' })}
         </div>
         <div class="gen-step__actions">
-          <!-- No run button: the sliders recompute as they move, so the only
-               thing left to press is the reset. It keeps the place it has in
-               Genesis and Tectonics; the busy mark stands where their run
-               button would be. -->
-          <button type="button" class="gen-action-icon" data-action="reset-climate" data-t-aria="generator.action.resetClimate.label" data-help="generator.action.resetClimate">
-            <img src="/icons/reset.png" alt="" />
-          </button>
+          <!-- No run button and no reset: the step computes on entry, and
+               its levers moved to step 0. The busy mark is all that is left. -->
           <span class="gen-step__status" data-value="climate-status"></span>
         </div>
       </div>
@@ -798,7 +807,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const rockContrastLabel = root.querySelector<HTMLElement>('[data-value="tectonics-rock-label"]')!
   alluviumInput.addEventListener('input', () => { alluviumLabel.textContent = alluviumInput.value })
   rockContrastInput.addEventListener('input', () => { rockContrastLabel.textContent = rockContrastInput.value })
-  const resetClimateButton = root.querySelector<HTMLButtonElement>('[data-action="reset-climate"]')!
+  const resetPlanetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-planet"]')!
   const resetEcologyButton = root.querySelector<HTMLButtonElement>('[data-action="reset-ecology"]')!
   const resetMigrationButton = root.querySelector<HTMLButtonElement>('[data-action="reset-migration"]')!
   // The artifact cache is filled by the worldmap, but inspecting it is just
@@ -832,6 +841,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // One call for the whole column: every step block in it carries its keys
       // rather than its strings (see i18n/relabel).
       relabel(sidebar.body)
+      relabel(sidebar.foot)
       sidebar.relabel()
       stepBar.relabel()
       worldChooser.relabel()
@@ -849,7 +859,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // is chrome and knows no world — so the menu is built here and its four
   // moves are this screen's own.
   const saveMenu = createSaveMenu({
-    currentWorld: () => ({ uid: worldUid, seed: seedInput.value, revision: worldRevision }),
+    currentWorld: () => ({ uid: worldUid, revision: worldRevision }),
     onSave: (target) => { void saveTo(target) },
     onOpenWorld: () => { void leaveWorld(() => openWorldChooser()) },
     onSignIn: () => serverIndicator.openSignIn(),
@@ -965,7 +975,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const busy = isBusy()
     randomizeButton.disabled = busy
     resetButton.disabled = busy
-    resetClimateButton.disabled = busy
+    resetPlanetButton.disabled = busy
     resetEcologyButton.disabled = busy
     resetMigrationButton.disabled = busy
     saveMenu.setEnabled(!busy)
@@ -1164,6 +1174,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastWind: Float32Array | null = null
   let lastPrecipitation: Float32Array | null = null
   let lastCurrents: Float32Array | null = null
+  // The SST anomaly the currents make, °C per climate cell (0 on land):
+  // what says whether a current is warm or cold.
+  let lastCurrentAnomaly: Float32Array | null = null
   let lastSeasonality: Float32Array | null = null
   let lastMonsoonIndex: Float32Array | null = null
   let lastBiomes: Uint8Array | null = null
@@ -1507,40 +1520,55 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
 
-  // Prevailing-wind arrows (climate) — a coarse grid of arrows sampling the
-  // wind field, drawn over the map. Calm belts (near-zero magnitude) draw no
-  // arrow. No-op until climate is computed.
+  // Prevailing wind (climate) as moving air, after earth.nullschool: dense,
+  // fine streaks that fade in from their tail, pale over the map, on evenly
+  // spaced flow lines (map/flowLines.ts). The calm belts between the wind
+  // bands — doldrums, horse latitudes, the subpolar calms — are left without
+  // streaks and lightened, so the band structure reads at a glance.
+  // Replaced the grid of arrows on 2026-09-28. No-op until climate is computed.
+  let windLines: { field: Float32Array; lines: FlowLine[]; calm: HTMLCanvasElement } | null = null
+  // Under this fraction of the reference speed the air counts as calm.
+  const WIND_CALM = 0.2
   function drawWind(c: CanvasRenderingContext2D): void {
     if (!lastWind) return
-    const cols = 40
-    const rows = 20
-    const scale = 42
-    c.strokeStyle = 'rgba(15, 45, 65, 0.8)'
-    c.lineWidth = 2
-    c.lineCap = 'round'
-    for (let r = 0; r < rows; r++) {
-      const py = ((r + 0.5) / rows) * MAP_HEIGHT
-      const gy = Math.min(climateResY - 1, Math.floor((py / MAP_HEIGHT) * climateResY))
-      for (let col = 0; col < cols; col++) {
-        const px = ((col + 0.5) / cols) * MAP_WIDTH
-        const gx = Math.min(climateResX - 1, Math.floor((px / MAP_WIDTH) * climateResX))
-        const u = lastWind[(gy * climateResX + gx) * 2]
-        const v = lastWind[(gy * climateResX + gx) * 2 + 1]
-        if (Math.hypot(u, v) < 0.05) continue
-        const ex = px + u * scale
-        const ey = py + v * scale
-        const angle = Math.atan2(v, u)
-        c.beginPath()
-        c.moveTo(px, py)
-        c.lineTo(ex, ey)
-        for (const wing of [-1, 1]) {
-          const wa = angle + Math.PI + wing * ((25 * Math.PI) / 180)
-          c.moveTo(ex, ey)
-          c.lineTo(ex + Math.cos(wa) * 8, ey + Math.sin(wa) * 8)
-        }
-        c.stroke()
+    // Traced once per field, not per composite: every overlay toggle
+    // composites, and the trace is the expensive half.
+    if (windLines?.field !== lastWind) {
+      const field = lastWind
+      const ref = vectorReferenceSpeed(field)
+      // The calm wash on the climate grid, one pixel per cell; drawn scaled
+      // up with smoothing, so the belts have soft edges instead of steps.
+      const calm = document.createElement('canvas')
+      calm.width = climateResX
+      calm.height = climateResY
+      const cc = calm.getContext('2d')!
+      const img = cc.createImageData(climateResX, climateResY)
+      for (let i = 0; i < climateResX * climateResY; i++) {
+        const s = Math.hypot(field[i * 2], field[i * 2 + 1]) / ref
+        const k = Math.max(0, 1 - s / WIND_CALM)
+        img.data[i * 4] = 255
+        img.data[i * 4 + 1] = 255
+        img.data[i * 4 + 2] = 255
+        img.data[i * 4 + 3] = Math.round(255 * 0.35 * k)
+      }
+      cc.putImageData(img, 0, 0)
+      windLines = {
+        field,
+        calm,
+        lines: traceFlowLines((x, y) => sampleVector(field, x, y), {
+          width: MAP_WIDTH, height: MAP_HEIGHT,
+          separation: 16, stopRatio: 0.5, step: 2, maxLength: 600,
+          minSpeed: ref * WIND_CALM * 0.5, refSpeed: ref,
+        }),
       }
     }
+    c.save()
+    c.imageSmoothingEnabled = true
+    c.drawImage(windLines.calm, 0, 0, MAP_WIDTH, MAP_HEIGHT)
+    c.restore()
+    // A faint dark underlay first, so the pale streaks hold on light ground.
+    drawComets(c, windLines.lines, { width: MAP_WIDTH, height: MAP_HEIGHT, color: [20, 35, 50], length: 26, gap: 14, maxWidth: 3.2, opacity: 0.55 })
+    drawComets(c, windLines.lines, { width: MAP_WIDTH, height: MAP_HEIGHT, color: [255, 255, 255], length: 26, gap: 14, maxWidth: 1.8 })
   }
 
   // Seasonality tint (climate): the annual temperature amplitude everywhere —
@@ -1584,9 +1612,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
 
-  // Bilinear-sampled ocean current (u,v) at a map pixel, wrapped. Zero over land.
-  function sampleCurrent(px: number, py: number): [number, number] {
-    if (!lastCurrents) return [0, 0]
+  // Bilinear-sampled (u,v) of a climate-grid vector field at a map pixel,
+  // wrapped. The currents are zero over land.
+  function sampleVector(field: Float32Array, px: number, py: number): [number, number] {
     const fx = (px / MAP_WIDTH) * climateResX - 0.5
     const fy = (py / MAP_HEIGHT) * climateResY - 0.5
     const x0 = Math.floor(fx)
@@ -1597,51 +1625,72 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const xb = wrapValue(x0 + 1, climateResX)
     const ya = wrapValue(y0, climateResY)
     const yb = wrapValue(y0 + 1, climateResY)
-    const at = (xw: number, yw: number, comp: number): number => lastCurrents![(yw * climateResX + xw) * 2 + comp]
+    const at = (xw: number, yw: number, comp: number): number => field[(yw * climateResX + xw) * 2 + comp]
     const lerp2 = (comp: number): number =>
       (at(xa, ya, comp) * (1 - tx) + at(xb, ya, comp) * tx) * (1 - ty) + (at(xa, yb, comp) * (1 - tx) + at(xb, yb, comp) * tx) * ty
     return [lerp2(0), lerp2(1)]
   }
 
-  // Ocean currents as streamlines: from a grid of seeds, trace along the current
-  // and draw the path, so the gyres read as loops. Each segment is colored by
-  // whether the flow is poleward (carrying warm water — reddish) or equatorward
-  // (cold — bluish), the climate-relevant distinction. Two batched paths keep it
-  // to two strokes. Streamlines stop where the current goes calm (i.e. at land).
+  // Nearest-cell read of a climate-grid scalar field at a map pixel, wrapped.
+  function sampleScalar(field: Float32Array, px: number, py: number): number {
+    const gx = wrapValue(Math.floor((px / MAP_WIDTH) * climateResX), climateResX)
+    const gy = wrapValue(Math.floor((py / MAP_HEIGHT) * climateResY), climateResY)
+    return field[gy * climateResX + gx]
+  }
+  // Under this SST anomaly (°C either way) a current is drawn neutral.
+  // Measured on Astrakan (2026-09-28), at the arrows' midpoints: 0.25 leaves
+  // 43 % of the arrows grey (31 % warm, 26 % cold), 0.5 leaves 58 %, 1.0
+  // leaves 73 % — the gyre interiors barely change the sea's temperature.
+  const CURRENT_NEUTRAL_C = 0.25
+
+  // The speed a flow line draws at full weight: the 95th percentile of the
+  // field's magnitudes, so one fast cell does not make everything else faint.
+  function vectorReferenceSpeed(field: Float32Array): number {
+    const m: number[] = []
+    for (let i = 0; i < field.length; i += 2) {
+      const v = Math.hypot(field[i], field[i + 1])
+      if (v > 0) m.push(v)
+    }
+    if (m.length === 0) return 1
+    m.sort((p, q) => p - q)
+    return m[Math.floor(m.length * 0.95)] || 1
+  }
+
+  // Ocean currents as broad arrows along evenly spaced flow lines
+  // (map/flowLines.ts): a row of arrows where a current runs open, one closed
+  // circuit of arrows where it comes round on itself — a gyre. Each arrow is
+  // coloured by the SST anomaly under it: red where the current makes the sea
+  // warmer than its latitude, blue where colder, grey where it hardly
+  // matters. Until 2026-09-28 the colour came from the direction (poleward =
+  // warm), which is right on the ocean's western and eastern edges and noise
+  // on every current that runs east–west. Lines end where the current goes
+  // calm, i.e. at land.
+  let currentLines: { field: Float32Array; lines: FlowLine[] } | null = null
   function drawCurrents(c: CanvasRenderingContext2D): void {
     if (!lastCurrents) return
-    const cols = 60
-    const rows = 30
-    const step = 6
-    const steps = 28
-    const threshold = 0.1
-    const mid = MAP_HEIGHT / 2
-    const warmPath = new Path2D()
-    const coldPath = new Path2D()
-    for (let r = 0; r < rows; r++) {
-      for (let col = 0; col < cols; col++) {
-        let x = ((col + 0.5) / cols) * MAP_WIDTH
-        let y = ((r + 0.5) / rows) * MAP_HEIGHT
-        for (let s = 0; s < steps; s++) {
-          const [u, v] = sampleCurrent(x, y)
-          if (Math.hypot(u, v) < threshold) break
-          const nx = x + u * step
-          const ny = y + v * step
-          const path = v * (y - mid) > 0 ? warmPath : coldPath
-          path.moveTo(x, y)
-          path.lineTo(nx, ny)
-          // Wrap for the next sample; a seam-crossing segment just clips.
-          x = wrapValue(nx, MAP_WIDTH)
-          y = wrapValue(ny, MAP_HEIGHT)
-        }
+    if (currentLines?.field !== lastCurrents) {
+      const field = lastCurrents
+      currentLines = {
+        field,
+        lines: traceFlowLines((x, y) => sampleVector(field, x, y), {
+          width: MAP_WIDTH, height: MAP_HEIGHT,
+          separation: 52, stopRatio: 0.55, step: 4, maxLength: 1800,
+          minSpeed: 0.1, refSpeed: vectorReferenceSpeed(field),
+        }),
       }
     }
-    c.lineWidth = 1.5
-    c.lineCap = 'round'
-    c.strokeStyle = 'rgba(205, 65, 50, 0.55)'
-    c.stroke(warmPath)
-    c.strokeStyle = 'rgba(40, 95, 185, 0.6)'
-    c.stroke(coldPath)
+    const anomaly = lastCurrentAnomaly
+    drawArrowRibbons(c, currentLines.lines, {
+      width: MAP_WIDTH, height: MAP_HEIGHT,
+      length: 64, gap: 26, maxHalfWidth: 4.5,
+      // Warm (0), cold (1), neutral (2).
+      classify: (p) => {
+        const a = anomaly ? sampleScalar(anomaly, p.x, p.y) : 0
+        return a > CURRENT_NEUTRAL_C ? 0 : a < -CURRENT_NEUTRAL_C ? 1 : 2
+      },
+      fills: ['rgba(205, 65, 50, 0.7)', 'rgba(40, 95, 185, 0.7)', 'rgba(120, 130, 140, 0.55)'],
+      outline: 'rgba(255, 255, 255, 0.55)',
+    })
   }
 
   // Rivers are NOT a compositor (texture) layer — they're scene-space ribbon
@@ -2062,7 +2111,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const v = lastCurrents[cell.i * 2 + 1]
         const b = bearing(u, v)
         if (b === null || Math.hypot(u, v) <= 0.02) return []
-        const warm = v * (cell.gy + 0.5 - climateResY / 2) > 0 // poleward = warm (see drawCurrents)
+        // Warm or cold by what the current does to the sea, as the map colours it.
+        const warm = (lastCurrentAnomaly?.[cell.i] ?? 0) > 0
         return [{ label: t('readout.row.current'), value: warm ? t('readout.current.warm') : t('readout.current.cold'), bearing: b }]
       },
     },
@@ -2765,7 +2815,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     })
   }
 
-  // THE PLANET PREVIEW (planet/sampleWorld.ts): while the Planet step is
+  // THE PLANET PREVIEW (planet/sampleWorld.ts): while step 0 is
   // open and the world has no plates yet, the map shows the sample world
   // with the climate the controls make on it. The real base is kept aside
   // and put back on leaving; the climate fields are the preview's for as
@@ -2783,11 +2833,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const PLANET_SAMPLE_URL = '/sample/astrakan-elevation.u16'
   const PLANET_SAMPLE_WIDTH = MAP_WIDTH / 2
   const PLANET_SAMPLE_HEIGHT = MAP_HEIGHT / 2
-  let planetSampleRequested = false
-  function loadPlanetSample(): void {
-    if (planetSampleRequested) return
-    planetSampleRequested = true
-    void (async () => {
+  // Settles once the sample is with the worker, or once it is clear it will
+  // not come (then the worker keeps its synthetic sample). A preview waits for
+  // it: drawing the synthetic world first and Astrakan a moment later was a
+  // visible flash of the wrong world (fixed 2026-09-28).
+  let planetSample: Promise<void> | null = null
+  function loadPlanetSample(): Promise<void> {
+    planetSample ??= (async () => {
       try {
         const response = await fetch(PLANET_SAMPLE_URL, { cache: 'force-cache' })
         if (!response.ok) return
@@ -2795,16 +2847,22 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         if (bytes.byteLength !== PLANET_SAMPLE_WIDTH * PLANET_SAMPLE_HEIGHT * 2) return
         const elevation = decodeLayer(bytes, ELEVATION_ENCODING)
         worker.postMessage({ type: 'planetSample', width: PLANET_SAMPLE_WIDTH, height: PLANET_SAMPLE_HEIGHT, elevation: elevation.buffer }, [elevation.buffer])
-        // The preview already drawn is the synthetic world's; redraw on the real one.
-        if (STEP_IDS[panelIndex] === 'planet' && !(archeanFinalised || hasHandover)) requestPlanetPreview()
       } catch {
         // offline, or a dev server without the file: the fallback stands
       }
     })()
+    return planetSample
   }
+  // Fetched as the screen opens rather than on the first preview, so step 0
+  // does not wait for a megabyte after the world list closes.
+  void loadPlanetSample()
   function requestPlanetPreview(): void {
-    loadPlanetSample()
-    postToWorker({ type: 'planetPreview', width: MAP_WIDTH, height: MAP_HEIGHT, weather: weatherParams() })
+    // The worker takes messages in order, so the sample is in place before
+    // the preview is asked for. The step may have been left in the meantime.
+    void loadPlanetSample().then(() => {
+      if (STEP_IDS[panelIndex] !== 'world' || archeanFinalised || hasHandover) return
+      postToWorker({ type: 'planetPreview', width: MAP_WIDTH, height: MAP_HEIGHT, weather: weatherParams() })
+    })
   }
   // A Planet control moved: the world's own climate when it has plates to
   // compute one on, the sample world's otherwise.
@@ -2818,7 +2876,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     planetPreviewDebounce = setTimeout(requestPlanetPreview, 150)
   }
   function handlePlanetPreviewData(message: WorkerPlanetPreviewDataMessage): void {
-    if (STEP_IDS[panelIndex] !== 'planet') return // left the step while it computed
+    if (STEP_IDS[panelIndex] !== 'world') return // left the step while it computed
     if (!planetPreviewShown) {
       planetPreviewShown = true
       planetPreviewRealBase = lastColoredBase && lastRelief ? { base: lastColoredBase, relief: lastRelief } : null
@@ -2832,6 +2890,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastTemperature = new Float32Array(message.temperature)
     lastWind = new Float32Array(message.wind)
     lastCurrents = new Float32Array(message.currents)
+    lastCurrentAnomaly = new Float32Array(message.currentAnomaly)
     lastPrecipitation = new Float32Array(message.precipitation)
     lastSeasonality = new Float32Array(message.seasonalAmplitude)
     lastMonsoonIndex = new Float32Array(message.monsoonIndex)
@@ -2859,6 +2918,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastTemperature = new Float32Array(message.temperature)
     lastWind = new Float32Array(message.wind)
     lastCurrents = new Float32Array(message.currents)
+    lastCurrentAnomaly = new Float32Array(message.currentAnomaly)
     lastPrecipitation = new Float32Array(message.precipitation)
     lastSeasonality = new Float32Array(message.seasonalAmplitude)
     lastMonsoonIndex = new Float32Array(message.monsoonIndex)
@@ -2976,6 +3036,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastTemperature = null
     lastWind = null
     lastCurrents = null
+    lastCurrentAnomaly = null
     lastPrecipitation = null
     lastSeasonality = null
     lastMonsoonIndex = null
@@ -3307,7 +3368,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // is the truth the preview is keeping aside: it goes into the stash and
     // the sample world stays on the map until the step is left. Everything
     // else the render carries (mantle, ages, counters) is taken as always.
-    const underPreview = planetPreviewShown && STEP_IDS[panelIndex] === 'planet'
+    const underPreview = planetPreviewShown && STEP_IDS[panelIndex] === 'world'
     if (planetPreviewShown && !underPreview) {
       planetPreviewShown = false
       planetPreviewRealBase = null
@@ -3713,20 +3774,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     })
     if (discard) go()
   }
-
-  // Closing the tab loses the same world, and the browser will not let a page
-  // ask its own question there: setting `returnValue` is the whole API, and the
-  // wording is the browser's. So this only decides WHETHER to ask.
-  const onBeforeUnload = (event: BeforeUnloadEvent): void => {
-    // Same exception as above: nothing is lost while the world list is up.
-    if (chooserOpen) return
-    const { kind } = saveState()
-    if (kind !== 'new' && kind !== 'unsaved') return
-    event.preventDefault()
-    // Firefox still wants the legacy assignment; every engine ignores the text.
-    event.returnValue = ''
-  }
-  window.addEventListener('beforeunload', onBeforeUnload)
 
   function updateSaveIndicator(): void {
     // The title bar's status line IS the unsaved marker now. The badge on the
@@ -4652,13 +4699,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     clearTimeout(climateDebounce)
     climateDebounce = setTimeout(requestPlanetForcing, 150)
   })
-  // Humidity + contrast: percentage sliders, same debounced live-recompute.
+  // Humidity + contrast: percentage sliders, the same debounced recompute as
+  // the planet's — on the sample world before the world has plates, on the
+  // world itself after (requestPlanetForcing decides which, and waits out a
+  // running history).
   const wireClimateSlider = (input: HTMLInputElement, label: HTMLElement): void => {
     input.addEventListener('input', () => {
       label.textContent = input.value
-      if (tectonicsRunning) return
       clearTimeout(climateDebounce)
-      climateDebounce = setTimeout(requestClimate, 150)
+      climateDebounce = setTimeout(requestPlanetForcing, 150)
     })
   }
   wireClimateSlider(humidityInput, humidityLabel)
@@ -4831,9 +4880,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // Per-panel reset: that stage's controls back to their declared defaults, then
   // recompute. Which controls those are comes from the stage table — see resetInputs.
-  resetClimateButton.addEventListener('click', () => {
+  // Step 0's reset takes both groups of its sliders: the planet's and the
+  // climate's two levers, which stand beside them.
+  resetPlanetButton.addEventListener('click', () => {
+    resetInputs('planet')
     resetInputs('climate')
-    requestClimate()
+    requestPlanetForcing()
   })
   resetEcologyButton.addEventListener('click', () => {
     resetInputs('ecology')
@@ -5024,7 +5076,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!seedInput.value.trim()) seedInput.value = randomSeed()
     worldCreated = true
     regenerate()
-    showPanel(panelIndexOf('planet'))
+    // The base kept aside behind the planet preview is the world this click
+    // replaces. Leaving step 0 would put it back on the map until the new
+    // world's first render lands — a flash of the old world. Dropped, so the
+    // preview stands until then instead.
+    planetPreviewRealBase = null
+    showPanel(GENESIS_PANEL_INDEX)
   })
   mantleVigourInput.addEventListener('input', () => {
     mantleVigourLabel.textContent = mantleVigourInput.value
@@ -5131,8 +5188,21 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   })
   // The steps whose controls have moved out of the panel row at the foot and
   // into the column. The rest follow one per step, in pipeline order.
-  sidebar.body.append(overlayList.element, worldPanel, panels[panelIndexOf('planet')], panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX], panels[panelIndexOf('erosion')], panels[ECOLOGY_PANEL_INDEX])
+  // Step 0 comes in two parts with the overlays between them: name, seed and
+  // shape first, then what the map shows, then the planet's sliders.
+  const worldParams = root.querySelector<HTMLElement>('[data-stage-part="world"]')!
+  sidebar.body.append(worldPanel, overlayList.element, worldParams, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX], panels[panelIndexOf('erosion')], panels[ECOLOGY_PANEL_INDEX])
+  // Each step's foot goes to the column's foot, which does not scroll. Tagged
+  // with its step, so showPanel shows it with the step it belongs to.
+  // A step's foot may sit in its second part (step 0), not in its panel.
+  for (const foot of root.querySelectorAll<HTMLElement>('.gen-step__foot')) {
+    const owner = foot.closest<HTMLElement>('[data-stage], [data-stage-part]')!
+    foot.dataset.stagePart = owner.dataset.stage ?? owner.dataset.stagePart
+    sidebar.foot.append(foot)
+  }
+  const stageParts = [...sidebar.element.querySelectorAll<HTMLElement>('[data-stage-part]')]
   relabel(sidebar.body)
+  relabel(sidebar.foot)
 
   const stepBar = createStepBar(root, {
     steps: STEPS.map((s) => ({ id: s.id, aside: s.aside === true })),
@@ -5162,8 +5232,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Step 0 is never "computed" — it is answered. It counts as settled the
     // moment the world has both halves of its identity.
     world: () => worldName.trim() !== '' && seedInput.value.trim() !== '',
-    // Answered, like step 0: its values are set, not computed.
-    planet: () => worldCreated,
     genesis: () => lastArcheanEpochs > 0 || hasHandover,
     tectonics: () => lastEpoch > 0,
     climate: () => lastTemperature !== null,
@@ -5204,9 +5272,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // instead of being asked for twice. A generic loop would lose both, and there is
   // no harness on this side to notice. See docs/design/generator-pipeline.md.
   const ensureDataFor = (index: number): void => {
-    // The Planet step shows its controls on the climate: the world's own
-    // once it has plates, the sample world's before.
-    if (index === panelIndexOf('planet') && worldCreated && lastTemperature === null) requestPlanetForcing()
+    // Step 0 shows the planet's controls on the climate: the world's own
+    // once it has plates, the sample world's before. Not behind the world
+    // list, which covers the map; closing the list enters the step again.
+    if (index === panelIndexOf('world') && !chooserOpen && lastTemperature === null) requestPlanetForcing()
     if (index === CLIMATE_PANEL_INDEX && lastTemperature === null) requestClimate()
     // The erosion panel carries the hydrology readout: entering it with eroded
     // terrain but no rivers (a reopened session, a mid-chain revisit) computes
@@ -5232,7 +5301,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // overlay defaults for it — and since 2026-08-09 it does NOT commit anything:
   // the Archean hand-over moved to the gesture that means it (see commitGenesis).
   const showPanel = (index: number): void => {
-    if (STEP_IDS[index] !== 'planet') leavePlanetPreview()
+    if (STEP_IDS[index] !== 'world') leavePlanetPreview()
     // Leaving a step: what it showed is what it shows next time.
     if (panelEverShown && index !== panelIndex) rememberOverlays()
     panelEverShown = true
@@ -5270,6 +5339,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     panels.forEach((panel, i) => {
       panel.hidden = i !== index
     })
+    // The rest of a step that is not one box: step 0's second part, and every
+    // step's foot, which sits in the column's foot rather than in its panel.
+    for (const part of stageParts) part.hidden = part.dataset.stagePart !== STEP_IDS[index]
     ensureDataFor(index)
     // The Archean's narration in the pill belongs to the Genesis step: it
     // describes what the Archean is doing right now, which stops being true
@@ -5358,7 +5430,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       serverIndicator.dispose()
       saveMenu.dispose()
       confirmDialog.dispose()
-      window.removeEventListener('beforeunload', onBeforeUnload)
       hoverTooltip?.dispose()
       riverLayer?.dispose()
       overlay.dispose()

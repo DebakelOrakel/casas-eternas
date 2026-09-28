@@ -20,6 +20,10 @@ export interface Sidebar {
   // Where a step puts its own controls. Empty for the steps that still keep
   // theirs in the panel row along the foot.
   body: HTMLElement
+  // Where a step puts its figures and its buttons: below the part that
+  // scrolls, directly above the step bar, so they stay in view however long
+  // the step's controls are.
+  foot: HTMLElement
   // Which step the column is describing. The id keys `generator.step.<id>`,
   // the same base the step bar reads, so a step's name exists once.
   setStep(id: string): void
@@ -47,7 +51,16 @@ export function createSidebar(host: HTMLElement): Sidebar {
   const body = document.createElement('div')
   body.className = 'gen-sidebar__body'
 
-  aside.append(heading, description, body)
+  // Title, description and controls scroll; the foot does not. Two boxes
+  // rather than a sticky foot inside one: a sticky element stops at the
+  // scroll box's padding, not at its border, and leaves a strip under it.
+  const scroll = document.createElement('div')
+  scroll.className = 'gen-sidebar__scroll'
+  scroll.append(heading, description, body)
+  const foot = document.createElement('div')
+  foot.className = 'gen-sidebar__foot'
+
+  aside.append(scroll, foot)
   host.appendChild(aside)
 
   function publishWidth(width: string): void {
@@ -73,6 +86,7 @@ export function createSidebar(host: HTMLElement): Sidebar {
   return {
     element: aside,
     body,
+    foot,
     setStep(id) {
       current = id
       paint()

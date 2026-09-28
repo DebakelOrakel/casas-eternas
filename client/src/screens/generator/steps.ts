@@ -1,9 +1,10 @@
 // THE STEPS, AS DATA. One entry per step: which pipeline stage it drives, which
 // map layers it offers, and which of those are showing when you enter it.
 //
-// A STEP is not a STAGE. Step 0 names and seeds the world and drives no stage at
-// all; hydrology is a stage with no step of its own, because its rivers and
-// lakes are the readout of the erosion solve — so its layers are offered by the
+// A STEP is not a STAGE. Step 0 names and seeds the world and also drives the
+// planet stage, whose controls are values you set rather than a run you start;
+// hydrology is a stage with no step of its own, because its rivers and lakes
+// are the readout of the erosion solve — so its layers are offered by the
 // Erosion step. The pipeline table (generator/pipeline/stages.ts) says what
 // computes what; this one says what you SEE and WHEN.
 //
@@ -19,12 +20,12 @@ import { ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputPa
 import type { EcologyFieldId } from '../../generator/ecology/ecologyField'
 import type { OverlayId } from './overlays'
 
-export type StepId = 'world' | 'planet' | 'genesis' | 'tectonics' | 'climate' | 'erosion' | 'ecology' | 'migration'
+export type StepId = 'world' | 'genesis' | 'tectonics' | 'climate' | 'erosion' | 'ecology' | 'migration'
 
 export interface Step {
   id: StepId
-  // The stage this step drives, or null for step 0, which computes nothing.
-  stage: StageId | null
+  // The stage this step drives.
+  stage: StageId
   // The layers the column offers, in the order it lists them. A layer may
   // appear in several steps — the mantle field is the Archean's subject and
   // still drives the plates afterwards.
@@ -63,26 +64,20 @@ const RESOURCE_FIELDS: readonly EcologyFieldId[] = ECOLOGY_ABUNDANCE_GROUPS.flat
 
 export const STEPS: readonly Step[] = [
   {
+    // Name, seed and the planet. The planet acts through the climate, so the
+    // step shows the climate's own layers — on the sample world until the
+    // world has plates, then on the world itself. The washes and the wind are
+    // one at a time. (Step 1 was the planet alone until 2026-09-28; its three
+    // sliders did not earn a step.)
+    //
+    // No terrain wash (2026-09-28). Temperature is on at entry: the planet
+    // sliders act on it first.
     id: 'world',
-    stage: null,
-    // Nothing to look at yet: the step is about which world, not about what the
-    // map is showing. The colour wash is offered so the map is not dead.
-    overlays: ['terrain'],
-    exclusive: [],
-    defaults: [],
-    fields: [],
-  },
-  {
-    // The planet acts through the climate, so the step shows the climate's
-    // own layers — on the sample world until the world has plates, then on
-    // the world itself. Temperature stays on like in the Climate step; the
-    // washes and the wind are one at a time.
-    id: 'planet',
     stage: 'planet',
-    overlays: ['terrain', 'temperature'],
-    exclusive: ['precipitation', 'seasonality', 'monsoon', 'wind'],
+    overlays: ['temperature'],
+    exclusive: ['precipitation', 'seasonality', 'monsoon', 'wind', 'currents'],
     pickTitle: 'generator.section.climateFields',
-    defaults: ['terrain', 'temperature'],
+    defaults: ['temperature'],
     fields: [],
   },
   {
@@ -195,7 +190,7 @@ const UNSTEPPED: readonly StageId[] = ['hydrology']
 // checked here: every stage is either driven by exactly one step or named above
 // as unstepped, and the steps run in pipeline order. It fails at startup rather
 // than half a screen later.
-const stepped = STEPS.map((s) => s.stage).filter((id): id is StageId => id !== null)
+const stepped = STEPS.map((s) => s.stage)
 for (const s of STAGES) {
   if (!stepped.includes(s.id) && !UNSTEPPED.includes(s.id)) {
     throw new Error(`pipeline stage ${s.id} has no generator step and is not listed as unstepped`)

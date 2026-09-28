@@ -51,6 +51,8 @@ export interface Weather {
   temperature: Float32Array
   wind: Float32Array
   currents: Float32Array
+  // SST anomaly the currents make, °C, 0 on land (see applyOceanSST).
+  currentAnomaly: Float32Array
   seasonalAmplitude: Float32Array
   seasonal: SeasonalPrecipitation
 }
@@ -63,8 +65,8 @@ export function computeWeather(elevation: Float32Array, width: number, height: n
   const temperature = computeTemperature(elevation, width, height, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, dryLand, planet)
   const wind = computeWind(params.equatorOffset, planet.rotationHours)
   const currents = computeOceanCurrents(elevation, wind, width, height, dryLand)
-  applyOceanSST(temperature, currents, elevation, width, height, dryLand)
+  const currentAnomaly = applyOceanSST(temperature, currents, elevation, width, height, dryLand)
   const seasonalAmplitude = computeSeasonalAmplitude(elevation, width, height, params.equatorOffset, dryLand, planet)
   const seasonal = computeSeasonalPrecipitation(elevation, temperature, seasonalAmplitude, wind, width, height, params.humidity, params.equatorOffset, dryLand)
-  return { temperature, wind, currents, seasonalAmplitude, seasonal }
+  return { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal }
 }

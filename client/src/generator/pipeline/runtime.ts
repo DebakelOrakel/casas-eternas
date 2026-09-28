@@ -733,7 +733,7 @@ function computeClimateChain(elevation: Float32Array, width: number, height: num
   // erosion engine's water forcing (the stage-2 coupling), so the panel's
   // overlays and the carved valleys can never disagree about what the
   // climate IS.
-  const { temperature, wind, currents, seasonalAmplitude, seasonal } = computeWeather(elevation, width, height, params, dryLand)
+  const { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal } = computeWeather(elevation, width, height, params, dryLand)
   // Classified twice, on purpose, from identical inputs: `biomes` on the climate
   // grid for the ecology step, `biomesFine` on the world raster for everything
   // the user sees or saves (see climate/biomes.computeBiomesFine, and
@@ -742,7 +742,7 @@ function computeClimateChain(elevation: Float32Array, width: number, height: num
   // precipitation advection it follows.
   const biomes = computeBiomes(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
   const biomesFine = computeBiomesFine(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
-  return { temperature, wind, currents, seasonalAmplitude, seasonal, biomes, biomesFine }
+  return { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal, biomes, biomesFine }
 }
 
 // Cache copies for hydrology/ecology (the message buffers get transferred,
@@ -769,12 +769,13 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
     temperature: chain.temperature.buffer as ArrayBuffer,
     wind: chain.wind.buffer as ArrayBuffer,
     currents: chain.currents.buffer as ArrayBuffer,
+    currentAnomaly: chain.currentAnomaly.buffer as ArrayBuffer,
     precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
     seasonalAmplitude: chain.seasonalAmplitude.buffer as ArrayBuffer,
     monsoonIndex: chain.seasonal.index.buffer as ArrayBuffer,
     biomes: chain.biomesFine.buffer as ArrayBuffer,
   }
-  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.biomes])
+  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.biomes])
   return climate
 }
 
@@ -1517,12 +1518,13 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
     temperature: chain.temperature.buffer as ArrayBuffer,
     wind: chain.wind.buffer as ArrayBuffer,
     currents: chain.currents.buffer as ArrayBuffer,
+    currentAnomaly: chain.currentAnomaly.buffer as ArrayBuffer,
     precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
     seasonalAmplitude: chain.seasonalAmplitude.buffer as ArrayBuffer,
     monsoonIndex: chain.seasonal.index.buffer as ArrayBuffer,
     biomes: chain.biomesFine.buffer as ArrayBuffer,
   }
-  emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, preview.currents, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.biomes])
+  emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, preview.currents, preview.currentAnomaly, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.biomes])
 }
 
 export function dispatch(message: WorkerInboundMessage): void {

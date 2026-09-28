@@ -87,7 +87,10 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
 // coastal land cell toward the anomaly of its adjacent ocean (a cold current
 // cools the coast, a warm one mildens it). `current` is the normalized field
 // from computeOceanCurrents.
-export function applyOceanSST(temperature: Float32Array, current: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): void {
+// Returns the current's own mark on the sea: SST minus the base temperature,
+// °C per ocean cell, 0 on land. Positive is a warm current, negative a cold
+// one — what the map colours the currents by.
+export function applyOceanSST(temperature: Float32Array, current: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Float32Array {
   const n = RX * RY
   const land = new Uint8Array(n)
   for (let gy = 0; gy < RY; gy++) {
@@ -120,6 +123,7 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
   // influence reaches a few cells past the shoreline instead of one.
   const anomaly = new Float32Array(n)
   for (let i = 0; i < n; i++) if (!land[i]) anomaly[i] = sst[i] - temperature[i]
+  const oceanAnomaly = anomaly.slice()
   for (let step = 0; step < CLIMATE_TUNING.currentsCoastalSteps; step++) {
     const next = anomaly.slice()
     for (let gy = 0; gy < RY; gy++) {
@@ -143,4 +147,5 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
   for (let i = 0; i < n; i++) {
     if (!land[i]) temperature[i] = sst[i]
   }
+  return oceanAnomaly
 }

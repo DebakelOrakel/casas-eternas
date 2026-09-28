@@ -29,7 +29,6 @@
   "common.panel.storage.empty": "Nothing cached yet — a world is stored once its bake finishes.",
   "common.panel.storage.clearAll": "Delete local data",
   "common.panel.storage.chipTitle": "{width}×{height}, baked in {seconds}s",
-  "common.world.seed": "Seed",
   "common.world.uid": "UID",
   "common.world.revision": "Revision",
   "common.world.checksum": "Checksum",

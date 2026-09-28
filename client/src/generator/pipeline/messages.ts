@@ -96,6 +96,7 @@ export interface WorkerPlanetPreviewDataMessage {
   temperature: ArrayBuffer
   wind: ArrayBuffer
   currents: ArrayBuffer
+  currentAnomaly: ArrayBuffer
   precipitation: ArrayBuffer
   seasonalAmplitude: ArrayBuffer
   monsoonIndex: ArrayBuffer
@@ -404,6 +405,9 @@ export interface WorkerClimateDataMessage {
   // Ocean surface currents, Float32 interleaved [u0,v0,…], normalized to max 1,
   // zero on land. See climate/oceanCurrents.ts.
   currents: ArrayBuffer
+  // The SST anomaly the currents make, °C, Float32 resX*resY, 0 on land:
+  // positive = warm current, negative = cold (applyOceanSST).
+  currentAnomaly: ArrayBuffer
   // Annual precipitation mm/yr, Float32, resX*resY row-major; land only (ocean
   // cells carry OCEAN_PRECIP). See climate/precipitation.ts.
   precipitation: ArrayBuffer
