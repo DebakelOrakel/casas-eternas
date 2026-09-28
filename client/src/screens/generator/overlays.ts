@@ -23,6 +23,7 @@ export type OverlayId =
   | 'pressure'
   | 'wind'
   | 'currents'
+  | 'upwelling'
   | 'precipitation'
   | 'monsoon'
   | 'biomes'
@@ -57,6 +58,7 @@ export const OVERLAY_META: Record<OverlayId, OverlayMeta> = {
   pressure: { icon: '/icons/weather.png' },
   wind: { icon: '/icons/wind.png' },
   currents: { icon: '/icons/gyres.png' },
+  upwelling: { icon: '/icons/upwelling.png' },
   precipitation: { icon: '/icons/rain.png' },
   monsoon: { icon: '/icons/weather.png' },
   biomes: { icon: '/icons/biomes.png' },

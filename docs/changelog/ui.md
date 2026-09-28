@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-28
+- **dropped** Generator: the Climate step's coldest and warmest tiles. `generator.panel.climate`
 - **dropped** Generator: closing the tab no longer asks first; leaving through the title bar still does. `generator`
 - **changed** Generator: a step's figures and its buttons stay at the foot of the column while the sliders scroll. `generator`
 - **changed** Generator: the Planet step is gone; its sliders are in the World step, with a reset of their own. `generator.action.resetPlanet`

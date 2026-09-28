@@ -140,8 +140,6 @@
   "generator.panel.climate.humidity.help": "Scale global rainfall up or down.",
   "generator.panel.climate.contrast.label": "Contrast",
   "generator.panel.climate.contrast.help": "How sharply temperature falls from equator to poles.",
-  "generator.panel.climate.readout.min": "Min",
-  "generator.panel.climate.readout.max": "Max",
   "generator.action.resetEcology.label": "Reset ecology to defaults",
   "generator.action.resetEcology.help": "Return every ecology lever to its default.",
   "generator.panel.ecology.carryingCapacity.label": "Carrying capacity",

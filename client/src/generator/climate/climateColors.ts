@@ -94,10 +94,24 @@ export function pressureColor(hPa: number): Rgb {
   return rampColor(PRESSURE_STOPS, hPa)
 }
 
+// Upwelling as a share of the world's strongest (0..1) → colour: pale sea
+// green to deep teal, cold water rising.
+const UPWELLING_STOPS: { c: number; rgb: Rgb }[] = [
+  { c: 0, rgb: [180, 225, 215] },
+  { c: 0.5, rgb: [60, 170, 170] },
+  { c: 1, rgb: [10, 95, 110] },
+]
+
+export function upwellingColor(share: number): Rgb {
+  return rampColor(UPWELLING_STOPS, share)
+}
+
 // The ramps as {value, rgb} lists, for building the overlay legend gradient bars
 // (same stops the paint uses, so the legend matches the map exactly).
 export const temperatureLegendStops = TEMPERATURE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
 export const precipitationLegendStops = PRECIPITATION_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
 export const amplitudeLegendStops = AMPLITUDE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
 export const monsoonLegendStops = MONSOON_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
+// In percent, as the legend and the readout say it.
+export const upwellingLegendStops = UPWELLING_STOPS.map((s) => ({ value: s.c * 100, rgb: s.rgb }))
 export const pressureLegendStops = PRESSURE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))

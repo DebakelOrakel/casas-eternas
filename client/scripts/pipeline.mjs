@@ -472,6 +472,12 @@ test('the climate refinement answers with twelve months, and declines without a 
   for (const v of pressure) { if (!Number.isFinite(v)) finite = false; lo = Math.min(lo, v); hi = Math.max(hi, v) }
   for (const v of wind) if (!Number.isFinite(v)) finite = false
   check('the pressure is finite and in a weather range', finite && lo > 950 && hi < 1070, `${lo.toFixed(1)}..${hi.toFixed(1)} hPa`)
+  const currents = new Float32Array(r.currents)
+  const anomaly = new Float32Array(r.currentAnomaly)
+  const upwelling = new Float32Array(r.upwelling)
+  let ok = currents.length === 2 * n && anomaly.length === n && upwelling.length === n
+  for (const a of [currents, anomaly, upwelling]) for (const v of a) if (!Number.isFinite(v)) ok = false
+  check('the refined currents, their anomaly and the upwelling are whole and finite', ok)
 })
 
 test('INVALIDATION: the epochs stale everything downstream, per the declared chain', async () => {

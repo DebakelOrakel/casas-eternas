@@ -35,7 +35,7 @@ import { eventCategory } from '../../generator/tectonics/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
 import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
-import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, pressureColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops, pressureLegendStops } from '../../generator/climate/climateColors'
+import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, pressureColor, upwellingColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops, pressureLegendStops, upwellingLegendStops } from '../../generator/climate/climateColors'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
 import { shiftedYNorm } from '../../generator/climate/climateField'
@@ -44,7 +44,9 @@ import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../generator/c
 import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
-import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer, decodeLayer } from '../../world/save/worldLayers'
+import { DISCHARGE_LAYER, FORCING_LAYERS, REFINED_LAYERS, WORLD_LAYERS, bakeLayer, decodeLayer } from '../../world/save/worldLayers'
+import { refinedFromLayers, refinedLayerSources } from '../../world/save/refinedLayers'
+import type { RefinedClimate } from '../../generator/climate/refinement'
 import { getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
 import { createOverlayList } from './OverlayList'
@@ -686,15 +688,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         </div>
       </section>
       <div class="gen-step__foot">
-        <div class="gen-stats">
-          ${statTile('generator.panel.climate.readout.min', 'temp-min', { unit: 'common.unit.celsius' })}
-          ${statTile('generator.panel.climate.readout.max', 'temp-max', { unit: 'common.unit.celsius' })}
-        </div>
+        <!-- No stats: the world's coldest and warmest cell said little once
+             the step had months (dropped 2026-09-28). No status mark either:
+             the progress pill says the climate is computing. -->
         <div class="gen-step__actions">
           <!-- The step computes the history's climate on entry; the button
                refines it (docs/design/climate-refinement.md), the reset
                drops the refinement. -->
-          <span class="gen-step__status" data-value="climate-status"></span>
           <button type="button" class="gen-action-icon" data-action="reset-climate" data-t-aria="generator.action.resetClimate.label" data-help="generator.action.resetClimate">
             <img src="/icons/reset.png" alt="" />
           </button>
@@ -893,7 +893,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   const storagePanel = createStoragePanel(root)
   root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => storagePanel.open())
-  const climateStatus = root.querySelector<HTMLElement>('[data-value="climate-status"]')!
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
   const humidityInput = root.querySelector<HTMLInputElement>('.humidity-input')!
@@ -910,8 +909,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const migrationThresholdLabel = root.querySelector<HTMLElement>('[data-value="migration-threshold-label"]')!
   const migrationSeaInput = root.querySelector<HTMLInputElement>('.migration-sea-input')!
   const migrationSeaLabel = root.querySelector<HTMLElement>('[data-value="migration-sea-label"]')!
-  const tempMaxLabel = root.querySelector<HTMLElement>('[data-value="temp-max"]')!
-  const tempMinLabel = root.querySelector<HTMLElement>('[data-value="temp-min"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
   const statLandBar = root.querySelector<HTMLElement>('[data-value="stat-land-bar"]')!
   const statTectAge = root.querySelector<HTMLElement>('[data-value="stat-tect-age"]')!
@@ -1213,7 +1210,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The climate step's refinement (docs/design/climate-refinement.md): twelve
   // months of pressure and wind, month-major. Null until its button ran, and
   // dropped with every new climate.
-  let lastRefined: { months: number; pressure: Float32Array; wind: Float32Array } | null = null
+  let lastRefined: RefinedClimate | null = null
+  // A loaded save's refinement, held until the catch-up has computed the
+  // climate it refines: that fresh climate would drop it otherwise.
+  let restoredRefinement: RefinedClimate | null = null
   // The month the climate layers show: 0 the year's mean, 1–12 January to
   // December. Read only while a refinement exists.
   let climateMonth = 0
@@ -1244,6 +1244,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The wind the layer and the readout show: the refined month's when there
   // is one, the history's banded wind otherwise.
   const displayWind = (): Float32Array | null => refinedMonth()?.wind ?? lastWind
+  // The currents the same way: the refinement's (under its year's wind, with
+  // the upwelling in the anomaly) when there is one.
+  const displayCurrents = (): Float32Array | null => lastRefined?.currents ?? lastCurrents
+  const displayCurrentAnomaly = (): Float32Array | null => lastRefined?.currentAnomaly ?? lastCurrentAnomaly
   let climateResX = 0
   let climateResY = 0
   // Rivers/lakes (hydrology) — a panel-less stage shown on the erosion panel.
@@ -1635,6 +1639,65 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     drawComets(c, windLines.lines, { width: MAP_WIDTH, height: MAP_HEIGHT, color: [20, 35, 50], length: 26, gap: 14, maxWidth: 3.2, opacity: 0.55 })
     drawComets(c, windLines.lines, { width: MAP_WIDTH, height: MAP_HEIGHT, color: [255, 255, 255], length: 26, gap: 14, maxWidth: 1.8 })
   }
+  // Upwelling (the refinement's): a teal wash on the sea, stronger where more
+  // cold water comes up. Scaled to the 98th percentile of the rising cells,
+  // not to the strongest: a few coast cells peak at seven times the usual
+  // (Astrakan), and would leave everything else pale. Downwelling is left
+  // out: it has nothing to show a player.
+  let upwellingScale: { source: Float32Array; peak: number } | null = null
+  const upwellingPeak = (): number => {
+    const field = lastRefined?.upwelling
+    if (!field) return 0
+    if (upwellingScale?.source !== field) {
+      const rising = Array.from(field).filter((v) => v > 0).sort((a, b) => a - b)
+      upwellingScale = { source: field, peak: rising.length > 0 ? rising[Math.floor(0.98 * (rising.length - 1))] : 0 }
+    }
+    return upwellingScale.peak
+  }
+  // Sampled bilinearly from the sea cells only (the climate grid's land test
+  // is the precipitation's ocean mark), and painted on sea pixels only (the
+  // relief's): nearest cells drew each 62 km cell as a block, and the coasts
+  // as stairs.
+  function paintUpwelling(data: Uint8ClampedArray): void {
+    const field = lastRefined?.upwelling
+    const precipitation = lastPrecipitation
+    if (!field || !precipitation || !lastRelief) return
+    const peak = upwellingPeak()
+    if (peak <= 0) return
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const fy = (y + 0.5) / MAP_HEIGHT * climateResY - 0.5
+      const y0 = Math.floor(fy)
+      const ty = fy - y0
+      const r0 = wrapValue(y0, climateResY) * climateResX
+      const r1 = wrapValue(y0 + 1, climateResY) * climateResX
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        if (lastRelief[y * MAP_WIDTH + x] & 128) continue // land
+        const fx = (x + 0.5) / MAP_WIDTH * climateResX - 0.5
+        const x0 = Math.floor(fx)
+        const tx = fx - x0
+        const c0 = wrapValue(x0, climateResX)
+        const c1 = wrapValue(x0 + 1, climateResX)
+        let sum = 0
+        let weight = 0
+        for (const [i, w] of [[r0 + c0, (1 - tx) * (1 - ty)], [r0 + c1, tx * (1 - ty)], [r1 + c0, (1 - tx) * ty], [r1 + c1, tx * ty]]) {
+          if (precipitation[i] !== OCEAN_PRECIP) continue
+          sum += field[i] * w
+          weight += w
+        }
+        if (weight <= 0) continue
+        const v = sum / weight
+        if (v <= 0) continue
+        const k = Math.min(1, v / peak)
+        const [r, g, b] = upwellingColor(k)
+        const alpha = 0.25 + 0.5 * k
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - alpha) + r * alpha
+        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
+        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
+      }
+    }
+  }
+
   // Sea-level pressure of the shown month (the refinement's): a wash, blue
   // for the lows and amber for the highs, and isobars every 4 hPa with the
   // 1012 and the 1020 line heavier — the weather map's convention. The wash
@@ -1771,9 +1834,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // calm, i.e. at land.
   let currentLines: { field: Float32Array; lines: FlowLine[] } | null = null
   function drawCurrents(c: CanvasRenderingContext2D): void {
-    if (!lastCurrents) return
-    if (currentLines?.field !== lastCurrents) {
-      const field = lastCurrents
+    const shown = displayCurrents()
+    if (!shown) return
+    if (currentLines?.field !== shown) {
+      const field = shown
       currentLines = {
         field,
         lines: traceFlowLines((x, y) => sampleVector(field, x, y), {
@@ -1783,7 +1847,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         }),
       }
     }
-    const anomaly = lastCurrentAnomaly
+    const anomaly = displayCurrentAnomaly()
     drawArrowRibbons(c, currentLines.lines, {
       width: MAP_WIDTH, height: MAP_HEIGHT,
       length: 64, gap: 26, maxHalfWidth: 4.5,
@@ -1992,6 +2056,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The equator is always drawn, like the events — a property of the map,
     // not a user toggle (decided 2026-09-26 on the picture check).
     { id: 'equator', enabled: true, paint: (c) => paintWrapped(c, drawEquator) },
+    { id: 'upwelling', enabled: false, paintPixels: paintUpwelling },
     { id: 'pressure', enabled: false, paint: drawPressure },
     { id: 'wind', enabled: false, paint: drawWind },
     { id: 'currents', enabled: false, paint: drawCurrents },
@@ -2192,6 +2257,16 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         ? [{ label: t('readout.row.season'), value: t('readout.seasonSwing', { v: (lastSeasonality[cell.i] / 2).toFixed(1) }) }]
         : [],
     },
+    upwelling: {
+      available: () => lastRefined !== null,
+      legend: () => ({ type: 'gradient', title: t('overlay.upwelling.label'), unit: t('common.unit.percent'), stops: upwellingLegendStops }),
+      probe: (cell) => {
+        const field = lastRefined?.upwelling
+        if (!field || cell.land || field[cell.i] <= 0) return []
+        const peak = upwellingPeak()
+        return peak > 0 ? [{ label: t('readout.row.upwelling'), value: `${Math.min(100, Math.round((100 * field[cell.i]) / peak))} ${t('common.unit.percent')}` }] : []
+      },
+    },
     pressure: {
       available: () => lastRefined !== null,
       legend: () => ({ type: 'gradient', title: t('overlay.pressure.label'), unit: t('common.unit.hectopascal'), stops: pressureLegendStops }),
@@ -2220,13 +2295,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       available: () => lastCurrents !== null,
       legend: null,
       probe: (cell) => {
-        if (!lastCurrents || cell.land) return []
-        const u = lastCurrents[cell.i * 2]
-        const v = lastCurrents[cell.i * 2 + 1]
+        const currents = displayCurrents()
+        if (!currents || cell.land) return []
+        const u = currents[cell.i * 2]
+        const v = currents[cell.i * 2 + 1]
         const b = bearing(u, v)
         if (b === null || Math.hypot(u, v) <= 0.02) return []
         // Warm or cold by what the current does to the sea, as the map colours it.
-        const warm = (lastCurrentAnomaly?.[cell.i] ?? 0) > 0
+        const warm = (displayCurrentAnomaly()?.[cell.i] ?? 0) > 0
         return [{ label: t('readout.row.current'), value: warm ? t('readout.current.warm') : t('readout.current.cold'), bearing: b }]
       },
     },
@@ -3039,20 +3115,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastBiomes = new Uint8Array(message.biomes)
     climateResX = message.resX
     climateResY = message.resY
-    climateStatus.textContent = ''
     climateInFlight = false
     updateControlsDisabled()
     updateProgress()
-    // Coldest/warmest average temperature on this world (reflects latitude,
-    // the greenhouse offset, and elevation lapse — a high pole peak is the min).
-    let min = Infinity
-    let max = -Infinity
-    for (const t of lastTemperature) {
-      if (t < min) min = t
-      if (t > max) max = t
-    }
-    tempMinLabel.textContent = String(Math.round(min))
-    tempMaxLabel.textContent = String(Math.round(max))
     // Climate data now exists → its overlay buttons become available.
     updateOverlays()
     // A fresh climate stales the rivers and the ecology that were derived from
@@ -3095,7 +3160,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         // The climate run and the refinement decline under one stage.
         climateInFlight = false
         refineInFlight = false
-        climateStatus.textContent = ''
         climateResolve?.()
         climateResolve = null
         break
@@ -3151,7 +3215,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   function handleClimateRefined(message: WorkerClimateRefinedMessage): void {
     refineInFlight = false
-    lastRefined = { months: message.months, pressure: new Float32Array(message.pressure), wind: new Float32Array(message.wind) }
+    lastRefined = {
+      months: message.months,
+      pressure: new Float32Array(message.pressure),
+      wind: new Float32Array(message.wind),
+      currents: new Float32Array(message.currents),
+      currentAnomaly: new Float32Array(message.currentAnomaly),
+      upwelling: new Float32Array(message.upwelling),
+    }
     updateControlsDisabled()
     updateOverlays()
   }
@@ -3185,9 +3256,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastSeasonality = null
     lastMonsoonIndex = null
     lastBiomes = null
-    climateStatus.textContent = ''
-    tempMinLabel.textContent = '–'
-    tempMaxLabel.textContent = '–'
     updateOverlays() // climate overlays no longer available
   }
 
@@ -3282,7 +3350,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // opening the climate panel and by the slider (debounced) for live re-tuning.
   function requestClimate(): void {
     if (tectonicsRunning) return
-    climateStatus.textContent = '…'
     climateInFlight = true
     updateControlsDisabled()
     updateProgress()
@@ -4098,6 +4165,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         })
       }
     }
+    // The climate step's refinement (formatVersion 6), one layer per month
+    // and component (world/save/refinedLayers.ts). Only when the session has
+    // one: a world saved unrefined loads unrefined.
+    if (lastRefined && climateResX > 0) {
+      const sources = refinedLayerSources(lastRefined, climateResX * climateResY)
+      for (const spec of REFINED_LAYERS) {
+        const src = sources.get(spec.name)
+        if (!src) continue
+        zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
+        layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: climateResX, resY: climateResY, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
+      }
+    }
     // The standing-water list (ADAPTIVE_MESH_PLAN.md phase 1): a JSON table
     // beside the rasters — the truth `lakeDepth` derives from
     // (hydrology.lakeDepthFromBodies), in this raster's texel coordinates.
@@ -4126,6 +4205,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // save may carry one, 4 that it may carry the sediment column as a
     // fourth (phase 5.2), 5 that the column's layers carry the climate at
     // deposition (phase 5.4). A world whose history has not run carries none.
+    // 6: the layers may carry the climate step's refinement (above).
     if (mesh) {
       zip.file('mesh/nodes.f32', mesh.nodes)
       zip.file('mesh/connectivity.bin', mesh.connectivity)
@@ -4133,7 +4213,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (mesh.column) zip.file('mesh/column.bin', mesh.column)
     }
     const manifest = {
-      formatVersion: 5,
+      formatVersion: 6,
       // The same provenance string status.generator carries — a real build id
       // since 2026-08-11, where a static 'casas-eternas/v1alpha1' had stood
       // saying nothing.
@@ -4318,6 +4398,28 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // climate feeds hydrology, both feed ecology — and quietly: nothing here is
   // a user's request, it is the screen catching up with the world it was just
   // handed. The step bar repaints as each lands (updateControlsDisabled).
+  // The save's refinement layers, decoded through the manifest's encodings;
+  // null for a save without them (before formatVersion 6, or unrefined).
+  async function readRefinement(zip: JSZip): Promise<RefinedClimate | null> {
+    try {
+      const manifestFile = zip.file('manifest.json')
+      if (!manifestFile) return null
+      const manifest = JSON.parse(await manifestFile.async('string')) as { layers?: { name: string; file: string; dtype?: string; resX?: number; resY?: number; encoding?: { scale: number; offset: number } }[] }
+      const decoded = new Map<string, Float32Array>()
+      let n = 0
+      for (const entry of manifest.layers ?? []) {
+        if (!REFINED_LAYERS.some((l) => l.name === entry.name) || !entry.encoding || !entry.resX || !entry.resY) continue
+        const buffer = await zip.file(entry.file)?.async('arraybuffer')
+        if (!buffer) continue
+        n = entry.resX * entry.resY
+        decoded.set(entry.name, decodeLayer(buffer, { dtype: entry.dtype as 'u8' | 'u16' | 'f32', scale: entry.encoding.scale, offset: entry.encoding.offset }))
+      }
+      return n > 0 ? refinedFromLayers((name) => decoded.get(name) ?? null, n) : null
+    } catch {
+      return null
+    }
+  }
+
   async function catchUpAfterRestore(): Promise<void> {
     // Each request is guarded against one already being in flight: landing on
     // the Ecology step and loading a world there would otherwise have the
@@ -4327,6 +4429,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (lastEpoch < MIN_TECTONIC_EPOCHS) return
     if (lastTemperature === null) {
       await awaitCompute((r) => { climateResolve = r }, () => { if (!climateInFlight) requestClimate() })
+    }
+    // The climate is the one the save's refinement was made on (the same
+    // world, the same levers), so the refinement goes back on top of it.
+    if (restoredRefinement && lastTemperature !== null) {
+      lastRefined = restoredRefinement
+      restoredRefinement = null
+      updateControlsDisabled()
+      updateOverlays()
     }
     if (erosionRunCount < 1) return
     if (lastRiverData === null) {
@@ -4651,7 +4761,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (erosionRunCount >= 1) {
       saveChainActive = true
       try {
-        await awaitCompute((r) => { climateResolve = r }, requestClimate)
+        // Only when missing, like the restore's and the migration's chains:
+        // the step-0 sliders recompute the climate as they move, so one that
+        // exists is current. Recomputing it anyway made a new climate, and a
+        // new climate drops the step's refinement (2026-09-28).
+        if (lastTemperature === null) await awaitCompute((r) => { climateResolve = r }, requestClimate)
         await awaitCompute((r) => { hydrologyResolve = r }, requestHydrology)
         await awaitCompute((r) => { ecologyResolve = r }, requestEcology)
       } finally {
@@ -4741,6 +4855,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ctx.notifications.clearAll()
     overlay.clearMarkers()
     invalidateAfter('tectonics')
+    restoredRefinement = await readRefinement(zip)
 
     const seed = readYamlValue(yaml, 'spec.seed') ?? ''
     // One read of the recipe instead of a regex per key, with every gap filled by

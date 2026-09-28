@@ -140,8 +140,6 @@
   "generator.panel.climate.humidity.help": "Den globalen Niederschlag hoch- oder herunterskalieren.",
   "generator.panel.climate.contrast.label": "Kontrast",
   "generator.panel.climate.contrast.help": "Wie stark die Temperatur vom Äquator zu den Polen abfällt.",
-  "generator.panel.climate.readout.min": "Min",
-  "generator.panel.climate.readout.max": "Max",
   "generator.action.resetEcology.label": "Ökologie auf Standard zurücksetzen",
   "generator.action.resetEcology.help": "Alle Ökologieregler auf ihren Standard zurücksetzen.",
   "generator.panel.ecology.carryingCapacity.label": "Tragfähigkeit",

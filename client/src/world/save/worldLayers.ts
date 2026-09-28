@@ -7,7 +7,7 @@
 
 import { metersToElevation } from '../../generator/elevation/elevationScale'
 import { sampleNearestWorld } from '../../generator/core/field'
-import { ECOLOGY_FIELD_NAMES, fieldSpec } from './fieldSpec'
+import { ECOLOGY_FIELD_NAMES, REFINED_FIELDS, fieldSpec } from './fieldSpec'
 import type { FieldSpec } from './fieldSpec'
 
 export type Dtype = 'u8' | 'u16' | 'f32'
@@ -144,6 +144,17 @@ export const FORCING_LAYERS: LayerSpec[] = [
   layer('erodibility', 'f32', 1, 0),
 ]
 
+// The climate step's refinement (fieldSpec.REFINED_FIELDS), written when the
+// session has one — formatVersion 6. Ranges are wide against what the model
+// gives today (Astrakan: 998–1024 hPa, winds under 20 m/s, anomalies within
+// ±8 °C, upwelling under 8) so the energy balance can grow them unclipped:
+// 950–1100 hPa at 2.3 Pa a step, ±40 m/s at 1.2 mm/s, ±20 °C at 0.6 m°C.
+export const REFINED_LAYERS: LayerSpec[] = REFINED_FIELDS.map((f) => {
+  if (f.name.startsWith('pressure.')) return layer(f.name, 'u16', 150 / 65535, 950)
+  if (f.name.startsWith('wind')) return layer(f.name, 'u16', 80 / 65535, -40)
+  if (f.name === 'currentU' || f.name === 'currentV') return layer(f.name, 'u16', 2 / 65535, -1)
+  return layer(f.name, 'u16', 40 / 65535, -20)
+})
 
 const maxCode = (dtype: Dtype): number => (dtype === 'u16' ? 65535 : 255)
 

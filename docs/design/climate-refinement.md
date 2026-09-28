@@ -4,7 +4,7 @@ date: 2026-09-28
 area: generator
 updated: 2026-09-28
 stage: building
-status: discussed and agreed 2026-09-28. Build steps 1 (β term, island rule) and 2 (pressure and wind, the step's button, month slider and pressure layer) BUILT 2026-09-28; the rest is not built. The order at the end is the build order. Constants are not measured. The decided forks are at the end; none is open.
+status: discussed and agreed 2026-09-28. Build steps 1 (β term, island rule), 2 (pressure and wind, the step's button, month slider and pressure layer) and 3 (currents from that wind, upwelling) BUILT 2026-09-28; the rest is not built. The order at the end is the build order. Constants are not measured. The decided forks are at the end; none is open.
 ---
 
 # Climate refinement
@@ -203,7 +203,24 @@ physics.
    Signs measured right (January cold high over the northern land, July
    heat low).
 3. Currents 2 + 4.
-4. B: twelve months, sea ice.
+   BUILT 2026-09-28 (climate/refinement.ts, oceanCurrents.computeUpwelling).
+   The curl's x term is exactly 0 for the banded wind, so the epochs are
+   unchanged. Near the equator only the eastern part of a basin cools
+   (the thermocline tilt, eastwardInBasin). Measured on Astrakan: the
+   equatorial sea −1.0 °C on average (the cold tongue), the subpolar band
+   −0.4 °C, the whole refinement 0.38 s. The eastern coasts at 15–40° get
+   little: at 30–40° the banded wind blows poleward, and the equatorward
+   coast winds come from the subtropical highs' eastern flank, which A
+   forms only with B's temperatures. The productivity field for ecology is
+   the upwelling itself; ecology does not read it yet.
+4. B: twelve months, sea ice. The run then takes 20–40 s: the worker
+   reports its progress to the progress pill, and the button becomes a
+   stop (`generator.action.runClimate.labelActive` exists for it).
+   The save keeps the refinement since formatVersion 6 (2026-09-28): one
+   climate-grid layer per month and component (`pressure.01`, `windU.01`,
+   …, `currentU`, `currentAnomaly`, `upwelling`; world/save/refinedLayers.ts),
+   and a load puts it back on the recomputed climate. B adds its monthly
+   temperature and precipitation the same way.
 5. Köppen, feeding the biomes.
 6. C1: fog coasts, föhn.
 7. Reliability field.

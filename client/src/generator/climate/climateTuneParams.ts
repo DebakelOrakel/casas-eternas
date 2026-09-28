@@ -239,6 +239,25 @@ export const CLIMATE_TUNING = {
   pressureBlockFullM: 4000,
   pressureBlockMax: 0.7,
 
+  // --- from oceanCurrents.ts (upwelling, the climate step's refinement) ---
+  // Not measured yet (2026-09-28).
+
+  // |f| is held at least here (sin 12°) near the equator, with its sign, so
+  // the Ekman transport τ/f stays finite and still turns both ways. A
+  // numerical guard, not a planet property: Ekman's balance fails where f
+  // goes to 0, and this sets how strong the equatorial band comes out. At 0.1
+  // the band set the layer's scale (Astrakan: equator 0.68 of the 98th
+  // percentile, rising coasts 0.60); at 0.2 the coasts stand out (equator
+  // 0.62, coasts 1.09) and the equator cools −0.89 °C instead of −1.03 °C.
+  upwellingMinF: 0.2,
+  // Sea cooling per unit of upwelling divergence, and its cap: real upwelling
+  // coasts run some 4–8 °C colder than the open sea at their latitude.
+  upwellingCoolingC: 2,
+  upwellingMaxCoolingC: 6,
+  // Latitude, degrees, over which the equatorial rule (cold only in the east
+  // of a basin) fades into the coastal one (cold wherever it comes up).
+  upwellingEquatorBandDeg: 12,
+
   // --- from oceanCurrents.ts ---
 
   // Streamfunction solve iterations (Gauss-Seidel, in place — converges roughly

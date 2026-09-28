@@ -36,6 +36,7 @@ const M = {
   settings: await L('/src/world/bakeSettings.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
   history: await L('/src/world/save/worldHistory.ts'),
+  refined: await L('/src/world/save/refinedLayers.ts'),
 }
 const JSZip = (await import(`${CLIENT}/node_modules/jszip/dist/jszip.min.js`)).default
 
@@ -419,6 +420,40 @@ else {
   const field = M.hydro.waterLevelField([body], bowl, bw, bh)
   const near = (a, b) => Math.abs(a - b) < 1e-6
   check('the level field carries the level onto the rim', near(field.level[2 * bw + 7], 0.2) && near(field.level[1 * bw + 3], 0.2) && field.level[0] === 0 && field.level[2 * bw + 8] === 0)
+}
+
+// The climate step's refinement (formatVersion 6): taken apart into its
+// per-month layers, quantised, decoded and put back, every value within half
+// a step of its layer, and the wind back in model units.
+{
+  const n = 8 * 4
+  const months = 12
+  const rnd = (i) => Math.sin(i * 12.9898) * 0.5 + 0.5
+  const r = {
+    months,
+    pressure: Float32Array.from({ length: months * n }, (_, i) => 995 + 30 * rnd(i)),
+    wind: Float32Array.from({ length: months * n * 2 }, (_, i) => (rnd(i + 7) - 0.5) * 3),
+    currents: Float32Array.from({ length: n * 2 }, (_, i) => rnd(i + 3) * 2 - 1),
+    currentAnomaly: Float32Array.from({ length: n }, (_, i) => (rnd(i + 5) - 0.5) * 12),
+    upwelling: Float32Array.from({ length: n }, (_, i) => (rnd(i + 9) - 0.3) * 6),
+  }
+  const sources = M.refined.refinedLayerSources(r, n)
+  const decoded = new Map()
+  for (const spec of M.layers.REFINED_LAYERS) decoded.set(spec.name, M.layers.decodeLayer(M.layers.bakeLayer(sources.get(spec.name), spec), spec))
+  check('every refinement layer has a source', M.layers.REFINED_LAYERS.every((spec) => sources.has(spec.name)))
+  const back = M.refined.refinedFromLayers((name) => decoded.get(name) ?? null, n)
+  const ms = 8
+  const worst = (a, b, tol) => { let w = 0; for (let i = 0; i < a.length; i++) w = Math.max(w, Math.abs(a[i] - b[i]) / tol); return w }
+  const stepOf = (name) => M.layers.REFINED_LAYERS.find((l) => l.name === name).scale
+  const within = back !== null
+    && worst(r.pressure, back.pressure, stepOf('pressure.01')) <= 0.51
+    && worst(r.wind, back.wind, stepOf('windU.01') / ms) <= 0.51
+    && worst(r.currents, back.currents, stepOf('currentU')) <= 0.51
+    && worst(r.currentAnomaly, back.currentAnomaly, stepOf('currentAnomaly')) <= 0.51
+    && worst(r.upwelling, back.upwelling, stepOf('upwelling')) <= 0.51
+  check('the refinement survives the save within half a step', within)
+  decoded.delete('upwelling')
+  check('a refinement with a layer missing is not one', M.refined.refinedFromLayers((name) => decoded.get(name) ?? null, n) === null)
 }
 
 // A zip that is not a world must be refused, not half-read.

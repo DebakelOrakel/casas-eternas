@@ -1,0 +1,70 @@
+// The climate step's refinement in the save (formatVersion 6): its stacks
+// and vectors taken apart into the one-field-per-month layers of
+// fieldSpec.REFINED_FIELDS, and put back together on load. The wind goes out
+// in m/s, so a reader needs no model unit; the generator's own unit comes
+// back on the way in.
+
+import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
+import type { RefinedClimate } from '../../generator/climate/refinement'
+import { REFINED_MONTHS } from '../../generator/climate/pressure'
+import { refinedMonthField } from './fieldSpec'
+
+// Each layer's values by field name, `n` cells each.
+export function refinedLayerSources(r: RefinedClimate, n: number): Map<string, Float32Array> {
+  const out = new Map<string, Float32Array>()
+  const ms = CLIMATE_TUNING.windSpeedMsPerUnit
+  for (let m = 0; m < r.months; m++) {
+    out.set(refinedMonthField('pressure', m + 1), r.pressure.slice(m * n, (m + 1) * n))
+    const u = new Float32Array(n)
+    const v = new Float32Array(n)
+    for (let i = 0; i < n; i++) {
+      u[i] = r.wind[(m * n + i) * 2] * ms
+      v[i] = r.wind[(m * n + i) * 2 + 1] * ms
+    }
+    out.set(refinedMonthField('windU', m + 1), u)
+    out.set(refinedMonthField('windV', m + 1), v)
+  }
+  const cu = new Float32Array(n)
+  const cv = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    cu[i] = r.currents[i * 2]
+    cv[i] = r.currents[i * 2 + 1]
+  }
+  out.set('currentU', cu)
+  out.set('currentV', cv)
+  out.set('currentAnomaly', r.currentAnomaly)
+  out.set('upwelling', r.upwelling)
+  return out
+}
+
+// The refinement from its decoded layers, or null when any is missing — a
+// partial set is not a refinement, and a save from before formatVersion 6
+// has none.
+export function refinedFromLayers(get: (name: string) => Float32Array | null, n: number): RefinedClimate | null {
+  const ms = CLIMATE_TUNING.windSpeedMsPerUnit
+  const pressure = new Float32Array(REFINED_MONTHS * n)
+  const wind = new Float32Array(REFINED_MONTHS * n * 2)
+  for (let m = 0; m < REFINED_MONTHS; m++) {
+    const p = get(refinedMonthField('pressure', m + 1))
+    const u = get(refinedMonthField('windU', m + 1))
+    const v = get(refinedMonthField('windV', m + 1))
+    if (!p || !u || !v || p.length !== n || u.length !== n || v.length !== n) return null
+    pressure.set(p, m * n)
+    for (let i = 0; i < n; i++) {
+      wind[(m * n + i) * 2] = u[i] / ms
+      wind[(m * n + i) * 2 + 1] = v[i] / ms
+    }
+  }
+  const cu = get('currentU')
+  const cv = get('currentV')
+  const currentAnomaly = get('currentAnomaly')
+  const upwelling = get('upwelling')
+  if (!cu || !cv || !currentAnomaly || !upwelling) return null
+  if (cu.length !== n || cv.length !== n || currentAnomaly.length !== n || upwelling.length !== n) return null
+  const currents = new Float32Array(n * 2)
+  for (let i = 0; i < n; i++) {
+    currents[i * 2] = cu[i]
+    currents[i * 2 + 1] = cv[i]
+  }
+  return { months: REFINED_MONTHS, pressure, wind, currents, currentAnomaly, upwelling }
+}

@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, latitudeAt } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, latitudeAt, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { sampleBilinearGrid } from '../core/field'
 import { wrapIndex2 } from '../core/field'
@@ -39,14 +39,18 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
     }
   }
 
-  // Wind-stress curl. The wind is zonally uniform (banded), so ∂τ_v/∂x = 0 and
-  // curl = −∂τ_u/∂y (central difference).
+  // Wind-stress curl, ∂τ_v/∂x − ∂τ_u/∂y in grid axes (central differences).
+  // For the history's banded wind the first term is exactly 0 (the wind is
+  // the same along a row), so the epochs' result is the same bit for bit as
+  // before the term (2026-09-28); the climate step's pressure wind has it.
   const curl = new Float32Array(n)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const uUp = wind[wrapIndex(gx, gy - 1) * 2]
       const uDown = wind[wrapIndex(gx, gy + 1) * 2]
-      curl[gy * RX + gx] = -(uDown - uUp) / 2
+      const vLeft = wind[wrapIndex(gx - 1, gy) * 2 + 1]
+      const vRight = wind[wrapIndex(gx + 1, gy) * 2 + 1]
+      curl[gy * RX + gx] = (vRight - vLeft) / 2 - (uDown - uUp) / 2
     }
   }
 
@@ -111,6 +115,80 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
   }
   for (let i = 0; i < current.length; i++) current[i] /= vmax
   return current
+}
+
+// Ekman upwelling on the climate grid (build step 3 of
+// docs/design/climate-refinement.md): the wind pushes the surface water at a
+// right angle to itself, to the right in the northern hemisphere and to the
+// left in the southern (transport = τ × k / f). Where that transport diverges
+// — off a coast the wind runs along, and at the equator under the trade
+// winds, where f changes sign — cold water comes up from below. Returns the
+// divergence per ocean cell, positive where water comes up, 0 on land.
+// `land` is 1 on land cells; the transport is 0 there, so a coast with the
+// water moving away from it diverges.
+export function computeUpwelling(wind: Float32Array, land: Uint8Array, equatorOffset: number, rotationHours: number): Float32Array {
+  const n = RX * RY
+  // Transport in grid axes (x east, y down).
+  const ex = new Float32Array(n)
+  const ey = new Float32Array(n)
+  for (let gy = 0; gy < RY; gy++) {
+    const sLat = (latitudeSign(gy, equatorOffset))
+    // f, northern (top) hemisphere positive, held off zero near the
+    // equator with its sign kept, so the transport stays finite there.
+    const f = sLat * Math.max(CLIMATE_TUNING.upwellingMinF, Math.abs(Math.sin(latitudeAt(gy, equatorOffset) * Math.PI / 2))) * (24 / rotationHours)
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      if (land[i]) continue
+      const u = wind[i * 2]
+      const vNorth = -wind[i * 2 + 1]
+      // τ × k / f in north-up axes: (τ_n, −τ_u) / f.
+      ex[i] = vNorth / f
+      ey[i] = u / f // −(−τ_u / f): the y axis points south
+    }
+  }
+  // The divergence over the cell's four faces; a face with land on either
+  // side carries nothing. So a coast cell with the water leaving it takes the
+  // whole transport as upwelling, not half of it as a central difference
+  // would give.
+  const face = (a: number, b: number, fa: number, fb: number): number => (land[a] || land[b] ? 0 : (fa + fb) / 2)
+  const out = new Float32Array(n)
+  for (let gy = 0; gy < RY; gy++) {
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      if (land[i]) continue
+      const r = wrapIndex(gx + 1, gy)
+      const l = wrapIndex(gx - 1, gy)
+      const d = wrapIndex(gx, gy + 1)
+      const u = wrapIndex(gx, gy - 1)
+      out[i] = face(i, r, ex[i], ex[r]) - face(l, i, ex[l], ex[i]) + face(i, d, ey[i], ey[d]) - face(u, i, ey[u], ey[i])
+    }
+  }
+  return out
+}
+
+// How far east a sea cell lies in its basin, along its row: 0 at the western
+// shore, 1 at the eastern, 0.5 where the row has no shore. The thermocline
+// tilts with the trade winds — deep under the warm pool in the west, shallow
+// in the east — so upwelling brings cold water only in the east (the
+// equatorial cold tongue).
+export function eastwardInBasin(land: Uint8Array): Float32Array {
+  const n = RX * RY
+  const out = new Float32Array(n).fill(0.5)
+  for (let gy = 0; gy < RY; gy++) {
+    for (let x0 = 0; x0 < RX; x0++) {
+      // A run of sea starts after a land cell.
+      if (!land[gy * RX + x0] || land[gy * RX + (x0 + 1) % RX]) continue
+      let len = 0
+      while (len < RX && !land[gy * RX + (x0 + 1 + len) % RX]) len++
+      for (let k = 0; k < len; k++) out[gy * RX + (x0 + 1 + k) % RX] = len > 1 ? k / (len - 1) : 0.5
+    }
+  }
+  return out
+}
+
+// +1 in the top (northern) hemisphere, −1 in the bottom one.
+function latitudeSign(gy: number, equatorOffset: number): number {
+  return shiftedYNorm(gy, RY, equatorOffset) < 0.5 ? 1 : -1
 }
 
 interface Island {

@@ -447,6 +447,14 @@ export interface WorkerClimateRefinedMessage {
   // Surface wind, Float32 interleaved [u, v] per cell like
   // WorkerClimateDataMessage.wind, months × resX × resY × 2 (month-major).
   wind: ArrayBuffer
+  // The currents under the year's mean wind and the sea-surface anomaly they
+  // and the upwelling make — the same forms as WorkerClimateDataMessage's
+  // `currents` and `currentAnomaly`.
+  currents: ArrayBuffer
+  currentAnomaly: ArrayBuffer
+  // Ekman upwelling, Float32 resX × resY, positive where cold water comes up,
+  // 0 on land (climate/refinement.RefinedClimate.upwelling).
+  upwelling: ArrayBuffer
 }
 
 // Rivers/lakes result for the hydrology overlay. Phase 1: river segments only

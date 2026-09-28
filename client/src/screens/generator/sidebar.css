@@ -212,16 +212,6 @@
   gap: 8px;
 }
 
-/* What a step that has no run button puts in its place: the mark that says it
-   is computing. It takes the free width so the reset icon keeps the left edge
-   it has in every other step. */
-.gen-step__status {
-  flex: 1;
-  align-self: center;
-  font-size: 12px;
-  color: var(--dc-muted);
-}
-
 /* The detail bake: a width to pick, and the button that orders it. Its own row
    above the step's actions, because it is not the step — it refines what the
    step produced. */

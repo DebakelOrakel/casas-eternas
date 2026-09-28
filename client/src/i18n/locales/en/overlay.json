@@ -34,6 +34,8 @@
   "overlay.wind.help": "Show the prevailing surface winds.",
   "overlay.pressure.label": "Air pressure",
   "overlay.pressure.help": "Sea-level pressure of the shown month: highs and lows.",
+  "overlay.upwelling.label": "Upwelling",
+  "overlay.upwelling.help": "Where the wind brings cold, nutrient-rich water up from below: cold coasts and rich fishing grounds.",
   "overlay.currents.label": "Ocean currents",
   "overlay.currents.help": "Show the wind-driven ocean gyres and their warm/cold flow.",
   "overlay.precipitation.label": "Precipitation",

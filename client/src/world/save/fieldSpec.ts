@@ -24,6 +24,7 @@
 export type FieldGrid = 'world' | 'climate'
 
 import { ECOLOGY_FIELD_IDS } from '../../generator/ecology/ecologyField'
+import { REFINED_MONTHS } from '../../generator/climate/pressure'
 
 export interface FieldSpec {
   name: string
@@ -77,7 +78,26 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
   climate('erodibility', '', false),
 ]
 
-const BY_NAME = new Map(WORLD_FIELDS.map((f) => [f.name, f]))
+// THE CLIMATE STEP'S REFINEMENT (docs/design/climate-refinement.md), one field
+// per month rather than a stack, so every reader that samples a field can
+// sample a month: `pressure.01` is January. Wind in m/s with v positive toward
+// the map's bottom (south), as the climate grid's vectors are; the currents'
+// two components normalised to the fastest (relative), 0 on land.
+export const refinedMonthField = (base: 'pressure' | 'windU' | 'windV', month: number): string => `${base}.${String(month).padStart(2, '0')}`
+const MONTHS = Array.from({ length: REFINED_MONTHS }, (_, i) => i + 1)
+export const REFINED_FIELDS: readonly FieldSpec[] = [
+  ...MONTHS.map((m) => climate(refinedMonthField('pressure', m), 'hPa', false)),
+  ...MONTHS.map((m) => climate(refinedMonthField('windU', m), 'm/s', false)),
+  ...MONTHS.map((m) => climate(refinedMonthField('windV', m), 'm/s', false)),
+  climate('currentU', 'relative', false),
+  climate('currentV', 'relative', false),
+  // The sea-surface anomaly of the currents and the upwelling, °C, 0 on land.
+  climate('currentAnomaly', '°C', false),
+  // Ekman upwelling, positive where cold water comes up (relative), 0 on land.
+  climate('upwelling', 'relative', false),
+]
+
+const BY_NAME = new Map([...WORLD_FIELDS, ...REFINED_FIELDS].map((f) => [f.name, f]))
 
 // Throws rather than returning undefined: a name that is not a field is a typo
 // or a field someone forgot to register, and both are better loud.

@@ -10,6 +10,7 @@
   "readout.row.monsoon": "Rain seasonality",
   "readout.row.wind": "Wind",
   "readout.row.pressure": "Pressure",
+  "readout.row.upwelling": "Upwelling",
   "readout.row.current": "Current",
   "readout.row.biome": "Biome",
   "readout.row.discharge": "Flow",
