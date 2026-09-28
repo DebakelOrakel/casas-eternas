@@ -26,6 +26,7 @@ export type OverlayId =
   | 'upwelling'
   | 'precipitation'
   | 'monsoon'
+  | 'koppen'
   | 'biomes'
   | 'rivers'
   | 'waterBalance'
@@ -61,6 +62,8 @@ export const OVERLAY_META: Record<OverlayId, OverlayMeta> = {
   upwelling: { icon: '/icons/upwelling.png' },
   precipitation: { icon: '/icons/rain.png' },
   monsoon: { icon: '/icons/weather.png' },
+  // Placeholder: no climate-class icon yet (the user picks icons).
+  koppen: { icon: '/icons/biomes.png' },
   biomes: { icon: '/icons/biomes.png' },
   rivers: { icon: '/icons/river.png' },
   waterBalance: { icon: '/icons/waterbilance.png' },

@@ -1,4 +1,5 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, sampleDryLandAtCell, sampleElevationAtCell } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, sampleDryLandAtCell, sampleElevationAtCell, shiftedYNorm } from './climateField'
+import { classifyKoppen, koppenCode, synthesizeMonths } from './koppen'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL, isLandAt } from '../elevation/elevationScale'
 import { sampleBilinearWorld, wrapValue } from '../core/field'
@@ -7,10 +8,12 @@ import { seasonalityMagnitude } from './monsoon'
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
 
-// A Whittaker-style biome set (~11), keyed by mean annual temperature and
-// precipitation, with the seasonal amplitude splitting continental grassland
-// from milder woodland. Ocean is its own id so the biome layer can skip it.
-// See docs/decisions/climate-biomes.md.
+// The biome set. Since 2026-09-28 the biome follows from the Köppen–Geiger
+// class of the place's twelve months (koppen.ts, biomeFromKoppen below), no
+// longer from the annual means on a Whittaker chart; the last four ids are
+// the biomes the months can tell apart and the means could not. Ocean is its
+// own id so the biome layer can skip it. Ids are stable (saves store them).
+// See docs/decisions/climate-biomes.md and docs/design/climate-refinement.md.
 export const Biome = {
   Ocean: 0,
   Ice: 1,
@@ -33,6 +36,14 @@ export const Biome = {
   // class on land, a glacier is a water body in a solid state — different
   // gameplay (fresh water, crossing), different tooltip.
   Glacier: 13,
+  // Dry-summer shrubland (Köppen Cs): maquis, chaparral, fynbos.
+  MediterraneanScrub: 14,
+  // Semi-arid grass (Köppen BS), between grassland and desert.
+  Steppe: 15,
+  // Tropical forest with a dry season (Köppen Am, the wet end of Aw).
+  TropicalDryForest: 16,
+  // Desert with cold winters (Köppen BWk): Gobi, Patagonia.
+  ColdDesert: 17,
 } as const
 
 type BiomeId = (typeof Biome)[keyof typeof Biome]
@@ -66,6 +77,10 @@ const BIOME_COLORS: Record<number, [number, number, number]> = {
   [Biome.Alpine]: [158, 154, 168], // cool slate/lavender-grey — bare rock, distinct from Tundra's warm grey and Ice's near-white
   [Biome.SaltFlat]: [236, 230, 218], // warm off-white salt crust — real pans aren't snow-white, and Ice keeps the cold near-white
   [Biome.Glacier]: [214, 228, 244], // pale glacier blue — bluer than Ice's near-white, reads as frozen WATER
+  [Biome.MediterraneanScrub]: [170, 150, 80], // dusty olive-brown, dry evergreen scrub
+  [Biome.Steppe]: [226, 206, 150], // pale buff, between grassland's yellow and desert's sand
+  [Biome.TropicalDryForest]: [120, 140, 50], // khaki green, a forest that browns in the dry season
+  [Biome.ColdDesert]: [200, 190, 170], // grey-beige, cooler than the hot desert's sand
 }
 
 export function biomeColor(id: number): [number, number, number] {
@@ -92,6 +107,10 @@ const BIOME_LABEL_KEYS: Record<number, string> = {
   [Biome.Alpine]: 'biome.alpine',
   [Biome.SaltFlat]: 'biome.saltFlat',
   [Biome.Glacier]: 'biome.glacier',
+  [Biome.MediterraneanScrub]: 'biome.mediterraneanScrub',
+  [Biome.Steppe]: 'biome.steppe',
+  [Biome.TropicalDryForest]: 'biome.tropicalDryForest',
+  [Biome.ColdDesert]: 'biome.coldDesert',
 }
 
 export function biomeLabelKey(id: number): string {
@@ -108,52 +127,74 @@ export function biomeLegend(): { labelKey: string; rgb: [number, number, number]
     Biome.Tundra,
     Biome.Alpine,
     Biome.Boreal,
+    Biome.ColdDesert,
+    Biome.Steppe,
     Biome.Grassland,
     Biome.Woodland,
+    Biome.MediterraneanScrub,
     Biome.TemperateForest,
     Biome.TemperateRainforest,
     Biome.Desert,
     Biome.SaltFlat,
     Biome.Savanna,
+    Biome.TropicalDryForest,
     Biome.TropicalRainforest,
   ]
   return order.map((id) => ({ labelKey: biomeLabelKey(id), rgb: biomeColor(id) }))
 }
 
-// Classify one cell. T = mean annual °C, P = annual precip mm/yr, amp = seasonal
-// TEMPERATURE amplitude °C, season = the monsoon / precipitation-SEASONALITY index
-// as a MAGNITUDE (0 = even year-round, →1 = strong wet-dry / monsoonal), which is
-// what seasonalityMagnitude makes of monsoon.ts's signed field. Aridity is implicit in the T bands (hotter
-// needs more water to escape desert). The season axis is what separates evergreen
-// forest (rain spread through the year) from open wet-dry vegetation (savanna,
-// seasonal woodland) at the SAME annual total — the classic monsoon boundary.
-// Thresholds are the tunable part of the Whittaker mapping.
-//
-// Vegetation answers to how uneven the year is, never to which half of it is the
-// wet one — a savanna is a savanna in either hemisphere — so the phase is dropped
-// before this point and the thresholds below read the 0..1 field they were tuned
-// against.
-function classify(tempC: number, precipMm: number, amplitude: number, season: number): BiomeId {
-  if (tempC < CLIMATE_TUNING.iceMaxC) return Biome.Ice
-  if (tempC < CLIMATE_TUNING.tundraMaxC) return Biome.Tundra
-  if (tempC < CLIMATE_TUNING.borealMaxC) {
-    return precipMm < CLIMATE_TUNING.borealMinPrecipMm ? Biome.Tundra : Biome.Boreal
+// The biome of a Köppen class (docs/design/climate-refinement.md, the table
+// agreed 2026-09-28). The class decides the kind; within the temperate and
+// continental classes the annual rain and the unevenness of the year still
+// decide how closed the canopy is, by the Whittaker thresholds that did it
+// before — Köppen does not split forest from grassland there.
+// `map` mm/yr, `amp` the seasonal range °C, `season` the monsoon index's
+// magnitude (0 even, →1 strongly wet-dry).
+export function biomeFromKoppen(id: number, map: number, amp: number, season: number): BiomeId {
+  const code = koppenCode(id)
+  if (!code) return Biome.Ice
+  const T = CLIMATE_TUNING
+  switch (code) {
+    case 'Af': return Biome.TropicalRainforest
+    case 'Am': return Biome.TropicalDryForest
+    case 'Aw': case 'As': return map >= T.hotSavannaMaxPrecipMm ? Biome.TropicalDryForest : Biome.Savanna
+    case 'BWh': return Biome.Desert
+    case 'BWk': return Biome.ColdDesert
+    case 'BSh': case 'BSk': return Biome.Steppe
+    case 'Csa': case 'Csb': case 'Csc': return Biome.MediterraneanScrub
+    case 'ET': return Biome.Tundra
+    case 'EF': return Biome.Ice
+    case 'Dsc': case 'Dsd': case 'Dwc': case 'Dwd': case 'Dfc': case 'Dfd':
+      return map < T.borealMinPrecipMm ? Biome.Tundra : Biome.Boreal
+    case 'Cfb': case 'Cfc':
+      if (map >= T.temperateForestMaxPrecipMm) return Biome.TemperateRainforest
+      return temperateCanopy(map, amp, season)
+    default:
+      // Cfa, Cw*, Dfa/Dfb, Dwa/Dwb, Dsa/Dsb.
+      return temperateCanopy(map, amp, season)
   }
-  if (tempC < CLIMATE_TUNING.temperateMaxC) {
-    if (precipMm < CLIMATE_TUNING.temperateDesertMaxPrecipMm) return Biome.Desert
-    if (precipMm < CLIMATE_TUNING.temperateGrasslandMaxPrecipMm) {
-      return amplitude > CLIMATE_TUNING.temperateOpenCanopyAmplitudeC || season > CLIMATE_TUNING.temperateOpenCanopySeason
-        ? Biome.Grassland
-        : Biome.Woodland
-    }
-    if (precipMm < CLIMATE_TUNING.temperateForestMaxPrecipMm) {
-      return season > CLIMATE_TUNING.temperateWoodlandSeason ? Biome.Woodland : Biome.TemperateForest
-    }
-    return Biome.TemperateRainforest
+}
+
+// How closed a temperate canopy is: grassland where the rain is short and
+// the year harsh or uneven, woodland where it is short and mild or uneven,
+// forest otherwise.
+function temperateCanopy(map: number, amp: number, season: number): BiomeId {
+  const T = CLIMATE_TUNING
+  if (map < T.temperateGrasslandMaxPrecipMm) {
+    return amp > T.temperateOpenCanopyAmplitudeC || season > T.temperateOpenCanopySeason ? Biome.Grassland : Biome.Woodland
   }
-  if (precipMm < CLIMATE_TUNING.hotDesertMaxPrecipMm) return Biome.Desert
-  if (precipMm < CLIMATE_TUNING.hotSavannaMaxPrecipMm) return Biome.Savanna
-  return season > CLIMATE_TUNING.tropicalSavannaSeason ? Biome.Savanna : Biome.TropicalRainforest
+  if (map < T.temperateForestMaxPrecipMm && season > T.temperateWoodlandSeason) return Biome.Woodland
+  return Biome.TemperateForest
+}
+
+// One cell from its annual figures: twelve synthesized months (koppen.ts),
+// their class, the class's biome. `index` is the SIGNED monsoon index (its
+// sign is the rain's phase); `north` whether the cell lies in the top
+// hemisphere. Scratch arrays passed in, so a raster pass allocates once.
+function classifyAnnual(tempC: number, precipMm: number, amp: number, index: number, north: boolean, t: Float64Array, p: Float64Array): { koppen: number; biome: BiomeId } {
+  synthesizeMonths(tempC, amp, precipMm, index, north, CLIMATE_TUNING.monsoonSeasonalityFloor, t, p)
+  const koppen = classifyKoppen(t, p)
+  return { koppen, biome: biomeFromKoppen(koppen, precipMm, amp, Math.abs(index)) }
 }
 
 // Biome id per climate cell (Uint8). Land only is classified; ocean → Biome.Ocean.
@@ -275,8 +316,11 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
   const biomes = new Uint8Array(worldWidth * worldHeight)
   const seasonality = seasonalityMagnitude(monsoonIndex)
   const seaLevelTemp = seaLevelTemperature ?? reduceTemperatureToSeaLevel(temperature, elevation, worldWidth, worldHeight, dryLand)
+  const months = new Float64Array(12)
+  const rain = new Float64Array(12)
   for (let wy = 0; wy < worldHeight; wy++) {
     const gy = Math.min(RY - 1, Math.floor((wy / worldHeight) * RY))
+    const north = (wy + 0.5) / worldHeight < 0.5
     for (let wx = 0; wx < worldWidth; wx++) {
       const world = wy * worldWidth + wx
       const here = elevation[world]
@@ -293,8 +337,13 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
       const temp = reduced - CLIMATE_TUNING.lapseCPerElevation * (dry ? here - SEA_LEVEL : Math.max(0, here - SEA_LEVEL))
       const precip = sampleLandBilinear(precipitation, wx, wy, worldWidth, worldHeight, precipitation[cell])
       const amp = sampleLandBilinear(seasonalAmplitude, wx, wy, worldWidth, worldHeight, seasonalAmplitude[cell])
+      // The index is blended as a magnitude (neighbours across the rain
+      // belt carry opposite signs, and blending them would read an even
+      // year exactly where the wet-dry savanna lives); its sign, the phase,
+      // is the containing cell's.
       const season = sampleLandBilinear(seasonality, wx, wy, worldWidth, worldHeight, seasonality[cell])
-      const base = classify(temp, precip, amp, season)
+      const index = monsoonIndex[cell] < 0 ? -season : season
+      const base = classifyAnnual(temp, precip, amp, index, north, months, rain).biome
       biomes[world] = here > CLIMATE_TUNING.alpineTreelineElevation && base !== Biome.Ice ? Biome.Alpine : base
     }
   }
@@ -303,7 +352,8 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
 
 export function computeBiomes(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Uint8Array {
   const biomes = new Uint8Array(RX * RY)
-  const seasonality = seasonalityMagnitude(monsoonIndex)
+  const months = new Float64Array(12)
+  const rain = new Float64Array(12)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
@@ -312,9 +362,45 @@ export function computeBiomes(temperature: Float32Array, precipitation: Float32A
         biomes[i] = Biome.Ocean
         continue
       }
-      const base = classify(temperature[i], precipitation[i], seasonalAmplitude[i], seasonality[i])
+      const base = classifyAnnual(temperature[i], precipitation[i], seasonalAmplitude[i], monsoonIndex[i], shiftedYNorm(gy, RY, 0) < 0.5, months, rain).biome
       biomes[i] = cellElevation > CLIMATE_TUNING.alpineTreelineElevation && base !== Biome.Ice ? Biome.Alpine : base
     }
   }
   return biomes
+}
+
+// The Köppen class per climate cell from the annual figures (synthesized
+// months, as computeBiomes classifies); 0 on the sea. The layer's field
+// before the climate step's refinement, and the history's.
+export function computeKoppenField(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Uint8Array {
+  const out = new Uint8Array(RX * RY)
+  const months = new Float64Array(12)
+  const rain = new Float64Array(12)
+  for (let gy = 0; gy < RY; gy++) {
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      if (!isLandAtCell(elevation, dryLand, gx, gy, worldWidth, worldHeight)) continue
+      out[i] = classifyAnnual(temperature[i], precipitation[i], seasonalAmplitude[i], monsoonIndex[i], shiftedYNorm(gy, RY, 0) < 0.5, months, rain).koppen
+    }
+  }
+  return out
+}
+
+// The Köppen class per climate cell from real months (the refinement's):
+// temperature °C and rain as mm/yr rates, month-major, rain OCEAN_PRECIP on
+// the sea, which is where the class stays 0.
+export function koppenFromMonths(temperature: Float32Array, precipitation: Float32Array, months: number): Uint8Array {
+  const n = RX * RY
+  const out = new Uint8Array(n)
+  const t = new Float64Array(12)
+  const p = new Float64Array(12)
+  for (let i = 0; i < n; i++) {
+    if (precipitation[i] < 0) continue
+    for (let m = 0; m < 12; m++) {
+      t[m] = temperature[m * n + i]
+      p[m] = precipitation[m * n + i] / months
+    }
+    out[i] = classifyKoppen(t, p)
+  }
+  return out
 }

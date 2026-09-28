@@ -33,6 +33,10 @@ const TERRAIN_COLORS: Record<number, [number, number, number]> = {
   [Biome.Alpine]: [140, 140, 156], // payne's grey, bare rock
   [Biome.SaltFlat]: [238, 232, 216], // warm salt crust
   [Biome.Glacier]: [212, 226, 242], // pale glacier blue, frozen water
+  [Biome.MediterraneanScrub]: [168, 146, 86], // dusty olive, dry evergreen scrub
+  [Biome.Steppe]: [222, 200, 140], // buff, thin dry grass
+  [Biome.TropicalDryForest]: [116, 136, 52], // khaki green
+  [Biome.ColdDesert]: [196, 182, 156], // grey sand
 }
 
 export function terrainColor(id: number): [number, number, number] {

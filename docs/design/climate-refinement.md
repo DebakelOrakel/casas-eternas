@@ -238,6 +238,18 @@ physics.
    and a load puts it back on the recomputed climate. B adds its monthly
    temperature and precipitation the same way.
 5. Köppen, feeding the biomes.
+   5a BUILT 2026-09-28 (climate/koppen.ts, Peel et al. 2007): the biomes
+   of every path follow the class; where only annual figures exist (the
+   epochs, the climate before refinement, the riparian pass) the months are
+   synthesized from mean, range and the signed monsoon index. Four biomes
+   added (ids 14–17). The Köppen layer shows the refinement's classes from
+   real months, else the synthesized ones. The rain bands' seasonal shift now
+   tapers with latitude (precipBeltTaperDeg, precipBeltShiftFloor): one shift
+   for all made Astrakan 15–17 % Cs. After: synthesized Cs 4 %, refined Cs
+   6 %, D 21 %, wet-to-dry month 4.8 : 1 at the median. Savanna (Aw) is
+   short in the refined path (4 % against Af 12 %; Earth has Aw above Af).
+   5b open: biomes from the refinement's real months, together with the
+   hydrology rerun on the refined climate (fork 2).
 6. C1: fog coasts, föhn.
 7. Reliability field.
 8. C2–C4.

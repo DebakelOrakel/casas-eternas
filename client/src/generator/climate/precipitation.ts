@@ -46,7 +46,14 @@ function elevationAtWorld(elevation: Float32Array, wx: number, wy: number, world
 // default; <1 = a drier world with expanding deserts, >1 = a wetter, greener
 // one — the user's humidity slider). It scales the mm/yr directly, sliding every
 // cell along the Whittaker precipitation axis; ocean sentinels are untouched.
-export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number, humidity = 1, equatorOffset = 0, dryLand?: Uint8Array): Float32Array {
+// `beltShift` moves the zonal rain bands with the season, as a fraction of
+// the map's height (+ toward the top): in full at the equator, where the rain
+// belt follows the sun far, down to `precipBeltShiftFloor` of it from
+// `precipBeltTaperDeg` poleward, where the subtropical highs move only a few
+// degrees (2026-09-28). One shift for all latitudes moved the dry belt over
+// every mid-latitude coast in summer: Astrakan came out 15–17 % Mediterranean
+// (Köppen Cs), Earth is about 2 %.
+export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number, humidity = 1, equatorOffset = 0, dryLand?: Uint8Array, beltShift = 0): Float32Array {
   const n = RX * RY
   const ocean = new Uint8Array(n)
   const evap = new Float32Array(n)
@@ -102,7 +109,11 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
 
   const precip = new Float32Array(n)
   for (let gy = 0; gy < RY; gy++) {
-    const yNorm = shiftedYNorm(gy, RY, equatorOffset)
+    const trueNorm = shiftedYNorm(gy, RY, equatorOffset)
+    const lat = Math.abs(trueNorm - 0.5) * 2
+    const reach = CLIMATE_TUNING.precipBeltShiftFloor + (1 - CLIMATE_TUNING.precipBeltShiftFloor) * Math.max(0, 1 - (lat * 90) / CLIMATE_TUNING.precipBeltTaperDeg)
+    const shifted = trueNorm + beltShift * reach
+    const yNorm = shifted - Math.floor(shifted)
     const band = bandFactor(Math.abs(yNorm - 0.5) * 2)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx

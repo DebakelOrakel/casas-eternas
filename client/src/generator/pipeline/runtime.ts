@@ -41,7 +41,7 @@ import type { LakeFields } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
-import { computeBiomes, computeBiomesFine } from '../climate/biomes'
+import { computeBiomes, computeBiomesFine, computeKoppenField } from '../climate/biomes'
 import { refineClimate } from '../climate/refinement'
 import { downsampleMax, sampleBilinearWorld } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
@@ -743,7 +743,8 @@ function computeClimateChain(elevation: Float32Array, width: number, height: num
   // precipitation advection it follows.
   const biomes = computeBiomes(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
   const biomesFine = computeBiomesFine(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
-  return { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal, biomes, biomesFine }
+  const koppen = computeKoppenField(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
+  return { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal, biomes, biomesFine, koppen }
 }
 
 // Cache copies for hydrology/ecology (the message buffers get transferred,
@@ -774,9 +775,10 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
     precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
     seasonalAmplitude: chain.seasonalAmplitude.buffer as ArrayBuffer,
     monsoonIndex: chain.seasonal.index.buffer as ArrayBuffer,
+    koppen: chain.koppen.buffer as ArrayBuffer,
     biomes: chain.biomesFine.buffer as ArrayBuffer,
   }
-  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.biomes])
+  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.koppen, climateMessage.biomes])
   return climate
 }
 
@@ -820,13 +822,14 @@ function handleClimateRefine(): void {
     months: r.months,
     temperature: r.temperature.buffer as ArrayBuffer,
     precipitation: r.precipitation.buffer as ArrayBuffer,
+    koppen: r.koppen.buffer as ArrayBuffer,
     pressure: r.pressure.buffer as ArrayBuffer,
     wind: r.wind.buffer as ArrayBuffer,
     currents: r.currents.buffer as ArrayBuffer,
     currentAnomaly: r.currentAnomaly.buffer as ArrayBuffer,
     upwelling: r.upwelling.buffer as ArrayBuffer,
   }
-  emit(reply, [reply.temperature, reply.precipitation, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling])
+  emit(reply, [reply.temperature, reply.precipitation, reply.koppen, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling])
 }
 
 // The lake depths with frozen basins zeroed — what the ecology (fish) and the
@@ -1552,9 +1555,10 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
     precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
     seasonalAmplitude: chain.seasonalAmplitude.buffer as ArrayBuffer,
     monsoonIndex: chain.seasonal.index.buffer as ArrayBuffer,
+    koppen: chain.koppen.buffer as ArrayBuffer,
     biomes: chain.biomesFine.buffer as ArrayBuffer,
   }
-  emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, preview.currents, preview.currentAnomaly, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.biomes])
+  emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, preview.currents, preview.currentAnomaly, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.koppen, preview.biomes])
 }
 
 export function dispatch(message: WorkerInboundMessage): void {

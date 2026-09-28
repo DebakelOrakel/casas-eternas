@@ -115,8 +115,8 @@ export function computeSeasonalPrecipitation(
   const windS = computeMonsoonWind(baseWind, tempS)
   // ITCZ migrates toward the summer hemisphere. +equatorOffset moves the equator toward
   // the bottom, so a top-hemisphere summer (belt shifts up) uses a SMALLER offset.
-  const precipN = computePrecipitation(elevation, tempN, windN, worldW, worldH, humidity, equatorOffset - CLIMATE_TUNING.monsoonItczSeasonalShift, dryLand)
-  const precipS = computePrecipitation(elevation, tempS, windS, worldW, worldH, humidity, equatorOffset + CLIMATE_TUNING.monsoonItczSeasonalShift, dryLand)
+  const precipN = computePrecipitation(elevation, tempN, windN, worldW, worldH, humidity, equatorOffset, dryLand, CLIMATE_TUNING.monsoonItczSeasonalShift)
+  const precipS = computePrecipitation(elevation, tempS, windS, worldW, worldH, humidity, equatorOffset, dryLand, -CLIMATE_TUNING.monsoonItczSeasonalShift)
 
   const n = precipN.length
   const annual = new Float32Array(n)

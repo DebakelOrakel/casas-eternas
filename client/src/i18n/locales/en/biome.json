@@ -7,11 +7,15 @@
   "biome.woodland": "Woodland",
   "biome.temperateForest": "Temperate forest",
   "biome.temperateRainforest": "Temperate rainforest",
-  "biome.desert": "Desert",
+  "biome.desert": "Hot desert",
   "biome.savanna": "Savanna",
   "biome.tropicalRainforest": "Tropical rainforest",
   "biome.alpine": "Alpine tundra",
   "biome.saltFlat": "Salt flat",
   "biome.glacier": "Glacier",
+  "biome.mediterraneanScrub": "Mediterranean scrub",
+  "biome.steppe": "Steppe",
+  "biome.tropicalDryForest": "Tropical dry forest",
+  "biome.coldDesert": "Cold desert",
   "biome.unknown": "Unknown"
 }

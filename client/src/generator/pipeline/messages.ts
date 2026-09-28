@@ -100,6 +100,9 @@ export interface WorkerPlanetPreviewDataMessage {
   precipitation: ArrayBuffer
   seasonalAmplitude: ArrayBuffer
   monsoonIndex: ArrayBuffer
+  // The Köppen–Geiger class per climate cell (Uint8, climate/koppen.ts ids,
+  // 0 on the sea), from the annual figures' synthesized months.
+  koppen: ArrayBuffer
   biomes: ArrayBuffer
 }
 
@@ -424,6 +427,9 @@ export interface WorkerClimateDataMessage {
   // Monsoon / precipitation-seasonality index (Float32, 0..1; OCEAN_PRECIP on ocean).
   // See climate/monsoon.ts.
   monsoonIndex: ArrayBuffer
+  // The Köppen–Geiger class per climate cell (Uint8, climate/koppen.ts ids,
+  // 0 on the sea), from the annual figures' synthesized months.
+  koppen: ArrayBuffer
   // Whittaker biome id per cell (Uint8; ocean = Biome.Ocean). See climate/biomes.ts.
   //
   // The one field here that is NOT on resX/resY: it is FULL-RES (world raster),
@@ -446,6 +452,8 @@ export interface WorkerClimateRefinedMessage {
   // (OCEAN_PRECIP on the sea), Float32, months × resX × resY (month-major).
   temperature: ArrayBuffer
   precipitation: ArrayBuffer
+  // The Köppen–Geiger class from these months (Uint8, 0 on the sea).
+  koppen: ArrayBuffer
   // Sea-level pressure, hPa, Float32, months × resX × resY (month-major).
   pressure: ArrayBuffer
   // Surface wind, Float32 interleaved [u, v] per cell like

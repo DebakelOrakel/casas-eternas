@@ -208,6 +208,12 @@ export const CLIMATE_TUNING = {
   // keeps those belts the driest zones without erasing all vegetation there (semi-arid
   // grassland/savanna rather than bare desert).
   precipBandFloor: 0.13,
+  // The season's shift of the rain bands (computePrecipitation's beltShift)
+  // tapers from full at the equator to this share of it from the latitude,
+  // degrees, below: the rain belt follows the sun some 10–15°, the
+  // subtropical highs some 4–5°.
+  precipBeltTaperDeg: 30,
+  precipBeltShiftFloor: 0.35,
 
   // --- from energyBalance.ts (the climate step's year) ---
   // Not measured yet (2026-09-28); physical orders of magnitude, then the

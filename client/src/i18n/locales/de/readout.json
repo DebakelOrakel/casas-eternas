@@ -13,6 +13,7 @@
   "readout.row.upwelling": "Auftrieb",
   "readout.row.current": "Strömung",
   "readout.row.biome": "Biom",
+  "readout.row.koppen": "Klima",
   "readout.row.discharge": "Abfluss",
   "readout.row.lakeDepth": "Seetiefe",
   "readout.row.effectivePrecip": "Effektiver Niederschlag",

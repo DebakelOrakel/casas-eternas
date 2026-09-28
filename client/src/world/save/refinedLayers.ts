@@ -10,6 +10,7 @@ import { REFINED_MONTHS } from '../../generator/climate/pressure'
 import { refinedMonthField } from './fieldSpec'
 import { restoreLandOnlySentinel } from './worldLayers'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
+import { koppenFromMonths } from '../../generator/climate/biomes'
 
 // Each layer's values by field name, `n` cells each.
 export function refinedLayerSources(r: RefinedClimate, n: number): Map<string, Float32Array> {
@@ -81,5 +82,7 @@ export function refinedFromLayers(get: (name: string) => Float32Array | null, n:
     currents[i * 2] = cu[i]
     currents[i * 2 + 1] = cv[i]
   }
-  return { months: REFINED_MONTHS, temperature, precipitation, pressure, wind, currents, currentAnomaly, upwelling }
+  // The class is the months', so it is derived again rather than stored twice.
+  const koppen = koppenFromMonths(temperature, precipitation, REFINED_MONTHS)
+  return { months: REFINED_MONTHS, temperature, precipitation, koppen, pressure, wind, currents, currentAnomaly, upwelling }
 }

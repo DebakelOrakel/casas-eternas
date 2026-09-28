@@ -7,11 +7,15 @@
   "biome.woodland": "Waldland",
   "biome.temperateForest": "Gemäßigter Wald",
   "biome.temperateRainforest": "Gemäßigter Regenwald",
-  "biome.desert": "Wüste",
+  "biome.desert": "Heisse Wüste",
   "biome.savanna": "Savanne",
   "biome.tropicalRainforest": "Tropischer Regenwald",
   "biome.alpine": "Alpine Tundra",
   "biome.saltFlat": "Salzpfanne",
   "biome.glacier": "Gletscher",
+  "biome.mediterraneanScrub": "Hartlaubgebüsch",
+  "biome.steppe": "Steppe",
+  "biome.tropicalDryForest": "Tropischer Trockenwald",
+  "biome.coldDesert": "Kalte Wüste",
   "biome.unknown": "Unbekannt"
 }

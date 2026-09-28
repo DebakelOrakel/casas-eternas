@@ -13,6 +13,7 @@
   "readout.row.upwelling": "Upwelling",
   "readout.row.current": "Current",
   "readout.row.biome": "Biome",
+  "readout.row.koppen": "Climate",
   "readout.row.discharge": "Flow",
   "readout.row.lakeDepth": "Lake depth",
   "readout.row.effectivePrecip": "Effective rainfall",

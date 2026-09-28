@@ -77,6 +77,10 @@ const BIOME_GRADE_FACTOR: Record<number, number> = {
   [Biome.Alpine]: 0.2,
   [Biome.SaltFlat]: 0.35,
   [Biome.Glacier]: 0,
+  [Biome.MediterraneanScrub]: 0.85,
+  [Biome.Steppe]: 0.95,
+  [Biome.TropicalDryForest]: 0.65,
+  [Biome.ColdDesert]: 0.75,
 }
 
 // World XZ → the map plane's UV — the frame every sampler here is keyed to,

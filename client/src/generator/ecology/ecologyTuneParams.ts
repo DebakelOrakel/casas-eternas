@@ -41,6 +41,13 @@ export const PASTURE_BY_BIOME: Record<LandBiomeId, number> = {
   [Biome.SaltFlat]: 0.0,
   // Neither does a frozen lake.
   [Biome.Glacier]: 0.0,
+  // The Köppen biomes (2026-09-28), set between their neighbours: the
+  // steppe is the herders' ground, the scrub feeds goats and sheep, the dry
+  // forest opens in its dry season, the cold desert barely feeds anything.
+  [Biome.Steppe]: 0.85,
+  [Biome.MediterraneanScrub]: 0.5,
+  [Biome.TropicalDryForest]: 0.35,
+  [Biome.ColdDesert]: 0.15,
 }
 
 // How much usable timber each biome yields (forests high, open/cold low).
@@ -59,6 +66,12 @@ export const TIMBER_BY_BIOME: Record<LandBiomeId, number> = {
   [Biome.Alpine]: 0.0,
   [Biome.SaltFlat]: 0.0,
   [Biome.Glacier]: 0.0,
+  // The Köppen biomes: the dry forest nearly a forest, the scrub a low
+  // woodland, the steppe and the cold desert next to nothing.
+  [Biome.TropicalDryForest]: 0.7,
+  [Biome.MediterraneanScrub]: 0.25,
+  [Biome.Steppe]: 0.05,
+  [Biome.ColdDesert]: 0.02,
 }
 
 // The two tables above are tuning too, and they are DELIBERATELY not folded into

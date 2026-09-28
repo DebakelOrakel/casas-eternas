@@ -1,6 +1,6 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, latitudeAt } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { reduceTemperatureToSeaLevel } from './biomes'
+import { koppenFromMonths, reduceTemperatureToSeaLevel } from './biomes'
 import { computePressureWind, REFINED_MONTHS } from './pressure'
 import { seasonalCycle } from './energyBalance'
 import { computePrecipitation } from './precipitation'
@@ -32,6 +32,9 @@ export interface RefinedClimate {
   // Precipitation, mm/yr at the month's rate, months × cells; OCEAN_PRECIP
   // on the sea. The year's total is their mean.
   precipitation: Float32Array
+  // The Köppen–Geiger class per cell from these months (koppen.ts), 0 on
+  // the sea.
+  koppen: Uint8Array
   // Ekman upwelling per ocean cell (computeUpwelling), 0 on land, the rising
   // part weighted like the cooling: near the equator by the cell's place in
   // its basin (only the east brings cold water up).
@@ -72,10 +75,9 @@ export function refineClimate(
     const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, width, height, baseWind, params.equatorOffset, planet.rotationHours)
     pressure.set(result.pressure, month * n)
     wind.set(result.wind, month * n * 2)
-    // +equatorOffset moves the equator toward the bottom, so the top
-    // hemisphere's summer (the belt moves up) takes a smaller offset.
+    // + in the top hemisphere's summer: the belt moves up.
     const belt = CLIMATE_TUNING.monsoonItczSeasonalShift * Math.cos(2 * Math.PI * ((month + 0.5) / REFINED_MONTHS - CLIMATE_TUNING.refineItczPeakYear))
-    precipitation.set(computePrecipitation(elevation, air, result.wind, width, height, params.humidity, params.equatorOffset - belt), month * n)
+    precipitation.set(computePrecipitation(elevation, air, result.wind, width, height, params.humidity, params.equatorOffset, undefined, belt), month * n)
     onProgress?.(0.15 + 0.75 * (month + 1) / REFINED_MONTHS)
   }
 
@@ -115,5 +117,6 @@ export function refineClimate(
     }
   }
 
-  return { months: REFINED_MONTHS, temperature: monthly, precipitation, pressure, wind, currents, currentAnomaly, upwelling }
+  const koppen = koppenFromMonths(monthly, precipitation, REFINED_MONTHS)
+  return { months: REFINED_MONTHS, temperature: monthly, precipitation, koppen, pressure, wind, currents, currentAnomaly, upwelling }
 }

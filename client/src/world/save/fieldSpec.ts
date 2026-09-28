@@ -61,6 +61,9 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
   world('biome', 'biomeId', false),
   climate('seasonalAmplitude', '°C', true),
   climate('monsoonIndex', '', true),
+  // The Köppen–Geiger class id (generator/climate/koppen.ts KOPPEN_CODES),
+  // 0 on the sea; the refinement's when the world has one.
+  climate('koppen', 'koppenId', false),
   world('lakeDepth', 'depth', true),
   // The water table's depth below the surface, metres (phase 5a); 0 at a
   // channel or a seep, the depth of a well elsewhere.

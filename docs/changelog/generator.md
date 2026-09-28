@@ -4,6 +4,9 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-28
+- **changed** Climate: biomes follow the Köppen–Geiger class of the twelve months; four new biomes — Mediterranean scrub, steppe, tropical dry forest, cold desert. `biome`
+- **new** Climate: a climate-class layer shows the Köppen–Geiger classes. `overlay.koppen`
+- **changed** Climate: the seasonal shift of the rain bands is strongest at the equator and small beyond 30°. `generator.climate`
 - **new** Climate: refining computes the year month by month — temperature from an energy balance, rain from each month's winds; temperature and rain follow the month slider. `generator.climate.month`
 - **new** Save: a world keeps its climate refinement — pressure and wind per month, currents and upwelling — and opens with it. `generator.save`
 - **changed** Climate: after refining, the currents follow the new winds, and upwelling cools the sea at the equator's eastern side and along coasts; an upwelling layer shows where. `overlay.upwelling`

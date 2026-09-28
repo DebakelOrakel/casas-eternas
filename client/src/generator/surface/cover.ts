@@ -30,6 +30,8 @@ export const COVER_BY_BIOME: Record<number, number> = {
   [Biome.Ocean]: 0.2, [Biome.Ice]: 0.2, [Biome.Tundra]: 0.35, [Biome.Boreal]: 0.7, [Biome.Grassland]: 0.5,
   [Biome.Woodland]: 0.7, [Biome.TemperateForest]: 0.85, [Biome.TemperateRainforest]: 0.9, [Biome.Desert]: 0.2,
   [Biome.Savanna]: 0.45, [Biome.TropicalRainforest]: 0.9, [Biome.Alpine]: 0.4, [Biome.SaltFlat]: 0.2, [Biome.Glacier]: 0.2,
+  // The Köppen biomes (2026-09-28), between their neighbours. Unmeasured.
+  [Biome.MediterraneanScrub]: 0.55, [Biome.Steppe]: 0.4, [Biome.TropicalDryForest]: 0.75, [Biome.ColdDesert]: 0.2,
 }
 
 // The cover per climate cell from the biomes; all zero before the plants.

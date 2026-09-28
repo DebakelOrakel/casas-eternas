@@ -35,6 +35,7 @@ import { eventCategory } from '../../generator/tectonics/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
 import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
+import { KOPPEN_CODES, koppenCode, koppenColor, koppenLabelKey } from '../../generator/climate/koppen'
 import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, pressureColor, upwellingColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops, pressureLegendStops, upwellingLegendStops } from '../../generator/climate/climateColors'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
@@ -1212,6 +1213,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastSeasonality: Float32Array | null = null
   let lastMonsoonIndex: Float32Array | null = null
   let lastBiomes: Uint8Array | null = null
+  // The Köppen class per climate cell from the annual figures (the history's
+  // climate); the refinement carries its own from real months.
+  let lastKoppen: Uint8Array | null = null
   // The climate step's refinement (docs/design/climate-refinement.md): twelve
   // months of pressure and wind, month-major. Null until its button ran, and
   // dropped with every new climate.
@@ -1265,6 +1269,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const displayWind = (): Float32Array | null => refinedMonth()?.wind ?? lastWind
   // Temperature and rain the same way. The rain of one month is still a
   // rate in mm/yr, so it shares the year's legend.
+  const displayKoppen = (): Uint8Array | null => lastRefined?.koppen ?? lastKoppen
   const displayTemperature = (): Float32Array | null => refinedMonth()?.temperature ?? lastTemperature
   const displayPrecipitation = (): Float32Array | null => refinedMonth()?.precipitation ?? lastPrecipitation
   // The currents the same way: the refinement's (under its year's wind, with
@@ -1790,6 +1795,31 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // `lastBiomes` shares the map raster (see the worker's climateData message), so
   // this is a straight per-pixel read — no climate-grid sampling, and no 8x8
   // blocks. The other climate overlays around it still sample their coarse grid.
+  // Köppen classes: the climate cell's class on its land pixels (the relief's
+  // land bit keeps the coast the map's, not the 62 km grid's). Classes do not
+  // blend, so the cells stay whole inland.
+  function paintKoppen(data: Uint8ClampedArray): void {
+    const field = displayKoppen()
+    if (!field || !lastRelief) return
+    const alpha = 0.7
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        if (!(lastRelief[y * MAP_WIDTH + x] & 128)) continue
+        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
+        const id = field[gy * climateResX + gx]
+        if (id === 0) continue
+        const [r, g, b] = koppenColor(id)
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - alpha) + r * alpha
+        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
+        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
+      }
+    }
+  }
+  // A class as the legend and the readout say it: its code, then its name.
+  const koppenName = (id: number): string => `${koppenCode(id)} · ${t(koppenLabelKey(id) as TKey)}`
+
   function paintBiomes(data: Uint8ClampedArray): void {
     if (!lastBiomes) return
     const alpha = 0.85
@@ -2065,6 +2095,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     { id: 'precipitation', enabled: false, paintPixels: paintPrecipitation },
     { id: 'monsoon', enabled: false, paintPixels: paintMonsoon },
     { id: 'seasonality', enabled: false, paintPixels: paintSeasonality },
+    { id: 'koppen', enabled: false, paintPixels: paintKoppen },
     { id: 'biomes', enabled: false, paintPixels: paintBiomes },
     { id: 'ecology', enabled: false, paintPixels: paintEcology },
     // Migration: race-tinted density fill (paintPixels) + origin markers (paint).
@@ -2356,6 +2387,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       probe: (cell) => lastMonsoonIndex && lastMonsoonIndex[cell.i] !== OCEAN_PRECIP
         ? [{ label: t('readout.row.monsoon'), value: Math.abs(lastMonsoonIndex[cell.i]).toFixed(2) }]
         : [],
+    },
+    // The legend lists the classes this world has, in the table's order
+    // (A to E), not all thirty-one.
+    koppen: {
+      available: () => displayKoppen() !== null,
+      legend: () => {
+        const present = new Set(displayKoppen() ?? [])
+        const ids = KOPPEN_CODES.map((_, id) => id).filter((id) => id > 0 && present.has(id))
+        return { type: 'swatches', title: t('overlay.koppen.label'), items: ids.map((id) => ({ label: koppenName(id), rgb: koppenColor(id) })) }
+      },
+      probe: (cell) => {
+        const id = displayKoppen()?.[cell.i] ?? 0
+        return id > 0 && cell.land ? [{ label: t('readout.row.koppen'), value: koppenName(id) }] : []
+      },
     },
     biomes: {
       available: () => lastBiomes !== null,
@@ -3126,6 +3171,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastPrecipitation = new Float32Array(message.precipitation)
     lastSeasonality = new Float32Array(message.seasonalAmplitude)
     lastMonsoonIndex = new Float32Array(message.monsoonIndex)
+    lastKoppen = new Uint8Array(message.koppen)
     lastBiomes = new Uint8Array(message.biomes)
     climateResX = message.resX
     climateResY = message.resY
@@ -3154,6 +3200,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastPrecipitation = new Float32Array(message.precipitation)
     lastSeasonality = new Float32Array(message.seasonalAmplitude)
     lastMonsoonIndex = new Float32Array(message.monsoonIndex)
+    lastKoppen = new Uint8Array(message.koppen)
     lastBiomes = new Uint8Array(message.biomes)
     climateResX = message.resX
     climateResY = message.resY
@@ -3267,6 +3314,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       currents: new Float32Array(message.currents),
       currentAnomaly: new Float32Array(message.currentAnomaly),
       upwelling: new Float32Array(message.upwelling),
+      koppen: new Uint8Array(message.koppen),
     }
     updateControlsDisabled()
     updateOverlays()
@@ -3300,6 +3348,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastPrecipitation = null
     lastSeasonality = null
     lastMonsoonIndex = null
+    lastKoppen = null
     lastBiomes = null
     updateOverlays() // climate overlays no longer available
   }
@@ -4174,6 +4223,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         biome: lastBiomes ?? undefined,
         seasonalAmplitude: lastSeasonality ?? undefined,
         monsoonIndex: lastMonsoonIndex ?? undefined,
+        koppen: displayKoppen() ?? undefined,
         lakeDepth: lastLakeDepth ?? undefined,
         waterTable: lastWaterTable ?? undefined,
       }

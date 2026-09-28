@@ -82,6 +82,7 @@ export const WORLD_LAYERS: LayerSpec[] = [
   // steps of the old encoding, at 0.0078 per step over a field whose consumers
   // compare it against thresholds like 0.35.
   layer('monsoonIndex', 'u8', 2 / 255, -1),
+  layer('koppen', 'u8', 1, 0),
   // Lake depth in elevation units. The range was 20 — off by nearly two orders
   // of magnitude, since a lake's depth is `filled - elevation` and the whole
   // elevation field only spans ±1. Measured over a real run: p50 0.004, p99
