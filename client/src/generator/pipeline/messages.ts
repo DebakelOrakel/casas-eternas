@@ -442,6 +442,10 @@ export interface WorkerClimateRefinedMessage {
   resX: number
   resY: number
   months: number
+  // Air temperature °C and precipitation mm/yr at the month's rate
+  // (OCEAN_PRECIP on the sea), Float32, months × resX × resY (month-major).
+  temperature: ArrayBuffer
+  precipitation: ArrayBuffer
   // Sea-level pressure, hPa, Float32, months × resX × resY (month-major).
   pressure: ArrayBuffer
   // Surface wind, Float32 interleaved [u, v] per cell like
@@ -455,6 +459,13 @@ export interface WorkerClimateRefinedMessage {
   // Ekman upwelling, Float32 resX × resY, positive where cold water comes up,
   // 0 on land (climate/refinement.RefinedClimate.upwelling).
   upwelling: ArrayBuffer
+}
+
+// How far the refinement has come, 0..1 — a few per run, for the progress
+// pill; the run itself answers with WorkerClimateRefinedMessage.
+export interface WorkerClimateRefineProgressMessage {
+  type: 'climateRefineProgress'
+  share: number
 }
 
 // Rivers/lakes result for the hydrology overlay. Phase 1: river segments only
@@ -587,6 +598,7 @@ export type WorkerOutboundMessage =
   | WorkerRenderedMessage
   | WorkerClimateDataMessage
   | WorkerClimateRefinedMessage
+  | WorkerClimateRefineProgressMessage
   | WorkerHydrologyDataMessage
   | WorkerEcologyDataMessage
   | WorkerMigrationDataMessage

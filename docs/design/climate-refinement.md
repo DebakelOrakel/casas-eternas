@@ -213,7 +213,23 @@ physics.
    coast winds come from the subtropical highs' eastern flank, which A
    forms only with B's temperatures. The productivity field for ecology is
    the upwelling itself; ecology does not read it yet.
-4. B: twelve months, sea ice. The run then takes 20–40 s: the worker
+4. B: twelve months, sea ice.
+   BUILT 2026-09-28 in part (climate/energyBalance.ts, refinement.ts): the
+   cycle is a linear energy balance for the departure from the cheap
+   model's annual mean, solved directly per harmonic (the year and the half
+   year, no spin-up); the rain is computePrecipitation once a month with
+   the month's air, the month's pressure wind and the rain belt following
+   the sun. Calibrated on Astrakan and a synthetic continent at 25–72°:
+   seasonal range at mid latitudes 9 °C at sea, 16–22 °C on coasts,
+   28–33 °C inland (Earth 35–45); subtropical interiors 23–31 °C (Earth
+   20–30); tropics 6 °C; polar coasts 24–30 °C (Earth ~30) once sea that
+   freezes counts with land's heat capacity. Sea ice is that rule only: a
+   linear model cannot let the ice come and go, so there is no ice field.
+   Astrakan: the whole refinement 2.6 s, land rain 1021 mm/yr against the
+   cheap 944, the wettest month to the driest 8.9 : 1 at the median —
+   likely too seasonal; to check against Köppen. The progress pill shows
+   the run; there is no stop yet (not needed at 3 s).
+   The run was planned at 20–40 s: the worker
    reports its progress to the progress pill, and the button becomes a
    stop (`generator.action.runClimate.labelActive` exists for it).
    The save keeps the refinement since formatVersion 6 (2026-09-28): one

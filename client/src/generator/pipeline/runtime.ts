@@ -58,7 +58,7 @@ import { computeEcology } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
-import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
+import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerClimateRefineProgressMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
 // tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
@@ -809,19 +809,24 @@ function handleClimateRefine(): void {
   const elevation = preErosionElevations ?? lastRawElevations
   if (!sim || !elevation) { decline('climate', 'tectonics'); return }
   if (!climate) { decline('climate', 'climate'); return }
-  const r = refineClimate(elevation, sim.width, sim.height, climate.params, climate.temperature, climate.seasonalAmplitude, climate.wind)
+  const r = refineClimate(elevation, sim.width, sim.height, climate.params, climate.temperature, climate.wind, (share) => {
+    const progress: WorkerClimateRefineProgressMessage = { type: 'climateRefineProgress', share }
+    emit(progress)
+  })
   const reply: WorkerClimateRefinedMessage = {
     type: 'climateRefined',
     resX: CLIMATE_RES_X,
     resY: CLIMATE_RES_Y,
     months: r.months,
+    temperature: r.temperature.buffer as ArrayBuffer,
+    precipitation: r.precipitation.buffer as ArrayBuffer,
     pressure: r.pressure.buffer as ArrayBuffer,
     wind: r.wind.buffer as ArrayBuffer,
     currents: r.currents.buffer as ArrayBuffer,
     currentAnomaly: r.currentAnomaly.buffer as ArrayBuffer,
     upwelling: r.upwelling.buffer as ArrayBuffer,
   }
-  emit(reply, [reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling])
+  emit(reply, [reply.temperature, reply.precipitation, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling])
 }
 
 // The lake depths with frozen basins zeroed — what the ecology (fish) and the

@@ -150,6 +150,11 @@ export const FORCING_LAYERS: LayerSpec[] = [
 // ±8 °C, upwelling under 8) so the energy balance can grow them unclipped:
 // 950–1100 hPa at 2.3 Pa a step, ±40 m/s at 1.2 mm/s, ±20 °C at 0.6 m°C.
 export const REFINED_LAYERS: LayerSpec[] = REFINED_FIELDS.map((f) => {
+  // Temperature in u16 for the wider range a month reaches. A month's rain
+  // is a rate, and a monsoon month's runs far past the year's (Astrakan:
+  // 15 700 mm/yr at the peak), so its range is 20 000, not 8000.
+  if (f.name.startsWith('temperature.')) return layer(f.name, 'u16', 140 / 65535, -70)
+  if (f.name.startsWith('precipitation.')) return layer(f.name, 'u16', 20000 / 65535, 0)
   if (f.name.startsWith('pressure.')) return layer(f.name, 'u16', 150 / 65535, 950)
   if (f.name.startsWith('wind')) return layer(f.name, 'u16', 80 / 65535, -40)
   if (f.name === 'currentU' || f.name === 'currentV') return layer(f.name, 'u16', 2 / 65535, -1)

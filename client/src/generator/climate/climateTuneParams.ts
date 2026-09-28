@@ -209,12 +209,46 @@ export const CLIMATE_TUNING = {
   // grassland/savanna rather than bare desert).
   precipBandFloor: 0.13,
 
+  // --- from energyBalance.ts (the climate step's year) ---
+  // Not measured yet (2026-09-28); physical orders of magnitude, then the
+  // exchange and the carry set against Earth's seasonal ranges.
+
+  // The solar constant at 1 AU, W/m², and the vernal equinox as a fraction
+  // of the year from 1 January (about 20 March).
+  ebmSolarWm2: 1361,
+  ebmVernalEquinoxYear: 0.22,
+  // Albedo: what the surface and the air above it reflect. Ice where the
+  // annual mean is below `ebmIceBelowC`.
+  ebmAlbedoLand: 0.3,
+  ebmAlbedoSea: 0.1,
+  ebmAlbedoIce: 0.6,
+  ebmIceBelowC: -10,
+  // Sea whose annual mean is below this, °C, counts as ice-covered for the
+  // heat capacity (sea water freezes at −1.8 °C; a mean a little above it
+  // still freezes in winter).
+  ebmSeaIceBelowC: 0,
+  // Heat capacity, J/m²K: land is the air column and a little soil
+  // (~1.2·10⁷), the sea a 50 m mixed layer (~2.1·10⁸).
+  ebmCapacityLand: 3e7,
+  ebmCapacitySea: 2.1e8,
+  // Outgoing radiation per kelvin, W/m²K (Budyko's B).
+  ebmRadiation: 2.1,
+  // Exchange with each of the four neighbours, W/m²K, and the carry by the
+  // wind per unit of wind (8 m/s), W/m²K.
+  ebmExchange: 40,
+  ebmCarryPerWind: 400,
+  // Gauss-Seidel sweeps per harmonic.
+  ebmSolveIters: 400,
+
+  // --- from refinement.ts ---
+  // When the equatorial rain belt stands furthest toward the top hemisphere,
+  // as a fraction of the year: about mid-July, a few weeks after the
+  // solstice, as the sea's lag holds it back.
+  refineItczPeakYear: 0.54,
+
   // --- from pressure.ts ---
   // Not measured yet (2026-09-28); set from Earth's orders of magnitude.
 
-  // A month's ocean swing, °C, until the energy balance: the sea has a
-  // seasonal range of a few degrees, the sentinel says nothing.
-  pressureOceanSwingC: 3,
   // Half the range of the zonal bands: 1013 ± 8 hPa, the equatorial trough
   // and the subpolar lows against the subtropical highs.
   pressureBandHpa: 8,

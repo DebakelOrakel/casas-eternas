@@ -83,9 +83,12 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
 // sample a month: `pressure.01` is January. Wind in m/s with v positive toward
 // the map's bottom (south), as the climate grid's vectors are; the currents'
 // two components normalised to the fastest (relative), 0 on land.
-export const refinedMonthField = (base: 'pressure' | 'windU' | 'windV', month: number): string => `${base}.${String(month).padStart(2, '0')}`
+export const refinedMonthField = (base: 'temperature' | 'precipitation' | 'pressure' | 'windU' | 'windV', month: number): string => `${base}.${String(month).padStart(2, '0')}`
 const MONTHS = Array.from({ length: REFINED_MONTHS }, (_, i) => i + 1)
 export const REFINED_FIELDS: readonly FieldSpec[] = [
+  ...MONTHS.map((m) => climate(refinedMonthField('temperature', m), '°C', false)),
+  // At the month's rate, mm/yr; the year's total is the mean of the twelve.
+  ...MONTHS.map((m) => climate(refinedMonthField('precipitation', m), 'mm/yr', true)),
   ...MONTHS.map((m) => climate(refinedMonthField('pressure', m), 'hPa', false)),
   ...MONTHS.map((m) => climate(refinedMonthField('windU', m), 'm/s', false)),
   ...MONTHS.map((m) => climate(refinedMonthField('windV', m), 'm/s', false)),

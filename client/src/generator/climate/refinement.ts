@@ -1,7 +1,9 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, latitudeAt } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { reduceTemperatureToSeaLevel } from './biomes'
-import { computePressureWind, monthTemperature, REFINED_MONTHS } from './pressure'
+import { computePressureWind, REFINED_MONTHS } from './pressure'
+import { seasonalCycle } from './energyBalance'
+import { computePrecipitation } from './precipitation'
 import { applyOceanSST, computeOceanCurrents, computeUpwelling, eastwardInBasin } from './oceanCurrents'
 import { computeTemperature } from './temperature'
 import type { WeatherParams } from './weather'
@@ -24,18 +26,24 @@ export interface RefinedClimate {
   // The sea-surface anomaly those currents and the upwelling make, °C per
   // ocean cell, 0 on land (positive warm, negative cold).
   currentAnomaly: Float32Array
+  // Air temperature, °C, months × cells: the annual mean of the climate
+  // the step shows plus the energy balance's cycle (energyBalance.ts).
+  temperature: Float32Array
+  // Precipitation, mm/yr at the month's rate, months × cells; OCEAN_PRECIP
+  // on the sea. The year's total is their mean.
+  precipitation: Float32Array
   // Ekman upwelling per ocean cell (computeUpwelling), 0 on land, the rising
   // part weighted like the cooling: near the equator by the cell's place in
   // its basin (only the east brings cold water up).
   upwelling: Float32Array
 }
 
-// `temperature`, `seasonalAmplitude` and `baseWind` are the climate the step
-// shows (climate/weather.computeWeather on the same terrain), `params` the
+// `temperature` and `baseWind` are the climate the step shows (climate/weather.computeWeather on the same terrain), `params` the
 // levers it was computed with.
+// `onProgress` hears the share done, 0..1, a few times a run.
 export function refineClimate(
   elevation: Float32Array, width: number, height: number, params: WeatherParams,
-  temperature: Float32Array, seasonalAmplitude: Float32Array, baseWind: Float32Array,
+  temperature: Float32Array, baseWind: Float32Array, onProgress?: (share: number) => void,
 ): RefinedClimate {
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const planet = params.planet ?? DEFAULT_PLANET_FORCING
@@ -44,14 +52,31 @@ export function refineClimate(
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) land[gy * CLIMATE_RES_X + gx] = isLandAtCell(elevation, undefined, gx, gy, width, height) ? 1 : 0
   }
 
-  // A: pressure and wind for each month.
+  // B: the year's temperature cycle around the annual mean (the banded wind
+  // carries it: the pressure wind needs these temperatures first).
+  const cycle = seasonalCycle(land, temperature, baseWind, planet, params.equatorOffset, REFINED_MONTHS)
+  const monthly = new Float32Array(REFINED_MONTHS * n)
+  for (let month = 0; month < REFINED_MONTHS; month++) {
+    for (let i = 0; i < n; i++) monthly[month * n + i] = temperature[i] + cycle[month * n + i]
+  }
+  onProgress?.(0.15)
+
+  // A: pressure and wind for each month, from the month's air reduced to sea
+  // level. Then B's second half: the month's rain, from that wind and that
+  // air, with the equatorial rain belt following the sun.
   const pressure = new Float32Array(REFINED_MONTHS * n)
   const wind = new Float32Array(REFINED_MONTHS * n * 2)
+  const precipitation = new Float32Array(REFINED_MONTHS * n)
   for (let month = 0; month < REFINED_MONTHS; month++) {
-    const air = reduceTemperatureToSeaLevel(monthTemperature(temperature, seasonalAmplitude, month, params.equatorOffset), elevation, width, height)
-    const result = computePressureWind(air, land, elevation, width, height, baseWind, params.equatorOffset, planet.rotationHours)
+    const air = monthly.subarray(month * n, (month + 1) * n)
+    const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, width, height, baseWind, params.equatorOffset, planet.rotationHours)
     pressure.set(result.pressure, month * n)
     wind.set(result.wind, month * n * 2)
+    // +equatorOffset moves the equator toward the bottom, so the top
+    // hemisphere's summer (the belt moves up) takes a smaller offset.
+    const belt = CLIMATE_TUNING.monsoonItczSeasonalShift * Math.cos(2 * Math.PI * ((month + 0.5) / REFINED_MONTHS - CLIMATE_TUNING.refineItczPeakYear))
+    precipitation.set(computePrecipitation(elevation, air, result.wind, width, height, params.humidity, params.equatorOffset - belt), month * n)
+    onProgress?.(0.15 + 0.75 * (month + 1) / REFINED_MONTHS)
   }
 
   // The currents follow the year's mean wind: the ocean answers the wind
@@ -90,5 +115,5 @@ export function refineClimate(
     }
   }
 
-  return { months: REFINED_MONTHS, pressure, wind, currents, currentAnomaly, upwelling }
+  return { months: REFINED_MONTHS, temperature: monthly, precipitation, pressure, wind, currents, currentAnomaly, upwelling }
 }

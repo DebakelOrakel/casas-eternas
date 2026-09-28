@@ -429,8 +429,12 @@ else {
   const n = 8 * 4
   const months = 12
   const rnd = (i) => Math.sin(i * 12.9898) * 0.5 + 0.5
+  // Every third cell is sea: its rain is the OCEAN_PRECIP mark (−1).
+  const sea = (i) => i % 3 === 0
   const r = {
     months,
+    temperature: Float32Array.from({ length: months * n }, (_, i) => (rnd(i + 11) - 0.5) * 80),
+    precipitation: Float32Array.from({ length: months * n }, (_, i) => (sea(i % n) ? -1 : 3000 * rnd(i + 13))),
     pressure: Float32Array.from({ length: months * n }, (_, i) => 995 + 30 * rnd(i)),
     wind: Float32Array.from({ length: months * n * 2 }, (_, i) => (rnd(i + 7) - 0.5) * 3),
     currents: Float32Array.from({ length: n * 2 }, (_, i) => rnd(i + 3) * 2 - 1),
@@ -440,12 +444,15 @@ else {
   const sources = M.refined.refinedLayerSources(r, n)
   const decoded = new Map()
   for (const spec of M.layers.REFINED_LAYERS) decoded.set(spec.name, M.layers.decodeLayer(M.layers.bakeLayer(sources.get(spec.name), spec), spec))
+  decoded.set('landMask', Float32Array.from({ length: n }, (_, i) => (sea(i) ? 0 : 1)))
   check('every refinement layer has a source', M.layers.REFINED_LAYERS.every((spec) => sources.has(spec.name)))
   const back = M.refined.refinedFromLayers((name) => decoded.get(name) ?? null, n)
   const ms = 8
   const worst = (a, b, tol) => { let w = 0; for (let i = 0; i < a.length; i++) w = Math.max(w, Math.abs(a[i] - b[i]) / tol); return w }
   const stepOf = (name) => M.layers.REFINED_LAYERS.find((l) => l.name === name).scale
   const within = back !== null
+    && worst(r.temperature, back.temperature, stepOf('temperature.01')) <= 0.51
+    && worst(r.precipitation, back.precipitation, stepOf('precipitation.01')) <= 0.51
     && worst(r.pressure, back.pressure, stepOf('pressure.01')) <= 0.51
     && worst(r.wind, back.wind, stepOf('windU.01') / ms) <= 0.51
     && worst(r.currents, back.currents, stepOf('currentU')) <= 0.51

@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-28
+- **new** Climate: refining computes the year month by month — temperature from an energy balance, rain from each month's winds; temperature and rain follow the month slider. `generator.climate.month`
 - **new** Save: a world keeps its climate refinement — pressure and wind per month, currents and upwelling — and opens with it. `generator.save`
 - **changed** Climate: after refining, the currents follow the new winds, and upwelling cools the sea at the equator's eastern side and along coasts; an upwelling layer shows where. `overlay.upwelling`
 - **new** Climate: a refine button computes air pressure and winds for each month; a month slider picks what the layers show, and a pressure layer draws highs, lows and isobars. `generator.action.runClimate`

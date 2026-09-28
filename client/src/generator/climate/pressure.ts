@@ -1,6 +1,5 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { OCEAN_AMPLITUDE } from './seasonality'
 import { hadleyEdge } from '../planet/planetForcing'
 import { downsampleBox, wrapIndex2 } from '../core/field'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
@@ -35,25 +34,6 @@ export interface PressureWind {
   pressure: Float32Array
   // Interleaved [u, v] in wind.ts's units (1 = 8 m/s), v toward +y.
   wind: Float32Array
-}
-
-// A month's air temperature from the annual mean and the seasonal swing, until
-// the twelve-month energy balance (build step 4) replaces it. `month` 0 is
-// January; the top hemisphere has its summer peak in July. The ocean carries
-// the OCEAN_AMPLITUDE sentinel and swings by `pressureOceanSwingC`.
-export function monthTemperature(annual: Float32Array, amplitude: Float32Array, month: number, equatorOffset: number): Float32Array {
-  const out = new Float32Array(annual.length)
-  const phase = Math.cos((2 * Math.PI * (month - 6)) / 12) // +1 July, −1 January
-  for (let gy = 0; gy < RY; gy++) {
-    const north = shiftedYNorm(gy, RY, equatorOffset) < 0.5
-    const sign = (north ? 0.5 : -0.5) * phase
-    for (let gx = 0; gx < RX; gx++) {
-      const i = gy * RX + gx
-      const swing = amplitude[i] === OCEAN_AMPLITUDE ? CLIMATE_TUNING.pressureOceanSwingC : amplitude[i]
-      out[i] = annual[i] + sign * swing
-    }
-  }
-  return out
 }
 
 // The zonal bands' pressure in hPa at a signed latitude (−1 top pole … +1
@@ -95,8 +75,8 @@ function blur(field: Float32Array, radius: number): void {
 }
 
 // `temperature` is the month's air temperature reduced to sea level
-// (monthTemperature over biomes.reduceTemperatureToSeaLevel: a high range is
-// cold by its height, and the pressure here is sea-level pressure), `land` 1 on
+// (biomes.reduceTemperatureToSeaLevel: a high range is cold by its height,
+// and the pressure here is sea-level pressure), `land` 1 on
 // land cells of the climate grid, `elevation` the full-res raster (for the
 // relief the wind meets), `baseWind` wind.ts's banded wind. `rotationHours`
 // scales the Coriolis parameter and moves the band edges.

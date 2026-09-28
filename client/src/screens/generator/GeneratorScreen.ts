@@ -979,6 +979,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // are disabled except the ACTIVE process's stop button (the only allowed action).
   let climateInFlight = false
   let refineInFlight = false
+  // How far the running refinement has come, 0..1 (climateRefineProgress).
+  let refineShare = 0
   let hydrologyInFlight = false
   let ecologyInFlight = false
   let migrationInFlight = false
@@ -1088,6 +1090,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       sub = judged.advice
       fraction = 1 - Math.max(0, autoStopAtEpoch - lastEpoch) / MAX_TECTONICS_EPOCHS
       stage = judged.stage
+    } else if (refineInFlight) {
+      label = t('generator.action.runClimate.label')
+      fraction = refineShare
     } else if (climateInFlight) {
       label = t('generator.step.climate.label')
     } else if (hydrologyInFlight) {
@@ -1217,33 +1222,51 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The month the climate layers show: 0 the year's mean, 1–12 January to
   // December. Read only while a refinement exists.
   let climateMonth = 0
-  let monthFields: { source: object; month: number; pressure: Float32Array; wind: Float32Array } | null = null
+  type MonthFields = { pressure: Float32Array; wind: Float32Array; temperature: Float32Array; precipitation: Float32Array }
+  let monthFields: ({ source: object; month: number } & MonthFields) | null = null
   // The refinement's fields for the shown month (the year: their mean),
   // made once per month and refinement.
-  function refinedMonth(): { pressure: Float32Array; wind: Float32Array } | null {
+  function refinedMonth(): MonthFields | null {
     if (!lastRefined) return null
     if (monthFields?.source === lastRefined && monthFields.month === climateMonth) return monthFields
     const n = climateResX * climateResY
     const { months } = lastRefined
     let pressure: Float32Array
     let wind: Float32Array
+    let temperature: Float32Array
+    let precipitation: Float32Array
     if (climateMonth > 0) {
-      pressure = lastRefined.pressure.subarray((climateMonth - 1) * n, climateMonth * n)
-      wind = lastRefined.wind.subarray((climateMonth - 1) * n * 2, climateMonth * n * 2)
+      const at = (climateMonth - 1) * n
+      pressure = lastRefined.pressure.subarray(at, at + n)
+      wind = lastRefined.wind.subarray(at * 2, (at + n) * 2)
+      temperature = lastRefined.temperature.subarray(at, at + n)
+      precipitation = lastRefined.precipitation.subarray(at, at + n)
     } else {
       pressure = new Float32Array(n)
       wind = new Float32Array(n * 2)
+      temperature = new Float32Array(n)
+      precipitation = new Float32Array(n)
       for (let m = 0; m < months; m++) {
-        for (let i = 0; i < n; i++) pressure[i] += lastRefined.pressure[m * n + i] / months
+        for (let i = 0; i < n; i++) {
+          pressure[i] += lastRefined.pressure[m * n + i] / months
+          temperature[i] += lastRefined.temperature[m * n + i] / months
+          precipitation[i] += lastRefined.precipitation[m * n + i] / months
+        }
         for (let i = 0; i < n * 2; i++) wind[i] += lastRefined.wind[m * n * 2 + i] / months
       }
+      // The sea keeps its mark: a mean of twelve marks is the mark again.
+      for (let i = 0; i < n; i++) if (lastRefined.precipitation[i] === OCEAN_PRECIP) precipitation[i] = OCEAN_PRECIP
     }
-    monthFields = { source: lastRefined, month: climateMonth, pressure, wind }
+    monthFields = { source: lastRefined, month: climateMonth, pressure, wind, temperature, precipitation }
     return monthFields
   }
   // The wind the layer and the readout show: the refined month's when there
   // is one, the history's banded wind otherwise.
   const displayWind = (): Float32Array | null => refinedMonth()?.wind ?? lastWind
+  // Temperature and rain the same way. The rain of one month is still a
+  // rate in mm/yr, so it shares the year's legend.
+  const displayTemperature = (): Float32Array | null => refinedMonth()?.temperature ?? lastTemperature
+  const displayPrecipitation = (): Float32Array | null => refinedMonth()?.precipitation ?? lastPrecipitation
   // The currents the same way: the refinement's (under its year's wind, with
   // the upwelling in the anomaly) when there is one.
   const displayCurrents = (): Float32Array | null => lastRefined?.currents ?? lastCurrents
@@ -1500,13 +1523,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   function paintTemperature(data: Uint8ClampedArray): void {
-    if (!lastTemperature) return
+    const field = displayTemperature()
+    if (!field) return
     const alpha = 0.55
     for (let y = 0; y < MAP_HEIGHT; y++) {
       const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
       for (let x = 0; x < MAP_WIDTH; x++) {
         const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
-        const [r, g, b] = temperatureColor(lastTemperature[gy * climateResX + gx])
+        const [r, g, b] = temperatureColor(field[gy * climateResX + gx])
         const p = (y * MAP_WIDTH + x) * 4
         data[p] = data[p] * (1 - alpha) + r * alpha
         data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
@@ -1549,13 +1573,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Precipitation heatmap tint (climate), land only — ocean cells carry the
   // OCEAN_PRECIP sentinel and are left as terrain. No-op until computed.
   function paintPrecipitation(data: Uint8ClampedArray): void {
-    if (!lastPrecipitation) return
+    const field = displayPrecipitation()
+    if (!field) return
     const alpha = 0.6
     for (let y = 0; y < MAP_HEIGHT; y++) {
       const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
       for (let x = 0; x < MAP_WIDTH; x++) {
         const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
-        const mm = lastPrecipitation[gy * climateResX + gx]
+        const mm = field[gy * climateResX + gx]
         if (mm === OCEAN_PRECIP) continue
         const [r, g, b] = precipitationColor(mm)
         const p = (y * MAP_WIDTH + x) * 4
@@ -2242,7 +2267,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     temperature: {
       available: () => lastTemperature !== null,
       legend: () => ({ type: 'gradient', title: t('overlay.temperature.label'), unit: t('overlay.temperature.legend.unit'), stops: temperatureLegendStops }),
-      probe: (cell) => lastTemperature ? [{ label: t('readout.row.temperature'), value: t('readout.temperature', { v: String(Math.round(lastTemperature[cell.i])) }) }] : [],
+      probe: (cell) => {
+        const field = displayTemperature()
+        return field ? [{ label: t('readout.row.temperature'), value: t('readout.temperature', { v: String(Math.round(field[cell.i])) }) }] : []
+      },
       chart: (cell) => {
         const year = temperatureYear(cell)
         return year ? { label: t('readout.chart.temperature'), kind: 'line', values: year } : null
@@ -2309,9 +2337,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     precipitation: {
       available: () => lastPrecipitation !== null,
       legend: () => ({ type: 'gradient', title: t('overlay.precipitation.label'), unit: t('overlay.precipitation.legend.unit'), stops: precipitationLegendStops }),
-      probe: (cell) => lastPrecipitation && lastPrecipitation[cell.i] !== OCEAN_PRECIP
-        ? [{ label: t('readout.row.precipitation'), value: t('readout.precipitation', { v: String(Math.round(lastPrecipitation[cell.i])) }) }]
-        : [],
+      probe: (cell) => {
+        const field = displayPrecipitation()
+        return field && field[cell.i] !== OCEAN_PRECIP
+          ? [{ label: t('readout.row.precipitation'), value: t('readout.precipitation', { v: String(Math.round(field[cell.i])) }) }]
+          : []
+      },
       chart: (cell) => {
         const year = precipitationYear(cell)
         return year ? { label: t('readout.chart.precipitation'), kind: 'bars', values: year } : null
@@ -2942,6 +2973,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The top of the map is the northern hemisphere (see shiftedYNorm), warmest in
   // July; the southern half runs the opposite way.
   function temperatureYear(cell: ProbeCell): number[] | null {
+    // The refinement's own twelve months when there are some.
+    if (lastRefined) {
+      const n = climateResX * climateResY
+      return Array.from({ length: lastRefined.months }, (_, m) => lastRefined!.temperature[m * n + cell.i])
+    }
     if (!lastTemperature || !lastSeasonality) return null
     const amp = lastSeasonality[cell.i]
     if (amp === OCEAN_AMPLITUDE) return null
@@ -2962,6 +2998,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // local summer — right for the tropics, half a year wrong for a Mediterranean
   // winter-rain climate.
   function precipitationYear(cell: ProbeCell): number[] | null {
+    // The refinement's own months, each rate turned into the month's share.
+    if (lastRefined) {
+      const n = climateResX * climateResY
+      if (lastRefined.precipitation[cell.i] === OCEAN_PRECIP) return null
+      return Array.from({ length: lastRefined.months }, (_, m) => lastRefined!.precipitation[m * n + cell.i] / lastRefined!.months)
+    }
     if (!lastPrecipitation || !lastMonsoonIndex) return null
     const annual = lastPrecipitation[cell.i]
     const index = lastMonsoonIndex[cell.i]
@@ -3215,8 +3257,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   function handleClimateRefined(message: WorkerClimateRefinedMessage): void {
     refineInFlight = false
+    updateProgress()
     lastRefined = {
       months: message.months,
+      temperature: new Float32Array(message.temperature),
+      precipitation: new Float32Array(message.precipitation),
       pressure: new Float32Array(message.pressure),
       wind: new Float32Array(message.wind),
       currents: new Float32Array(message.currents),
@@ -3553,6 +3598,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     if (message.type === 'climateRefined') {
       handleClimateRefined(message)
+      return
+    }
+    if (message.type === 'climateRefineProgress') {
+      refineShare = message.share
+      updateProgress()
       return
     }
     if (message.type === 'planetPreviewData') {
@@ -4408,7 +4458,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const decoded = new Map<string, Float32Array>()
       let n = 0
       for (const entry of manifest.layers ?? []) {
-        if (!REFINED_LAYERS.some((l) => l.name === entry.name) || !entry.encoding || !entry.resX || !entry.resY) continue
+        // The refinement's layers, and the land mask its rain is masked by.
+        if ((entry.name !== 'landMask' && !REFINED_LAYERS.some((l) => l.name === entry.name)) || !entry.encoding || !entry.resX || !entry.resY) continue
         const buffer = await zip.file(entry.file)?.async('arraybuffer')
         if (!buffer) continue
         n = entry.resX * entry.resY
@@ -5148,7 +5199,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   refineClimateButton.addEventListener('click', () => {
     if (isBusy() || lastTemperature === null || lastRefined !== null) return
     refineInFlight = true
+    refineShare = 0
     updateControlsDisabled()
+    updateProgress()
     postToWorker({ type: 'climateRefine' })
   })
   resetClimateButton.addEventListener('click', () => {

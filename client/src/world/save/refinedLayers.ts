@@ -8,12 +8,16 @@ import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
 import type { RefinedClimate } from '../../generator/climate/refinement'
 import { REFINED_MONTHS } from '../../generator/climate/pressure'
 import { refinedMonthField } from './fieldSpec'
+import { restoreLandOnlySentinel } from './worldLayers'
+import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 
 // Each layer's values by field name, `n` cells each.
 export function refinedLayerSources(r: RefinedClimate, n: number): Map<string, Float32Array> {
   const out = new Map<string, Float32Array>()
   const ms = CLIMATE_TUNING.windSpeedMsPerUnit
   for (let m = 0; m < r.months; m++) {
+    out.set(refinedMonthField('temperature', m + 1), r.temperature.slice(m * n, (m + 1) * n))
+    out.set(refinedMonthField('precipitation', m + 1), r.precipitation.slice(m * n, (m + 1) * n))
     out.set(refinedMonthField('pressure', m + 1), r.pressure.slice(m * n, (m + 1) * n))
     const u = new Float32Array(n)
     const v = new Float32Array(n)
@@ -39,12 +43,23 @@ export function refinedLayerSources(r: RefinedClimate, n: number): Map<string, F
 
 // The refinement from its decoded layers, or null when any is missing — a
 // partial set is not a refinement, and a save from before formatVersion 6
-// has none.
+// has none. The rain is land-only: its sea comes back as OCEAN_PRECIP from
+// the save's `landMask` (worldLayers.restoreLandOnlySentinel), which `get`
+// must also answer.
 export function refinedFromLayers(get: (name: string) => Float32Array | null, n: number): RefinedClimate | null {
   const ms = CLIMATE_TUNING.windSpeedMsPerUnit
+  const landMask = get('landMask')
+  if (!landMask || landMask.length !== n) return null
+  const temperature = new Float32Array(REFINED_MONTHS * n)
+  const precipitation = new Float32Array(REFINED_MONTHS * n)
   const pressure = new Float32Array(REFINED_MONTHS * n)
   const wind = new Float32Array(REFINED_MONTHS * n * 2)
   for (let m = 0; m < REFINED_MONTHS; m++) {
+    const t = get(refinedMonthField('temperature', m + 1))
+    const r = get(refinedMonthField('precipitation', m + 1))
+    if (!t || !r || t.length !== n || r.length !== n) return null
+    temperature.set(t, m * n)
+    precipitation.set(restoreLandOnlySentinel(r, landMask, OCEAN_PRECIP), m * n)
     const p = get(refinedMonthField('pressure', m + 1))
     const u = get(refinedMonthField('windU', m + 1))
     const v = get(refinedMonthField('windV', m + 1))
@@ -66,5 +81,5 @@ export function refinedFromLayers(get: (name: string) => Float32Array | null, n:
     currents[i * 2] = cu[i]
     currents[i * 2 + 1] = cv[i]
   }
-  return { months: REFINED_MONTHS, pressure, wind, currents, currentAnomaly, upwelling }
+  return { months: REFINED_MONTHS, temperature, precipitation, pressure, wind, currents, currentAnomaly, upwelling }
 }
