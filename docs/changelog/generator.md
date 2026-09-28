@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-09-28
+- **changed** Climate: ocean currents run fast along the western side of a basin and pass between landmasses. `overlay.currents`
+
 ## 2026-09-27
 - **changed** Planet: the preview world is a real one, Astrakan, in place of the three domes. `generator.panel.planet`
 - **changed** Generator: the hover readout lists what the step's layers say at the point, and the legend what is on — both from one table per layer, so a step cannot offer a layer the readout does not know. `generator.readout`

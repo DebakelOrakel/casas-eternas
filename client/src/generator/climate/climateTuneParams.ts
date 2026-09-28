@@ -216,11 +216,23 @@ export const CLIMATE_TUNING = {
   // doesn't need a fully-converged ψ.
   currentsSolveIters: 700,
 
+  // β, the northward growth of the Coriolis parameter, against a friction of
+  // 1 per cell (Stommel). The western boundary current is about 1/β cells
+  // wide; at 0.4 that is 2.5 cells (150 km) at the equator and more toward the
+  // poles, the narrowest the 62 km grid can hold. Above 2 the central
+  // difference loses diagonal dominance and the solve oscillates.
+  currentsBeta: 0.4,
+
   // SST transport: how far (grid cells) it advects along the normalized current
   // per iteration, how many iterations, and the per-iteration relaxation back
   // toward the latitudinal base (anchors the SST to latitude so anomalies stay
   // bounded — a few °C, like real boundary currents on this coarse grid).
-  currentsAdvectStep: 2.5,
+  // The step was 2.5 until the β term (2026-09-28): the western jet now sets
+  // the normalisation, the mean speed fell to 0.61 of before, and the
+  // anomalies with it (Astrakan: warm 29 → 16 % of the sea, cold 26 → 16 %).
+  // At 4 they are back at warm 21 %, cold 24 %, +4.2/−7.5 °C. The cold
+  // eastern coasts belong to upwelling, which is not modelled yet.
+  currentsAdvectStep: 4,
   currentsAdvectIters: 80,
   currentsBaseRelax: 0.15,
 

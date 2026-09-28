@@ -2,8 +2,9 @@
 summary: The climate step refines today's climate on the final geography. A pressure field and a terrain-aware wind, a 12-month energy balance with moisture transport, better ocean currents, Köppen classes that feed the biomes, and fields for phenomena and for the reliability of rain. Budget 20–40 s; the epochs keep the cheap model, except two current-solver terms.
 date: 2026-09-28
 area: generator
-stage: decided
-status: discussed and agreed 2026-09-28; nothing built. The order at the end is the build order. Constants are not measured. The decided forks are at the end; none is open.
+updated: 2026-09-28
+stage: building
+status: discussed and agreed 2026-09-28. Build step 1 (β term, island rule) BUILT 2026-09-28; the rest is not built. The order at the end is the build order. Constants are not measured. The decided forks are at the end; none is open.
 ---
 
 # Climate refinement
@@ -191,6 +192,9 @@ physics.
 ## Build order
 
 1. Currents 1 + 3 in the shared solver (epochs and step), golden reset.
+   BUILT 2026-09-28: the solve went from 139 to 173 ms on Astrakan, about
+   +11 ms per epoch (the climate runs every third epoch). West/east
+   boundary speed 0.34/0.32 before, 0.32/0.08 after.
 2. A: pressure and wind.
 3. Currents 2 + 4.
 4. B: twelve months, sea ice.
