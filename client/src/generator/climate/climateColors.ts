@@ -80,9 +80,24 @@ export function monsoonColor(index: number): Rgb {
   return rampColor(MONSOON_STOPS, index)
 }
 
+// Sea-level pressure (hPa) → colour: blue lows, pale at the standard 1013,
+// amber highs.
+const PRESSURE_STOPS: { c: number; rgb: Rgb }[] = [
+  { c: 996, rgb: [50, 90, 190] },
+  { c: 1006, rgb: [140, 175, 225] },
+  { c: 1013, rgb: [236, 236, 230] },
+  { c: 1020, rgb: [235, 200, 130] },
+  { c: 1030, rgb: [205, 120, 45] },
+]
+
+export function pressureColor(hPa: number): Rgb {
+  return rampColor(PRESSURE_STOPS, hPa)
+}
+
 // The ramps as {value, rgb} lists, for building the overlay legend gradient bars
 // (same stops the paint uses, so the legend matches the map exactly).
 export const temperatureLegendStops = TEMPERATURE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
 export const precipitationLegendStops = PRECIPITATION_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
 export const amplitudeLegendStops = AMPLITUDE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
 export const monsoonLegendStops = MONSOON_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
+export const pressureLegendStops = PRESSURE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))

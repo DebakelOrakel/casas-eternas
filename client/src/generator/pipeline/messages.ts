@@ -122,6 +122,12 @@ export interface WorkerClimateRunMessage {
   // The Planet stage's forcing (planet/planetForcing.ts); Earth when absent.
   planet?: PlanetForcing
 }
+// Asks for the climate step's refinement (docs/design/climate-refinement.md)
+// on the current climate: pressure and wind for each month. Replies with
+// WorkerClimateRefinedMessage, or declines when no climate exists.
+export interface WorkerClimateRefineMessage {
+  type: 'climateRefine'
+}
 // Requests a rivers/lakes (hydrology) compute on the current topography, using
 // the precipitation cached from the last computeClimate as the water source.
 // No parameters since the density slider died (erosion-v2 P4/teardown): the
@@ -210,6 +216,7 @@ export type WorkerInboundMessage =
   | WorkerResetStageMessage
   | WorkerRequestElevationFieldMessage
   | WorkerClimateRunMessage
+  | WorkerClimateRefineMessage
   | WorkerHydrologyRunMessage
   | WorkerEcologyRunMessage
   | WorkerMigrationRunMessage
@@ -427,6 +434,21 @@ export interface WorkerClimateDataMessage {
   biomes: ArrayBuffer
 }
 
+// The climate step's refinement: `months` twelve-month stacks on the climate
+// grid, month 0 = January. Build step 2 of docs/design/climate-refinement.md;
+// B, Köppen and the rest add their fields here.
+export interface WorkerClimateRefinedMessage {
+  type: 'climateRefined'
+  resX: number
+  resY: number
+  months: number
+  // Sea-level pressure, hPa, Float32, months × resX × resY (month-major).
+  pressure: ArrayBuffer
+  // Surface wind, Float32 interleaved [u, v] per cell like
+  // WorkerClimateDataMessage.wind, months × resX × resY × 2 (month-major).
+  wind: ArrayBuffer
+}
+
 // Rivers/lakes result for the hydrology overlay. Phase 1: river segments only
 // (lakes + riparian biome feedback come in later phases). See generator/hydrology.ts.
 export interface WorkerHydrologyDataMessage {
@@ -556,6 +578,7 @@ export type WorkerOutboundMessage =
   | WorkerPlanetPreviewDataMessage
   | WorkerRenderedMessage
   | WorkerClimateDataMessage
+  | WorkerClimateRefinedMessage
   | WorkerHydrologyDataMessage
   | WorkerEcologyDataMessage
   | WorkerMigrationDataMessage

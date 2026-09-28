@@ -4,7 +4,7 @@ date: 2026-09-28
 area: generator
 updated: 2026-09-28
 stage: building
-status: discussed and agreed 2026-09-28. Build step 1 (β term, island rule) BUILT 2026-09-28; the rest is not built. The order at the end is the build order. Constants are not measured. The decided forks are at the end; none is open.
+status: discussed and agreed 2026-09-28. Build steps 1 (β term, island rule) and 2 (pressure and wind, the step's button, month slider and pressure layer) BUILT 2026-09-28; the rest is not built. The order at the end is the build order. Constants are not measured. The decided forks are at the end; none is open.
 ---
 
 # Climate refinement
@@ -196,6 +196,12 @@ physics.
    +11 ms per epoch (the climate runs every third epoch). West/east
    boundary speed 0.34/0.32 before, 0.32/0.08 after.
 2. A: pressure and wind.
+   BUILT 2026-09-28 (climate/pressure.ts, the `climateRefine` message).
+   Display only: nothing reads the monthly wind yet, and the worker keeps
+   no copy. Weak until B: the cheap seasonal swing peaks at 14 °C (Earth's
+   interiors 40–60 °C), so the thermal part stays within ±3 hPa on Astrakan.
+   Signs measured right (January cold high over the northern land, July
+   heat low).
 3. Currents 2 + 4.
 4. B: twelve months, sea ice.
 5. Köppen, feeding the biomes.

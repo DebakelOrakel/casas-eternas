@@ -41,7 +41,8 @@ import type { LakeFields } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
-import { computeBiomes, computeBiomesFine } from '../climate/biomes'
+import { computeBiomes, computeBiomesFine, reduceTemperatureToSeaLevel } from '../climate/biomes'
+import { computePressureWind, monthTemperature, REFINED_MONTHS } from '../climate/pressure'
 import { downsampleMax, sampleBilinearWorld } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import type { WaterBody } from '../surface/hydrology'
@@ -52,12 +53,12 @@ import { findSedimentBasins, type SedimentBasin } from '../surface/sedimentBasin
 import { computeIceThickness } from '../surface/iceFlow'
 import { WORLD_WIDTH_METERS } from '../surface/erosionEngine'
 import type { RiverGraph } from '../surface/riverGraph'
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, sampleElevationAtCell } from '../climate/climateField'
 import { computeEcology } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
-import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
+import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
 // tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
@@ -800,6 +801,43 @@ function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climat
   invalidateAfter('climate')
 }
 
+// The climate step's refinement: pressure and wind for each month, on the
+// climate the step shows and the terrain it was computed on. The month's air
+// temperature is still the annual mean ± the seasonal swing (build step 4
+// replaces it with the energy balance), reduced to sea level for the pressure.
+// The worker keeps nothing of it yet: nothing downstream reads it until the
+// energy balance feeds the biomes, so the screen holds the only copy.
+function handleClimateRefine(): void {
+  const elevation = preErosionElevations ?? lastRawElevations
+  if (!sim || !elevation) { decline('climate', 'tectonics'); return }
+  if (!climate) { decline('climate', 'climate'); return }
+  const { width, height } = sim
+  const n = CLIMATE_RES_X * CLIMATE_RES_Y
+  const land = new Uint8Array(n)
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) land[gy * CLIMATE_RES_X + gx] = isLandAtCell(elevation, undefined, gx, gy, width, height) ? 1 : 0
+  }
+  const equatorOffset = climate.params.equatorOffset
+  const rotationHours = (climate.params.planet ?? DEFAULT_PLANET_FORCING).rotationHours
+  const pressure = new Float32Array(REFINED_MONTHS * n)
+  const wind = new Float32Array(REFINED_MONTHS * n * 2)
+  for (let month = 0; month < REFINED_MONTHS; month++) {
+    const air = reduceTemperatureToSeaLevel(monthTemperature(climate.temperature, climate.seasonalAmplitude, month, equatorOffset), elevation, width, height)
+    const result = computePressureWind(air, land, elevation, width, height, climate.wind, equatorOffset, rotationHours)
+    pressure.set(result.pressure, month * n)
+    wind.set(result.wind, month * n * 2)
+  }
+  const reply: WorkerClimateRefinedMessage = {
+    type: 'climateRefined',
+    resX: CLIMATE_RES_X,
+    resY: CLIMATE_RES_Y,
+    months: REFINED_MONTHS,
+    pressure: pressure.buffer as ArrayBuffer,
+    wind: wind.buffer as ArrayBuffer,
+  }
+  emit(reply, [reply.pressure, reply.wind])
+}
+
 // The lake depths with frozen basins zeroed — what the ecology (fish) and the
 // migration cost field should see as WATER. Computed on demand rather than
 // stored: the full depth layer stays the display/save truth (ice is water).
@@ -1456,6 +1494,7 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   resetStage: (m) => handleResetStage(m as Extract<WorkerInboundMessage, { type: 'resetStage' }>),
   requestElevationField: () => handleRequestElevationField(),
   climateRun: (m) => handleClimateRun(m as Extract<WorkerInboundMessage, { type: 'climateRun' }>),
+  climateRefine: () => handleClimateRefine(),
   hydrologyRun: () => handleHydrologyRun(),
   ecologyRun: (m) => handleEcologyRun(m as Extract<WorkerInboundMessage, { type: 'ecologyRun' }>),
   migrationRun: (m) => handleMigrationRun(m as Extract<WorkerInboundMessage, { type: 'migrationRun' }>),

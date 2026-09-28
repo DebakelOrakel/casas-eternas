@@ -9,6 +9,7 @@
   "readout.row.precipitation": "Niederschlag",
   "readout.row.monsoon": "Regenzeitlichkeit",
   "readout.row.wind": "Wind",
+  "readout.row.pressure": "Luftdruck",
   "readout.row.current": "Strömung",
   "readout.row.biome": "Biom",
   "readout.row.discharge": "Abfluss",

@@ -20,6 +20,7 @@ export type OverlayId =
   | 'cratonAge'
   | 'temperature'
   | 'seasonality'
+  | 'pressure'
   | 'wind'
   | 'currents'
   | 'precipitation'
@@ -52,6 +53,8 @@ export const OVERLAY_META: Record<OverlayId, OverlayMeta> = {
   cratonAge: { icon: '/icons/craton.png' },
   temperature: { icon: '/icons/temperature.png' },
   seasonality: { icon: '/icons/seasonality.png' },
+  // Placeholder: no pressure icon yet (the user picks icons).
+  pressure: { icon: '/icons/weather.png' },
   wind: { icon: '/icons/wind.png' },
   currents: { icon: '/icons/gyres.png' },
   precipitation: { icon: '/icons/rain.png' },

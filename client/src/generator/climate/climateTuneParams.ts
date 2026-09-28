@@ -209,6 +209,36 @@ export const CLIMATE_TUNING = {
   // grassland/savanna rather than bare desert).
   precipBandFloor: 0.13,
 
+  // --- from pressure.ts ---
+  // Not measured yet (2026-09-28); set from Earth's orders of magnitude.
+
+  // A month's ocean swing, °C, until the energy balance: the sea has a
+  // seasonal range of a few degrees, the sentinel says nothing.
+  pressureOceanSwingC: 3,
+  // Half the range of the zonal bands: 1013 ± 8 hPa, the equatorial trough
+  // and the subpolar lows against the subtropical highs.
+  pressureBandHpa: 8,
+  // Thermal part: hPa per °C of departure from the row's mean. The Siberian
+  // winter high is some +20–30 hPa over air 20–30 °C colder than its
+  // latitude.
+  pressureHpaPerC: 1,
+  // Smoothing radius, cells (62 km): three box passes, σ ≈ 370 km, the scale
+  // of heat lows and cold highs rather than of coasts.
+  pressureSmoothCells: 6,
+  // Wind units (8 m/s) per hPa per cell of gradient before the balance: 20 hPa
+  // over 2000 km at 45° gives some 5 m/s over the sea.
+  pressureWindPerHpa: 0.8,
+  // Surface friction against the Coriolis parameter (1 at the pole, 24 h day):
+  // the wind crosses the isobars at about 20° over the sea at mid latitudes,
+  // at about 40° over land.
+  pressureFrictionSea: 0.3,
+  pressureFrictionLand: 0.6,
+  // A range turns the part of the wind that blows up its slope: nothing below
+  // the first height, the full share `pressureBlockMax` above the second.
+  pressureBlockFromM: 1500,
+  pressureBlockFullM: 4000,
+  pressureBlockMax: 0.7,
+
   // --- from oceanCurrents.ts ---
 
   // Streamfunction solve iterations (Gauss-Seidel, in place — converges roughly

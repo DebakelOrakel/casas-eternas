@@ -32,6 +32,8 @@
   "overlay.seasonality.legend.unit": "°C range",
   "overlay.wind.label": "Wind",
   "overlay.wind.help": "Show the prevailing surface winds.",
+  "overlay.pressure.label": "Air pressure",
+  "overlay.pressure.help": "Sea-level pressure of the shown month: highs and lows.",
   "overlay.currents.label": "Ocean currents",
   "overlay.currents.help": "Show the wind-driven ocean gyres and their warm/cold flow.",
   "overlay.precipitation.label": "Precipitation",

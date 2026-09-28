@@ -450,6 +450,30 @@ test('the stages compute, in order, on one world', async () => {
   check('migration ran off the ecology it was handed', p.count('migrationData') >= 1)
 })
 
+test('the climate refinement answers with twelve months, and declines without a climate', async () => {
+  const p = await freshPipeline()
+  await growWorld(p)
+  await runEpochs(p, 1)
+  p.dispatch({ type: 'climateRefine' })
+  await until(() => p.count('stageDeclined') >= 1, { label: 'the refusal' })
+  check('the refinement names the climate it needs', p.last('stageDeclined').needs === 'climate', JSON.stringify(p.last('stageDeclined')))
+  p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+  await until(() => p.count('climateData') >= 1, { label: 'climate' })
+  p.dispatch({ type: 'climateRefine' })
+  await until(() => p.count('climateRefined') >= 1, { label: 'the refinement' })
+  const r = p.last('climateRefined')
+  const n = r.resX * r.resY
+  const pressure = new Float32Array(r.pressure)
+  const wind = new Float32Array(r.wind)
+  check('twelve months of pressure and wind', r.months === 12 && pressure.length === 12 * n && wind.length === 24 * n, `${r.months} months`)
+  let finite = true
+  let lo = Infinity
+  let hi = -Infinity
+  for (const v of pressure) { if (!Number.isFinite(v)) finite = false; lo = Math.min(lo, v); hi = Math.max(hi, v) }
+  for (const v of wind) if (!Number.isFinite(v)) finite = false
+  check('the pressure is finite and in a weather range', finite && lo > 950 && hi < 1070, `${lo.toFixed(1)}..${hi.toFixed(1)} hPa`)
+})
+
 test('INVALIDATION: the epochs stale everything downstream, per the declared chain', async () => {
   // stages.ts says climate, hydrology, ecology and migration all sit downstream of
   // erosion. Before 3c this side dropped only the hydrology while WorldGenScreen

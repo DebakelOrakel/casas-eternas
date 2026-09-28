@@ -23,7 +23,7 @@ import type { WaterBody } from '../../generator/surface/hydrology'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
-import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
+import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
 import { downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
 import { drawContinentLabels } from '../../generator/render/continentLabelRenderer'
@@ -35,7 +35,7 @@ import { eventCategory } from '../../generator/tectonics/plateSimulation'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
 import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
-import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops } from '../../generator/climate/climateColors'
+import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, pressureColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops, pressureLegendStops } from '../../generator/climate/climateColors'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
 import { shiftedYNorm } from '../../generator/climate/climateField'
@@ -86,6 +86,7 @@ import type { WorldSpec } from '../../world/save/worldSpec'
 import { displayValue, type InputParam } from '../../generator/core/inputParams'
 import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
 import { traceFlowLines, drawComets, drawArrowRibbons, type FlowLine } from '../../map/flowLines'
+import { traceIsolines, drawIsolines, type Isoline } from '../../map/isolines'
 import { DEFAULT_PLANET_FORCING } from '../../generator/planet/planetForcing'
 import './generator.css'
 import '../../ui/chrome/chrome.css'
@@ -672,15 +673,34 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       </div>
     </div>
     <div class="gen-step" data-stage="climate">
+      <!-- The month the climate layers show. A view, not a lever: the step
+           has no levers (they are step 0's), so it stands without a Params
+           title. Live once the refinement ran. -->
+      <section class="gen-params">
+        <div class="gen-param" data-help="generator.climate.month">
+          <div class="gen-param__head">
+            <span class="gen-param__label" data-t="generator.climate.month.label">${t('generator.climate.month.label')}</span>
+            <span class="gen-param__value"><span data-value="climate-month-label">${t('generator.climate.month.annual')}</span></span>
+          </div>
+          <input type="range" class="gen-param__range climate-month-input" min="0" max="12" step="1" value="0" disabled aria-label="${t('generator.climate.month.label')}" data-t-aria="generator.climate.month.label" />
+        </div>
+      </section>
       <div class="gen-step__foot">
         <div class="gen-stats">
           ${statTile('generator.panel.climate.readout.min', 'temp-min', { unit: 'common.unit.celsius' })}
           ${statTile('generator.panel.climate.readout.max', 'temp-max', { unit: 'common.unit.celsius' })}
         </div>
         <div class="gen-step__actions">
-          <!-- No run button and no reset: the step computes on entry, and
-               its levers moved to step 0. The busy mark is all that is left. -->
+          <!-- The step computes the history's climate on entry; the button
+               refines it (docs/design/climate-refinement.md), the reset
+               drops the refinement. -->
           <span class="gen-step__status" data-value="climate-status"></span>
+          <button type="button" class="gen-action-icon" data-action="reset-climate" data-t-aria="generator.action.resetClimate.label" data-help="generator.action.resetClimate">
+            <img src="/icons/reset.png" alt="" />
+          </button>
+          <button type="button" class="gen-action" data-action="refine-climate" data-help="generator.action.runClimate">
+            <span class="gen-action__label" data-t="generator.action.runClimate.label">${t('generator.action.runClimate.label')}</span>
+          </button>
         </div>
       </div>
     </div>
@@ -808,6 +828,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   alluviumInput.addEventListener('input', () => { alluviumLabel.textContent = alluviumInput.value })
   rockContrastInput.addEventListener('input', () => { rockContrastLabel.textContent = rockContrastInput.value })
   const resetPlanetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-planet"]')!
+  const refineClimateButton = root.querySelector<HTMLButtonElement>('[data-action="refine-climate"]')!
+  const resetClimateButton = root.querySelector<HTMLButtonElement>('[data-action="reset-climate"]')!
+  const climateMonthInput = root.querySelector<HTMLInputElement>('.climate-month-input')!
+  const climateMonthLabel = root.querySelector<HTMLElement>('[data-value="climate-month-label"]')!
   const resetEcologyButton = root.querySelector<HTMLButtonElement>('[data-action="reset-ecology"]')!
   const resetMigrationButton = root.querySelector<HTMLButtonElement>('[data-action="reset-migration"]')!
   // The artifact cache is filled by the worldmap, but inspecting it is just
@@ -842,6 +866,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // rather than its strings (see i18n/relabel).
       relabel(sidebar.body)
       relabel(sidebar.foot)
+      sayClimateMonth()
       sidebar.relabel()
       stepBar.relabel()
       worldChooser.relabel()
@@ -956,6 +981,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // goes) or a climate/hydrology compute. While busy, ALL bottom-panel controls
   // are disabled except the ACTIVE process's stop button (the only allowed action).
   let climateInFlight = false
+  let refineInFlight = false
   let hydrologyInFlight = false
   let ecologyInFlight = false
   let migrationInFlight = false
@@ -967,7 +993,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // True while the save flow drives the compute chain — suppresses the ecology
   // panel's own auto-recompute so it doesn't double-fire.
   let saveChainActive = false
-  const isBusy = (): boolean => tectonicsRunning || climateInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight
+  const isBusy = (): boolean => tectonicsRunning || climateInFlight || refineInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight
 
   // Disable every panel control while a compute runs; the running process keeps its
   // stop button live (tectonics = toggle-sim, erosion = erode, which becomes a stop).
@@ -976,6 +1002,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     randomizeButton.disabled = busy
     resetButton.disabled = busy
     resetPlanetButton.disabled = busy
+    // Refine once per climate; the reset takes the refinement back.
+    refineClimateButton.disabled = busy || lastTemperature === null || lastRefined !== null
+    resetClimateButton.disabled = busy || lastRefined === null
+    climateMonthInput.disabled = lastRefined === null
     resetEcologyButton.disabled = busy
     resetMigrationButton.disabled = busy
     saveMenu.setEnabled(!busy)
@@ -1180,6 +1210,40 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastSeasonality: Float32Array | null = null
   let lastMonsoonIndex: Float32Array | null = null
   let lastBiomes: Uint8Array | null = null
+  // The climate step's refinement (docs/design/climate-refinement.md): twelve
+  // months of pressure and wind, month-major. Null until its button ran, and
+  // dropped with every new climate.
+  let lastRefined: { months: number; pressure: Float32Array; wind: Float32Array } | null = null
+  // The month the climate layers show: 0 the year's mean, 1–12 January to
+  // December. Read only while a refinement exists.
+  let climateMonth = 0
+  let monthFields: { source: object; month: number; pressure: Float32Array; wind: Float32Array } | null = null
+  // The refinement's fields for the shown month (the year: their mean),
+  // made once per month and refinement.
+  function refinedMonth(): { pressure: Float32Array; wind: Float32Array } | null {
+    if (!lastRefined) return null
+    if (monthFields?.source === lastRefined && monthFields.month === climateMonth) return monthFields
+    const n = climateResX * climateResY
+    const { months } = lastRefined
+    let pressure: Float32Array
+    let wind: Float32Array
+    if (climateMonth > 0) {
+      pressure = lastRefined.pressure.subarray((climateMonth - 1) * n, climateMonth * n)
+      wind = lastRefined.wind.subarray((climateMonth - 1) * n * 2, climateMonth * n * 2)
+    } else {
+      pressure = new Float32Array(n)
+      wind = new Float32Array(n * 2)
+      for (let m = 0; m < months; m++) {
+        for (let i = 0; i < n; i++) pressure[i] += lastRefined.pressure[m * n + i] / months
+        for (let i = 0; i < n * 2; i++) wind[i] += lastRefined.wind[m * n * 2 + i] / months
+      }
+    }
+    monthFields = { source: lastRefined, month: climateMonth, pressure, wind }
+    return monthFields
+  }
+  // The wind the layer and the readout show: the refined month's when there
+  // is one, the history's banded wind otherwise.
+  const displayWind = (): Float32Array | null => refinedMonth()?.wind ?? lastWind
   let climateResX = 0
   let climateResY = 0
   // Rivers/lakes (hydrology) — a panel-less stage shown on the erosion panel.
@@ -1530,11 +1594,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Under this fraction of the reference speed the air counts as calm.
   const WIND_CALM = 0.2
   function drawWind(c: CanvasRenderingContext2D): void {
-    if (!lastWind) return
+    const shown = displayWind()
+    if (!shown) return
     // Traced once per field, not per composite: every overlay toggle
     // composites, and the trace is the expensive half.
-    if (windLines?.field !== lastWind) {
-      const field = lastWind
+    if (windLines?.field !== shown) {
+      const field = shown
       const ref = vectorReferenceSpeed(field)
       // The calm wash on the climate grid, one pixel per cell; drawn scaled
       // up with smoothing, so the belts have soft edges instead of steps.
@@ -1570,6 +1635,45 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     drawComets(c, windLines.lines, { width: MAP_WIDTH, height: MAP_HEIGHT, color: [20, 35, 50], length: 26, gap: 14, maxWidth: 3.2, opacity: 0.55 })
     drawComets(c, windLines.lines, { width: MAP_WIDTH, height: MAP_HEIGHT, color: [255, 255, 255], length: 26, gap: 14, maxWidth: 1.8 })
   }
+  // Sea-level pressure of the shown month (the refinement's): a wash, blue
+  // for the lows and amber for the highs, and isobars every 4 hPa with the
+  // 1012 and the 1020 line heavier — the weather map's convention. The wash
+  // and the isobars are made once per field.
+  let pressureDrawing: { field: Float32Array; wash: HTMLCanvasElement; isobars: Isoline[] } | null = null
+  function drawPressure(c: CanvasRenderingContext2D): void {
+    const field = refinedMonth()?.pressure
+    if (!field) return
+    if (pressureDrawing?.field !== field) {
+      const wash = document.createElement('canvas')
+      wash.width = climateResX
+      wash.height = climateResY
+      const wc = wash.getContext('2d')!
+      const img = wc.createImageData(climateResX, climateResY)
+      for (let i = 0; i < climateResX * climateResY; i++) {
+        const [r, g, b] = pressureColor(field[i])
+        img.data[i * 4] = r
+        img.data[i * 4 + 1] = g
+        img.data[i * 4 + 2] = b
+        // Stronger the further from the standard pressure, so the land
+        // stays readable where nothing is going on.
+        img.data[i * 4 + 3] = Math.round(255 * (0.2 + 0.4 * Math.min(1, Math.abs(field[i] - 1013) / 12)))
+      }
+      wc.putImageData(img, 0, 0)
+      const levels: number[] = []
+      for (let p = 980; p <= 1048; p += 4) levels.push(p)
+      pressureDrawing = { field, wash, isobars: traceIsolines(field, climateResX, climateResY, levels) }
+    }
+    c.save()
+    c.imageSmoothingEnabled = true
+    c.drawImage(pressureDrawing.wash, 0, 0, MAP_WIDTH, MAP_HEIGHT)
+    c.strokeStyle = 'rgba(40, 45, 60, 0.6)'
+    drawIsolines(c, pressureDrawing.isobars, {
+      resX: climateResX, resY: climateResY, width: MAP_WIDTH, height: MAP_HEIGHT,
+      lineWidth: 1, emphasis: (level) => level === 1012 || level === 1020, emphasisWidth: 2,
+    })
+    c.restore()
+  }
+
 
   // Seasonality tint (climate): the annual temperature amplitude everywhere —
   // stable teal near coasts/equator, extreme purple in continental interiors at
@@ -1888,6 +1992,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The equator is always drawn, like the events — a property of the map,
     // not a user toggle (decided 2026-09-26 on the picture check).
     { id: 'equator', enabled: true, paint: (c) => paintWrapped(c, drawEquator) },
+    { id: 'pressure', enabled: false, paint: drawPressure },
     { id: 'wind', enabled: false, paint: drawWind },
     { id: 'currents', enabled: false, paint: drawCurrents },
     { id: 'waterBalance', enabled: false, paintPixels: paintWaterBalance },
@@ -2087,13 +2192,22 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         ? [{ label: t('readout.row.season'), value: t('readout.seasonSwing', { v: (lastSeasonality[cell.i] / 2).toFixed(1) }) }]
         : [],
     },
+    pressure: {
+      available: () => lastRefined !== null,
+      legend: () => ({ type: 'gradient', title: t('overlay.pressure.label'), unit: t('common.unit.hectopascal'), stops: pressureLegendStops }),
+      probe: (cell) => {
+        const field = refinedMonth()?.pressure
+        return field ? [{ label: t('readout.row.pressure'), value: `${Math.round(field[cell.i])} ${t('common.unit.hectopascal')}` }] : []
+      },
+    },
     wind: {
       available: () => lastWind !== null,
       legend: null,
       probe: (cell) => {
-        if (!lastWind) return []
-        const u = lastWind[cell.i * 2]
-        const v = lastWind[cell.i * 2 + 1]
+        const wind = displayWind()
+        if (!wind) return []
+        const u = wind[cell.i * 2]
+        const v = wind[cell.i * 2 + 1]
         // The raw magnitude is a relative one, so it goes out through the m/s
         // anchor rather than as itself (CLIMATE_TUNING.windSpeedMsPerUnit). The
         // band pattern tapers to zero at each cell edge (climate/wind.ts), so a
@@ -2946,7 +3060,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // so the ecology overlay went on showing values computed from a climate that
     // no longer existed. The hydrology's own refinement is exempt: it carries
     // `refinement`, and the pass that sent it is recomputing that work itself.
-    if (!message.refinement) invalidateAfter('climate')
+    if (!message.refinement) {
+      invalidateAfter('climate')
+      dropRefinement()
+    }
     climateResolve?.()
     climateResolve = null
   }
@@ -2975,7 +3092,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         // No run of its own since phase 5.1; nothing was waiting.
         break
       case 'climate':
+        // The climate run and the refinement decline under one stage.
         climateInFlight = false
+        refineInFlight = false
         climateStatus.textContent = ''
         climateResolve?.()
         climateResolve = null
@@ -3030,9 +3149,34 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     for (const downstream of downstreamOf(id)) clearStage(downstream)
   }
 
+  function handleClimateRefined(message: WorkerClimateRefinedMessage): void {
+    refineInFlight = false
+    lastRefined = { months: message.months, pressure: new Float32Array(message.pressure), wind: new Float32Array(message.wind) }
+    updateControlsDisabled()
+    updateOverlays()
+  }
+  // The reset button's half, and what a new climate does: the step shows the
+  // history's climate again, over the year.
+  function dropRefinement(): void {
+    if (!lastRefined && !refineInFlight) return
+    lastRefined = null
+    monthFields = null
+    climateMonth = 0
+    climateMonthInput.value = '0'
+    sayClimateMonth()
+    updateControlsDisabled()
+    updateOverlays()
+  }
+  function sayClimateMonth(): void {
+    climateMonthLabel.textContent = climateMonth === 0
+      ? t('generator.climate.month.annual')
+      : new Intl.DateTimeFormat(getLocale(), { month: 'long' }).format(new Date(2001, climateMonth - 1, 1))
+  }
+
   // Clears ONE stage's mirrors. The cascade is not here any more — it comes from
   // the declared chain, via invalidateAfter below.
   function clearClimate(): void {
+    dropRefinement()
     lastTemperature = null
     lastWind = null
     lastCurrents = null
@@ -3338,6 +3482,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
     if (message.type === 'climateData') {
       handleClimateData(message)
+      return
+    }
+    if (message.type === 'climateRefined') {
+      handleClimateRefined(message)
       return
     }
     if (message.type === 'planetPreviewData') {
@@ -4882,6 +5030,22 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // recompute. Which controls those are comes from the stage table — see resetInputs.
   // Step 0's reset takes both groups of its sliders: the planet's and the
   // climate's two levers, which stand beside them.
+  refineClimateButton.addEventListener('click', () => {
+    if (isBusy() || lastTemperature === null || lastRefined !== null) return
+    refineInFlight = true
+    updateControlsDisabled()
+    postToWorker({ type: 'climateRefine' })
+  })
+  resetClimateButton.addEventListener('click', () => {
+    if (isBusy()) return
+    dropRefinement()
+  })
+  climateMonthInput.addEventListener('input', () => {
+    climateMonth = Number(climateMonthInput.value)
+    sayClimateMonth()
+    applyOverlays()
+    renderLegends()
+  })
   resetPlanetButton.addEventListener('click', () => {
     resetInputs('planet')
     resetInputs('climate')
