@@ -159,7 +159,8 @@ export const REFINED_LAYERS: LayerSpec[] = REFINED_FIELDS.map((f) => {
   if (f.name.startsWith('pressure.')) return layer(f.name, 'u16', 150 / 65535, 950)
   if (f.name.startsWith('wind')) return layer(f.name, 'u16', 80 / 65535, -40)
   if (f.name === 'currentU' || f.name === 'currentV') return layer(f.name, 'u16', 2 / 65535, -1)
-  if (f.name === 'fog' || f.name === 'foehn') return layer(f.name, 'u8', 1 / 255, 0)
+  if (f.name === 'fog' || f.name === 'foehn' || f.name === 'rainVariability') return layer(f.name, 'u8', 1 / 255, 0)
+  if (f.name === 'ensoPattern') return layer(f.name, 'u8', 2 / 255, -1)
   return layer(f.name, 'u16', 40 / 65535, -20)
 })
 

@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-28
+- **new** Climate: the rain's year-to-year variability and an ENSO-like see-saw of equatorial basins, shown under weather phenomena and kept in the save. `weather.enso`
 - **new** Climate: coastal fog and föhn — fog cools coasts beside a cold sea, föhn warms the lee of ranges; a weather-phenomena layer shows either. `overlay.weather`
 - **changed** Climate: after refining, the biomes come from the real months, and rivers, lakes and ecology are computed again on the refined climate. `generator.action.runClimate`
 - **changed** Climate: biomes follow the Köppen–Geiger class of the twelve months; four new biomes — Mediterranean scrub, steppe, tropical dry forest, cold desert. `biome`

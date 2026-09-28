@@ -271,6 +271,37 @@ export const CLIMATE_TUNING = {
   foehnFullWind: 1,
   foehnWarmingC: 3,
 
+  // --- from reliability.ts (the rain's reliability, the ENSO see-saw) ---
+  // Not measured yet (2026-09-28); orders of magnitude.
+
+  // The rain's own year-to-year spread (coefficient of variation):
+  // scale/√(annual mm), so 100 mm → 45 %, 400 mm → 22 %, 1600 mm → 11 %
+  // (deserts vary by 40–50 %, wet coasts by 10–15 %); the rain floored at
+  // this many mm, the spread capped here; this much more on a fully seasonal
+  // year (the monsoon's margins fail).
+  rainVariabilityScale: 4.5,
+  rainVariabilityFloorMm: 50,
+  rainVariabilityMax: 0.8,
+  rainVariabilitySeason: 0.3,
+  // The see-saw: basins are the sea runs within this latitude of the
+  // equator, shore to shore; full where the west third is this much warmer
+  // than the east third, and from this width to that (the Pacific spans
+  // ~150°, the Atlantic ~60°, and its see-saw is weak).
+  ensoRowsDeg: 5,
+  ensoFullGradientC: 3,
+  ensoMinWidthDeg: 50,
+  ensoFullWidthDeg: 120,
+  // Its reach on land: this latitude and this many cells (62 km) from the
+  // basin's ends, as Gaussians; this much spread at full reach.
+  ensoReachLatDeg: 25,
+  ensoReachCells: 20,
+  ensoVariability: 0.3,
+  // Its period, years, from a narrow basin to one of 180°: a 150° basin
+  // comes out at about 4.5 years (Earth's ENSO recurs every 2–7, some 4 on
+  // average). At 7 the 150° test basin gave 6.2.
+  ensoPeriodMinYears: 2,
+  ensoPeriodMaxYears: 5,
+
   // --- from refinement.ts ---
   // When the equatorial rain belt stands furthest toward the top hemisphere,
   // as a fraction of the year: about mid-July, a few weeks after the

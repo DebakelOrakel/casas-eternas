@@ -104,6 +104,11 @@ export const REFINED_FIELDS: readonly FieldSpec[] = [
   // Weather phenomena, each the share of the year it happens (0..1), land.
   climate('fog', 'share', true),
   climate('foehn', 'share', true),
+  // The rain's reliability: its year-to-year coefficient of variation, and
+  // the ENSO see-saw's mark (−1 drier … +1 wetter in the warm phase); the
+  // see-saw's period and strength are the table `enso`.
+  climate('rainVariability', 'share', true),
+  climate('ensoPattern', '', true),
 ]
 
 const BY_NAME = new Map([...WORLD_FIELDS, ...REFINED_FIELDS].map((f) => [f.name, f]))

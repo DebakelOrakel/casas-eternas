@@ -442,6 +442,12 @@ else {
     upwelling: Float32Array.from({ length: n }, (_, i) => (rnd(i + 9) - 0.3) * 6),
     fog: Float32Array.from({ length: n }, (_, i) => rnd(i + 17)),
     foehn: Float32Array.from({ length: n }, (_, i) => rnd(i + 19) * 0.3),
+    reliability: {
+      rainVariability: Float32Array.from({ length: n }, (_, i) => rnd(i + 23) * 0.6),
+      ensoPattern: Float32Array.from({ length: n }, (_, i) => rnd(i + 29) * 2 - 1),
+      ensoPeriodYears: 4.5,
+      ensoStrength: 0.3,
+    },
   }
   const sources = M.refined.refinedLayerSources(r, n)
   const decoded = new Map()

@@ -11,6 +11,8 @@ import { refinedMonthField } from './fieldSpec'
 import { restoreLandOnlySentinel } from './worldLayers'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { koppenFromMonths } from '../../generator/climate/biomes'
+import { annualFromMonths } from '../../generator/climate/refinement'
+import { computeReliability } from '../../generator/climate/reliability'
 
 // Each layer's values by field name, `n` cells each.
 export function refinedLayerSources(r: RefinedClimate, n: number): Map<string, Float32Array> {
@@ -41,6 +43,8 @@ export function refinedLayerSources(r: RefinedClimate, n: number): Map<string, F
   out.set('upwelling', r.upwelling)
   out.set('fog', r.fog)
   out.set('foehn', r.foehn)
+  out.set('rainVariability', r.reliability.rainVariability)
+  out.set('ensoPattern', r.reliability.ensoPattern)
   return out
 }
 
@@ -88,5 +92,12 @@ export function refinedFromLayers(get: (name: string) => Float32Array | null, n:
   }
   // The class is the months', so it is derived again rather than stored twice.
   const koppen = koppenFromMonths(temperature, precipitation, REFINED_MONTHS)
-  return { months: REFINED_MONTHS, temperature, precipitation, koppen, fog, foehn, pressure, wind, currents, currentAnomaly, upwelling }
+  // The reliability is the months' and the sea's again, like the classes;
+  // its layers are for readers without the generator. (The equator at the
+  // map's middle: the shift slider is gone.)
+  const land = new Uint8Array(n)
+  for (let i = 0; i < n; i++) land[i] = landMask[i] > 0.5 ? 1 : 0
+  const annual = annualFromMonths({ months: REFINED_MONTHS, temperature, precipitation })
+  const reliability = computeReliability(annual.precipitation, annual.monsoonIndex, currentAnomaly, land, 0)
+  return { months: REFINED_MONTHS, temperature, precipitation, koppen, fog, foehn, reliability, pressure, wind, currents, currentAnomaly, upwelling }
 }

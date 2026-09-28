@@ -2,5 +2,11 @@
   "weather.fog.label": "Nebel",
   "weather.fog.help": "Küstennebel über kaltem Auftriebswasser: kühle, trockene Küsten, die vom Nebel leben.",
   "weather.foehn.label": "Föhn",
-  "weather.foehn.help": "Warmer, trockener Fallwind auf der Leeseite eines Gebirges."
+  "weather.foehn.help": "Warmer, trockener Fallwind auf der Leeseite eines Gebirges.",
+  "weather.rainVariability.label": "Regenschwankung",
+  "weather.rainVariability.help": "Wie weit der Regen eines Jahres vom Mittel abweicht: Trockengebiete und Monsunränder schwanken am stärksten.",
+  "weather.enso.label": "ENSO-Wippe",
+  "weather.enso.help": "In der warmen Phase schwappt das warme Wasser eines Äquatorozeans nach Osten: seine Ostufer bekommen Regen, seine Westufer Dürre.",
+  "weather.enso.legend.unit": "% nasser in der warmen Phase",
+  "weather.enso.period": "alle {v} Jahre"
 }

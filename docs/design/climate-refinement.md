@@ -271,6 +271,15 @@ physics.
    polar and subpolar coasts, some coastal desert), föhn on 84 (at most a
    quarter of the year). Constants unmeasured against Earth.
 7. Reliability field.
+   BUILT 2026-09-28 (climate/reliability.ts): the rain's coefficient of
+   variation from its dryness (4.5/√mm, capped 0.8) and seasonality, plus an
+   ENSO see-saw for equatorial basins with shores on both sides, strength
+   from their west-to-east warmth and width, the land past the east end
+   wetter and before the west end drier in the warm phase; period from the
+   width (2–5 years). Astrakan: variability 12/20/47 % (p10/p50/p90), a
+   basin of strength 0.30; a 150° test basin gives 4.5 years. In the save:
+   layers rainVariability and ensoPattern, table enso (period, strength);
+   the reliability is derived again on load, like the classes.
 8. C2–C4.
 9. Currents 5, controls, D: when needed.
 10. Final refinement: with the bakery step.

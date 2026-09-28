@@ -696,6 +696,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           <div class="gen-bake__tiers">
             <button type="button" class="gen-tier" data-weather="fog" aria-pressed="true" disabled data-t="weather.fog.label" data-help="weather.fog">${t('weather.fog.label')}</button>
             <button type="button" class="gen-tier" data-weather="foehn" aria-pressed="false" disabled data-t="weather.foehn.label" data-help="weather.foehn">${t('weather.foehn.label')}</button>
+            <button type="button" class="gen-tier" data-weather="rainVariability" aria-pressed="false" disabled data-t="weather.rainVariability.label" data-help="weather.rainVariability">${t('weather.rainVariability.label')}</button>
+            <button type="button" class="gen-tier" data-weather="enso" aria-pressed="false" disabled data-t="weather.enso.label" data-help="weather.enso">${t('weather.enso.label')}</button>
           </div>
         </div>
       </section>
@@ -1747,15 +1749,26 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The weather phenomena (the refinement's): the picked one's share of the
   // year on the land, blended over the land cells and painted on land
   // pixels, as the upwelling is on the sea. Full colour at half the year.
-  type WeatherId = 'fog' | 'foehn'
+  type WeatherId = 'fog' | 'foehn' | 'rainVariability' | 'enso'
   let pickedWeather: WeatherId = 'fog'
-  const WEATHER_COLORS: Record<WeatherId, [number, number, number]> = { fog: [120, 140, 170], foehn: [215, 110, 40] }
-  const WEATHER_FULL = 0.5
+  // The picked phenomenon's field, and how it is drawn: a share with its
+  // colour at full strength (`full`), or the see-saw's signed mark, brown
+  // for drier and blue for wetter.
+  const weatherField = (id: WeatherId): Float32Array | null => {
+    if (!lastRefined) return null
+    return id === 'enso' ? lastRefined.reliability.ensoPattern : id === 'rainVariability' ? lastRefined.reliability.rainVariability : lastRefined[id]
+  }
+  const WEATHER_STYLE: Record<WeatherId, { rgb: [number, number, number]; full: number; signed?: [number, number, number] }> = {
+    fog: { rgb: [120, 140, 170], full: 0.5 },
+    foehn: { rgb: [215, 110, 40], full: 0.5 },
+    rainVariability: { rgb: [170, 60, 120], full: 0.5 },
+    enso: { rgb: [40, 110, 200], full: 1, signed: [165, 110, 45] },
+  }
   function paintWeather(data: Uint8ClampedArray): void {
-    const field = lastRefined?.[pickedWeather]
+    const field = weatherField(pickedWeather)
     const precipitation = lastPrecipitation
     if (!field || !precipitation || !lastRelief) return
-    const [r, g, b] = WEATHER_COLORS[pickedWeather]
+    const style = WEATHER_STYLE[pickedWeather]
     for (let y = 0; y < MAP_HEIGHT; y++) {
       const fy = (y + 0.5) / MAP_HEIGHT * climateResY - 0.5
       const y0 = Math.floor(fy)
@@ -1777,8 +1790,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           weight += w
         }
         if (weight <= 0) continue
-        const k = Math.min(1, sum / weight / WEATHER_FULL)
+        const v = sum / weight
+        const k = Math.min(1, Math.abs(v) / style.full)
         if (k <= 0.02) continue
+        const [r, g, b] = v < 0 && style.signed ? style.signed : style.rgb
         const alpha = 0.7 * k
         const p = (y * MAP_WIDTH + x) * 4
         data[p] = data[p] * (1 - alpha) + r * alpha
@@ -2379,13 +2394,25 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     weather: {
       available: () => lastRefined !== null,
-      legend: () => ({ type: 'gradient', title: t(`weather.${pickedWeather}.label` as TKey), unit: t('common.unit.percent'), stops: [
-        { value: 0, rgb: [236, 236, 230] },
-        { value: WEATHER_FULL * 100, rgb: WEATHER_COLORS[pickedWeather] },
-      ] }),
+      legend: () => {
+        const style = WEATHER_STYLE[pickedWeather]
+        const pale: [number, number, number] = [236, 236, 230]
+        if (pickedWeather === 'enso') {
+          const period = lastRefined?.reliability.ensoPeriodYears ?? 0
+          const title = period > 0 ? `${t('weather.enso.label')} · ${t('weather.enso.period', { v: period.toFixed(1) })}` : t('weather.enso.label')
+          return { type: 'gradient', title, unit: t('weather.enso.legend.unit'), stops: [
+            { value: -100, rgb: style.signed! }, { value: 0, rgb: pale }, { value: 100, rgb: style.rgb },
+          ] }
+        }
+        return { type: 'gradient', title: t(`weather.${pickedWeather}.label` as TKey), unit: t('common.unit.percent'), stops: [
+          { value: 0, rgb: pale }, { value: style.full * 100, rgb: style.rgb },
+        ] }
+      },
       probe: (cell) => {
-        const v = lastRefined?.[pickedWeather][cell.i] ?? 0
-        return cell.land && v > 0.005 ? [{ label: t(`weather.${pickedWeather}.label` as TKey), value: `${Math.round(100 * v)} ${t('common.unit.percent')}` }] : []
+        const v = weatherField(pickedWeather)?.[cell.i] ?? 0
+        if (!cell.land || Math.abs(v) <= 0.005) return []
+        const shown = pickedWeather === 'enso' ? `${v > 0 ? '+' : '−'}${Math.round(100 * Math.abs(v))}` : `${Math.round(100 * v)}`
+        return [{ label: t(`weather.${pickedWeather}.label` as TKey), value: `${shown} ${t('common.unit.percent')}` }]
       },
     },
     upwelling: {
@@ -3397,6 +3424,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       koppen: new Uint8Array(message.koppen),
       fog: new Float32Array(message.fog),
       foehn: new Float32Array(message.foehn),
+      reliability: {
+        rainVariability: new Float32Array(message.rainVariability),
+        ensoPattern: new Float32Array(message.ensoPattern),
+        ensoPeriodYears: message.ensoPeriodYears,
+        ensoStrength: message.ensoStrength,
+      },
     }
     updateControlsDisabled()
     updateOverlays()
@@ -4358,6 +4391,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
         layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: climateResX, resY: climateResY, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
       }
+    }
+    // The ENSO see-saw's period and strength, beside its pattern layer: what
+    // a reader needs to roll the phase of a year.
+    if (lastRefined) {
+      const { ensoPeriodYears, ensoStrength } = lastRefined.reliability
+      zip.file('layers/enso.json', JSON.stringify({ periodYears: ensoPeriodYears, strength: ensoStrength }))
+      layers.push({ name: 'enso', file: 'layers/enso.json', kind: 'table' })
     }
     // The standing-water list (ADAPTIVE_MESH_PLAN.md phase 1): a JSON table
     // beside the rasters — the truth `lakeDepth` derives from

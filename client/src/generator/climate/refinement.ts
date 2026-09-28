@@ -4,6 +4,7 @@ import { koppenFromMonths, reduceTemperatureToSeaLevel } from './biomes'
 import { computePressureWind, REFINED_MONTHS } from './pressure'
 import { seasonalCycle } from './energyBalance'
 import { applyPhenomena } from './phenomena'
+import { computeReliability, type Reliability } from './reliability'
 import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
 import { OCEAN_AMPLITUDE } from './seasonality'
 import { applyOceanSST, computeOceanCurrents, computeUpwelling, eastwardInBasin } from './oceanCurrents'
@@ -37,6 +38,8 @@ export interface RefinedClimate {
   // The Köppen–Geiger class per cell from these months (koppen.ts), 0 on
   // the sea.
   koppen: Uint8Array
+  // The rain's reliability and the ENSO see-saw (reliability.ts).
+  reliability: Reliability
   // Weather phenomena, each a share of the year per cell (phenomena.ts).
   fog: Float32Array
   foehn: Float32Array
@@ -127,7 +130,12 @@ export function refineClimate(
   const { fog, foehn } = applyPhenomena(monthly, REFINED_MONTHS, wind, currentAnomaly, land, elevation, width, height)
 
   const koppen = koppenFromMonths(monthly, precipitation, REFINED_MONTHS)
-  return { months: REFINED_MONTHS, temperature: monthly, precipitation, koppen, fog, foehn, pressure, wind, currents, currentAnomaly, upwelling }
+  const refined = { months: REFINED_MONTHS, temperature: monthly, precipitation, koppen, fog, foehn, pressure, wind, currents, currentAnomaly, upwelling }
+
+  // 7: the rain's reliability, from the year the months make.
+  const annual = annualFromMonths(refined)
+  const reliability = computeReliability(annual.precipitation, annual.monsoonIndex, currentAnomaly, land, params.equatorOffset)
+  return { ...refined, reliability }
 }
 
 // The annual fields of a refinement, in the forms the history's climate
@@ -138,7 +146,7 @@ export function refineClimate(
 // two halves of the year, (P_top − P_bottom) / (P_top + P_bottom + floor)
 // with each half as its own annual rate, + where the rain falls in the top
 // hemisphere's summer (April–September), OCEAN_PRECIP on the sea.
-export function annualFromMonths(r: RefinedClimate): { temperature: Float32Array; precipitation: Float32Array; seasonalAmplitude: Float32Array; monsoonIndex: Float32Array } {
+export function annualFromMonths(r: Pick<RefinedClimate, 'months' | 'temperature' | 'precipitation'>): { temperature: Float32Array; precipitation: Float32Array; seasonalAmplitude: Float32Array; monsoonIndex: Float32Array } {
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const temperature = new Float32Array(n)
   const precipitation = new Float32Array(n)

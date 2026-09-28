@@ -463,6 +463,14 @@ export interface WorkerClimateRefinedMessage {
   // climate/phenomena.ts): coastal fog, föhn.
   fog: ArrayBuffer
   foehn: ArrayBuffer
+  // The rain's reliability (climate/reliability.ts): its year-to-year
+  // coefficient of variation and the ENSO see-saw's mark (−1 drier … +1
+  // wetter in the warm phase), Float32 per cell, 0 on the sea; the see-saw's
+  // period in years and strength (0..1), 0 where the world has none.
+  rainVariability: ArrayBuffer
+  ensoPattern: ArrayBuffer
+  ensoPeriodYears: number
+  ensoStrength: number
   // Sea-level pressure, hPa, Float32, months × resX × resY (month-major).
   pressure: ArrayBuffer
   // Surface wind, Float32 interleaved [u, v] per cell like
