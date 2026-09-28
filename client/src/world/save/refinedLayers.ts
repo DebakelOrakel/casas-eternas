@@ -39,6 +39,8 @@ export function refinedLayerSources(r: RefinedClimate, n: number): Map<string, F
   out.set('currentV', cv)
   out.set('currentAnomaly', r.currentAnomaly)
   out.set('upwelling', r.upwelling)
+  out.set('fog', r.fog)
+  out.set('foehn', r.foehn)
   return out
 }
 
@@ -75,7 +77,9 @@ export function refinedFromLayers(get: (name: string) => Float32Array | null, n:
   const cv = get('currentV')
   const currentAnomaly = get('currentAnomaly')
   const upwelling = get('upwelling')
-  if (!cu || !cv || !currentAnomaly || !upwelling) return null
+  const fog = get('fog')
+  const foehn = get('foehn')
+  if (!cu || !cv || !currentAnomaly || !upwelling || !fog || !foehn) return null
   if (cu.length !== n || cv.length !== n || currentAnomaly.length !== n || upwelling.length !== n) return null
   const currents = new Float32Array(n * 2)
   for (let i = 0; i < n; i++) {
@@ -84,5 +88,5 @@ export function refinedFromLayers(get: (name: string) => Float32Array | null, n:
   }
   // The class is the months', so it is derived again rather than stored twice.
   const koppen = koppenFromMonths(temperature, precipitation, REFINED_MONTHS)
-  return { months: REFINED_MONTHS, temperature, precipitation, koppen, pressure, wind, currents, currentAnomaly, upwelling }
+  return { months: REFINED_MONTHS, temperature, precipitation, koppen, fog, foehn, pressure, wind, currents, currentAnomaly, upwelling }
 }

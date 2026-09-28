@@ -246,6 +246,31 @@ export const CLIMATE_TUNING = {
   // Gauss-Seidel sweeps per harmonic.
   ebmSolveIters: 400,
 
+  // --- from phenomena.ts (the climate step's weather phenomena) ---
+  // Not measured yet (2026-09-28); orders of magnitude.
+
+  // Fog reaches this many cells (62 km) inland, thinning each cell; it is
+  // full where the sea is this much colder than its latitude's base and the
+  // air this much warmer than the sea, and it takes this share of the
+  // difference off the coast's month (the marine layer's chill).
+  fogReachCells: 2,
+  fogFullColdC: 2,
+  fogFullContrastC: 3,
+  // A wind this onshore (the cosine to the coast's normal) counts in full.
+  fogFullOnshore: 0.5,
+  fogCooling: 0.5,
+  // Föhn: the highest ground within this many cells upwind, over the ground
+  // here, from this barrier (m) on, full at this much more; full at this wind
+  // (8 m/s units); this much warmer on a month of it, °C (a monthly mean; the
+  // days themselves run 10–20 °C warmer).
+  foehnReachCells: 4,
+  // From 600 m: the air sheds its water above the cloud base on the
+  // windward side and comes down the lee dry, some 0.4 °C warmer per 100 m.
+  foehnMinBarrierM: 600,
+  foehnFullBarrierM: 2000,
+  foehnFullWind: 1,
+  foehnWarmingC: 3,
+
   // --- from refinement.ts ---
   // When the equatorial rain belt stands furthest toward the top hemisphere,
   // as a fraction of the year: about mid-July, a few weeks after the

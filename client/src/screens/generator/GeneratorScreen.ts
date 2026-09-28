@@ -687,6 +687,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           </div>
           <input type="range" class="gen-param__range climate-month-input" min="0" max="12" step="1" value="0" disabled aria-label="${t('generator.climate.month.label')}" data-t-aria="generator.climate.month.label" />
         </div>
+        <!-- Which weather phenomenon the phenomena layer shows: one layer and
+             a pick, so the layer list stays short as phenomena are added. -->
+        <div class="gen-param" data-help="generator.climate.weather">
+          <div class="gen-param__head">
+            <span class="gen-param__label" data-t="generator.climate.weather.label">${t('generator.climate.weather.label')}</span>
+          </div>
+          <div class="gen-bake__tiers">
+            <button type="button" class="gen-tier" data-weather="fog" aria-pressed="true" disabled data-t="weather.fog.label" data-help="weather.fog">${t('weather.fog.label')}</button>
+            <button type="button" class="gen-tier" data-weather="foehn" aria-pressed="false" disabled data-t="weather.foehn.label" data-help="weather.foehn">${t('weather.foehn.label')}</button>
+          </div>
+        </div>
       </section>
       <div class="gen-step__foot">
         <!-- No stats: the world's coldest and warmest cell said little once
@@ -833,6 +844,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const resetClimateButton = root.querySelector<HTMLButtonElement>('[data-action="reset-climate"]')!
   const climateMonthInput = root.querySelector<HTMLInputElement>('.climate-month-input')!
   const climateMonthLabel = root.querySelector<HTMLElement>('[data-value="climate-month-label"]')!
+  const weatherPicks = [...root.querySelectorAll<HTMLButtonElement>('[data-weather]')]
   const resetEcologyButton = root.querySelector<HTMLButtonElement>('[data-action="reset-ecology"]')!
   const resetMigrationButton = root.querySelector<HTMLButtonElement>('[data-action="reset-migration"]')!
   // The artifact cache is filled by the worldmap, but inspecting it is just
@@ -1006,6 +1018,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     refineClimateButton.disabled = busy || lastTemperature === null || lastRefined !== null
     resetClimateButton.disabled = busy || lastRefined === null
     climateMonthInput.disabled = lastRefined === null
+    for (const pick of weatherPicks) pick.disabled = lastRefined === null
     resetEcologyButton.disabled = busy
     resetMigrationButton.disabled = busy
     saveMenu.setEnabled(!busy)
@@ -1731,6 +1744,50 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
 
+  // The weather phenomena (the refinement's): the picked one's share of the
+  // year on the land, blended over the land cells and painted on land
+  // pixels, as the upwelling is on the sea. Full colour at half the year.
+  type WeatherId = 'fog' | 'foehn'
+  let pickedWeather: WeatherId = 'fog'
+  const WEATHER_COLORS: Record<WeatherId, [number, number, number]> = { fog: [120, 140, 170], foehn: [215, 110, 40] }
+  const WEATHER_FULL = 0.5
+  function paintWeather(data: Uint8ClampedArray): void {
+    const field = lastRefined?.[pickedWeather]
+    const precipitation = lastPrecipitation
+    if (!field || !precipitation || !lastRelief) return
+    const [r, g, b] = WEATHER_COLORS[pickedWeather]
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const fy = (y + 0.5) / MAP_HEIGHT * climateResY - 0.5
+      const y0 = Math.floor(fy)
+      const ty = fy - y0
+      const r0 = wrapValue(y0, climateResY) * climateResX
+      const r1 = wrapValue(y0 + 1, climateResY) * climateResX
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        if (!(lastRelief[y * MAP_WIDTH + x] & 128)) continue // sea
+        const fx = (x + 0.5) / MAP_WIDTH * climateResX - 0.5
+        const x0 = Math.floor(fx)
+        const tx = fx - x0
+        const c0 = wrapValue(x0, climateResX)
+        const c1 = wrapValue(x0 + 1, climateResX)
+        let sum = 0
+        let weight = 0
+        for (const [i, w] of [[r0 + c0, (1 - tx) * (1 - ty)], [r0 + c1, tx * (1 - ty)], [r1 + c0, (1 - tx) * ty], [r1 + c1, tx * ty]]) {
+          if (precipitation[i] === OCEAN_PRECIP) continue
+          sum += field[i] * w
+          weight += w
+        }
+        if (weight <= 0) continue
+        const k = Math.min(1, sum / weight / WEATHER_FULL)
+        if (k <= 0.02) continue
+        const alpha = 0.7 * k
+        const p = (y * MAP_WIDTH + x) * 4
+        data[p] = data[p] * (1 - alpha) + r * alpha
+        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
+        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
+      }
+    }
+  }
+
   // Sea-level pressure of the shown month (the refinement's): a wash, blue
   // for the lows and amber for the highs, and isobars every 4 hPa with the
   // 1012 and the 1020 line heavier — the weather map's convention. The wash
@@ -2116,6 +2173,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // not a user toggle (decided 2026-09-26 on the picture check).
     { id: 'equator', enabled: true, paint: (c) => paintWrapped(c, drawEquator) },
     { id: 'upwelling', enabled: false, paintPixels: paintUpwelling },
+    { id: 'weather', enabled: false, paintPixels: paintWeather },
     { id: 'pressure', enabled: false, paint: drawPressure },
     { id: 'wind', enabled: false, paint: drawWind },
     { id: 'currents', enabled: false, paint: drawCurrents },
@@ -2318,6 +2376,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       probe: (cell) => lastSeasonality && lastSeasonality[cell.i] !== OCEAN_AMPLITUDE
         ? [{ label: t('readout.row.season'), value: t('readout.seasonSwing', { v: (lastSeasonality[cell.i] / 2).toFixed(1) }) }]
         : [],
+    },
+    weather: {
+      available: () => lastRefined !== null,
+      legend: () => ({ type: 'gradient', title: t(`weather.${pickedWeather}.label` as TKey), unit: t('common.unit.percent'), stops: [
+        { value: 0, rgb: [236, 236, 230] },
+        { value: WEATHER_FULL * 100, rgb: WEATHER_COLORS[pickedWeather] },
+      ] }),
+      probe: (cell) => {
+        const v = lastRefined?.[pickedWeather][cell.i] ?? 0
+        return cell.land && v > 0.005 ? [{ label: t(`weather.${pickedWeather}.label` as TKey), value: `${Math.round(100 * v)} ${t('common.unit.percent')}` }] : []
+      },
     },
     upwelling: {
       available: () => lastRefined !== null,
@@ -3326,6 +3395,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       currentAnomaly: new Float32Array(message.currentAnomaly),
       upwelling: new Float32Array(message.upwelling),
       koppen: new Uint8Array(message.koppen),
+      fog: new Float32Array(message.fog),
+      foehn: new Float32Array(message.foehn),
     }
     updateControlsDisabled()
     updateOverlays()
@@ -5277,6 +5348,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     dropRefinement()
     requestClimate()
   })
+  for (const pick of weatherPicks) {
+    pick.addEventListener('click', () => {
+      pickedWeather = pick.dataset.weather as WeatherId
+      for (const other of weatherPicks) other.setAttribute('aria-pressed', String(other === pick))
+      applyOverlays()
+      renderLegends()
+    })
+  }
   climateMonthInput.addEventListener('input', () => {
     climateMonth = Number(climateMonthInput.value)
     sayClimateMonth()

@@ -136,6 +136,8 @@
   "generator.climate.month.label": "Month",
   "generator.climate.month.annual": "Year",
   "generator.climate.month.help": "Which month the climate layers show.",
+  "generator.climate.weather.label": "Phenomenon",
+  "generator.climate.weather.help": "Which phenomenon the layer shows.",
   "generator.panel.climate.humidity.label": "Humidity",
   "generator.panel.climate.humidity.help": "Scale global rainfall up or down.",
   "generator.panel.climate.contrast.label": "Contrast",

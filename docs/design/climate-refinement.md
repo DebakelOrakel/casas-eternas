@@ -262,6 +262,14 @@ physics.
    savannaMaxPrecipMm = 1400 brings it back: Astrakan synthesized 9.8 %,
    real months 4.8 %.
 6. C1: fog coasts, föhn.
+   BUILT 2026-09-28 (climate/phenomena.ts): shares of the year per cell,
+   from the months' wind, the sea's anomaly and the relief; fog cools the
+   coast's month toward the sea, föhn warms the lee, before the Köppen
+   classes. One layer ("weather phenomena") with a pick in the step, agreed
+   2026-09-28, catalog `weather.*`. Astrakan (a flat world, highest peak
+   1700 m): fog on 194 land cells (38 above a fifth of the year, most at
+   polar and subpolar coasts, some coastal desert), föhn on 84 (at most a
+   quarter of the year). Constants unmeasured against Earth.
 7. Reliability field.
 8. C2–C4.
 9. Currents 5, controls, D: when needed.

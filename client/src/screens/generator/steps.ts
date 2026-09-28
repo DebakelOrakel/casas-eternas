@@ -119,7 +119,7 @@ export const STEPS: readonly Step[] = [
     // No terrain wash by default: a colour wash under a temperature ramp reads
     // as a third colour.
     overlays: ['terrain', 'names', 'temperature'],
-    exclusive: ['precipitation', 'seasonality', 'monsoon', 'koppen', 'biomes', 'pressure', 'wind', 'currents', 'upwelling'],
+    exclusive: ['precipitation', 'seasonality', 'monsoon', 'koppen', 'biomes', 'pressure', 'wind', 'currents', 'upwelling', 'weather'],
     pickTitle: 'generator.section.climateFields',
     defaults: ['names', 'temperature'],
     fields: [],

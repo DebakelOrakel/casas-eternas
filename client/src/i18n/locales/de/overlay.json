@@ -36,6 +36,8 @@
   "overlay.pressure.help": "Luftdruck auf Meereshöhe im gezeigten Monat: Hochs und Tiefs.",
   "overlay.upwelling.label": "Auftrieb",
   "overlay.upwelling.help": "Wo der Wind kaltes, nährstoffreiches Wasser aus der Tiefe holt: kalte Küsten und reiche Fischgründe.",
+  "overlay.weather.label": "Wetterphänomene",
+  "overlay.weather.help": "Wo ein Wetterphänomen auftritt; die Liste im Schritt wählt, welches.",
   "overlay.currents.label": "Meeresströmungen",
   "overlay.currents.help": "Zeigt die windgetriebenen Meereswirbel und ihre warme bzw. kalte Strömung.",
   "overlay.precipitation.label": "Niederschlag",

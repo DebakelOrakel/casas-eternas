@@ -440,6 +440,8 @@ else {
     currents: Float32Array.from({ length: n * 2 }, (_, i) => rnd(i + 3) * 2 - 1),
     currentAnomaly: Float32Array.from({ length: n }, (_, i) => (rnd(i + 5) - 0.5) * 12),
     upwelling: Float32Array.from({ length: n }, (_, i) => (rnd(i + 9) - 0.3) * 6),
+    fog: Float32Array.from({ length: n }, (_, i) => rnd(i + 17)),
+    foehn: Float32Array.from({ length: n }, (_, i) => rnd(i + 19) * 0.3),
   }
   const sources = M.refined.refinedLayerSources(r, n)
   const decoded = new Map()
@@ -458,6 +460,8 @@ else {
     && worst(r.currents, back.currents, stepOf('currentU')) <= 0.51
     && worst(r.currentAnomaly, back.currentAnomaly, stepOf('currentAnomaly')) <= 0.51
     && worst(r.upwelling, back.upwelling, stepOf('upwelling')) <= 0.51
+    && worst(r.fog, back.fog, stepOf('fog')) <= 0.51
+    && worst(r.foehn, back.foehn, stepOf('foehn')) <= 0.51
   check('the refinement survives the save within half a step', within)
   decoded.delete('upwelling')
   check('a refinement with a layer missing is not one', M.refined.refinedFromLayers((name) => decoded.get(name) ?? null, n) === null)

@@ -3,6 +3,7 @@ import { CLIMATE_TUNING } from './climateTuneParams'
 import { koppenFromMonths, reduceTemperatureToSeaLevel } from './biomes'
 import { computePressureWind, REFINED_MONTHS } from './pressure'
 import { seasonalCycle } from './energyBalance'
+import { applyPhenomena } from './phenomena'
 import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
 import { OCEAN_AMPLITUDE } from './seasonality'
 import { applyOceanSST, computeOceanCurrents, computeUpwelling, eastwardInBasin } from './oceanCurrents'
@@ -36,6 +37,9 @@ export interface RefinedClimate {
   // The Köppen–Geiger class per cell from these months (koppen.ts), 0 on
   // the sea.
   koppen: Uint8Array
+  // Weather phenomena, each a share of the year per cell (phenomena.ts).
+  fog: Float32Array
+  foehn: Float32Array
   // Ekman upwelling per ocean cell (computeUpwelling), 0 on land, the rising
   // part weighted like the cooling: near the equator by the cell's place in
   // its basin (only the east brings cold water up).
@@ -118,8 +122,12 @@ export function refineClimate(
     }
   }
 
+  // C1: fog and föhn, which change the months they happen in (so after the
+  // sea, and before the classes).
+  const { fog, foehn } = applyPhenomena(monthly, REFINED_MONTHS, wind, currentAnomaly, land, elevation, width, height)
+
   const koppen = koppenFromMonths(monthly, precipitation, REFINED_MONTHS)
-  return { months: REFINED_MONTHS, temperature: monthly, precipitation, koppen, pressure, wind, currents, currentAnomaly, upwelling }
+  return { months: REFINED_MONTHS, temperature: monthly, precipitation, koppen, fog, foehn, pressure, wind, currents, currentAnomaly, upwelling }
 }
 
 // The annual fields of a refinement, in the forms the history's climate

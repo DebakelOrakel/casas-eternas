@@ -459,6 +459,10 @@ export interface WorkerClimateRefinedMessage {
   precipitation: ArrayBuffer
   // The Köppen–Geiger class from these months (Uint8, 0 on the sea).
   koppen: ArrayBuffer
+  // Weather phenomena, each a share of the year per cell (Float32,
+  // climate/phenomena.ts): coastal fog, föhn.
+  fog: ArrayBuffer
+  foehn: ArrayBuffer
   // Sea-level pressure, hPa, Float32, months × resX × resY (month-major).
   pressure: ArrayBuffer
   // Surface wind, Float32 interleaved [u, v] per cell like

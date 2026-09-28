@@ -101,6 +101,9 @@ export const REFINED_FIELDS: readonly FieldSpec[] = [
   climate('currentAnomaly', '°C', false),
   // Ekman upwelling, positive where cold water comes up (relative), 0 on land.
   climate('upwelling', 'relative', false),
+  // Weather phenomena, each the share of the year it happens (0..1), land.
+  climate('fog', 'share', true),
+  climate('foehn', 'share', true),
 ]
 
 const BY_NAME = new Map([...WORLD_FIELDS, ...REFINED_FIELDS].map((f) => [f.name, f]))
