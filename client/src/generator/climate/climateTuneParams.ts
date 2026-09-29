@@ -246,9 +246,14 @@ export const CLIMATE_TUNING = {
   // Outgoing radiation per kelvin, W/m²K (Budyko's B).
   ebmRadiation: 2.1,
   // Exchange with each of the four neighbours, W/m²K, and the carry by the
-  // wind per unit of wind (8 m/s), W/m²K.
+  // wind per unit of wind (8 m/s), W/m²K. The carry measured on Earth
+  // (scripts/earthClimate.mjs, 2026-09-29): at 400 the sea's air reached so
+  // far inland that the places' years came out 2.8 °C too narrow on average
+  // (Winnipeg's January +2 °C, real −16); at 150 0.6 °C, and the land's
+  // Köppen groups 29 → 18 points off Beck 2018. At 50 the swings stay right
+  // but the D group overgrows (29 % of land, Earth 22).
   ebmExchange: 40,
-  ebmCarryPerWind: 400,
+  ebmCarryPerWind: 150,
   // Gauss-Seidel sweeps per harmonic.
   ebmSolveIters: 400,
 
@@ -408,6 +413,16 @@ export const CLIMATE_TUNING = {
   // as a fraction of the year: about mid-July, a few weeks after the
   // solstice, as the sea's lag holds it back.
   refineItczPeakYear: 0.54,
+
+  // The rain's multiplier from the anomaly of the sea the air rose from
+  // (computePrecipitation's refined path): e^(perC × °C), clamped. Measured
+  // on Earth (scripts/earthClimate.mjs, 2026-09-29): 0.2 moves the land's
+  // Köppen groups from 18 points off Beck 2018 to 8 (B 20 → 26 %, the dry
+  // west coasts); 0.3 gives 6 but dries the places' rain further (×2.49 →
+  // ×2.58 off).
+  rainSourcePerC: 0.2,
+  rainSourceMin: 0.2,
+  rainSourceMax: 4,
 
   // --- from pressure.ts ---
   // Not measured yet (2026-09-28); set from Earth's orders of magnitude.

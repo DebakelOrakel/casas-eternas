@@ -324,6 +324,49 @@ physics.
    an ocean heat transport knob has no physics). D: when needed.
 10. Final refinement: with the bakery step.
 
+## Calibration on Earth
+
+`node client/scripts/earthClimate.mjs [key=value …]` runs the climate on
+Earth's relief (client/scripts/fixtures/earth-heightmap.png) and compares
+47 places (Köppen class, January and July, annual rain) and the land's
+Köppen group shares (Beck et al. 2018). The temperature error is also
+given as a bias of the mean and of the swing, so the annual mean (the cheap
+model, step 0) and the year's cycle (the energy balance) can be told apart.
+
+2026-09-29, in order:
+
+| Change | Class | Group | Swing bias | Rain | Groups off |
+|---|---|---|---|---|---|
+| Start | 9/47 | 22/47 | — | ×2.65 | 24 |
+| Orographic rainout cap 0.85 → 0.15 | 9 | 22 | −2.8 °C | ×2.35 | 25 |
+| Energy balance: wind carry 400 → 150 | 10 | 23 | −0.6 °C | ×2.22 | 18 |
+| Sea evaporation at its surface, source anomaly 0.2 | 10 | 24 | −0.6 °C | ×2.49 | 8 |
+
+Tried and dropped, as they measured no better than what they replaced:
+
+- A rain factor from the month's wind convergence instead of the zonal
+  band. The banded wind's divergence dominates at 30–40° (±0.04 wind units
+  per cell against ±0.03 from the thermal part), so the east coasts stayed
+  dry; the monsoon's convergence is there (Delhi +0.037 in July, −0.033 in
+  January) but too weak to carry the rain.
+- A rain factor from the month's pressure (low wet, high dry, scaled so the
+  bands alone give the band factor's range): class 10 against 10, groups
+  13 against 9 points. The heat lows over the deserts rain as much as the
+  monsoon's.
+- An eddy diffusion of the moisture across the mean wind: at 0.05–0.1 per
+  iteration the scores moved by one place or one point.
+- A stronger thermal pressure (2–3 hPa/°C): groups 27–34 points off.
+
+What is left, by place: the subtropical east coasts (Shanghai, Tokyo, New
+York, Miami, Sydney, Buenos Aires) and the monsoon (Delhi, Kolkata,
+Beijing) are too dry — the mean wind comes off the land there, and the
+moisture the real coasts get comes with the storms of the western flank
+of the subtropical highs, which a zonal high cannot give. Some interiors
+and highlands are too wet (Alice Springs, Riyadh, Nairobi, Bogotá,
+Brasília), from the upslope rainout of air that has not dried on its way
+in. The dry subtropical summers are some 10 °C too cool (Madrid, Riyadh,
+Tehran), which is the annual mean of step 0, not the cycle.
+
 ## Forks decided 2026-09-28
 
 1. **Köppen replaces Whittaker.** The biome enum changes; ecology and the

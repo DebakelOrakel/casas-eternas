@@ -82,23 +82,22 @@ export function refineClimate(
   onProgress?.(0.15)
 
   // A: pressure and wind for each month, from the month's air reduced to sea
-  // level. Then B's second half: the month's rain, from that wind and that
-  // air, with the equatorial rain belt following the sun.
+  // level.
   const pressure = new Float32Array(REFINED_MONTHS * n)
   const wind = new Float32Array(REFINED_MONTHS * n * 2)
-  const precipitation = new Float32Array(REFINED_MONTHS * n)
+  const belts = new Float32Array(REFINED_MONTHS)
   for (let month = 0; month < REFINED_MONTHS; month++) {
     const air = monthly.subarray(month * n, (month + 1) * n)
     // The season's shift of the bands, + in the top hemisphere's summer:
     // the rain belt, the wind cells and the pressure bands all move by it
     // (climateField.beltYNorm), the sun's latitude lagged by the sea.
     const belt = CLIMATE_TUNING.monsoonItczSeasonalShift * Math.cos(2 * Math.PI * ((month + 0.5) / REFINED_MONTHS - CLIMATE_TUNING.refineItczPeakYear))
+    belts[month] = belt
     const bandWind = computeWind(params.equatorOffset, planet.rotationHours, belt)
     const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, width, height, bandWind, params.equatorOffset, planet.rotationHours, belt)
     pressure.set(result.pressure, month * n)
     wind.set(result.wind, month * n * 2)
-    precipitation.set(computePrecipitation(elevation, air, result.wind, width, height, params.humidity, params.equatorOffset, undefined, belt), month * n)
-    onProgress?.(0.15 + 0.75 * (month + 1) / REFINED_MONTHS)
+    onProgress?.(0.15 + 0.35 * (month + 1) / REFINED_MONTHS)
   }
 
   // The currents follow the year's mean wind: the ocean answers the wind
@@ -108,6 +107,53 @@ export function refineClimate(
     for (let i = 0; i < n * 2; i++) annualWind[i] += wind[month * n * 2 + i] / REFINED_MONTHS
   }
   const windCurrents = computeOceanCurrents(elevation, annualWind, width, height, undefined, params.equatorOffset)
+
+  // The sea-surface anomaly, from the latitudinal base (not from `temperature`,
+  // which already carries the history's currents): here on the wind's
+  // currents, below on the full ones.
+  const base = computeTemperature(elevation, width, height, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, undefined, planet)
+  const windAnomaly = applyOceanSST(base.slice(), windCurrents, elevation, width, height)
+
+  // Upwelling cools the sea where it comes up. The cold eastern coasts are
+  // mostly this, not the slow currents along them.
+  // Near the equator only the eastern part of a basin cools (see
+  // eastwardInBasin); off the equator the coast's own upwelling counts in
+  // full. The blend runs over `upwellingEquatorBandDeg`.
+  const upwelling = computeUpwelling(annualWind, land, params.equatorOffset, planet.rotationHours)
+  const east = eastwardInBasin(land)
+  const upwellingCooling = new Float32Array(n)
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    const lat = latitudeAt(gy, params.equatorOffset) * 90
+    const equatorial = Math.max(0, 1 - lat / CLIMATE_TUNING.upwellingEquatorBandDeg)
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      const i = gy * CLIMATE_RES_X + gx
+      if (land[i] || upwelling[i] <= 0) continue
+      const reach = 1 - equatorial + equatorial * east[i]
+      // What is returned is the upwelling that brings cold water, the same
+      // share that cools: in the west of an equatorial basin the water comes
+      // up warm, and a layer of "upwelling" there would promise cold coasts
+      // and fishing grounds that are not there.
+      upwelling[i] *= reach
+      upwellingCooling[i] = Math.min(CLIMATE_TUNING.upwellingMaxCoolingC, upwelling[i] * CLIMATE_TUNING.upwellingCoolingC)
+    }
+  }
+
+  // B's second half: the month's rain, from that wind and that air, with the
+  // equatorial rain belt following the sun. The sea evaporates at its own
+  // surface: the base, the wind's currents, the upwelling and the month's
+  // cycle (the overturning's warmth, which needs the rain for the salt, is
+  // left out), and its anomaly goes with the air (computePrecipitation).
+  const precipitation = new Float32Array(REFINED_MONTHS * n)
+  const seaTemperature = new Float32Array(n)
+  const seaAnomaly = new Float32Array(n)
+  for (let i = 0; i < n; i++) if (!land[i]) seaAnomaly[i] = windAnomaly[i] - upwellingCooling[i]
+  for (let month = 0; month < REFINED_MONTHS; month++) {
+    for (let i = 0; i < n; i++) if (!land[i]) seaTemperature[i] = base[i] + windAnomaly[i] - upwellingCooling[i] + cycle[month * n + i]
+    const air = monthly.subarray(month * n, (month + 1) * n)
+    const monthWind = wind.subarray(month * n * 2, (month + 1) * n * 2)
+    precipitation.set(computePrecipitation(elevation, air, monthWind, width, height, params.humidity, params.equatorOffset, undefined, belts[month], { seaTemperature, seaAnomaly }), month * n)
+    onProgress?.(0.5 + 0.4 * (month + 1) / REFINED_MONTHS)
+  }
 
   // 9: the sea's salt and where it sinks, then the surface water that
   // sinking draws after it (computeSinkInflow) added to the wind's currents,
@@ -126,40 +172,15 @@ export function refineClimate(
   if (fastest > 1) for (let k = 0; k < n * 2; k++) currents[k] /= fastest
   const { salinity, deepWater } = computeSalinity(temperature, landRain, currents, land, params.equatorOffset, params.humidity)
 
-  // The sea-surface anomaly, from the latitudinal base (not from `temperature`,
-  // which already carries the history's currents): on the full currents,
-  // and on the wind's alone, whose difference is the overturning's warmth.
-  const base = computeTemperature(elevation, width, height, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, undefined, planet)
+  // The anomaly on the full currents; its difference to the wind's alone is
+  // the overturning's warmth.
   const currentAnomaly = applyOceanSST(base.slice(), currents, elevation, width, height)
-  const windAnomaly = applyOceanSST(base.slice(), windCurrents, elevation, width, height)
   const drift = new Float32Array(n)
   for (let i = 0; i < n; i++) if (!land[i]) drift[i] = currentAnomaly[i] - windAnomaly[i]
   // The months take it, on the sea and on the coasts beside it.
   const warmth = spreadToCoasts(drift, land)
   for (let month = 0; month < REFINED_MONTHS; month++) for (let i = 0; i < n; i++) monthly[month * n + i] += warmth[i]
-
-  // Upwelling cools the sea where it comes up. The cold eastern coasts are
-  // mostly this, not the slow currents along them.
-  // Near the equator only the eastern part of a basin cools (see
-  // eastwardInBasin); off the equator the coast's own upwelling counts in
-  // full. The blend runs over `upwellingEquatorBandDeg`.
-  const upwelling = computeUpwelling(annualWind, land, params.equatorOffset, planet.rotationHours)
-  const east = eastwardInBasin(land)
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    const lat = latitudeAt(gy, params.equatorOffset) * 90
-    const equatorial = Math.max(0, 1 - lat / CLIMATE_TUNING.upwellingEquatorBandDeg)
-    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      const i = gy * CLIMATE_RES_X + gx
-      if (land[i] || upwelling[i] <= 0) continue
-      const reach = 1 - equatorial + equatorial * east[i]
-      // What is returned is the upwelling that brings cold water, the same
-      // share that cools: in the west of an equatorial basin the water comes
-      // up warm, and a layer of "upwelling" there would promise cold coasts
-      // and fishing grounds that are not there.
-      upwelling[i] *= reach
-      currentAnomaly[i] -= Math.min(CLIMATE_TUNING.upwellingMaxCoolingC, upwelling[i] * CLIMATE_TUNING.upwellingCoolingC)
-    }
-  }
+  for (let i = 0; i < n; i++) currentAnomaly[i] -= upwellingCooling[i]
 
   // C1: fog and föhn, which change the months they happen in (so after the
   // sea, and before the classes).

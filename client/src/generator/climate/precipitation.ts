@@ -57,7 +57,20 @@ function elevationAtWorld(elevation: Float32Array, wx: number, wy: number, world
 // degrees (2026-09-28). One shift for all latitudes moved the dry belt over
 // every mid-latitude coast in summer: Astrakan came out 15–17 % Mediterranean
 // (Köppen Cs), Earth is about 2 %.
-export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number, humidity = 1, equatorOffset = 0, dryLand?: Uint8Array, beltShift = 0): Float32Array {
+//
+// `refined` is the climate step's refinement (refinement.ts): the sea
+// evaporates at `seaTemperature` (the sea surface with its currents and
+// upwelling) instead of at the air of `temperature`, and the air carries the
+// anomaly of the sea it rose from (`seaAnomaly`, °C, the sea surface against
+// its latitude): air off a warm current is unstable and rains readily, air
+// off a cold current or an upwelling is stable under the warmer air above it
+// and hardly rains — the dry west coasts of the subtropics.
+export interface RefinedRain {
+  seaTemperature: Float32Array
+  seaAnomaly: Float32Array
+}
+
+export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number, humidity = 1, equatorOffset = 0, dryLand?: Uint8Array, beltShift = 0, refined?: RefinedRain): Float32Array {
   const n = RX * RY
   const ocean = new Uint8Array(n)
   const evap = new Float32Array(n)
@@ -66,7 +79,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       ocean[i] = isLandAtCell(elevation, dryLand, gx, gy, worldW, worldH) ? 0 : 1
-      evap[i] = evaporation(temperature[i])
+      evap[i] = evaporation(ocean[i] && refined ? refined.seaTemperature[i] : temperature[i])
       if (ocean[i]) {
         rainFrac[i] = CLIMATE_TUNING.precipBaseRainout
         continue
@@ -89,16 +102,26 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
   let moisture = new Float32Array(n)
   for (let i = 0; i < n; i++) moisture[i] = ocean[i] ? evap[i] : 0
   const rainedOut = new Float32Array(n)
+  // The refinement's second tracer: moisture × its source's sea anomaly,
+  // carried and depleted with the moisture, so carried / moisture is the
+  // anomaly of the sea the air came from.
+  let carried = new Float32Array(n)
+  const sourceAnomaly = new Float32Array(n)
+  if (refined) for (let i = 0; i < n; i++) carried[i] = ocean[i] ? evap[i] * refined.seaAnomaly[i] : 0
   for (let iter = 0; iter < CLIMATE_TUNING.precipIters; iter++) {
     const next = new Float32Array(n)
+    const nextCarried = refined ? new Float32Array(n) : carried
     for (let gy = 0; gy < RY; gy++) {
       for (let gx = 0; gx < RX; gx++) {
         const i = gy * RX + gx
         const u = wind[i * 2]
         const v = wind[i * 2 + 1]
-        const advected = sampleBilinearGrid(moisture, RX, RY, gx - u * CLIMATE_TUNING.precipAdvectStep, gy - v * CLIMATE_TUNING.precipAdvectMeridionalScale * CLIMATE_TUNING.precipAdvectStep)
+        const fx = gx - u * CLIMATE_TUNING.precipAdvectStep
+        const fy = gy - v * CLIMATE_TUNING.precipAdvectMeridionalScale * CLIMATE_TUNING.precipAdvectStep
+        const advected = sampleBilinearGrid(moisture, RX, RY, fx, fy)
         if (ocean[i]) {
           next[i] = evap[i] // ocean is a fixed moisture source
+          if (refined) nextCarried[i] = carried[i]
           continue
         }
         const rain = advected * rainFrac[i]
@@ -106,9 +129,15 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
         // Depletes by the rain that stays on the ground; the recycled fraction re-enters
         // the pool so downwind interiors keep getting fed (see CLIMATE_TUNING.precipLandRecycleFrac).
         next[i] = advected - rain * (1 - CLIMATE_TUNING.precipLandRecycleFrac)
+        if (refined && advected > 0) {
+          const anomaly = sampleBilinearGrid(carried, RX, RY, fx, fy) / advected
+          sourceAnomaly[i] = anomaly
+          nextCarried[i] = next[i] * anomaly
+        }
       }
     }
     moisture = next
+    carried = nextCarried
   }
 
   const precip = new Float32Array(n)
@@ -117,8 +146,16 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
     const band = bandFactor(Math.abs(yNorm - 0.5) * 2)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      precip[i] = ocean[i] ? OCEAN_PRECIP : rainedOut[i] * band * CLIMATE_TUNING.precipScale * humidity
+      const factor = refined ? band * sourceStability(sourceAnomaly[i]) : band
+      precip[i] = ocean[i] ? OCEAN_PRECIP : rainedOut[i] * factor * CLIMATE_TUNING.precipScale * humidity
     }
   }
   return precip
+}
+
+// The rain's multiplier from the anomaly of the sea the air rose from, °C:
+// e^(k·anomaly), clamped.
+function sourceStability(anomaly: number): number {
+  const f = Math.exp(CLIMATE_TUNING.rainSourcePerC * anomaly)
+  return f < CLIMATE_TUNING.rainSourceMin ? CLIMATE_TUNING.rainSourceMin : f > CLIMATE_TUNING.rainSourceMax ? CLIMATE_TUNING.rainSourceMax : f
 }

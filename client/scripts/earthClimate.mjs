@@ -158,7 +158,7 @@ function nearestLand(lon, lat) {
   return best
 }
 
-let exact = 0, group = 0, janErr = 0, julErr = 0, rainErr = 0, counted = 0
+let exact = 0, group = 0, janErr = 0, julErr = 0, meanErr = 0, swingErr = 0, rainErr = 0, counted = 0
 const rows = []
 for (const [name, lon, lat, height, realClass, realJan, realJul, realRain] of PLACES) {
   const i = nearestLand(lon, lat)
@@ -176,6 +176,10 @@ for (const [name, lon, lat, height, realClass, realJan, realJul, realRain] of PL
   if (cls[0] === realClass[0]) group++
   janErr += Math.abs(t[0] - realJan)
   julErr += Math.abs(t[6] - realJul)
+  // The same two months as a mean and a swing (July − January, signed by
+  // hemisphere through the data): which of the two is off.
+  meanErr += (t[0] + t[6]) / 2 - (realJan + realJul) / 2
+  swingErr += Math.abs(t[6] - t[0]) - Math.abs(realJul - realJan)
   rainErr += Math.abs(Math.log((rain + 50) / (realRain + 50)))
   rows.push(`${name.padEnd(13)} ${realClass.padEnd(4)}→ ${cls.padEnd(4)} ${cls === realClass ? ' ' : cls[0] === realClass[0] ? '~' : '✗'}  Jan ${String(realJan).padStart(4)}→${t[0].toFixed(0).padStart(4)}  Jul ${String(realJul).padStart(4)}→${t[6].toFixed(0).padStart(4)}  rain ${String(realRain).padStart(5)}→${String(Math.round(rain)).padStart(5)}`)
 }
@@ -204,5 +208,5 @@ const shares = Object.keys(BECK).map((g) => {
 
 console.log(`\nrefinement ${Math.round(ms)} ms`)
 console.log(`Köppen groups, % of land (Beck 2018): ${shares}`)
-console.log(`places: class ${exact}/${counted}, group ${group}/${counted}; mean |error| January ${(janErr / counted).toFixed(1)} °C, July ${(julErr / counted).toFixed(1)} °C, rain ×${Math.exp(rainErr / counted).toFixed(2)}; groups off by ${shareErr.toFixed(0)} points`)
+console.log(`places: class ${exact}/${counted}, group ${group}/${counted}; mean |error| January ${(janErr / counted).toFixed(1)} °C, July ${(julErr / counted).toFixed(1)} °C (bias: mean ${(meanErr / counted).toFixed(1)}, swing ${(swingErr / counted).toFixed(1)}), rain ×${Math.exp(rainErr / counted).toFixed(2)}; groups off by ${shareErr.toFixed(0)} points`)
 await server.close()
