@@ -12,31 +12,11 @@
   display: none;
 }
 
-/* A fixed width, for the same reason as the sign-in button (titleBar.css):
-   "Save" and "Speichern" differ, and a button sized to its label would move
-   the right-hand group on every language switch. Fits "Speichern" at 13.5px
-   plus the icon, the chevron, their gaps and the padding. */
+/* Fits "Speichern" at 13.5px plus the icon, the chevron, their gaps and the
+   padding (the shape is .title-bar__tool's, titleBar.css; open reads as
+   pressed there). */
 .save-menu__button {
   width: 140px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px 0 12px;
-  border: 1px solid var(--dc-line2);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dc-text);
-  font-size: 13.5px;
-}
-
-.save-menu__button:hover {
-  background: var(--dc-hover);
-}
-
-/* Open is a pressed state, not a hover that happens to have stuck. */
-.save-menu__button[aria-expanded='true'] {
-  background: var(--dc-hover);
 }
 
 .save-menu__list {
@@ -138,7 +118,3 @@
 
 /* The label takes the free width and centres in it, so the chevron keeps
    the right edge. */
-.save-menu__button-label {
-  flex-grow: 1;
-  text-align: center;
-}

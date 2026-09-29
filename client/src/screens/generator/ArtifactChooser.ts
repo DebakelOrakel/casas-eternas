@@ -25,8 +25,9 @@ import './artifactChooser.css'
 // per entry what the viewer may do).
 
 export interface ArtifactChooserOptions {
-  // The world the generator holds, or null before there is one.
-  currentWorld(): { uid: string; name: string; seed: string } | null
+  // The world the generator holds, or null before there is one; `worldId` its
+  // last save's terrain id, null before it was saved.
+  currentWorld(): { uid: string; name: string; seed: string; worldId: string | null } | null
   onClose(): void
 }
 
@@ -44,9 +45,15 @@ type Where = 'all' | 'server' | 'local'
 
 // The levels a row shows, filled or dashed: the three the ladder plans.
 const LEVELS = [1, 2, 3]
-// A level's artifact from another pipeline version than this client's is
-// outdated: it was baked by other code, and this client does not look for it.
-const isCurrent = (entry: ArtifactEntry, level: number): boolean => entry.pipelineVersion === meshPipelineVersion(level)
+// An artifact is outdated when it was baked by another pipeline version than
+// this client's (other code; this client does not look for it), or — for the
+// world held here — from another terrain than its last save's (the world
+// moved on since the bake).
+function currentFor(world: { uid: string; worldId: string | null } | null) {
+  return (entry: ArtifactEntry, level: number): boolean =>
+    entry.pipelineVersion === meshPipelineVersion(level)
+    && !(world?.worldId && entry.worldUid === world.uid && entry.worldId !== world.worldId)
+}
 
 export function createArtifactChooser(host: HTMLElement, options: ArtifactChooserOptions): ArtifactChooser {
   const root = document.createElement('div')
@@ -133,7 +140,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
         deletable: a.callerLevel === 'editor' || a.callerLevel === 'owner' || a.callerLevel === 'admin',
       })),
     ]
-    rows = artifactRows(entries, isCurrent)
+    rows = artifactRows(entries, currentFor(options.currentWorld()))
     paint()
   }
 

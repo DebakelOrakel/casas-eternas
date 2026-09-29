@@ -205,7 +205,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
     }
     const signIn = document.createElement('button')
     signIn.type = 'button'
-    signIn.className = 'title-bar__sign-in'
+    signIn.className = 'title-bar__tool title-bar__tool--primary title-bar__sign-in'
     signIn.dataset.help = 'titlebar.signIn'
     signIn.innerHTML = `
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
@@ -213,7 +213,10 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
         <path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" />
       </svg>
     `
-    signIn.append(t('titlebar.signIn.label'))
+    const signInLabel = document.createElement('span')
+    signInLabel.className = 'title-bar__tool-label'
+    signInLabel.textContent = t('titlebar.signIn.label')
+    signIn.append(signInLabel)
     signIn.addEventListener('click', () => options.onSignIn())
     accountSlot.appendChild(signIn)
   }

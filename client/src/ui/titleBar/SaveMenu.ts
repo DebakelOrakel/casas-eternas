@@ -70,7 +70,7 @@ export function createSaveMenu(options: SaveMenuOptions): SaveMenu {
 
   const button = document.createElement('button')
   button.type = 'button'
-  button.className = 'save-menu__button'
+  button.className = 'title-bar__tool save-menu__button'
   button.dataset.help = 'titlebar.save'
   button.setAttribute('aria-expanded', 'false')
   button.setAttribute('aria-haspopup', 'menu')
@@ -79,7 +79,7 @@ export function createSaveMenu(options: SaveMenuOptions): SaveMenu {
       <path d="M5 3h11l3 3v15H5z" />
       <path d="M8 3v5h7V3M8 21v-7h8v7" />
     </svg>
-    <span class="save-menu__button-label"></span>
+    <span class="title-bar__tool-label save-menu__button-label"></span>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
       <path d="m6 9 6 6 6-6" />
     </svg>

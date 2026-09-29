@@ -67,6 +67,7 @@ import { keepWorldInBrowser } from '../../world/browserWorlds'
 import { uploadWorld } from '../../server/worldClient'
 import { createWorldChooser } from './WorldChooser'
 import { createArtifactChooser } from './ArtifactChooser'
+import { openWorld } from '../../world/query'
 import { createStepBar } from './StepBar'
 import { createSidebar } from './Sidebar'
 import { createMonthPlayer } from './monthPlayer'
@@ -343,6 +344,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // derived from anything: see identity.newWorldUid for why the terrain hash
   // cannot serve here. Empty until the world is first saved or loaded.
   let worldUid = ''
+  // The terrain id (identity.deriveWorldId, what artifacts are keyed by) of
+  // this world's last save or load, read back from that archive — the
+  // artifact window calls an artifact of another terrain outdated. Null until
+  // the world was saved or loaded.
+  let savedWorldId: string | null = null
   let worldRevision = 0
   // Epoch the safety auto-stop will fire at. Re-armed to (current epoch +
   // MAX_TECTONICS_EPOCHS) every time the sim is started (see startSim), so
@@ -871,10 +877,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // design draws it; pressed while the window is open.
   const artifactsButton = document.createElement('button')
   artifactsButton.type = 'button'
-  artifactsButton.className = 'artifacts-button'
+  artifactsButton.className = 'title-bar__tool artifacts-button'
   artifactsButton.dataset.help = 'common.action.storage'
   artifactsButton.setAttribute('aria-pressed', 'false')
-  artifactsButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span class="artifacts-button__label"></span>'
+  artifactsButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span class="title-bar__tool-label"></span>'
   const sayArtifactsButton = (): void => { artifactsButton.querySelector('span')!.textContent = t('generator.artifacts.title') }
   sayArtifactsButton()
   titleBar.tools.append(artifactsButton, saveMenu.element)
@@ -883,7 +889,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // (ArtifactChooser). Its world is the one held here, once it has a uid (a
   // world gets one on its first save; artifacts are filed under it).
   const artifactChooser = createArtifactChooser(root, {
-    currentWorld: () => (worldUid ? { uid: worldUid, name: worldName, seed: seedInput.value } : null),
+    currentWorld: () => (worldUid ? { uid: worldUid, name: worldName, seed: seedInput.value, worldId: savedWorldId } : null),
     onClose: () => closeArtifacts(),
   })
   artifactsButton.addEventListener('click', () => (artifactChooser.isOpen() ? closeArtifacts() : openArtifacts()))
@@ -4708,6 +4714,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // Hands the finished archive to its destination. Download is the fallback for
   // everything: a world that could not be uploaded must still not be lost.
+  // Reads the terrain id back from an archive through the reader every
+  // consumer uses (world/query), so it is the key a bake of this save files
+  // its artifacts under.
+  async function noteSavedWorldId(archive: Blob): Promise<void> {
+    const world = await openWorld(await archive.arrayBuffer())
+    if (world) savedWorldId = await world.worldId()
+  }
+
   async function deliverArchive(blob: Blob, filename: string): Promise<void> {
     if (pendingSaveTarget === 'browser') {
       const kept = await keepWorldInBrowser(worldUid, blob, {
@@ -4793,6 +4807,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const preview = await makePreviewBlob()
     if (preview) zip.file('preview.png', preview)
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
+    void noteSavedWorldId(blob)
     const safeName = (worldName || seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')
     await deliverArchive(blob, `${safeName}.zip`)
   }
@@ -5062,6 +5077,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     overlay.clearMarkers()
     invalidateAfter('tectonics')
     restoredRefinement = await readRefinement(zip)
+    savedWorldId = null
+    void noteSavedWorldId(file)
 
     const seed = readYamlValue(yaml, 'spec.seed') ?? ''
     // One read of the recipe instead of a regex per key, with every gap filled by
@@ -5466,6 +5483,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Note this is regenerate() only: running more tectonics or resetting
     // erosion also zero erosionRunCount, but those are the SAME world evolving.
     worldUid = ''
+    savedWorldId = null
     worldRevision = 0
     archeanFinalised = false
     hasHandover = false

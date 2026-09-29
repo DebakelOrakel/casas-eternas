@@ -180,32 +180,8 @@
   align-self: center;
 }
 
-/* The door in the title bar, the save menu's shape; pressed while open. A
-   fixed width, as the save menu's: sized to its text the right-hand group
-   would jump sideways at every language switch. 124px holds "Artefakte" and
-   "Artifacts" with the icon. */
+/* The door in the title bar: .title-bar__tool's shape (titleBar.css), at a
+   width that holds "Artefakte" and "Artifacts" with the icon. */
 .artifacts-button {
   width: 124px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px 0 12px;
-  border: 1px solid var(--dc-line2);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dc-text);
-  font: inherit;
-  font-size: 13.5px;
-  cursor: pointer;
-}
-.artifacts-button:hover,
-.artifacts-button[aria-pressed='true'] {
-  background: var(--dc-hover);
-}
-/* Laid out as the save menu's button: the icon at the left edge, the label
-   centred in the room after it. */
-.artifacts-button__label {
-  flex-grow: 1;
-  text-align: center;
 }

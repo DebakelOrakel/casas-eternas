@@ -556,5 +556,7 @@ fail; and `bytes` is the sum of what the caller sees — the whole store only
 for the operator, whose gauge it is. The client's artifact window (the
 design canvas's "Artefaktstore", full screen, replacing the storage panel)
 lists this world's or all worlds' artifacts, one row per world and kind,
-the levels side by side. Still open: deleting a world on the server does not
+the levels side by side; an artifact is outdated when another pipeline
+version baked it, or, for the world held, when its terrain id is not the
+one of the world's last save or load (read back from that archive). Still open: deleting a world on the server does not
 sweep its artifacts.

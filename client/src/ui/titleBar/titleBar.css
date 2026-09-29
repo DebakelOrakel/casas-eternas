@@ -178,26 +178,51 @@ button.title-bar__mark:hover {
   color: var(--dc-lang-on);
 }
 
-/* --- account ------------------------------------------------------------- */
+/* --- the tool buttons ----------------------------------------------------- */
 
-/* A fixed width, not padding around the label: "Sign in" and "Anmelden" are
-   different lengths, and with the button sized to its text the whole right-hand
-   group would jump sideways every time the language is switched — right next to
-   the buttons doing the switching. The width fits the longer of the two at
-   13.5px/600 plus the icon and its gap, with room for a third language later. */
-.title-bar__sign-in {
-  width: 124px;
+/* One shape for the bar's buttons (sign-in, the save menu, the artifacts):
+   36 px high, the icon at the left edge and the label centred in the room
+   after it. Each sets only its WIDTH, and fixes it: labels differ between
+   languages, and a button sized to its text would move the right-hand group
+   on every language switch — right next to the buttons doing the switching.
+   The outline look is the default; the sign-in fills it (`--primary`). */
+.title-bar__tool {
   height: 36px;
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  border: 0;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--dc-line2);
   border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text);
+  font-size: 13.5px;
+}
+.title-bar__tool:hover,
+.title-bar__tool[aria-pressed='true'],
+.title-bar__tool[aria-expanded='true'] {
+  background: var(--dc-hover);
+}
+.title-bar__tool-label {
+  flex-grow: 1;
+  text-align: center;
+}
+.title-bar__tool--primary {
+  border-color: var(--dc-accent);
   background: var(--dc-accent);
   color: var(--dc-on-accent);
-  font-size: 13.5px;
   font-weight: 600;
+}
+.title-bar__tool--primary:hover {
+  background: var(--dc-accent);
+}
+
+/* --- account ------------------------------------------------------------- */
+
+/* Fits the longer of "Sign in" and "Anmelden" at 13.5px/600 plus the icon,
+   with room for a third language later (see .title-bar__tool). */
+.title-bar__sign-in {
+  width: 124px;
 }
 
 .title-bar__account {
