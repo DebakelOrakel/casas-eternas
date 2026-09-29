@@ -407,6 +407,17 @@ equator, 13 °C at 40°, −2 °C at 60°), so the base runs 3–6 °C warm from
 its missing North Atlantic warmth (off Norway +2.6 °C against Earth's +7)
 cancels that. A step of its own.
 
+**The latitude profile and the mass elevation effect** (2026-09-29, step 0,
+so every world and the epochs). Earth's fitted profile (26.5 °C, −30 °C)
+ran 2.7 °C cold here and shrank the A climates 22 → 15 % of the land: the
+tropical highlands were already too cold (Brasília, Bogotá, Mexico City
+−2..−5 °C), missing the warmth a broad high surface gives the air on it.
+Kept: the equator at 28 °C, the pole at −25 °C, and +2 °C per km of the
+land's height smoothed over three cells. The places' annual mean error
+2.47 → 2.23 °C, its bias +1.0 → +0.3, January's 3.8 → 3.5 °C; Tibet's
+warmest month 0 → 7 °C; the groups' shares 6 → 9 points off (C grows).
+The golden worlds came out 1.2 °C cooler, with 4–6 % less rain and runoff.
+
 The step-0 temperatures, tried (2026-09-29). The places' annual means are
 off in a regional pattern: highlands and the dry subtropics too cold
 (Tehran −7 °C, Mexico City −6, Riyadh −5), the interiors and east coasts of

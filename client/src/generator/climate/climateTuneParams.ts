@@ -46,8 +46,24 @@ export const CLIMATE_TUNING = {
 
   // Real-ish units (°C), so the later Whittaker biome thresholds are directly
   // usable. Tune by eye — these set the equator-to-pole span.
-  tempEquatorC: 30,
+  // Measured on Earth (scripts/earthClimate.mjs, 2026-09-29): at 30 and −25
+  // the places' annual means ran 1.0 °C warm on average, the tropics some
+  // 2 °C, the east coasts at 35–42° 4–6 °C; Earth's zonal mean near sea
+  // level fits −30 + 56.5 cos φ, but that profile here (26.5, −30) ran
+  // 2.7 °C cold and shrank the A climates from 22 to 15 % of the land,
+  // mostly on the tropical highlands, which were already too cold without
+  // the mass elevation effect below. 28 and −25 with it: the annual mean
+  // error 2.47 → 2.23 °C, the bias +1.0 → +0.3, January's error 3.8 →
+  // 3.5 °C; the groups' shares 6 → 9 points off (A 22 → 21 %, C 15 → 17).
+  tempEquatorC: 28,
   tempPoleC: -25,
+  // The mass elevation effect (temperature.ts): °C per km of the land's
+  // height smoothed over the radius, cells. At 2 the Tibetan plateau's
+  // warmest month 0 → 7 °C (some 8–10 on Earth at 4500 m), the Altiplano's
+  // 7 → 8; at 1 the tropical highlands stay too cold (Brasília, Bogotá,
+  // Mexico City −2..−5 °C); a radius of 6 changed nothing.
+  tempPlateauCPerKm: 2,
+  tempPlateauRadiusCells: 3,
 
   // The environmental lapse rate — °C lost per unit of elevation. Now a derived
   // quantity rather than a tuned one: the real atmosphere loses ~6.5 °C/km, and
