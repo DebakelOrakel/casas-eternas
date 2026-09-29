@@ -62,7 +62,7 @@ const el = ero.elevations
 const temperature = M.temperature.computeTemperature(el, W, H)
 const wind = M.wind.computeWind()
 const currents = M.currents.computeOceanCurrents(el, wind, W, H)
-M.currents.applyOceanSST(temperature, currents, el, W, H)
+M.currents.applyOceanSST(temperature, currents, el, W, H, wind)
 const seasonal = M.seasonality.computeSeasonalAmplitude(el, W, H)
 const precipitation = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, W, H, 1, 0).annual
 const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y

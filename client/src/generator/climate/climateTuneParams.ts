@@ -575,6 +575,20 @@ export const CLIMATE_TUNING = {
   currentsCoastalFactor: 0.9,
   currentsCoastalSteps: 4,
   currentsCoastalDecay: 0.8,
+  // The anomaly carried onto the land with the wind (oceanCurrents.
+  // carryInland): looked for this many cells upwind, e^(−d / decay) over
+  // land, and the share a coast gets off its own shore where the wind
+  // blows out to sea. currentsCoastalSteps and currentsCoastalDecay remain
+  // for the salinity's spread onto the coasts. Measured on Earth
+  // (scripts/earthClimate.mjs, 2026-09-29) against the old spread: the
+  // places' annual mean error 2.54 → 2.47 °C, Oslo −4 → −1 °C, Ushuaia −3 →
+  // +4 (a cold coast downwind of nothing now), classes 17 → 18 of 47; at a
+  // decay of 6 or 10 cells a little less. The east coasts (Tokyo, New
+  // York, Beijing +4..+6 °C) did not move: their warmth is the latitude
+  // profile's, not the currents'.
+  currentsInlandReachCells: 30,
+  currentsInlandDecayCells: 15,
+  currentsCoastalLeeShare: 0.3,
 
   // --- from biomes.ts ---
 

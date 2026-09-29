@@ -263,6 +263,48 @@ export function basinFlank(land: Uint8Array, fullWidthCells: number): Float32Arr
   return out
 }
 
+// The sea's anomaly on the land, °C per land cell: the air takes the anomaly
+// of the sea it last crossed and loses it over land, e^(−d / L) after d cells
+// (`currentsInlandDecayCells`), looked for up to `currentsInlandReachCells`
+// upwind along `wind`. So the westerlies carry the North Atlantic's warmth
+// deep into Europe, and a coast the wind leaves for the sea (an east coast
+// in the westerlies, a west coast in the trades) gets only the breeze off
+// its own shore: `currentsCoastalLeeShare` of its strongest neighbouring
+// sea cell. Until 2026-09-29 every coast took its neighbour's anomaly the
+// same way, four cells in, whatever the wind: Tokyo's January came out
+// 19 °C (5) on the Kuroshio's warmth, Oslo's −10 °C (−4).
+function carryInland(seaAnomaly: Float32Array, land: Uint8Array, wind: Float32Array): Float32Array {
+  const n = RX * RY
+  const out = new Float32Array(n)
+  const reach = CLIMATE_TUNING.currentsInlandReachCells
+  for (let gy = 0; gy < RY; gy++) {
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      if (!land[i]) continue
+      let lee = 0
+      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+        const a = seaAnomaly[wrapIndex(gx + dx, gy + dy)]
+        if (Math.abs(a) > Math.abs(lee)) lee = a
+      }
+      let carried = 0
+      const u = wind[i * 2]
+      const v = wind[i * 2 + 1]
+      const speed = Math.hypot(u, v)
+      if (speed > 0) {
+        for (let k = 1; k <= reach; k++) {
+          const j = wrapIndex(Math.round(gx - (u / speed) * k), Math.round(gy - (v / speed) * k))
+          if (land[j]) continue
+          carried = seaAnomaly[j] * Math.exp(-(k - 1) / CLIMATE_TUNING.currentsInlandDecayCells)
+          break
+        }
+      }
+      const breeze = lee * CLIMATE_TUNING.currentsCoastalLeeShare
+      out[i] = Math.abs(carried) > Math.abs(breeze) ? carried : breeze
+    }
+  }
+  return out
+}
+
 // +1 in the top (northern) hemisphere, −1 in the bottom one.
 function latitudeSign(gy: number, equatorOffset: number): number {
   return shiftedYNorm(gy, RY, equatorOffset) < 0.5 ? 1 : -1
@@ -344,14 +386,15 @@ function findIslands(land: Uint8Array, left: Int32Array, right: Int32Array, up: 
 
 // Applies the ocean currents' heat transport to the temperature field (°C, in
 // place): advects a sea-surface-temperature field (seeded from the latitudinal
-// base) along the currents, writes it back over ocean cells, and nudges each
-// coastal land cell toward the anomaly of its adjacent ocean (a cold current
-// cools the coast, a warm one mildens it). `current` is the normalized field
-// from computeOceanCurrents.
+// base) along the currents, writes it back over ocean cells, and carries the
+// sea's anomaly onto the land with the wind (a cold current cools the coast
+// downwind of it, a warm one mildens it). `current` is the normalized field
+// from computeOceanCurrents, `wind` the [u, v] the air moves by (see
+// carryInland).
 // Returns the current's own mark on the sea: SST minus the base temperature,
 // °C per ocean cell, 0 on land. Positive is a warm current, negative a cold
 // one — what the map colours the currents by.
-export function applyOceanSST(temperature: Float32Array, current: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Float32Array {
+export function applyOceanSST(temperature: Float32Array, current: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, wind: Float32Array, dryLand?: Uint8Array): Float32Array {
   const n = RX * RY
   const land = new Uint8Array(n)
   for (let gy = 0; gy < RY; gy++) {
@@ -378,30 +421,12 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
     sst = next
   }
 
-  // Coastal band: build the SST anomaly on ocean cells (uses the original base,
-  // still in temperature[] here), then propagate it inland — each land cell
-  // takes its strongest neighbour's anomaly, decayed — so the maritime
-  // influence reaches a few cells past the shoreline instead of one.
-  const anomaly = new Float32Array(n)
-  for (let i = 0; i < n; i++) if (!land[i]) anomaly[i] = sst[i] - temperature[i]
-  const oceanAnomaly = anomaly.slice()
-  for (let step = 0; step < CLIMATE_TUNING.currentsCoastalSteps; step++) {
-    const next = anomaly.slice()
-    for (let gy = 0; gy < RY; gy++) {
-      for (let gx = 0; gx < RX; gx++) {
-        const i = gy * RX + gx
-        if (!land[i]) continue
-        let best = 0
-        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-          const a = anomaly[wrapIndex(gx + dx, gy + dy)]
-          if (Math.abs(a) > Math.abs(best)) best = a
-        }
-        next[i] = best * CLIMATE_TUNING.currentsCoastalDecay
-      }
-    }
-    for (let i = 0; i < n; i++) if (land[i]) anomaly[i] = next[i]
-  }
-  for (let i = 0; i < n; i++) if (land[i]) temperature[i] += CLIMATE_TUNING.currentsCoastalFactor * anomaly[i]
+  // The SST anomaly on ocean cells (uses the original base, still in
+  // temperature[] here), then onto the land with the wind (carryInland).
+  const oceanAnomaly = new Float32Array(n)
+  for (let i = 0; i < n; i++) if (!land[i]) oceanAnomaly[i] = sst[i] - temperature[i]
+  const inland = carryInland(oceanAnomaly, land, wind)
+  for (let i = 0; i < n; i++) if (land[i]) temperature[i] += CLIMATE_TUNING.currentsCoastalFactor * inland[i]
 
   // Ocean cells take the sea-surface temperature (so the temperature overlay
   // shows the current structure too).

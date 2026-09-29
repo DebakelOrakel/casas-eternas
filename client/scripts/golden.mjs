@@ -252,7 +252,7 @@ async function buildWorld(seed) {
   let temperature = M.temperature.computeTemperature(el, W, H)
   const wind = M.wind.computeWind()
   let currents = M.currents.computeOceanCurrents(el, wind, W, H)
-  M.currents.applyOceanSST(temperature, currents, el, W, H)
+  M.currents.applyOceanSST(temperature, currents, el, W, H, wind)
   let seasonal = M.seasonality.computeSeasonalAmplitude(el, W, H)
   let seasonalPrecip = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, W, H, 1, 0)
   let precipitation = seasonalPrecip.annual
@@ -290,7 +290,7 @@ async function buildWorld(seed) {
   let lakes = lakesOnMesh(temperature, precipitation)
   const t2 = M.temperature.computeTemperature(el, W, H, 0, 1, 0, lakes.dryBasin)
   const c2 = M.currents.computeOceanCurrents(el, wind, W, H, lakes.dryBasin)
-  M.currents.applyOceanSST(t2, c2, el, W, H, lakes.dryBasin)
+  M.currents.applyOceanSST(t2, c2, el, W, H, wind, lakes.dryBasin)
   const s2 = M.seasonality.computeSeasonalAmplitude(el, W, H, 0, lakes.dryBasin)
   const sp2 = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, W, H, 1, 0, lakes.dryBasin)
   precipitation = sp2.annual

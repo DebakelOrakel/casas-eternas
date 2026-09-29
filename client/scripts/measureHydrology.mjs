@@ -147,7 +147,7 @@ async function measure(name, controls) {
   let temperature = M.temperature.computeTemperature(raw, W, H)
   const wind = M.wind.computeWind()
   let currents = M.currents.computeOceanCurrents(raw, wind, W, H)
-  M.currents.applyOceanSST(temperature, currents, raw, W, H)
+  M.currents.applyOceanSST(temperature, currents, raw, W, H, wind)
   let seasonal = M.seasonality.computeSeasonalAmplitude(raw, W, H)
   let precipitation = M.monsoon.computeSeasonalPrecipitation(raw, temperature, seasonal, wind, W, H, 1, 0).annual
 
@@ -156,7 +156,7 @@ async function measure(name, controls) {
   let lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, temperature, precipitation, CRX, CRY)
   const t2 = M.temperature.computeTemperature(el, W, H, 0, 1, 0, lakes.dryBasin)
   const c2 = M.currents.computeOceanCurrents(el, wind, W, H, lakes.dryBasin)
-  M.currents.applyOceanSST(t2, c2, el, W, H, lakes.dryBasin)
+  M.currents.applyOceanSST(t2, c2, el, W, H, wind, lakes.dryBasin)
   const s2 = M.seasonality.computeSeasonalAmplitude(el, W, H, 0, lakes.dryBasin)
   precipitation = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, W, H, 1, 0, lakes.dryBasin).annual
   discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)

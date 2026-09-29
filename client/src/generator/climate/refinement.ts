@@ -131,7 +131,7 @@ export function refineClimate(
   // which already carries the history's currents): here on the wind's
   // currents, below on the full ones.
   const base = computeTemperature(elevation, width, height, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, undefined, planet)
-  const windAnomaly = applyOceanSST(base.slice(), windCurrents, elevation, width, height)
+  const windAnomaly = applyOceanSST(base.slice(), windCurrents, elevation, width, height, annualWind)
 
   // Upwelling cools the sea where it comes up. The cold eastern coasts are
   // mostly this, not the slow currents along them.
@@ -234,7 +234,7 @@ export function refineClimate(
 
   // The anomaly on the full currents; its difference to the wind's alone is
   // the overturning's warmth.
-  const currentAnomaly = applyOceanSST(base.slice(), currents, elevation, width, height)
+  const currentAnomaly = applyOceanSST(base.slice(), currents, elevation, width, height, annualWind)
   const drift = new Float32Array(n)
   for (let i = 0; i < n; i++) if (!land[i]) drift[i] = currentAnomaly[i] - windAnomaly[i]
   // The months take it, on the sea and on the coasts beside it.

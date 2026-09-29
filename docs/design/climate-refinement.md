@@ -393,6 +393,20 @@ after it: cells 35 % class, 71 % group; places 17/47; the northern land
 warmest in July (54 %) or June (37 %) — Earth's northern summer now falls
 at aphelion, as it does on Earth.
 
+**The sea's warmth carried inland with the wind** (2026-09-29, also the
+epochs): the SST anomaly used to spread four cells onto every coast
+alike; it is now carried along the wind from the sea the air last
+crossed, e^(−d / 15 cells), and a lee coast gets 0.3 of its own shore's.
+Oslo's year −4 → −1 °C, the places' annual error 2.54 → 2.47 °C, classes
+17 → 18/47; the cells and shares did not move. The east coasts stayed as
+warm as they were (Tokyo, New York, Beijing, Chicago +4..+6 °C): the cause
+is the latitude profile. The cheap model's base is −25 + 55 cos φ;
+Earth's zonal mean near sea level fits −30 + 56.5 cos φ (26.5 °C at the
+equator, 13 °C at 40°, −2 °C at 60°), so the base runs 3–6 °C warm from
+20° to 50° and some 3 °C in the tropics. Europe only looks right because
+its missing North Atlantic warmth (off Norway +2.6 °C against Earth's +7)
+cancels that. A step of its own.
+
 The step-0 temperatures, tried (2026-09-29). The places' annual means are
 off in a regional pattern: highlands and the dry subtropics too cold
 (Tehran −7 °C, Mexico City −6, Riyadh −5), the interiors and east coasts of

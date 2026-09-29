@@ -65,7 +65,7 @@ export function computeWeather(elevation: Float32Array, width: number, height: n
   const temperature = computeTemperature(elevation, width, height, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, dryLand, planet)
   const wind = computeWind(params.equatorOffset, planet.rotationHours)
   const currents = computeOceanCurrents(elevation, wind, width, height, dryLand, params.equatorOffset)
-  const currentAnomaly = applyOceanSST(temperature, currents, elevation, width, height, dryLand)
+  const currentAnomaly = applyOceanSST(temperature, currents, elevation, width, height, wind, dryLand)
   const seasonalAmplitude = computeSeasonalAmplitude(elevation, width, height, params.equatorOffset, dryLand, planet)
   const seasonal = computeSeasonalPrecipitation(elevation, temperature, seasonalAmplitude, wind, width, height, params.humidity, params.equatorOffset, dryLand)
   return { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal }
