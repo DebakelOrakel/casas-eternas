@@ -11,6 +11,8 @@
   "readout.row.wind": "Wind",
   "readout.row.pressure": "Pressure",
   "readout.row.upwelling": "Upwelling",
+  "readout.row.salinity": "Salinity",
+  "readout.row.deepWater": "Sinking",
   "readout.row.current": "Current",
   "readout.row.biome": "Biome",
   "readout.row.koppen": "Climate",

@@ -117,6 +117,63 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
   return current
 }
 
+// THE OVERTURNING'S SURFACE INFLOW (build step 9 of
+// docs/design/climate-refinement.md): the surface water drawn toward where
+// it sinks. The wind-driven currents above are a streamfunction, flow with
+// no sources or sinks; a sinking sea is a sink, so its inflow is the other
+// half of a velocity field, a potential: ∇²χ = −s, u = ∇χ, with the sinking
+// as `s` and the water that sank coming up again spread over the whole sea
+// (so the field balances), and no flow into a coast (the potential mirrors
+// at land). Returns [u, v] per cell, 0 on land, scaled so its fastest cell
+// is 1.
+export function computeSinkInflow(sink: Float32Array, land: Uint8Array): Float32Array {
+  const n = RX * RY
+  let total = 0
+  let sea = 0
+  for (let i = 0; i < n; i++) {
+    if (land[i]) continue
+    total += sink[i]
+    sea++
+  }
+  const inflow = new Float32Array(n * 2)
+  if (total <= 0 || sea === 0) return inflow
+  const rise = total / sea
+  const source = new Float32Array(n)
+  for (let i = 0; i < n; i++) if (!land[i]) source[i] = sink[i] - rise
+
+  const neighbours = (gx: number, gy: number): [number, number, number, number] => [wrapIndex(gx - 1, gy), wrapIndex(gx + 1, gy), wrapIndex(gx, gy - 1), wrapIndex(gx, gy + 1)]
+  const chi = new Float32Array(n)
+  for (let iter = 0; iter < CLIMATE_TUNING.conveyorSolveIters; iter++) {
+    for (let gy = 0; gy < RY; gy++) {
+      for (let gx = 0; gx < RX; gx++) {
+        const i = gy * RX + gx
+        if (land[i]) continue
+        // A land neighbour stands in with this cell's own value: no flow
+        // across the coast.
+        let sum = 0
+        for (const j of neighbours(gx, gy)) sum += land[j] ? chi[i] : chi[j]
+        chi[i] = (sum + source[i]) / 4
+      }
+    }
+  }
+  let fastest = 0
+  for (let gy = 0; gy < RY; gy++) {
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      if (land[i]) continue
+      const [l, r, u, d] = neighbours(gx, gy)
+      const at = (j: number): number => (land[j] ? chi[i] : chi[j])
+      const vx = (at(r) - at(l)) / 2
+      const vy = (at(d) - at(u)) / 2
+      inflow[i * 2] = vx
+      inflow[i * 2 + 1] = vy
+      fastest = Math.max(fastest, Math.hypot(vx, vy))
+    }
+  }
+  if (fastest > 0) for (let k = 0; k < inflow.length; k++) inflow[k] /= fastest
+  return inflow
+}
+
 // Ekman upwelling on the climate grid (build step 3 of
 // docs/design/climate-refinement.md): the wind pushes the surface water at a
 // right angle to itself, to the right in the northern hemisphere and to the

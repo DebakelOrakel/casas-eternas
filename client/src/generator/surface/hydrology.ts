@@ -453,23 +453,43 @@ export function accumulateDischargeOn(sub: FlowSubstrate, elevation: Float32Arra
 // without it the year is even and only aridity can dry a river. The ocean
 // sentinels (OCEAN_PRECIP, and |index| ≥ 1 which no land value reaches)
 // contribute nothing, like precipRunoffAt.
+//
+// With the climate step's months (`months`, 2026-09-29) the dry season is
+// read off them instead: the mean of the driest months' water, where a
+// month's water is its rain above freezing plus the snow melting in it. Snow
+// that falls in the cold months lies until the thaw and feeds the rivers
+// then, so a mountain river runs in a dry summer (degree-day melt,
+// SURFACE_TUNING.snowMeltMmPerDegreeMonth).
 export interface RegimeInputs {
   loss: Float32Array
   dry: Float32Array
 }
 
-export function accumulateRegimeInputs(routing: FlowRouting, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, monsoonIndex: Float32Array | undefined, climateResX: number, climateResY: number): RegimeInputs {
-  return accumulateRegimeInputsOn(rasterSubstrate(routing), elevation, temperature, precip, monsoonIndex, climateResX, climateResY)
+// The climate step's months, month-major on the climate grid: °C and mm/yr
+// rates (OCEAN_PRECIP on the sea).
+export interface ClimateMonths {
+  temperature: Float32Array
+  precipitation: Float32Array
+  count: number
 }
 
-export function accumulateRegimeInputsOn(sub: FlowSubstrate, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, monsoonIndex: Float32Array | undefined, climateResX: number, climateResY: number): RegimeInputs {
+export function accumulateRegimeInputs(routing: FlowRouting, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, monsoonIndex: Float32Array | undefined, climateResX: number, climateResY: number, months?: ClimateMonths): RegimeInputs {
+  return accumulateRegimeInputsOn(rasterSubstrate(routing), elevation, temperature, precip, monsoonIndex, climateResX, climateResY, months)
+}
+
+export function accumulateRegimeInputsOn(sub: FlowSubstrate, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, monsoonIndex: Float32Array | undefined, climateResX: number, climateResY: number, months?: ClimateMonths): RegimeInputs {
   const n = climateResX * climateResY
   const pet = new Float32Array(n)
   const dryPrecip = new Float32Array(n)
+  const water = new Float64Array(months?.count ?? 0)
   for (let i = 0; i < n; i++) {
     const p = precip[i]
     if (p === OCEAN_PRECIP || p <= 0) continue
     pet[i] = evaporationPotential(temperature[i])
+    if (months && months.count > 0) {
+      dryPrecip[i] = dryWaterFromMonths(months, i, n, water)
+      continue
+    }
     const s = monsoonIndex ? Math.abs(monsoonIndex[i]) : 0
     dryPrecip[i] = s < 1 ? p * (1 - s) : 0
   }
@@ -477,6 +497,46 @@ export function accumulateRegimeInputsOn(sub: FlowSubstrate, elevation: Float32A
     loss: accumulateDischargeOn(sub, elevation, pet, climateResX, climateResY),
     dry: accumulateDischargeOn(sub, elevation, dryPrecip, climateResX, climateResY),
   }
+}
+
+// The dry season's water of one climate cell from its months, as an annual
+// rate (mm/yr): each month's rain above freezing plus its melt, the snow
+// lying from the cold months (a degree-day melt, run over two years so the
+// winter's pack reaches the spring whichever month the year starts in),
+// then the mean of the `regimeDryMonths` driest THAWED months. A frozen
+// month is not a dry one: the river runs on under its ice, on groundwater
+// (the first cut counted frost as drought and made 42 % of Astrakan's land
+// seasonal). With no thawed month at all, the year's mean. `water` is
+// scratch, one entry per month.
+function dryWaterFromMonths(months: ClimateMonths, i: number, n: number, water: Float64Array): number {
+  const count = months.count
+  let pack = 0
+  for (let pass = 0; pass < 2; pass++) {
+    for (let m = 0; m < count; m++) {
+      const t = months.temperature[m * n + i]
+      const rain = Math.max(0, months.precipitation[m * n + i]) / count // mm this month
+      let flow = 0
+      if (t <= 0) pack += rain
+      else {
+        const melt = Math.min(pack, SURFACE_TUNING.snowMeltMmPerDegreeMonth * t)
+        pack -= melt
+        flow = rain + melt
+      }
+      if (pass === 1) water[m] = flow * count // back to an annual rate
+    }
+  }
+  const thawed: number[] = []
+  let all = 0
+  for (let m = 0; m < count; m++) {
+    all += water[m] / count
+    if (months.temperature[m * n + i] > 0) thawed.push(water[m])
+  }
+  if (thawed.length === 0) return all
+  thawed.sort((a, b) => a - b)
+  const k = Math.min(SURFACE_TUNING.regimeDryMonths, thawed.length)
+  let sum = 0
+  for (let m = 0; m < k; m++) sum += thawed[m]
+  return sum / k
 }
 
 // Largest discharge anywhere on land — the reference for river WIDTH (the mouth

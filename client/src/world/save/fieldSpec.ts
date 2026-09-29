@@ -101,6 +101,10 @@ export const REFINED_FIELDS: readonly FieldSpec[] = [
   climate('currentAnomaly', '°C', false),
   // Ekman upwelling, positive where cold water comes up (relative), 0 on land.
   climate('upwelling', 'relative', false),
+  // The sea's salt, psu (0 on land), and where its surface water sinks
+  // (0..1).
+  climate('salinity', 'psu', false),
+  climate('deepWater', 'relative', false),
   // Weather phenomena, each the share of the year it happens (0..1), land.
   climate('fog', 'share', true),
   climate('foehn', 'share', true),

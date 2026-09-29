@@ -481,6 +481,10 @@ export interface WorkerClimateRefinedMessage {
   // The storms (climate/storms.ts), Float32 0..1 per cell: cyclone tracks,
   // tornado readiness, dust and thunder relative to the world's strongest,
   // blizzards as the share of the year.
+  // The sea's salt (psu, 0 on land) and where its surface water sinks
+  // (0..1), Float32 per cell (climate/salinity.ts).
+  salinity: ArrayBuffer
+  deepWater: ArrayBuffer
   cyclone: ArrayBuffer
   tornado: ArrayBuffer
   blizzard: ArrayBuffer

@@ -857,6 +857,8 @@ function handleClimateRefine(): void {
     ensoPattern: r.reliability.ensoPattern.buffer as ArrayBuffer,
     ensoPeriodYears: r.reliability.ensoPeriodYears,
     ensoStrength: r.reliability.ensoStrength,
+    salinity: r.salinity.buffer as ArrayBuffer,
+    deepWater: r.deepWater.buffer as ArrayBuffer,
     cyclone: r.storms.cyclone.buffer as ArrayBuffer,
     tornado: r.storms.tornado.buffer as ArrayBuffer,
     blizzard: r.storms.blizzard.buffer as ArrayBuffer,
@@ -868,7 +870,7 @@ function handleClimateRefine(): void {
     currentAnomaly: r.currentAnomaly.slice().buffer as ArrayBuffer,
     upwelling: r.upwelling.buffer as ArrayBuffer,
   }
-  emit(reply, [reply.temperature, reply.precipitation, reply.koppen, reply.fog, reply.foehn, reply.rainVariability, reply.ensoPattern, reply.cyclone, reply.tornado, reply.blizzard, reply.dust, reply.thunder, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling])
+  emit(reply, [reply.temperature, reply.precipitation, reply.koppen, reply.fog, reply.foehn, reply.rainVariability, reply.ensoPattern, reply.salinity, reply.deepWater, reply.cyclone, reply.tornado, reply.blizzard, reply.dust, reply.thunder, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling])
   // The screen's annual fields follow, as a climate of its own kind.
   const climateMessage: WorkerClimateDataMessage = {
     type: 'climateData',
@@ -1034,7 +1036,7 @@ function handleHydrologyRun(): void {
         const sub = meshSubstrate(meshTerrain.mesh, meshTerrain.routing, meshTerrain.areas)
         const bankAtNode = new Uint8Array(meshTerrain.mesh.vertexSlots)
         for (let v = 0; v < bankAtNode.length; v++) if (meshTerrain.mesh.vAlive[v]) bankAtNode[v] = riparian.biomes[rasterCellAt(meshTerrain.mesh.vx[v], meshTerrain.mesh.vy[v], width, height)]
-        const regime = accumulateRegimeInputsOn(sub, meshTerrain.z, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y)
+        const regime = accumulateRegimeInputsOn(sub, meshTerrain.z, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y, weather.months)
         result.graph = buildRiverGraph({
           substrate: sub, discharge: result.onMesh.discharge, elevation: meshTerrain.z, threshold, maxDischarge: result.maxDischarge,
           bodies: result.onMesh.lakes.bodies, body: result.onMesh.lakes.body, lakeDepth: result.onMesh.lakes.depth,
@@ -1057,7 +1059,7 @@ function handleHydrologyRun(): void {
         for (let c = 0; c < table.length; c++) if (elevation[c] <= 0 || table[c] < 0) table[c] = -1
         result.waterTable = table
       } else {
-        const regime = accumulateRegimeInputs(result.routing, elevation, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y)
+        const regime = accumulateRegimeInputs(result.routing, elevation, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y, weather.months)
         result.graph = buildRiverGraph({
           routing: result.routing, discharge: result.discharge, elevation, threshold, maxDischarge: result.maxDischarge,
           bodies: result.bodies, body: result.body, lakeDepth: result.lakeDepth,

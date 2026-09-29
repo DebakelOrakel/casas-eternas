@@ -9,6 +9,7 @@
   "common.unit.degrees": "°",
   "common.unit.hours": "h",
   "common.unit.hectopascal": "hPa",
+  "common.unit.psu": "psu",
   "common.unit.metres": "m",
   "common.unit.metresPerSecond": "m/s",
   "common.unit.cubicMetresPerSecond": "m³/s",

@@ -13,6 +13,17 @@
 // AMPLIFY_CONSTANTS, which already exists as its own hashed set.
 
 export const SURFACE_TUNING = {
+  // The flow regime from the climate step's months (hydrology.
+  // dryWaterFromMonths): the dry season is the mean of this many driest
+  // thawed months' water — six, the drier half-year, which is what the
+  // regime's thresholds were set against (the smaller of the two seasons,
+  // F6); three read far drier (Astrakan: the dry season's median share of
+  // the year 0.20 against 0.77). Snow melts at this many mm per °C above
+  // freezing per month (a degree-day factor of ~4 mm/°C/day, the common one
+  // for snow).
+  regimeDryMonths: 6,
+  snowMeltMmPerDegreeMonth: 120,
+
   // HYDROGEOLOGY (surface/hydrogeology.ts, ADAPTIVE_MESH_PLAN.md phase 5a;
   // a classification, nothing moves). Permeability of the top material in
   // [0, 1]: coarse fill, fine fill, bedrock at neutral hardness (divided by

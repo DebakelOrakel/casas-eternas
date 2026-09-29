@@ -161,6 +161,9 @@ export const REFINED_LAYERS: LayerSpec[] = REFINED_FIELDS.map((f) => {
   if (f.name === 'currentU' || f.name === 'currentV') return layer(f.name, 'u16', 2 / 65535, -1)
   if (['fog', 'foehn', 'rainVariability', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder'].includes(f.name)) return layer(f.name, 'u8', 1 / 255, 0)
   if (f.name === 'ensoPattern') return layer(f.name, 'u8', 2 / 255, -1)
+  // 0–45 psu at 0.7 thousandths a step; the sinking a share.
+  if (f.name === 'salinity') return layer(f.name, 'u16', 45 / 65535, 0)
+  if (f.name === 'deepWater') return layer(f.name, 'u8', 1 / 255, 0)
   return layer(f.name, 'u16', 40 / 65535, -20)
 })
 

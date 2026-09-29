@@ -44,6 +44,8 @@ export function refinedLayerSources(r: RefinedClimate, n: number): Map<string, F
   out.set('currentV', cv)
   out.set('currentAnomaly', r.currentAnomaly)
   out.set('upwelling', r.upwelling)
+  out.set('salinity', r.salinity)
+  out.set('deepWater', r.deepWater)
   out.set('fog', r.fog)
   out.set('foehn', r.foehn)
   out.set('rainVariability', r.reliability.rainVariability)
@@ -87,7 +89,11 @@ export function refinedFromLayers(get: (name: string) => Float32Array | null, n:
   const upwelling = get('upwelling')
   const fog = get('fog')
   const foehn = get('foehn')
-  if (!cu || !cv || !currentAnomaly || !upwelling || !fog || !foehn) return null
+  // The salt reads the months' rain and the currents: it comes back as
+  // saved, like the storms.
+  const salinity = get('salinity')
+  const deepWater = get('deepWater')
+  if (!cu || !cv || !currentAnomaly || !upwelling || !fog || !foehn || !salinity || !deepWater) return null
   if (cu.length !== n || cv.length !== n || currentAnomaly.length !== n || upwelling.length !== n) return null
   const currents = new Float32Array(n * 2)
   for (let i = 0; i < n; i++) {
@@ -108,5 +114,5 @@ export function refinedFromLayers(get: (name: string) => Float32Array | null, n:
   for (let i = 0; i < n; i++) land[i] = landMask[i] > 0.5 ? 1 : 0
   const annual = annualFromMonths({ months: REFINED_MONTHS, temperature, precipitation })
   const reliability = computeReliability(annual.precipitation, annual.monsoonIndex, currentAnomaly, land, 0)
-  return { months: REFINED_MONTHS, temperature, precipitation, koppen, fog, foehn, reliability, storms, pressure, wind, currents, currentAnomaly, upwelling }
+  return { months: REFINED_MONTHS, temperature, precipitation, koppen, fog, foehn, salinity, deepWater, reliability, storms, pressure, wind, currents, currentAnomaly, upwelling }
 }

@@ -352,7 +352,52 @@ export const CLIMATE_TUNING = {
   cycloneFadeBelow: 0.02,
   cycloneSteps: 60,
 
-    // --- from refinement.ts ---
+    // --- from salinity.ts (the sea's salt and the overturning) ---
+  // Not measured yet (2026-09-29); orders of magnitude.
+
+  // The ocean's mean salinity, psu, and the range a cell is held in (the
+  // Baltic runs to 7, the Red Sea to 41).
+  salinityMeanPsu: 35,
+  salinityMinPsu: 5,
+  salinityMaxPsu: 42,
+  // What the sea evaporates at the evaporation factor's 1 (~30 °C), mm/yr
+  // (tropical seas lose some 1800); land evaporates this share of it.
+  salinityEvapMm: 1800,
+  salinityLandEvapShare: 0.6,
+  // The sea's rain: this many mm/yr at the rain model's zonal band factor and
+  // evaporation factor of 1 (salinity.ts). The band runs 1.5 at the equator
+  // and the 60th parallels, 0.13 in the subtropics and at the poles, so the
+  // equatorial sea gets ~2200 mm/yr, 60° ~900, the subtropics ~150 (Earth:
+  // ~2200, ~1000, 500–700 — the subtropics too dry, the gradient right).
+  salinitySeaRainMm: 1550,
+  // psu per mm/yr of net fresh water, per pass, with this relaxation toward
+  // the mean per pass, over this many passes: a surplus of 1000 mm/yr of
+  // evaporation settles near +2 psu (the subtropical gyres run 36–37).
+  salinityPsuPerMm: 1e-4,
+  salinityRelax: 0.05,
+  salinityIters: 150,
+  // psu per pass where the sea freezes (the salt the ice leaves behind).
+  // Small: freezing and melting nearly cancel over a year; what is left is
+  // the brine of the ice that drifts away.
+  salinityBrinePsu: 0.01,
+  // Surface water sinks poleward of this latitude where the sea is colder
+  // than this °C (fully at freezing, −1.8 °C) and saltier than its
+  // latitude's mean, fully this much saltier. At 0.5 psu a fifth or more of
+  // the sinking reached 6 % of Astrakan's sea; at 1 psu 3 % (the test world
+  // with an Atlantic-like basin 5 %), at a mean 68–71°, and the overturning
+  // warms the land beside it by up to 1.7–2.4 °C. Earth's sinking is a few
+  // small patches (55–70°), its warmth some degrees on Europe's coasts.
+  seaFreezesC: -1.8,
+  deepWaterBelowC: 5,
+  deepWaterFullAnomalyPsu: 1,
+  deepWaterMinLatDeg: 50,
+  // The sinking's surface inflow (oceanCurrents.computeSinkInflow): its
+  // fastest cell as this share of the wind's fastest current, and the
+  // Gauss-Seidel sweeps of its potential.
+  conveyorFlow: 0.3,
+  conveyorSolveIters: 700,
+
+  // --- from refinement.ts ---
   // When the equatorial rain belt stands furthest toward the top hemisphere,
   // as a fraction of the year: about mid-July, a few weeks after the
   // solstice, as the sea's lag holds it back.

@@ -3,6 +3,10 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-09-29
+- **changed** Rivers: after refining the climate, whether a river runs dry follows the real months, snowmelt included, and not only how uneven the year is. `generator.panel.erosion`
+- **new** Climate: the sea's salinity and where its cold, salty water sinks; the currents draw surface water toward it, warming the coasts on the way. A salinity layer shows it. `overlay.salinity`
+
 ## 2026-09-28
 - **new** Climate: tropical cyclones, tornado alleys, blizzards, dust and thunderstorms under weather phenomena, kept in the save. `weather.cyclone`
 - **new** Climate: the rain's year-to-year variability and an ENSO-like see-saw of equatorial basins, shown under weather phenomena and kept in the save. `weather.enso`

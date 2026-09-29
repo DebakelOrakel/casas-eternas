@@ -106,6 +106,23 @@ export function upwellingColor(share: number): Rgb {
   return rampColor(UPWELLING_STOPS, share)
 }
 
+// Sea surface salinity (psu) → colour: fresh water green-blue, the ocean's
+// mean pale, salty seas amber.
+const SALINITY_STOPS: { c: number; rgb: Rgb }[] = [
+  { c: 30, rgb: [70, 150, 150] },
+  { c: 33, rgb: [150, 200, 195] },
+  { c: 35, rgb: [236, 236, 230] },
+  { c: 37, rgb: [235, 200, 130] },
+  { c: 39, rgb: [205, 130, 55] },
+]
+
+export function salinityColor(psu: number): Rgb {
+  return rampColor(SALINITY_STOPS, psu)
+}
+
+// The sinking water's mark over the salinity: a deep violet.
+export const DEEP_WATER_RGB: Rgb = [90, 50, 140]
+
 // The ramps as {value, rgb} lists, for building the overlay legend gradient bars
 // (same stops the paint uses, so the legend matches the map exactly).
 export const temperatureLegendStops = TEMPERATURE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
@@ -114,4 +131,5 @@ export const amplitudeLegendStops = AMPLITUDE_STOPS.map((s) => ({ value: s.c, rg
 export const monsoonLegendStops = MONSOON_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
 // In percent, as the legend and the readout say it.
 export const upwellingLegendStops = UPWELLING_STOPS.map((s) => ({ value: s.c * 100, rgb: s.rgb }))
+export const salinityLegendStops = SALINITY_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))
 export const pressureLegendStops = PRESSURE_STOPS.map((s) => ({ value: s.c, rgb: s.rgb }))

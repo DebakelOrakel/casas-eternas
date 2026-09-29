@@ -6,9 +6,10 @@ import { seasonalCycle } from './energyBalance'
 import { applyPhenomena } from './phenomena'
 import { computeReliability, type Reliability } from './reliability'
 import { computeStorms, type Storms } from './storms'
+import { computeSalinity, spreadToCoasts } from './salinity'
 import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
 import { OCEAN_AMPLITUDE } from './seasonality'
-import { applyOceanSST, computeOceanCurrents, computeUpwelling, eastwardInBasin } from './oceanCurrents'
+import { applyOceanSST, computeOceanCurrents, computeSinkInflow, computeUpwelling, eastwardInBasin } from './oceanCurrents'
 import { computeTemperature } from './temperature'
 import type { WeatherParams } from './weather'
 import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
@@ -43,6 +44,10 @@ export interface RefinedClimate {
   reliability: Reliability
   // Cyclones, tornadoes, blizzards, dust, thunder (storms.ts).
   storms: Storms
+  // Sea surface salinity (psu, 0 on land) and where the surface water
+  // sinks (0..1), salinity.ts.
+  salinity: Float32Array
+  deepWater: Float32Array
   // Weather phenomena, each a share of the year per cell (phenomena.ts).
   fog: Float32Array
   foehn: Float32Array
@@ -98,12 +103,36 @@ export function refineClimate(
   for (let month = 0; month < REFINED_MONTHS; month++) {
     for (let i = 0; i < n * 2; i++) annualWind[i] += wind[month * n * 2 + i] / REFINED_MONTHS
   }
-  const currents = computeOceanCurrents(elevation, annualWind, width, height, undefined, params.equatorOffset)
+  const windCurrents = computeOceanCurrents(elevation, annualWind, width, height, undefined, params.equatorOffset)
+
+  // 9: the sea's salt and where it sinks, then the surface water that
+  // sinking draws after it (computeSinkInflow) added to the wind's currents,
+  // then the salt again on those — once round: the inflow moves the salty
+  // water that sinks, and one more pass settles where it does.
+  const landRain = new Float32Array(n)
+  for (let month = 0; month < REFINED_MONTHS; month++) for (let i = 0; i < n; i++) landRain[i] += precipitation[month * n + i] / REFINED_MONTHS
+  const first = computeSalinity(temperature, landRain, windCurrents, land, params.equatorOffset, params.humidity)
+  const inflow = computeSinkInflow(first.deepWater, land)
+  const currents = new Float32Array(n * 2)
+  let fastest = 0
+  for (let k = 0; k < n * 2; k++) currents[k] = windCurrents[k] + CLIMATE_TUNING.conveyorFlow * inflow[k]
+  for (let i = 0; i < n; i++) fastest = Math.max(fastest, Math.hypot(currents[i * 2], currents[i * 2 + 1]))
+  // Normalised like the wind's (the fastest is 1), which the sea's transport
+  // and the currents layer read.
+  if (fastest > 1) for (let k = 0; k < n * 2; k++) currents[k] /= fastest
+  const { salinity, deepWater } = computeSalinity(temperature, landRain, currents, land, params.equatorOffset, params.humidity)
 
   // The sea-surface anomaly, from the latitudinal base (not from `temperature`,
-  // which already carries the history's currents).
+  // which already carries the history's currents): on the full currents,
+  // and on the wind's alone, whose difference is the overturning's warmth.
   const base = computeTemperature(elevation, width, height, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, undefined, planet)
-  const currentAnomaly = applyOceanSST(base, currents, elevation, width, height)
+  const currentAnomaly = applyOceanSST(base.slice(), currents, elevation, width, height)
+  const windAnomaly = applyOceanSST(base.slice(), windCurrents, elevation, width, height)
+  const drift = new Float32Array(n)
+  for (let i = 0; i < n; i++) if (!land[i]) drift[i] = currentAnomaly[i] - windAnomaly[i]
+  // The months take it, on the sea and on the coasts beside it.
+  const warmth = spreadToCoasts(drift, land)
+  for (let month = 0; month < REFINED_MONTHS; month++) for (let i = 0; i < n; i++) monthly[month * n + i] += warmth[i]
 
   // Upwelling cools the sea where it comes up. The cold eastern coasts are
   // mostly this, not the slow currents along them.
@@ -133,7 +162,7 @@ export function refineClimate(
   const { fog, foehn } = applyPhenomena(monthly, REFINED_MONTHS, wind, currentAnomaly, land, elevation, width, height)
 
   const koppen = koppenFromMonths(monthly, precipitation, REFINED_MONTHS)
-  const refined = { months: REFINED_MONTHS, temperature: monthly, precipitation, koppen, fog, foehn, pressure, wind, currents, currentAnomaly, upwelling }
+  const refined = { months: REFINED_MONTHS, temperature: monthly, precipitation, koppen, fog, foehn, salinity, deepWater, pressure, wind, currents, currentAnomaly, upwelling }
 
   // 7: the rain's reliability, from the year the months make.
   const annual = annualFromMonths(refined)

@@ -14,12 +14,16 @@ export const OCEAN_PRECIP = -1
 // Warmer air/ocean evaporates and holds more moisture (a Clausius-Clapeyron-ish
 // increase) — this is what keeps the tropics humid and the cold poles dry, and
 // couples precipitation to the temperature slider (a warmer world is wetter).
-function evaporation(tempC: number): number {
+// Exported for the sea's salt balance (salinity.ts), which needs the same
+// evaporation the rain is made of.
+export function evaporation(tempC: number): number {
   const e = (tempC - CLIMATE_TUNING.precipEvapZeroC) / CLIMATE_TUNING.precipEvapSpanC
   return e < CLIMATE_TUNING.precipEvapMin ? CLIMATE_TUNING.precipEvapMin : e > CLIMATE_TUNING.precipEvapMax ? CLIMATE_TUNING.precipEvapMax : e
 }
 
-function bandFactor(phi: number): number {
+// Exported for the sea's rain (salinity.ts): this model rains out over land
+// only, and the sea's salt needs the zonal profile it rains by.
+export function bandFactor(phi: number): number {
   const f = CLIMATE_TUNING.precipBandBase + CLIMATE_TUNING.precipBandSwing * Math.cos(3 * Math.PI * phi)
   return f < CLIMATE_TUNING.precipBandFloor ? CLIMATE_TUNING.precipBandFloor : f
 }

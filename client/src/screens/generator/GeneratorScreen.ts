@@ -36,7 +36,7 @@ import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
 import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
 import { KOPPEN_CODES, koppenCode, koppenColor, koppenLabelKey } from '../../generator/climate/koppen'
-import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, pressureColor, upwellingColor, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops, pressureLegendStops, upwellingLegendStops } from '../../generator/climate/climateColors'
+import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, pressureColor, upwellingColor, salinityColor, DEEP_WATER_RGB, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops, pressureLegendStops, upwellingLegendStops, salinityLegendStops } from '../../generator/climate/climateColors'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
 import { shiftedYNorm } from '../../generator/climate/climateField'
@@ -1840,6 +1840,56 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
 
+  // The sea's salt (the refinement's): a wash on the sea, blended over the
+  // sea cells and painted on sea pixels like the upwelling, with the sinking
+  // water laid over it in violet, stronger where more of it sinks.
+  function paintSalinity(data: Uint8ClampedArray): void {
+    const salt = lastRefined?.salinity
+    const sink = lastRefined?.deepWater
+    const precipitation = lastPrecipitation
+    if (!salt || !sink || !precipitation || !lastRelief) return
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      const fy = (y + 0.5) / MAP_HEIGHT * climateResY - 0.5
+      const y0 = Math.floor(fy)
+      const ty = fy - y0
+      const r0 = wrapValue(y0, climateResY) * climateResX
+      const r1 = wrapValue(y0 + 1, climateResY) * climateResX
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        if (lastRelief[y * MAP_WIDTH + x] & 128) continue // land
+        const fx = (x + 0.5) / MAP_WIDTH * climateResX - 0.5
+        const x0 = Math.floor(fx)
+        const tx = fx - x0
+        const c0 = wrapValue(x0, climateResX)
+        const c1 = wrapValue(x0 + 1, climateResX)
+        let s = 0
+        let d = 0
+        let weight = 0
+        for (const [i, w] of [[r0 + c0, (1 - tx) * (1 - ty)], [r0 + c1, tx * (1 - ty)], [r1 + c0, (1 - tx) * ty], [r1 + c1, tx * ty]]) {
+          if (precipitation[i] !== OCEAN_PRECIP) continue
+          s += salt[i] * w
+          d += sink[i] * w
+          weight += w
+        }
+        if (weight <= 0) continue
+        const [r, g, b] = salinityColor(s / weight)
+        const p = (y * MAP_WIDTH + x) * 4
+        const alpha = 0.6
+        let pr = data[p] * (1 - alpha) + r * alpha
+        let pg = data[p + 1] * (1 - alpha) + g * alpha
+        let pb = data[p + 2] * (1 - alpha) + b * alpha
+        const sinkAlpha = 0.8 * Math.min(1, d / weight)
+        if (sinkAlpha > 0.05) {
+          pr = pr * (1 - sinkAlpha) + DEEP_WATER_RGB[0] * sinkAlpha
+          pg = pg * (1 - sinkAlpha) + DEEP_WATER_RGB[1] * sinkAlpha
+          pb = pb * (1 - sinkAlpha) + DEEP_WATER_RGB[2] * sinkAlpha
+        }
+        data[p] = pr
+        data[p + 1] = pg
+        data[p + 2] = pb
+      }
+    }
+  }
+
   // Sea-level pressure of the shown month (the refinement's): a wash, blue
   // for the lows and amber for the highs, and isobars every 4 hPa with the
   // 1012 and the 1020 line heavier — the weather map's convention. The wash
@@ -2225,6 +2275,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // not a user toggle (decided 2026-09-26 on the picture check).
     { id: 'equator', enabled: true, paint: (c) => paintWrapped(c, drawEquator) },
     { id: 'upwelling', enabled: false, paintPixels: paintUpwelling },
+    { id: 'salinity', enabled: false, paintPixels: paintSalinity },
     { id: 'weather', enabled: false, paintPixels: paintWeather },
     { id: 'pressure', enabled: false, paint: drawPressure },
     { id: 'wind', enabled: false, paint: drawWind },
@@ -2311,9 +2362,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // 'gradient' = a continuous colour ramp with value labels; 'swatches' =
   // discrete colour+label rows. Shown on the right whenever a legend-bearing
   // overlay is active.
+  type LegendItem = { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' | 'ring' | 'line'; dash?: 'solid' | 'dashed' | 'dotted' }
+  // A gradient may carry items under its bar: a mark the same layer draws
+  // over its ramp (the salinity's sinking water).
   type LegendSpec =
-    | { type: 'gradient'; title: string; unit: string; stops: { value: number; rgb: [number, number, number] }[] }
-    | { type: 'swatches'; title: string; items: { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' | 'ring' | 'line'; dash?: 'solid' | 'dashed' | 'dotted' }[] }
+    | { type: 'gradient'; title: string; unit: string; stops: { value: number; rgb: [number, number, number] }[]; items?: LegendItem[] }
+    | { type: 'swatches'; title: string; items: LegendItem[] }
   // ONE ROW PER LAYER, and every layer must fill it in (a layer added to
   // overlays.ts is a compile error here until it does): whether it can be
   // shown right now, what its legend says, and what it reads out at a hovered
@@ -2450,6 +2504,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         if (!cell.land || Math.abs(v) <= 0.005) return []
         const shown = pickedWeather === 'enso' ? `${v > 0 ? '+' : '−'}${Math.round(100 * Math.abs(v))}` : `${Math.round(100 * v)}`
         return [{ label: t(`weather.${pickedWeather}.label` as TKey), value: formatValue(shown, 'common.unit.percent') }]
+      },
+    },
+    salinity: {
+      available: () => lastRefined !== null,
+      legend: () => ({ type: 'gradient', title: t('overlay.salinity.label'), unit: t('common.unit.psu'), stops: salinityLegendStops, items: [
+        { label: t('overlay.salinity.legend.deepWater'), rgb: DEEP_WATER_RGB },
+      ] }),
+      probe: (cell) => {
+        if (!lastRefined || cell.land) return []
+        const rows = [{ label: t('readout.row.salinity'), value: formatValue(lastRefined.salinity[cell.i].toFixed(1), 'common.unit.psu') }]
+        const sink = lastRefined.deepWater[cell.i]
+        if (sink > 0.05) rows.push({ label: t('readout.row.deepWater'), value: formatValue(Math.round(100 * sink), 'common.unit.percent') })
+        return rows
       },
     },
     upwelling: {
@@ -2760,39 +2827,42 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
       row.append(bar, labels)
       block.appendChild(row)
-    } else {
-      const list = document.createElement('div')
-      list.className = 'legend-swatches'
-      for (const it of spec.items) {
-        const r = document.createElement('div')
-        r.className = 'legend-swatch-row'
-        const sw = document.createElement('span')
-        if (it.shape === 'cone') {
-          // Match the map's volcano marker (an upward cone), not a flat square.
-          sw.className = 'legend-cone'
-          sw.style.borderBottomColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
-        } else if (it.shape === 'ring') {
-          // Match the map's hotspot-plume marker (an orange ring).
-          sw.className = 'legend-ring'
-          sw.style.borderColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
-        } else if (it.shape === 'line') {
-          // A drawn line: the rivers' regimes (solid, dashed, dotted — the
-          // ribbon shader's convention) and the coast's cliff line.
-          sw.className = 'legend-line'
-          sw.style.borderTopStyle = it.dash ?? 'solid'
-          sw.style.borderTopColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
-        } else {
-          sw.className = 'legend-swatch'
-          sw.style.background = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
-        }
-        const lb = document.createElement('span')
-        lb.textContent = it.label
-        r.append(sw, lb)
-        list.appendChild(r)
-      }
-      block.appendChild(list)
     }
+    if (spec.items && spec.items.length > 0) block.appendChild(buildLegendSwatches(spec.items))
     return block
+  }
+
+  function buildLegendSwatches(items: LegendItem[]): HTMLElement {
+    const list = document.createElement('div')
+    list.className = 'legend-swatches'
+    for (const it of items) {
+      const r = document.createElement('div')
+      r.className = 'legend-swatch-row'
+      const sw = document.createElement('span')
+      if (it.shape === 'cone') {
+        // Match the map's volcano marker (an upward cone), not a flat square.
+        sw.className = 'legend-cone'
+        sw.style.borderBottomColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
+      } else if (it.shape === 'ring') {
+        // Match the map's hotspot-plume marker (an orange ring).
+        sw.className = 'legend-ring'
+        sw.style.borderColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
+      } else if (it.shape === 'line') {
+        // A drawn line: the rivers' regimes (solid, dashed, dotted — the
+        // ribbon shader's convention) and the coast's cliff line.
+        sw.className = 'legend-line'
+        sw.style.borderTopStyle = it.dash ?? 'solid'
+        sw.style.borderTopColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
+      } else {
+        sw.className = 'legend-swatch'
+        sw.style.background = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
+      }
+      const lb = document.createElement('span')
+      lb.textContent = it.label
+      r.append(sw, lb)
+      list.appendChild(r)
+    }
+    return list
   }
 
   // Rebuild the right-side legend from whichever legend-bearing overlays are
@@ -3466,6 +3536,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       currentAnomaly: new Float32Array(message.currentAnomaly),
       upwelling: new Float32Array(message.upwelling),
       koppen: new Uint8Array(message.koppen),
+      salinity: new Float32Array(message.salinity),
+      deepWater: new Float32Array(message.deepWater),
       fog: new Float32Array(message.fog),
       foehn: new Float32Array(message.foehn),
       reliability: {

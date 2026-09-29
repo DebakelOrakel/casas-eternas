@@ -449,6 +449,8 @@ else {
     currents: Float32Array.from({ length: n * 2 }, (_, i) => rnd(i + 3) * 2 - 1),
     currentAnomaly: Float32Array.from({ length: n }, (_, i) => (rnd(i + 5) - 0.5) * 12),
     upwelling: Float32Array.from({ length: n }, (_, i) => (rnd(i + 9) - 0.3) * 6),
+    salinity: Float32Array.from({ length: n }, (_, i) => 30 + 9 * rnd(i + 37)),
+    deepWater: Float32Array.from({ length: n }, (_, i) => rnd(i + 41)),
     fog: Float32Array.from({ length: n }, (_, i) => rnd(i + 17)),
     foehn: Float32Array.from({ length: n }, (_, i) => rnd(i + 19) * 0.3),
     reliability: {
@@ -477,6 +479,8 @@ else {
     && worst(r.currentAnomaly, back.currentAnomaly, stepOf('currentAnomaly')) <= 0.51
     && worst(r.upwelling, back.upwelling, stepOf('upwelling')) <= 0.51
     && worst(r.fog, back.fog, stepOf('fog')) <= 0.51
+    && worst(r.salinity, back.salinity, stepOf('salinity')) <= 0.51
+    && worst(r.deepWater, back.deepWater, stepOf('deepWater')) <= 0.51
     && worst(r.foehn, back.foehn, stepOf('foehn')) <= 0.51
     && ['cyclone', 'tornado', 'blizzard', 'dust', 'thunder'].every((k) => worst(r.storms[k], back.storms[k], stepOf(k)) <= 0.51)
   check('the refinement survives the save within half a step', within)

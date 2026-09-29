@@ -76,9 +76,16 @@ after the step than before it. Köppen is also a layer of its own.
 4. **Upwelling.** Ekman transport at eastern boundaries and at the equator.
    The result is cold coasts, fog deserts and a marine productivity field
    (fish) for ecology.
-5. **Thermohaline circulation.** Later, as an estimate for each basin from
-   evaporation minus precipitation and from the basin's opening to the
-   pole. No salinity or depth model.
+5. **Salinity and the conveyor** (revised 2026-09-29: a field, not an
+   estimate per basin). The sea surface's salinity from evaporation,
+   rain, the rivers' outflow (the hydrology's discharge at the mouths) and
+   the salt sea ice leaves behind, carried by the currents as the sea
+   surface temperature is. Cold, salty water is dense: where it forms at
+   high latitude, it sinks, and warm surface water is drawn after it along
+   the currents (the Atlantic's overturning, some degrees of warmth on the
+   coasts downstream). The salinity is a field of its own too: brackish
+   estuaries, salty marginal seas. No depth model: the sinking's strength
+   is read off the surface, and its pull is calibrated, not computed.
 
 **Items 1 and 3 also go into the epochs** (agreed 2026-09-28): they are in
 the shared solver and cost little. They change the golden hashes. Measure
@@ -123,7 +130,7 @@ cycles alias. That is a separate topic.
 | Western boundary currents | β term | yes | – | yes | coastal climate |
 | Passages, circumpolar current | island rule | yes | – | yes | polar ice |
 | Upwelling, marine productivity | Ekman | yes | – | – | fog, resources |
-| Thermohaline circulation | estimate per basin | later | – | – | high-latitude heat |
+| Salinity, conveyor | evaporation, rain, rivers, ice, currents | later | – | – | high-latitude heat, estuaries |
 | Fog coasts | upwelling + onshore wind | yes | yes: coastline | – | Köppen (BWn), biomes |
 | Föhn | lee side (A) | yes | yes | – | Köppen, biomes |
 | Valley and katabatic winds | relief | – | yes | – | local climate |
@@ -292,7 +299,29 @@ physics.
    poleward drift, and wind from any side instead of the westerlies).
    In the save as layers; they read the relief, so a load reads them back
    rather than deriving them.
-9. Currents 5, controls, D: when needed.
+9. Currents 5 (salinity and the conveyor).
+   BUILT 2026-09-29 (climate/salinity.ts; the refinement 2.6 → 3.6 s).
+   The salt budget per sea cell (evaporation, rain, rivers, brine) carried
+   by the currents and relaxed toward 35 psu. The rain model rains over
+   land only, so the sea's rain is estimated from its zonal band factor
+   times the local evaporation; the rivers are each land cell's surplus at
+   its nearest sea cell (the routing runs after the climate). Sinking where
+   the sea is near freezing and saltier than its latitude's mean: an
+   absolute density threshold sank every polar sea or none, as the polar
+   seas come out within 0.1 psu of each other (no moisture moves between
+   oceans here). The sinking draws surface water after it: a potential flow
+   into the sinks (oceanCurrents.computeSinkInflow), the sunk water rising
+   spread over the whole sea, added to the wind's currents at 0.3 of their
+   fastest; the salt is computed again on those. The overturning's warmth
+   is the sea temperature's difference with and without the inflow, onto
+   the coasts, in every month. (A first cut traced a warmth back along the
+   wind's currents instead, which left the currents themselves untouched.)
+   Astrakan: 34.2 psu at the equator, 37.1 in the subtropics, 35.5 at mid
+   latitudes (Earth ~34.5, ~37, 34–35); sinking on 4 % of the sea at a
+   mean 68°; the land beside it up to 2.3 °C warmer (0.6 of the wind's
+   fastest gave up to 6 °C); the whole refinement 4.4 s. The controls: not wanted
+   (2026-09-29: eccentricity and perihelion add little beyond the tilt,
+   an ocean heat transport knob has no physics). D: when needed.
 10. Final refinement: with the bakery step.
 
 ## Forks decided 2026-09-28

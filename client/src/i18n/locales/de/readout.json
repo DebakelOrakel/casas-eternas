@@ -11,6 +11,8 @@
   "readout.row.wind": "Wind",
   "readout.row.pressure": "Luftdruck",
   "readout.row.upwelling": "Auftrieb",
+  "readout.row.salinity": "Salzgehalt",
+  "readout.row.deepWater": "Absinken",
   "readout.row.current": "Strömung",
   "readout.row.biome": "Biom",
   "readout.row.koppen": "Klima",
