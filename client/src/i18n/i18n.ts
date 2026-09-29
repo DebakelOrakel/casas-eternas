@@ -127,3 +127,15 @@ export function t(key: TKey, params?: Record<string, string | number>): string {
   }
   return value
 }
+
+// A unit is a `common.unit.*` key: one per quantity, the only place a unit
+// is written (2026-09-29; they used to stand in the legends and the readout
+// lines too, °C three times).
+export type UnitKey = Extract<TKey, `common.unit.${string}`>
+
+// A number with its unit, as the active language writes the pair
+// (`common.valueWithUnit`). The number comes formatted: the caller knows how
+// many places it has.
+export function formatValue(v: string | number, unit: UnitKey): string {
+  return t('common.valueWithUnit', { v, unit: t(unit) })
+}

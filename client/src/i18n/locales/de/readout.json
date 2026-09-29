@@ -25,14 +25,8 @@
   "readout.current.warm": "warm",
   "readout.current.cold": "kalt",
   "readout.seasonSwing": "± {v} °C",
-  "readout.percent": "{v} %",
   "readout.chart.temperature": "Temperatur übers Jahr",
   "readout.chart.precipitation": "Niederschlag übers Jahr",
   "readout.months": "J,F,M,A,M,J,J,A,S,O,N,D",
-  "readout.metres": "{v} m",
-  "readout.metresDeep": "{v} m tief",
-  "readout.temperature": "{v} °C",
-  "readout.metresPerSecond": "{v} m/s",
-  "readout.cubicMetresPerSecond": "{v} m³/s",
-  "readout.precipitation": "{v} mm/Jahr"
+  "readout.metresDeep": "{v} m tief"
 }

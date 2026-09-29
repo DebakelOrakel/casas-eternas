@@ -48,7 +48,7 @@ import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecol
 import { DISCHARGE_LAYER, FORCING_LAYERS, REFINED_LAYERS, WORLD_LAYERS, bakeLayer, decodeLayer } from '../../world/save/worldLayers'
 import { refinedFromLayers, refinedLayerSources } from '../../world/save/refinedLayers'
 import type { RefinedClimate } from '../../generator/climate/refinement'
-import { getLocale, t, type TKey } from '../../i18n/i18n'
+import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
 import { createOverlayList } from './OverlayList'
 import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from './overlays'
@@ -1141,7 +1141,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       computeProgressFill.setAttribute('d', progressFillPath(fraction, progressWavePhase))
       if (stage) computeProgress.dataset.stage = stage
       else delete computeProgress.dataset.stage
-      computeProgress.setAttribute('aria-label', t('generator.progress.aria', { step: label, percent: `${Math.round(fraction * 100)} %` }))
+      computeProgress.setAttribute('aria-label', t('generator.progress.aria', { step: label, percent: formatValue(Math.round(fraction * 100), 'common.unit.percent') }))
     }
     // The wave moves while the pill shows — once a second is enough, and
     // not at all when motion is reduced or the Archean stands.
@@ -2388,10 +2388,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     temperature: {
       available: () => lastTemperature !== null,
-      legend: () => ({ type: 'gradient', title: t('overlay.temperature.label'), unit: t('overlay.temperature.legend.unit'), stops: temperatureLegendStops }),
+      legend: () => ({ type: 'gradient', title: t('overlay.temperature.label'), unit: t('common.unit.celsius'), stops: temperatureLegendStops }),
       probe: (cell) => {
         const field = displayTemperature()
-        return field ? [{ label: t('readout.row.temperature'), value: t('readout.temperature', { v: String(Math.round(field[cell.i])) }) }] : []
+        return field ? [{ label: t('readout.row.temperature'), value: formatValue(String(Math.round(field[cell.i])), 'common.unit.celsius') }] : []
       },
       chart: (cell) => {
         const year = temperatureYear(cell)
@@ -2400,7 +2400,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     seasonality: {
       available: () => lastSeasonality !== null,
-      legend: () => ({ type: 'gradient', title: t('overlay.seasonality.label'), unit: t('overlay.seasonality.legend.unit'), stops: amplitudeLegendStops }),
+      legend: () => ({ type: 'gradient', title: t('overlay.seasonality.label'), unit: t('common.unit.celsius'), stops: amplitudeLegendStops }),
       // The field is the full peak-to-peak swing (seasonalTemperature adds
       // ±half of it), so the ± figure is half the field.
       probe: (cell) => lastSeasonality && lastSeasonality[cell.i] !== OCEAN_AMPLITUDE
@@ -2427,7 +2427,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const v = weatherField(pickedWeather)?.[cell.i] ?? 0
         if (!cell.land || Math.abs(v) <= 0.005) return []
         const shown = pickedWeather === 'enso' ? `${v > 0 ? '+' : '−'}${Math.round(100 * Math.abs(v))}` : `${Math.round(100 * v)}`
-        return [{ label: t(`weather.${pickedWeather}.label` as TKey), value: `${shown} ${t('common.unit.percent')}` }]
+        return [{ label: t(`weather.${pickedWeather}.label` as TKey), value: formatValue(shown, 'common.unit.percent') }]
       },
     },
     upwelling: {
@@ -2437,7 +2437,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const field = lastRefined?.upwelling
         if (!field || cell.land || field[cell.i] <= 0) return []
         const peak = upwellingPeak()
-        return peak > 0 ? [{ label: t('readout.row.upwelling'), value: `${Math.min(100, Math.round((100 * field[cell.i]) / peak))} ${t('common.unit.percent')}` }] : []
+        return peak > 0 ? [{ label: t('readout.row.upwelling'), value: formatValue(Math.min(100, Math.round((100 * field[cell.i]) / peak)), 'common.unit.percent') }] : []
       },
     },
     pressure: {
@@ -2445,7 +2445,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       legend: () => ({ type: 'gradient', title: t('overlay.pressure.label'), unit: t('common.unit.hectopascal'), stops: pressureLegendStops }),
       probe: (cell) => {
         const field = refinedMonth()?.pressure
-        return field ? [{ label: t('readout.row.pressure'), value: `${Math.round(field[cell.i])} ${t('common.unit.hectopascal')}` }] : []
+        return field ? [{ label: t('readout.row.pressure'), value: formatValue(Math.round(field[cell.i]), 'common.unit.hectopascal') }] : []
       },
     },
     wind: {
@@ -2461,7 +2461,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         // band pattern tapers to zero at each cell edge (climate/wind.ts), so a
         // calm belt reads 0.0 m/s and loses its arrow, which is the truth.
         const speed = Math.hypot(u, v) * CLIMATE_TUNING.windSpeedMsPerUnit
-        return [{ label: t('readout.row.wind'), value: t('readout.metresPerSecond', { v: speed.toFixed(1) }), bearing: bearing(u, v) ?? undefined }]
+        return [{ label: t('readout.row.wind'), value: formatValue(speed.toFixed(1), 'common.unit.metresPerSecond'), bearing: bearing(u, v) ?? undefined }]
       },
     },
     currents: {
@@ -2481,11 +2481,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     precipitation: {
       available: () => lastPrecipitation !== null,
-      legend: () => ({ type: 'gradient', title: t('overlay.precipitation.label'), unit: t('overlay.precipitation.legend.unit'), stops: precipitationLegendStops }),
+      legend: () => ({ type: 'gradient', title: t('overlay.precipitation.label'), unit: t('common.unit.millimetresPerYear'), stops: precipitationLegendStops }),
       probe: (cell) => {
         const field = displayPrecipitation()
         return field && field[cell.i] !== OCEAN_PRECIP
-          ? [{ label: t('readout.row.precipitation'), value: t('readout.precipitation', { v: String(Math.round(field[cell.i])) }) }]
+          ? [{ label: t('readout.row.precipitation'), value: formatValue(String(Math.round(field[cell.i])), 'common.unit.millimetresPerYear') }]
           : []
       },
       chart: (cell) => {
@@ -2545,10 +2545,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           // decimal while it is small enough for one to mean something.
           const m3s = lastDischargeField[cell.fine] * DISCHARGE_TO_M3S
           const flow = m3s >= 100 ? Math.round(m3s).toLocaleString(getLocale()) : m3s.toFixed(1)
-          rows.push({ label: t('readout.row.discharge'), value: t('readout.cubicMetresPerSecond', { v: flow }) })
+          rows.push({ label: t('readout.row.discharge'), value: formatValue(flow, 'common.unit.cubicMetresPerSecond') })
         }
         if (lastLakeDepth && lastLakeDepth[cell.fine] > 0) {
-          rows.push({ label: t('readout.row.lakeDepth'), value: t('readout.metres', { v: String(Math.round(elevationToMeters(lastLakeDepth[cell.fine]) - elevationToMeters(0))) }) })
+          rows.push({ label: t('readout.row.lakeDepth'), value: formatValue(String(Math.round(elevationToMeters(lastLakeDepth[cell.fine]) - elevationToMeters(0))), 'common.unit.metres') })
         }
         return rows
       },
@@ -2560,7 +2560,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         { label: t('overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
       ] }),
       probe: (cell) => lastPrecipitationEffective && lastPrecipitationEffective[cell.i] !== OCEAN_PRECIP
-        ? [{ label: t('readout.row.effectivePrecip'), value: t('readout.precipitation', { v: String(Math.round(lastPrecipitationEffective[cell.i])) }) }]
+        ? [{ label: t('readout.row.effectivePrecip'), value: formatValue(String(Math.round(lastPrecipitationEffective[cell.i])), 'common.unit.millimetresPerYear') }]
         : [],
     },
     // A basin's colour is its identity, not a value: nothing to read out.
@@ -2579,7 +2579,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const ex = Math.min(ecologyResX - 1, Math.floor((cell.gx / Math.max(1, climateResX)) * ecologyResX))
         const ey = Math.min(ecologyResY - 1, Math.floor((cell.gy / Math.max(1, climateResY)) * ecologyResY))
         const v = field[ey * ecologyResX + ex]
-        return v === ECOLOGY_OCEAN ? [] : [{ label: t(`resource.${selectedEcologyField}.label` as TKey), value: t('readout.percent', { v: String(Math.round(v * 100)) }) }]
+        return v === ECOLOGY_OCEAN ? [] : [{ label: t(`resource.${selectedEcologyField}.label` as TKey), value: formatValue(String(Math.round(v * 100)), 'common.unit.percent') }]
       },
     },
     // Migration leaves the generator for a screen of its own; until then the
@@ -2930,8 +2930,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (lengthKm === 0) { scaleBar.hidden = true; return }
     scaleBar.hidden = false
     scaleBarBar.style.width = `${Math.round((lengthKm * 1000) / metresPerPx)}px`
-    scaleBarLabel.textContent = `${lengthKm} ${t('common.unit.kilometres')}`
-    scaleBar.setAttribute('aria-label', `${lengthKm} ${t('common.unit.kilometres')}`)
+    scaleBarLabel.textContent = formatValue(lengthKm, 'common.unit.kilometres')
+    scaleBar.setAttribute('aria-label', formatValue(lengthKm, 'common.unit.kilometres'))
   }
 
   const tempScale = root.querySelector<HTMLCanvasElement>('[data-value="temp-scale"]')!
@@ -3197,7 +3197,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
     const stepId = STEP_IDS[panelIndex]
     return buildProbeCard({
-      heading: metres >= 0 ? t('readout.metres', { v: String(metres) }) : t('readout.metresDeep', { v: String(-metres) }),
+      heading: metres >= 0 ? formatValue(String(metres), 'common.unit.metres') : t('readout.metresDeep', { v: String(-metres) }),
       kind: cell.land ? t('readout.kind.land') : t('readout.kind.ocean'),
       land: cell.land,
       rows: probeRowsFor(stepId, cell),
