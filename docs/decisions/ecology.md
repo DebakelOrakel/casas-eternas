@@ -253,6 +253,12 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      works need a dry season, not a dry year), and a terminal basin's salt
      flat (hydrology) is salt in full. Tried and dropped: the sea's salinity
      and the shore's flatness. See computeSalt and the salt constants.
+     **Water in dry land 2026-09-29:** an oasis (hydrogeology's spring in
+     an arid climate) waters its cell's fields as a big river does; below
+     400 mm of rain the grazing needs water for the herds, a river or a
+     hand-dug well (water table within 30 m). Wells as irrigation were
+     tried and dropped (two thirds of the dry land became farmland). See
+     fieldWater, herdWater and computePasture.
    - **2b — fish** ✅ BUILT 2026-07-26 (pending visual check): marine (coastalness
      × shelf-base + upwelling from adjacent-ocean current strength) + freshwater
      (big rivers via discharge + lake presence), saturating; a 4th subsistence

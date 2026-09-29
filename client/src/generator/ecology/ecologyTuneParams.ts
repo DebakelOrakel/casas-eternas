@@ -144,6 +144,24 @@ export const ECOLOGY_TUNING = {
   arableFrostC: 5,
   arableIrrigationMm: 1000,
   arableRiskW: 1,
+  // Water in dry land (fieldWater, herdWater, computePasture): an oasis
+  // waters its cell's fields as a big river does (`oasisW`); a herd drinks
+  // where the water table lies within `wellDepthM` (a hand-dug well), the
+  // cell's share of it × `wellW`; below `pastureDryMm` of rain the grazing
+  // is lost toward `pastureDryFullMm` where there is no such water.
+  // Measured on the three golden worlds (2026-09-29): the oases (37, 16
+  // and 2) add 15, 5 and 1 farmed cells to 1176, 180 and 149 dry ones
+  // (below 250 mm). The hydrogeology puts the table within 30 m on some
+  // 60–80 % of the dry land (along its wadis), so the dry land keeps most
+  // of its grazing: its pasture 0.12–0.15 with the wells, 0.04–0.06
+  // without; the worlds' mean pasture −2 to −3 %. Wells as irrigation
+  // were tried first: at 0.3 of a river's water they made two thirds of
+  // the dry land farmland (365 → 775 of 1176 cells above 0.1).
+  oasisW: 1,
+  wellDepthM: 30,
+  wellW: 1,
+  pastureDryMm: 400,
+  pastureDryFullMm: 100,
 
   // Arable flatness sensitivity: steeper ground is progressively harder to farm.
   // Scaled by SLOPE_RECALIBRATION (see elevationScale.ts): flatness reads raw

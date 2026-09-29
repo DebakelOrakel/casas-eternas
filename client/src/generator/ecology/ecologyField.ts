@@ -89,6 +89,11 @@ export interface EcologyInputs {
   // Full-res: 1 on a terminal basin's dry floor (hydrology's salt flat), or
   // null (no hydrology yet).
   saltFlat: Uint8Array | null
+  // Full-res: the water table's depth below the surface, metres, −1 under
+  // water (hydrology's hydrogeology), or null. And its oases: the springs
+  // in an arid climate, world px.
+  waterTable: Float32Array | null
+  oases: { x: number; y: number }[]
   volcanoes: Volcano[]
   // Collision-belt points — tin / lode-gold / gem provenance. Combines the
   // CURRENT fold-mountain features (on-crust, always where collision ranges are)
@@ -127,7 +132,7 @@ function productivity(tempC: number, precipMm: number): number {
 // the rain fails often: × (1 − `arableRiskW` × the rain's variability), and
 // a river takes that risk away as far as it waters the fields. Without
 // months (a climate that was not refined) the annual means stand in.
-function computeArable(temperature: Float32Array, precipitation: Float32Array, months: EcologyInputs['months'], rainVariability: Float32Array | null, river: Float32Array | null, elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number): Float32Array {
+function computeArable(temperature: Float32Array, precipitation: Float32Array, months: EcologyInputs['months'], rainVariability: Float32Array | null, fieldWaterShare: Float32Array | null, elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number): Float32Array {
   const T = ECOLOGY_TUNING
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const out = new Float32Array(n)
@@ -135,7 +140,7 @@ function computeArable(temperature: Float32Array, precipitation: Float32Array, m
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const i = gy * CLIMATE_RES_X + gx
       if (!land[i]) continue
-      const water = river ? river[i] : 0
+      const water = fieldWaterShare ? fieldWaterShare[i] : 0
       let growing = 0
       if (months) {
         for (let m = 0; m < months.count; m++) {
@@ -158,13 +163,43 @@ function computeArable(temperature: Float32Array, precipitation: Float32Array, m
   return out
 }
 
-// How much water a big river brings to the cell's fields, 0..1: the
-// fish's freshwater scale (√ of the discharge against the world's largest,
-// doubled, capped).
+// How much water a big river brings, 0..1: the fish's freshwater scale (√
+// of the discharge against the world's largest, doubled, capped). Null when
+// there is no hydrology.
 function riverWater(coarseDischarge: Float32Array | null, maxDischarge: number): Float32Array | null {
   if (!coarseDischarge || maxDischarge <= 0) return null
   const out = new Float32Array(coarseDischarge.length)
   for (let i = 0; i < out.length; i++) out[i] = Math.min(1, Math.sqrt(Math.max(0, coarseDischarge[i]) / maxDischarge) * 2)
+  return out
+}
+
+// The water on the cell's fields, 0..1: a big river's, or an oasis in the
+// cell (`oasisW`): the spring waters its gardens.
+function fieldWater(river: Float32Array | null, oases: { x: number; y: number }[], worldW: number, worldH: number): Float32Array | null {
+  if (!river && oases.length === 0) return null
+  const out = river ? river.slice() : new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  for (const o of oases) {
+    const gx = Math.min(CLIMATE_RES_X - 1, Math.floor((o.x / worldW) * CLIMATE_RES_X))
+    const gy = Math.min(CLIMATE_RES_Y - 1, Math.floor((o.y / worldH) * CLIMATE_RES_Y))
+    const i = gy * CLIMATE_RES_X + gx
+    out[i] = Math.max(out[i], ECOLOGY_TUNING.oasisW)
+  }
+  return out
+}
+
+// The water a herd can drink, 0..1: a big river's, or the share of the
+// cell whose water table lies within `wellDepthM` (a well dug by hand), ×
+// `wellW`. Null when there is no hydrology.
+function herdWater(river: Float32Array | null, waterTable: Float32Array | null, worldW: number, worldH: number): Float32Array | null {
+  if (!river && !waterTable) return null
+  const T = ECOLOGY_TUNING
+  const out = river ? river.slice() : new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  if (waterTable) {
+    const shallow = new Float32Array(waterTable.length)
+    for (let k = 0; k < waterTable.length; k++) shallow[k] = waterTable[k] >= 0 && waterTable[k] <= T.wellDepthM ? 1 : 0
+    const share = downsampleBox(shallow, worldW, worldH, CLIMATE_RES_X, CLIMATE_RES_Y)
+    for (let i = 0; i < out.length; i++) out[i] = Math.max(out[i], Math.min(1, T.wellW * share[i]))
+  }
   return out
 }
 
@@ -191,8 +226,12 @@ function computeGame(temperature: Float32Array, precipitation: Float32Array, bio
   return out
 }
 
-// Pasture: open grazing land by biome (see PASTURE_BY_BIOME).
-function computePasture(biomes: Uint8Array, land: Uint8Array): Float32Array {
+// Pasture: open grazing land by biome (see PASTURE_BY_BIOME), in dry land
+// only as far as the herds find water: below `pastureDryMm` of rain the
+// grazing is lost toward `pastureDryFullMm` unless a river or a well
+// (herdWater) is there. The dry steppe is grazed from its wells.
+function computePasture(biomes: Uint8Array, precipitation: Float32Array, water: Float32Array | null, land: Uint8Array): Float32Array {
+  const T = ECOLOGY_TUNING
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   for (let i = 0; i < out.length; i++) {
     if (!land[i]) continue
@@ -203,7 +242,10 @@ function computePasture(biomes: Uint8Array, land: Uint8Array): Float32Array {
     // agree, nothing enforces it, and without the fallback a disagreement would
     // write `undefined` into a Float32Array — a NaN, not a wrong number.
     // Removable once part C1 leaves one land mask.
-    out[i] = PASTURE_BY_BIOME[biomes[i] as LandBiomeId] ?? 0.1
+    const grazing = PASTURE_BY_BIOME[biomes[i] as LandBiomeId] ?? 0.1
+    // Without hydrology nothing is known of the water: the biome decides.
+    const dry = water ? clamp01((T.pastureDryMm - precipitation[i]) / (T.pastureDryMm - T.pastureDryFullMm)) : 0
+    out[i] = grazing * (1 - dry * (1 - (water ? water[i] : 0)))
   }
   return out
 }
@@ -550,7 +592,7 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: 
 // --- entry point ------------------------------------------------------------
 
 export function computeEcology(inputs: EcologyInputs, params: EcologyParams): EcologyFields {
-  const { temperature, precipitation, biomes, upwelling, months, rainVariability, elevation, discharge, maxDischarge, lakeDepth, saltFlat, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth, worldHeight } = inputs
+  const { temperature, precipitation, biomes, upwelling, months, rainVariability, elevation, discharge, maxDischarge, lakeDepth, saltFlat, waterTable, oases, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth, worldHeight } = inputs
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const land = new Uint8Array(n)
   for (let i = 0; i < n; i++) if (precipitation[i] !== OCEAN_PRECIP) land[i] = 1
@@ -569,10 +611,11 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
   const coarseLake = lakeDepth ? toClimateGrid(lakeDepth, worldWidth, worldHeight) : null
 
   // Subsistence.
-  const arable = scaleField(computeArable(temperature, precipitation, months, rainVariability, riverWater(coarseDischarge, maxDischarge), elevation, land, worldWidth, worldHeight), 'arable')
+  const river = riverWater(coarseDischarge, maxDischarge)
+  const arable = scaleField(computeArable(temperature, precipitation, months, rainVariability, fieldWater(river, oases, worldWidth, worldHeight), elevation, land, worldWidth, worldHeight), 'arable')
   const fish = scaleField(computeFish(land, temperature, upwelling, shelfShare(elevation, worldWidth, worldHeight), coarseDischarge, maxDischarge, coarseLake), 'fish')
   const game = scaleField(computeGame(temperature, precipitation, biomes, land), 'game')
-  const pasture = scaleField(computePasture(biomes, land), 'pasture')
+  const pasture = scaleField(computePasture(biomes, precipitation, herdWater(river, waterTable, worldWidth, worldHeight), land), 'pasture')
   const salt = scaleField(computeSalt(temperature, precipitation, months, saltFlat ? toClimateGrid(Float32Array.from(saltFlat), worldWidth, worldHeight) : null, land), 'salt')
 
   // Saturating carrying-capacity base: subsistence sources complement with

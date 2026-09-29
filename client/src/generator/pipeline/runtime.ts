@@ -232,6 +232,9 @@ interface HydrologyResult {
   // The water table's depth below the surface on the world raster, metres
   // (phase 5a, surface/hydrogeology.ts); −1 under water.
   waterTable: Float32Array | null
+  // The springs in an arid climate (phase 5a's oases), world px — the
+  // ecology waters their fields.
+  oases: { x: number; y: number }[]
   // The mesh's own hydrology when the world has a mesh (phase 4.3); the
   // raster fields above are then its recovery.
   onMesh: MeshHydrology | null
@@ -996,7 +999,7 @@ function handleHydrologyRun(): void {
         result = {
           routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
           bodies: lakes.bodies, level: lakes.level, surface: onMesh ? onMesh.raster.surface : waterLevelField(lakes.bodies, elevation, width, height).surface, body: lakes.body,
-          maxDischarge, meanRunoff, graph: null, coast: null, sedimentBasins: [], ice: null, waterTable: null,
+          maxDischarge, meanRunoff, graph: null, coast: null, sedimentBasins: [], ice: null, waterTable: null, oases: [],
           onMesh,
         }
       }
@@ -1064,6 +1067,7 @@ function handleHydrologyRun(): void {
         const table = rasteriseNodeField(meshTerrain.mesh, ground.waterTableDepthM, width, height)
         for (let c = 0; c < table.length; c++) if (elevation[c] <= 0 || table[c] < 0) table[c] = -1
         result.waterTable = table
+        result.oases = ground.springs.filter((s) => s.oasis)
       } else {
         const regime = accumulateRegimeInputs(result.routing, elevation, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y, weather.months)
         result.graph = buildRiverGraph({
@@ -1083,6 +1087,7 @@ function handleHydrologyRun(): void {
           cover, regime, discharge: result.discharge, cellM: WORLD_WIDTH_METERS / width,
         })
         result.waterTable = ground.waterTableDepthM
+        result.oases = ground.springs.filter((s) => s.oasis)
       }
       // THE RIVER COURSE (phase 3): pattern, meanders, braids and deltas per
       // reach, seeded from the world so a world always gets the same bends.
@@ -1196,6 +1201,8 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     // Liquid water only: a frozen basin is a glacier and feeds no fishery.
     lakeDepth: hydrology ? liquidLakeDepth(hydrology) : null,
     saltFlat: hydrology?.saltFlat ?? null,
+    waterTable: hydrology?.waterTable ?? null,
+    oases: hydrology?.oases ?? [],
     volcanoes: collectVolcanoes(sim.features),
     // Collision belts for tin/lode-gold/gems: current fold mountains (on-crust)
     // + the accumulated (advected) deep-time sutures.
