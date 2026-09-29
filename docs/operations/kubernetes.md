@@ -68,11 +68,11 @@ Scheduling is left to real numbers: each Job requests its honest 3Gi
 peak, so how many fit a node is the node's business; a topology spread
 prefers empty nodes without forbidding co-location. Jobs beyond the
 cluster's free memory sit Pending, and the server reports exactly that.
-`bake.max-concurrent` (set to 3 in the manifests) caps how many are in
+`jobs.max-concurrent` (set to 3 in the manifests) caps how many are in
 flight at all.
 
 **Failed Jobs are kept** — the last three, so their pod logs survive for
-diagnosis (`oc logs job/casas-bake-<id>`); successful ones are removed
+diagnosis (`oc logs job/casas-job-<id>`); successful ones are removed
 immediately. A six-hour TTL is the backstop for jobs nobody deleted.
 
 **The run-once deadline trap.** OpenShift's RunOnceDuration plugin (or a

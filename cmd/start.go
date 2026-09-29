@@ -22,9 +22,9 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/artifacts"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/auth"
-	"github.com/DebakelOrakel/casas-eternas/internal/modules/bake"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/client"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/docs"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/jobs"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/world"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
@@ -168,7 +168,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	// local-mode short circuit. Built once so the capability handshake runs
 	// once and both consumers agree by construction.
 	var rankWorld func(ctx context.Context, uid, bearer string) (bool, access.Level)
-	if targets.Has(config.TargetArtifacts) || targets.Has(config.TargetBake) {
+	if targets.Has(config.TargetArtifacts) || targets.Has(config.TargetJobs) {
 		rankWorld, err = worldRanking(caller, worldModule, authMode, cfg.Global.Services.Worlds)
 		if err != nil {
 			return nil, nil, err
@@ -184,12 +184,12 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		}
 		modules = append(modules, m)
 	}
-	if targets.Has(config.TargetBake) {
+	if targets.Has(config.TargetJobs) {
 		bcfg, err := bakeConfig(targets, cfg, worldModule, rankWorld, caller, tokens)
 		if err != nil {
 			return nil, nil, err
 		}
-		m, err := bake.New(bcfg)
+		m, err := jobs.New(bcfg)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -213,18 +213,18 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 // own: co-resident store when the target is selected here, HTTP against the
 // configured peer service when it is not. This is the composition that makes
 // "a target must be able to run alone" true for bake.
-func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Module, rankWorld func(context.Context, string, string) (bool, access.Level), caller *identity.Resolver, tokens *token.Tokens) (bake.Config, error) {
-	inCluster := bake.InCluster()
+func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Module, rankWorld func(context.Context, string, string) (bool, access.Level), caller *identity.Resolver, tokens *token.Tokens) (jobs.Config, error) {
+	inCluster := jobs.InCluster()
 	selfURL := serverBaseURL(cfg.Global.Listen)
 	if inCluster && selfURL == "" {
-		return bake.Config{}, fmt.Errorf("CASAS_POD_IP is not set: a cluster bake Job reaches this server by its pod IP (deploy/manifests.yaml wires it)")
+		return jobs.Config{}, fmt.Errorf("CASAS_POD_IP is not set: a cluster bake Job reaches this server by its pod IP (deploy/manifests.yaml wires it)")
 	}
-	bcfg := bake.Config{
-		BakerPath:     bakerPath(cfg.Bake.Baker),
+	bcfg := jobs.Config{
+		WorkerPath:    workerPath(cfg.Jobs.Worker),
 		Identity:      caller,
 		Tokens:        tokens,
 		SelfURL:       selfURL,
-		MaxConcurrent: cfg.Bake.MaxConcurrent,
+		MaxConcurrent: cfg.Jobs.MaxConcurrent,
 	}
 
 	// The ranking is the shared closure built in buildModules; what remains
@@ -245,7 +245,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 	case cfg.Global.Services.Worlds != "":
 		bcfg.WorldsURL = strings.TrimRight(cfg.Global.Services.Worlds, "/") + server.APIPrefix
 	default:
-		return bake.Config{}, fmt.Errorf("bake needs a world source: select the world target too, or set global.services.worlds")
+		return jobs.Config{}, fmt.Errorf("jobs need a world source: select the world target too, or set global.services.worlds")
 	}
 
 	switch {
@@ -259,11 +259,11 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 	case cfg.Global.Services.Artifacts != "":
 		base := strings.TrimRight(cfg.Global.Services.Artifacts, "/")
 		if err := requireCapability(keySvcArts, base, "artifacts"); err != nil {
-			return bake.Config{}, err
+			return jobs.Config{}, err
 		}
 		bcfg.ArtifactsURL = base + server.APIPrefix
 	default:
-		return bake.Config{}, fmt.Errorf("bake needs an artifact sink: select the artifacts target too, or set global.services.artifacts")
+		return jobs.Config{}, fmt.Errorf("jobs need an artifact sink: select the artifacts target too, or set global.services.artifacts")
 	}
 	return bcfg, nil
 }
@@ -377,19 +377,19 @@ func serverBaseURL(listen string) string {
 	return fmt.Sprintf("http://%s:%s%s", ip, port, server.APIPrefix)
 }
 
-// bakerPath resolves bake.baker, defaulting to the bundle beside the binary.
+// workerPath resolves bake.baker, defaulting to the bundle beside the binary.
 //
 // Beside the BINARY rather than beside the working directory: a server is
 // started from wherever its data lives, and the bundle ships with the program.
-func bakerPath(configured string) string {
+func workerPath(configured string) string {
 	if configured != "" {
 		return configured
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return "baker.mjs"
+		return "job-worker.mjs"
 	}
-	return filepath.Join(filepath.Dir(executable), "baker.mjs")
+	return filepath.Join(filepath.Dir(executable), "job-worker.mjs")
 }
 
 // buildIdentity is what EVERY process needs in a checking mode: the one

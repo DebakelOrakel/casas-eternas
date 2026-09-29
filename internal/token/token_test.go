@@ -102,7 +102,7 @@ func TestRejectsAnotherSigningMethod(t *testing.T) {
 // session.
 func TestAudiencesDoNotOpenEachOther(t *testing.T) {
 	tokens := newTokens(t)
-	bakeAudience := BakeAudience("v4-abc123")
+	bakeAudience := JobAudience("v4-abc123")
 
 	job, _, err := tokens.Issue("ada", bakeAudience, time.Hour)
 	if err != nil {
@@ -115,7 +115,7 @@ func TestAudiencesDoNotOpenEachOther(t *testing.T) {
 		t.Errorf("a bake token was refused for its own audience: %v", err)
 	}
 	// And a job token is scoped to ONE key, not to bakes in general.
-	if _, err := tokens.Verify(job, BakeAudience("v4-something-else")); err == nil {
+	if _, err := tokens.Verify(job, JobAudience("v4-something-else")); err == nil {
 		t.Error("a bake token opened a different artifact key")
 	}
 

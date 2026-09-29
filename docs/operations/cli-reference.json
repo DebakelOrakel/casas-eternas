@@ -128,17 +128,6 @@
           "env": "CASAS_AUTH_STORAGE_DIR_PATH"
         },
         {
-          "name": "bake.baker",
-          "usage": "Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.",
-          "env": "CASAS_BAKE_BAKER"
-        },
-        {
-          "name": "bake.max-concurrent",
-          "default": "1",
-          "usage": "How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.",
-          "env": "CASAS_BAKE_MAX_CONCURRENT"
-        },
-        {
           "name": "client.storage.dir.path",
           "usage": "The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside \"npm run dev\" wants.",
           "env": "CASAS_CLIENT_STORAGE_DIR_PATH"
@@ -182,10 +171,21 @@
           "env": "CASAS_GLOBAL_SERVICES_WORLDS"
         },
         {
+          "name": "jobs.max-concurrent",
+          "default": "1",
+          "usage": "How many jobs may run at once. One level-1 job of a real world holds some gigabytes, so raising this raises the memory the host must have.",
+          "env": "CASAS_JOBS_MAX_CONCURRENT"
+        },
+        {
+          "name": "jobs.worker",
+          "usage": "Path to the job worker bundle (npm run build:worker). Defaults to job-worker.mjs beside the binary.",
+          "env": "CASAS_JOBS_WORKER"
+        },
+        {
           "name": "target",
           "shorthand": "t",
           "default": "[]",
-          "usage": "The target modules to start: all, client, world, artifacts, bake, docs, auth. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.",
+          "usage": "The target modules to start: all, client, world, artifacts, jobs, docs, auth. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.",
           "env": "CASAS_TARGET"
         },
         {
@@ -206,7 +206,7 @@
       "path": "casas-eternas version",
       "use": "version",
       "short": "Prints the build, the API version and the bake pipeline this binary carries.",
-      "long": "Prints what this binary is.\n\nThe pipeline version is the one worth reading: artifacts are addressed by it,\nso a bake bundle from a different commit than the client expecting its output\nproduces artifacts nobody ever looks for — a failure that is otherwise silent.\nIt is read from the bake bundle itself (bake.baker), so it says what this\ninstallation would actually run.\n\nA running server reports the same build string at GET /v1/capabilities."
+      "long": "Prints what this binary is.\n\nThe pipeline version is the one worth reading: artifacts are addressed by it,\nso a bake bundle from a different commit than the client expecting its output\nproduces artifacts nobody ever looks for — a failure that is otherwise silent.\nIt is read from the job worker bundle itself (jobs.worker), so it says what this\ninstallation would actually run.\n\nA running server reports the same build string at GET /v1/capabilities."
     }
   ],
   "keys": [
@@ -237,19 +237,6 @@
     {
       "key": "auth.storage.type",
       "env": "CASAS_AUTH_STORAGE_TYPE"
-    },
-    {
-      "key": "bake.baker",
-      "env": "CASAS_BAKE_BAKER",
-      "usage": "Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.",
-      "command": "casas-eternas start"
-    },
-    {
-      "key": "bake.max-concurrent",
-      "env": "CASAS_BAKE_MAX_CONCURRENT",
-      "default": "1",
-      "usage": "How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.",
-      "command": "casas-eternas start"
     },
     {
       "key": "client.storage.dir.path",
@@ -340,6 +327,19 @@
       "env": "CASAS_GLOBAL_TLS_KEY",
       "usage": "Path to the server private key. Enables HTTPS together with global.tls.cert.",
       "command": "casas-eternas"
+    },
+    {
+      "key": "jobs.max-concurrent",
+      "env": "CASAS_JOBS_MAX_CONCURRENT",
+      "default": "1",
+      "usage": "How many jobs may run at once. One level-1 job of a real world holds some gigabytes, so raising this raises the memory the host must have.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "jobs.worker",
+      "env": "CASAS_JOBS_WORKER",
+      "usage": "Path to the job worker bundle (npm run build:worker). Defaults to job-worker.mjs beside the binary.",
+      "command": "casas-eternas start"
     },
     {
       "key": "world.keep-revisions",

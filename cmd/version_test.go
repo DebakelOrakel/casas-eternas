@@ -21,7 +21,7 @@ func TestVersionReportsWithoutABaker(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	// An empty directory: no casas.yaml to read, and no baker.mjs to find.
 	t.Chdir(t.TempDir())
-	viper.Set(keyBaker, "baker.mjs")
+	viper.Set(keyWorker, "job-worker.mjs")
 
 	var out bytes.Buffer
 	cmd := &cobra.Command{}

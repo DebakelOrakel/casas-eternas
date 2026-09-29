@@ -62,4 +62,4 @@ effect immediately, no restart.
 Outside a cluster the server runs bakes as local subprocesses — give the
 container the memory they need (an 8192² bake peaks near 2.6 GB in the
 Node process; `--memory 4g` is the honest floor with one concurrent bake,
-`bake.max-concurrent` multiplies it).
+`jobs.max-concurrent` multiplies it).

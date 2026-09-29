@@ -6,7 +6,7 @@ import { listServerArtifacts, removeServerArtifact } from '../../server/artifact
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { meshPipelineVersion } from '../../world/meshArtifacts'
-import { commissionBake } from '../../world/bakeClient'
+import { commissionBake } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { BROWSER_ICON, SERVER_ICON, icon } from './chooserIcons'
 import '../../ui/theme/design.css'

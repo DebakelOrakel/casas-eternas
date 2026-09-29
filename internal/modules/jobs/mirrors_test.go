@@ -1,4 +1,4 @@
-package bake
+package jobs
 
 import (
 	"os"
@@ -38,6 +38,6 @@ func TestErosionRoundsMirrorTheClient(t *testing.T) {
 
 func TestNodeHeapMirrorsTheJobTemplate(t *testing.T) {
 	if got := mirrored(t, defaultJobTemplate, `--max-old-space-size=(\d+)`); got != nodeHeapMB {
-		t.Errorf("bake-job.yaml --max-old-space-size=%d, nodeHeapMB = %d", got, nodeHeapMB)
+		t.Errorf("job.yaml --max-old-space-size=%d, nodeHeapMB = %d", got, nodeHeapMB)
 	}
 }

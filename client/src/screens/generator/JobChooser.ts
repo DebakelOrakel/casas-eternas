@@ -1,6 +1,6 @@
 import { t, type TKey } from '../../i18n/i18n'
 import { formatWhen } from '../../ui/format'
-import { bakeFraction, cancelBake, listBakes, type BakeJob } from '../../world/bakeClient'
+import { bakeFraction, cancelBake, listBakes, type BakeJob } from '../../world/jobClient'
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { icon } from './chooserIcons'

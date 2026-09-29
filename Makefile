@@ -4,7 +4,7 @@
 #                no ESLint/Biome is configured, and the branch convention is
 #                "verify with tsc", so this is the honest gate)
 #   make test    the Go tests plus the worldgen regression harness
-#   make baker   bundle the level bake for Node (./baker.mjs)
+#   make worker  bundle the job worker for Node (./job-worker.mjs)
 #   make run     build everything and start a local server on :8080
 #   make build   build the container image (deploy/Dockerfile, context = repo
 #                root — it needs client/, docs/changelog/, cmd/, internal/)
@@ -33,11 +33,11 @@ TAG   ?= latest
 VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/DebakelOrakel/casas-eternas/cmd.buildVersion=$(VERSION)
 
-.PHONY: lint test baker client run build push cli-reference
+.PHONY: lint test worker client run build push cli-reference
 
 lint:
 	cd client && npx tsc --noEmit
-	# The Node side separately: scripts/bake.ts needs @types/node and the browser
+	# The Node side separately: scripts/jobWorker.ts needs @types/node and the browser
 	# code must not have it. Two configs, both checked — see tsconfig.node.json.
 	cd client && npx tsc --noEmit -p tsconfig.node.json
 	gofmt -l . | tee /dev/stderr | (! read)
@@ -60,10 +60,10 @@ test:
 	cd client && npm run harness:mesh
 	cd client && npm run harness:golden
 
-# The bake pipeline, bundled for Node. Lands beside the binary because that is
-# where bake.baker looks by default.
-baker:
-	cd client && npm run build:baker
+# The job worker, bundled for Node. Lands beside the binary because that is
+# where jobs.worker looks by default.
+worker:
+	cd client && npm run build:worker
 
 client:
 	cd client && npm run build
@@ -74,9 +74,9 @@ docs:
 	cd client && npm run build:docs
 
 # Everything a local instance needs, then start it. `go build` rather than
-# `go run` on purpose: bake.baker resolves relative to the EXECUTABLE, and
+# `go run` on purpose: jobs.worker resolves relative to the EXECUTABLE, and
 # go run puts that in a temp directory.
-run: baker client docs
+run: worker client docs
 	go build -ldflags="$(LDFLAGS)" -o casas-eternas .
 	./casas-eternas start --target all --client.storage.dir.path client/dist --docs.storage.dir.path client/docs-dist
 

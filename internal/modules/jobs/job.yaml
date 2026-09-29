@@ -1,7 +1,7 @@
-# The Job the server creates for one amplification bake.
+# The Job the server creates for one job (a level of a world).
 #
 # EDIT THIS FILE to change how bakes are scheduled — it is a Go text/template
-# rendered by internal/bake/kubernetes.go and embedded into the binary, so what
+# rendered by internal/modules/jobs/kubernetes.go and embedded into the binary, so what
 # you read here is exactly what the cluster is asked for. Later it can be
 # mounted from a ConfigMap instead; nothing about the shape has to change for
 # that, only where it is read from.
@@ -26,7 +26,7 @@ metadata:
     # for Jobs orphaned by a replaced server process WOULD use — that sweep
     # is a named open point (docs/decisions/distributed-bake.md), not
     # something that exists.
-    casas-eternas/component: bake
+    casas-eternas/component: job
     casas-eternas/job-id: {{ .JobID }}
 spec:
   # Retries are the server's business, not the cluster's. A bake that failed
@@ -44,7 +44,7 @@ spec:
     metadata:
       labels:
         app: casas-eternas
-        casas-eternas/component: bake
+        casas-eternas/component: job
         casas-eternas/job-id: {{ .JobID }}
     spec:
       restartPolicy: Never
@@ -63,9 +63,9 @@ spec:
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
-              casas-eternas/component: bake
+              casas-eternas/component: job
       containers:
-        - name: bake
+        - name: job
           # The server's own image: the bake pipeline must be the same commit
           # as the server that commissioned it, because the artifact key
           # includes a pipeline version and a mismatch fails SILENTLY — the Job
@@ -91,7 +91,7 @@ spec:
           # template has no value for it, so change the two together. Note the
           # tension with the 4Gi limit below: the kernel's ceiling sits under
           # Node's, so a runaway bake is killed by the cgroup, not GC'd.
-          command: ["node", "--max-old-space-size=6144", "/app/baker.mjs"]
+          command: ["node", "--max-old-space-size=6144", "/app/job-worker.mjs"]
           args: {{ .Args }}
           resources:
             requests:

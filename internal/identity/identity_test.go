@@ -23,7 +23,7 @@ func TestCallerResolvesEveryKindOfCredential(t *testing.T) {
 	}
 	// A bake token whose subject CLAIMS to be a user — the impersonation case:
 	// the claim must be ignored, a job is a job whatever it says it is.
-	disguisedJob, _, err := tokens.Issue("ada", token.BakeAudience("job-1"), time.Hour)
+	disguisedJob, _, err := tokens.Issue("ada", token.JobAudience("job-1"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestCallerResolvesEveryKindOfCredential(t *testing.T) {
 		// RFC 7235: the scheme is case-insensitive, and some clients send it
 		// lowercase.
 		{"lowercase bearer scheme", checking, "bearer " + session, "ada"},
-		{"a job token is the job, never its subject claim", checking, "Bearer " + disguisedJob, token.SubjectBakeJob},
+		{"a job token is the job, never its subject claim", checking, "Bearer " + disguisedJob, token.SubjectJob},
 	}
 	for _, c := range cases {
 		request := httptest.NewRequest(http.MethodGet, "/v1/worlds", nil)
@@ -85,7 +85,7 @@ func TestAdminComesOnlyFromTheClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience("job-1"), time.Hour)
+	job, _, err := tokens.Issue(token.SubjectJob, token.JobAudience("job-1"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestBakeJobNamesExactlyItsOwnJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, _, err := tokens.IssueBakeJob("job-7", "world-9", time.Hour)
+	job, _, err := tokens.IssueJob("job-7", "world-9", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,16 +131,16 @@ func TestBakeJobNamesExactlyItsOwnJob(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.Header.Set("Authorization", "Bearer "+job)
-	if id, world, ok := checking.BakeJob(request); !ok || id != "job-7" || world != "world-9" {
+	if id, world, ok := checking.JobToken(request); !ok || id != "job-7" || world != "world-9" {
 		t.Errorf("BakeJob = %q/%q/%v, want job-7/world-9/true", id, world, ok)
 	}
 
 	// A session is a caller but not a job; the local mode verifies nothing.
 	request.Header.Set("Authorization", "Bearer "+session)
-	if _, _, ok := checking.BakeJob(request); ok {
+	if _, _, ok := checking.JobToken(request); ok {
 		t.Error("a user session passed as a bake job")
 	}
-	if _, _, ok := NewResolver(config.AuthNone, nil).BakeJob(request); ok {
+	if _, _, ok := NewResolver(config.AuthNone, nil).JobToken(request); ok {
 		t.Error("the local mode attributed a job id")
 	}
 }

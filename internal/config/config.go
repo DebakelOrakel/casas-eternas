@@ -24,7 +24,7 @@ const (
 	TargetClient    Target = "client"
 	TargetWorld     Target = "world"
 	TargetArtifacts Target = "artifacts"
-	TargetBake      Target = "bake"
+	TargetJobs      Target = "jobs"
 	TargetDocs      Target = "docs"
 	// TargetAuth is the login process: the one that opens the credential
 	// store and serves /v1/auth/session. Every OTHER process still verifies
@@ -38,7 +38,7 @@ const (
 // modules lists the real targets, in the order they are reported to the user.
 // TargetAll is absent on purpose: it expands to this, so having it in the list
 // would let "all" select itself.
-var modules = []Target{TargetClient, TargetWorld, TargetArtifacts, TargetBake, TargetDocs, TargetAuth}
+var modules = []Target{TargetClient, TargetWorld, TargetArtifacts, TargetJobs, TargetDocs, TargetAuth}
 
 // Targets is a resolved selection: every module that should run.
 type Targets map[Target]bool
@@ -74,7 +74,7 @@ func ParseTargets(raw []string) (Targets, error) {
 			for _, m := range modules {
 				selected[m] = true
 			}
-		case TargetClient, TargetWorld, TargetArtifacts, TargetBake, TargetDocs, TargetAuth:
+		case TargetClient, TargetWorld, TargetArtifacts, TargetJobs, TargetDocs, TargetAuth:
 			selected[target] = true
 		default:
 			return nil, fmt.Errorf("unknown target %q; valid targets: %s", value, strings.Join(ValidTargets(), ", "))

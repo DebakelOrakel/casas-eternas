@@ -61,6 +61,6 @@ client/scripts/mesh-hashes.json
 client/docs-dist/
 client/scripts/.docsite.mjs
 
-# The bake pipeline bundled for Node. Built by `make baker` (and by the
+# The job worker bundled for Node. Built by `make worker` (and by the
 # Dockerfile itself), so a tracked copy is only ever stale.
-baker.mjs
+job-worker.mjs

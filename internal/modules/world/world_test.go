@@ -191,11 +191,11 @@ func TestBakeJobReadsExactlyItsWorld(t *testing.T) {
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("create = %d", recorder.Code)
 	}
-	job, _, err := tokens.IssueBakeJob("job-1", sampleUID, time.Hour)
+	job, _, err := tokens.IssueJob("job-1", sampleUID, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stray, _, err := tokens.IssueBakeJob("job-2", "00000000-0000-4000-8000-000000000000", time.Hour)
+	stray, _, err := tokens.IssueJob("job-2", "00000000-0000-4000-8000-000000000000", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

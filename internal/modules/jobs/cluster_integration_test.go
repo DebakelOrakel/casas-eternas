@@ -1,4 +1,4 @@
-package bake
+package jobs
 
 import (
 	"context"
@@ -187,13 +187,13 @@ func TestClusterReportsAMissingJob(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if _, err := api.jobStatus(ctx, "casas-bake-definitely-not-there"); err == nil {
+	if _, err := api.jobStatus(ctx, "casas-job-definitely-not-there"); err == nil {
 		t.Error("reading an absent job returned no error")
 	} else {
 		t.Logf("absent job reports: %v", err)
 	}
 	// Deleting something absent is fine: the caller wanted it gone, and it is.
-	if err := api.deleteJob(ctx, "casas-bake-definitely-not-there"); err != nil {
+	if err := api.deleteJob(ctx, "casas-job-definitely-not-there"); err != nil {
 		t.Errorf("deleting an absent job: %v", err)
 	}
 }

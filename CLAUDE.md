@@ -20,7 +20,7 @@ client/src/
   server/         client-side HTTP clients for the Go server
   map/ ui/ camera/ app/ i18n/
 client/scripts/   the four harnesses (golden, pipeline, roundtrip, mesh) and
-                  bake.ts → baker.mjs, the server-side level bake bundle
+                  jobWorker.ts → job-worker.mjs, the server-side job worker bundle
 internal/ cmd/    the Go server
 docs/             see docs/README.md for the taxonomy
 ```
@@ -95,7 +95,7 @@ audited and written down 2026-08-12:
   variable; never invent a second name for one.
 - **A module's routes live under its own namespace** (`/v1/<module>…`), and
   no module registers into another's. (The one violation — bake's
-  `POST /v1/worlds/{uid}/bake` — moved to `POST /v1/bakes` on 2026-08-12.)
+  `POST /v1/worlds/{uid}/bake` — moved to `POST /v1/bakes` on 2026-08-12, `/v1/jobs` since 2026-09-29.)
 - **A module's disk layout and JSON formats are private.** Cross-module needs
   are injected functions composed in `cmd/` — the same pattern that
   distributes `identity.Resolver`. Never duplicate another module's paths or

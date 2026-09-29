@@ -103,20 +103,20 @@ func TestLoadConfigEnvOverridesFile(t *testing.T) {
 // Environment values are strings whatever the key's type — a numeric key set
 // via CASAS_* must decode into its int field, and garbage must stay a loud
 // start error instead of a weakly-typed guess. Pinned because exactly this
-// failed in the field: CASAS_BAKE_MAX_CONCURRENT=3 refused to start.
+// failed in the field: CASAS_JOBS_MAX_CONCURRENT=3 refused to start.
 func TestLoadConfigDecodesNumbersFromTheEnvironment(t *testing.T) {
 	initConfig()
 	viper.Set(flagConfig, "")
-	t.Setenv("CASAS_BAKE_MAX_CONCURRENT", "3")
+	t.Setenv("CASAS_JOBS_MAX_CONCURRENT", "3")
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Bake.MaxConcurrent != 3 {
-		t.Errorf("max-concurrent = %d, want 3", cfg.Bake.MaxConcurrent)
+	if cfg.Jobs.MaxConcurrent != 3 {
+		t.Errorf("max-concurrent = %d, want 3", cfg.Jobs.MaxConcurrent)
 	}
 
-	t.Setenv("CASAS_BAKE_MAX_CONCURRENT", "many")
+	t.Setenv("CASAS_JOBS_MAX_CONCURRENT", "many")
 	if _, err := loadConfig(); err == nil {
 		t.Error("a non-numeric value decoded without complaint")
 	}

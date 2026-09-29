@@ -61,7 +61,7 @@ func (r *Resolver) ChecksIdentity() bool { return r != nil && r.mode.ChecksIdent
 // are accepted, and they are deliberately different identities:
 //
 //   - a person's session, whose subject is the user
-//   - a bake Job, whose subject is token.SubjectBakeJob
+//   - a bake Job, whose subject is token.SubjectJob
 //
 // The second was missing until the first real cluster run, and its absence was
 // written down as a FEATURE: a test asserted that a job token must not open the
@@ -105,8 +105,8 @@ func (r *Resolver) ResolveBearer(authorization string) (caller string, admin boo
 	// moment job tokens became callers at all. Relying on the one place that
 	// mints them to always write the right subject is not a guarantee, it is a
 	// habit; this makes impersonation impossible instead of unlikely.
-	if _, _, _, err := r.tokens.VerifyBakeJob(raw); err == nil {
-		return token.SubjectBakeJob, false
+	if _, _, _, err := r.tokens.VerifyJob(raw); err == nil {
+		return token.SubjectJob, false
 	}
 	return Anonymous, false
 }
@@ -137,7 +137,7 @@ func (r *Resolver) Admin(req *http.Request) bool {
 // In the local mode this returns false: nothing is verified there, and the
 // endpoints it serves are unreachable anyway (that runner reports over a
 // pipe and writes files directly).
-func (r *Resolver) BakeJob(req *http.Request) (jobID, worldUID string, ok bool) {
+func (r *Resolver) JobToken(req *http.Request) (jobID, worldUID string, ok bool) {
 	if !r.ChecksIdentity() || r.tokens == nil {
 		return "", "", false
 	}
@@ -145,7 +145,7 @@ func (r *Resolver) BakeJob(req *http.Request) (jobID, worldUID string, ok bool) 
 	if raw == "" {
 		return "", "", false
 	}
-	_, id, world, err := r.tokens.VerifyBakeJob(raw)
+	_, id, world, err := r.tokens.VerifyJob(raw)
 	if err != nil {
 		return "", "", false
 	}

@@ -1,4 +1,4 @@
-package bake
+package jobs
 
 import (
 	"bufio"
@@ -61,14 +61,14 @@ type Spec struct {
 	// for the one route the baker currently posts to. Only a cluster Job
 	// carries it; without it the baker falls back to ArtifactsURL, the
 	// co-resident shape.
-	BakeURL string `json:"bakeUrl,omitempty"`
+	JobsURL string `json:"jobsUrl,omitempty"`
 
 	// The bake job's id.
 	//
 	// The cluster runner names its Job object after it, which is what makes a
 	// stray Job traceable back to the request that made it — and since
 	// 2026-08-09 the baker gets it too, because a Job on another node reports
-	// its progress to /v1/bakes/{id}/progress and has to know which id that is.
+	// its progress to /v1/jobs/{id}/progress and has to know which id that is.
 	// omitempty, so a local run's spec still carries neither this nor a URL: it
 	// reports over the pipe.
 	JobID string `json:"jobId,omitempty"`
@@ -105,7 +105,7 @@ func NewLocalRunner(bakerPath string, maxHeapMB int) (Runner, error) {
 	return &localRunner{bakerPath: absolute, maxHeapMB: maxHeapMB}, nil
 }
 
-// BakerVersion asks the bundle which pipeline it IS, without running one
+// WorkerVersion asks the bundle which pipeline it IS, without running one
 // (`baker.mjs --version`, see client/scripts/bake.ts).
 //
 // A package function rather than a Runner method, because it is a property of
@@ -116,7 +116,7 @@ func NewLocalRunner(bakerPath string, maxHeapMB int) (Runner, error) {
 // built from a different commit than the client writes a perfectly good
 // artifact under a key nobody looks for, so the bake reports success and the
 // map never changes.
-func BakerVersion(ctx context.Context, bakerPath string) (string, error) {
+func WorkerVersion(ctx context.Context, bakerPath string) (string, error) {
 	absolute, err := filepath.Abs(bakerPath)
 	if err != nil {
 		return "", err

@@ -67,7 +67,7 @@ import { keepWorldInBrowser } from '../../world/browserWorlds'
 import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
 import { getServerStatus } from '../../server/serverStatus'
 import { hasSession } from '../../server/session'
-import { bakeFraction, commissionBake, listBakes, type BakeJob } from '../../world/bakeClient'
+import { bakeFraction, commissionBake, listBakes, type BakeJob } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { createWorldChooser } from './WorldChooser'
 import { createArtifactChooser } from './ArtifactChooser'
@@ -4938,7 +4938,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const status = await getServerStatus()
     const reachable = status.state === 'local' || status.state === 'remote'
     let needs: TKey | null = null
-    if (!reachable || !status.modules.includes('bake')) needs = 'generator.finishing.needs.bakes'
+    if (!reachable || !status.modules.includes('jobs')) needs = 'generator.finishing.needs.bakes'
     else if (status.loginPath !== '' && !hasSession()) needs = 'generator.finishing.needs.signIn'
     else if (worldUid === '' || !isStoredOnServer(worldUid)) needs = 'generator.finishing.needs.server'
     let job: BakeJob | null = null

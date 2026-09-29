@@ -1,4 +1,4 @@
-package bake
+package jobs
 
 import (
 	"context"
@@ -167,7 +167,7 @@ func post(m *Module, uid, body, token string) *httptest.ResponseRecorder {
 	if strings.HasPrefix(body, "{") {
 		body = `{"worldUid":"` + uid + `",` + body[1:]
 	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/bakes", strings.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/v1/jobs", strings.NewReader(body))
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -234,7 +234,7 @@ func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
 		{"no credentials", ""},
 		{"nonsense", "not-a-valid-token"},
 		{"a stranger's session", issue("eve", token.AudienceSession)},
-		{"a bake token", issue("ada", token.BakeAudience("v4-abc"))},
+		{"a bake token", issue("ada", token.JobAudience("v4-abc"))},
 	} {
 		if got := post(m, testUID, `{"stage":1}`, c.token).Code; got != http.StatusNotFound {
 			t.Errorf("%s = %d, want 404", c.name, got)
@@ -281,7 +281,7 @@ func TestProgressAcceptsOnlyTheJobItBelongsTo(t *testing.T) {
 	runner.awaitSpec(t)
 
 	report := func(jobID, token, body string) int {
-		request := httptest.NewRequest(http.MethodPost, "/v1/bakes/"+jobID+"/progress", strings.NewReader(body))
+		request := httptest.NewRequest(http.MethodPost, "/v1/jobs/"+jobID+"/progress", strings.NewReader(body))
 		request.SetPathValue("id", jobID)
 		if token != "" {
 			request.Header.Set("Authorization", "Bearer "+token)
@@ -290,11 +290,11 @@ func TestProgressAcceptsOnlyTheJobItBelongsTo(t *testing.T) {
 		m.handleProgress(recorder, request)
 		return recorder.Code
 	}
-	own, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience(id), time.Hour)
+	own, _, err := tokens.Issue(token.SubjectJob, token.JobAudience(id), time.Hour)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	other, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience("some-other-job"), time.Hour)
+	other, _, err := tokens.Issue(token.SubjectJob, token.JobAudience("some-other-job"), time.Hour)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -495,27 +495,27 @@ func TestClusterJobCarriesAScopedToken(t *testing.T) {
 	// The audience names the JOB, not the person who ordered it and not the
 	// artifact key: it is what lets the job report progress against one order,
 	// and what stops the token being usable as a login.
-	subject, err := tokens.Verify(spec.AuthToken, token.BakeAudience(spec.JobID))
+	subject, err := tokens.Verify(spec.AuthToken, token.JobAudience(spec.JobID))
 	if err != nil {
 		t.Fatalf("the job's token does not verify for its own job: %v", err)
 	}
-	if subject != token.SubjectBakeJob {
-		t.Errorf("token subject = %q, want %q — a job must not borrow its orderer's identity", subject, token.SubjectBakeJob)
+	if subject != token.SubjectJob {
+		t.Errorf("token subject = %q, want %q — a job must not borrow its orderer's identity", subject, token.SubjectJob)
 	}
 	if _, err := tokens.Verify(spec.AuthToken, token.AudienceSession); err == nil {
 		t.Error("a job token was accepted as a session")
 	}
-	if _, err := tokens.Verify(spec.AuthToken, token.BakeAudience("some-other-job")); err == nil {
+	if _, err := tokens.Verify(spec.AuthToken, token.JobAudience("some-other-job")); err == nil {
 		t.Error("a job token was accepted for another job")
 	}
 	// Progress goes to THIS server's bake API — which need not be the
 	// artifact store's address, so the spec names it separately.
-	if spec.BakeURL != m.cfg.SelfURL {
-		t.Errorf("bakeUrl = %q, want the commissioning server %q", spec.BakeURL, m.cfg.SelfURL)
+	if spec.JobsURL != m.cfg.SelfURL {
+		t.Errorf("jobsUrl = %q, want the commissioning server %q", spec.JobsURL, m.cfg.SelfURL)
 	}
 	// And the token is narrowed to the one world the job bakes — what lets
 	// the artifact store accept it exactly there and nowhere else.
-	if _, _, world, err := tokens.VerifyBakeJob(spec.AuthToken); err != nil || world != testUID {
+	if _, _, world, err := tokens.VerifyJob(spec.AuthToken); err != nil || world != testUID {
 		t.Errorf("job token world claim = %q (err %v), want %q", world, err, testUID)
 	}
 }
@@ -573,8 +573,8 @@ func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
 	if spec.JobID != "" {
 		t.Errorf("a local runner must not learn a job id, got %q", spec.JobID)
 	}
-	if spec.BakeURL != "" {
-		t.Errorf("a local runner reports over its pipe, not to %q", spec.BakeURL)
+	if spec.JobsURL != "" {
+		t.Errorf("a local runner reports over its pipe, not to %q", spec.JobsURL)
 	}
 }
 
@@ -596,14 +596,14 @@ func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
 	// by which one is present, so an empty string would be an ambiguous job.
 	// jobId is in that list too — a local baker that had one would post progress
 	// to a server it is running inside.
-	for _, key := range []string{"worldUrl", "artifactsUrl", "authToken", "bakeUrl", "jobId"} {
+	for _, key := range []string{"worldUrl", "artifactsUrl", "authToken", "jobsUrl", "jobId"} {
 		if strings.Contains(string(local), key) {
 			t.Errorf("local spec should omit %s: %s", key, local)
 		}
 	}
 
-	remote, _ := json.Marshal(Spec{Stage: 1, ErosionRounds: 2, WorldURL: "http://s/v1/worlds/x", ArtifactsURL: "http://s/v1", AuthToken: "t", BakeURL: "http://b/v1", JobID: "j1"})
-	for _, key := range []string{`"worldUrl":"http://s/v1/worlds/x"`, `"artifactsUrl":"http://s/v1"`, `"authToken":"t"`, `"bakeUrl":"http://b/v1"`, `"jobId":"j1"`} {
+	remote, _ := json.Marshal(Spec{Stage: 1, ErosionRounds: 2, WorldURL: "http://s/v1/worlds/x", ArtifactsURL: "http://s/v1", AuthToken: "t", JobsURL: "http://b/v1", JobID: "j1"})
+	for _, key := range []string{`"worldUrl":"http://s/v1/worlds/x"`, `"artifactsUrl":"http://s/v1"`, `"authToken":"t"`, `"jobsUrl":"http://b/v1"`, `"jobId":"j1"`} {
 		if !strings.Contains(string(remote), key) {
 			t.Errorf("remote spec is missing %s: %s", key, remote)
 		}
@@ -662,29 +662,29 @@ func TestJobsShowAndCancelByWorldAccess(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	if body := do(http.MethodGet, "/v1/bakes", stranger).Body.String(); strings.TrimSpace(body) != "[]" {
+	if body := do(http.MethodGet, "/v1/jobs", stranger).Body.String(); strings.TrimSpace(body) != "[]" {
 		t.Errorf("a stranger's list = %s, want []", body)
 	}
-	if body := do(http.MethodGet, "/v1/bakes", viewer).Body.String(); strings.Count(body, `"callerLevel":"viewer"`) != 2 {
+	if body := do(http.MethodGet, "/v1/jobs", viewer).Body.String(); strings.Count(body, `"callerLevel":"viewer"`) != 2 {
 		t.Errorf("the viewer's list = %s, want both jobs as viewer", body)
 	}
-	if got := do(http.MethodGet, "/v1/bakes/"+running, stranger).Code; got != http.StatusNotFound {
+	if got := do(http.MethodGet, "/v1/jobs/"+running, stranger).Code; got != http.StatusNotFound {
 		t.Errorf("a stranger's get = %d, want 404", got)
 	}
 
-	if got := do(http.MethodDelete, "/v1/bakes/"+queued, stranger).Code; got != http.StatusNotFound {
+	if got := do(http.MethodDelete, "/v1/jobs/"+queued, stranger).Code; got != http.StatusNotFound {
 		t.Errorf("a stranger's cancel = %d, want 404", got)
 	}
-	if got := do(http.MethodDelete, "/v1/bakes/"+queued, viewer).Code; got != http.StatusForbidden {
+	if got := do(http.MethodDelete, "/v1/jobs/"+queued, viewer).Code; got != http.StatusForbidden {
 		t.Errorf("a viewer's cancel = %d, want 403", got)
 	}
-	if got := do(http.MethodDelete, "/v1/bakes/"+queued, editor).Code; got != http.StatusNoContent {
+	if got := do(http.MethodDelete, "/v1/jobs/"+queued, editor).Code; got != http.StatusNoContent {
 		t.Errorf("cancelling the queued job = %d, want 204", got)
 	}
 	if got := stateOf(queued); got != StateCancelled {
 		t.Errorf("the queued job is %s, want cancelled", got)
 	}
-	if got := do(http.MethodDelete, "/v1/bakes/"+running, editor).Code; got != http.StatusNoContent {
+	if got := do(http.MethodDelete, "/v1/jobs/"+running, editor).Code; got != http.StatusNoContent {
 		t.Errorf("cancelling the running job = %d, want 204", got)
 	}
 	deadline = time.Now().Add(3 * time.Second)
@@ -694,7 +694,7 @@ func TestJobsShowAndCancelByWorldAccess(t *testing.T) {
 	if got := stateOf(running); got != StateCancelled {
 		t.Errorf("the running job is %s, want cancelled", got)
 	}
-	if got := do(http.MethodDelete, "/v1/bakes/"+running, editor).Code; got != http.StatusConflict {
+	if got := do(http.MethodDelete, "/v1/jobs/"+running, editor).Code; got != http.StatusConflict {
 		t.Errorf("cancelling an ended job = %d, want 409", got)
 	}
 	if n := atomic.LoadInt32(&runner.started); n != 1 {

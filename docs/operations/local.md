@@ -16,7 +16,7 @@ From a checkout:
 make run
 ```
 
-builds the baker bundle, the client and the docs site, then starts
+builds the job worker bundle, the client and the docs site, then starts
 everything on `:8080`. From a bare binary, the equivalent is:
 
 ```
@@ -75,5 +75,5 @@ of the bake bundle it would run. Artifacts are addressed by that version,
 so a bundle built from a different commit than the client bakes perfectly
 good bytes under a key no client ever looks for — the bake succeeds and the
 map never changes. If the line reads `unknown`, this process has no bundle
-(normal for a `world` or `auth` target) or `bake.baker` points somewhere
+(normal for a `world` or `auth` target) or `jobs.worker` points somewhere
 empty.

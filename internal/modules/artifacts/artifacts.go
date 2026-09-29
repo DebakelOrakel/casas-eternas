@@ -124,7 +124,7 @@ func (m *Module) allowed(w http.ResponseWriter, r *http.Request, worldUID string
 	if m.operator(r) {
 		return true
 	}
-	if _, jobWorld, ok := m.cfg.Identity.BakeJob(r); ok && jobWorld != "" && jobWorld == worldUID {
+	if _, jobWorld, ok := m.cfg.Identity.JobToken(r); ok && jobWorld != "" && jobWorld == worldUID {
 		return true
 	}
 	if worldUID == "" {

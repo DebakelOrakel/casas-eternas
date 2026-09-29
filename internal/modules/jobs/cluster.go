@@ -1,4 +1,4 @@
-package bake
+package jobs
 
 import (
 	"bytes"
@@ -256,10 +256,10 @@ type jobSummary struct {
 }
 
 // listJobs answers this namespace's bake Jobs, selected by the component
-// label the template stamps on every one (bake-job.yaml) — the same handle
+// label the template stamps on every one (job.yaml) — the same handle
 // its topology spread keys off.
 func (c *clusterAPI) listJobs(ctx context.Context) ([]jobSummary, error) {
-	raw, status, err := c.do(ctx, http.MethodGet, c.jobsPath()+"?labelSelector="+url.QueryEscape("casas-eternas/component=bake"), nil)
+	raw, status, err := c.do(ctx, http.MethodGet, c.jobsPath()+"?labelSelector="+url.QueryEscape("casas-eternas/component=job"), nil)
 	if err != nil {
 		return nil, err
 	}

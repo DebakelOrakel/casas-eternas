@@ -1,4 +1,4 @@
-package bake
+package jobs
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ import (
 // an API rejection minutes into a deployment.
 func renderTemplate(t *testing.T, values map[string]string) map[string]any {
 	t.Helper()
-	parsed, err := template.New("bake-job").Parse(defaultJobTemplate)
+	parsed, err := template.New("job").Parse(defaultJobTemplate)
 	if err != nil {
 		t.Fatalf("the embedded template does not parse: %v", err)
 	}
@@ -37,7 +37,7 @@ func renderTemplate(t *testing.T, values map[string]string) map[string]any {
 func testValues() map[string]string {
 	args, _ := json.Marshal([]string{`{"stage":1,"worldUrl":"http://10.1.2.3:8080/v1/worlds/x"}`})
 	return map[string]string{
-		"Name": "casas-bake-abc123", "Namespace": "worlds", "JobID": "abc123",
+		"Name": "casas-job-abc123", "Namespace": "worlds", "JobID": "abc123",
 		"Image": "ghcr.io/x/casas-eternas:latest", "Args": string(args),
 	}
 }
@@ -64,7 +64,7 @@ func TestTemplateRendersAValidJob(t *testing.T) {
 	if manifest["apiVersion"] != "batch/v1" || manifest["kind"] != "Job" {
 		t.Errorf("apiVersion/kind = %v/%v", manifest["apiVersion"], manifest["kind"])
 	}
-	if got := dig(t, manifest, "metadata", "name"); got != "casas-bake-abc123" {
+	if got := dig(t, manifest, "metadata", "name"); got != "casas-job-abc123" {
 		t.Errorf("name = %v", got)
 	}
 	if got := dig(t, manifest, "metadata", "namespace"); got != "worlds" {
@@ -189,7 +189,7 @@ func TestJobNameIsAValidObjectName(t *testing.T) {
 	// would be rejected at creation, minutes after the request.
 	for _, id := range []string{"abc123", "0f9e8d7c6b5a4321", "FFFF"} {
 		name := jobName(id)
-		if !strings.HasPrefix(name, "casas-bake-") {
+		if !strings.HasPrefix(name, "casas-job-") {
 			t.Errorf("jobName(%q) = %q", id, name)
 		}
 		if name != strings.ToLower(name) {

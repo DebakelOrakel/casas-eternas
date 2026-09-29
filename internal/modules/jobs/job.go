@@ -1,4 +1,4 @@
-package bake
+package jobs
 
 import (
 	"fmt"
@@ -49,7 +49,7 @@ const (
 	StateRunning State = "running"
 	StateDone    State = "done"
 	StateFailed  State = "failed"
-	// Cancelled by a caller (DELETE /v1/bakes/{id}) before or while it ran.
+	// Cancelled by a caller (DELETE /v1/jobs/{id}) before or while it ran.
 	StateCancelled State = "cancelled"
 )
 

@@ -46,24 +46,24 @@ const Issuer = "casas-eternas"
 const (
 	// AudienceSession is a logged-in person.
 	AudienceSession = "session"
-	// AudienceBakePrefix builds the audience of a bake job's token, which names
-	// the ONE job it belongs to: "bake:<jobID>".
+	// AudienceJobPrefix builds the audience of a bake job's token, which names
+	// the ONE job it belongs to: "job:<jobID>".
 	//
 	// The job rather than the artifact key it writes, decided 2026-08-09: a job
 	// reports its progress to an endpoint keyed by job id, and the artifact key
 	// is in its spec anyway. Keying the audience by artifact would have meant
 	// the token could not identify which job was talking.
-	AudienceBakePrefix = "bake:"
+	AudienceJobPrefix = "job:"
 )
 
-// SubjectBakeJob is who a bake Job is, as a caller.
+// SubjectJob is who a bake Job is, as a caller.
 //
 // Not the person who ordered it: a Job may write the artifacts of the one world
 // it was given, and borrowing its orderer's identity would hand it everything
 // that person may do — including ordering more bakes. A name of its own keeps
 // "may bake" and "may act as ada" separate, and it is what a log line names when
 // a Job misbehaves.
-const SubjectBakeJob = "bake-job"
+const SubjectJob = "job"
 
 // MinKeyBytes is the shortest signing key accepted.
 //
@@ -229,8 +229,8 @@ func (t *Tokens) VerifySession(raw string) (subject string, admin bool, err erro
 	return claims.Subject, claims.Admin, nil
 }
 
-// BakeAudience is the audience of the token belonging to one bake job.
-func BakeAudience(jobID string) string { return AudienceBakePrefix + jobID }
+// JobAudience is the audience of the token belonging to one bake job.
+func JobAudience(jobID string) string { return AudienceJobPrefix + jobID }
 
 // bakeClaims is a bake job token's payload: the registered set plus the ONE
 // world the job exists to bake.
@@ -243,10 +243,10 @@ type bakeClaims struct {
 	World string `json:"wld,omitempty"`
 }
 
-// IssueBakeJob mints the credential one bake job carries: subject is the
+// IssueJob mints the credential one bake job carries: subject is the
 // machine identity, audience names the job, and the world claim names the
 // one world it may touch.
-func (t *Tokens) IssueBakeJob(jobID, worldUID string, ttl time.Duration) (string, time.Time, error) {
+func (t *Tokens) IssueJob(jobID, worldUID string, ttl time.Duration) (string, time.Time, error) {
 	if jobID == "" || worldUID == "" {
 		return "", time.Time{}, fmt.Errorf("refusing to issue a bake token without a job and its world")
 	}
@@ -254,8 +254,8 @@ func (t *Tokens) IssueBakeJob(jobID, worldUID string, ttl time.Duration) (string
 	expires := now.Add(ttl)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, bakeClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   SubjectBakeJob,
-			Audience:  jwt.ClaimStrings{BakeAudience(jobID)},
+			Subject:   SubjectJob,
+			Audience:  jwt.ClaimStrings{JobAudience(jobID)},
 			Issuer:    Issuer,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(expires),
@@ -269,7 +269,7 @@ func (t *Tokens) IssueBakeJob(jobID, worldUID string, ttl time.Duration) (string
 	return signed, expires, nil
 }
 
-// VerifyBakeJob accepts a token belonging to SOME bake job, and says which —
+// VerifyJob accepts a token belonging to SOME bake job, and says which —
 // the job AND the world its claim narrows it to.
 //
 // Separate from Verify because the caller does not know the audience in advance
@@ -283,7 +283,7 @@ func (t *Tokens) IssueBakeJob(jobID, worldUID string, ttl time.Duration) (string
 // cluster run after job tokens were introduced. worldUID may be empty only
 // for a token minted before the claim existed; callers that gate on the
 // world treat that as no claim at all.
-func (t *Tokens) VerifyBakeJob(raw string) (subject, jobID, worldUID string, err error) {
+func (t *Tokens) VerifyJob(raw string) (subject, jobID, worldUID string, err error) {
 	claims := &bakeClaims{}
 	if _, parseErr := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) { return t.key, nil },
 		jwt.WithValidMethods([]string{signingMethod}),
@@ -294,10 +294,10 @@ func (t *Tokens) VerifyBakeJob(raw string) (subject, jobID, worldUID string, err
 	}
 	// Exactly one, so a token carrying both a session and a job audience cannot
 	// be minted into something that is quietly both.
-	if len(claims.Audience) != 1 || !strings.HasPrefix(claims.Audience[0], AudienceBakePrefix) {
+	if len(claims.Audience) != 1 || !strings.HasPrefix(claims.Audience[0], AudienceJobPrefix) {
 		return "", "", "", fmt.Errorf("token rejected: not a bake job token")
 	}
-	id := strings.TrimPrefix(claims.Audience[0], AudienceBakePrefix)
+	id := strings.TrimPrefix(claims.Audience[0], AudienceJobPrefix)
 	if id == "" || claims.Subject == "" {
 		return "", "", "", fmt.Errorf("token rejected: incomplete bake job token")
 	}

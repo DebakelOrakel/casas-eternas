@@ -32,7 +32,7 @@ type Config struct {
 	Global    Global          `mapstructure:"global"`
 	World     WorldConfig     `mapstructure:"world"`
 	Artifacts ArtifactsConfig `mapstructure:"artifacts"`
-	Bake      BakeConfig      `mapstructure:"bake"`
+	Jobs      JobsConfig      `mapstructure:"jobs"`
 	Client    ClientConfig    `mapstructure:"client"`
 	Auth      AuthConfig      `mapstructure:"auth"`
 	Docs      DocsConfig      `mapstructure:"docs"`
@@ -147,8 +147,8 @@ type ArtifactsConfig struct {
 	Cap string `mapstructure:"cap"`
 }
 
-type BakeConfig struct {
-	Baker         string `mapstructure:"baker"`
+type JobsConfig struct {
+	Worker        string `mapstructure:"worker"`
 	MaxConcurrent int    `mapstructure:"max-concurrent"`
 }
 

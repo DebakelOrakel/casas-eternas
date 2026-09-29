@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/modules/bake"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/jobs"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
 )
 
@@ -60,7 +60,7 @@ var VersionCmd = &cobra.Command{
 The pipeline version is the one worth reading: artifacts are addressed by it,
 so a bake bundle from a different commit than the client expecting its output
 produces artifacts nobody ever looks for — a failure that is otherwise silent.
-It is read from the bake bundle itself (bake.baker), so it says what this
+It is read from the job worker bundle itself (jobs.worker), so it says what this
 installation would actually run.
 
 A running server reports the same build string at GET /v1/capabilities.`,
@@ -98,10 +98,10 @@ func pipelineLine(cmd *cobra.Command) string {
 	if err != nil {
 		return fmt.Sprintf("unknown (%v)", err)
 	}
-	path := bakerPath(cfg.Bake.Baker)
+	path := workerPath(cfg.Jobs.Worker)
 	ctx, cancel := context.WithTimeout(cmd.Context(), bakerVersionTimeout)
 	defer cancel()
-	pipeline, err := bake.BakerVersion(ctx, path)
+	pipeline, err := jobs.WorkerVersion(ctx, path)
 	if err != nil {
 		return fmt.Sprintf("unknown (%v)", err)
 	}

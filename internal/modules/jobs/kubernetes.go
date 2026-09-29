@@ -1,4 +1,4 @@
-package bake
+package jobs
 
 import (
 	"bytes"
@@ -26,13 +26,13 @@ import (
 // spread only keeps the load even.
 
 // The Job manifest, kept as an editable file rather than built in Go: what a
-// reader sees in internal/modules/bake/bake-job.yaml is exactly what the cluster is
+// reader sees in internal/modules/jobs/job.yaml is exactly what the cluster is
 // asked for. It lives beside this file rather than in deploy/ only because
 // go:embed cannot reach outside its own package; deploy/README.md says so.
 // Embedded so the binary runs alone; a ConfigMap-mounted override later is a
 // change of where this is read from, nothing more.
 //
-//go:embed bake-job.yaml
+//go:embed job.yaml
 var defaultJobTemplate string
 
 const (
@@ -89,7 +89,7 @@ func NewKubernetesRunner(image string) (Runner, error) {
 		return nil, err
 	}
 	if image == "" {
-		return nil, fmt.Errorf("no image to run bakes with; set CASAS_BAKE_IMAGE or the pod's own image")
+		return nil, fmt.Errorf("no image to run bakes with; set CASAS_JOBS_IMAGE or the pod's own image")
 	}
 	parsed, err := templateFor(defaultJobTemplate)
 	if err != nil {
@@ -108,7 +108,7 @@ func NewKubernetesRunner(image string) (Runner, error) {
 // can build the same runner against a real cluster without duplicating what a
 // correctly-constructed one looks like.
 func templateFor(text string) (*template.Template, error) {
-	parsed, err := template.New("bake-job").Parse(text)
+	parsed, err := template.New("job").Parse(text)
 	if err != nil {
 		return nil, fmt.Errorf("bake job template: %w", err)
 	}
@@ -119,7 +119,7 @@ func templateFor(text string) (*template.Template, error) {
 // DNS-1123 labels, so the hex id is prefixed rather than used bare — a name
 // starting with a digit is rejected, and "bake-" also makes the objects
 // obvious in a listing.
-func jobName(id string) string { return "casas-bake-" + strings.ToLower(id) }
+func jobName(id string) string { return "casas-job-" + strings.ToLower(id) }
 
 func (r *kubernetesRunner) Run(ctx context.Context, spec Spec, onProgress func(Progress)) (Result, error) {
 	// The Job talks to the server over HTTP, so the paths a local subprocess

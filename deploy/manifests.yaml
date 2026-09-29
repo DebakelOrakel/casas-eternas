@@ -29,7 +29,7 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: casas-eternas-bake
+  name: casas-eternas-jobs
   labels:
     app: casas-eternas
 rules:
@@ -40,13 +40,13 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: casas-eternas-bake
+  name: casas-eternas-jobs
   labels:
     app: casas-eternas
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: casas-eternas-bake
+  name: casas-eternas-jobs
 subjects:
   - kind: ServiceAccount
     name: casas-eternas
@@ -127,12 +127,12 @@ spec:
             # is not tidiness: the artifact key carries a pipeline version, so
             # a baker from a different build produces artifacts no client will
             # ever look for — a failure that looks exactly like success.
-            - name: CASAS_BAKE_IMAGE
+            - name: CASAS_JOBS_IMAGE
               value: ghcr.io/debakelorakel/casas-eternas:latest
             # Three bakes in flight; each Job reserves its honest 3Gi, so the
             # ceiling in practice is the nodes' free memory — beyond it the
             # extra Jobs sit Pending, which the server reports as exactly that.
-            - name: CASAS_BAKE_MAX_CONCURRENT
+            - name: CASAS_JOBS_MAX_CONCURRENT
               value: "3"
             # Authentication. Environment rather than args because CMD already
             # carries the flag list and repeating it here to append a few would

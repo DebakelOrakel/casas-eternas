@@ -382,3 +382,14 @@ its own context cancelled — the same path a shutdown takes, which aborts its
 subprocess or Kubernetes Job. No pausing. The client orders level 1 from the
 Finishing step and lists and cancels jobs in a full-screen window ("Jobs" in
 the title bar); the artifact window rebuilds an outdated level.
+
+## Addendum 2026-09-29 — renamed to jobs
+
+The module is `jobs` (internal/modules/jobs): target `-t jobs`, keys
+`jobs.worker` (the Node bundle, `job-worker.mjs`, `make worker`) and
+`jobs.max-concurrent`, environment `CASAS_JOBS_*` and `CASAS_JOBS_IMAGE`,
+routes `/v1/jobs…`, the capability name `jobs`, the token audience `job:{id}`
+with subject `job`, the Kubernetes ServiceAccount `casas-eternas-jobs`, Job
+names `casas-job-{id}` and the label `casas-eternas/component=job`. A hard
+break: no old name is accepted. What a job computes keeps its name, the level
+bake.

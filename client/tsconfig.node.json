@@ -1,19 +1,19 @@
 {
-  // The NODE side: scripts/bake.ts, the server-side baker, built with esbuild
+  // The NODE side: scripts/jobWorker.ts, the server-side baker, built with esbuild
   // rather than vite.
   //
   // Its own config rather than another entry in tsconfig.json's include,
-  // because the two need different globals. bake.ts wants @types/node; the
+  // because the two need different globals. jobWorker.ts wants @types/node; the
   // browser code must NOT have it, or `process.env` compiles cleanly in a file
   // that ships to a browser and fails there.
   //
   // It exists at all because of 2026-08-09: the artifact store's auth option
-  // changed, bake.ts went on passing the old one, everything compiled, and the
+  // changed, jobWorker.ts went on passing the old one, everything compiled, and the
   // bake would have run without credentials. Nothing was checking this file.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "types": ["node"],
-    // DOM stays, and not by accident: bake.ts shares fetch, Response and
+    // DOM stays, and not by accident: jobWorker.ts shares fetch, Response and
     // RequestInit with the browser code it imports from.
     "lib": ["ES2023", "DOM"]
   },

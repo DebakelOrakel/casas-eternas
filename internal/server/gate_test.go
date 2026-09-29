@@ -122,7 +122,7 @@ func TestApiRequiresACaller(t *testing.T) {
 // ownership lives, in the bake module.
 func TestABakeJobIsACallerButNotAUser(t *testing.T) {
 	gate, tokens := newGate(t, config.AuthPassword)
-	job, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience("job-1"), time.Hour)
+	job, _, err := tokens.Issue(token.SubjectJob, token.JobAudience("job-1"), time.Hour)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestABakeJobIsACallerButNotAUser(t *testing.T) {
 
 	// Still refused: expired, and issued somewhere else. A job token is not a
 	// skeleton key, it is one more thing this server signed.
-	expired, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience("job-1"), -time.Minute)
+	expired, _, err := tokens.Issue(token.SubjectJob, token.JobAudience("job-1"), -time.Minute)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestABakeJobIsACallerButNotAUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	foreign, _, err := stranger.Issue(token.SubjectBakeJob, token.BakeAudience("job-1"), time.Hour)
+	foreign, _, err := stranger.Issue(token.SubjectJob, token.JobAudience("job-1"), time.Hour)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}

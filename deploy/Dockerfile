@@ -8,7 +8,7 @@
 # internal/, main.go):
 #   docker build -f deploy/Dockerfile -t casas-eternas:latest .
 #
-# WHY THE RUNTIME CARRIES NODE. The bake pipeline is the browser's own
+# WHY THE RUNTIME CARRIES NODE. The job worker is the client's own
 # TypeScript, bundled for Node and spawned as a subprocess — that is what keeps
 # a server-baked artifact byte-identical to a browser-baked one, since both
 # carry a key derived from their inputs. Two images (Go here, Node there) would
@@ -19,7 +19,7 @@
 # OpenShift-ready: runs as a non-root, ARBITRARY UID (member of GID 0), listens
 # on 8080, and keeps all writable state on mounted volumes.
 
-# ---- Stage 1: the client bundle and the bake bundle -------------------------
+# ---- Stage 1: the client bundle and the job worker -------------------------
 FROM node:22-alpine AS web
 # Mirrors the repo layout (/app/client + /app/docs) rather than flattening the
 # client to /app. The title screen's changelog viewer imports
@@ -38,9 +38,9 @@ RUN npm ci
 COPY docs/ /app/docs/
 COPY client/ ./
 
-# dist/ is the app; baker.mjs is the bake pipeline for the server to spawn.
+# dist/ is the app; job-worker.mjs is the job worker for the server to spawn.
 # Both come out of the same source tree in the same layer, which is the point.
-RUN npm run build && npm run build:baker && npm run build:docs
+RUN npm run build && npm run build:worker && npm run build:docs
 
 # ---- Stage 2: the server ----------------------------------------------------
 FROM golang:1.26-alpine AS server
@@ -64,13 +64,13 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # ---- Runtime ----------------------------------------------------------------
 FROM node:22-alpine AS runtime
 
-# bake.baker defaults to beside the executable, so it needs no flag. The
+# jobs.worker defaults to beside the executable, so it needs no flag. The
 # client directory is passed explicitly in CMD: its default is empty on
 # purpose, so that a dev run without a build serves only /config.json instead
 # of refusing to start.
 WORKDIR /app
 COPY --from=server /out/casas-eternas /app/casas-eternas
-COPY --from=web    /app/baker.mjs     /app/baker.mjs
+COPY --from=web    /app/job-worker.mjs /app/job-worker.mjs
 COPY --from=web    /app/client/dist   /app/dist
 COPY --from=web    /app/client/docs-dist /app/docs-dist
 

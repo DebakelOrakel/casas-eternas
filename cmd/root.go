@@ -44,8 +44,8 @@ const (
 	keyClientPath = "client.storage.dir.path"
 	keyAuthStore  = "auth.storage.dir.path"
 	keyDocsPath   = "docs.storage.dir.path"
-	keyBaker      = "bake.baker"
-	keyBakeMax    = "bake.max-concurrent"
+	keyWorker     = "jobs.worker"
+	keyJobsMax    = "jobs.max-concurrent"
 )
 
 // The two enum texts are composed, not written: the value lists live in
@@ -77,8 +77,8 @@ const (
 	textClientPath = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
 	textAuthStore  = `The directory the auth subsystem's state lives in — auth.db, holding users and their credentials. A users.json left by an older server is imported once when the database is founded.`
 	textDocsPath   = `The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.`
-	textBaker      = `Path to the bake bundle (npm run build:baker). Defaults to baker.mjs beside the binary.`
-	textBakeMax    = `How many bakes may run at once. One 8192² bake peaks near 2.6 GB, so raising this raises the memory the host must have.`
+	textWorker     = `Path to the job worker bundle (npm run build:worker). Defaults to job-worker.mjs beside the binary.`
+	textJobsMax    = `How many jobs may run at once. One level-1 job of a real world holds some gigabytes, so raising this raises the memory the host must have.`
 )
 
 // RootCmd represents the base command when called without any subcommands
@@ -148,8 +148,8 @@ func init() {
 	StartCmd.Flags().String(keyClientPath, "", textClientPath)
 	StartCmd.Flags().String(keyAuthStore, "./auth", textAuthStore)
 	StartCmd.Flags().String(keyDocsPath, "", textDocsPath)
-	StartCmd.Flags().String(keyBaker, "", textBaker)
-	StartCmd.Flags().Int(keyBakeMax, 1, textBakeMax)
+	StartCmd.Flags().String(keyWorker, "", textWorker)
+	StartCmd.Flags().Int(keyJobsMax, 1, textJobsMax)
 
 	bindings := map[string]*cobra.Command{
 		flagConfig: RootCmd,
@@ -159,7 +159,7 @@ func init() {
 		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd,
 		keySvcWorlds: StartCmd, keySvcArts: StartCmd, keyAuthStore: StartCmd,
 		keyWorldPath: StartCmd, keyKeepRevs: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
-		keyClientPath: StartCmd, keyBaker: StartCmd, keyBakeMax: StartCmd, keyDocsPath: StartCmd,
+		keyClientPath: StartCmd, keyWorker: StartCmd, keyJobsMax: StartCmd, keyDocsPath: StartCmd,
 	}
 	for key, cmd := range bindings {
 		flags := cmd.Flags()

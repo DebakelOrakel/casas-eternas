@@ -256,15 +256,15 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 	// system's own writer, narrowed to the one world it was sent for. For
 	// any other world, or without the claim (a pre-claim token), it is a
 	// stranger like every other.
-	rightJob, _, err := tokens.IssueBakeJob("job-1", worldUID, time.Hour)
+	rightJob, _, err := tokens.IssueJob("job-1", worldUID, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongJob, _, err := tokens.IssueBakeJob("job-2", "00000000-1111-4222-8333-444444444444", time.Hour)
+	wrongJob, _, err := tokens.IssueJob("job-2", "00000000-1111-4222-8333-444444444444", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clueless, _, err := tokens.Issue(token.SubjectBakeJob, token.BakeAudience("job-3"), time.Hour)
+	clueless, _, err := tokens.Issue(token.SubjectJob, token.JobAudience("job-3"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

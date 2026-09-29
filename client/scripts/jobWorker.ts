@@ -71,7 +71,7 @@ interface Job {
   // reports go. Named for the module, like artifactsUrl, not for the one
   // route currently used. Falls back to artifactsUrl when absent, which is
   // the co-resident shape where both are the same server.
-  bakeUrl?: string
+  jobsUrl?: string
   // This job's id, for reporting progress back. Absent for a local run, whose
   // progress reaches the server over the pipe instead.
   jobId?: string
@@ -243,9 +243,9 @@ function authorizedFetch(job: Job): (input: string, init?: RequestInit) => Promi
 // that fails usually fails every time and a log full of the same line is a log
 // nobody reads.
 function progressReporter(job: Job): (phase: string, percent: number) => void {
-  const base = job.bakeUrl ?? job.artifactsUrl
+  const base = job.jobsUrl ?? job.artifactsUrl
   if (!base || !job.jobId) return () => {}
-  const url = `${base}/bakes/${encodeURIComponent(job.jobId)}/progress`
+  const url = `${base}/jobs/${encodeURIComponent(job.jobId)}/progress`
   const send = authorizedFetch(job)
   let lastSentAt = 0
   let lastPhase = ''

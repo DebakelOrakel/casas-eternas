@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-09-29
+- **changed** Server: bake jobs are jobs — target `-t jobs`, keys `jobs.worker` and `jobs.max-concurrent` (`CASAS_JOBS_*`), routes `/v1/jobs`, bundle `job-worker.mjs` (`make worker`), image variable `CASAS_JOBS_IMAGE`; a `bake:` section in casas.yaml now refuses to start, so rename it on deploy. `jobs`
 - **fixed** Server: bake jobs show only to those who may see their world, and an editor can cancel one. `bake`
 - **removed** Server: the 4K/8K raster bake; bake jobs now build the finer mesh level of a world. `bake`
 

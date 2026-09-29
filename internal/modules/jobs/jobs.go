@@ -11,7 +11,7 @@
 // Simple today, deliberately not a dead end: see job.go for the three things
 // (job as a value, explicit scope, Runner interface) that let this become many
 // distributed workers without a rewrite.
-package bake
+package jobs
 
 import (
 	"context"
@@ -43,7 +43,7 @@ const defaultErosionRounds = 12
 // nodeHeapMB is what the baker's Node process is allowed. Sized for the 8192²
 // measurement (~2.6 GB) with headroom, since running out mid-bake wastes the
 // minutes already spent. The cluster Job pins the same number by hand in
-// bake-job.yaml's command line (the template has no value for it) — change
+// job.yaml's command line (the template has no value for it) — change
 // the two together; mirrors_test.go fails when they differ.
 //
 // IT DOES NOT BOUND THIS WORKLOAD, and that is worth knowing before anyone
@@ -98,7 +98,7 @@ type Config struct {
 	// cluster, empty for a purely local runner (which reports over its pipe).
 	SelfURL string
 	// The Node bundle, from `npm run build:baker`.
-	BakerPath string
+	WorkerPath string
 	// Identity answers who a request comes from — the same resolver every other
 	// module holds, so ownership is compared against one notion of "caller".
 	Identity *identity.Resolver
@@ -129,7 +129,7 @@ type Module struct {
 	shutdown context.Context
 	cancel   context.CancelFunc
 	workers  sync.WaitGroup
-	// The running jobs' own cancellations, by id: what DELETE /v1/bakes/{id}
+	// The running jobs' own cancellations, by id: what DELETE /v1/jobs/{id}
 	// pulls to stop one bake without touching the others.
 	runningMu sync.Mutex
 	running   map[string]context.CancelFunc
@@ -164,12 +164,12 @@ func New(cfg Config) (*Module, error) {
 		if cfg.SelfURL == "" || cfg.WorldsURL == "" || cfg.ArtifactsURL == "" {
 			return nil, fmt.Errorf("a cluster bake needs SelfURL, WorldsURL and ArtifactsURL; is CASAS_POD_IP set? (deploy/manifests.yaml wires it)")
 		}
-		runner, err = NewKubernetesRunner(bakeImage())
+		runner, err = NewKubernetesRunner(jobsImage())
 		if err != nil {
 			return nil, fmt.Errorf("cluster bake runner: %w", err)
 		}
 	} else {
-		runner, err = NewLocalRunner(cfg.BakerPath, nodeHeapMB)
+		runner, err = NewLocalRunner(cfg.WorkerPath, nodeHeapMB)
 		if err != nil {
 			return nil, fmt.Errorf("bake.baker: %w", err)
 		}
@@ -201,7 +201,7 @@ func New(cfg Config) (*Module, error) {
 	return m, nil
 }
 
-func (m *Module) Name() string { return "bake" }
+func (m *Module) Name() string { return "jobs" }
 
 // Describe tells the client HOW bakes run here, which is not something it can
 // infer: the same API answers whether the work happens in a subprocess beside
@@ -221,11 +221,11 @@ func (m *Module) Describe() map[string]any {
 // on the world. (It lived at POST /v1/worlds/{uid}/bake until 2026-08-12,
 // which was the one route registered inside another module's namespace.)
 func (m *Module) Mount(mux *http.ServeMux) error {
-	mux.HandleFunc("POST /v1/bakes", m.handleEnqueue)
-	mux.HandleFunc("GET /v1/bakes", m.handleList)
-	mux.HandleFunc("GET /v1/bakes/{id}", m.handleGet)
-	mux.HandleFunc("DELETE /v1/bakes/{id}", m.handleCancel)
-	mux.HandleFunc("POST /v1/bakes/{id}/progress", m.handleProgress)
+	mux.HandleFunc("POST /v1/jobs", m.handleEnqueue)
+	mux.HandleFunc("GET /v1/jobs", m.handleList)
+	mux.HandleFunc("GET /v1/jobs/{id}", m.handleGet)
+	mux.HandleFunc("DELETE /v1/jobs/{id}", m.handleCancel)
+	mux.HandleFunc("POST /v1/jobs/{id}/progress", m.handleProgress)
 	return nil
 }
 
@@ -250,12 +250,12 @@ func (m *Module) Close() error {
 	return nil
 }
 
-// bakeImage is the image a Job runs. Taken from the environment rather than a
+// jobsImage is the image a Job runs. Taken from the environment rather than a
 // flag because it is meaningless outside a cluster: the deployment sets it to
 // its OWN image, so the bake pipeline is the same commit as the server that
 // commissioned it — a mismatch there fails silently (the artifact key carries
 // a pipeline version, and a client would simply never look for what was made).
-func bakeImage() string { return os.Getenv("CASAS_BAKE_IMAGE") }
+func jobsImage() string { return os.Getenv("CASAS_JOBS_IMAGE") }
 
 func newID() string {
 	raw := make([]byte, 8)
@@ -482,7 +482,7 @@ func (m *Module) mayReportFor(r *http.Request, id string) bool {
 	if !m.cfg.Identity.ChecksIdentity() {
 		return true
 	}
-	jobID, _, ok := m.cfg.Identity.BakeJob(r)
+	jobID, _, ok := m.cfg.Identity.JobToken(r)
 	return ok && jobID == id
 }
 
@@ -575,7 +575,7 @@ func (m *Module) work(ctx context.Context) {
 		// it is not a login: the gate refuses it everywhere a session is
 		// expected.
 		if m.cfg.Tokens != nil && (spec.WorldURL != "" || spec.ArtifactsURL != "") {
-			token, _, tokenErr := m.cfg.Tokens.IssueBakeJob(id, job.Request.WorldUID, jobTokenTTL)
+			token, _, tokenErr := m.cfg.Tokens.IssueJob(id, job.Request.WorldUID, jobTokenTTL)
 			if tokenErr != nil {
 				// Failing here rather than sending the baker out without one:
 				// it would start, read the world, get a 401 and report a
@@ -592,14 +592,14 @@ func (m *Module) work(ctx context.Context) {
 			spec.AuthToken = token
 		}
 		// Only a Job on another node learns its own id and where to report:
-		// progress goes to THIS server's bake API (BakeURL), which need not
+		// progress goes to THIS server's bake API (JobsURL), which need not
 		// be the artifact store's address. The local baker reports over its
 		// stderr pipe, which this process is already reading — telling it an
 		// id would invite it to post progress to a server it is running
 		// inside.
 		if m.clusterMode {
 			spec.JobID = id
-			spec.BakeURL = m.cfg.SelfURL
+			spec.JobsURL = m.cfg.SelfURL
 		}
 		// Its own context under the module's, so a cancel stops this job
 		// alone (handleCancel).

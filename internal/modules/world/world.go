@@ -150,7 +150,7 @@ func (m *Module) gate(w http.ResponseWriter, r *http.Request, uid string, action
 	// a checking server met a cluster bake — the job's GET got the
 	// stranger's 404 and the bake died in three seconds.
 	if exists && level < access.Viewer && action == access.ActionRead {
-		if _, jobWorld, ok := m.cfg.Identity.BakeJob(r); ok && jobWorld == uid {
+		if _, jobWorld, ok := m.cfg.Identity.JobToken(r); ok && jobWorld == uid {
 			level = access.Viewer
 		}
 	}

@@ -21,7 +21,7 @@ casas-eternas start -t auth                       login + user store only
 
 A **target** is a deployment unit: every target can run alone, and a
 multi-process deployment is the same binary started several times with
-different `-t`. The targets are `client`, `world`, `artifacts`, `bake`,
+different `-t`. The targets are `client`, `world`, `artifacts`, `jobs`,
 `docs`, `auth` — and `all` as the shorthand for every one.
 
 ## One configuration vocabulary
