@@ -26,7 +26,7 @@
   "overlay.temperature.scale": "Jahresmittel auf Meereshöhe",
   "overlay.temperature.label": "Temperatur",
   "overlay.temperature.help": "Färbt die Karte nach der mittleren Jahrestemperatur.",
-  "overlay.seasonality.label": "Saisonalität",
+  "overlay.seasonality.label": "Temperaturspanne",
   "overlay.seasonality.help": "Zeigt, wie stark die Temperatur zwischen den Jahreszeiten schwankt.",
   "overlay.wind.label": "Wind",
   "overlay.wind.help": "Zeigt die vorherrschenden Bodenwinde.",

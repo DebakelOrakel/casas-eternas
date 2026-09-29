@@ -69,14 +69,12 @@ export const OVERLAY_META: Record<OverlayId, OverlayMeta> = {
   wind: { icon: '/icons/wind.png' },
   currents: { icon: '/icons/gyres.png' },
   upwelling: { icon: '/icons/upwelling.png' },
-  // Placeholder: no salinity icon yet (the user picks icons).
-  salinity: { icon: '/icons/ocean.png' },
+  salinity: { icon: '/icons/salt.png' },
   // The weather phenomena (2026-09-29), each its own layer in the climate
-  // step's weather group. Rain variability borrows the rain icon until it
-  // has its own.
+  // step's weather group.
   fog: { icon: '/icons/fog.png' },
   foehn: { icon: '/icons/foehn.png' },
-  rainVariability: { icon: '/icons/rain.png' },
+  rainVariability: { icon: '/icons/rainvar.png' },
   enso: { icon: '/icons/enso.png' },
   cyclone: { icon: '/icons/hurricane.png' },
   tornado: { icon: '/icons/tornado.png' },

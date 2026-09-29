@@ -26,7 +26,7 @@
   "overlay.temperature.scale": "Annual mean at sea level",
   "overlay.temperature.label": "Temperature",
   "overlay.temperature.help": "Colour the map by mean annual air temperature.",
-  "overlay.seasonality.label": "Seasonality",
+  "overlay.seasonality.label": "Temperature range",
   "overlay.seasonality.help": "Show how far temperature swings between seasons.",
   "overlay.wind.label": "Wind",
   "overlay.wind.help": "Show the prevailing surface winds.",
