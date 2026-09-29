@@ -171,9 +171,15 @@ export const CLIMATE_TUNING = {
   // stays where it belongs. Net land depletion per step becomes rain·(1 − this).
   precipLandRecycleFrac: 0.5,
 
-  // World px upwind to sample for the along-wind slope (needs the fine elevation,
-  // not the coarse climate grid — the point of sampling full-res here).
-  precipOrogSamplePx: 40,
+  // The along-wind lever, world px at a wind of 1: the slope across a cell
+  // (read on the fine elevation, not the coarse climate grid — the point of
+  // sampling full-res here) counts as the rise over this distance. Measured
+  // on Earth (scripts/earthClimate.mjs, 2026-09-29), after the slope moved
+  // into the cell: at 40 (the old sample distance) the places' rain ×2.01
+  // off, at 20 ×1.98, at 10 ×1.93 and the land with the right group 65 →
+  // 66 %; Bogotá 1600 mm (1000), Alice Springs 900 (280). Nairobi and Riyadh
+  // stay wet at any lever: their cells hold real escarpments.
+  precipOrogLeverPx: 20,
 
   // Raw rainout → mm/yr. Tunes overall wetness; a wet windward mountain lands
   // around a few thousand mm, deserts/rain-shadow near zero.

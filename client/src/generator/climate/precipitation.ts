@@ -92,13 +92,36 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
       // rain. Only counted between two LAND points — the ocean→coast step is a
       // huge elevation jump but not a mountain, and must not wring out the
       // incoming moisture right at the shoreline (that left interiors bone-dry).
+      // The rise is read across this cell, from its upwind edge to its
+      // downwind edge (each the mean of three points across the wind), and
+      // scaled to a rise over `precipOrogLeverPx` at the wind's speed: the
+      // rain falls on the cell the slope is in. It used to be read from 40 px
+      // upwind to the cell's centre, which put a range's rain on the plateau
+      // behind its rim, up to 300 km in (on Earth's relief, 2026-09-29:
+      // Nairobi 6200 mm, Bogotá 5400, both ~1000).
       const u = wind[i * 2]
       const v = wind[i * 2 + 1]
-      const wx = ((gx + 0.5) / RX) * worldW
-      const wy = ((gy + 0.5) / RY) * worldH
-      const eHere = elevationAtWorld(elevation, wx, wy, worldW, worldH)
-      const eUp = elevationAtWorld(elevation, wx - u * CLIMATE_TUNING.precipOrogSamplePx, wy - v * CLIMATE_TUNING.precipOrogSamplePx, worldW, worldH)
-      const upslope = eUp > SEA_LEVEL ? Math.max(0, eHere - eUp) : 0
+      const speed = Math.hypot(u, v)
+      let upslope = 0
+      if (speed > 0) {
+        const wx = ((gx + 0.5) / RX) * worldW
+        const wy = ((gy + 0.5) / RY) * worldH
+        const half = worldW / RX / 2
+        const ax = (u / speed) * half
+        const ay = (v / speed) * half
+        let up = 0
+        let down = 0
+        let upLand = true
+        for (const k of [-0.5, 0, 0.5]) {
+          const px = -ay * k * 2
+          const py = ax * k * 2
+          const eUp = elevationAtWorld(elevation, wx - ax + px, wy - ay + py, worldW, worldH)
+          if (eUp <= SEA_LEVEL) upLand = false
+          up += eUp / 3
+          down += elevationAtWorld(elevation, wx + ax + px, wy + ay + py, worldW, worldH) / 3
+        }
+        if (upLand) upslope = Math.max(0, down - up) * speed * CLIMATE_TUNING.precipOrogLeverPx / (2 * half)
+      }
       rainFrac[i] = Math.min(CLIMATE_TUNING.precipRainoutMax, CLIMATE_TUNING.precipBaseRainout + CLIMATE_TUNING.precipOrographicRate * upslope)
     }
   }

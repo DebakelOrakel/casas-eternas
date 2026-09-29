@@ -358,6 +358,7 @@ Against the map from here on:
 | Start | 26 % | 63 % | 10/47 | ×2.49 | 13 | 51 % |
 | Ocean highs from the basin's flank | 27 % | 65 % | 15/47 | ×2.06 | 19 | 30 % |
 | Dry air mixed in where the air sinks (0.05) | 27 % | 65 % | 15/47 | ×2.06 | 16 | 34 % |
+| Upslope read across the cell, lever 20 px (also the epochs) | 27 % | 66 % | 15/47 | ×1.98 | 16 | 34 % |
 
 The ocean highs: ±8 hPa from a basin's western shore to its eastern at
 15–50°, smoothed as a mean over the sea; they enter the months' pressure
@@ -375,6 +376,17 @@ wet mostly from the upslope rainout (without it Riyadh 496 → 244 mm,
 Tehran 445 → 148, Alice Springs 2051 → 431, Nairobi 6242 → 1717, Bogotá
 5443 → 1357): a whole windward slope lies in one 62 km cell, so its rain
 falls on the plateau above. That is the next thing to look at.
+
+Done next: the rain model read the rise from 40 px upwind (up to 300 km)
+to the cell's centre, so a plateau counted as a windward slope far behind
+its rim. The rise is now read across the cell itself, edge to edge, and
+scaled to a lever. Bogotá 5443 → 1880 mm, Alice Springs 2051 → 1330,
+Tehran 445 → 330; Nairobi and Riyadh stay wet, their cells hold real
+escarpments and their air is too moist. This is the shared rain function,
+so the epochs' rain moved with it: at a lever of 20 px the golden worlds
+lost 0–6 % of their rain; 10 px measured a little better on Earth (×1.93)
+but took 10–19 % and halved a temperate rainforest, as it cuts every
+smooth slope's rain too.
 
 Tried and dropped, as they measured no better than what they replaced:
 
