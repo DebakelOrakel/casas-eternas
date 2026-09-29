@@ -329,7 +329,10 @@ physics.
 `node client/scripts/earthClimate.mjs [key=value …]` runs the climate on
 Earth's relief (client/scripts/fixtures/earth-heightmap.png) and compares
 47 places (Köppen class, January and July, annual rain) and the land's
-Köppen group shares (Beck et al. 2018). The temperature error is also
+Köppen group shares; since the Beck et al. map for 1991–2020 came in
+(client/scripts/fixtures/earth-koppen.tif, 0.5°), also every land cell
+against it — the share with the right class and group, and where each real
+group ends up. The temperature error is also
 given as a bias of the mean and of the swing, so the annual mean (the cheap
 model, step 0) and the year's cycle (the energy balance) can be told apart.
 
@@ -341,6 +344,12 @@ model, step 0) and the year's cycle (the energy balance) can be told apart.
 | Orographic rainout cap 0.85 → 0.15 | 9 | 22 | −2.8 °C | ×2.35 | 25 |
 | Energy balance: wind carry 400 → 150 | 10 | 23 | −0.6 °C | ×2.22 | 18 |
 | Sea evaporation at its surface, source anomaly 0.2 | 10 | 24 | −0.6 °C | ×2.49 | 8 |
+
+"Groups off" in this table is against Beck 2018's rounded shares (A 19,
+B 29, C 14, D 22, E 16). Against the 1991–2020 map (A 23, B 27, C 13,
+D 22, E 15) the last row is 13 points off; per cell, 26 % of the land has
+the right class and 63 % the right group. Of the real C land, 51 % comes
+out B — the dry east coasts.
 
 Tried and dropped, as they measured no better than what they replaced:
 

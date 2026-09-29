@@ -2,8 +2,10 @@
 // the calibration): the generator's climate run on Earth's own relief, and
 // compared where the answer is known — about fifty places with their
 // Köppen–Geiger class, January and July mean temperature and annual rain
-// (rounded climate normals), and the world's land shares of the five Köppen
-// groups (Beck et al. 2018, rounded). Not a gate: it prints the table and a
+// (rounded climate normals), and every land cell against Beck et al.'s
+// Köppen–Geiger map for 1991–2020 (scripts/fixtures/earth-koppen.tif): the
+// share of the land with the right class and group, the groups' shares and
+// where each real group ends up. Not a gate: it prints the table and a
 // score the calibration is judged on, so a change reads as better or worse.
 //
 //   node scripts/earthClimate.mjs [heightmap.png] [key=value …]
@@ -185,28 +187,96 @@ for (const [name, lon, lat, height, realClass, realJan, realJul, realRain] of PL
 }
 console.log(rows.join('\n'))
 
-// The world's shares of the five groups, over land cells weighted by their
-// area (the cosine of the latitude), against Beck et al. (2018).
-const BECK = { A: 19, B: 29, C: 14, D: 22, E: 16 }
+// --- the Köppen map ------------------------------------------------------------
+
+// Beck et al.'s Köppen–Geiger map for 1991–2020 at 0.5°
+// (scripts/fixtures/earth-koppen.tif, its legend beside it): a GeoTIFF of
+// 720×360 bytes, deflate-compressed strips, west edge −180°, north +90°,
+// 0 the sea. Read here for what this file needs and no more.
+function decodeKoppenTiff(bytes) {
+  if (bytes.toString('ascii', 0, 2) !== 'II') throw new Error('expected a little-endian TIFF')
+  const ifd = bytes.readUInt32LE(4)
+  const tags = new Map()
+  for (let k = 0; k < bytes.readUInt16LE(ifd); k++) {
+    const o = ifd + 2 + 12 * k
+    const type = bytes.readUInt16LE(o + 2), count = bytes.readUInt32LE(o + 4)
+    const size = type === 3 ? 2 : 4
+    const at = count * size <= 4 ? o + 8 : bytes.readUInt32LE(o + 8)
+    const values = []
+    for (let j = 0; j < Math.min(count, 64); j++) values.push(type === 3 ? bytes.readUInt16LE(at + 2 * j) : bytes.readUInt32LE(at + 4 * j))
+    tags.set(bytes.readUInt16LE(o), values)
+  }
+  const width = tags.get(256)[0], height = tags.get(257)[0]
+  if (tags.get(258)[0] !== 8 || tags.get(259)[0] !== 8 || (tags.get(317)?.[0] ?? 1) !== 1) throw new Error('expected 8-bit deflate strips without a predictor')
+  const offsets = tags.get(273), lengths = tags.get(279)
+  const px = new Uint8Array(width * height)
+  let at = 0
+  for (let k = 0; k < offsets.length; k++) {
+    const strip = inflateSync(bytes.subarray(offsets[k], offsets[k] + lengths[k]))
+    px.set(strip.subarray(0, Math.min(strip.length, px.length - at)), at)
+    at += strip.length
+  }
+  return { px, width, height }
+}
+const koppenMap = decodeKoppenTiff(readFileSync(`${CLIENT}/scripts/fixtures/earth-koppen.tif`))
+const legend = new Map(readFileSync(`${CLIENT}/scripts/fixtures/earth-koppen-legend.txt`, 'utf8').split('\n').slice(1)
+  .map((line) => line.split('\t')).filter((f) => f.length > 1 && f[1] !== '-').map((f) => [Number(f[0]), f[1]]))
+
+// Per climate cell, the class most of its map cells have (land only), and
+// the comparison over the cells that are land in both, weighted by area.
+// The world's shares of the five groups, over each one's land.
+const GROUPS = ['A', 'B', 'C', 'D', 'E']
 const share = { A: 0, B: 0, C: 0, D: 0, E: 0 }
-let area = 0
+const beck = { A: 0, B: 0, C: 0, D: 0, E: 0 }
+const confusion = Object.fromEntries(GROUPS.map((g) => [g, { A: 0, B: 0, C: 0, D: 0, E: 0 }]))
+let area = 0, beckArea = 0, both = 0, cellsExact = 0, cellsGroup = 0
+const kx = koppenMap.width / RX, ky = koppenMap.height / RY
 for (let y = 0; y < RY; y++) {
   const w = Math.cos(((y + 0.5) / RY - 0.5) * Math.PI)
   for (let x = 0; x < RX; x++) {
+    const counts = new Map()
+    for (let my = Math.floor(y * ky); my < Math.floor((y + 1) * ky); my++) {
+      for (let mx = Math.floor(x * kx); mx < Math.floor((x + 1) * kx); mx++) {
+        const v = koppenMap.px[my * koppenMap.width + mx]
+        if (v) counts.set(v, (counts.get(v) ?? 0) + 1)
+      }
+    }
+    let real = null, most = 0
+    for (const [v, c] of counts) if (c > most) { most = c; real = legend.get(v) }
     const code = M.koppen.koppenCode(r.koppen[y * RX + x])
-    if (!code) continue
-    share[code[0]] += w
-    area += w
+    if (code) { share[code[0]] += w; area += w }
+    if (!real || !code) continue
+    both += w
+    if (code === real) cellsExact += w
+    if (code[0] === real[0]) cellsGroup += w
+    confusion[real[0]][code[0]] += w
+  }
+}
+// The real shares from the map itself, each 0.5° cell by its area: a
+// majority per climate cell overstates the classes of coasts and islands
+// (A came out 27 % instead of 23).
+for (let my = 0; my < koppenMap.height; my++) {
+  const w = Math.cos(((my + 0.5) / koppenMap.height - 0.5) * Math.PI)
+  for (let mx = 0; mx < koppenMap.width; mx++) {
+    const code = legend.get(koppenMap.px[my * koppenMap.width + mx])
+    if (code) { beck[code[0]] += w; beckArea += w }
   }
 }
 let shareErr = 0
-const shares = Object.keys(BECK).map((g) => {
-  const pct = (100 * share[g]) / area
-  shareErr += Math.abs(pct - BECK[g])
-  return `${g} ${pct.toFixed(0)} (${BECK[g]})`
+const shares = GROUPS.map((g) => {
+  const pct = (100 * share[g]) / area, want = (100 * beck[g]) / beckArea
+  shareErr += Math.abs(pct - want)
+  return `${g} ${pct.toFixed(0)} (${want.toFixed(0)})`
 }).join('  ')
+// Where each real group went: of its land, the share per modelled group.
+console.log('\nreal → modelled group, % of the real group\'s land:')
+for (const g of GROUPS) {
+  const total = GROUPS.reduce((s, h) => s + confusion[g][h], 0)
+  console.log(`  ${g}: ${GROUPS.map((h) => `${h} ${String(Math.round((100 * confusion[g][h]) / total)).padStart(3)}`).join('  ')}`)
+}
 
 console.log(`\nrefinement ${Math.round(ms)} ms`)
-console.log(`Köppen groups, % of land (Beck 2018): ${shares}`)
+console.log(`Köppen groups, % of land (Beck 1991–2020): ${shares}`)
+console.log(`cells: class ${((100 * cellsExact) / both).toFixed(0)} %, group ${((100 * cellsGroup) / both).toFixed(0)} % of the land both have`)
 console.log(`places: class ${exact}/${counted}, group ${group}/${counted}; mean |error| January ${(janErr / counted).toFixed(1)} °C, July ${(julErr / counted).toFixed(1)} °C (bias: mean ${(meanErr / counted).toFixed(1)}, swing ${(swingErr / counted).toFixed(1)}), rain ×${Math.exp(rainErr / counted).toFixed(2)}; groups off by ${shareErr.toFixed(0)} points`)
 await server.close()

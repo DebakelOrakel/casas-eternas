@@ -250,7 +250,7 @@ export const CLIMATE_TUNING = {
   // (scripts/earthClimate.mjs, 2026-09-29): at 400 the sea's air reached so
   // far inland that the places' years came out 2.8 °C too narrow on average
   // (Winnipeg's January +2 °C, real −16); at 150 0.6 °C, and the land's
-  // Köppen groups 29 → 18 points off Beck 2018. At 50 the swings stay right
+  // Köppen groups 29 → 18 points off Beck 2018's rounded shares. At 50 the swings stay right
   // but the D group overgrows (29 % of land, Earth 22).
   ebmExchange: 40,
   ebmCarryPerWind: 150,
@@ -417,7 +417,7 @@ export const CLIMATE_TUNING = {
   // The rain's multiplier from the anomaly of the sea the air rose from
   // (computePrecipitation's refined path): e^(perC × °C), clamped. Measured
   // on Earth (scripts/earthClimate.mjs, 2026-09-29): 0.2 moves the land's
-  // Köppen groups from 18 points off Beck 2018 to 8 (B 20 → 26 %, the dry
+  // Köppen groups from 18 points off Beck 2018's rounded shares to 8 (B 20 → 26 %, the dry
   // west coasts); 0.3 gives 6 but dries the places' rain further (×2.49 →
   // ×2.58 off).
   rainSourcePerC: 0.2,
