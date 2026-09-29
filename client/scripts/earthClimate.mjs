@@ -6,11 +6,11 @@
 // groups (Beck et al. 2018, rounded). Not a gate: it prints the table and a
 // score the calibration is judged on, so a change reads as better or worse.
 //
-//   node scripts/earthClimate.mjs <heightmap.png> [key=value …]
+//   node scripts/earthClimate.mjs [heightmap.png] [key=value …]
 //
 // The heightmap is an 8-bit grayscale equirectangular PNG, west edge at
-// −180°, north at the top, with the sea's floor in it; it is not in the
-// repository. Its scale was read off the file itself (2026-09-29): sea level
+// −180°, north at the top, with the sea's floor in it:
+// scripts/fixtures/earth-heightmap.png unless another is named. Its scale was read off the file itself (2026-09-29): sea level
 // between 158 and 159 (the 29 % of Earth that is land lies above 158.5,
 // area-weighted; the Netherlands, the Amazon and the Dead Sea all read 159),
 // land to 8849 m at 255 (Everest reads 254), sea to −10 994 m at 0 (the
@@ -28,11 +28,7 @@ import { fileURLToPath } from 'node:url'
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const args = process.argv.slice(2)
-const png = args.find((a) => !a.includes('='))
-if (!png) {
-  console.error('usage: node scripts/earthClimate.mjs <heightmap.png> [key=value …]')
-  process.exit(2)
-}
+const png = args.find((a) => !a.includes('=')) ?? `${CLIENT}/scripts/fixtures/earth-heightmap.png`
 
 const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/index.js`)
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom', logLevel: 'error' })

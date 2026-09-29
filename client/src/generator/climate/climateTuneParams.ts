@@ -33,8 +33,14 @@ export const CLIMATE_TUNING = {
   // and swing (the ITCZ and the polar front wet, the subtropics dry).
   precipBandBase: 0.8,
   precipBandSwing: 0.7,
-  // The most of a column's moisture one cell can rain out.
-  precipRainoutMax: 0.85,
+  // The most of a column's moisture one cell can rain out: five times the
+  // base rainout, as a mountain rains some two to five times what the plain
+  // before it does (Earth's wettest places, 10 000–12 000 mm/yr). It was 0.85,
+  // 28 times the base; on Earth's relief (scripts/earthClimate.mjs,
+  // 2026-09-29) that gave Nairobi 12 900 mm and Bogotá 29 800 (both ~1000),
+  // at 0.15 7 100 each and the mean rain error ×2.65 → ×2.35; at 0.10 the
+  // places lost a class.
+  precipRainoutMax: 0.15,
 
   // --- from temperature.ts ---
 
