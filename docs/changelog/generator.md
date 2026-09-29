@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-29
+- **changed** Climate: after refining, the wind cells and pressure bands move with the seasons like the rain belt, so winds turn and the trades and monsoons reverse over the year. `overlay.wind`
 - **changed** Rivers: after refining the climate, whether a river runs dry follows the real months, snowmelt included, and not only how uneven the year is. `generator.panel.erosion`
 - **new** Climate: the sea's salinity and where its cold, salty water sinks; the currents draw surface water toward it, warming the coasts on the way. A salinity layer shows it. `overlay.salinity`
 

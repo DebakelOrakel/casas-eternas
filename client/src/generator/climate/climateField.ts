@@ -4,6 +4,7 @@
 // where fine detail matters (lapse, and later orographic rain shadow).
 import { isLandAt } from '../elevation/elevationScale'
 import { torusDomain } from '../core/domain'
+import { CLIMATE_TUNING } from './climateTuneParams'
 
 export const CLIMATE_RES_X = 256
 export const CLIMATE_RES_Y = 128
@@ -19,6 +20,22 @@ export const CLIMATE_RES_Y = 128
 export function shiftedYNorm(gridY: number, resY: number, equatorOffset: number): number {
   const y = (gridY + 0.5) / resY - equatorOffset
   return y - Math.floor(y)
+}
+
+// Where a row sits in the zonal bands when they follow the season: its
+// shiftedYNorm moved by `beltShift` (a fraction of the map's height, + toward
+// the top), in full at the equator and down to `precipBeltShiftFloor` of it
+// from `precipBeltTaperDeg` poleward — the equatorial rain belt follows the
+// sun some 10–15°, the subtropical highs and the wind cells some 4–5°. The
+// rain (precipitation.ts), the wind cells (wind.ts) and the pressure bands
+// (pressure.ts) all move by it, so they move together. 0 is the year's mean
+// position, exactly.
+export function beltYNorm(trueNorm: number, beltShift: number): number {
+  if (beltShift === 0) return trueNorm
+  const lat = Math.abs(trueNorm - 0.5) * 2
+  const reach = CLIMATE_TUNING.precipBeltShiftFloor + (1 - CLIMATE_TUNING.precipBeltShiftFloor) * Math.max(0, 1 - (lat * 90) / CLIMATE_TUNING.precipBeltTaperDeg)
+  const shifted = trueNorm + beltShift * reach
+  return shifted - Math.floor(shifted)
 }
 
 // Latitude 0..1 for a climate-grid row: 0 at the equator (the horizontal

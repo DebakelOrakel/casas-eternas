@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, shiftedYNorm } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, shiftedYNorm, beltYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { sampleBilinearGrid } from '../core/field'
@@ -113,11 +113,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
 
   const precip = new Float32Array(n)
   for (let gy = 0; gy < RY; gy++) {
-    const trueNorm = shiftedYNorm(gy, RY, equatorOffset)
-    const lat = Math.abs(trueNorm - 0.5) * 2
-    const reach = CLIMATE_TUNING.precipBeltShiftFloor + (1 - CLIMATE_TUNING.precipBeltShiftFloor) * Math.max(0, 1 - (lat * 90) / CLIMATE_TUNING.precipBeltTaperDeg)
-    const shifted = trueNorm + beltShift * reach
-    const yNorm = shifted - Math.floor(shifted)
+    const yNorm = beltYNorm(shiftedYNorm(gy, RY, equatorOffset), beltShift)
     const band = bandFactor(Math.abs(yNorm - 0.5) * 2)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx

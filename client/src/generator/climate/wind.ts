@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, beltYNorm, shiftedYNorm } from './climateField'
 import { hadleyEdge } from '../planet/planetForcing'
 import { PLANET_INPUTS } from '../planet/planetInputParams'
 import { CLIMATE_TUNING } from './climateTuneParams'
@@ -14,12 +14,14 @@ import { CLIMATE_TUNING } from './climateTuneParams'
 // bottom/"south" (+y). See docs/decisions/climate-biomes.md.
 // `rotationHours` (planet/planetForcing.ts): the Hadley cell's edge moves
 // with the rotation period; the Ferrel cell takes half of what is left.
-export function computeWind(equatorOffset = 0, rotationHours = PLANET_INPUTS.rotation.default): Float32Array {
+// `beltShift`: the season's shift of the cells (climateField.beltYNorm); 0,
+// the year's mean position, for the history and the cheap climate.
+export function computeWind(equatorOffset = 0, rotationHours = PLANET_INPUTS.rotation.default, beltShift = 0): Float32Array {
   const wind = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y * 2)
   const e1 = hadleyEdge(rotationHours)
   const e2 = (1 + e1) / 2
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    const yNorm = shiftedYNorm(gy, CLIMATE_RES_Y, equatorOffset)
+    const yNorm = beltYNorm(shiftedYNorm(gy, CLIMATE_RES_Y, equatorOffset), beltShift)
     const sLat = (yNorm - 0.5) * 2 // signed latitude: −1 north(top) … +1 south(bottom)
     const phi = Math.abs(sLat)
     const hemi = Math.sign(sLat) // −1 north, +1 south, 0 at the equator

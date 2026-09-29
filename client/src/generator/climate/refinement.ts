@@ -2,6 +2,7 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, latitudeAt } from './climat
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { koppenFromMonths, reduceTemperatureToSeaLevel } from './biomes'
 import { computePressureWind, REFINED_MONTHS } from './pressure'
+import { computeWind } from './wind'
 import { seasonalCycle } from './energyBalance'
 import { applyPhenomena } from './phenomena'
 import { computeReliability, type Reliability } from './reliability'
@@ -88,11 +89,14 @@ export function refineClimate(
   const precipitation = new Float32Array(REFINED_MONTHS * n)
   for (let month = 0; month < REFINED_MONTHS; month++) {
     const air = monthly.subarray(month * n, (month + 1) * n)
-    const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, width, height, baseWind, params.equatorOffset, planet.rotationHours)
+    // The season's shift of the bands, + in the top hemisphere's summer:
+    // the rain belt, the wind cells and the pressure bands all move by it
+    // (climateField.beltYNorm), the sun's latitude lagged by the sea.
+    const belt = CLIMATE_TUNING.monsoonItczSeasonalShift * Math.cos(2 * Math.PI * ((month + 0.5) / REFINED_MONTHS - CLIMATE_TUNING.refineItczPeakYear))
+    const bandWind = computeWind(params.equatorOffset, planet.rotationHours, belt)
+    const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, width, height, bandWind, params.equatorOffset, planet.rotationHours, belt)
     pressure.set(result.pressure, month * n)
     wind.set(result.wind, month * n * 2)
-    // + in the top hemisphere's summer: the belt moves up.
-    const belt = CLIMATE_TUNING.monsoonItczSeasonalShift * Math.cos(2 * Math.PI * ((month + 0.5) / REFINED_MONTHS - CLIMATE_TUNING.refineItczPeakYear))
     precipitation.set(computePrecipitation(elevation, air, result.wind, width, height, params.humidity, params.equatorOffset, undefined, belt), month * n)
     onProgress?.(0.15 + 0.75 * (month + 1) / REFINED_MONTHS)
   }
