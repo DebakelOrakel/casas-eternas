@@ -281,6 +281,17 @@ physics.
    layers rainVariability and ensoPattern, table enso (period, strength);
    the reliability is derived again on load, like the classes.
 8. C2–C4.
+   BUILT 2026-09-28 (climate/storms.ts, 0.09 s): cyclone tracks from warm
+   tropical sea along the month's wind with a west and poleward drift,
+   fading over land and cold water; tornado readiness from warm moist air,
+   high ground upwind under a westerly, a plain; blizzards as cold, snowy,
+   windy months; dust from dry thawed land carried downwind; thunder from
+   heat and rain. Mean latitudes on Astrakan and a test world: cyclones
+   15–16°, tornadoes 35–46°, blizzards 50–57°, dust 28°, thunder 17–18°
+   (the first cut had cyclones at 10° and tornadoes at 21°: too little
+   poleward drift, and wind from any side instead of the westerlies).
+   In the save as layers; they read the relief, so a load reads them back
+   rather than deriving them.
 9. Currents 5, controls, D: when needed.
 10. Final refinement: with the bakery step.
 

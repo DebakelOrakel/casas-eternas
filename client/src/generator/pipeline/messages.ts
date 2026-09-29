@@ -471,6 +471,14 @@ export interface WorkerClimateRefinedMessage {
   ensoPattern: ArrayBuffer
   ensoPeriodYears: number
   ensoStrength: number
+  // The storms (climate/storms.ts), Float32 0..1 per cell: cyclone tracks,
+  // tornado readiness, dust and thunder relative to the world's strongest,
+  // blizzards as the share of the year.
+  cyclone: ArrayBuffer
+  tornado: ArrayBuffer
+  blizzard: ArrayBuffer
+  dust: ArrayBuffer
+  thunder: ArrayBuffer
   // Sea-level pressure, hPa, Float32, months × resX × resY (month-major).
   pressure: ArrayBuffer
   // Surface wind, Float32 interleaved [u, v] per cell like

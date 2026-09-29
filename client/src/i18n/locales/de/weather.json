@@ -8,5 +8,15 @@
   "weather.enso.label": "ENSO-Wippe",
   "weather.enso.help": "In der warmen Phase schwappt das warme Wasser eines Äquatorozeans nach Osten: seine Ostufer bekommen Regen, seine Westufer Dürre.",
   "weather.enso.legend.unit": "% nasser in der warmen Phase",
-  "weather.enso.period": "alle {v} Jahre"
+  "weather.enso.period": "alle {v} Jahre",
+  "weather.cyclone.label": "Tropische Wirbelstürme",
+  "weather.cyclone.help": "Wo über warmem Meer tropische Wirbelstürme entstehen und wohin ihre Bahnen an Land reichen.",
+  "weather.tornado.label": "Tornadogürtel",
+  "weather.tornado.help": "Wo warme, feuchte Luft unter trockener Gebirgsluft auf starken Westwind über der Ebene trifft.",
+  "weather.blizzard.label": "Blizzards",
+  "weather.blizzard.help": "Kalte, schneereiche und windige Monate auf offenem Land.",
+  "weather.dust.label": "Staub",
+  "weather.dust.help": "Staub, den der Wind von trockenem Land hebt, und wohin er treibt.",
+  "weather.thunder.label": "Gewitter",
+  "weather.thunder.help": "Wie oft Hitze und Feuchte Gewitter auftürmen."
 }

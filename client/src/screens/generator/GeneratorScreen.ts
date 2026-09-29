@@ -698,6 +698,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             <button type="button" class="gen-tier" data-weather="foehn" aria-pressed="false" disabled data-t="weather.foehn.label" data-help="weather.foehn">${t('weather.foehn.label')}</button>
             <button type="button" class="gen-tier" data-weather="rainVariability" aria-pressed="false" disabled data-t="weather.rainVariability.label" data-help="weather.rainVariability">${t('weather.rainVariability.label')}</button>
             <button type="button" class="gen-tier" data-weather="enso" aria-pressed="false" disabled data-t="weather.enso.label" data-help="weather.enso">${t('weather.enso.label')}</button>
+            <button type="button" class="gen-tier" data-weather="cyclone" aria-pressed="false" disabled data-t="weather.cyclone.label" data-help="weather.cyclone">${t('weather.cyclone.label')}</button>
+            <button type="button" class="gen-tier" data-weather="tornado" aria-pressed="false" disabled data-t="weather.tornado.label" data-help="weather.tornado">${t('weather.tornado.label')}</button>
+            <button type="button" class="gen-tier" data-weather="blizzard" aria-pressed="false" disabled data-t="weather.blizzard.label" data-help="weather.blizzard">${t('weather.blizzard.label')}</button>
+            <button type="button" class="gen-tier" data-weather="dust" aria-pressed="false" disabled data-t="weather.dust.label" data-help="weather.dust">${t('weather.dust.label')}</button>
+            <button type="button" class="gen-tier" data-weather="thunder" aria-pressed="false" disabled data-t="weather.thunder.label" data-help="weather.thunder">${t('weather.thunder.label')}</button>
           </div>
         </div>
       </section>
@@ -1749,20 +1754,30 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The weather phenomena (the refinement's): the picked one's share of the
   // year on the land, blended over the land cells and painted on land
   // pixels, as the upwelling is on the sea. Full colour at half the year.
-  type WeatherId = 'fog' | 'foehn' | 'rainVariability' | 'enso'
+  type WeatherId = 'fog' | 'foehn' | 'rainVariability' | 'enso' | 'cyclone' | 'tornado' | 'blizzard' | 'dust' | 'thunder'
   let pickedWeather: WeatherId = 'fog'
   // The picked phenomenon's field, and how it is drawn: a share with its
   // colour at full strength (`full`), or the see-saw's signed mark, brown
   // for drier and blue for wetter.
   const weatherField = (id: WeatherId): Float32Array | null => {
     if (!lastRefined) return null
-    return id === 'enso' ? lastRefined.reliability.ensoPattern : id === 'rainVariability' ? lastRefined.reliability.rainVariability : lastRefined[id]
+    if (id === 'enso') return lastRefined.reliability.ensoPattern
+    if (id === 'rainVariability') return lastRefined.reliability.rainVariability
+    if (id === 'fog' || id === 'foehn') return lastRefined[id]
+    return lastRefined.storms[id]
   }
   const WEATHER_STYLE: Record<WeatherId, { rgb: [number, number, number]; full: number; signed?: [number, number, number] }> = {
     fog: { rgb: [120, 140, 170], full: 0.5 },
     foehn: { rgb: [215, 110, 40], full: 0.5 },
     rainVariability: { rgb: [170, 60, 120], full: 0.5 },
     enso: { rgb: [40, 110, 200], full: 1, signed: [165, 110, 45] },
+    // The storms relative to the world's strongest are full at 1; a
+    // blizzard a third of the year is as bad as they come.
+    cyclone: { rgb: [120, 45, 160], full: 1 },
+    tornado: { rgb: [200, 55, 55], full: 1 },
+    blizzard: { rgb: [70, 130, 200], full: 0.3 },
+    dust: { rgb: [190, 150, 80], full: 1 },
+    thunder: { rgb: [230, 180, 30], full: 1 },
   }
   function paintWeather(data: Uint8ClampedArray): void {
     const field = weatherField(pickedWeather)
@@ -3429,6 +3444,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         ensoPattern: new Float32Array(message.ensoPattern),
         ensoPeriodYears: message.ensoPeriodYears,
         ensoStrength: message.ensoStrength,
+      },
+      storms: {
+        cyclone: new Float32Array(message.cyclone),
+        tornado: new Float32Array(message.tornado),
+        blizzard: new Float32Array(message.blizzard),
+        dust: new Float32Array(message.dust),
+        thunder: new Float32Array(message.thunder),
       },
     }
     updateControlsDisabled()

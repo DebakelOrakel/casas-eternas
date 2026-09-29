@@ -13,6 +13,9 @@ import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { koppenFromMonths } from '../../generator/climate/biomes'
 import { annualFromMonths } from '../../generator/climate/refinement'
 import { computeReliability } from '../../generator/climate/reliability'
+import type { Storms } from '../../generator/climate/storms'
+
+const STORM_NAMES = ['cyclone', 'tornado', 'blizzard', 'dust', 'thunder'] as const satisfies readonly (keyof Storms)[]
 
 // Each layer's values by field name, `n` cells each.
 export function refinedLayerSources(r: RefinedClimate, n: number): Map<string, Float32Array> {
@@ -45,6 +48,7 @@ export function refinedLayerSources(r: RefinedClimate, n: number): Map<string, F
   out.set('foehn', r.foehn)
   out.set('rainVariability', r.reliability.rainVariability)
   out.set('ensoPattern', r.reliability.ensoPattern)
+  for (const name of STORM_NAMES) out.set(name, r.storms[name])
   return out
 }
 
@@ -92,6 +96,11 @@ export function refinedFromLayers(get: (name: string) => Float32Array | null, n:
   }
   // The class is the months', so it is derived again rather than stored twice.
   const koppen = koppenFromMonths(temperature, precipitation, REFINED_MONTHS)
+  // The storms read the relief, which is not here: they come back as saved.
+  const [cyclone, tornado, blizzard, dust, thunder] = STORM_NAMES.map((name) => get(name))
+  if (!cyclone || !tornado || !blizzard || !dust || !thunder) return null
+  if ([cyclone, tornado, blizzard, dust, thunder].some((f) => f.length !== n)) return null
+  const storms: Storms = { cyclone, tornado, blizzard, dust, thunder }
   // The reliability is the months' and the sea's again, like the classes;
   // its layers are for readers without the generator. (The equator at the
   // map's middle: the shift slider is gone.)
@@ -99,5 +108,5 @@ export function refinedFromLayers(get: (name: string) => Float32Array | null, n:
   for (let i = 0; i < n; i++) land[i] = landMask[i] > 0.5 ? 1 : 0
   const annual = annualFromMonths({ months: REFINED_MONTHS, temperature, precipitation })
   const reliability = computeReliability(annual.precipitation, annual.monsoonIndex, currentAnomaly, land, 0)
-  return { months: REFINED_MONTHS, temperature, precipitation, koppen, fog, foehn, reliability, pressure, wind, currents, currentAnomaly, upwelling }
+  return { months: REFINED_MONTHS, temperature, precipitation, koppen, fog, foehn, reliability, storms, pressure, wind, currents, currentAnomaly, upwelling }
 }

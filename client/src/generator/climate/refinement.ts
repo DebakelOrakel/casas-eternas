@@ -5,6 +5,7 @@ import { computePressureWind, REFINED_MONTHS } from './pressure'
 import { seasonalCycle } from './energyBalance'
 import { applyPhenomena } from './phenomena'
 import { computeReliability, type Reliability } from './reliability'
+import { computeStorms, type Storms } from './storms'
 import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
 import { OCEAN_AMPLITUDE } from './seasonality'
 import { applyOceanSST, computeOceanCurrents, computeUpwelling, eastwardInBasin } from './oceanCurrents'
@@ -40,6 +41,8 @@ export interface RefinedClimate {
   koppen: Uint8Array
   // The rain's reliability and the ENSO see-saw (reliability.ts).
   reliability: Reliability
+  // Cyclones, tornadoes, blizzards, dust, thunder (storms.ts).
+  storms: Storms
   // Weather phenomena, each a share of the year per cell (phenomena.ts).
   fog: Float32Array
   foehn: Float32Array
@@ -135,7 +138,9 @@ export function refineClimate(
   // 7: the rain's reliability, from the year the months make.
   const annual = annualFromMonths(refined)
   const reliability = computeReliability(annual.precipitation, annual.monsoonIndex, currentAnomaly, land, params.equatorOffset)
-  return { ...refined, reliability }
+  // 8: the storms of those months.
+  const storms = computeStorms(monthly, precipitation, REFINED_MONTHS, wind, land, elevation, width, height, params.equatorOffset)
+  return { ...refined, reliability, storms }
 }
 
 // The annual fields of a refinement, in the forms the history's climate

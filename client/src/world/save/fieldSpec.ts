@@ -109,6 +109,13 @@ export const REFINED_FIELDS: readonly FieldSpec[] = [
   // see-saw's period and strength are the table `enso`.
   climate('rainVariability', 'share', true),
   climate('ensoPattern', '', true),
+  // The storms: cyclone tracks, tornado readiness, dust and thunder relative
+  // to the world's strongest (0..1), blizzards the share of the year.
+  climate('cyclone', 'relative', false),
+  climate('tornado', 'relative', true),
+  climate('blizzard', 'share', true),
+  climate('dust', 'relative', false),
+  climate('thunder', 'relative', false),
 ]
 
 const BY_NAME = new Map([...WORLD_FIELDS, ...REFINED_FIELDS].map((f) => [f.name, f]))

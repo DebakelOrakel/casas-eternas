@@ -448,6 +448,7 @@ else {
       ensoPeriodYears: 4.5,
       ensoStrength: 0.3,
     },
+    storms: Object.fromEntries(['cyclone', 'tornado', 'blizzard', 'dust', 'thunder'].map((k, j) => [k, Float32Array.from({ length: n }, (_, i) => rnd(i + 31 + j))])),
   }
   const sources = M.refined.refinedLayerSources(r, n)
   const decoded = new Map()
@@ -468,6 +469,7 @@ else {
     && worst(r.upwelling, back.upwelling, stepOf('upwelling')) <= 0.51
     && worst(r.fog, back.fog, stepOf('fog')) <= 0.51
     && worst(r.foehn, back.foehn, stepOf('foehn')) <= 0.51
+    && ['cyclone', 'tornado', 'blizzard', 'dust', 'thunder'].every((k) => worst(r.storms[k], back.storms[k], stepOf(k)) <= 0.51)
   check('the refinement survives the save within half a step', within)
   decoded.delete('upwelling')
   check('a refinement with a layer missing is not one', M.refined.refinedFromLayers((name) => decoded.get(name) ?? null, n) === null)

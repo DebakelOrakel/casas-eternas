@@ -857,13 +857,18 @@ function handleClimateRefine(): void {
     ensoPattern: r.reliability.ensoPattern.buffer as ArrayBuffer,
     ensoPeriodYears: r.reliability.ensoPeriodYears,
     ensoStrength: r.reliability.ensoStrength,
+    cyclone: r.storms.cyclone.buffer as ArrayBuffer,
+    tornado: r.storms.tornado.buffer as ArrayBuffer,
+    blizzard: r.storms.blizzard.buffer as ArrayBuffer,
+    dust: r.storms.dust.buffer as ArrayBuffer,
+    thunder: r.storms.thunder.buffer as ArrayBuffer,
     pressure: r.pressure.buffer as ArrayBuffer,
     wind: r.wind.buffer as ArrayBuffer,
     currents: r.currents.slice().buffer as ArrayBuffer,
     currentAnomaly: r.currentAnomaly.slice().buffer as ArrayBuffer,
     upwelling: r.upwelling.buffer as ArrayBuffer,
   }
-  emit(reply, [reply.temperature, reply.precipitation, reply.koppen, reply.fog, reply.foehn, reply.rainVariability, reply.ensoPattern, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling])
+  emit(reply, [reply.temperature, reply.precipitation, reply.koppen, reply.fog, reply.foehn, reply.rainVariability, reply.ensoPattern, reply.cyclone, reply.tornado, reply.blizzard, reply.dust, reply.thunder, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling])
   // The screen's annual fields follow, as a climate of its own kind.
   const climateMessage: WorkerClimateDataMessage = {
     type: 'climateData',

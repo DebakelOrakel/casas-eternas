@@ -8,5 +8,15 @@
   "weather.enso.label": "ENSO see-saw",
   "weather.enso.help": "In the warm phase an equatorial ocean's warm water sloshes east: its eastern shores get rain, its western shores drought.",
   "weather.enso.legend.unit": "% wetter in the warm phase",
-  "weather.enso.period": "every {v} years"
+  "weather.enso.period": "every {v} years",
+  "weather.cyclone.label": "Tropical cyclones",
+  "weather.cyclone.help": "Where tropical cyclones form over warm seas and where their tracks reach land.",
+  "weather.tornado.label": "Tornado alley",
+  "weather.tornado.help": "Where warm, moist air under dry air off the mountains meets a strong westerly over the plains.",
+  "weather.blizzard.label": "Blizzards",
+  "weather.blizzard.help": "Cold, snowy and windy months on open land.",
+  "weather.dust.label": "Dust",
+  "weather.dust.help": "Dust lifted by the wind from dry land, and where it drifts.",
+  "weather.thunder.label": "Thunderstorms",
+  "weather.thunder.help": "How often heat and moisture build thunderstorms."
 }

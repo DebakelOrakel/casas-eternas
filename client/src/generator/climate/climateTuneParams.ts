@@ -302,7 +302,57 @@ export const CLIMATE_TUNING = {
   ensoPeriodMinYears: 2,
   ensoPeriodMaxYears: 5,
 
-  // --- from refinement.ts ---
+  // --- from storms.ts (the climate step's storms) ---
+  // Not measured yet (2026-09-28); orders of magnitude.
+
+  // Thunder: from this warmth, full this much warmer, full at this month's
+  // rain (mm); the sea builds this share of the land's.
+  thunderFromC: 10,
+  thunderSpanC: 18,
+  thunderFullRainMm: 150,
+  thunderSeaShare: 0.25,
+  // Blizzard: a month below this °C with this much snow (mm water) and this
+  // much wind (8 m/s units).
+  blizzardBelowC: -5,
+  blizzardMinSnowMm: 15,
+  blizzardMinWind: 0.7,
+  // Dust: a month under this rain (mm) is dry, a wind this strong lifts in
+  // full; it drifts this many cells along the year's wind, keeping this
+  // share per cell.
+  dustDryBelowMm: 25,
+  dustFullWind: 0.8,
+  dustSteps: 20,
+  dustKeep: 0.75,
+  // Tornado: a plain below this height (m); ground this high within this
+  // many cells upwind, full this much higher (the dry air aloft); warm and
+  // moist from this °C, full this much warmer and at this month's rain;
+  // full at this wind.
+  tornadoPlainBelowM: 1000,
+  tornadoReachCells: 12,
+  tornadoMinBarrierM: 1500,
+  tornadoFullBarrierM: 1500,
+  tornadoFromC: 12,
+  tornadoSpanC: 10,
+  tornadoFullRainMm: 80,
+  tornadoFullWind: 1,
+  // Cyclones form between these latitudes over sea warmer than 26.5 °C,
+  // full this much warmer; each step one cell along the month's wind with
+  // this drift west and poleward; over land a track keeps this share per
+  // cell, over sea colder than this °C that share; it ends below this weight
+  // or after this many cells.
+  cycloneMinLatDeg: 5,
+  cycloneMaxLatDeg: 20,
+  cycloneWarmC: 26.5,
+  cycloneSpanC: 3,
+  cycloneDriftWest: 0.3,
+  cycloneDriftPole: 0.6,
+  cycloneLandKeep: 0.7,
+  cycloneColdC: 24,
+  cycloneColdKeep: 0.8,
+  cycloneFadeBelow: 0.02,
+  cycloneSteps: 60,
+
+    // --- from refinement.ts ---
   // When the equatorial rain belt stands furthest toward the top hemisphere,
   // as a fraction of the year: about mid-July, a few weeks after the
   // solstice, as the sea's lag holds it back.
