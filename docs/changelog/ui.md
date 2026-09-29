@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-29
+- **changed** Generator: the terrain colours change with height like an atlas's — green, yellow-green, khaki, ochre, brown, rock, snow — so ranges from 1300 m up stand out as mountains. `overlay.terrain`
 - **changed** Generator: the map readout shows the climate class and biome under the height and the temperature as the year's span; the climate step's month slider stays in sight above its buttons. `readout`
 - **changed** Generator: the climate step's washes come in three groups — land, sea, weather phenomena — one at a time within a group, combined across them; pressure, wind and currents are switches; each weather phenomenon is a layer with its own icon, and every pick group is a row of icon tiles. `generator.section`
 - **fixed** Generator: "new world" in the world list starts fresh — new name and seed, default sliders, later steps locked — instead of leaving the last world open. `generator`

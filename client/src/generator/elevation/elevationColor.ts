@@ -6,6 +6,13 @@ type Rgb = [number, number, number]
 // a coastline band, then lowland green through highland brown to snow-capped
 // peaks.
 //
+// The land's stops follow an atlas's layer tints — green, yellow-green,
+// khaki, ochre, brown, dark brown, rock, snow — with a distinct hue per band
+// where the land is. Until 2026-09-29 the ramp had two near-identical greens
+// from 200 m to 1200 m and turned brown only at 2500 m, so a 1500 m range
+// read as hills; on Earth's relief a quarter of the land lies above 1500 m
+// and half of it below 500 m, and the colour changes are now spent there.
+//
 // Stops are given in METRES and converted, rather than as bare -1..1 numbers.
 // The old stops were spaced for a scale whose land baseline sat at 0.35, so the
 // entire land ramp was tuned around terrain that is now ~1.5 km lower; carried
@@ -32,11 +39,14 @@ const COLOR_STOPS: { elevation: number; color: Rgb }[] = [
   stop(-600, [70, 130, 190]), // continental slope
   at(SHELF_BREAK, [98, 160, 210]), // shelf break — shallow water above here
   at(SEA_LEVEL, [222, 208, 158]), // shoreline
-  stop(200, [92, 150, 68]), // lowland green
-  stop(1200, [72, 122, 58]), // upland
-  stop(2500, [122, 108, 66]), // highland brown
-  stop(4200, [128, 118, 108]), // bare rock
-  stop(6000, [250, 250, 250]), // permanent snow
+  stop(100, [98, 156, 74]), // lowland green
+  stop(400, [156, 176, 88]), // yellow-green hills
+  stop(800, [206, 196, 118]), // pale khaki uplands
+  stop(1300, [206, 160, 94]), // ochre — mountain country begins
+  stop(2000, [172, 114, 70]), // brown mountains
+  stop(3000, [128, 86, 66]), // dark brown high ranges
+  stop(4200, [146, 138, 136]), // bare rock
+  stop(5500, [236, 236, 238]), // permanent snow
   stop(ELEVATION_METERS, [255, 255, 255]), // the scale's ceiling
 ]
 
