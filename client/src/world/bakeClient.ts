@@ -1,6 +1,5 @@
 import { apiBase } from '../server/worldClient'
 import { getServerStatus } from '../server/serverStatus'
-import { amplifyPhaseFraction } from '../generator/surface/bakeInBrowser'
 import { authFetch, hasSession } from '../server/session'
 
 // Commissioning a bake on the server, and following it until it lands.
@@ -80,13 +79,23 @@ export type BakeOutcome =
 const POLL_MS = 2000
 
 // The server reports progress WITHIN the current phase, so `erosion 84%` is
-// followed by `hydrology 0%`. The band table that makes that monotonic lives in
-// generator/surface/bakeInBrowser, shared with the generator's own bake — two
-// copies would drift, and a progress bar that runs backwards in one place and
-// not the other is exactly the kind of difference nobody notices until it is
-// confusing.
+// followed by `hydrology 0%`; each phase owns a band of the whole so the bar
+// runs one way. The phases are the mesh level bake's
+// (pipeline/meshBakeStage). Set, not measured: the level bake has not been
+// timed phase by phase yet (the raster bake's bands, measured, went with it
+// on 2026-09-29).
+const PHASE_BANDS: Record<string, [number, number]> = {
+  refine: [0, 0.3],
+  erosion: [0.3, 0.6],
+  hydrology: [0.6, 1],
+}
+
+// Undefined for a phase with no band — the cluster runner's `pending` and
+// `running`, where any bar would be invented rather than measured.
 export function bakeFraction(job: BakeJob): number | undefined {
-  return amplifyPhaseFraction(job.phase ?? '', job.percent / 100)
+  const band = PHASE_BANDS[job.phase ?? '']
+  if (!band) return undefined
+  return band[0] + (band[1] - band[0]) * Math.max(0, Math.min(1, job.percent / 100))
 }
 
 // Whether the job is still waiting rather than working. Queued here, or —

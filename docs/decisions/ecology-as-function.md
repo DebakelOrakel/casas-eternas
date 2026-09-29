@@ -3,7 +3,7 @@ summary: The ecology fields become a local rule over the coarse climate, the fin
 date: 2026-09-29
 area: generator
 stage: building
-status: decided 2026-09-29; step 1 BUILT the same day, and the save stopped carrying the ecology layers (formatVersion 7, part of step 2) — the rule runs per pixel at 2048×1024 (prepareEcology, some 2 s, kept by the worker while only the sliders move; applyEcology, some 0.3 s), the map and its readout show it, the save and the migration read its means per climate cell. Steps 2–4 open.
+status: decided 2026-09-29; steps 1 and 2 BUILT the same day — the rule runs per pixel at 2048×1024 (prepareEcology, some 2 s, kept by the worker while only the sliders move; applyEcology, some 0.3 s), the map and its readout show it, the migration reads its means per climate cell, the save carries its inputs only (formatVersion 7). Steps 3–4 open.
 ---
 
 # Ecology as a function, not a raster
@@ -142,3 +142,17 @@ surface) at 0.15 of a river's wet ground; both back within some 10 % of
 the old means. A stream below a floor feeds no fish and waters no field
 (on Earth the land with a trace of fish 72 → 13 %). The fish field shows
 the sea's richness on the sea itself: the fishing grounds.
+
+## Step 2, built (2026-09-29)
+
+The save carries no ecology layers (formatVersion 7); a loaded world
+computes the ecology from its inputs: the sliders from world.yaml, the
+features and cratons from the simulation's snapshot, the terrain from the
+mesh, the months, upwelling and rain reliability from the refined climate
+the save holds, and the fine biomes, rivers, lakes, salt flats, water table
+and oases from the hydrology computed on load. Measured on Earth (the
+refined climate through the save's encoding and back, the ecology on both):
+the mean difference per pixel is nil; 0.01 % of the pixels differ by more
+than 0.05, in pasture and timber only, where the rounding tips a pixel's
+biome over a class border. A reader without the generator finds no ecology
+in the save; none asks for one yet.

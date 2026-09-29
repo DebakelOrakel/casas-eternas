@@ -64,8 +64,8 @@ surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), e
             springs, the regime with baseflow, the water table — a classification over the
             column, no process), glacial (phase 6: the epoch's ice on the mesh at its
             steady state, the cut it does, the till it leaves), coastal (phase 7: the
-            waves' cut at the shore and the one-line drift along it), amplify,
-            runAmplification
+            waves' cut at the shore and the one-line drift along it), amplify
+            (the mesh level's synthesis layers and the level bake's constants)
 climate/ ecology/ migration/ render/
 ```
 
@@ -90,11 +90,11 @@ reduction is a *choice*, and `downsampleMax` is the wrong one for anything
 sampled per point. `lakeDepth` used to take it, which let a single lake cell
 claim its whole 62 km cell and inflated saved lake area 4× (2026-08-09).
 
-**The 2048 macro raster is the sole authority and the only persisted form.** The
-4k/8k amplification bake is derived presentation: it may refine the macro shapes,
-never contradict them, is never serialized into a save, and is never fed back
-into the generator (`docs/decisions/worldmap-amplification.md`, rule 4). "Finest
-available" is therefore never the right rule for picking a source.
+**The save is the sole authority.** A finer mesh level (the level bake,
+`pipeline/meshBakeStage.ts`) is derived: an artifact, never serialized into a
+save and never fed back into the generator. "Finest available" is therefore
+never the right rule for picking a source. (The 4k/8k raster amplification that
+this rule was written for went on 2026-09-29.)
 
 Ocean is marked by a different sentinel per aspect — `OCEAN_PRECIP`,
 `OCEAN_AMPLITUDE`, `ECOLOGY_OCEAN` (which is `-1`, so "no negatives" is the wrong
@@ -107,7 +107,6 @@ not assume; look up which one the field you touched uses.
 cd client && npm run harness:roundtrip       # the save format; 0.2 s
 cd client && npm run harness:mesh            # the adaptive mesh; ~5 s
 cd client && npm run harness:pipeline        # the pipeline's behaviour; ~3 min
-cd client && npm run harness:amplify         # the amplification bake; ~13 s
 cd client && npm run harness:golden          # the generator; ~20 min (4 world builds at 2048×1024, 4 coupled epochs each)
 cd client && npm run harness:golden:record   # re-record the metric baseline, on purpose
 cd client && npm run harness:golden:hash     # arm the refactor guard (layer 4)
@@ -136,11 +135,10 @@ process. The baseline is machine-local and gitignored; record it where you work.
   mid-flight. Run it after touching anything under `pipeline/`. What it still does
   NOT reach is the screen — panel switching, button state and the DOM half of a
   reset are unguarded.
-- It does **not** cover the amplification bake's terrain — that is
-  `npm run harness:amplify`'s job since 2026-08-09. It bakes a small world
-  through the real `runAmplification` and checks invariants, determinism (which
-  the artifact cache depends on absolutely: two machines baking one world must
-  agree byte for byte) and, opt-in, a byte baseline. The artifact KEY is guarded
+- It does **not** cover the level bake's terrain — `npm run harness:mesh`
+  bakes level 1 and checks that parents are kept, no node crosses the coast, the
+  same save bakes the same level and the artifact reads back identical (the
+  artifact cache depends on that absolutely). The artifact KEY is guarded
   separately — `npm run harness:roundtrip` checks that every constant
   AMPLIFY_CONSTANTS lists actually moves the pipeline version.
 - It does **not** cover the adaptive mesh — `npm run harness:mesh` does, in seconds
@@ -237,9 +235,9 @@ in a save is therefore DERIVED; `mesh/` is the terrain, and a restored mesh
 must step to the same bytes as the session's — which is why positions are
 float32 on insert and the mesh is renumbered through the codec after every
 epoch (`mesh/meshSerial.compactMesh`). Do not hand the engine a mesh that has
-not been compacted and expect a reload to match. The erosion panel keeps its
-readout and the bakes; its former sliders are the tectonics panel's
-(`tectonics/tectonicsInputParams.ts`).
+not been compacted and expect a reload to match. The erosion step is gone
+(2026-09-29); its former sliders are the tectonics panel's
+(`tectonics/tectonicsInputParams.ts`), its readout the climate step's.
 
 **The hydrology runs over a flow substrate** (phase 4.3, 2026-09-23).
 `surface/flowSubstrate.ts` is the one interface the discharge, the lakes, the
@@ -258,4 +256,4 @@ scan), the mesh the other (`mesh/meshErosion.ts`). A kernel that indexes
 `nbr[cell * 8 + slot]` or counts in cells is wrong on the mesh even if the
 raster harnesses pass; walk `nbrStart[i]..nbrStart[i + 1]` and multiply by
 `areaRel` / `lenRel`. `harness:mesh` runs the engine on a mesh and checks the
-sediment budget closes; `harness:amplify` and golden run it on the raster.
+sediment budget closes; golden runs it on the raster.

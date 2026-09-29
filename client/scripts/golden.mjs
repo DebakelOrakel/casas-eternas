@@ -135,13 +135,14 @@ const M = {
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
   finalize: await L('/src/generator/archean/finalizeArchean.ts'),
   // Not part of building a world — see PIPELINE_VERSION below.
-  artifact: await L('/src/world/artifacts.ts'),
+  meshArtifact: await L('/src/world/meshArtifacts.ts'),
 }
 
 const SEA = M.scale.SEA_LEVEL
 const METRES = M.scale.ELEVATION_METERS
 
-// The key every cached 4k/8k bake is addressed by, local and on the server.
+// The key every cached level bake (L1) is addressed by, local and on the
+// server — the 4k/8k raster bake's until it went (2026-09-29).
 //
 // It is not a world property and nothing here builds one — it is in the guard
 // because it is a PRODUCT OF CONSTANTS, and those constants are exactly what
@@ -153,9 +154,9 @@ const METRES = M.scale.ELEVATION_METERS
 //
 // Calls the REAL function rather than reassembling the spread, which this line
 // used to do — a guard that rebuilds what it is guarding cannot notice the two
-// drifting apart. Every caller now goes through `amplificationPipelineVersion`
-// (part B3), so this checks the same thing the screens and the baker do.
-const PIPELINE_VERSION = M.artifact.amplificationPipelineVersion()
+// drifting apart. The baker goes through `meshPipelineVersion` too, so this
+// checks the same thing it does.
+const PIPELINE_VERSION = M.meshArtifact.meshPipelineVersion(1)
 
 // Float32 hashing has to be bit-exact, so hash the raw bytes rather than any
 // rounded form — a refactor that changes the last mantissa bit is still a

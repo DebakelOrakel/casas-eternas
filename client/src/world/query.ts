@@ -22,23 +22,10 @@ import type { ErosionControls, WorldManifest, WorldManifestLayer } from './save/
 // one more erosion pass is formally a different world. That makes everything in
 // this file immutable and removes cache invalidation from the design entirely.
 
-// Which tier a caller is entitled to, and the reason the facade does not simply
-// return the finest thing it has.
-//
-// The 2048 macro raster is the sole authority; the 4k/8k amplification is derived
-// presentation that may REFINE the macro shapes but never contradict them, and is
-// never serialized (worldmap-amplification.md, rule 4). So the finest data is the
-// least authoritative, and "finest wins" would make a world's answer depend on
-// whether a bake happened to have finished — a fine default for drawing, a
-// disaster for a rule.
-export type Purpose =
-  // The authority tier only. Same answer every time, and the same answer a
-  // server reading the save would give. Never opportunistically upgraded.
-  | 'authoritative'
-  // Best available. May sharpen within a session as a bake lands.
-  | 'presentation'
-
-export type FieldSource = 'save' | 'amplified'
+// Where a field came from. One source since the raster amplification went
+// (2026-09-29): the save. A finer level lives in the artifact store and is
+// read through it, not through this facade.
+export type FieldSource = 'save'
 
 // A field, acquired once and then sampled freely.
 //
@@ -92,7 +79,7 @@ export interface World {
   // existed simply does not list it, and the honest answer is "no" rather than
   // a fabricated default.
   has(name: string): boolean
-  acquire(name: string, purpose?: Purpose): Promise<FieldView | null>
+  acquire(name: string): Promise<FieldView | null>
   // A JSON table the manifest lists (kind 'table') — the standing-water
   // list is the first. Null when the save carries none or it does not parse;
   // the caller checks the shape, this reader only knows it is JSON.
@@ -103,10 +90,6 @@ export interface World {
   // the elevation and precipitation layers, and derived HERE so every reader of
   // a save agrees on it instead of each hashing its own idea of the inputs.
   worldId(): Promise<string>
-  // Register an amplified elevation tier as it lands. The world map bakes these
-  // per session and they are never persisted, so the world learns about them
-  // rather than finding them.
-  addAmplifiedElevation(data: Float32Array, resX: number, resY: number): void
   // The adaptive mesh the save carries (formatVersion 3, `mesh/…`, see
   // mesh/meshSerial.ts) — the terrain proper since phase 4.3; null for a
   // save written before it or a world never eroded on one.
@@ -188,7 +171,6 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
   // Decoded fields are kept, not re-read: a layer is megabytes and a caller that
   // acquires elevation for a tooltip and again for an overlay should pay once.
   const cache = new Map<string, FieldView>()
-  const amplified: { data: Float32Array; resX: number; resY: number }[] = []
 
   const view = (spec: FieldSpec, source: FieldSource, data: Float32Array, resX: number, resY: number): FieldView => ({
     spec, source, resX, resY, data,
@@ -241,16 +223,7 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
       })
     },
 
-    async acquire(name, purpose = 'authoritative') {
-      // Elevation is the ONLY field with more than one source, and saying so
-      // here is better than implying a choice the others do not have: the
-      // artifact cache holds an amplified elevation and river polylines, and
-      // nothing else. Climate, biome and ecology have exactly one tier, so
-      // `purpose` cannot change their answer — and must not pretend to.
-      if (name === 'elevation' && purpose === 'presentation' && amplified.length > 0) {
-        const finest = amplified.reduce((a, b) => (b.resX > a.resX ? b : a))
-        return view(fieldSpec('elevation'), 'amplified', finest.data, finest.resX, finest.resY)
-      }
+    async acquire(name) {
       return fromSave(name)
     },
 
@@ -263,9 +236,6 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
       if (!nodes || !connectivity || !z || nodes.byteLength !== files.nodes * 8 || z.byteLength !== files.nodes * 4) return null
       const column = files.files.column ? await zip.file(files.files.column)?.async('arraybuffer') : undefined
       return { count: files.nodes, nodes: new Float32Array(nodes), connectivity: new Uint8Array(connectivity), z: new Float32Array(z), column: column ? new Uint8Array(column) : undefined }
-    },
-    addAmplifiedElevation(data, resX, resY) {
-      amplified.push({ data, resX, resY })
     },
   }
   // Refuse an archive with no elevation, the same way readWorldInputs did: a

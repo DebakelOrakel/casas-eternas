@@ -4,7 +4,7 @@
 #                no ESLint/Biome is configured, and the branch convention is
 #                "verify with tsc", so this is the honest gate)
 #   make test    the Go tests plus the worldgen regression harness
-#   make baker   bundle the bake pipeline for Node (./baker.mjs)
+#   make baker   bundle the level bake for Node (./baker.mjs)
 #   make run     build everything and start a local server on :8080
 #   make build   build the container image (deploy/Dockerfile, context = repo
 #                root — it needs client/, docs/changelog/, cmd/, internal/)
@@ -57,7 +57,7 @@ test:
 	go test ./internal/...
 	cd client && npm run harness:roundtrip
 	cd client && npm run harness:pipeline
-	cd client && npm run harness:amplify
+	cd client && npm run harness:mesh
 	cd client && npm run harness:golden
 
 # The bake pipeline, bundled for Node. Lands beside the binary because that is

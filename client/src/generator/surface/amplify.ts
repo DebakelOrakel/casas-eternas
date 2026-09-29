@@ -1,30 +1,24 @@
-import { upscaleBilinearToroidal } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
-import { fineDetailNoise, periodicValueNoise2D } from '../elevation/ridgedNoise'
+import { periodicValueNoise2D } from '../elevation/ridgedNoise'
 import { CANONICAL_RIVER_DENSITY, CHANNEL_SLOPE_EXPONENT } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import { DEFAULT_ENGINE_PARAMS, STATUS_CLAMP_M } from './erosionEngine'
 import { EROSION_LITHO_SEED_SALT, ROCK_CONTRAST_SIGMA_MAX } from './erosionForcingFields'
 
-// Terrain AMPLIFICATION — the derived fine tier of
-// docs/decisions/worldmap-amplification.md. Takes the authoritative macro
-// elevation raster (2048x1024, the only thing a save carries) and produces a
-// finer raster for the worldmap to present: upsample, then inject seed
-// roughness. Erosion (phase 2) then runs on that result; this module is
-// deliberately only the PREPARATION, because the two halves fail differently
-// and are worth verifying apart.
+// The SYNTHESIS of a finer level: what a mesh level adds below its parent's
+// spacing (mesh/meshRefine, the level bake of pipeline/meshBakeStage) — seed
+// roughness for the erosion to bite into, and ridging scaled by the parent's
+// relief so a range reads as crests. And AMPLIFY_CONSTANTS, everything whose
+// value changes the level bake's output, for its cache key.
 //
-// Why seed roughness at all: bilinear upsampling adds no information, so an
-// upscaled raster is glass below the macro cell — and erosion on glass does
-// nothing interesting, because the priority flood has no texture to pick a
-// drainage side with and every micro-catchment is a tie. The micro-tile
-// prototype learned this first (the micro tile's seed roughness, removed with it): fine
-// erosion needs something to bite into. This is the same idea at global
-// scale.
+// Why seed roughness at all: a finer node given its parent's surface height
+// adds no information, so the level is glass below the parent spacing —
+// and erosion on glass does nothing interesting, because the priority flood
+// has no texture to pick a drainage side with and every micro-catchment is a
+// tie. The name is the raster bake's, which this module served until
+// 2026-09-29 (docs/decisions/worldmap-amplification.md, superseded).
 //
-// Everything here is deterministic in (macro raster, factor, seed): the same
-// world always amplifies to the identical field, which is what lets the bake
-// be a per-load recomputation rather than something the save must carry.
+// Everything here is deterministic in (parent surface, spacing, seed).
 
 // Peak seed amplitude, in metres. The micro tile's 30 m was the starting
 // point, but measurement (2026-08-07, esbuild transect over a synthetic
@@ -209,13 +203,6 @@ export const BAKE_ENGINE_OVERRIDES = {
   upliftDt: 0,
 } as const
 
-// How far seaward of a river mouth the land/sea status rule leaves cells
-// FREE (erosion-v2 P3 ②) — the room a delta may prograde into. Physical km
-// rather than cells, so every tier grants the same coastline the same
-// growth. ~a large real delta lobe; the constant is bake policy and hashed
-// below.
-export const DELTA_ALLOWANCE_KM = 15
-
 // Everything in this module whose value changes the bake's output, in one
 // place a cache key can hash. Kept beside the constants themselves so an
 // edit and its invalidation stay in the same field of view.
@@ -253,9 +240,8 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   bakeUpliftDt: BAKE_ENGINE_OVERRIDES.upliftDt,
   lithoSeedSalt: EROSION_LITHO_SEED_SALT,
   rockContrastSigmaMax: ROCK_CONTRAST_SIGMA_MAX,
-  // The coastline status rule (P3 ②): the growth allowance and the clamp
-  // depth both move baked coastlines.
-  deltaAllowanceKm: DELTA_ALLOWANCE_KM,
+  // The coastline status rule (P3 ②): the clamp depth moves baked
+  // coastlines.
   statusClampM: STATUS_CLAMP_M,
   // The bake RE-EXTRACTS rivers on the amplified field, so hydrology's channel
   // criterion is part of what it produces — and none of these three were in the
@@ -284,12 +270,6 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   // The flow regime per reach (F6) is a graph attribute the bake writes.
   regimeAridBelow: SURFACE_TUNING.regimeAridBelow,
   regimeDrySeasonBelow: SURFACE_TUNING.regimeDrySeasonBelow,
-}
-
-export interface AmplifiedField {
-  data: Float32Array
-  width: number
-  height: number
 }
 
 // Ridged fBm at an explicit octave table (the point of the exercise — see
@@ -339,56 +319,4 @@ export function localRelief(field: Float32Array, width: number, height: number):
     }
   }
   return out
-}
-
-// Upsample + seed roughness. `factor` is the linear refinement (2 → 4096x2048,
-// 4 → 8192x4096); `seed` should derive from the world so a given world always
-// amplifies identically. `onProgress` reports 0..1 over the roughness pass,
-// which is the part long enough to be worth reporting.
-export function amplifyElevation(
-  macro: Float32Array,
-  macroWidth: number,
-  macroHeight: number,
-  factor: number,
-  seed: number,
-  onProgress?: (fraction: number) => void,
-): AmplifiedField {
-  const width = macroWidth * factor
-  const height = macroHeight * factor
-  const data = upscaleBilinearToroidal(macro, macroWidth, macroHeight, width, height)
-  if (factor <= 1) return { data, width, height }
-
-  const scales = seedCascadeScales(width)
-  const amplitudes = scales.map((_, i) => Math.pow(CASCADE_FALLOFF, i))
-  const norm = amplitudes.reduce((a, b) => a + b, 0)
-  // Relief is read from the SMOOTH upsample, before either layer perturbs
-  // it: "is this raised ground" is a property of the macro world, and
-  // letting the ridging feed back into its own amplitude would compound.
-  const relief = localRelief(data, width, height)
-  const ridgeSeed = (seed ^ 0x5f356495) >>> 0
-
-  const reportEvery = Math.max(1, Math.floor(height / 50))
-  for (let y = 0; y < height; y++) {
-    const row = y * width
-    for (let x = 0; x < width; x++) {
-      const base = data[row + x]
-      const amplitude = seedRoughnessAmplitude(base)
-      if (amplitude === 0) continue
-      let noise = 0
-      for (let i = 0; i < scales.length; i++) {
-        const s = scales[i]
-        noise += fineDetailNoise(x, y, width / s, height / s, (seed + i * 0x9e3779b9) >>> 0) * amplitudes[i]
-      }
-      // Two layers with different jobs: the seed roughness gives erosion
-      // something to bite into at cell scale, the ridging shapes the
-      // MOUNTAIN at ridgeline scale. Only the second can make a range read
-      // as crests rather than a bulge — and it scales with the terrain's own
-      // relief, so plains stay plains.
-      const ridge = (ridgedAt(x, y, width, height, ridgeSeed) - RIDGE_FIELD_MEAN) * relief[row + x] * RIDGE_STRENGTH
-      data[row + x] = base + (noise / norm) * amplitude + ridge
-    }
-    if (onProgress && y % reportEvery === 0) onProgress(y / height)
-  }
-  onProgress?.(1)
-  return { data, width, height }
 }

@@ -30,10 +30,8 @@ const M = {
   spec: await L('/src/world/save/worldSpec.ts'),
   inputs: await L('/src/world/save/loadWorldInputs.ts'),
   key: await L('/src/world/identity.ts'),
-  artifact: await L('/src/world/artifacts.ts'),
   memory: await L('/src/storage/MemoryArtifactStore.ts'),
   amplify: await L('/src/generator/surface/amplify.ts'),
-  settings: await L('/src/world/bakeSettings.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
   history: await L('/src/world/save/worldHistory.ts'),
   refined: await L('/src/world/save/refinedLayers.ts'),
@@ -197,99 +195,9 @@ check(`all ${Object.keys(M.amplify.AMPLIFY_CONSTANTS).length} listed constants m
   inert.length === 0, inert.join(', '))
 
 // --- 4. the artifact store ---------------------------------------------------
-console.log('\n— amplification artifact —')
-const store = M.memory.createMemoryArtifactStore()
-const key = { worldUid: 'test-uid', worldId: id, pipelineVersion: M.artifact.amplificationPipelineVersion(), stage: '2' }
-const art = {
-  elevation: Float32Array.from({ length: 40 }, (_, i) => -0.9 + (i / 39) * 1.8),
-  width: 8, height: 5,
-  riverPoints: Float32Array.from([1.5, 2.5, 3.5, 4.5, 10, 20]),
-  riverLengths: Uint32Array.from([2, 1]),
-  riverRegimes: Uint8Array.from([0, 2]),
-  iceThickness: Float32Array.from({ length: 40 }, (_, i) => (i % 7 === 0 ? 120.5 + i : 0)),
-}
-// The feature graph rides in the artifact beside the rivers (phase 2): a
-// two-reach toy, round-tripped through JSON + raw cells. In the graph's
-// present shape (2026-09-29): the hydrogeology (5a) set to values other than
-// the defaults a reader fills in, so the check sees them survive rather than
-// come back as defaults; the positions (4.3) are derived from the cells on
-// a raster graph and checked as such.
-art.riverGraph = {
-  width: 8, height: 5, substrate: 'raster',
-  nodes: [
-    { id: 0, kind: 'source', cell: 9, x: 1.5, y: 1.5, body: -1, catchmentCells: 0 },
-    { id: 1, kind: 'junction', cell: 18, x: 2.5, y: 2.5, body: -1, catchmentCells: 0 },
-    { id: 2, kind: 'mouth', cell: 27, x: 3.5, y: 3.5, body: -1, catchmentCells: 7 },
-  ],
-  reaches: [
-    { id: 0, kind: 'river', from: 0, to: 1, cellStart: 0, cellCount: 2, dischargeIn: 1, dischargeOut: 2, widthPx: 0.5, lengthKm: 11, dropM: 20, slope: 0.0018, sedimentM3: 0, bank: 3, order: 1, regime: 'intermittent', runoffOut: 3, springFed: true },
-    { id: 1, kind: 'river', from: 1, to: 2, cellStart: 2, cellCount: 2, dischargeIn: 2, dischargeOut: 5, widthPx: 0.7, lengthKm: 11, dropM: 15, slope: 0.0014, sedimentM3: 4, bank: 3, order: 1, regime: 'perennial', runoffOut: 7.5, springFed: false },
-  ],
-  cells: Int32Array.from([9, 18, 18, 27]),
-  cellX: Float32Array.from([1.5, 2.5, 2.5, 3.5]),
-  cellY: Float32Array.from([1.5, 2.5, 2.5, 3.5]),
-  bodies: [],
-}
-const wrote = await M.artifact.writeAmplificationArtifact(store, key, art, 1234)
-check('write reports success', wrote === true)
-check('exists() finds it', await M.artifact.amplificationArtifactExists(store, key))
-const back = await M.artifact.readAmplificationArtifact(store, key)
-if (!back) check('read returns the entry', false)
-else {
-  let worst = 0
-  for (let i = 0; i < art.elevation.length; i++) worst = Math.max(worst, Math.abs(back.artifact.elevation[i] - art.elevation[i]))
-  // u16 over the -1..1 elevation range: 2/65535 per step, so half a step.
-  check('elevation survives quantisation', worst <= 1 / 65535 + 1e-9, `worst ${worst.toExponential(3)}`)
-  check('river points are exact', String(back.artifact.riverPoints) === String(art.riverPoints))
-  check('river lengths are exact', String(back.artifact.riverLengths) === String(art.riverLengths))
-  check('river regimes are exact', String(back.artifact.riverRegimes) === String(art.riverRegimes))
-  {
-    let worstIce = 0
-    for (let i = 0; i < 40; i++) worstIce = Math.max(worstIce, Math.abs((back.artifact.iceThickness?.[i] ?? NaN) - art.iceThickness[i]))
-    check('ice thickness survives quantisation', worstIce <= 4000 / 65535 / 2 + 1e-6, `worst ${worstIce}`)
-  }
-  check('dimensions and bake cost survive', back.artifact.width === 8 && back.artifact.height === 5 && back.bakeMs === 1234)
-  const typed = { cells: undefined, cellX: undefined, cellY: undefined }
-  check('the river graph comes back whole', back.artifact.riverGraph !== null
-    && JSON.stringify({ ...back.artifact.riverGraph, ...typed }) === JSON.stringify({ ...art.riverGraph, ...typed })
-    && String(back.artifact.riverGraph.cells) === String(art.riverGraph.cells)
-    && String(back.artifact.riverGraph.cellX) === String(art.riverGraph.cellX)
-    && String(back.artifact.riverGraph.cellY) === String(art.riverGraph.cellY))
-}
-
-// The derived family (docs/decisions/derived-bake-tiers.md): the designated
-// finest stage writes each coarser tier as a box-downsample of itself into
-// the SAME entry, and the member read halves the dimensions and the river
-// texel coordinates. A stage-2 write (above) must NOT gain family files.
-{
-  const finestKey = { ...key, stage: String(M.settings.AMPLIFY_FINEST_STAGE) }
-  const fine = {
-    elevation: Float32Array.from({ length: 8 * 4 }, (_, i) => Math.sin(i * 0.7) * 0.8),
-    width: 8, height: 4,
-    riverPoints: Float32Array.from([2, 2, 3]),
-    riverLengths: Uint32Array.from([1]),
-    riverRegimes: Uint8Array.from([1]),
-    lakeDepth: Float32Array.from({ length: 8 * 4 }, (_, i) => (i % 5 === 0 ? 0.1 : 0)),
-  }
-  check('a family is written only by the finest stage', (await M.artifact.readAmplificationArtifact(store, key, 2)) === null)
-  await M.artifact.writeAmplificationArtifact(store, finestKey, fine, 99)
-  const member = await M.artifact.readAmplificationArtifact(store, finestKey, 2)
-  if (!member) check('the family member reads back', false)
-  else {
-    check('the member is half the finest resolution', member.artifact.width === 4 && member.artifact.height === 2)
-    let worst = 0
-    for (let gy = 0; gy < 2; gy++) {
-      for (let gx = 0; gx < 4; gx++) {
-        let sum = 0
-        for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) sum += fine.elevation[(gy * 2 + dy) * 8 + gx * 2 + dx]
-        worst = Math.max(worst, Math.abs(member.artifact.elevation[gy * 4 + gx] - sum / 4))
-      }
-    }
-    check('the member is the box mean of the finest, to quantisation', worst <= 1 / 65535 + 1e-9, `worst ${worst.toExponential(3)}`)
-    check('the member scales river texels and keeps the width', String(member.artifact.riverPoints) === String(Float32Array.from([1, 1, 3])))
-    check('the member carries a lake layer at its own size', member.artifact.lakeDepth !== null && member.artifact.lakeDepth.length === 8)
-  }
-}
+// The raster amplification artifact's round trip lived here until it went
+// (2026-09-29); the level artifact's is harness:mesh's (`the artifact reads
+// back identical`).
 
 // --- 5. the zip reader -------------------------------------------------------
 //

@@ -1,9 +1,11 @@
-// The server-side baker: one amplification bake, run in Node.
+// The server-side baker: one level bake, run in Node.
 //
 // Spawned by the Go server's `bake` module as a subprocess, one per job. It
-// reads a saved world, runs the amplification pipeline and writes the result
-// into the artifact store's directory layout — after which the client finds it
-// through the tiered store without knowing where it came from.
+// reads a saved world, refines its mesh to a finer level
+// (pipeline/meshBakeStage) and writes the level into the artifact store's
+// directory layout — after which the client finds it through the tiered store
+// without knowing where it came from. (It baked the raster amplification's
+// 4096²/8192² tiers until 2026-09-29.)
 //
 // WHY THIS IS NOT A PORT. Every module it touches is the browser's own: the
 // save reader, the pipeline, the artifact encoder, the key derivation. Nothing
@@ -13,10 +15,9 @@
 // running this same pipeline under Node for months, which is what makes the
 // server tier wiring rather than a rewrite.
 //
-// WHY IT RUNS ON THE SERVER AT ALL: an 8192² bake peaks near 2.6 GB. That is
-// unremarkable for a Node process and fatal for a browser tab (measured: it
-// kills Safari). 8k is therefore a capability of having a server — even a
-// local one.
+// WHY IT RUNS ON THE SERVER AT ALL: a level is large (level 1 of a real save
+// is ~17 M nodes and 349 MB, 155 s single-threaded) — unremarkable for a
+// Node process, too much for a browser tab.
 //
 // Bundled by `npm run build:baker` and invoked as:
 //   node baker.mjs '<job JSON>'
@@ -28,9 +29,7 @@ import { join, dirname } from 'node:path'
 import { Worker as NodeWorker, isMainThread } from 'node:worker_threads'
 import { availableParallelism } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
-import { runAmplification } from '../src/generator/surface/runAmplification'
 import type { WorkerLike } from '../src/generator/surface/erosionEnginePool'
-import { amplificationPipelineVersion, writeAmplificationArtifact } from '../src/world/artifacts'
 import { bakeMeshLevel, levelBudget } from '../src/generator/pipeline/meshBakeStage'
 import { meshLevelStage, meshLevelToArtifact, meshPipelineVersion, writeMeshLevelArtifact } from '../src/world/meshArtifacts'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
@@ -56,11 +55,10 @@ interface Job {
   worldZip?: string
   // …or its URL, when it is not. Exactly one of the two.
   worldUrl?: string
-  // Amplification factor: 2 → 4096, 4 → 8192 — the raster bake. Stage 1 is
-  // the MESH bake's level 1 (ADAPTIVE_MESH_PLAN.md phase 4.5): the save's
-  // mesh refined to twice the density and eroded for `erosionRounds`; the
-  // artifact is the level (world/meshArtifacts.ts). The two share the
-  // field while the raster bake still exists; it goes with phase 4.
+  // The level: 1 is the mesh bake's level 1 (ADAPTIVE_MESH_PLAN.md phase
+  // 4.5), the save's mesh refined to twice the density and eroded for
+  // `erosionRounds`; the artifact is the level (world/meshArtifacts.ts). The
+  // only one built.
   stage: number
   erosionRounds: number
   // Root of the artifact store as a directory…
@@ -82,7 +80,7 @@ interface Job {
   // a 16K bake is ~17 GiB single-buffer against ~26 GiB pipelined, the
   // difference between fitting a 32 GB machine and thrashing it). The Go
   // server never sets it; it exists for a MANUAL local run:
-  //   node baker.mjs '{"worldZip":"…","stage":8,"erosionRounds":12,
+  //   node baker.mjs '{"worldZip":"…","stage":1,"erosionRounds":12,
   //                    "artifactsDir":"…","pool":false}'
   // Slower by the pool's factor (~2× at 8 cores), which a one-off accepts.
   pool?: boolean
@@ -94,7 +92,7 @@ interface Job {
 // next request without any handshake.
 //
 // Implemented here rather than reusing the encoder's own writer because that
-// is exactly the point of the interface: `writeAmplificationArtifact` does the
+// is exactly the point of the interface: `writeMeshLevelArtifact` does the
 // quantisation, the file naming and the meta-last ordering, and it does not
 // care whether the bytes land in OPFS, over HTTP, or here.
 function createFsArtifactStore(root: string): ArtifactStore {
@@ -143,10 +141,8 @@ function createFsArtifactStore(root: string): ArtifactStore {
           return null
         }
       }
-      // One nested level, as the OPFS store lists: the family members'
-      // files live a directory down (`family-1/elevation.u16`,
-      // world/artifacts.ts), and a top-level-only listing reported every
-      // baked family as missing them.
+      // One nested level, as the OPFS store lists (the raster bake's family
+      // members lived a directory down; the shape tiles may use).
       const files: string[] = []
       try {
         for (const entry of await readdir(join(root, uid), { withFileTypes: true })) {
@@ -323,7 +319,7 @@ async function main(): Promise<void> {
   // them. That happened once. This makes an image's pipeline version something
   // you can read off it in a second rather than infer from a missing cache hit.
   if (raw === '--version') {
-    process.stdout.write(`${JSON.stringify({ pipelineVersion: amplificationPipelineVersion(), meshPipelineVersion: meshPipelineVersion(1) })}\n`)
+    process.stdout.write(`${JSON.stringify({ pipelineVersion: meshPipelineVersion(1) })}\n`)
     return
   }
   if (!raw) fail('usage: baker.mjs \'<job JSON>\'  |  baker.mjs --version')
@@ -353,90 +349,26 @@ async function main(): Promise<void> {
     process.stderr.write(`${JSON.stringify({ phase, percent })}\n`)
     report(phase, percent)
   }
-  if (job.stage === 1) {
-    if (!inputs.mesh) fail('the world carries no mesh (a save from before formatVersion 3, or never eroded) — nothing to refine')
-    const level = await bakeMeshLevel({
-      mesh: inputs.mesh, width: inputs.width, height: inputs.height,
-      detailSeed: inputs.detailSeed, lithoSeed: inputs.lithoSeed,
-      controls: { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast },
-      uplift: inputs.uplift?.data ?? null, erodibility: inputs.erodibility?.data ?? null,
-      forcingResX: inputs.uplift?.resX ?? 0, forcingResY: inputs.uplift?.resY ?? 0,
-      precipitation: inputs.climate?.data ?? null, temperature: inputs.temperature?.data ?? null,
-      monsoonIndex: inputs.biomeInputs?.monsoonIndex.data ?? null,
-      climateResX: inputs.climate?.resX ?? 0, climateResY: inputs.climate?.resY ?? 0,
-    }, { level: 1, budget: levelBudget(1), rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
-    const durationMs = Date.now() - started
-    const store = artifactStoreFor(job)
-    if (!store) fail('neither artifactsDir nor artifactsUrl was given')
-    const pipelineVersion = meshPipelineVersion(1, job.erosionRounds)
-    const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshLevelStage(1))
-    const artifact = meshLevelToArtifact(level)
-    if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) fail('could not write the artifact')
-    process.stdout.write(`${JSON.stringify({ worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs })}\n`)
-    return
-  }
-  const result = await runAmplification({
-    elevation: inputs.elevations,
-    macroWidth: inputs.width,
-    macroHeight: inputs.height,
-    factor: job.stage,
-    seed: inputs.detailSeed,
-    erosionRounds: job.erosionRounds,
-    pool: job.pool === false ? undefined : enginePool(),
-    lithoSeed: inputs.lithoSeed,
-    alluvium: inputs.erosionControls.alluvium,
-    rockContrast: inputs.erosionControls.rockContrast,
-    upliftCoarse: inputs.uplift?.data,
-    erodibilityCoarse: inputs.erodibility?.data,
-    forcingResX: inputs.uplift?.resX,
-    forcingResY: inputs.uplift?.resY,
-    precipitation: inputs.climate?.data,
-    temperature: inputs.temperature?.data,
-    monsoonIndex: inputs.biomeInputs?.monsoonIndex.data,
-    climateResX: inputs.climate?.resX,
-    climateResY: inputs.climate?.resY,
-  }, onProgress)
-
+  if (job.stage !== 1) fail(`stage ${job.stage}: only level 1 is built`)
+  if (!inputs.mesh) fail('the world carries no mesh (a save from before formatVersion 3, or never eroded) — nothing to refine')
+  const level = await bakeMeshLevel({
+    mesh: inputs.mesh, width: inputs.width, height: inputs.height,
+    detailSeed: inputs.detailSeed, lithoSeed: inputs.lithoSeed,
+    controls: { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast },
+    uplift: inputs.uplift?.data ?? null, erodibility: inputs.erodibility?.data ?? null,
+    forcingResX: inputs.uplift?.resX ?? 0, forcingResY: inputs.uplift?.resY ?? 0,
+    precipitation: inputs.climate?.data ?? null, temperature: inputs.temperature?.data ?? null,
+    monsoonIndex: inputs.biomeInputs?.monsoonIndex.data ?? null,
+    climateResX: inputs.climate?.resX ?? 0, climateResY: inputs.climate?.resY ?? 0,
+  }, { level: 1, budget: levelBudget(1), rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
   const durationMs = Date.now() - started
   const store = artifactStoreFor(job)
   if (!store) fail('neither artifactsDir nor artifactsUrl was given')
-  // ROUNDS BELONGS IN THE VERSION. The client hashes
-  // `{...AMPLIFY_CONSTANTS, rounds}` (world/artifacts.ts), and it must: the
-  // round budget changes the terrain, so two bakes that differ only in it are
-  // different artifacts. Leaving it out here produced a version the client
-  // would never look for — bakes succeeded, artifacts appeared, and not one
-  // was ever used.
-  const pipelineVersion = amplificationPipelineVersion(job.erosionRounds)
-  // The world uid comes from the save itself, which the server has already
-  // checked against the entry it stores the world under — so baker and
-  // browser key the artifact identically by construction.
-  const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, String(job.stage))
-  const stored = await writeAmplificationArtifact(store, key, {
-    elevation: result.elevation,
-    width: result.width,
-    height: result.height,
-    riverPoints: result.rivers.points,
-    riverLengths: result.rivers.lengths,
-    riverRegimes: result.rivers.regimes,
-    // Null for a region job (a basin across two jobs would flood twice) and
-    // for a save without temperature; the reader then keeps the macro lakes.
-    lakeDepth: result.lakeDepth,
-    // The bodies and the graph ride with the lakes, as the browser bake
-    // writes them (phases 1–2); the baker had left both out.
-    waterBodies: result.waterBodies,
-    riverGraph: result.riverGraph,
-    iceThickness: result.iceThickness,
-  }, durationMs, inputs.seedText, job.erosionRounds)
-  if (!stored) fail('could not write the artifact')
-
-  process.stdout.write(`${JSON.stringify({
-    worldId: key.worldId,
-    pipelineVersion,
-    stage: key.stage,
-    width: result.width,
-    height: result.height,
-    durationMs,
-  })}\n`)
+  const pipelineVersion = meshPipelineVersion(1, job.erosionRounds)
+  const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshLevelStage(1))
+  const artifact = meshLevelToArtifact(level)
+  if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) fail('could not write the artifact')
+  process.stdout.write(`${JSON.stringify({ worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs })}\n`)
 }
 
 // A worker thread loading this bundle is an ENGINE WORKER, not a baker:

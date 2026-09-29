@@ -1,15 +1,12 @@
-// Package bake turns a stored world into amplified terrain, on the server.
+// Package bake turns a stored world into a finer mesh level, on the server.
 //
-// The reason it exists is a measurement: an 8192² amplification bake peaks
-// near 2.6 GB. That is unremarkable for a process and fatal for a browser tab
-// — Safari kills it. So 8k is a capability of having a server, even a local
-// one, and the client keeps its own ability to bake at the resolutions a tab
-// can hold.
+// The reason it exists is size: level 1 of a real world is ~17 M nodes and
+// 349 MB, unremarkable for a process and too much for a browser tab. (It
+// baked the raster amplification's 4096²/8192² tiers until 2026-09-29.)
 //
-// It is NOT a port of the pipeline. The baker is the browser's own TypeScript,
-// bundled for Node and spawned as a subprocess, which is what keeps a
-// server-baked artifact byte-identical to a browser-baked one — they carry a
-// key derived from their inputs, so they had better be.
+// It is NOT a port of the pipeline. The baker is the client's own
+// TypeScript, bundled for Node and spawned as a subprocess, so an artifact
+// carries a key derived from its inputs exactly as the client derives it.
 //
 // Simple today, deliberately not a dead end: see job.go for the three things
 // (job as a value, explicit scope, Runner interface) that let this become many

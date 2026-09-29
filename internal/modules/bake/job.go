@@ -29,7 +29,7 @@ import (
 type ScopeKind string
 
 const (
-	// ScopeWorld is the whole raster in one pass — the only kind today.
+	// ScopeWorld is the whole world in one pass — the only kind today.
 	ScopeWorld ScopeKind = "world"
 	// ScopeBasin is reserved for the split along drainage divides. Declared
 	// now so the wire format and the queue never have to learn a new shape.
@@ -54,7 +54,9 @@ const (
 // Request is what a caller asks for.
 type Request struct {
 	WorldUID string `json:"worldUid"`
-	// Amplification factor: 2 → 4096², 4 → 8192².
+	// The level to bake: 1 is the mesh's level 1 (the save's mesh refined to
+	// twice the density; client/src/pipeline/meshBakeStage.ts). The raster
+	// amplification's factors 2/4/8 went on 2026-09-29.
 	Stage int `json:"stage"`
 	// Erosion rounds; zero means the module's default rather than "no erosion",
 	// because a request that forgot the field should not silently produce a
@@ -97,13 +99,9 @@ func (r Request) Validate() error {
 	if r.WorldUID == "" {
 		return fmt.Errorf("worldUid is required")
 	}
-	// Powers of two only: the amplification upsamples by an integer factor and
-	// the erosion constants are rescaled by it. 8 is 16384², far past what a
-	// bake has ever been measured at, and is allowed rather than blessed.
-	switch r.Stage {
-	case 2, 4, 8:
-	default:
-		return fmt.Errorf("stage must be 2, 4 or 8")
+	// Level 1 is the only one built; the tile levels come as their own jobs.
+	if r.Stage != 1 {
+		return fmt.Errorf("stage must be 1")
 	}
 	switch r.Scope.Kind {
 	case "", ScopeWorld:

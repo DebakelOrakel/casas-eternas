@@ -1,10 +1,11 @@
 ---
 summary: The worldmap gets its fine terrain from a one-time, deterministic AMPLIFICATION BAKE at load — upsample the 2048 macro raster to 8192×4096, inject seed roughness, run a few real erosion passes, then RE-RUN hydrology on the amplified field. The 2048 sim raster stays the sole authority and the only thing saved; the 8k layer is derived presentation, recomputed per load, never serialized. Below ~1 km, detail remains synthesis/regional forever.
 date: 2026-08-07
-updated: 2026-08-14
+updated: 2026-09-29
 area: generator
-stage: building
-status: decided; river threshold reversed 2026-08-08 (see point 2 — amplification now enriches the network instead of preserving it); phases 1–4 built 2026-08-07 (upsample + seed roughness + rescaled erosion + re-run hydrology with river ribbons, staged). SHIPPING AT 4096 — the 8192 target crashed Safari (tab OOM) and waits on the memory work; caching also still open
+stage: superseded
+status: SUPERSEDED — the raster amplification bake was removed on 2026-09-29; detail comes from the mesh levels and their tile jobs (decisions/adaptive-mesh.md, fork 3). Before that: decided; river threshold reversed 2026-08-08 (see point 2 — amplification now enriches the network instead of preserving it); phases 1–4 built 2026-08-07 (upsample + seed roughness + rescaled erosion + re-run hydrology with river ribbons, staged). SHIPPING AT 4096 — the 8192 target crashed Safari (tab OOM) and waits on the memory work; caching also still open
+superseded-by: adaptive-mesh.md
 ---
 
 # Worldmap terrain amplification (the 8k bake)

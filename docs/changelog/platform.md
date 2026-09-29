@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-09-29
+- **removed** Server: the 4K/8K raster bake; bake jobs now build the finer mesh level of a world. `bake`
+
 ## 2026-09-22
 - **changed** Performance: erosion computes on land, basins and a shelf band only — the deep ocean is frozen — so the generator's erosion pass and the bake's erosion phase run several times faster. `generator.panel.erosion`
 

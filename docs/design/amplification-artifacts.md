@@ -1,10 +1,10 @@
 ---
 summary: How the worldmap's amplification bake could stop costing seven minutes every load — tiling as the shared enabler, then caching (local first, server later), plus what could make the bake itself cheaper (basin decomposition, parallel workers, GPU, an adaptive mesh as the last resort). Analysis and options; the choices are not made.
 date: 2026-08-07
-updated: 2026-09-22
+updated: 2026-09-29
 area: platform
 stage: idea
-status: design discussion — options and analysis, nothing decided
+status: The raster bake it discusses is gone — the raster amplification bake was removed on 2026-09-29; detail comes from the mesh levels and their tile jobs (decisions/adaptive-mesh.md, fork 3). Before that: design discussion — options and analysis, nothing decided
 ---
 
 # Amplification artifacts: tiling, caching, and making the bake cheaper

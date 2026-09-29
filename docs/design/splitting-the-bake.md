@@ -7,10 +7,11 @@ summary: How an amplification bake could be split across machines, and what it w
   it is ~85% depositSediment walking every cell of the raster to throw 90% of them
   away. So splitting cannot pay until that is fixed, and fixing it helps every bake.
 date: 2026-08-09
-updated: 2026-08-12
+updated: 2026-09-29
 area: platform
-stage: building
-status: STEPS 1-2 BUILT 2026-08-09. Step 3a is BUILT AND DOES NOT PAY YET: on a real world it is 0.7x the speed of a whole bake and differs from it on 3.5% of cells. The speed half is explained and belongs elsewhere - ~85% of a bake is depositSediment, whose cost is per-cell over the whole raster; walking only the shelf and above is 7x faster with zero cells changed. Fix that before returning here
+stage: superseded
+status: SUPERSEDED — the raster amplification bake was removed on 2026-09-29; detail comes from the mesh levels and their tile jobs (decisions/adaptive-mesh.md, fork 3). Before that: STEPS 1-2 BUILT 2026-08-09. Step 3a is BUILT AND DOES NOT PAY YET: on a real world it is 0.7x the speed of a whole bake and differs from it on 3.5% of cells. The speed half is explained and belongs elsewhere - ~85% of a bake is depositSediment, whose cost is per-cell over the whole raster; walking only the shelf and above is 7x faster with zero cells changed. Fix that before returning here
+superseded-by: ../decisions/adaptive-mesh.md
 ---
 
 # Splitting the bake

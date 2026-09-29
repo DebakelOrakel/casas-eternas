@@ -124,7 +124,7 @@ func TestClusterAcceptsTheJobTemplate(t *testing.T) {
 	_ = api.deleteJob(ctx, name)
 	waitGone(t, ctx, api, name)
 
-	args, _ := json.Marshal([]string{`{"stage":2,"erosionRounds":2,"worldUrl":"http://x/v1/worlds/y","artifactsUrl":"http://x/v1"}`})
+	args, _ := json.Marshal([]string{`{"stage":1,"erosionRounds":2,"worldUrl":"http://x/v1/worlds/y","artifactsUrl":"http://x/v1"}`})
 	manifest, err := runner.render(name, jobID, string(args))
 	if err != nil {
 		t.Fatalf("render: %v", err)

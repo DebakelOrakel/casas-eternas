@@ -35,7 +35,7 @@ func renderTemplate(t *testing.T, values map[string]string) map[string]any {
 }
 
 func testValues() map[string]string {
-	args, _ := json.Marshal([]string{`{"stage":4,"worldUrl":"http://10.1.2.3:8080/v1/worlds/x"}`})
+	args, _ := json.Marshal([]string{`{"stage":1,"worldUrl":"http://10.1.2.3:8080/v1/worlds/x"}`})
 	return map[string]string{
 		"Name": "casas-bake-abc123", "Namespace": "worlds", "JobID": "abc123",
 		"Image": "ghcr.io/x/casas-eternas:latest", "Args": string(args),
@@ -86,7 +86,7 @@ func TestTemplateRendersAValidJob(t *testing.T) {
 	if err := json.Unmarshal([]byte(args[0].(string)), &job); err != nil {
 		t.Fatalf("the single argument is not the job JSON: %v", err)
 	}
-	if job["stage"] != float64(4) {
+	if job["stage"] != float64(1) {
 		t.Errorf("job payload did not survive templating: %v", job)
 	}
 }

@@ -72,7 +72,7 @@ func (f *fakeRunner) Run(ctx context.Context, spec Spec, onProgress func(Progres
 	case <-ctx.Done():
 	case <-time.After(5 * time.Second):
 	}
-	return Result{WorldID: "w", PipelineVersion: "v", Stage: "2", Width: 4096, Height: 2048}, nil
+	return Result{WorldID: "w", PipelineVersion: "v", Stage: "L1"}, nil
 }
 
 // fakeWorlds stands in for the ranking closure cmd/ builds over the world
@@ -186,7 +186,7 @@ func TestLocalModeLetsEveryoneBake(t *testing.T) {
 	m, _, worlds := newTestModule(t, config.AuthNone, 1)
 	writeWorld(t, worlds, testUID)
 
-	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusAccepted {
+	if got := post(m, testUID, `{"stage":1}`, "").Code; got != http.StatusAccepted {
 		t.Errorf("anonymous local request = %d, want 202", got)
 	}
 }
@@ -199,7 +199,7 @@ func TestEnqueueAfterCloseAnswers503(t *testing.T) {
 	if err := m.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusServiceUnavailable {
+	if got := post(m, testUID, `{"stage":1}`, "").Code; got != http.StatusServiceUnavailable {
 		t.Errorf("enqueue after Close = %d, want 503", got)
 	}
 }
@@ -236,19 +236,19 @@ func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
 		{"a stranger's session", issue("eve", token.AudienceSession)},
 		{"a bake token", issue("ada", token.BakeAudience("v4-abc"))},
 	} {
-		if got := post(m, testUID, `{"stage":2}`, c.token).Code; got != http.StatusNotFound {
+		if got := post(m, testUID, `{"stage":1}`, c.token).Code; got != http.StatusNotFound {
 			t.Errorf("%s = %d, want 404", c.name, got)
 		}
 	}
 
 	// A viewer SEES the world, so the refusal may honestly say "not yours
 	// to bake".
-	if got := post(m, testUID, `{"stage":2}`, viewer).Code; got != http.StatusForbidden {
+	if got := post(m, testUID, `{"stage":1}`, viewer).Code; got != http.StatusForbidden {
 		t.Errorf("viewer = %d, want 403", got)
 	}
 	// And an editor bakes — the case that proves the refusals above refuse
 	// for the right reason.
-	if got := post(m, testUID, `{"stage":2}`, editor).Code; got != http.StatusAccepted {
+	if got := post(m, testUID, `{"stage":1}`, editor).Code; got != http.StatusAccepted {
 		t.Errorf("editor = %d, want 202", got)
 	}
 }
@@ -267,7 +267,7 @@ func TestProgressAcceptsOnlyTheJobItBelongsTo(t *testing.T) {
 		t.Fatalf("Issue: %v", err)
 	}
 	writeWorld(t, worlds, testUID, "Bearer "+session)
-	accepted := post(m, testUID, `{"stage":2}`, session)
+	accepted := post(m, testUID, `{"stage":1}`, session)
 	if accepted.Code != http.StatusAccepted {
 		t.Fatalf("bake request = %d, want 202", accepted.Code)
 	}
@@ -361,8 +361,8 @@ func TestHiddenAndMissingAreIndistinguishable(t *testing.T) {
 	m, _, worlds := newTestModule(t, config.AuthPassword, 1)
 	worlds.set(testUID, "Bearer someone-elses", access.Editor)
 
-	hidden := post(m, testUID, `{"stage":2}`, "").Code
-	absent := post(m, "11111111-2222-4333-8444-555555555555", `{"stage":2}`, "").Code
+	hidden := post(m, testUID, `{"stage":1}`, "").Code
+	absent := post(m, "11111111-2222-4333-8444-555555555555", `{"stage":1}`, "").Code
 	if hidden != http.StatusNotFound || absent != http.StatusNotFound {
 		t.Errorf("hidden = %d, absent = %d, want 404 for both", hidden, absent)
 	}
@@ -372,7 +372,7 @@ func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 	m, runner, worlds := newTestModule(t, config.AuthNone, 1)
 	writeWorld(t, worlds, testUID)
 
-	for _, body := range []string{`{"stage":3}`, `{"stage":0}`, `{"scope":{"kind":"basin"},"stage":2}`, `not json`} {
+	for _, body := range []string{`{"stage":2}`, `{"stage":0}`, `{"scope":{"kind":"basin"},"stage":1}`, `not json`} {
 		if got := post(m, testUID, body, "").Code; got != http.StatusBadRequest {
 			t.Errorf("body %q = %d, want 400", body, got)
 		}
@@ -383,7 +383,7 @@ func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 
 	// Omitting the rounds must mean the default, never zero — a bake with no
 	// rounds produces a world with no carved valleys, which looks broken.
-	recorder := post(m, testUID, `{"stage":2}`, "")
+	recorder := post(m, testUID, `{"stage":1}`, "")
 	var job Job
 	if err := json.Unmarshal(recorder.Body.Bytes(), &job); err != nil {
 		t.Fatal(err)
@@ -396,7 +396,7 @@ func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 	}
 }
 
-// The cap is a memory argument — two 8k bakes want 5 GB — so it has to hold
+// The cap is a memory argument — two level bakes want gigabytes — so it has to hold
 // under a burst, not merely be configured.
 func TestConcurrencyIsCapped(t *testing.T) {
 	const cap = 2
@@ -404,7 +404,7 @@ func TestConcurrencyIsCapped(t *testing.T) {
 	writeWorld(t, worlds, testUID)
 
 	for i := 0; i < 6; i++ {
-		if got := post(m, testUID, `{"stage":2}`, "").Code; got != http.StatusAccepted {
+		if got := post(m, testUID, `{"stage":1}`, "").Code; got != http.StatusAccepted {
 			t.Fatalf("request %d = %d, want 202", i, got)
 		}
 	}
@@ -431,7 +431,7 @@ func TestProgressAndResultReachTheJobRecord(t *testing.T) {
 	m, runner, worlds := newTestModule(t, config.AuthNone, 1)
 	writeWorld(t, worlds, testUID)
 
-	recorder := post(m, testUID, `{"stage":2}`, "")
+	recorder := post(m, testUID, `{"stage":1}`, "")
 	var job Job
 	_ = json.Unmarshal(recorder.Body.Bytes(), &job)
 
@@ -484,7 +484,7 @@ func TestClusterJobCarriesAScopedToken(t *testing.T) {
 	m.cfg.SelfURL = "http://server:8080/v1"
 	writeWorld(t, worlds, testUID)
 
-	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
+	if code := post(m, testUID, `{"stage":1}`, "").Code; code != http.StatusAccepted {
 		t.Fatalf("bake request = %d, want 202", code)
 	}
 	spec := runner.awaitSpec(t)
@@ -531,7 +531,7 @@ func TestLocalJobCarriesNoToken(t *testing.T) {
 	m.cfg.Tokens = tokens
 	writeWorld(t, worlds, testUID)
 
-	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
+	if code := post(m, testUID, `{"stage":1}`, "").Code; code != http.StatusAccepted {
 		t.Fatalf("bake request = %d, want 202", code)
 	}
 	if spec := runner.awaitSpec(t); spec.AuthToken != "" {
@@ -554,7 +554,7 @@ func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
 	m.cfg.WorldsURL = "http://worlds:8080/v1"
 	writeWorld(t, worlds, testUID)
 
-	if code := post(m, testUID, `{"stage":2}`, "").Code; code != http.StatusAccepted {
+	if code := post(m, testUID, `{"stage":1}`, "").Code; code != http.StatusAccepted {
 		t.Fatalf("bake request = %d, want 202", code)
 	}
 	spec := runner.awaitSpec(t)
@@ -583,11 +583,11 @@ func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
 // otherwise surface as a bake that reads nothing and writes nowhere — with no
 // error, because the baker's own fields would simply be undefined.
 func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
-	local, err := json.Marshal(Spec{Stage: 2, ErosionRounds: 2, WorldZip: "/w.zip", ArtifactsDir: "/art"})
+	local, err := json.Marshal(Spec{Stage: 1, ErosionRounds: 2, WorldZip: "/w.zip", ArtifactsDir: "/art"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{`"stage":2`, `"erosionRounds":2`, `"worldZip":"/w.zip"`, `"artifactsDir":"/art"`} {
+	for _, key := range []string{`"stage":1`, `"erosionRounds":2`, `"worldZip":"/w.zip"`, `"artifactsDir":"/art"`} {
 		if !strings.Contains(string(local), key) {
 			t.Errorf("local spec is missing %s: %s", key, local)
 		}
@@ -602,7 +602,7 @@ func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
 		}
 	}
 
-	remote, _ := json.Marshal(Spec{Stage: 4, ErosionRounds: 2, WorldURL: "http://s/v1/worlds/x", ArtifactsURL: "http://s/v1", AuthToken: "t", BakeURL: "http://b/v1", JobID: "j1"})
+	remote, _ := json.Marshal(Spec{Stage: 1, ErosionRounds: 2, WorldURL: "http://s/v1/worlds/x", ArtifactsURL: "http://s/v1", AuthToken: "t", BakeURL: "http://b/v1", JobID: "j1"})
 	for _, key := range []string{`"worldUrl":"http://s/v1/worlds/x"`, `"artifactsUrl":"http://s/v1"`, `"authToken":"t"`, `"bakeUrl":"http://b/v1"`, `"jobId":"j1"`} {
 		if !strings.Contains(string(remote), key) {
 			t.Errorf("remote spec is missing %s: %s", key, remote)

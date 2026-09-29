@@ -1,5 +1,5 @@
-// Package artifacts is the ARTIFACT store: derived data such as the
-// amplification bake's rasters and, later, tiles.
+// Package artifacts is the ARTIFACT store: derived data such as the mesh
+// level bakes and, later, their tiles.
 //
 // Named for what it HOLDS, not for being a cache — the client's OPFS copy is a
 // cache, this one is the shared authoritative copy. What both do share is the

@@ -6,7 +6,7 @@
 //
 // Reads the save's elevation raster, box-downsamples it to half the map
 // (1024×512: 1 MB instead of 4, and at 2× upsampling a preview cannot tell),
-// encodes it as the bake artifacts store elevation (u16, world/artifacts.ts) and writes
+// encodes it with the sample world's u16 (worldLayers.ELEVATION_ENCODING) and writes
 // public/sample/astrakan-elevation.u16. The screen decodes it with the same
 // layer spec and the worker resamples it to the map — no second codec, no
 // header: the size is a constant the screen and this script share.
@@ -24,7 +24,6 @@ const L = (p) => server.ssrLoadModule(p)
 const M = {
   field: await L('/src/generator/core/field.ts'),
   layers: await L('/src/world/save/worldLayers.ts'),
-  artifacts: await L('/src/world/artifacts.ts'),
 }
 
 const folder = process.argv[2] ?? join(homedir(), 'Downloads', 'Astrakan')
@@ -38,7 +37,7 @@ const elevation = new Float32Array(raw.buffer, raw.byteOffset, width * height)
 const outW = width / 2
 const outH = height / 2
 const half = M.field.downsampleBox(elevation, width, height, outW, outH)
-const spec = M.artifacts.ELEVATION_ENCODING
+const spec = M.layers.ELEVATION_ENCODING
 const bytes = M.layers.bakeLayer(half, spec)
 const out = join(CLIENT, 'public', 'sample', 'astrakan-elevation.u16')
 mkdirSync(join(CLIENT, 'public', 'sample'), { recursive: true })

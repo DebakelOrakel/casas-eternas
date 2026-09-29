@@ -274,7 +274,7 @@ func (r *kubernetesRunner) await(ctx context.Context, name string, stage int, on
 			// is exactly what keying artifacts by content bought. The job
 			// record therefore says "done" with the stage it was asked for and
 			// nothing else, and that is honest rather than lossy.
-			return Result{Stage: fmt.Sprint(stage)}, false, nil
+			return Result{Stage: fmt.Sprintf("L%d", stage)}, false, nil
 		case state.Failed > 0:
 			message := state.Message
 			if message == "" {
