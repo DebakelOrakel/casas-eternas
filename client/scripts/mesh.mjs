@@ -68,6 +68,7 @@ const M = {
   serial: await L('/src/generator/mesh/meshSerial.ts'),
   meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
   sampler: await L('/src/generator/mesh/meshSampler.ts'),
+  tile: await L('/src/generator/mesh/meshTile.ts'),
   bake: await L('/src/generator/pipeline/meshBakeStage.ts'),
   coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
   column: await L('/src/generator/mesh/meshColumn.ts'),
@@ -630,6 +631,103 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const back = read ? M.artifacts.meshLevelMesh(read.artifact, W, H) : null
   check('the level artifact writes and reads back to the same mesh and heights', wrote && read !== null && back !== null && meshHash(back) === meshHash(level.mesh) && read.artifact.z.every((v, i) => v === level.z[i]) && (read.artifact.graph?.reaches.length ?? -1) === level.graph.reaches.length)
   check('the mesh pipeline version carries the density rule', M.artifacts.meshPipelineVersion(1, 4) !== M.artifacts.meshPipelineVersion(1, 5) && M.artifacts.meshPipelineVersion(1, 4) !== M.artifacts.meshPipelineVersion(2, 4))
+
+  // The tiles of the top level (docs/decisions/tile-jobs.md): built from
+  // level 1, one tile and its neighbour. The seam rule is what is checked —
+  // the shared edge line the same in both, at the same heights, every step
+  // of it an edge of both triangulations, and the tile's inside a function
+  // of its own points alone (a wider halo changes no triangle in it).
+  {
+    const T = M.tile
+    const parent = { mesh: level.mesh, z: level.z, discharge: level.discharge, sampler }
+    const opts = { seed: 1234, width: W, height: H }
+    const { cols, rows } = T.tileGrid(W, H)
+    // The tile with the most land under its centre row, and its east neighbour.
+    let best = { x: 0, y: 0, land: -1 }
+    for (let ty = 0; ty < rows; ty++) for (let tx = 0; tx < cols; tx++) {
+      let n = 0
+      for (let k = 0; k < 8; k++) if (sampler.heightAt(tx * T.TILE_CELLS + k + 0.5, ty * T.TILE_CELLS + 4) > 0) n++
+      if (n > best.land) best = { x: tx, y: ty, land: n }
+    }
+    const t1 = performance.now()
+    const A = T.buildTileMesh(parent, best, opts)
+    const tileMs = performance.now() - t1
+    const B = T.buildTileMesh(parent, { x: (best.x + 1) % cols, y: best.y }, opts)
+    const count = (t, role) => { let n = 0; for (let v = 0; v < t.mesh.vertexSlots; v++) if (t.mesh.vAlive[v] && t.role[v] === role) n++; return n }
+    check(`a tile is a valid triangulation (${A.mesh.aliveVertices} nodes: ${count(A, T.TILE_ROLE_NEW)} new, ${count(A, T.TILE_ROLE_PARENT)} parents, ${count(A, T.TILE_ROLE_EDGE)} edge; ${tileMs.toFixed(0)} ms)`, A.mesh.validate().length === 0 && B.mesh.validate().length === 0)
+    // Edge nodes by world position.
+    const key = (x, y) => `${x},${y}`
+    const edgeNodes = (t) => {
+      const map = new Map()
+      for (let v = 0; v < t.mesh.vertexSlots; v++) if (t.mesh.vAlive[v] && t.role[v] === T.TILE_ROLE_EDGE) map.set(key(T.tileWorldX(t, t.mesh.vx[v], W), T.tileWorldY(t, t.mesh.vy[v], H)), v)
+      return map
+    }
+    const edgeA = edgeNodes(A), edgeB = edgeNodes(B)
+    const sharedX = ((best.x + 1) % cols) * T.TILE_CELLS
+    let shared = 0, heightDiffers = 0, missing = 0
+    for (const [k, v] of edgeA) {
+      if (Number(k.split(',')[0]) !== sharedX) continue
+      shared++
+      const u = edgeB.get(k)
+      if (u === undefined) missing++
+      else if (A.z[v] !== B.z[u]) heightDiffers++
+    }
+    check('two neighbours hold the same nodes on their shared edge, at the same heights', shared === T.TILE_EDGE_STEPS + 1 && missing === 0 && heightDiffers === 0, `${shared} shared, ${missing} missing, ${heightDiffers} heights differ`)
+    // Every step of the edge line is an edge of the triangulation.
+    const stepsMissing = (t, edges) => {
+      // The row along each line, sorted; consecutive nodes must be neighbours.
+      const nb = new Int32Array(64)
+      const lines = new Map()
+      for (const [k, v] of edges) {
+        const [x, y] = k.split(',').map(Number)
+        if (x % T.TILE_CELLS === 0) { const l = `x${x}`; if (!lines.has(l)) lines.set(l, []); lines.get(l).push([y, v]) }
+        if (y % T.TILE_CELLS === 0) { const l = `y${y}`; if (!lines.has(l)) lines.set(l, []); lines.get(l).push([x, v]) }
+      }
+      let lost = 0, steps = 0
+      for (const row of lines.values()) {
+        row.sort((a, b) => a[0] - b[0])
+        for (let i = 1; i < row.length; i++) {
+          if (row[i][0] - row[i - 1][0] > T.TILE_CELLS / 2) continue // across the world's seam
+          steps++
+          const n = t.mesh.neighbours(row[i][1], nb)
+          let found = false
+          for (let j = 0; j < n; j++) if (nb[j] === row[i - 1][1]) found = true
+          if (!found) lost++
+        }
+      }
+      return steps === 4 * T.TILE_EDGE_STEPS ? lost : -1
+    }
+    const lostA = stepsMissing(A, edgeA), lostB = stepsMissing(B, edgeB)
+    check('every step of the edge line is an edge of the tile\'s triangulation', lostA === 0 && lostB === 0, `${lostA} + ${lostB} missing (-1: not every step found)`)
+    // The inside does not depend on the halo.
+    const insideTriangles = (t) => {
+      const set = new Set()
+      // Inside: no corner in the halo (a centroid test would catch the
+      // local torus's wrap-around triangles, whose naive centroid can fall
+      // anywhere).
+      for (let tri = 0; tri < t.mesh.triSlots; tri++) {
+        if (!t.mesh.tAlive[tri]) continue
+        const vs = [0, 1, 2].map((c) => t.mesh.tris[3 * tri + c])
+        if (vs.some((v) => t.role[v] === T.TILE_ROLE_HALO)) continue
+        set.add(vs.map((v) => `${t.role[v]}@` + key(T.tileWorldX(t, t.mesh.vx[v], W), T.tileWorldY(t, t.mesh.vy[v], H)) + ':' + t.z[v]).sort().join('|'))
+      }
+      return set
+    }
+    const wide = T.buildTileMesh(parent, best, { ...opts, halo: 2 })
+    const inA = insideTriangles(A), inWide = insideTriangles(wide)
+    let differ = 0
+    let first = ''
+    for (const k of inA) if (!inWide.has(k)) { differ++; first ||= k }
+    check('a wider halo changes no triangle and no height inside the tile', differ === 0 && inA.size === inWide.size, `${inA.size} vs ${inWide.size} triangles, ${differ} differ${first ? `, e.g. ${first}` : ''}`)
+    const again = T.buildTileMesh(parent, best, opts)
+    check('the same parent builds the same tile', meshHash(again.mesh) === meshHash(A.mesh) && again.z.every((v, i) => v === A.z[i]))
+    // Across the world's seam: the last column's east edge is the first's west edge.
+    const east = T.buildTileMesh(parent, { x: cols - 1, y: best.y }, opts), west = T.buildTileMesh(parent, { x: 0, y: best.y }, opts)
+    const edgeE = edgeNodes(east), edgeW = edgeNodes(west)
+    let seam = 0, seamBad = 0
+    for (const [k, v] of edgeE) { if (Number(k.split(',')[0]) !== 0) continue; seam++; const u = edgeW.get(k); if (u === undefined || east.z[v] !== west.z[u]) seamBad++ }
+    check('tiles meet across the world\'s seam as they do inside it', seam === T.TILE_EDGE_STEPS + 1 && seamBad === 0, `${seam} shared, ${seamBad} differ`)
+  }
 }
 
 // Flexural isostasy (phase 5.3): the plate's answer to a load on a flat

@@ -30,6 +30,9 @@ mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay 
             heights, fields and normals at a point — what map/ reads the mesh through),
             meshRefine (one rung of the ladder: a parent refined to a finer budget,
             parents kept, new nodes from the parent surface plus synthesis),
+            meshTile (the top level's tile: nodes placed by position, a pinned
+            edge row every tile shares with its neighbour, the tile plus its halo
+            triangulated as a small torus — docs/decisions/tile-jobs.md),
             meshColumn (phase 5.2: the sediment column per node as epoch-indexed
             layers with provenance — a stacked MeshState field, cut from the top,
             the save's mesh/column.bin).

@@ -73,6 +73,33 @@ export function refineMeshLevel(parentMesh: PeriodicTriangulation, parentZ: Floa
   // grid, ranged over the amplification's radius.
   const macro = rasteriseNodeField(mesh, parentZ, width, height)
   const relief = localRelief(macro, width, height)
+  const synthesise = levelSynthesis(options, (x, y) => sampleBilinearGrid(relief, width, height, x, y))
+  const sample = (v: number, x: number, y: number): void => {
+    // The parent's height at this point, then the two layers on top.
+    state.get(MESH_Z)[v] = synthesise(x, y, parentSampler.heightAt(x, y))
+    state.get('parent')[v] = 0
+  }
+  const stats = refine(mesh, state, densityTarget(state, budget), { seed: levelSeed(options), sample, maxRounds: options.maxRounds })
+  const { mesh: canonical, order } = compactMesh(mesh)
+  const parent = new Uint8Array(canonical.vertexSlots)
+  const parentField = permute(state.get('parent'), order)
+  for (let v = 0; v < parent.length; v++) parent[v] = parentField[v] > 0.5 ? 1 : 0
+  return { mesh: canonical, z: permute(state.get(MESH_Z), order), parent, inserted: stats.inserted }
+}
+
+// The level's seed: the world's detail seed salted by the level number.
+export function levelSeed(options: { seed: number; level: number }): number {
+  return (options.seed ^ hashSeedString(`mesh-level:${options.level}`)) >>> 0
+}
+
+// The synthesis a level puts on a new node, as a function of the point
+// and the parent's height there: the seed roughness and the ridging (see
+// the head of this file). `reliefAt` is the parent's local relief on the
+// macro grid (amplify.localRelief), sampled at the point. A function of
+// position alone, so the tiles of the top level (meshTile.ts) put the same
+// heights on the nodes two neighbours share.
+export function levelSynthesis(options: { seed: number; level: number; budget: number; width: number; height: number }, reliefAt: (x: number, y: number) => number): (x: number, y: number, base: number) => number {
+  const { budget, width, height } = options
   // The synthesis at the level's cell scale: the level's nominal grid is
   // the macro grid over the budget, and the cascade's octaves are the
   // raster bake's for that grid.
@@ -81,35 +108,21 @@ export function refineMeshLevel(parentMesh: PeriodicTriangulation, parentZ: Floa
   const scales = seedCascadeScales(levelWidth)
   const amplitudes = scales.map((_, i) => Math.pow(CASCADE_FALLOFF, i))
   const norm = amplitudes.reduce((a, b) => a + b, 0)
-  const levelSeed = (options.seed ^ hashSeedString(`mesh-level:${options.level}`)) >>> 0
-  const ridgeSeed = (levelSeed ^ 0x5f356495) >>> 0
-  const sample = (v: number, x: number, y: number): void => {
-    // The parent's height at this point, then the two layers on top.
-    const zField = state.get(MESH_Z)
-    const base = parentSampler.heightAt(x, y)
-    zField[v] = base
+  const seed = levelSeed(options)
+  const ridgeSeed = (seed ^ 0x5f356495) >>> 0
+  return (x, y, base) => {
     const amplitude = seedRoughnessAmplitude(base)
-    if (amplitude === 0) {
-      state.get('parent')[v] = 0
-      return
-    }
+    if (amplitude === 0) return base
     const px = x / budget
     const py = y / budget
     let noise = 0
     for (let i = 0; i < scales.length; i++) {
       const s = scales[i]
-      noise += fineDetailNoise(px, py, levelWidth / s, levelHeight / s, (levelSeed + i * 0x9e3779b9) >>> 0) * amplitudes[i]
+      noise += fineDetailNoise(px, py, levelWidth / s, levelHeight / s, (seed + i * 0x9e3779b9) >>> 0) * amplitudes[i]
     }
-    const ridge = (ridgedAt(px, py, levelWidth, levelHeight, ridgeSeed) - RIDGE_FIELD_MEAN) * sampleBilinearGrid(relief, width, height, x, y) * RIDGE_STRENGTH
-    zField[v] = base + (noise / norm) * amplitude + ridge
-    state.get('parent')[v] = 0
+    const ridge = (ridgedAt(px, py, levelWidth, levelHeight, ridgeSeed) - RIDGE_FIELD_MEAN) * reliefAt(x, y) * RIDGE_STRENGTH
+    return base + (noise / norm) * amplitude + ridge
   }
-  const stats = refine(mesh, state, densityTarget(state, budget), { seed: levelSeed, sample, maxRounds: options.maxRounds })
-  const { mesh: canonical, order } = compactMesh(mesh)
-  const parent = new Uint8Array(canonical.vertexSlots)
-  const parentField = permute(state.get('parent'), order)
-  for (let v = 0; v < parent.length; v++) parent[v] = parentField[v] > 0.5 ? 1 : 0
-  return { mesh: canonical, z: permute(state.get(MESH_Z), order), parent, inserted: stats.inserted }
 }
 
 // A copy of the parent triangulation for the sampler: through the codec,

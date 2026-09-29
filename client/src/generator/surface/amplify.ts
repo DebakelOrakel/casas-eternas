@@ -296,27 +296,33 @@ export function ridgedAt(x: number, y: number, width: number, height: number, se
 // "is this raised ground", and a full min-filter at this radius would cost
 // more than the rest of the bake.
 export function localRelief(field: Float32Array, width: number, height: number): Float32Array {
-  const radius = Math.max(1, Math.round(width * RELIEF_RADIUS_FRACTION))
   const out = new Float32Array(field.length)
-  const wrap = (v: number, n: number): number => ((v % n) + n) % n
+  const at = (x: number, y: number): number => field[y * width + x]
   for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      let lowest = Infinity
-      for (let dy = -radius; dy <= radius; dy += radius) {
-        const ny = wrap(y + dy, height) * width
-        for (let dx = -radius; dx <= radius; dx += radius) {
-          const value = field[ny + wrap(x + dx, width)]
-          if (value < lowest) lowest = value
-        }
-      }
-      // Floored at sea level, which is not a detail: measured against the
-      // raw neighbourhood minimum, a 100 m coastal plain beside a 3,000 m
-      // deep ocean scored 3,100 m of "relief" and got ridged as hard as an
-      // alpine crest — 36,000 cells were driven below sea level and the
-      // plains moved by an average of 258 m. Relief means height above the
-      // surrounding LAND.
-      out[y * width + x] = Math.max(0, field[y * width + x] - Math.max(SEA_LEVEL, lowest))
-    }
+    for (let x = 0; x < width; x++) out[y * width + x] = localReliefAt(at, x, y, width, height)
   }
   return out
+}
+
+// One cell of localRelief, over any source of the macro grid's heights —
+// the tiles of the top mesh level (mesh/meshTile.ts) need it for a few
+// cells around themselves, not for the world.
+export function localReliefAt(at: (x: number, y: number) => number, x: number, y: number, width: number, height: number): number {
+  const radius = Math.max(1, Math.round(width * RELIEF_RADIUS_FRACTION))
+  const wrap = (v: number, n: number): number => ((v % n) + n) % n
+  let lowest = Infinity
+  for (let dy = -radius; dy <= radius; dy += radius) {
+    const ny = wrap(y + dy, height)
+    for (let dx = -radius; dx <= radius; dx += radius) {
+      const value = at(wrap(x + dx, width), ny)
+      if (value < lowest) lowest = value
+    }
+  }
+  // Floored at sea level, which is not a detail: measured against the
+  // raw neighbourhood minimum, a 100 m coastal plain beside a 3,000 m
+  // deep ocean scored 3,100 m of "relief" and got ridged as hard as an
+  // alpine crest — 36,000 cells were driven below sea level and the
+  // plains moved by an average of 258 m. Relief means height above the
+  // surrounding LAND.
+  return Math.max(0, at(wrap(x, width), wrap(y, height)) - Math.max(SEA_LEVEL, lowest))
 }
