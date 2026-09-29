@@ -35,5 +35,7 @@
   "titlebar.save.server.help": "Stored on the server, reachable from any browser you sign in from. Needs a sign-in.",
   "titlebar.save.open.label": "Open world …",
   "titlebar.save.open.sub": "From browser, file or server",
-  "titlebar.save.open.help": "Open a different world. The world you are working on is replaced."
+  "titlebar.save.open.help": "Open a different world. The world you are working on is replaced.",
+  "titlebar.jobs.label": "Jobs",
+  "titlebar.jobs.help": "The fine simulation of your worlds on the server: what waits, runs, is done."
 }

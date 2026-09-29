@@ -614,3 +614,90 @@ func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
 		}
 	}
 }
+
+// Jobs show to whoever may read their world, say what the caller may do, and
+// an editor cancels them — a queued one before it starts, a running one
+// through its context (2026-09-29; before, every caller saw every job).
+func TestJobsShowAndCancelByWorldAccess(t *testing.T) {
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
+	if err != nil {
+		t.Fatalf("NewTokens: %v", err)
+	}
+	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
+	mux := http.NewServeMux()
+	if err := m.Mount(mux); err != nil {
+		t.Fatal(err)
+	}
+	issue := func(subject string) string {
+		t.Helper()
+		tok, _, issueErr := tokens.Issue(subject, token.AudienceSession, time.Hour)
+		if issueErr != nil {
+			t.Fatalf("Issue: %v", issueErr)
+		}
+		return tok
+	}
+	editor, viewer, stranger := issue("ada"), issue("grace"), issue("eve")
+	worlds.set(testUID, "Bearer "+editor, access.Editor)
+	worlds.set(testUID, "Bearer "+viewer, access.Viewer)
+	do := func(method, path, tok string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, nil)
+		request.Header.Set("Authorization", "Bearer "+tok)
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, request)
+		return recorder
+	}
+	idOf := func(recorder *httptest.ResponseRecorder) string {
+		var job Job
+		_ = json.Unmarshal(recorder.Body.Bytes(), &job)
+		return job.ID
+	}
+	running := idOf(post(m, testUID, `{"stage":1}`, editor))
+	queued := idOf(post(m, testUID, `{"stage":1}`, editor))
+	stateOf := func(id string) State {
+		job, _ := m.jobs.get(id)
+		return job.State
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for stateOf(running) != StateRunning && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if body := do(http.MethodGet, "/v1/bakes", stranger).Body.String(); strings.TrimSpace(body) != "[]" {
+		t.Errorf("a stranger's list = %s, want []", body)
+	}
+	if body := do(http.MethodGet, "/v1/bakes", viewer).Body.String(); strings.Count(body, `"callerLevel":"viewer"`) != 2 {
+		t.Errorf("the viewer's list = %s, want both jobs as viewer", body)
+	}
+	if got := do(http.MethodGet, "/v1/bakes/"+running, stranger).Code; got != http.StatusNotFound {
+		t.Errorf("a stranger's get = %d, want 404", got)
+	}
+
+	if got := do(http.MethodDelete, "/v1/bakes/"+queued, stranger).Code; got != http.StatusNotFound {
+		t.Errorf("a stranger's cancel = %d, want 404", got)
+	}
+	if got := do(http.MethodDelete, "/v1/bakes/"+queued, viewer).Code; got != http.StatusForbidden {
+		t.Errorf("a viewer's cancel = %d, want 403", got)
+	}
+	if got := do(http.MethodDelete, "/v1/bakes/"+queued, editor).Code; got != http.StatusNoContent {
+		t.Errorf("cancelling the queued job = %d, want 204", got)
+	}
+	if got := stateOf(queued); got != StateCancelled {
+		t.Errorf("the queued job is %s, want cancelled", got)
+	}
+	if got := do(http.MethodDelete, "/v1/bakes/"+running, editor).Code; got != http.StatusNoContent {
+		t.Errorf("cancelling the running job = %d, want 204", got)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for stateOf(running) != StateCancelled && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := stateOf(running); got != StateCancelled {
+		t.Errorf("the running job is %s, want cancelled", got)
+	}
+	if got := do(http.MethodDelete, "/v1/bakes/"+running, editor).Code; got != http.StatusConflict {
+		t.Errorf("cancelling an ended job = %d, want 409", got)
+	}
+	if n := atomic.LoadInt32(&runner.started); n != 1 {
+		t.Errorf("%d bakes started, want 1 (the cancelled queued one must not run)", n)
+	}
+}

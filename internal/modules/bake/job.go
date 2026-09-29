@@ -49,6 +49,8 @@ const (
 	StateRunning State = "running"
 	StateDone    State = "done"
 	StateFailed  State = "failed"
+	// Cancelled by a caller (DELETE /v1/bakes/{id}) before or while it ran.
+	StateCancelled State = "cancelled"
 )
 
 // Request is what a caller asks for.

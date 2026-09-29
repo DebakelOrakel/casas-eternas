@@ -35,7 +35,7 @@ export interface BakeResult {
 
 export interface BakeJob {
   id: string
-  state: 'queued' | 'running' | 'done' | 'failed'
+  state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
   // Free text from the runner: pipeline phase locally, or the cluster runner's
   // pending/running distinction — a Job waiting for a node is not working yet,
   // and with hard anti-affinity that wait is routine rather than a fault.
@@ -48,6 +48,38 @@ export interface BakeJob {
   // else placed the order — see findActiveBake.
   request?: { worldUid: string; stage: number }
   queuedAt?: string
+  startedAt?: string
+  // The caller's level on the job's world ("viewer", "editor", "owner", or
+  // "admin" for the operator). Cancelling takes an editor.
+  callerLevel?: string
+}
+
+// The jobs the caller may see (the server lists by the worlds' access), newest
+// first; null when there is no server or no bake module to ask.
+export async function listBakes(): Promise<BakeJob[] | null> {
+  if (!(await canCommissionBakes())) return null
+  const base = await apiBase()
+  if (!base) return null
+  try {
+    const response = await authFetch(`${base}/bakes`, { cache: 'no-store' })
+    if (!response.ok) return null
+    return (await response.json()) as BakeJob[]
+  } catch {
+    return null
+  }
+}
+
+// Stops a job: a waiting one never starts, a running one is aborted. False
+// when the server refused or could not be reached.
+export async function cancelBake(id: string): Promise<boolean> {
+  const base = await apiBase()
+  if (!base) return false
+  try {
+    const response = await authFetch(`${base}/bakes/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    return response.ok
+  } catch {
+    return false
+  }
 }
 
 // Why an order failed, in terms the caller can act on rather than a status
@@ -198,7 +230,7 @@ export async function findActiveBake(worldUid: string, stage: number): Promise<B
     return null
   }
   const matching = jobs.filter((job) =>
-    job.state !== 'failed' && job.request?.worldUid === worldUid && job.request?.stage === stage)
+    job.state !== 'failed' && job.state !== 'cancelled' && job.request?.worldUid === worldUid && job.request?.stage === stage)
   if (matching.length === 0) return null
   // Newest first: orders are not deduplicated, so an old finished job and a
   // fresh running one can coexist — the fresh one is the one to follow.

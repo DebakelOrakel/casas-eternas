@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-09-29
+- **fixed** Server: bake jobs show only to those who may see their world, and an editor can cancel one. `bake`
 - **removed** Server: the 4K/8K raster bake; bake jobs now build the finer mesh level of a world. `bake`
 
 ## 2026-09-22

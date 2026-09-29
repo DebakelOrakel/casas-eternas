@@ -6,6 +6,8 @@ import { listServerArtifacts, removeServerArtifact } from '../../server/artifact
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { meshPipelineVersion } from '../../world/meshArtifacts'
+import { commissionBake } from '../../world/bakeClient'
+import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { BROWSER_ICON, SERVER_ICON, icon } from './chooserIcons'
 import '../../ui/theme/design.css'
 import './worldChooser.css'
@@ -291,7 +293,23 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
         await reload()
       })()
     })
-    line.appendChild(remove)
+    // An outdated level of a world on the server is ordered again from here
+    // (a job, see the jobs window), where the viewer may: an editor.
+    const actions = document.createElement('span')
+    actions.className = 'ac-actions'
+    if (row.kind === 'level' && row.stale && row.server && row.deletable && row.worldUid) {
+      const rebuild = document.createElement('button')
+      rebuild.type = 'button'
+      rebuild.className = 'wc-remove'
+      rebuild.textContent = t('generator.artifacts.rebuild.label', { artifact: name })
+      rebuild.addEventListener('click', () => {
+        rebuild.disabled = true
+        void commissionBake(row.worldUid, 1, AMPLIFY_EROSION_ROUNDS)
+      })
+      actions.appendChild(rebuild)
+    }
+    actions.appendChild(remove)
+    line.appendChild(actions)
     return line
   }
 

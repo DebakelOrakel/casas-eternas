@@ -129,6 +129,10 @@ type Module struct {
 	shutdown context.Context
 	cancel   context.CancelFunc
 	workers  sync.WaitGroup
+	// The running jobs' own cancellations, by id: what DELETE /v1/bakes/{id}
+	// pulls to stop one bake without touching the others.
+	runningMu sync.Mutex
+	running   map[string]context.CancelFunc
 }
 
 func New(cfg Config) (*Module, error) {
@@ -182,6 +186,7 @@ func New(cfg Config) (*Module, error) {
 		clusterMode: InCluster(),
 		runner:      runner,
 		jobs:        newRegistry(jobHistory),
+		running:     map[string]context.CancelFunc{},
 		// Buffered so a burst of requests is accepted rather than blocking the
 		// HTTP handler; full means genuinely swamped, which answers 503.
 		queue:    make(chan string, 64),
@@ -219,6 +224,7 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST /v1/bakes", m.handleEnqueue)
 	mux.HandleFunc("GET /v1/bakes", m.handleList)
 	mux.HandleFunc("GET /v1/bakes/{id}", m.handleGet)
+	mux.HandleFunc("DELETE /v1/bakes/{id}", m.handleCancel)
 	mux.HandleFunc("POST /v1/bakes/{id}/progress", m.handleProgress)
 	return nil
 }
@@ -318,13 +324,95 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	httpjson.Write(w, http.StatusAccepted, job)
 }
 
+// A job with the caller's level on its world ("viewer", "editor", "owner",
+// or "admin" for the operator): what the caller may do with it. Cancelling
+// takes an editor, as ordering one does.
+type listedJob struct {
+	Job
+	CallerLevel string `json:"callerLevel"`
+}
+
+// operator answers "may this request see and do anything here": the admin
+// claim, or the local mode, where every check answers yes by design.
+func (m *Module) operator(r *http.Request) bool {
+	if !m.cfg.Identity.ChecksIdentity() {
+		return true
+	}
+	_, admin := m.cfg.Identity.ResolveBearer(r.Header.Get("Authorization"))
+	return admin
+}
+
+// levelFor ranks the caller against a job's world. A job is its world's
+// data (its world uid, its error text), so it shows to whoever may read the
+// world — the shape the artifacts have (2026-09-29; before, every caller
+// saw every job).
+func (m *Module) levelFor(r *http.Request, job Job) access.Level {
+	if m.operator(r) {
+		return access.Admin
+	}
+	exists, level := m.cfg.WorldAccess(r.Context(), job.Request.WorldUID, r.Header.Get("Authorization"))
+	if !exists {
+		return access.None
+	}
+	return level
+}
+
 func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 	job, ok := m.jobs.get(r.PathValue("id"))
-	if !ok {
+	level := access.None
+	if ok {
+		level = m.levelFor(r, job)
+	}
+	if level < access.Viewer {
 		httpjson.ClientError(w, http.StatusNotFound, "no such job")
 		return
 	}
-	httpjson.Write(w, http.StatusOK, job)
+	httpjson.Write(w, http.StatusOK, listedJob{job, level.String()})
+}
+
+// handleCancel stops a job: a queued one never starts, a running one has its
+// context cancelled, which aborts its subprocess or Job as a shutdown does.
+// A half-run bake is harmless (see Close). A job that has already ended
+// answers 409.
+func (m *Module) handleCancel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	job, ok := m.jobs.get(id)
+	level := access.None
+	if ok {
+		level = m.levelFor(r, job)
+	}
+	if level < access.Viewer {
+		httpjson.ClientError(w, http.StatusNotFound, "no such job")
+		return
+	}
+	if level < access.Editor {
+		httpjson.ClientError(w, http.StatusForbidden, "cancelling a bake needs editor access to its world")
+		return
+	}
+	cancelled := false
+	now := time.Now()
+	updated, _ := m.jobs.update(id, func(j *Job) {
+		if j.State == StateQueued {
+			j.State = StateCancelled
+			j.EndedAt = &now
+			cancelled = true
+		}
+	})
+	if !cancelled && updated.State == StateRunning {
+		m.runningMu.Lock()
+		stop := m.running[id]
+		m.runningMu.Unlock()
+		if stop != nil {
+			stop()
+			cancelled = true
+		}
+	}
+	if !cancelled {
+		httpjson.ClientError(w, http.StatusConflict, "the job has already ended")
+		return
+	}
+	slog.Info("bake cancelled", "job", id, "world", job.Request.WorldUID)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleProgress takes a running job's own report of where it has got to.
@@ -399,7 +487,20 @@ func (m *Module) mayReportFor(r *http.Request, id string) bool {
 }
 
 func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
-	httpjson.Write(w, http.StatusOK, m.jobs.list())
+	// One ranking per DISTINCT world, not per job.
+	levels := map[string]access.Level{}
+	visible := make([]listedJob, 0)
+	for _, job := range m.jobs.list() {
+		level, ranked := levels[job.Request.WorldUID]
+		if !ranked {
+			level = m.levelFor(r, job)
+			levels[job.Request.WorldUID] = level
+		}
+		if level >= access.Viewer {
+			visible = append(visible, listedJob{job, level.String()})
+		}
+	}
+	httpjson.Write(w, http.StatusOK, visible)
 }
 
 // progressBodyLimit bounds what a progress report may be. It is two small
@@ -426,7 +527,7 @@ func (m *Module) work(ctx context.Context) {
 		case id = <-m.queue:
 		}
 		job, ok := m.jobs.get(id)
-		if !ok {
+		if !ok || job.State == StateCancelled {
 			continue
 		}
 		started := time.Now()
@@ -500,16 +601,38 @@ func (m *Module) work(ctx context.Context) {
 			spec.JobID = id
 			spec.BakeURL = m.cfg.SelfURL
 		}
-		result, err := m.runner.Run(ctx, spec, func(p Progress) {
+		// Its own context under the module's, so a cancel stops this job
+		// alone (handleCancel).
+		jobCtx, stopJob := context.WithCancel(ctx)
+		m.runningMu.Lock()
+		if m.running == nil {
+			m.running = map[string]context.CancelFunc{}
+		}
+		m.running[id] = stopJob
+		m.runningMu.Unlock()
+		result, err := m.runner.Run(jobCtx, spec, func(p Progress) {
 			m.jobs.update(id, func(j *Job) {
 				j.Phase = p.Phase
 				j.Percent = p.Percent
 			})
 		})
 
+		m.runningMu.Lock()
+		delete(m.running, id)
+		m.runningMu.Unlock()
+		// Cancelled by a caller rather than failed: its context went, the
+		// module's did not.
+		byCaller := jobCtx.Err() != nil && ctx.Err() == nil
+		stopJob()
+
 		ended := time.Now()
 		m.jobs.update(id, func(j *Job) {
 			j.EndedAt = &ended
+			// A cancel wins over whatever the runner returned after it.
+			if byCaller {
+				j.State = StateCancelled
+				return
+			}
 			if err != nil {
 				j.State = StateFailed
 				j.Error = err.Error()
@@ -519,6 +642,9 @@ func (m *Module) work(ctx context.Context) {
 			j.Percent = 100
 			j.Result = &result
 		})
+		if byCaller {
+			continue
+		}
 		if err != nil {
 			// A cancelled context is a shutdown, not a fault worth alarming
 			// about — the job record already says it failed.

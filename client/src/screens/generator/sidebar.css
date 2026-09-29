@@ -289,3 +289,10 @@
 .ecology-cat.is-active {
   opacity: 1;
 }
+
+/* The finishing step's state line, above its button. */
+.gen-finishing__state {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dc-text2);
+}

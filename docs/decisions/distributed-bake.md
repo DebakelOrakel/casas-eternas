@@ -370,3 +370,15 @@ written to the old one — a race whose only symptom is a progress bar that skip
   rule that makes a bake safely retryable in the first place.
 - [design/server-storage.md](../design/server-storage.md) — the longer
   argument, including the speculation about a worker that this decides.
+
+## Addendum 2026-09-29 — jobs are their world's, and can be cancelled
+
+`GET /v1/bakes` and `GET /v1/bakes/{id}` answered every caller with every
+job, world uid and error text included; they now show a job to whoever may
+read its world (the operator sees all), each with the caller's level on it
+(`callerLevel`). `DELETE /v1/bakes/{id}` cancels, for an editor of the
+world: a queued job is marked `cancelled` and never starts, a running one has
+its own context cancelled — the same path a shutdown takes, which aborts its
+subprocess or Kubernetes Job. No pausing. The client orders level 1 from the
+Finishing step and lists and cancels jobs in a full-screen window ("Jobs" in
+the title bar); the artifact window rebuilds an outdated level.

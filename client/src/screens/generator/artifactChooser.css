@@ -108,6 +108,11 @@
   margin: 0;
   align-self: center;
 }
+.ac-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
 .ac-row .wc-remove:disabled {
   opacity: 0.45;
   cursor: default;
@@ -184,4 +189,46 @@
    width that holds "Artefakte" and "Artifacts" with the icon. */
 .artifacts-button {
   width: 124px;
+}
+
+/* --- the jobs window (JobChooser) ----------------------------------------- */
+
+.jc-table .ac-row {
+  grid-template-columns: minmax(0, 1.6fr) 60px 110px minmax(0, 1.2fr) 120px auto;
+}
+.jc-state[data-state='running'] {
+  color: var(--dc-accent);
+}
+.jc-state[data-state='failed'] {
+  color: var(--dc-accent);
+  font-weight: 600;
+}
+.jc-state[data-state='done'],
+.jc-state[data-state='queued'],
+.jc-state[data-state='cancelled'] {
+  color: var(--dc-muted);
+}
+.jc-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dc-text2);
+}
+.jc-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--dc-line);
+  overflow: hidden;
+}
+.jc-fill {
+  display: block;
+  height: 100%;
+  background: var(--dc-accent);
+}
+
+/* The jobs door in the title bar: "Jobs" in both languages. */
+.jobs-button {
+  width: 96px;
 }

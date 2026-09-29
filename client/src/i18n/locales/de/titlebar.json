@@ -35,5 +35,7 @@
   "titlebar.save.server.help": "Liegt auf dem Server und ist aus jedem Browser erreichbar, in dem du angemeldet bist. Verlangt eine Anmeldung.",
   "titlebar.save.open.label": "Welt öffnen …",
   "titlebar.save.open.sub": "Aus Browser, Datei oder Server",
-  "titlebar.save.open.help": "Eine andere Welt öffnen. Die Welt, an der du gerade arbeitest, wird dabei ersetzt."
+  "titlebar.save.open.help": "Eine andere Welt öffnen. Die Welt, an der du gerade arbeitest, wird dabei ersetzt.",
+  "titlebar.jobs.label": "Jobs",
+  "titlebar.jobs.help": "Die Feinsimulation deiner Welten auf dem Server: was wartet, läuft, fertig ist."
 }

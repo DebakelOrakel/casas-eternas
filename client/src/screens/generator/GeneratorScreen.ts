@@ -64,9 +64,14 @@ import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleB
 import { createSaveMenu, type SaveTarget } from '../../ui/titleBar/SaveMenu'
 import { createConfirmDialog } from '../../ui/confirmDialog/ConfirmDialog'
 import { keepWorldInBrowser } from '../../world/browserWorlds'
-import { uploadWorld } from '../../server/worldClient'
+import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
+import { getServerStatus } from '../../server/serverStatus'
+import { hasSession } from '../../server/session'
+import { bakeFraction, commissionBake, listBakes, type BakeJob } from '../../world/bakeClient'
+import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { createWorldChooser } from './WorldChooser'
 import { createArtifactChooser } from './ArtifactChooser'
+import { createJobChooser } from './JobChooser'
 import { openWorld } from '../../world/query'
 import { createStepBar } from './StepBar'
 import { createSidebar } from './Sidebar'
@@ -726,7 +731,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     </div>
     <!-- The detail jobs on the finished world (2026-09-29): empty until the
          jobs that belong here are built. -->
-    <div class="gen-step" data-stage="finishing"></div>
+    <div class="gen-step" data-stage="finishing">
+      <div class="gen-step__foot">
+        <!-- The fine simulation of the world held (2026-09-29): level 1 as a
+             job on the server, its state above the button that orders it.
+             The button is off with its reason while the world cannot be
+             baked (signed out, not on the server, no baker there). -->
+        <p class="gen-finishing__state" data-value="finishing-state"></p>
+        <div class="gen-step__actions">
+          <button type="button" class="gen-action" data-action="refine-world" data-help="generator.finishing.refine">
+            <span class="gen-action__label" data-t="generator.finishing.refine.label">${t('generator.finishing.refine.label')}</span>
+          </button>
+        </div>
+      </div>
+    </div>
     <div class="panel" data-stage="migration">
       <button type="button" class="icon-button panel-reset" data-action="reset-migration" aria-label="${t('generator.action.resetMigration.label')}" data-help="generator.action.resetMigration">
         <img src="/icons/reset.png" alt="" />
@@ -853,6 +871,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       stepBar.relabel()
       worldChooser.relabel()
       artifactChooser.relabel()
+      jobChooser.relabel()
+      sayJobsButton()
       sayArtifactsButton()
       saveMenu.relabel()
       tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
@@ -883,7 +903,16 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   artifactsButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span class="title-bar__tool-label"></span>'
   const sayArtifactsButton = (): void => { artifactsButton.querySelector('span')!.textContent = t('generator.artifacts.title') }
   sayArtifactsButton()
-  titleBar.tools.append(artifactsButton, saveMenu.element)
+  // The door to the jobs (the fine simulation on the server), the same shape.
+  const jobsButton = document.createElement('button')
+  jobsButton.type = 'button'
+  jobsButton.className = 'title-bar__tool jobs-button'
+  jobsButton.dataset.help = 'titlebar.jobs'
+  jobsButton.setAttribute('aria-pressed', 'false')
+  jobsButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg><span class="title-bar__tool-label"></span>'
+  const sayJobsButton = (): void => { jobsButton.querySelector('span')!.textContent = t('titlebar.jobs.label') }
+  sayJobsButton()
+  titleBar.tools.append(jobsButton, artifactsButton, saveMenu.element)
 
   // The artifacts: full screen over the generator like the world list
   // (ArtifactChooser). Its world is the one held here, once it has a uid (a
@@ -893,6 +922,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onClose: () => closeArtifacts(),
   })
   artifactsButton.addEventListener('click', () => (artifactChooser.isOpen() ? closeArtifacts() : openArtifacts()))
+  const jobChooser = createJobChooser(root, { onClose: () => closeJobs() })
+  jobsButton.addEventListener('click', () => (jobChooser.isOpen() ? closeJobs() : openJobs()))
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
   const humidityInput = root.querySelector<HTMLInputElement>('.humidity-input')!
@@ -4471,6 +4502,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The artifacts door steps aside with it: the world list covers the
     // screen the window would open over.
     artifactsButton.hidden = chooserOpen
+    jobsButton.hidden = chooserOpen
   }
 
   // One delegated listener instead of one per control: every slider, including the
@@ -4868,11 +4900,68 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // list does.
   function openArtifacts(): void {
     if (artifactChooser.isOpen() || chooserOpen) return
+    closeJobs()
     stepBar.setVisible(false)
     sidebar.setVisible(false)
     artifactChooser.open()
     artifactsButton.setAttribute('aria-pressed', 'true')
   }
+  // The jobs window, the same way; one of the two at a time.
+  function openJobs(): void {
+    if (jobChooser.isOpen() || chooserOpen) return
+    closeArtifacts()
+    stepBar.setVisible(false)
+    sidebar.setVisible(false)
+    jobChooser.open()
+    jobsButton.setAttribute('aria-pressed', 'true')
+  }
+  function closeJobs(): void {
+    if (!jobChooser.isOpen()) return
+    jobChooser.close()
+    jobsButton.setAttribute('aria-pressed', 'false')
+    stepBar.setVisible(true)
+    sidebar.setVisible(true)
+  }
+
+  // THE FINISHING STEP: level 1 of the world held, as a job on the server.
+  // Its state is the newest job for this world and level; it is asked again
+  // every two seconds while one waits or runs and the step is shown.
+  const finishingState = root.querySelector<HTMLElement>('[data-value="finishing-state"]')!
+  const refineButton = root.querySelector<HTMLButtonElement>('[data-action="refine-world"]')!
+  let finishingTimer: ReturnType<typeof setTimeout> | null = null
+  function stopFinishingPoll(): void {
+    if (finishingTimer !== null) clearTimeout(finishingTimer)
+    finishingTimer = null
+  }
+  async function refreshFinishing(): Promise<void> {
+    stopFinishingPoll()
+    const status = await getServerStatus()
+    const reachable = status.state === 'local' || status.state === 'remote'
+    let needs: TKey | null = null
+    if (!reachable || !status.modules.includes('bake')) needs = 'generator.finishing.needs.bakes'
+    else if (status.loginPath !== '' && !hasSession()) needs = 'generator.finishing.needs.signIn'
+    else if (worldUid === '' || !isStoredOnServer(worldUid)) needs = 'generator.finishing.needs.server'
+    let job: BakeJob | null = null
+    if (!needs) {
+      const jobs = await listBakes()
+      job = (jobs ?? []).filter((j) => j.request?.worldUid === worldUid && j.request?.stage === 1)
+        .sort((a, b) => (b.queuedAt ?? '').localeCompare(a.queuedAt ?? ''))[0] ?? null
+    }
+    const active = job !== null && (job.state === 'queued' || job.state === 'running')
+    finishingState.textContent = needs ? t(needs)
+      : !job || job.state === 'cancelled' ? t('generator.finishing.state.none')
+      : job.state === 'queued' ? t('generator.finishing.state.queued')
+      : job.state === 'running' ? t('generator.finishing.state.running', { percent: Math.round((bakeFraction(job) ?? 0) * 100) })
+      : job.state === 'done' ? t('generator.finishing.state.done')
+      : t('generator.finishing.state.failed', { error: job.error ?? '' })
+    refineButton.disabled = needs !== null || active
+    if (active && STEP_IDS[panelIndex] === 'finishing') finishingTimer = setTimeout(() => void refreshFinishing(), 2000)
+  }
+  refineButton.addEventListener('click', () => {
+    refineButton.disabled = true
+    void commissionBake(worldUid, 1, AMPLIFY_EROSION_ROUNDS).then(() => refreshFinishing())
+  })
+
   function closeArtifacts(): void {
     if (!artifactChooser.isOpen()) return
     artifactChooser.close()
@@ -5793,6 +5882,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Migration ensures the whole upstream chain, auto-places origins the first
     // time, then computes.
     if (index === MIGRATION_PANEL_INDEX && lastMigration === null) void ensureMigration()
+    // The finishing step asks the server for its world's job on entry.
+    if (STEP_IDS[index] === 'finishing') void refreshFinishing()
   }
 
   // Show a panel. It navigates, asks for the data that panel needs, and sets the
@@ -5937,6 +6028,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       titleBar.dispose()
       helpTooltip.dispose()
       artifactChooser.dispose()
+      jobChooser.dispose()
+      stopFinishingPoll()
       serverIndicator.dispose()
       saveMenu.dispose()
       confirmDialog.dispose()
