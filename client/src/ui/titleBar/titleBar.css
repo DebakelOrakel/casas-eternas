@@ -247,3 +247,10 @@ button.title-bar__mark:hover {
 /* The world block is TEXT. It used to be the way back to the world list, and
    that reading was wrong twice over: it named the world and led away from it,
    and a masthead's own name is where "up" lives. The mark carries that now. */
+
+/* A screen's tools (the artifacts door, the save menu) side by side. */
+.title-bar [data-slot='tools'] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

@@ -1,104 +1,80 @@
-import type { LocalArtifactStore, StoredArtifact } from './ArtifactStore'
+import type { LocalArtifactStore } from './ArtifactStore'
 
-// Housekeeping and view-shaping for the artifact cache. The store lists FLAT
-// entries (uid + meta fields, identical in shape to the server's listing);
-// this module folds either tier's list into the grouping the panel renders —
-// one function, so the two sections cannot drift.
+// Housekeeping and view-shaping for the artifact cache. Either tier lists
+// FLAT entries (uid + meta fields, one shape for both); this module folds them
+// into the rows the artifact window shows — one function, so the two tiers
+// cannot drift.
 
 export async function clearArtifacts(store: LocalArtifactStore): Promise<void> {
   await store.clear()
 }
 
-// One baked tier, as the panel lists it.
-export interface CachedStage {
-  stage: string
-  width: number
-  height: number
+// One stored artifact, from either tier, as the window needs it.
+export interface ArtifactEntry {
+  artifactUid: string
   bytes: number
-  bakeMs: number
-}
-
-// One pipeline version of one terrain — a LINE in the panel: the stages this
-// exact algorithm + constants combination has produced.
-export interface CachedVersion {
-  pipelineVersion: string
-  bytes: number
-  stages: CachedStage[]
-}
-
-// One terrain (content hash) of a world — several accumulate as a world is
-// eroded on, and telling them apart is what the panel's lines exist for.
-export interface CachedTerrain {
-  worldId: string
-  bytes: number
-  versions: CachedVersion[]
-}
-
-export interface CachedWorld {
-  // The owning world's uid — NO_UID for worlds never saved with one, and the
-  // artifact's own uid for an entry whose meta is unreadable (bytes with a
-  // name, still deletable).
   worldUid: string
+  worldId: string
+  pipelineVersion: string
+  stage: string
   label: string
+  where: 'local' | 'server'
+  // Whether the viewer may delete it: always on this machine; on the server
+  // from its world's editor up.
+  deletable: boolean
+}
+
+// What an artifact is: a finer level of the world (stage `L1`, `L2`, …, the
+// level bake's), or something this client cannot name — a meta-less entry,
+// or one from a bake that no longer exists (the raster bake's stages 2/4).
+export type ArtifactKind = 'level' | 'unknown'
+
+// One row: every artifact of one kind for one world, wherever it is kept.
+export interface ArtifactRow {
+  worldUid: string
+  kind: ArtifactKind
+  label: string
+  // The levels present (1, 2, …); empty for the unknown kind.
+  levels: number[]
+  local: boolean
+  server: boolean
   bytes: number
-  terrains: CachedTerrain[]
-  // Every artifact uid in this group — the unit deletion works in.
-  artifactUids: string[]
+  // Outdated: some entry was baked by another pipeline version than this
+  // client's; the unknown kind always is.
+  stale: boolean
+  deletable: boolean
+  entries: ArtifactEntry[]
 }
 
-// Grid width → the shorthand people actually use for it. Derived rather than
-// tabulated so 16384 keeps working the day someone tries it. Uppercase K,
-// matching the bake buttons in the erosion panel.
-export const resolutionLabel = (width: number): string => `${Math.round(width / 1024)}K`
+// The level an entry holds, from its stage (`L1` → 1), or null.
+export function entryLevel(entry: ArtifactEntry): number | null {
+  const match = /^L(\d+)$/.exec(entry.stage)
+  return match ? Number(match[1]) : null
+}
 
-// Folds a flat listing into world groups: uid → terrain → version → stages.
-// Entries without a readable meta (no key fields) become their own group so
-// their bytes stay visible and deletable — the phantom-total lesson.
-export function groupArtifacts(entries: StoredArtifact[]): CachedWorld[] {
-  const byUid = new Map<string, CachedWorld>()
+// `current` answers whether an entry's pipeline version is this client's for
+// its level (world/meshArtifacts, which this module may not import).
+export function artifactRows(entries: readonly ArtifactEntry[], current: (entry: ArtifactEntry, level: number) => boolean): ArtifactRow[] {
+  const rows = new Map<string, ArtifactRow>()
   for (const entry of entries) {
-    if (!entry.worldUid) {
-      byUid.set(`?${entry.artifactUid}`, {
-        worldUid: entry.artifactUid,
-        label: entry.artifactUid,
-        bytes: entry.bytes,
-        terrains: [],
-        artifactUids: [entry.artifactUid],
-      })
-      continue
+    const level = entryLevel(entry)
+    const kind: ArtifactKind = level === null ? 'unknown' : 'level'
+    // Entries without a world stay on rows of their own: nothing joins them.
+    const key = `${entry.worldUid || `?${entry.artifactUid}`}|${kind}`
+    let row = rows.get(key)
+    if (!row) {
+      row = { worldUid: entry.worldUid, kind, label: entry.label, levels: [], local: false, server: false, bytes: 0, stale: false, deletable: true, entries: [] }
+      rows.set(key, row)
     }
-    let world = byUid.get(entry.worldUid)
-    if (!world) {
-      world = { worldUid: entry.worldUid, label: '', bytes: 0, terrains: [], artifactUids: [] }
-      byUid.set(entry.worldUid, world)
-    }
-    world.label ||= entry.label
-    world.bytes += entry.bytes
-    world.artifactUids.push(entry.artifactUid)
-    let terrain = world.terrains.find((candidate) => candidate.worldId === entry.worldId)
-    if (!terrain) {
-      terrain = { worldId: entry.worldId, bytes: 0, versions: [] }
-      world.terrains.push(terrain)
-    }
-    terrain.bytes += entry.bytes
-    let version = terrain.versions.find((candidate) => candidate.pipelineVersion === entry.pipelineVersion)
-    if (!version) {
-      version = { pipelineVersion: entry.pipelineVersion, bytes: 0, stages: [] }
-      terrain.versions.push(version)
-    }
-    version.bytes += entry.bytes
-    version.stages.push({ stage: entry.stage, width: entry.width, height: entry.height, bytes: entry.bytes, bakeMs: entry.bakeMs })
+    row.entries.push(entry)
+    row.bytes += entry.bytes
+    if (entry.where === 'local') row.local = true
+    else row.server = true
+    if (!row.label) row.label = entry.label
+    if (level !== null && !row.levels.includes(level)) row.levels.push(level)
+    if (level === null || !current(entry, level)) row.stale = true
+    if (!entry.deletable) row.deletable = false
   }
-  const worlds = [...byUid.values()]
-  for (const world of worlds) {
-    world.label ||= world.worldUid
-    world.terrains.sort((a, b) => b.bytes - a.bytes)
-    for (const terrain of world.terrains) {
-      terrain.versions.sort((a, b) => a.pipelineVersion.localeCompare(b.pipelineVersion))
-      for (const version of terrain.versions) version.stages.sort((a, b) => a.width - b.width)
-    }
-  }
-  worlds.sort((a, b) => b.bytes - a.bytes)
-  return worlds
+  for (const row of rows.values()) row.levels.sort((a, b) => a - b)
+  return [...rows.values()].sort((a, b) => b.bytes - a.bytes)
 }
-

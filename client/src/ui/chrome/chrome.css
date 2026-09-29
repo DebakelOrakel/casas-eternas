@@ -31,46 +31,6 @@
   display: none;
 }
 
-/* Load / save buttons, fixed top-left — in FRONT of the top overlay bar + its fading
-   backdrop (z-index 3, above the backdrop's 1 and the icon bar's 2). The overlay legend
-   sits just below them (top 4rem). */
-.map-chrome .file-actions {
-  position: fixed;
-  /* Clears the title bar when one is mounted; without it the variable is
-     unset and this stays the plain 1rem it always was (ui/titleBar). */
-  top: calc(1rem + var(--title-bar-height, 0px));
-  left: 1rem;
-  z-index: 3;
-  display: flex;
-  gap: 0.5rem;
-}
-
-.map-chrome .file-button {
-  width: 32px;
-  flex: none;
-  position: relative;
-  border: none;
-  background: none;
-  padding: 0;
-  cursor: pointer;
-  opacity: 0.85;
-  transition: opacity 0.15s ease;
-}
-
-.map-chrome .file-button:hover {
-  opacity: 1;
-}
-
-.map-chrome .file-button img {
-  width: 100%;
-  height: auto;
-  display: block;
-}
-
-/* The unsaved-changes badge that used to overhang the floppy is gone with the
-   floppy: the title bar states the same condition in words (ui/titleBar). */
-
-
 .map-chrome .panel-title {
   position: fixed;
   left: 4.75rem;

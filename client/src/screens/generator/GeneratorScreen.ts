@@ -59,7 +59,6 @@ const NO_PICK_PREFIX = 'none:'
 const noPickOf = (group: number | 'fields'): string => `${NO_PICK_PREFIX}${group}`
 import { STEPS, STEP_IDS, step, type StepId } from './steps'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
-import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleBar'
 import { createSaveMenu, type SaveTarget } from '../../ui/titleBar/SaveMenu'
@@ -67,6 +66,7 @@ import { createConfirmDialog } from '../../ui/confirmDialog/ConfirmDialog'
 import { keepWorldInBrowser } from '../../world/browserWorlds'
 import { uploadWorld } from '../../server/worldClient'
 import { createWorldChooser } from './WorldChooser'
+import { createArtifactChooser } from './ArtifactChooser'
 import { createStepBar } from './StepBar'
 import { createSidebar } from './Sidebar'
 import { createMonthPlayer } from './monthPlayer'
@@ -528,12 +528,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     </div>`
 
   root.innerHTML = `
-    <div class="file-actions">
-      <span data-slot="server-indicator"></span>
-      <button type="button" class="file-button cache-button" data-action="cache-manager" aria-label="${t('common.action.storage.label')}" data-help="common.action.storage">
-        <img src="/icons/server_clean.png" alt="" />
-      </button>
-    </div>
     <div class="compute-progress" data-value="compute-progress" role="status" hidden>
       <span class="compute-progress__text">
         <span class="compute-progress__label" data-value="compute-progress-label"></span>
@@ -817,9 +811,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // as wanted from here — a world tuned in this screen is what ends up
   // costing minutes to bake over there. Same centred window, un-localized
   // like the other debug affordances.
-  // Where a world would go, shown on every screen (see ui/serverIndicator).
+  // The server's state and its sign-in window (ui/serverIndicator). Not
+  // shown here since the top-left strip went (2026-09-29): the title bar
+  // says whether you are signed in and opens the window through it, and the
+  // save menu where a world is kept. The title screen still shows its icon.
   const serverIndicator = createServerIndicator(root)
-  root.querySelector('[data-slot="server-indicator"]')!.replaceWith(serverIndicator.element)
 
   // The title bar (ui/titleBar). It has taken over saving and opening from the
   // older chrome — the floppy and the folder are gone, and what is left of the
@@ -850,6 +846,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       sidebar.relabel()
       stepBar.relabel()
       worldChooser.relabel()
+      artifactChooser.relabel()
+      sayArtifactsButton()
       saveMenu.relabel()
       tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
       // The step statuses are words the screen chooses, not the bar's; this is
@@ -869,10 +867,26 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onOpenWorld: () => { void leaveWorld(() => openWorldChooser()) },
     onSignIn: () => serverIndicator.openSignIn(),
   })
-  titleBar.tools.appendChild(saveMenu.element)
+  // The door to the artifacts, in the title bar beside the save menu as the
+  // design draws it; pressed while the window is open.
+  const artifactsButton = document.createElement('button')
+  artifactsButton.type = 'button'
+  artifactsButton.className = 'artifacts-button'
+  artifactsButton.dataset.help = 'common.action.storage'
+  artifactsButton.setAttribute('aria-pressed', 'false')
+  artifactsButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span class="artifacts-button__label"></span>'
+  const sayArtifactsButton = (): void => { artifactsButton.querySelector('span')!.textContent = t('generator.artifacts.title') }
+  sayArtifactsButton()
+  titleBar.tools.append(artifactsButton, saveMenu.element)
 
-  const storagePanel = createStoragePanel(root)
-  root.querySelector('[data-action="cache-manager"]')!.addEventListener('click', () => storagePanel.open())
+  // The artifacts: full screen over the generator like the world list
+  // (ArtifactChooser). Its world is the one held here, once it has a uid (a
+  // world gets one on its first save; artifacts are filed under it).
+  const artifactChooser = createArtifactChooser(root, {
+    currentWorld: () => (worldUid ? { uid: worldUid, name: worldName, seed: seedInput.value } : null),
+    onClose: () => closeArtifacts(),
+  })
+  artifactsButton.addEventListener('click', () => (artifactChooser.isOpen() ? closeArtifacts() : openArtifacts()))
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
   const humidityInput = root.querySelector<HTMLInputElement>('.humidity-input')!
@@ -4448,6 +4462,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // list is about to replace, and offering to write it would be offering to
     // keep a world nobody has chosen yet.
     saveMenu.setVisible(!chooserOpen)
+    // The artifacts door steps aside with it: the world list covers the
+    // screen the window would open over.
+    artifactsButton.hidden = chooserOpen
   }
 
   // One delegated listener instead of one per control: every slider, including the
@@ -4830,6 +4847,23 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     sidebar.setVisible(false)
     updateSaveIndicator()
     worldChooser.open()
+  }
+
+  // The artifact window steps the generator's furniture aside as the world
+  // list does.
+  function openArtifacts(): void {
+    if (artifactChooser.isOpen() || chooserOpen) return
+    stepBar.setVisible(false)
+    sidebar.setVisible(false)
+    artifactChooser.open()
+    artifactsButton.setAttribute('aria-pressed', 'true')
+  }
+  function closeArtifacts(): void {
+    if (!artifactChooser.isOpen()) return
+    artifactChooser.close()
+    artifactsButton.setAttribute('aria-pressed', 'false')
+    stepBar.setVisible(true)
+    sidebar.setVisible(true)
   }
 
   function closeWorldChooser(): void {
@@ -5884,7 +5918,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       worldChooser.dispose()
       titleBar.dispose()
       helpTooltip.dispose()
-      storagePanel.dispose()
+      artifactChooser.dispose()
       serverIndicator.dispose()
       saveMenu.dispose()
       confirmDialog.dispose()

@@ -546,3 +546,15 @@ loudly rather than filing under a wrong key.
   "store and answer, do not generate" role this extends.
 - [design/world-save-format.md](../design/world-save-format.md) — the
   `.zip` the world store holds.
+
+## Addendum 2026-09-29 — the listing says what the caller may do
+
+`GET /v1/artifacts` gives each entry the caller's level on its world
+(`callerLevel`: viewer, editor, owner, or admin for the operator), so a
+client greys out what it may not delete rather than letting the request
+fail; and `bytes` is the sum of what the caller sees — the whole store only
+for the operator, whose gauge it is. The client's artifact window (the
+design canvas's "Artefaktstore", full screen, replacing the storage panel)
+lists this world's or all worlds' artifacts, one row per world and kind,
+the levels side by side. Still open: deleting a world on the server does not
+sweep its artifacts.

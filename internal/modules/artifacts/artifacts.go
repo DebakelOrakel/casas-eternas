@@ -239,10 +239,19 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 	// The listing inherits the worlds' visibility: an artifact shows to
 	// whoever may read its world. Meta-less entries (junk, mid-write) show
 	// only to the operator — they can rank nobody. One WorldAccess per
-	// DISTINCT world, not per artifact.
-	visible := make([]ListedArtifact, 0, len(artifacts))
+	// DISTINCT world, not per artifact. Each entry says what the caller may
+	// do with it (callerLevel: its world's level, "admin" for the operator),
+	// so a client greys out what it may not delete rather than letting the
+	// request fail.
+	visible := make([]callerArtifact, 0, len(artifacts))
+	var bytes int64
 	if m.operator(r) {
-		visible = artifacts
+		for _, artifact := range artifacts {
+			visible = append(visible, callerArtifact{artifact, access.Admin.String()})
+		}
+		// The operator sees the whole store, so the gauge is the whole store —
+		// the cache-size figure the eviction reasons about.
+		bytes, _ = m.store.Usage(r.Context())
 	} else {
 		bearer := r.Header.Get("Authorization")
 		levels := map[string]access.Level{}
@@ -256,14 +265,20 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 				levels[artifact.WorldUID] = level
 			}
 			if level >= access.Viewer {
-				visible = append(visible, artifact)
+				visible = append(visible, callerArtifact{artifact, level.String()})
+				bytes += artifact.Bytes
 			}
 		}
 	}
-	// Usage stays the whole store: it is the cache-size gauge the eviction
-	// panel reasons about, not a per-user figure.
-	usage, _ := m.store.Usage(r.Context())
-	httpjson.Write(w, http.StatusOK, map[string]any{"artifacts": visible, "bytes": usage})
+	// Anyone else sees what they may see, and its size: the store's whole
+	// usage would tell them about worlds they cannot see.
+	httpjson.Write(w, http.StatusOK, map[string]any{"artifacts": visible, "bytes": bytes})
+}
+
+// A listed artifact with the caller's level on its world.
+type callerArtifact struct {
+	ListedArtifact
+	CallerLevel string `json:"callerLevel"`
 }
 
 func (m *Module) handleRemove(w http.ResponseWriter, r *http.Request) {

@@ -5,6 +5,7 @@ import { deleteWorld, fetchWorld, fetchWorldPreview, listWorlds } from '../../se
 import { browserWorldThumbnail, forgetBrowserWorld, listBrowserWorlds, openBrowserWorld } from '../../world/browserWorlds'
 import '../../ui/theme/design.css'
 import './worldChooser.css'
+import { BROWSER_ICON, SERVER_ICON, icon } from './chooserIcons'
 
 // The generator's first screen: which world are we working on?
 //
@@ -60,21 +61,8 @@ interface Entry {
 // The time and size formatters were copied per screen once, four times over,
 // on the reasoning that a screen must not reach into another screen's panel for
 // a string helper. That was right about the direction and wrong about the
-// remedy: they live in ui/format now, which is nobody's screen.
-function icon(path: string): SVGElement {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.setAttribute('viewBox', '0 0 24 24')
-  svg.setAttribute('fill', 'none')
-  svg.setAttribute('stroke', 'currentColor')
-  svg.setAttribute('stroke-width', '2')
-  svg.setAttribute('stroke-linecap', 'round')
-  svg.setAttribute('aria-hidden', 'true')
-  svg.innerHTML = path
-  return svg
-}
-
-const SERVER_ICON = '<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/>'
-const BROWSER_ICON = '<rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8M12 17v4"/>'
+// remedy: they live in ui/format now, which is nobody's screen. The icons are
+// shared with the artifact window (chooserIcons).
 
 export function createWorldChooser(host: HTMLElement, options: WorldChooserOptions): WorldChooser {
   const root = document.createElement('div')

@@ -21,7 +21,7 @@ import { authFetch } from './session'
 // other (the type import was the last edge of that cycle). It is kept
 // field-for-field the shape the local store lists (storage/ArtifactStore
 // StoredArtifact), so one grouping function serves both tiers by structure
-// — the compiler checks the match at the call (artifactAdmin.groupArtifacts).
+// — the artifact window folds both into its rows (artifactAdmin.artifactRows).
 export interface ServerArtifact {
   artifactUid: string
   bytes: number
@@ -33,6 +33,10 @@ export interface ServerArtifact {
   width: number
   height: number
   bakeMs: number
+  // The caller's level on the artifact's world ("viewer", "editor", "owner",
+  // or "admin" for the operator): what the caller may do with it. Deleting
+  // takes an editor.
+  callerLevel?: string
 }
 
 export interface ServerArtifacts {

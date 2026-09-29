@@ -1,0 +1,211 @@
+/* The artifact window — the design canvas's "Artefaktstore" (Main.dc.html,
+   the block behind `showStore`), light column. It wears the world list's
+   frame (.world-chooser, .wc-sheet, .wc-filter, .wc-remove from
+   worldChooser.css) and adds what a table of derived data needs. */
+
+.ac-sheet {
+  gap: 20px;
+}
+
+.ac-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ac-close {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text2);
+}
+.ac-close:hover {
+  background: var(--dc-hover);
+}
+.ac-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* --- the four figures ------------------------------------------------------ */
+
+.ac-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.ac-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--dc-line);
+  border-radius: 8px;
+}
+.ac-tile__label {
+  font-size: 12px;
+  color: var(--dc-muted);
+}
+.ac-tile__value {
+  font-size: 18px;
+  color: var(--dc-text);
+}
+.ac-tile__hint {
+  font-size: 11.5px;
+  color: var(--dc-faint);
+}
+
+/* --- filters --------------------------------------------------------------- */
+
+.ac-filters {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.ac-filters .wc-filter button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ac-hint {
+  font-size: 11.5px;
+  color: var(--dc-faint);
+}
+
+/* --- the table ------------------------------------------------------------- */
+
+.ac-table {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--dc-line);
+}
+.ac-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) 150px 60px 90px 100px auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 52px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--dc-line);
+  font-size: 13px;
+}
+.ac-table--world .ac-row {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) 150px 60px 90px 100px auto;
+}
+.ac-row--head {
+  min-height: 34px;
+  font-size: 11px;
+  color: var(--dc-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.ac-row .wc-remove {
+  margin: 0;
+  align-self: center;
+}
+.ac-row .wc-remove:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ac-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ac-id {
+  font-size: 11px;
+  color: var(--dc-faint);
+}
+.ac-world {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dc-text2);
+}
+
+/* A level present is filled, one not built yet dashed (the design's
+   resolutions column, as levels). */
+.ac-levels {
+  display: flex;
+  gap: 4px;
+}
+.ac-level {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.ac-level[data-present='true'] {
+  border: 1px solid var(--dc-accent);
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+}
+.ac-level[data-present='false'] {
+  border: 1px dashed var(--dc-dash-line);
+  color: var(--dc-faint);
+}
+
+.ac-where {
+  display: flex;
+  gap: 6px;
+  color: var(--dc-teal);
+}
+.ac-where svg {
+  width: 15px;
+  height: 15px;
+}
+.ac-size {
+  color: var(--dc-text2);
+}
+.ac-state[data-stale='true'] {
+  color: var(--dc-accent);
+}
+.ac-state[data-stale='false'] {
+  color: var(--dc-muted);
+}
+
+.ac-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.ac-foot .wc-remove {
+  margin: 0;
+  align-self: center;
+}
+
+/* The door in the title bar, the save menu's shape; pressed while open. A
+   fixed width, as the save menu's: sized to its text the right-hand group
+   would jump sideways at every language switch. 124px holds "Artefakte" and
+   "Artifacts" with the icon. */
+.artifacts-button {
+  width: 124px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text);
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.artifacts-button:hover,
+.artifacts-button[aria-pressed='true'] {
+  background: var(--dc-hover);
+}
+/* Laid out as the save menu's button: the icon at the left edge, the label
+   centred in the room after it. */
+.artifacts-button__label {
+  flex-grow: 1;
+  text-align: center;
+}

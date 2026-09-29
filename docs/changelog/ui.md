@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-29
+- **changed** Generator: the storage panel becomes a full-screen artifact window — this world's or all worlds' derived data, where it is kept, its levels, whether it is outdated, deletable where you may. `generator.artifacts`
 - **changed** Generator: in the climate step, air pressure, water balance and watersheds are land layers, shown one at a time with the other land layers. `generator.section.land`
 - **removed** Generator: the erosion step and its detail bake; the rivers, water balance and watersheds are shown in the climate step. `generator.step.climate`
 - **changed** Generator: the climate refines by itself once the world is finished, and a loaded world takes its refined climate from the save. `generator.step.climate`

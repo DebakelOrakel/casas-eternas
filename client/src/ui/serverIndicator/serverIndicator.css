@@ -1,8 +1,7 @@
 /* The server indicator.
  *
- * Sized and spaced to sit in the same row as the file buttons (chrome.css's
- * .file-button is 32px) so the top-left corner reads as one strip rather than
- * as a badge parked beside one.
+ * 32px, the size the generator's old top-left strip set; shown on the title
+ * screen only since that strip went (2026-09-29).
  *
  * It is a button element, but usually a DISABLED one: it invites a click only
  * when a sign-in is missing, which is the single case where clicking does

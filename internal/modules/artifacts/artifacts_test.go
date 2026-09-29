@@ -195,6 +195,24 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 		t.Fatalf("editor write = %d", got)
 	}
 
+	// The listing says what each caller may do with an entry, and counts only
+	// what the caller sees (2026-09-29).
+	meta := `{"key":{"worldUid":"` + worldUID + `","worldId":"w","pipelineVersion":"v","stage":"L1"},"label":"test","createdAt":1}`
+	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/meta.json", meta, editor).Code; got != http.StatusNoContent {
+		t.Fatalf("editor meta = %d", got)
+	}
+	for _, c := range []struct {
+		who, token, level string
+	}{{"viewer", viewer, `"callerLevel":"viewer"`}, {"owner", owner, `"callerLevel":"owner"`}, {"operator", admin, `"callerLevel":"admin"`}} {
+		body := doAs(mux, http.MethodGet, "/v1/artifacts", "", c.token).Body.String()
+		if !strings.Contains(body, c.level) {
+			t.Errorf("%s listing = %s, want %s", c.who, body, c.level)
+		}
+	}
+	if body := doAs(mux, http.MethodGet, "/v1/artifacts", "", stranger).Body.String(); !strings.Contains(body, `"artifacts":[]`) || !strings.Contains(body, `"bytes":0`) {
+		t.Errorf("a stranger's listing = %s, want nothing and no bytes", body)
+	}
+
 	cases := []struct {
 		name   string
 		method string
