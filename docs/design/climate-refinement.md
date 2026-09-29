@@ -469,6 +469,24 @@ it upslope rain of air off the Gulf. A dryness the energy balance can
 trust needs that fixed first — then the dry land's damping, then the heat
 low.
 
+**The upslope rain** (2026-09-29). The deserts' rain was the upslope
+term's: without it Riyadh 1264 → 287 mm. It was too strong everywhere, not
+only in the deserts (Madrid 1345 mm against 420, Seattle 2390 against 950,
+Nairobi 7970 against 900). Earth at this scale has 2.5 times too steep
+slopes, so the instrument runs the term at 1/2.5 of its rate. Tried and
+dropped: no upslope rain under sinking air (Riyadh 1264 → 1192: in July
+Riyadh is not under the band's dry core), a minimum lift before rain
+(works, but it is the same as a smaller rate at 0.1 and more), and upslope
+rain only in near-saturated air (the moisture against the evaporation at
+the air's temperature: Riyadh's air off the Gulf is saturated by this
+measure, so nothing changes). Taken: the rate 0.9 → 0.2 (×
+SLOPE_RECALIBRATION). The places' rain ×1.98 → ×1.78 off, the right group
+71 → 73 %, the groups' shares 10 → 7 points off; Riyadh 390, Alice Springs
+465, Madrid 530. What is left in the deserts is the plain rain: Riyadh's
+air comes off the Gulf from the east in July, where on Earth the shamal
+comes from the northwest, off dry land. Lima (467 mm, 10 on Earth) is not
+explained yet.
+
 The step-0 temperatures, tried (2026-09-29). The places' annual means are
 off in a regional pattern: highlands and the dry subtropics too cold
 (Tehran −7 °C, Mexico City −6, Riyadh −5), the interiors and east coasts of

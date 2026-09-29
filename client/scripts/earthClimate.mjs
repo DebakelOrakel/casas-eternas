@@ -54,6 +54,10 @@ for (const a of args.filter((x) => x.includes('='))) {
   if (!(k in M.tune.CLIMATE_TUNING)) { console.error(`no such constant: ${k}`); process.exit(2) }
   M.tune.CLIMATE_TUNING[k] = Number(v)
 }
+// Earth at this scale has its heights on a 2.5 times shorter distance, so
+// every slope is 2.5 times too steep. The upslope rain is the one term that
+// reads a slope: it runs at 1/2.5 of its rate here (after any key=value).
+M.tune.CLIMATE_TUNING.precipOrographicRate /= 2.5
 
 // --- the heightmap -----------------------------------------------------------
 

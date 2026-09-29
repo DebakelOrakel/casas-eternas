@@ -175,7 +175,17 @@ export const CLIMATE_TUNING = {
   // interior stopped being a flat plateau, so the same terrain now produces half
   // the measured upslope. Without this, orographic rain and its rain shadows both
   // collapse toward the BASE_RAINOUT floor.
-  precipOrographicRate: 0.9 * SLOPE_RECALIBRATION,
+  // Measured on Earth (scripts/earthClimate.mjs, 2026-09-29), which runs
+  // this rate at 1/2.5 (Earth's slopes are 2.5 times too steep at this
+  // scale): at 0.9 the mountains and the deserts on a slope were far too
+  // wet (Madrid 1345 mm, real 420; Seattle 2390, 950; Nairobi 7970, 900;
+  // Riyadh 1260, 100; Alice Springs 910, 280). At 0.2 the places' rain
+  // ×1.98 → ×1.78 off, the land with the right group 71 → 73 %, Earth's
+  // dry land that is dry 58 → 64 %, the groups' shares 10 → 7 points off;
+  // Madrid 530, Seattle 1100, Riyadh 390, Alice Springs 465. Istanbul goes
+  // dry (800 → 310). Without the term the scores are about the same, but
+  // no range makes a rain shadow.
+  precipOrographicRate: 0.2 * SLOPE_RECALIBRATION,
 
   // Land moisture recycling (evapotranspiration): the fraction of rained-out water that
   // re-evaporates from soil/vegetation back into the airborne pool, feeding downwind rain.

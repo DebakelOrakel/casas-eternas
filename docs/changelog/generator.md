@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-29
+- **changed** Climate: slopes wring much less rain out of the air, so mountains and deserts on a gentle rise are drier. `generator.climate`
 - **fixed** Climate: after refining, cold northern seas no longer freeze over in the model's year, so the coasts beside them keep mild winters and cool summers. `generator.climate.month`
 - **changed** Climate: the tropics and mid-latitudes are a little cooler, and broad high plateaus warmer than a lone peak of the same height. `generator.panel.planet`
 - **changed** Climate: the wind carries a sea's warmth or cold inland, so coasts facing the prevailing wind feel their ocean and lee coasts much less. `overlay.currents`
