@@ -265,6 +265,9 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      ecotone is the share of fine neighbours whose biomes differ, and its
      productivity the months' mean. Without hydrology (no fine biomes) the
      coarse biome stands in. The fields stay on the climate grid.
+     **Resolution:** decided 2026-09-29 in
+     [ecology-as-function.md](./ecology-as-function.md): the fields become a
+     local rule evaluated where one looks, not a stored raster.
    - **2b — fish** ✅ BUILT 2026-07-26 (pending visual check): marine (coastalness
      × shelf-base + upwelling from adjacent-ocean current strength) + freshwater
      (big rivers via discharge + lake presence), saturating; a 4th subsistence
