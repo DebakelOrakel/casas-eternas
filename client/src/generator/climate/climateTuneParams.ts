@@ -553,9 +553,16 @@ export const CLIMATE_TUNING = {
   // anomalies with it (Astrakan: warm 29 → 16 % of the sea, cold 26 → 16 %).
   // At 4 they are back at warm 21 %, cold 24 %, +4.2/−7.5 °C. The cold
   // eastern coasts belong to upwelling, which is not modelled yet.
+  // The relaxation measured on Earth (scripts/earthClimate.mjs,
+  // 2026-09-29): at 0.15 the anomalies came out at a third of Earth's (off
+  // Norway +2.1 °C, some +7; off California −1.7, some −4), the North
+  // Atlantic's warmth fading before it reached Europe; at 0.1 +2.6 and
+  // −2.4, Reykjavik's year 3 °C → right, London's 4 → 2 °C too cold, the
+  // places' January error 3.9 → 3.7 °C. At 0.05 the anomalies grow on
+  // (+3.4, −3.8) and the scores do not.
   currentsAdvectStep: 4,
   currentsAdvectIters: 80,
-  currentsBaseRelax: 0.15,
+  currentsBaseRelax: 0.1,
 
   // How strongly a coastal land cell is pulled toward the adjacent ocean's SST
   // anomaly (warm current → milder coast, cold current/upwelling → cooler coast),

@@ -378,6 +378,27 @@ changed:
 |---|---|---|---|---|---|---|
 | Heightmap at 61.6 m per level | 34 % | 70 % | 14/47 | ×1.98 | 6 | 35 % |
 | Elevated heat source, 0.6 hPa/(km·°C) | 35 % | 71 % | 14/47 | ×1.91 | 7 | 32 % |
+| Sea surface anomaly relaxed 0.15 → 0.1 per pass (also the epochs) | 35 % | 70 % | 15/47 | ×1.91 | 6 | 34 % |
+
+The step-0 temperatures, tried (2026-09-29). The places' annual means are
+off in a regional pattern: highlands and the dry subtropics too cold
+(Tehran −7 °C, Mexico City −6, Riyadh −5), the interiors and east coasts of
+the northern continents too warm in winter (Yakutsk's January −16 °C
+against −38, Winnipeg −4 against −16, Tokyo 19 against 5), northwestern
+Europe too cold (Reykjavik, London). Tried and dropped: a continentality
+term on the annual mean (the land's share around a cell, then along the
+air's way upwind; subtropical warming, high-latitude cooling), a mass
+elevation term (°C per km of smoothed height), a colder equator (28 °C),
+and in the refinement a deeper continental winter below 5 °C. Each moved
+some places right and as many wrong — the high-latitude cooling that
+brought Yakutsk and Winnipeg near took Moscow to −23 °C in January and
+Oslo, Reykjavik and Anchorage with it, as Europe already lacked the North
+Atlantic's heat. What was kept: the sea surface anomaly, which came out at
+a third of Earth's (off Norway +2.1 °C against some +7), now relaxes
+slower (+2.6); Reykjavik's year is right, London's 2 °C instead of 4 too
+cold. The rest of the North Atlantic's warmth is a matter of the currents'
+speed there, not of the relaxation (at 0.05 the anomalies grew, the scores
+did not).
 
 The elevated heat source: a plateau heated in summer warms the middle of
 the atmosphere, and a low forms over it that the sea-level reduction
