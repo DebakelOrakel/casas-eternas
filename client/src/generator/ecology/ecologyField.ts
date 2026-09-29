@@ -378,13 +378,16 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
       if (!land[i]) continue
       const share = Math.max(0, discharge[i]) / maxDischarge
       riverRoot[i] = Math.sqrt(share)
-      river[i] = Math.min(1, riverRoot[i] * 2)
+      // Below `riverFloor` (√ of the share) a stream is no fishing water
+      // and waters no field: every pixel has some discharge.
+      river[i] = Math.min(1, Math.max(0, riverRoot[i] - T.riverFloor) * 2)
       riverWet[i] = Math.min(1, share * 4)
     }
   }
   if (lakeDepth) for (let i = 0; i < n; i++) if (lakeDepth[i] > 0) lake[i] = 1
   const riverNear = maxWithin(river, w, h, waterR)
-  const riverRootNear = maxWithin(riverRoot, w, h, waterR)
+  // Placer gold lies in a river's gravels and terraces, wider than its bed.
+  const riverRootNear = maxWithin(riverRoot, w, h, reachPx(T.placerReachM, mPerPx))
   const riverWetNear = maxWithin(riverWet, w, h, waterR)
   const lakeNear = maxWithin(lake, w, h, waterR)
   // A hand-dug well within a herd's reach.
@@ -394,6 +397,10 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
     for (let i = 0; i < n; i++) if (waterTable[i] >= 0 && waterTable[i] <= T.wellDepthM) shallow[i] = 1
     wellNear = maxWithin(shallow, w, h, waterR)
   }
+  // Waterlogged ground: the water table within `wetlandTableM` of the
+  // surface (bog iron forms where ground water seeps out).
+  const waterlogged = new Float32Array(n)
+  if (waterTable) for (let i = 0; i < n; i++) if (waterTable[i] >= 0 && waterTable[i] <= T.wetlandTableM) waterlogged[i] = 1
   // The oases' gardens.
   const oasis = new Float32Array(n)
   for (const o of oases) {
@@ -496,12 +503,16 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
       salt[i] = clamp01(Math.max(flatSalt, arid * (T.saltInteriorW + (T.saltCoastW - T.saltInteriorW) * Math.min(1, seaShare[i] / T.fishFullSeaShare))))
 
       // Wetland (bog iron): flat, wet, water-fed lowland.
-      const water = lakeNear[i] > 0 ? 1 : riverWetNear[i]
+      const water = lakeNear[i] > 0 ? 1 : Math.max(riverWetNear[i], T.wetlandTableW * waterlogged[i])
       wetland[i] = flat * water * clamp01(yearP / 600)
       aridity[i] = aridWarm(yearT, yearP)
       craton[i] = Math.max(0, px.read(cratonAge, cratonMask))
     }
   }
+
+  // The fishing grounds: on the sea the fish field is the sea's own
+  // richness, what a boat finds there.
+  for (let i = 0; i < n; i++) if (!land[i]) fish[i] = 1 - Math.exp(-seaRich[i])
 
   // Material and prestige before the sliders. Copper = arc volcanoes; tin =
   // orogen belts (its radius a slider); iron = old cratons + bog iron.
@@ -575,7 +586,8 @@ export function applyEcology(eco: EcologyBase, params: EcologyParams): EcologyFi
   const scaled = (arr: Float32Array, id: EcologyFieldId): Float32Array => {
     const out = arr.slice()
     const m = wmap[id] ?? 1
-    if (m !== 1) for (let i = 0; i < n; i++) if (land[i]) out[i] *= m
+    // The fish are on the sea too (the fishing grounds).
+    if (m !== 1) for (let i = 0; i < n; i++) if (land[i] || id === 'fish') out[i] *= m
     return out
   }
   const arable = scaled(raw.arable, 'arable')
@@ -606,9 +618,11 @@ export function applyEcology(eco: EcologyBase, params: EcologyParams): EcologyFi
   for (let i = 0; i < n; i++) if (land[i]) gemsRaw[i] = clamp01(T.gemOrogenW * eco.gemBelt[i] + T.gemAridW * eco.aridity[i] * copper[i])
   const gems = scaled(gemsRaw, 'gems')
 
-  // Mask every per-resource field to the ocean sentinel so overlays skip water.
+  // Mask every per-resource field to the ocean sentinel so overlays skip
+  // water — all but the fish, whose sea is its fishing grounds.
   const fine: Record<EcologyFieldId, Float32Array> = { carryingCapacity, arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron, gold, silver, gems }
   for (const id of ECOLOGY_FIELD_IDS) {
+    if (id === 'fish') continue
     const f = fine[id]
     for (let i = 0; i < n; i++) if (!land[i]) f[i] = ECOLOGY_OCEAN
   }

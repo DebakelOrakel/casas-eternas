@@ -133,3 +133,12 @@ reach (as any shelf pixel within reach ×1.55); salt 0.26 against 0.01
 (was 0.27 against 0.01). As cell means, the carrying capacity 0.35 →
 0.29: the fish and the irrigation reach a strip, no longer the whole
 cell.
+
+Recalibrated the same day, on the golden worlds against the old means per
+cell: bog iron and placer gold had become strips (iron and gold means
+−60 %). Placer gold now reaches 30 km from its river (its gravels and
+terraces), bog iron counts waterlogged ground (the water table at the
+surface) at 0.15 of a river's wet ground; both back within some 10 % of
+the old means. A stream below a floor feeds no fish and waters no field
+(on Earth the land with a trace of fish 72 → 13 %). The fish field shows
+the sea's richness on the sea itself: the fishing grounds.

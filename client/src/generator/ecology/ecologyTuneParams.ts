@@ -137,6 +137,25 @@ export const ECOLOGY_TUNING = {
   coastReachM: 30000,
   waterReachM: 8000,
   ecotoneReachM: 16000,
+  // Placer gold's reach from a river (its gravels and terraces), bog iron's
+  // waterlogged ground (the water table within `wetlandTableM` of the
+  // surface) at `wetlandTableW` of a river's wet ground, and the stream
+  // below which a river neither feeds fish nor waters a field (`riverFloor`,
+  // √ of its share of the largest discharge: every pixel has some).
+  // Measured on the three golden worlds (2026-09-29), against the means per
+  // climate cell before the fields went per pixel (iron 0.079, 0.063,
+  // 0.073; gold 0.019, 0.023, 0.039): per pixel with the water a pixel away
+  // iron 0.033, 0.023, 0.028 and gold 0.007, 0.008, 0.014 (bog iron and
+  // placer gold became strips). The placer at 24 km gold 0.016, 0.020,
+  // 0.034, at 30 km 0.020, 0.026, 0.044. Bog iron on waterlogged ground in
+  // full 0.35 (the table reaches the surface on much of the land); a wider
+  // floodplain instead (24, 40 km) 0.040–0.056; the ground at 0.15 iron
+  // 0.079, 0.066, 0.062. The river floor on Earth (scratch run, the same
+  // day): the land with a trace of fish (0–5 %) 72 → 13 %.
+  placerReachM: 30000,
+  wetlandTableM: 0,
+  wetlandTableW: 0.15,
+  riverFloor: 0.05,
   fishRiverW: 0.6,
   fishLakeW: 0.5,
 
