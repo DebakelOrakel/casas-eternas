@@ -75,6 +75,13 @@ export interface EcologyInputs {
   // grid, 0 on land; null for a climate that was not refined (the
   // history's), where the fish lose that term.
   upwelling: Float32Array | null
+  // The climate step's months (refinement.ts): temperature °C and rain at
+  // the month's rate, mm/yr, month-major on the climate grid; and the rain's
+  // year-to-year spread (reliability.ts, a coefficient of variation per land
+  // cell). Both null for a climate that was not refined: arable then reads
+  // the annual means and takes no risk.
+  months: { temperature: Float32Array; precipitation: Float32Array; count: number } | null
+  rainVariability: Float32Array | null
   elevation: Float32Array // full-res
   discharge: Float32Array | null // full-res river discharge, or null (no hydrology yet)
   maxDischarge: number // reference max discharge over land
@@ -106,23 +113,55 @@ function productivity(tempC: number, precipMm: number): number {
 
 // --- subsistence fields (climate grid) --------------------------------------
 
-// Arable land: productivity modulated by terrain flatness (steep = poor). Slope
-// is read from the full-res elevation across the cell's climate-grid neighbours.
-function computeArable(temperature: Float32Array, precipitation: Float32Array, elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number): Float32Array {
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+// Arable land: the growing year × terrain flatness (steep = poor; slope read
+// from the full-res elevation across the cell's climate-grid neighbours) ×
+// the harvest's reliability. The growing year is the mean of the months'
+// productivity: a month below `arableFrostC` grows nothing, and a month
+// takes its own rain, plus what a big river brings to its fields
+// (irrigation, up to `arableIrrigationMm` at the rate of a year). So a
+// monsoon or a Mediterranean year is read as it is, not as its mean, and
+// the Nile's banks are farmland in a desert. A harvest is less worth where
+// the rain fails often: × (1 − `arableRiskW` × the rain's variability), and
+// a river takes that risk away as far as it waters the fields. Without
+// months (a climate that was not refined) the annual means stand in.
+function computeArable(temperature: Float32Array, precipitation: Float32Array, months: EcologyInputs['months'], rainVariability: Float32Array | null, river: Float32Array | null, elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number): Float32Array {
+  const T = ECOLOGY_TUNING
+  const n = CLIMATE_RES_X * CLIMATE_RES_Y
+  const out = new Float32Array(n)
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const i = gy * CLIMATE_RES_X + gx
       if (!land[i]) continue
-      const npp = productivity(temperature[i], precipitation[i])
+      const water = river ? river[i] : 0
+      let growing = 0
+      if (months) {
+        for (let m = 0; m < months.count; m++) {
+          const t = months.temperature[m * n + i]
+          if (t < T.arableFrostC) continue
+          growing += productivity(t, months.precipitation[m * n + i] + T.arableIrrigationMm * water) / months.count
+        }
+      } else {
+        growing = productivity(temperature[i], precipitation[i] + T.arableIrrigationMm * water)
+      }
+      const risk = rainVariability ? T.arableRiskW * rainVariability[i] * (1 - water) : 0
       const eC = sampleElevationAtCell(elevation, gx, gy, worldW, worldH)
       const eE = sampleElevationAtCell(elevation, (gx + 1) % CLIMATE_RES_X, gy, worldW, worldH)
       const eS = sampleElevationAtCell(elevation, gx, (gy + 1) % CLIMATE_RES_Y, worldW, worldH)
       const slope = Math.hypot(eE - eC, eS - eC)
-      const flatness = 1 / (1 + ECOLOGY_TUNING.slopeK * slope)
-      out[i] = npp * flatness
+      const flatness = 1 / (1 + T.slopeK * slope)
+      out[i] = growing * flatness * Math.max(0, 1 - risk)
     }
   }
+  return out
+}
+
+// How much water a big river brings to the cell's fields, 0..1: the
+// fish's freshwater scale (√ of the discharge against the world's largest,
+// doubled, capped).
+function riverWater(coarseDischarge: Float32Array | null, maxDischarge: number): Float32Array | null {
+  if (!coarseDischarge || maxDischarge <= 0) return null
+  const out = new Float32Array(coarseDischarge.length)
+  for (let i = 0; i < out.length; i++) out[i] = Math.min(1, Math.sqrt(Math.max(0, coarseDischarge[i]) / maxDischarge) * 2)
   return out
 }
 
@@ -499,7 +538,7 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: 
 // --- entry point ------------------------------------------------------------
 
 export function computeEcology(inputs: EcologyInputs, params: EcologyParams): EcologyFields {
-  const { temperature, precipitation, biomes, upwelling, elevation, discharge, maxDischarge, lakeDepth, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth, worldHeight } = inputs
+  const { temperature, precipitation, biomes, upwelling, months, rainVariability, elevation, discharge, maxDischarge, lakeDepth, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth, worldHeight } = inputs
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const land = new Uint8Array(n)
   for (let i = 0; i < n; i++) if (precipitation[i] !== OCEAN_PRECIP) land[i] = 1
@@ -518,7 +557,7 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
   const coarseLake = lakeDepth ? toClimateGrid(lakeDepth, worldWidth, worldHeight) : null
 
   // Subsistence.
-  const arable = scaleField(computeArable(temperature, precipitation, elevation, land, worldWidth, worldHeight), 'arable')
+  const arable = scaleField(computeArable(temperature, precipitation, months, rainVariability, riverWater(coarseDischarge, maxDischarge), elevation, land, worldWidth, worldHeight), 'arable')
   const fish = scaleField(computeFish(land, temperature, upwelling, shelfShare(elevation, worldWidth, worldHeight), coarseDischarge, maxDischarge, coarseLake), 'fish')
   const game = scaleField(computeGame(temperature, precipitation, biomes, land), 'game')
   const pasture = scaleField(computePasture(biomes, land), 'pasture')

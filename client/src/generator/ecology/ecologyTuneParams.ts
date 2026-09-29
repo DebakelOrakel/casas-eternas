@@ -127,6 +127,24 @@ export const ECOLOGY_TUNING = {
   fishRiverW: 0.6,
   fishLakeW: 0.5,
 
+  // Arable (computeArable): the coldest month that still grows, °C; a big
+  // river's water on the fields, mm/yr at full flow; the harvest's loss per
+  // unit of the rain's variability.
+  // Measured on Earth (scratch run of the refined climate with its rivers,
+  // 2026-09-29), twelve farmland places (Paris, Des Moines, Ludhiana, Patna,
+  // Zhengzhou, Yogyakarta, Milan, Kyiv, Rosario, Tanta, Baghdad, Dhaka)
+  // against ten that are not (Tamanrasset, Yakutsk, Calama, Lhasa, Alice
+  // Springs, Riyadh, Norilsk, Nuuk, Kashgar, Ulaanbaatar): with the annual
+  // means 0.17 against 0.09 (×1.9; Tanta 0.03, Baghdad 0.04). The months
+  // alone change little (×1.9), the frost ×2.0, the river's water ×2.5
+  // (Tanta 0.31, Baghdad 0.18), the risk ×2.75 (at 1.5 ×2.9, at 2000 mm
+  // ×3.0: kept lower, as few places decide it). The land's mean arable
+  // 0.139 → 0.109, the carrying capacity 0.386 → 0.346. Ludhiana and Patna
+  // stay near 0: the refined climate has no monsoon there.
+  arableFrostC: 5,
+  arableIrrigationMm: 1000,
+  arableRiskW: 1,
+
   // Arable flatness sensitivity: steeper ground is progressively harder to farm.
   // Scaled by SLOPE_RECALIBRATION (see elevationScale.ts): flatness reads raw
   // elevation differences, which halved, so without this every slope on the map

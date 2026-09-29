@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-29
+- **changed** Ecology: farmland follows the growing season, big rivers water the fields of dry lands, and unreliable rain makes land less worth farming. `generator.step.ecology`
 - **changed** Ecology: fish are rich where cold water wells up, where cool seas mix and on shallow shelves, and poor in warm seas. `generator.step.ecology`
 - **changed** Climate: slopes wring much less rain out of the air, so mountains and deserts on a gentle rise are drier. `generator.climate`
 - **fixed** Climate: after refining, cold northern seas no longer freeze over in the model's year, so the coasts beside them keep mild winters and cool summers. `generator.climate.month`

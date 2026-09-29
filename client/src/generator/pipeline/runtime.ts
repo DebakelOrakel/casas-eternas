@@ -180,6 +180,9 @@ interface ClimateResult {
   // The refinement's upwelling for the ecology step (the fish read it); null
   // for the history's climate, which has none.
   upwelling: Float32Array | null
+  // The refinement's rain reliability (reliability.ts) for the ecology step
+  // (arable reads it); null for the history's climate.
+  rainVariability: Float32Array | null
   // The wind (climate/wind.ts, interleaved) — the coast's exposure reads it.
   wind: Float32Array
   // Set when this is the climate step's refinement (handleClimateRefine):
@@ -767,6 +770,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
     monsoonIndex: chain.seasonal.index.slice(),
     biomes: chain.biomes.slice(),
     upwelling: null,
+    rainVariability: null,
     wind: chain.wind.slice(),
   }
   const climateMessage: WorkerClimateDataMessage = {
@@ -840,6 +844,7 @@ function handleClimateRefine(): void {
     monsoonIndex: annual.monsoonIndex,
     biomes,
     upwelling: r.upwelling.slice(),
+    rainVariability: r.reliability.rainVariability.slice(),
     wind: annualWind,
     months: { temperature: r.temperature, precipitation: r.precipitation, count: r.months },
   }
@@ -1183,6 +1188,8 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     precipitation: climate.precipitation,
     biomes: climate.biomes,
     upwelling: climate.upwelling,
+    months: climate.months ?? null,
+    rainVariability: climate.rainVariability,
     elevation: lastRawElevations,
     discharge: hydrology?.discharge ?? null,
     maxDischarge: hydrology?.maxDischarge ?? 0,

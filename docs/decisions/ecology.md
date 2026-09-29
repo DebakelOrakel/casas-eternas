@@ -242,6 +242,13 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      label/role/ramp; message carries `fields[]`); selector + dynamic legend +
      per-field hover; worker caches biomes. Headless-verified (fields
      ocean-consistent, pipeline still mean-preserving/gain-linear).
+     **Arable reworked 2026-09-29:** the growing year is the mean of the
+     refined climate's months (a month below 5 °C grows nothing), a big
+     river waters its fields (irrigation: the Nile and Mesopotamia), and
+     unreliable rain costs harvest unless a river waters the fields. A
+     climate that was not refined gives the annual means and no risk.
+     Measured on Earth: farmland against non-farmland ×1.9 → ×2.75. See
+     computeArable and the arable constants in ecologyTuneParams.ts.
    - **2b — fish** ✅ BUILT 2026-07-26 (pending visual check): marine (coastalness
      × shelf-base + upwelling from adjacent-ocean current strength) + freshwater
      (big rivers via discharge + lake presence), saturating; a 4th subsistence
