@@ -286,6 +286,41 @@ export interface EcologyBase {
   // The province layer's deviation per land pixel (volcanic soil + noise),
   // before its mean is taken off.
   provinceDeviation: Float32Array
+  // What a month's fields need (ecologyMonth); null for a climate without
+  // months (not refined).
+  seasonal: EcologySeasons | null
+}
+
+// The fields that change over the year, and what their months are made of:
+// per pixel the parts that do not change with the month, and the climate's
+// months to read the rest from.
+export const SEASONAL_ECOLOGY_FIELDS = ['arable', 'fish', 'game', 'pasture', 'salt'] as const satisfies readonly EcologyFieldId[]
+export type SeasonalEcologyFieldId = (typeof SEASONAL_ECOLOGY_FIELDS)[number]
+export const isSeasonalEcologyField = (id: EcologyFieldId): id is SeasonalEcologyFieldId => (SEASONAL_ECOLOGY_FIELDS as readonly string[]).includes(id)
+
+interface EcologySeasons {
+  elevation: Float32Array
+  months: NonNullable<EcologyInputs['months']>
+  seaLevelMonths: Float32Array
+  coarseLand: Uint8Array
+  coarseSea: Uint8Array
+  // Arable: flatness × the harvest's reliability, and the water on the fields.
+  arableFactor: Float32Array
+  fieldWater: Float32Array
+  // Game: the edge bonus; pasture: the year's grazing and the year's mean
+  // productivity it is set against.
+  edgeFactor: Float32Array
+  pastureYear: Float32Array
+  nppYear: Float32Array
+  // Salt: the coast's weight and the salt flats.
+  saltCoast: Float32Array
+  saltFlat: Uint8Array | null
+  // Fish: a sea pixel's richness without its winter mixing, the land's
+  // reach to the sea and its fresh water.
+  seaRichStatic: Float32Array
+  access: Float32Array
+  freshwater: Float32Array
+  coastR: number
 }
 
 export function computeEcology(inputs: EcologyInputs, params: EcologyParams): EcologyFields {
@@ -353,6 +388,7 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
   for (let i = 0; i < n; i++) if (!land[i] && elevation[i] > shelfFloor) shallow[i] = 1
   const shelfShare = meanWithin(shallow, w, h, coastR)
   const seaRich = new Float32Array(n)
+  const seaRichStatic = new Float32Array(n)
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x
@@ -360,7 +396,8 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
       px.setPixel(x, y, w, h)
       const rising = upwelling ? clamp01(px.read(upwelling, coarseSea) / T.fishUpwellingFull) : 0
       const cool = seaMixing(px.read(temperature, coarseSea))
-      seaRich[i] = T.fishSeaBase + T.fishShelfW * shelfShare[i] + T.fishUpwellingW * rising + T.fishMixingW * cool
+      seaRichStatic[i] = T.fishSeaBase + T.fishShelfW * shelfShare[i] + T.fishUpwellingW * rising
+      seaRich[i] = seaRichStatic[i] + T.fishMixingW * cool
     }
   }
   const richSeaNear = maxWithin(seaRich, w, h, coastR)
@@ -442,6 +479,10 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
   for (let i = 0; i < nc; i++) cratonMask[i] = cratonAge[i] >= 0 ? 1 : 0
   const variabilityMask = coarseLand
   const aridWarm = (tempC: number, precipMm: number): number => clamp01(1 - precipMm / T.saltAridPrecip) * clamp01(tempC / 25)
+  const keep = months ? {
+    arableFactor: new Float32Array(n), fieldWater: new Float32Array(n), edgeFactor: new Float32Array(n),
+    nppYear: new Float32Array(n), saltCoast: new Float32Array(n), access: new Float32Array(n), freshwater: new Float32Array(n),
+  } : null
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x
@@ -479,6 +520,8 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
       // harvest's reliability, which a watered field does not need.
       const risk = rainVariability ? T.arableRiskW * px.read(rainVariability, variabilityMask) * (1 - fieldWater) : 0
       arable[i] = growing * flat * Math.max(0, 1 - risk)
+      const edgeFactor = 1 + T.ecotoneBonus * clamp01(edges[i] / T.ecotoneFullShare)
+      const saltCoast = T.saltInteriorW + (T.saltCoastW - T.saltInteriorW) * Math.min(1, seaShare[i] / T.fishFullSeaShare)
 
       // Fish: the richest sea within reach, as far as the sea is at hand
       // (a straight coast in full), plus the rivers and lakes near.
@@ -487,7 +530,7 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
       fish[i] = 1 - Math.exp(-(access * richSeaNear[i] + freshwater))
 
       // Game: productivity, more where biomes meet.
-      game[i] = npp * (1 + T.ecotoneBonus * clamp01(edges[i] / T.ecotoneFullShare))
+      game[i] = npp * edgeFactor
 
       // Pasture: the biome's grazing, in dry land only as far as a herd
       // finds water (without hydrology nothing is known of it: the biome
@@ -500,7 +543,16 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
       // Salt: a salt flat in full; else the dry warm season, strongest on
       // a coast.
       const flatSalt = saltFlat && saltFlat[i] ? T.saltFlatW : 0
-      salt[i] = clamp01(Math.max(flatSalt, arid * (T.saltInteriorW + (T.saltCoastW - T.saltInteriorW) * Math.min(1, seaShare[i] / T.fishFullSeaShare))))
+      salt[i] = clamp01(Math.max(flatSalt, arid * saltCoast))
+      if (keep) {
+        keep.arableFactor[i] = flat * Math.max(0, 1 - risk)
+        keep.fieldWater[i] = fieldWater
+        keep.edgeFactor[i] = edgeFactor
+        keep.nppYear[i] = npp
+        keep.saltCoast[i] = saltCoast
+        keep.access[i] = access
+        keep.freshwater[i] = freshwater
+      }
 
       // Wetland (bog iron): flat, wet, water-fed lowland.
       const water = lakeNear[i] > 0 ? 1 : Math.max(riverWetNear[i], T.wetlandTableW * waterlogged[i])
@@ -569,7 +621,67 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
     gemBelt, aridity,
     tinPoints: thinPoints(orogenPoints, T.tinKeep, warpSeed ^ 0x71b2a903),
     provinceDeviation,
+    seasonal: months && keep ? {
+      elevation, months, seaLevelMonths, coarseLand, coarseSea, ...keep,
+      pastureYear: pasture, saltFlat, seaRichStatic, coastR,
+    } : null,
   }
+}
+
+// One month of a field that changes over the year (SEASONAL_ECOLOGY_FIELDS),
+// per pixel, `month` 1..12, with the field's abundance slider; null when the
+// climate has no months. Each is what the land gives in that month on the
+// field's own scale, so the twelve months average to its year:
+// - arable: the month's growth (none below the frost) × flatness × reliability;
+// - game: the month's productivity × the edge bonus;
+// - pasture: the year's grazing × the month's productivity against the year's;
+// - salt: a salt flat in full, else the month's warm dryness × the coast;
+// - fish: the sea's richness with the month's mixing (on the sea and within
+//   the land's reach), plus the fresh water.
+export function ecologyMonth(eco: EcologyBase, field: SeasonalEcologyFieldId, month: number, weight = 1): Float32Array | null {
+  const S = eco.seasonal
+  if (!S) return null
+  const T = ECOLOGY_TUNING
+  const { w, h, land } = eco
+  const n = w * h
+  const nc = CLIMATE_RES_X * CLIMATE_RES_Y
+  const m = Math.max(0, Math.min(S.months.count - 1, month - 1)) * nc
+  const out = new Float32Array(n).fill(ECOLOGY_OCEAN)
+  const px = new ClimatePixel()
+  const lapse = CLIMATE_TUNING.lapseCPerElevation
+  if (field === 'fish') {
+    const rich = new Float32Array(n)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x
+        if (land[i]) continue
+        px.setPixel(x, y, w, h)
+        rich[i] = S.seaRichStatic[i] + T.fishMixingW * seaMixing(px.read(S.months.temperature, S.coarseSea, m))
+        out[i] = weight * (1 - Math.exp(-rich[i]))
+      }
+    }
+    const near = maxWithin(rich, w, h, S.coastR)
+    for (let i = 0; i < n; i++) if (land[i]) out[i] = weight * (1 - Math.exp(-(S.access[i] * near[i] + S.freshwater[i])))
+    return out
+  }
+  const aridWarm = (tempC: number, precipMm: number): number => clamp01(1 - precipMm / T.saltAridPrecip) * clamp01(tempC / 25)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      if (!land[i]) continue
+      if (field === 'salt' && S.saltFlat && S.saltFlat[i]) { out[i] = weight * clamp01(T.saltFlatW); continue }
+      px.setPixel(x, y, w, h)
+      const t = px.read(S.seaLevelMonths, null, m) - lapse * Math.max(0, S.elevation[i] - SEA_LEVEL)
+      const p = px.read(S.months.precipitation, S.coarseLand, m)
+      let v: number
+      if (field === 'arable') v = (t >= T.arableFrostC ? productivity(t, p + T.arableIrrigationMm * S.fieldWater[i]) : 0) * S.arableFactor[i]
+      else if (field === 'game') v = productivity(t, p) * S.edgeFactor[i]
+      else if (field === 'pasture') v = S.nppYear[i] > 0 ? S.pastureYear[i] * productivity(t, p) / S.nppYear[i] : 0
+      else v = clamp01(aridWarm(t, p) * S.saltCoast[i])
+      out[i] = weight * v
+    }
+  }
+  return out
 }
 
 // The step's sliders on the physics: the per-field abundance, the carrying

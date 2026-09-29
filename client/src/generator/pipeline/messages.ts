@@ -149,6 +149,15 @@ export interface WorkerHydrologyRunMessage {
 // the cached climate temperature+precipitation as the productivity inputs and the
 // sim's volcanoes for the province layer. PHASE 1: the carrying-capacity field
 // only. Replies with WorkerEcologyDataMessage. See docs/decisions/ecology.md.
+// One month of a resource that changes over the year
+// (ecologyField.SEASONAL_ECOLOGY_FIELDS), on the last ecology run's physics
+// and sliders. `month` 1..12.
+export interface WorkerEcologyMonthMessage {
+  type: 'ecologyMonth'
+  field: string
+  month: number
+}
+
 export interface WorkerEcologyRunMessage {
   type: 'ecologyRun'
   // Global carrying-capacity gain (%, 100 = neutral) — level knob.
@@ -227,6 +236,7 @@ export type WorkerInboundMessage =
   | WorkerClimateRefineMessage
   | WorkerHydrologyRunMessage
   | WorkerEcologyRunMessage
+  | WorkerEcologyMonthMessage
   | WorkerMigrationRunMessage
   | WorkerSerializeWorldMessage
   | WorkerRestoreWorldMessage
@@ -585,6 +595,17 @@ export interface WorkerHydrologyDataMessage {
 // The computed ecology fields (coarse climate grid), keyed by field id so the
 // set can grow per sub-step without changing the message shape. Each is Float32,
 // resX*resY, land only (ECOLOGY_OCEAN sentinel on water). See ecology/ecologyField.ts.
+// The answer to ecologyMonth: the field per pixel of the world raster, one
+// byte each (ecologyField.encodeFineField).
+export interface WorkerEcologyMonthDataMessage {
+  type: 'ecologyMonthData'
+  field: string
+  month: number
+  resX: number
+  resY: number
+  data: ArrayBuffer
+}
+
 export interface WorkerEcologyDataMessage {
   type: 'ecologyData'
   // The fields on the climate grid (Float32): the save and the migration.
@@ -654,6 +675,7 @@ export type WorkerOutboundMessage =
   | WorkerClimateRefineProgressMessage
   | WorkerHydrologyDataMessage
   | WorkerEcologyDataMessage
+  | WorkerEcologyMonthDataMessage
   | WorkerMigrationDataMessage
   | WorkerWorldDataMessage
   | WorkerGenesisStatusMessage

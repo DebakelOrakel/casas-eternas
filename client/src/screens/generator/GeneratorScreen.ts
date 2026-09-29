@@ -22,7 +22,7 @@ import type { WaterBody } from '../../generator/surface/hydrology'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
-import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
+import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
 import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
 import { drawContinentLabels } from '../../generator/render/continentLabelRenderer'
@@ -43,7 +43,7 @@ import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
 import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../generator/climate/biomes'
 import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
-import { ECOLOGY_OCEAN, decodeFineValue, type EcologyFieldId } from '../../generator/ecology/ecologyField'
+import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { DISCHARGE_LAYER, FORCING_LAYERS, REFINED_LAYERS, WORLD_LAYERS, bakeLayer, decodeLayer } from '../../world/save/worldLayers'
 import { refinedFromLayers, refinedLayerSources } from '../../world/save/refinedLayers'
 import type { RefinedClimate } from '../../generator/climate/refinement'
@@ -69,6 +69,7 @@ import { uploadWorld } from '../../server/worldClient'
 import { createWorldChooser } from './WorldChooser'
 import { createStepBar } from './StepBar'
 import { createSidebar } from './Sidebar'
+import { createMonthPlayer } from './monthPlayer'
 import { readRecipeValue as readYamlValue } from '../../world/save/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { ELEVATION_ENCODING } from '../../world/artifacts'
@@ -671,24 +672,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         <!-- No stats: the world's coldest and warmest cell said little once
              the step had months (dropped 2026-09-28). No status mark either:
              the progress pill says the climate is computing. -->
-        <!-- The month the climate layers show. A view, not a lever: the step
-             has no levers (they are step 0's). It stands in the foot, above
-             the buttons, so it stays in sight however far the layer column
-             scrolls (2026-09-29). Live once the refinement ran. The play
-             button runs through the months, round and round. No run or
-             reset button: the refinement runs by itself once the world is
-             there (2026-09-29). -->
-        <div class="gen-param" data-help="generator.climate.month">
-          <div class="gen-param__head">
-            <span class="gen-param__label" data-t="generator.climate.month.label">${t('generator.climate.month.label')}</span>
-            <span class="gen-param__value"><span data-value="climate-month-label">${t('generator.climate.month.annual')}</span></span>
-          </div>
-          <div class="gen-param__play">
-            <input type="range" class="gen-param__range climate-month-input" min="0" max="12" step="1" value="0" disabled aria-label="${t('generator.climate.month.label')}" data-t-aria="generator.climate.month.label" />
-            <button type="button" class="gen-action-icon" data-action="play-months" disabled aria-pressed="false" data-t-aria="generator.climate.play.label" data-help="generator.climate.play">
-              <img src="/icons/play.png" alt="" />
-            </button>
-          </div>
+        <!-- The month the climate layers show, and its play button: the months
+             run round and round, and stopping shows the year again. A view,
+             not a lever — no slider: the step has no levers (they are step
+             0's). The row has a reset's place on the left, empty here (the
+             refinement runs by itself), so the month stands in the middle as
+             in the ecology step. Live once the refinement ran. -->
+        <div class="gen-month" data-help="generator.climate.month">
+          <span class="gen-month__spare" aria-hidden="true"></span>
+          <span class="gen-month__label" data-value="climate-month-label">${t('generator.climate.month.annual')}</span>
+          <button type="button" class="gen-action-icon" data-action="play-months" disabled aria-pressed="false" data-t-aria="generator.climate.play.label" data-help="generator.climate.play">
+            <img src="/icons/play.png" alt="" />
+          </button>
         </div>
       </div>
     </div>
@@ -715,9 +710,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         ${paramField(ECOLOGY_INPUTS.provinceStrength, 'province-input', 'province-label', { attrs: ' data-ecofield="carryingCapacity"' })}
       </section>
       <div class="gen-step__foot">
-        <div class="gen-step__actions">
+        <!-- The step's reset, the month the seasonal resources show (arable,
+             fish, game, pasture, salt) and its play button, in one row as in
+             the climate step. The months play once the climate has them and
+             a seasonal resource is picked; the others are yearly values. -->
+        <div class="gen-month" data-help="generator.ecology.month">
           <button type="button" class="gen-action-icon" data-action="reset-ecology" data-t-aria="generator.action.resetEcology.label" data-help="generator.action.resetEcology">
             <img src="/icons/reset.png" alt="" />
+          </button>
+          <span class="gen-month__label" data-value="ecology-month-label">${t('generator.climate.month.annual')}</span>
+          <button type="button" class="gen-action-icon" data-action="play-ecology-months" disabled aria-pressed="false" data-t-aria="generator.climate.play.label" data-help="generator.climate.play">
+            <img src="/icons/play.png" alt="" />
           </button>
         </div>
       </div>
@@ -796,9 +799,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   alluviumInput.addEventListener('input', () => { alluviumLabel.textContent = alluviumInput.value })
   rockContrastInput.addEventListener('input', () => { rockContrastLabel.textContent = rockContrastInput.value })
   const resetPlanetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-planet"]')!
-  const playMonthsButton = root.querySelector<HTMLButtonElement>('[data-action="play-months"]')!
-  const climateMonthInput = root.querySelector<HTMLInputElement>('.climate-month-input')!
-  const climateMonthLabel = root.querySelector<HTMLElement>('[data-value="climate-month-label"]')!
+  // The months the climate layers and the seasonal resources show
+  // (monthPlayer). Built here, before anything reads them; their callbacks
+  // reach only hoisted functions.
+  const climatePlayer = createMonthPlayer({
+    label: root.querySelector<HTMLElement>('[data-value="climate-month-label"]')!,
+    button: root.querySelector<HTMLButtonElement>('[data-action="play-months"]')!,
+    onMonth: () => { applyOverlays(); renderLegends() },
+  })
+  const ecologyPlayer = createMonthPlayer({
+    label: root.querySelector<HTMLElement>('[data-value="ecology-month-label"]')!,
+    button: root.querySelector<HTMLButtonElement>('[data-action="play-ecology-months"]')!,
+    onMonth: () => showEcologyMonth(),
+  })
   const resetEcologyButton = root.querySelector<HTMLButtonElement>('[data-action="reset-ecology"]')!
   const resetMigrationButton = root.querySelector<HTMLButtonElement>('[data-action="reset-migration"]')!
   // The artifact cache is filled by the worldmap, but inspecting it is just
@@ -833,7 +846,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // rather than its strings (see i18n/relabel).
       relabel(sidebar.body)
       relabel(sidebar.foot)
-      sayClimateMonth()
+      climatePlayer.relabel()
+      ecologyPlayer.relabel()
       sidebar.relabel()
       stepBar.relabel()
       worldChooser.relabel()
@@ -987,8 +1001,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     sayResetPlanet()
     for (const el of [seedInput, obliquityInput, tempBandInput, contrastInput, rotationInput, humidityInput]) el.disabled = step0Locked
     randomizeButton.disabled = step0Locked
-    climateMonthInput.disabled = lastRefined === null
-    playMonthsButton.disabled = lastRefined === null
+    climatePlayer.setEnabled(lastRefined !== null)
+    ecologyPlayer.setEnabled(lastRefined !== null && hasEcologyData() && isSeasonalEcologyField(pickedEcologyField))
     resetEcologyButton.disabled = busy
     resetMigrationButton.disabled = busy
     saveMenu.setEnabled(!busy)
@@ -1219,13 +1233,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let refineResolve: (() => void) | null = null
   // The month the climate layers show: 0 the year's mean, 1–12 January to
   // December. Read only while a refinement exists.
-  let climateMonth = 0
   type MonthFields = { pressure: Float32Array; wind: Float32Array; temperature: Float32Array; precipitation: Float32Array }
   let monthFields: ({ source: object; month: number } & MonthFields) | null = null
   // The refinement's fields for the shown month (the year: their mean),
   // made once per month and refinement.
   function refinedMonth(): MonthFields | null {
     if (!lastRefined) return null
+    const climateMonth = climatePlayer.month
     if (monthFields?.source === lastRefined && monthFields.month === climateMonth) return monthFields
     const n = climateResX * climateResY
     const { months } = lastRefined
@@ -1315,6 +1329,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastEcologyFine: Partial<Record<EcologyFieldId, Uint8Array>> = {}
   let ecologyFineResX = 0
   let ecologyFineResY = 0
+  // The month of a seasonal resource the map shows (ecologyPlayer), from
+  // the worker (ecologyMonth); null for the year. One request at a time,
+  // the latest wish kept while one is out (playing asks faster than a
+  // month of fish computes).
+  let ecologyMonthFine: { field: EcologyFieldId; month: number; data: Uint8Array } | null = null
+  let ecologyMonthInFlight = false
+  let ecologyMonthWanted: { field: EcologyFieldId; month: number } | null = null
   let selectedEcologyField: EcologyFieldId = 'carryingCapacity'
   // What the picker last CHOSE, as opposed to what a hover is momentarily
   // showing. Leaving a hover returns here; it used to return to the aggregate,
@@ -1523,7 +1544,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // visible (a uniform scale would vanish under max-normalisation). Ocean =
   // ECOLOGY_OCEAN sentinel, left as terrain. No-op until computed.
   function paintEcology(data: Uint8ClampedArray): void {
-    const fine = lastEcologyFine[selectedEcologyField]
+    // A month of the picked seasonal resource, while a month is chosen
+    // (the last one landed stands while the next computes).
+    const monthly = ecologyPlayer.month > 0 && ecologyMonthFine?.field === selectedEcologyField ? ecologyMonthFine.data : null
+    const fine = monthly ?? lastEcologyFine[selectedEcologyField]
     const field = lastEcologyFields[selectedEcologyField]
     if (!fine && !field) return
     const baseAlpha = 0.6
@@ -2619,7 +2643,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const fine = lastEcologyFine[selectedEcologyField]
         const field = lastEcologyFields[selectedEcologyField]
         let v: number
-        if (fine && ecologyFineResX === MAP_WIDTH && ecologyFineResY === MAP_HEIGHT) {
+        const monthly = ecologyPlayer.month > 0 && ecologyMonthFine?.field === selectedEcologyField ? ecologyMonthFine.data : null
+        if (monthly && ecologyFineResX === MAP_WIDTH && ecologyFineResY === MAP_HEIGHT) {
+          v = decodeFineValue(monthly[cell.fine])
+        } else if (fine && ecologyFineResX === MAP_WIDTH && ecologyFineResY === MAP_HEIGHT) {
           v = decodeFineValue(fine[cell.fine])
         } else {
           if (!field || ecologyResX <= 0) return []
@@ -2720,6 +2747,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     pickedEcologyField = selectedEcologyField
     showAbundanceFor(pickedEcologyField)
+    // The month player serves the seasonal resources only.
+    updateControlsDisabled()
+    showEcologyMonth()
     updateOverlays()
   }
 
@@ -3539,47 +3569,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // history's climate again, over the year.
   function dropRefinement(): void {
     if (!lastRefined && !refineInFlight) return
-    stopMonths()
+    climatePlayer.stop()
     lastRefined = null
     monthFields = null
-    climateMonth = 0
-    climateMonthInput.value = '0'
-    sayClimateMonth()
+    climatePlayer.show(0)
     updateControlsDisabled()
     updateOverlays()
   }
-  // The month the climate layers show, and the slider and label with it.
-  function showClimateMonth(month: number): void {
-    climateMonth = month
-    climateMonthInput.value = String(month)
-    sayClimateMonth()
-    applyOverlays()
-    renderLegends()
-  }
-  // How long each month stands while the months play.
-  const MONTH_STEP_MS = 800
-  let monthTimer: ReturnType<typeof setInterval> | null = null
-  // The button says what a press does; its key rides on data-t-aria so a
-  // language switch finds it (i18n/relabel).
-  function sayPlayButton(playing: boolean): void {
-    const key = playing ? 'generator.climate.play.labelActive' : 'generator.climate.play.label'
-    playMonthsButton.dataset.tAria = key
-    playMonthsButton.setAttribute('aria-label', t(key))
-    playMonthsButton.setAttribute('aria-pressed', String(playing))
-    playMonthsButton.querySelector('img')!.src = playing ? '/icons/stop.png' : '/icons/play.png'
-  }
-  function stopMonths(): void {
-    if (monthTimer === null) return
-    clearInterval(monthTimer)
-    monthTimer = null
-    sayPlayButton(false)
-  }
-  function sayClimateMonth(): void {
-    climateMonthLabel.textContent = climateMonth === 0
-      ? t('generator.climate.month.annual')
-      : new Intl.DateTimeFormat(getLocale(), { month: 'long' }).format(new Date(2001, climateMonth - 1, 1))
-  }
-
   // Clears ONE stage's mirrors. The cascade is not here any more — it comes from
   // the declared chain, via invalidateAfter below.
   function clearClimate(): void {
@@ -3739,6 +3735,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     for (const f of message.fine.fields) lastEcologyFine[f.id as EcologyFieldId] = new Uint8Array(f.data)
     ecologyFineResX = message.fine.resX
     ecologyFineResY = message.fine.resY
+    // The months stand on the last run's sliders: asked again.
+    ecologyMonthFine = null
+    showEcologyMonth()
     ecologyInFlight = false
     updateControlsDisabled()
     updateProgress()
@@ -3750,7 +3749,30 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function clearEcology(): void {
     lastEcologyFields = {}
     lastEcologyFine = {}
+    ecologyMonthFine = null
     updateOverlays()
+  }
+
+  // The month the ecology player shows, for the picked resource: asked of
+  // the worker when it is a seasonal one and not here yet.
+  function showEcologyMonth(): void {
+    const month = ecologyPlayer.month
+    if (month > 0 && isSeasonalEcologyField(pickedEcologyField) && hasEcologyData()) requestEcologyMonth(pickedEcologyField, month)
+    applyOverlays()
+  }
+  function requestEcologyMonth(field: EcologyFieldId, month: number): void {
+    if (ecologyMonthFine?.field === field && ecologyMonthFine.month === month) return
+    if (ecologyMonthInFlight) { ecologyMonthWanted = { field, month }; return }
+    ecologyMonthInFlight = true
+    postToWorker({ type: 'ecologyMonth', field, month })
+  }
+  function handleEcologyMonthData(message: WorkerEcologyMonthDataMessage): void {
+    ecologyMonthInFlight = false
+    if (message.data.byteLength > 0) ecologyMonthFine = { field: message.field as EcologyFieldId, month: message.month, data: new Uint8Array(message.data) }
+    const wanted = ecologyMonthWanted
+    ecologyMonthWanted = null
+    if (wanted && (wanted.field !== message.field || wanted.month !== message.month)) requestEcologyMonth(wanted.field, wanted.month)
+    applyOverlays()
   }
 
   // --- initial migration ---
@@ -3952,6 +3974,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
     if (message.type === 'ecologyData') {
       handleEcologyData(message)
+      return
+    }
+    if (message.type === 'ecologyMonthData') {
+      handleEcologyMonthData(message)
       return
     }
 
@@ -5263,20 +5289,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // recompute. Which controls those are comes from the stage table — see resetInputs.
   // Step 0's reset takes both groups of its sliders: the planet's and the
   // climate's two levers, which stand beside them.
-  climateMonthInput.addEventListener('input', () => {
-    stopMonths()
-    showClimateMonth(Number(climateMonthInput.value))
-  })
-  // THE MONTHS PLAYED: January to December and round again, the annual mean
-  // left out, until pressed again (or the refinement goes).
-  playMonthsButton.addEventListener('click', () => {
-    if (monthTimer !== null) { stopMonths(); return }
-    if (lastRefined === null) return
-    const advance = (): void => showClimateMonth(climateMonth % 12 + 1)
-    advance()
-    monthTimer = setInterval(advance, MONTH_STEP_MS)
-    sayPlayButton(true)
-  })
   // Reset over a locked world frees the levers (at their defaults); once
   // freed, the same button takes them back to the world's values and locks
   // them again — the way back into the world without making it anew.

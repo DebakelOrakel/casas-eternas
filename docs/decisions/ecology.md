@@ -269,6 +269,13 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      [ecology-as-function.md](./ecology-as-function.md): the fields become a
      local rule evaluated where one looks, not a stored raster. Step 1
      built the same day: the fields per pixel at 2048 on the map.
+     **Seasons 2026-09-29:** arable, fish, game, pasture and salt have
+     months (ecologyMonth, one month on request, some 0.1 s, fish 0.6 s at
+     2048): the month's growth, productivity, grazing, dry warmth and sea
+     mixing, each on its field's scale so the twelve average to the year
+     (checked on Earth: to 0.002). Timber, stone, metals, gems and the
+     carrying capacity stay yearly. The step plays them like the climate
+     step.
    - **2b — fish** ✅ BUILT 2026-07-26 (pending visual check): marine (coastalness
      × shelf-base + upwelling from adjacent-ocean current strength) + freshwater
      (big rivers via discharge + lake presence), saturating; a 4th subsistence

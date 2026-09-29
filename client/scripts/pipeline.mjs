@@ -536,6 +536,11 @@ test('a stage that cannot run says so instead of going quiet', async () => {
   const declined = p.messages.filter((m) => m.type === 'stageDeclined')
   check('all four refuse on a world that does not exist yet', declined.length === 4, declined.map((d) => d.stage).join(', '))
   check('each names the world itself as what is missing', declined.every((d) => d.needs === 'tectonics'), JSON.stringify(declined.map((d) => d.needs)))
+  // A month of a resource is answered even with nothing to show, so the
+  // screen is not left waiting on it.
+  p.dispatch({ type: 'ecologyMonth', field: 'arable', month: 7 })
+  await until(() => p.count('ecologyMonthData') >= 1, { label: 'the empty month' })
+  check('a month of a resource without an ecology comes back empty', p.last('ecologyMonthData').data.byteLength === 0)
 
   // And once there IS a world, the refusal is specific: the climate is what
   // hydrology is short of, not the terrain.

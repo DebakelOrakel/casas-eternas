@@ -638,5 +638,5 @@ Tehran), which is the annual mean of step 0, not the cycle.
    freed step-0 levers), and the rivers follow it, as the hydrology always
    did; the start and reset buttons are gone. A loaded world takes the
    refinement from its save instead of computing it (formatVersion 7); a
-   save without one is refined on load. The month slider has a play
-   button that runs through the months.
+   save without one is refined on load. The month slider gave way to a
+   play button that runs through the months; stopping shows the year.

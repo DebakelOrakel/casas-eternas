@@ -212,15 +212,21 @@
   gap: 8px;
 }
 
-/* The month slider with its play button beside it. */
-.gen-param__play {
-  display: flex;
+/* A step's month row: a reset (or its empty place), the month in the
+   middle, the play button. The month is shown, not picked. */
+.gen-month {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
   align-items: center;
   gap: 8px;
 }
-.gen-param__play .gen-param__range {
-  flex: 1;
-  min-width: 0;
+.gen-month__spare {
+  width: 44px;
+  height: 44px;
+}
+.gen-month__label {
+  text-align: center;
+  color: var(--dc-text2);
 }
 
 .gen-action {

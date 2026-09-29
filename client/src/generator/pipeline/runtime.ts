@@ -54,11 +54,11 @@ import { computeIceThickness } from '../surface/iceFlow'
 import { WORLD_WIDTH_METERS } from '../surface/erosionEngine'
 import type { RiverGraph } from '../surface/riverGraph'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
-import { applyEcology, encodeFineField, prepareEcology, type EcologyBase } from '../ecology/ecologyField'
+import { applyEcology, ecologyMonth, encodeFineField, isSeasonalEcologyField, prepareEcology, type EcologyBase, type EcologyFieldId, type EcologyParams } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
-import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerClimateRefineProgressMessage, WorkerEcologyDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
+import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerClimateRefineProgressMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
 // tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
@@ -258,6 +258,8 @@ interface EcologyResult {
 let ecology: EcologyResult | null = null
 // The ecology's physics (prepareEcology) and what it was computed from.
 let ecologyBase: { key: { climate: unknown; hydrology: unknown; elevation: unknown; sim: unknown; epoch: number }; base: EcologyBase } | null = null
+// The sliders of the last ecology run, which a month's field is scaled by.
+let ecologyParams: EcologyParams | null = null
 
 // The last erosion's pre-fill elevations (basins still intact) — the terrain the
 // hydrology runs on, so lakes have depressions to fill. null when the current
@@ -1228,13 +1230,14 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     worldHeight: sim.height,
   }) }
   }
-  const eco = applyEcology(ecologyBase.base, {
+  ecologyParams = {
     carryingCapacity: message.carryingCapacity,
     concentration: message.concentration,
     provinceStrength: message.provinceStrength,
     tinRarity: message.tinRarity,
     weights: message.weights,
-  })
+  }
+  const eco = applyEcology(ecologyBase.base, ecologyParams)
   // Cache a copy of carrying capacity BEFORE the buffers below are transferred
   // (transfer neuters them) — the migration step reads it.
   ecology = { carryingCapacity: eco.fields.carryingCapacity.slice() }
@@ -1248,6 +1251,23 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     fine: { resX: eco.fine.resX, resY: eco.fine.resY, fields: fine },
   }
   emit(ecologyMessage, [...fields.map((f) => f.data), ...fine.map((f) => f.data)])
+}
+
+function handleEcologyMonth(message: Extract<WorkerInboundMessage, { type: 'ecologyMonth' }>): void {
+  // Answered on the physics and sliders of the last run; without them (or
+  // for a yearly field, or a climate without months) there is nothing to
+  // send, and the screen keeps showing the year.
+  // Always answered, with no data then, so the screen is not left waiting.
+  const field = message.field as EcologyFieldId
+  const data = ecologyBase && ecologyParams && isSeasonalEcologyField(field)
+    ? ecologyMonth(ecologyBase.base, field, message.month, ecologyParams.weights?.[field] ?? 1)
+    : null
+  const reply: WorkerEcologyMonthDataMessage = {
+    type: 'ecologyMonthData', field, month: message.month,
+    resX: ecologyBase?.base.w ?? 0, resY: ecologyBase?.base.h ?? 0,
+    data: data ? encodeFineField(data).buffer as ArrayBuffer : new ArrayBuffer(0),
+  }
+  emit(reply, [reply.data])
 }
 
 function handleMigrationRun(message: Extract<WorkerInboundMessage, { type: 'migrationRun' }>): void {
@@ -1593,6 +1613,7 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   climateRefine: (m) => handleClimateRefine(m as Extract<WorkerInboundMessage, { type: 'climateRefine' }>),
   hydrologyRun: () => handleHydrologyRun(),
   ecologyRun: (m) => handleEcologyRun(m as Extract<WorkerInboundMessage, { type: 'ecologyRun' }>),
+  ecologyMonth: (m) => handleEcologyMonth(m as Extract<WorkerInboundMessage, { type: 'ecologyMonth' }>),
   migrationRun: (m) => handleMigrationRun(m as Extract<WorkerInboundMessage, { type: 'migrationRun' }>),
   serializeWorld: () => handleSerializeWorld(),
   restoreWorld: (m) => handleRestoreWorld(m as Extract<WorkerInboundMessage, { type: 'restoreWorld' }>),

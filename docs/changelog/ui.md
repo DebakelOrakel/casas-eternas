@@ -7,7 +7,8 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 - **changed** Generator: in the climate step, air pressure, water balance and watersheds are land layers, shown one at a time with the other land layers. `generator.section.land`
 - **removed** Generator: the erosion step and its detail bake; the rivers, water balance and watersheds are shown in the climate step. `generator.step.climate`
 - **changed** Generator: the climate refines by itself once the world is finished, and a loaded world takes its refined climate from the save. `generator.step.climate`
-- **new** Generator: a play button beside the month slider runs through the months. `generator.climate.play`
+- **changed** Generator: the climate step's month slider gives way to a play button that runs through the months; stopping shows the year again. `generator.climate.play`
+- **new** Generator: the ecology step plays the months of the seasonal resources — arable land, fish, game, pasture, salt — beside its reset button. `generator.ecology.month`
 - **new** Generator: a last step, Finishing, for the detail jobs on the finished world (empty for now). `generator.step.finishing`
 - **changed** Generator: the terrain colours change with height like an atlas's — green, yellow-green, khaki, ochre, brown, rock, snow — so ranges from 1300 m up stand out as mountains. `overlay.terrain`
 - **changed** Generator: the map readout shows the climate class and biome under the height and the temperature as the year's span; the climate step's month slider stays in sight above its buttons. `readout`
