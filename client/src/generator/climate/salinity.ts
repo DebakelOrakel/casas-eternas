@@ -139,30 +139,3 @@ export function computeSalinity(seaTemperature: Float32Array, landRain: Float32A
 
   return { salinity, deepWater }
 }
-
-// A sea field onto the coasts beside it, thinning inland as the currents'
-// own mark does (oceanCurrents.applyOceanSST): each land cell takes its
-// strongest neighbour's value, decayed, over a few cells. The sea cells
-// keep theirs; land cells start at 0.
-export function spreadToCoasts(field: Float32Array, land: Uint8Array): Float32Array {
-  const n = RX * RY
-  const out = new Float32Array(n)
-  for (let i = 0; i < n; i++) if (!land[i]) out[i] = field[i]
-  for (let step = 0; step < CLIMATE_TUNING.currentsCoastalSteps; step++) {
-    const next = out.slice()
-    for (let gy = 0; gy < RY; gy++) {
-      for (let gx = 0; gx < RX; gx++) {
-        const i = gy * RX + gx
-        if (!land[i]) continue
-        let best = 0
-        for (const [dx, dy] of NEIGHBOURS) {
-          const v = out[wrapIndex(gx + dx, gy + dy)]
-          if (Math.abs(v) > Math.abs(best)) best = v
-        }
-        next[i] = best * CLIMATE_TUNING.currentsCoastalDecay
-      }
-    }
-    out.set(next)
-  }
-  return out
-}

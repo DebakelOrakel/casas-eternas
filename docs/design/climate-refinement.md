@@ -439,6 +439,19 @@ ranges channel south — a winter circulation this model does not have. And
 Europe's winters are too cold before any deepening (Moscow −10, Oslo −8),
 which is the North Atlantic's missing warmth.
 
+**The North Atlantic** (2026-09-29). The wind-driven currents carry the
+Gulf Stream east across the ocean but not northeast to Norway: that branch
+is the overturning's, which only the refinement has (step 9; it sinks in
+the Norwegian Sea here, 0.89). Off Norway the refined sea is 4.3 °C over
+its latitude (Earth some 7); a stronger inflow (conveyorFlow 0.5, 0.8)
+raised it to 4.8 and moved no score. What made the northern coasts' winters
+wrong was the energy balance: sea whose annual air mean fell below 0 °C
+counted as frozen and swung like land, and with the cooler profile the
+Nordic seas did (Reykjavik's year swung 28 °C, Earth 11). At −6 °C:
+Reykjavik 14, the places' January error 3.5 → 3.3 °C, their swing error
+5.2 → 4.7 °C, the rest as it was. The overturning's warmth now reaches the
+land with the wind too (carryInland), as the currents' own anomaly does.
+
 The step-0 temperatures, tried (2026-09-29). The places' annual means are
 off in a regional pattern: highlands and the dry subtropics too cold
 (Tehran −7 °C, Mexico City −6, Riyadh −5), the interiors and east coasts of

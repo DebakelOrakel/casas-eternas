@@ -271,9 +271,10 @@ export function basinFlank(land: Uint8Array, fullWidthCells: number): Float32Arr
 // in the westerlies, a west coast in the trades) gets only the breeze off
 // its own shore: `currentsCoastalLeeShare` of its strongest neighbouring
 // sea cell. Until 2026-09-29 every coast took its neighbour's anomaly the
-// same way, four cells in, whatever the wind: Tokyo's January came out
-// 19 °C (5) on the Kuroshio's warmth, Oslo's −10 °C (−4).
-function carryInland(seaAnomaly: Float32Array, land: Uint8Array, wind: Float32Array): Float32Array {
+// same way, four cells in, whatever the wind, and Europe's interior got
+// little of the North Atlantic's (on Earth's relief Oslo's year came out
+// 4 °C too cold, now 1).
+export function carryInland(seaAnomaly: Float32Array, land: Uint8Array, wind: Float32Array): Float32Array {
   const n = RX * RY
   const out = new Float32Array(n)
   const reach = CLIMATE_TUNING.currentsInlandReachCells

@@ -261,9 +261,16 @@ export const CLIMATE_TUNING = {
   ebmAlbedoIce: 0.6,
   ebmIceBelowC: -10,
   // Sea whose annual mean is below this, °C, counts as ice-covered for the
-  // heat capacity (sea water freezes at −1.8 °C; a mean a little above it
-  // still freezes in winter).
-  ebmSeaIceBelowC: 0,
+  // heat capacity (sea water freezes at −1.8 °C, but the annual mean read
+  // here is the air's, which over an open sea in winter runs well below
+  // the water's). At 0 the Nordic seas froze in the model (the Norwegian
+  // Sea's air comes out near −2 °C a year with the cooler profile of
+  // 2026-09-29), swung like land, and took the coasts with them: on
+  // Earth's relief Reykjavik's year swung 28 °C (11), Nuuk's 27 (14). At −6
+  // 14 and 20; the places' January error 3.5 → 3.3 °C, their swing error
+  // 5.2 → 4.7 °C. At −10 the groups' shares go 9 → 16 points off (D gives
+  // way to E).
+  ebmSeaIceBelowC: -6,
   // Heat capacity, J/m²K: land is the air column and a little soil
   // (~1.2·10⁷), the sea a 50 m mixed layer (~2.1·10⁸).
   ebmCapacityLand: 1e7,
@@ -584,18 +591,14 @@ export const CLIMATE_TUNING = {
   currentsAdvectIters: 80,
   currentsBaseRelax: 0.1,
 
-  // How strongly a coastal land cell is pulled toward the adjacent ocean's SST
-  // anomaly (warm current → milder coast, cold current/upwelling → cooler coast),
-  // and how far inland that influence reaches, decaying per cell (a maritime band
-  // a few cells wide rather than a single-cell edge).
+  // How strongly the land takes the sea's anomaly it gets (warm current →
+  // milder coast, cold current/upwelling → cooler coast).
   currentsCoastalFactor: 0.9,
-  currentsCoastalSteps: 4,
-  currentsCoastalDecay: 0.8,
   // The anomaly carried onto the land with the wind (oceanCurrents.
   // carryInland): looked for this many cells upwind, e^(−d / decay) over
   // land, and the share a coast gets off its own shore where the wind
-  // blows out to sea. currentsCoastalSteps and currentsCoastalDecay remain
-  // for the salinity's spread onto the coasts. Measured on Earth
+  // blows out to sea. The overturning's warmth goes the same way
+  // (refinement.ts). Measured on Earth
   // (scripts/earthClimate.mjs, 2026-09-29) against the old spread: the
   // places' annual mean error 2.54 → 2.47 °C, Oslo −4 → −1 °C, Ushuaia −3 →
   // +4 (a cold coast downwind of nothing now), classes 17 → 18 of 47; at a

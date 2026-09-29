@@ -7,10 +7,10 @@ import { seasonalCycle } from './energyBalance'
 import { applyPhenomena } from './phenomena'
 import { computeReliability, type Reliability } from './reliability'
 import { computeStorms, type Storms } from './storms'
-import { computeSalinity, spreadToCoasts } from './salinity'
+import { computeSalinity } from './salinity'
 import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
 import { OCEAN_AMPLITUDE } from './seasonality'
-import { applyOceanSST, basinFlank, computeOceanCurrents, computeSinkInflow, computeUpwelling, eastwardInBasin } from './oceanCurrents'
+import { applyOceanSST, basinFlank, carryInland, computeOceanCurrents, computeSinkInflow, computeUpwelling, eastwardInBasin } from './oceanCurrents'
 import { computeTemperature } from './temperature'
 import type { WeatherParams } from './weather'
 import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
@@ -237,8 +237,11 @@ export function refineClimate(
   const currentAnomaly = applyOceanSST(base.slice(), currents, elevation, width, height, annualWind)
   const drift = new Float32Array(n)
   for (let i = 0; i < n; i++) if (!land[i]) drift[i] = currentAnomaly[i] - windAnomaly[i]
-  // The months take it, on the sea and on the coasts beside it.
-  const warmth = spreadToCoasts(drift, land)
+  // The months take it, on the sea and on the land the wind carries it to
+  // (oceanCurrents.carryInland, as the currents' own anomaly goes).
+  const inland = carryInland(drift, land, annualWind)
+  const warmth = new Float32Array(n)
+  for (let i = 0; i < n; i++) warmth[i] = land[i] ? CLIMATE_TUNING.currentsCoastalFactor * inland[i] : drift[i]
   for (let month = 0; month < REFINED_MONTHS; month++) for (let i = 0; i < n; i++) monthly[month * n + i] += warmth[i]
   for (let i = 0; i < n; i++) currentAnomaly[i] -= upwellingCooling[i]
 
