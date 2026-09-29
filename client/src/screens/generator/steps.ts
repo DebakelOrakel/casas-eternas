@@ -71,10 +71,13 @@ export interface PickGroup {
 }
 
 // The climate's groups (2026-09-29), shared by step 0 (which offers some of
-// them on the planet preview) and the climate step. The lines — pressure,
-// wind, currents — are no group: isobars, streaks and arrows read over each
+// them on the planet preview) and the climate step. The lines — wind,
+// currents, rivers — are no group: streaks, arrows and ribbons read over each
 // other and over any wash, so they are switches.
-const LAND: PickGroup = { title: 'generator.section.land', members: ['precipitation', 'seasonality', 'monsoon', 'koppen', 'biomes'] }
+// The pressure is a wash over land and sea with its isobars; it sits with the
+// land's washes (2026-09-29), and may still read over a sea wash. The water
+// balance and the watersheds are land washes (since the erosion step went).
+const LAND: PickGroup = { title: 'generator.section.land', members: ['precipitation', 'seasonality', 'monsoon', 'koppen', 'biomes', 'pressure', 'waterBalance', 'watersheds'] }
 const SEA: PickGroup = { title: 'generator.section.sea', members: ['upwelling', 'salinity'] }
 const WEATHER: PickGroup = { title: 'generator.section.weather', members: ['fog', 'foehn', 'rainVariability', 'enso', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder'] }
 
@@ -134,7 +137,7 @@ export const STEPS: readonly Step[] = [
     // seasonality is its annual amplitude, the biomes are classified from it —
     // so it is a switch that stays on, not one answer among many.
     //
-    // The lines — pressure, wind, currents — are switches beside it. The
+    // The lines — wind, currents, rivers — are switches beside it. The
     // washes are in groups by where they paint (see `groups`): one on the
     // land, one on the sea, one weather phenomenon.
     //
@@ -143,8 +146,8 @@ export const STEPS: readonly Step[] = [
     //
     // The rivers, the water balance and the watersheds are the climate's
     // readout since the erosion step went (2026-09-29): the hydrology runs
-    // on this step's refined climate.
-    overlays: ['terrain', 'names', 'temperature', 'pressure', 'wind', 'currents', 'rivers', 'waterBalance', 'watersheds'],
+    // on this step's refined climate. The two washes are land picks.
+    overlays: ['terrain', 'names', 'temperature', 'wind', 'currents', 'rivers'],
     groups: [LAND, SEA, WEATHER],
     defaults: ['names', 'temperature'],
     fields: [],
