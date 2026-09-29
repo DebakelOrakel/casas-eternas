@@ -418,6 +418,27 @@ land's height smoothed over three cells. The places' annual mean error
 warmest month 0 → 7 °C; the groups' shares 6 → 9 points off (C grows).
 The golden worlds came out 1.2 °C cooler, with 4–6 % less rain and runoff.
 
+**The continental winter, second try** (2026-09-29, dropped again). The
+months below the year's mean deepened on land where the air is
+continental and the month cold enough for snow. Three measures of
+continentality: the land's share upwind along the banded wind; the cells
+over land back to the sea plus the highest ground crossed (the
+Cordillera keeps the Pacific out of the North American interior); the
+same along the first pass's mean pressure wind, which carries Europe's
+westerlies where the banded cells die out near 60°. The last kept Oslo
+out of it (continentality 0.03), but Moscow came out as continental as
+Yakutsk (0.77 each): the wind reaching Moscow comes from the west-south-
+west over land, the one reaching Yakutsk from the Sea of Okhotsk. At a
+deepening of 1 Winnipeg's January −5 → −17 °C (−16), Yakutsk's −16 → −29
+(−38), Chicago −5 (−5), but Moscow −21 (−7), Denver −9 (−1), Tehran −7
+(3), Anchorage −19 (−9); the cells' right group 71 → 73 %, the places'
+January error 3.5 → 3.9 °C, the groups' shares 9 → 13 points off. At 0.5
+a draw. What sets Yakutsk apart from Moscow on Earth is the Siberian High
+and its inversions, and what sets Winnipeg apart the Arctic air the
+ranges channel south — a winter circulation this model does not have. And
+Europe's winters are too cold before any deepening (Moscow −10, Oslo −8),
+which is the North Atlantic's missing warmth.
+
 The step-0 temperatures, tried (2026-09-29). The places' annual means are
 off in a regional pattern: highlands and the dry subtropics too cold
 (Tehran −7 °C, Mexico City −6, Riyadh −5), the interiors and east coasts of
