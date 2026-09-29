@@ -86,6 +86,9 @@ export interface EcologyInputs {
   discharge: Float32Array | null // full-res river discharge, or null (no hydrology yet)
   maxDischarge: number // reference max discharge over land
   lakeDepth: Float32Array | null // full-res lake depth, or null
+  // Full-res: 1 on a terminal basin's dry floor (hydrology's salt flat), or
+  // null (no hydrology yet).
+  saltFlat: Uint8Array | null
   volcanoes: Volcano[]
   // Collision-belt points — tin / lode-gold / gem provenance. Combines the
   // CURRENT fold-mountain features (on-crust, always where collision ranges are)
@@ -307,19 +310,28 @@ function computeTimber(biomes: Uint8Array, land: Uint8Array): Float32Array {
   return out
 }
 
-// Salt: arid evaporation, strongest on warm dry coasts (salt pans), weaker in
-// arid interiors (rock-salt / playa proxy).
-function computeSalt(temperature: Float32Array, precipitation: Float32Array, land: Uint8Array): Float32Array {
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+// Salt, from two sources. A terminal basin's dry floor (the hydrology's
+// salt flat: the Dead Sea's shores, the Rann of Kutch) is salt in full. And
+// water evaporates to salt where it is warm and dry: in pans on a coast
+// (strongest) and in playas and rock salt inland. Warm and dry counts per
+// month where the climate has months, so a coast with a dry summer makes
+// salt (the Camargue, the Bohai), as salt works need a dry season, not a
+// dry year; the annual means stand in otherwise.
+function computeSalt(temperature: Float32Array, precipitation: Float32Array, months: EcologyInputs['months'], saltFlat: Float32Array | null, land: Uint8Array): Float32Array {
+  const T = ECOLOGY_TUNING
+  const n = CLIMATE_RES_X * CLIMATE_RES_Y
+  const aridWarm = (tempC: number, precipMm: number): number => clamp01(1 - precipMm / T.saltAridPrecip) * clamp01(tempC / 25)
+  const out = new Float32Array(n)
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const i = gy * CLIMATE_RES_X + gx
       if (!land[i]) continue
-      const dryness = clamp01(1 - precipitation[i] / ECOLOGY_TUNING.saltAridPrecip)
-      const warmth = clamp01(temperature[i] / 25)
-      const arid = dryness * warmth
+      let arid = 0
+      if (months) for (let m = 0; m < months.count; m++) arid += aridWarm(months.temperature[m * n + i], months.precipitation[m * n + i]) / months.count
+      else arid = aridWarm(temperature[i], precipitation[i])
       const coast = coastalnessAt(land, gx, gy)
-      out[i] = clamp01(arid * (ECOLOGY_TUNING.saltInteriorW + (ECOLOGY_TUNING.saltCoastW - ECOLOGY_TUNING.saltInteriorW) * coast))
+      const flat = saltFlat ? T.saltFlatW * saltFlat[i] : 0
+      out[i] = clamp01(Math.max(flat, arid * (T.saltInteriorW + (T.saltCoastW - T.saltInteriorW) * coast)))
     }
   }
   return out
@@ -538,7 +550,7 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: 
 // --- entry point ------------------------------------------------------------
 
 export function computeEcology(inputs: EcologyInputs, params: EcologyParams): EcologyFields {
-  const { temperature, precipitation, biomes, upwelling, months, rainVariability, elevation, discharge, maxDischarge, lakeDepth, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth, worldHeight } = inputs
+  const { temperature, precipitation, biomes, upwelling, months, rainVariability, elevation, discharge, maxDischarge, lakeDepth, saltFlat, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth, worldHeight } = inputs
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const land = new Uint8Array(n)
   for (let i = 0; i < n; i++) if (precipitation[i] !== OCEAN_PRECIP) land[i] = 1
@@ -561,7 +573,7 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
   const fish = scaleField(computeFish(land, temperature, upwelling, shelfShare(elevation, worldWidth, worldHeight), coarseDischarge, maxDischarge, coarseLake), 'fish')
   const game = scaleField(computeGame(temperature, precipitation, biomes, land), 'game')
   const pasture = scaleField(computePasture(biomes, land), 'pasture')
-  const salt = scaleField(computeSalt(temperature, precipitation, land), 'salt')
+  const salt = scaleField(computeSalt(temperature, precipitation, months, saltFlat ? toClimateGrid(Float32Array.from(saltFlat), worldWidth, worldHeight) : null, land), 'salt')
 
   // Saturating carrying-capacity base: subsistence sources complement with
   // diminishing returns (1 - e^-Σ w·x); salt adds a small preservation bonus (the

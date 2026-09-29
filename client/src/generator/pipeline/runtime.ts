@@ -1195,6 +1195,7 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     maxDischarge: hydrology?.maxDischarge ?? 0,
     // Liquid water only: a frozen basin is a glacier and feeds no fishery.
     lakeDepth: hydrology ? liquidLakeDepth(hydrology) : null,
+    saltFlat: hydrology?.saltFlat ?? null,
     volcanoes: collectVolcanoes(sim.features),
     // Collision belts for tin/lode-gold/gems: current fold mountains (on-crust)
     // + the accumulated (advected) deep-time sutures.

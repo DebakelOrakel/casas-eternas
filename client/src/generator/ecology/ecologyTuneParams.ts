@@ -180,10 +180,24 @@ export const ECOLOGY_TUNING = {
   goldLodeKeep: 0.5,
   gemKeep: 0.5,
 
-  // Salt: below this precip a cell reads arid; coasts evaporate best.
+  // Salt (computeSalt): below this precip (a month's rate where the climate
+  // has months) a cell reads arid; coasts evaporate best; a salt flat
+  // counts `saltFlatW`.
+  // Measured on Earth (scratch run of the refined climate with its rivers
+  // and lakes, 2026-09-29), twelve salt works and salt lakes (the Camargue,
+  // Trapani, Cádiz, the Rann of Kutch, Tianjin, Swakopmund, Guerrero Negro,
+  // the Dead Sea, Death Valley, the Red Sea's coast, Dubai, the Chott el
+  // Djerid) against ten wet or cold places without: on the annual means
+  // 0.21 against 0.00, the Camargue, Tianjin and the Red Sea's coast 0.
+  // Per month 0.27 against 0.01 (the Camargue 0.03, Tianjin 0.09, the Red
+  // Sea 0.13; Kutch 1.0 from its salt flat). Tried and dropped: pans only
+  // on a flat shore (0.21 → 0.17: the grid's slope is no guide to a
+  // shore's lagoons) and the sea's salinity (0.17: the seas differ by a few
+  // psu, the climate by far more).
   saltAridPrecip: 500,
   saltCoastW: 1.0,
   saltInteriorW: 0.35,
+  saltFlatW: 1,
 
   // Salt's small bonus to carrying capacity (preservation → denser settlement).
   wSaltCc: 0.15,

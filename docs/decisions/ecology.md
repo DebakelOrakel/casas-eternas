@@ -249,6 +249,10 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      climate that was not refined gives the annual means and no risk.
      Measured on Earth: farmland against non-farmland ×1.9 → ×2.75. See
      computeArable and the arable constants in ecologyTuneParams.ts.
+     **Salt reworked 2026-09-29:** warm and dry counts per month (salt
+     works need a dry season, not a dry year), and a terminal basin's salt
+     flat (hydrology) is salt in full. Tried and dropped: the sea's salinity
+     and the shore's flatness. See computeSalt and the salt constants.
    - **2b — fish** ✅ BUILT 2026-07-26 (pending visual check): marine (coastalness
      × shelf-base + upwelling from adjacent-ocean current strength) + freshwater
      (big rivers via discharge + lake presence), saturating; a 4th subsistence
