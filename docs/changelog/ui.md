@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-09-29
+- **changed** Generator: the climate step's washes come in three groups — land, sea, weather phenomena — one at a time within a group, combined across them; pressure, wind and currents are switches; each weather phenomenon is a layer with its own icon, and every pick group is a row of icon tiles. `generator.section`
 - **fixed** Generator: "new world" in the world list starts fresh — new name and seed, default sliders, later steps locked — instead of leaving the last world open. `generator`
 - **changed** Generator: once a world exists, step 0's seed and sliders are locked; the step's reset frees them and they preview on the sample world. While they differ from the world, the later steps show "out of date" and stay closed until "create world" takes the change (after asking) or the button returns to the world's values. `generator.confirm.recreate`
 - **changed** Generator: the Archean's mantle and water sliders act from its next start instead of rebuilding the world. `generator.panel.genesis`

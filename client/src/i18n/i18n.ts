@@ -12,7 +12,6 @@ import enResource from './locales/en/resource.json'
 import enSpecies from './locales/en/species.json'
 import enReadout from './locales/en/readout.json'
 import enKoppen from './locales/en/koppen.json'
-import enWeather from './locales/en/weather.json'
 import deCommon from './locales/de/common.json'
 import deTitleBar from './locales/de/titlebar.json'
 import deNotify from './locales/de/notify.json'
@@ -23,7 +22,6 @@ import deResource from './locales/de/resource.json'
 import deSpecies from './locales/de/species.json'
 import deReadout from './locales/de/readout.json'
 import deKoppen from './locales/de/koppen.json'
-import deWeather from './locales/de/weather.json'
 
 // The area catalogs merged into one flat lookup. English is the type
 // source: TKey is every key that exists, so `t('typo.key')` fails to compile.
@@ -51,15 +49,15 @@ import deWeather from './locales/de/weather.json'
 // branch named by the same id. `overlay` (a map layer, its legend included,
 // which is what lets the screen derive the key from the id rather than carry a
 // table of them), `biome`, `resource`, `species`, `koppen` (the climate
-// classes, one key per Köppen–Geiger code, 2026-09-28), `weather` (the
-// climate step's weather phenomena, 2026-09-28).
+// classes, one key per Köppen–Geiger code, 2026-09-28). The weather
+// phenomena are layers and live under `overlay` (moved there 2026-09-29).
 //
 // `common` is the rest: shared words and units. There used to be a `world`
 // catalog as well, which collected every list of names the world has — layers,
 // biomes, resources, species, readout lines, event lines. It held six unrelated
 // things because each was about "the world", which is true of everything here.
 // A drawer is not a namespace; it was taken apart 2026-09-20.
-const en = { ...enCommon, ...enTitleBar, ...enNotify, ...enGenerator, ...enOverlay, ...enBiome, ...enResource, ...enSpecies, ...enReadout, ...enKoppen, ...enWeather }
+const en = { ...enCommon, ...enTitleBar, ...enNotify, ...enGenerator, ...enOverlay, ...enBiome, ...enResource, ...enSpecies, ...enReadout, ...enKoppen }
 
 export type Locale = 'en' | 'de'
 export type TKey = keyof typeof en
@@ -67,7 +65,7 @@ export type TKey = keyof typeof en
 // German is complete: typing it `Record<TKey, string>` makes a missing German
 // key a compile error (tsc is the completeness gate). `t()` still falls back to
 // English at runtime for safety.
-const de: Record<TKey, string> = { ...deCommon, ...deTitleBar, ...deNotify, ...deGenerator, ...deOverlay, ...deBiome, ...deResource, ...deSpecies, ...deReadout, ...deKoppen, ...deWeather }
+const de: Record<TKey, string> = { ...deCommon, ...deTitleBar, ...deNotify, ...deGenerator, ...deOverlay, ...deBiome, ...deResource, ...deSpecies, ...deReadout, ...deKoppen }
 
 const catalogs: Partial<Record<Locale, Record<string, string>>> = { en, de }
 let locale: Locale = 'en'

@@ -24,6 +24,14 @@ export interface OverlayListRow {
   icon: string
 }
 
+// A pick group: radios, one of which is on. `title` and `help` are catalog
+// bases for its heading and the heading's hover card.
+export interface OverlayPickGroup {
+  title?: string
+  help?: string
+  rows: readonly OverlayListRow[]
+}
+
 export interface OverlayListState {
   on: boolean
   available: boolean
@@ -31,10 +39,11 @@ export interface OverlayListState {
 
 export interface OverlayList {
   element: HTMLElement
-  // The rows of the step just entered. `picks` are mutually exclusive — one
-  // resource field paints, so they are radios in a section of their own, not
-  // switches. Either list empty hides its section; both empty hides the lot.
-  setRows(rows: readonly OverlayListRow[], picks?: readonly OverlayListRow[], pickTitle?: string): void
+  // The rows of the step just entered. Each pick group is mutually exclusive
+  // within itself — radios in a section of their own, not switches — and
+  // the groups combine (2026-09-29: several groups per step). An empty list
+  // hides its section; nothing at all hides the lot.
+  setRows(rows: readonly OverlayListRow[], groups?: readonly OverlayPickGroup[]): void
   // Switch positions and the unavailable look, read from the same state the map
   // is drawn from rather than kept a second time here.
   //
@@ -43,12 +52,11 @@ export interface OverlayList {
   relabel(): void
 }
 
-// Above this many picks the list becomes a grid of icon tiles. A resource step
-// offers fourteen fields; fourteen full rows are two thirds of the column, and
-// the name beside each icon says nothing the icon and its hover card do not.
-// Up to three a list reads better, because a short list of words is faster than
-// a short row of pictures.
-const PICK_GRID_MIN = 4
+// Picks are a grid of icon tiles, however few (2026-09-29: the rule that
+// kept groups of up to three as a list of words is gone). A resource step
+// offers fourteen fields, and fourteen full rows are two thirds of the
+// column; the name beside each icon says nothing the icon and its hover card
+// do not, and one look for every group reads better than two.
 
 export function createOverlayList(options: {
   onToggle: (id: string) => void
@@ -71,16 +79,9 @@ export function createOverlayList(options: {
       </div>
       <div class="gen-overlays__rows"></div>
     </section>
-    <section class="gen-overlays gen-picks" hidden>
-      <h2 class="gen-section-title" hidden></h2>
-      <div class="gen-overlays__picks"></div>
-    </section>
   `
   const overlaySection = host.querySelector<HTMLElement>('.gen-overlays')!
-  const pickSection = host.querySelector<HTMLElement>('.gen-picks')!
-  const pickTitle = pickSection.querySelector<HTMLElement>('.gen-section-title')!
   const rowHost = host.querySelector<HTMLElement>('.gen-overlays__rows')!
-  const pickHost = host.querySelector<HTMLElement>('.gen-overlays__picks')!
   const count = host.querySelector<HTMLElement>('.gen-overlays__count')!
   relabel(host)
 
@@ -91,7 +92,7 @@ export function createOverlayList(options: {
   // One row. A switch stands for a layer that combines with the others; a radio
   // stands for a pick where only one answer can be on the map at a time, and
   // the control says which it is rather than leaving you to find out.
-  function buildRow(row: OverlayListRow, kind: 'checkbox' | 'radio', onChange: () => void): HTMLElement {
+  function buildRow(row: OverlayListRow, kind: 'checkbox' | 'radio', onChange: () => void, group = 0): HTMLElement {
     const label = document.createElement('label')
     label.className = 'gen-overlay'
     label.dataset.help = row.helpBase
@@ -111,32 +112,44 @@ export function createOverlayList(options: {
     box.dataset.tAria = `${row.helpBase}.label`
     box.setAttribute('aria-label', text)
     box.className = kind === 'radio' ? 'gen-overlay__pick' : 'gen-overlay__switch'
-    if (kind === 'radio') box.name = 'gen-overlay-pick'
+    // One radio set per group, so a pick in one leaves the others alone.
+    if (kind === 'radio') box.name = `gen-overlay-pick-${group}`
     box.addEventListener('change', onChange)
     boxes.set(row.id, box)
     label.append(icon, name, box)
     return label
   }
 
-  // `title` is the pick section's catalog base, which the step names because the
-  // group is a different question in each one — a resource field in Ecology,
-  // which layer to paint in Climate. A step that gives none gets no heading:
-  // the section is still its own box, spaced by the column's gap.
-  function setRows(nextRows: readonly OverlayListRow[], nextPicks: readonly OverlayListRow[] = [], title?: string): void {
+  // A group's `title` is its heading's catalog base, which the step names
+  // because each group asks its own question; a group without one gets no
+  // heading, and is still its own box, spaced by the column's gap.
+  let pickSections: HTMLElement[] = []
+  function setRows(nextRows: readonly OverlayListRow[], groups: readonly OverlayPickGroup[] = []): void {
     rows = nextRows
-    picks = nextPicks
+    picks = groups.flatMap((g) => g.rows)
     boxes.clear()
     rowHost.replaceChildren(...rows.map((row) => buildRow(row, 'checkbox', () => options.onToggle(row.id))))
-    pickHost.replaceChildren(...picks.map((row) => buildRow(row, 'radio', () => options.onPick(row.id))))
-    pickHost.classList.toggle('is-compact', picks.length >= PICK_GRID_MIN)
-    pickTitle.hidden = title === undefined
-    if (title !== undefined) {
-      pickTitle.dataset.t = `${title}.label`
-      pickTitle.dataset.help = title
-      pickTitle.textContent = t(`${title}.label` as TKey)
-    }
+    for (const old of pickSections) old.remove()
+    pickSections = groups.filter((g) => g.rows.length > 0).map((g, index) => {
+      const section = document.createElement('section')
+      section.className = 'gen-overlays gen-picks'
+      if (g.title !== undefined) {
+        const heading = document.createElement('h2')
+        heading.className = 'gen-section-title'
+        heading.dataset.t = `${g.title}.label`
+        heading.dataset.help = g.help ?? g.title
+        heading.textContent = t(`${g.title}.label` as TKey)
+        section.appendChild(heading)
+      }
+      const list = document.createElement('div')
+      list.className = 'gen-overlays__picks'
+      list.classList.add('is-compact')
+      list.replaceChildren(...g.rows.map((row) => buildRow(row, 'radio', () => options.onPick(row.id), index)))
+      section.appendChild(list)
+      host.appendChild(section)
+      return section
+    })
     overlaySection.hidden = rows.length === 0
-    pickSection.hidden = picks.length === 0
     host.hidden = rows.length === 0 && picks.length === 0
   }
 

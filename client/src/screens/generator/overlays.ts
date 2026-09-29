@@ -25,7 +25,15 @@ export type OverlayId =
   | 'currents'
   | 'upwelling'
   | 'salinity'
-  | 'weather'
+  | 'fog'
+  | 'foehn'
+  | 'rainVariability'
+  | 'enso'
+  | 'cyclone'
+  | 'tornado'
+  | 'blizzard'
+  | 'dust'
+  | 'thunder'
   | 'precipitation'
   | 'monsoon'
   | 'koppen'
@@ -57,19 +65,27 @@ export const OVERLAY_META: Record<OverlayId, OverlayMeta> = {
   cratonAge: { icon: '/icons/craton.png' },
   temperature: { icon: '/icons/temperature.png' },
   seasonality: { icon: '/icons/seasonality.png' },
-  // Placeholder: no pressure icon yet (the user picks icons).
-  pressure: { icon: '/icons/weather.png' },
+  pressure: { icon: '/icons/pressure.png' },
   wind: { icon: '/icons/wind.png' },
   currents: { icon: '/icons/gyres.png' },
   upwelling: { icon: '/icons/upwelling.png' },
   // Placeholder: no salinity icon yet (the user picks icons).
   salinity: { icon: '/icons/ocean.png' },
-  // Placeholder: no weather-phenomena icon yet (the user picks icons).
-  weather: { icon: '/icons/weather.png' },
+  // The weather phenomena (2026-09-29), each its own layer in the climate
+  // step's weather group. Rain variability borrows the rain icon until it
+  // has its own.
+  fog: { icon: '/icons/fog.png' },
+  foehn: { icon: '/icons/foehn.png' },
+  rainVariability: { icon: '/icons/rain.png' },
+  enso: { icon: '/icons/enso.png' },
+  cyclone: { icon: '/icons/hurricane.png' },
+  tornado: { icon: '/icons/tornado.png' },
+  blizzard: { icon: '/icons/blizzard.png' },
+  dust: { icon: '/icons/dust.png' },
+  thunder: { icon: '/icons/thunder.png' },
   precipitation: { icon: '/icons/rain.png' },
   monsoon: { icon: '/icons/weather.png' },
-  // Placeholder: no climate-class icon yet (the user picks icons).
-  koppen: { icon: '/icons/biomes.png' },
+  koppen: { icon: '/icons/climate.png' },
   biomes: { icon: '/icons/biomes.png' },
   rivers: { icon: '/icons/river.png' },
   waterBalance: { icon: '/icons/waterbilance.png' },

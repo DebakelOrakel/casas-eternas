@@ -53,8 +53,11 @@ import { relabel } from '../../i18n/relabel'
 import { createOverlayList } from './OverlayList'
 import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from './overlays'
 
-// The pick row that paints none of a step's exclusive layers (overlayList).
-const NO_PICK = 'none' as const
+// The pick row that paints none of a group's layers (overlayList): one per
+// group, `none:<index>` for the step's layer groups and `none:fields` for its
+// resource picks.
+const NO_PICK_PREFIX = 'none:'
+const noPickOf = (group: number | 'fields'): string => `${NO_PICK_PREFIX}${group}`
 import { STEPS, STEP_IDS, step, type StepId } from './steps'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createStoragePanel } from '../../ui/storagePanel/StoragePanel'
@@ -687,24 +690,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           </div>
           <input type="range" class="gen-param__range climate-month-input" min="0" max="12" step="1" value="0" disabled aria-label="${t('generator.climate.month.label')}" data-t-aria="generator.climate.month.label" />
         </div>
-        <!-- Which weather phenomenon the phenomena layer shows: one layer and
-             a pick, so the layer list stays short as phenomena are added. -->
-        <div class="gen-param" data-help="generator.climate.weather">
-          <div class="gen-param__head">
-            <span class="gen-param__label" data-t="generator.climate.weather.label">${t('generator.climate.weather.label')}</span>
-          </div>
-          <div class="gen-bake__tiers">
-            <button type="button" class="gen-tier" data-weather="fog" aria-pressed="true" disabled data-t="weather.fog.label" data-help="weather.fog">${t('weather.fog.label')}</button>
-            <button type="button" class="gen-tier" data-weather="foehn" aria-pressed="false" disabled data-t="weather.foehn.label" data-help="weather.foehn">${t('weather.foehn.label')}</button>
-            <button type="button" class="gen-tier" data-weather="rainVariability" aria-pressed="false" disabled data-t="weather.rainVariability.label" data-help="weather.rainVariability">${t('weather.rainVariability.label')}</button>
-            <button type="button" class="gen-tier" data-weather="enso" aria-pressed="false" disabled data-t="weather.enso.label" data-help="weather.enso">${t('weather.enso.label')}</button>
-            <button type="button" class="gen-tier" data-weather="cyclone" aria-pressed="false" disabled data-t="weather.cyclone.label" data-help="weather.cyclone">${t('weather.cyclone.label')}</button>
-            <button type="button" class="gen-tier" data-weather="tornado" aria-pressed="false" disabled data-t="weather.tornado.label" data-help="weather.tornado">${t('weather.tornado.label')}</button>
-            <button type="button" class="gen-tier" data-weather="blizzard" aria-pressed="false" disabled data-t="weather.blizzard.label" data-help="weather.blizzard">${t('weather.blizzard.label')}</button>
-            <button type="button" class="gen-tier" data-weather="dust" aria-pressed="false" disabled data-t="weather.dust.label" data-help="weather.dust">${t('weather.dust.label')}</button>
-            <button type="button" class="gen-tier" data-weather="thunder" aria-pressed="false" disabled data-t="weather.thunder.label" data-help="weather.thunder">${t('weather.thunder.label')}</button>
-          </div>
-        </div>
       </section>
       <div class="gen-step__foot">
         <!-- No stats: the world's coldest and warmest cell said little once
@@ -851,7 +836,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const resetClimateButton = root.querySelector<HTMLButtonElement>('[data-action="reset-climate"]')!
   const climateMonthInput = root.querySelector<HTMLInputElement>('.climate-month-input')!
   const climateMonthLabel = root.querySelector<HTMLElement>('[data-value="climate-month-label"]')!
-  const weatherPicks = [...root.querySelectorAll<HTMLButtonElement>('[data-weather]')]
   const resetEcologyButton = root.querySelector<HTMLButtonElement>('[data-action="reset-ecology"]')!
   const resetMigrationButton = root.querySelector<HTMLButtonElement>('[data-action="reset-migration"]')!
   // The artifact cache is filled by the worldmap, but inspecting it is just
@@ -1044,7 +1028,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     refineClimateButton.disabled = busy || lastTemperature === null || lastRefined !== null
     resetClimateButton.disabled = busy || lastRefined === null
     climateMonthInput.disabled = lastRefined === null
-    for (const pick of weatherPicks) pick.disabled = lastRefined === null
     resetEcologyButton.disabled = busy
     resetMigrationButton.disabled = busy
     saveMenu.setEnabled(!busy)
@@ -1777,7 +1760,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // year on the land, blended over the land cells and painted on land
   // pixels, as the upwelling is on the sea. Full colour at half the year.
   type WeatherId = 'fog' | 'foehn' | 'rainVariability' | 'enso' | 'cyclone' | 'tornado' | 'blizzard' | 'dust' | 'thunder'
-  let pickedWeather: WeatherId = 'fog'
+  const WEATHER_IDS: readonly WeatherId[] = ['fog', 'foehn', 'rainVariability', 'enso', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder']
   // The picked phenomenon's field, and how it is drawn: a share with its
   // colour at full strength (`full`), or the see-saw's signed mark, brown
   // for drier and blue for wetter.
@@ -1801,11 +1784,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     dust: { rgb: [190, 150, 80], full: 1 },
     thunder: { rgb: [230, 180, 30], full: 1 },
   }
-  function paintWeather(data: Uint8ClampedArray): void {
-    const field = weatherField(pickedWeather)
+  function paintWeather(data: Uint8ClampedArray, id: WeatherId): void {
+    const field = weatherField(id)
     const precipitation = lastPrecipitation
     if (!field || !precipitation || !lastRelief) return
-    const style = WEATHER_STYLE[pickedWeather]
+    const style = WEATHER_STYLE[id]
     for (let y = 0; y < MAP_HEIGHT; y++) {
       const fy = (y + 0.5) / MAP_HEIGHT * climateResY - 0.5
       const y0 = Math.floor(fy)
@@ -2276,7 +2259,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     { id: 'equator', enabled: true, paint: (c) => paintWrapped(c, drawEquator) },
     { id: 'upwelling', enabled: false, paintPixels: paintUpwelling },
     { id: 'salinity', enabled: false, paintPixels: paintSalinity },
-    { id: 'weather', enabled: false, paintPixels: paintWeather },
+    ...WEATHER_IDS.map((id) => ({ id, enabled: false, paintPixels: (data: Uint8ClampedArray) => paintWeather(data, id) })),
     { id: 'pressure', enabled: false, paint: drawPressure },
     { id: 'wind', enabled: false, paint: drawWind },
     { id: 'currents', enabled: false, paint: drawCurrents },
@@ -2396,6 +2379,39 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // climate computes as a year).
     chart?: (cell: ProbeCell) => ProbeChart | null
   }
+  // The weather phenomena's rows, one per layer (2026-09-29: each its own
+  // layer in the climate step's weather group): a share of the year or of
+  // the world's strongest from pale to the phenomenon's colour, and the ENSO
+  // see-saw's signed mark with its period in the title.
+  function weatherReadouts(): Record<WeatherId, OverlayReadout> {
+    const pale: [number, number, number] = [236, 236, 230]
+    const entry = (id: WeatherId): OverlayReadout => ({
+      available: () => lastRefined !== null,
+      legend: () => {
+        const style = WEATHER_STYLE[id]
+        if (id === 'enso') {
+          const period = lastRefined?.reliability.ensoPeriodYears ?? 0
+          const title = period > 0 ? `${t('overlay.enso.label')} · ${t('overlay.enso.period', { v: period.toFixed(1) })}` : t('overlay.enso.label')
+          return { type: 'gradient', title, unit: t('overlay.enso.legend.unit'), stops: [
+            { value: -100, rgb: style.signed! }, { value: 0, rgb: pale }, { value: 100, rgb: style.rgb },
+          ] }
+        }
+        return { type: 'gradient', title: t(`overlay.${id}.label` as TKey), unit: t('common.unit.percent'), stops: [
+          { value: 0, rgb: pale }, { value: style.full * 100, rgb: style.rgb },
+        ] }
+      },
+      probe: (cell) => {
+        const v = weatherField(id)?.[cell.i] ?? 0
+        if (!cell.land || Math.abs(v) <= 0.005) return []
+        const shown = id === 'enso' ? `${v > 0 ? '+' : '−'}${Math.round(100 * Math.abs(v))}` : `${Math.round(100 * v)}`
+        return [{ label: t(`overlay.${id}.label` as TKey), value: formatValue(shown, 'common.unit.percent') }]
+      },
+    })
+    return {
+      fog: entry('fog'), foehn: entry('foehn'), rainVariability: entry('rainVariability'), enso: entry('enso'),
+      cyclone: entry('cyclone'), tornado: entry('tornado'), blizzard: entry('blizzard'), dust: entry('dust'), thunder: entry('thunder'),
+    }
+  }
   const overlayReadout: Record<OverlayId, OverlayReadout> = {
     terrain: { available: () => lastColoredBase !== null, legend: null, probe: null },
     // Available from the hand-over on, running or not — the plates are the thing
@@ -2483,29 +2499,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         ? [{ label: t('readout.row.season'), value: t('readout.seasonSwing', { v: (lastSeasonality[cell.i] / 2).toFixed(1) }) }]
         : [],
     },
-    weather: {
-      available: () => lastRefined !== null,
-      legend: () => {
-        const style = WEATHER_STYLE[pickedWeather]
-        const pale: [number, number, number] = [236, 236, 230]
-        if (pickedWeather === 'enso') {
-          const period = lastRefined?.reliability.ensoPeriodYears ?? 0
-          const title = period > 0 ? `${t('weather.enso.label')} · ${t('weather.enso.period', { v: period.toFixed(1) })}` : t('weather.enso.label')
-          return { type: 'gradient', title, unit: t('weather.enso.legend.unit'), stops: [
-            { value: -100, rgb: style.signed! }, { value: 0, rgb: pale }, { value: 100, rgb: style.rgb },
-          ] }
-        }
-        return { type: 'gradient', title: t(`weather.${pickedWeather}.label` as TKey), unit: t('common.unit.percent'), stops: [
-          { value: 0, rgb: pale }, { value: style.full * 100, rgb: style.rgb },
-        ] }
-      },
-      probe: (cell) => {
-        const v = weatherField(pickedWeather)?.[cell.i] ?? 0
-        if (!cell.land || Math.abs(v) <= 0.005) return []
-        const shown = pickedWeather === 'enso' ? `${v > 0 ? '+' : '−'}${Math.round(100 * Math.abs(v))}` : `${Math.round(100 * v)}`
-        return [{ label: t(`weather.${pickedWeather}.label` as TKey), value: formatValue(shown, 'common.unit.percent') }]
-      },
-    },
+    ...weatherReadouts(),
     salinity: {
       available: () => lastRefined !== null,
       legend: () => ({ type: 'gradient', title: t('overlay.salinity.label'), unit: t('common.unit.psu'), stops: salinityLegendStops, items: [
@@ -2686,7 +2680,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // a step that paints a resource field, that layer. The order is the column's.
   function probedLayers(stepId: StepId): OverlayId[] {
     const s = step(stepId)
-    return [...s.overlays, ...s.exclusive, ...(s.fields.length > 0 ? ['ecology' as const] : [])]
+    return [...s.overlays, ...s.groups.flatMap((g) => g.members), ...(s.fields.length > 0 ? ['ecology' as const] : [])]
   }
   function probeRowsFor(stepId: StepId, cell: ProbeCell): ProbeRow[] {
     return probedLayers(stepId).flatMap((id) => {
@@ -2916,19 +2910,25 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   const isOverlayId = (id: string): id is OverlayId => id in OVERLAY_META
 
-  // Pick one of the step's exclusive layers: it comes on, the rest of ITS group
-  // goes off. The group is read from the step table rather than kept a second
-  // time, and the state is the ordinary `overlaysOn` — a pick is a switch that
-  // turns its siblings off, not a second kind of thing to keep in sync.
-  // `NO_PICK` switches the whole group off.
-  function pickExclusiveOverlay(id: OverlayId | typeof NO_PICK): void {
+  // Pick one of a group's layers: it comes on, the rest of ITS group goes
+  // off, the other groups stay as they are. The groups are read from the
+  // step table rather than kept a second time, and the state is the ordinary
+  // `overlaysOn` — a pick is a switch that turns its siblings off, not a
+  // second kind of thing to keep in sync. A group's "none" switches it off;
+  // the resource picks' "none" switches the ecology layer off.
+  function pickExclusiveOverlay(id: string): void {
     const current = step(STEP_IDS[panelIndex])
-    const group = current.exclusive
-    if (id !== NO_PICK && !group.includes(id)) return
-    for (const member of group) overlaysOn[member] = member === id
-    // In a step that paints a resource field, `NO_PICK` is the field picks'
-    // way out as well: the ecology layer goes off.
-    if (id === NO_PICK && current.fields.length > 0) overlaysOn.ecology = false
+    if (id === noPickOf('fields')) {
+      overlaysOn.ecology = false
+    } else if (id.startsWith(NO_PICK_PREFIX)) {
+      const group = current.groups[Number(id.slice(NO_PICK_PREFIX.length))]
+      if (!group) return
+      for (const member of group.members) overlaysOn[member] = false
+    } else {
+      const group = current.groups.find((g) => g.members.includes(id as OverlayId))
+      if (!group) return
+      for (const member of group.members) overlaysOn[member] = member === id
+    }
     updateOverlays()
   }
 
@@ -2937,10 +2937,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // when it is the one being painted.
   function refreshOverlayList(): void {
     const ecologyAvailable = overlayAvailable('ecology')
+    const current = step(STEP_IDS[panelIndex])
     overlayList.refresh((id) => isOverlayId(id)
       ? { on: overlaysOn[id], available: overlayAvailable(id) }
-      : id === NO_PICK
-        ? { on: !step(STEP_IDS[panelIndex]).exclusive.some((member) => overlaysOn[member]) && !(step(STEP_IDS[panelIndex]).fields.length > 0 && overlaysOn.ecology), available: true }
+      : id === noPickOf('fields')
+        ? { on: !overlaysOn.ecology, available: true }
+      : id.startsWith(NO_PICK_PREFIX)
+        ? { on: !(current.groups[Number(id.slice(NO_PICK_PREFIX.length))]?.members.some((member) => overlaysOn[member]) ?? false), available: true }
       // The PICK, not what a hover is showing: hovering a lever previews the
       // aggregate, and the mark would leave the resource you chose.
       : { on: overlaysOn.ecology && pickedEcologyField === id, available: ecologyAvailable })
@@ -5572,14 +5575,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     dropRefinement()
     requestClimate()
   })
-  for (const pick of weatherPicks) {
-    pick.addEventListener('click', () => {
-      pickedWeather = pick.dataset.weather as WeatherId
-      for (const other of weatherPicks) other.setAttribute('aria-pressed', String(other === pick))
-      applyOverlays()
-      renderLegends()
-    })
-  }
   climateMonthInput.addEventListener('input', () => {
     climateMonth = Number(climateMonthInput.value)
     sayClimateMonth()
@@ -5926,7 +5921,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onToggle: (id) => toggleOverlay(id as OverlayId),
     // One pick group, two kinds of member: a layer the step shows one at a time,
     // or — in Ecology — a resource field the one layer paints. The id says which.
-    onPick: (id) => (isOverlayId(id) || id === NO_PICK ? pickExclusiveOverlay(id) : selectEcologyField(id as EcologyFieldId)),
+    onPick: (id) => (isOverlayId(id) || id.startsWith(NO_PICK_PREFIX) ? pickExclusiveOverlay(id) : selectEcologyField(id as EcologyFieldId)),
   })
   // The steps whose controls have moved out of the panel row at the foot and
   // into the column. The rest follow one per step, in pipeline order.
@@ -6063,16 +6058,28 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     overlayList.setRows(
       stepDef.overlays.map((id) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })),
       [
-        // The way out of a pick group, first and the default (2026-09-22): a
-        // step that paints one of its layers at a time starts painting none.
-        // The resource picks have it too (2026-09-27): it is how the ecology
-        // layer goes off, and the panel shows the levers of the whole map
-        // while nothing is picked.
-        ...(stepDef.exclusive.length > 0 || stepDef.fields.length > 0 ? [{ id: NO_PICK, helpBase: 'overlay.none', icon: '/icons/clear.png' }] : []),
-        ...stepDef.exclusive.map((id) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })),
-        ...stepDef.fields.map((field) => ({ id: field, helpBase: `resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
+        // Each group opens with its way out, first and the default
+        // (2026-09-22): a step starts painting none of a group's layers. The
+        // groups share one hover card, which says what a group is.
+        ...stepDef.groups.map((g, index) => ({
+          title: g.title,
+          help: 'generator.section.climateFields',
+          rows: [
+            { id: noPickOf(index), helpBase: 'overlay.none', icon: '/icons/clear.png' },
+            ...g.members.map((id) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })),
+          ],
+        })),
+        // The resource picks have a "none" too (2026-09-27): it is how the
+        // ecology layer goes off, and the panel shows the levers of the whole
+        // map while nothing is picked.
+        ...(stepDef.fields.length > 0 ? [{
+          title: stepDef.fieldsTitle,
+          rows: [
+            { id: noPickOf('fields'), helpBase: 'overlay.none', icon: '/icons/clear.png' },
+            ...stepDef.fields.map((field) => ({ id: field, helpBase: `resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
+          ],
+        }] : []),
       ],
-      stepDef.pickTitle,
     )
     // As you left it, or — the first time on this world — the step's defaults.
     const remembered = overlayMemory.get(stepDef.id)
