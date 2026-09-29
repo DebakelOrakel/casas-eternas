@@ -484,8 +484,30 @@ SLOPE_RECALIBRATION). The places' rain ×1.98 → ×1.78 off, the right group
 71 → 73 %, the groups' shares 10 → 7 points off; Riyadh 390, Alice Springs
 465, Madrid 530. What is left in the deserts is the plain rain: Riyadh's
 air comes off the Gulf from the east in July, where on Earth the shamal
-comes from the northwest, off dry land. Lima (467 mm, 10 on Earth) is not
-explained yet.
+comes from the northwest, off dry land. Lima (467 mm, 10 on Earth) is
+the grid: its 62 km cell is the Andes' western slope, and the air there
+comes over the range from the Amazon.
+
+**The desert heat, tried** (2026-09-29, dropped). Riyadh is 5 °C too cold
+in the year and 9 °C in July (27 °C, 36 on Earth). Two tries, both
+dropped:
+
+- Dry land swings more (the energy balance's absorbed sun up and its
+  damping down by the dryness, the dryness from a first refined pass, so
+  the refinement runs twice, 5 → 10 s). Riyadh's July 27 → 28–29 °C only,
+  and the monsoon lands the model leaves dry run away (Delhi's July 33 →
+  38–41 °C, January 13 → 6–10); the cells' class 37 → 31–35 %.
+- Sinking air warms the land below it (the rain's subsidence field, 2–6 °C
+  where it sinks in full, up to 40° of latitude). It warms the deserts'
+  winters, not their summers: the band's dry core moves toward the equator
+  in winter, and in July Riyadh is not under it. The groups' shares 7 → 4
+  points off, but the places' January error 3.3 → 3.6–3.8 °C and Perth,
+  Santiago and Los Angeles move further off.
+
+What Arabia misses in July is the sinking air west of the Asian monsoon
+(on Earth the monsoon's heat drives it) and the dry northwesterly with it.
+The model's July has Riyadh under the moving band's rain side and its air
+off the Gulf. This is the monsoon again, from its other side.
 
 The step-0 temperatures, tried (2026-09-29). The places' annual means are
 off in a regional pattern: highlands and the dry subtropics too cold
