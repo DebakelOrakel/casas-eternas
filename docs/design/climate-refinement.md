@@ -452,6 +452,23 @@ Reykjavik 14, the places' January error 3.5 → 3.3 °C, their swing error
 5.2 → 4.7 °C, the rest as it was. The overturning's warmth now reaches the
 land with the wind too (carryInland), as the currents' own anomaly does.
 
+**The Pakistan heat low, tried** (2026-09-29, dropped). In July the Bay of
+Bengal's southwest monsoon is there (Kolkata and Nagpur get their summer
+rain), but the pressure falls toward the east — Pakistan 1011 hPa, Delhi
+1008, the Bay 1003 — where Earth's monsoon trough is deepest in the
+northwest (~997 over Pakistan), so Delhi gets the Thar's westerly. The
+deserts' summers are too cool to make that low (Riyadh July 27 °C, 36 on
+Earth) and their years too flat (Riyadh's swing 13 °C, 21). Tried: the
+energy balance's damping cut on dry land, since dry ground cannot cool by
+evaporating. The dryness had to come from the cheap climate's rain, which
+calls the monsoon lands dry (Delhi and Beijing get next to none there) and
+Arabia wet; at a cut of 0.4 Delhi's year ran 7 → 39 °C, at 0.8 −8 → 54,
+and Riyadh barely moved. What stands in the way is the deserts' rain:
+Riyadh gets 1264 mm a year in the refinement (100 on Earth), nearly all of
+it upslope rain of air off the Gulf. A dryness the energy balance can
+trust needs that fixed first — then the dry land's damping, then the heat
+low.
+
 The step-0 temperatures, tried (2026-09-29). The places' annual means are
 off in a regional pattern: highlands and the dry subtropics too cold
 (Tehran −7 °C, Mexico City −6, Riyadh −5), the interiors and east coasts of
