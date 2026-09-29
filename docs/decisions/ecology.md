@@ -248,17 +248,17 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      unreliable rain costs harvest unless a river waters the fields. A
      climate that was not refined gives the annual means and no risk.
      Measured on Earth: farmland against non-farmland ×1.9 → ×2.75. See
-     computeArable and the arable constants in ecologyTuneParams.ts.
+     prepareEcology and the arable constants in ecologyTuneParams.ts.
      **Salt reworked 2026-09-29:** warm and dry counts per month (salt
      works need a dry season, not a dry year), and a terminal basin's salt
      flat (hydrology) is salt in full. Tried and dropped: the sea's salinity
-     and the shore's flatness. See computeSalt and the salt constants.
+     and the shore's flatness. See prepareEcology and the salt constants.
      **Water in dry land 2026-09-29:** an oasis (hydrogeology's spring in
      an arid climate) waters its cell's fields as a big river does; below
      400 mm of rain the grazing needs water for the herds, a river or a
      hand-dug well (water table within 30 m). Wells as irrigation were
      tried and dropped (two thirds of the dry land became farmland). See
-     fieldWater, herdWater and computePasture.
+     prepareEcology.
      **Game, pasture and timber on the fine biomes 2026-09-29:** timber and
      grazing are their tables' mean over the cell's biomes on the world
      raster (the riparian ones, so the gallery forests count); game's
@@ -267,7 +267,8 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      coarse biome stands in. The fields stay on the climate grid.
      **Resolution:** decided 2026-09-29 in
      [ecology-as-function.md](./ecology-as-function.md): the fields become a
-     local rule evaluated where one looks, not a stored raster.
+     local rule evaluated where one looks, not a stored raster. Step 1
+     built the same day: the fields per pixel at 2048 on the map.
    - **2b — fish** ✅ BUILT 2026-07-26 (pending visual check): marine (coastalness
      × shelf-base + upwelling from adjacent-ocean current strength) + freshwater
      (big rivers via discharge + lake presence), saturating; a 4th subsistence
@@ -281,7 +282,7 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      and the shelf share (sea to 200 m), not the current speed; a straight
      coast reaches the sea in full. A climate that was not refined has no
      upwelling, and its fish lose that term. Measured on Earth: rich fishing
-     coasts against poor ones ×1.2 → ×2.3. See computeFish and the fish
+     coasts against poor ones ×1.2 → ×2.3. See prepareEcology and the fish
      constants in ecologyTuneParams.ts.
    - **2c — material** ✅ BUILT 2026-07-26 (pending visual check): timber (biome),
      salt (arid coasts/interior; + small carrying-cap preservation bonus — the

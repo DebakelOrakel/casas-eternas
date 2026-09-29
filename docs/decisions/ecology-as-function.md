@@ -2,8 +2,8 @@
 summary: The ecology fields become a local rule over the coarse climate, the fine terrain and water, and the tectonic features, evaluated at whatever resolution one looks at (2048 in the generator, the tile's own in a detail job), instead of a raster stored at one resolution. The climate stays at 62 km and is downscaled by the terrain where a tile needs it. The save carries the inputs, not the fields.
 date: 2026-09-29
 area: generator
-stage: decided
-status: decided 2026-09-29; nothing built. The ecology fields read the refined climate and the fine hydrology since the same day (fish, arable, salt, water, game/pasture/timber — see ecology.md), but they are still computed and stored on the 256×128 climate grid.
+stage: building
+status: decided 2026-09-29; step 1 BUILT the same day — the rule runs per pixel at 2048×1024 (prepareEcology, some 2 s, kept by the worker while only the sliders move; applyEcology, some 0.3 s), the map and its readout show it, the save and the migration read its means per climate cell. Steps 2–4 open.
 ---
 
 # Ecology as a function, not a raster
@@ -111,3 +111,25 @@ is downscaled by the terrain in the tile.
    the detail jobs of [adaptive-mesh.md](./adaptive-mesh.md), not before.
 
 The biomes follow the same path; they are a local rule too.
+
+## Step 1, built (2026-09-29)
+
+`ecology/ecologyField.ts`: `prepareEcology` evaluates the physics per pixel
+of the world raster, `applyEcology` the step's sliders, `computeEcology`
+both. The climate is read at the pixel by a bilinear over the cells that
+fit (land or sea), the temperature at sea level with the pixel's own
+lapse. The neighbour rules are reaches in metres (`coastReachM`,
+`waterReachM`, `ecotoneReachM`); the slope is the pixel's, read against a
+climate cell's length. The worker sends the fine fields as one byte a
+pixel (29 MB for fourteen, 117 MB as floats) with the cell means beside
+them.
+
+Measured on Earth (scratch runs of the refined climate with its rivers,
+the value at the place's own pixel): arable's farmland against the rest
+0.17 against 0.04 (×4.3; was ×2.75 per cell, Tanta 0.31 → 0.51 on the
+Nile's strip); fish's rich coasts against the poor 0.28 against 0.14
+(×2.05; was ×2.3 per cell) once the shelf counted as its share within
+reach (as any shelf pixel within reach ×1.55); salt 0.26 against 0.01
+(was 0.27 against 0.01). As cell means, the carrying capacity 0.35 →
+0.29: the fish and the irrigation reach a strip, no longer the whole
+cell.

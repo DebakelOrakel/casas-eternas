@@ -44,7 +44,7 @@ import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
 import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../generator/climate/biomes'
 import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
-import { ECOLOGY_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
+import { ECOLOGY_OCEAN, decodeFineValue, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { DISCHARGE_LAYER, FORCING_LAYERS, REFINED_LAYERS, WORLD_LAYERS, bakeLayer, decodeLayer } from '../../world/save/worldLayers'
 import { refinedFromLayers, refinedLayerSources } from '../../world/save/refinedLayers'
 import type { RefinedClimate } from '../../generator/climate/refinement'
@@ -1369,6 +1369,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // single ecology overlay paints whichever `selectedEcologyField` is chosen in
   // the panel selector, on an absolute 0..1 scale.
   let lastEcologyFields: Partial<Record<EcologyFieldId, Float32Array>> = {}
+  // The same fields per pixel of the world raster, one byte each
+  // (ecologyField.encodeFineField) — what the map paints and the readout
+  // reads. Empty for a world loaded from a save until the step runs.
+  let lastEcologyFine: Partial<Record<EcologyFieldId, Uint8Array>> = {}
+  let ecologyFineResX = 0
+  let ecologyFineResY = 0
   let selectedEcologyField: EcologyFieldId = 'carryingCapacity'
   // What the picker last CHOSE, as opposed to what a hover is momentarily
   // showing. Leaving a hover returns here; it used to return to the aggregate,
@@ -1577,19 +1583,21 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // visible (a uniform scale would vanish under max-normalisation). Ocean =
   // ECOLOGY_OCEAN sentinel, left as terrain. No-op until computed.
   function paintEcology(data: Uint8ClampedArray): void {
+    const fine = lastEcologyFine[selectedEcologyField]
     const field = lastEcologyFields[selectedEcologyField]
-    if (!field) return
+    if (!fine && !field) return
     const baseAlpha = 0.6
     // Deposit fields (fadeZero) blend out below this value — barren land shows
     // terrain instead of the ramp's 0% tint, and the Gaussian deposit halos fade
     // smoothly into it rather than ending in a hard stamp edge.
     const fadeIn = 0.05
     const fadeZero = ECOLOGY_FIELD_META[selectedEcologyField].fadeZero === true
+    const [rx, ry] = fine ? [ecologyFineResX, ecologyFineResY] : [ecologyResX, ecologyResY]
     for (let y = 0; y < MAP_HEIGHT; y++) {
-      const gy = Math.min(ecologyResY - 1, Math.floor((y / MAP_HEIGHT) * ecologyResY))
+      const gy = Math.min(ry - 1, Math.floor((y / MAP_HEIGHT) * ry))
       for (let x = 0; x < MAP_WIDTH; x++) {
-        const gx = Math.min(ecologyResX - 1, Math.floor((x / MAP_WIDTH) * ecologyResX))
-        const v = field[gy * ecologyResX + gx]
+        const gx = Math.min(rx - 1, Math.floor((x / MAP_WIDTH) * rx))
+        const v = fine ? decodeFineValue(fine[gy * rx + gx]) : field![gy * rx + gx]
         if (v === ECOLOGY_OCEAN) continue
         const alpha = fadeZero ? baseAlpha * Math.min(1, v / fadeIn) : baseAlpha
         if (alpha === 0) continue
@@ -2668,11 +2676,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       available: hasEcologyData,
       legend: null,
       probe: (cell) => {
+        const fine = lastEcologyFine[selectedEcologyField]
         const field = lastEcologyFields[selectedEcologyField]
-        if (!field || ecologyResX <= 0) return []
-        const ex = Math.min(ecologyResX - 1, Math.floor((cell.gx / Math.max(1, climateResX)) * ecologyResX))
-        const ey = Math.min(ecologyResY - 1, Math.floor((cell.gy / Math.max(1, climateResY)) * ecologyResY))
-        const v = field[ey * ecologyResX + ex]
+        let v: number
+        if (fine && ecologyFineResX === MAP_WIDTH && ecologyFineResY === MAP_HEIGHT) {
+          v = decodeFineValue(fine[cell.fine])
+        } else {
+          if (!field || ecologyResX <= 0) return []
+          const ex = Math.min(ecologyResX - 1, Math.floor((cell.gx / Math.max(1, climateResX)) * ecologyResX))
+          const ey = Math.min(ecologyResY - 1, Math.floor((cell.gy / Math.max(1, climateResY)) * ecologyResY))
+          v = field[ey * ecologyResX + ex]
+        }
         return v === ECOLOGY_OCEAN ? [] : [{ label: t(`resource.${selectedEcologyField}.label` as TKey), value: formatValue(String(Math.round(v * 100)), 'common.unit.percent') }]
       },
     },
@@ -3725,6 +3739,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     for (const f of message.fields) lastEcologyFields[f.id as EcologyFieldId] = new Float32Array(f.data)
     ecologyResX = message.resX
     ecologyResY = message.resY
+    lastEcologyFine = {}
+    for (const f of message.fine.fields) lastEcologyFine[f.id as EcologyFieldId] = new Uint8Array(f.data)
+    ecologyFineResX = message.fine.resX
+    ecologyFineResY = message.fine.resY
     ecologyInFlight = false
     updateControlsDisabled()
     updateProgress()
@@ -3735,6 +3753,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   function clearEcology(): void {
     lastEcologyFields = {}
+    lastEcologyFine = {}
     updateOverlays()
   }
 

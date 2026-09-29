@@ -94,15 +94,16 @@ export const ECOLOGY_TUNING = {
   wGame: 0.45,
   wPasture: 0.35,
 
-  // Fish tuning (computeFish). A sea's richness = a base + the shelf share
+  // Fish tuning (prepareEcology). A sea's richness = a base + the shelf share
   // + the upwelling + the winter mixing, each weighted; freshwater = big
   // rivers + lake presence. The upwelling counts in full at
   // `fishUpwellingFull` (the refinement's units: at 3 it cools the sea by
   // its full 6 °C, climateTuneParams.upwellingMaxCoolingC). The mixing is
   // full from `fishMixFullC` down to `fishMixIceC`, gone at `fishMixWarmC`
   // and `fishMixIceSpanC` below the ice. Shelf: sea to `fishShelfDepthM`.
-  // A coast reaches the sea in full with `fishFullSeaNeighbours` of its 8
-  // neighbours sea (a straight coast).
+  // A coast reaches the sea in full where `fishFullSeaShare` of the land
+  // within `coastReachM` is sea (a straight coast; it was 3 of a climate
+  // cell's 8 neighbours before the fields went per pixel).
   // Measured on Earth (scratch run of the refined climate, 2026-09-29), nine
   // rich fishing coasts (Lima, Walvis Bay, Agadir, Monterey, Bergen,
   // St John's, Hokkaido, Aberdeen, Reykjavik) against six poor ones (Jeddah,
@@ -112,7 +113,10 @@ export const ECOLOGY_TUNING = {
   // (×2.3; Lima 0.38, Walvis Bay 0.35, Kingston 0.08), the coasts' mean
   // 0.14 → 0.16. Left: Athens 0.25 (the Mediterranean is poor from its
   // circulation, which this does not know) and Agadir 0.10 (the refined
-  // wind gives Morocco no upwelling).
+  // wind gives Morocco no upwelling). Per pixel (the same day, the value at
+  // the place itself): 0.28 against 0.14 (×2.05) with the shelf as its
+  // share within reach; as a shelf pixel anywhere within reach ×1.55 (every
+  // warm coast has some shelf).
   fishSeaBase: 0.05,
   fishShelfW: 0.15,
   fishUpwellingW: 0.3,
@@ -123,11 +127,20 @@ export const ECOLOGY_TUNING = {
   fishMixIceC: -1,
   fishMixIceSpanC: 6,
   fishShelfDepthM: 200,
-  fishFullSeaNeighbours: 3,
+  fishFullSeaShare: 3 / 8,
+  // The reaches of the per-pixel rule (docs/decisions/ecology-as-function.md),
+  // metres: the sea a coast fishes and makes salt from, and the shelf it
+  // counts; the water a field or a herd reaches (a river, a lake, a well,
+  // an oasis); the land whose biomes make an edge for game. Set, not
+  // measured: a day's walk to the sea, a pixel to the water, two pixels of
+  // edge.
+  coastReachM: 30000,
+  waterReachM: 8000,
+  ecotoneReachM: 16000,
   fishRiverW: 0.6,
   fishLakeW: 0.5,
 
-  // Arable (computeArable): the coldest month that still grows, °C; a big
+  // Arable (prepareEcology): the coldest month that still grows, °C; a big
   // river's water on the fields, mm/yr at full flow; the harvest's loss per
   // unit of the rain's variability.
   // Measured on Earth (scratch run of the refined climate with its rivers,
@@ -144,7 +157,7 @@ export const ECOLOGY_TUNING = {
   arableFrostC: 5,
   arableIrrigationMm: 1000,
   arableRiskW: 1,
-  // Water in dry land (fieldWater, herdWater, computePasture): an oasis
+  // Water in dry land (prepareEcology): an oasis
   // waters its cell's fields as a big river does (`oasisW`); a herd drinks
   // where the water table lies within `wellDepthM` (a hand-dug well), the
   // cell's share of it × `wellW`; below `pastureDryMm` of rain the grazing
@@ -166,15 +179,18 @@ export const ECOLOGY_TUNING = {
   // Arable flatness sensitivity: steeper ground is progressively harder to farm.
   // Scaled by SLOPE_RECALIBRATION (see elevationScale.ts): flatness reads raw
   // elevation differences, which halved, so without this every slope on the map
-  // would suddenly count as farmable. Used here and in flatnessAt (wetland, tool
-  // stone).
+  // would suddenly count as farmable. Read per pixel as the rise across a
+  // climate cell's length (the scale it was set on); used for arable,
+  // wetland and flint.
   slopeK: 8 * SLOPE_RECALIBRATION,
 
   // Ecotone (biome-boundary) game bonus and its cap.
   ecotoneBonus: 0.18,
-  // The share of a cell's fine neighbour pairs whose biomes differ at which
-  // it counts as an edge in full (computeGame): at 8 fine pixels a side, one
-  // straight border through the cell is some 0.06. Measured on Earth
+  // The share of edge at which it counts in full: per pixel, the share of
+  // its four neighbours of another biome, averaged within `ecotoneReachM`.
+  // (Before the fields went per pixel: the share of a climate cell's fine
+  // neighbour pairs; one straight border through the cell was some 0.06.
+  // Per pixel the land's game mean stays 0.21.) Measured on Earth
   // (scratch run of the refined climate, 2026-09-29): game's land mean
   // 0.233 (annual means, coarse edges) → 0.210 (months, fine edges), 9 % of
   // the cells move by more than 0.1; with the fine biomes' mean pasture
@@ -208,7 +224,7 @@ export const ECOLOGY_TUNING = {
   goldLodeKeep: 0.5,
   gemKeep: 0.5,
 
-  // Salt (computeSalt): below this precip (a month's rate where the climate
+  // Salt (prepareEcology): below this precip (a month's rate where the climate
   // has months) a cell reads arid; coasts evaporate best; a salt flat
   // counts `saltFlatW`.
   // Measured on Earth (scratch run of the refined climate with its rivers

@@ -4,16 +4,21 @@
 // saturating combination of the subsistence fields, run through the two
 // top-level knobs (carrying capacity = level, concentration = spatial structure).
 //
-// PHASE 2a: subsistence split (arable / game / pasture) + the aggregate. Fish
-// (sea/coast/freshwater), material (timber/salt/tool-stone/metals) and
-// prestige (gold/silver/gems) grow the field set in later sub-steps; the field
-// registry + selector already carry them.
+// A LOCAL RULE, evaluated per pixel of the world raster
+// (docs/decisions/ecology-as-function.md): the coarse climate interpolated to
+// the pixel (its temperature with the pixel's own lapse), the pixel's terrain,
+// the water and the sea within a reach in metres, the tectonic features near
+// it. Nothing here counts climate cells. The fields on the climate grid, which
+// the save and the migration read, are the fine ones averaged over each cell's
+// land.
 
-import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../climate/climateField'
+import { CLIMATE_TUNING } from '../climate/climateTuneParams'
 import { OCEAN_PRECIP } from '../climate/precipitation'
-import { Biome } from '../climate/biomes'
+import { Biome, reduceTemperatureToSeaLevel } from '../climate/biomes'
 import { clamp01, smoothstep } from '../core/interpolation'
-import { downsampleBox, downsampleMax, wrapValue } from '../core/field'
+import { wrapValue } from '../core/field'
+import { MAP_WIDTH, METERS_PER_CELL } from '../core/mapConfig'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { ECOLOGY_TUNING, PASTURE_BY_BIOME, TIMBER_BY_BIOME } from './ecologyTuneParams'
 import type { Volcano } from '../tectonics/volcanoes'
@@ -39,6 +44,19 @@ export const ECOLOGY_FIELD_IDS = [
 
 export type EcologyFieldId = (typeof ECOLOGY_FIELD_IDS)[number]
 
+// The fine fields travel to the screen as one byte per pixel: a value v
+// (0..3, the save's range) as round(v / ECOLOGY_FINE_STEP), the sea as
+// ECOLOGY_FINE_OCEAN. Fourteen fields at 2048×1024 are 29 MB so, 117 MB as
+// floats.
+export const ECOLOGY_FINE_OCEAN = 255
+export const ECOLOGY_FINE_STEP = 3 / 254
+export function encodeFineField(field: Float32Array): Uint8Array {
+  const out = new Uint8Array(field.length)
+  for (let i = 0; i < field.length; i++) out[i] = field[i] === ECOLOGY_OCEAN ? ECOLOGY_FINE_OCEAN : Math.min(254, Math.max(0, Math.round(field[i] / ECOLOGY_FINE_STEP)))
+  return out
+}
+export const decodeFineValue = (code: number): number => (code === ECOLOGY_FINE_OCEAN ? ECOLOGY_OCEAN : code * ECOLOGY_FINE_STEP)
+
 export interface EcologyParams {
   // Global carrying-capacity gain (%). 100 = neutral; scales the LEVEL only.
   carryingCapacity: number
@@ -59,22 +77,26 @@ export interface EcologyParams {
 }
 
 export interface EcologyFields {
+  // The fields on the climate grid (the fine ones averaged over each cell's
+  // land): what the save and the migration read.
   resX: number
   resY: number
   fields: Record<EcologyFieldId, Float32Array>
+  // The fields per pixel of the world raster: what the map shows.
+  fine: { resX: number; resY: number; fields: Record<EcologyFieldId, Float32Array> }
 }
 
 // Everything the ecology step reads. Climate fields are on the coarse grid;
-// elevation/discharge/lakeDepth are full-res (worldWidth×worldHeight), sampled/
-// downsampled here. Hydrology (discharge/lakeDepth) is optional — without it,
-// fish gets its marine component only (freshwater needs rivers/lakes).
+// elevation/discharge/lakeDepth are full-res (worldWidth×worldHeight). Hydrology
+// (discharge/lakeDepth) is optional — without it, fish gets its marine component
+// only (freshwater needs rivers/lakes).
 export interface EcologyInputs {
   temperature: Float32Array // climate grid, °C (SST-adjusted on ocean)
   precipitation: Float32Array // climate grid, mm/yr (OCEAN_PRECIP on water = land mask)
   biomes: Uint8Array // climate grid
   // The map's biomes on the world raster (the riparian ones), or null (no
   // hydrology yet): timber, grazing and game's edges then read the coarse
-  // `biomes`.
+  // `biomes`, each pixel its cell's.
   biomesFine: Uint8Array | null
   // The climate step's upwelling (refinement.ts, the cold-water part), climate
   // grid, 0 on land; null for a climate that was not refined (the
@@ -105,8 +127,8 @@ export interface EcologyInputs {
   // with the accumulated (advected) sutures for deep-time belts. Empty if the
   // world has had no continental collisions.
   orogenPoints: { x: number; y: number }[]
-  // Coarse (resX×resY) continental-crust oldness 0..1 (1 = ancient craton core),
-  // -1 over ocean — see rafts.computeCratonOldnessField. Feeds iron.
+  // Coarse (climate grid) continental-crust oldness 0..1 (1 = ancient craton
+  // core), -1 over ocean — see rafts.computeCratonOldnessField. Feeds iron.
   cratonAge: Float32Array
   warpSeed: number
   worldWidth: number
@@ -124,250 +146,6 @@ function productivity(tempC: number, precipMm: number): number {
   return Math.min(nppTemp, nppPrecip)
 }
 
-// --- subsistence fields (climate grid) --------------------------------------
-
-// Arable land: the growing year × terrain flatness (steep = poor; slope read
-// from the full-res elevation across the cell's climate-grid neighbours) ×
-// the harvest's reliability. The growing year is the mean of the months'
-// productivity: a month below `arableFrostC` grows nothing, and a month
-// takes its own rain, plus what a big river brings to its fields
-// (irrigation, up to `arableIrrigationMm` at the rate of a year). So a
-// monsoon or a Mediterranean year is read as it is, not as its mean, and
-// the Nile's banks are farmland in a desert. A harvest is less worth where
-// the rain fails often: × (1 − `arableRiskW` × the rain's variability), and
-// a river takes that risk away as far as it waters the fields. Without
-// months (a climate that was not refined) the annual means stand in.
-function computeArable(temperature: Float32Array, precipitation: Float32Array, months: EcologyInputs['months'], rainVariability: Float32Array | null, fieldWaterShare: Float32Array | null, elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number): Float32Array {
-  const T = ECOLOGY_TUNING
-  const n = CLIMATE_RES_X * CLIMATE_RES_Y
-  const out = new Float32Array(n)
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      const i = gy * CLIMATE_RES_X + gx
-      if (!land[i]) continue
-      const water = fieldWaterShare ? fieldWaterShare[i] : 0
-      let growing = 0
-      if (months) {
-        for (let m = 0; m < months.count; m++) {
-          const t = months.temperature[m * n + i]
-          if (t < T.arableFrostC) continue
-          growing += productivity(t, months.precipitation[m * n + i] + T.arableIrrigationMm * water) / months.count
-        }
-      } else {
-        growing = productivity(temperature[i], precipitation[i] + T.arableIrrigationMm * water)
-      }
-      const risk = rainVariability ? T.arableRiskW * rainVariability[i] * (1 - water) : 0
-      const eC = sampleElevationAtCell(elevation, gx, gy, worldW, worldH)
-      const eE = sampleElevationAtCell(elevation, (gx + 1) % CLIMATE_RES_X, gy, worldW, worldH)
-      const eS = sampleElevationAtCell(elevation, gx, (gy + 1) % CLIMATE_RES_Y, worldW, worldH)
-      const slope = Math.hypot(eE - eC, eS - eC)
-      const flatness = 1 / (1 + T.slopeK * slope)
-      out[i] = growing * flatness * Math.max(0, 1 - risk)
-    }
-  }
-  return out
-}
-
-// How much water a big river brings, 0..1: the fish's freshwater scale (√
-// of the discharge against the world's largest, doubled, capped). Null when
-// there is no hydrology.
-function riverWater(coarseDischarge: Float32Array | null, maxDischarge: number): Float32Array | null {
-  if (!coarseDischarge || maxDischarge <= 0) return null
-  const out = new Float32Array(coarseDischarge.length)
-  for (let i = 0; i < out.length; i++) out[i] = Math.min(1, Math.sqrt(Math.max(0, coarseDischarge[i]) / maxDischarge) * 2)
-  return out
-}
-
-// The water on the cell's fields, 0..1: a big river's, or an oasis in the
-// cell (`oasisW`): the spring waters its gardens.
-function fieldWater(river: Float32Array | null, oases: { x: number; y: number }[], worldW: number, worldH: number): Float32Array | null {
-  if (!river && oases.length === 0) return null
-  const out = river ? river.slice() : new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  for (const o of oases) {
-    const gx = Math.min(CLIMATE_RES_X - 1, Math.floor((o.x / worldW) * CLIMATE_RES_X))
-    const gy = Math.min(CLIMATE_RES_Y - 1, Math.floor((o.y / worldH) * CLIMATE_RES_Y))
-    const i = gy * CLIMATE_RES_X + gx
-    out[i] = Math.max(out[i], ECOLOGY_TUNING.oasisW)
-  }
-  return out
-}
-
-// The water a herd can drink, 0..1: a big river's, or the share of the
-// cell whose water table lies within `wellDepthM` (a well dug by hand), ×
-// `wellW`. Null when there is no hydrology.
-function herdWater(river: Float32Array | null, waterTable: Float32Array | null, worldW: number, worldH: number): Float32Array | null {
-  if (!river && !waterTable) return null
-  const T = ECOLOGY_TUNING
-  const out = river ? river.slice() : new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  if (waterTable) {
-    const shallow = new Float32Array(waterTable.length)
-    for (let k = 0; k < waterTable.length; k++) shallow[k] = waterTable[k] >= 0 && waterTable[k] <= T.wellDepthM ? 1 : 0
-    const share = downsampleBox(shallow, worldW, worldH, CLIMATE_RES_X, CLIMATE_RES_Y)
-    for (let i = 0; i < out.length; i++) out[i] = Math.max(out[i], Math.min(1, T.wellW * share[i]))
-  }
-  return out
-}
-
-// Wild game / forage: ecosystem productivity plus an ecotone bonus at biome
-// boundaries (forest↔grassland, land↔water edges are the richest hunting).
-// The productivity is the months' mean where the climate has months (game
-// lives through the lean season on what the good one grew), the annual
-// means otherwise. The ecotone is `edges` (fineEdges, the share of the
-// cell's fine neighbours that differ, full at `ecotoneFullShare`) when the
-// fine biomes are there, and otherwise whether any coarse 4-neighbour
-// differs.
-function computeGame(temperature: Float32Array, precipitation: Float32Array, months: EcologyInputs['months'], biomes: Uint8Array, edges: Float32Array | null, land: Uint8Array): Float32Array {
-  const T = ECOLOGY_TUNING
-  const n = CLIMATE_RES_X * CLIMATE_RES_Y
-  const out = new Float32Array(n)
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      const i = gy * CLIMATE_RES_X + gx
-      if (!land[i]) continue
-      let npp = 0
-      if (months) for (let m = 0; m < months.count; m++) npp += productivity(months.temperature[m * n + i], months.precipitation[m * n + i]) / months.count
-      else npp = productivity(temperature[i], precipitation[i])
-      let ecotone: number
-      if (edges) {
-        ecotone = clamp01(edges[i] / T.ecotoneFullShare)
-      } else {
-        const here = biomes[i]
-        const left = biomes[gy * CLIMATE_RES_X + ((gx - 1 + CLIMATE_RES_X) % CLIMATE_RES_X)]
-        const right = biomes[gy * CLIMATE_RES_X + ((gx + 1) % CLIMATE_RES_X)]
-        const up = biomes[((gy - 1 + CLIMATE_RES_Y) % CLIMATE_RES_Y) * CLIMATE_RES_X + gx]
-        const down = biomes[((gy + 1) % CLIMATE_RES_Y) * CLIMATE_RES_X + gx]
-        ecotone = here !== left || here !== right || here !== up || here !== down ? 1 : 0
-      }
-      out[i] = npp * (1 + T.ecotoneBonus * ecotone)
-    }
-  }
-  return out
-}
-
-// Per climate cell, the mean of a biome table over the cell's land pixels on
-// the fine biome raster; NaN where the cell has none (the caller then
-// reads the coarse biome).
-function fineTableMean(biomesFine: Uint8Array, table: Record<LandBiomeId, number>, fallback: number, worldW: number, worldH: number): Float32Array {
-  const n = CLIMATE_RES_X * CLIMATE_RES_Y
-  const sum = new Float32Array(n)
-  const count = new Float32Array(n)
-  for (let y = 0; y < worldH; y++) {
-    const gy = Math.min(CLIMATE_RES_Y - 1, Math.floor((y * CLIMATE_RES_Y) / worldH))
-    for (let x = 0; x < worldW; x++) {
-      const b = biomesFine[y * worldW + x]
-      if (b === Biome.Ocean) continue
-      const i = gy * CLIMATE_RES_X + Math.min(CLIMATE_RES_X - 1, Math.floor((x * CLIMATE_RES_X) / worldW))
-      sum[i] += table[b as LandBiomeId] ?? fallback
-      count[i]++
-    }
-  }
-  for (let i = 0; i < n; i++) sum[i] = count[i] > 0 ? sum[i] / count[i] : NaN
-  return sum
-}
-
-// Per climate cell, the share of the fine raster's neighbour pairs (each
-// pixel with its right and lower neighbour, land to land) whose biomes
-// differ: how much edge the cell holds.
-function fineEdges(biomesFine: Uint8Array, worldW: number, worldH: number): Float32Array {
-  const n = CLIMATE_RES_X * CLIMATE_RES_Y
-  const diff = new Float32Array(n)
-  const pairs = new Float32Array(n)
-  for (let y = 0; y < worldH; y++) {
-    const gy = Math.min(CLIMATE_RES_Y - 1, Math.floor((y * CLIMATE_RES_Y) / worldH))
-    const below = ((y + 1) % worldH) * worldW
-    for (let x = 0; x < worldW; x++) {
-      const b = biomesFine[y * worldW + x]
-      if (b === Biome.Ocean) continue
-      const i = gy * CLIMATE_RES_X + Math.min(CLIMATE_RES_X - 1, Math.floor((x * CLIMATE_RES_X) / worldW))
-      const r = biomesFine[y * worldW + ((x + 1) % worldW)]
-      const d = biomesFine[below + x]
-      if (r !== Biome.Ocean) { pairs[i]++; if (r !== b) diff[i]++ }
-      if (d !== Biome.Ocean) { pairs[i]++; if (d !== b) diff[i]++ }
-    }
-  }
-  for (let i = 0; i < n; i++) diff[i] = pairs[i] > 0 ? diff[i] / pairs[i] : 0
-  return diff
-}
-
-// Pasture: open grazing land by biome (see PASTURE_BY_BIOME), in dry land
-// only as far as the herds find water: below `pastureDryMm` of rain the
-// grazing is lost toward `pastureDryFullMm` unless a river or a well
-// (herdWater) is there. The dry steppe is grazed from its wells.
-function computePasture(biomes: Uint8Array, fineGrazing: Float32Array | null, precipitation: Float32Array, water: Float32Array | null, land: Uint8Array): Float32Array {
-  const T = ECOLOGY_TUNING
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  for (let i = 0; i < out.length; i++) {
-    if (!land[i]) continue
-    // The table is exhaustive over land biomes, so the `??` is not covering a
-    // forgotten entry — it covers the two modules disagreeing about what land
-    // IS. `land` here comes from `precipitation !== OCEAN_PRECIP`; the biome id
-    // comes from `elevation <= SEA_LEVEL` in climate/biomes.ts. They normally
-    // agree, nothing enforces it, and without the fallback a disagreement would
-    // write `undefined` into a Float32Array — a NaN, not a wrong number.
-    // Removable once part C1 leaves one land mask.
-    const fine = fineGrazing ? fineGrazing[i] : NaN
-    const grazing = Number.isNaN(fine) ? PASTURE_BY_BIOME[biomes[i] as LandBiomeId] ?? 0.1 : fine
-    // Without hydrology nothing is known of the water: the biome decides.
-    const dry = water ? clamp01((T.pastureDryMm - precipitation[i]) / (T.pastureDryMm - T.pastureDryFullMm)) : 0
-    out[i] = grazing * (1 - dry * (1 - (water ? water[i] : 0)))
-  }
-  return out
-}
-
-// Max of a full-res field over each coarse climate cell's footprint — rivers/
-// lakes are thin, so a footprint max ("is there a big river/lake in this cell")
-// beats a single centre sample.
-// Bound to the climate grid, which is the only resolution this module reduces to.
-const toClimateGrid = (fullRes: Float32Array, worldWidth: number, worldHeight: number): Float32Array =>
-  downsampleMax(fullRes, worldWidth, worldHeight, CLIMATE_RES_X, CLIMATE_RES_Y)
-
-// Fish: a subsistence source for coastal + riverine/lake land. Marine = how
-// coastal the cell is × the richest sea next to it. A sea is rich where
-// nutrients come up into the light: where cold water wells up along a coast
-// (Peru, Namibia, California), where a cool sea mixes every winter (the
-// North Sea, the Grand Banks), and on a shallow shelf. Warm seas stay
-// layered and poor (the Caribbean, the Red Sea). Freshwater = big rivers +
-// nearby lakes. Saturating combine of the two.
-// `seaTemperature` is the climate's temperature, read on the sea cells;
-// `shelf` the share of each cell that is shallow sea (shelfShare).
-function computeFish(land: Uint8Array, seaTemperature: Float32Array, upwelling: Float32Array | null, shelf: Float32Array, coarseDischarge: Float32Array | null, maxDischarge: number, coarseLake: Float32Array | null): Float32Array {
-  const T = ECOLOGY_TUNING
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      const i = gy * CLIMATE_RES_X + gx
-      if (!land[i]) continue
-      // Coastalness + the richest sea among the 8 neighbours' ocean cells.
-      let oceanN = 0
-      let richest = 0
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) continue
-          const j = wrapValue(gy + dy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrapValue(gx + dx, CLIMATE_RES_X)
-          if (land[j]) continue
-          oceanN++
-          const rising = upwelling ? clamp01(upwelling[j] / T.fishUpwellingFull) : 0
-          const cool = seaMixing(seaTemperature[j])
-          const rich = T.fishSeaBase + T.fishShelfW * shelf[j] + T.fishUpwellingW * rising + T.fishMixingW * cool
-          if (rich > richest) richest = rich
-        }
-      }
-      // A straight coast (3 of the 8 neighbours sea) reaches the sea in
-      // full: the share of sea around a cell said more about the grid's
-      // coastline than about the fishing (an island of one cell got twice
-      // a straight coast's fish).
-      const coastalness = Math.min(1, oceanN / T.fishFullSeaNeighbours)
-      const marine = coastalness * richest
-      let freshwater = 0
-      if (coarseDischarge && maxDischarge > 0) freshwater += T.fishRiverW * Math.min(1, Math.sqrt(coarseDischarge[i] / maxDischarge) * 2)
-      if (coarseLake && coarseLake[i] > 0) freshwater += T.fishLakeW
-      freshwater = Math.min(1, freshwater)
-      out[i] = 1 - Math.exp(-(marine + freshwater))
-    }
-  }
-  return out
-}
-
 // How well a sea at this temperature (°C) mixes its nutrients up, 0..1: in
 // full from `fishMixFullC` down to `fishMixIceC` (cool seas turn over in
 // winter), gone at `fishMixWarmC` (a warm sea stays layered) and below the
@@ -378,156 +156,486 @@ function seaMixing(tempC: number): number {
   return clamp01((T.fishMixWarmC - tempC) / (T.fishMixWarmC - T.fishMixFullC))
 }
 
-// The share of each climate cell that is shelf sea, 0..1: sea no deeper
-// than `fishShelfDepthM`.
-function shelfShare(elevation: Float32Array, worldW: number, worldH: number): Float32Array {
-  const floor = -metersToElevation(ECOLOGY_TUNING.fishShelfDepthM)
-  const shallow = new Float32Array(elevation.length)
-  for (let k = 0; k < elevation.length; k++) shallow[k] = elevation[k] <= SEA_LEVEL && elevation[k] > SEA_LEVEL + floor ? 1 : 0
-  return downsampleBox(shallow, worldW, worldH, CLIMATE_RES_X, CLIMATE_RES_Y)
-}
+// A reach in metres as a radius in pixels (at least one).
+const reachPx = (metres: number, metresPerPx: number): number => Math.max(1, Math.round(metres / metresPerPx))
 
-// --- material fields (separate channel; salt also lightly feeds carrying cap) --
-
-// Fraction of a land cell's 8 neighbours that are ocean.
-function coastalnessAt(land: Uint8Array, gx: number, gy: number): number {
-  let ocean = 0
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      if (dx === 0 && dy === 0) continue
-      const j = ((gy + dy + CLIMATE_RES_Y) % CLIMATE_RES_Y) * CLIMATE_RES_X + ((gx + dx + CLIMATE_RES_X) % CLIMATE_RES_X)
-      if (!land[j]) ocean++
+// The largest value within `r` pixels (a square, wrapped on the torus):
+// "is there water / a rich sea within reach". Two passes, rows then columns.
+function maxWithin(src: Float32Array, w: number, h: number, r: number): Float32Array {
+  const rows = new Float32Array(src.length)
+  for (let y = 0; y < h; y++) {
+    const row = y * w
+    for (let x = 0; x < w; x++) {
+      let m = src[row + x]
+      for (let d = 1; d <= r; d++) {
+        const a = src[row + wrapValue(x - d, w)]
+        const b = src[row + wrapValue(x + d, w)]
+        if (a > m) m = a
+        if (b > m) m = b
+      }
+      rows[row + x] = m
     }
   }
-  return ocean / 8
-}
-
-// Terrain flatness 0..1 at a climate cell (from full-res elevation neighbours).
-function flatnessAt(elevation: Float32Array, gx: number, gy: number, worldW: number, worldH: number): number {
-  const eC = sampleElevationAtCell(elevation, gx, gy, worldW, worldH)
-  const eE = sampleElevationAtCell(elevation, (gx + 1) % CLIMATE_RES_X, gy, worldW, worldH)
-  const eS = sampleElevationAtCell(elevation, gx, (gy + 1) % CLIMATE_RES_Y, worldW, worldH)
-  return 1 / (1 + ECOLOGY_TUNING.slopeK * Math.hypot(eE - eC, eS - eC))
-}
-
-// Timber by biome: the fine biomes' mean over the cell when there are
-// fine biomes (a half-forested cell has half the wood, and the gallery
-// forests along the rivers count), the coarse biome otherwise.
-function computeTimber(biomes: Uint8Array, fineTimber: Float32Array | null, land: Uint8Array): Float32Array {
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  for (let i = 0; i < out.length; i++) {
-    if (!land[i]) continue
-    const fine = fineTimber ? fineTimber[i] : NaN
-    out[i] = Number.isNaN(fine) ? TIMBER_BY_BIOME[biomes[i] as LandBiomeId] ?? 0.05 : fine // fallback: see computePasture
+  const out = new Float32Array(src.length)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let m = rows[y * w + x]
+      for (let d = 1; d <= r; d++) {
+        const a = rows[wrapValue(y - d, h) * w + x]
+        const b = rows[wrapValue(y + d, h) * w + x]
+        if (a > m) m = a
+        if (b > m) m = b
+      }
+      out[y * w + x] = m
+    }
   }
   return out
 }
 
-// Salt, from two sources. A terminal basin's dry floor (the hydrology's
-// salt flat: the Dead Sea's shores, the Rann of Kutch) is salt in full. And
-// water evaporates to salt where it is warm and dry: in pans on a coast
-// (strongest) and in playas and rock salt inland. Warm and dry counts per
-// month where the climate has months, so a coast with a dry summer makes
-// salt (the Camargue, the Bohai), as salt works need a dry season, not a
-// dry year; the annual means stand in otherwise.
-function computeSalt(temperature: Float32Array, precipitation: Float32Array, months: EcologyInputs['months'], saltFlat: Float32Array | null, land: Uint8Array): Float32Array {
+// The mean within `r` pixels (a square, wrapped): "how much of the land
+// around is sea". Running sums, rows then columns.
+function meanWithin(src: Float32Array, w: number, h: number, r: number): Float32Array {
+  const span = 2 * r + 1
+  const rows = new Float32Array(src.length)
+  for (let y = 0; y < h; y++) {
+    const row = y * w
+    let sum = 0
+    for (let d = -r; d <= r; d++) sum += src[row + wrapValue(d, w)]
+    for (let x = 0; x < w; x++) {
+      rows[row + x] = sum / span
+      sum += src[row + wrapValue(x + r + 1, w)] - src[row + wrapValue(x - r, w)]
+    }
+  }
+  const out = new Float32Array(src.length)
+  for (let x = 0; x < w; x++) {
+    let sum = 0
+    for (let d = -r; d <= r; d++) sum += rows[wrapValue(d, h) * w + x]
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = sum / span
+      sum += rows[wrapValue(y + r + 1, h) * w + x] - rows[wrapValue(y - r, h) * w + x]
+    }
+  }
+  return out
+}
+
+// A bilinear read of a climate-grid field at a world pixel's centre, over the
+// corners `use` accepts only (the weights of the rest dropped and the others
+// renormalised; with none, the containing cell's value). A land field's sea
+// corners carry a sentinel, and a sea field's land corners the wrong thing.
+// The corners and weights are set once per pixel (setPixel) and read for
+// every field and month (read).
+class ClimatePixel {
+  private readonly idx = new Int32Array(4)
+  private readonly wt = new Float64Array(4)
+  private cell = 0
+  setPixel(wx: number, wy: number, worldW: number, worldH: number): void {
+    const gx = ((wx + 0.5) / worldW) * CLIMATE_RES_X - 0.5
+    const gy = ((wy + 0.5) / worldH) * CLIMATE_RES_Y - 0.5
+    const x0 = Math.floor(gx)
+    const y0 = Math.floor(gy)
+    const fx = gx - x0
+    const fy = gy - y0
+    const x0m = wrapValue(x0, CLIMATE_RES_X)
+    const y0m = wrapValue(y0, CLIMATE_RES_Y)
+    const x1m = (x0m + 1) % CLIMATE_RES_X
+    const y1m = (y0m + 1) % CLIMATE_RES_Y
+    this.idx[0] = y0m * CLIMATE_RES_X + x0m
+    this.idx[1] = y0m * CLIMATE_RES_X + x1m
+    this.idx[2] = y1m * CLIMATE_RES_X + x0m
+    this.idx[3] = y1m * CLIMATE_RES_X + x1m
+    this.wt[0] = (1 - fx) * (1 - fy)
+    this.wt[1] = fx * (1 - fy)
+    this.wt[2] = (1 - fx) * fy
+    this.wt[3] = fx * fy
+    this.cell = Math.min(CLIMATE_RES_Y - 1, Math.floor((wy / worldH) * CLIMATE_RES_Y)) * CLIMATE_RES_X + Math.min(CLIMATE_RES_X - 1, Math.floor((wx / worldW) * CLIMATE_RES_X))
+  }
+  // `offset` picks a month in a month-major field; `mask[i]` 1 marks the
+  // corners to use (null: all).
+  read(field: Float32Array, mask: Uint8Array | null, offset = 0): number {
+    let sum = 0
+    let weight = 0
+    for (let k = 0; k < 4; k++) {
+      const i = this.idx[k]
+      if (mask && !mask[i]) continue
+      sum += field[offset + i] * this.wt[k]
+      weight += this.wt[k]
+    }
+    return weight > 0 ? sum / weight : field[offset + this.cell]
+  }
+  get coarseCell(): number {
+    return this.cell
+  }
+}
+
+// --- the fields ---------------------------------------------------------------
+
+// The physics of the ecology, every field before the step's sliders: the
+// expensive part (some 2 s at 2048×1024), which depends on the world alone.
+// The worker keeps it while only the sliders move (applyEcology).
+export interface EcologyBase {
+  w: number
+  h: number
+  land: Uint8Array
+  coarseLand: Uint8Array
+  raw: Record<Exclude<EcologyFieldId, 'carryingCapacity' | 'tin' | 'gems'>, Float32Array>
+  // Gems' two parts (the copper they weather from is scaled by the slider).
+  gemBelt: Float32Array
+  aridity: Float32Array
+  // Tin's belt points, thinned (its radius is a slider: tinRarity).
+  tinPoints: { x: number; y: number }[]
+  // The province layer's deviation per land pixel (volcanic soil + noise),
+  // before its mean is taken off.
+  provinceDeviation: Float32Array
+}
+
+export function computeEcology(inputs: EcologyInputs, params: EcologyParams): EcologyFields {
+  return applyEcology(prepareEcology(inputs), params)
+}
+
+export function prepareEcology(inputs: EcologyInputs): EcologyBase {
+  const { temperature, precipitation, biomes, biomesFine, upwelling, months, rainVariability, elevation, discharge, maxDischarge, lakeDepth, saltFlat, waterTable, oases, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth: w, worldHeight: h } = inputs
   const T = ECOLOGY_TUNING
-  const n = CLIMATE_RES_X * CLIMATE_RES_Y
+  const n = w * h
+  const nc = CLIMATE_RES_X * CLIMATE_RES_Y
+  // Metres per pixel: the generator's world is MAP_WIDTH × METERS_PER_CELL
+  // wide whatever raster it is sampled on.
+  const mPerPx = (MAP_WIDTH * METERS_PER_CELL) / w
+  // The slope's scale: flatness was measured on the rise across a climate
+  // cell, and a pixel's rise is read against the same length.
+  const pxPerCell = w / CLIMATE_RES_X
+
+  const land = new Uint8Array(n)
+  const sea = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    if (elevation[i] > SEA_LEVEL) land[i] = 1
+    else sea[i] = 1
+  }
+  const coarseLand = new Uint8Array(nc)
+  const coarseSea = new Uint8Array(nc)
+  for (let i = 0; i < nc; i++) {
+    if (precipitation[i] !== OCEAN_PRECIP) coarseLand[i] = 1
+    else coarseSea[i] = 1
+  }
+
+  // The climate reduced to sea level per cell (the lapse of the cell's own
+  // mean height taken off), so each pixel can take its own lapse back.
+  const monthCount = months ? months.count : 1
+  const seaLevelMonths = new Float32Array(monthCount * nc)
+  for (let m = 0; m < monthCount; m++) {
+    const air = months ? months.temperature.subarray(m * nc, (m + 1) * nc) : temperature
+    seaLevelMonths.set(reduceTemperatureToSeaLevel(air, elevation, w, h), m * nc)
+  }
+  const monthRain = months ? months.precipitation : precipitation
+  const seaLevelYear = reduceTemperatureToSeaLevel(temperature, elevation, w, h)
+  const lapse = CLIMATE_TUNING.lapseCPerElevation
+
+  // Every pixel's biome: the fine one, or its climate cell's.
+  const biomeAt = new Uint8Array(n)
+  for (let y = 0; y < h; y++) {
+    const gy = Math.min(CLIMATE_RES_Y - 1, Math.floor((y / h) * CLIMATE_RES_Y))
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      if (!land[i]) { biomeAt[i] = Biome.Ocean; continue }
+      biomeAt[i] = biomesFine ? biomesFine[i] : biomes[gy * CLIMATE_RES_X + Math.min(CLIMATE_RES_X - 1, Math.floor((x / w) * CLIMATE_RES_X))]
+    }
+  }
+
+  // --- water and sea within reach -------------------------------------------
+  const px = new ClimatePixel()
+  const coastR = reachPx(T.coastReachM, mPerPx)
+  const waterR = reachPx(T.waterReachM, mPerPx)
+
+  // The sea's richness per sea pixel: a base, the share of shelf sea
+  // within reach, the upwelling and the winter mixing (see the fish
+  // constants).
+  const shelfFloor = SEA_LEVEL - metersToElevation(T.fishShelfDepthM)
+  const shallow = new Float32Array(n)
+  for (let i = 0; i < n; i++) if (!land[i] && elevation[i] > shelfFloor) shallow[i] = 1
+  const shelfShare = meanWithin(shallow, w, h, coastR)
+  const seaRich = new Float32Array(n)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      if (land[i]) continue
+      px.setPixel(x, y, w, h)
+      const rising = upwelling ? clamp01(px.read(upwelling, coarseSea) / T.fishUpwellingFull) : 0
+      const cool = seaMixing(px.read(temperature, coarseSea))
+      seaRich[i] = T.fishSeaBase + T.fishShelfW * shelfShare[i] + T.fishUpwellingW * rising + T.fishMixingW * cool
+    }
+  }
+  const richSeaNear = maxWithin(seaRich, w, h, coastR)
+  const seaShare = meanWithin(sea, w, h, coastR)
+
+  // A big river's water per land pixel (√ of the discharge against the
+  // world's largest, doubled, capped), and what lies within reach of it.
+  const hasHydrology = !!discharge && maxDischarge > 0
+  const river = new Float32Array(n)
+  const riverRoot = new Float32Array(n)
+  const riverWet = new Float32Array(n)
+  const lake = new Float32Array(n)
+  if (discharge && maxDischarge > 0) {
+    for (let i = 0; i < n; i++) {
+      if (!land[i]) continue
+      const share = Math.max(0, discharge[i]) / maxDischarge
+      riverRoot[i] = Math.sqrt(share)
+      river[i] = Math.min(1, riverRoot[i] * 2)
+      riverWet[i] = Math.min(1, share * 4)
+    }
+  }
+  if (lakeDepth) for (let i = 0; i < n; i++) if (lakeDepth[i] > 0) lake[i] = 1
+  const riverNear = maxWithin(river, w, h, waterR)
+  const riverRootNear = maxWithin(riverRoot, w, h, waterR)
+  const riverWetNear = maxWithin(riverWet, w, h, waterR)
+  const lakeNear = maxWithin(lake, w, h, waterR)
+  // A hand-dug well within a herd's reach.
+  let wellNear: Float32Array | null = null
+  if (waterTable) {
+    const shallow = new Float32Array(n)
+    for (let i = 0; i < n; i++) if (waterTable[i] >= 0 && waterTable[i] <= T.wellDepthM) shallow[i] = 1
+    wellNear = maxWithin(shallow, w, h, waterR)
+  }
+  // The oases' gardens.
+  const oasis = new Float32Array(n)
+  for (const o of oases) {
+    const cx = Math.floor(o.x)
+    const cy = Math.floor(o.y)
+    for (let dy = -waterR; dy <= waterR; dy++) for (let dx = -waterR; dx <= waterR; dx++) oasis[wrapValue(cy + dy, h) * w + wrapValue(cx + dx, w)] = 1
+  }
+
+  // How much of the land around differs in biome (game's edges): per pixel
+  // the share of its four neighbours of another biome, averaged within reach.
+  const differs = new Float32Array(n)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      if (!land[i]) continue
+      const b = biomeAt[i]
+      let d = 0
+      if (biomeAt[y * w + wrapValue(x + 1, w)] !== b) d++
+      if (biomeAt[y * w + wrapValue(x - 1, w)] !== b) d++
+      if (biomeAt[wrapValue(y + 1, h) * w + x] !== b) d++
+      if (biomeAt[wrapValue(y - 1, h) * w + x] !== b) d++
+      differs[i] = d / 4
+    }
+  }
+  const edges = meanWithin(differs, w, h, reachPx(T.ecotoneReachM, mPerPx))
+
+  // --- per pixel -------------------------------------------------------------
+  const arable = new Float32Array(n)
+  const fish = new Float32Array(n)
+  const game = new Float32Array(n)
+  const pasture = new Float32Array(n)
+  const salt = new Float32Array(n)
+  const timber = new Float32Array(n)
+  const flatness = new Float32Array(n)
+  const wetland = new Float32Array(n)
+  const aridity = new Float32Array(n)
+  const craton = new Float32Array(n)
+  const cratonMask = new Uint8Array(nc)
+  for (let i = 0; i < nc; i++) cratonMask[i] = cratonAge[i] >= 0 ? 1 : 0
+  const variabilityMask = coarseLand
   const aridWarm = (tempC: number, precipMm: number): number => clamp01(1 - precipMm / T.saltAridPrecip) * clamp01(tempC / 25)
-  const out = new Float32Array(n)
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      const i = gy * CLIMATE_RES_X + gx
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
       if (!land[i]) continue
+      px.setPixel(x, y, w, h)
+      const height = Math.max(0, elevation[i] - SEA_LEVEL)
+
+      // The pixel's slope, as a rise across a climate cell's length.
+      const e = elevation
+      const dx = e[y * w + wrapValue(x + 1, w)] - e[y * w + wrapValue(x - 1, w)]
+      const dy = e[wrapValue(y + 1, h) * w + x] - e[wrapValue(y - 1, h) * w + x]
+      const flat = 1 / (1 + T.slopeK * Math.hypot(dx, dy) * 0.5 * pxPerCell)
+      flatness[i] = flat
+
+      // The fields' water.
+      const fieldWater = Math.max(riverNear[i], T.oasisW * oasis[i])
+      const herdWater = hasHydrology || wellNear ? Math.max(riverNear[i], wellNear ? T.wellW * wellNear[i] : 0) : 1
+
+      // The months: arable's growing year, game's productivity, salt's dry
+      // warm season.
+      let growing = 0
+      let npp = 0
       let arid = 0
-      if (months) for (let m = 0; m < months.count; m++) arid += aridWarm(months.temperature[m * n + i], months.precipitation[m * n + i]) / months.count
-      else arid = aridWarm(temperature[i], precipitation[i])
-      const coast = coastalnessAt(land, gx, gy)
-      const flat = saltFlat ? T.saltFlatW * saltFlat[i] : 0
-      out[i] = clamp01(Math.max(flat, arid * (T.saltInteriorW + (T.saltCoastW - T.saltInteriorW) * coast)))
+      for (let m = 0; m < monthCount; m++) {
+        const t = px.read(seaLevelMonths, null, m * nc) - lapse * height
+        const p = px.read(monthRain, coarseLand, months ? m * nc : 0)
+        if (t >= T.arableFrostC || !months) growing += productivity(t, p + T.arableIrrigationMm * fieldWater) / monthCount
+        npp += productivity(t, p) / monthCount
+        arid += aridWarm(t, p) / monthCount
+      }
+      const yearT = px.read(seaLevelYear, null) - lapse * height
+      const yearP = px.read(precipitation, coarseLand)
+
+      // Arable (see the constants): the growing year × flatness × the
+      // harvest's reliability, which a watered field does not need.
+      const risk = rainVariability ? T.arableRiskW * px.read(rainVariability, variabilityMask) * (1 - fieldWater) : 0
+      arable[i] = growing * flat * Math.max(0, 1 - risk)
+
+      // Fish: the richest sea within reach, as far as the sea is at hand
+      // (a straight coast in full), plus the rivers and lakes near.
+      const access = Math.min(1, seaShare[i] / T.fishFullSeaShare)
+      const freshwater = Math.min(1, T.fishRiverW * riverNear[i] + T.fishLakeW * lakeNear[i])
+      fish[i] = 1 - Math.exp(-(access * richSeaNear[i] + freshwater))
+
+      // Game: productivity, more where biomes meet.
+      game[i] = npp * (1 + T.ecotoneBonus * clamp01(edges[i] / T.ecotoneFullShare))
+
+      // Pasture: the biome's grazing, in dry land only as far as a herd
+      // finds water (without hydrology nothing is known of it: the biome
+      // decides).
+      const b = biomeAt[i] as LandBiomeId
+      const dry = hasHydrology || wellNear ? clamp01((T.pastureDryMm - yearP) / (T.pastureDryMm - T.pastureDryFullMm)) : 0
+      pasture[i] = (PASTURE_BY_BIOME[b] ?? 0.1) * (1 - dry * (1 - herdWater))
+      timber[i] = TIMBER_BY_BIOME[b] ?? 0.05
+
+      // Salt: a salt flat in full; else the dry warm season, strongest on
+      // a coast.
+      const flatSalt = saltFlat && saltFlat[i] ? T.saltFlatW : 0
+      salt[i] = clamp01(Math.max(flatSalt, arid * (T.saltInteriorW + (T.saltCoastW - T.saltInteriorW) * Math.min(1, seaShare[i] / T.fishFullSeaShare))))
+
+      // Wetland (bog iron): flat, wet, water-fed lowland.
+      const water = lakeNear[i] > 0 ? 1 : riverWetNear[i]
+      wetland[i] = flat * water * clamp01(yearP / 600)
+      aridity[i] = aridWarm(yearT, yearP)
+      craton[i] = Math.max(0, px.read(cratonAge, cratonMask))
     }
   }
-  return out
-}
 
-// Wetland: flat, wet, water-fed lowland (bog-iron country). Internal — feeds iron.
-function computeWetland(precipitation: Float32Array, coarseDischarge: Float32Array | null, maxDischarge: number, coarseLake: Float32Array | null, elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number): Float32Array {
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      const i = gy * CLIMATE_RES_X + gx
+  // Material and prestige before the sliders. Copper = arc volcanoes; tin =
+  // orogen belts (its radius a slider); iron = old cratons + bog iron.
+  const arcVolcanoes = volcanoes.filter((v) => v.kind === 'arc')
+  const obsidian = rasterisePointField(thinPoints(volcanoes, T.obsidianKeep, warpSeed ^ 0x0b51d1a2), T.obsidianRadiusFrac, w, h)
+  const toolStone = new Float32Array(n)
+  for (let i = 0; i < n; i++) if (land[i]) toolStone[i] = Math.max(obsidian[i], T.flintBase * flatness[i])
+  const copper = maskToLand(rasterisePointField(thinPoints(arcVolcanoes, T.copperKeep, warpSeed ^ 0xc0bbe401), T.copperRadiusFrac, w, h), land)
+  // Iron: the old-craton signal broken into deposits by a seeded noise (so it
+  // fluctuates instead of reading as a flat 100%), plus bog iron in wetlands.
+  const iron = new Float32Array(n)
+  const ironSeed = (warpSeed ^ 0x51ed2701) | 0
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
       if (!land[i]) continue
-      const flat = flatnessAt(elevation, gx, gy, worldW, worldH)
-      let water = 0
-      if (coarseDischarge && maxDischarge > 0) water += Math.min(1, (coarseDischarge[i] / maxDischarge) * 4)
-      if (coarseLake && coarseLake[i] > 0) water = 1
-      const moisture = clamp01(precipitation[i] / 600)
-      out[i] = flat * water * moisture
+      const noise01 = (provinceNoise((x + 0.5) / w, (y + 0.5) / h, T.ironDepositFreqX, T.ironDepositFreqY, ironSeed) + 1) / 2
+      const deposit = T.ironDepositFloor + (1 - T.ironDepositFloor) * noise01
+      iron[i] = clamp01(Math.max(T.ironCratonW * craton[i] * deposit, T.ironBogW * wetland[i]))
     }
   }
-  return out
-}
-
-// Tool-stone: obsidian (volcanic point sources) with a low flint baseline on flat
-// lowland (sedimentary proxy).
-function computeToolStone(volcanoes: Volcano[], elevation: Float32Array, land: Uint8Array, worldW: number, worldH: number, warpSeed: number): Float32Array {
-  const obsidian = rasterisePointField(thinPoints(volcanoes, ECOLOGY_TUNING.obsidianKeep, warpSeed ^ 0x0b51d1a2), ECOLOGY_TUNING.obsidianRadiusFrac, worldW, worldH)
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      const i = gy * CLIMATE_RES_X + gx
-      if (!land[i]) continue
-      out[i] = Math.max(obsidian[i], ECOLOGY_TUNING.flintBase * flatnessAt(elevation, gx, gy, worldW, worldH))
-    }
-  }
-  return out
-}
-
-// Iron: broad old-craton signal (cratonAge oldness) broken into deposits by a
-// seeded noise (so it fluctuates instead of reading as a flat 100%), plus bog
-// iron in wetlands.
-function computeIron(cratonAge: Float32Array, wetland: Float32Array, land: Uint8Array, warpSeed: number): Float32Array {
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  const seed = (warpSeed ^ 0x51ed2701) | 0
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      const i = gy * CLIMATE_RES_X + gx
-      if (!land[i]) continue
-      const craton = Math.max(0, cratonAge[i])
-      const noise01 = (provinceNoise((gx + 0.5) / CLIMATE_RES_X, (gy + 0.5) / CLIMATE_RES_Y, ECOLOGY_TUNING.ironDepositFreqX, ECOLOGY_TUNING.ironDepositFreqY, seed) + 1) / 2
-      const deposit = ECOLOGY_TUNING.ironDepositFloor + (1 - ECOLOGY_TUNING.ironDepositFloor) * noise01
-      out[i] = clamp01(Math.max(ECOLOGY_TUNING.ironCratonW * craton * deposit, ECOLOGY_TUNING.ironBogW * wetland[i]))
-    }
-  }
-  return out
-}
-
-// Gold: placer (carried down rivers) + lode at orogenic belts.
-function computeGold(coarseDischarge: Float32Array | null, maxDischarge: number, orogenLode: Float32Array, land: Uint8Array): Float32Array {
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  for (let i = 0; i < out.length; i++) {
+  // Prestige (separate channel — no carrying-capacity contribution). Gold:
+  // placer (carried down rivers) + lode at orogenic belts. Silver:
+  // hydrothermal, near volcanic arcs. Gems: metamorphic/orogenic belts + arid
+  // weathering (turquoise near copper, in applyEcology).
+  const lode = rasterisePointField(thinPoints(orogenPoints, T.goldLodeKeep, warpSeed ^ 0x601dfeed), T.goldLodeRadiusFrac, w, h)
+  const arc = rasterisePointField(thinPoints(arcVolcanoes, T.silverKeep, warpSeed ^ 0x5117e201), T.silverRadiusFrac, w, h)
+  const gemBelt = rasterisePointField(thinPoints(orogenPoints, T.gemKeep, warpSeed ^ 0x9e35c0de), T.gemRadiusFrac, w, h)
+  const gold = new Float32Array(n)
+  const silver = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
     if (!land[i]) continue
-    const placer = coarseDischarge && maxDischarge > 0 ? Math.min(1, Math.max(0, Math.sqrt(coarseDischarge[i] / maxDischarge) - ECOLOGY_TUNING.goldPlacerSqrtFloor) * ECOLOGY_TUNING.goldPlacerGain) : 0
-    out[i] = clamp01(ECOLOGY_TUNING.goldPlacerW * placer + ECOLOGY_TUNING.goldLodeW * orogenLode[i])
+    const placer = Math.min(1, Math.max(0, riverRootNear[i] - T.goldPlacerSqrtFloor) * T.goldPlacerGain)
+    gold[i] = clamp01(T.goldPlacerW * placer + T.goldLodeW * lode[i])
+    silver[i] = clamp01(T.silverW * arc[i])
   }
-  return out
+
+  // The province layer (L2 of the concentration pipeline): volcanic soil and
+  // a light seeded noise.
+  const volcanic = rasterisePointField(volcanoes, T.volcanicProvinceRadiusFrac, w, h)
+  const provinceDeviation = new Float32Array(n)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      if (!land[i]) continue
+      const noise = provinceNoise((x + 0.5) / w, (y + 0.5) / h, T.provinceNoiseFreqX, T.provinceNoiseFreqY, warpSeed)
+      provinceDeviation[i] = T.volcanicWeight * volcanic[i] + T.noiseWeight * noise
+    }
+  }
+
+  return {
+    w, h, land, coarseLand,
+    raw: { arable, fish, game, pasture, timber, salt, toolStone, copper, iron, gold, silver },
+    gemBelt, aridity,
+    tinPoints: thinPoints(orogenPoints, T.tinKeep, warpSeed ^ 0x71b2a903),
+    provinceDeviation,
+  }
 }
 
-// Silver: hydrothermal, near volcanic arcs.
-function computeSilver(arcField: Float32Array, land: Uint8Array): Float32Array {
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  for (let i = 0; i < out.length; i++) if (land[i]) out[i] = clamp01(ECOLOGY_TUNING.silverW * arcField[i])
-  return out
-}
+// The step's sliders on the physics: the per-field abundance, the carrying
+// capacity's level and concentration, the province strength, tin's rarity;
+// then the fields on the climate grid. Cheap next to prepareEcology.
+export function applyEcology(eco: EcologyBase, params: EcologyParams): EcologyFields {
+  const T = ECOLOGY_TUNING
+  const { w, h, land, coarseLand, raw } = eco
+  const n = w * h
+  // Fold-out nudges: per-field abundance multipliers, on copies so the base
+  // stays as it was; they both scale the displayed field and (for
+  // subsistence + salt) flow into the carrying-capacity combine below.
+  const wmap = params.weights ?? {}
+  const scaled = (arr: Float32Array, id: EcologyFieldId): Float32Array => {
+    const out = arr.slice()
+    const m = wmap[id] ?? 1
+    if (m !== 1) for (let i = 0; i < n; i++) if (land[i]) out[i] *= m
+    return out
+  }
+  const arable = scaled(raw.arable, 'arable')
+  const fish = scaled(raw.fish, 'fish')
+  const game = scaled(raw.game, 'game')
+  const pasture = scaled(raw.pasture, 'pasture')
+  const salt = scaled(raw.salt, 'salt')
 
-// Gems: metamorphic/orogenic belts + arid weathering (turquoise near copper).
-function computeGems(orogenField: Float32Array, copper: Float32Array, temperature: Float32Array, precipitation: Float32Array, land: Uint8Array): Float32Array {
-  const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
-  for (let i = 0; i < out.length; i++) {
+  // Saturating carrying-capacity base: subsistence sources complement with
+  // diminishing returns (1 - e^-Σ w·x); salt adds a small preservation bonus (the
+  // one sanctioned material→subsistence bleed).
+  const base = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
     if (!land[i]) continue
-    const aridity = clamp01(1 - precipitation[i] / ECOLOGY_TUNING.saltAridPrecip) * clamp01(temperature[i] / 25)
-    out[i] = clamp01(ECOLOGY_TUNING.gemOrogenW * orogenField[i] + ECOLOGY_TUNING.gemAridW * aridity * copper[i])
+    base[i] = 1 - Math.exp(-(T.wArable * arable[i] + T.wFish * fish[i] + T.wGame * game[i] + T.wPasture * pasture[i] + T.wSaltCc * salt[i]))
   }
+  const carryingCapacity = concentrationPipeline(base, land, eco.provinceDeviation, params)
+
+  const timber = scaled(raw.timber, 'timber')
+  const toolStone = scaled(raw.toolStone, 'toolStone')
+  const copper = scaled(raw.copper, 'copper')
+  const tinRadius = T.tinRadiusFrac * (1 - 0.6 * Math.max(0, Math.min(1, params.tinRarity ?? 0)))
+  const tin = scaled(maskToLand(rasterisePointField(eco.tinPoints, tinRadius, w, h), land), 'tin')
+  const iron = scaled(raw.iron, 'iron')
+  const gold = scaled(raw.gold, 'gold')
+  const silver = scaled(raw.silver, 'silver')
+  const gemsRaw = new Float32Array(n)
+  for (let i = 0; i < n; i++) if (land[i]) gemsRaw[i] = clamp01(T.gemOrogenW * eco.gemBelt[i] + T.gemAridW * eco.aridity[i] * copper[i])
+  const gems = scaled(gemsRaw, 'gems')
+
+  // Mask every per-resource field to the ocean sentinel so overlays skip water.
+  const fine: Record<EcologyFieldId, Float32Array> = { carryingCapacity, arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron, gold, silver, gems }
+  for (const id of ECOLOGY_FIELD_IDS) {
+    const f = fine[id]
+    for (let i = 0; i < n; i++) if (!land[i]) f[i] = ECOLOGY_OCEAN
+  }
+
+  const coarse = {} as Record<EcologyFieldId, Float32Array>
+  for (const id of ECOLOGY_FIELD_IDS) coarse[id] = toClimateCells(fine[id], land, coarseLand, w, h)
+  return { resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y, fields: coarse, fine: { resX: w, resY: h, fields: fine } }
+}
+
+// A fine field averaged over each climate cell's land pixels; ECOLOGY_OCEAN on
+// the cells the climate calls sea, 0 on a land cell without a land pixel.
+function toClimateCells(field: Float32Array, land: Uint8Array, coarseLand: Uint8Array, w: number, h: number): Float32Array {
+  const nc = CLIMATE_RES_X * CLIMATE_RES_Y
+  const sum = new Float64Array(nc)
+  const count = new Float64Array(nc)
+  for (let y = 0; y < h; y++) {
+    const gy = Math.min(CLIMATE_RES_Y - 1, Math.floor((y / h) * CLIMATE_RES_Y))
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      if (!land[i]) continue
+      const c = gy * CLIMATE_RES_X + Math.min(CLIMATE_RES_X - 1, Math.floor((x / w) * CLIMATE_RES_X))
+      sum[c] += field[i]
+      count[c]++
+    }
+  }
+  const out = new Float32Array(nc)
+  for (let c = 0; c < nc; c++) out[c] = !coarseLand[c] ? ECOLOGY_OCEAN : count[c] > 0 ? sum[c] / count[c] : 0
   return out
 }
 
@@ -535,14 +643,14 @@ function computeGems(orogenField: Float32Array, copper: Float32Array, temperatur
 // point's integer position with the world seed + a per-resource salt and keeps
 // the fraction that wins. Position-based (not index-based) so the surviving
 // subset is stable as the feature list grows or reorders between epochs.
-function thinPoints<T extends { x: number; y: number }>(points: T[], keepFraction: number, salt: number): T[] {
+function thinPoints<P extends { x: number; y: number }>(points: P[], keepFraction: number, salt: number): P[] {
   if (keepFraction >= 1) return points
-  const out: T[] = []
+  const out: P[] = []
   for (const p of points) {
-    let h = ((Math.floor(p.x) * 374761393 + Math.floor(p.y) * 668265263) ^ salt) | 0
-    h = Math.imul(h ^ (h >>> 13), 1274126177)
-    h = (h ^ (h >>> 16)) >>> 0
-    if (h / 4294967296 < keepFraction) out.push(p)
+    let hsh = ((Math.floor(p.x) * 374761393 + Math.floor(p.y) * 668265263) ^ salt) | 0
+    hsh = Math.imul(hsh ^ (hsh >>> 13), 1274126177)
+    hsh = (hsh ^ (hsh >>> 16)) >>> 0
+    if (hsh / 4294967296 < keepFraction) out.push(p)
   }
   return out
 }
@@ -557,18 +665,18 @@ function maskToLand(field: Float32Array, land: Uint8Array): Float32Array {
 
 function landMean(field: Float32Array, land: Uint8Array): number {
   let sum = 0
-  let n = 0
-  for (let i = 0; i < field.length; i++) if (land[i]) { sum += field[i]; n += 1 }
-  return n > 0 ? sum / n : 0
+  let count = 0
+  for (let i = 0; i < field.length; i++) if (land[i]) { sum += field[i]; count += 1 }
+  return count > 0 ? sum / count : 0
 }
 
 // Province noise (see Phase 1): smooth seeded value noise in [-1,1], toroidal, at
 // a coarse lattice frequency — broad "provinces", not fine texture.
 function hashLattice(ix: number, iy: number, seed: number): number {
-  let h = (ix * 374761393 + iy * 668265263 + seed * 1442695040) | 0
-  h = (h ^ (h >>> 13)) * 1274126177
-  h = h ^ (h >>> 16)
-  return (h >>> 0) / 4294967295
+  let hsh = (ix * 374761393 + iy * 668265263 + seed * 1442695040) | 0
+  hsh = (hsh ^ (hsh >>> 13)) * 1274126177
+  hsh = hsh ^ (hsh >>> 16)
+  return (hsh >>> 0) / 4294967295
 }
 function provinceNoise(u: number, v: number, freqX: number, freqY: number, seed: number): number {
   const gx = u * freqX
@@ -587,29 +695,26 @@ function provinceNoise(u: number, v: number, freqX: number, freqY: number, seed:
 }
 
 // Rasterises a soft Gaussian "influence" field (0..1, union-max) around a set of
-// world-space points into the climate grid — reused for volcanic-soil provinces,
-// copper (arc volcanoes), tin (sutures), obsidian, etc. Radius as a fraction of
-// the smaller world dimension; stamps only near each point, so cost is O(points).
-function rasterisePointField(points: { x: number; y: number }[], radiusFrac: number, worldWidth: number, worldHeight: number): Float32Array {
-  const field = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+// world-space points onto the w×h raster the points are given in — reused for
+// volcanic-soil provinces, copper (arc volcanoes), tin (sutures), obsidian, etc.
+// Radius as a fraction of the smaller world dimension; stamps within three
+// radii of each point only, so cost is O(points).
+function rasterisePointField(points: { x: number; y: number }[], radiusFrac: number, w: number, h: number): Float32Array {
+  const field = new Float32Array(w * h)
   if (points.length === 0) return field
-  const radiusWorld = Math.min(worldWidth, worldHeight) * radiusFrac
-  const radiusCellsX = Math.ceil((radiusWorld / worldWidth) * CLIMATE_RES_X) * 3
-  const radiusCellsY = Math.ceil((radiusWorld / worldHeight) * CLIMATE_RES_Y) * 3
-  const cellW = worldWidth / CLIMATE_RES_X
-  const cellH = worldHeight / CLIMATE_RES_Y
-  const inv2r2 = 1 / (2 * radiusWorld * radiusWorld)
+  const radius = Math.min(w, h) * radiusFrac
+  const reach = Math.ceil(radius * 3)
+  const inv2r2 = 1 / (2 * radius * radius)
   for (const v of points) {
-    const cx = Math.floor((v.x / worldWidth) * CLIMATE_RES_X)
-    const cy = Math.floor((v.y / worldHeight) * CLIMATE_RES_Y)
-    for (let dy = -radiusCellsY; dy <= radiusCellsY; dy++) {
-      const gy = ((cy + dy) % CLIMATE_RES_Y + CLIMATE_RES_Y) % CLIMATE_RES_Y
-      for (let dx = -radiusCellsX; dx <= radiusCellsX; dx++) {
-        const gx = ((cx + dx) % CLIMATE_RES_X + CLIMATE_RES_X) % CLIMATE_RES_X
-        const wdx = Math.min(Math.abs(dx * cellW), worldWidth - Math.abs(dx * cellW))
-        const wdy = Math.min(Math.abs(dy * cellH), worldHeight - Math.abs(dy * cellH))
-        const bump = Math.exp(-(wdx * wdx + wdy * wdy) * inv2r2)
-        const i = gy * CLIMATE_RES_X + gx
+    const cx = Math.floor(v.x)
+    const cy = Math.floor(v.y)
+    for (let dy = -reach; dy <= reach; dy++) {
+      const y = wrapValue(cy + dy, h)
+      const ddy = cy + dy + 0.5 - v.y
+      for (let dx = -reach; dx <= reach; dx++) {
+        const ddx = cx + dx + 0.5 - v.x
+        const bump = Math.exp(-(ddx * ddx + ddy * ddy) * inv2r2)
+        const i = y * w + wrapValue(cx + dx, w)
         if (bump > field[i]) field[i] = bump
       }
     }
@@ -620,7 +725,7 @@ function rasterisePointField(points: { x: number; y: number }[], radiusFrac: num
 // Runs the base subsistence aggregate through `normalise → L1 gamma
 // (mean-preserving) → L2 province (mean-1) → gain`, so carrying capacity's gain
 // changes only the level and concentration only the shape. Verified in Phase 1.
-function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: Volcano[], warpSeed: number, worldWidth: number, worldHeight: number, params: EcologyParams): Float32Array {
+function concentrationPipeline(base: Float32Array, land: Uint8Array, dev: Float32Array, params: EcologyParams): Float32Array {
   const n = base.length
   let maxBase = 0
   for (let i = 0; i < n; i++) if (land[i] && base[i] > maxBase) maxBase = base[i]
@@ -636,15 +741,6 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: 
   for (let i = 0; i < n; i++) if (land[i]) shaped[i] *= l1Scale
 
   const strength = params.provinceStrength
-  const volcanic = rasterisePointField(volcanoes, ECOLOGY_TUNING.volcanicProvinceRadiusFrac, worldWidth, worldHeight)
-  const dev = new Float32Array(n)
-  for (let i = 0; i < n; i++) {
-    if (!land[i]) continue
-    const gy = Math.floor(i / CLIMATE_RES_X)
-    const gx = i - gy * CLIMATE_RES_X
-    const noise = provinceNoise((gx + 0.5) / CLIMATE_RES_X, (gy + 0.5) / CLIMATE_RES_Y, ECOLOGY_TUNING.provinceNoiseFreqX, ECOLOGY_TUNING.provinceNoiseFreqY, warpSeed)
-    dev[i] = ECOLOGY_TUNING.volcanicWeight * volcanic[i] + ECOLOGY_TUNING.noiseWeight * noise
-  }
   const meanDev = landMean(dev, land)
   const provincal = new Float32Array(n)
   for (let i = 0; i < n; i++) {
@@ -658,66 +754,4 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: 
   const out = new Float32Array(n)
   for (let i = 0; i < n; i++) out[i] = land[i] ? provincal[i] * l2Scale * gain : ECOLOGY_OCEAN
   return out
-}
-
-// --- entry point ------------------------------------------------------------
-
-export function computeEcology(inputs: EcologyInputs, params: EcologyParams): EcologyFields {
-  const { temperature, precipitation, biomes, biomesFine, upwelling, months, rainVariability, elevation, discharge, maxDischarge, lakeDepth, saltFlat, waterTable, oases, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth, worldHeight } = inputs
-  const n = CLIMATE_RES_X * CLIMATE_RES_Y
-  const land = new Uint8Array(n)
-  for (let i = 0; i < n; i++) if (precipitation[i] !== OCEAN_PRECIP) land[i] = 1
-
-  // Fold-out nudges: per-field abundance multipliers, applied in place so they
-  // both scale the displayed field and (for subsistence + salt) flow into the
-  // carrying-capacity combine below.
-  const wmap = params.weights ?? {}
-  const scaleField = (arr: Float32Array, id: EcologyFieldId): Float32Array => {
-    const m = wmap[id] ?? 1
-    if (m !== 1) for (let i = 0; i < arr.length; i++) if (land[i]) arr[i] *= m
-    return arr
-  }
-
-  const coarseDischarge = discharge ? toClimateGrid(discharge, worldWidth, worldHeight) : null
-  const coarseLake = lakeDepth ? toClimateGrid(lakeDepth, worldWidth, worldHeight) : null
-
-  // Subsistence.
-  const river = riverWater(coarseDischarge, maxDischarge)
-  const arable = scaleField(computeArable(temperature, precipitation, months, rainVariability, fieldWater(river, oases, worldWidth, worldHeight), elevation, land, worldWidth, worldHeight), 'arable')
-  const fish = scaleField(computeFish(land, temperature, upwelling, shelfShare(elevation, worldWidth, worldHeight), coarseDischarge, maxDischarge, coarseLake), 'fish')
-  const game = scaleField(computeGame(temperature, precipitation, months, biomes, biomesFine ? fineEdges(biomesFine, worldWidth, worldHeight) : null, land), 'game')
-  const pasture = scaleField(computePasture(biomes, biomesFine ? fineTableMean(biomesFine, PASTURE_BY_BIOME, 0.1, worldWidth, worldHeight) : null, precipitation, herdWater(river, waterTable, worldWidth, worldHeight), land), 'pasture')
-  const salt = scaleField(computeSalt(temperature, precipitation, months, saltFlat ? toClimateGrid(Float32Array.from(saltFlat), worldWidth, worldHeight) : null, land), 'salt')
-
-  // Saturating carrying-capacity base: subsistence sources complement with
-  // diminishing returns (1 - e^-Σ w·x); salt adds a small preservation bonus (the
-  // one sanctioned material→subsistence bleed).
-  const base = new Float32Array(n)
-  for (let i = 0; i < n; i++) {
-    if (!land[i]) continue
-    base[i] = 1 - Math.exp(-(ECOLOGY_TUNING.wArable * arable[i] + ECOLOGY_TUNING.wFish * fish[i] + ECOLOGY_TUNING.wGame * game[i] + ECOLOGY_TUNING.wPasture * pasture[i] + ECOLOGY_TUNING.wSaltCc * salt[i]))
-  }
-  const carryingCapacity = concentrationPipeline(base, land, volcanoes, warpSeed, worldWidth, worldHeight, params)
-
-  // Material (separate channel). Copper = arc volcanoes; tin = orogen belts (rarer
-  // with tinRarity → tighter radius); iron = old cratons + bog iron.
-  const arcVolcanoes = volcanoes.filter((v) => v.kind === 'arc')
-  const timber = scaleField(computeTimber(biomes, biomesFine ? fineTableMean(biomesFine, TIMBER_BY_BIOME, 0.05, worldWidth, worldHeight) : null, land), 'timber')
-  const toolStone = scaleField(computeToolStone(volcanoes, elevation, land, worldWidth, worldHeight, warpSeed), 'toolStone')
-  const copper = scaleField(maskToLand(rasterisePointField(thinPoints(arcVolcanoes, ECOLOGY_TUNING.copperKeep, warpSeed ^ 0xc0bbe401), ECOLOGY_TUNING.copperRadiusFrac, worldWidth, worldHeight), land), 'copper')
-  const tinRadius = ECOLOGY_TUNING.tinRadiusFrac * (1 - 0.6 * Math.max(0, Math.min(1, params.tinRarity ?? 0)))
-  const tin = scaleField(maskToLand(rasterisePointField(thinPoints(orogenPoints, ECOLOGY_TUNING.tinKeep, warpSeed ^ 0x71b2a903), tinRadius, worldWidth, worldHeight), land), 'tin')
-  const wetland = computeWetland(precipitation, coarseDischarge, maxDischarge, coarseLake, elevation, land, worldWidth, worldHeight)
-  const iron = scaleField(computeIron(cratonAge, wetland, land, warpSeed), 'iron')
-
-  // Prestige (separate channel — no carrying-capacity contribution).
-  const gold = scaleField(computeGold(coarseDischarge, maxDischarge, rasterisePointField(thinPoints(orogenPoints, ECOLOGY_TUNING.goldLodeKeep, warpSeed ^ 0x601dfeed), ECOLOGY_TUNING.goldLodeRadiusFrac, worldWidth, worldHeight), land), 'gold')
-  const silver = scaleField(computeSilver(maskToLand(rasterisePointField(thinPoints(arcVolcanoes, ECOLOGY_TUNING.silverKeep, warpSeed ^ 0x5117e201), ECOLOGY_TUNING.silverRadiusFrac, worldWidth, worldHeight), land), land), 'silver')
-  const gems = scaleField(computeGems(rasterisePointField(thinPoints(orogenPoints, ECOLOGY_TUNING.gemKeep, warpSeed ^ 0x9e35c0de), ECOLOGY_TUNING.gemRadiusFrac, worldWidth, worldHeight), copper, temperature, precipitation, land), 'gems')
-
-  // Mask every per-resource field to the ocean sentinel so overlays skip water.
-  const perResource = [arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron, gold, silver, gems]
-  for (let i = 0; i < n; i++) if (!land[i]) for (const f of perResource) f[i] = ECOLOGY_OCEAN
-
-  return { resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y, fields: { carryingCapacity, arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron, gold, silver, gems } }
 }

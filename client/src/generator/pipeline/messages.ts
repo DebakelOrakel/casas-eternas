@@ -582,9 +582,13 @@ export interface WorkerHydrologyDataMessage {
 // resX*resY, land only (ECOLOGY_OCEAN sentinel on water). See ecology/ecologyField.ts.
 export interface WorkerEcologyDataMessage {
   type: 'ecologyData'
+  // The fields on the climate grid (Float32): the save and the migration.
   resX: number
   resY: number
   fields: { id: string; data: ArrayBuffer }[]
+  // The fields per pixel of the world raster, one byte each
+  // (ecologyField.encodeFineField): the map and its readout.
+  fine: { resX: number; resY: number; fields: { id: string; data: ArrayBuffer }[] }
 }
 
 // The initial-migration result (coarse climate grid). See migration/migrationField.ts.

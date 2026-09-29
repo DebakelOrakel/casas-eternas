@@ -54,7 +54,7 @@ import { computeIceThickness } from '../surface/iceFlow'
 import { WORLD_WIDTH_METERS } from '../surface/erosionEngine'
 import type { RiverGraph } from '../surface/riverGraph'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
-import { computeEcology } from '../ecology/ecologyField'
+import { applyEcology, encodeFineField, prepareEcology, type EcologyBase } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
@@ -256,6 +256,8 @@ interface EcologyResult {
   carryingCapacity: Float32Array
 }
 let ecology: EcologyResult | null = null
+// The ecology's physics (prepareEcology) and what it was computed from.
+let ecologyBase: { key: { climate: unknown; hydrology: unknown; elevation: unknown; sim: unknown; epoch: number }; base: EcologyBase } | null = null
 
 // The last erosion's pre-fill elevations (basins still intact) — the terrain the
 // hydrology runs on, so lakes have depressions to fill. null when the current
@@ -329,6 +331,7 @@ function clearResult(id: StageId): void {
       return
     case 'ecology':
       ecology = null
+      ecologyBase = null
       return
     case 'migration':
       // Nothing retained: its four rasters go straight to the screen.
@@ -1192,7 +1195,13 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
   // yet, fish falls back to its marine component; the ecology panel re-triggers
   // this once hydrology lands (see GeneratorScreen's chaining).
   const cratonAge = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, sim.width, sim.height)
-  const eco = computeEcology({
+  // The physics depends on the world alone; while only the sliders move,
+  // the last one stands (prepareEcology is some 2 s at 2048, the sliders a
+  // tenth of that).
+  const key = { climate, hydrology, elevation: lastRawElevations, sim, epoch: sim.epoch }
+  const last = ecologyBase?.key
+  if (!ecologyBase || !last || last.climate !== key.climate || last.hydrology !== key.hydrology || last.elevation !== key.elevation || last.sim !== key.sim || last.epoch !== key.epoch) {
+    ecologyBase = { key, base: prepareEcology({
     temperature: climate.temperature,
     precipitation: climate.precipitation,
     biomes: climate.biomes,
@@ -1216,7 +1225,9 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     warpSeed: sim.warpSeed,
     worldWidth: sim.width,
     worldHeight: sim.height,
-  }, {
+  }) }
+  }
+  const eco = applyEcology(ecologyBase.base, {
     carryingCapacity: message.carryingCapacity,
     concentration: message.concentration,
     provinceStrength: message.provinceStrength,
@@ -1227,13 +1238,15 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
   // (transfer neuters them) — the migration step reads it.
   ecology = { carryingCapacity: eco.fields.carryingCapacity.slice() }
   const fields = Object.entries(eco.fields).map(([id, data]) => ({ id, data: data.buffer as ArrayBuffer }))
+  const fine = Object.entries(eco.fine.fields).map(([id, data]) => ({ id, data: encodeFineField(data).buffer as ArrayBuffer }))
   const ecologyMessage: WorkerEcologyDataMessage = {
     type: 'ecologyData',
     resX: eco.resX,
     resY: eco.resY,
     fields,
+    fine: { resX: eco.fine.resX, resY: eco.fine.resY, fields: fine },
   }
-  emit(ecologyMessage, fields.map((f) => f.data))
+  emit(ecologyMessage, [...fields.map((f) => f.data), ...fine.map((f) => f.data)])
 }
 
 function handleMigrationRun(message: Extract<WorkerInboundMessage, { type: 'migrationRun' }>): void {

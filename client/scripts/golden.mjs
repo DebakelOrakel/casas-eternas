@@ -406,7 +406,7 @@ function invariants(w) {
     discharge: w.discharge,
     'lakes.depth': w.lakes.depth,
     seasonality: w.seasonal,
-    ...Object.fromEntries(Object.keys(w.eco.fields).map((k) => [`eco.${k}`, w.eco.fields[k]])),
+    ...Object.fromEntries(Object.keys(w.eco.fine.fields).map((k) => [`eco.${k}`, w.eco.fine.fields[k]])),
   }
   // NaN is the failure mode this pipeline actually has: it propagates silently
   // through float maths, hashes consistently, and only shows up as a blank
@@ -529,7 +529,7 @@ function invariants(w) {
   // fields on all 3 seeds. What must hold is that a cell is EITHER unscored or
   // non-negative: a scored cell going negative is the actual bug class, and it
   // would otherwise hide behind the sentinel.
-  for (const [name, field] of Object.entries(w.eco.fields)) {
+  for (const [name, field] of Object.entries(w.eco.fine.fields)) {
     let below = 0
     for (let i = 0; i < field.length; i++) {
       if (field[i] < 0 && field[i] !== M.ecology.ECOLOGY_OCEAN) below++
@@ -626,8 +626,12 @@ function metrics(w) {
   // tracking land, not ecology). And `.max` is dropped: several fields clamp at
   // 1, so their maximum was identical on every seed — a metric that cannot vary
   // guards nothing, which the coverage layer duly reported.
-  for (const name of Object.keys(w.eco.fields).sort()) {
-    const field = w.eco.fields[name]
+  // Per pixel of the world raster, what the map shows (since 2026-09-29,
+  // docs/decisions/ecology-as-function.md): the cell means dilute the
+  // resources that lie in strips (fish, placer gold, bog iron) until no cell
+  // is rich.
+  for (const name of Object.keys(w.eco.fine.fields).sort()) {
+    const field = w.eco.fine.fields[name]
     let sum = 0, scored = 0, rich = 0
     for (let i = 0; i < field.length; i++) {
       if (field[i] === M.ecology.ECOLOGY_OCEAN) continue
@@ -702,7 +706,7 @@ function fingerprints(w) {
   put('hydro.saltFlat', w.lakes.saltFlat)
   put('hydro.dryBasin', w.lakes.dryBasin)
 
-  for (const k of Object.keys(w.eco.fields).sort()) put(`eco.${k}`, w.eco.fields[k])
+  for (const k of Object.keys(w.eco.fine.fields).sort()) put(`eco.${k}`, w.eco.fine.fields[k])
 
   put('mig.cost', w.mig.cost)
   put('mig.density', w.mig.density)
