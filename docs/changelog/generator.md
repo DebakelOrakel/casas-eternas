@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-29
+- **changed** Ecology: game, grazing and timber follow the detailed biome map, so forest edges, gallery forests and mixed land count as they are. `generator.step.ecology`
 - **changed** Ecology: oases water their fields, and dry grassland feeds herds only where a river or a well gives them water. `generator.step.ecology`
 - **changed** Ecology: salt comes from dry-bottomed salt basins and from coasts with a dry season, not only from deserts. `generator.step.ecology`
 - **changed** Ecology: farmland follows the growing season, big rivers water the fields of dry lands, and unreliable rain makes land less worth farming. `generator.step.ecology`

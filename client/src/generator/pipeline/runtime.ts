@@ -235,6 +235,9 @@ interface HydrologyResult {
   // The springs in an arid climate (phase 5a's oases), world px — the
   // ecology waters their fields.
   oases: { x: number; y: number }[]
+  // The riparian biomes on the world raster (computeRiparianBiomes), the
+  // map's own: the ecology reads its timber, grazing and edges from them.
+  biomesFine: Uint8Array | null
   // The mesh's own hydrology when the world has a mesh (phase 4.3); the
   // raster fields above are then its recovery.
   onMesh: MeshHydrology | null
@@ -999,7 +1002,7 @@ function handleHydrologyRun(): void {
         result = {
           routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
           bodies: lakes.bodies, level: lakes.level, surface: onMesh ? onMesh.raster.surface : waterLevelField(lakes.bodies, elevation, width, height).surface, body: lakes.body,
-          maxDischarge, meanRunoff, graph: null, coast: null, sedimentBasins: [], ice: null, waterTable: null, oases: [],
+          maxDischarge, meanRunoff, graph: null, coast: null, sedimentBasins: [], ice: null, waterTable: null, oases: [], biomesFine: null,
           onMesh,
         }
       }
@@ -1029,6 +1032,7 @@ function handleHydrologyRun(): void {
       // The riparian-effective precipitation rides along: it is what lets the
       // worldmap reclassify at bake resolution without re-running hydrology.
       biomesOut = riparian.biomes
+      result.biomesFine = riparian.biomes.slice()
       precipEffOut = riparian.precipEff
       // THE FEATURE GRAPH (phase 2): the network as data, with the riparian
       // biomes as bank material and the last erosion pass's sediment flux as
@@ -1203,6 +1207,7 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     saltFlat: hydrology?.saltFlat ?? null,
     waterTable: hydrology?.waterTable ?? null,
     oases: hydrology?.oases ?? [],
+    biomesFine: hydrology?.biomesFine ?? null,
     volcanoes: collectVolcanoes(sim.features),
     // Collision belts for tin/lode-gold/gems: current fold mountains (on-crust)
     // + the accumulated (advected) deep-time sutures.

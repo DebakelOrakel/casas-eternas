@@ -259,6 +259,12 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      hand-dug well (water table within 30 m). Wells as irrigation were
      tried and dropped (two thirds of the dry land became farmland). See
      fieldWater, herdWater and computePasture.
+     **Game, pasture and timber on the fine biomes 2026-09-29:** timber and
+     grazing are their tables' mean over the cell's biomes on the world
+     raster (the riparian ones, so the gallery forests count); game's
+     ecotone is the share of fine neighbours whose biomes differ, and its
+     productivity the months' mean. Without hydrology (no fine biomes) the
+     coarse biome stands in. The fields stay on the climate grid.
    - **2b — fish** ✅ BUILT 2026-07-26 (pending visual check): marine (coastalness
      × shelf-base + upwelling from adjacent-ocean current strength) + freshwater
      (big rivers via discharge + lake presence), saturating; a 4th subsistence

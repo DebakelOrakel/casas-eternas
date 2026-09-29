@@ -172,6 +172,16 @@ export const ECOLOGY_TUNING = {
 
   // Ecotone (biome-boundary) game bonus and its cap.
   ecotoneBonus: 0.18,
+  // The share of a cell's fine neighbour pairs whose biomes differ at which
+  // it counts as an edge in full (computeGame): at 8 fine pixels a side, one
+  // straight border through the cell is some 0.06. Measured on Earth
+  // (scratch run of the refined climate, 2026-09-29): game's land mean
+  // 0.233 (annual means, coarse edges) → 0.210 (months, fine edges), 9 % of
+  // the cells move by more than 0.1; with the fine biomes' mean pasture
+  // and timber keep their means (0.240 → 0.234, 0.289 → 0.296) and move by
+  // more than 0.1 on 10 and 12 % of the cells, at the biomes' borders (the
+  // Congo's rim: timber 0.20 → 0.42, pasture 0.90 → 0.66).
+  ecotoneFullShare: 0.1,
 
   // Metal / stone influence radii (world fraction). Tin is tightest → the rare,
   // clustered bottleneck; copper broader (arc belts); obsidian tight (point sources).
