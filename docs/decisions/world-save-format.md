@@ -1,7 +1,7 @@
 ---
 summary: A saved world is a .zip — a human-readable YAML recipe/status + a JSON sim snapshot + the two heavy float rasters + a preview, restorable instantly and offline.
 date: 2026-07-24
-updated: 2026-08-12
+updated: 2026-09-29
 area: platform
 stage: built
 status: implemented (v1alpha1)
@@ -149,3 +149,12 @@ still get a regenerated mantle and an empty lattice.
   recipe).
 - A save browser using `preview.png`; naming beyond the seed; validation of an
   `apiVersion` mismatch on load (currently best-effort).
+
+## Addendum 2026-09-29 — formatVersion 7
+
+The fourteen ecology layers are no longer written: the ecology is a rule
+evaluated where one looks (decisions/ecology-as-function.md) and is
+computed on load. The generator now loads the climate refinement from the
+save (the layers of formatVersion 6) instead of computing it again; a save
+without it is refined on load. The hydrology is still computed on load;
+whether to load it from the save too is open.

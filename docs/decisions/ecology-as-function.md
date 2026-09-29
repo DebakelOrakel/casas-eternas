@@ -3,7 +3,7 @@ summary: The ecology fields become a local rule over the coarse climate, the fin
 date: 2026-09-29
 area: generator
 stage: building
-status: decided 2026-09-29; step 1 BUILT the same day — the rule runs per pixel at 2048×1024 (prepareEcology, some 2 s, kept by the worker while only the sliders move; applyEcology, some 0.3 s), the map and its readout show it, the save and the migration read its means per climate cell. Steps 2–4 open.
+status: decided 2026-09-29; step 1 BUILT the same day, and the save stopped carrying the ecology layers (formatVersion 7, part of step 2) — the rule runs per pixel at 2048×1024 (prepareEcology, some 2 s, kept by the worker while only the sliders move; applyEcology, some 0.3 s), the map and its readout show it, the save and the migration read its means per climate cell. Steps 2–4 open.
 ---
 
 # Ecology as a function, not a raster

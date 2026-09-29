@@ -3,9 +3,9 @@
 //
 // A STEP is not a STAGE. Step 0 names and seeds the world and also drives the
 // planet stage, whose controls are values you set rather than a run you start;
-// hydrology is a stage with no step of its own, because its rivers and lakes
-// are the readout of the erosion solve — so its layers are offered by the
-// Erosion step. The pipeline table (generator/pipeline/stages.ts) says what
+// hydrology and erosion are stages with no step of their own: the erosion runs
+// in the tectonics' epochs, and the rivers and lakes are the climate's readout,
+// offered by the Climate step. The pipeline table (generator/pipeline/stages.ts) says what
 // computes what; this one says what you SEE and WHEN.
 //
 // WHY IT EXISTS. The same question — "what belongs to this step?" — used to be
@@ -20,7 +20,7 @@ import { ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputPa
 import type { EcologyFieldId } from '../../generator/ecology/ecologyField'
 import type { OverlayId } from './overlays'
 
-export type StepId = 'world' | 'genesis' | 'tectonics' | 'climate' | 'erosion' | 'ecology' | 'migration'
+export type StepId = 'world' | 'genesis' | 'tectonics' | 'climate' | 'ecology' | 'finishing' | 'migration'
 
 export interface Step {
   id: StepId
@@ -140,19 +140,13 @@ export const STEPS: readonly Step[] = [
     //
     // No terrain wash by default: a colour wash under a temperature ramp reads
     // as a third colour.
-    overlays: ['terrain', 'names', 'temperature', 'pressure', 'wind', 'currents'],
+    //
+    // The rivers, the water balance and the watersheds are the climate's
+    // readout since the erosion step went (2026-09-29): the hydrology runs
+    // on this step's refined climate.
+    overlays: ['terrain', 'names', 'temperature', 'pressure', 'wind', 'currents', 'rivers', 'waterBalance', 'watersheds'],
     groups: [LAND, SEA, WEATHER],
     defaults: ['names', 'temperature'],
-    fields: [],
-  },
-  {
-    id: 'erosion',
-    stage: 'erosion',
-    // The hydrology stage has no step: rivers and lakes are what this solve
-    // produces, so they are offered here.
-    overlays: ['terrain', 'names', 'rivers', 'waterBalance', 'watersheds', 'biomes'],
-    groups: [],
-    defaults: ['terrain', 'names', 'rivers'],
     fields: [],
   },
   {
@@ -165,6 +159,16 @@ export const STEPS: readonly Step[] = [
     defaults: ['names', 'ecology'],
     fields: ['carryingCapacity', ...RESOURCE_FIELDS],
     fieldsTitle: 'generator.section.resources',
+  },
+  {
+    // The detail jobs on the finished world (2026-09-29): nothing yet — which
+    // jobs belong here is decided when they are built.
+    id: 'finishing',
+    stage: 'finishing',
+    overlays: ['terrain', 'names', 'rivers', 'biomes'],
+    groups: [],
+    defaults: ['terrain', 'names', 'rivers'],
+    fields: [],
   },
   {
     id: 'migration',
@@ -206,7 +210,7 @@ export function step(id: StepId): Step {
 }
 
 // Stages that deliberately have no step of their own.
-const UNSTEPPED: readonly StageId[] = ['hydrology']
+const UNSTEPPED: readonly StageId[] = ['hydrology', 'erosion']
 
 // The table used to be derived from STAGES, which meant a stage added to the
 // pipeline became a step nobody had written a label for. Declared instead, and

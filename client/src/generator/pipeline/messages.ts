@@ -1,3 +1,4 @@
+import type { RefinedClimate } from '../climate/refinement'
 import type { WaterBody } from '../surface/hydrology'
 import type { PlanetForcing } from '../planet/planetForcing'
 import type { CoastReach } from '../surface/coastGraph'
@@ -130,6 +131,10 @@ export interface WorkerClimateRunMessage {
 // WorkerClimateRefinedMessage, or declines when no climate exists.
 export interface WorkerClimateRefineMessage {
   type: 'climateRefine'
+  // A refinement read back from a save (refinedLayers.refinedFromLayers):
+  // taken as it is instead of computed, so a loaded world keeps the climate
+  // it was saved with.
+  restored?: RefinedClimate
 }
 // Requests a rivers/lakes (hydrology) compute on the current topography, using
 // the precipitation cached from the last computeClimate as the water source.

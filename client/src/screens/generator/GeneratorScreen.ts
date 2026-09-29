@@ -12,7 +12,6 @@ import { createMeshSampler } from '../../generator/mesh/meshSampler'
 import { decodeMesh } from '../../generator/mesh/meshSerial'
 import { torusDomain } from '../../generator/core/domain'
 import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
-import { AMPLIFY_BAKE_STAGES, AMPLIFY_EROSION_ROUNDS, AMPLIFY_FINEST_STAGE } from '../../world/bakeSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../generator/core/mapConfig'
 
@@ -66,20 +65,13 @@ import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleB
 import { createSaveMenu, type SaveTarget } from '../../ui/titleBar/SaveMenu'
 import { createConfirmDialog } from '../../ui/confirmDialog/ConfirmDialog'
 import { keepWorldInBrowser } from '../../world/browserWorlds'
-import { getServerStatus, refreshServerStatus } from '../../server/serverStatus'
-import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
+import { uploadWorld } from '../../server/worldClient'
 import { createWorldChooser } from './WorldChooser'
 import { createStepBar } from './StepBar'
 import { createSidebar } from './Sidebar'
 import { readRecipeValue as readYamlValue } from '../../world/save/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
-import { getArtifactStore } from '../../storage/artifactStoreProvider'
-import { artifactKey } from '../../storage/ArtifactStore'
-import { ELEVATION_ENCODING, amplificationArtifactExists, amplificationPipelineVersion, readAmplificationArtifact, writeAmplificationArtifact } from '../../world/artifacts'
-import { readWorldInputs } from '../../world/save/loadWorldInputs'
-import { openWorld } from '../../world/query'
-import { amplifyPhaseFraction, bakeStageInBrowser } from '../../generator/surface/bakeInBrowser'
-import { bakeFraction, bakeIsWaiting, canCommissionBakes, commissionBake, followBake } from '../../world/bakeClient'
+import { ELEVATION_ENCODING } from '../../world/artifacts'
 import { MIGRATION_INPUTS } from '../../generator/migration/migrationInputParams'
 import { ARCHEAN_INPUTS } from '../../generator/archean/archeanInputParams'
 import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
@@ -96,7 +88,6 @@ import { traceIsolines, drawIsolines, type Isoline } from '../../map/isolines'
 import { DEFAULT_PLANET_FORCING } from '../../generator/planet/planetForcing'
 import './generator.css'
 import '../../ui/chrome/chrome.css'
-import { needsSignIn } from '../../server/session'
 
 // The ecology per-field abundance weights persisted in world.yaml (keys `w_<field>`).
 // The one grouping of ecology resources — used by the panel's abundance fold-out, by
@@ -449,9 +440,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       mapView.setReliefSurfaces(null)
       riverLayer?.setHeightSurface(null)
     }
-    // The bake start button shares this gate (a bake refines ERODED terrain),
-    // and this is the one place every erosionRunCount change flows through.
-    void refreshBakeButtons()
   }
 
   // River ribbons live in the scene over the map plane; segments come from the
@@ -686,47 +674,21 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         <!-- The month the climate layers show. A view, not a lever: the step
              has no levers (they are step 0's). It stands in the foot, above
              the buttons, so it stays in sight however far the layer column
-             scrolls (2026-09-29). Live once the refinement ran. -->
+             scrolls (2026-09-29). Live once the refinement ran. The play
+             button runs through the months, round and round. No run or
+             reset button: the refinement runs by itself once the world is
+             there (2026-09-29). -->
         <div class="gen-param" data-help="generator.climate.month">
           <div class="gen-param__head">
             <span class="gen-param__label" data-t="generator.climate.month.label">${t('generator.climate.month.label')}</span>
             <span class="gen-param__value"><span data-value="climate-month-label">${t('generator.climate.month.annual')}</span></span>
           </div>
-          <input type="range" class="gen-param__range climate-month-input" min="0" max="12" step="1" value="0" disabled aria-label="${t('generator.climate.month.label')}" data-t-aria="generator.climate.month.label" />
-        </div>
-        <div class="gen-step__actions">
-          <!-- The step computes the history's climate on entry; the button
-               refines it (docs/design/climate-refinement.md), the reset
-               drops the refinement. -->
-          <button type="button" class="gen-action-icon" data-action="reset-climate" data-t-aria="generator.action.resetClimate.label" data-help="generator.action.resetClimate">
-            <img src="/icons/reset.png" alt="" />
-          </button>
-          <button type="button" class="gen-action" data-action="refine-climate" data-help="generator.action.runClimate">
-            <span class="gen-action__label" data-t="generator.action.runClimate.label">${t('generator.action.runClimate.label')}</span>
-          </button>
-        </div>
-      </div>
-    </div>
-    <div class="gen-step" data-stage="erosion">
-      <!-- No sliders and no run button: since the coupled history (phase
-           5.1) the erosion happens inside the tectonics' epochs, and its
-           controls sit on that panel. What is left here is the readout
-           (the rivers) and the detail bake. -->
-      <div class="gen-step__foot">
-        <!-- The detail bake: pick a width, then order it. It stands with the
-             step that makes its input, because a bake refines ERODED terrain
-             and nothing else. The design canvas gives it a place of its own
-             ("Feinsimulation", with the job list); it moves there when that
-             exists. -->
-        <div class="gen-bake">
-          <div class="gen-bake__tiers">
-            <button type="button" class="gen-tier" data-bake-tier="8" aria-pressed="false" disabled data-t="generator.panel.erosion.bake16k.label" data-help="generator.panel.erosion.bake16k">${t('generator.panel.erosion.bake16k.label')}</button>
-            <button type="button" class="gen-tier" data-bake-tier="4" aria-pressed="true" data-t="generator.panel.erosion.bake8k.label" data-help="generator.panel.erosion.bake8k">${t('generator.panel.erosion.bake8k.label')}</button>
-            <button type="button" class="gen-tier" data-bake-tier="2" aria-pressed="false" data-t="generator.panel.erosion.bake4k.label" data-help="generator.panel.erosion.bake4k">${t('generator.panel.erosion.bake4k.label')}</button>
+          <div class="gen-param__play">
+            <input type="range" class="gen-param__range climate-month-input" min="0" max="12" step="1" value="0" disabled aria-label="${t('generator.climate.month.label')}" data-t-aria="generator.climate.month.label" />
+            <button type="button" class="gen-action-icon" data-action="play-months" disabled aria-pressed="false" data-t-aria="generator.climate.play.label" data-help="generator.climate.play">
+              <img src="/icons/play.png" alt="" />
+            </button>
           </div>
-          <button type="button" class="gen-action-icon" data-action="bake-detail" data-t-aria="generator.action.runDetailBake.label" data-help="generator.action.runDetailBake">
-            <img src="/icons/erosion_detail.png" alt="" />
-          </button>
         </div>
       </div>
     </div>
@@ -760,6 +722,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         </div>
       </div>
     </div>
+    <!-- The detail jobs on the finished world (2026-09-29): empty until the
+         jobs that belong here are built. -->
+    <div class="gen-step" data-stage="finishing"></div>
     <div class="panel" data-stage="migration">
       <button type="button" class="icon-button panel-reset" data-action="reset-migration" aria-label="${t('generator.action.resetMigration.label')}" data-help="generator.action.resetMigration">
         <img src="/icons/reset.png" alt="" />
@@ -831,8 +796,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   alluviumInput.addEventListener('input', () => { alluviumLabel.textContent = alluviumInput.value })
   rockContrastInput.addEventListener('input', () => { rockContrastLabel.textContent = rockContrastInput.value })
   const resetPlanetButton = root.querySelector<HTMLButtonElement>('[data-action="reset-planet"]')!
-  const refineClimateButton = root.querySelector<HTMLButtonElement>('[data-action="refine-climate"]')!
-  const resetClimateButton = root.querySelector<HTMLButtonElement>('[data-action="reset-climate"]')!
+  const playMonthsButton = root.querySelector<HTMLButtonElement>('[data-action="play-months"]')!
   const climateMonthInput = root.querySelector<HTMLInputElement>('.climate-month-input')!
   const climateMonthLabel = root.querySelector<HTMLElement>('[data-value="climate-month-label"]')!
   const resetEcologyButton = root.querySelector<HTMLButtonElement>('[data-action="reset-ecology"]')!
@@ -1023,10 +987,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     sayResetPlanet()
     for (const el of [seedInput, obliquityInput, tempBandInput, contrastInput, rotationInput, humidityInput]) el.disabled = step0Locked
     randomizeButton.disabled = step0Locked
-    // Refine once per climate; the reset takes the refinement back.
-    refineClimateButton.disabled = busy || lastTemperature === null || lastRefined !== null
-    resetClimateButton.disabled = busy || lastRefined === null
     climateMonthInput.disabled = lastRefined === null
+    playMonthsButton.disabled = lastRefined === null
     resetEcologyButton.disabled = busy
     resetMigrationButton.disabled = busy
     saveMenu.setEnabled(!busy)
@@ -1116,7 +1078,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       fraction = 1 - Math.max(0, autoStopAtEpoch - lastEpoch) / MAX_TECTONICS_EPOCHS
       stage = judged.stage
     } else if (refineInFlight) {
-      label = t('generator.action.runClimate.label')
+      label = t('generator.step.climate.label')
       fraction = refineShare
     } else if (climateInFlight) {
       label = t('generator.step.climate.label')
@@ -1241,12 +1203,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // climate); the refinement carries its own from real months.
   let lastKoppen: Uint8Array | null = null
   // The climate step's refinement (docs/design/climate-refinement.md): twelve
-  // months of pressure and wind, month-major. Null until its button ran, and
-  // dropped with every new climate.
+  // months of pressure and wind, month-major. Null until it ran (by itself,
+  // once the world stands, or read back from a save), and dropped with every
+  // new climate.
   let lastRefined: RefinedClimate | null = null
   // A loaded save's refinement, held until the catch-up has computed the
   // climate it refines: that fresh climate would drop it otherwise.
-  let restoredRefinement = false
+  let restoredRefinement: RefinedClimate | null = null
+  // True while a flow sequences the computes itself (the restore's
+  // catch-up): the automatic chain (climate → refinement → hydrology) stands
+  // aside, as it does for the save's (saveChainActive).
+  let restoreChainActive = false
   // Called when a requested refinement has landed, the refined climate
   // included (the restore's catch-up waits on it).
   let refineResolve: (() => void) | null = null
@@ -1305,41 +1272,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const displayCurrentAnomaly = (): Float32Array | null => lastRefined?.currentAnomaly ?? lastCurrentAnomaly
   let climateResX = 0
   let climateResY = 0
-  // Rivers/lakes (hydrology) — a panel-less stage shown on the erosion panel.
+  // Rivers/lakes (hydrology) — a panel-less stage shown on the climate step.
   // River segments come from the worker's hydrology step; null until computed /
   // invalidated.
   let lastRiverData: { points: Float32Array; lengths: Uint32Array; regimes: Uint8Array } | null = null
-  // A baked river network, shown INSTEAD of the 2k one when this world has an
-  // amplified artifact. Display only, and kept apart from lastRiverData for a
-  // concrete reason: that one is written into the save as layers/rivers.json,
-  // and a save whose rivers came from an 8k bake would carry a network its own
-  // elevation raster cannot reproduce — while deriveWorldId, which hashes no
-  // rivers at all, would call the two saves identical.
-  //
-  // The 2048 raster stays the authority (docs/decisions/worldmap-amplification);
-  // this only lets the generator PREVIEW what the world map will draw.
-  let bakedRiverDisplay: { points: Float32Array; lengths: Uint32Array; regimes: Uint8Array } | null = null
 
-  // Whichever network is current. One place, so the two sources cannot both
-  // think they are on screen.
+  // The rivers on the map.
   function drawRivers(): void {
-    const shown = bakedRiverDisplay ?? lastRiverData
-    if (shown) riverLayer?.setPolylines(shown.points, shown.lengths, shown.regimes)
-  }
-
-  // Adopt a baked artifact's rivers for display, rescaled from the fine grid to
-  // macro texel coordinates. Only x/y are divided: the third component is a
-  // CARTOGRAPHIC width, sized to read as a line rather than measured in cells,
-  // so scaling it would thin every river as the bake got finer.
-  function showBakedRivers(points: Float32Array, lengths: Uint32Array, regimes: Uint8Array, factor: number): void {
-    const scaled = new Float32Array(points.length)
-    for (let i = 0; i < points.length; i += 3) {
-      scaled[i] = points[i] / factor
-      scaled[i + 1] = points[i + 1] / factor
-      scaled[i + 2] = points[i + 2]
-    }
-    bakedRiverDisplay = { points: scaled, lengths, regimes }
-    drawRivers()
+    if (lastRiverData) riverLayer?.setPolylines(lastRiverData.points, lastRiverData.lengths, lastRiverData.regimes)
   }
   let lastWatersheds: Uint16Array | null = null
   let lastDischargeField: Float32Array | null = null
@@ -3468,9 +3408,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       invalidateAfter('climate')
       refineResolve?.()
       refineResolve = null
+      // The rivers follow the refined climate by themselves.
+      if (!chainDriven() && erosionRunCount >= 1) requestHydrology()
     } else if (!message.refinement) {
       invalidateAfter('climate')
       dropRefinement()
+      if (!chainDriven()) requestRefinement()
     }
     climateResolve?.()
     climateResolve = null
@@ -3505,6 +3448,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         refineInFlight = false
         climateResolve?.()
         climateResolve = null
+        refineResolve?.()
+        refineResolve = null
         break
       case 'hydrology':
         hydrologyInFlight = false
@@ -3594,6 +3539,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // history's climate again, over the year.
   function dropRefinement(): void {
     if (!lastRefined && !refineInFlight) return
+    stopMonths()
     lastRefined = null
     monthFields = null
     climateMonth = 0
@@ -3601,6 +3547,32 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     sayClimateMonth()
     updateControlsDisabled()
     updateOverlays()
+  }
+  // The month the climate layers show, and the slider and label with it.
+  function showClimateMonth(month: number): void {
+    climateMonth = month
+    climateMonthInput.value = String(month)
+    sayClimateMonth()
+    applyOverlays()
+    renderLegends()
+  }
+  // How long each month stands while the months play.
+  const MONTH_STEP_MS = 800
+  let monthTimer: ReturnType<typeof setInterval> | null = null
+  // The button says what a press does; its key rides on data-t-aria so a
+  // language switch finds it (i18n/relabel).
+  function sayPlayButton(playing: boolean): void {
+    const key = playing ? 'generator.climate.play.labelActive' : 'generator.climate.play.label'
+    playMonthsButton.dataset.tAria = key
+    playMonthsButton.setAttribute('aria-label', t(key))
+    playMonthsButton.setAttribute('aria-pressed', String(playing))
+    playMonthsButton.querySelector('img')!.src = playing ? '/icons/stop.png' : '/icons/play.png'
+  }
+  function stopMonths(): void {
+    if (monthTimer === null) return
+    clearInterval(monthTimer)
+    monthTimer = null
+    sayPlayButton(false)
   }
   function sayClimateMonth(): void {
     climateMonthLabel.textContent = climateMonth === 0
@@ -3658,10 +3630,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   function clearHydrology(): void {
     lastRiverData = null
-    // A baked network describes ONE elevation raster. Erode again and its
-    // channels sit beside the valleys they were cut for — worse than showing
-    // nothing, because it looks authoritative.
-    bakedRiverDisplay = null
     lastLakeDepth = null
     lastWaterTable = null
     lastWaterBodies = null
@@ -3677,6 +3645,34 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     riverLayer?.setEnabled(false)
     compositeOverlays()
   }
+
+  // THE CLIMATE STEP'S REFINEMENT RUNS BY ITSELF (2026-09-29), like the
+  // hydrology after it: once the world stands (tectonics with its eroding
+  // epochs, step 0 taken), the history's climate is refined, and the rivers
+  // follow (handleClimateData). Not over a planet preview (step 0's freed
+  // levers recompute the climate as they move) nor while a simulation runs.
+  // `restored`: a save's refinement, taken instead of computed.
+  // Answers whether a refinement is under way after the call.
+  function requestRefinement(restored?: RefinedClimate): boolean {
+    if (refineInFlight) return true
+    if (lastRefined !== null || lastTemperature === null) return false
+    if (tectonicsRunning || archeanRunning || step0Pending() || step0Unlocked) return false
+    if (erosionRunCount < 1 || lastEpoch < MIN_TECTONIC_EPOCHS) return false
+    refineInFlight = true
+    refineShare = 0
+    updateControlsDisabled()
+    updateProgress()
+    postToWorker(restored ? { type: 'climateRefine', restored } : { type: 'climateRefine' })
+    return true
+  }
+  // A flow's wait for the refinement: settled at once when none can run.
+  const awaitRefinement = (restored?: RefinedClimate): Promise<void> =>
+    new Promise((resolve) => {
+      refineResolve = resolve
+      if (!requestRefinement(restored)) { refineResolve = null; resolve() }
+    })
+  // The chain of computes goes by itself unless a flow sequences it.
+  const chainDriven = (): boolean => saveChainActive || restoreChainActive
 
   // Posts a hydrology compute. Needs a computed climate (the worker caches its
   // precipitation as the river water source); every caller posts climateRun
@@ -3837,6 +3833,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   async function ensureMigration(): Promise<void> {
     if (tectonicsRunning || erosionRunCount < 1) return
     if (lastTemperature === null) await awaitCompute((r) => { climateResolve = r }, requestClimate)
+    if (lastRefined === null) await awaitRefinement()
     if (lastRiverData === null) await awaitCompute((r) => { hydrologyResolve = r }, requestHydrology)
     if (!hasEcologyData()) await awaitCompute((r) => { ecologyResolve = r }, requestEcology)
     if (migrationOrigins.length === 0) autoPlaceMigrationOrigins()
@@ -4019,7 +4016,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastContinentCount = message.raftLabels.length
     updateStats()
     updateProgress()
-    updateNavState() // epoch progress may unlock the Erosion panel
+    updateNavState() // epoch progress may unlock the Climate step
     // The counters this render just reported are what the baseline is made of, so
     // a load or a regenerate takes its reading here rather than before the round
     // trip, when lastEpoch still belonged to the previous world.
@@ -4076,8 +4073,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       tectonicsSettling = false
       updateControlsDisabled()
       updateProgress()
-      // The rivers are the erosion panel's readout (the hydrology stage has no
-      // panel of its own): when the run settles — the plates stopped, the last
+      // The rivers are the climate step's readout (the hydrology stage has no
+      // step of its own): when the run settles — the plates stopped, the last
       // epoch's erosion in — run the chain right away instead of waiting for
       // a panel switch. The render above has just invalidated climate and
       // hydrology (every fresh topography does), so both are posted, in
@@ -4085,8 +4082,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // first epoch — un-eroded terrain gets no rivers. The save chain
       // sequences its own computes.
       if (runJustSettled && erosionRunCount >= 1 && !saveChainActive) {
+        // The refinement and the rivers follow the climate by themselves
+        // (handleClimateData).
         if (lastTemperature === null) requestClimate()
-        if (lastRiverData === null) requestHydrology()
+        else requestRefinement()
       }
     }
   }
@@ -4550,7 +4549,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         lakeDepth: lastLakeDepth ?? undefined,
         waterTable: lastWaterTable ?? undefined,
       }
-      for (const f of Object.keys(lastEcologyFields) as EcologyFieldId[]) sources[f] = lastEcologyFields[f]
       for (const spec of WORLD_LAYERS) {
         const src = sources[spec.name]
         if (!src) continue
@@ -4636,6 +4634,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // fourth (phase 5.2), 5 that the column's layers carry the climate at
     // deposition (phase 5.4). A world whose history has not run carries none.
     // 6: the layers may carry the climate step's refinement (above).
+    // 7: no ecology layers (docs/decisions/ecology-as-function.md: computed
+    // on load), and the generator loads the refinement it finds rather than
+    // computing it again.
     if (mesh) {
       zip.file('mesh/nodes.f32', mesh.nodes)
       zip.file('mesh/connectivity.bin', mesh.connectivity)
@@ -4643,7 +4644,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (mesh.column) zip.file('mesh/column.bin', mesh.column)
     }
     const manifest = {
-      formatVersion: 6,
+      formatVersion: 7,
       // The same provenance string status.generator carries — a real build id
       // since 2026-08-11, where a static 'casas-eternas/v1alpha1' had stood
       // saying nothing.
@@ -4721,10 +4722,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // recipe that is not read off a control. A world minted here keeps its uid
     // for every later save; regenerate() is the only thing that clears it.
     if (worldUid === '') worldUid = newWorldUid()
-    // A bake is NOT a save. Bumping the revision here would advance the counter
-    // the server's optimistic lock compares against, so the next real upload
-    // would collide with a write that never happened.
-    if (pendingBakeFactors.length === 0) worldRevision += 1
+    worldRevision += 1
     zip.file('world.yaml', buildWorldYaml())
     // A world saved during the Archean has no plate simulation yet — it carries its own
     // snapshot instead. The phase is a pause, so it has to be savable there; before this
@@ -4737,17 +4735,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const archeanPreview = await makePreviewBlob()
       if (archeanPreview) zip.file('preview.png', archeanPreview)
       const archeanBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
-      // An Archean save has no climate, so a bake of it would stop after
-      // erosion and yield a world with no rivers. It is still routed through
-      // runBakeOrder rather than dropped: that path reports the reason and,
-      // more importantly, clears the "a bake is running" state. Returning here
-      // with it still set would disable the start button until the screen
-      // reloads. (The erosion gate makes this unreachable from the UI — this
-      // is the belt to that suspender.)
-      if (pendingBakeFactors.length > 0) {
-        await runBakeOrder(archeanBlob)
-        return
-      }
       await deliverArchive(archeanBlob, `${(worldName || seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)
       return
     }
@@ -4764,13 +4751,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const preview = await makePreviewBlob()
     if (preview) zip.file('preview.png', preview)
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
-    // The bake reads this archive back rather than being handed the rasters:
-    // see bakeFromArchive for why the save is the only representation whose
-    // artifact key the world map will actually look for.
-    if (pendingBakeFactors.length > 0) {
-      await runBakeOrder(blob)
-      return
-    }
     const safeName = (worldName || seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')
     await deliverArchive(blob, `${safeName}.zip`)
   }
@@ -4873,28 +4853,28 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // still right in that case — the resolver is called by whichever request
     // lands, not by the one that asked.
     if (lastEpoch < MIN_TECTONIC_EPOCHS) return
-    if (lastTemperature === null) {
-      await awaitCompute((r) => { climateResolve = r }, () => { if (!climateInFlight) requestClimate() })
-    }
-    // A save that was refined is refined again here, before the rivers: the
-    // worker's climate must be the refined one they run on, and the
-    // refinement is deterministic, so this is the saved one. (The save's
-    // refinement layers are for readers without the generator.)
-    if (restoredRefinement && lastTemperature !== null && lastRefined === null) {
-      restoredRefinement = false
-      await awaitCompute((r) => { refineResolve = r }, () => {
-        refineInFlight = true
-        refineShare = 0
-        updateControlsDisabled()
-        postToWorker({ type: 'climateRefine' })
-      })
-    }
-    if (erosionRunCount < 1) return
-    if (lastRiverData === null) {
-      await awaitCompute((r) => { hydrologyResolve = r }, () => { if (!hydrologyInFlight) requestHydrology() })
-    }
-    if (!hasEcologyData()) {
-      await awaitCompute((r) => { ecologyResolve = r }, () => { if (!ecologyInFlight) requestEcology() })
+    restoreChainActive = true
+    try {
+      if (lastTemperature === null) {
+        await awaitCompute((r) => { climateResolve = r }, () => { if (!climateInFlight) requestClimate() })
+      }
+      // The save's refinement is taken as it was saved (the worker adopts it
+      // without computing); a save without one is refined now, as a world
+      // that just finished would be.
+      if (lastTemperature !== null && lastRefined === null) {
+        const saved = restoredRefinement
+        restoredRefinement = null
+        await awaitRefinement(saved ?? undefined)
+      }
+      if (erosionRunCount < 1) return
+      if (lastRiverData === null) {
+        await awaitCompute((r) => { hydrologyResolve = r }, () => { if (!hydrologyInFlight) requestHydrology() })
+      }
+      if (!hasEcologyData()) {
+        await awaitCompute((r) => { ecologyResolve = r }, () => { if (!ecologyInFlight) requestEcology() })
+      }
+    } finally {
+      restoreChainActive = false
     }
   }
 
@@ -4907,287 +4887,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // it would make the bar claim a place the world is not.
     if (target !== 'download') lastSave = { target, at: new Date() }
     updateSaveIndicator()
-    // Saving to the server is exactly what unblocks 8K, so the buttons are
-    // re-evaluated here rather than leaving a greyed-out control that has just
-    // become possible.
-    void refreshBakeButtons()
-  }
-
-  // --- Ordering an amplification bake from the erosion panel ----------------
-  //
-  // The bake IS an erosion pass at a finer grid — upsample, seed roughness,
-  // erode, re-derive hydrology — which is why it is commissioned from here
-  // rather than beside the river-density slider that reads its result.
-  //
-  // It goes through the SAVE, always, and that is the load-bearing decision.
-  // The obvious shortcut is to bake from the rasters this screen already
-  // holds, and it produces a wrong cache key: an artifact is addressed by
-  // `deriveWorldId`, which hashes the precipitation layer as STORED (u16 at
-  // 8000/65535), while the generator holds raw floats. The buildWorldYaml
-  // comment says the same thing about not writing that id into the recipe.
-  // A bake keyed off the raw floats would run correctly, write real bytes,
-  // and be invisible to the world map for ever — the same silent class of
-  // failure as a pipeline-version mismatch. Serialising and reading back
-  // through `readWorldInputs` makes the key right by construction, because
-  // it is the identical reader the map and the server's baker use.
-  // The bakes the next save cycle should run, in the order they will run.
-  // Several at once is the point: the chips SELECT tiers, the one start button
-  // orders them, and this client works through them one after the other —
-  // coarsest first, so the tier a map can already use arrives soonest.
-  let pendingBakeFactors: number[] = []
-  let bakeRunning = false
-
-  // Which tier the chips have selected, as a factor (2 → 4K, 4 → 8K). ONE
-  // value, radio-style, finest first in the row (user decision 2026-08-16):
-  // under derived tiers the finest bake carries every coarser view as its
-  // downsample, so ordering several tiers is redundant — the standalone 4K is
-  // only the stopgap before an 8K exists. Default = the designated finest.
-  // 16K's chip exists and stays disabled — its help card says what it waits
-  // on (tiled artifacts).
-  let selectedBakeFactor: number = AMPLIFY_FINEST_STAGE
-
-  // Look for the finest baked network this world already has and show it.
-  //
-  // Finest first: the whole point of the search is "best available", and 8K
-  // carries roughly seven times the channel length of 4K. Silent when there is
-  // nothing — an absent artifact is the normal state, not a failure.
-  async function adoptBestBakedRivers(worldUidForLookup: string, worldIdForLookup: string): Promise<void> {
-    const pipelineVersion = amplificationPipelineVersion()
-    const store = await getArtifactStore()
-    for (const factor of [4, 2]) {
-      const key = artifactKey(worldUidForLookup, worldIdForLookup, pipelineVersion, String(factor))
-      const hit = await readAmplificationArtifact(store, key).catch(() => null)
-      if (!hit) continue
-      showBakedRivers(hit.artifact.riverPoints, hit.artifact.riverLengths, hit.artifact.riverRegimes, factor)
-      return
-    }
-  }
-
-  // One tier of one archive. Deliberately does NOT own `bakeRunning`: the
-  // caller runs a whole ORDER of these in sequence, and the first tier
-  // clearing the flag would re-enable the start button with the rest of the
-  // order still to run.
-  async function bakeFromArchive(archive: Blob, factor: number): Promise<void> {
-    const level = `${factor * 2}K`
-    const inputs = await readWorldInputs(await archive.arrayBuffer())
-    if (!inputs || !inputs.climate) {
-      // No climate means no discharge, so the bake would stop after erosion
-      // and produce a world with no rivers — which is the Archean case.
-      ctx.notifications.show({ message: t('notify.bake.failed', { reason: '' }), icon: '/icons/warning.png', durationMs: 8000 })
-      return
-    }
-
-    const pipelineVersion = amplificationPipelineVersion()
-    const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, String(factor))
-    const store = await getArtifactStore()
-    if (await amplificationArtifactExists(store, key).catch(() => false)) {
-      // Already made, by this machine or another. Saying so beats spending
-      // minutes to reproduce bytes that are addressed by content anyway.
-      ctx.notifications.show({ message: t('notify.bake.exists', { level }), icon: '/icons/ok.png', durationMs: 6000 })
-      void adoptBestBakedRivers(inputs.worldUid, inputs.worldId)
-      return
-    }
-
-    // Waiting wears the SERVER's icon whatever the deployment is, because that
-    // is what is true: the server holds the request until something is free to
-    // take it, and where it will run is not yet a fact about the world.
-    let toast = ctx.notifications.show({
-      message: t('notify.bake.waiting', { level }),
-      icon: '/icons/server_load.png',
-      sticky: true,
-    })
-    const settle = (message: string, icon: string, durationMs: number): void => {
-      ctx.notifications.dismiss(toast)
-      ctx.notifications.show({ message, icon, durationMs })
-    }
-
-    // Once it IS running, the icon says where — a Kubernetes Job on another node
-    // looks different from a subprocess beside the server, and that is worth
-    // seeing while you wait seven minutes.
-    //
-    // A second notification rather than a patched one, and that follows the rule
-    // rather than working around it: NotificationPatch allows only the message
-    // and the bar to change, on the grounds that a moved icon "would read as a
-    // second event" — and here it is one. Waiting for a machine and running on
-    // it are two different things.
-    //
-    // Resolved BEFORE the poll loop so the swap is synchronous. Awaiting inside
-    // it would reassign `toast` after the same tick had already written to the
-    // old one, which is a race with no symptom except a progress bar that skips.
-    const status = await getServerStatus()
-    const runningIcon = status.bakeRunner === 'kubernetes' ? '/icons/kubernetes.png' : '/icons/server_load.png'
-    let announcedRunning = false
-    const announceRunning = (): void => {
-      if (announcedRunning) return
-      announcedRunning = true
-      ctx.notifications.dismiss(toast)
-      toast = ctx.notifications.show({
-        message: t('notify.bake.running', { level }),
-        icon: runningIcon,
-        sticky: true,
-      })
-    }
-
-    // The server when it can, this browser when it cannot. Measured: 78 s
-    // against 232 s for the same stage, and the tab stays responsive.
-    const onServer = inputs.worldUid !== '' && isStoredOnServer(inputs.worldUid) && (await canCommissionBakes())
-    if (onServer) {
-      const order = await commissionBake(inputs.worldUid, factor, AMPLIFY_EROSION_ROUNDS)
-      if (!order.ok) {
-        settle(order.reason === 'unknownWorld' ? t('notify.bake.needsUpload') : t('notify.bake.failed', { reason: order.message ?? '' }), '/icons/warning.png', 12000)
-        return
-      }
-      const outcome = await followBake(order.job.id, pipelineVersion, (job) => {
-        if (!bakeIsWaiting(job)) announceRunning()
-        ctx.notifications.update(toast, {
-          message: t(bakeIsWaiting(job) ? 'notify.bake.waiting' : 'notify.bake.running', { level }),
-          progress: bakeFraction(job),
-        })
-      })
-      if (!outcome.ok) {
-        settle(
-          outcome.reason === 'mismatch'
-            ? t('notify.bake.mismatch', { serverVersion: outcome.serverVersion, clientVersion: outcome.clientVersion })
-            : t('notify.bake.failed', { reason: outcome.message }),
-          '/icons/warning.png', 15000,
-        )
-        return
-      }
-      settle(t('notify.bake.done', { level, width: outcome.result.width, height: outcome.result.height, seconds: Math.round(outcome.result.durationMs / 1000) }), '/icons/server_clean.png', 15000)
-      void adoptBestBakedRivers(inputs.worldUid, inputs.worldId)
-      return
-    }
-
-    // No server: only what a tab can survive. 8K is the ~2.6 GB that kills it,
-    // and the button is disabled for exactly this reason — reaching here means
-    // the world lost its server between the check and the click.
-    //
-    // Being signed out lands here too, and it is worth saying which of the two
-    // it is: "needs a server" sends someone to check a deployment that is fine.
-    if (!AMPLIFY_BAKE_STAGES.includes(factor)) {
-      const missing = await needsSignIn()
-      settle(t(missing ? 'generator.panel.erosion.bake.needsSignIn' : 'generator.panel.erosion.bake.needsServer'), '/icons/warning.png', 10000)
-      return
-    }
-    try {
-      const baked = await bakeStageInBrowser(
-        {
-          macro: inputs.elevations, macroWidth: inputs.width, macroHeight: inputs.height,
-          factor, detailSeed: inputs.detailSeed, erosionRounds: AMPLIFY_EROSION_ROUNDS,
-          lithoSeed: inputs.lithoSeed,
-          alluvium: inputs.erosionControls.alluvium,
-          rockContrast: inputs.erosionControls.rockContrast,
-          uplift: inputs.uplift?.data,
-          erodibility: inputs.erodibility?.data,
-          forcingResX: inputs.uplift?.resX, forcingResY: inputs.uplift?.resY,
-          precipitation: inputs.climate.data,
-          temperature: inputs.temperature?.data,
-          monsoonIndex: inputs.biomeInputs?.monsoonIndex.data,
-          climateResX: inputs.climate.resX, climateResY: inputs.climate.resY,
-        },
-        (phase, fraction) => {
-          ctx.notifications.update(toast, {
-            message: t('notify.bake.running', { level }),
-            progress: amplifyPhaseFraction(phase, fraction),
-          })
-        },
-      )
-      await writeAmplificationArtifact(store, key, baked.artifact, baked.durationMs, inputs.seedText).catch(() => false)
-      showBakedRivers(baked.artifact.riverPoints, baked.artifact.riverLengths, baked.artifact.riverRegimes, factor)
-      settle(t('notify.bake.done', { level, width: baked.artifact.width, height: baked.artifact.height, seconds: Math.round(baked.durationMs / 1000) }), '/icons/server_clean.png', 15000)
-    } catch {
-      settle(t('notify.bake.failed', { reason: '' }), '/icons/warning.png', 12000)
-    }
-  }
-
-  // The whole order, one tier after the other against the SAME archive — the
-  // client-side sequence the chips select. Sequential on purpose: the browser
-  // path cannot run two bakes at once, a server bake saturates the worker
-  // cap anyway, and one moving progress toast at a time is readable where two
-  // racing ones are not. A failed tier does not stop the rest — the artifacts
-  // are independent, and 4K failing for a browser reason says nothing about
-  // 8K on the server.
-  async function runBakeOrder(archive: Blob): Promise<void> {
-    const factors = pendingBakeFactors
-    pendingBakeFactors = []
-    try {
-      for (const factor of factors) await bakeFromArchive(archive, factor)
-    } finally {
-      // Owned here, not by the tiers: the first settling tier would otherwise
-      // re-enable the start button with the rest of the order still to run.
-      bakeRunning = false
-      void refreshBakeButtons()
-    }
-  }
-
-  // "4K" is factor 2 and "8K" is factor 4 — the label is the WIDTH, the factor
-  // is the refinement. Kept explicit here rather than computed at each site,
-  // because confusing the two silently bakes the wrong tier.
-  const bakeTierChips = [...root.querySelectorAll<HTMLButtonElement>('[data-bake-tier]')]
-  const bakeStartButton = root.querySelector<HTMLButtonElement>('[data-action="bake-detail"]')!
-
-  // A disabled control KEEPS its help card. The first cut swapped data-help for
-  // a native `title` — exactly one of the two, since the card replaces the
-  // native tooltip and both at once shows two — and that traded the styled
-  // explanation for a plain delayed one at the very moment it was needed most.
-  // Each card's text already names what its tier requires, so the disabled
-  // state says "not now" and the card says "why".
-  async function refreshBakeButtons(): Promise<void> {
-    const saved = worldUid !== '' && isStoredOnServer(worldUid)
-    const server = await canCommissionBakes()
-    // 4K needs nothing but a world: without a server it bakes here, which is
-    // what the browser can survive at this tier. 8K is the ~2.6 GB that
-    // kills a tab, so it is server-only — and the server bakes from the
-    // STORED world, which is the second condition and the one more often
-    // missing while a world is still being made. 16K does not exist yet.
-    // Deliberately WITHOUT bakeRunning: that is a transient the chips show
-    // by being disabled, not a reason to move a selection.
-    const usable = (factor: number): boolean =>
-      factor === 2 ? true
-      : factor === 4 ? server && saved
-      : false
-    // Selection follows availability: a selected tier whose requirement just
-    // went away (signed out, world no longer on the server) must not stay
-    // selected — the start button would commission it into a late failure.
-    // Radio semantics, so it falls back to the finest usable tier instead of
-    // to nothing.
-    if (!usable(selectedBakeFactor)) selectedBakeFactor = 2
-    for (const chip of bakeTierChips) {
-      const factor = Number(chip.dataset.bakeTier)
-      chip.disabled = bakeRunning || !usable(factor)
-      chip.setAttribute('aria-pressed', String(factor === selectedBakeFactor))
-    }
-    // The gate the tiers share: a bake refines ERODED terrain. Before the
-    // first macro pass there is no climate either (compute-on-save has the
-    // same erosionRunCount >= 1 condition), so a bake ordered earlier ran the
-    // whole save cycle only to fail with "no rivers" at the end. The card on
-    // this button names the precondition.
-    bakeStartButton.disabled = bakeRunning || erosionRunCount < 1
-  }
-
-  for (const chip of bakeTierChips) {
-    chip.addEventListener('click', () => {
-      // Radio, not toggle: clicking the selected chip keeps it selected —
-      // there is always exactly one tier to bake.
-      selectedBakeFactor = Number(chip.dataset.bakeTier)
-      void refreshBakeButtons()
-    })
-  }
-  bakeStartButton.addEventListener('click', () => orderAmplification())
-  void refreshBakeButtons()
-
-  function orderAmplification(): void {
-    if (bakeRunning || erosionRunCount < 1) return
-    bakeRunning = true
-    void refreshBakeButtons()
-    // Routed through the ordinary save request: the worker owns the world
-    // data, and asking it here is the same question the save button asks.
-    // pendingSaveTarget is forced away from 'server' so a bake never uploads.
-    // (Still an array downstream — the order machinery predates the
-    // single-select chips and one entry rides it fine.)
-    pendingSaveTarget = 'download'
-    pendingBakeFactors = [selectedBakeFactor]
-    void saveWorld()
   }
 
   function pickLocalWorldFile(): void {
@@ -5217,8 +4916,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         // exists is current. Recomputing it anyway made a new climate, and a
         // new climate drops the step's refinement (2026-09-28).
         if (lastTemperature === null) await awaitCompute((r) => { climateResolve = r }, requestClimate)
+        if (lastRefined === null) await awaitRefinement()
         await awaitCompute((r) => { hydrologyResolve = r }, requestHydrology)
-        await awaitCompute((r) => { ecologyResolve = r }, requestEcology)
       } finally {
         saveChainActive = false
       }
@@ -5303,7 +5002,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ctx.notifications.clearAll()
     overlay.clearMarkers()
     invalidateAfter('tectonics')
-    restoredRefinement = (await readRefinement(zip)) !== null
+    restoredRefinement = await readRefinement(zip)
 
     const seed = readYamlValue(yaml, 'spec.seed') ?? ''
     // One read of the recipe instead of a regex per key, with every gap filled by
@@ -5327,37 +5026,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // identity.deriveWorldUid.
     worldUid = readYamlValue(yaml, 'metadata.uid') || deriveWorldUid(new Uint8Array(elevation))
     worldRevision = Number(readYamlValue(yaml, 'status.revision') ?? 0)
-    // Both 8K preconditions just changed: this world now has an identity, and
-    // one opened FROM the server is by definition stored there. Without this
-    // the buttons keep answering for the empty screen they were built on —
-    // which reads as "needs a server" while a server is plainly working.
-    //
-    // The status is RE-PROBED first rather than read from the shared cache.
-    // That cache is resolved once per page load and never expires on its own,
-    // so a probe that failed while the server was still coming up would keep
-    // reporting "no server" for the rest of the session. Opening a world is
-    // the right moment to ask again — and if it came from the server, it is
-    // also proof the answer should be yes.
-    void refreshServerStatus().then(() => refreshBakeButtons())
-    // If this world already HAS a baked network, preview it rather than the
-    // 2k one. The key comes from the archive that is right here, read through
-    // the same reader the map and the baker use — deriving it from the loaded
-    // rasters instead would hash raw floats where every reader hashes the
-    // stored (quantised) precipitation, and find nothing for ever.
-    //
-    // Deliberately after everything else and unawaited: it is a nicety, the
-    // load must not wait on a zip being parsed a second time, and a world with
-    // no artifact simply keeps its own rivers.
-    // Asked as the narrow question it is. `readWorldInputs` would decode seven
-    // layers — including the full-res biome raster — to hand back an id and a
-    // slider value; opening the world and asking for its identity touches
-    // elevation and precipitation and stops there.
-    void file.arrayBuffer()
-      .then((bytes) => openWorld(bytes))
-      .then(async (loaded) => {
-        if (loaded) return adoptBestBakedRivers(loaded.recipe.worldUid, await loaded.worldId())
-      })
-      .catch(() => undefined)
     mantleVigourInput.value = String(spec.values['genesis.mantleVigour'])
     waterInput.value = String(spec.values['genesis.water'])
     obliquityInput.value = String(spec.values['planet.obliquity'])
@@ -5595,26 +5263,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // recompute. Which controls those are comes from the stage table — see resetInputs.
   // Step 0's reset takes both groups of its sliders: the planet's and the
   // climate's two levers, which stand beside them.
-  refineClimateButton.addEventListener('click', () => {
-    if (isBusy() || lastTemperature === null || lastRefined !== null) return
-    refineInFlight = true
-    refineShare = 0
-    updateControlsDisabled()
-    updateProgress()
-    postToWorker({ type: 'climateRefine' })
-  })
-  // The worker holds the refined climate in the history's place, so the
-  // reset computes the history's again (which drops the refinement here).
-  resetClimateButton.addEventListener('click', () => {
-    if (isBusy()) return
-    dropRefinement()
-    requestClimate()
-  })
   climateMonthInput.addEventListener('input', () => {
-    climateMonth = Number(climateMonthInput.value)
-    sayClimateMonth()
-    applyOverlays()
-    renderLegends()
+    stopMonths()
+    showClimateMonth(Number(climateMonthInput.value))
+  })
+  // THE MONTHS PLAYED: January to December and round again, the annual mean
+  // left out, until pressed again (or the refinement goes).
+  playMonthsButton.addEventListener('click', () => {
+    if (monthTimer !== null) { stopMonths(); return }
+    if (lastRefined === null) return
+    const advance = (): void => showClimateMonth(climateMonth % 12 + 1)
+    advance()
+    monthTimer = setInterval(advance, MONTH_STEP_MS)
+    sayPlayButton(true)
   })
   // Reset over a locked world frees the levers (at their defaults); once
   // freed, the same button takes them back to the world's values and locks
@@ -5903,7 +5564,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // tectonics a world of proto-cratons that are still dissolving.
   const MIN_ARCHEAN_STABILISED = 0.5
   const entryRequirementUnmet = (index: number): string | null => {
-    const erosionPanel = panelIndexOf('erosion')
     // Nothing exists before step 0 is answered — the steps after it all work on
     // the world it names and seeds.
     if (index > panelIndexOf('world') && !worldCreated) return t('notify.gate.needsWorld')
@@ -5917,15 +5577,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (index >= panelIndexOf('tectonics') && !archeanFinalised && !hasHandover && archeanStabilised < MIN_ARCHEAN_STABILISED) {
       return t('notify.gate.needsArchean', { min: Math.round(MIN_ARCHEAN_STABILISED * 100), current: Math.round(archeanStabilised * 100) })
     }
-    // Climate sits BEFORE erosion since the stage-2 coupling (its sliders
-    // shape the erosion's water forcing), so the tectonics gate covers both:
-    // climate computes on the tectonic terrain and needs one to exist.
-    if (index >= panelIndexOf('climate') && index <= erosionPanel && lastEpoch < MIN_TECTONIC_EPOCHS) return t('generator.notify.needsTectonics', { min: MIN_TECTONIC_EPOCHS, current: lastEpoch })
-    // Everything past Erosion, rather than the panels named one by one: the
-    // gate is about the stages the user has to run for themselves. The rest
-    // compute on entry, so they gate on what they are all derived from — and a
-    // panel added after this one is covered without anyone remembering to.
-    if (index > erosionPanel && erosionRunCount < 1) return t('generator.notify.needsErosion')
+    // The climate computes on the tectonic terrain and needs one to exist,
+    // and so does everything after it.
+    if (index >= panelIndexOf('climate') && lastEpoch < MIN_TECTONIC_EPOCHS) return t('generator.notify.needsTectonics', { min: MIN_TECTONIC_EPOCHS, current: lastEpoch })
+    // Everything past the climate, rather than the panels named one by one:
+    // the rivers and all that reads them need an eroded terrain (the
+    // erosion runs in the tectonics' epochs) — and a panel added after this
+    // one is covered without anyone remembering to.
+    if (index > panelIndexOf('climate') && erosionRunCount < 1) return t('generator.notify.needsErosion')
     return null
   }
   // Migration is carried as `aside`: it is reachable but not part of the chain
@@ -5963,7 +5622,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Step 0 comes in two parts with the overlays between them: name, seed and
   // shape first, then what the map shows, then the planet's sliders.
   const worldParams = root.querySelector<HTMLElement>('[data-stage-part="world"]')!
-  sidebar.body.append(worldPanel, overlayList.element, worldParams, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX], panels[panelIndexOf('erosion')], panels[ECOLOGY_PANEL_INDEX])
+  sidebar.body.append(worldPanel, overlayList.element, worldParams, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX], panels[ECOLOGY_PANEL_INDEX], panels[panelIndexOf('finishing')])
   // Each step's foot goes to the column's foot, which does not scroll. Tagged
   // with its step, so showPanel shows it with the step it belongs to.
   // A step's foot may sit in its second part (step 0), not in its panel.
@@ -6009,9 +5668,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     world: () => worldName.trim() !== '' && seedInput.value.trim() !== '',
     genesis: () => lastArcheanEpochs > 0 || hasHandover,
     tectonics: () => lastEpoch > 0,
-    climate: () => lastTemperature !== null,
-    erosion: () => erosionRunCount >= 1,
+    // The climate step is done when its refinement is.
+    climate: () => lastRefined !== null,
     ecology: () => hasEcologyData(),
+    // Nothing to compute yet: the step holds no job.
+    finishing: () => false,
     migration: () => lastMigration !== null,
   }
 
@@ -6054,21 +5715,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // list, which covers the map; closing the list enters the step again.
     // With the levers freed the preview shows, whatever climate the world has.
     if (index === panelIndexOf('world') && !chooserOpen && (lastTemperature === null || step0Unlocked)) requestPlanetForcing()
-    if (index === CLIMATE_PANEL_INDEX && lastTemperature === null) requestClimate()
-    // The erosion panel carries the hydrology readout: entering it with eroded
-    // terrain but no rivers (a reopened session, a mid-chain revisit) computes
-    // them, exactly as the settle of a pass does. Un-eroded terrain gets none —
-    // rivers/lakes on it are badly wrong (the old hydrology panel's gate).
-    if (index === panelIndexOf('erosion') && erosionRunCount >= 1 && lastRiverData === null) {
+    // The climate step: the climate, its refinement and the rivers after it
+    // come by themselves (handleClimateData); entering asks for what is
+    // missing, in that order. Un-eroded terrain gets no rivers.
+    // Ecology reads all three — productivity/biomes from the climate, fish
+    // freshwater from rivers and lakes — and follows the rivers when they
+    // land (handleHydrologyData).
+    if (index === CLIMATE_PANEL_INDEX || index === ECOLOGY_PANEL_INDEX) {
       if (lastTemperature === null) requestClimate()
-      requestHydrology()
-    }
-    // Ecology reads both — productivity/biomes from climate, fish freshwater from
-    // rivers and lakes.
-    if (index === ECOLOGY_PANEL_INDEX) {
-      if (lastTemperature === null) requestClimate()
-      if (lastRiverData === null) requestHydrology()
-      else if (!hasEcologyData()) requestEcology()
+      else if (lastRefined === null) requestRefinement()
+      else if (lastRiverData === null && erosionRunCount >= 1 && !hydrologyInFlight) requestHydrology()
+      else if (index === ECOLOGY_PANEL_INDEX && lastRiverData !== null && !hasEcologyData()) requestEcology()
     }
     // Migration ensures the whole upstream chain, auto-places origins the first
     // time, then computes.

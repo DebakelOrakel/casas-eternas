@@ -23,7 +23,6 @@
 // registry is where it would land if it does.
 export type FieldGrid = 'world' | 'climate'
 
-import { ECOLOGY_FIELD_IDS } from '../../generator/ecology/ecologyField'
 import { REFINED_MONTHS } from '../../generator/climate/pressure'
 
 export interface FieldSpec {
@@ -40,12 +39,6 @@ export interface FieldSpec {
 
 const world = (name: string, unit: string, landOnly: boolean): FieldSpec => ({ name, grid: 'world', unit, landOnly })
 const climate = (name: string, unit: string, landOnly: boolean): FieldSpec => ({ name, grid: 'climate', unit, landOnly })
-
-// The ecology aggregate plus the 13 resources — all coarse, all land-only, all
-// dimensionless suitability/abundance. Taken from the producer rather than
-// relisted here: this order is the save's layer order, and the two lists had to
-// agree with nothing making them.
-export const ECOLOGY_FIELD_NAMES: readonly string[] = ECOLOGY_FIELD_IDS
 
 // Every field a consumer can ask a world for. Order is the save's write order for
 // the ones that are baked; the rest follow.
@@ -68,7 +61,9 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
   // The water table's depth below the surface, metres (phase 5a); 0 at a
   // channel or a seep, the depth of a well elsewhere.
   world('waterTable', 'm', true),
-  ...ECOLOGY_FIELD_NAMES.map((name) => climate(name, '', true)),
+  // No ecology fields since 2026-09-29: the ecology is a rule evaluated
+  // where one looks (docs/decisions/ecology-as-function.md), computed on
+  // load, not stored.
   world('discharge', 'm3/s', false),
   // The erosion engine's coarse forcing (docs/design/erosion-v2.md): uplift
   // is the features' activity-weighted U (normalized to the world's peak,

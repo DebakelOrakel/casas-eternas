@@ -7,7 +7,7 @@
 
 import { metersToElevation } from '../../generator/elevation/elevationScale'
 import { sampleNearestWorld } from '../../generator/core/field'
-import { ECOLOGY_FIELD_NAMES, REFINED_FIELDS, fieldSpec } from './fieldSpec'
+import { REFINED_FIELDS, fieldSpec } from './fieldSpec'
 import type { FieldSpec } from './fieldSpec'
 
 export type Dtype = 'u8' | 'u16' | 'f32'
@@ -102,7 +102,6 @@ export const WORLD_LAYERS: LayerSpec[] = [
   layer('lakeDepth', LAKE_DEPTH_ENCODING.dtype, LAKE_DEPTH_ENCODING.scale, LAKE_DEPTH_ENCODING.offset),
   // Metres to 1000, in 1.5 cm steps — a well is never deeper here.
   layer('waterTable', 'u16', 1000 / 65535, 0),
-  ...ECOLOGY_FIELD_NAMES.map((name) => layer(name, 'u8', 3 / 255, 0)),
 ]
 
 // Flow accumulation. Full-res like biome, but kept out of WORLD_LAYERS because

@@ -633,3 +633,10 @@ Tehran), which is the annual mean of step 0, not the cycle.
    the run discards the result: the climate must be computed again. It
    does not rerun by itself (20–40 s for each slider movement is too
    much); the step shows that the result is gone and start is active.
+   **Revised 2026-09-29:** the refinement runs by itself once the world
+   stands (tectonics with its eroding epochs, step 0 taken, no preview of
+   freed step-0 levers), and the rivers follow it, as the hydrology always
+   did; the start and reset buttons are gone. A loaded world takes the
+   refinement from its save instead of computing it (formatVersion 7); a
+   save without one is refined on load. The month slider has a play
+   button that runs through the months.

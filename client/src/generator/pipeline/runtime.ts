@@ -826,12 +826,13 @@ function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climat
 // step shows and the terrain it was computed on. The worker keeps nothing of
 // it yet: nothing downstream reads it until the
 // energy balance feeds the biomes, so the screen holds the only copy.
-function handleClimateRefine(): void {
+function handleClimateRefine(message: Extract<WorkerInboundMessage, { type: 'climateRefine' }>): void {
   const elevation = preErosionElevations ?? lastRawElevations
   if (!sim || !elevation) { decline('climate', 'tectonics'); return }
   if (!climate) { decline('climate', 'climate'); return }
   const { width, height } = sim
-  const r = refineClimate(elevation, width, height, climate.params, climate.temperature, climate.wind, (share) => {
+  // A save's refinement is taken as it is; otherwise it is computed.
+  const r = message.restored ?? refineClimate(elevation, width, height, climate.params, climate.temperature, climate.wind, (share) => {
     const progress: WorkerClimateRefineProgressMessage = { type: 'climateRefineProgress', share: share * 0.85 }
     emit(progress)
   })
@@ -1589,7 +1590,7 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   resetStage: (m) => handleResetStage(m as Extract<WorkerInboundMessage, { type: 'resetStage' }>),
   requestElevationField: () => handleRequestElevationField(),
   climateRun: (m) => handleClimateRun(m as Extract<WorkerInboundMessage, { type: 'climateRun' }>),
-  climateRefine: () => handleClimateRefine(),
+  climateRefine: (m) => handleClimateRefine(m as Extract<WorkerInboundMessage, { type: 'climateRefine' }>),
   hydrologyRun: () => handleHydrologyRun(),
   ecologyRun: (m) => handleEcologyRun(m as Extract<WorkerInboundMessage, { type: 'ecologyRun' }>),
   migrationRun: (m) => handleMigrationRun(m as Extract<WorkerInboundMessage, { type: 'migrationRun' }>),

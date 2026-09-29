@@ -25,7 +25,6 @@ import { PLANET_INPUTS } from '../planet/planetInputParams'
 import { TECTONICS_INPUTS } from '../tectonics/tectonicsInputParams'
 import { CLIMATE_INPUTS } from '../climate/climateInputParams'
 import { ECOLOGY_INPUTS } from '../ecology/ecologyInputParams'
-import { ECOLOGY_FIELD_IDS } from '../ecology/ecologyField'
 import { MIGRATION_INPUTS } from '../migration/migrationInputParams'
 
 // `genesis` rather than `archean` because that is what the two user-facing
@@ -33,7 +32,7 @@ import { MIGRATION_INPUTS } from '../migration/migrationInputParams'
 // `spec.genesis.*`. The module is `archean/` (the era) and the messages are
 // `archeanInit`/`archeanStart` (the implementation) — three names for one stage,
 // which step 3d is where it gets resolved, not here.
-export type StageId = 'planet' | 'genesis' | 'tectonics' | 'erosion' | 'climate' | 'hydrology' | 'ecology' | 'migration'
+export type StageId = 'planet' | 'genesis' | 'tectonics' | 'erosion' | 'climate' | 'hydrology' | 'ecology' | 'finishing' | 'migration'
 
 // How a stage occupies time, which decides what controlling it looks like. This
 // is a real difference in kind, not an accident: a steppable stage runs on a
@@ -130,8 +129,8 @@ export const STAGES: readonly Stage[] = [
     dependsOn: ['tectonics', 'climate'],
     kind: 'progressive',
     // Since phase 5.1 the erosion has no run of its own — it happens in the
-    // tectonics' epochs. The stage stays for its panel (the bakes, the
-    // overlays) and its place in the invalidation order; it computes nothing.
+    // tectonics' epochs. The stage stays for its place in the invalidation
+    // order; it computes nothing and has no step (since 2026-09-29).
     inputs: {},
     outputs: ['elevation'],
   },
@@ -143,8 +142,8 @@ export const STAGES: readonly Stage[] = [
     dependsOn: ['climate', 'erosion'],
     kind: 'oneShot',
     // No controls since the density slider died (P4/teardown) — and no panel
-    // either: the stage runs after each erosion pass and on demand from the
-    // stages downstream; its readout lives on the erosion panel.
+    // either: the stage runs after the climate and on demand from the stages
+    // downstream; its readout lives on the climate step.
     inputs: {},
     // Rewrites `biome` for riparian and salt-flat cells. River polylines and
     // watersheds are drawn but not registered fields.
@@ -162,7 +161,19 @@ export const STAGES: readonly Stage[] = [
     // Plus the thirteen per-field abundance nudges, which share one range and
     // reach the save through ECOLOGY_ABUNDANCE_GROUPS rather than as named
     // controls — see worldSpec.ts.
-    outputs: [...ECOLOGY_FIELD_IDS],
+    // No registered fields since 2026-09-29: the ecology is a rule evaluated
+    // where one looks, computed on load and not saved
+    // (docs/decisions/ecology-as-function.md).
+    outputs: [],
+  },
+  {
+    id: 'finishing',
+    // The detail jobs on the finished world (the Finishing step): they read
+    // the terrain, its water and what grows on it. None is built yet.
+    dependsOn: ['hydrology', 'ecology'],
+    kind: 'oneShot',
+    inputs: {},
+    outputs: [],
   },
   {
     id: 'migration',

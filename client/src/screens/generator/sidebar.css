@@ -212,42 +212,15 @@
   gap: 8px;
 }
 
-/* The detail bake: a width to pick, and the button that orders it. Its own row
-   above the step's actions, because it is not the step — it refines what the
-   step produced. */
-.gen-bake {
+/* The month slider with its play button beside it. */
+.gen-param__play {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: 8px;
 }
-.gen-bake__tiers {
+.gen-param__play .gen-param__range {
   flex: 1;
-  display: flex;
-  gap: 4px;
-}
-.gen-tier {
-  flex: 1;
-  border: 1px solid var(--dc-line2);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dc-text2);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.gen-tier:hover:not(:disabled) {
-  background: var(--dc-hover);
-}
-/* The chosen width is a fill, not a shade: it is a radio, and one of them is
-   always the answer. */
-.gen-tier[aria-pressed="true"] {
-  border-color: var(--dc-strong);
-  background: var(--dc-strong);
-  color: var(--dc-panel);
-}
-.gen-tier:disabled {
-  opacity: 0.45;
-  cursor: default;
+  min-width: 0;
 }
 
 .gen-action {
