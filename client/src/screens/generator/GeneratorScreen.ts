@@ -39,7 +39,7 @@ import { KOPPEN_CODES, koppenCode, koppenColor, koppenLabelKey } from '../../gen
 import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, pressureColor, upwellingColor, salinityColor, DEEP_WATER_RGB, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops, pressureLegendStops, upwellingLegendStops, salinityLegendStops } from '../../generator/climate/climateColors'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
-import { shiftedYNorm } from '../../generator/climate/climateField'
+import { shiftedYNorm, topSummerCos } from '../../generator/climate/climateField'
 import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
 import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../generator/climate/biomes'
 import { evaporationPotential } from '../../generator/surface/hydrology'
@@ -679,10 +679,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       </div>
     </div>
     <div class="gen-step" data-stage="climate">
-      <!-- The month the climate layers show. A view, not a lever: the step
-           has no levers (they are step 0's), so it stands without a Params
-           title. Live once the refinement ran. -->
-      <section class="gen-params">
+      <div class="gen-step__foot">
+        <!-- No stats: the world's coldest and warmest cell said little once
+             the step had months (dropped 2026-09-28). No status mark either:
+             the progress pill says the climate is computing. -->
+        <!-- The month the climate layers show. A view, not a lever: the step
+             has no levers (they are step 0's). It stands in the foot, above
+             the buttons, so it stays in sight however far the layer column
+             scrolls (2026-09-29). Live once the refinement ran. -->
         <div class="gen-param" data-help="generator.climate.month">
           <div class="gen-param__head">
             <span class="gen-param__label" data-t="generator.climate.month.label">${t('generator.climate.month.label')}</span>
@@ -690,11 +694,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           </div>
           <input type="range" class="gen-param__range climate-month-input" min="0" max="12" step="1" value="0" disabled aria-label="${t('generator.climate.month.label')}" data-t-aria="generator.climate.month.label" />
         </div>
-      </section>
-      <div class="gen-step__foot">
-        <!-- No stats: the world's coldest and warmest cell said little once
-             the step had months (dropped 2026-09-28). No status mark either:
-             the progress pill says the climate is computing. -->
         <div class="gen-step__actions">
           <!-- The step computes the history's climate on entry; the button
                refines it (docs/design/climate-refinement.md), the reset
@@ -1963,7 +1962,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
   // A class as the legend and the readout say it: its code, then its name.
-  const koppenName = (id: number): string => `${koppenCode(id)} · ${t(koppenLabelKey(id) as TKey)}`
+  const koppenName = (id: number): string => `${t(koppenLabelKey(id) as TKey)} (${koppenCode(id)})`
 
   function paintBiomes(data: Uint8ClampedArray): void {
     if (!lastBiomes) return
@@ -2378,6 +2377,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // A year's course at the cell, drawn under the rows (the two fields the
     // climate computes as a year).
     chart?: (cell: ProbeCell) => ProbeChart | null
+    // What the cell IS, beside the height in the card's head instead of a
+    // row (the climate class, the biome); null where the layer says nothing.
+    highlight?: (cell: ProbeCell) => string | null
   }
   // The weather phenomena's rows, one per layer (2026-09-29: each its own
   // layer in the climate step's weather group): a share of the year or of
@@ -2481,9 +2483,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     temperature: {
       available: () => lastTemperature !== null,
       legend: () => ({ type: 'gradient', title: t('overlay.temperature.label'), unit: t('common.unit.celsius'), stops: temperatureLegendStops }),
+      // The year's span and, in brackets, the value the map shows (the
+      // year's mean, or the month's): one row for what used to be the
+      // temperature and the seasonal swing apart (2026-09-29).
       probe: (cell) => {
         const field = displayTemperature()
-        return field ? [{ label: t('readout.row.temperature'), value: formatValue(String(Math.round(field[cell.i])), 'common.unit.celsius') }] : []
+        if (!field) return []
+        const shown = formatValue(String(Math.round(field[cell.i])), 'common.unit.celsius')
+        const year = temperatureYear(cell)
+        if (!year) return [{ label: t('readout.row.temperature'), value: shown }]
+        const span = `${Math.round(Math.min(...year))}…${formatValue(String(Math.round(Math.max(...year))), 'common.unit.celsius')}`
+        return [{ label: t('readout.row.temperature'), value: `${span} (${shown})` }]
       },
       chart: (cell) => {
         const year = temperatureYear(cell)
@@ -2493,11 +2503,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     seasonality: {
       available: () => lastSeasonality !== null,
       legend: () => ({ type: 'gradient', title: t('overlay.seasonality.label'), unit: t('common.unit.celsius'), stops: amplitudeLegendStops }),
-      // The field is the full peak-to-peak swing (seasonalTemperature adds
-      // ±half of it), so the ± figure is half the field.
-      probe: (cell) => lastSeasonality && lastSeasonality[cell.i] !== OCEAN_AMPLITUDE
-        ? [{ label: t('readout.row.season'), value: t('readout.seasonSwing', { v: (lastSeasonality[cell.i] / 2).toFixed(1) }) }]
-        : [],
+      // No row: the temperature row gives the year's span wherever the swing
+      // is known (temperatureYear builds the year from it).
+      probe: null,
     },
     ...weatherReadouts(),
     salinity: {
@@ -2594,15 +2602,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const ids = KOPPEN_CODES.map((_, id) => id).filter((id) => id > 0 && present.has(id))
         return { type: 'swatches', title: t('overlay.koppen.label'), items: ids.map((id) => ({ label: koppenName(id), rgb: koppenColor(id) })) }
       },
-      probe: (cell) => {
+      probe: null,
+      // The name alone: the code is the legend's, beside its swatch.
+      highlight: (cell) => {
         const id = displayKoppen()?.[cell.i] ?? 0
-        return id > 0 && cell.land ? [{ label: t('readout.row.koppen'), value: koppenName(id) }] : []
+        return id > 0 && cell.land ? t(koppenLabelKey(id) as TKey) : null
       },
     },
     biomes: {
       available: () => lastBiomes !== null,
       legend: () => ({ type: 'swatches', title: t('overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) }),
-      probe: (cell) => lastBiomes ? [{ label: t('readout.row.biome'), value: t(biomeLabelKey(lastBiomes[cell.fine]) as TKey) }] : [],
+      probe: null,
+      highlight: (cell) => lastBiomes && cell.land ? t(biomeLabelKey(lastBiomes[cell.fine]) as TKey) : null,
     },
     // 'rivers' bundles the scene-space river ribbons + the lake tint under one
     // control. The colours are the map's: the ribbon overlay's river blue, the
@@ -2686,6 +2697,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return probedLayers(stepId).flatMap((id) => {
       const r = overlayReadout[id]
       return r.probe && r.available() ? r.probe(cell) : []
+    })
+  }
+  function probeHighlightsFor(stepId: StepId, cell: ProbeCell): string[] {
+    return probedLayers(stepId).flatMap((id) => {
+      const r = overlayReadout[id]
+      const h = r.highlight && r.available() ? r.highlight(cell) : null
+      return h ? [h] : []
     })
   }
   function probeChartsFor(stepId: StepId, cell: ProbeCell): ProbeChart[] {
@@ -3224,8 +3242,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Twelve months of temperature. This adds NOTHING to the model: the climate is
   // an annual mean plus a seasonal amplitude (climate/seasonality.ts), which IS
   // a sinusoid over the year — this draws the curve that was already computed.
-  // The top of the map is the northern hemisphere (see shiftedYNorm), warmest in
-  // July; the southern half runs the opposite way.
+  // The grid's top rows (the screen's lower half, see climateField's calendar)
+  // are warmest in TOP_SUMMER_MONTH; the other half runs the opposite way.
   function temperatureYear(cell: ProbeCell): number[] | null {
     // The refinement's own twelve months when there are some.
     if (lastRefined) {
@@ -3236,10 +3254,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const amp = lastSeasonality[cell.i]
     if (amp === OCEAN_AMPLITUDE) return null
     const mean = lastTemperature[cell.i]
-    const north = shiftedYNorm(cell.gy, climateResY, 0) < 0.5
-    const sign = north ? 1 : -1
-    // Index 6 = July, the northern peak; cos is 1 there.
-    return Array.from({ length: 12 }, (_, m) => mean + sign * (amp / 2) * Math.cos(((m - 6) / 12) * 2 * Math.PI))
+    const top = shiftedYNorm(cell.gy, climateResY, 0) < 0.5
+    const sign = top ? 1 : -1
+    return Array.from({ length: 12 }, (_, m) => mean + sign * (amp / 2) * topSummerCos(m))
   }
 
   // Twelve months of rainfall, and the whole year is now the model's own. The
@@ -3265,9 +3282,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Half the difference between the two seasons, signed like the index.
     const half = (index * (2 * annual + CLIMATE_TUNING.monsoonSeasonalityFloor)) / 2
     return Array.from({ length: 12 }, (_, m) => {
-      // Index 6 = July, the top hemisphere's summer, where cos is 1.
-      const northSummer = Math.cos(((m - 6) / 12) * 2 * Math.PI)
-      return Math.max(0, (annual + half * northSummer) / 12)
+      return Math.max(0, (annual + half * topSummerCos(m)) / 12)
     })
   }
 
@@ -3295,6 +3310,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       heading: metres >= 0 ? formatValue(String(metres), 'common.unit.metres') : t('readout.metresDeep', { v: String(-metres) }),
       kind: cell.land ? t('readout.kind.land') : t('readout.kind.ocean'),
       land: cell.land,
+      highlights: probeHighlightsFor(stepId, cell),
       rows: probeRowsFor(stepId, cell),
       months: t('readout.months').split(','),
       charts: probeChartsFor(stepId, cell),

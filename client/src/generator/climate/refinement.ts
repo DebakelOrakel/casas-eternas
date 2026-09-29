@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, latitudeAt } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, inTopSummerHalf, isLandAtCell, latitudeAt } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { koppenFromMonths, reduceTemperatureToSeaLevel } from './biomes'
 import { blur, computePressureWind, REFINED_MONTHS } from './pressure'
@@ -264,7 +264,8 @@ export function refineClimate(
 // coldest), OCEAN_AMPLITUDE on the sea; the signed monsoon index from the
 // two halves of the year, (P_top − P_bottom) / (P_top + P_bottom + floor)
 // with each half as its own annual rate, + where the rain falls in the top
-// hemisphere's summer (April–September), OCEAN_PRECIP on the sea.
+// hemisphere's summer half (climateField.inTopSummerHalf), OCEAN_PRECIP on
+// the sea.
 export function annualFromMonths(r: Pick<RefinedClimate, 'months' | 'temperature' | 'precipitation'>): { temperature: Float32Array; precipitation: Float32Array; seasonalAmplitude: Float32Array; monsoonIndex: Float32Array } {
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const temperature = new Float32Array(n)
@@ -292,7 +293,7 @@ export function annualFromMonths(r: Pick<RefinedClimate, 'months' | 'temperature
     let bottom = 0
     for (let m = 0; m < r.months; m++) {
       const p = r.precipitation[m * n + i]
-      const summerTop = m >= 3 && m < 9
+      const summerTop = inTopSummerHalf(m)
       if (summerTop) top += (2 * p) / r.months
       else bottom += (2 * p) / r.months
     }

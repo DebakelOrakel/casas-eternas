@@ -96,11 +96,16 @@ const metres = (v) => (v >= SEA_GRAY ? (v - SEA_GRAY) * 61.6 : ((v - SEA_GRAY) *
 const W = 2048, H = 1024
 const map = decodeGrayPng(readFileSync(png))
 const sx = map.width / W, sy = map.height / H
+// North goes to the BOTTOM rows: the map is drawn mirrored in y, so they are
+// the screen's upper half, the half with the northern calendar
+// (climateField.TOP_SUMMER_MONTH). Every latitude below is read the same
+// way: row = (90° + lat) / 180° of the height.
 const elevation = new Float32Array(W * H)
 for (let y = 0; y < H; y++) {
+  const my = H - 1 - y
   for (let x = 0; x < W; x++) {
     let sum = 0, count = 0
-    for (let dy = 0; dy < sy; dy++) for (let dx = 0; dx < sx; dx++) { sum += metres(map.px[(y * sy + dy) * map.width + x * sx + dx]); count++ }
+    for (let dy = 0; dy < sy; dy++) for (let dx = 0; dx < sx; dx++) { sum += metres(map.px[(my * sy + dy) * map.width + x * sx + dx]); count++ }
     elevation[y * W + x] = M.scale.metersToElevation(sum / count)
   }
 }
@@ -153,7 +158,7 @@ const PLACES = [
 // The nearest land cell to a place, within three cells: a 62 km cell on a
 // coast is often sea.
 function nearestLand(lon, lat) {
-  const gx = Math.floor(((lon + 180) / 360) * RX), gy = Math.min(RY - 1, Math.floor(((90 - lat) / 180) * RY))
+  const gx = Math.floor(((lon + 180) / 360) * RX), gy = Math.min(RY - 1, Math.floor(((90 + lat) / 180) * RY))
   let best = -1, bestD = Infinity
   for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
     const x = (gx + dx + RX) % RX, y = gy + dy
@@ -241,7 +246,8 @@ for (let y = 0; y < RY; y++) {
   const w = Math.cos(((y + 0.5) / RY - 0.5) * Math.PI)
   for (let x = 0; x < RX; x++) {
     const counts = new Map()
-    for (let my = Math.floor(y * ky); my < Math.floor((y + 1) * ky); my++) {
+    const ry = RY - 1 - y
+    for (let my = Math.floor(ry * ky); my < Math.floor((ry + 1) * ky); my++) {
       for (let mx = Math.floor(x * kx); mx < Math.floor((x + 1) * kx); mx++) {
         const v = koppenMap.px[my * koppenMap.width + mx]
         if (v) counts.set(v, (counts.get(v) ?? 0) + 1)
@@ -285,7 +291,7 @@ for (const g of GROUPS) {
 // warmest in. On Earth nearly all of it in July, a coastal fringe in
 // August.
 const warmest = new Array(12).fill(0)
-for (let y = Math.round(RY * 20 / 180); y < Math.round(RY * 80 / 180); y++) {
+for (let y = Math.round(RY * 100 / 180); y < Math.round(RY * 160 / 180); y++) {
   for (let x = 0; x < RX; x++) {
     const i = y * RX + x
     if (!land(i)) continue

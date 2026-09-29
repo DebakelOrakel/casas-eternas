@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-29
+- **fixed** Climate: the upper half of the map has its summer in July, not in January. `generator.climate.month`
 - **changed** Climate: warm and cold ocean currents carry their warmth or cold further, so coasts beside them are milder or cooler. `overlay.currents`
 - **changed** Climate: after refining, high plateaus heated in summer draw in a monsoon, so East Asia gets its summer rain. `generator.climate`
 - **changed** Climate: after refining, continents are warmest in July (or January in the south), not a month or two later. `generator.climate.month`

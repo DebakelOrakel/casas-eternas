@@ -380,6 +380,19 @@ changed:
 | Elevated heat source, 0.6 hPa/(km·°C) | 35 % | 71 % | 14/47 | ×1.91 | 7 | 32 % |
 | Sea surface anomaly relaxed 0.15 → 0.1 per pass (also the epochs) | 35 % | 70 % | 15/47 | ×1.91 | 6 | 34 % |
 
+**The calendar was upside down until here (fixed 2026-09-29).** The map
+is drawn mirrored in y, so the grid's top rows are the screen's lower half;
+the model gave them the July summer, and the screen's upper half — the
+north a reader sees, whose winds turn as the north's do — had its summer
+in January. The calendar now runs the other way (climateField.
+TOP_SUMMER_MONTH, the energy balance's equinox and the rain belt's peak
+moved by half a year), and the instrument lays Earth's north on the
+bottom rows. The physics is the mirror image of before, so the annual
+fields, the classes and the golden metrics did not move. The instrument
+after it: cells 35 % class, 71 % group; places 17/47; the northern land
+warmest in July (54 %) or June (37 %) — Earth's northern summer now falls
+at aphelion, as it does on Earth.
+
 The step-0 temperatures, tried (2026-09-29). The places' annual means are
 off in a regional pattern: highlands and the dry subtropics too cold
 (Tehran −7 °C, Mexico City −6, Riyadh −5), the interiors and east coasts of

@@ -231,10 +231,13 @@ export const CLIMATE_TUNING = {
   // Not measured yet (2026-09-28); physical orders of magnitude, then the
   // exchange and the carry set against Earth's seasonal ranges.
 
-  // The solar constant at 1 AU, W/m², and the vernal equinox as a fraction
-  // of the year from 1 January (about 20 March).
+  // The solar constant at 1 AU, W/m², and the top hemisphere's vernal
+  // equinox as a fraction of the year from 1 January: about 20 September,
+  // so its summer is the southern one and the bottom hemisphere — the
+  // screen's upper half — has the northern calendar (climateField.
+  // TOP_SUMMER_MONTH). It was 0.22 (20 March) until 2026-09-29.
   ebmSolarWm2: 1361,
-  ebmVernalEquinoxYear: 0.22,
+  ebmVernalEquinoxYear: 0.72,
   // Albedo: what the surface and the air above it reflect. Ice where the
   // annual mean is below `ebmIceBelowC`.
   ebmAlbedoLand: 0.3,
@@ -426,9 +429,10 @@ export const CLIMATE_TUNING = {
 
   // --- from refinement.ts ---
   // When the equatorial rain belt stands furthest toward the top hemisphere,
-  // as a fraction of the year: about mid-July, a few weeks after the
-  // solstice, as the sea's lag holds it back.
-  refineItczPeakYear: 0.54,
+  // as a fraction of the year: about mid-January, a few weeks after its
+  // solstice, as the sea's lag holds it back (climateField.TOP_SUMMER_MONTH;
+  // mid-July, 0.54, until 2026-09-29).
+  refineItczPeakYear: 0.04,
 
   // The rain's multiplier from the anomaly of the sea the air rose from
   // (computePrecipitation's refined path): e^(perC × °C), clamped. Measured

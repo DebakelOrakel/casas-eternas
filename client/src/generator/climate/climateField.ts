@@ -9,6 +9,29 @@ import { CLIMATE_TUNING } from './climateTuneParams'
 export const CLIMATE_RES_X = 256
 export const CLIMATE_RES_Y = 128
 
+// The calendar. The top hemisphere (the rows before the equator, small y)
+// has its summer in January and the bottom one in July: the map is drawn
+// mirrored in y (the canvas's +y is up on screen), so the top rows are the
+// half at the BOTTOM of the screen, and the screen's upper half — the north
+// a reader sees, whose winds also turn as the north's do there — must have
+// the northern calendar. Until 2026-09-29 it was the other way round, and
+// the north on screen had its summer in January. The energy balance's
+// equinox (ebmVernalEquinoxYear) and the rain belt's peak
+// (refineItczPeakYear) are set to agree with this; everything that builds
+// or reads a year by hemisphere goes through the two helpers below.
+export const TOP_SUMMER_MONTH = 0
+
+// 1 in the top hemisphere's warmest month, −1 six months later.
+export function topSummerCos(month: number): number {
+  return Math.cos(((month - TOP_SUMMER_MONTH) / 12) * 2 * Math.PI)
+}
+
+// Whether a month lies in the top hemisphere's summer half (the six months
+// around TOP_SUMMER_MONTH, October–March).
+export function inTopSummerHalf(month: number): boolean {
+  return (((month - TOP_SUMMER_MONTH + 3) % 12) + 12) % 12 < 6
+}
+
 // Normalized row position (0..1) shifted by `equatorOffset` and wrapped around the
 // torus — the single place the "move the equator" knob lives. Every zonal climate
 // field (temperature, wind, precipitation, seasonality) derives its latitude from a

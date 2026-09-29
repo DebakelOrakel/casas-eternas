@@ -1,3 +1,5 @@
+import { topSummerCos } from './climateField'
+
 // KÖPPEN–GEIGER CLIMATE CLASSES (build step 5 of
 // docs/design/climate-refinement.md): the class of a place from its twelve
 // months of temperature and rain, after the rules of Peel, Finlayson and
@@ -107,15 +109,15 @@ export function classifyKoppen(t: ArrayLike<number>, p: ArrayLike<number>): numb
 
 // Twelve months from the annual figures, where only those exist (the
 // history's epochs, the climate before refinement): the temperature a
-// cosine of half the seasonal range around the mean, warmest in July in the
-// top hemisphere; the rain the two seasons the monsoon index was made of,
+// cosine of half the seasonal range around the mean, warmest in the top
+// hemisphere's summer month (climateField.TOP_SUMMER_MONTH); the rain the two seasons the monsoon index was made of,
 // (P_N − P_S) / (P_N + P_S + floor), with its sign as the phase. The same
 // curves the hover chart draws. `t` and `p` are written, mm per month.
 export function synthesizeMonths(meanC: number, rangeC: number, annualMm: number, monsoonIndex: number, north: boolean, floorMm: number, t: Float64Array, p: Float64Array): void {
   const sign = north ? 1 : -1
   const half = (monsoonIndex * (2 * annualMm + floorMm)) / 2
   for (let m = 0; m < 12; m++) {
-    const c = Math.cos(((m - 6) / 12) * 2 * Math.PI) // 1 in July
+    const c = topSummerCos(m)
     t[m] = meanC + sign * (rangeC / 2) * c
     p[m] = Math.max(0, (annualMm + half * c) / 12)
   }

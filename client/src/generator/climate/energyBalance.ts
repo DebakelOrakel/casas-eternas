@@ -133,7 +133,8 @@ export function seasonalCycle(land: Uint8Array, annualTemperature: Float32Array,
 
 // Daily-mean insolation, W/m², at a latitude (radians, + north) and a time
 // of year (0..1 from 1 January), for the planet's orbit. The top
-// hemisphere's summer solstice falls in late June; perihelion sits
+// hemisphere's summer solstice falls in late December (climateField.
+// TOP_SUMMER_MONTH); perihelion sits
 // `precessionDeg + 90°` of solar longitude past the vernal equinox, so 0
 // puts it in the top hemisphere's summer (planetForcing.seasonalityFactor).
 export function monthInsolation(latNorth: number, yearFraction: number, planet: PlanetForcing): number {

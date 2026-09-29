@@ -33,6 +33,9 @@ export interface ProbeContent {
   // Land / Ocean, with the dot that says which.
   kind: string
   land: boolean
+  // What the cell IS, under the height in a larger type (the climate class
+  // and the biome). Empty on the sea and in the steps before the climate.
+  highlights: string[]
   rows: ProbeRow[]
   // Month initials for the axis under the charts, already split by the caller
   // (one catalog key holds all twelve, comma separated).
@@ -147,6 +150,18 @@ export function buildProbeCard(content: ProbeContent): HTMLElement {
   kind.textContent = content.kind
   head.appendChild(kind)
   root.appendChild(head)
+
+  if (content.highlights.length > 0) {
+    const what = document.createElement('div')
+    what.className = 'probe-highlights'
+    for (const h of content.highlights) {
+      const line = document.createElement('span')
+      line.className = 'probe-highlight'
+      line.textContent = h
+      what.appendChild(line)
+    }
+    root.appendChild(what)
+  }
 
   if (content.rows.length > 0) {
     const rows = document.createElement('div')

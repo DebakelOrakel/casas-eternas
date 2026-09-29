@@ -8,6 +8,9 @@
   flex-direction: column;
   gap: 9px;
   min-width: 190px;
+  /* The charts are 240 px; a long value (a climate class's name) wraps
+     rather than widening the card past them. */
+  max-width: 260px;
 }
 
 .probe-head {
@@ -20,6 +23,23 @@
   font-size: 19px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  color: var(--dc-strong, #15191d);
+}
+
+/* What the cell is — its climate class and biome — under the height, a
+   step larger than the rows, one per line across the card's width, so a
+   long name wraps instead of widening the card. */
+.probe-highlights {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: -5px;
+}
+
+.probe-highlight {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
   color: var(--dc-strong, #15191d);
 }
 
@@ -52,7 +72,7 @@
    per pair: the values then line up at one right edge whatever the labels do. */
 .probe-rows {
   display: grid;
-  grid-template-columns: auto auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;
   gap: 4px 14px;
 }
@@ -67,6 +87,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
+  text-align: right;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--dc-text, #1f2328);
