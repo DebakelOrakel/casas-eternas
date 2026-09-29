@@ -351,6 +351,24 @@ D 22, E 15) the last row is 13 points off; per cell, 26 % of the land has
 the right class and 63 % the right group. Of the real C land, 51 % comes
 out B — the dry east coasts.
 
+Against the map from here on:
+
+| Change | Class | Group | Places class | Rain | Groups off | Real C → B |
+|---|---|---|---|---|---|---|
+| Start | 26 % | 63 % | 10/47 | ×2.49 | 13 | 51 % |
+| Ocean highs from the basin's flank | 27 % | 65 % | 15/47 | ×2.06 | 19 | 30 % |
+
+The ocean highs: ±8 hPa from a basin's western shore to its eastern at
+15–50°, smoothed as a mean over the sea; they enter the months' pressure
+and wind, and under their western flank (below 0 hPa) the band's
+subtropical dryness gives way. A test first: with the band factor's floor
+lifted, Shanghai, New York, Sydney and Buenos Aires came out at 900–2200 mm
+— the moisture was there, the band's dryness held it back. A high from the
+sea's own anomaly (3–10 hPa/°C) dried the east coasts further: their warm
+currents come out at +0.5 °C here. The groups' shares move away from
+Earth's (C 18 % against 13) while the cells come closer; the cells are the
+measure that counts where the classes lie.
+
 Tried and dropped, as they measured no better than what they replaced:
 
 - A rain factor from the month's wind convergence instead of the zonal

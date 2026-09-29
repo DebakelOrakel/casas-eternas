@@ -422,6 +422,28 @@ export const CLIMATE_TUNING = {
   // ×2.58 off).
   rainSourcePerC: 0.2,
   rainSourceMin: 0.2,
+  // The ocean highs (refinement.ts): ± hPa from a basin's western shore to
+  // its eastern, in full in a basin this many cells wide, over the latitudes
+  // between (a sine bump); smoothed over the radius, cells, as a mean over
+  // the sea, and nothing where less than the share of the smoothing is sea.
+  // Under the western flank the band's dryness gives way toward
+  // `rainFlankFactor`, in full at −`rainFlankFullHpa`
+  // (computePrecipitation's flankRelief). Measured on Earth
+  // (scripts/earthClimate.mjs, 2026-09-29): of the real C land, 51 % came
+  // out dry (B), now 30 %; the land with the right group 63 → 65 %, the
+  // places' classes 10 → 15 of 47, their rain ×2.49 → ×2.06 off. The groups'
+  // shares 13 → 19 points off: C grows past Earth's (18 % against 13).
+  // A high from the sea's own anomaly (cold high, warm low, 3–10 hPa/°C)
+  // was tried first and dried the east coasts further: their warm currents
+  // come out at +0.5 °C here, and the cold seas set the mean.
+  oceanHighFlankHpa: 8,
+  oceanHighBasinCells: 40,
+  oceanHighFromDeg: 15,
+  oceanHighToDeg: 50,
+  oceanHighSmoothCells: 8,
+  oceanHighMinSeaShare: 0.05,
+  rainFlankFactor: 1,
+  rainFlankFullHpa: 1.5,
   rainSourceMax: 4,
 
   // --- from pressure.ts ---

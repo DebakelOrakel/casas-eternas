@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-29
+- **changed** Climate: after refining, the subtropical highs sit over the east of the oceans, so east coasts get rain and west coasts stay dry. `generator.climate`
 - **changed** Climate: after refining, continents have stronger winters and summers, and coasts beside a cold sea get less rain. `generator.climate`
 - **changed** Climate: mountains wring at most five times the plain's rain out of the air, not 28 times. `generator.climate`
 - **changed** Climate: after refining, the wind cells and pressure bands move with the seasons like the rain belt, so winds turn and the trades and monsoons reverse over the year. `overlay.wind`

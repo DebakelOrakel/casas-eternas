@@ -64,10 +64,14 @@ function elevationAtWorld(elevation: Float32Array, wx: number, wy: number, world
 // anomaly of the sea it rose from (`seaAnomaly`, °C, the sea surface against
 // its latitude): air off a warm current is unstable and rains readily, air
 // off a cold current or an upwelling is stable under the warmer air above it
-// and hardly rains — the dry west coasts of the subtropics.
+// and hardly rains — the dry west coasts of the subtropics. `highHpa` is the
+// refinement's ocean highs (refinement.ts): under the western flank of a
+// high (below 0 hPa) the air does not sink, and the band's dryness gives way
+// toward `rainFlankFactor`, in full at −`rainFlankFullHpa`.
 export interface RefinedRain {
   seaTemperature: Float32Array
   seaAnomaly: Float32Array
+  highHpa: Float32Array
 }
 
 export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number, humidity = 1, equatorOffset = 0, dryLand?: Uint8Array, beltShift = 0, refined?: RefinedRain): Float32Array {
@@ -146,11 +150,19 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
     const band = bandFactor(Math.abs(yNorm - 0.5) * 2)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      const factor = refined ? band * sourceStability(sourceAnomaly[i]) : band
+      const factor = refined ? flankRelief(band, refined.highHpa[i]) * sourceStability(sourceAnomaly[i]) : band
       precip[i] = ocean[i] ? OCEAN_PRECIP : rainedOut[i] * factor * CLIMATE_TUNING.precipScale * humidity
     }
   }
   return precip
+}
+
+// The band factor under a high's western flank: raised toward
+// `rainFlankFactor` as the pressure there falls below 0 (never lowered).
+function flankRelief(band: number, highHpa: number): number {
+  if (highHpa >= 0 || band >= CLIMATE_TUNING.rainFlankFactor) return band
+  const t = Math.min(1, -highHpa / CLIMATE_TUNING.rainFlankFullHpa)
+  return band + (CLIMATE_TUNING.rainFlankFactor - band) * t
 }
 
 // The rain's multiplier from the anomaly of the sea the air rose from, °C:

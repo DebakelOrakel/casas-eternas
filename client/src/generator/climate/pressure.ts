@@ -49,9 +49,10 @@ function bandPressure(phi: number, e1: number, e2: number): number {
   return 1013 + a * t
 }
 
-// Wrapped box blur, in place through a scratch buffer; three passes approach a
-// Gaussian of σ ≈ radius.
-function blur(field: Float32Array, radius: number): void {
+// Wrapped box blur on the climate grid, in place through a scratch buffer;
+// three passes approach a Gaussian of σ ≈ radius. Exported for the
+// refinement's ocean highs.
+export function blur(field: Float32Array, radius: number): void {
   const tmp = new Float32Array(field.length)
   const width = 2 * radius + 1
   for (let pass = 0; pass < 3; pass++) {
@@ -86,6 +87,9 @@ export function computePressureWind(
   // The season's shift of the bands (climateField.beltYNorm), the same the
   // month's rain and `baseWind` were made with.
   beltShift = 0,
+  // A further pressure part, hPa per cell, already smooth: the refinement's
+  // ocean highs. Its wind is found with the thermal part's.
+  extraHpa?: Float32Array,
 ): PressureWind {
   const n = RX * RY
   const e1 = hadleyEdge(rotationHours)
@@ -101,6 +105,7 @@ export function computePressureWind(
     for (let gx = 0; gx < RX; gx++) thermal[gy * RX + gx] = -(temperature[gy * RX + gx] - mean) * CLIMATE_TUNING.pressureHpaPerC
   }
   blur(thermal, CLIMATE_TUNING.pressureSmoothCells)
+  if (extraHpa) for (let i = 0; i < n; i++) thermal[i] += extraHpa[i]
 
   const pressure = new Float32Array(n)
   const f = new Float32Array(RY)

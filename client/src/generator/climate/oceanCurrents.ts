@@ -243,6 +243,26 @@ export function eastwardInBasin(land: Uint8Array): Float32Array {
   return out
 }
 
+// Where a sea cell lies across its basin, along its row: −1 at the western
+// shore, +1 at the eastern, scaled down in a basin narrower than
+// `fullWidthCells` (a sea between two coasts close together has no east and
+// west of its own); 0 where the row has no shore.
+export function basinFlank(land: Uint8Array, fullWidthCells: number): Float32Array {
+  const n = RX * RY
+  const out = new Float32Array(n)
+  for (let gy = 0; gy < RY; gy++) {
+    for (let x0 = 0; x0 < RX; x0++) {
+      if (!land[gy * RX + x0] || land[gy * RX + (x0 + 1) % RX]) continue
+      let len = 0
+      while (len < RX && !land[gy * RX + (x0 + 1 + len) % RX]) len++
+      if (len < 2) continue
+      const width = Math.min(1, len / fullWidthCells)
+      for (let k = 0; k < len; k++) out[gy * RX + (x0 + 1 + k) % RX] = (2 * k / (len - 1) - 1) * width
+    }
+  }
+  return out
+}
+
 // +1 in the top (northern) hemisphere, −1 in the bottom one.
 function latitudeSign(gy: number, equatorOffset: number): number {
   return shiftedYNorm(gy, RY, equatorOffset) < 0.5 ? 1 : -1
