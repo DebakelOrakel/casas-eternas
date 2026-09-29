@@ -177,8 +177,9 @@ interface ClimateResult {
   // the 4-neighbourhood as regional adjacency. Handing it the fine array would
   // silently redefine "neighbouring biome" from 62 km to 8 km.
   biomes: Uint8Array
-  // Ocean currents for the ecology step (fish upwelling reads them).
-  currents: Float32Array
+  // The refinement's upwelling for the ecology step (the fish read it); null
+  // for the history's climate, which has none.
+  upwelling: Float32Array | null
   // The wind (climate/wind.ts, interleaved) — the coast's exposure reads it.
   wind: Float32Array
   // Set when this is the climate step's refinement (handleClimateRefine):
@@ -765,7 +766,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
     seasonalAmplitude: chain.seasonalAmplitude.slice(),
     monsoonIndex: chain.seasonal.index.slice(),
     biomes: chain.biomes.slice(),
-    currents: chain.currents.slice(),
+    upwelling: null,
     wind: chain.wind.slice(),
   }
   const climateMessage: WorkerClimateDataMessage = {
@@ -838,7 +839,7 @@ function handleClimateRefine(): void {
     seasonalAmplitude: annual.seasonalAmplitude,
     monsoonIndex: annual.monsoonIndex,
     biomes,
-    currents: r.currents,
+    upwelling: r.upwelling.slice(),
     wind: annualWind,
     months: { temperature: r.temperature, precipitation: r.precipitation, count: r.months },
   }
@@ -1181,7 +1182,7 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     temperature: climate.temperature,
     precipitation: climate.precipitation,
     biomes: climate.biomes,
-    currents: climate.currents,
+    upwelling: climate.upwelling,
     elevation: lastRawElevations,
     discharge: hydrology?.discharge ?? null,
     maxDischarge: hydrology?.maxDischarge ?? 0,

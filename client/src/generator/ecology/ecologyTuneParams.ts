@@ -94,10 +94,36 @@ export const ECOLOGY_TUNING = {
   wGame: 0.45,
   wPasture: 0.35,
 
-  // Fish tuning. Marine = coastal shelf base + upwelling (adjacent-ocean current
-  // strength); freshwater = big rivers + lake presence.
-  fishShelfBase: 0.35,
-  fishUpwellingW: 0.65,
+  // Fish tuning (computeFish). A sea's richness = a base + the shelf share
+  // + the upwelling + the winter mixing, each weighted; freshwater = big
+  // rivers + lake presence. The upwelling counts in full at
+  // `fishUpwellingFull` (the refinement's units: at 3 it cools the sea by
+  // its full 6 °C, climateTuneParams.upwellingMaxCoolingC). The mixing is
+  // full from `fishMixFullC` down to `fishMixIceC`, gone at `fishMixWarmC`
+  // and `fishMixIceSpanC` below the ice. Shelf: sea to `fishShelfDepthM`.
+  // A coast reaches the sea in full with `fishFullSeaNeighbours` of its 8
+  // neighbours sea (a straight coast).
+  // Measured on Earth (scratch run of the refined climate, 2026-09-29), nine
+  // rich fishing coasts (Lima, Walvis Bay, Agadir, Monterey, Bergen,
+  // St John's, Hokkaido, Aberdeen, Reykjavik) against six poor ones (Jeddah,
+  // Kingston, Athens, Perth, Darwin, Mombasa): with the current speed as the
+  // upwelling and the sea's share around the cell as the reach, 0.20
+  // against 0.17 (×1.2; Kingston 0.30, Lima 0.13). Now 0.28 against 0.12
+  // (×2.3; Lima 0.38, Walvis Bay 0.35, Kingston 0.08), the coasts' mean
+  // 0.14 → 0.16. Left: Athens 0.25 (the Mediterranean is poor from its
+  // circulation, which this does not know) and Agadir 0.10 (the refined
+  // wind gives Morocco no upwelling).
+  fishSeaBase: 0.05,
+  fishShelfW: 0.15,
+  fishUpwellingW: 0.3,
+  fishUpwellingFull: 3,
+  fishMixingW: 0.2,
+  fishMixFullC: 12,
+  fishMixWarmC: 24,
+  fishMixIceC: -1,
+  fishMixIceSpanC: 6,
+  fishShelfDepthM: 200,
+  fishFullSeaNeighbours: 3,
   fishRiverW: 0.6,
   fishLakeW: 0.5,
 

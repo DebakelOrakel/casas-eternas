@@ -361,7 +361,7 @@ async function buildWorld(seed) {
   // That is the bug INVARIANTS now catch directly.
   const volcanoes = M.volcanoes.collectVolcanoes(sim.features)
   const eco = M.ecology.computeEcology({
-    temperature, precipitation, biomes, currents, elevation: el,
+    temperature, precipitation, biomes, upwelling: null, elevation: el,
     // Liquid water only, mirroring the worker's liquidLakeDepth: a frozen
     // basin is a glacier and feeds no fishery.
     discharge, maxDischarge: maxDis, lakeDepth: lakes.depth.map((d, i) => (lakes.frozen[i] ? 0 : d)), volcanoes,

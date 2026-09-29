@@ -219,7 +219,7 @@ physics.
    little: at 30–40° the banded wind blows poleward, and the equatorward
    coast winds come from the subtropical highs' eastern flank, which A
    forms only with B's temperatures. The productivity field for ecology is
-   the upwelling itself; ecology does not read it yet.
+   the upwelling itself; ecology reads it for the fish since 2026-09-29.
 4. B: twelve months, sea ice.
    BUILT 2026-09-28 in part (climate/energyBalance.ts, refinement.ts): the
    cycle is a linear energy balance for the departure from the cheap

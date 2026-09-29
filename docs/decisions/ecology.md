@@ -250,6 +250,13 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      ecology panel ensures hydrology + re-triggers ecology when it lands.
      `computeEcology` refactored to an inputs object. Headless-verified (coastal
      ≫ interior fish, freshwater adds interior, marine-only fallback).
+     **Reworked 2026-09-29:** the sea's richness is now the refinement's
+     upwelling, the winter mixing of cool seas (from the sea temperature)
+     and the shelf share (sea to 200 m), not the current speed; a straight
+     coast reaches the sea in full. A climate that was not refined has no
+     upwelling, and its fish lose that term. Measured on Earth: rich fishing
+     coasts against poor ones ×1.2 → ×2.3. See computeFish and the fish
+     constants in ecologyTuneParams.ts.
    - **2c — material** ✅ BUILT 2026-07-26 (pending visual check): timber (biome),
      salt (arid coasts/interior; + small carrying-cap preservation bonus — the
      one sanctioned material→subsistence bleed), tool-stone (obsidian from

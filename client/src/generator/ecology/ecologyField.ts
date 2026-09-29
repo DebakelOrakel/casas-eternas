@@ -5,14 +5,15 @@
 // top-level knobs (carrying capacity = level, concentration = spatial structure).
 //
 // PHASE 2a: subsistence split (arable / game / pasture) + the aggregate. Fish
-// (currents/coast/freshwater), material (timber/salt/tool-stone/metals) and
+// (sea/coast/freshwater), material (timber/salt/tool-stone/metals) and
 // prestige (gold/silver/gems) grow the field set in later sub-steps; the field
 // registry + selector already carry them.
 
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { clamp01, smoothstep } from '../core/interpolation'
-import { downsampleMax, wrapValue } from '../core/field'
+import { downsampleBox, downsampleMax, wrapValue } from '../core/field'
+import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { ECOLOGY_TUNING, PASTURE_BY_BIOME, TIMBER_BY_BIOME } from './ecologyTuneParams'
 import type { Volcano } from '../tectonics/volcanoes'
 import type { LandBiomeId } from './ecologyTuneParams'
@@ -70,7 +71,10 @@ export interface EcologyInputs {
   temperature: Float32Array // climate grid, °C (SST-adjusted on ocean)
   precipitation: Float32Array // climate grid, mm/yr (OCEAN_PRECIP on water = land mask)
   biomes: Uint8Array // climate grid
-  currents: Float32Array // climate grid, interleaved [u,v,…], 0 on land
+  // The climate step's upwelling (refinement.ts, the cold-water part), climate
+  // grid, 0 on land; null for a climate that was not refined (the
+  // history's), where the fish lose that term.
+  upwelling: Float32Array | null
   elevation: Float32Array // full-res
   discharge: Float32Array | null // full-res river discharge, or null (no hydrology yet)
   maxDischarge: number // reference max discharge over land
@@ -170,38 +174,69 @@ const toClimateGrid = (fullRes: Float32Array, worldWidth: number, worldHeight: n
   downsampleMax(fullRes, worldWidth, worldHeight, CLIMATE_RES_X, CLIMATE_RES_Y)
 
 // Fish: a subsistence source for coastal + riverine/lake land. Marine = how
-// coastal the cell is × (a shelf base + upwelling read from adjacent-ocean
-// current strength — boundary currents/gyre edges are the great fisheries).
-// Freshwater = big rivers + nearby lakes. Saturating combine of the two.
-function computeFish(land: Uint8Array, currents: Float32Array, coarseDischarge: Float32Array | null, maxDischarge: number, coarseLake: Float32Array | null): Float32Array {
+// coastal the cell is × the richest sea next to it. A sea is rich where
+// nutrients come up into the light: where cold water wells up along a coast
+// (Peru, Namibia, California), where a cool sea mixes every winter (the
+// North Sea, the Grand Banks), and on a shallow shelf. Warm seas stay
+// layered and poor (the Caribbean, the Red Sea). Freshwater = big rivers +
+// nearby lakes. Saturating combine of the two.
+// `seaTemperature` is the climate's temperature, read on the sea cells;
+// `shelf` the share of each cell that is shallow sea (shelfShare).
+function computeFish(land: Uint8Array, seaTemperature: Float32Array, upwelling: Float32Array | null, shelf: Float32Array, coarseDischarge: Float32Array | null, maxDischarge: number, coarseLake: Float32Array | null): Float32Array {
+  const T = ECOLOGY_TUNING
   const out = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const i = gy * CLIMATE_RES_X + gx
       if (!land[i]) continue
-      // Coastalness + upwelling from the 8 neighbours' ocean cells.
+      // Coastalness + the richest sea among the 8 neighbours' ocean cells.
       let oceanN = 0
-      let upwelling = 0
+      let richest = 0
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (dx === 0 && dy === 0) continue
           const j = wrapValue(gy + dy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrapValue(gx + dx, CLIMATE_RES_X)
           if (land[j]) continue
           oceanN++
-          const mag = Math.hypot(currents[j * 2], currents[j * 2 + 1])
-          if (mag > upwelling) upwelling = mag
+          const rising = upwelling ? clamp01(upwelling[j] / T.fishUpwellingFull) : 0
+          const cool = seaMixing(seaTemperature[j])
+          const rich = T.fishSeaBase + T.fishShelfW * shelf[j] + T.fishUpwellingW * rising + T.fishMixingW * cool
+          if (rich > richest) richest = rich
         }
       }
-      const coastalness = oceanN / 8
-      const marine = coastalness * (ECOLOGY_TUNING.fishShelfBase + ECOLOGY_TUNING.fishUpwellingW * upwelling)
+      // A straight coast (3 of the 8 neighbours sea) reaches the sea in
+      // full: the share of sea around a cell said more about the grid's
+      // coastline than about the fishing (an island of one cell got twice
+      // a straight coast's fish).
+      const coastalness = Math.min(1, oceanN / T.fishFullSeaNeighbours)
+      const marine = coastalness * richest
       let freshwater = 0
-      if (coarseDischarge && maxDischarge > 0) freshwater += ECOLOGY_TUNING.fishRiverW * Math.min(1, Math.sqrt(coarseDischarge[i] / maxDischarge) * 2)
-      if (coarseLake && coarseLake[i] > 0) freshwater += ECOLOGY_TUNING.fishLakeW
+      if (coarseDischarge && maxDischarge > 0) freshwater += T.fishRiverW * Math.min(1, Math.sqrt(coarseDischarge[i] / maxDischarge) * 2)
+      if (coarseLake && coarseLake[i] > 0) freshwater += T.fishLakeW
       freshwater = Math.min(1, freshwater)
       out[i] = 1 - Math.exp(-(marine + freshwater))
     }
   }
   return out
+}
+
+// How well a sea at this temperature (°C) mixes its nutrients up, 0..1: in
+// full from `fishMixFullC` down to `fishMixIceC` (cool seas turn over in
+// winter), gone at `fishMixWarmC` (a warm sea stays layered) and below the
+// sea ice.
+function seaMixing(tempC: number): number {
+  const T = ECOLOGY_TUNING
+  if (tempC < T.fishMixIceC) return clamp01(1 - (T.fishMixIceC - tempC) / T.fishMixIceSpanC)
+  return clamp01((T.fishMixWarmC - tempC) / (T.fishMixWarmC - T.fishMixFullC))
+}
+
+// The share of each climate cell that is shelf sea, 0..1: sea no deeper
+// than `fishShelfDepthM`.
+function shelfShare(elevation: Float32Array, worldW: number, worldH: number): Float32Array {
+  const floor = -metersToElevation(ECOLOGY_TUNING.fishShelfDepthM)
+  const shallow = new Float32Array(elevation.length)
+  for (let k = 0; k < elevation.length; k++) shallow[k] = elevation[k] <= SEA_LEVEL && elevation[k] > SEA_LEVEL + floor ? 1 : 0
+  return downsampleBox(shallow, worldW, worldH, CLIMATE_RES_X, CLIMATE_RES_Y)
 }
 
 // --- material fields (separate channel; salt also lightly feeds carrying cap) --
@@ -464,7 +499,7 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, volcanoes: 
 // --- entry point ------------------------------------------------------------
 
 export function computeEcology(inputs: EcologyInputs, params: EcologyParams): EcologyFields {
-  const { temperature, precipitation, biomes, currents, elevation, discharge, maxDischarge, lakeDepth, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth, worldHeight } = inputs
+  const { temperature, precipitation, biomes, upwelling, elevation, discharge, maxDischarge, lakeDepth, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth, worldHeight } = inputs
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const land = new Uint8Array(n)
   for (let i = 0; i < n; i++) if (precipitation[i] !== OCEAN_PRECIP) land[i] = 1
@@ -484,7 +519,7 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
 
   // Subsistence.
   const arable = scaleField(computeArable(temperature, precipitation, elevation, land, worldWidth, worldHeight), 'arable')
-  const fish = scaleField(computeFish(land, currents, coarseDischarge, maxDischarge, coarseLake), 'fish')
+  const fish = scaleField(computeFish(land, temperature, upwelling, shelfShare(elevation, worldWidth, worldHeight), coarseDischarge, maxDischarge, coarseLake), 'fish')
   const game = scaleField(computeGame(temperature, precipitation, biomes, land), 'game')
   const pasture = scaleField(computePasture(biomes, land), 'pasture')
   const salt = scaleField(computeSalt(temperature, precipitation, land), 'salt')
