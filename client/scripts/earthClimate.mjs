@@ -12,11 +12,17 @@
 //
 // The heightmap is an 8-bit grayscale equirectangular PNG, west edge at
 // −180°, north at the top, with the sea's floor in it:
-// scripts/fixtures/earth-heightmap.png unless another is named. Its scale was read off the file itself (2026-09-29): sea level
-// between 158 and 159 (the 29 % of Earth that is land lies above 158.5,
-// area-weighted; the Netherlands, the Amazon and the Dead Sea all read 159),
-// land to 8849 m at 255 (Everest reads 254), sea to −10 994 m at 0 (the
-// Mariana Trench reads 15). Any key=value is set on CLIMATE_TUNING first,
+// scripts/fixtures/earth-heightmap.png unless another is named. Its scale
+// was read off the file itself (2026-09-29): sea level between 158 and 159
+// (the 29 % of Earth that is land lies above 158.5, area-weighted; the
+// Netherlands, the Amazon and the Dead Sea all read 159); land 61.6 m per
+// level, fitted on thirteen cities and plateaus from Munich (520 m, 167)
+// to Lake Titicaca (3812 m, 219), within 10 % — so 255 is some 5940 m and
+// the high peaks are cut off there (Everest and K2 both read 241–255); sea
+// to −10 994 m at 0 (the Mariana Trench reads 15; abyssal plains and
+// trenches give 55–75 m per level, so the sea's scale is rougher). A first
+// reading took the land up to 8849 m at 255, which put every highland
+// 1.4–1.7 times too high (Lhasa 6200 m) and left Tibet at −16 °C in July. Any key=value is set on CLIMATE_TUNING first,
 // so a constant can be tried without editing it.
 //
 // Earth runs at the generator's scale: 2048 cells round, some 16 000 km,
@@ -86,7 +92,7 @@ function decodeGrayPng(bytes) {
 }
 
 const SEA_GRAY = 158.5
-const metres = (v) => (v >= SEA_GRAY ? ((v - SEA_GRAY) * 8849) / (255 - SEA_GRAY) : ((v - SEA_GRAY) * 10994) / SEA_GRAY)
+const metres = (v) => (v >= SEA_GRAY ? (v - SEA_GRAY) * 61.6 : ((v - SEA_GRAY) * 10994) / SEA_GRAY)
 const W = 2048, H = 1024
 const map = decodeGrayPng(readFileSync(png))
 const sx = map.width / W, sy = map.height / H

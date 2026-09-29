@@ -495,6 +495,16 @@ export const CLIMATE_TUNING = {
   // at about 40° over land.
   pressureFrictionSea: 0.3,
   pressureFrictionLand: 0.6,
+  // The elevated heat source (refinement.ts): hPa per km of height over the
+  // threshold per °C of the month's departure from the year's mean.
+  // Measured on Earth (scripts/earthClimate.mjs, 2026-09-29): at 0.6 the
+  // July pressure over Tibet 1016 → 1007 hPa, the wind over the Bay of
+  // Bengal turns southwest, Beijing's rain 117 → 574 mm (570), Tehran 491 →
+  // 354 (230); the land with the right group 70 → 71 %. At 1 Beijing 1166.
+  // Delhi stays dry: it lies in the westerly on the low's south side, off
+  // the Thar, as the heat low over Pakistan is too shallow here.
+  pressurePlateauHpaPerKmC: 0.6,
+  pressurePlateauFromKm: 1,
   // A range turns the part of the wind that blows up its slope: nothing below
   // the first height, the full share `pressureBlockMax` above the second.
   pressureBlockFromM: 1500,

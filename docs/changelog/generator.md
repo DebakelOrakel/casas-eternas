@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-09-29
+- **changed** Climate: after refining, high plateaus heated in summer draw in a monsoon, so East Asia gets its summer rain. `generator.climate`
 - **changed** Climate: after refining, continents are warmest in July (or January in the south), not a month or two later. `generator.climate.month`
 - **changed** Climate: mountain rain falls on the slopes, not on the plateaus behind them. `generator.climate`
 - **changed** Climate: after refining, the subtropical highs sit over the east of the oceans, so east coasts get rain and west coasts stay dry. `generator.climate`

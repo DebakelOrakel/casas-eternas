@@ -14,6 +14,8 @@ import { applyOceanSST, basinFlank, computeOceanCurrents, computeSinkInflow, com
 import { computeTemperature } from './temperature'
 import type { WeatherParams } from './weather'
 import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
+import { downsampleBox } from '../core/field'
+import { ELEVATION_METERS } from '../elevation/elevationScale'
 
 // THE CLIMATE STEP'S REFINEMENT (docs/design/climate-refinement.md): the
 // climate the history left, computed again with more physics on the final
@@ -81,6 +83,23 @@ export function refineClimate(
   }
   onProgress?.(0.15)
 
+  // The elevated heat source: a high plateau heated in summer warms the
+  // middle of the atmosphere directly, where the air over the plain is only
+  // warmed from below, and a low forms over it and its surroundings that
+  // the sea-level reduction of its air cannot show (Tibet draws the Asian
+  // monsoon in). Per month, hPa: −perKmC × the height over
+  // `pressurePlateauFromKm` × the month's departure from the year's mean,
+  // smoothed like the thermal part; in winter the sign turns and a high
+  // sits there.
+  const plateauKm = downsampleBox(elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+  for (let i = 0; i < n; i++) plateauKm[i] = Math.max(0, plateauKm[i] * ELEVATION_METERS / 1000 - CLIMATE_TUNING.pressurePlateauFromKm)
+  const plateauHeat = (month: number): Float32Array => {
+    const hpa = new Float32Array(n)
+    for (let i = 0; i < n; i++) hpa[i] = -CLIMATE_TUNING.pressurePlateauHpaPerKmC * plateauKm[i] * cycle[month * n + i]
+    blur(hpa, CLIMATE_TUNING.pressureSmoothCells)
+    return hpa
+  }
+
   // A: pressure and wind for each month, from the month's air reduced to sea
   // level.
   const pressure = new Float32Array(REFINED_MONTHS * n)
@@ -94,7 +113,7 @@ export function refineClimate(
     const belt = CLIMATE_TUNING.monsoonItczSeasonalShift * Math.cos(2 * Math.PI * ((month + 0.5) / REFINED_MONTHS - CLIMATE_TUNING.refineItczPeakYear))
     belts[month] = belt
     const bandWind = computeWind(params.equatorOffset, planet.rotationHours, belt)
-    const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, width, height, bandWind, params.equatorOffset, planet.rotationHours, belt)
+    const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, width, height, bandWind, params.equatorOffset, planet.rotationHours, belt, plateauHeat(month))
     pressure.set(result.pressure, month * n)
     wind.set(result.wind, month * n * 2)
     onProgress?.(0.15 + 0.35 * (month + 1) / REFINED_MONTHS)
@@ -174,7 +193,9 @@ export function refineClimate(
   for (let month = 0; month < REFINED_MONTHS; month++) {
     const air = monthly.subarray(month * n, (month + 1) * n)
     const bandWind = computeWind(params.equatorOffset, planet.rotationHours, belts[month])
-    const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, width, height, bandWind, params.equatorOffset, planet.rotationHours, belts[month], oceanHigh)
+    const extra = plateauHeat(month)
+    for (let i = 0; i < n; i++) extra[i] += oceanHigh[i]
+    const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, width, height, bandWind, params.equatorOffset, planet.rotationHours, belts[month], extra)
     pressure.set(result.pressure, month * n)
     wind.set(result.wind, month * n * 2)
   }

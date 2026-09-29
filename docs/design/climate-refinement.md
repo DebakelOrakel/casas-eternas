@@ -366,7 +366,31 @@ August or September (the instrument now prints it), on Earth July; now
 July on 80 % of it, August 15 %. The places' January and July errors fell
 4.1 → 3.8 and 3.7 → 3.1 °C.
 
-The monsoon, tried and left open (2026-09-29): Nagpur and Kolkata get a
+**The heightmap's scale was wrong until here.** The instrument read the
+land up to 8849 m at 255; fitted on thirteen cities and plateaus the file
+is linear at 61.6 m per level and cut off at some 5940 m, so every
+highland stood 1.4–1.7 times too high (Lhasa 6200 m, Tibet −16 °C in
+July). The rows above were measured on that relief; their direction
+holds, their numbers are too low. With the scale right, and nothing else
+changed:
+
+| Change | Class | Group | Places class | Rain | Groups off | Real C → B |
+|---|---|---|---|---|---|---|
+| Heightmap at 61.6 m per level | 34 % | 70 % | 14/47 | ×1.98 | 6 | 35 % |
+| Elevated heat source, 0.6 hPa/(km·°C) | 35 % | 71 % | 14/47 | ×1.91 | 7 | 32 % |
+
+The elevated heat source: a plateau heated in summer warms the middle of
+the atmosphere, and a low forms over it that the sea-level reduction
+cannot show. Tibet's July pressure 1016 → 1007 hPa, the wind over the Bay
+of Bengal turns southwest, Beijing gets its summer rain (117 → 574 mm,
+real 570). Delhi stays dry: it lies in the westerly on the low's south
+side, off the Thar; the heat low over Pakistan that draws Earth's monsoon
+trough along the Ganges is too shallow here. Tibet itself is still some
+7 °C too cold in July: large plateaus are warmer than the free air at
+their height (the mass elevation effect), which the cheap model's
+uniform lapse does not know.
+
+The monsoon, tried and left open (2026-09-29, before the heightmap fix): Nagpur and Kolkata get a
 summer rain from the belt's shift, Delhi and Beijing none, and the summer
 wind never turns southwest. A stronger thermal pressure (2–3 hPa/°C), a
 stronger pressure wind (×2–3), the banded wind giving way where the
