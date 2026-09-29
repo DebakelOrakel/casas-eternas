@@ -3,6 +3,11 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-09-29
+- **fixed** Generator: "new world" in the world list starts fresh — new name and seed, default sliders, later steps locked — instead of leaving the last world open. `generator`
+- **changed** Generator: once a world exists, step 0's seed and sliders are locked; the step's reset frees them and they preview on the sample world. While they differ from the world, the later steps show "out of date" and stay closed until "create world" takes the change (after asking) or the button returns to the world's values. `generator.confirm.recreate`
+- **changed** Generator: the Archean's mantle and water sliders act from its next start instead of rebuilding the world. `generator.panel.genesis`
+
 ## 2026-09-28
 - **dropped** Generator: the Climate step's coldest and warmest tiles. `generator.panel.climate`
 - **dropped** Generator: closing the tab no longer asks first; leaving through the title bar still does. `generator`

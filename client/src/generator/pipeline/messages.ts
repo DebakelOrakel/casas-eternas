@@ -250,7 +250,14 @@ export interface WorkerGenesisInitMessage {
   // Water offset in elevation units (see elevationScale.WATER_OFFSET_MAX_M).
   seaLevelOffset?: number
 }
-export interface WorkerGenesisStartMessage { type: 'genesisStart' }
+// The Archean's levers as they stand when a run starts (2026-09-29): a run
+// may go on with other ones than the last, as a tectonics run may, and the
+// world's history records each run's values. Absent, the current ones stay.
+export interface WorkerGenesisStartMessage {
+  type: 'genesisStart'
+  mantleDiffusion?: number
+  seaLevelOffset?: number
+}
 // The screen's 3D relief preview asking for the current full-res
 // display-space elevation raster (answered with WorkerElevationFieldMessage).
 // On demand rather than piggybacked on every 'rendered' message: the raster

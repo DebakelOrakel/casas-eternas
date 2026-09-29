@@ -209,19 +209,25 @@ const art = {
   iceThickness: Float32Array.from({ length: 40 }, (_, i) => (i % 7 === 0 ? 120.5 + i : 0)),
 }
 // The feature graph rides in the artifact beside the rivers (phase 2): a
-// two-reach toy, round-tripped through JSON + raw cells.
+// two-reach toy, round-tripped through JSON + raw cells. In the graph's
+// present shape (2026-09-29): the hydrogeology (5a) set to values other than
+// the defaults a reader fills in, so the check sees them survive rather than
+// come back as defaults; the positions (4.3) are derived from the cells on
+// a raster graph and checked as such.
 art.riverGraph = {
-  width: 8, height: 5,
+  width: 8, height: 5, substrate: 'raster',
   nodes: [
     { id: 0, kind: 'source', cell: 9, x: 1.5, y: 1.5, body: -1, catchmentCells: 0 },
     { id: 1, kind: 'junction', cell: 18, x: 2.5, y: 2.5, body: -1, catchmentCells: 0 },
     { id: 2, kind: 'mouth', cell: 27, x: 3.5, y: 3.5, body: -1, catchmentCells: 7 },
   ],
   reaches: [
-    { id: 0, kind: 'river', from: 0, to: 1, cellStart: 0, cellCount: 2, dischargeIn: 1, dischargeOut: 2, widthPx: 0.5, lengthKm: 11, dropM: 20, slope: 0.0018, sedimentM3: 0, bank: 3, order: 1, regime: 'intermittent' },
-    { id: 1, kind: 'river', from: 1, to: 2, cellStart: 2, cellCount: 2, dischargeIn: 2, dischargeOut: 5, widthPx: 0.7, lengthKm: 11, dropM: 15, slope: 0.0014, sedimentM3: 4, bank: 3, order: 1, regime: 'perennial' },
+    { id: 0, kind: 'river', from: 0, to: 1, cellStart: 0, cellCount: 2, dischargeIn: 1, dischargeOut: 2, widthPx: 0.5, lengthKm: 11, dropM: 20, slope: 0.0018, sedimentM3: 0, bank: 3, order: 1, regime: 'intermittent', runoffOut: 3, springFed: true },
+    { id: 1, kind: 'river', from: 1, to: 2, cellStart: 2, cellCount: 2, dischargeIn: 2, dischargeOut: 5, widthPx: 0.7, lengthKm: 11, dropM: 15, slope: 0.0014, sedimentM3: 4, bank: 3, order: 1, regime: 'perennial', runoffOut: 7.5, springFed: false },
   ],
   cells: Int32Array.from([9, 18, 18, 27]),
+  cellX: Float32Array.from([1.5, 2.5, 2.5, 3.5]),
+  cellY: Float32Array.from([1.5, 2.5, 2.5, 3.5]),
   bodies: [],
 }
 const wrote = await M.artifact.writeAmplificationArtifact(store, key, art, 1234)
@@ -243,9 +249,12 @@ else {
     check('ice thickness survives quantisation', worstIce <= 4000 / 65535 / 2 + 1e-6, `worst ${worstIce}`)
   }
   check('dimensions and bake cost survive', back.artifact.width === 8 && back.artifact.height === 5 && back.bakeMs === 1234)
+  const typed = { cells: undefined, cellX: undefined, cellY: undefined }
   check('the river graph comes back whole', back.artifact.riverGraph !== null
-    && JSON.stringify({ ...back.artifact.riverGraph, cells: undefined }) === JSON.stringify({ ...art.riverGraph, cells: undefined })
-    && String(back.artifact.riverGraph.cells) === String(art.riverGraph.cells))
+    && JSON.stringify({ ...back.artifact.riverGraph, ...typed }) === JSON.stringify({ ...art.riverGraph, ...typed })
+    && String(back.artifact.riverGraph.cells) === String(art.riverGraph.cells)
+    && String(back.artifact.riverGraph.cellX) === String(art.riverGraph.cellX)
+    && String(back.artifact.riverGraph.cellY) === String(art.riverGraph.cellY))
 }
 
 // The derived family (docs/decisions/derived-bake-tiers.md): the designated

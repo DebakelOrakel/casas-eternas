@@ -24,7 +24,7 @@ import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
 import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
-import { downstreamOf, stage } from '../../generator/pipeline/stages'
+import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
 import { drawContinentLabels } from '../../generator/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../generator/render/continentLabelRenderer'
@@ -979,6 +979,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // (see entryRequirementUnmet) — until then there is a map on screen, but it
   // is the one the screen starts with, not one anybody asked for.
   let worldCreated = false
+  // THE APPLIED WORLD (2026-09-29): step 0's seed and levers as the world was
+  // last created or opened with. Once a world exists, moving them changes
+  // nothing yet — "create world" takes them, with a question, since it
+  // discards the simulation. The world's every computation reads these, not
+  // the controls: the planet sliders used to recompute the climate on the
+  // spot while the history they had shaped stood, which broke the rule that a
+  // change upstream remakes everything after it. Null before the first world.
+  let applied: { seed: string; values: Record<string, number> } | null = null
+  // Step 0's levers are LOCKED over a world (2026-09-29): a slider that moves
+  // and does nothing is worse than one that cannot move. Its reset unlocks
+  // them (and sets them to their defaults); "create world" takes them and
+  // locks them again.
+  let step0Unlocked = false
   // Latest stabilised fraction, so updateProgress can render the bar without the
   // status message being in scope.
   let archeanStabilised = 0
@@ -1018,9 +1031,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // stop button live (tectonics = toggle-sim, erosion = erode, which becomes a stop).
   const updateControlsDisabled = (): void => {
     const busy = isBusy()
-    randomizeButton.disabled = busy
     resetButton.disabled = busy
     resetPlanetButton.disabled = busy
+    // Once a world exists, "create world" is for taking changed levers, and
+    // the levers move only after the step's reset unlocked them.
+    createWorldButton.disabled = busy || (applied !== null && !step0Pending())
+    const step0Locked = busy || (applied !== null && !step0Unlocked)
+    sayResetPlanet()
+    for (const el of [seedInput, obliquityInput, tempBandInput, contrastInput, rotationInput, humidityInput]) el.disabled = step0Locked
+    randomizeButton.disabled = step0Locked
     // Refine once per climate; the reset takes the refinement back.
     refineClimateButton.disabled = busy || lastTemperature === null || lastRefined !== null
     resetClimateButton.disabled = busy || lastRefined === null
@@ -1036,7 +1055,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // too — a slider that moves while the plates run and changes nothing
     // would lie. The climate/river sliders are left live for tuning (they
     // only affect the next compute, not the one in flight).
-    for (const el of [seedInput, mantleVigourInput, waterInput, alluviumInput, rockContrastInput]) el.disabled = busy
+    for (const el of [alluviumInput, rockContrastInput]) el.disabled = busy
+    // The Archean's levers lock while it runs too, which busy does not
+    // count (it is not a compute the other controls must wait for).
+    for (const el of [mantleVigourInput, waterInput]) el.disabled = busy || archeanRunning
 
     updateNavState() // the step bar locks with it (see its own gating)
   }
@@ -3251,13 +3273,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The worker takes messages in order, so the sample is in place before
     // the preview is asked for. The step may have been left in the meantime.
     void loadPlanetSample().then(() => {
-      if (STEP_IDS[panelIndex] !== 'world' || archeanFinalised || hasHandover) return
-      postToWorker({ type: 'planetPreview', width: MAP_WIDTH, height: MAP_HEIGHT, weather: weatherParams() })
+      if (STEP_IDS[panelIndex] !== 'world' || ((archeanFinalised || hasHandover) && !step0Unlocked)) return
+      postToWorker({ type: 'planetPreview', width: MAP_WIDTH, height: MAP_HEIGHT, weather: weatherParams(step0Unlocked) })
     })
   }
   // A Planet control moved: the world's own climate when it has plates to
   // compute one on, the sample world's otherwise.
   function requestPlanetForcing(): void {
+    // Freed levers over a world preview on the sample world: the world keeps
+    // what it was made with until "create world" takes them.
+    if (step0Unlocked) {
+      clearTimeout(planetPreviewDebounce)
+      planetPreviewDebounce = setTimeout(requestPlanetPreview, 150)
+      return
+    }
     if (archeanFinalised || hasHandover) {
       if (tectonicsRunning) return
       requestClimate()
@@ -3559,23 +3588,36 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The climate panel's sliders in MODEL units — one reading shared by the
   // climate compute and (since the stage-2 coupling) the erosion request,
   // whose water forcing evaluates the same weather chain with them.
-  const weatherParams = () => ({
-    temperatureOffset: Number(tempBandInput.value),
-    temperatureContrast: CLIMATE_INPUTS.contrast.toModel(Number(contrastInput.value)),
-    humidity: CLIMATE_INPUTS.humidity.toModel(Number(humidityInput.value)),
-    // The thermal equator sits at the map's middle since 2026-09-26 (the
-    // shift slider is gone; the map draws the equator instead).
-    equatorOffset: 0,
-    // The Planet stage's forcing, in model units (planet/planetForcing.ts).
-    planet: {
-      obliquityDeg: Number(obliquityInput.value),
-      eccentricity: DEFAULT_PLANET_FORCING.eccentricity,
-      precessionDeg: DEFAULT_PLANET_FORCING.precessionDeg,
-      solarConstant: DEFAULT_PLANET_FORCING.solarConstant,
-      landPlantsFromMa: DEFAULT_PLANET_FORCING.landPlantsFromMa,
-      rotationHours: Number(rotationInput.value),
-    },
-  })
+  // `controls`: the controls' values rather than the world's — the planet
+  // preview of freed step-0 levers, which shows what they would make.
+  const weatherParams = (controls = false) => {
+    const lever = controls ? controlValue : worldLever
+    return {
+      temperatureOffset: lever('planet.greenhouse'),
+      temperatureContrast: CLIMATE_INPUTS.contrast.toModel(lever('climate.contrast')),
+      humidity: CLIMATE_INPUTS.humidity.toModel(lever('climate.humidity')),
+      // The thermal equator sits at the map's middle since 2026-09-26 (the
+      // shift slider is gone; the map draws the equator instead).
+      equatorOffset: 0,
+      // The Planet stage's forcing, in model units (planet/planetForcing.ts).
+      planet: {
+        obliquityDeg: lever('planet.obliquity'),
+        eccentricity: DEFAULT_PLANET_FORCING.eccentricity,
+        precessionDeg: DEFAULT_PLANET_FORCING.precessionDeg,
+        solarConstant: DEFAULT_PLANET_FORCING.solarConstant,
+        landPlantsFromMa: DEFAULT_PLANET_FORCING.landPlantsFromMa,
+        rotationHours: lever('planet.rotation'),
+      },
+    }
+  }
+  // A step-0 lever moved (it can only while no world exists or after the
+  // step's reset freed it): it shows at once, on the sample world, and
+  // "create world" lights up when it differs from the world's.
+  function planetLeverMoved(): void {
+    updateControlsDisabled()
+    clearTimeout(climateDebounce)
+    climateDebounce = setTimeout(requestPlanetForcing, 150)
+  }
 
   // Posts a climate compute with the current band-slider offset. Fired on
   // opening the climate panel and by the slider (debounced) for live re-tuning.
@@ -3975,6 +4017,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     toggleArcheanButton.setAttribute('aria-label', label)
     toggleArcheanButton.querySelector('.gen-action__label')!.textContent = label
   }
+  // Starts or stops the Archean in the screen's eyes: the button, and the
+  // levers it locks. Not folded into setArcheanRunning, which also runs while
+  // the screen is still being built, before the step bar it repaints exists
+  // (that call made the generator a white page, 2026-09-29).
+  const archeanRunChanged = (running: boolean): void => {
+    setArcheanRunning(running)
+    updateControlsDisabled()
+  }
   // Says the button for the first time: it starts stopped, and until this runs
   // it carries an icon and an empty word.
   setArcheanRunning(archeanRunning)
@@ -3982,20 +4032,24 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   toggleArcheanButton.addEventListener('click', () => {
     if (archeanRunning) {
       postToWorker({ type: 'genesisStop' })
-      setArcheanRunning(false)
+      archeanRunChanged(false)
       updateOverlays()
       updateProgress()
       return
     }
     openRun(history.genesis, runValues(GENESIS_RUN_FIELDS, readSpec().values), BUILD_VERSION)
-    postToWorker({ type: 'genesisStart' })
-    setArcheanRunning(true)
+    postToWorker({
+      type: 'genesisStart',
+      mantleDiffusion: vigourToDiffusion(Number(mantleVigourInput.value)),
+      seaLevelOffset: metersToElevation(waterSliderToOffsetM(Number(waterInput.value))),
+    })
+    archeanRunChanged(true)
     updateOverlays()
   })
 
   resetArcheanButton.addEventListener('click', () => {
     postToWorker({ type: 'resetStage', stage: 'genesis' })
-    setArcheanRunning(false)
+    archeanRunChanged(false)
     lastArcheanEpochs = 0
     history = emptyWorldHistory()
     genesisTallied = 0
@@ -4144,17 +4198,39 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // names the InputParam, and sliderBindings knows the element that param produced.
   // That correspondence used to be written out a THIRD time, as a twelve-entry map
   // from spec path to input; it is now the same one the markup already recorded.
+  // Step 0's recipe values are the APPLIED ones once a world exists (see
+  // `applied`): a lever moved and not yet taken is not the world's.
   function readSpec(): WorldSpec {
     const values: Record<string, number> = {}
     for (const field of WORLD_SPEC_FIELDS) {
       const leaf = field.path.split('.').pop() as EcologyFieldId
+      if (applied && field.path in applied.values) {
+        values[field.path] = applied.values[field.path]
+        continue
+      }
       // The thirteen ecology abundance nudges share one declaration, so they have
       // no binding of their own and are found by their field id.
       const input = sliderBindings.get(field.input)?.input
       values[field.path] = input ? Number(input.value) : (abundance.get(leaf) ?? field.input.default)
     }
-    return { seed: seedInput.value, values }
+    return { seed: applied?.seed ?? seedInput.value, values }
   }
+
+  // Step 0's levers: the planet's and the two climate ones that sit with it.
+  const STEP0_FIELDS = WORLD_SPEC_FIELDS.filter((f) => f.path.startsWith('planet.') || f.path.startsWith('climate.'))
+  const controlValue = (path: string): number => {
+    const field = STEP0_FIELDS.find((f) => f.path === path)!
+    return Number(sliderBindings.get(field.input)!.input.value)
+  }
+  // What the world computes with: the applied value, or the control's while
+  // no world exists (the planet preview on the sample world).
+  const worldLever = (path: string): number => (applied ? applied.values[path] : controlValue(path))
+  function takeStep0(): void {
+    applied = { seed: seedInput.value, values: Object.fromEntries(STEP0_FIELDS.map((f) => [f.path, controlValue(f.path)])) }
+  }
+  // Whether step 0 holds changes the world has not taken.
+  const step0Pending = (): boolean =>
+    applied !== null && (seedInput.value !== applied.seed || STEP0_FIELDS.some((f) => controlValue(f.path) !== applied!.values[f.path]))
 
   // --- unsaved changes ---------------------------------------------------------
 
@@ -4599,9 +4675,24 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const worldChooser = createWorldChooser(root, {
     // A new world starts at step 0, wherever the generator happened to be
     // standing when the list was reopened.
+    // A new world is the state the generator opens in (2026-09-29): a fresh
+    // name and seed, every lever at its default, an empty world behind step
+    // 0 with the planet preview on the sample world, nothing applied, the
+    // later steps locked until "create world". It used to leave the last
+    // world loaded and its steps open. Leaving that world already asked.
     onNewWorld: () => {
+      worldName = randomWorldName()
+      worldNameInput.value = worldName
+      seedInput.value = randomSeed()
+      for (const { id } of STAGES) resetInputs(id)
+      worldCreated = false
+      applied = null
+      step0Unlocked = false
+      regenerate()
       closeWorldChooser()
       showPanel(panelIndexOf('world'))
+      updateSaveIndicator()
+      updateControlsDisabled()
     },
     // Same path a picked file takes — `loadWorldFromZip` closes the chooser
     // once the archive has actually turned out to be a world.
@@ -5099,9 +5190,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     showPanel(GENESIS_PANEL_INDEX)
 
     stopSim()
-    // Drop any pending debounced regenerate — it would fire an `init` after the
-    // restore and overwrite the loaded world.
-    if (regenerateTimer !== undefined) clearTimeout(regenerateTimer)
     ctx.notifications.clearAll()
     overlay.clearMarkers()
     invalidateAfter('tectonics')
@@ -5177,10 +5265,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // there is nothing for the tectonics reset to rewind to, whichever phase the
     // save is in.
     hasHandover = false
-    setArcheanRunning(false)
+    archeanRunChanged(false)
     tempBandInput.value = String(spec.values['planet.greenhouse'])
     humidityInput.value = String(spec.values['climate.humidity'])
     contrastInput.value = String(spec.values['climate.contrast'])
+    // The opened world's step 0 is what it was made with, locked.
+    takeStep0()
+    step0Unlocked = false
+    updateControlsDisabled()
     alluviumInput.value = String(spec.values['tectonics.alluvium'])
     rockContrastInput.value = String(spec.values['tectonics.rockContrast'])
     carryingCapacityInput.value = String(spec.values['ecology.carryingCapacity'])
@@ -5209,8 +5301,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   tempBandInput.addEventListener('input', () => {
     const v = Number(tempBandInput.value)
     tempBandLabel.textContent = v > 0 ? `+${v}` : String(v)
-    clearTimeout(climateDebounce)
-    climateDebounce = setTimeout(requestPlanetForcing, 150)
+    planetLeverMoved()
   })
   // Humidity + contrast: percentage sliders, the same debounced recompute as
   // the planet's — on the sample world before the world has plates, on the
@@ -5219,8 +5310,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const wireClimateSlider = (input: HTMLInputElement, label: HTMLElement): void => {
     input.addEventListener('input', () => {
       label.textContent = input.value
-      clearTimeout(climateDebounce)
-      climateDebounce = setTimeout(requestPlanetForcing, 150)
+      planetLeverMoved()
     })
   }
   wireClimateSlider(humidityInput, humidityLabel)
@@ -5424,11 +5514,42 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     applyOverlays()
     renderLegends()
   })
+  // Reset over a locked world frees the levers (at their defaults); once
+  // freed, the same button takes them back to the world's values and locks
+  // them again — the way back into the world without making it anew.
   resetPlanetButton.addEventListener('click', () => {
+    if (applied && step0Unlocked) {
+      revertStep0()
+      return
+    }
     resetInputs('planet')
     resetInputs('climate')
-    requestPlanetForcing()
+    if (applied) step0Unlocked = true
+    planetLeverMoved()
+    updateControlsDisabled()
   })
+  function revertStep0(): void {
+    if (!applied) return
+    seedInput.value = applied.seed
+    for (const field of STEP0_FIELDS) {
+      const bound = sliderBindings.get(field.input)!
+      bound.input.value = String(applied.values[field.path])
+      bound.label.textContent = displayValue(field.input, applied.values[field.path])
+    }
+    step0Unlocked = false
+    // The sample world's preview goes; the world's own climate comes back.
+    leavePlanetPreview()
+    ensureDataFor(panelIndex)
+    updateSaveIndicator()
+    updateControlsDisabled()
+  }
+  // The button says which of the two it is.
+  function sayResetPlanet(): void {
+    const base = applied && step0Unlocked ? 'generator.action.revertPlanet' : 'generator.action.resetPlanet'
+    resetPlanetButton.dataset.tAria = `${base}.label`
+    resetPlanetButton.dataset.help = base
+    resetPlanetButton.setAttribute('aria-label', t(`${base}.label` as TKey))
+  }
   resetEcologyButton.addEventListener('click', () => {
     resetInputs('ecology')
     // The thirteen abundance nudges are not named controls — they share one range
@@ -5544,18 +5665,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     initArchean(seedInput.value, Number(mantleVigourInput.value), Number(waterInput.value))
     updateNavState() // fresh world → re-lock downstream panels
   }
-  // Debounced so dragging a slider (or typing a seed) doesn't fire a full
-  // world regen + render on every input event — the label updates live, the
-  // world rebuilds once the value settles. A single click (reset/randomize)
-  // regenerates immediately.
-  let regenerateTimer: ReturnType<typeof setTimeout> | undefined
-  const regenerateDebounced = (): void => {
-    if (regenerateTimer !== undefined) clearTimeout(regenerateTimer)
-    regenerateTimer = setTimeout(() => {
-      regenerateTimer = undefined
-      regenerate()
-    }, 150)
-  }
+
   // A reset inside a panel undoes THAT panel's work and returns its own input —
   // here, the world exactly as the Archean handed it over. It used to call
   // `regenerate`, which restarts the Archean at an epoch that has no crust yet, so
@@ -5585,7 +5695,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // it is one half of the world's identity, and "Create world" is the moment
   // the answer is given. Typing a seed and watching six steps of work vanish
   // under the keystrokes is not an edit, it is an accident.
-  seedInput.addEventListener('input', () => updateNavState())
+  seedInput.addEventListener('input', () => {
+    updateNavState()
+    updateControlsDisabled()
+  })
   randomizeButton.addEventListener('click', () => {
     seedInput.value = randomSeed()
     // A click is not an `input` event, so the delegated listener above does not
@@ -5593,6 +5706,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // the name dice does.
     updateSaveIndicator()
     updateNavState()
+    updateControlsDisabled()
   })
 
   worldNameInput.addEventListener('input', () => {
@@ -5609,15 +5723,27 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     updateNavState()
   })
 
-  createWorldButton.addEventListener('click', () => {
+  createWorldButton.addEventListener('click', async () => {
     if (isBusy()) return
+    // Over a world, this discards its simulation: asked, like leaving it.
+    if (applied) {
+      const go = await confirmDialog.ask({
+        titleKey: 'generator.confirm.recreate.title',
+        bodyKey: 'generator.confirm.recreate.body',
+        confirmKey: 'generator.confirm.recreate.action',
+      })
+      if (!go) return
+    }
     if (!worldName.trim()) {
       worldName = randomWorldName()
       worldNameInput.value = worldName
     }
     if (!seedInput.value.trim()) seedInput.value = randomSeed()
     worldCreated = true
+    takeStep0()
+    step0Unlocked = false
     regenerate()
+    updateControlsDisabled()
     // The base kept aside behind the planet preview is the world this click
     // replaces. Leaving step 0 would put it back on the map until the new
     // world's first render lands — a flash of the old world. Dropped, so the
@@ -5625,21 +5751,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     planetPreviewRealBase = null
     showPanel(GENESIS_PANEL_INDEX)
   })
-  mantleVigourInput.addEventListener('input', () => {
-    mantleVigourLabel.textContent = mantleVigourInput.value
-    regenerateDebounced()
-  })
-  waterInput.addEventListener('input', () => {
-    waterLabel.textContent = waterInput.value
-    regenerateDebounced()
-  })
+  // The Archean's levers act from its next start (2026-09-29): a run goes on
+  // with the values it is started with, as a tectonics run does, and the
+  // history records each run's. They used to rebuild the world on the spot,
+  // which silently threw away an Archean that had run. Locked while it runs.
+  mantleVigourInput.addEventListener('input', () => { mantleVigourLabel.textContent = mantleVigourInput.value })
+  waterInput.addEventListener('input', () => { waterLabel.textContent = waterInput.value })
   // The astronomical controls act on the climate: label, then the same
   // debounced recompute the climate sliders use (which in turn marks the
   // erosion stale, as its forcing reads the same chain).
   for (const [input, label] of [[obliquityInput, obliquityLabel], [rotationInput, rotationLabel]] as const) {
     input.addEventListener('input', () => {
       label.textContent = input.value
-      requestPlanetForcing()
+      planetLeverMoved()
     })
   }
   // THE PANELS ARE THE STAGES. Back steps to the previous one or leaves for the
@@ -5681,6 +5805,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Nothing exists before step 0 is answered — the steps after it all work on
     // the world it names and seeds.
     if (index > panelIndexOf('world') && !worldCreated) return t('notify.gate.needsWorld')
+    // Step 0 changed and not yet taken: everything after it no longer
+    // describes the world those values would make (stages.ts: all of it
+    // stands on the planet). Create it anew, or return to its values.
+    if (index > panelIndexOf('world') && step0Pending()) return t('notify.gate.worldChanged')
     // Genesis hands its world to plate tectonics, so the hand-over is what
     // every later step stands on. A world opened from a file has one already,
     // which is what archeanFinalised/hasHandover answer.
@@ -5766,6 +5894,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
   })
 
+  // The stages that stand on step 0's planet, from the declared chain.
+  const STAGES_AFTER_PLANET: ReadonlySet<StageId> = new Set(downstreamOf('planet'))
+
   // Whether a step has actually been run. Two-valued on purpose — see the note
   // in StepBar about the third state the design draws. Each stage answers with
   // the thing that only exists once it has computed, rather than with a counter
@@ -5790,13 +5921,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     stepBar.setState({
       current: panelIndex,
       steps: STEP_IDS.map((id, index) => {
-        const settled = stageComputed[id]()
+        // Computed on values step 0 no longer holds: out of date.
+        const stale = id !== 'world' && step0Pending() && STAGES_AFTER_PLANET.has(step(id).stage) && stageComputed[id]()
+        const settled = stageComputed[id]() && !stale
         return {
           // Step 0 reports the shape it set rather than a computation it did
           // not do, which is what the design's chip shows: "Flat · set".
           status: id === 'world'
             ? `${t('generator.world.topology.flat.label')} · ${t('generator.step.status.set')}`
-            : t(settled ? 'generator.step.status.computed' : 'generator.step.status.pending'),
+            : t(stale ? 'generator.step.status.stale' : settled ? 'generator.step.status.computed' : 'generator.step.status.pending'),
           settled,
           // The busy lock is the same one the controls get: stepping away
           // mid-simulation would leave a half-run stage behind.
@@ -5817,7 +5950,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Step 0 shows the planet's controls on the climate: the world's own
     // once it has plates, the sample world's before. Not behind the world
     // list, which covers the map; closing the list enters the step again.
-    if (index === panelIndexOf('world') && !chooserOpen && lastTemperature === null) requestPlanetForcing()
+    // With the levers freed the preview shows, whatever climate the world has.
+    if (index === panelIndexOf('world') && !chooserOpen && (lastTemperature === null || step0Unlocked)) requestPlanetForcing()
     if (index === CLIMATE_PANEL_INDEX && lastTemperature === null) requestClimate()
     // The erosion panel carries the hydrology readout: entering it with eroded
     // terrain but no rivers (a reopened session, a mid-chain revisit) computes
@@ -5950,7 +6084,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     hasHandover = true
     postToWorker({ type: 'genesisStop' })
     postToWorker({ type: 'genesisFinalize' })
-    setArcheanRunning(false)
+    archeanRunChanged(false)
     // Plate outlines and continent names unblock here — this is where plates and
     // continents start existing.
     updateOverlays()

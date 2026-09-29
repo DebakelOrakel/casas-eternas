@@ -14,6 +14,7 @@
   "notify.bake.mismatch": "Der Server hat mit Build {serverVersion} gebacken, dieser Client liest {clientVersion}. Das Ergebnis existiert, ist von hier aus aber nicht auffindbar.",
   "notify.bake.needsUpload": "Speichere diese Welt auf dem Server, bevor sie dort gebacken werden kann.",
   "notify.gate.needsWorld": "Erzeuge zuerst die Welt — Schritt 1 arbeitet an der Welt, die Schritt 0 benennt.",
+  "notify.gate.worldChanged": "Schritt 0 weicht von den Werten dieser Welt ab: Welt neu erzeugen oder zu ihren Werten zurückkehren.",
   "notify.gate.needsArchean": "Lass das Archaikum zuerst bis {min}% Stabilisierung laufen (jetzt {current}%).",
   "notify.event.continentsCollidedNamed": "{a} und {b} sind kollidiert",
   "notify.event.continentsCollided": "Zwei Kontinente sind kollidiert",

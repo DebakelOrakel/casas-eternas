@@ -397,6 +397,15 @@
   filter: brightness(0.95);
 }
 
+/* Greyed while nothing waits to be taken: once a world exists, the button
+   only lights up when step 0 holds a change (GeneratorScreen `applied`).
+   Without this it looked the same either way, and a click did nothing. */
+.generator-screen .world-create:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: none;
+}
+
 /* The temperature scale between the column and the map (see
    GeneratorScreen.renderTemperatureScale): a strip the height of the map,
    pointer-transparent, on the map chrome's layer. The canvas fills the

@@ -1412,8 +1412,13 @@ function handleGenesisInit(message: Extract<WorkerInboundMessage, { type: 'genes
   void renderArcheanAndPost()
 }
 
-function handleGenesisStart(): void {
+function handleGenesisStart(message: Extract<WorkerInboundMessage, { type: 'genesisStart' }>): void {
   if (intervalId !== undefined) return
+  if (message.mantleDiffusion !== undefined) archeanParams = { ...archeanParams, diffusion: message.mantleDiffusion }
+  if (message.seaLevelOffset !== undefined) {
+    archeanWater = message.seaLevelOffset
+    if (archean) archean.seaLevelOffset = message.seaLevelOffset
+  }
   intervalId = setInterval(() => {
     if (!archean || renderInFlight) return
     archeanStep(archean, archeanParams)
@@ -1555,7 +1560,7 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   serializeWorld: () => handleSerializeWorld(),
   restoreWorld: (m) => handleRestoreWorld(m as Extract<WorkerInboundMessage, { type: 'restoreWorld' }>),
   genesisInit: (m) => handleGenesisInit(m as Extract<WorkerInboundMessage, { type: 'genesisInit' }>),
-  genesisStart: () => handleGenesisStart(),
+  genesisStart: (m) => handleGenesisStart(m as Extract<WorkerInboundMessage, { type: 'genesisStart' }>),
   genesisStop: () => handleGenesisStop(),
   genesisFinalize: () => handleGenesisFinalize(),
 }

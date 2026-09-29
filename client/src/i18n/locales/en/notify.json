@@ -14,6 +14,7 @@
   "notify.bake.mismatch": "The server baked with build {serverVersion}, this client reads {clientVersion}. The result exists but cannot be found from here.",
   "notify.bake.needsUpload": "Save this world to the server before it can be baked there.",
   "notify.gate.needsWorld": "First create the world — step 1 works on the world step 0 names.",
+  "notify.gate.worldChanged": "Step 0 differs from what this world was made with: create the world anew, or return to its values.",
   "notify.gate.needsArchean": "First run the Archean to at least {min}% stabilised (now {current}%).",
   "notify.event.continentsCollidedNamed": "{a} and {b} collided",
   "notify.event.continentsCollided": "Two continents collided",
