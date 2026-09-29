@@ -359,6 +359,25 @@ Against the map from here on:
 | Ocean highs from the basin's flank | 27 % | 65 % | 15/47 | ×2.06 | 19 | 30 % |
 | Dry air mixed in where the air sinks (0.05) | 27 % | 65 % | 15/47 | ×2.06 | 16 | 34 % |
 | Upslope read across the cell, lever 20 px (also the epochs) | 27 % | 66 % | 15/47 | ×1.98 | 16 | 34 % |
+| Energy balance: land capacity 3·10⁷ → 1·10⁷, damping 2.1 → 8, carry 150 → 100 | 31 % | 65 % | 16/47 | ×2.04 | 17 | 35 % |
+
+The last row fixes the year's phase: the northern land's warmest month was
+August or September (the instrument now prints it), on Earth July; now
+July on 80 % of it, August 15 %. The places' January and July errors fell
+4.1 → 3.8 and 3.7 → 3.1 °C.
+
+The monsoon, tried and left open (2026-09-29): Nagpur and Kolkata get a
+summer rain from the belt's shift, Delhi and Beijing none, and the summer
+wind never turns southwest. A stronger thermal pressure (2–3 hPa/°C), a
+stronger pressure wind (×2–3), the banded wind giving way where the
+thermal part is strong, and the rain belt shifting further over land
+(×1.5–2.5) each moved Delhi by under 60 mm and the scores not at all or
+down. The Bay of Bengal's July pressure (1006 hPa, the band's trough
+shifted north) stays below India's (1016): the heat low is too shallow to
+draw the sea's air in. What a real monsoon needs here is a heat low that
+beats the band's trough — likely the elevated heating of a plateau
+(Tibet), which the sea-level reduction of the air hides. A topic of its
+own.
 
 The ocean highs: ±8 hPa from a basin's western shore to its eastern at
 15–50°, smoothed as a mean over the sea; they enter the months' pressure

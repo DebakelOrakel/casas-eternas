@@ -275,6 +275,21 @@ for (const g of GROUPS) {
   console.log(`  ${g}: ${GROUPS.map((h) => `${h} ${String(Math.round((100 * confusion[g][h]) / total)).padStart(3)}`).join('  ')}`)
 }
 
+// The phase of the year: which month the northern land (10–70° N) is
+// warmest in. On Earth nearly all of it in July, a coastal fringe in
+// August.
+const warmest = new Array(12).fill(0)
+for (let y = Math.round(RY * 20 / 180); y < Math.round(RY * 80 / 180); y++) {
+  for (let x = 0; x < RX; x++) {
+    const i = y * RX + x
+    if (!land(i)) continue
+    let best = 0
+    for (let m = 1; m < 12; m++) if (r.temperature[m * n + i] > r.temperature[best * n + i]) best = m
+    warmest[best]++
+  }
+}
+const landN = warmest.reduce((a, b) => a + b, 0)
+console.log(`northern land's warmest month, %: ${['Jun', 'Jul', 'Aug', 'Sep'].map((name, k) => `${name} ${Math.round((100 * warmest[k + 5]) / landN)}`).join('  ')}`)
 console.log(`\nrefinement ${Math.round(ms)} ms`)
 console.log(`Köppen groups, % of land (Beck 1991–2020): ${shares}`)
 console.log(`cells: class ${((100 * cellsExact) / both).toFixed(0)} %, group ${((100 * cellsGroup) / both).toFixed(0)} % of the land both have`)

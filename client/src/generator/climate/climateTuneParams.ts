@@ -247,19 +247,29 @@ export const CLIMATE_TUNING = {
   ebmSeaIceBelowC: 0,
   // Heat capacity, J/m²K: land is the air column and a little soil
   // (~1.2·10⁷), the sea a 50 m mixed layer (~2.1·10⁸).
-  ebmCapacityLand: 3e7,
+  ebmCapacityLand: 1e7,
   ebmCapacitySea: 2.1e8,
-  // Outgoing radiation per kelvin, W/m²K (Budyko's B).
-  ebmRadiation: 2.1,
+  // The damping per kelvin, W/m²K: the outgoing radiation (Budyko's B,
+  // ~2) and the heat the surface gives to the air above it, which the
+  // cycle's anomaly loses too. Measured on Earth with the land's capacity
+  // (scripts/earthClimate.mjs, 2026-09-29): at B 2.1 and 3·10⁷ the northern
+  // land's warmest month was August (3981 cells) or September (1565), not
+  // July (109): an interior continent has no neighbour to damp it, and
+  // C/B gave it a lag of some 70°. At 8 and 1·10⁷: July 4720, August 908;
+  // the land with the right class 27 → 31 %, the places' January and July
+  // error 4.1 → 3.8 and 3.7 → 3.1 °C. The capacity alone widened the swing
+  // by 7 °C; the damping holds it.
+  ebmRadiation: 8,
   // Exchange with each of the four neighbours, W/m²K, and the carry by the
   // wind per unit of wind (8 m/s), W/m²K. The carry measured on Earth
   // (scripts/earthClimate.mjs, 2026-09-29): at 400 the sea's air reached so
   // far inland that the places' years came out 2.8 °C too narrow on average
   // (Winnipeg's January +2 °C, real −16); at 150 0.6 °C, and the land's
   // Köppen groups 29 → 18 points off Beck 2018's rounded shares. At 50 the swings stay right
-  // but the D group overgrows (29 % of land, Earth 22).
+  // but the D group overgrows (29 % of land, Earth 22). With the damping
+  // at 8 (above), 100 (swing −0.5 °C against 150's −1.1).
   ebmExchange: 40,
-  ebmCarryPerWind: 150,
+  ebmCarryPerWind: 100,
   // Gauss-Seidel sweeps per harmonic.
   ebmSolveIters: 400,
 
