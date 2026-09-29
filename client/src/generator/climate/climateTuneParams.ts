@@ -444,6 +444,18 @@ export const CLIMATE_TUNING = {
   oceanHighMinSeaShare: 0.05,
   rainFlankFactor: 1,
   rainFlankFullHpa: 1.5,
+  // The share of the moisture the sinking air mixes away per iteration over
+  // land, where it sinks in full, and the band factor below which the band
+  // counts as sinking air (computePrecipitation's subsidence). Measured on
+  // Earth (scripts/earthClimate.mjs, 2026-09-29): a small effect. At 0.05
+  // the groups' shares 19 → 16 points off, the cells and the places
+  // unchanged; Cairo 99 → 63 mm, Tehran 518 → 445, Dakar 454 → 354. More
+  // dries New York and Chicago, whose air crosses the band's core on its way
+  // from the Gulf. The band counted from 1 down made the storm tracks at 40°
+  // sink too (New York, Chicago → B). The wet deserts left are the
+  // upslope rainout's: without it Riyadh 496 → 244, Alice Springs 2051 → 431.
+  rainSubsidenceMix: 0.05,
+  rainSubsidenceBand: 0.3,
   rainSourceMax: 4,
 
   // --- from pressure.ts ---

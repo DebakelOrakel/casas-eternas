@@ -106,6 +106,9 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
   let moisture = new Float32Array(n)
   for (let i = 0; i < n; i++) moisture[i] = ocean[i] ? evap[i] : 0
   const rainedOut = new Float32Array(n)
+  // The refinement's sinking air, 0..1 per cell (subsidence), and the share
+  // of the moisture it mixes away per iteration over land.
+  const sinking = refined ? subsidence(refined.highHpa, equatorOffset, beltShift) : null
   // The refinement's second tracer: moisture × its source's sea anomaly,
   // carried and depleted with the moisture, so carried / moisture is the
   // anomaly of the sea the air came from.
@@ -133,6 +136,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
         // Depletes by the rain that stays on the ground; the recycled fraction re-enters
         // the pool so downwind interiors keep getting fed (see CLIMATE_TUNING.precipLandRecycleFrac).
         next[i] = advected - rain * (1 - CLIMATE_TUNING.precipLandRecycleFrac)
+        if (sinking) next[i] *= 1 - CLIMATE_TUNING.rainSubsidenceMix * sinking[i]
         if (refined && advected > 0) {
           const anomaly = sampleBilinearGrid(carried, RX, RY, fx, fy) / advected
           sourceAnomaly[i] = anomaly
@@ -155,6 +159,30 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
     }
   }
   return precip
+}
+
+// How strongly the air sinks, 0..1 per cell: the band's dry core (0 where
+// the band factor is `rainSubsidenceBand` or more, 1 at its floor — the
+// subtropical highs and the poles; the band's slopes toward the storm
+// tracks are not sinking air), taken away under a high's western flank as flankRelief takes
+// the dryness away, and at least the high's own share of its full strength
+// (`oceanHighFlankHpa`) in its east. Where the air sinks, dry air from
+// above mixes into the moist air below: Arabia and Australia stay dry
+// beside a warm sea.
+function subsidence(highHpa: Float32Array, equatorOffset: number, beltShift: number): Float32Array {
+  const T = CLIMATE_TUNING
+  const out = new Float32Array(RX * RY)
+  for (let gy = 0; gy < RY; gy++) {
+    const band = bandFactor(Math.abs(beltYNorm(shiftedYNorm(gy, RY, equatorOffset), beltShift) - 0.5) * 2)
+    const fromBand = Math.min(1, Math.max(0, (T.rainSubsidenceBand - band) / (T.rainSubsidenceBand - T.precipBandFloor)))
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      const h = highHpa[i]
+      const s = h < 0 ? fromBand * (1 - Math.min(1, -h / T.rainFlankFullHpa)) : Math.max(fromBand, Math.min(1, h / T.oceanHighFlankHpa))
+      out[i] = s
+    }
+  }
+  return out
 }
 
 // The band factor under a high's western flank: raised toward

@@ -357,6 +357,7 @@ Against the map from here on:
 |---|---|---|---|---|---|---|
 | Start | 26 % | 63 % | 10/47 | ×2.49 | 13 | 51 % |
 | Ocean highs from the basin's flank | 27 % | 65 % | 15/47 | ×2.06 | 19 | 30 % |
+| Dry air mixed in where the air sinks (0.05) | 27 % | 65 % | 15/47 | ×2.06 | 16 | 34 % |
 
 The ocean highs: ±8 hPa from a basin's western shore to its eastern at
 15–50°, smoothed as a mean over the sea; they enter the months' pressure
@@ -368,6 +369,12 @@ sea's own anomaly (3–10 hPa/°C) dried the east coasts further: their warm
 currents come out at +0.5 °C here. The groups' shares move away from
 Earth's (C 18 % against 13) while the cells come closer; the cells are the
 measure that counts where the classes lie.
+
+The sinking air's mixing measured small: the deserts it was meant for stay
+wet mostly from the upslope rainout (without it Riyadh 496 → 244 mm,
+Tehran 445 → 148, Alice Springs 2051 → 431, Nairobi 6242 → 1717, Bogotá
+5443 → 1357): a whole windward slope lies in one 62 km cell, so its rain
+falls on the plateau above. That is the next thing to look at.
 
 Tried and dropped, as they measured no better than what they replaced:
 
