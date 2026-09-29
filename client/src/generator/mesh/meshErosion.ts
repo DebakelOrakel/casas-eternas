@@ -81,12 +81,15 @@ export interface MeshErosionOptions {
   onChunkComplete?: (z: Float32Array, chunk: number) => void | Promise<void>
   // Checked between chunks; true stops early with the partial result.
   shouldCancel?: () => boolean
+  // Nodes frozen besides the deep ocean (per vertex slot, 1 = frozen): a
+  // tile's halo, computed around it and not eroded.
+  frozen?: Uint8Array
 }
 
 const PROGRESS_CHUNKS = 8
 
 // The engine index over the mesh for a terrain z (per vertex slot).
-export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Array, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS, refM = METERS_PER_CELL): EngineIndex {
+export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Array, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS, refM = METERS_PER_CELL, extraFrozen?: Uint8Array): EngineIndex {
   const slots = mesh.vertexSlots
   const star = new Int32Array(256)
   // The world ocean: the largest component of z ≤ 0 over alive vertices.
@@ -203,6 +206,13 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
       frozenCount++
     }
   }
+  if (extraFrozen) {
+    for (let v = 0; v < slots; v++) {
+      if (!mesh.vAlive[v] || frozen[v] || !extraFrozen[v]) continue
+      frozen[v] = 1
+      frozenCount++
+    }
+  }
   // Active indices in vertex order.
   let activeCount = 0
   for (let v = 0; v < slots; v++) if (mesh.vAlive[v] && !frozen[v]) activeCount++
@@ -308,7 +318,7 @@ function cotAtApex(mesh: PeriodicTriangulation, e: number, f: Float64Array): num
 // otherwise — the same kernels either way.
 export async function runMeshErosion(mesh: PeriodicTriangulation, initial: Float32Array, forcing: ErosionForcing, options: MeshErosionOptions): Promise<MeshErosionResult> {
   const params = options.params ?? DEFAULT_ENGINE_PARAMS
-  const index = buildMeshEngineIndex(mesh, initial, params)
+  const index = buildMeshEngineIndex(mesh, initial, params, METERS_PER_CELL, options.frozen)
   const chunkSize = Math.max(1, Math.ceil(options.age / PROGRESS_CHUNKS))
   const chunks = async (run: (step: number, done: number) => void, expand: () => Float32Array): Promise<void> => {
     let done = 0

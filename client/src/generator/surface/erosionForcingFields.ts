@@ -169,7 +169,10 @@ export function assembleFineForcing(
 // `xs`/`ys` in world coordinates on a world `worldWidth` × `worldHeight`
 // units wide, `alive` marking the slots that hold a node, `areas` the
 // nodes' areas for the water normalisation. Arrays come back in the
-// point set's slot layout.
+// point set's slot layout. `meanLandWater` replaces the water mean the
+// weights are normalised by: a tile of the top level is a piece of a world
+// and must weigh its water against the WORLD's land, not its own (a dry
+// tile would otherwise drain like an average one).
 export function assembleNodeForcing(
   coarse: CoarseForcingInputs,
   xs: ArrayLike<number>,
@@ -181,6 +184,7 @@ export function assembleNodeForcing(
   worldWidth: number,
   worldHeight: number,
   controls: ErosionControlsV2 = {},
+  meanLandWater?: number,
 ): { forcing: ErosionForcing; params: ErosionEngineParams } {
   const sigma = rockContrastSigma(controls)
   const uplift = new Float32Array(count)
@@ -203,7 +207,7 @@ export function assembleNodeForcing(
     if (z[i] > 0) { landSum += weight * areas[i]; landArea += areas[i] }
   }
   if (coarse.water) {
-    const meanLand = landArea > 0 && landSum > 0 ? landSum / landArea : 1
+    const meanLand = meanLandWater ?? (landArea > 0 && landSum > 0 ? landSum / landArea : 1)
     for (let i = 0; i < count; i++) accumulationWeights[i] = accumulationWeights[i] / meanLand
   }
   return { forcing: { uplift, erodibility, coastMask, accumulationWeights }, params: engineParamsFor(controls) }

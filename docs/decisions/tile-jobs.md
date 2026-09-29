@@ -3,7 +3,7 @@ summary: How the top level of the detail ladder runs — level 1 stays the one g
 date: 2026-09-29
 area: generator
 stage: decided
-status: decided 2026-09-29; the tile's mesh built the same day (mesh/meshTile.ts), the erosion, the job and the pick not yet. Refines fork 3 of adaptive-mesh.md (the ladder, the tile) with the numbers and the seam rule it left open.
+status: decided 2026-09-29; the tile's mesh and its bake built the same day (mesh/meshTile.ts, pipeline/meshTileBake.ts), the job and the pick not yet. Refines fork 3 of adaptive-mesh.md (the ladder, the tile) with the numbers and the seam rule it left open.
 ---
 
 # Tile jobs
@@ -91,3 +91,21 @@ constrained triangulation:
 `npm run harness:mesh` checks that two neighbours share the edge nodes at
 the same heights, every step of the line is an edge, a wider halo changes
 no triangle inside the tile, and the same holds across the world's seam.
+
+The tile's bake (`client/src/generator/pipeline/meshTileBake.ts`) freezes
+the halo and PINS the edge row: the engine's `pinnedZ` holds a node at a
+height through every iteration and makes it a seed of the flood, so the
+tile drains over its edge. A level-1 river that crosses the edge inward
+adds its discharge to the drainage weight of the first node inside. The
+water weights are normalised by the world's mean land water, not the
+tile's, so that discharge is in the engine's unit.
+
+Two engine consequences, both general:
+
+- A water component that touches no frozen node is no longer taken for
+  the ocean when pinned seeds exist — on a tile it is a depression.
+- The flood keeps a flooded node strictly above the level it was reached
+  from in float32. At the tile's reach length (1/64 cell) the step of
+  1e-7 per cell vanished in float32 above ~270 m, and lake surfaces came
+  out level with no receiver. The raster cannot meet the case; the macro
+  mesh only on flats above ~4 500 m.

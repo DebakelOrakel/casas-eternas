@@ -233,6 +233,12 @@ export interface TerrainViews {
   // FLAG_HAS_STATUS_MASK is set — the bake's macro-coastline authority; the
   // generator never sets it (its coasts are free by decision).
   statusMask: Uint8Array
+  // Pinned heights (the tile's edge row, docs/decisions/tile-jobs.md): a
+  // node with a number here keeps that height through every iteration and
+  // is a seed of the flood — a fixed level water leaves the region by. NaN
+  // = free. Read when FLAG_HAS_PINNED is set, which also sets
+  // FLAG_HAS_STATUS_MASK so the clamp that enforces it runs.
+  pinnedZ: Float32Array
   // Stencil scratch (hillslope/marine two-pass form): the volume moved
   // along each directed edge from the lower-indexed endpoint, written by
   // the moves pass at that endpoint's run and read by the apply pass
@@ -294,7 +300,7 @@ export interface TerrainViews {
   erodedW: Float64Array
   exportedW: Float64Array
   // Scalar flags: FLAG_HAS_COAST_MASK, FLAG_HAS_ACCUM_WEIGHTS,
-  // FLAG_HAS_STATUS_MASK, FLAG_GRID8.
+  // FLAG_HAS_STATUS_MASK, FLAG_GRID8, FLAG_HAS_PINNED.
   flags: Int32Array
   buffer: ArrayBufferLike
 }
@@ -390,10 +396,10 @@ export function terrainBufferBytes(activeCount: number, edgeCount: number): numb
   // erosionVolume, accumulationWeights, flux, donorMin, mouthFlux, mouthZ,
   // cutVolume, depositVolume, depositCraton, depositHard, fluxCraton,
   // fluxHard, mouthCraton, mouthHard, cratonAge, rockHard, erosionCoarse,
-  // fluxCoarse, mouthCoarse, depositCoarse, slopeScale, diffScale, hillNet
-  // (27a); u8: coastMask, statusMask (2a); i32 flags(16); f64 maxStepW,
+  // fluxCoarse, mouthCoarse, depositCoarse, slopeScale, diffScale, hillNet,
+  // pinnedZ (28a); u8: coastMask, statusMask (2a); i32 flags(16); f64 maxStepW,
   // erodedW, exportedW (3 × 64); alignment slack.
-  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 27 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
+  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 28 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
 }
 
 export function routingBufferBytes(activeCount: number, edgeCount: number): number {
@@ -452,6 +458,7 @@ export function createTerrainViews(activeCount: number, edgeCount: number, buffe
     slopeScale: take(Float32Array, a),
     diffScale: take(Float32Array, a),
     hillNet: take(Float32Array, a),
+    pinnedZ: take(Float32Array, a),
     maxStepW: take(Float64Array, 64),
     erodedW: take(Float64Array, 64),
     exportedW: take(Float64Array, 64),
@@ -526,6 +533,7 @@ export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFro
     erodibility: terrain.erodibility,
     coastMask: terrain.coastMask,
     statusMask: terrain.statusMask,
+    pinnedZ: terrain.pinnedZ,
     edgeMove: terrain.edgeMove,
     erosionVolume: terrain.erosionVolume,
     accumulationWeights: terrain.accumulationWeights,
@@ -591,6 +599,7 @@ export const FLAG_HAS_COAST_MASK = 0
 export const FLAG_HAS_ACCUM_WEIGHTS = 1
 export const FLAG_HAS_STATUS_MASK = 2
 export const FLAG_GRID8 = 3
+export const FLAG_HAS_PINNED = 4
 
 // Job ids for the worker protocol (erosionEnginePool.ts ↔
 // erosionEngineWorker.ts). ctrl[0] = job sequence number (bumped per

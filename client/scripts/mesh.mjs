@@ -69,6 +69,7 @@ const M = {
   meshHydro: await L('/src/generator/mesh/meshHydrology.ts'),
   sampler: await L('/src/generator/mesh/meshSampler.ts'),
   tile: await L('/src/generator/mesh/meshTile.ts'),
+  tileBake: await L('/src/generator/pipeline/meshTileBake.ts'),
   bake: await L('/src/generator/pipeline/meshBakeStage.ts'),
   coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
   column: await L('/src/generator/mesh/meshColumn.ts'),
@@ -727,6 +728,62 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     let seam = 0, seamBad = 0
     for (const [k, v] of edgeE) { if (Number(k.split(',')[0]) !== 0) continue; seam++; const u = edgeW.get(k); if (u === undefined || east.z[v] !== west.z[u]) seamBad++ }
     check('tiles meet across the world\'s seam as they do inside it', seam === T.TILE_EDGE_STEPS + 1 && seamBad === 0, `${seam} shared, ${seamBad} differ`)
+
+    // The tile's bake: the edge row pinned, the halo frozen, level 1's
+    // rivers entering with their discharge. The edge must come out at the
+    // parent surface to the bit, the inside must erode, and every land
+    // node inside must drain — over the edge or into the sea.
+    const macro = M.raster.rasteriseNodeField(level.mesh, level.z, W, H)
+    const tileInputs = {
+      parent, parentGraph: level.graph, width: W, height: H, detailSeed: 1234, lithoSeed: 77, controls: {},
+      uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
+      precipitation: precip, climateResX: CRX, climateResY: CRY,
+      meanLandWater: M.hydro.meanLandRunoff(precip, macro, W, H, CRX, CRY),
+    }
+    const t2 = performance.now()
+    const baked = await M.tileBake.bakeMeshTile(tileInputs, best, { rounds: 4 })
+    const bakeMs = performance.now() - t2
+    const bt = baked.tile
+    let edgeMoved = 0, moved = 0, nan = 0, maxCutM = 0
+    for (let v = 0; v < bt.mesh.vertexSlots; v++) {
+      if (!bt.mesh.vAlive[v]) continue
+      if (!Number.isFinite(baked.z[v])) nan++
+      if (bt.role[v] === T.TILE_ROLE_EDGE) { if (baked.z[v] !== bt.z[v]) edgeMoved++ }
+      else if (bt.role[v] !== T.TILE_ROLE_HALO && baked.z[v] !== bt.z[v]) { moved++; maxCutM = Math.max(maxCutM, (bt.z[v] - baked.z[v]) * M.scale.ELEVATION_METERS) }
+    }
+    check(`a tile bakes (${bakeMs.toFixed(0)} ms, ${baked.inflows} level-1 rivers enter)`, nan === 0 && moved > 0 && baked.erodedFluxM3 > 0, `${moved} inside nodes moved, deepest cut ${maxCutM.toFixed(1)} m, ${nan} NaN`)
+    check('the tile\'s edge row keeps the parent surface to the bit', edgeMoved === 0, `${edgeMoved} edge nodes moved`)
+    let drained = 0, stuck = 0
+    const target = baked.routing.flowTarget
+    for (let v = 0; v < bt.mesh.vertexSlots; v++) {
+      if (!bt.mesh.vAlive[v] || bt.role[v] === T.TILE_ROLE_EDGE || bt.role[v] === T.TILE_ROLE_HALO || baked.z[v] <= 0) continue
+      let u = v, steps = 0
+      while (steps++ < 1e6 && baked.z[u] > 0 && bt.role[u] !== T.TILE_ROLE_EDGE && target[u] >= 0) u = target[u]
+      if (bt.role[u] === T.TILE_ROLE_EDGE || baked.z[u] <= 0) drained++
+      else { stuck++ }
+    }
+    check('every land node inside drains over the edge or into the sea', stuck === 0 && drained > 0, `${drained} drained, ${stuck} stuck`)
+    const bakedAgain = await M.tileBake.bakeMeshTile(tileInputs, best, { rounds: 4 })
+    check('the same parent bakes the same tile', bakedAgain.z.every((v, i) => v === baked.z[i] || (Number.isNaN(v) && Number.isNaN(baked.z[i]))))
+    // A tile a level-1 river flows into: its catchment enters at the
+    // crossing and leaves over the edge — the accumulation on the edge
+    // row carries at least what came in.
+    let inTile = null
+    const g = level.graph
+    for (const r of g.reaches) {
+      if (r.kind !== 'river') continue
+      for (let k = 1; k < r.cellCount && !inTile; k++) {
+        const a = [Math.floor(g.cellX[r.cellStart + k - 1] / T.TILE_CELLS), Math.floor(g.cellY[r.cellStart + k - 1] / T.TILE_CELLS)]
+        const b = [Math.floor(g.cellX[r.cellStart + k] / T.TILE_CELLS), Math.floor(g.cellY[r.cellStart + k] / T.TILE_CELLS)]
+        if ((a[0] !== b[0] || a[1] !== b[1]) && r.dischargeOut > 0) inTile = { x: b[0], y: b[1] }
+      }
+      if (inTile) break
+    }
+    const fed = inTile ? await M.tileBake.bakeMeshTile(tileInputs, inTile, { rounds: 4 }) : null
+    let edgeAcc = 0
+    if (fed) for (let v = 0; v < fed.tile.mesh.vertexSlots; v++) if (fed.tile.mesh.vAlive[v] && fed.tile.role[v] === T.TILE_ROLE_EDGE) edgeAcc = Math.max(edgeAcc, fed.routing.accumulation[v])
+    const inflowArea = fed ? fed.inflowDischarge / tileInputs.meanLandWater : 0
+    check('a level-1 river entering a tile leaves over its edge with its catchment', fed !== null && fed.inflows > 0 && edgeAcc >= inflowArea, fed ? `tile ${inTile.x},${inTile.y}: ${fed.inflows} inflows, ${inflowArea.toFixed(1)} cells in, largest on the edge ${edgeAcc.toFixed(1)}` : 'no crossing found')
   }
 }
 

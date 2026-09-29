@@ -9,6 +9,7 @@ import {
   FLAG_GRID8,
   FLAG_HAS_ACCUM_WEIGHTS,
   FLAG_HAS_COAST_MASK,
+  FLAG_HAS_PINNED,
   FLAG_HAS_STATUS_MASK,
   type EngineIndex,
   type EngineViews,
@@ -204,6 +205,9 @@ export interface ErosionForcing {
   // (its erosion output BECOMES the macro — free coasts by decision, see
   // docs/design/erosion-v2.md "Coastlines must be pinned").
   statusMask?: Uint8Array
+  // Pinned heights per cell, NaN where free (see TerrainViews.pinnedZ):
+  // the tile's edge row, held at the parent surface. Omit for none.
+  pinnedZ?: Float32Array
   // The provenance a cut hands to the sediment walk (phase 5.2): the
   // craton oldness and the crust-history hardness under every node. Omit
   // to record volumes alone (the raster drivers do).
@@ -535,7 +539,7 @@ export function kernelMarineApply(v: EngineViews, a0: number, a1: number, kp: Ke
 // when the caller supplied a mask; excluded from the residual on purpose —
 // a clamp is enforcement, not evolution.
 export function kernelStatusClamp(v: EngineViews, a0: number, a1: number): void {
-  const { z, statusMask, flags } = v
+  const { z, statusMask, pinnedZ, flags } = v
   if (flags[FLAG_HAS_STATUS_MASK] === 0) return
   const clamp = STATUS_CLAMP_M / ELEVATION_METERS
   for (let i = a0; i < a1; i++) {
@@ -546,6 +550,8 @@ export function kernelStatusClamp(v: EngineViews, a0: number, a1: number): void 
       if (z[i] > 0) z[i] = -clamp
     }
   }
+  if (flags[FLAG_HAS_PINNED] === 0) return
+  for (let i = a0; i < a1; i++) if (pinnedZ[i] === pinnedZ[i]) z[i] = pinnedZ[i]
 }
 
 // ------------------------------------------------- serial (coordinator) parts
@@ -599,8 +605,14 @@ export function createCoordinatorScratch(activeCount: number): CoordinatorScratc
 // largest component, which is what the raster flood seeded by (an
 // enclosed basin is a depression, not a sea; same rule as flowRouting's
 // largestWaterComponent, 2026-08-06).
+//
+// PINNED nodes (a tile's edge row) are seeds too, whatever their height:
+// the region drains over its fixed edge. Where there are any, a water
+// component that touches no frozen node stays a depression — the
+// largest-component fallback is for a world, not for a tile.
 export function computeOceanSeed(v: EngineViews, s: CoordinatorScratch): boolean {
-  const { z, nbr, nbrStart, diffFactor, seedMask, activeCount } = v
+  const { z, nbr, nbrStart, diffFactor, seedMask, activeCount, pinnedZ, flags } = v
+  const pinned = flags[FLAG_HAS_PINNED] !== 0
   const label = s.componentLabel
   const stack = s.componentStack
   label.fill(-1)
@@ -635,8 +647,16 @@ export function computeOceanSeed(v: EngineViews, s: CoordinatorScratch): boolean
     sizes.push(size)
     touchesFrozen.push(touches)
   }
-  if (sizes.length === 0) return false
-  let any = false
+  let anyPinned = false
+  if (pinned) {
+    for (let i = 0; i < activeCount; i++) {
+      if (pinnedZ[i] !== pinnedZ[i]) continue
+      seedMask[i] = 1
+      anyPinned = true
+    }
+  }
+  if (sizes.length === 0) return anyPinned
+  let any = anyPinned
   for (let id = 0; id < sizes.length; id++) if (touchesFrozen[id]) any = true
   if (!any) {
     let best = 0
@@ -674,12 +694,32 @@ export function floodActive(v: EngineViews, s: CoordinatorScratch): number {
       const nb = nbr[e]
       if (nb < 0 || visited[nb]) continue
       visited[nb] = 1
-      filled[nb] = Math.max(z[nb], filled[current]) + EPSILON_FLOOD_STEP * lenRel[e]
+      filled[nb] = floodStep(z[nb], filled[current], EPSILON_FLOOD_STEP * lenRel[e])
       heap.push(filled[nb], nb)
     }
   }
   for (let a = 0; a < activeCount; a++) if (!visited[a]) filled[a] = Infinity
   return popped
+}
+
+// A flooded node's level: its own height, or the level it was reached
+// from plus the step — and STRICTLY above that level in float32, which
+// `filled` is. The step is 1e-7 per unit of reach length; on a tile of the
+// top level a reach is 1/64 of a cell, and 1.6e-9 vanishes in float32
+// above ~0.03 units (270 m): a lake surface came out level, its nodes had
+// no lower neighbour and no receiver (2 712 of 28 000 land nodes on the
+// harness tile, 2026-09-29). The raster cannot meet this — its step is
+// ≥ 1e-7, over half a float32 step at every height it holds — and the
+// macro mesh only on flats above ~4 500 m.
+const floatBits = new Float32Array(1)
+const intBits = new Int32Array(floatBits.buffer)
+function floodStep(own: number, from: number, step: number): number {
+  const level = Math.max(own, from) + step
+  if (Math.fround(level) > from) return level
+  floatBits[0] = from
+  intBits[0] += from >= 0 ? 1 : -1
+  if (from === 0) floatBits[0] = 1.401298464324817e-45
+  return floatBits[0]
 }
 
 // The λ-walk: choose each cell's receiver to minimise the accumulated
@@ -1267,6 +1307,13 @@ export function loadTerrain(index: EngineIndex, views: Omit<TerrainViews, 'buffe
   }
   if (forcing.statusMask) {
     gatherActive(index, forcing.statusMask, views.statusMask)
+    views.flags[FLAG_HAS_STATUS_MASK] = 1
+  }
+  if (forcing.pinnedZ) {
+    gatherActive(index, forcing.pinnedZ, views.pinnedZ)
+    views.flags[FLAG_HAS_PINNED] = 1
+    // The clamp that holds them runs under the status flag; a status mask
+    // left out reads as all free.
     views.flags[FLAG_HAS_STATUS_MASK] = 1
   }
   if (forcing.cratonAge) gatherActive(index, forcing.cratonAge, views.cratonAge)
