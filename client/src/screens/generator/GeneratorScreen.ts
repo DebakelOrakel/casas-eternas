@@ -2303,13 +2303,30 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Events are always on — a persistent notification-coupled marker layer,
     // not a user toggle.
     { id: 'events', enabled: true },
-    { id: 'names', enabled: false, paint: (c) => paintWrapped(c, (cc) => drawContinentLabels(cc, lastRaftLabels)) },
     // The finishing step's picked tile — drawn only while that step is open.
     { id: 'tilePick', enabled: true, paint: (c) => paintWrapped(c, (cc) => drawTilePick(cc)) },
   ])
   // Same layer OBJECTS in both compositors — toggles/enabled flags are
   // shared state, only the base differs (shaded vs. unshaded paper).
   reliefOverlay.setLayers([...overlay.getLayers()])
+
+  // THE CONTINENT NAMES are not a compositor layer: painted into the map
+  // texture they sat under the water, the relief and the river ribbons. They
+  // go on the map view's label layer instead, drawn over all of it
+  // (map/ToroidalMapView.ts, LABEL_RENDERING_GROUP) — same canvas size and
+  // pixel path as the compositor, so the same orientation.
+  const labelCanvas = document.createElement('canvas')
+  labelCanvas.width = MAP_WIDTH
+  labelCanvas.height = MAP_HEIGHT
+  const labelCtx = labelCanvas.getContext('2d', { willReadFrequently: true })!
+  let labelsShown = false
+  function repaintLabels(): void {
+    mapView.setLabelsVisible(labelsShown)
+    if (!labelsShown) return
+    labelCtx.clearRect(0, 0, MAP_WIDTH, MAP_HEIGHT)
+    paintWrapped(labelCtx, (cc) => drawContinentLabels(cc, lastRaftLabels))
+    mapView.labelTexture.update(new Uint8Array(labelCtx.getImageData(0, 0, MAP_WIDTH, MAP_HEIGHT).data.buffer))
+  }
 
   // Draws one tectonic event's geologic marker, faded by `alpha`: a suture band
   // (collision), a dashed rift axis (breakup), or a ring (supercontinent /
@@ -2968,10 +2985,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (id === 'rivers') {
         riverLayer?.setEnabled(show)
         mapView.setLakesVisible(show)
+      } else if (id === 'names') {
+        labelsShown = show
       } else {
         overlay.setLayerEnabled(id, show)
       }
     }
+    repaintLabels()
     compositeOverlays()
     hoverTooltip?.refresh()
   }
@@ -4068,6 +4088,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     lastBoundaryMask = new Uint8Array(message.boundaryMask)
     lastRaftLabels = message.raftLabels
+    if (labelsShown) repaintLabels()
     if (underPreview) {
       planetPreviewRealBase = { base: new Uint8ClampedArray(message.buffer), relief: new Uint8Array(message.relief) }
     } else {

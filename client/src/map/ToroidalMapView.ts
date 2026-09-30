@@ -105,6 +105,12 @@ export interface ToroidalMapView {
   setWaterLevels(level: Float32Array | null, surface: Uint8Array | null, coast?: Uint8Array | null): void
   // Lakes follow the hydrology toggle; the sea is always drawn.
   setLakesVisible(visible: boolean): void
+  // The LABEL layer: an RGBA texture with alpha, the map's size, drawn over
+  // everything else this view and the screen put in the scene (the water, the
+  // relief, the river ribbons) — see LABEL_RENDERING_GROUP. Update it with the
+  // labels' pixels; hidden until setLabelsVisible(true).
+  readonly labelTexture: RawTexture
+  setLabelsVisible(visible: boolean): void
   // Pick the terrain THIS view renders, restricted to its own surfaces
   // (flat plane, relief levels, near-detail patch) — a plain scene.pick can
   // land on any stray pickable mesh, and any surface that is not the
@@ -155,6 +161,15 @@ export interface ToroidalMapView {
 // sample) — no render-order assumption, but it lowers ridges at the coarse
 // level, which is a change to the map's own look.
 export const NEAR_RENDERING_GROUP = 1
+
+// THE LABELS go last, in a group of their own: the depth clear between groups
+// draws them over the water the material plugin paints, the relief levels
+// and the river ribbons (the near group) alike. Painted into the map texture
+// they sat UNDER all of those (reported 2026-09-30: continent names covered
+// by other overlay elements). A flat plane at sea level: straight down it
+// covers the map exactly; tilted, a name keeps its place on the plane rather
+// than riding the relief under it — acceptable for a label a continent wide.
+export const LABEL_RENDERING_GROUP = 2
 
 // Relief grid resolutions against the 2048x1024 map raster. Coarse: one
 // vertex per two raster cells (~15.6 km spacing) — cheap enough to have
@@ -249,11 +264,43 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     }
   }
 
+  // The label layer (see LABEL_RENDERING_GROUP): transparent until drawn.
+  const labelTexture = RawTexture.CreateRGBATexture(new Uint8Array(textureWidth * textureHeight * 4), textureWidth, textureHeight, scene, false, false)
+  labelTexture.hasAlpha = true
+  const labelMaterial = new StandardMaterial('mapLabelMaterial', scene)
+  labelMaterial.diffuseTexture = labelTexture
+  labelMaterial.useAlphaFromDiffuseTexture = true
+  labelMaterial.specularColor = new Color3(0, 0, 0)
+  labelMaterial.emissiveColor = new Color3(1, 1, 1)
+  labelMaterial.disableLighting = true
+  const labelTile = MeshBuilder.CreateGround('mapLabels', { width: worldWidth, height: worldHeight, subdivisions: 1 }, scene)
+  labelTile.material = labelMaterial
+  labelTile.renderingGroupId = LABEL_RENDERING_GROUP
+  labelTile.isPickable = false
+  const labelInstances: InstancedMesh[] = []
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dz === 0) continue
+      const inst = labelTile.createInstance(`mapLabels_${dx}_${dz}`)
+      inst.renderingGroupId = LABEL_RENDERING_GROUP
+      inst.isPickable = false
+      labelInstances.push(inst)
+    }
+  }
+  let labelsVisible = false
+  const applyLabelsVisible = (): void => {
+    const on = enabled && labelsVisible
+    labelTile.setEnabled(on)
+    for (const inst of labelInstances) inst.setEnabled(on)
+  }
+
   let coarseLevel: ReliefLevel | null = null
   let fineLevel: ReliefLevel | null = null
   let coarseSurface: ElevationSurface | null = null
   let fineSurface: ElevationSurface | null = null
   let enabled = true
+  // The label layer starts hidden (and is only ever shown with the view).
+  applyLabelsVisible()
   // What each layer's setEnabled was last given, so the per-frame visibility
   // sync only touches meshes on actual changes.
   const shown: Record<'flat' | 'coarse' | 'fine', boolean> = { flat: true, coarse: false, fine: false }
@@ -555,12 +602,14 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   // Babylon's default, but it is the entire mechanism the near group rests on,
   // and a default relied upon silently is a default someone changes.
   scene.setRenderingAutoClearDepthStencil(NEAR_RENDERING_GROUP, true, true, false)
+  scene.setRenderingAutoClearDepthStencil(LABEL_RENDERING_GROUP, true, true, false)
 
   const observer = scene.onBeforeRenderObservable.add(() => {
     const focus = getFocus()
     const centerX = Math.round(focus.x / worldWidth) * worldWidth
     const centerZ = Math.round(focus.z / worldHeight) * worldHeight
     tile.position.set(centerX, 0, centerZ)
+    labelTile.position.set(centerX, 0, centerZ)
     coarseLevel?.base.position.set(centerX, 0, centerZ)
     fineLevel?.base.position.set(centerX, 0, centerZ)
     let i = 0
@@ -568,6 +617,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       for (let dx = -1; dx <= 1; dx++) {
         if (dx === 0 && dz === 0) continue
         wrapInstances[i].position.set(centerX + dx * worldWidth, 0, centerZ + dz * worldHeight)
+        labelInstances[i].position.set(centerX + dx * worldWidth, 0, centerZ + dz * worldHeight)
         coarseLevel?.instances[i].position.set(centerX + dx * worldWidth, 0, centerZ + dz * worldHeight)
         fineLevel?.instances[i].position.set(centerX + dx * worldWidth, 0, centerZ + dz * worldHeight)
         i++
@@ -641,6 +691,11 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       waterPlugin.setLakesVisible(visible)
       reliefWaterPlugin.setLakesVisible(visible)
     },
+    labelTexture,
+    setLabelsVisible(visible: boolean): void {
+      labelsVisible = visible
+      applyLabelsVisible()
+    },
     pickGround(screenX: number, screenY: number): { x: number; z: number } | null {
       const isGround = (mesh: AbstractMesh): boolean => {
         // A custom predicate REPLACES scene.pick's default enabled/visible
@@ -667,6 +722,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     setEnabled(next: boolean): void {
       enabled = next
       applyVisibility()
+      applyLabelsVisible()
     },
     dispose(): void {
       scene.onBeforeRenderObservable.remove(observer)
@@ -675,6 +731,10 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       disposeLevel(fineLevel)
       for (const inst of wrapInstances) inst.dispose()
       tile.dispose()
+      for (const inst of labelInstances) inst.dispose()
+      labelTile.dispose()
+      labelMaterial.dispose()
+      labelTexture.dispose()
       waterField.dispose()
       material.dispose()
       texture.dispose()
