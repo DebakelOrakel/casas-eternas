@@ -141,6 +141,10 @@ export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
   const order = Int32Array.from(land)
   const empty = { thickness, balance, receiver, slope, order, elaM, massIn: 0, massMelt: 0, massOut: 0 }
   if (iceable === 0) return empty
+  // The land nodes' Voronoi areas, once: the mesh does not change while the
+  // ice finds its steady state, and the rounds below read each area twice.
+  const areaOf = new Float64Array(slots)
+  for (const v of land) areaOf[v] = mesh.voronoiArea(v)
   const surface = new Float32Array(slots)
   const flux = new Float64Array(slots)
   const out = new Int32Array(64)
@@ -172,7 +176,7 @@ export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
     massOut = 0
     for (let i = 0; i < order.length; i++) {
       const v = order[i]
-      const area = mesh.voronoiArea(v) * cellM * cellM
+      const area = areaOf[v] * cellM * cellM
       const b = balance[v] * area
       const arriving = flux[v]
       const q = arriving + b
@@ -192,7 +196,7 @@ export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
         const s = Math.max(t.iceMinSlope, slope[v])
         // The flux per unit width: over the node's cell width (its area's
         // square root), the mesh's counterpart of the raster's cell.
-        const widthM = Math.sqrt(mesh.voronoiArea(v)) * cellM
+        const widthM = Math.sqrt(areaOf[v]) * cellM
         h = Math.pow((q / widthM) / (gamma * s * s * s), 0.2)
         if (h > t.iceMaxThicknessM) h = t.iceMaxThicknessM
       }
