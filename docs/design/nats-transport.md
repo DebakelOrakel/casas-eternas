@@ -1,7 +1,7 @@
 ---
 summary: Findings from a hypothetical discussion of NATS as a message bus — where it would slot into the architecture, what it would buy, and why it does not make split bakes attractive.
 date: 2026-08-16
-updated: 2026-08-16
+updated: 2026-09-30
 area: platform
 stage: idea
 status: unfinished discussion notes — nothing decided, nothing built; triggers named at the end
@@ -104,3 +104,7 @@ contained if it enters through the seam above.
    rather than as a new service, keeping the one-binary-with-targets model.
 
 None of the triggers has fired.
+
+2026-09-30: [tile-coordinator.md](tile-coordinator.md) names a case for
+trigger 1 — a coordinator that gives tile computations to a pool of
+workers.

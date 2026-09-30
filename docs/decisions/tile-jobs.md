@@ -130,3 +130,6 @@ The tile as a job and an artifact (2026-09-30):
   boundary. Its pipeline version carries level 1's constants, the rounds
   and every constant of the tile (`TILE_CONSTANTS`).
 - The artifact window counts a world's tiles on its L2 chip.
+
+Where the ladder may go next — level 1 as a replayed history, more tile
+levels, a coordinator for the tiles: [design/tile-coordinator.md](../design/tile-coordinator.md).
