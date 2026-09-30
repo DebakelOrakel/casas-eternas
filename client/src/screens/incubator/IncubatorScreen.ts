@@ -282,6 +282,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const worldChooser = createWorldChooser(root, {
     titleKey: 'incubator.load.title',
     subtitleKey: 'incubator.load.subtitle',
+    // The generator's says "loads this world into the generator"; the
+    // incubator has no line of its own yet (a debug screen, no new keys).
+    cardHelpKey: null,
     // A browser world never holds a level: the levels are server jobs.
     openable: {
       load: async () => {

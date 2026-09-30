@@ -4432,30 +4432,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // it would be the temporal dead zone that once blanked this whole screen.
   let chooserOpen = false
 
-  // DIAGNOSTIC (dev only, temporary — 2026-09-30): which part of the
-  // signature moved when a saved world turns "unsaved". Remove once the
-  // reopen-reports-unsaved report is understood.
-  let reportedSignature = ''
-  function reportSignatureChange(now: string): void {
-    if (!import.meta.env.DEV || savedSignature === '' || now === reportedSignature) return
-    reportedSignature = now
-    const names = ['worldName', 'seed', 'values', 'archeanEpochs', 'epoch', 'erosionRuns']
-    const before = JSON.parse(savedSignature) as unknown[]
-    const after = JSON.parse(now) as unknown[]
-    const moved: Record<string, unknown> = {}
-    names.forEach((name, i) => {
-      if (name === 'values') {
-        const b = before[i] as Record<string, number>
-        const a = after[i] as Record<string, number>
-        for (const key of new Set([...Object.keys(b), ...Object.keys(a)])) if (b[key] !== a[key]) moved[`values.${key}`] = [b[key], a[key]]
-      } else if (JSON.stringify(before[i]) !== JSON.stringify(after[i])) moved[name] = [before[i], after[i]]
-    })
-    console.warn('[unsaved] signature moved since the last save/open:', moved, new Error('where').stack)
-  }
-
   function saveState(): TitleBarSaveState {
     const signatureNow = worldSignature()
-    if (signatureNow !== savedSignature) reportSignatureChange(signatureNow)
     if (signatureNow !== savedSignature) {
       return lastSave === undefined && savedSignature === '' ? { kind: 'new' } : { kind: 'unsaved' }
     }

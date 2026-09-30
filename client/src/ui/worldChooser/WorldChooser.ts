@@ -32,6 +32,10 @@ export interface WorldChooserOptions {
   // The heading and the line under it. The generator's when left out.
   titleKey?: TKey
   subtitleKey?: TKey
+  // The help card on a world's card, which says what opening it does: the
+  // base of a `.label`/`.help` key pair, as data-help takes it. The
+  // generator's when left out; null for none.
+  cardHelpKey?: string | null
   // Keep the world the generator already built and get out of the way.
   // Without it (and without onPickFile) the two big choices are not shown.
   onNewWorld?(): void
@@ -257,7 +261,8 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     const open = document.createElement('button')
     open.type = 'button'
     open.className = 'wc-card__open'
-    open.dataset.help = 'generator.load.card'
+    const cardHelp = options.cardHelpKey === undefined ? 'generator.load.card' : options.cardHelpKey
+    if (cardHelp) open.dataset.help = cardHelp
 
     const frame = document.createElement('span')
     frame.className = 'wc-thumb'
