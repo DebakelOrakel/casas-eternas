@@ -1,5 +1,5 @@
-/* The generator's left column — design canvas (Main.dc.html, the `<aside>`),
-   light column. Between the title bar and the step bar, both of which publish
+/* A screen's left column (the generator, the incubator) — design canvas
+   (Main.dc.html, the `<aside>`), light column. Between the title bar and the step bar, both of which publish
    their own heights; this one reads them rather than repeating the numbers. */
 .gen-sidebar {
   position: fixed;

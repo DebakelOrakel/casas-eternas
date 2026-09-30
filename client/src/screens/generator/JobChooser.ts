@@ -3,9 +3,9 @@ import { formatWhen } from '../../ui/format'
 import { bakeFraction, cancelBake, jobStageName, listBakes, type BakeJob } from '../../world/jobClient'
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
-import { icon } from './chooserIcons'
+import { icon } from '../../ui/chooserIcons'
 import '../../ui/theme/design.css'
-import './worldChooser.css'
+import '../../ui/worldChooser/worldChooser.css'
 import './artifactChooser.css'
 
 // The jobs window: the fine simulation of the viewer's worlds on the server —

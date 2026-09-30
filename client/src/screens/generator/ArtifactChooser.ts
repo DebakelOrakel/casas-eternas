@@ -9,9 +9,9 @@ import { meshPipelineVersion } from '../../world/meshArtifacts'
 import { meshTilePipelineVersion } from '../../world/meshTileArtifacts'
 import { commissionBake } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
-import { BROWSER_ICON, SERVER_ICON, icon } from './chooserIcons'
+import { BROWSER_ICON, SERVER_ICON, icon } from '../../ui/chooserIcons'
 import '../../ui/theme/design.css'
-import './worldChooser.css'
+import '../../ui/worldChooser/worldChooser.css'
 import './artifactChooser.css'
 
 // The artifact window: what the world's derived data takes, where, and

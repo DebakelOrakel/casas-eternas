@@ -30,11 +30,15 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
     </div> -->
     <nav class="title-nav">
       <button class="text-link" data-action="generator">${t('common.title.nav.generator')}</button>
+      <button class="text-link" data-action="incubator">${t('common.title.nav.incubator')}</button>
       <a class="text-link" href="/docs/" target="_blank" rel="noopener">${t('common.title.nav.documentation')}</a>
     </nav>
   `
   root.querySelector('[data-action="generator"]')!.addEventListener('click', () => {
     ctx.goTo('generator')
+  })
+  root.querySelector('[data-action="incubator"]')!.addEventListener('click', () => {
+    ctx.goTo('incubator')
   })
 
   // Where a world would go, on every screen — including this one, so the state

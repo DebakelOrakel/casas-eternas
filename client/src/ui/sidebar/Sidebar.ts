@@ -2,11 +2,13 @@ import { t, type TKey } from '../../i18n/i18n'
 import '../../ui/theme/design.css'
 import './sidebar.css'
 
-// The generator's left column — from the design canvas (Main.dc.html, the
-// `<aside>` between the title bar and the step bar), light theme.
+// A screen's left column — from the design canvas (Main.dc.html, the
+// `<aside>` between the title bar and the step bar), light theme. The
+// generator and the incubator use it; each names its steps from its own
+// catalog branch.
 //
-// It names the step you are on and says what that step does. Until now the
-// generator never said either: the panel title was one word, and what a step
+// It names the step you are on and says what that step does. Until the
+// column came, the generator said neither: the panel title was one word, and what a step
 // actually IS lived only in the tooltip on its chip.
 //
 // It takes real width rather than floating over the map. That is cheap here
@@ -24,7 +26,7 @@ export interface Sidebar {
   // scrolls, directly above the step bar, so they stay in view however long
   // the step's controls are.
   foot: HTMLElement
-  // Which step the column is describing. The id keys `generator.step.<id>`,
+  // Which step the column is describing. The id keys `<stepKeys>.<id>`,
   // the same base the step bar reads, so a step's name exists once.
   setStep(id: string): void
   // Say the step's name and description again, in the language that is active
@@ -40,7 +42,10 @@ export interface Sidebar {
 const WIDTH_VAR = '--sidebar-width'
 const WIDTH = '300px'
 
-export function createSidebar(host: HTMLElement): Sidebar {
+// `stepKeys` is the catalog branch that holds the steps' names and
+// descriptions, `generator.step` for the generator: step `<id>` reads
+// `<stepKeys>.<id>.label` and `<stepKeys>.<id>.help`.
+export function createSidebar(host: HTMLElement, stepKeys: string): Sidebar {
   const aside = document.createElement('aside')
   aside.className = 'gen-sidebar design-light'
 
@@ -75,12 +80,12 @@ export function createSidebar(host: HTMLElement): Sidebar {
 
   function paint(): void {
     if (!current) return
-    heading.textContent = t(`generator.step.${current}.label` as TKey)
+    heading.textContent = t(`${stepKeys}.${current}.label` as TKey)
     // The same string the step bar shows in its hover card. Shown here for
     // the step you are ON, where it is the answer to "what am I looking at";
     // the card stays for the steps you are not on, where it is the answer to
     // "what would this one be".
-    description.textContent = t(`generator.step.${current}.help` as TKey)
+    description.textContent = t(`${stepKeys}.${current}.help` as TKey)
   }
 
   return {

@@ -44,6 +44,7 @@
   "common.panel.signIn.failed": "Wrong user or password.",
   "common.panel.signIn.unreachable": "The server did not answer.",
   "common.title.nav.generator": "Generator",
+  "common.title.nav.incubator": "Incubator",
   "common.title.nav.documentation": "Documentation",
   "common.confirm.action.cancel": "Cancel",
   "common.confirm.discard.title": "Unsaved changes",

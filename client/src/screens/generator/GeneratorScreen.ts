@@ -73,12 +73,12 @@ import { meshPipelineVersion } from '../../world/meshArtifacts'
 import { meshTilePipelineVersion, meshTileStage } from '../../world/meshTileArtifacts'
 import { TILE_CELLS, tileGrid, type TileId } from '../../generator/mesh/meshTile'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
-import { createWorldChooser } from './WorldChooser'
+import { createWorldChooser } from '../../ui/worldChooser/WorldChooser'
 import { createArtifactChooser } from './ArtifactChooser'
 import { createJobChooser } from './JobChooser'
 import { openWorld } from '../../world/query'
 import { createStepBar } from './StepBar'
-import { createSidebar } from './Sidebar'
+import { createSidebar } from '../../ui/sidebar/Sidebar'
 import { createMonthPlayer } from './monthPlayer'
 import { readRecipeValue as readYamlValue } from '../../world/save/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
@@ -5897,7 +5897,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The column, and step 0 moving into it. The other steps keep their controls
   // in the panel row along the foot for now; each moves in its own step, so a
   // broken one is always traceable to the step that broke it.
-  const sidebar = createSidebar(root)
+  const sidebar = createSidebar(root, 'generator.step')
   // Step 0's markup carries its keys rather than its strings, so a language
   // switch can find them again (see i18n/relabel). Nothing stands in it until
   // this runs.

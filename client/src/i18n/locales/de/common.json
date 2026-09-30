@@ -44,6 +44,7 @@
   "common.panel.signIn.failed": "Benutzer oder Passwort stimmt nicht.",
   "common.panel.signIn.unreachable": "Der Server hat nicht geantwortet.",
   "common.title.nav.generator": "Generator",
+  "common.title.nav.incubator": "Inkubator",
   "common.title.nav.documentation": "Dokumentation",
   "common.confirm.action.cancel": "Abbrechen",
   "common.confirm.discard.title": "Ungespeicherte Änderungen",

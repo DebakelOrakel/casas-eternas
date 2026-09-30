@@ -5,32 +5,46 @@ import { deleteWorld, fetchWorld, fetchWorldPreview, listWorlds } from '../../se
 import { browserWorldThumbnail, forgetBrowserWorld, listBrowserWorlds, openBrowserWorld } from '../../world/browserWorlds'
 import '../../ui/theme/design.css'
 import './worldChooser.css'
-import { BROWSER_ICON, SERVER_ICON, icon } from './chooserIcons'
+import { BROWSER_ICON, SERVER_ICON, icon } from '../chooserIcons'
 
-// The generator's first screen: which world are we working on?
+// The first screen of the generator and of the incubator: which world are we
+// working on?
 //
 // From the "Weltgenerator" design canvas (artboard Main.dc.html, "Welt
-// wählen"), light theme. It covers the generator rather than being a screen of
+// wählen"), light theme. It covers the screen rather than being a screen of
 // its own, and that is a decision worth stating: `ctx.goTo(id)` carries no
 // payload, so a separate route would first need a channel to hand the chosen
-// world to the generator. As an overlay there is nothing to hand over —
-// "open" is the archive path the screen already has, "new" just closes this.
-// The generator builds behind it, so its starting world is ready the moment
-// someone asks for one.
+// world over. As an overlay there is nothing to hand over — "open" is the
+// archive path the screen already has, "new" just closes this. The generator
+// builds behind it, so its starting world is ready the moment someone asks
+// for one.
+//
+// The generator offers every world and the two big choices (new, upload).
+// The incubator leaves the choices out and opens only the worlds that hold
+// level 1; the others stay in the list, marked, so that a world does not
+// seem lost only because it cannot be used here yet.
 //
 // It shows worlds from BOTH places at once — this browser and the server —
 // because "where is it kept" is a property of a world, not a place to navigate
 // to. The filter narrows that; it does not switch between two lists.
 
 export interface WorldChooserOptions {
+  // The heading and the line under it. The generator's when left out.
+  titleKey?: TKey
+  subtitleKey?: TKey
   // Keep the world the generator already built and get out of the way.
-  onNewWorld(): void
-  // Hands an archive over; the generator owns the loading itself. `kept`
+  // Without it (and without onPickFile) the two big choices are not shown.
+  onNewWorld?(): void
+  // Hands an archive over; the screen owns the loading itself. `kept`
   // says where the world rests and since when — an opened world is a saved
-  // one, and the title bar says so.
-  onOpenArchive(archive: Blob, kept: { where: Where; savedAt: string }): void
+  // one, and the title bar says so — and what the list called it.
+  onOpenArchive(archive: Blob, kept: { where: Where; savedAt: string; name: string; seed: string }): void
   // The plain file picker, for a world that lives in neither place.
-  onPickFile(): void
+  onPickFile?(): void
+  // Which worlds may be opened here: asked at every reload, beside the two
+  // lists. A world it refuses stays in the list, cannot be opened, and says
+  // why with `reasonKey`. Without it every world opens.
+  openable?: { load(): Promise<(where: Where, uid: string) => boolean>; reasonKey: TKey }
 }
 
 export interface WorldChooser {
@@ -118,8 +132,8 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   // Every string the frame itself holds, in one place, so saying them again in
   // another language is the same code that said them first.
   function paintStatic(): void {
-    root.querySelector('.wc-title')!.textContent = t('generator.load.title')
-    root.querySelector('.wc-subtitle')!.textContent = t('generator.load.subtitle')
+    root.querySelector('.wc-title')!.textContent = t(options.titleKey ?? 'generator.load.title')
+    root.querySelector('.wc-subtitle')!.textContent = t(options.subtitleKey ?? 'generator.load.subtitle')
     root.querySelector('.wc-listtitle')!.textContent = t('generator.load.existing')
     newChoice.querySelector('.wc-choice__label')!.textContent = t('generator.load.new.label')
     newChoice.querySelector('.wc-choice__sub')!.textContent = t('generator.load.new.help')
@@ -134,8 +148,11 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   // it knows the world is actually there: an archive that turns out not to be
   // one must leave the list standing rather than drop you into the generator
   // with a notification and no way back.
-  newChoice.addEventListener('click', () => options.onNewWorld())
-  uploadChoice.addEventListener('click', () => options.onPickFile())
+  newChoice.addEventListener('click', () => options.onNewWorld?.())
+  uploadChoice.addEventListener('click', () => options.onPickFile?.())
+  newChoice.hidden = !options.onNewWorld
+  uploadChoice.hidden = !options.onPickFile
+  root.querySelector<HTMLElement>('.wc-choices')!.hidden = !options.onNewWorld && !options.onPickFile
 
   // --- filter ---------------------------------------------------------------
 
@@ -165,6 +182,8 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   // between "not asked yet" and "cannot be reached", which the list has to
   // word differently.
   let serverReachable: boolean | null = null
+  // What `options.openable` answered at the last reload.
+  let opens: (where: Where, uid: string) => boolean = () => true
 
   // Every object URL this screen made, so closing it does not leave the page
   // holding thumbnails for the rest of the session.
@@ -179,8 +198,13 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     // Asked together: the server list is a network round trip and the browser
     // list is not, and waiting for the slow one before showing either would
     // make a local-only user pay for a server they do not use.
-    const [browser, server] = await Promise.all([listBrowserWorlds(), listWorlds()])
+    const [browser, server, openable] = await Promise.all([
+      listBrowserWorlds(),
+      listWorlds(),
+      options.openable?.load() ?? null,
+    ])
     serverReachable = server !== null
+    opens = openable ?? (() => true)
     entries = [
       ...browser.map((world): Entry => ({
         where: 'browser',
@@ -258,14 +282,17 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     // step a world stopped at — the save records no panel — so this says the
     // one thing both sources DO carry: whether the world has been eroded, and
     // how often. An invented step number would be worse than a smaller truth.
+    //
+    // A world this screen cannot open says why in the same line instead.
+    const openable = opens(entry.where, entry.uid)
     const progress = document.createElement('span')
     progress.className = 'wc-progress'
     const dot = document.createElement('span')
     dot.className = 'wc-dot'
-    dot.dataset.state = entry.erosionRun >= 1 ? 'eroded' : 'fresh'
+    dot.dataset.state = !openable ? 'closed' : entry.erosionRun >= 1 ? 'eroded' : 'fresh'
     const progressText = document.createElement('span')
-    progressText.textContent = entry.erosionRun >= 1
-      ? t('generator.load.eroded', { n: entry.erosionRun })
+    progressText.textContent = !openable && options.openable ? t(options.openable.reasonKey)
+      : entry.erosionRun >= 1 ? t('generator.load.eroded', { n: entry.erosionRun })
       : t('generator.load.notEroded')
     progress.append(dot, progressText)
 
@@ -282,6 +309,12 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
 
     main.append(heading, progress, meta)
     open.append(frame, main)
+    if (!openable) {
+      open.disabled = true
+      // The card's help says what a click does, and here it does nothing.
+      delete open.dataset.help
+      card.classList.add('wc-card--closed')
+    }
 
     open.addEventListener('click', () => {
       void (async () => {
@@ -294,7 +327,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
           setNote(t('generator.load.unavailable'))
           return
         }
-        options.onOpenArchive(archive, { where: entry.where, savedAt: entry.savedAt })
+        options.onOpenArchive(archive, { where: entry.where, savedAt: entry.savedAt, name: entry.name, seed: entry.seed })
       })()
     })
 

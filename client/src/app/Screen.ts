@@ -1,7 +1,7 @@
 import type { Engine, Scene } from '@babylonjs/core'
 import type { NotificationManager } from '../ui/notifications/NotificationManager'
 
-export type ScreenId = 'title' | 'generator'
+export type ScreenId = 'title' | 'generator' | 'incubator'
 
 export interface ScreenContext {
   engine: Engine

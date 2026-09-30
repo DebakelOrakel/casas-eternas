@@ -1,4 +1,4 @@
-/* "Welt wählen" — the generator's first screen. Geometry and colour from the
+/* "Welt wählen" — the first screen of the generator and the incubator. Geometry and colour from the
    design canvas (Main.dc.html, the block behind `showStart`), light column.
 
    It sits UNDER the title bar rather than over it: the bar stays visible and
@@ -83,6 +83,13 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+/* `display` outranks the user-agent rule for [hidden]; the incubator has
+   neither choice. */
+.wc-choices[hidden],
+.wc-choice[hidden] {
+  display: none;
 }
 
 .wc-choice {
@@ -239,6 +246,22 @@
   background: var(--dc-hover);
 }
 
+/* A world this screen cannot open (the incubator: no level 1 yet). It stays
+   in the list, drawn as an outline of a card: dashed, faded, no hover. The
+   remove button keeps working. */
+.wc-card--closed {
+  border-style: dashed;
+}
+
+.wc-card--closed:hover {
+  background: transparent;
+}
+
+.wc-card--closed .wc-card__open {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .wc-card__open {
   flex-grow: 1;
   min-width: 0;
@@ -323,6 +346,11 @@
 
 .wc-dot[data-state='fresh'] {
   background: var(--dc-accent);
+}
+
+.wc-dot[data-state='closed'] {
+  border: 1px dashed var(--dc-muted);
+  box-sizing: border-box;
 }
 
 .wc-meta {

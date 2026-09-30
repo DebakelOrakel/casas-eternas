@@ -1,0 +1,7 @@
+{
+  "incubator.step.world.label": "Welt",
+  "incubator.step.world.help": "Wähle eine Welt mit Stufe 1.",
+  "incubator.load.title": "Welt wählen",
+  "incubator.load.subtitle": "Nur auf dem Server verfeinerte Welten (Stufe 1) lassen sich inkubieren.",
+  "incubator.load.noLevel": "Noch keine Stufe 1"
+}

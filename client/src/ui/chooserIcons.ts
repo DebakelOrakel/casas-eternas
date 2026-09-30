@@ -1,5 +1,5 @@
-// The line icons the full-screen windows over the generator share (the world
-// list, the artifacts): a 24-unit stroke SVG from its path data.
+// The line icons the full-screen windows share (the world list, the
+// artifacts, the jobs): a 24-unit stroke SVG from its path data.
 export function icon(path: string): SVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('viewBox', '0 0 24 24')

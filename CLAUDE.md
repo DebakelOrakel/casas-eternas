@@ -15,7 +15,7 @@ client/src/
   generator/      the generator — has its own CLAUDE.md, read it before working there
   world/          a world's identity, spec, save format and artifacts — the layer that
                   knows WHICH world; everything below it does not
-  screens/        generator (the editor), title
+  screens/        generator (the editor), incubator (the prehistory), title
   storage/        artifact stores (OPFS / HTTP / tiered), bytes at paths
   server/         client-side HTTP clients for the Go server
   map/ ui/ camera/ app/ i18n/
@@ -113,9 +113,9 @@ audited and written down 2026-08-12:
 
 **widgets** (`tooltip`, `panel`, `notifications`, `help`, `chrome`) which are DOM
 only and import nothing outside `ui/`, so anything may use them; and **connected
-panels** (`storagePanel`, `serverIndicator`, `worldPanels`, `signInPanel`) which
-talk to `server/` and `storage/` and are really screen fragments sitting above
-the peers. Nothing that computes pixels or fields belongs there at all —
+panels** (`storagePanel`, `serverIndicator`, `worldPanels`, `signInPanel`,
+`worldChooser`) which talk to `server/` and `storage/` and are really screen
+fragments sitting above the peers. Nothing that computes pixels or fields belongs there at all —
 `paperBase` and `biomeIds` moved to `map/` on 2026-08-11 for exactly that
 reason.
 
