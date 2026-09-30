@@ -1,7 +1,8 @@
-import { Color4, Matrix, PointerEventTypes, Scene } from '@babylonjs/core'
+import { Color4, PointerEventTypes, Scene } from '@babylonjs/core'
 import { BUILD_VERSION } from '../../app/buildVersion'
 import { createGeneratorCamera } from '../../camera/generatorCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
+import { createScaleBar, pickMapPlane } from '../../map/ScaleBar'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { buildProbeCard } from '../../ui/mapProbe/probeCard'
 import type { ProbeChart, ProbeRow } from '../../ui/mapProbe/probeCard'
@@ -561,10 +562,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       </svg>
     </div>
     <div class="temp-scale"><canvas data-value="temp-scale" role="img"></canvas></div>
-    <div class="scale-bar" data-value="scale-bar" role="img" hidden>
-      <span class="scale-bar__label" data-value="scale-bar-label"></span>
-      <span class="scale-bar__bar" data-value="scale-bar-bar"></span>
-    </div>
     <div class="world-panel" data-stage="world">
       <div class="world-panel__fields">
         <label class="world-field">
@@ -3053,68 +3050,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // greenhouse, the contrast and the planet's forcing as they stand, and
   // nothing of the terrain. A reading aid, not a field: it follows the
   // camera, since a row's latitude does, and stands in every step (decided
-  // 2026-09-26). The pick is the plane pick above, per sampled row.
-  // THE SCALE BAR at the map's lower right (2026-09-27): a bar of a round
-  // length — 1, 2 or 5 × 10ⁿ km — sized to the metres a screen pixel spans
-  // where the bar stands. The span is read from the map view's own ground
-  // pick at two points a hundred pixels apart on the bar's row (the
-  // torus's shorter way between them), so the bar is right at any zoom,
-  // tilt and place, and says nothing while the ray misses the plane.
-  // The ground for the two scales: the map's PLANE (y = 0), met by the
-  // picking ray analytically — microseconds, where a mesh pick against the
-  // fine relief and its wrapped copies cost milliseconds each and made a
-  // slow pan stutter at high zoom (2026-09-27). For a latitude and for a
-  // map scale the plane is the right reference anyway; the relief's
-  // exaggeration is a view property.
-  function pickPlane(screenX: number, screenY: number): { x: number; z: number } | null {
-    const camera = scene.activeCamera
-    if (!camera) return null
-    const ray = scene.createPickingRay(screenX, screenY, Matrix.Identity(), camera)
-    if (Math.abs(ray.direction.y) < 1e-6) return null
-    const t = -ray.origin.y / ray.direction.y
-    if (t <= 0) return null
-    return { x: ray.origin.x + ray.direction.x * t, z: ray.origin.z + ray.direction.z * t }
-  }
-  const scaleBar = root.querySelector<HTMLElement>('[data-value="scale-bar"]')!
-  const scaleBarLabel = root.querySelector<HTMLElement>('[data-value="scale-bar-label"]')!
-  const scaleBarBar = root.querySelector<HTMLElement>('[data-value="scale-bar-bar"]')!
-  const SCALE_BAR_PROBE_PX = 100
-  const SCALE_BAR_MIN_PX = 70
-  const SCALE_BAR_MAX_PX = 170
-  const metresPerWorldUnit = (METERS_PER_CELL * MAP_WIDTH) / WORLD_WIDTH
-  let scaleBarSeen = ''
+  // 2026-09-26). The pick is the map's plane (map/ScaleBar's pickMapPlane),
+  // per sampled row.
+  const pickPlane = (screenX: number, screenY: number): { x: number; z: number } | null => pickMapPlane(scene, screenX, screenY)
+
+  // The scale bar at the map's lower right (map/ScaleBar).
+  const scaleBar = createScaleBar(root, { scene, worldWidth: WORLD_WIDTH, worldHeight: WORLD_HEIGHT, metresPerWorldUnit: (METERS_PER_CELL * MAP_WIDTH) / WORLD_WIDTH })
   function renderScaleBar(): void {
     const focus = getCameraFocus()
-    const key = `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${getCameraZoom().toFixed(4)},${getCameraYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`
-    if (key === scaleBarSeen) return
-    scaleBarSeen = key
-    const rect = scaleBar.getBoundingClientRect()
-    const y = scaleBar.hidden ? window.innerHeight - 40 : rect.top + rect.height / 2
-    const xRight = scaleBar.hidden ? window.innerWidth - 24 : rect.right - 8
-    const a = pickPlane(xRight - SCALE_BAR_PROBE_PX, y)
-    const b = pickPlane(xRight, y)
-    if (!a || !b) { scaleBar.hidden = true; return }
-    let dx = Math.abs(b.x - a.x) % WORLD_WIDTH
-    if (dx > WORLD_WIDTH / 2) dx = WORLD_WIDTH - dx
-    let dz = Math.abs(b.z - a.z) % WORLD_HEIGHT
-    if (dz > WORLD_HEIGHT / 2) dz = WORLD_HEIGHT - dz
-    const metresPerPx = (Math.hypot(dx, dz) * metresPerWorldUnit) / SCALE_BAR_PROBE_PX
-    if (!(metresPerPx > 0)) { scaleBar.hidden = true; return }
-    // The round length whose bar fits the band, the largest such.
-    let lengthKm = 0
-    for (let exp = 0; exp <= 5 && lengthKm === 0; exp++) {
-      for (const m of [1, 2, 5]) {
-        const km = m * 10 ** exp
-        const px = (km * 1000) / metresPerPx
-        if (px >= SCALE_BAR_MIN_PX && px <= SCALE_BAR_MAX_PX) { lengthKm = km; break }
-        if (px > SCALE_BAR_MAX_PX) break
-      }
-    }
-    if (lengthKm === 0) { scaleBar.hidden = true; return }
-    scaleBar.hidden = false
-    scaleBarBar.style.width = `${Math.round((lengthKm * 1000) / metresPerPx)}px`
-    scaleBarLabel.textContent = formatValue(lengthKm, 'common.unit.kilometres')
-    scaleBar.setAttribute('aria-label', formatValue(lengthKm, 'common.unit.kilometres'))
+    scaleBar.update(`${focus.x.toFixed(1)},${focus.z.toFixed(1)},${getCameraZoom().toFixed(4)},${getCameraYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`)
   }
 
   const tempScale = root.querySelector<HTMLCanvasElement>('[data-value="temp-scale"]')!

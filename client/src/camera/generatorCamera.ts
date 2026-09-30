@@ -188,6 +188,12 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
   } = options
 
   const maxTilt = (maxTiltDeg * Math.PI) / 180
+  // The map view's far plane: twice the distance from the camera to the
+  // focus at the steepest tilt (the camera stands cameraHeight above the
+  // ground, set back along the tilt). At 60° that is the 4 × cameraHeight
+  // it always was; a steeper tilt limit needs more, or the ground falls
+  // behind the far plane and the view goes blank.
+  const mapFarZ = (cameraHeight / Math.cos(maxTilt)) * 2
   const horizonPitch = (horizonPitchDeg * Math.PI) / 180
   const nearPitchMin = (nearPitchMinDeg * Math.PI) / 180
   const nearPitchMax = (nearPitchMaxDeg * Math.PI) / 180
@@ -195,7 +201,7 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
   const camera = new FreeCamera('generatorCamera', new Vector3(0, cameraHeight, 0), scene)
   camera.mode = Camera.ORTHOGRAPHIC_CAMERA
   camera.minZ = 1
-  camera.maxZ = cameraHeight * 4
+  camera.maxZ = mapFarZ
   camera.fov = fovRad
   camera.upVector = new Vector3(0, 0, 1)
   camera.setTarget(new Vector3(0, 0, 0))
@@ -400,7 +406,7 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
       if (camera.mode !== Camera.ORTHOGRAPHIC_CAMERA) {
         camera.mode = Camera.ORTHOGRAPHIC_CAMERA
         camera.minZ = 1
-        camera.maxZ = cameraHeight * 4
+        camera.maxZ = mapFarZ
       }
       viewHeight = cameraHeight
       groundHeight = 0

@@ -37,8 +37,8 @@ export interface WorldChooserOptions {
   onNewWorld?(): void
   // Hands an archive over; the screen owns the loading itself. `kept`
   // says where the world rests and since when — an opened world is a saved
-  // one, and the title bar says so — and what the list called it.
-  onOpenArchive(archive: Blob, kept: { where: Where; savedAt: string; name: string; seed: string }): void
+  // one, and the title bar says so — and which world the list meant.
+  onOpenArchive(archive: Blob, kept: { where: Where; savedAt: string; uid: string; name: string; seed: string }): void
   // The plain file picker, for a world that lives in neither place.
   onPickFile?(): void
   // Which worlds may be opened here: asked at every reload, beside the two
@@ -327,7 +327,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
           setNote(t('generator.load.unavailable'))
           return
         }
-        options.onOpenArchive(archive, { where: entry.where, savedAt: entry.savedAt, name: entry.name, seed: entry.seed })
+        options.onOpenArchive(archive, { where: entry.where, savedAt: entry.savedAt, uid: entry.uid, name: entry.name, seed: entry.seed })
       })()
     })
 

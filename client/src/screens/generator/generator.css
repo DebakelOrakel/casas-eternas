@@ -426,34 +426,3 @@
   height: 100%;
 }
 
-/* The scale bar at the map's lower right (GeneratorScreen.renderScaleBar):
-   a bar with end ticks and its round length above it, on the map chrome's
-   paper, pointer-transparent. */
-.generator-screen .scale-bar {
-  position: fixed;
-  right: 1rem;
-  bottom: calc(1rem + var(--step-bar-height, 0px));
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
-  padding: 4px 8px 6px;
-  border-radius: 0.5rem;
-  border: 1px solid var(--dc-line2, #d3cab8);
-  background: rgba(251, 248, 242, 0.9);
-  color: var(--dc-text, #1f2328);
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 0.72rem;
-  pointer-events: none;
-}
-.generator-screen .scale-bar[hidden] {
-  display: none;
-}
-.generator-screen .scale-bar__bar {
-  display: block;
-  height: 5px;
-  box-sizing: border-box;
-  border: 1.5px solid var(--dc-strong, #15191d);
-  border-top: none;
-}

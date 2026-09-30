@@ -1,4 +1,4 @@
-import { Color3, DirectionalLight, HemisphericLight, Mesh, MeshBuilder, RawTexture, Scene, StandardMaterial, Vector3, VertexBuffer } from '@babylonjs/core'
+import { Color3, DirectionalLight, HemisphericLight, Mesh, MeshBuilder, RawTexture, Scene, ShadowGenerator, StandardMaterial, Vector3, VertexBuffer } from '@babylonjs/core'
 import type { AbstractMesh, InstancedMesh } from '@babylonjs/core'
 import type { ElevationSurface } from './elevationSurface'
 import { HexGridMaterialPlugin } from './hexGridMaterialPlugin'
@@ -55,6 +55,15 @@ export interface ToroidalMapViewOptions {
   // instead of cliffing over it. Patch extent scales with altitude, so its
   // resolution sharpens exactly as the camera descends.
   nearDetail?: { detailSurface: ElevationSurface; baseSurface: ElevationSurface; getActive: () => boolean; getAltitude: () => number }
+  // Cast shadows from the relief sun onto the near-detail patch, the patch
+  // being its own caster — real shadows where the terrain is closest to the
+  // camera, nowhere else: the relief levels span the whole world, and one
+  // shadow map over the whole world would be far too coarse to show a
+  // valley's. `sunElevationDeg` puts the sun lower than the map's 45°,
+  // since only slopes steeper than the sun cast a shadow; the sun's
+  // intensity is raised with it, so flat ground keeps its brightness.
+  // Without the option, no shadows and the sun at 45°.
+  nearShadows?: { sunElevationDeg: number }
   // Called each frame with the recenter block's center, so a screen can tile
   // extra meshes in lockstep (e.g. the river ribbon overlay).
   onRecenter?: (centerX: number, centerZ: number) => void
@@ -191,6 +200,9 @@ const FINE_SUBDIVISIONS_Y = 1024
 const SUN_INTENSITY = 1.0
 const FILL_INTENSITY = 0.25
 const SUN_ELEVATION_RAD = Math.PI / 4
+// The shadow map's size, texels per side, over the near-detail patch: a
+// few texels per patch quad (192 per side).
+const SHADOW_MAP_SIZE = 2048
 
 // One displaced relief level: the base mesh + its 8 wrap instances. The
 // instances share the displaced geometry, which is exactly right on a torus
@@ -216,7 +228,7 @@ interface ReliefLevel {
 // sun — which is what keeps slopes crisp when the texture itself has run out
 // of resolution.
 export function createToroidalMapView(options: ToroidalMapViewOptions): ToroidalMapView {
-  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, getSunWorldBlend, hexGrid, nearDetail, onRecenter } = options
+  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, getSunWorldBlend, hexGrid, nearDetail, nearShadows, onRecenter } = options
 
   // Starts as a flat white placeholder (the caller's clear color) until the
   // first composited frame is uploaded, so there's no flash.
@@ -247,7 +259,12 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   // maintained as levels are built) — everything else in the scene keeps its
   // unlit-emissive look no matter what lights exist here.
   const sun = new DirectionalLight('mapReliefSun', new Vector3(0.5, -0.7, -0.5), scene)
-  sun.intensity = SUN_INTENSITY
+  const sunElevation = nearShadows ? (nearShadows.sunElevationDeg * Math.PI) / 180 : SUN_ELEVATION_RAD
+  sun.intensity = (SUN_INTENSITY * Math.sin(SUN_ELEVATION_RAD)) / Math.sin(sunElevation)
+  // The shadow map fits the patch each frame (autoUpdateExtends is the
+  // light's default), near and far planes included.
+  sun.autoCalcShadowZBounds = true
+  let shadows: ShadowGenerator | null = null
   const fill = new HemisphericLight('mapReliefFill', new Vector3(0, 1, 0), scene)
   fill.intensity = FILL_INTENSITY
   fill.groundColor = new Color3(0.3, 0.3, 0.35)
@@ -564,6 +581,12 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       sun.includedOnlyMeshes.push(patchMesh)
       fill.includedOnlyMeshes.push(patchMesh)
       patchLastSpacing = 0
+      if (nearShadows) {
+        shadows = new ShadowGenerator(SHADOW_MAP_SIZE, sun)
+        shadows.usePercentageCloserFiltering = true
+        shadows.addShadowCaster(patchMesh)
+        patchMesh.receiveShadows = true
+      }
     }
     patchMesh.setEnabled(true)
     const spacing = (altitude * PATCH_COVERAGE) / PATCH_SUBDIVISIONS
@@ -575,6 +598,8 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     // per-frame cost.
     if (spacingChanged || moved > spacing * 2) rebuildPatch(centerX, centerZ, spacing, altitude)
     patchMesh.position.set(patchLastCenterX, 0, patchLastCenterZ)
+    // The shadow camera looks along the sun from behind the patch.
+    if (shadows) sun.position.set(patchLastCenterX - sun.direction.x * altitude * 20, -sun.direction.y * altitude * 20, patchLastCenterZ - sun.direction.z * altitude * 20)
   }
 
   // Keep the sun top-left in SCREEN space (see getYaw above): rotate the
@@ -590,10 +615,10 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     const rightX = Math.cos(yaw)
     const rightZ = -Math.sin(yaw)
     const invSqrt2 = Math.SQRT1_2
-    const horizontal = Math.cos(SUN_ELEVATION_RAD)
+    const horizontal = Math.cos(sunElevation)
     sun.direction.set(
       (rightX - upX) * invSqrt2 * horizontal,
-      -Math.sin(SUN_ELEVATION_RAD),
+      -Math.sin(sunElevation),
       (rightZ - upZ) * invSqrt2 * horizontal,
     )
   }
@@ -740,6 +765,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       texture.dispose()
       reliefMaterial.dispose()
       reliefTexture.dispose()
+      shadows?.dispose()
       sun.dispose()
       fill.dispose()
     },
