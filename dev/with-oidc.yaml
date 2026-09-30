@@ -1,0 +1,59 @@
+# Local server with OIDC login (a foreign identity provider holds the
+# users).
+#
+# NOT IMPLEMENTED YET: `global.auth.mode: oidc` parses, but `start` refuses
+# with "auth mode oidc is not implemented yet". The provider's settings
+# (issuer, client id, secret) have no keys yet — they are named when the
+# mode is built. Until then this file is dev/with-auth.yaml with the mode
+# switched, kept so the shape is ready.
+#
+#   ./casas-eternas start -t all --config dev/with-oidc.yaml
+#
+# Paths are relative to the directory the server starts in (the project
+# root). The session key signs this server's own sessions in oidc mode
+# too — the login is foreign, the session is still issued here:
+#
+#   openssl rand -base64 48 > data/session.key
+
+global:
+  listen: ":8080"
+  auth:
+    mode: oidc
+    session-key: ./data/session.key
+    token-ttl: 720h
+    session-ttl: 720h
+  admin:
+    socket: ./data/admin.sock
+
+world:
+  storage:
+    dir:
+      path: ./data/worlds
+  keep-revisions: 3
+
+artifacts:
+  storage:
+    dir:
+      path: ./data/artifacts
+  # Empty: no cap. A size such as "20GB" evicts the least recently used.
+  cap: ""
+
+auth:
+  storage:
+    dir:
+      path: ./data/auth
+
+jobs:
+  # Empty: the job-worker.mjs beside the binary (make worker).
+  worker: ""
+  max-concurrent: 1
+
+client:
+  storage:
+    dir:
+      path: ./client/dist
+
+docs:
+  storage:
+    dir:
+      path: ./client/docs-dist

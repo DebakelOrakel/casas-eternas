@@ -45,7 +45,8 @@ A new `auth:` section shaped like every other target section (storage
 union), because that is what auth is on its way to becoming — the separable
 auth target. Deliberately NOT under `global.auth`: global holds what every
 process reads (mode, shared key, TTLs, admins); the registry is state only
-the login-serving process touches. Default `./auth`; the container mounts
+the login-serving process touches. Default `./auth` (`./data/auth` since
+2026-09-30); the container mounts
 `/data/auth`.
 
 ## Admins: a claim in the token

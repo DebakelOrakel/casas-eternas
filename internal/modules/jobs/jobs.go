@@ -97,7 +97,7 @@ type Config struct {
 	// this very server. Resolved by cmd/ from the pod IP; required in a
 	// cluster, empty for a purely local runner (which reports over its pipe).
 	SelfURL string
-	// The Node bundle, from `npm run build:baker`.
+	// The Node bundle, from `make worker` (npm run build:worker).
 	WorkerPath string
 	// Identity answers who a request comes from — the same resolver every other
 	// module holds, so ownership is compared against one notion of "caller".
@@ -171,7 +171,7 @@ func New(cfg Config) (*Module, error) {
 	} else {
 		runner, err = NewLocalRunner(cfg.WorkerPath, nodeHeapMB)
 		if err != nil {
-			return nil, fmt.Errorf("bake.baker: %w", err)
+			return nil, fmt.Errorf("jobs.worker: %w", err)
 		}
 	}
 

@@ -377,7 +377,7 @@ func serverBaseURL(listen string) string {
 	return fmt.Sprintf("http://%s:%s%s", ip, port, server.APIPrefix)
 }
 
-// workerPath resolves bake.baker, defaulting to the bundle beside the binary.
+// workerPath resolves jobs.worker, defaulting to the bundle beside the binary.
 //
 // Beside the BINARY rather than beside the working directory: a server is
 // started from wherever its data lives, and the bundle ships with the program.

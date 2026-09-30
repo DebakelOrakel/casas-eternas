@@ -32,7 +32,8 @@ only the API plus `/config.json`, which is exactly what a dev run beside
 ## Defaults are cwd-relative
 
 With nothing configured, state lands beside where you started the
-process: `./worlds`, `./artifacts`, `./auth`. A `casas.yaml` in the same
+process, under `./data/`: `./data/worlds`, `./data/artifacts`, `./data/auth`
+(the repository ignores `data/`). A `casas.yaml` in the same
 directory is picked up automatically; `--config` points anywhere else.
 
 ## The local mode is `none`

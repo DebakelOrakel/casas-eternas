@@ -1,0 +1,62 @@
+# Local server WITH password login — for testing multiplayer behaviour.
+#
+#   make worker client docs
+#   ./casas-eternas start -t all --config dev/with-auth.yaml
+#
+# Paths are relative to the directory the server starts in (the project
+# root). The first user is created over the admin socket, from the same
+# directory, while the server runs:
+#
+#   ./casas-eternas --global.admin.socket ./data/admin.sock auth user add ada
+#   ./casas-eternas --global.admin.socket ./data/admin.sock auth role bind ada admin
+#
+# The session key: a file with at least 32 random bytes. Without it the
+# server makes an ephemeral key and every restart ends the sessions.
+#
+#   openssl rand -base64 48 > data/session.key
+#
+# Every key here is also a flag (--global.auth.mode) and an environment
+# variable (CASAS_GLOBAL_AUTH_MODE); see docs/operations/cli-reference.json.
+
+global:
+  listen: ":8080"
+  auth:
+    mode: password
+    session-key: ./data/session.key
+    token-ttl: 720h
+    session-ttl: 720h
+  admin:
+    socket: ./data/admin.sock
+
+world:
+  storage:
+    dir:
+      path: ./data/worlds
+  keep-revisions: 3
+
+artifacts:
+  storage:
+    dir:
+      path: ./data/artifacts
+  # Empty: no cap. A size such as "20GB" evicts the least recently used.
+  cap: ""
+
+auth:
+  storage:
+    dir:
+      path: ./data/auth
+
+jobs:
+  # Empty: the job-worker.mjs beside the binary (make worker).
+  worker: ""
+  max-concurrent: 1
+
+client:
+  storage:
+    dir:
+      path: ./client/dist
+
+docs:
+  storage:
+    dir:
+      path: ./client/docs-dist

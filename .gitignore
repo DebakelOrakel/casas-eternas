@@ -27,11 +27,7 @@ casas-eternas
 # The server's own stores (world.storage.dir.path / artifacts.storage.dir.path):
 # a world is irreplaceable but belongs to whoever ran the server, and an
 # artifact is recomputable — neither belongs in the repository.
-worlds/*
-artifacts/*
-
-# Worlds exported by hand from the client's save button.
-saves/*
+data/*
 
 # The golden harness's opt-in refactor guard (layer 4). Machine-local by
 # nature — Math results can move between V8 versions — and it exists only for

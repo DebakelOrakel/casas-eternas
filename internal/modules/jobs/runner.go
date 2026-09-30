@@ -95,7 +95,7 @@ type TileRef struct {
 // isolation means "run it elsewhere" later is a change of Runner rather than a
 // change of everything.
 type localRunner struct {
-	// Path to the esbuild bundle produced by `npm run build:baker`.
+	// Path to the esbuild bundle produced by `make worker` (npm run build:worker).
 	bakerPath string
 	// Heap ceiling handed to Node. An 8192² bake peaks near 2.6 GB, and node's
 	// own default is far below that on some builds — leaving it to chance is
@@ -112,13 +112,13 @@ func NewLocalRunner(bakerPath string, maxHeapMB int) (Runner, error) {
 		return nil, err
 	}
 	if _, err := os.Stat(absolute); err != nil {
-		return nil, fmt.Errorf("bake bundle not found at %s (build it with `npm run build:baker`): %w", absolute, err)
+		return nil, fmt.Errorf("job worker bundle not found at %s (build it with `make worker`): %w", absolute, err)
 	}
 	return &localRunner{bakerPath: absolute, maxHeapMB: maxHeapMB}, nil
 }
 
 // WorkerVersion asks the bundle which pipeline it IS, without running one
-// (`baker.mjs --version`, see client/scripts/bake.ts).
+// (`job-worker.mjs --version`, see client/scripts/jobWorker.ts).
 //
 // A package function rather than a Runner method, because it is a property of
 // the BUNDLE and not of how a job gets executed: a cluster runner spawns
@@ -134,7 +134,7 @@ func WorkerVersion(ctx context.Context, bakerPath string) (string, error) {
 		return "", err
 	}
 	if _, err := os.Stat(absolute); err != nil {
-		return "", fmt.Errorf("no bake bundle at %s — build it with `npm run build:baker`", absolute)
+		return "", fmt.Errorf("no job worker bundle at %s — build it with `make worker`", absolute)
 	}
 	// No heap ceiling: --version parses no world and allocates nothing worth
 	// bounding. Output is the same one-JSON-line contract Run relies on.

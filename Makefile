@@ -76,9 +76,11 @@ docs:
 # Everything a local instance needs, then start it. `go build` rather than
 # `go run` on purpose: jobs.worker resolves relative to the EXECUTABLE, and
 # go run puts that in a temp directory.
+# Extra arguments for `start`, e.g. make run ARGS="--config dev/with-auth.yaml"
+# (make reads a bare --config as its own option).
 run: worker client docs
 	go build -ldflags="$(LDFLAGS)" -o casas-eternas .
-	./casas-eternas start --target all --client.storage.dir.path client/dist --docs.storage.dir.path client/docs-dist
+	./casas-eternas start --target all --client.storage.dir.path client/dist --docs.storage.dir.path client/docs-dist $(ARGS)
 
 build:
 	docker build --platform linux/amd64 --build-arg CASAS_VERSION=$(VERSION) -f deploy/Dockerfile -t $(IMAGE):$(TAG) .

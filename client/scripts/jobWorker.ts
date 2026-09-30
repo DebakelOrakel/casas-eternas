@@ -19,8 +19,8 @@
 // is ~17 M nodes and 349 MB, 155 s single-threaded) — unremarkable for a
 // Node process, too much for a browser tab.
 //
-// Bundled by `npm run build:baker` and invoked as:
-//   node baker.mjs '<job JSON>'
+// Bundled by `make worker` (npm run build:worker) and invoked as:
+//   node job-worker.mjs '<job JSON>'
 // with the job on argv and a one-line JSON result on stdout, so the Go side
 // needs no framing beyond "read the last line".
 import { readFile, mkdir, writeFile, rename, readdir } from 'node:fs/promises'
@@ -90,7 +90,7 @@ interface Job {
   // a 16K bake is ~17 GiB single-buffer against ~26 GiB pipelined, the
   // difference between fitting a 32 GB machine and thrashing it). The Go
   // server never sets it; it exists for a MANUAL local run:
-  //   node baker.mjs '{"worldZip":"…","stage":1,"erosionRounds":12,
+  //   node job-worker.mjs '{"worldZip":"…","stage":1,"erosionRounds":12,
   //                    "artifactsDir":"…","pool":false}'
   // Slower by the pool's factor (~2× at 8 cores), which a one-off accepts.
   pool?: boolean
@@ -299,7 +299,7 @@ function fail(message: string): never {
   process.exit(1)
 }
 
-// The engine's worker pool, self-spawned from THIS entry: baker.mjs is one
+// The engine's worker pool, self-spawned from THIS entry: job-worker.mjs is one
 // esbuild bundle, so `import.meta.url` names a file that already contains
 // the engine worker's code — a worker thread loading it takes the
 // `isMainThread` branch at the bottom and becomes an engine worker. No
@@ -332,7 +332,7 @@ async function main(): Promise<void> {
     process.stdout.write(`${JSON.stringify({ pipelineVersion: meshPipelineVersion(1), tilePipelineVersion: meshTilePipelineVersion() })}\n`)
     return
   }
-  if (!raw) fail('usage: baker.mjs \'<job JSON>\'  |  baker.mjs --version')
+  if (!raw) fail('usage: job-worker.mjs \'<job JSON>\'  |  job-worker.mjs --version')
   let job: Job
   try {
     job = JSON.parse(raw) as Job

@@ -117,13 +117,13 @@
         },
         {
           "name": "artifacts.storage.dir.path",
-          "default": "./artifacts",
+          "default": "./data/artifacts",
           "usage": "The directory of the artifact store.",
           "env": "CASAS_ARTIFACTS_STORAGE_DIR_PATH"
         },
         {
           "name": "auth.storage.dir.path",
-          "default": "./auth",
+          "default": "./data/auth",
           "usage": "The directory the auth subsystem's state lives in — auth.db, holding users and their credentials. A users.json left by an older server is imported once when the database is founded.",
           "env": "CASAS_AUTH_STORAGE_DIR_PATH"
         },
@@ -196,7 +196,7 @@
         },
         {
           "name": "world.storage.dir.path",
-          "default": "./worlds",
+          "default": "./data/worlds",
           "usage": "The directory the saved worlds live in.",
           "env": "CASAS_WORLD_STORAGE_DIR_PATH"
         }
@@ -219,7 +219,7 @@
     {
       "key": "artifacts.storage.dir.path",
       "env": "CASAS_ARTIFACTS_STORAGE_DIR_PATH",
-      "default": "./artifacts",
+      "default": "./data/artifacts",
       "usage": "The directory of the artifact store.",
       "command": "casas-eternas start"
     },
@@ -230,7 +230,7 @@
     {
       "key": "auth.storage.dir.path",
       "env": "CASAS_AUTH_STORAGE_DIR_PATH",
-      "default": "./auth",
+      "default": "./data/auth",
       "usage": "The directory the auth subsystem's state lives in — auth.db, holding users and their credentials. A users.json left by an older server is imported once when the database is founded.",
       "command": "casas-eternas start"
     },
@@ -351,7 +351,7 @@
     {
       "key": "world.storage.dir.path",
       "env": "CASAS_WORLD_STORAGE_DIR_PATH",
-      "default": "./worlds",
+      "default": "./data/worlds",
       "usage": "The directory the saved worlds live in.",
       "command": "casas-eternas start"
     },
