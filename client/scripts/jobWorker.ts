@@ -1,4 +1,4 @@
-// The server-side baker: one level bake, run in Node.
+// The server-side baker: one level bake or one tile, run in Node.
 //
 // Spawned by the Go server's `bake` module as a subprocess, one per job. It
 // reads a saved world, refines its mesh to a finer level
@@ -31,7 +31,12 @@ import { availableParallelism } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
 import type { WorkerLike } from '../src/generator/surface/erosionEnginePool'
 import { bakeMeshLevel, levelBudget } from '../src/generator/pipeline/meshBakeStage'
-import { meshLevelStage, meshLevelToArtifact, meshPipelineVersion, writeMeshLevelArtifact } from '../src/world/meshArtifacts'
+import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact } from '../src/world/meshArtifacts'
+import { bakedTileToArtifact, meshTilePipelineVersion, meshTileStage, writeMeshTileArtifact } from '../src/world/meshTileArtifacts'
+import { bakeMeshTile } from '../src/generator/pipeline/meshTileBake'
+import { tileGrid } from '../src/generator/mesh/meshTile'
+import { createMeshSampler } from '../src/generator/mesh/meshSampler'
+import { meanLandRunoff } from '../src/generator/surface/hydrology'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
 import { artifactKey } from '../src/storage/ArtifactStore'
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../src/storage/ArtifactStore'
@@ -57,9 +62,14 @@ interface Job {
   worldUrl?: string
   // The level: 1 is the mesh bake's level 1 (ADAPTIVE_MESH_PLAN.md phase
   // 4.5), the save's mesh refined to twice the density and eroded for
-  // `erosionRounds`; the artifact is the level (world/meshArtifacts.ts). The
-  // only one built.
+  // `erosionRounds`; the artifact is the level (world/meshArtifacts.ts).
+  // 2 is one tile of the top level (pipeline/meshTileBake, `tile` below;
+  // world/meshTileArtifacts.ts).
   stage: number
+  // The tile of the top level, for stage 2 (docs/decisions/tile-jobs.md):
+  // its column and row on the world's tile grid. Level 1 of the world must
+  // be in the artifact store — the tile is built on it.
+  tile?: { x: number; y: number }
   erosionRounds: number
   // Root of the artifact store as a directory…
   artifactsDir?: string
@@ -319,7 +329,7 @@ async function main(): Promise<void> {
   // them. That happened once. This makes an image's pipeline version something
   // you can read off it in a second rather than infer from a missing cache hit.
   if (raw === '--version') {
-    process.stdout.write(`${JSON.stringify({ pipelineVersion: meshPipelineVersion(1) })}\n`)
+    process.stdout.write(`${JSON.stringify({ pipelineVersion: meshPipelineVersion(1), tilePipelineVersion: meshTilePipelineVersion() })}\n`)
     return
   }
   if (!raw) fail('usage: baker.mjs \'<job JSON>\'  |  baker.mjs --version')
@@ -349,7 +359,8 @@ async function main(): Promise<void> {
     process.stderr.write(`${JSON.stringify({ phase, percent })}\n`)
     report(phase, percent)
   }
-  if (job.stage !== 1) fail(`stage ${job.stage}: only level 1 is built`)
+  if (job.stage === 2) return bakeTile(job, inputs, onProgress)
+  if (job.stage !== 1) fail(`stage ${job.stage}: only levels 1 and 2 are built`)
   if (!inputs.mesh) fail('the world carries no mesh (a save from before formatVersion 3, or never eroded) — nothing to refine')
   const level = await bakeMeshLevel({
     mesh: inputs.mesh, width: inputs.width, height: inputs.height,
@@ -368,6 +379,46 @@ async function main(): Promise<void> {
   const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshLevelStage(1))
   const artifact = meshLevelToArtifact(level)
   if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) fail('could not write the artifact')
+  process.stdout.write(`${JSON.stringify({ worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs })}\n`)
+}
+
+// Stage 2: one tile of the top level, built on the world's level 1, which
+// is read from the same artifact store the tile is written to.
+async function bakeTile(job: Job, inputs: NonNullable<Awaited<ReturnType<typeof readWorldInputs>>>, onProgress: (phase: string, fraction: number) => void): Promise<void> {
+  const tile = job.tile
+  const { cols, rows } = tileGrid(inputs.width, inputs.height)
+  if (!tile || !Number.isInteger(tile.x) || !Number.isInteger(tile.y) || tile.x < 0 || tile.y < 0 || tile.x >= cols || tile.y >= rows) {
+    return fail(`stage 2 needs a tile inside the ${cols} × ${rows} grid`)
+  }
+  const store = artifactStoreFor(job)
+  if (!store) return fail('neither artifactsDir nor artifactsUrl was given')
+  const started = Date.now()
+  onProgress('parent', 0)
+  const parentKey = artifactKey(inputs.worldUid, inputs.worldId, meshPipelineVersion(1, job.erosionRounds), meshLevelStage(1))
+  const parentArtifact = await readMeshLevelArtifact(store, parentKey)
+  if (!parentArtifact) return fail('level 1 of this world is not in the artifact store — refine the world first')
+  const parentMesh = meshLevelMesh(parentArtifact.artifact, inputs.width, inputs.height)
+  const parentZ = parentArtifact.artifact.z
+  onProgress('parent', 1)
+  const precipitation = inputs.climate?.data ?? null
+  const climateResX = inputs.climate?.resX ?? 0
+  const climateResY = inputs.climate?.resY ?? 0
+  const baked = await bakeMeshTile({
+    parent: { mesh: parentMesh, z: parentZ, discharge: null, sampler: createMeshSampler(parentMesh, parentZ) },
+    parentGraph: parentArtifact.artifact.graph,
+    width: inputs.width, height: inputs.height,
+    detailSeed: inputs.detailSeed, lithoSeed: inputs.lithoSeed,
+    controls: { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast },
+    uplift: inputs.uplift?.data ?? null, erodibility: inputs.erodibility?.data ?? null,
+    forcingResX: inputs.uplift?.resX ?? 0, forcingResY: inputs.uplift?.resY ?? 0,
+    precipitation, climateResX, climateResY,
+    meanLandWater: precipitation ? meanLandRunoff(precipitation, inputs.elevations, inputs.width, inputs.height, climateResX, climateResY) : 0,
+  }, tile, { rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
+  const durationMs = Date.now() - started
+  const pipelineVersion = meshTilePipelineVersion(job.erosionRounds)
+  const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(tile))
+  const artifact = bakedTileToArtifact(baked)
+  if (!(await writeMeshTileArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) return fail('could not write the artifact')
   process.stdout.write(`${JSON.stringify({ worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs })}\n`)
 }
 

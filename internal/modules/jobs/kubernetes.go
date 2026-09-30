@@ -167,7 +167,7 @@ func (r *kubernetesRunner) Run(ctx context.Context, spec Spec, onProgress func(P
 		_ = r.api.deleteJob(cleanup, name)
 	}()
 
-	result, podFailed, err := r.await(ctx, name, spec.Stage, onProgress)
+	result, podFailed, err := r.await(ctx, name, spec.StageName, onProgress)
 	keep = podFailed
 	return result, err
 }
@@ -232,7 +232,7 @@ func (r *kubernetesRunner) render(name, jobID, args string) ([]byte, error) {
 // distinction that matters — a Job waiting for a node looks nothing like one
 // that is working, and calling both "running" would be a lie a busy cluster
 // makes routine.
-func (r *kubernetesRunner) await(ctx context.Context, name string, stage int, onProgress func(Progress)) (result Result, podFailed bool, err error) {
+func (r *kubernetesRunner) await(ctx context.Context, name string, stage string, onProgress func(Progress)) (result Result, podFailed bool, err error) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	reported := ""
@@ -274,7 +274,7 @@ func (r *kubernetesRunner) await(ctx context.Context, name string, stage int, on
 			// is exactly what keying artifacts by content bought. The job
 			// record therefore says "done" with the stage it was asked for and
 			// nothing else, and that is honest rather than lossy.
-			return Result{Stage: fmt.Sprintf("L%d", stage)}, false, nil
+			return Result{Stage: stage}, false, nil
 		case state.Failed > 0:
 			message := state.Message
 			if message == "" {

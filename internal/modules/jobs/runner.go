@@ -46,6 +46,12 @@ type Runner interface {
 type Spec struct {
 	Stage         int `json:"stage"`
 	ErosionRounds int `json:"erosionRounds"`
+	// The tile, for stage 2.
+	Tile *TileRef `json:"tile,omitempty"`
+	// The artifact stage the job produces (Request.StageName), for the
+	// runner that reports a result without reading the worker's output.
+	// Not sent to the worker.
+	StageName string `json:"-"`
 
 	// Exactly one of each pair.
 	WorldZip     string `json:"worldZip,omitempty"`
@@ -72,6 +78,12 @@ type Spec struct {
 	// omitempty, so a local run's spec still carries neither this nor a URL: it
 	// reports over the pipe.
 	JobID string `json:"jobId,omitempty"`
+}
+
+// TileRef is a tile's column and row, as the worker reads them.
+type TileRef struct {
+	X int `json:"x"`
+	Y int `json:"y"`
 }
 
 // localRunner spawns the Node baker as a subprocess.

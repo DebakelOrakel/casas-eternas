@@ -102,6 +102,24 @@ const EDGE_SALT_COL = 102
 const MAX_SIDE = 16
 const quantise = (v: number): number => Math.round(v / POSITION_QUANTUM) * POSITION_QUANTUM
 
+// Every number that shapes a tile, for the tile artifact's pipeline
+// version (world/meshTileArtifacts.ts): a change to any of them is a
+// different tile.
+export const TILE_CONSTANTS: Record<string, number> = {
+  tileCells: TILE_CELLS,
+  tileHaloCells: TILE_HALO_CELLS,
+  tileEdgeSteps: TILE_EDGE_STEPS,
+  tileBudget: TILE_BUDGET,
+  tileLevel: TILE_LEVEL,
+  tilePlacementFinest: PLACEMENT_LEVELS[PLACEMENT_LEVELS.length - 1],
+  tilePlacementCoarsest: PLACEMENT_LEVELS[0],
+  tileAccept: ACCEPT,
+  tileJitter: JITTER,
+  tileEdgeJitter: EDGE_JITTER,
+  tileClearFraction: CLEAR_FRACTION,
+  tilePositionQuantum: POSITION_QUANTUM,
+}
+
 export const TILE_ROLE_NEW = 0
 export const TILE_ROLE_PARENT = 1
 export const TILE_ROLE_EDGE = 2

@@ -46,7 +46,7 @@ export interface BakeJob {
   // The order that produced the job, as the server records it. What lets a
   // screen recognise a job as being about ITS world and stage when somebody
   // else placed the order — see findActiveBake.
-  request?: { worldUid: string; stage: number }
+  request?: { worldUid: string; stage: number; scope?: { kind: string; x?: number; y?: number } }
   queuedAt?: string
   startedAt?: string
   // The caller's level on the job's world ("viewer", "editor", "owner", or
@@ -121,11 +121,19 @@ const PHASE_BANDS: Record<string, [number, number]> = {
   erosion: [0.3, 0.6],
   hydrology: [0.6, 1],
 }
+// A tile's (pipeline/meshTileBake, scripts/jobWorker's bakeTile): reading
+// level 1, building the tile's mesh, eroding it. Set, not measured.
+const TILE_PHASE_BANDS: Record<string, [number, number]> = {
+  parent: [0, 0.15],
+  mesh: [0.15, 0.3],
+  erosion: [0.3, 1],
+}
 
 // Undefined for a phase with no band — the cluster runner's `pending` and
 // `running`, where any bar would be invented rather than measured.
 export function bakeFraction(job: BakeJob): number | undefined {
-  const band = PHASE_BANDS[job.phase ?? '']
+  const bands = job.request?.stage === 2 ? TILE_PHASE_BANDS : PHASE_BANDS
+  const band = bands[job.phase ?? '']
   if (!band) return undefined
   return band[0] + (band[1] - band[0]) * Math.max(0, Math.min(1, job.percent / 100))
 }
@@ -160,10 +168,23 @@ export async function canCommissionBakes(): Promise<boolean> {
   return reachable && permitted && status.modules.includes('jobs')
 }
 
+// The artifact stage a job produces, as the server names it (the jobs
+// module's StageName): `L1`, or `L2:x,y` for a tile.
+export function jobStageName(job: BakeJob): string {
+  const request = job.request
+  if (!request) return '?'
+  const scope = request.scope
+  if (scope?.kind === 'tile') return `L${request.stage}:${scope.x ?? 0},${scope.y ?? 0}`
+  return `L${request.stage}`
+}
+
+// `tile` orders one tile of the top level (stage 2); without it the whole
+// world at `stage`.
 export async function commissionBake(
   worldUid: string,
   stage: number,
   erosionRounds: number,
+  tile?: { x: number; y: number },
 ): Promise<CommissionOutcome> {
   const base = await apiBase()
   if (!base) return { ok: false, reason: 'offline' }
@@ -178,7 +199,7 @@ export async function commissionBake(
       // including this one, so a server whose default had drifted would bake a
       // real world under a key nobody asks for — the silent failure again, by
       // a different route.
-      body: JSON.stringify({ worldUid, stage, erosionRounds }),
+      body: JSON.stringify({ worldUid, stage, erosionRounds, ...(tile ? { scope: { kind: 'tile', x: tile.x, y: tile.y } } : {}) }),
     })
   } catch {
     return { ok: false, reason: 'offline' }

@@ -266,7 +266,7 @@ func newID() string {
 func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var request Request
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&request); err != nil {
-		httpjson.ClientError(w, http.StatusBadRequest, `expected {"worldUid": "…", "stage": 2}`)
+		httpjson.ClientError(w, http.StatusBadRequest, `expected {"worldUid": "…", "stage": 1} or {"worldUid": "…", "stage": 2, "scope": {"kind": "tile", "x": 0, "y": 0}}`)
 		return
 	}
 	if request.Scope.Kind == "" {
@@ -544,6 +544,10 @@ func (m *Module) work(ctx context.Context) {
 		spec := Spec{
 			Stage:         job.Request.Stage,
 			ErosionRounds: job.Request.ErosionRounds,
+			StageName:     job.Request.StageName(),
+		}
+		if job.Request.Scope.Kind == ScopeTile {
+			spec.Tile = &TileRef{X: job.Request.Scope.X, Y: job.Request.Scope.Y}
 		}
 		if m.cfg.WorldZip != nil {
 			zip, ok := m.cfg.WorldZip(ctx, job.Request.WorldUID)

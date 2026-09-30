@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-09-30
+- **new** Generator: the Finishing step refines one area of the world — a tile picked on the map — on the server (level 2). `generator.finishing.tile`
+
 ## 2026-09-29
 - **new** Generator: the Finishing step refines a world on the server (level 1); a Jobs window lists the fine simulation of your worlds, with its progress, and cancels it; the artifact window rebuilds an outdated level. `generator.jobs`
 - **changed** Generator: the storage panel becomes a full-screen artifact window — this world's or all worlds' derived data, where it is kept, its levels, whether it is outdated, deletable where you may. `generator.artifacts`

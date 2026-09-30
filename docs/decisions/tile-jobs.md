@@ -3,7 +3,7 @@ summary: How the top level of the detail ladder runs — level 1 stays the one g
 date: 2026-09-29
 area: generator
 stage: decided
-status: decided 2026-09-29; the tile's mesh and its bake built the same day (mesh/meshTile.ts, pipeline/meshTileBake.ts), the job and the pick not yet. Refines fork 3 of adaptive-mesh.md (the ladder, the tile) with the numbers and the seam rule it left open.
+status: decided 2026-09-29; the tile's mesh, its bake, its artifact and its job built 2026-09-29/30 (mesh/meshTile.ts, pipeline/meshTileBake.ts, world/meshTileArtifacts.ts); the pick in the Finishing step 2026-09-30. Refines fork 3 of adaptive-mesh.md (the ladder, the tile) with the numbers and the seam rule it left open.
 ---
 
 # Tile jobs
@@ -31,10 +31,14 @@ threaded).
 
 2. **Tiles are squares of 8 × 8 macro cells, ~62 km a side** (a climate
    cell's size), aligned to the macro grid, and level 2 aims at ~120 m
-   spacing (the "128K" of design/adaptive-mesh.md): some 200 000 nodes
-   inside a mountainous tile, seconds to minutes a job. A 2048 × 1024
-   world holds 256 × 128 = 32 768 tiles, a quarter to a third of them
-   land. Numbers to be measured on a real world.
+   spacing (the "128K" of design/adaptive-mesh.md) as the floor. A
+   2048 × 1024 world holds 256 × 128 = 32 768 tiles. Measured 2026-09-30
+   on a saved world with 12 % land (4 078 land tiles; its level 1: 2.7 M
+   nodes, 20 s, 54 MB): a mountain tile (1 700–3 400 m) 48 000 nodes at
+   a mean edge of 300 m, a plain 19 000 at 510 m; ~2 s a job at 12
+   rounds, ~0.95 GB peak (most of it level 1 read whole), 0.7–1.7 MB an
+   artifact. The density rule reads level 1's relief, which is smoother
+   than the tile's own, so the 125 m floor is rarely reached.
 
 3. **Seams: world-wide node placement, a halo, and a pinned edge line.**
    - New nodes are placed by a rule of their POSITION, the same for the
@@ -109,3 +113,20 @@ Two engine consequences, both general:
   1e-7 per cell vanished in float32 above ~270 m, and lake surfaces came
   out level with no receiver. The raster cannot meet the case; the macro
   mesh only on flats above ~4 500 m.
+
+The tile as a job and an artifact (2026-09-30):
+
+- The request is stage 2 with a tile scope,
+  `{"worldUid": …, "stage": 2, "scope": {"kind": "tile", "x": …, "y": …}}`;
+  the jobs module hands the worker `tile: {x, y}` and names the result
+  `L2:x,y`. Stage 1 stays the whole world; each stage accepts only its
+  own scope.
+- The worker reads the world's level 1 from the artifact store it writes
+  to (same rounds, same pipeline version) and fails with a message when
+  it is not there: a tile needs its level 1 first.
+- The artifact (`world/meshTileArtifacts.ts`) holds the tile's inside
+  only — the edge row, the nodes within it and their triangles, positions
+  in cells from the tile's corner. Not the periodic codec: a tile has a
+  boundary. Its pipeline version carries level 1's constants, the rounds
+  and every constant of the tile (`TILE_CONSTANTS`).
+- The artifact window counts a world's tiles on its L2 chip.

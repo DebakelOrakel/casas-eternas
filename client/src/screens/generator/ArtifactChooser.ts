@@ -6,6 +6,7 @@ import { listServerArtifacts, removeServerArtifact } from '../../server/artifact
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { meshPipelineVersion } from '../../world/meshArtifacts'
+import { meshTilePipelineVersion } from '../../world/meshTileArtifacts'
 import { commissionBake } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { BROWSER_ICON, SERVER_ICON, icon } from './chooserIcons'
@@ -53,7 +54,7 @@ const LEVELS = [1, 2, 3]
 // moved on since the bake).
 function currentFor(world: { uid: string; worldId: string | null } | null) {
   return (entry: ArtifactEntry, level: number): boolean =>
-    entry.pipelineVersion === meshPipelineVersion(level)
+    entry.pipelineVersion === (level === 2 ? meshTilePipelineVersion() : meshPipelineVersion(level))
     && !(world?.worldId && entry.worldUid === world.uid && entry.worldId !== world.worldId)
 }
 
@@ -238,7 +239,8 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
       const chip = document.createElement('span')
       chip.className = 'ac-level mono'
       chip.dataset.present = String(row.levels.includes(level))
-      chip.textContent = `L${level}`
+      // The top level comes in tiles: how many this world holds.
+      chip.textContent = level === 2 && row.tiles > 0 ? `L${level} ×${row.tiles}` : `L${level}`
       levels.appendChild(chip)
     }
     line.appendChild(levels)

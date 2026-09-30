@@ -1,6 +1,6 @@
 import { t, type TKey } from '../../i18n/i18n'
 import { formatWhen } from '../../ui/format'
-import { bakeFraction, cancelBake, listBakes, type BakeJob } from '../../world/jobClient'
+import { bakeFraction, cancelBake, jobStageName, listBakes, type BakeJob } from '../../world/jobClient'
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { icon } from './chooserIcons'
@@ -111,7 +111,7 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     const level = document.createElement('span')
     level.className = 'ac-level mono'
     level.dataset.present = String(job.state === 'done')
-    level.textContent = `L${job.request?.stage ?? '?'}`
+    level.textContent = jobStageName(job)
     const levelCell = document.createElement('span')
     levelCell.className = 'ac-levels'
     levelCell.appendChild(level)

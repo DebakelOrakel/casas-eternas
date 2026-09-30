@@ -68,6 +68,10 @@ import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
 import { getServerStatus } from '../../server/serverStatus'
 import { hasSession } from '../../server/session'
 import { bakeFraction, commissionBake, listBakes, type BakeJob } from '../../world/jobClient'
+import { listServerArtifacts } from '../../server/artifactsClient'
+import { meshPipelineVersion } from '../../world/meshArtifacts'
+import { meshTilePipelineVersion, meshTileStage } from '../../world/meshTileArtifacts'
+import { TILE_CELLS, tileGrid, type TileId } from '../../generator/mesh/meshTile'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { createWorldChooser } from './WorldChooser'
 import { createArtifactChooser } from './ArtifactChooser'
@@ -354,6 +358,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // artifact window calls an artifact of another terrain outdated. Null until
   // the world was saved or loaded.
   let savedWorldId: string | null = null
+  // The finishing step's picked tile (docs/decisions/tile-jobs.md) — up
+  // here because the overlay layer that outlines it is declared long
+  // before the step's own code, and paints from the first composite on.
+  let pickedTile: TileId | null = null
   let worldRevision = 0
   // Epoch the safety auto-stop will fire at. Re-armed to (current epoch +
   // MAX_TECTONICS_EPOCHS) every time the sim is started (see startSim), so
@@ -741,6 +749,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         <div class="gen-step__actions">
           <button type="button" class="gen-action" data-action="refine-world" data-help="generator.finishing.refine">
             <span class="gen-action__label" data-t="generator.finishing.refine.label">${t('generator.finishing.refine.label')}</span>
+          </button>
+        </div>
+        <!-- One tile of the top level (docs/decisions/tile-jobs.md): picked
+             on the map, ordered once level 1 is there. -->
+        <p class="gen-finishing__state" data-value="finishing-tile-state"></p>
+        <div class="gen-step__actions">
+          <button type="button" class="gen-action" data-action="refine-tile" data-help="generator.finishing.tile">
+            <span class="gen-action__label" data-t="generator.finishing.tile.label">${t('generator.finishing.tile.label')}</span>
           </button>
         </div>
       </div>
@@ -2290,6 +2306,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // not a user toggle.
     { id: 'events', enabled: true },
     { id: 'names', enabled: false, paint: (c) => paintWrapped(c, (cc) => drawContinentLabels(cc, lastRaftLabels)) },
+    // The finishing step's picked tile — drawn only while that step is open.
+    { id: 'tilePick', enabled: true, paint: (c) => paintWrapped(c, (cc) => drawTilePick(cc)) },
   ])
   // Same layer OBJECTS in both compositors — toggles/enabled flags are
   // shared state, only the base differs (shaded vs. unshaded paper).
@@ -4941,25 +4959,106 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!reachable || !status.modules.includes('jobs')) needs = 'generator.finishing.needs.bakes'
     else if (status.loginPath !== '' && !hasSession()) needs = 'generator.finishing.needs.signIn'
     else if (worldUid === '' || !isStoredOnServer(worldUid)) needs = 'generator.finishing.needs.server'
-    let job: BakeJob | null = null
+    let jobs: BakeJob[] = []
+    // The stages this world holds on the server, for this client's pipeline
+    // and — once saved — its current terrain.
+    const stored = new Set<string>()
     if (!needs) {
-      const jobs = await listBakes()
-      job = (jobs ?? []).filter((j) => j.request?.worldUid === worldUid && j.request?.stage === 1)
-        .sort((a, b) => (b.queuedAt ?? '').localeCompare(a.queuedAt ?? ''))[0] ?? null
+      const [listed, artifacts] = await Promise.all([listBakes(), listServerArtifacts()])
+      jobs = (listed ?? []).filter((j) => j.request?.worldUid === worldUid)
+        .sort((a, b) => (b.queuedAt ?? '').localeCompare(a.queuedAt ?? ''))
+      for (const a of artifacts?.artifacts ?? []) {
+        if (a.worldUid !== worldUid || (savedWorldId !== null && a.worldId !== savedWorldId)) continue
+        const current = a.stage === 'L1' ? meshPipelineVersion(1) : a.stage.startsWith('L2:') ? meshTilePipelineVersion() : null
+        if (a.pipelineVersion === current) stored.add(a.stage)
+      }
     }
+    const job = jobs.find((j) => j.request?.stage === 1) ?? null
     const active = job !== null && (job.state === 'queued' || job.state === 'running')
+    const levelDone = stored.has('L1') || job?.state === 'done'
     finishingState.textContent = needs ? t(needs)
+      : active ? jobStateText(job)
+      : levelDone ? t('generator.finishing.state.done')
       : !job || job.state === 'cancelled' ? t('generator.finishing.state.none')
-      : job.state === 'queued' ? t('generator.finishing.state.queued')
-      : job.state === 'running' ? t('generator.finishing.state.running', { percent: Math.round((bakeFraction(job) ?? 0) * 100) })
-      : job.state === 'done' ? t('generator.finishing.state.done')
-      : t('generator.finishing.state.failed', { error: job.error ?? '' })
+      : jobStateText(job)
     refineButton.disabled = needs !== null || active
-    if (active && STEP_IDS[panelIndex] === 'finishing') finishingTimer = setTimeout(() => void refreshFinishing(), 2000)
+    // The picked tile.
+    const tile = pickedTile
+    const tileJob = tile ? jobs.find((j) => j.request?.stage === 2 && j.request.scope?.kind === 'tile' && (j.request.scope.x ?? 0) === tile.x && (j.request.scope.y ?? 0) === tile.y) ?? null : null
+    const tileActive = tileJob !== null && (tileJob.state === 'queued' || tileJob.state === 'running')
+    const sea = tile !== null && !tileHasLand(tile)
+    const tileDone = tile !== null && (stored.has(meshTileStage(tile)) || tileJob?.state === 'done')
+    finishingTileState.textContent = needs ? ''
+      : !tile ? t('generator.finishing.tile.pick')
+      : sea ? t('generator.finishing.tile.sea')
+      : tileActive ? jobStateText(tileJob)
+      : tileDone ? t('generator.finishing.tile.done', { x: tile.x, y: tile.y })
+      : !levelDone ? t('generator.finishing.tile.needsLevel')
+      : tileJob && tileJob.state === 'failed' ? jobStateText(tileJob)
+      : t('generator.finishing.tile.picked', { x: tile.x, y: tile.y })
+    refineTileButton.disabled = needs !== null || !tile || sea || !levelDone || tileActive
+    if ((active || tileActive) && STEP_IDS[panelIndex] === 'finishing') finishingTimer = setTimeout(() => void refreshFinishing(), 2000)
+  }
+  // A job's state line: waiting, running with its fraction, or failed.
+  function jobStateText(job: BakeJob | null): string {
+    if (!job) return ''
+    if (job.state === 'queued') return t('generator.finishing.state.queued')
+    if (job.state === 'running') return t('generator.finishing.state.running', { percent: Math.round((bakeFraction(job) ?? 0) * 100) })
+    return t('generator.finishing.state.failed', { error: job.error ?? '' })
   }
   refineButton.addEventListener('click', () => {
     refineButton.disabled = true
     void commissionBake(worldUid, 1, AMPLIFY_EROSION_ROUNDS).then(() => refreshFinishing())
+  })
+
+  // THE TILE PICK: a tap on the map in the finishing step picks the tile
+  // under it (a drag still pans the camera — POINTERTAP is a click without
+  // one); the overlay outlines it while the step is open.
+  const finishingTileState = root.querySelector<HTMLElement>('[data-value="finishing-tile-state"]')!
+  const refineTileButton = root.querySelector<HTMLButtonElement>('[data-action="refine-tile"]')!
+  // Whether any macro cell of the tile is land, on the coarse elevation the
+  // screen holds.
+  function tileHasLand(tile: TileId): boolean {
+    const e = lastCoarseElevation
+    if (!e || elevationResX === 0) return true
+    const x0 = Math.floor((tile.x * TILE_CELLS / MAP_WIDTH) * elevationResX)
+    const x1 = Math.ceil(((tile.x + 1) * TILE_CELLS / MAP_WIDTH) * elevationResX)
+    const y0 = Math.floor((tile.y * TILE_CELLS / MAP_HEIGHT) * elevationResY)
+    const y1 = Math.ceil(((tile.y + 1) * TILE_CELLS / MAP_HEIGHT) * elevationResY)
+    for (let y = y0; y < Math.max(y1, y0 + 1); y++) {
+      for (let x = x0; x < Math.max(x1, x0 + 1); x++) if (e[(y % elevationResY) * elevationResX + (x % elevationResX)] > 0) return true
+    }
+    return false
+  }
+  function drawTilePick(c: CanvasRenderingContext2D): void {
+    if (!pickedTile || STEP_IDS[panelIndex] !== 'finishing') return
+    const { x, y } = pickedTile
+    c.save()
+    c.fillStyle = 'rgba(214, 90, 49, 0.18)'
+    c.fillRect(x * TILE_CELLS, y * TILE_CELLS, TILE_CELLS, TILE_CELLS)
+    c.strokeStyle = 'rgba(214, 90, 49, 0.95)'
+    c.lineWidth = 1.5
+    c.strokeRect(x * TILE_CELLS, y * TILE_CELLS, TILE_CELLS, TILE_CELLS)
+    c.restore()
+  }
+  scene.onPointerObservable.add((info) => {
+    if (info.type !== PointerEventTypes.POINTERTAP || STEP_IDS[panelIndex] !== 'finishing') return
+    const pick = scene.pick(scene.pointerX, scene.pointerY)
+    const uv = pick?.hit ? pick.getTextureCoordinates() : null
+    if (!uv) return
+    const { cols, rows } = tileGrid(MAP_WIDTH, MAP_HEIGHT)
+    pickedTile = {
+      x: Math.min(cols - 1, Math.max(0, Math.floor((uv.x * MAP_WIDTH) / TILE_CELLS))),
+      y: Math.min(rows - 1, Math.max(0, Math.floor((uv.y * MAP_HEIGHT) / TILE_CELLS))),
+    }
+    compositeOverlays()
+    void refreshFinishing()
+  })
+  refineTileButton.addEventListener('click', () => {
+    const tile = pickedTile
+    if (!tile) return
+    refineTileButton.disabled = true
+    void commissionBake(worldUid, 2, AMPLIFY_EROSION_ROUNDS, tile).then(() => refreshFinishing())
   })
 
   function closeArtifacts(): void {
@@ -5167,6 +5266,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     invalidateAfter('tectonics')
     restoredRefinement = await readRefinement(zip)
     savedWorldId = null
+    pickedTile = null
     void noteSavedWorldId(file)
 
     const seed = readYamlValue(yaml, 'spec.seed') ?? ''
@@ -5573,6 +5673,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // erosion also zero erosionRunCount, but those are the SAME world evolving.
     worldUid = ''
     savedWorldId = null
+    pickedTile = null
     worldRevision = 0
     archeanFinalised = false
     hasHandover = false
@@ -5884,6 +5985,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (index === MIGRATION_PANEL_INDEX && lastMigration === null) void ensureMigration()
     // The finishing step asks the server for its world's job on entry.
     if (STEP_IDS[index] === 'finishing') void refreshFinishing()
+    // The picked tile shows in the finishing step only.
+    if (pickedTile) compositeOverlays()
   }
 
   // Show a panel. It navigates, asks for the data that panel needs, and sets the

@@ -95,6 +95,7 @@ const M = {
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
   finalize: await L('/src/generator/archean/finalizeArchean.ts'),
   artifacts: await L('/src/world/meshArtifacts.ts'),
+  tileArtifacts: await L('/src/world/meshTileArtifacts.ts'),
   memory: await L('/src/storage/MemoryArtifactStore.ts'),
   store: await L('/src/storage/ArtifactStore.ts'),
   surface: await L('/src/map/meshSurface.ts'),
@@ -784,6 +785,23 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     if (fed) for (let v = 0; v < fed.tile.mesh.vertexSlots; v++) if (fed.tile.mesh.vAlive[v] && fed.tile.role[v] === T.TILE_ROLE_EDGE) edgeAcc = Math.max(edgeAcc, fed.routing.accumulation[v])
     const inflowArea = fed ? fed.inflowDischarge / tileInputs.meanLandWater : 0
     check('a level-1 river entering a tile leaves over its edge with its catchment', fed !== null && fed.inflows > 0 && edgeAcc >= inflowArea, fed ? `tile ${inTile.x},${inTile.y}: ${fed.inflows} inflows, ${inflowArea.toFixed(1)} cells in, largest on the edge ${edgeAcc.toFixed(1)}` : 'no crossing found')
+    // The tile's artifact: its inside only, written and read back identical,
+    // under a stage that names the tile.
+    {
+      const art = M.tileArtifacts.bakedTileToArtifact(baked)
+      let halo = 0
+      for (let i = 0; i < art.count; i++) if (art.role[i] === T.TILE_ROLE_HALO) halo++
+      let outside = 0
+      for (let i = 0; i < art.count; i++) { const x = art.nodes[2 * i], y = art.nodes[2 * i + 1]; if (x < 0 || y < 0 || x > T.TILE_CELLS || y > T.TILE_CELLS) outside++ }
+      const tileStore = M.memory.createMemoryArtifactStore()
+      const stage = M.tileArtifacts.meshTileStage(best)
+      const tileKey = M.store.artifactKey('uid', 'world', M.tileArtifacts.meshTilePipelineVersion(4), stage)
+      const wrote = await M.tileArtifacts.writeMeshTileArtifact(tileStore, tileKey, art, bakeMs, 'synthetic', 4)
+      const read = await M.tileArtifacts.readMeshTileArtifact(tileStore, tileKey)
+      const same = read !== null && read.artifact.count === art.count && read.artifact.z.every((v, i) => v === art.z[i]) && read.artifact.triangles.every((v, i) => v === art.triangles[i]) && read.artifact.nodes.every((v, i) => v === art.nodes[i])
+      check(`a tile's artifact holds its inside and reads back identical (${stage}: ${art.count} nodes, ${art.triangles.length / 3} triangles)`, wrote && same && halo === 0 && outside === 0 && stage === `L2:${best.x},${best.y}`, `${halo} halo nodes, ${outside} outside the tile`)
+      check('the tile pipeline version moves with the rounds and differs from level 1\'s', M.tileArtifacts.meshTilePipelineVersion(4) !== M.tileArtifacts.meshTilePipelineVersion(5) && M.tileArtifacts.meshTilePipelineVersion(4) !== M.artifacts.meshPipelineVersion(1, 4))
+    }
   }
 }
 

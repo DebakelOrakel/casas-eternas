@@ -615,6 +615,41 @@ func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
 	}
 }
 
+// A tile job (stage 2) names its tile in a tile scope; the whole world is
+// stage 1. The spec hands the tile to the worker as {"x", "y"} — the field
+// client/scripts/jobWorker.ts reads — and the stage name is the artifact's.
+func TestTileJobsNameTheirTile(t *testing.T) {
+	cases := []struct {
+		request Request
+		ok      bool
+	}{
+		{Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}}, true},
+		{Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeTile, X: 3, Y: 0}}, true},
+		{Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeWorld}}, false},
+		{Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeTile}}, false},
+		{Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeTile, X: -1}}, false},
+	}
+	for _, c := range cases {
+		if err := c.request.Validate(); (err == nil) != c.ok {
+			t.Errorf("Validate(%+v) = %v, want ok=%v", c.request, err, c.ok)
+		}
+	}
+	tile := Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeTile, X: 3, Y: 0}}
+	if got := tile.StageName(); got != "L2:3,0" {
+		t.Errorf("tile stage = %q, want L2:3,0", got)
+	}
+	if got := (Request{Stage: 1}).StageName(); got != "L1" {
+		t.Errorf("level stage = %q, want L1", got)
+	}
+	wire, _ := json.Marshal(Spec{Stage: 2, ErosionRounds: 2, Tile: &TileRef{X: 3, Y: 0}, StageName: "L2:3,0"})
+	if !strings.Contains(string(wire), `"tile":{"x":3,"y":0}`) {
+		t.Errorf("spec does not carry the tile as the worker reads it: %s", wire)
+	}
+	if strings.Contains(string(wire), "L2:3,0") {
+		t.Errorf("the stage name is the runner's, not the worker's: %s", wire)
+	}
+}
+
 // Jobs show to whoever may read their world, say what the caller may do, and
 // an editor cancels them — a queued one before it starts, a running one
 // through its context (2026-09-29; before, every caller saw every job).

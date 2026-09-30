@@ -34,12 +34,19 @@ const (
 	// ScopeBasin is reserved for the split along drainage divides. Declared
 	// now so the wire format and the queue never have to learn a new shape.
 	ScopeBasin ScopeKind = "basin"
+	// ScopeTile is one tile of the top mesh level (stage 2): X and Y are its
+	// column and row on the world's tile grid (docs/decisions/tile-jobs.md).
+	ScopeTile ScopeKind = "tile"
 )
 
 type Scope struct {
 	Kind ScopeKind `json:"kind"`
 	// Which basin, once Kind is ScopeBasin. Ignored for ScopeWorld.
 	ID int `json:"id,omitempty"`
+	// Which tile, once Kind is ScopeTile. The grid's size depends on the
+	// world, so the upper bound is the worker's to check.
+	X int `json:"x,omitempty"`
+	Y int `json:"y,omitempty"`
 }
 
 type State string
@@ -57,7 +64,8 @@ const (
 type Request struct {
 	WorldUID string `json:"worldUid"`
 	// The level to bake: 1 is the mesh's level 1 (the save's mesh refined to
-	// twice the density; client/src/pipeline/meshBakeStage.ts). The raster
+	// twice the density; client/src/pipeline/meshBakeStage.ts), 2 one tile of
+	// the top level, named by a tile scope (meshTileBake.ts). The raster
 	// amplification's factors 2/4/8 went on 2026-09-29.
 	Stage int `json:"stage"`
 	// Erosion rounds; zero means the module's default rather than "no erosion",
@@ -101,18 +109,34 @@ func (r Request) Validate() error {
 	if r.WorldUID == "" {
 		return fmt.Errorf("worldUid is required")
 	}
-	// Level 1 is the only one built; the tile levels come as their own jobs.
-	if r.Stage != 1 {
-		return fmt.Errorf("stage must be 1")
-	}
+	// Level 1 runs over the whole world, level 2 one tile at a time.
 	switch r.Scope.Kind {
 	case "", ScopeWorld:
+		if r.Stage != 1 {
+			return fmt.Errorf("stage %d needs a tile scope; the whole world is stage 1", r.Stage)
+		}
+	case ScopeTile:
+		if r.Stage != 2 {
+			return fmt.Errorf("a tile scope is stage 2")
+		}
+		if r.Scope.X < 0 || r.Scope.Y < 0 {
+			return fmt.Errorf("tile x and y must not be negative")
+		}
 	case ScopeBasin:
 		return fmt.Errorf("basin scope is not implemented yet")
 	default:
 		return fmt.Errorf("unknown scope %q", r.Scope.Kind)
 	}
 	return nil
+}
+
+// StageName is the artifact stage a request produces: `L1` for a level,
+// `L2:x,y` for a tile — the client's meshLevelStage and meshTileStage.
+func (r Request) StageName() string {
+	if r.Scope.Kind == ScopeTile {
+		return fmt.Sprintf("L%d:%d,%d", r.Stage, r.Scope.X, r.Scope.Y)
+	}
+	return fmt.Sprintf("L%d", r.Stage)
 }
 
 // registry holds jobs by id. Bounded so a long-running server does not
