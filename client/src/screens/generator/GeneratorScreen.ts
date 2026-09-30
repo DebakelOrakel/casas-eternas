@@ -302,7 +302,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     getFocus: getCameraFocus,
     setPanEnabled: setCameraPanEnabled,
     setDeepZoomEnabled: setCameraDeepZoom,
-    setDesiredTilt: setCameraDesiredTilt,
     getZoom: getCameraZoom,
     getYaw: getCameraYaw,
     getViewWidth: getCameraViewWidth,
@@ -446,9 +445,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // view back flat and drops the stale surface. Called from the 'rendered'
   // handler — every path that changes erosionRunCount is followed by a
   // render, so the gate re-syncs itself without per-call-site bookkeeping.
-  // The desired tilt is armed permanently for now: tilting is purely
-  // zoom-driven (a dedicated tilt control is an open UI question).
-  setCameraDesiredTilt(Number.POSITIVE_INFINITY)
+  // No tilt of its own: the zoom goes straight in, and R/F tilt the view
+  // inside the envelope (decided 2026-09-30, camera/generatorCamera.ts).
   const syncReliefGate = (): void => {
     const active = erosionRunCount >= 1
     setCameraDeepZoom(active)

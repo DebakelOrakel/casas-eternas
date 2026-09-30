@@ -7,10 +7,13 @@ import { Camera, Engine, FreeCamera, Observer, PointerEventTypes, PointerInfo, S
 // scale regardless of camera height, with no perspective distortion toward
 // the edges, and a *tilted* orthographic view is a clean axonometric relief
 // shot. Zoom adjusts the frustum's world-space extent EXPONENTIALLY in z
-// (equal steps = equal percentage change). Tilt is an envelope coupled to
-// zoom — min(desiredTilt, maxTiltForZoom(z)) — so zooming out presses the
-// view back to top-down with no separate return animation. Yaw (Q/E) only
-// accumulates while the envelope is open and folds back to north outside it.
+// (equal steps = equal percentage change). Tilt is the user's (R/F), inside
+// an envelope coupled to zoom — min(desiredTilt, maxTiltForZoom(z)) — and
+// the desired tilt SHRINKS with the envelope, so zooming out presses the view
+// back to top-down with no separate return animation and zooming in again
+// stays top-down (decided 2026-09-30: zoom goes straight in, it never tilts
+// by itself). Yaw (Q/E) only accumulates while the envelope is open and
+// folds back to north outside it.
 //
 // NEAR (z in 1..2, opt-in via nearModeEnabled — the worldmap screen): the
 // same camera flips to PERSPECTIVE at z = 1, with its distance chosen so the
@@ -102,7 +105,7 @@ export interface GeneratorCameraOptions {
   // returns to the standard orientation, same philosophy as tilt/yaw.
   nearPitchMinDeg?: number
   nearPitchMaxDeg?: number
-  // R/F pitch adjust speed in radians per second.
+  // R/F tilt/pitch adjust speed in radians per second (both regimes).
   pitchRatePerSecond?: number
 }
 
@@ -125,7 +128,9 @@ export interface GeneratorCamera {
   setDeepZoomEnabled: (enabled: boolean) => void
   // The tilt the user WANTS, in radians off vertical. Applied tilt is
   // min(desired, envelope(zoom)), eased — safe to set at any zoom. Values
-  // above maxTiltDeg clamp to it, so Infinity means "as far as allowed".
+  // above maxTiltDeg clamp to it, so Infinity means "as far as allowed" —
+  // until the envelope closes below it: zooming out lowers the desired tilt
+  // with it. R/F set it from the keyboard.
   setDesiredTilt: (angleRadians: number) => void
   // Current EASED zoom: 0..1 map regime, 1..2 near regime. What the view is
   // actually showing this frame, not the wheel's target.
@@ -401,7 +406,14 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
       groundHeight = 0
       updateOrthoExtents(Math.min(1, currentZoom))
       viewWidthAtFocus = camera.orthoRight! - camera.orthoLeft!
-      tiltTarget = Math.min(desiredTilt, envelopeTilt(currentZoom))
+      // R/F tilt within the envelope; the desired tilt never stays above
+      // it, so a zoom out that closes the envelope brings the view back to
+      // top-down and a zoom in afterwards stays there.
+      const envelope = envelopeTilt(currentZoom)
+      if (pressedKeys.has('r')) desiredTilt += pitchRatePerSecond * dt
+      if (pressedKeys.has('f')) desiredTilt -= pitchRatePerSecond * dt
+      desiredTilt = Scalar.Clamp(desiredTilt, 0, envelope)
+      tiltTarget = desiredTilt
       nearPitchOffset = 0 // back on the map: the next descent starts on the curve
     } else {
       // NEAR regime: perspective, altitude-driven. The handover altitude is

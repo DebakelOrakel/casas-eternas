@@ -261,7 +261,11 @@ the actual code:
   out then *automatically* presses the camera back to top-down — the
   "rotate back on zoom-out" behaviour falls out of the clamp, no
   special-case animation. `desiredTilt` is remembered so zooming back
-  in restores the view. Yaw stays out of v1 (would need a look at the
+  in restores the view. *Revised 2026-09-30:* the generator no longer
+  arms a desired tilt — the zoom goes straight in; R/F tilt within the
+  envelope, and the desired tilt shrinks with the envelope, so a zoom
+  out returns the view to top-down and a zoom in afterwards stays
+  there. Yaw stays out of v1 (would need a look at the
   3×3 tiling margins).
 - **Deepen the zoom for 1:1 to read at all.** Scale check: the world is
   16,000 × 8,000 km (20 × 10 scene units — 1 unit = 800 km; 9,000 m of

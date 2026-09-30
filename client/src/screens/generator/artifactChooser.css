@@ -79,22 +79,32 @@
 
 /* --- the table ------------------------------------------------------------- */
 
+/* ONE grid for the whole table, its rows on it as subgrids: a row that is
+   its own grid sizes its `auto` column by its own content, so the header
+   (an empty cell there) and a row with a button (or an armed one, whose
+   text is longer) laid their columns out differently and nothing lined up.
+   On the table's grid the last column is the widest button of all rows. */
 .ac-table {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) 150px 60px 90px 100px auto;
+  /* On the table, so the subgrid rows inherit it and the tracks are sized
+     with it. */
+  column-gap: 14px;
   border-top: 1px solid var(--dc-line);
+}
+.ac-table > * {
+  grid-column: 1 / -1;
 }
 .ac-row {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) 150px 60px 90px 100px auto;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: 14px;
   min-height: 52px;
   padding: 0 4px;
   border-bottom: 1px solid var(--dc-line);
   font-size: 13px;
 }
-.ac-table--world .ac-row {
+.ac-table--world {
   grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) 150px 60px 90px 100px auto;
 }
 .ac-row--head {
@@ -193,7 +203,7 @@
 
 /* --- the jobs window (JobChooser) ----------------------------------------- */
 
-.jc-table .ac-row {
+.ac-table.jc-table {
   grid-template-columns: minmax(0, 1.6fr) 60px 110px minmax(0, 1.2fr) 120px auto;
 }
 .jc-state[data-state='running'] {
