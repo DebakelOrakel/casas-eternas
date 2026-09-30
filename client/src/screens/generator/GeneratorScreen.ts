@@ -4469,8 +4469,31 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // it would be the temporal dead zone that once blanked this whole screen.
   let chooserOpen = false
 
+  // DIAGNOSTIC (dev only, temporary — 2026-09-30): which part of the
+  // signature moved when a saved world turns "unsaved". Remove once the
+  // reopen-reports-unsaved report is understood.
+  let reportedSignature = ''
+  function reportSignatureChange(now: string): void {
+    if (!import.meta.env.DEV || savedSignature === '' || now === reportedSignature) return
+    reportedSignature = now
+    const names = ['worldName', 'seed', 'values', 'archeanEpochs', 'epoch', 'erosionRuns']
+    const before = JSON.parse(savedSignature) as unknown[]
+    const after = JSON.parse(now) as unknown[]
+    const moved: Record<string, unknown> = {}
+    names.forEach((name, i) => {
+      if (name === 'values') {
+        const b = before[i] as Record<string, number>
+        const a = after[i] as Record<string, number>
+        for (const key of new Set([...Object.keys(b), ...Object.keys(a)])) if (b[key] !== a[key]) moved[`values.${key}`] = [b[key], a[key]]
+      } else if (JSON.stringify(before[i]) !== JSON.stringify(after[i])) moved[name] = [before[i], after[i]]
+    })
+    console.warn('[unsaved] signature moved since the last save/open:', moved, new Error('where').stack)
+  }
+
   function saveState(): TitleBarSaveState {
-    if (worldSignature() !== savedSignature) {
+    const signatureNow = worldSignature()
+    if (signatureNow !== savedSignature) reportSignatureChange(signatureNow)
+    if (signatureNow !== savedSignature) {
       return lastSave === undefined && savedSignature === '' ? { kind: 'new' } : { kind: 'unsaved' }
     }
     if (!lastSave) return { kind: 'new' }
@@ -4893,7 +4916,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     // Same path a picked file takes — `loadWorldFromZip` closes the chooser
     // once the archive has actually turned out to be a world.
-    onOpenArchive: (archive) => { void loadWorldFromZip(new File([archive], 'world.zip')) },
+    onOpenArchive: (archive, kept) => { void loadWorldFromZip(new File([archive], 'world.zip'), kept) },
     onPickFile: () => pickLocalWorldFile(),
   })
 
@@ -5189,7 +5212,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // Load flow: unzip → set the UI from the recipe/status → restore the sim in
   // the worker (no replay) → the render it posts back displays the world.
-  async function loadWorldFromZip(file: File): Promise<void> {
+  // `kept`: where the world rests when it came from the world list (this
+  // browser or the server) — it is saved there, as of then. A picked file
+  // rests nowhere this generator holds, like a download.
+  async function loadWorldFromZip(file: File, kept?: { where: 'browser' | 'server'; savedAt: string }): Promise<void> {
     let zip: JSZip
     let yaml: string
     let snapshot: PlateSimulationSnapshot | undefined
@@ -5331,6 +5357,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // lastEpoch is set from the restore render's reported epoch (status
     // .tectonicsRun == the snapshot's epoch), so no need to set it here.
 
+    // Where this world was saved, not where the previous one was: the title
+    // bar's "saved in the browser" belongs to the world it names.
+    const savedAt = kept ? new Date(kept.savedAt) : null
+    lastSave = kept && savedAt && !Number.isNaN(savedAt.getTime()) ? { target: kept.where === 'server' ? 'server' : 'browser', at: savedAt } : undefined
     markCleanOnNextRender = true
     restoredFromSave = true
     postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: vigourToDiffusion(Number(mantleVigourInput.value)) })

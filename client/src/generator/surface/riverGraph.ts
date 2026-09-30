@@ -2,6 +2,7 @@ import type { SpringFeature } from './hydrogeology'
 import type { FlowRouting } from './flowRouting'
 import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
+import { wrapValue } from '../core/field'
 import { buildChannelMaskOn, RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE } from './hydrology'
 import type { RegimeInputs, RiverPolylines, WaterBody } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
@@ -371,6 +372,32 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
   for (let k = 0; k < cells.length; k++) {
     cellX[k] = sub.x(cells[k])
     cellY[k] = sub.y(cells[k])
+  }
+  // A reach into the sea ends on the first sea node — on the mesh, a node of
+  // the deep ocean may stand ~160 km off the coast (budget 4), and the last
+  // step drew as a straight line far out to sea. The reach's LAST POSITION
+  // is put where that step crosses sea level instead: the heights are linear
+  // along a mesh edge, so that is the coastline the map draws. The mouth
+  // node keeps its water cell (the coast and the sediment basins read the
+  // node and the last land cell). The raster's step is one cell, so it keeps
+  // the cell centre as it always did.
+  if (sub.kind === 'mesh') {
+    for (const r of reaches) {
+      if (r.cellCount < 2) continue
+      const last = r.cellStart + r.cellCount - 1
+      const zLand = elevation[cells[last - 1]]
+      const zSea = elevation[cells[last]]
+      if (!(zLand > SEA_LEVEL && zSea <= SEA_LEVEL)) continue
+      const f = (zLand - SEA_LEVEL) / (zLand - zSea)
+      let dx = cellX[last] - cellX[last - 1]
+      let dy = cellY[last] - cellY[last - 1]
+      if (dx > width / 2) dx -= width
+      else if (dx < -width / 2) dx += width
+      if (dy > height / 2) dy -= height
+      else if (dy < -height / 2) dy += height
+      cellX[last] = wrapValue(cellX[last - 1] + f * dx, width)
+      cellY[last] = wrapValue(cellY[last - 1] + f * dy, height)
+    }
   }
   return { width, height, substrate: sub.kind, nodes, reaches, cells, cellX, cellY, bodies: bodies.slice() }
 }

@@ -25,8 +25,10 @@ import { BROWSER_ICON, SERVER_ICON, icon } from './chooserIcons'
 export interface WorldChooserOptions {
   // Keep the world the generator already built and get out of the way.
   onNewWorld(): void
-  // Hands an archive over; the generator owns the loading itself.
-  onOpenArchive(archive: Blob): void
+  // Hands an archive over; the generator owns the loading itself. `kept`
+  // says where the world rests and since when — an opened world is a saved
+  // one, and the title bar says so.
+  onOpenArchive(archive: Blob, kept: { where: Where; savedAt: string }): void
   // The plain file picker, for a world that lives in neither place.
   onPickFile(): void
 }
@@ -292,7 +294,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
           setNote(t('generator.load.unavailable'))
           return
         }
-        options.onOpenArchive(archive)
+        options.onOpenArchive(archive, { where: entry.where, savedAt: entry.savedAt })
       })()
     })
 
