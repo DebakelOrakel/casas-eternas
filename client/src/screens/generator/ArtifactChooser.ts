@@ -7,7 +7,7 @@ import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { meshPipelineVersion } from '../../world/meshArtifacts'
 import { meshTilePipelineVersion } from '../../world/meshTileArtifacts'
-import { commissionBake } from '../../world/jobClient'
+import { commissionBake, type CommissionOutcome } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { BROWSER_ICON, SERVER_ICON, icon } from '../../ui/chooserIcons'
 import '../../ui/theme/design.css'
@@ -32,6 +32,8 @@ export interface ArtifactChooserOptions {
   // last save's terrain id, null before it was saved.
   currentWorld(): { uid: string; name: string; seed: string; worldId: string | null } | null
   onClose(): void
+  // What became of an order placed from here (the screen says why it failed).
+  onCommissioned(outcome: CommissionOutcome): void
 }
 
 export interface ArtifactChooser {
@@ -121,6 +123,8 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
   // --- data -------------------------------------------------------------------
 
   let rows: ArtifactRow[] = []
+  // The pipeline-and-terrain check the rows were judged with (currentFor).
+  let isCurrent: (entry: ArtifactEntry, level: number) => boolean = () => true
   let worldNames = new Map<string, string>()
   let serverBytes: number | null = null
   let browserUsage: { usedBytes: number; quotaBytes: number } | null = null
@@ -143,7 +147,8 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
         deletable: a.callerLevel === 'editor' || a.callerLevel === 'owner' || a.callerLevel === 'admin',
       })),
     ]
-    rows = artifactRows(entries, currentFor(options.currentWorld()))
+    isCurrent = currentFor(options.currentWorld())
+    rows = artifactRows(entries, isCurrent)
     paint()
   }
 
@@ -299,14 +304,21 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     // (a job, see the jobs window), where the viewer may: an editor.
     const actions = document.createElement('span')
     actions.className = 'ac-actions'
-    if (row.kind === 'level' && row.stale && row.server && row.deletable && row.worldUid) {
+    // Only for level 1 itself: the button orders level 1, and a row stale
+    // only by its tiles got a duplicate of a current level while the tiles
+    // stayed stale (2026-10-01). Stale tiles have no rebuild here yet.
+    const levelOneStale = row.entries.some((e) => e.where === 'server' && e.stage === 'L1' && !isCurrent(e, 1))
+    if (row.kind === 'level' && levelOneStale && row.deletable && row.worldUid) {
       const rebuild = document.createElement('button')
       rebuild.type = 'button'
       rebuild.className = 'wc-remove'
       rebuild.textContent = t('generator.artifacts.rebuild.label', { artifact: name })
       rebuild.addEventListener('click', () => {
         rebuild.disabled = true
-        void commissionBake(row.worldUid, 1, AMPLIFY_EROSION_ROUNDS)
+        void commissionBake(row.worldUid, 1, AMPLIFY_EROSION_ROUNDS).then((outcome) => {
+          options.onCommissioned(outcome)
+          if (!outcome.ok) rebuild.disabled = false
+        })
       })
       actions.appendChild(rebuild)
     }

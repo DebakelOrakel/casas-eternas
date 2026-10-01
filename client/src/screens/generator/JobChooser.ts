@@ -67,8 +67,15 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     worldNames = new Map([...browserWorlds.map((w) => [w.uid, w.name] as const), ...(serverWorlds ?? []).map((w) => [w.uid, w.name] as const)])
   }
 
+  // Each reload is numbered; an answer lands only if no later reload was
+  // asked meanwhile. With a slow server the polls overlap, and an older
+  // answer painted over a newer one showed jobs going back a state.
+  let reloadSeq = 0
   async function reload(): Promise<void> {
-    jobs = await listBakes()
+    const seq = ++reloadSeq
+    const listed = await listBakes()
+    if (seq !== reloadSeq) return
+    jobs = listed
     paint()
   }
 

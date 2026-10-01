@@ -68,7 +68,7 @@ import { keepWorldInBrowser } from '../../world/browserWorlds'
 import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
 import { getServerStatus } from '../../server/serverStatus'
 import { hasSession } from '../../server/session'
-import { bakeFraction, commissionBake, listBakes, type BakeJob } from '../../world/jobClient'
+import { bakeFraction, commissionBake, listBakes, type BakeJob, type CommissionOutcome } from '../../world/jobClient'
 import { listServerArtifacts } from '../../server/artifactsClient'
 import { meshPipelineVersion } from '../../world/meshArtifacts'
 import { meshTilePipelineVersion, meshTileStage } from '../../world/meshTileArtifacts'
@@ -931,6 +931,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const artifactChooser = createArtifactChooser(root, {
     currentWorld: () => (worldUid ? { uid: worldUid, name: worldName, seed: seedInput.value, worldId: savedWorldId } : null),
     onClose: () => closeArtifacts(),
+    onCommissioned: (outcome) => reportCommission(outcome),
   })
   artifactsButton.addEventListener('click', () => (artifactChooser.isOpen() ? closeArtifacts() : openArtifacts()))
   const jobChooser = createJobChooser(root, { onClose: () => closeJobs() })
@@ -1066,7 +1067,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ecologyPlayer.setEnabled(lastRefined !== null && hasEcologyData() && isSeasonalEcologyField(pickedEcologyField))
     resetEcologyButton.disabled = busy
     resetMigrationButton.disabled = busy
-    saveMenu.setEnabled(!busy)
+    // A running Archean cannot be saved (saveWorld declines while it steps):
+    // the menu says so rather than taking a click that does nothing.
+    saveMenu.setEnabled(!busy && !archeanRunning)
     // Stop buttons of the active process stay enabled.
     toggleSimButton.disabled = busy && !tectonicsRunning
     // Genesis inputs (debounced-)regenerate the whole world, so lock them while
@@ -1106,6 +1109,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const PROGRESS_R = 44
   const PROGRESS_CY = 60
   let progressTicker: ReturnType<typeof setInterval> | undefined
+  // Set by dispose: what an await still in flight checks before it arms
+  // anything new.
+  let screenDisposed = false
   let progressWavePhase = 0
   let progressPaused = false
   // The fill: the disc below a wavy water line at `fraction` of its height,
@@ -1186,7 +1192,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     // The wave moves while the pill shows — once a second is enough, and
     // not at all when motion is reduced or the Archean stands.
-    if (progressTicker === undefined) {
+    if (progressTicker === undefined && !screenDisposed) {
       const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
       progressTicker = setInterval(() => {
         if (!still && !progressPaused) progressWavePhase += 0.6
@@ -3339,6 +3345,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // sees them as the world's climate.
   let planetPreviewShown = false
   let planetPreviewRealBase: { base: Uint8ClampedArray; relief: Uint8Array } | null = null
+  // The world's own climate, its refinement included, kept aside the same
+  // way while the preview's fields stand in the mirrors (2026-10-01). Until
+  // then the preview wrote over them and they were cleared on leaving, so a
+  // save made under the preview baked the sample world's climate into the
+  // world, and the world's refinement stayed on show over the sample world.
+  // Null when there was none, or when the world itself was remade under the
+  // preview: its old climate is not its climate any more.
+  interface ClimateMirrors {
+    temperature: Float32Array | null; wind: Float32Array | null; currents: Float32Array | null; currentAnomaly: Float32Array | null
+    precipitation: Float32Array | null; seasonality: Float32Array | null; monsoonIndex: Float32Array | null; koppen: Uint8Array | null
+    biomes: Uint8Array | null; resX: number; resY: number; refined: RefinedClimate | null
+  }
+  let planetPreviewRealClimate: ClimateMirrors | null = null
   let planetPreviewDebounce: ReturnType<typeof setTimeout> | undefined
   // THE SAMPLE WORLD IS A REAL ONE (2026-09-27): Astrakan's elevation at half
   // the map, baked by scripts/sampleWorld.mjs into public/sample/ and fetched
@@ -3403,6 +3422,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!planetPreviewShown) {
       planetPreviewShown = true
       planetPreviewRealBase = lastColoredBase && lastRelief ? { base: lastColoredBase, relief: lastRelief } : null
+      planetPreviewRealClimate = lastTemperature === null ? null : {
+        temperature: lastTemperature, wind: lastWind, currents: lastCurrents, currentAnomaly: lastCurrentAnomaly,
+        precipitation: lastPrecipitation, seasonality: lastSeasonality, monsoonIndex: lastMonsoonIndex, koppen: lastKoppen,
+        biomes: lastBiomes, resX: climateResX, resY: climateResY, refined: lastRefined,
+      }
+      // The refinement is the world's, not the sample's: off the map while
+      // the preview stands. Kept above, not dropped.
+      if (lastRefined) {
+        climatePlayer.stop()
+        lastRefined = null
+        monthFields = null
+        climatePlayer.show(0)
+      }
     }
     lastColoredBase = new Uint8ClampedArray(message.buffer)
     lastRelief = new Uint8Array(message.relief)
@@ -3435,7 +3467,27 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       applyBase()
     }
     planetPreviewRealBase = null
-    clearClimate()
+    const real = planetPreviewRealClimate
+    planetPreviewRealClimate = null
+    if (!real) {
+      clearClimate()
+      return
+    }
+    lastTemperature = real.temperature
+    lastWind = real.wind
+    lastCurrents = real.currents
+    lastCurrentAnomaly = real.currentAnomaly
+    lastPrecipitation = real.precipitation
+    lastSeasonality = real.seasonality
+    lastMonsoonIndex = real.monsoonIndex
+    lastKoppen = real.koppen
+    lastBiomes = real.biomes
+    climateResX = real.resX
+    climateResY = real.resY
+    lastRefined = real.refined
+    monthFields = null
+    updateControlsDisabled()
+    updateOverlays()
   }
 
   function handleClimateData(message: WorkerClimateDataMessage): void {
@@ -4028,6 +4080,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (planetPreviewShown && !underPreview) {
       planetPreviewShown = false
       planetPreviewRealBase = null
+      planetPreviewRealClimate = null
       clearClimate()
     }
     lastBoundaryMask = new Uint8Array(message.boundaryMask)
@@ -4035,6 +4088,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (labelsShown) repaintLabels()
     if (underPreview) {
       planetPreviewRealBase = { base: new Uint8ClampedArray(message.buffer), relief: new Uint8Array(message.relief) }
+      planetPreviewRealClimate = null
     } else {
       lastColoredBase = new Uint8ClampedArray(message.buffer)
       lastRelief = new Uint8Array(message.relief)
@@ -4063,8 +4117,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // one eroding epoch more on this world. Counted here, off the render that
     // reports it, rather than at the start gesture — the count is what the
     // relief, the bake and the panels past erosion gate on, and it must say
-    // what the map shows.
-    if (tectonicsRunning && message.epoch > lastEpoch) {
+    // what the map shows. Settling counts too: the epoch that was in flight
+    // when the run was stopped finishes and arrives as the settled render
+    // (tectonicsSettling is cleared further down, off this same render).
+    // Counted only while running, a stop during the first epoch left an
+    // eroded world at 0 — climate locked, no relief, `erosionRun: 0` in the
+    // save — and every later stop one epoch short (2026-10-01).
+    if ((tectonicsRunning || tectonicsSettling) && message.epoch > lastEpoch) {
       erosionRunCount += 1
       tallyRun(history.tectonics, message.epoch - lastEpoch, runValues(TECTONICS_RUN_FIELDS, readSpec().values), BUILD_VERSION)
     }
@@ -4731,9 +4790,23 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Reads the terrain id back from an archive through the reader every
   // consumer uses (world/query), so it is the key a bake of this save files
   // its artifacts under.
+  // Hashing a save takes a moment; a world opened or regenerated meanwhile
+  // must not get the old one's id (2026-10-01: it hid the new world's levels
+  // and called its artifacts outdated). Every reset and every new reading
+  // takes a new generation; a reading lands only in its own.
+  let savedWorldIdGeneration = 0
+  function forgetSavedWorldId(): void {
+    savedWorldIdGeneration++
+    savedWorldId = null
+  }
   async function noteSavedWorldId(archive: Blob): Promise<void> {
+    const generation = ++savedWorldIdGeneration
     const world = await openWorld(await archive.arrayBuffer())
-    if (world) savedWorldId = await world.worldId()
+    const id = world ? await world.worldId() : null
+    if (generation !== savedWorldIdGeneration) return
+    savedWorldId = id
+    // The finishing step judged the levels without it.
+    if (STEP_IDS[panelIndex] === 'finishing') void refreshFinishing()
   }
 
   async function deliverArchive(blob: Blob, filename: string): Promise<void> {
@@ -4748,6 +4821,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }, await makePreviewBlob())
       if (kept) {
         ctx.notifications.show({ message: t('notify.save.browser.stored'), icon: '/icons/ok.png', durationMs: 4000 })
+        lastSave = { target: 'browser', at: new Date() }
         markWorldEstablished()
         return
       }
@@ -4768,6 +4842,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const outcome = await uploadWorld(worldUid, blob)
       if (outcome.ok) {
         ctx.notifications.show({ message: t('notify.save.server.stored'), icon: '/icons/ok.png', durationMs: 4000 })
+        // Only the two targets that ARE a resting place. A download is an
+        // export: nothing here holds it afterwards.
+        lastSave = { target: 'server', at: new Date() }
         markWorldEstablished()
         return
       }
@@ -4846,6 +4923,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       worldNameInput.value = worldName
       seedInput.value = randomSeed()
       for (const { id } of STAGES) resetInputs(id)
+      // The thirteen abundances are no bound sliders (one slider shows the
+      // picked resource's), so resetInputs does not reach them: a new world
+      // carried the last one's into its spec (2026-10-01).
+      for (const f of ECOLOGY_WEIGHT_FIELDS) abundance.set(f, ECOLOGY_ABUNDANCE.default)
+      abundanceInput.value = String(ECOLOGY_ABUNDANCE.default)
+      abundanceValue.textContent = String(ECOLOGY_ABUNDANCE.default)
       worldCreated = false
       applied = null
       step0Unlocked = false
@@ -4925,21 +5008,28 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     else if (worldUid === '' || !isStoredOnServer(worldUid)) needs = 'generator.finishing.needs.server'
     let jobs: BakeJob[] = []
     // The stages this world holds on the server, for this client's pipeline
-    // and — once saved — its current terrain.
+    // and its current terrain. Nothing while that terrain's id is not known
+    // yet (it arrives a moment after a save or a load, and refreshes this):
+    // a level of another terrain is not this world's.
     const stored = new Set<string>()
     if (!needs) {
       const [listed, artifacts] = await Promise.all([listBakes(), listServerArtifacts()])
       jobs = (listed ?? []).filter((j) => j.request?.worldUid === worldUid)
         .sort((a, b) => (b.queuedAt ?? '').localeCompare(a.queuedAt ?? ''))
       for (const a of artifacts?.artifacts ?? []) {
-        if (a.worldUid !== worldUid || (savedWorldId !== null && a.worldId !== savedWorldId)) continue
+        if (a.worldUid !== worldUid || a.worldId !== savedWorldId) continue
         const current = a.stage === 'L1' ? meshPipelineVersion(1) : a.stage.startsWith('L2:') ? meshTilePipelineVersion() : null
         if (a.pipelineVersion === current) stored.add(a.stage)
       }
     }
     const job = jobs.find((j) => j.request?.stage === 1) ?? null
     const active = job !== null && (job.state === 'queued' || job.state === 'running')
-    const levelDone = stored.has('L1') || job?.state === 'done'
+    // A finished job counts only for the terrain and the pipeline it was
+    // asked for; one for an earlier save of this world is not this world's
+    // level (its tile jobs failed, the level not being there, 2026-10-01).
+    const doneHere = (j: BakeJob | null, version: string): boolean =>
+      j !== null && j.state === 'done' && j.result?.worldId === savedWorldId && j.result.pipelineVersion === version
+    const levelDone = stored.has('L1') || doneHere(job, meshPipelineVersion(1))
     finishingState.textContent = needs ? t(needs)
       : active ? jobStateText(job)
       : levelDone ? t('generator.finishing.state.done')
@@ -4951,7 +5041,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const tileJob = tile ? jobs.find((j) => j.request?.stage === 2 && j.request.scope?.kind === 'tile' && (j.request.scope.x ?? 0) === tile.x && (j.request.scope.y ?? 0) === tile.y) ?? null : null
     const tileActive = tileJob !== null && (tileJob.state === 'queued' || tileJob.state === 'running')
     const sea = tile !== null && !tileHasLand(tile)
-    const tileDone = tile !== null && (stored.has(meshTileStage(tile)) || tileJob?.state === 'done')
+    const tileDone = tile !== null && (stored.has(meshTileStage(tile)) || doneHere(tileJob, meshTilePipelineVersion()))
     finishingTileState.textContent = needs ? ''
       : !tile ? t('generator.finishing.tile.pick')
       : sea ? t('generator.finishing.tile.sea')
@@ -4961,7 +5051,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       : tileJob && tileJob.state === 'failed' ? jobStateText(tileJob)
       : t('generator.finishing.tile.picked', { x: tile.x, y: tile.y })
     refineTileButton.disabled = needs !== null || !tile || sea || !levelDone || tileActive
-    if ((active || tileActive) && STEP_IDS[panelIndex] === 'finishing') finishingTimer = setTimeout(() => void refreshFinishing(), 2000)
+    // Not after the screen was left during the awaits above, and never two
+    // polls: a refresh that overlapped another one may arm only one timer.
+    stopFinishingPoll()
+    if (!screenDisposed && (active || tileActive) && STEP_IDS[panelIndex] === 'finishing') finishingTimer = setTimeout(() => void refreshFinishing(), 2000)
   }
   // A job's state line: waiting, running with its fraction, or failed.
   function jobStateText(job: BakeJob | null): string {
@@ -4970,9 +5063,24 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (job.state === 'running') return t('generator.finishing.state.running', { percent: Math.round((bakeFraction(job) ?? 0) * 100) })
     return t('generator.finishing.state.failed', { error: job.error ?? '' })
   }
+  // Why an order did not go through, said (2026-10-01): the outcomes were
+  // dropped, so a refused order (no rights, server busy, world not uploaded)
+  // only showed as a button that came back. The server's own message is the
+  // reason; the jobs window shows the rest of a job's life.
+  function reportCommission(outcome: CommissionOutcome): void {
+    if (outcome.ok) return
+    if (outcome.reason === 'unknownWorld') {
+      ctx.notifications.show({ message: t('notify.bake.needsUpload'), icon: '/icons/warning.png', durationMs: 8000 })
+      return
+    }
+    ctx.notifications.show({ message: t('notify.bake.failed', { reason: outcome.message ?? outcome.reason }), icon: '/icons/warning.png', durationMs: 8000 })
+  }
   refineButton.addEventListener('click', () => {
     refineButton.disabled = true
-    void commissionBake(worldUid, 1, AMPLIFY_EROSION_ROUNDS).then(() => refreshFinishing())
+    void commissionBake(worldUid, 1, AMPLIFY_EROSION_ROUNDS).then((outcome) => {
+      reportCommission(outcome)
+      return refreshFinishing()
+    })
   })
 
   // THE TILE PICK: a tap on the map in the finishing step picks the tile
@@ -5022,7 +5130,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const tile = pickedTile
     if (!tile) return
     refineTileButton.disabled = true
-    void commissionBake(worldUid, 2, AMPLIFY_EROSION_ROUNDS, tile).then(() => refreshFinishing())
+    void commissionBake(worldUid, 2, AMPLIFY_EROSION_ROUNDS, tile).then((outcome) => {
+      reportCommission(outcome)
+      return refreshFinishing()
+    })
   })
 
   function closeArtifacts(): void {
@@ -5107,11 +5218,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   async function saveTo(target: SaveTarget): Promise<void> {
     pendingSaveTarget = target
     await saveWorld()
-    // After saveWorld, so a failed save does not claim a resting place — and
-    // only for the two targets that ARE one. A download is an export: it hands
-    // the world to the user and nothing here holds it afterwards, so recording
-    // it would make the bar claim a place the world is not.
-    if (target !== 'download') lastSave = { target, at: new Date() }
+    // Where the world rests is recorded by deliverArchive, once the archive
+    // is actually there (2026-10-01). Set here, it claimed a place for a save
+    // that declined (a running Archean), that was still on its way, or whose
+    // upload failed and fell back to a download.
     updateSaveIndicator()
   }
 
@@ -5130,6 +5240,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Neither phase may be stepping: a snapshot taken mid-epoch would capture a world
     // the simulation has already moved past.
     if (tectonicsRunning || archeanRunning) return
+    // The planet preview's fields are the sample world's: the world's own
+    // come back before anything is baked (cleared, when none were kept, and
+    // then computed below). The preview returns with the next lever moved.
+    leavePlanetPreview()
     // Compute-on-save: bake everything the world's current pipeline stage allows,
     // independent of which panels were visited. Climate/hydrology/ecology need
     // eroded terrain (same gate as their panels) — pre-erosion, only elevation is
@@ -5232,8 +5346,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     overlay.clearMarkers()
     invalidateAfter('tectonics')
     restoredRefinement = await readRefinement(zip)
-    savedWorldId = null
+    forgetSavedWorldId()
     pickedTile = null
+    // The previous world's peoples start on the previous world's land.
+    migrationOrigins = []
     void noteSavedWorldId(file)
 
     const seed = readYamlValue(yaml, 'spec.seed') ?? ''
@@ -5643,7 +5759,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Note this is regenerate() only: running more tectonics or resetting
     // erosion also zero erosionRunCount, but those are the SAME world evolving.
     worldUid = ''
-    savedWorldId = null
+    forgetSavedWorldId()
     pickedTile = null
     worldRevision = 0
     archeanFinalised = false
@@ -5736,6 +5852,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // world's first render lands — a flash of the old world. Dropped, so the
     // preview stands until then instead.
     planetPreviewRealBase = null
+    planetPreviewRealClimate = null
     showPanel(GENESIS_PANEL_INDEX)
   })
   // The Archean's levers act from its next start (2026-09-29): a run goes on
@@ -6095,6 +6212,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   return {
     scene,
     dispose() {
+      // Everything that ticks on its own goes first: each one held the whole
+      // screen (rasters, mesh, refined climate) after it was left, and the
+      // month players painted into a disposed scene (2026-10-01).
+      screenDisposed = true
+      if (progressTicker !== undefined) clearInterval(progressTicker)
+      progressTicker = undefined
+      climatePlayer.stop()
+      ecologyPlayer.stop()
       stopSim()
       sidebar.dispose()
       stepBar.dispose()
@@ -6110,6 +6235,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       hoverTooltip?.dispose()
       riverLayer?.dispose()
       overlay.dispose()
+      reliefOverlay.dispose()
       mapView.dispose()
       worker.terminate()
       // scene.dispose() doesn't remove the camera module's own 'wheel'

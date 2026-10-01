@@ -83,6 +83,11 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
     // Old saves predate these two — see the notes at their use below.
     hotspots: snap.hotspots ?? [],
     sutures: snap.sutures ?? [],
+    // The epoch appends to the climate history in place: adopted, a run
+    // after a reset wrote into the kept hand-over snapshot, and the next
+    // reset's history held those epochs twice (2026-10-01).
+    climateHistory: snap.climateHistory ?? [],
+    lakeAges: snap.lakeAges ?? [],
   })
   return {
     width: snap.width,
@@ -100,8 +105,8 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
     epochMa: snap.epochMa ?? 1,
     sedimentExportM3: snap.sedimentExportM3 ?? 0,
     eustaticM: snap.eustaticM ?? 0,
-    climateHistory: snap.climateHistory ?? [],
-    lakeAges: snap.lakeAges ?? [],
+    climateHistory: owned.climateHistory,
+    lakeAges: owned.lakeAges,
     random: mulberry32(snap.rngState),
     warpSeed: snap.warpSeed,
     lattice,

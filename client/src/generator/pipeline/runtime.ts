@@ -129,7 +129,7 @@ function dropHandover(): void {
 let lastRawElevations: Float32Array | null = null
 // The last erosion pass's per-cell sediment flux (ErosionPassV2Result), the
 // river graph's sediment load. Null before any pass; stale after a restore
-// (the pass that made it is gone), which the graph tolerates as zero.
+// (the pass that made it is gone): a restore clears it.
 let lastSedimentFlux: Float32Array | null = null
 // The DISPLAY-space elevations of the last render (redistributed values the
 // map colors were computed from, with their grid size) — retained for the
@@ -1382,6 +1382,15 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   stopTicking()
   worldGeneration += 1
   dropHandover()
+  // What the previous world's last epoch and hydrology left: its
+  // pre-erosion heights (the sediment basins diffed the new world against
+  // them), its sediment flux (the river graph read it where the sizes
+  // matched) and its terminal basins (painted on the new world's first
+  // render). None of them describes the world being restored (2026-10-01).
+  meshBefore = null
+  lastSedimentFlux = null
+  renderDryBasin = null
+  renderSaltFlat = null
   if (message.archean) {
     sim = null
     archean = deserializeArchean(message.archean.snapshot, new Float32Array(message.archean.mantle), new Int16Array(message.archean.streak))

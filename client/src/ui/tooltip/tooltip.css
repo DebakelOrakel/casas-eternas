@@ -20,6 +20,12 @@
   font-weight: 600;
 }
 
+/* A help card without a label of its own (HelpTooltip): the sentence alone,
+   not set as a heading. */
+.tooltip-card > div.tooltip-card__body:first-child {
+  font-weight: inherit;
+}
+
 /* Map hover readout: short value lines, one per active overlay — never wrap. */
 .tooltip-card--readout {
   max-width: none;

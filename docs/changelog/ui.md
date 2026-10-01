@@ -3,6 +3,13 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-01
+- **fixed** Generator: saving while step 0 previews the sample world saves the world's own climate. `generator.step.world`
+- **fixed** Generator: a run stopped during its first epoch counts as eroded, and later stops no longer count an epoch short. `generator.step.tectonics`
+- **fixed** Generator: opening a world no longer keeps the previous world's peoples, basins or sediment. `generator.load`
+- **fixed** Generator: the title bar says a world is saved only once the save has arrived, and a refused job order says why. `generator.jobs`
+- **fixed** Generator: the finishing step counts a level only when it belongs to the world's current terrain. `generator.finishing`
+
 ## 2026-09-30
 - **fixed** Generator: continent names stay on top of water, rivers and relief.
 - **changed** Generator: zooming in no longer tilts the map; R and F tilt it, and zooming out brings it back to top-down.

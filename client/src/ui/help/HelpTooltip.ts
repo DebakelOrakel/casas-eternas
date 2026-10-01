@@ -32,13 +32,20 @@ export function createHelpTooltip(root: HTMLElement): HelpTooltip {
 
   function fill(base: string): void {
     card.el.textContent = ''
-    const label = document.createElement('div')
-    label.textContent = t(`${base}.label` as TKey)
-    card.el.appendChild(label)
+    // t() returns the key itself when a string is missing — then that line is
+    // left out rather than showing the raw key. A base with a help text and
+    // no label of its own is legitimate: the climate step's pick groups share
+    // one card, under each group's own title (generator.section.climateFields).
+    const labelText = t(`${base}.label` as TKey)
+    if (labelText !== `${base}.label`) {
+      const label = document.createElement('div')
+      label.textContent = labelText
+      card.el.appendChild(label)
+    }
     const helpText = t(`${base}.help` as TKey)
-    // t() returns the key itself when a string is missing — then show label only.
     if (helpText && helpText !== `${base}.help`) {
       const help = document.createElement('div')
+      help.className = 'tooltip-card__body'
       help.textContent = helpText
       card.el.appendChild(help)
     }
