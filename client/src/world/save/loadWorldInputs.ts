@@ -5,6 +5,7 @@ import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
 import { openWorld, type SavedMesh } from '../query'
 import type { World } from '../query'
 import type { WaterBody } from '../../generator/surface/hydrology'
+import type { WorldHistory } from './worldHistory'
 
 // Reading a saved world through the QUERYABLE side of its .zip — manifest.json
 // plus the baked layers (docs/decisions/queryable-world-save.md), deliberately
@@ -63,6 +64,8 @@ export interface WorldInputs {
   width: number
   height: number
   seedText: string
+  // The runs that made the world (worldHistory.ts), for level 1's replay.
+  history: WorldHistory
   // Seed for the deterministic near-field detail and for the bake's seed
   // roughness. It IS the generator's warpSeed (salted), derived from the
   // recipe's seed rather than stored — see world/query.openWorld.
@@ -191,6 +194,7 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
     width: world.width,
     height: world.height,
     seedText: world.recipe.seedText,
+    history: world.recipe.history,
     detailSeed: world.recipe.detailSeed,
     lithoSeed: world.recipe.lithoSeed,
     erosionControls: world.recipe.erosionControls,

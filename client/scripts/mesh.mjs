@@ -600,7 +600,12 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   }
   const parentSampler = M.sampler.createMeshSampler(parentMesh, parentZ)
   const t0 = performance.now()
-  const level = await M.bake.bakeMeshLevel(inputs, { level: 1, budget: M.bake.levelBudget(1), rounds: 4 })
+  // The refine path at half the parent's budget: this synthetic parent is
+  // built at budget 1, the ladder's level 1 (levelBudget(1), since
+  // 2026-10-01 made by replay rather than by refining), so refining to it
+  // would add nothing.
+  const REFINE_BUDGET = 0.5
+  const level = await M.bake.bakeMeshLevel(inputs, { level: 1, budget: REFINE_BUDGET, rounds: 4 })
   const ms = performance.now() - t0
   const split = (m, zz) => { let land = 0, sea = 0; for (let v = 0; v < m.vertexSlots; v++) if (m.vAlive[v]) { if (zz[v] > 0) land++; else sea++ } ; return `${land} land / ${sea} sea` }
   check(`level 1 is valid and denser (${parentMesh.aliveVertices} → ${level.mesh.aliveVertices} nodes, ${ms.toFixed(0)} ms)`, level.mesh.validate().length === 0 && level.mesh.aliveVertices > parentMesh.aliveVertices * 2, `parent ${split(parentMesh, parentZ)}, level ${split(level.mesh, level.z)}`)
@@ -622,7 +627,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check('no node crossed the coastline', crossed === 0, `${crossed} of ${level.mesh.vertexSlots}`)
   check('the level has a river graph with reaches', level.graph !== null && level.graph.reaches.length > 0, `${level.graph?.reaches.length ?? 0} reaches`)
   // Determinism, and the artifact round trip.
-  const again = await M.bake.bakeMeshLevel(inputs, { level: 1, budget: M.bake.levelBudget(1), rounds: 4 })
+  const again = await M.bake.bakeMeshLevel(inputs, { level: 1, budget: REFINE_BUDGET, rounds: 4 })
   let differ = 0
   for (let v = 0; v < level.mesh.vertexSlots; v++) if (again.z[v] !== level.z[v]) differ++
   check('the same save bakes the same level', differ === 0 && meshHash(again.mesh) === meshHash(level.mesh), `${differ} heights differ`)

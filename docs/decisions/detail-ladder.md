@@ -3,7 +3,7 @@ summary: The detail ladder after the first tile jobs — five levels a factor of
 date: 2026-10-01
 area: generator
 stage: decided
-status: decided 2026-10-01 — the ladder's five budgets (fork 1), level 1 as a replay of the whole history (fork 2), the coordinator with its graph and NATS from the start and the tile pick removed (fork 4). Also decided 2026-10-01: the tile sizes (fork 3), the seams (fork 5), the inflow through the coordinator (fork 6), the rain to be measured then built (fork 7), and the bus as its own target `relay` (fork 8). and the workers and the relay's subjects (fork 9). Built 2026-10-01: the relay, the coordinator and its workers, and the client's refine plan (build order step 3); the tile jobs it starts from are built too (decisions/tile-jobs.md). The exploration behind it is design/tile-coordinator.md.
+status: decided 2026-10-01 — the ladder's five budgets (fork 1), level 1 as a replay of the whole history (fork 2), the coordinator with its graph and NATS from the start and the tile pick removed (fork 4). Also decided 2026-10-01: the tile sizes (fork 3), the seams (fork 5), the inflow through the coordinator (fork 6), the rain to be measured then built (fork 7), and the bus as its own target `relay` (fork 8). and the workers and the relay's subjects (fork 9). Built 2026-10-01: the relay, the coordinator and its workers, and the client's refine plan (build order step 3); level 1 by replay (step 4); the tile jobs it starts from are built too (decisions/tile-jobs.md). The exploration behind it is design/tile-coordinator.md.
 ---
 
 # The detail ladder
@@ -64,6 +64,9 @@ budget 1. Option 1 keeps the painted valleys.
   that made it; the save's `history:` block names the build per run
   (world/save/worldHistory.ts). A world whose runs span two builds cannot
   be replayed; the job refuses it rather than baking a third world.
+  Confirmed 2026-10-01: no fallback to refining the end state — a world
+  saved before the code hash, or with other code, gets no level 1 until it
+  is made again (the engine changes too fast to carry old worlds).
 - **The whole recipe, in order.** `history:` holds every Archean and
   tectonics run with its values and epochs; still missing for a replay
   (worldHistory.ts says so): the resets and the loads in order. A reset
@@ -326,6 +329,94 @@ share them), and the build id (`git describe --dirty`, fixed at Vite's
 start) does not identify the code — a content hash of the generator
 sources should.
 
+## Step 5 — the tile levels: DECIDED 2026-10-01, plan
+
+What step 5 of the build order builds, worked out against the code as it
+stands (meshTile.ts, meshTileBake.ts, the coordinator). The four points
+at the end were decided by the user on 2026-10-01.
+
+**One tile, a level as a parameter.** Today's tile is one fixed shape
+(`TILE_CELLS` 8, `TILE_BUDGET` 1/16, `TILE_LEVEL` 2). It becomes a spec
+per level — cells, budget, grid offset, halo, edge steps, placement levels,
+position quantum — and `TILE_CONSTANTS` per level enters that level's
+pipeline version:
+
+| Level | Cells | Budget | Offset | Parent |
+|---|---|---|---|---|
+| L2 | 16 × 16 | 1/4 | 0 | L1, the global mesh |
+| L3 | 8 × 8 | 1/16 | 4 cells | the L2 tiles it overlaps |
+| L4 | 2 × 2 | 1/64 | 1 cell | the L3 tiles it overlaps (step 7) |
+
+Today's tile is L3's shape; its artifacts (`L2:x,y` today) are outdated by
+the change of level and parent. The float32-exact frame (`MAX_SIDE` 16
+cells at a quantum of 2⁻²⁰) does not hold an L2 tile with its halo
+(18 cells); the quantum scales with the level's floor spacing, so L2 runs
+at 2⁻¹⁸ with a 64-cell frame.
+
+**Staggered grids (fork 5), made exact.** A level's grid is shifted by
+half of ITS OWN tile against the level above: L2's seams at 16k fall in
+the middle of L3's tiles [16k − 4, 16k + 4]; a shift of half the PARENT's
+tile (8) would put them on L3's seams. Only the finest level's seams stay.
+
+**A patchwork parent.** An L3 tile's parent is not one mesh but the L2
+tiles it overlaps with its halo (two, four at a corner). `TileParent`
+becomes a sampler over tile artifacts: a point is answered by the tile
+that holds it, its edge row shared by both neighbours, so the surface is
+continuous; halos are never read. L2's parent stays the global L1 mesh
+(`TileParent` as today). A worker caches L1 once and the few L2 tiles an
+L3 tile needs.
+
+**The graph (fork 4, stage B; fork 6).** When level 1 finishes, its
+worker plans both tile levels from L1's drainage and reports them; the
+coordinator only wires what it is told:
+
+- the tasks: every L2 and L3 tile with land or shelf;
+- the parent edges: an L3 tile waits for the L2 tiles it overlaps;
+- the flow edges: a tile waits for the tiles of its level whose water
+  enters it, read off L1's routing (the drainage crossing each shared
+  edge, summed). For L3 the same L1 drainage is used, not L2's, so the
+  whole graph is known before the first tile runs.
+- cycles: two neighbours drain into each other at different places along
+  their edge, so cycles are the rule, not the exception. Cut
+  deterministically from L1 alone: of a pair, only the direction with the
+  larger crossing discharge is an edge; remaining longer cycles are cut at
+  their weakest edge, visited in tile order. A crossing against a cut edge
+  takes its inflow from the parent's discharge at the edge, as today.
+
+The worker reports `tasks: [{ level, x, y, deps: [[level, x, y], …] }]`
+in place of today's `tiles`; the coordinator turns each dep into a task
+id, adds the dependency on level 1, and publishes in that order. Go stays
+ignorant of the hydrology.
+
+**Inflow at every edge node.** A tile's artifact gains its outflow: per
+edge-row node, the discharge (engine units) that left the interior over
+it. The tile below reads its upstream tiles' outflow on the shared edge
+and adds each to the drainage weight of the first node inside (today's
+mechanism, applied per edge node instead of per L1 river crossing). Small
+streams then cross tile edges instead of being lost.
+
+**The order of building, each with its check:**
+1. The tile spec per level; L3 = today's tile with the offset, still on
+   L1. Check: today's tile harness passes per level; seams continuous.
+2. L2 tiles on L1 (inflow from L1's river graph, as today). Check:
+   valley depth L1 vs L2 on one region; time and nodes per tile.
+3. The patchwork parent; L3 on L2. Check: the parent surface continuous
+   across L2 seams; L3 valley depth vs L2.
+4. The graph: the L1 task reports tasks and deps, the coordinator wires
+   them; the outflow artifact and the inflow at every edge node. Check:
+   across every shared edge, the outflow upstream equals the inflow
+   below; no lost stream (channels ending at an edge) on one region.
+5. The L3 button in the finishing step; `maxRefineStage` 3.
+
+**Decided 2026-10-01 (all four as proposed):**
+1. The offset is half the level's own tile — the reading of fork 5 that
+   keeps seams apart.
+2. A cycle is cut by the larger crossing discharge, from L1 alone.
+3. L3's flow edges come from L1's drainage, not L2's (all known up
+   front; L2's own drainage would plan L3 only after every L2 tile).
+4. The erosion rounds are 12 on every level for now, calibrated with the
+   valley-depth checks of 2 and 3.
+
 ## Build order
 
 Each step ends with its measurement; the next starts on its result.
@@ -339,6 +430,17 @@ Each step ends with its measurement; the next starts on its result.
    jobs module's coordinator with its graph in bbolt, the workers' serving
    mode (fork 9). The tile pick goes.
 4. **L1 by replay** at budget 1, as the coordinator's first computation.
+   *Built 2026-10-01* (world/replay.ts, scripts/jobWorker.ts replayLevel):
+   the worker refuses a history whose runs' code is not its own (its
+   bundle carries the hash, scripts/buildWorker.mjs), replays at budget 4
+   and compares the mesh with the save's bit for bit, then replays at
+   budget 1 with a checkpoint every 10 epochs where one restores exactly
+   (before an epoch that computes its climate), and derives the waters
+   from the last epoch's climate (meshBakeStage.levelHydrology).
+   `levelBudget` is the ladder now (4, 1, 1/4, 1/16). The pipeline harness
+   checks the replay against the runtime across a load and a resume. Open:
+   the waters use the history's coarse climate, not the climate step's
+   refinement; the time at 2048 × 1024 is still to be measured.
 5. **L2 tiles at 1/4, 16 × 16**, from L1; today's tile job moves to L3
    with L2 as its parent; staggered grids; inflow at every edge node, then
    in flow order through the graph.

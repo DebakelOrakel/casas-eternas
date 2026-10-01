@@ -341,7 +341,7 @@ test('a world survives serialize -> restore unchanged', async () => {
   await growWorld(p)
   const base = p.count('rendered')
   p.dispatch({ type: 'tectonicsStart' })
-  await until(() => p.count('rendered') >= base + 4, { label: 'some tectonics' })
+  await until(() => p.count('rendered') >= base + 4, { label: 'some tectonics', timeout: 180000 })
   p.dispatch({ type: 'tectonicsStop' })
   await quiet(p)
   const saved = hash(p.last('rendered').elevation)
@@ -766,6 +766,87 @@ test('a stop between two epochs runs no epoch after it', async () => {
   const renderEvery = (await server.ssrLoadModule('/src/generator/pipeline/coupledEpoch.ts')).HISTORY_DEFAULTS.renderEvery
   check('no epoch starts after the stop', settled.epoch >= shown && settled.epoch <= shown + renderEvery, `shown epoch ${shown}, settled epoch ${settled.epoch}; renders: ${sequence}`)
   check('exactly one settled render follows the stop', p.settledRenders() === settledBefore + 1, `+${p.settledRenders() - settledBefore}`)
+})
+
+// --------------------------------------------------------- level 1's replay
+
+test("level 1's replay makes the saved world again, across a load and a checkpoint", async () => {
+  // world/replay.ts runs a world's history as direct calls — what the job
+  // worker does for level 1 (docs/decisions/detail-ladder.md, fork 2). At
+  // the history's budget it must land on the bytes the runtime saved, or
+  // the worker's own check refuses every world. The world here is made the
+  // way the screen makes one, with a load in the middle (the `restored`
+  // run), and the replay is resumed once from a checkpoint.
+  const RP = await server.ssrLoadModule('/src/world/runParams.ts')
+  const WS = await server.ssrLoadModule('/src/world/save/worldSpec.ts')
+  const WH = await server.ssrLoadModule('/src/world/save/worldHistory.ts')
+  const RE = await server.ssrLoadModule('/src/world/replay.ts')
+  const CE = await server.ssrLoadModule('/src/generator/pipeline/coupledEpoch.ts')
+  const values = Object.fromEntries(WS.WORLD_SPEC_FIELDS.map((f) => [f.path, f.input.default]))
+  const genesis = { mantleDiffusion: RP.mantleDiffusionFromVigour(values['genesis.mantleVigour']), seaLevelOffset: RP.seaLevelOffsetFromWater(values['genesis.water']) }
+  const start = { type: 'tectonicsStart', alluvium: values['tectonics.alluvium'], rockContrast: values['tectonics.rockContrast'], weather: RP.weatherParamsFrom((path) => values[path]) }
+  const run = async (q, n) => {
+    const settledBefore = q.settledRenders()
+    const renders = q.count('rendered')
+    q.dispatch(start)
+    await until(() => q.count('rendered') >= renders + n, { label: `${n} pictures`, timeout: 180000 })
+    q.dispatch({ type: 'tectonicsStop' })
+    await until(() => q.settledRenders() > settledBefore, { label: 'the settled render', timeout: 180000 })
+    await quiet(q)
+    return q.last('rendered').epoch
+  }
+  const serialize = async (q) => {
+    const before = q.count('worldData')
+    q.dispatch({ type: 'serializeWorld' })
+    await until(() => q.count('worldData') > before, { label: 'the serialized world' })
+    return q.last('worldData')
+  }
+
+  const p = await freshPipeline()
+  p.dispatch({ ...ARCHEAN_INIT, seed: 'replay', ...genesis })
+  await until(() => p.count('rendered') >= 1, { label: 'the first Archean render' })
+  p.dispatch({ type: 'genesisStart', ...genesis })
+  await until(() => p.count('genesisStatus') >= ARCHEAN_EPOCHS, { label: 'the Archean' })
+  p.dispatch({ type: 'genesisStop' })
+  await quiet(p)
+  const handover = p.count('rendered')
+  p.dispatch({ type: 'genesisFinalize' })
+  await until(() => p.count('rendered') > handover, { label: 'the hand-over render' })
+  await quiet(p)
+  const archeanEpochs = p.last('genesisStatus').epoch
+  // Two pictures are at least four epochs (one every third, the first
+  // always): a scheduled climate epoch inside the run, where a checkpoint
+  // is offered.
+  const before = await run(p, 2)
+  const saved = await serialize(p)
+  const q = await freshPipeline()
+  q.dispatch({ ...asRestore(saved, 'replay'), mesh: structuredClone(saved.mesh) })
+  await until(() => q.count('rendered') >= 1, { label: 'the restore render' })
+  await quiet(q)
+  const after = await run(q, 1)
+  const final = (await serialize(q)).mesh
+
+  const runOf = (epochs, fields, restored) => ({ epochs, generator: '', code: '', values: WH.runValues(fields, values), ...(restored ? { restored: true } : {}) })
+  const recipe = {
+    seed: 'replay', width: W, height: H,
+    history: { genesis: [runOf(archeanEpochs, WH.GENESIS_RUN_FIELDS)], tectonics: [runOf(before, WH.TECTONICS_RUN_FIELDS), runOf(after - before, WH.TECTONICS_RUN_FIELDS, true)] },
+  }
+  // Bytes, whatever holds them: the save's ArrayBuffers, the encoder's views.
+  const bytes = (x) => (x instanceof ArrayBuffer ? x : x.buffer.slice(x.byteOffset, x.byteOffset + x.byteLength))
+  const parts = (mesh) => ['nodes', 'connectivity', 'z', 'column'].map((k) => hash(bytes(mesh[k]))).join(' ')
+  const savedParts = parts(final)
+  let checkpoint = null
+  const replayed = await RE.replayHistory(recipe, {
+    budget: CE.HISTORY_DEFAULTS.budget,
+    onCheckpoint: (position, take) => { if (!checkpoint && position.epoch > 0) checkpoint = { position, snapshot: structuredClone(take()) } },
+  })
+  check('the replay lands on the saved mesh bit for bit', parts(CE.encodeCoupledTerrain(replayed.terrain)) === savedParts, `${before} + ${after - before} epochs`)
+  check('the replay offered a checkpoint inside a run', checkpoint !== null)
+  if (checkpoint) {
+    const resumed = await RE.replayHistory(recipe, { budget: CE.HISTORY_DEFAULTS.budget, resume: checkpoint })
+    check('a replay resumed from its checkpoint lands on the same bytes', parts(CE.encodeCoupledTerrain(resumed.terrain)) === savedParts, JSON.stringify(checkpoint.position))
+  }
+  check('a history without its code is refused', RE.replayRefusal(recipe.history, 'abc') !== null)
 })
 
 // ------------------------------------------------------------------------- run

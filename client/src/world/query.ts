@@ -4,6 +4,7 @@ import { decodeLayer, sampleAt } from './save/worldLayers'
 import { fieldSpec } from './save/fieldSpec'
 import type { FieldSpec } from './save/fieldSpec'
 import { readRecipeNumber, readRecipeValue } from './save/recipeYaml'
+import { historyFromYaml, type WorldHistory } from './save/worldHistory'
 import { deriveWorldId } from './identity'
 import { coastalWarpSeed } from '../generator/archean/archeanState'
 import { FINE_DETAIL_SEED_SALT } from '../generator/elevation/ridgedNoise'
@@ -70,6 +71,9 @@ export interface WorldRecipe {
   // field existed; deliberately not derived as a fallback, because a uid guessed
   // from different bytes than the one uploaded points at another world.
   worldUid: string
+  // How the world came about, run by run (save/worldHistory.ts) — what a
+  // replay of level 1 makes it again from (world/replay.ts).
+  history: WorldHistory
 }
 
 export interface World {
@@ -155,6 +159,7 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
       rockContrast: readRecipeNumber(yamlText, 'spec.tectonics.rockContrast') ?? readRecipeNumber(yamlText, 'spec.erosion.rockContrast'),
     },
     worldUid: readRecipeValue(yamlText, 'metadata.uid') ?? '',
+    history: historyFromYaml(yamlText),
   }
   const byName = new Map<string, WorldManifestLayer>()
   const tables = new Map<string, WorldManifestLayer>()

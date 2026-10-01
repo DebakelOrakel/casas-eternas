@@ -115,16 +115,16 @@ export type BakeOutcome =
 // a state the server has not itself observed yet, so it would be pure traffic.
 const POLL_MS = 2000
 
-// The server reports progress WITHIN the current phase, so `erosion 84%` is
+// The server reports progress WITHIN the current phase, so `history 84%` is
 // followed by `hydrology 0%`; each phase owns a band of the whole so the bar
-// runs one way. The phases are the mesh level bake's
-// (pipeline/meshBakeStage). Set, not measured: the level bake has not been
-// timed phase by phase yet (the raster bake's bands, measured, went with it
-// on 2026-09-29).
+// runs one way. The phases are level 1's replay (scripts/jobWorker.ts,
+// replayLevel): the check at the history's budget, the replay at level 1's,
+// the waters. From the epoch costs measured 2026-09-30 (budget 4 ~5 s,
+// budget 1 ~60 s an epoch): the check is ~8 % of the whole.
 const PHASE_BANDS: Record<string, [number, number]> = {
-  refine: [0, 0.3],
-  erosion: [0.3, 0.6],
-  hydrology: [0.6, 1],
+  verify: [0, 0.08],
+  history: [0.08, 0.97],
+  hydrology: [0.97, 1],
 }
 // A tile's (pipeline/meshTileBake, scripts/jobWorker's bakeTile): reading
 // level 1, building the tile's mesh, eroding it. Set, not measured.

@@ -23,14 +23,17 @@
 //   node job-worker.mjs '<job JSON>'
 // with the job on argv and a one-line JSON result on stdout, so the Go side
 // needs no framing beyond "read the last line".
-import { readFile, mkdir, writeFile, rename, readdir } from 'node:fs/promises'
+import { readFile, mkdir, writeFile, rename, readdir, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { Worker as NodeWorker, isMainThread } from 'node:worker_threads'
 import { availableParallelism } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
 import type { WorkerLike } from '../src/generator/surface/erosionEnginePool'
-import { bakeMeshLevel, levelBudget } from '../src/generator/pipeline/meshBakeStage'
+import { levelBudget, levelHydrology, type MeshLevel } from '../src/generator/pipeline/meshBakeStage'
+import { encodeCoupledTerrain, HISTORY_DEFAULTS } from '../src/generator/pipeline/coupledEpoch'
+import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../src/generator/climate/climateField'
+import { replayHistory, replayRefusal, type ReplayPosition, type ReplaySnapshot } from '../src/world/replay'
 import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact } from '../src/world/meshArtifacts'
 import { bakedTileToArtifact, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact } from '../src/world/meshTileArtifacts'
 import { bakeMeshTile } from '../src/generator/pipeline/meshTileBake'
@@ -39,7 +42,7 @@ import { SHELF_BREAK } from '../src/generator/elevation/elevationScale'
 import { connect } from '@nats-io/transport-node'
 import { AckPolicy, jetstream, jetstreamManager, type JsMsg } from '@nats-io/jetstream'
 import { createMeshSampler } from '../src/generator/mesh/meshSampler'
-import { levelBakeInputs, tileBakeInputs } from '../src/world/bakeInputs'
+import { tileBakeInputs } from '../src/world/bakeInputs'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
 import { artifactKey } from '../src/storage/ArtifactStore'
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../src/storage/ArtifactStore'
@@ -92,6 +95,9 @@ interface Job {
   // relay (internal/modules/jobs/coordinator.go): what it reports on
   // jobs.done.<taskId>.
   taskId?: string
+  // Where level 1's replay keeps its checkpoints (internal/modules/jobs,
+  // Spec.CheckpointDir); none without it.
+  checkpointDir?: string
   // Whether an artifact already in the store may stand for the result
   // (set by the coordinator for a plan's tasks): its key names the inputs and
   // the pipeline version, so it is the one this job would write.
@@ -319,6 +325,12 @@ function fail(message: string): never {
 // throughput knobs, never part of the result — the engine is byte-identical
 // across any worker count, which is what lets a job land on whatever
 // machine has cores to spare.
+// The generator code this bundle was built from (scripts/buildWorker.mjs
+// defines it): what a world's history must record for level 1's replay.
+// Empty where the source runs unbundled — every replay is then refused.
+declare const __GENERATOR_CODE__: string
+const GENERATOR_CODE: string = typeof __GENERATOR_CODE__ === 'string' ? __GENERATOR_CODE__ : ''
+
 function enginePool(): ({ createWorker: () => WorkerLike } & { stencilWorkers: number; refreshWorkers: number; pipelineDepth: number }) | undefined {
   const cores = availableParallelism()
   if (cores < 4) return undefined
@@ -340,7 +352,7 @@ async function main(): Promise<void> {
   // them. That happened once. This makes an image's pipeline version something
   // you can read off it in a second rather than infer from a missing cache hit.
   if (raw === '--version') {
-    process.stdout.write(`${JSON.stringify({ pipelineVersion: meshPipelineVersion(1), tilePipelineVersion: meshTilePipelineVersion() })}\n`)
+    process.stdout.write(`${JSON.stringify({ pipelineVersion: meshPipelineVersion(1), tilePipelineVersion: meshTilePipelineVersion(), code: GENERATOR_CODE })}\n`)
     return
   }
   if (raw === '--serve') {
@@ -450,16 +462,134 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
       }
     }
   }
-  const bakeInputs = levelBakeInputs(inputs)
-  if (!bakeInputs) throw new Error('the world carries no mesh (a save from before formatVersion 3, or never eroded) — nothing to refine')
-  const level = await bakeMeshLevel(bakeInputs, { level: 1, budget: levelBudget(1), rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
+  const level = await replayLevel(job, inputs, onProgress)
   const durationMs = Date.now() - started
   const artifact = meshLevelToArtifact(level)
   if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
   if (cache) remember(cache.levels, `${key.worldUid}/${key.worldId}/${key.pipelineVersion}`, { artifact }, CACHED_LEVELS)
+  if (job.checkpointDir) await rm(checkpointPath(job.checkpointDir, inputs), { recursive: true, force: true })
   return {
     result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs },
     tiles: landTiles(inputs),
+  }
+}
+
+// LEVEL 1 BY REPLAY (docs/decisions/detail-ladder.md, fork 2): the world's
+// history made again at level 1's budget, its waters derived on the
+// result. Three phases:
+//   verify   — the history at its own budget must land on the save's mesh
+//              bit for bit, or this code cannot make this world again;
+//   history  — the replay at level 1's budget, with checkpoints;
+//   hydrology — the level's waters from its last epoch's climate.
+// Refused, not approximated, where the world's code is not this bundle's.
+async function replayLevel(job: Job, inputs: WorldInputs, onProgress: (phase: string, fraction: number) => void): Promise<MeshLevel> {
+  const refusal = replayRefusal(inputs.history, GENERATOR_CODE)
+  if (refusal) throw new Error(refusal)
+  if (!inputs.mesh) throw new Error('the world carries no mesh — make it again to refine it')
+  const recipe = { seed: inputs.seedText, width: inputs.width, height: inputs.height, history: inputs.history }
+  const pool = job.pool === false ? undefined : enginePool()
+  const dir = job.checkpointDir ? checkpointPath(job.checkpointDir, inputs) : null
+  const resume = dir ? await readCheckpoint(dir) : null
+  // A checkpoint is past the check: the run that wrote it passed it.
+  if (!resume) {
+    onProgress('verify', 0)
+    const check = await replayHistory(recipe, { budget: HISTORY_DEFAULTS.budget, pool, onEpoch: (done, total) => onProgress('verify', done / total) })
+    const parted = meshParts(encodeCoupledTerrain(check.terrain), inputs.mesh)
+    if (parted) throw new Error(`the replay does not make this world again (its ${parted} differs from the save's) — this code cannot refine it`)
+  }
+  onProgress('history', 0)
+  let lastCheckpoint = resume?.done ?? 0
+  let done = lastCheckpoint
+  const { terrain } = await replayHistory(recipe, {
+    budget: levelBudget(1),
+    pool,
+    resume: resume ? { position: resume.position, snapshot: resume.snapshot } : undefined,
+    onEpoch: (epochs, total) => {
+      done = epochs
+      onProgress('history', epochs / total)
+    },
+    onCheckpoint: dir
+      ? async (position, take) => {
+        if (done - lastCheckpoint < CHECKPOINT_EVERY_EPOCHS) return
+        await writeCheckpoint(dir, position, done, take())
+        lastCheckpoint = done
+      }
+      : undefined,
+  })
+  onProgress('hydrology', 0)
+  const weather = terrain.weather?.result
+  if (!terrain.routing || !weather) throw new Error('the replay ended without its last epoch\'s state')
+  const water = levelHydrology(terrain.mesh, terrain.z, terrain.routing, terrain.areas, terrain.sedimentFlux, {
+    precipitation: weather.seasonal.annual, temperature: weather.temperature, monsoonIndex: weather.seasonal.index,
+    climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
+  }, { width: inputs.width, height: inputs.height, budget: levelBudget(1), detailSeed: inputs.detailSeed })
+  onProgress('hydrology', 1)
+  return { level: 1, mesh: terrain.mesh, z: terrain.z, routing: terrain.routing, ...water, inserted: 0 }
+}
+
+// Which part of a replayed mesh differs from the save's, or null.
+function meshParts(mine: { nodes: Float32Array; connectivity: Uint8Array; z: Float32Array; column: Uint8Array }, saved: NonNullable<WorldInputs['mesh']>): string | null {
+  const same = (a: ArrayBufferView, b: ArrayBufferView): boolean =>
+    a.byteLength === b.byteLength && Buffer.compare(Buffer.from(a.buffer, a.byteOffset, a.byteLength), Buffer.from(b.buffer, b.byteOffset, b.byteLength)) === 0
+  if (!same(mine.nodes, saved.nodes)) return 'node positions'
+  if (!same(mine.connectivity, saved.connectivity)) return 'triangulation'
+  if (!same(mine.z, saved.z)) return 'heights'
+  if (saved.column && !same(mine.column, saved.column)) return 'sediment column'
+  return null
+}
+
+// CHECKPOINTS of level 1's replay: hours of one task, so a worker that dies
+// leaves the state of an epoch for the one that takes the task over. Kept
+// per world revision and code; written whole into a fresh directory, then
+// renamed over the last, so a crash mid-write leaves the previous one.
+// Every CHECKPOINT_EVERY_EPOCHS epochs (~10 min at level 1), and only where
+// one restores exactly (world/replay.ts, onCheckpoint).
+const CHECKPOINT_EVERY_EPOCHS = 10
+
+function checkpointPath(root: string, inputs: WorldInputs): string {
+  return join(root, `${inputs.worldUid || 'no-uid'}-${inputs.worldId}-${GENERATOR_CODE}`)
+}
+
+const CHECKPOINT_ARRAYS = ['oceanAge', 'mantle', 'latticeAccumulated', 'latticeLockedEpochs', 'latticeLastClassCode'] as const
+const CHECKPOINT_MESH = ['nodes', 'connectivity', 'z', 'column'] as const
+
+async function writeCheckpoint(dir: string, position: ReplayPosition, done: number, snapshot: ReplaySnapshot): Promise<void> {
+  const fresh = `${dir}.${randomUUID()}`
+  await mkdir(fresh, { recursive: true })
+  const bytes = (a: ArrayBufferView): Uint8Array => new Uint8Array(a.buffer, a.byteOffset, a.byteLength)
+  await writeFile(join(fresh, 'position.json'), JSON.stringify({ position, done }))
+  await writeFile(join(fresh, 'state.json'), JSON.stringify(snapshot.state))
+  for (const name of CHECKPOINT_ARRAYS) await writeFile(join(fresh, `${name}.bin`), bytes(snapshot[name]))
+  for (const name of CHECKPOINT_MESH) await writeFile(join(fresh, `mesh.${name}.bin`), bytes(snapshot.mesh[name]))
+  await rm(dir, { recursive: true, force: true })
+  await rename(fresh, dir)
+}
+
+async function readCheckpoint(dir: string): Promise<{ position: ReplayPosition; done: number; snapshot: ReplaySnapshot } | null> {
+  try {
+    const { position, done } = JSON.parse(await readFile(join(dir, 'position.json'), 'utf8')) as { position: ReplayPosition; done: number }
+    const read = async (name: string): Promise<ArrayBuffer> => {
+      const b = await readFile(join(dir, name))
+      return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer
+    }
+    const snapshot: ReplaySnapshot = {
+      state: JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')),
+      oceanAge: new Float32Array(await read('oceanAge.bin')),
+      mantle: new Float32Array(await read('mantle.bin')),
+      latticeAccumulated: new Float32Array(await read('latticeAccumulated.bin')),
+      latticeLockedEpochs: new Int16Array(await read('latticeLockedEpochs.bin')),
+      latticeLastClassCode: new Int8Array(await read('latticeLastClassCode.bin')),
+      mesh: {
+        nodes: new Float32Array(await read('mesh.nodes.bin')),
+        connectivity: new Uint8Array(await read('mesh.connectivity.bin')),
+        z: new Float32Array(await read('mesh.z.bin')),
+        column: new Uint8Array(await read('mesh.column.bin')),
+      },
+    }
+    process.stderr.write(`resuming level 1 from epoch ${done} (${dir})\n`)
+    return { position, done, snapshot }
+  } catch {
+    return null
   }
 }
 

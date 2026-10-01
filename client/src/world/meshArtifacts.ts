@@ -9,6 +9,7 @@ import { torusDomain } from '../generator/core/domain'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
 import { levelBudget } from '../generator/pipeline/meshBakeStage'
+import { HISTORY_DEFAULTS } from '../generator/pipeline/coupledEpoch'
 import { LITHO_LATTICE_X, LITHO_LATTICE_Y } from '../generator/surface/erosionForcingFields'
 import { DIFFUSION_PAIR_CAP, EPSILON_FLOOD_STEP } from '../generator/surface/erosionEngine'
 import { DEFAULT_ROUTING_EVERY } from '../generator/mesh/meshErosion'
@@ -67,9 +68,14 @@ export const MESH_BAKE_CONSTANTS: Record<string, number> = {
 
 // The constants a level's version is derived from — and what its meta
 // records, so the version can be recomputed from the meta (it recorded a
-// subset until 2026-10-01).
+// subset until 2026-10-01). Level 1 is the history replayed at its budget
+// (world/replay.ts, since 2026-10-01): the history's settings are part of
+// what it is, and `replay` parts it from the levels refined before.
 export function meshLevelPipelineConstants(level: number, rounds: number = AMPLIFY_EROSION_ROUNDS): Record<string, number> {
-  return { ...MESH_BAKE_CONSTANTS, meshBudget: levelBudget(level), rounds }
+  const replay = level === 1
+    ? { replay: 1, ...Object.fromEntries(Object.entries(HISTORY_DEFAULTS).filter(([k]) => k !== 'budget' && k !== 'renderEvery').map(([k, v]) => [`history_${k}`, v])) }
+    : {}
+  return { ...MESH_BAKE_CONSTANTS, ...replay, meshBudget: levelBudget(level), rounds }
 }
 
 export function meshPipelineVersion(level: number, rounds: number = AMPLIFY_EROSION_ROUNDS): string {

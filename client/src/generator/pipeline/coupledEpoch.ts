@@ -447,8 +447,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // chain every epoch and never say so.
   const paramsKey = JSON.stringify(weatherParams)
   const cached = terrain.weather
-  const climateDue = !cached || cached.params !== paramsKey || sim.epoch - cached.epoch >= climateEvery
-  const weather = climateDue ? computeWeather(coarseZ, CLIMATE_RES_X, CLIMATE_RES_Y, weatherParams) : cached.result
+  const climateDue = climateDueAt(sim.epoch, cached, paramsKey, climateEvery)
+  const weather = climateDue || !cached ? computeWeather(coarseZ, CLIMATE_RES_X, CLIMATE_RES_Y, weatherParams) : cached.result
   if (climateDue) terrain.weather = { epoch: sim.epoch, params: paramsKey, result: weather }
   const precipitation = weather.seasonal.annual
   const climateCellM = (width / CLIMATE_RES_X) * METERS_PER_CELL
@@ -776,6 +776,15 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
 }
 
 // The terrain's bytes for a save or a harness hash.
+// Whether the epoch numbered `epoch` computes its climate rather than
+// reusing the terrain's cached weather: none cached (the first epoch, or
+// after a restore), other parameters, or the schedule. The epoch's number
+// is the one it runs as — stepEpoch advances sim.epoch before the climate,
+// so a caller asking before a step passes sim.epoch + 1.
+export function climateDueAt(epoch: number, cached: CoupledTerrain['weather'], paramsKey: string, climateEvery: number): boolean {
+  return !cached || cached.params !== paramsKey || epoch - cached.epoch >= climateEvery
+}
+
 export function encodeCoupledTerrain(terrain: CoupledTerrain): { nodes: Float32Array; connectivity: Uint8Array; z: Float32Array; column: Uint8Array } {
   const order = new Int32Array(terrain.mesh.aliveVertices)
   for (let i = 0; i < order.length; i++) order[i] = i

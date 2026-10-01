@@ -93,8 +93,9 @@ reduction is a *choice*, and `downsampleMax` is the wrong one for anything
 sampled per point. `lakeDepth` used to take it, which let a single lake cell
 claim its whole 62 km cell and inflated saved lake area 4× (2026-08-09).
 
-**The save is the sole authority.** A finer mesh level (the level bake,
-`pipeline/meshBakeStage.ts`) is derived: an artifact, never serialized into a
+**The save is the sole authority.** A finer mesh level is derived: level 1
+the save's recipe replayed at its budget (`world/replay.ts`, since
+2026-10-01), the tiles refined from it — artifacts, never serialized into a
 save and never fed back into the generator. "Finest available" is therefore
 never the right rule for picking a source. (The 4k/8k raster amplification that
 this rule was written for went on 2026-09-29.)

@@ -75,9 +75,11 @@ export interface MeshLevel {
   inserted: number
 }
 
-// The level's budget by its number: each level halves the spacing.
+// The level's budget by its number — the detail ladder (docs/decisions/
+// detail-ladder.md, fork 1): level 0 at the history's 4, each level a
+// quarter of the one before (4, 1, 1/4, 1/16).
 export function levelBudget(level: number): number {
-  return Math.pow(0.5, level)
+  return 4 / Math.pow(4, level)
 }
 
 export async function bakeMeshLevel(inputs: MeshBakeInputs, options: MeshBakeOptions): Promise<MeshLevel> {
@@ -112,36 +114,53 @@ export async function bakeMeshLevel(inputs: MeshBakeInputs, options: MeshBakeOpt
   })
   options.onProgress?.('hydrology', 0)
   const z = result.z
-  let discharge: Float32Array = new Float32Array(mesh.vertexSlots)
-  let waterBodies: WaterBody[] = []
-  let graph: RiverGraph | null = null
-  let rivers: RiverPolylines | null = null
-  if (inputs.precipitation && inputs.temperature) {
-    const sub = meshSubstrate(mesh, result.routing, areas)
-    const precipitation = inputs.precipitation
-    const temperature = inputs.temperature
-    const CRX = inputs.climateResX || CLIMATE_RES_X
-    const CRY = inputs.climateResY || CLIMATE_RES_Y
-    discharge = accumulateDischargeOn(sub, z, precipitation, CRX, CRY)
-    const lakes = computeLakesOn(sub, discharge, z, temperature, precipitation, CRX, CRY)
-    waterBodies = lakes.bodies
-    // The channel criterion as the raster bake derives it: the canonical
-    // density over the world's mean runoff.
-    const macroLand = new Float32Array(width * height)
-    const meanRunoff = meanLandRunoff(precipitation, macroLandFrom(mesh, z, width, height, macroLand), width, height, CRX, CRY)
-    const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), meanRunoff)
-    const maxDischarge = maxDischargeOverLand(discharge, z)
-    graph = buildRiverGraph({
-      substrate: sub, discharge, elevation: z, threshold, maxDischarge,
-      bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux: result.sedimentFlux,
-      regime: accumulateRegimeInputsOn(sub, z, temperature, precipitation, inputs.monsoonIndex ?? undefined, CRX, CRY),
-      criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
-    })
-    graph.courses = computeRiverCourses(graph, { cellM: (WORLD_WIDTH_METERS / width) * options.budget, seed: inputs.detailSeed })
-    rivers = riverPolylinesFromGraph(graph, maxDischarge)
-  }
+  const water = inputs.precipitation && inputs.temperature
+    ? levelHydrology(mesh, z, result.routing, areas, result.sedimentFlux, {
+      precipitation: inputs.precipitation, temperature: inputs.temperature, monsoonIndex: inputs.monsoonIndex,
+      climateResX: inputs.climateResX || CLIMATE_RES_X, climateResY: inputs.climateResY || CLIMATE_RES_Y,
+    }, { width, height, budget: options.budget, detailSeed: inputs.detailSeed })
+    : { discharge: new Float32Array(mesh.vertexSlots), waterBodies: [], graph: null, rivers: null }
   options.onProgress?.('hydrology', 1)
-  return { level: options.level, mesh, z, routing: result.routing, discharge, waterBodies, graph, rivers, inserted: refined.inserted }
+  return { level: options.level, mesh, z, routing: result.routing, ...water, inserted: refined.inserted }
+}
+
+// The climate a level's waters are derived from, on the climate grid.
+export interface LevelClimate {
+  precipitation: Float32Array
+  temperature: Float32Array
+  monsoonIndex: Float32Array | null
+  climateResX: number
+  climateResY: number
+}
+
+// A level's waters from its terrain: the discharge, the lakes, the channel
+// criterion and the river graph with its courses. One derivation for the
+// two ways a level is made — refined from the save (bakeMeshLevel) and
+// replayed from the recipe (world/replay.ts) — so they draw the same
+// rivers from the same terrain.
+export function levelHydrology(
+  mesh: PeriodicTriangulation, z: Float32Array, routing: MeshRouting, areas: Float32Array, sedimentFlux: Float32Array,
+  climate: LevelClimate, level: { width: number; height: number; budget: number; detailSeed: number },
+): { discharge: Float32Array; waterBodies: WaterBody[]; graph: RiverGraph; rivers: RiverPolylines } {
+  const { width, height } = level
+  const { precipitation, temperature, climateResX: CRX, climateResY: CRY } = climate
+  const sub = meshSubstrate(mesh, routing, areas)
+  const discharge = accumulateDischargeOn(sub, z, precipitation, CRX, CRY)
+  const lakes = computeLakesOn(sub, discharge, z, temperature, precipitation, CRX, CRY)
+  // The channel criterion as the raster bake derives it: the canonical
+  // density over the world's mean runoff.
+  const macroLand = new Float32Array(width * height)
+  const meanRunoff = meanLandRunoff(precipitation, macroLandFrom(mesh, z, width, height, macroLand), width, height, CRX, CRY)
+  const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), meanRunoff)
+  const maxDischarge = maxDischargeOverLand(discharge, z)
+  const graph = buildRiverGraph({
+    substrate: sub, discharge, elevation: z, threshold, maxDischarge,
+    bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux,
+    regime: accumulateRegimeInputsOn(sub, z, temperature, precipitation, climate.monsoonIndex ?? undefined, CRX, CRY),
+    criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
+  })
+  graph.courses = computeRiverCourses(graph, { cellM: (WORLD_WIDTH_METERS / width) * level.budget, seed: level.detailSeed })
+  return { discharge, waterBodies: lakes.bodies, graph, rivers: riverPolylinesFromGraph(graph, maxDischarge) }
 }
 
 // The land mask the mean runoff is taken over — the macro grid's cells

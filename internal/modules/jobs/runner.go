@@ -79,6 +79,10 @@ type Spec struct {
 	// one there is the one the task would write.
 	Reuse bool `json:"reuse,omitempty"`
 
+	// Where a long task keeps its checkpoints (level 1's replay), on a disk
+	// every worker that may take the task over can read. Empty: none kept.
+	CheckpointDir string `json:"checkpointDir,omitempty"`
+
 	// The bake job's id.
 	//
 	// The cluster runner names its Job object after it, which is what makes a

@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -739,6 +740,16 @@ func (m *Module) buildSpec(ctx context.Context, id string, request Request) (Spe
 			return Spec{}, fmt.Errorf("cannot issue a token for the bake job: %w", err)
 		}
 		spec.AuthToken = token
+	}
+	// The local workers share this machine's disk: a long task keeps its
+	// checkpoints under the module's storage, where the worker that takes
+	// it over after a crash finds them.
+	if m.cfg.StorageDir != "" && !m.clusterMode {
+		dir, err := filepath.Abs(filepath.Join(m.cfg.StorageDir, "checkpoints"))
+		if err != nil {
+			return Spec{}, err
+		}
+		spec.CheckpointDir = dir
 	}
 	// Only a Job on another node learns its own id and where to report:
 	// progress goes to THIS server's API (JobsURL). A coordinator's task
