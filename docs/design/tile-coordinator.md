@@ -3,7 +3,7 @@ summary: A direction for the detail ladder after the first tile jobs — level 1
 date: 2026-09-30
 area: platform
 stage: idea
-status: design discussion of 2026-09-30 — measured where marked; decided only that the coordinator's state is bbolt; nothing of the coordinator built. The tile jobs it builds on are built (decisions/tile-jobs.md).
+status: design discussion of 2026-09-30 — measured where marked; decided only that the coordinator's state is bbolt; nothing of the coordinator built. The tile jobs it builds on are built (decisions/tile-jobs.md). Carried into decisions/detail-ladder.md on 2026-10-01 (the ladder's budgets decided, the rest proposed there).
 ---
 
 # Tile coordinator

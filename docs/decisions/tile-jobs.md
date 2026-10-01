@@ -3,7 +3,7 @@ summary: How the top level of the detail ladder runs — level 1 stays the one g
 date: 2026-09-29
 area: generator
 stage: decided
-status: decided 2026-09-29; the tile's mesh, its bake, its artifact and its job built 2026-09-29/30 (mesh/meshTile.ts, pipeline/meshTileBake.ts, world/meshTileArtifacts.ts); the pick in the Finishing step 2026-09-30. Refines fork 3 of adaptive-mesh.md (the ladder, the tile) with the numbers and the seam rule it left open.
+status: decided 2026-09-29; the tile's mesh, its bake, its artifact and its job built 2026-09-29/30 (mesh/meshTile.ts, pipeline/meshTileBake.ts, world/meshTileArtifacts.ts); the pick in the Finishing step 2026-09-30. Refines fork 3 of adaptive-mesh.md (the ladder, the tile) with the numbers and the seam rule it left open. decisions/detail-ladder.md (2026-10-01) puts five levels a factor of 4 apart: this tile becomes level 3, level 1 is to be replayed rather than refined.
 ---
 
 # Tile jobs
