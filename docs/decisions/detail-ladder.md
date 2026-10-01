@@ -3,7 +3,7 @@ summary: The detail ladder after the first tile jobs — five levels a factor of
 date: 2026-10-01
 area: generator
 stage: decided
-status: decided 2026-10-01 — the ladder's five budgets (fork 1), level 1 as a replay of the whole history (fork 2), the coordinator with its graph and NATS from the start and the tile pick removed (fork 4). Also decided 2026-10-01: the tile sizes (fork 3), the seams (fork 5), the inflow through the coordinator (fork 6), the rain to be measured then built (fork 7), and the bus as its own target `relay` (fork 8). and the workers and the relay's subjects (fork 9). Nothing of it built; the tile jobs it starts from are (decisions/tile-jobs.md). The exploration behind it is design/tile-coordinator.md.
+status: decided 2026-10-01 — the ladder's five budgets (fork 1), level 1 as a replay of the whole history (fork 2), the coordinator with its graph and NATS from the start and the tile pick removed (fork 4). Also decided 2026-10-01: the tile sizes (fork 3), the seams (fork 5), the inflow through the coordinator (fork 6), the rain to be measured then built (fork 7), and the bus as its own target `relay` (fork 8). and the workers and the relay's subjects (fork 9). Built 2026-10-01: the relay, the coordinator and its workers, and the client's refine plan (build order step 3); the tile jobs it starts from are built too (decisions/tile-jobs.md). The exploration behind it is design/tile-coordinator.md.
 ---
 
 # The detail ladder
@@ -279,7 +279,8 @@ declares its streams; (3) the coordinator on bbolt with today's two task
 kinds (level 1, tile), a Go test with a fake worker, and the event
 stream; (4) the workers' serving mode and the local pool; (5) the client:
 the tile pick goes, "refine the world" orders the graph, progress by
-events; (6) Kubernetes, later.
+events; (6) Kubernetes, later. Steps (1)–(5) built 2026-10-01; the
+refine plan is level 1 then every tile with land, today's two task kinds.
 
 ## Measured 2026-10-01 (build steps 1 and 2)
 

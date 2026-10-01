@@ -1,6 +1,6 @@
 import { t, type TKey } from '../../i18n/i18n'
 import { formatWhen } from '../../ui/format'
-import { bakeFraction, cancelBake, jobStageName, listBakes, type BakeJob } from '../../world/jobClient'
+import { bakeFraction, cancelBake, jobStageName, listBakes, watchJobs, type BakeJob } from '../../world/jobClient'
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { icon } from '../../ui/chooserIcons'
@@ -11,8 +11,9 @@ import './artifactChooser.css'
 // The jobs window: the fine simulation of the viewer's worlds on the server —
 // what waits, runs, is done (the design canvas's "Jobliste", Main.dc.html),
 // full screen like the artifacts, whose frame and table it shares. One row
-// per job: a level of a world. It asks the server again every two seconds
-// while it is open. No pausing (decided 2026-09-29); a job is cancelled, and
+// per job: a level of a world. While it is open it follows the server's job
+// events (watchJobs), and asks every two seconds where the stream is not to
+// be had. No pausing (decided 2026-09-29); a job is cancelled, and
 // that confirms in place.
 
 export interface JobChooserOptions {
@@ -58,6 +59,7 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
   let jobs: BakeJob[] | null = []
   let worldNames = new Map<string, string>()
   let timer: ReturnType<typeof setInterval> | null = null
+  let unwatch: (() => void) | null = null
   // Rows armed for cancelling survive a repaint: the list is redrawn every
   // two seconds, and a confirmation that vanished with it would never land.
   const armed = new Map<string, ReturnType<typeof setTimeout>>()
@@ -76,6 +78,16 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     const listed = await listBakes()
     if (seq !== reloadSeq) return
     jobs = listed
+    paint()
+  }
+
+  // One job changed, as the event stream sends it: in place, or on top when
+  // it is new (the list is newest first).
+  function apply(job: BakeJob): void {
+    if (!jobs) return
+    const index = jobs.findIndex((j) => j.id === job.id)
+    if (index >= 0) jobs[index] = job
+    else jobs.unshift(job)
     paint()
   }
 
@@ -188,6 +200,8 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
   function stopPolling(): void {
     if (timer !== null) clearInterval(timer)
     timer = null
+    unwatch?.()
+    unwatch = null
   }
 
   paintStatic()
@@ -205,7 +219,10 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
       closeButton.focus()
       void loadNames().then(reload)
       stopPolling()
-      timer = setInterval(() => void reload(), POLL_MS)
+      unwatch = watchJobs(apply, () => {
+        unwatch = null
+        if (!root.hidden) timer = setInterval(() => void reload(), POLL_MS)
+      })
     },
     close() {
       root.hidden = true

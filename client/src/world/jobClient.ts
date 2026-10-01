@@ -46,13 +46,17 @@ export interface BakeJob {
   // The order that produced the job, as the server records it. What lets a
   // screen recognise a job as being about ITS world and stage when somebody
   // else placed the order — see findActiveBake.
-  request?: { worldUid: string; stage: number; scope?: { kind: string; x?: number; y?: number } }
+  request?: { worldUid: string; stage: number; scope?: { kind: string; x?: number; y?: number }; plan?: JobPlan }
   queuedAt?: string
   startedAt?: string
   // The caller's level on the job's world ("viewer", "editor", "owner", or
   // "admin" for the operator). Cancelling takes an editor.
   callerLevel?: string
 }
+
+// A job's plan (docs/decisions/detail-ladder.md, "Coordinator"): `refine` is
+// level 1 of the world, then every tile of it that holds land at level 2.
+export type JobPlan = 'refine'
 
 // The jobs the caller may see (the server lists by the worlds' access), newest
 // first; null when there is no server or no bake module to ask.
@@ -131,7 +135,13 @@ const TILE_PHASE_BANDS: Record<string, [number, number]> = {
 
 // Undefined for a phase with no band — the cluster runner's `pending` and
 // `running`, where any bar would be invented rather than measured.
+//
+// A plan's fraction is that of its current part: level 1 by its phases, then
+// `tiles`, whose percent the coordinator gives over all tiles. Not one bar
+// over both, because the parts differ by two orders of magnitude (measured
+// 2026-10-01: level 1 ~30 s, the tiles of one world ~2.5 h on two workers).
 export function bakeFraction(job: BakeJob): number | undefined {
+  if (job.phase === 'tiles') return Math.max(0, Math.min(1, job.percent / 100))
   const bands = job.request?.stage === 2 ? TILE_PHASE_BANDS : PHASE_BANDS
   const band = bands[job.phase ?? '']
   if (!band) return undefined
@@ -169,23 +179,26 @@ export async function canCommissionBakes(): Promise<boolean> {
 }
 
 // The artifact stage a job produces, as the server names it (the jobs
-// module's StageName): `L1`, or `L2:x,y` for a tile.
+// module's StageName): `L1`, or `L2:x,y` for a tile; `L1+L2` for a refine
+// plan, which produces both.
 export function jobStageName(job: BakeJob): string {
   const request = job.request
   if (!request) return '?'
+  if (request.plan === 'refine') return `L${request.stage}+L${request.stage + 1}`
   const scope = request.scope
   if (scope?.kind === 'tile') return `L${request.stage}:${scope.x ?? 0},${scope.y ?? 0}`
   return `L${request.stage}`
 }
 
 // `tile` orders one tile of the top level (stage 2); without it the whole
-// world at `stage`.
+// world at `stage`. `plan` orders a plan of tasks instead of one (JobPlan).
 export async function commissionBake(
   worldUid: string,
   stage: number,
   erosionRounds: number,
-  tile?: { x: number; y: number },
+  order: { tile?: { x: number; y: number }; plan?: JobPlan } = {},
 ): Promise<CommissionOutcome> {
+  const { tile, plan } = order
   const base = await apiBase()
   if (!base) return { ok: false, reason: 'offline' }
 
@@ -199,7 +212,7 @@ export async function commissionBake(
       // including this one, so a server whose default had drifted would bake a
       // real world under a key nobody asks for — the silent failure again, by
       // a different route.
-      body: JSON.stringify({ worldUid, stage, erosionRounds, ...(tile ? { scope: { kind: 'tile', x: tile.x, y: tile.y } } : {}) }),
+      body: JSON.stringify({ worldUid, stage, erosionRounds, ...(tile ? { scope: { kind: 'tile', x: tile.x, y: tile.y } } : {}), ...(plan ? { plan } : {}) }),
     })
   } catch {
     return { ok: false, reason: 'offline' }
@@ -220,6 +233,51 @@ export async function commissionBake(
     default:
       return { ok: false, reason: 'rejected', message }
   }
+}
+
+// Follows the jobs' changes as the server sends them (GET /v1/jobs/events,
+// server-sent events): `onJob` gets each changed job, in full. Read with
+// fetch, not EventSource, which cannot send the session's Authorization
+// header. The stream sends changes only, so a caller lists the jobs first.
+//
+// `onLost` is called once when the stream cannot be opened or ends without
+// being stopped — an older server, a proxy that buffers, a restart. The caller
+// then polls, as before the stream existed. The returned function stops it.
+export function watchJobs(onJob: (job: BakeJob) => void, onLost: () => void): () => void {
+  const abort = new AbortController()
+  void (async () => {
+    const base = await apiBase()
+    if (!base || !(await canCommissionBakes())) throw new Error('no jobs')
+    const response = await authFetch(`${base}/jobs/events`, { cache: 'no-store', signal: abort.signal })
+    if (!response.ok || !response.body) throw new Error(`events ${response.status}`)
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+    let pending = ''
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      pending += value
+      // One event per blank-line-terminated block; only `data:` lines carry
+      // a job (`:` lines are the server's keep-alive).
+      let end: number
+      while ((end = pending.indexOf('\n\n')) >= 0) {
+        const block = pending.slice(0, end)
+        pending = pending.slice(end + 2)
+        for (const line of block.split('\n')) {
+          if (!line.startsWith('data:')) continue
+          try {
+            onJob(JSON.parse(line.slice(5)) as BakeJob)
+          } catch {
+            // A line that does not parse is skipped; the next change of that
+            // job carries it in full again.
+          }
+        }
+      }
+    }
+  })().then(
+    () => { if (!abort.signal.aborted) onLost() },
+    () => { if (!abort.signal.aborted) onLost() },
+  )
+  return () => abort.abort()
 }
 
 // The most recent job for this world and stage that has not failed, or null.

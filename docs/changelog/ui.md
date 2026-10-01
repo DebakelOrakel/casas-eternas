@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-01
+- **changed** Generator: Refine the world now refines level 1 and then every tile with land, with live progress; the tile pick on the map is gone. `generator.finishing.refine`
 - **changed** Generator: levels and tiles refined before today count as outdated and are refined again. `generator.artifacts`
 - **fixed** Generator: saving while step 0 previews the sample world saves the world's own climate. `generator.step.world`
 - **fixed** Generator: a run stopped during its first epoch counts as eroded, and later stops no longer count an epoch short. `generator.step.tectonics`
@@ -14,7 +15,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 ## 2026-09-30
 - **fixed** Generator: continent names stay on top of water, rivers and relief.
 - **changed** Generator: zooming in no longer tilts the map; R and F tilt it, and zooming out brings it back to top-down.
-- **new** Generator: the Finishing step refines one area of the world — a tile picked on the map — on the server (level 2). `generator.finishing.tile`
+- **new** Generator: the Finishing step refines one area of the world — a tile picked on the map — on the server (level 2). `generator.finishing`
 
 ## 2026-09-29
 - **new** Generator: the Finishing step refines a world on the server (level 1); a Jobs window lists the fine simulation of your worlds, with its progress, and cancels it; the artifact window rebuilds an outdated level. `generator.jobs`
