@@ -1011,7 +1011,7 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
     const stats = await M.coupled.stepCoupledEpoch(sim, terrain, { iterationsPerEpoch: ITER })
     if (terrain.mesh.validate().length > 0) valid = false
     for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && !Number.isFinite(terrain.z[v])) finite = false
-    ledger += stats.depositedM3 + stats.screeM3 - stats.reErodedM3
+    ledger += stats.depositedM3 + stats.screeM3 - stats.reErodedM3 + stats.iceCoastColumnM3
     columnVolume = stats.columnVolumeM3
     if (stats.reboundMaxM > rebound) rebound = stats.reboundMaxM
     if (stats.subsidenceMaxM > subsidence) subsidence = stats.subsidenceMaxM
@@ -1039,14 +1039,16 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && terrain.z[v] > 0) landN++
   check(`land persists through the epochs (${land0} → ${landN} land nodes)`, landN > land0 * 0.5)
   // The sediment column (phase 5.2): the epochs' deposits as layers. The
-  // ledger — deposited plus scree minus re-eroded, summed over the epochs
+  // ledger — deposited plus scree minus re-eroded, plus what the ice and the
+  // coast put in and took out (since 2026-10-01), summed over the epochs
   // — closes against the column's volume to within what the remesh loses
   // (new nodes interpolate, a rift's fresh floor starts with none):
   // measured 4–10 % over five epochs on this world as the deposition's
-  // pattern changed through 5.2–5.6; the gate is what says the remesh does
+  // pattern changed through 5.2–5.6, 0.1 % once the ice's and the coast's
+  // share was counted (2026-10-01); the gate is what says the remesh does
   // not eat the column, not that the interpolation is exact.
   check(`the column holds the epochs' deposits (${(columnVolume / 1e9).toFixed(1)} km³, ${terrain.column.epochs.length} layers)`, columnVolume > 0 && terrain.column.epochs.length === EPOCHS)
-  check(`the column's ledger closes (deposited + scree − re-eroded ${(ledger / 1e9).toFixed(1)} km³ vs column ${(columnVolume / 1e9).toFixed(1)} km³)`, Math.abs(ledger - columnVolume) <= 0.15 * Math.max(ledger, columnVolume))
+  check(`the column's ledger closes (deposited + scree − re-eroded + ice and coast ${(ledger / 1e9).toFixed(1)} km³ vs column ${(columnVolume / 1e9).toFixed(1)} km³)`, Math.abs(ledger - columnVolume) <= 0.15 * Math.max(ledger, columnVolume))
   {
     // A cut that comes off the column: no layer is ever negative, and the
     // provenance products never exceed their thickness (oldness and the

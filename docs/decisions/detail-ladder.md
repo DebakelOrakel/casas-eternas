@@ -230,7 +230,15 @@ synthesis'; its erosion fills channels (+16 m median) and lowers
 hillslopes (−20 m), and runs longer make the valleys shallower still.
 **The engine does not incise at ~1.5 km spacing** — to be found and fixed
 before level 1 replays the history at budget 1 (fork 2), or the replay
-earns shallower valleys than it starts from.
+earns shallower valleys than it starts from. *Found and fixed the same day:*
+three closures were set for level 0's ~127 km² nodes and did not scale —
+the sub-grid drainage area (a constant 500 km²), the land settle lengths
+and the hillslope diffusivity. They now scale with each node's own area,
+and a channel head (5 km²) keeps ridges from being cut
+(surface/erosionEngine.ts). On level 1 with history-like settings the
+valleys deepen over the run (d10 256 → 317 m over 120 iterations) where
+they shallowed (169 → 117 m); level 0 changes a little (land p99 5.5 →
+5.2 km, mountain d10 p90 331 → 377 m).
 
 Rain downscaled (Smith & Barstad, FFT, ~25 s a world): moves 20–35 % of
 the mountain channel nodes and changes small streams' discharge 0.1–1.6×;

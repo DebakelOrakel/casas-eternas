@@ -109,10 +109,19 @@ export interface ErosionEngineParams {
   // to the engine; ITERATION_YEARS names it). Units: (km²)^-m per km of
   // reach.
   kappaDt: number
-  // Sub-grid drainage closure: every cell is fed by this much unresolved
-  // catchment, so headwater slopes stop depending on the cell size
-  // (P0: without it the fine grid stood +156 m systematically higher).
-  baseAreaKm2: number
+  // Sub-grid drainage closure: every node is fed by unresolved catchment,
+  // so headwater slopes stop depending on the node size (P0: without it the
+  // fine grid stood +156 m systematically higher) — `baseAreaRel` times
+  // the node's OWN area. It was a constant 500 km² until 2026-10-01: right
+  // for the ~127 km² land nodes of level 0 (3.94 × 127 = 500), and at
+  // level 1's ~1 km² nodes it made every hillslope erode like a 500 km²
+  // river, so ridges were cut faster than channels and the valleys shallowed
+  // as the run went on (measured on a 6.3 M-node level 1).
+  baseAreaRel: number
+  // The channel head: no stream power below this drainage area (km²,
+  // water-weighted). Ridges stand and only channels cut. Never reached on
+  // level 0, whose nodes are 57 km² and more.
+  channelHeadKm2: number
   // Uplift per iteration at forcing = 1, in normalized-z units.
   upliftDt: number
   // Settling: L = max(floor, xi·√Q[km²]) km on land, a short constant under
@@ -121,6 +130,13 @@ export interface ErosionEngineParams {
   settleXiKm: number
   settleFloorKm: number
   settleMarineKm: number
+  // The node spacing the land settle lengths (fine and coarse) are set
+  // for, km — level 0's land spacing. A land length is scaled by this over
+  // the node's own spacing (Davy & Lague's q = Q/dx): the deposit per
+  // reach length does not depend on the spacing, the eroded volume grows
+  // with the node's area, so unscaled the deposit outgrew the cut ~8× at
+  // level 1 and the channels aggraded (+16.7 m median in its 12 rounds).
+  settleWidthRefKm: number
   // TWO GRAIN CLASSES (phase 5.2b, decision 15): a cut's coarse share is
   // the channel slope over `coarseSlope` (steep torrents shed gravel,
   // rivers on a plain shed mud), the coarse class settles over the short
@@ -140,6 +156,11 @@ export interface ErosionEngineParams {
   // Roering hillslope: physical diffusivity (km²/iteration) — the per-pair
   // exchange fraction is D/dx², so the term is scale-invariant.
   hillDiffKm2: number
+  // The node area `hillDiffKm2` is set for (km², level 0's land node): a
+  // pair's diffusivity is scaled by its mean node area over this, keeping
+  // it a sub-grid closure. Unscaled, a ~1 km² node relaxed ~90 % towards
+  // its neighbours every iteration and a 5 km valley decayed in one.
+  hillRefKm2: number
   criticalSlope: number
   // Marine smoothing of fresh deposits: the fraction of a water-to-water
   // height difference exchanged per pair per iteration.
@@ -163,18 +184,21 @@ export interface ErosionEngineParams {
 export const DEFAULT_ENGINE_PARAMS: ErosionEngineParams = {
   m: 0.5,
   kappaDt: 0.009,
-  baseAreaKm2: 500,
+  baseAreaRel: 3.94,
+  channelHeadKm2: 5,
   upliftDt: 2.2e-3,
   settleXiKm: 1.0,
   settleFloorKm: 20,
   settleMarineKm: 8,
   settleCoarseKm: 8,
+  settleWidthRefKm: 11.25,
   coarseSlope: 0.05,
   abrasionKm: 200,
   marineFreeboardM: 2,
   depositCapLandM: 10,
   depositCapMarineM: 30,
   hillDiffKm2: 0.5,
+  hillRefKm2: 127,
   criticalSlope: 0.65,
   // 0.25 × the 0.1 the marine kernel used to fold in — the same exchange
   // fraction, now one hashed number instead of a constant beside it.
@@ -257,6 +281,7 @@ export const WORLD_WIDTH_METERS = MAP_WIDTH * METERS_PER_CELL
 export interface KernelParams {
   upliftDt: number
   hillDiffKm2: number
+  hillRefKm2: number
   criticalSlope: number
   marineDiffDt: number
   cellM: number
@@ -266,6 +291,7 @@ export function kernelParamsFor(refM: number, params: ErosionEngineParams): Kern
   return {
     upliftDt: params.upliftDt,
     hillDiffKm2: params.hillDiffKm2,
+    hillRefKm2: params.hillRefKm2,
     criticalSlope: params.criticalSlope,
     marineDiffDt: params.marineDiffDt,
     cellM: refM,
@@ -450,7 +476,9 @@ export function kernelHillMoves(v: EngineViews, a0: number, a1: number, kp: Kern
       // holds steeper, a cold one creeps faster; one is exactly the old rule.
       const ratio = Math.min(0.95, slope / (kp.criticalSlope * slopeScale[cell]))
       const boost = 1 / (1 - ratio * ratio)
-      const coefficient = Math.min(diffM2 * diffScale[cell] * geom * Math.min(boost, 12), DIFFUSION_PAIR_CAP * Math.min(ownArea, areaRel[nb] * refM2))
+      // The pair's diffusivity at its own size (ErosionEngineParams.hillRefKm2).
+      const sizeScale = (0.5 * (areaRel[cell] + areaRel[nb]) * refM2) / 1e6 / kp.hillRefKm2
+      const coefficient = Math.min(diffM2 * sizeScale * diffScale[cell] * geom * Math.min(boost, 12), DIFFUSION_PAIR_CAP * Math.min(ownArea, areaRel[nb] * refM2))
       edgeMove[e] = coefficient * dz
     }
   }
@@ -874,8 +902,10 @@ function fluvialCell(v: EngineViews, cell: number, params: ErosionEngineParams, 
   if (target < 0) return 0
   const zr = z[target]
   if (zr >= old) return 0
+  // Above the channel head only (ErosionEngineParams.channelHeadKm2).
+  if (accumulation[cell] * cellKm2 < params.channelHeadKm2) return 0
   const distKm = (cellM / 1000) * lenRel[nbrStart[cell] + flowDir[cell]]
-  const dischargeKm2 = accumulation[cell] * cellKm2 + params.baseAreaKm2
+  const dischargeKm2 = accumulation[cell] * cellKm2 + params.baseAreaRel * areaRel[cell] * cellKm2
   const F = (params.kappaDt * erodibility[cell] * Math.pow(dischargeKm2, params.m)) / distKm
   const znew = (old + F * zr) / (1 + F)
   const cut = old - znew
@@ -970,8 +1000,10 @@ function sedimentCell(v: EngineViews, cell: number, params: ErosionEngineParams,
   const land = z[cell] > 0
   const grid8 = flags[FLAG_GRID8] !== 0
   const settle = land
-    ? Math.max(params.settleFloorKm, params.settleXiKm * Math.sqrt(accumulation[cell] * cellKm2 + params.baseAreaKm2))
+    ? Math.max(params.settleFloorKm, params.settleXiKm * Math.sqrt(accumulation[cell] * cellKm2 + params.baseAreaRel * areaRel[cell] * cellKm2))
     : params.settleMarineKm
+  // The land lengths at the node's own spacing (ErosionEngineParams.settleWidthRefKm).
+  const widthScale = land ? params.settleWidthRefKm / ((Math.sqrt(areaRel[cell]) * cellM) / 1000) : 1
   // Exact exponential integration over the reach — scale-consistent
   // for any dx/L, where a clamped linear fraction was not. A terminal
   // node (no receiver) settles over one reference length; so does every
@@ -985,8 +1017,8 @@ function sedimentCell(v: EngineViews, cell: number, params: ErosionEngineParams,
     coarse -= abraded
     fine += abraded
   }
-  let depositFine = fine * (1 - Math.exp(-reachKm / settle))
-  let depositCoarse = coarse * (1 - Math.exp(-reachKm / params.settleCoarseKm))
+  let depositFine = fine * (1 - Math.exp(-reachKm / (settle * widthScale)))
+  let depositCoarse = coarse * (1 - Math.exp(-reachKm / (params.settleCoarseKm * widthScale)))
   let deposit = depositFine + depositCoarse
   const area = areaRel[cell]
   const column = columnM3 * area
