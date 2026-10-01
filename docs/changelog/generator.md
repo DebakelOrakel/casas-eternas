@@ -4,6 +4,8 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-01
+- **fixed** Ecology: salt flats and dry basin floors count as land, so the salt flats yield salt. `generator.step.ecology`
+- **fixed** Biomes: small islands take the climate of their latitude's land instead of becoming salt deserts. `generator.step.climate`
 - **fixed** Tectonics: when two plates merge, the history no longer stops, and land no longer moves with the wrong plate. `generator.step.tectonics`
 - **changed** Tectonics: mountains rise twice as fast, so active ranges reach 5–7 km instead of about 3.5 km. `generator.step.tectonics`
 - **changed** Tectonics: mountain ranges move with their continent, so they keep much of their height after their uplift ends instead of sliding to the coast and sinking. `generator.step.tectonics`

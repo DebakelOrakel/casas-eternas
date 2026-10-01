@@ -365,7 +365,7 @@ async function buildWorld(seed) {
     temperature, precipitation, biomes, biomesFine: biomesFine2, upwelling: null, months: null, rainVariability: null, elevation: el,
     // Liquid water only, mirroring the worker's liquidLakeDepth: a frozen
     // basin is a glacier and feeds no fishery.
-    discharge, maxDischarge: maxDis, lakeDepth: lakes.depth.map((d, i) => (lakes.frozen[i] ? 0 : d)), saltFlat: lakes.saltFlat, waterTable: M.meshRaster.rasteriseNodeField(terrain.mesh, ground.waterTableDepthM, W, H), oases: ground.springs.filter((s) => s.oasis), volcanoes,
+    discharge, maxDischarge: maxDis, lakeDepth: lakes.depth.map((d, i) => (lakes.frozen[i] ? 0 : d)), saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, waterTable: M.meshRaster.rasteriseNodeField(terrain.mesh, ground.waterTableDepthM, W, H), oases: ground.springs.filter((s) => s.oasis), volcanoes,
     orogenPoints: sim.sutures.map((s) => ({ x: s.x, y: s.y })),
     cratonAge, warpSeed: sim.warpSeed, worldWidth: W, worldHeight: H,
   }, { carryingCapacity: 100, concentration: 0, provinceStrength: M.ecologyInputs.ECOLOGY_INPUTS.provinceStrength.toModel(M.ecologyInputs.ECOLOGY_INPUTS.provinceStrength.default) })

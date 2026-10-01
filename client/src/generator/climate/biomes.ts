@@ -1,4 +1,4 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, sampleDryLandAtCell, sampleElevationAtCell, shiftedYNorm } from './climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, sampleDryLandAtCell, sampleElevationAtCell, shiftedYNorm, zonalLandMean } from './climateField'
 import { classifyKoppen, koppenCode, synthesizeMonths } from './koppen'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL, isLandAt } from '../elevation/elevationScale'
@@ -317,6 +317,11 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
   const biomes = new Uint8Array(worldWidth * worldHeight)
   const seasonality = seasonalityMagnitude(monsoonIndex)
   const seaLevelTemp = seaLevelTemperature ?? reduceTemperatureToSeaLevel(temperature, elevation, worldWidth, worldHeight, dryLand)
+  // An island's climate (climateField.zonalLandMean): its row's land mean.
+  const onLand = (i: number): boolean => precipitation[i] >= 0
+  const islandPrecip = zonalLandMean(precipitation, onLand)
+  const islandAmp = zonalLandMean(seasonalAmplitude, onLand)
+  const islandSeason = zonalLandMean(seasonality, onLand)
   const months = new Float64Array(12)
   const rain = new Float64Array(12)
   for (let wy = 0; wy < worldHeight; wy++) {
@@ -336,13 +341,13 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
       // regional part is smooth while the elevation term stays strictly local.
       const reduced = sampleBilinearWorld(seaLevelTemp, RX, RY, wx + 0.5, wy + 0.5, worldWidth, worldHeight)
       const temp = reduced - CLIMATE_TUNING.lapseCPerElevation * (dry ? here - SEA_LEVEL : Math.max(0, here - SEA_LEVEL))
-      const precip = sampleLandBilinear(precipitation, wx, wy, worldWidth, worldHeight, precipitation[cell])
-      const amp = sampleLandBilinear(seasonalAmplitude, wx, wy, worldWidth, worldHeight, seasonalAmplitude[cell])
+      const precip = sampleLandBilinear(precipitation, wx, wy, worldWidth, worldHeight, islandPrecip[gy])
+      const amp = sampleLandBilinear(seasonalAmplitude, wx, wy, worldWidth, worldHeight, islandAmp[gy])
       // The index is blended as a magnitude (neighbours across the rain
       // belt carry opposite signs, and blending them would read an even
       // year exactly where the wet-dry savanna lives); its sign, the phase,
       // is the containing cell's.
-      const season = sampleLandBilinear(seasonality, wx, wy, worldWidth, worldHeight, seasonality[cell])
+      const season = sampleLandBilinear(seasonality, wx, wy, worldWidth, worldHeight, islandSeason[gy])
       const index = monsoonIndex[cell] < 0 ? -season : season
       const base = classifyAnnual(temp, precip, amp, index, north, months, rain).biome
       biomes[world] = here > CLIMATE_TUNING.alpineTreelineElevation && base !== Biome.Ice ? Biome.Alpine : base
@@ -491,6 +496,9 @@ export function computeBiomesFineFromMonths(monthsT: Float32Array, monthsP: Floa
     for (let i = 0; i < n; i++) seaT[m * n + i] = monthsT[m * n + i] + (lapseBack[i] - annualTemperature[i])
   }
   const rain = scaledMonths(monthsP, months, precipitation)
+  // An island's climate (climateField.zonalLandMean): each month's rain
+  // over its row's land.
+  const islandRain = Array.from({ length: months }, (_, m) => zonalLandMean(rain, (i) => rain[m * n + i] >= 0, m * n))
   const biomes = new Uint8Array(worldWidth * worldHeight)
   const t = new Float64Array(12)
   const p = new Float64Array(12)
@@ -517,7 +525,7 @@ export function computeBiomesFineFromMonths(monthsT: Float32Array, monthsP: Floa
       const c1 = wrapValue(x0 + 1, RX)
       corners[0] = r0 + c0; corners[1] = r0 + c1; corners[2] = r1 + c0; corners[3] = r1 + c1
       weights[0] = (1 - tx) * (1 - ty); weights[1] = tx * (1 - ty); weights[2] = (1 - tx) * ty; weights[3] = tx * ty
-      // Land corners for the rain; with none, the nearest cell's own.
+      // Land corners for the rain; with none, the island's (its row's land).
       let landWeight = 0
       for (let k = 0; k < 4; k++) if (rain[corners[k]] >= 0) landWeight += weights[k]
       const lapse = CLIMATE_TUNING.lapseCPerElevation * (dry ? here - SEA_LEVEL : Math.max(0, here - SEA_LEVEL))
@@ -530,7 +538,7 @@ export function computeBiomesFineFromMonths(monthsT: Float32Array, monthsP: Floa
           for (let k = 0; k < 4; k++) if (rain[corners[k]] >= 0) sum += rain[base + corners[k]] * weights[k]
           sum /= landWeight
         } else {
-          sum = Math.max(0, rain[base + nearest])
+          sum = islandRain[m][Math.floor(nearest / RX)]
         }
         p[m] = sum / months
       }

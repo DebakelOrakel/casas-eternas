@@ -9,6 +9,44 @@ import { CLIMATE_TUNING } from './climateTuneParams'
 export const CLIMATE_RES_X = 256
 export const CLIMATE_RES_Y = 128
 
+// AN ISLAND'S CLIMATE. A land pixel whose four nearest climate cells are all
+// sea has no land climate to interpolate: an island under a cell's size
+// (~62 km). It read the ocean sentinel instead — no rain, a desert, salt —
+// so every small tropical island and island arc came out a salt desert
+// (2026-10-01, structure review). It gets the mean of the land cells of its
+// climate row: the latitude's land climate, wet in the tropics and dry in
+// the subtropics. Not the nearest land cell, whose coast can be another
+// climate entirely.
+//
+// The mean of `field` (from `offset`, one climate grid of it) over the
+// cells `isLand` marks, per climate row; a row without land takes the mean
+// of all land, a world without land 0.
+export function zonalLandMean(field: ArrayLike<number>, isLand: (i: number) => boolean, offset = 0): Float32Array {
+  const out = new Float32Array(CLIMATE_RES_Y)
+  const rowHas = new Uint8Array(CLIMATE_RES_Y)
+  let total = 0
+  let totalCount = 0
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    let sum = 0
+    let count = 0
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      const i = gy * CLIMATE_RES_X + gx
+      if (!isLand(i)) continue
+      sum += field[offset + i]
+      count++
+    }
+    if (count > 0) {
+      out[gy] = sum / count
+      rowHas[gy] = 1
+    }
+    total += sum
+    totalCount += count
+  }
+  const fallback = totalCount > 0 ? total / totalCount : 0
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) if (!rowHas[gy]) out[gy] = fallback
+  return out
+}
+
 // The calendar. The top hemisphere (the rows before the equator, small y)
 // has its summer in January and the bottom one in July: the map is drawn
 // mirrored in y (the canvas's +y is up on screen), so the top rows are the

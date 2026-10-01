@@ -1217,6 +1217,7 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     // Liquid water only: a frozen basin is a glacier and feeds no fishery.
     lakeDepth: hydrology ? liquidLakeDepth(hydrology) : null,
     saltFlat: hydrology?.saltFlat ?? null,
+    dryBasin: hydrology?.dryBasin ?? null,
     waterTable: hydrology?.waterTable ?? null,
     oases: hydrology?.oases ?? [],
     biomesFine: hydrology?.biomesFine ?? null,

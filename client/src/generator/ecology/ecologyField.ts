@@ -12,7 +12,7 @@
 // the save and the migration read, are the fine ones averaged over each cell's
 // land.
 
-import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../climate/climateField'
+import { CLIMATE_RES_X, CLIMATE_RES_Y, zonalLandMean } from '../climate/climateField'
 import { CLIMATE_TUNING } from '../climate/climateTuneParams'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { Biome, reduceTemperatureToSeaLevel } from '../climate/biomes'
@@ -116,6 +116,9 @@ export interface EcologyInputs {
   // Full-res: 1 on a terminal basin's dry floor (hydrology's salt flat), or
   // null (no hydrology yet).
   saltFlat: Uint8Array | null
+  // Full-res: 1 on every dry floor of a terminal basin, salt flats included
+  // (hydrology's dryBasin), or null. Land, though at or below sea level.
+  dryBasin: Uint8Array | null
   // Full-res: the water table's depth below the surface, metres, −1 under
   // water (hydrology's hydrogeology), or null. And its oases: the springs
   // in an arid climate, world px.
@@ -220,14 +223,19 @@ function meanWithin(src: Float32Array, w: number, h: number, r: number): Float32
 
 // A bilinear read of a climate-grid field at a world pixel's centre, over the
 // corners `use` accepts only (the weights of the rest dropped and the others
-// renormalised; with none, the containing cell's value). A land field's sea
-// corners carry a sentinel, and a sea field's land corners the wrong thing.
+// renormalised; with none, the mean of the accepted cells of the pixel's
+// climate row — an island's climate, climateField.zonalLandMean). A land
+// field's sea corners carry a sentinel, and a sea field's land corners the
+// wrong thing.
 // The corners and weights are set once per pixel (setPixel) and read for
 // every field and month (read).
 class ClimatePixel {
   private readonly idx = new Int32Array(4)
   private readonly wt = new Float64Array(4)
   private cell = 0
+  // Row means per field, mask and month, made the first time a pixel needs
+  // one.
+  private readonly rowMeans = new Map<Float32Array, Map<Uint8Array, Map<number, Float32Array>>>()
   setPixel(wx: number, wy: number, worldW: number, worldH: number): void {
     const gx = ((wx + 0.5) / worldW) * CLIMATE_RES_X - 0.5
     const gy = ((wy + 0.5) / worldH) * CLIMATE_RES_Y - 0.5
@@ -260,7 +268,15 @@ class ClimatePixel {
       sum += field[offset + i] * this.wt[k]
       weight += this.wt[k]
     }
-    return weight > 0 ? sum / weight : field[offset + this.cell]
+    if (weight > 0) return sum / weight
+    if (!mask) return field[offset + this.cell]
+    let byMask = this.rowMeans.get(field)
+    if (!byMask) this.rowMeans.set(field, (byMask = new Map()))
+    let byOffset = byMask.get(mask)
+    if (!byOffset) byMask.set(mask, (byOffset = new Map()))
+    let means = byOffset.get(offset)
+    if (!means) byOffset.set(offset, (means = zonalLandMean(field, (i) => mask[i] === 1, offset)))
+    return means[Math.floor(this.cell / CLIMATE_RES_X)]
   }
   get coarseCell(): number {
     return this.cell
@@ -328,7 +344,7 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
 }
 
 export function prepareEcology(inputs: EcologyInputs): EcologyBase {
-  const { temperature, precipitation, biomes, biomesFine, upwelling, months, rainVariability, elevation, discharge, maxDischarge, lakeDepth, saltFlat, waterTable, oases, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth: w, worldHeight: h } = inputs
+  const { temperature, precipitation, biomes, biomesFine, upwelling, months, rainVariability, elevation, discharge, maxDischarge, lakeDepth, saltFlat, dryBasin, waterTable, oases, volcanoes, orogenPoints, cratonAge, warpSeed, worldWidth: w, worldHeight: h } = inputs
   const T = ECOLOGY_TUNING
   const n = w * h
   const nc = CLIMATE_RES_X * CLIMATE_RES_Y
@@ -341,8 +357,11 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
 
   const land = new Uint8Array(n)
   const sea = new Float32Array(n)
+  // A terminal basin's dry floor is land below sea level: counted as sea,
+  // every salt flat read as ocean and the salt-flat term never applied
+  // (2026-10-01) — the hydrology only finds basins at or below the sea.
   for (let i = 0; i < n; i++) {
-    if (elevation[i] > SEA_LEVEL) land[i] = 1
+    if (elevation[i] > SEA_LEVEL || (dryBasin !== null && dryBasin[i] === 1)) land[i] = 1
     else sea[i] = 1
   }
   const coarseLand = new Uint8Array(nc)
