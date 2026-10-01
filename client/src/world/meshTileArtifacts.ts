@@ -1,46 +1,48 @@
 import { MESH_BAKE_CONSTANTS } from './meshArtifacts'
-import { TILE_CONSTANTS, TILE_LEVEL, TILE_ROLE_HALO, type TileId } from '../generator/mesh/meshTile'
+import { tileConstants, tileSpec, TILE_ROLE_HALO, type TileId } from '../generator/mesh/meshTile'
 import { levelBudget } from '../generator/pipeline/meshBakeStage'
 import type { BakedTile } from '../generator/pipeline/meshTileBake'
 import type { ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
 
-// A TILE OF THE TOP LEVEL as an artifact (docs/decisions/tile-jobs.md,
-// answer 5): one artifact per tile, stage `L2:x,y`. It holds the tile's
+// A TILE OF A FINE LEVEL as an artifact (docs/decisions/tile-jobs.md,
+// answer 5): one artifact per tile, stage `L<level>:x,y`. It holds the tile's
 // INSIDE only — the edge row and the nodes within it, and the triangles
 // between them; the halo was computed and is dropped. Not the periodic
 // mesh codec (meshSerial.ts): a tile is a square with a boundary, so the
 // triangles are stored as they are, three node indices each.
 //
-// Positions are in cells from the tile's own corner (0..TILE_CELLS), so
-// world x = tile.x · TILE_CELLS + x. They are float32 and exact: the tile
-// put every node on a 2^-20 grid (meshTile.ts).
+// Positions are in cells from the tile's own corner (0..cells), so
+// world x = tileCorner(tile).x + x. They are float32 and exact: the tile
+// put every node on its level's quantum (meshTile.ts).
 //
-// The pipeline version carries what level 1 carries (the tile is built on
-// it and baked with the same rounds) plus every constant of the tile.
+// The pipeline version carries what the mesh levels carry (the tile is
+// built on its parent and baked with the same rounds), the parent's
+// budget and every constant of the level's tile.
 
 export const MESH_TILE_FILES = {
   nodes: 'tileNodes.f32',
   triangles: 'tileTriangles.u32',
   z: 'tileZ.f32',
   role: 'tileRole.u8',
+  outflow: 'tileOutflow.f32',
   meta: 'meta.json',
 } as const
 
 export function meshTileStage(tile: TileId): string {
-  return `L${TILE_LEVEL}:${tile.x},${tile.y}`
+  return `L${tile.level}:${tile.x},${tile.y}`
 }
 
-export function meshTilePipelineVersion(rounds: number = AMPLIFY_EROSION_ROUNDS): string {
-  return derivePipelineVersion(tilePipelineConstants(rounds))
+export function meshTilePipelineVersion(level: number, rounds: number = AMPLIFY_EROSION_ROUNDS): string {
+  return derivePipelineVersion(tilePipelineConstants(level, rounds))
 }
 
-function tilePipelineConstants(rounds: number): Record<string, number> {
+function tilePipelineConstants(level: number, rounds: number): Record<string, number> {
   return {
     ...MESH_BAKE_CONSTANTS,
-    parentBudget: levelBudget(1),
-    ...TILE_CONSTANTS,
+    parentBudget: levelBudget(level - 1),
+    ...tileConstants(tileSpec(level)),
     rounds,
   }
 }
@@ -55,6 +57,9 @@ export interface MeshTileArtifact {
   z: Float32Array
   // meshTile's TILE_ROLE_* per node (new, parent, edge).
   role: Uint8Array
+  // The drainage leaving over each edge node, 0 elsewhere (meshTileBake's
+  // outflow): what the tile below reads as its inflow.
+  outflow: Float32Array
 }
 
 interface MeshTileMeta {
@@ -79,6 +84,7 @@ export function bakedTileToArtifact(baked: BakedTile): MeshTileArtifact {
   const nodes = new Float32Array(count * 2)
   const z = new Float32Array(count)
   const roles = new Uint8Array(count)
+  const outflow = new Float32Array(count)
   for (let v = 0; v < mesh.vertexSlots; v++) {
     const i = index[v]
     if (i < 0) continue
@@ -86,6 +92,7 @@ export function bakedTileToArtifact(baked: BakedTile): MeshTileArtifact {
     nodes[2 * i + 1] = mesh.vy[v] - halo
     z[i] = baked.z[v]
     roles[i] = role[v]
+    outflow[i] = baked.outflow[v]
   }
   const triangles: number[] = []
   for (let t = 0; t < mesh.triSlots; t++) {
@@ -95,7 +102,7 @@ export function bakedTileToArtifact(baked: BakedTile): MeshTileArtifact {
     const c = index[mesh.tris[3 * t + 2]]
     if (a >= 0 && b >= 0 && c >= 0) triangles.push(a, b, c)
   }
-  return { tile: baked.tile.tile, count, nodes, triangles: Uint32Array.from(triangles), z, role: roles }
+  return { tile: baked.tile.tile, count, nodes, triangles: Uint32Array.from(triangles), z, role: roles, outflow }
 }
 
 const bytesOf = (a: ArrayBufferView): Uint8Array => new Uint8Array(a.buffer, a.byteOffset, a.byteLength)
@@ -106,12 +113,13 @@ export async function writeMeshTileArtifact(store: ArtifactStore, key: ArtifactK
   const F = MESH_TILE_FILES
   const meta: MeshTileMeta = {
     key, tile: artifact.tile, nodes: artifact.count, triangles: artifact.triangles.length / 3, bakeMs, createdAt: Date.now(), label,
-    pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, constants: tilePipelineConstants(rounds) },
+    pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, constants: tilePipelineConstants(artifact.tile.level, rounds) },
     files: {
       [F.nodes]: artifact.nodes.byteLength,
       [F.triangles]: artifact.triangles.byteLength,
       [F.z]: artifact.z.byteLength,
       [F.role]: artifact.role.byteLength,
+      [F.outflow]: artifact.outflow.byteLength,
     },
   }
   return (
@@ -119,6 +127,7 @@ export async function writeMeshTileArtifact(store: ArtifactStore, key: ArtifactK
     (await store.write(handle, F.triangles, bytesOf(artifact.triangles))) &&
     (await store.write(handle, F.z, bytesOf(artifact.z))) &&
     (await store.write(handle, F.role, artifact.role)) &&
+    (await store.write(handle, F.outflow, bytesOf(artifact.outflow))) &&
     (await store.write(handle, F.meta, new TextEncoder().encode(JSON.stringify(meta))))
   )
 }
@@ -139,10 +148,11 @@ export async function readMeshTileArtifact(store: ArtifactStore, key: ArtifactKe
   const triangles = await store.read(handle, F.triangles)
   const z = await store.read(handle, F.z)
   const role = await store.read(handle, F.role)
-  if (!nodes || !triangles || !z || !role) return null
-  if (nodes.byteLength !== meta.nodes * 8 || z.byteLength !== meta.nodes * 4 || role.byteLength !== meta.nodes || triangles.byteLength !== meta.triangles * 12) return null
+  const outflow = await store.read(handle, F.outflow)
+  if (!nodes || !triangles || !z || !role || !outflow) return null
+  if (nodes.byteLength !== meta.nodes * 8 || z.byteLength !== meta.nodes * 4 || role.byteLength !== meta.nodes || outflow.byteLength !== meta.nodes * 4 || triangles.byteLength !== meta.triangles * 12) return null
   return {
-    artifact: { tile: meta.tile, count: meta.nodes, nodes: new Float32Array(nodes.slice(0)), triangles: new Uint32Array(triangles.slice(0)), z: new Float32Array(z.slice(0)), role: new Uint8Array(role.slice(0)) },
+    artifact: { tile: meta.tile, count: meta.nodes, nodes: new Float32Array(nodes.slice(0)), triangles: new Uint32Array(triangles.slice(0)), z: new Float32Array(z.slice(0)), role: new Uint8Array(role.slice(0)), outflow: new Float32Array(outflow.slice(0)) },
     bakeMs: meta.bakeMs,
   }
 }

@@ -191,7 +191,7 @@ export function jobStageName(job: BakeJob): string {
   return `L${request.stage}`
 }
 
-// `tile` orders one tile of the top level (stage 2); without it the whole
+// `tile` orders one tile of `stage` (a level with tiles, 2 or 3); without it the whole
 // world at `stage`. `plan` orders a plan of tasks instead of one (JobPlan).
 export async function commissionBake(
   worldUid: string,

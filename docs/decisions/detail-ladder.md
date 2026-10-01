@@ -329,6 +329,36 @@ share them), and the build id (`git describe --dirty`, fixed at Vite's
 start) does not identify the code — a content hash of the generator
 sources should.
 
+## Measured 2026-10-01 (build step 4, level 1 by replay)
+
+World "Calvessor" (seed 983721401, 2048 × 1024, made fresh with the code
+of the day), level 1 ordered from the finishing step on the local server,
+one worker: **2 h 30 min** (9 008 s) for the check and the replay at
+budget 1; **4.32 M nodes** (3.46 M on land, ~2.5 km land spacing) — more
+than the 1.85 M measured on Astrakan at budget 1, this world being more
+mountainous. The worker held **6.2 GB** (its heap ceiling is 6 GB, the
+engine threads included); a checkpoint is **763 MB**, written every ten
+epochs and removed at the end.
+
+Valley depth (method of step 1: highest point within R minus the
+channel, channels ≥ 1 macro cell of drainage, mountains > 1 500 m), p50 /
+p90:
+
+| | mtn d10 | mtn d5 | low d10 | drainage density km/km² |
+|---|---|---|---|---|
+| L0 (the save) | 58 / 168 m | 29 / 87 m | 43 / 124 m | 0.069 |
+| L1 replayed | 209 / 576 m | 113 / 364 m | 105 / 553 m | 0.090 |
+| L1, lakes filled | 205 / 594 m | 105 / 351 m | 93 / 527 m | 0.092 |
+
+The replayed level 1's mountain valleys are **3.6× deeper than level
+0's**; on the old level 1 (refined, Astrakan, step 1) the ratio was
+1.4 / 1.25. Level 1 holds three times the land in closed depressions
+(11.7 % against 4.2 %, depth p50 80 m, 25 230 water bodies); measured on
+the filled surface the valleys are as deep, so the depressions are not
+what makes them. Not yet known: what the depressions are (overdeepened
+glacial troughs, flexure, the engine's own pits) — to be looked at with
+the incubator.
+
 ## Step 5 — the tile levels: DECIDED 2026-10-01, plan
 
 What step 5 of the build order builds, worked out against the code as it
@@ -398,15 +428,48 @@ streams then cross tile edges instead of being lost.
 **The order of building, each with its check:**
 1. The tile spec per level; L3 = today's tile with the offset, still on
    L1. Check: today's tile harness passes per level; seams continuous.
+   *Built 2026-10-01* (meshTile.ts `TILE_SPECS`, a tile's id carries its
+   level, stage `L<level>:x,y`, a pipeline version per level): the seam,
+   halo, world-seam, drainage and artifact checks of harness:mesh pass for
+   L3 and L2 alike. A refine plan up to stage 2 now bakes L2's 16-cell
+   tiles; old `L2:x,y` artifacts are outdated.
 2. L2 tiles on L1 (inflow from L1's river graph, as today). Check:
    valley depth L1 vs L2 on one region; time and nodes per tile.
 3. The patchwork parent; L3 on L2. Check: the parent surface continuous
    across L2 seams; L3 valley depth vs L2.
+   *Built 2026-10-01* (meshTile.ts `parentTilesOf`, `tileParentFromTiles`;
+   the worker reads the level-2 tiles an L3 tile overlaps, level 1 once
+   per worker for the inflow and the synthesis' relief, `TileParent.macro`
+   — the relief looks ~32 cells around, past any patch). harness:mesh: the
+   join holds every L2 node at its height, a shared one once; two L3
+   tiles, each on its own patchwork, meet on their edge; a tile on it
+   drains. Found on the way: the bootstrap lattice meets tile corners, so
+   a point landing on a lattice node is inserted again (as the tile does).
+   The valley depths wait for a real L1.
 4. The graph: the L1 task reports tasks and deps, the coordinator wires
    them; the outflow artifact and the inflow at every edge node. Check:
    across every shared edge, the outflow upstream equals the inflow
    below; no lost stream (channels ending at an edge) on one region.
+   *Built 2026-10-01* (generator/pipeline/tilePlan.ts; the worker plans
+   from the level-1 ARTIFACT, decoded and routed, so a fresh and a reused
+   level 1 plan alike; the report's `tasks` replace `tiles`; the tile
+   artifact gains `tileOutflow.f32`; a crossing from a non-upstream side
+   still comes from level 1's rivers). harness:mesh: the plan acyclic and
+   whole (synthetic world: 114 + 369 tiles, 992 flow edges); an upstream
+   tile's outflow over the shared edge is the tile's inflow to the float
+   sum (242.15 = 242.15 over 102 edge nodes); the water arrives in the
+   tile's drainage. Found on the way: an edge node in sparse ground can
+   have only edge nodes around it, so its water enters at the nearest
+   inside node by the mesh (a breadth-first search), not by a fixed
+   neighbourhood. The coordinator test runs a plan in its order (upstream
+   first, parents first, level 3 dropped below stage 3).
 5. The L3 button in the finishing step; `maxRefineStage` 3.
+   *Built 2026-10-01.* End to end on a fresh 512 × 256 world (local
+   server, two workers, a refine plan to level 3): 23.5 min, no failure —
+   level 1 629 k nodes in 67 s; 391 level-2 tiles (17 k nodes, 0.3 s
+   each); 1 401 level-3 tiles (97 k nodes, 1.8 s each). On 2048 × 1024
+   that suggests a few hours for the tile levels on two workers; measured
+   on a real world is still to come.
 
 **Decided 2026-10-01 (all four as proposed):**
 1. The offset is half the level's own tile — the reading of fork 5 that

@@ -1,4 +1,4 @@
-import { TILE_LEVEL } from '../generator/mesh/meshTile'
+import { TILE_SPECS } from '../generator/mesh/meshTile'
 import { meshPipelineVersion } from './meshArtifacts'
 import { meshTilePipelineVersion } from './meshTileArtifacts'
 
@@ -26,12 +26,12 @@ export function parseStage(stage: string): ParsedStage | null {
 }
 
 // The pipeline version this client writes and reads a stage under, or null
-// for a stage it does not make: tiles exist on TILE_LEVEL only, whole levels
+// for a stage it does not make: tiles exist on the levels with a TileSpec, whole levels
 // on every other.
 export function currentPipelineVersion(stage: string): string | null {
   const parsed = parseStage(stage)
   if (!parsed) return null
-  if (parsed.tile) return parsed.level === TILE_LEVEL ? meshTilePipelineVersion() : null
+  if (parsed.tile) return TILE_SPECS[parsed.level] ? meshTilePipelineVersion(parsed.level) : null
   return meshPipelineVersion(parsed.level)
 }
 

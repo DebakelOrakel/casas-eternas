@@ -42,9 +42,13 @@ const (
 // level 1, then every land and shelf tile the level reports.
 const PlanRefine = "refine"
 
-// The highest level a refine plan reaches today: level 1 and the tiles on
-// it. The ladder's level 3 (docs/decisions/detail-ladder.md) raises it.
-const maxRefineStage = 2
+// The highest level a refine plan reaches: level 1, then the tiles of
+// levels 2 and 3 (docs/decisions/detail-ladder.md, step 5). Level 4 is on
+// demand near the camera, never planned.
+const maxRefineStage = 3
+
+// The deepest level with tiles (TILE_SPECS in the client's meshTile.ts).
+const maxTileStage = 3
 
 type taskState string
 
@@ -65,8 +69,11 @@ type Task struct {
 	Request Request   `json:"request"`
 	Deps    []string  `json:"deps,omitempty"`
 	State   taskState `json:"state"`
-	Error   string    `json:"error,omitempty"`
-	Result  *Result   `json:"result,omitempty"`
+	// For a tile: the upstream tiles of its level, handed to the worker
+	// (Spec.Upstream).
+	Upstream []TileRef `json:"upstream,omitempty"`
+	Error    string    `json:"error,omitempty"`
+	Result   *Result   `json:"result,omitempty"`
 }
 
 // taskDone is what a worker reports on jobs.done.<taskId>.
@@ -75,9 +82,21 @@ type taskDoneReport struct {
 	OK     bool    `json:"ok"`
 	Error  string  `json:"error,omitempty"`
 	Result *Result `json:"result,omitempty"`
-	// For a level task of a refine plan: the tiles that hold land or shelf,
-	// as [x, y].
-	Tiles [][2]int `json:"tiles,omitempty"`
+	// For the level task of a refine plan: the tile levels' tasks, planned
+	// from level 1's drainage by the worker (client/src/generator/pipeline/
+	// tilePlan.ts). The coordinator wires them and knows no hydrology.
+	Tasks []plannedTask `json:"tasks,omitempty"`
+}
+
+// plannedTask is one tile of a refine plan: its level and place, the
+// tiles it waits for (its parents and its upstream tiles, as [level, x,
+// y]), and the upstream tiles of its own level, whose outflow it reads.
+type plannedTask struct {
+	Level    int       `json:"level"`
+	X        int       `json:"x"`
+	Y        int       `json:"y"`
+	After    [][3]int  `json:"after,omitempty"`
+	Upstream []TileRef `json:"upstream,omitempty"`
 }
 
 // taskEvent is what a worker reports on jobs.event.<jobId> while it works.
@@ -299,6 +318,7 @@ func (c *coordinator) publish(tasks []*Task) error {
 			}
 			spec.TaskID = task.ID
 			spec.JobID = task.JobID
+			spec.Upstream = task.Upstream
 			// A plan keeps what is already there; a single order computes again.
 			if job, ok := c.registry.get(task.JobID); ok && job.Request.Plan != "" {
 				spec.Reuse = true
@@ -383,20 +403,46 @@ func (c *coordinator) applyDone(report taskDoneReport) {
 	task.State = taskDone
 	task.Result = report.Result
 	c.save(nil, task)
-	// A refine plan grows its tiles off its level: each depends on it alone.
-	if job.Request.Plan == PlanRefine && job.Request.Stage >= 2 && task.Pool == poolLevel {
-		var added []*Task
-		for i, tile := range report.Tiles {
-			request := Request{WorldUID: job.Request.WorldUID, Stage: 2, ErosionRounds: job.Request.ErosionRounds, Scope: Scope{Kind: ScopeTile, X: tile[0], Y: tile[1]}}
-			t := &Task{ID: fmt.Sprintf("%s-%d", job.ID, i+1), JobID: job.ID, Pool: poolTile, Request: request, Deps: []string{task.ID}, State: taskWaiting}
+	// A refine plan grows its tile levels off its level, up to the level
+	// asked for: every tile waits for level 1 and for what the plan says.
+	if job.Request.Plan == PlanRefine && task.Pool == poolLevel {
+		planned := filterPlanned(report.Tasks, job.Request.Stage)
+		byPlace := map[[3]int]string{}
+		added := make([]*Task, 0, len(planned))
+		for _, p := range planned {
+			request := Request{WorldUID: job.Request.WorldUID, Stage: p.Level, ErosionRounds: job.Request.ErosionRounds, Scope: Scope{Kind: ScopeTile, X: p.X, Y: p.Y}}
+			t := &Task{ID: fmt.Sprintf("%s-%d", job.ID, len(c.byJob[job.ID])+len(added)), JobID: job.ID, Pool: poolTile, Request: request, Deps: []string{task.ID}, Upstream: p.Upstream, State: taskWaiting}
+			byPlace[[3]int{p.Level, p.X, p.Y}] = t.ID
+			added = append(added, t)
+		}
+		// The dependencies once every task has its id: a tile may wait for
+		// one listed after it.
+		for i, p := range planned {
+			for _, after := range p.After {
+				if id, ok := byPlace[after]; ok {
+					added[i].Deps = append(added[i].Deps, id)
+				}
+			}
+		}
+		for _, t := range added {
 			c.tasks[t.ID] = t
 			c.byJob[job.ID] = append(c.byJob[job.ID], t.ID)
-			added = append(added, t)
 		}
 		c.save(nil, added...)
 	}
 	c.progress(task.JobID)
 	c.dispatchReady(task.JobID)
+}
+
+// filterPlanned is the plan's tasks up to a level, in the plan's order.
+func filterPlanned(tasks []plannedTask, stage int) []plannedTask {
+	var out []plannedTask
+	for _, t := range tasks {
+		if t.Level <= stage {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // progress says a job's state from its tasks, and ends it when all are done.

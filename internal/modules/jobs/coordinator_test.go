@@ -3,7 +3,9 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,12 +45,18 @@ func coordinatorRelay(t *testing.T) (*natsserver.Server, *relay.Conn) {
 }
 
 func plainSpec(_ context.Context, _ string, request Request) (Spec, error) {
-	return Spec{Stage: request.Stage, ErosionRounds: request.ErosionRounds, StageName: request.StageName()}, nil
+	spec := Spec{Stage: request.Stage, ErosionRounds: request.ErosionRounds, StageName: request.StageName()}
+	if request.Scope.Kind == ScopeTile {
+		spec.Tile = &TileRef{X: request.Scope.X, Y: request.Scope.Y}
+	}
+	return spec, nil
 }
 
-// fakeWorker serves tasks as a Node worker would: a level reports two tiles,
-// a tile reports done — or `failTile` fails, when set. Returns how many tasks
-// it computed, and how many of them it was allowed to reuse.
+// fakeWorker serves tasks as a Node worker would: a level reports a plan —
+// two level-2 tiles, the second downstream of the first, and a level-3
+// tile on the first — a tile reports done, or `failTile` fails, when set.
+// Returns how many tasks it computed, and how many of them it was allowed
+// to reuse; `order` (when not nil) gets each task's stage name as computed.
 func fakeWorker(t *testing.T, server *natsserver.Server, failTile bool) (stop func(), computed, reused *atomic.Int32) {
 	t.Helper()
 	conn, err := relay.Connect("jobs", server, "")
@@ -75,10 +83,21 @@ func fakeWorker(t *testing.T, server *natsserver.Server, failTile bool) (stop fu
 		}
 		report := taskDoneReport{TaskID: spec.TaskID, OK: true, Result: &Result{Stage: stage}}
 		if spec.Stage == 1 {
-			report.Tiles = [][2]int{{0, 0}, {1, 0}}
+			report.Tasks = []plannedTask{
+				{Level: 2, X: 1, Y: 0, After: [][3]int{{2, 0, 0}}, Upstream: []TileRef{{X: 0, Y: 0}}},
+				{Level: 2, X: 0, Y: 0},
+				{Level: 3, X: 0, Y: 0, After: [][3]int{{2, 0, 0}}},
+			}
 		} else if failTile {
 			report = taskDoneReport{TaskID: spec.TaskID, Error: "tile went wrong"}
 		}
+		place := "L1"
+		if spec.Tile != nil {
+			place = fmt.Sprintf("L%d:%d,%d", spec.Stage, spec.Tile.X, spec.Tile.Y)
+		}
+		computedOrder.Lock()
+		computedOrder.names = append(computedOrder.names, place)
+		computedOrder.Unlock()
 		raw, _ := json.Marshal(report)
 		if _, err := conn.JetStream().Publish(ctx, conn.Subject("done", spec.TaskID), raw); err == nil {
 			computed.Add(1)
@@ -93,6 +112,41 @@ func fakeWorker(t *testing.T, server *natsserver.Server, failTile bool) (stop fu
 		cancel()
 		conn.Close()
 	}, computed, reused
+}
+
+// The tasks the fake workers computed, in order.
+var computedOrder struct {
+	sync.Mutex
+	names []string
+}
+
+// A plan to level 3: every tile after what it waits for — its upstream
+// tile, its parent.
+func TestCoordinatorRunsTilesInPlanOrder(t *testing.T) {
+	server, conn := coordinatorRelay(t)
+	reg := newRegistry(jobHistory)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.close()
+	computedOrder.Lock()
+	computedOrder.names = nil
+	computedOrder.Unlock()
+	stop, computed, _ := fakeWorker(t, server, false)
+	defer stop()
+	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 3, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	waitForJob(t, reg, job.ID, StateDone)
+	computedOrder.Lock()
+	order := append([]string(nil), computedOrder.names...)
+	computedOrder.Unlock()
+	at := map[string]int{}
+	for i, name := range order {
+		at[name] = i
+	}
+	if computed.Load() != 4 || at["L2:0,0"] > at["L2:1,0"] || at["L2:0,0"] > at["L3:0,0"] || at["L1"] != 0 {
+		t.Errorf("computed %d in order %v", computed.Load(), order)
+	}
 }
 
 func waitForJob(t *testing.T, reg *registry, id string, want State) Job {
@@ -138,7 +192,9 @@ func TestCoordinatorRunsARefinePlan(t *testing.T) {
 	tasks := c.byJob[job.ID]
 	tile := c.tasks[tasks[1]]
 	c.mu.Unlock()
-	if len(tasks) != 3 || tile.Request.Stage != 2 || len(tile.Deps) != 1 || tile.Deps[0] != tasks[0] {
+	// The level-3 tile is past the plan's stage; the first tile waits for
+	// level 1 and for its upstream tile, listed after it.
+	if len(tasks) != 3 || tile.Request.Stage != 2 || tile.Request.Scope.X != 1 || len(tile.Deps) != 2 || tile.Deps[0] != tasks[0] || tile.Deps[1] != tasks[2] || len(tile.Upstream) != 1 {
 		t.Errorf("tasks %v, tile %+v", tasks, tile)
 	}
 }

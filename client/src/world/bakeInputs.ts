@@ -1,5 +1,5 @@
 import type { MeshBakeInputs } from '../generator/pipeline/meshBakeStage'
-import type { TileBakeInputs } from '../generator/pipeline/meshTileBake'
+import type { TileBakeInputs, UpstreamTile } from '../generator/pipeline/meshTileBake'
 import type { TileParent } from '../generator/mesh/meshTile'
 import type { SavedMesh } from '../generator/mesh/meshSerial'
 import type { RiverGraph } from '../generator/surface/riverGraph'
@@ -39,13 +39,14 @@ export function levelBakeInputs(inputs: WorldInputs, mesh: SavedMesh | null = in
 // One tile on its parent level. The world's mean land water is taken over
 // the SAVE's land (its elevation raster): the discharge a river carries into
 // the tile is in that unit (meshTileBake.ts).
-export function tileBakeInputs(inputs: WorldInputs, parent: TileParent, parentGraph: RiverGraph | null): TileBakeInputs {
+export function tileBakeInputs(inputs: WorldInputs, parent: TileParent, parentGraph: RiverGraph | null, upstream: UpstreamTile[]): TileBakeInputs {
   const precipitation = inputs.climate?.data ?? null
   const climateResX = inputs.climate?.resX ?? 0
   const climateResY = inputs.climate?.resY ?? 0
   return {
     parent,
     parentGraph,
+    upstream,
     width: inputs.width,
     height: inputs.height,
     detailSeed: inputs.detailSeed,

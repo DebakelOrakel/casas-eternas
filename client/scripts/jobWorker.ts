@@ -31,17 +31,19 @@ import { availableParallelism } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
 import type { WorkerLike } from '../src/generator/surface/erosionEnginePool'
 import { levelBudget, levelHydrology, type MeshLevel } from '../src/generator/pipeline/meshBakeStage'
+import { planTiles } from '../src/generator/pipeline/tilePlan'
+import { meshRouting } from '../src/generator/mesh/meshHydrology'
 import { encodeCoupledTerrain, HISTORY_DEFAULTS } from '../src/generator/pipeline/coupledEpoch'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../src/generator/climate/climateField'
 import { replayHistory, replayRefusal, type ReplayPosition, type ReplaySnapshot } from '../src/world/replay'
-import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact } from '../src/world/meshArtifacts'
+import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact, type MeshLevelArtifact } from '../src/world/meshArtifacts'
 import { bakedTileToArtifact, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact } from '../src/world/meshTileArtifacts'
-import { bakeMeshTile } from '../src/generator/pipeline/meshTileBake'
-import { TILE_CELLS, tileGrid } from '../src/generator/mesh/meshTile'
+import { bakeMeshTile, type UpstreamTile } from '../src/generator/pipeline/meshTileBake'
+import { parentTilesOf, TILE_SPECS, tileCorner, tileGrid, tileParentFromTiles, tileSpec, type TileParent, type TilePiece, type TileSpec } from '../src/generator/mesh/meshTile'
 import { SHELF_BREAK } from '../src/generator/elevation/elevationScale'
 import { connect } from '@nats-io/transport-node'
 import { AckPolicy, jetstream, jetstreamManager, type JsMsg } from '@nats-io/jetstream'
-import { createMeshSampler } from '../src/generator/mesh/meshSampler'
+import { createMeshSampler, type MeshSampler } from '../src/generator/mesh/meshSampler'
 import { tileBakeInputs } from '../src/world/bakeInputs'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
 import { artifactKey } from '../src/storage/ArtifactStore'
@@ -72,10 +74,13 @@ interface Job {
   // 2 is one tile of the top level (pipeline/meshTileBake, `tile` below;
   // world/meshTileArtifacts.ts).
   stage: number
-  // The tile of the top level, for stage 2 (docs/decisions/tile-jobs.md):
+  // The tile, for a stage with tiles (2, 3; docs/decisions/tile-jobs.md):
   // its column and row on the world's tile grid. Level 1 of the world must
   // be in the artifact store — the tile is built on it.
   tile?: { x: number; y: number }
+  // For a tile: the tiles of its level upstream of it, whose outflow it
+  // reads (the refine plan's flow edges, Spec.Upstream).
+  upstream?: { x: number; y: number }[]
   erosionRounds: number
   // Root of the artifact store as a directory…
   artifactsDir?: string
@@ -352,7 +357,7 @@ async function main(): Promise<void> {
   // them. That happened once. This makes an image's pipeline version something
   // you can read off it in a second rather than infer from a missing cache hit.
   if (raw === '--version') {
-    process.stdout.write(`${JSON.stringify({ pipelineVersion: meshPipelineVersion(1), tilePipelineVersion: meshTilePipelineVersion(), code: GENERATOR_CODE })}\n`)
+    process.stdout.write(`${JSON.stringify({ pipelineVersion: meshPipelineVersion(1), tilePipelineVersions: Object.fromEntries(Object.keys(TILE_SPECS).map((level) => [level, meshTilePipelineVersion(Number(level))])), code: GENERATOR_CODE })}\n`)
     return
   }
   if (raw === '--serve') {
@@ -397,10 +402,10 @@ function stderrProgress(job: Job): (phase: string, fraction: number) => void {
 }
 
 // What one job produced: the result line the Go side reads, and for a level
-// the tiles that hold land or shelf (a refine plan grows them, coordinator.go).
+// the tile levels' plan (a refine plan grows it, coordinator.go).
 interface JobOutcome {
   result: { worldId: string; pipelineVersion: string; stage: string; width: number; height: number; nodes: number; durationMs: number }
-  tiles?: [number, number][]
+  tasks?: PlannedTask[]
 }
 
 type WorldInputs = NonNullable<Awaited<ReturnType<typeof readWorldInputs>>>
@@ -411,7 +416,7 @@ type WorldInputs = NonNullable<Awaited<ReturnType<typeof readWorldInputs>>>
 // hundreds of megabytes.
 interface JobCache {
   worlds: Map<string, WorldInputs>
-  levels: Map<string, { artifact: NonNullable<Awaited<ReturnType<typeof readMeshLevelArtifact>>>['artifact'] }>
+  levels: Map<string, { artifact: NonNullable<Awaited<ReturnType<typeof readMeshLevelArtifact>>>['artifact']; mesh?: ReturnType<typeof meshLevelMesh>; sampler?: MeshSampler }>
 }
 const CACHED_WORLDS = 2
 const CACHED_LEVELS = 2
@@ -447,8 +452,8 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
   }
   const store = artifactStoreFor(job)
   if (!store) throw new Error('neither artifactsDir nor artifactsUrl was given')
-  if (job.stage === 2) return bakeTile(job, inputs, store, onProgress, cache)
-  if (job.stage !== 1) throw new Error(`stage ${job.stage}: only levels 1 and 2 are built`)
+  if (job.stage !== 1 && TILE_SPECS[job.stage]) return bakeTile(job, inputs, store, onProgress, cache)
+  if (job.stage !== 1) throw new Error(`stage ${job.stage}: no such level`)
   const started = Date.now()
   const pipelineVersion = meshPipelineVersion(1, job.erosionRounds)
   const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshLevelStage(1))
@@ -458,7 +463,7 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
       if (cache) remember(cache.levels, `${key.worldUid}/${key.worldId}/${key.pipelineVersion}`, { artifact: stored.artifact }, CACHED_LEVELS)
       return {
         result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: stored.artifact.count, durationMs: stored.bakeMs },
-        tiles: landTiles(inputs),
+        tasks: planOf(inputs, stored.artifact),
       }
     }
   }
@@ -470,8 +475,34 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
   if (job.checkpointDir) await rm(checkpointPath(job.checkpointDir, inputs), { recursive: true, force: true })
   return {
     result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs },
-    tiles: landTiles(inputs),
+    tasks: planOf(inputs, artifact),
   }
+}
+
+// The tile levels' plan as the coordinator reads it (coordinator.go,
+// plannedTask): each tile, what it waits for as [level, x, y], and its
+// upstream tiles. From the level-1 ARTIFACT, decoded and routed, so a
+// level computed now and one read back plan alike.
+interface PlannedTask {
+  level: number
+  x: number
+  y: number
+  after: [number, number, number][]
+  upstream: { x: number; y: number }[]
+}
+function planOf(inputs: WorldInputs, artifact: MeshLevelArtifact): PlannedTask[] {
+  const mesh = meshLevelMesh(artifact, inputs.width, inputs.height)
+  const routing = meshRouting(mesh, artifact.z)
+  const plan = planTiles({
+    mesh, z: artifact.z, routing, width: inputs.width, height: inputs.height,
+    levels: Object.keys(TILE_SPECS).map(Number).sort((a, b) => a - b),
+    landTiles: (level) => landTiles(inputs, tileSpec(level)).map(([x, y]) => ({ level, x, y })),
+  })
+  return plan.map((p) => ({
+    level: p.tile.level, x: p.tile.x, y: p.tile.y,
+    after: [...p.parents, ...p.upstream].map((t) => [t.level, t.x, t.y] as [number, number, number]),
+    upstream: p.upstream.map((t) => ({ x: t.x, y: t.y })),
+  }))
 }
 
 // LEVEL 1 BY REPLAY (docs/decisions/detail-ladder.md, fork 2): the world's
@@ -593,18 +624,21 @@ async function readCheckpoint(dir: string): Promise<{ position: ReplayPosition; 
   }
 }
 
-// The tiles that hold land or shelf — every tile with a cell of the save's
-// raster above the shelf break. What a refine plan computes past level 1;
-// the deep ocean has no relief to refine.
-function landTiles(inputs: WorldInputs): [number, number][] {
-  const { cols, rows } = tileGrid(inputs.width, inputs.height)
+// A level's tiles that hold land or shelf — every tile with a cell of the
+// save's raster above the shelf break. What a refine plan computes past
+// level 1; the deep ocean has no relief to refine.
+function landTiles(inputs: WorldInputs, spec: TileSpec): [number, number][] {
+  const { width, height } = inputs
+  const { cols, rows } = tileGrid(width, height, spec)
   const out: [number, number][] = []
   for (let ty = 0; ty < rows; ty++) {
     for (let tx = 0; tx < cols; tx++) {
+      const corner = tileCorner({ level: spec.level, x: tx, y: ty }, spec)
       let found = false
-      for (let y = ty * TILE_CELLS; y < (ty + 1) * TILE_CELLS && !found; y++) {
-        for (let x = tx * TILE_CELLS; x < (tx + 1) * TILE_CELLS; x++) {
-          if (inputs.elevations[y * inputs.width + x] > SHELF_BREAK) {
+      for (let dy = 0; dy < spec.cells && !found; dy++) {
+        const y = (corner.y + dy) % height
+        for (let dx = 0; dx < spec.cells; dx++) {
+          if (inputs.elevations[y * width + (corner.x + dx) % width] > SHELF_BREAK) {
             found = true
             break
           }
@@ -616,16 +650,20 @@ function landTiles(inputs: WorldInputs): [number, number][] {
   return out
 }
 
-// Stage 2: one tile of the top level, built on the world's level 1, which
-// is read from the same artifact store the tile is written to.
+// A stage past level 1: one tile of that level, built on its parent — level
+// 1 for a level-2 tile, the level-2 tiles it overlaps for a level-3 tile —
+// read from the same artifact store the tile is written to. Level 1 is
+// read by every tile: its river graph brings the inflow, its surface the
+// synthesis' relief.
 async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onProgress: (phase: string, fraction: number) => void, cache?: JobCache): Promise<JobOutcome> {
-  const tile = job.tile
-  const { cols, rows } = tileGrid(inputs.width, inputs.height)
-  if (!tile || !Number.isInteger(tile.x) || !Number.isInteger(tile.y) || tile.x < 0 || tile.y < 0 || tile.x >= cols || tile.y >= rows) {
-    throw new Error(`stage 2 needs a tile inside the ${cols} × ${rows} grid`)
+  const spec = tileSpec(job.stage)
+  const { cols, rows } = tileGrid(inputs.width, inputs.height, spec)
+  if (!job.tile || !Number.isInteger(job.tile.x) || !Number.isInteger(job.tile.y) || job.tile.x < 0 || job.tile.y < 0 || job.tile.x >= cols || job.tile.y >= rows) {
+    throw new Error(`stage ${job.stage} needs a tile inside the ${cols} × ${rows} grid`)
   }
+  const tile = { level: spec.level, x: job.tile.x, y: job.tile.y }
   const started = Date.now()
-  const pipelineVersion = meshTilePipelineVersion(job.erosionRounds)
+  const pipelineVersion = meshTilePipelineVersion(spec.level, job.erosionRounds)
   const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(tile))
   if (job.reuse) {
     const stored = await readMeshTileArtifact(store, key)
@@ -634,18 +672,44 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
   onProgress('parent', 0)
   const parentKey = artifactKey(inputs.worldUid, inputs.worldId, meshPipelineVersion(1, job.erosionRounds), meshLevelStage(1))
   const levelKey = `${parentKey.worldUid}/${parentKey.worldId}/${parentKey.pipelineVersion}`
-  let parentArtifact = cache ? recall(cache.levels, levelKey)?.artifact : undefined
-  if (!parentArtifact) {
+  let level1 = cache ? recall(cache.levels, levelKey) : undefined
+  if (!level1) {
     const read = await readMeshLevelArtifact(store, parentKey)
     if (!read) throw new Error('level 1 of this world is not in the artifact store — refine the world first')
-    parentArtifact = read.artifact
-    if (cache) remember(cache.levels, levelKey, { artifact: parentArtifact }, CACHED_LEVELS)
+    level1 = { artifact: read.artifact }
+    if (cache) remember(cache.levels, levelKey, level1, CACHED_LEVELS)
   }
-  const parentMesh = meshLevelMesh(parentArtifact, inputs.width, inputs.height)
-  const parentZ = parentArtifact.z
+  // Decoded and indexed once per worker, not once per tile.
+  level1.mesh ??= meshLevelMesh(level1.artifact, inputs.width, inputs.height)
+  level1.sampler ??= createMeshSampler(level1.mesh, level1.artifact.z)
+  const macro = level1.sampler
+  let parent: TileParent
+  if (spec.level === 2) {
+    parent = { mesh: level1.mesh, z: level1.artifact.z, discharge: null, sampler: macro, macro }
+  } else {
+    // The level above's tiles this one overlaps, joined (meshTile.ts,
+    // tileParentFromTiles); every one must be there — the coordinator
+    // orders them first.
+    const above = tileSpec(spec.level - 1)
+    const pieces: TilePiece[] = []
+    for (const piece of parentTilesOf(tile, above, inputs.width, inputs.height)) {
+      const read = await readMeshTileArtifact(store, artifactKey(inputs.worldUid, inputs.worldId, meshTilePipelineVersion(above.level, job.erosionRounds), meshTileStage(piece)))
+      if (!read) throw new Error(`tile ${meshTileStage(piece)} of this world is not in the artifact store — the level above comes first`)
+      pieces.push({ tile: piece, count: read.artifact.count, nodes: read.artifact.nodes, z: read.artifact.z })
+    }
+    const patch = tileParentFromTiles(pieces, inputs.width, inputs.height)
+    parent = { mesh: patch.mesh, z: patch.z, discharge: null, sampler: createMeshSampler(patch.mesh, patch.z), macro }
+  }
+  // The upstream tiles' outflow; each was computed first (it is a dep).
+  const upstream: UpstreamTile[] = []
+  for (const at of job.upstream ?? []) {
+    const up = { level: spec.level, x: at.x, y: at.y }
+    const read = await readMeshTileArtifact(store, artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(up)))
+    if (!read) throw new Error(`tile ${meshTileStage(up)} upstream of this one is not in the artifact store`)
+    upstream.push({ tile: up, count: read.artifact.count, nodes: read.artifact.nodes, outflow: read.artifact.outflow })
+  }
   onProgress('parent', 1)
-  const parent = { mesh: parentMesh, z: parentZ, discharge: null, sampler: createMeshSampler(parentMesh, parentZ) }
-  const baked = await bakeMeshTile(tileBakeInputs(inputs, parent, parentArtifact.graph), tile, { rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
+  const baked = await bakeMeshTile(tileBakeInputs(inputs, parent, level1.artifact.graph, upstream), tile, { rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
   const durationMs = Date.now() - started
   const artifact = bakedTileToArtifact(baked)
   if (!(await writeMeshTileArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
@@ -736,7 +800,7 @@ async function serve(config: ServeConfig): Promise<void> {
     }
     try {
       const outcome = await runJob(job, onProgress, cache)
-      await js.publish(`jobs.done.${taskId}`, JSON.stringify({ taskId, ok: true, result: outcome.result, tiles: outcome.tiles }))
+      await js.publish(`jobs.done.${taskId}`, JSON.stringify({ taskId, ok: true, result: outcome.result, tasks: outcome.tasks }))
       msg.ack()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

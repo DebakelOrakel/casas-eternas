@@ -4844,7 +4844,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The level the plan refines up to. The highest the server builds is
   // REFINE_LEVELS (internal/modules/jobs, maxRefineStage); a higher button
   // stays off until it is built. Kept for the screen's life only.
-  const REFINE_LEVELS = 2
+  const REFINE_LEVELS = 3
   const depthButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-value="finishing-depth"] button')]
   let refineDepth = REFINE_LEVELS
   function paintDepth(): void {

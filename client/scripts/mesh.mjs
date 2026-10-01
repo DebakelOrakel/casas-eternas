@@ -70,6 +70,8 @@ const M = {
   sampler: await L('/src/generator/mesh/meshSampler.ts'),
   tile: await L('/src/generator/mesh/meshTile.ts'),
   tileBake: await L('/src/generator/pipeline/meshTileBake.ts'),
+  tilePlan: await L('/src/generator/pipeline/tilePlan.ts'),
+  meshHydrology: await L('/src/generator/mesh/meshHydrology.ts'),
   bake: await L('/src/generator/pipeline/meshBakeStage.ts'),
   bakeInputs: await L('/src/world/bakeInputs.ts'),
   coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
@@ -640,27 +642,35 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check('the level artifact writes and reads back to the same mesh and heights', wrote && read !== null && back !== null && meshHash(back) === meshHash(level.mesh) && read.artifact.z.every((v, i) => v === level.z[i]) && (read.artifact.graph?.reaches.length ?? -1) === level.graph.reaches.length)
   check('the mesh pipeline version carries the density rule', M.artifacts.meshPipelineVersion(1, 4) !== M.artifacts.meshPipelineVersion(1, 5) && M.artifacts.meshPipelineVersion(1, 4) !== M.artifacts.meshPipelineVersion(2, 4))
 
-  // The tiles of the top level (docs/decisions/tile-jobs.md): built from
-  // level 1, one tile and its neighbour. The seam rule is what is checked —
-  // the shared edge line the same in both, at the same heights, every step
-  // of it an edge of both triangulations, and the tile's inside a function
-  // of its own points alone (a wider halo changes no triangle in it).
-  {
+  // The tiles of the fine levels (docs/decisions/tile-jobs.md; the levels,
+  // detail-ladder.md step 5): built from level 1, one tile and its
+  // neighbour, per level. The seam rule is what is checked — the shared
+  // edge line the same in both, at the same heights, every step of it an
+  // edge of both triangulations, and the tile's inside a function of its
+  // own points alone (a wider halo changes no triangle in it).
+  for (const tileLevel of [3, 2]) {
     const T = M.tile
-    const parent = { mesh: level.mesh, z: level.z, discharge: level.discharge, sampler }
+    const spec = T.tileSpec(tileLevel)
+    const C = spec.cells
+    console.log(`  — level ${tileLevel}: ${C} × ${C} cells, offset ${spec.offset}, budget ${spec.budget}`)
+    const corner = (t) => T.tileCorner({ level: tileLevel, ...t }, spec)
+    const onLine = (v) => (((v - spec.offset) % C) + C) % C === 0
+    const tileOf = (x, y) => ({ level: tileLevel, x: Math.floor((((x - spec.offset) % W) + W) % W / C), y: Math.floor((((y - spec.offset) % H) + H) % H / C) })
+    const parent = { mesh: level.mesh, z: level.z, discharge: level.discharge, sampler, macro: sampler }
     const opts = { seed: 1234, width: W, height: H }
-    const { cols, rows } = T.tileGrid(W, H)
+    const { cols, rows } = T.tileGrid(W, H, spec)
     // The tile with the most land under its centre row, and its east neighbour.
-    let best = { x: 0, y: 0, land: -1 }
+    let best = { level: tileLevel, x: 0, y: 0, land: -1 }
     for (let ty = 0; ty < rows; ty++) for (let tx = 0; tx < cols; tx++) {
       let n = 0
-      for (let k = 0; k < 8; k++) if (sampler.heightAt(tx * T.TILE_CELLS + k + 0.5, ty * T.TILE_CELLS + 4) > 0) n++
-      if (n > best.land) best = { x: tx, y: ty, land: n }
+      const c = corner({ x: tx, y: ty })
+      for (let k = 0; k < C; k++) if (sampler.heightAt((c.x + k + 0.5) % W, (c.y + C / 2) % H) > 0) n++
+      if (n > best.land) best = { level: tileLevel, x: tx, y: ty, land: n }
     }
     const t1 = performance.now()
     const A = T.buildTileMesh(parent, best, opts)
     const tileMs = performance.now() - t1
-    const B = T.buildTileMesh(parent, { x: (best.x + 1) % cols, y: best.y }, opts)
+    const B = T.buildTileMesh(parent, { level: tileLevel, x: (best.x + 1) % cols, y: best.y }, opts)
     const count = (t, role) => { let n = 0; for (let v = 0; v < t.mesh.vertexSlots; v++) if (t.mesh.vAlive[v] && t.role[v] === role) n++; return n }
     check(`a tile is a valid triangulation (${A.mesh.aliveVertices} nodes: ${count(A, T.TILE_ROLE_NEW)} new, ${count(A, T.TILE_ROLE_PARENT)} parents, ${count(A, T.TILE_ROLE_EDGE)} edge; ${tileMs.toFixed(0)} ms)`, A.mesh.validate().length === 0 && B.mesh.validate().length === 0)
     // Edge nodes by world position.
@@ -671,7 +681,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
       return map
     }
     const edgeA = edgeNodes(A), edgeB = edgeNodes(B)
-    const sharedX = ((best.x + 1) % cols) * T.TILE_CELLS
+    const sharedX = corner({ x: (best.x + 1) % cols, y: best.y }).x % W
     let shared = 0, heightDiffers = 0, missing = 0
     for (const [k, v] of edgeA) {
       if (Number(k.split(',')[0]) !== sharedX) continue
@@ -680,7 +690,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
       if (u === undefined) missing++
       else if (A.z[v] !== B.z[u]) heightDiffers++
     }
-    check('two neighbours hold the same nodes on their shared edge, at the same heights', shared === T.TILE_EDGE_STEPS + 1 && missing === 0 && heightDiffers === 0, `${shared} shared, ${missing} missing, ${heightDiffers} heights differ`)
+    check('two neighbours hold the same nodes on their shared edge, at the same heights', shared === spec.edgeSteps + 1 && missing === 0 && heightDiffers === 0, `${shared} shared, ${missing} missing, ${heightDiffers} heights differ`)
     // Every step of the edge line is an edge of the triangulation.
     const stepsMissing = (t, edges) => {
       // The row along each line, sorted; consecutive nodes must be neighbours.
@@ -688,14 +698,14 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
       const lines = new Map()
       for (const [k, v] of edges) {
         const [x, y] = k.split(',').map(Number)
-        if (x % T.TILE_CELLS === 0) { const l = `x${x}`; if (!lines.has(l)) lines.set(l, []); lines.get(l).push([y, v]) }
-        if (y % T.TILE_CELLS === 0) { const l = `y${y}`; if (!lines.has(l)) lines.set(l, []); lines.get(l).push([x, v]) }
+        if (onLine(x)) { const l = `x${x}`; if (!lines.has(l)) lines.set(l, []); lines.get(l).push([y, v]) }
+        if (onLine(y)) { const l = `y${y}`; if (!lines.has(l)) lines.set(l, []); lines.get(l).push([x, v]) }
       }
       let lost = 0, steps = 0
       for (const row of lines.values()) {
         row.sort((a, b) => a[0] - b[0])
         for (let i = 1; i < row.length; i++) {
-          if (row[i][0] - row[i - 1][0] > T.TILE_CELLS / 2) continue // across the world's seam
+          if (row[i][0] - row[i - 1][0] > C / 2) continue // across the world's seam
           steps++
           const n = t.mesh.neighbours(row[i][1], nb)
           let found = false
@@ -703,7 +713,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
           if (!found) lost++
         }
       }
-      return steps === 4 * T.TILE_EDGE_STEPS ? lost : -1
+      return steps === 4 * spec.edgeSteps ? lost : -1
     }
     const lostA = stepsMissing(A, edgeA), lostB = stepsMissing(B, edgeB)
     check('every step of the edge line is an edge of the tile\'s triangulation', lostA === 0 && lostB === 0, `${lostA} + ${lostB} missing (-1: not every step found)`)
@@ -730,11 +740,11 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     const again = T.buildTileMesh(parent, best, opts)
     check('the same parent builds the same tile', meshHash(again.mesh) === meshHash(A.mesh) && again.z.every((v, i) => v === A.z[i]))
     // Across the world's seam: the last column's east edge is the first's west edge.
-    const east = T.buildTileMesh(parent, { x: cols - 1, y: best.y }, opts), west = T.buildTileMesh(parent, { x: 0, y: best.y }, opts)
+    const east = T.buildTileMesh(parent, { level: tileLevel, x: cols - 1, y: best.y }, opts), west = T.buildTileMesh(parent, { level: tileLevel, x: 0, y: best.y }, opts)
     const edgeE = edgeNodes(east), edgeW = edgeNodes(west)
     let seam = 0, seamBad = 0
-    for (const [k, v] of edgeE) { if (Number(k.split(',')[0]) !== 0) continue; seam++; const u = edgeW.get(k); if (u === undefined || east.z[v] !== west.z[u]) seamBad++ }
-    check('tiles meet across the world\'s seam as they do inside it', seam === T.TILE_EDGE_STEPS + 1 && seamBad === 0, `${seam} shared, ${seamBad} differ`)
+    for (const [k, v] of edgeE) { if (Number(k.split(',')[0]) !== spec.offset % W) continue; seam++; const u = edgeW.get(k); if (u === undefined || east.z[v] !== west.z[u]) seamBad++ }
+    check('tiles meet across the world\'s seam as they do inside it', seam === spec.edgeSteps + 1 && seamBad === 0, `${seam} shared, ${seamBad} differ`)
 
     // The tile's bake: the edge row pinned, the halo frozen, level 1's
     // rivers entering with their discharge. The edge must come out at the
@@ -746,6 +756,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
       uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
       precipitation: precip, climateResX: CRX, climateResY: CRY,
       meanLandWater: M.hydro.meanLandRunoff(precip, macro, W, H, CRX, CRY),
+      upstream: [],
     }
     const t2 = performance.now()
     const baked = await M.tileBake.bakeMeshTile(tileInputs, best, { rounds: 4 })
@@ -780,9 +791,9 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     for (const r of g.reaches) {
       if (r.kind !== 'river') continue
       for (let k = 1; k < r.cellCount && !inTile; k++) {
-        const a = [Math.floor(g.cellX[r.cellStart + k - 1] / T.TILE_CELLS), Math.floor(g.cellY[r.cellStart + k - 1] / T.TILE_CELLS)]
-        const b = [Math.floor(g.cellX[r.cellStart + k] / T.TILE_CELLS), Math.floor(g.cellY[r.cellStart + k] / T.TILE_CELLS)]
-        if ((a[0] !== b[0] || a[1] !== b[1]) && r.dischargeOut > 0) inTile = { x: b[0], y: b[1] }
+        const a = tileOf(g.cellX[r.cellStart + k - 1], g.cellY[r.cellStart + k - 1])
+        const b = tileOf(g.cellX[r.cellStart + k], g.cellY[r.cellStart + k])
+        if ((a.x !== b.x || a.y !== b.y) && r.dischargeOut > 0) inTile = b
       }
       if (inTile) break
     }
@@ -798,16 +809,167 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
       let halo = 0
       for (let i = 0; i < art.count; i++) if (art.role[i] === T.TILE_ROLE_HALO) halo++
       let outside = 0
-      for (let i = 0; i < art.count; i++) { const x = art.nodes[2 * i], y = art.nodes[2 * i + 1]; if (x < 0 || y < 0 || x > T.TILE_CELLS || y > T.TILE_CELLS) outside++ }
+      for (let i = 0; i < art.count; i++) { const x = art.nodes[2 * i], y = art.nodes[2 * i + 1]; if (x < 0 || y < 0 || x > C || y > C) outside++ }
       const tileStore = M.memory.createMemoryArtifactStore()
       const stage = M.tileArtifacts.meshTileStage(best)
-      const tileKey = M.store.artifactKey('uid', 'world', M.tileArtifacts.meshTilePipelineVersion(4), stage)
+      const tileKey = M.store.artifactKey('uid', 'world', M.tileArtifacts.meshTilePipelineVersion(tileLevel, 4), stage)
       const wrote = await M.tileArtifacts.writeMeshTileArtifact(tileStore, tileKey, art, bakeMs, 'synthetic', 4)
       const read = await M.tileArtifacts.readMeshTileArtifact(tileStore, tileKey)
       const same = read !== null && read.artifact.count === art.count && read.artifact.z.every((v, i) => v === art.z[i]) && read.artifact.triangles.every((v, i) => v === art.triangles[i]) && read.artifact.nodes.every((v, i) => v === art.nodes[i])
-      check(`a tile's artifact holds its inside and reads back identical (${stage}: ${art.count} nodes, ${art.triangles.length / 3} triangles)`, wrote && same && halo === 0 && outside === 0 && stage === `L2:${best.x},${best.y}`, `${halo} halo nodes, ${outside} outside the tile`)
-      check('the tile pipeline version moves with the rounds and differs from level 1\'s', M.tileArtifacts.meshTilePipelineVersion(4) !== M.tileArtifacts.meshTilePipelineVersion(5) && M.tileArtifacts.meshTilePipelineVersion(4) !== M.artifacts.meshPipelineVersion(1, 4))
+      check(`a tile's artifact holds its inside and reads back identical (${stage}: ${art.count} nodes, ${art.triangles.length / 3} triangles)`, wrote && same && halo === 0 && outside === 0 && stage === `L${tileLevel}:${best.x},${best.y}`, `${halo} halo nodes, ${outside} outside the tile`)
+      check('the tile pipeline version moves with the rounds and the level, and differs from level 1\'s', M.tileArtifacts.meshTilePipelineVersion(tileLevel, 4) !== M.tileArtifacts.meshTilePipelineVersion(tileLevel, 5) && M.tileArtifacts.meshTilePipelineVersion(2, 4) !== M.tileArtifacts.meshTilePipelineVersion(3, 4) && M.tileArtifacts.meshTilePipelineVersion(tileLevel, 4) !== M.artifacts.meshPipelineVersion(1, 4))
     }
+  }
+
+  // The patchwork parent (detail-ladder.md step 5.3): a level-3 tile
+  // built on the level-2 tiles it overlaps, joined. The join must hold
+  // every level-2 node at its own height, a shared edge node once, and the
+  // level-3 tiles on it must meet as they do on level 1.
+  {
+    const T = M.tile
+    const s2 = T.tileSpec(2), s3 = T.tileSpec(3)
+    const parent1 = { mesh: level.mesh, z: level.z, discharge: level.discharge, sampler, macro: sampler }
+    const macro = M.raster.rasteriseNodeField(level.mesh, level.z, W, H)
+    const inputs2 = {
+      parent: parent1, parentGraph: level.graph, width: W, height: H, detailSeed: 1234, lithoSeed: 77, controls: {},
+      uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
+      precipitation: precip, climateResX: CRX, climateResY: CRY,
+      meanLandWater: M.hydro.meanLandRunoff(precip, macro, W, H, CRX, CRY),
+      upstream: [],
+    }
+    // A level-3 tile on a level-2 seam with land, and its east neighbour.
+    const { cols: c3, rows: r3 } = T.tileGrid(W, H, s3)
+    let pick = null
+    for (let ty = 0; ty < r3 && !pick; ty++) for (let tx = 0; tx < c3 && !pick; tx++) {
+      const c = T.tileCorner({ level: 3, x: tx, y: ty }, s3)
+      if (sampler.heightAt((c.x + 4) % W, (c.y + 4) % H) > 0 && T.parentTilesOf({ level: 3, x: tx, y: ty }, s2, W, H).length >= 2) pick = { level: 3, x: tx, y: ty }
+    }
+    const pair = [pick, { level: 3, x: (pick.x + 1) % c3, y: pick.y }]
+    const needed = new Map()
+    for (const t of pair) for (const p of T.parentTilesOf(t, s2, W, H)) needed.set(`${p.x},${p.y}`, p)
+    const pieces = []
+    for (const p of needed.values()) {
+      const art = M.tileArtifacts.bakedTileToArtifact(await M.tileBake.bakeMeshTile(inputs2, p, { rounds: 2 }))
+      pieces.push({ tile: p, count: art.count, nodes: art.nodes, z: art.z })
+    }
+    const patch = T.tileParentFromTiles(pieces, W, H)
+    const patchSampler = M.sampler.createMeshSampler(patch.mesh, patch.z)
+    let total = 0, off = 0
+    for (const piece of pieces) {
+      const c = T.tileCorner(piece.tile, s2)
+      for (let i = 0; i < piece.count; i++) {
+        total++
+        // At the node as the mesh holds it (float32 world positions).
+        const h = patchSampler.heightAt(Math.fround((c.x + piece.nodes[2 * i]) % W), Math.fround((c.y + piece.nodes[2 * i + 1]) % H))
+        if (Math.abs(h - piece.z[i]) > 1e-6) off++
+      }
+    }
+    check(`the patchwork holds every level-2 node at its height, a shared one once (${pieces.length} tiles, ${total} → ${patch.mesh.aliveVertices} nodes)`, off === 0 && patch.mesh.validate().length === 0 && patch.mesh.aliveVertices < total, `${off} off`)
+    const parent3 = { mesh: patch.mesh, z: patch.z, discharge: null, sampler: patchSampler, macro: sampler }
+    // Each tile on its OWN patchwork, as a worker builds it: the two share
+    // some level-2 tiles, not all.
+    const own = (t) => {
+      const mine = pieces.filter((piece) => T.parentTilesOf(t, s2, W, H).some((p) => p.x === piece.tile.x && p.y === piece.tile.y))
+      const joined = T.tileParentFromTiles(mine, W, H)
+      return { mesh: joined.mesh, z: joined.z, discharge: null, sampler: M.sampler.createMeshSampler(joined.mesh, joined.z), macro: sampler }
+    }
+    const opts = { seed: 1234, width: W, height: H }
+    const A = T.buildTileMesh(own(pair[0]), pair[0], opts), B = T.buildTileMesh(own(pair[1]), pair[1], opts)
+    const edge = (t) => { const m = new Map(); for (let v = 0; v < t.mesh.vertexSlots; v++) if (t.mesh.vAlive[v] && t.role[v] === T.TILE_ROLE_EDGE) m.set(`${T.tileWorldX(t, t.mesh.vx[v], W)},${T.tileWorldY(t, t.mesh.vy[v], H)}`, v); return m }
+    const eA = edge(A), eB = edge(B)
+    const sharedX = T.tileCorner(pair[1], s3).x % W
+    let shared = 0, bad = 0
+    for (const [k, v] of eA) { if (Number(k.split(',')[0]) !== sharedX) continue; shared++; const u = eB.get(k); if (u === undefined || A.z[v] !== B.z[u]) bad++ }
+    check('level-3 tiles on the patchwork are valid and meet on their shared edge', A.mesh.validate().length === 0 && B.mesh.validate().length === 0 && shared === s3.edgeSteps + 1 && bad === 0, `${shared} shared, ${bad} differ; tile ${pick.x},${pick.y} over ${T.parentTilesOf(pick, s2, W, H).length} level-2 tiles`)
+    const baked3 = await M.tileBake.bakeMeshTile({ ...inputs2, parent: parent3 }, pair[0], { rounds: 2 })
+    let stuck = 0, drained = 0
+    const target = baked3.routing.flowTarget, bt = baked3.tile
+    for (let v = 0; v < bt.mesh.vertexSlots; v++) {
+      if (!bt.mesh.vAlive[v] || bt.role[v] === T.TILE_ROLE_EDGE || bt.role[v] === T.TILE_ROLE_HALO || baked3.z[v] <= 0) continue
+      let u = v, n = 0
+      while (n++ < 1e6 && baked3.z[u] > 0 && bt.role[u] !== T.TILE_ROLE_EDGE && target[u] >= 0) u = target[u]
+      if (bt.role[u] === T.TILE_ROLE_EDGE || baked3.z[u] <= 0) drained++
+      else stuck++
+    }
+    check('a level-3 tile on the patchwork bakes and every land node inside drains', stuck === 0 && drained > 0, `${drained} drained, ${stuck} stuck`)
+  }
+
+  // The tile levels' graph (detail-ladder.md step 5.4): planned from level
+  // 1's drainage — acyclic, a finer tile's parents in the plan, every
+  // dependency a planned tile — and the water across an edge: what an
+  // upstream tile lets out over its edge row is what the tile below takes
+  // in, node for node.
+  {
+    const T = M.tile, P = M.tilePlan
+    const routing = M.meshHydrology.meshRouting(level.mesh, level.z)
+    const landOf = (lv) => {
+      const spec = T.tileSpec(lv), { cols, rows } = T.tileGrid(W, H, spec), out = []
+      for (let ty = 0; ty < rows; ty++) for (let tx = 0; tx < cols; tx++) {
+        const c = T.tileCorner({ level: lv, x: tx, y: ty }, spec)
+        let land = false
+        for (let k = 0; k < spec.cells && !land; k += 2) for (let j = 0; j < spec.cells && !land; j += 2) if (sampler.heightAt((c.x + k + 0.5) % W, (c.y + j + 0.5) % H) > 0) land = true
+        if (land) out.push({ level: lv, x: tx, y: ty })
+      }
+      return out
+    }
+    const t0 = performance.now()
+    const plan = P.planTiles({ mesh: level.mesh, z: level.z, routing, width: W, height: H, levels: [2, 3], landTiles: landOf })
+    const planMs = performance.now() - t0
+    const key = (t) => `${t.level}:${t.x},${t.y}`
+    const planned = new Map(plan.map((p) => [key(p.tile), p]))
+    let missing = 0, edges = 0
+    for (const p of plan) for (const d of [...p.parents, ...p.upstream]) { edges++; if (!planned.has(key(d))) missing++ }
+    // Kahn's order: every tile placeable after what it waits for.
+    const waiting = new Map(plan.map((p) => [key(p.tile), p.parents.length + p.upstream.length]))
+    const after = new Map()
+    for (const p of plan) for (const d of [...p.parents, ...p.upstream]) { const k = key(d); if (!after.has(k)) after.set(k, []); after.get(k).push(key(p.tile)) }
+    const ready = [...waiting].filter(([, n]) => n === 0).map(([k]) => k)
+    let placed = 0
+    while (ready.length) { const k = ready.pop(); placed++; for (const n of after.get(k) ?? []) { waiting.set(n, waiting.get(n) - 1); if (waiting.get(n) === 0) ready.push(n) } }
+    const counts = [2, 3].map((lv) => plan.filter((p) => p.tile.level === lv).length)
+    const flow = plan.reduce((n, p) => n + p.upstream.length, 0)
+    check(`the tile plan is acyclic and whole (${counts[0]} + ${counts[1]} tiles, ${flow} flow edges, ${edges} in all; ${planMs.toFixed(0)} ms)`, missing === 0 && placed === plan.length && flow > 0, `${missing} unplanned deps, ${placed}/${plan.length} placed`)
+
+    // A level-2 tile with an upstream tile: the upstream's outflow over the
+    // shared edge is the downstream's inflow, to the bit of a float sum.
+    const down = plan.find((p) => p.tile.level === 2 && p.upstream.length > 0)
+    const parent1 = { mesh: level.mesh, z: level.z, discharge: level.discharge, sampler, macro: sampler }
+    const macro = M.raster.rasteriseNodeField(level.mesh, level.z, W, H)
+    const base = {
+      parent: parent1, parentGraph: level.graph, width: W, height: H, detailSeed: 1234, lithoSeed: 77, controls: {},
+      uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
+      precipitation: precip, climateResX: CRX, climateResY: CRY,
+      meanLandWater: M.hydro.meanLandRunoff(precip, macro, W, H, CRX, CRY), upstream: [],
+    }
+    const ups = []
+    for (const u of down.upstream) {
+      const art = M.tileArtifacts.bakedTileToArtifact(await M.tileBake.bakeMeshTile(base, u, { rounds: 2 }))
+      ups.push({ tile: u, count: art.count, nodes: art.nodes, outflow: art.outflow })
+    }
+    const fed = await M.tileBake.bakeMeshTile({ ...base, upstream: ups }, down.tile, { rounds: 2 })
+    // What the upstream tiles let out on the edges they share with it.
+    const spec = T.tileSpec(2)
+    const own = new Set()
+    for (let v = 0; v < fed.tile.mesh.vertexSlots; v++) if (fed.tile.mesh.vAlive[v] && fed.tile.role[v] === T.TILE_ROLE_EDGE) own.add(`${T.tileWorldX(fed.tile, fed.tile.mesh.vx[v], W)},${T.tileWorldY(fed.tile, fed.tile.mesh.vy[v], H)}`)
+    let sent = 0
+    for (const u of ups) {
+      const c = T.tileCorner(u.tile, spec)
+      for (let i = 0; i < u.count; i++) if (u.outflow[i] > 0 && own.has(`${(c.x + u.nodes[2 * i]) % W},${(c.y + u.nodes[2 * i + 1]) % H}`)) sent += u.outflow[i]
+    }
+    check('an upstream tile\'s outflow over the shared edge is the tile\'s inflow', sent > 0 && Math.abs(fed.upstreamInflow - sent) <= 1e-6 * sent, `${sent.toFixed(2)} out, ${fed.upstreamInflow.toFixed(2)} in over ${fed.upstreamNodes} edge nodes; tile ${down.tile.x},${down.tile.y} after ${down.upstream.map((u) => `${u.x},${u.y}`).join(' ')}`)
+    // The water arrives in the network: against the same tile baked with
+    // no upstream, the drainage somewhere grows by at least the strongest
+    // single inflow (the engine spreads area over several receivers, so a
+    // sum over single-flow outlets would not close).
+    let strongest = 0
+    for (const u of ups) {
+      const c = T.tileCorner(u.tile, spec)
+      for (let i = 0; i < u.count; i++) if (own.has(`${(c.x + u.nodes[2 * i]) % W},${(c.y + u.nodes[2 * i + 1]) % H}`)) strongest = Math.max(strongest, u.outflow[i])
+    }
+    const bare = await M.tileBake.bakeMeshTile(base, down.tile, { rounds: 2 })
+    let grew = 0
+    for (let v = 0; v < fed.tile.mesh.vertexSlots; v++) if (fed.tile.mesh.vAlive[v]) grew = Math.max(grew, fed.routing.accumulation[v] - bare.routing.accumulation[v])
+    check('the water taken in arrives in the tile\'s drainage', grew >= 0.9 * strongest, `drainage grew by up to ${grew.toFixed(2)}, the strongest inflow ${strongest.toFixed(2)}`)
   }
 }
 

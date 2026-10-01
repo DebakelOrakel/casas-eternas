@@ -46,7 +46,7 @@ type Runner interface {
 type Spec struct {
 	Stage         int `json:"stage"`
 	ErosionRounds int `json:"erosionRounds"`
-	// The tile, for stage 2.
+	// The tile, for a stage with tiles (2, 3).
 	Tile *TileRef `json:"tile,omitempty"`
 	// The artifact stage the job produces (Request.StageName), for the
 	// runner that reports a result without reading the worker's output.
@@ -78,6 +78,10 @@ type Spec struct {
 	// a plan. The artifact key names the inputs and the pipeline version, so
 	// one there is the one the task would write.
 	Reuse bool `json:"reuse,omitempty"`
+
+	// For a tile: the upstream tiles of its level, whose outflow it reads
+	// (the refine plan's flow edges, coordinator.go).
+	Upstream []TileRef `json:"upstream,omitempty"`
 
 	// Where a long task keeps its checkpoints (level 1's replay), on a disk
 	// every worker that may take the task over can read. Empty: none kept.

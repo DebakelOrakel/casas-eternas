@@ -34,8 +34,8 @@ const (
 	// ScopeBasin is reserved for the split along drainage divides. Declared
 	// now so the wire format and the queue never have to learn a new shape.
 	ScopeBasin ScopeKind = "basin"
-	// ScopeTile is one tile of the top mesh level (stage 2): X and Y are its
-	// column and row on the world's tile grid (docs/decisions/tile-jobs.md).
+	// ScopeTile is one tile of a fine mesh level (stage 2 or 3): X and Y are
+	// its column and row on that level's tile grid (docs/decisions/tile-jobs.md).
 	ScopeTile ScopeKind = "tile"
 )
 
@@ -114,7 +114,7 @@ func (r Request) Validate() error {
 	if r.WorldUID == "" {
 		return fmt.Errorf("worldUid is required")
 	}
-	// Level 1 runs over the whole world, level 2 one tile at a time.
+	// Level 1 runs over the whole world, the levels below one tile at a time.
 	switch r.Scope.Kind {
 	case "", ScopeWorld:
 		if r.Plan != "" && r.Plan != PlanRefine {
@@ -134,8 +134,10 @@ func (r Request) Validate() error {
 		if r.Plan != "" {
 			return fmt.Errorf("a plan runs over the whole world")
 		}
-		if r.Stage != 2 {
-			return fmt.Errorf("a tile scope is stage 2")
+		// The levels with tiles (client/src/generator/mesh/meshTile.ts,
+		// TILE_SPECS).
+		if r.Stage < 2 || r.Stage > maxTileStage {
+			return fmt.Errorf("a tile scope is stage 2 to %d", maxTileStage)
 		}
 		if r.Scope.X < 0 || r.Scope.Y < 0 {
 			return fmt.Errorf("tile x and y must not be negative")
