@@ -32,7 +32,7 @@ import { readWorldInputs } from '../src/world/save/loadWorldInputs'
 import type { WorkerLike } from '../src/generator/surface/erosionEnginePool'
 import { bakeMeshLevel, levelBudget } from '../src/generator/pipeline/meshBakeStage'
 import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact } from '../src/world/meshArtifacts'
-import { bakedTileToArtifact, meshTilePipelineVersion, meshTileStage, writeMeshTileArtifact } from '../src/world/meshTileArtifacts'
+import { bakedTileToArtifact, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact } from '../src/world/meshTileArtifacts'
 import { bakeMeshTile } from '../src/generator/pipeline/meshTileBake'
 import { TILE_CELLS, tileGrid } from '../src/generator/mesh/meshTile'
 import { SHELF_BREAK } from '../src/generator/elevation/elevationScale'
@@ -92,6 +92,10 @@ interface Job {
   // relay (internal/modules/jobs/coordinator.go): what it reports on
   // jobs.done.<taskId>.
   taskId?: string
+  // Whether an artifact already in the store may stand for the result
+  // (set by the coordinator for a plan's tasks): its key names the inputs and
+  // the pipeline version, so it is the one this job would write.
+  reuse?: boolean
   // False forces the single-threaded engine — ONE state buffer instead of the
   // pool's pipelined pair, which halves the routing memory (measured layout:
   // a 16K bake is ~17 GiB single-buffer against ~26 GiB pipelined, the
@@ -434,12 +438,22 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
   if (job.stage === 2) return bakeTile(job, inputs, store, onProgress, cache)
   if (job.stage !== 1) throw new Error(`stage ${job.stage}: only levels 1 and 2 are built`)
   const started = Date.now()
+  const pipelineVersion = meshPipelineVersion(1, job.erosionRounds)
+  const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshLevelStage(1))
+  if (job.reuse) {
+    const stored = await readMeshLevelArtifact(store, key)
+    if (stored) {
+      if (cache) remember(cache.levels, `${key.worldUid}/${key.worldId}/${key.pipelineVersion}`, { artifact: stored.artifact }, CACHED_LEVELS)
+      return {
+        result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: stored.artifact.count, durationMs: stored.bakeMs },
+        tiles: landTiles(inputs),
+      }
+    }
+  }
   const bakeInputs = levelBakeInputs(inputs)
   if (!bakeInputs) throw new Error('the world carries no mesh (a save from before formatVersion 3, or never eroded) — nothing to refine')
   const level = await bakeMeshLevel(bakeInputs, { level: 1, budget: levelBudget(1), rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
   const durationMs = Date.now() - started
-  const pipelineVersion = meshPipelineVersion(1, job.erosionRounds)
-  const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshLevelStage(1))
   const artifact = meshLevelToArtifact(level)
   if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
   if (cache) remember(cache.levels, `${key.worldUid}/${key.worldId}/${key.pipelineVersion}`, { artifact }, CACHED_LEVELS)
@@ -481,6 +495,12 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
     throw new Error(`stage 2 needs a tile inside the ${cols} × ${rows} grid`)
   }
   const started = Date.now()
+  const pipelineVersion = meshTilePipelineVersion(job.erosionRounds)
+  const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(tile))
+  if (job.reuse) {
+    const stored = await readMeshTileArtifact(store, key)
+    if (stored) return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: stored.artifact.count, durationMs: stored.bakeMs } }
+  }
   onProgress('parent', 0)
   const parentKey = artifactKey(inputs.worldUid, inputs.worldId, meshPipelineVersion(1, job.erosionRounds), meshLevelStage(1))
   const levelKey = `${parentKey.worldUid}/${parentKey.worldId}/${parentKey.pipelineVersion}`
@@ -497,8 +517,6 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
   const parent = { mesh: parentMesh, z: parentZ, discharge: null, sampler: createMeshSampler(parentMesh, parentZ) }
   const baked = await bakeMeshTile(tileBakeInputs(inputs, parent, parentArtifact.graph), tile, { rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
   const durationMs = Date.now() - started
-  const pipelineVersion = meshTilePipelineVersion(job.erosionRounds)
-  const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(tile))
   const artifact = bakedTileToArtifact(baked)
   if (!(await writeMeshTileArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
   return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs } }
@@ -534,7 +552,7 @@ async function serve(config: ServeConfig): Promise<void> {
     ack_policy: AckPolicy.Explicit,
     ack_wait: TASK_ACK_WAIT_MS * 1_000_000,
     max_deliver: TASK_MAX_DELIVER,
-    filter_subjects: config.pools.map((pool) => `jobs.task.${pool}`),
+    filter_subjects: config.pools.map((pool) => `jobs.task.${pool}.*`),
   }
   const jsm = await jetstreamManager(nc)
   try {

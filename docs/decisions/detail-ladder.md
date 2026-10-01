@@ -213,8 +213,8 @@ another's namespace.
 
 | Subject | Stream | What |
 |---|---|---|
-| `jobs.task.<pool>` | `JOBS_TASKS` (work queue) | the micro-computations; `<pool>` e.g. `level`, `tile` |
-| `jobs.task.<pool>.urgent` | the same | the urgent ones (level 4) |
+| `jobs.task.<pool>.<jobId>` | `JOBS_TASKS` (work queue) | the micro-computations; `<pool>` e.g. `level`, `tile`; the job's id last, so a cancel purges its tasks in one call |
+| `jobs.task.<pool>-urgent.<jobId>` | the same | the urgent ones (level 4), a pool of their own |
 | `jobs.event.<jobId>` | `JOBS_EVENTS` (short retention) | progress and the end; `jobs` passes them to the client as server-sent events — the client never speaks NATS |
 | `world.event.<uid>`, `artifacts.event.…` | later, a stream each | e.g. a world saved, an artifact written |
 
@@ -241,7 +241,7 @@ message id, so JetStream drops a task published twice):
 
 | Subject | Stream | What |
 |---|---|---|
-| `jobs.task.<pool>` (+ `.urgent`) | `JOBS_TASKS`, work queue | a task: id, kind, world uid and id, input artifact keys, parameters, output key |
+| `jobs.task.<pool>.<jobId>` | `JOBS_TASKS`, work queue | a task: id, kind, world uid and id, input artifact keys, parameters, output key |
 | `jobs.done.<taskId>` | `JOBS_DONE`, work queue, read by the coordinator | the artifact key, pipeline version, duration — or the error |
 | `jobs.event.<jobId>` | `JOBS_EVENTS`, short retention | progress, for the client |
 

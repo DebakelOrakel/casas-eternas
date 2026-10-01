@@ -73,6 +73,12 @@ type Spec struct {
 	// what the worker reports on jobs.done.<taskId>.
 	TaskID string `json:"taskId,omitempty"`
 
+	// Whether the worker may report an artifact already in the store as
+	// the task's result instead of computing it again: set for the tasks of
+	// a plan. The artifact key names the inputs and the pipeline version, so
+	// one there is the one the task would write.
+	Reuse bool `json:"reuse,omitempty"`
+
 	// The bake job's id.
 	//
 	// The cluster runner names its Job object after it, which is what makes a

@@ -376,7 +376,7 @@ func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 	m, runner, worlds := newTestModule(t, config.AuthNone, 1)
 	writeWorld(t, worlds, testUID)
 
-	for _, body := range []string{`{"stage":2}`, `{"stage":0}`, `{"scope":{"kind":"basin"},"stage":1}`, `not json`} {
+	for _, body := range []string{`{"stage":2}`, `{"stage":0}`, `{"stage":3,"plan":"refine"}`, `{"stage":0,"plan":"refine"}`, `{"scope":{"kind":"basin"},"stage":1}`, `not json`} {
 		if got := post(m, testUID, body, "").Code; got != http.StatusBadRequest {
 			t.Errorf("body %q = %d, want 400", body, got)
 		}

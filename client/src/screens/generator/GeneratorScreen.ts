@@ -720,6 +720,16 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
              The button is off with its reason while the world cannot be
              baked (signed out, not on the server, no baker there). -->
         <p class="gen-finishing__state" data-value="finishing-state"></p>
+        <!-- How far: the levels as options (2026-10-01), the highest one
+             built chosen first; a level not built yet is shown, off. -->
+        <div class="gen-depth">
+          <span class="gen-depth__label" data-help="generator.finishing.depth" data-t="generator.finishing.depth.label">${t('generator.finishing.depth.label')}</span>
+          <div class="gen-depth__options" data-value="finishing-depth">
+            <button type="button" data-level="1">L1</button>
+            <button type="button" data-level="2">L2</button>
+            <button type="button" data-level="3">L3</button>
+          </div>
+        </div>
         <div class="gen-step__actions">
           <button type="button" class="gen-action" data-action="refine-world" data-help="generator.finishing.refine">
             <span class="gen-action__label" data-t="generator.finishing.refine.label">${t('generator.finishing.refine.label')}</span>
@@ -4831,6 +4841,26 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // to be had.
   const finishingState = root.querySelector<HTMLElement>('[data-value="finishing-state"]')!
   const refineButton = root.querySelector<HTMLButtonElement>('[data-action="refine-world"]')!
+  // The level the plan refines up to. The highest the server builds is
+  // REFINE_LEVELS (internal/modules/jobs, maxRefineStage); a higher button
+  // stays off until it is built. Kept for the screen's life only.
+  const REFINE_LEVELS = 2
+  const depthButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-value="finishing-depth"] button')]
+  let refineDepth = REFINE_LEVELS
+  function paintDepth(): void {
+    for (const button of depthButtons) {
+      const level = Number(button.dataset.level)
+      button.disabled = level > REFINE_LEVELS
+      button.setAttribute('aria-pressed', String(level === refineDepth))
+    }
+  }
+  for (const button of depthButtons) {
+    button.addEventListener('click', () => {
+      refineDepth = Number(button.dataset.level)
+      paintDepth()
+    })
+  }
+  paintDepth()
   let finishingTimer: ReturnType<typeof setTimeout> | null = null
   let finishingUnwatch: (() => void) | null = null
   // What the last refresh found: why the world cannot be refined, its jobs
@@ -4885,18 +4915,22 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   function paintFinishing(): void {
     const needs = finishingNeeds
-    const job = finishingJobs.find((j) => j.request?.stage === 1 && j.request.plan === 'refine') ?? null
+    const job = finishingJobs.find((j) => j.request?.plan === 'refine') ?? null
     const active = job !== null && (job.state === 'queued' || job.state === 'running')
-    // A finished plan counts only for the terrain and the pipeline it was
-    // asked for; one for an earlier save of this world is not this world's
-    // refinement. Without a finished plan, level 1 and at least one tile
-    // stored count too (ordered one by one before the plan existed).
-    const doneHere = job !== null && job.state === 'done' && job.result !== undefined && savedWorldId !== null && isCurrentArtifact(job.result, savedWorldId)
-    const storedTile = [...finishingStored].some((stage) => parseStage(stage)?.tile != null)
-    const refined = doneHere || (finishingStored.has(meshLevelStage(1)) && storedTile)
+    // How far the world is refined: what its newest finished plan reached,
+    // or what is stored — level 1, and the tile level once a tile of it is
+    // there. A plan counts only for the terrain and the pipeline it was
+    // asked for; one for an earlier save of this world is not this world's.
+    const planDone = job !== null && job.state === 'done' && job.result !== undefined && savedWorldId !== null && isCurrentArtifact(job.result, savedWorldId)
+    let refined = planDone ? job.request?.stage ?? 1 : 0
+    if (finishingStored.has(meshLevelStage(1))) refined = Math.max(refined, 1)
+    for (const stage of finishingStored) {
+      const parsed = parseStage(stage)
+      if (parsed?.tile) refined = Math.max(refined, parsed.level)
+    }
     finishingState.textContent = needs ? t(needs)
       : active ? jobStateText(job)
-      : refined ? t('generator.finishing.state.done')
+      : refined > 0 ? t('generator.finishing.state.done', { level: refined })
       : !job || job.state === 'cancelled' ? t('generator.finishing.state.none')
       : jobStateText(job)
     refineButton.disabled = needs !== null || active
@@ -4943,7 +4977,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   refineButton.addEventListener('click', () => {
     refineButton.disabled = true
-    void commissionBake(worldUid, 1, AMPLIFY_EROSION_ROUNDS, { plan: 'refine' }).then((outcome) => {
+    void commissionBake(worldUid, refineDepth, AMPLIFY_EROSION_ROUNDS, { plan: 'refine' }).then((outcome) => {
       reportCommission(outcome)
       return refreshFinishing()
     })

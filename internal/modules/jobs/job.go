@@ -74,8 +74,9 @@ type Request struct {
 	ErosionRounds int   `json:"erosionRounds,omitempty"`
 	Scope         Scope `json:"scope"`
 	// The plan: empty for the one task the request names; "refine" for
-	// level 1 and then every land and shelf tile on it — the finishing
-	// step's "refine the world" (coordinator.go). Needs the coordinator.
+	// level 1 and then every land and shelf tile on it, up to Stage — the
+	// finishing step's "refine the world" (coordinator.go). Needs the
+	// coordinator.
 	Plan string `json:"plan,omitempty"`
 }
 
@@ -118,6 +119,13 @@ func (r Request) Validate() error {
 	case "", ScopeWorld:
 		if r.Plan != "" && r.Plan != PlanRefine {
 			return fmt.Errorf("unknown plan %q", r.Plan)
+		}
+		// A plan's stage is the level it refines up to.
+		if r.Plan == PlanRefine {
+			if r.Stage < 1 || r.Stage > maxRefineStage {
+				return fmt.Errorf("a refine plan goes up to stage 1 to %d", maxRefineStage)
+			}
+			break
 		}
 		if r.Stage != 1 {
 			return fmt.Errorf("stage %d needs a tile scope; the whole world is stage 1", r.Stage)

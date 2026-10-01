@@ -48,8 +48,8 @@ func plainSpec(_ context.Context, _ string, request Request) (Spec, error) {
 
 // fakeWorker serves tasks as a Node worker would: a level reports two tiles,
 // a tile reports done — or `failTile` fails, when set. Returns how many tasks
-// it computed.
-func fakeWorker(t *testing.T, server *natsserver.Server, failTile bool) (stop func(), computed *atomic.Int32) {
+// it computed, and how many of them it was allowed to reuse.
+func fakeWorker(t *testing.T, server *natsserver.Server, failTile bool) (stop func(), computed, reused *atomic.Int32) {
 	t.Helper()
 	conn, err := relay.Connect("jobs", server, "")
 	if err != nil {
@@ -60,10 +60,13 @@ func fakeWorker(t *testing.T, server *natsserver.Server, failTile bool) (stop fu
 	if err != nil {
 		t.Fatal(err)
 	}
-	computed = &atomic.Int32{}
+	computed, reused = &atomic.Int32{}, &atomic.Int32{}
 	consume, err := consumer.Consume(func(msg jetstream.Msg) {
 		var spec Spec
 		_ = json.Unmarshal(msg.Data(), &spec)
+		if spec.Reuse {
+			reused.Add(1)
+		}
 		event, _ := json.Marshal(taskEvent{TaskID: spec.TaskID, Phase: "erosion", Percent: 50})
 		_ = conn.NATS().Publish(conn.Subject("event", spec.JobID), event)
 		stage := "L1"
@@ -89,7 +92,7 @@ func fakeWorker(t *testing.T, server *natsserver.Server, failTile bool) (stop fu
 		consume.Stop()
 		cancel()
 		conn.Close()
-	}, computed
+	}, computed, reused
 }
 
 func waitForJob(t *testing.T, reg *registry, id string, want State) Job {
@@ -124,9 +127,9 @@ func TestCoordinatorRunsARefinePlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.close()
-	stop, computed := fakeWorker(t, server, false)
+	stop, computed, _ := fakeWorker(t, server, false)
 	defer stop()
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, ErosionRounds: 12, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 2, ErosionRounds: 12, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
 	done := waitForJob(t, reg, job.ID, StateDone)
 	if computed.Load() != 3 || done.Result == nil || done.Result.Stage != "L1" || done.Percent != 100 {
 		t.Errorf("computed %d, result %+v, percent %d", computed.Load(), done.Result, done.Percent)
@@ -140,6 +143,30 @@ func TestCoordinatorRunsARefinePlan(t *testing.T) {
 	}
 }
 
+// A plan stops at the level it refines up to, and its tasks may reuse what is
+// already there; a single order may not.
+func TestCoordinatorStopsAPlanAtItsStage(t *testing.T) {
+	server, conn := coordinatorRelay(t)
+	reg := newRegistry(jobHistory)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.close()
+	stop, computed, reused := fakeWorker(t, server, false)
+	defer stop()
+	plan := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	waitForJob(t, reg, plan.ID, StateDone)
+	if computed.Load() != 1 || reused.Load() != 1 {
+		t.Errorf("plan to stage 1: computed %d, reused %d, want 1 and 1", computed.Load(), reused.Load())
+	}
+	single := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
+	waitForJob(t, reg, single.ID, StateDone)
+	if computed.Load() != 2 || reused.Load() != 1 {
+		t.Errorf("single order: computed %d, reused %d, want 2 and 1", computed.Load(), reused.Load())
+	}
+}
+
 // A failed task ends its job, and says why.
 func TestCoordinatorFailsAJobOnAFailedTask(t *testing.T) {
 	server, conn := coordinatorRelay(t)
@@ -149,9 +176,9 @@ func TestCoordinatorFailsAJobOnAFailedTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.close()
-	stop, _ := fakeWorker(t, server, true)
+	stop, _, _ := fakeWorker(t, server, true)
 	defer stop()
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
 	failed := waitForJob(t, reg, job.ID, StateFailed)
 	if !strings.Contains(failed.Error, "tile went wrong") {
 		t.Errorf("error %q", failed.Error)
@@ -168,6 +195,8 @@ func TestCoordinatorWithdrawsACancelledJob(t *testing.T) {
 	}
 	defer c.close()
 	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
+	// Another job's task stays.
+	submitted(t, c, reg, Request{WorldUID: "v", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
 	if !c.cancelJob(job.ID) {
 		t.Fatal("cancel refused")
 	}
@@ -181,8 +210,8 @@ func TestCoordinatorWithdrawsACancelledJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.State.Msgs != 0 {
-		t.Errorf("%d tasks left on the relay", info.State.Msgs)
+	if info.State.Msgs != 1 {
+		t.Errorf("%d tasks left on the relay, want the other job's one", info.State.Msgs)
 	}
 }
 
@@ -196,7 +225,7 @@ func TestCoordinatorSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
 	c.close()
 
 	again := newRegistry(jobHistory)
@@ -208,7 +237,7 @@ func TestCoordinatorSurvivesARestart(t *testing.T) {
 	if restored, ok := again.get(job.ID); !ok || restored.State != StateQueued {
 		t.Fatalf("restored %+v, %v", restored, ok)
 	}
-	stop, computed := fakeWorker(t, server, false)
+	stop, computed, _ := fakeWorker(t, server, false)
 	defer stop()
 	waitForJob(t, again, job.ID, StateDone)
 	// The level was published once, before the restart; a second publish of

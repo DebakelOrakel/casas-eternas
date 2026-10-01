@@ -3,7 +3,6 @@ package jobs
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,7 +23,7 @@ import (
 // coordinator"). A job — what a caller orders — is a graph of TASKS: pure
 // computations whose dependencies are declared before they start, each with
 // one artifact as its result. The coordinator publishes every task whose
-// dependencies are done to the relay (`jobs.task.<pool>`), a worker computes
+// dependencies are done to the relay (`jobs.task.<pool>.<jobId>`), a worker computes
 // it and reports on `jobs.done.<taskId>`, and the coordinator releases what
 // waited on it. Which worker computes what, and when, changes no byte.
 //
@@ -42,6 +41,10 @@ const (
 // The plan a job runs. Empty: one task, the request itself. PlanRefine:
 // level 1, then every land and shelf tile the level reports.
 const PlanRefine = "refine"
+
+// The highest level a refine plan reaches today: level 1 and the tiles on
+// it. The ladder's level 3 (docs/decisions/detail-ladder.md) raises it.
+const maxRefineStage = 2
 
 type taskState string
 
@@ -62,10 +65,8 @@ type Task struct {
 	Request Request   `json:"request"`
 	Deps    []string  `json:"deps,omitempty"`
 	State   taskState `json:"state"`
-	// The stream sequence it was published at, to withdraw it on a cancel.
-	Seq    uint64  `json:"seq,omitempty"`
-	Error  string  `json:"error,omitempty"`
-	Result *Result `json:"result,omitempty"`
+	Error   string    `json:"error,omitempty"`
+	Result  *Result   `json:"result,omitempty"`
 }
 
 // taskDone is what a worker reports on jobs.done.<taskId>.
@@ -236,6 +237,8 @@ func (c *coordinator) submit(job Job) error {
 	defer c.mu.Unlock()
 	first := &Task{ID: job.ID + "-0", JobID: job.ID, Pool: poolFor(job.Request), Request: job.Request, State: taskWaiting}
 	first.Request.Plan = ""
+	// A plan starts at level 1, whatever level it refines up to.
+	first.Request.Stage = 1
 	c.tasks[first.ID] = first
 	c.byJob[job.ID] = []string{first.ID}
 	c.save(&job, first)
@@ -253,16 +256,20 @@ func poolFor(request Request) string {
 // dispatchReady publishes every waiting task of the job whose dependencies
 // are done. Called with the lock held.
 func (c *coordinator) dispatchReady(jobID string) {
+	var ready []*Task
 	for _, id := range c.byJob[jobID] {
-		task := c.tasks[id]
-		if task.State != taskWaiting || !c.depsDone(task) {
-			continue
-		}
-		if err := c.publish(task); err != nil {
-			c.failJob(jobID, fmt.Sprintf("could not hand out task %s: %v", task.ID, err))
-			return
+		if task := c.tasks[id]; task.State == taskWaiting && c.depsDone(task) {
+			ready = append(ready, task)
 		}
 	}
+	if len(ready) == 0 {
+		return
+	}
+	if err := c.publish(ready); err != nil {
+		c.failJob(jobID, fmt.Sprintf("could not hand out the tasks: %v", err))
+		return
+	}
+	c.save(nil, ready...)
 }
 
 func (c *coordinator) depsDone(task *Task) bool {
@@ -274,30 +281,62 @@ func (c *coordinator) depsDone(task *Task) bool {
 	return true
 }
 
-// publish hands a task to the relay. The task id is the message id: a
-// second publish of the same task (a restart) is dropped by JetStream.
-func (c *coordinator) publish(task *Task) error {
-	spec, err := c.spec(c.ctx, task.JobID, task.Request)
-	if err != nil {
-		return err
+// publish hands tasks to the relay, in batches published without waiting
+// for each acknowledgement: a refine plan releases thousands of tiles at
+// once, and one round trip each, under the lock, held the coordinator for a
+// minute (measured 2026-10-01: ~7000 tiles, ~50 s). The task id is the
+// message id: a second publish of the same task (a restart) is dropped by
+// JetStream.
+func (c *coordinator) publish(tasks []*Task) error {
+	js := c.conn.JetStream()
+	for start := 0; start < len(tasks); start += publishBatch {
+		batch := tasks[start:min(start+publishBatch, len(tasks))]
+		futures := make([]jetstream.PubAckFuture, 0, len(batch))
+		for _, task := range batch {
+			spec, err := c.spec(c.ctx, task.JobID, task.Request)
+			if err != nil {
+				return err
+			}
+			spec.TaskID = task.ID
+			spec.JobID = task.JobID
+			// A plan keeps what is already there; a single order computes again.
+			if job, ok := c.registry.get(task.JobID); ok && job.Request.Plan != "" {
+				spec.Reuse = true
+			}
+			raw, err := json.Marshal(spec)
+			if err != nil {
+				return err
+			}
+			future, err := js.PublishAsync(c.conn.Subject("task", task.Pool, task.JobID), raw, jetstream.WithMsgID(task.ID))
+			if err != nil {
+				return err
+			}
+			futures = append(futures, future)
+		}
+		select {
+		case <-js.PublishAsyncComplete():
+		case <-time.After(publishWait):
+			return fmt.Errorf("the relay did not acknowledge %d tasks in %s", len(batch), publishWait)
+		}
+		for i, future := range futures {
+			select {
+			case <-future.Ok():
+				batch[i].State = taskQueued
+			case err := <-future.Err():
+				return err
+			}
+		}
 	}
-	spec.TaskID = task.ID
-	spec.JobID = task.JobID
-	raw, err := json.Marshal(spec)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
-	defer cancel()
-	ack, err := c.conn.JetStream().Publish(ctx, c.conn.Subject("task", task.Pool), raw, jetstream.WithMsgID(task.ID))
-	if err != nil {
-		return err
-	}
-	task.State = taskQueued
-	task.Seq = ack.Sequence
-	c.save(nil, task)
 	return nil
 }
+
+const (
+	// Tasks published before waiting for their acknowledgements; below the
+	// JetStream context's own limit of pending publishes (4000).
+	publishBatch = 1000
+	// How long one batch may wait for them.
+	publishWait = 30 * time.Second
+)
 
 // reconcile publishes, after a restart, what was ready and not published.
 func (c *coordinator) reconcile() {
@@ -345,7 +384,7 @@ func (c *coordinator) applyDone(report taskDoneReport) {
 	task.Result = report.Result
 	c.save(nil, task)
 	// A refine plan grows its tiles off its level: each depends on it alone.
-	if job.Request.Plan == PlanRefine && task.Pool == poolLevel {
+	if job.Request.Plan == PlanRefine && job.Request.Stage >= 2 && task.Pool == poolLevel {
 		var added []*Task
 		for i, tile := range report.Tiles {
 			request := Request{WorldUID: job.Request.WorldUID, Stage: 2, ErosionRounds: job.Request.ErosionRounds, Scope: Scope{Kind: ScopeTile, X: tile[0], Y: tile[1]}}
@@ -453,38 +492,33 @@ func (c *coordinator) cancelJob(jobID string) bool {
 }
 
 func (c *coordinator) endJob(jobID string, state State, reason string) {
+	var ended []*Task
+	queued := false
 	for _, id := range c.byJob[jobID] {
 		task := c.tasks[id]
 		if task.State == taskDone || task.State == taskFailed {
 			continue
 		}
-		if task.State == taskQueued && task.Seq > 0 {
-			ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
-			if err := c.stream.DeleteMsg(ctx, task.Seq); err != nil && !messageGone(err) {
-				slog.Warn("jobs: could not withdraw a task", "task", id, "err", err)
-			}
-			cancel()
-		}
+		queued = queued || task.State == taskQueued
 		task.State = taskCancelled
-		c.save(nil, task)
+		ended = append(ended, task)
 	}
+	// What waits in the stream goes with one purge of the job's subjects. A
+	// task a worker holds is gone from under it too; its report is ignored.
+	if queued {
+		ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+		if err := c.stream.Purge(ctx, jetstream.WithPurgeSubject(c.conn.Subject("task", "*", jobID))); err != nil {
+			slog.Warn("jobs: could not withdraw the tasks", "job", jobID, "err", err)
+		}
+		cancel()
+	}
+	c.save(nil, ended...)
 	now := time.Now()
 	c.updateJob(jobID, func(j *Job) {
 		j.State = state
 		j.Error = reason
 		j.EndedAt = &now
 	})
-}
-
-// messageGone: a withdrawal that found nothing to withdraw — a worker took
-// the task in the meantime (its report is then ignored).
-func messageGone(err error) bool {
-	if errors.Is(err, jetstream.ErrMsgNotFound) {
-		return true
-	}
-	var apiErr *jetstream.APIError
-	// 10057: "message deletion unsuccessful", the message no longer there.
-	return errors.As(err, &apiErr) && (apiErr.ErrorCode == jetstream.JSErrCodeMessageNotFound || apiErr.ErrorCode == 10057)
 }
 
 func (c *coordinator) close() {

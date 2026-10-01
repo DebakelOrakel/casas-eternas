@@ -13,9 +13,10 @@ import (
 // The jobs module's streams on the relay (docs/decisions/detail-ladder.md,
 // "The relay and the coordinator"):
 //
-//   - TASKS  jobs.task.<pool>[.urgent] — the tasks, a work queue: each one
+//   - TASKS  jobs.task.<pool>.<jobId> — the tasks, a work queue: each one
 //     goes to exactly one worker. Its message id is the task id, so a task
-//     published twice (a coordinator restarting) is dropped by JetStream.
+//     published twice (a coordinator restarting) is dropped by JetStream; the
+//     job's id last, so a cancel purges the job's tasks in one call.
 //   - DONE   jobs.done.<taskId> — what the workers report back, a work queue
 //     the coordinator reads.
 //   - EVENTS jobs.event.<jobId> — progress, for the client; kept briefly.

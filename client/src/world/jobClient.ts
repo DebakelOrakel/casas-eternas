@@ -55,7 +55,8 @@ export interface BakeJob {
 }
 
 // A job's plan (docs/decisions/detail-ladder.md, "Coordinator"): `refine` is
-// level 1 of the world, then every tile of it that holds land at level 2.
+// level 1 of the world, then every tile of it that holds land, up to the
+// job's stage.
 export type JobPlan = 'refine'
 
 // The jobs the caller may see (the server lists by the worlds' access), newest
@@ -142,7 +143,7 @@ const TILE_PHASE_BANDS: Record<string, [number, number]> = {
 // 2026-10-01: level 1 ~30 s, the tiles of one world ~2.5 h on two workers).
 export function bakeFraction(job: BakeJob): number | undefined {
   if (job.phase === 'tiles') return Math.max(0, Math.min(1, job.percent / 100))
-  const bands = job.request?.stage === 2 ? TILE_PHASE_BANDS : PHASE_BANDS
+  const bands = job.request?.scope?.kind === 'tile' ? TILE_PHASE_BANDS : PHASE_BANDS
   const band = bands[job.phase ?? '']
   if (!band) return undefined
   return band[0] + (band[1] - band[0]) * Math.max(0, Math.min(1, job.percent / 100))
@@ -179,12 +180,12 @@ export async function canCommissionBakes(): Promise<boolean> {
 }
 
 // The artifact stage a job produces, as the server names it (the jobs
-// module's StageName): `L1`, or `L2:x,y` for a tile; `L1+L2` for a refine
-// plan, which produces both.
+// module's StageName): `L1`, or `L2:x,y` for a tile; `L1–L2` for a refine
+// plan up to level 2, which produces both.
 export function jobStageName(job: BakeJob): string {
   const request = job.request
   if (!request) return '?'
-  if (request.plan === 'refine') return `L${request.stage}+L${request.stage + 1}`
+  if (request.plan === 'refine') return request.stage > 1 ? `L1–L${request.stage}` : 'L1'
   const scope = request.scope
   if (scope?.kind === 'tile') return `L${request.stage}:${scope.x ?? 0},${scope.y ?? 0}`
   return `L${request.stage}`

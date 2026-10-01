@@ -290,6 +290,46 @@
   opacity: 1;
 }
 
+/* The finishing step's depth: the levels as one row of options, the chosen
+   one filled (the artifact window's filters, worldChooser.css). */
+.gen-depth {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gen-depth__label {
+  font-size: 13px;
+  color: var(--dc-text2);
+}
+.gen-depth__options {
+  height: 32px;
+  display: flex;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.gen-depth__options button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--dc-text2);
+  font: 12.5px 'IBM Plex Mono', ui-monospace, monospace;
+}
+.gen-depth__options button + button {
+  border-left: 1px solid var(--dc-line2);
+}
+.gen-depth__options button:hover:not(:disabled) {
+  background: var(--dc-hover);
+}
+.gen-depth__options button[aria-pressed='true'] {
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+}
+.gen-depth__options button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* The finishing step's state line, above its button. */
 .gen-finishing__state {
   margin: 0;
