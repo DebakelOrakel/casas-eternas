@@ -34,8 +34,9 @@ import type { PeriodicTriangulation } from './periodicDelaunay'
 export interface RefineOptions {
   seed: number
   // Called for every inserted vertex after its state was interpolated —
-  // the place to set sampled fields (height from a field function).
-  sample?: (v: number, x: number, y: number) => void
+  // the place to set sampled fields (height from a field function). `a`,
+  // `b`, `c` are the corners it was interpolated from.
+  sample?: (v: number, x: number, y: number, a: number, b: number, c: number) => void
   maxRounds?: number
   // Jitter across the edge, as a fraction of its length.
   jitter?: number
@@ -147,7 +148,7 @@ export function refine(mesh: PeriodicTriangulation, state: MeshState, target: Ta
       state.inheritInsert(v, ta, tb, tc, bary[0], bary[1], bary[2])
       // A new node's target until the next round: its parents' finest.
       targets[v] = Math.min(targets[ta], targets[tb], targets[tc])
-      options.sample?.(v, mesh.vx[v], mesh.vy[v])
+      options.sample?.(v, mesh.vx[v], mesh.vy[v], ta, tb, tc)
       insertedThisRound++
     }
     inserted += insertedThisRound

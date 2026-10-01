@@ -14,7 +14,7 @@ import { deservesContinentName, pickUnusedRaftName } from './raftNames'
 // collide, tearing at a rift, and shattering into separate continents when the
 // tear leaves disconnected pieces. Blob-set operations, all of them.
 
-function nearestPlateIndex(x: number, y: number, seeds: PlateSeed[], width: number, height: number): number {
+export function nearestPlateIndex(x: number, y: number, seeds: PlateSeed[], width: number, height: number): number {
   let best = 0
   let bestDistSq = Infinity
   for (let i = 0; i < seeds.length; i++) {

@@ -6,6 +6,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 ## 2026-10-01
 - **fixed** Tectonics: when two plates merge, the history no longer stops, and land no longer moves with the wrong plate. `generator.step.tectonics`
 - **changed** Tectonics: mountains rise twice as fast, so active ranges reach 5–7 km instead of about 3.5 km. `generator.step.tectonics`
+- **changed** Tectonics: mountain ranges move with their continent, so they keep much of their height after their uplift ends instead of sliding to the coast and sinking. `generator.step.tectonics`
 - **fixed** Glaciers: a glacier's till spreads out as a moraine instead of piling into one tower at its end. `generator.step.tectonics`
 - **fixed** Mesh: finding the triangle under a point no longer fails half a world away, which made rare tile jobs fail. `generator.finishing`
 

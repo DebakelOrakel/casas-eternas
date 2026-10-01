@@ -3,6 +3,7 @@ import { toroidalDistanceSq } from '../core/toroidal'
 import { ITERATION_YEARS } from '../surface/erosionEngine'
 import { TECTONIC_MA_PER_EPOCH } from '../core/worldTime'
 import { raftField } from '../crust/raftField'
+import { nearestPlateIndex } from '../crust/raftLifecycle'
 import { dynamicTopographyAt } from '../elevation/dynamicTopography'
 import { raftBaselineAt } from '../elevation/elevationField'
 import { ELEVATION_METERS, marginParameter } from '../elevation/elevationScale'
@@ -182,6 +183,12 @@ export interface CoupledEpochOptions {
 // remaining 1.6; the rebuild stays per epoch).
 export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 0.5, climateEvery: 3, remeshEvery: 3, renderEvery: 3 } as const
 
+// How far from a raft blob's centre a node still rides the raft, in blob
+// radii (the membership in stepCoupledEpoch). The blob's field fades out
+// past its radius; half a radius more keeps a range on a raft's edge with
+// the raft.
+const RAFT_RELIEF_REACH = 1.5
+
 // The flexure raster's cell in macro cells: 4 (31 km at 2048) — the
 // flexural parameter is tens to a hundred-odd km, and the kernel wants a
 // few cells across it.
@@ -289,17 +296,34 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const timing = { membership: 0, tectonics: 0, rebuild: 0, remesh: 0, baseline: 0, forcing: 0, erosion: 0, flexure: 0, climate: 0, lakes: 0, ice: 0, coast: 0 }
   let tick = performance.now()
   const lap = (): number => { const now = performance.now(); const dt = now - tick; tick = now; return dt }
-  // Plate membership BEFORE the plates move: nearest seed.
+  // Plate membership BEFORE the plates move. A node on a raft moves with
+  // the raft's plate (crust/raftLifecycle.advanceRafts: the plate nearest
+  // the raft's first blob); any other node with the nearest seed.
+  //
+  // On a raft since 2026-10-01. Before, every node took the nearest seed
+  // while the raft under it took its own host: a range rode one plate, its
+  // continent another, and slid across the continent's profile towards
+  // the margin, its baseline falling under it (85–99 % of the top 5 % of
+  // land was on a different plate from its raft; the baseline swap took
+  // −1.7 km off it in 15 epochs). Measured on 2048×1024, seed 434430010:
+  // after the ranges' boundaries went quiet, land p99 held at 4.1 km
+  // instead of falling to 2.6, the top 5 % at 3.5 instead of 2.3, the land
+  // fraction unchanged (15.8 against 15.6 %).
+  const raftHosts = sim.rafts.map((raft) => raft.blobs.length > 0 ? nearestPlateIndex(raft.blobs[0].x, raft.blobs[0].y, sim.seeds, width, height) : -1)
   const host = new Int32Array(mesh0.vertexSlots).fill(-1)
   for (let v = 0; v < mesh0.vertexSlots; v++) {
     if (!mesh0.vAlive[v]) continue
-    let best = 0
-    let bestSq = Infinity
-    for (let p = 0; p < sim.seeds.length; p++) {
-      const d = toroidalDistanceSq(mesh0.vx[v], mesh0.vy[v], sim.seeds[p].x, sim.seeds[p].y, width, height)
-      if (d < bestSq) { bestSq = d; best = p }
+    const x = mesh0.vx[v]
+    const y = mesh0.vy[v]
+    let onRaft = -1
+    let nearest = RAFT_RELIEF_REACH
+    for (let r = 0; r < sim.rafts.length; r++) {
+      for (const blob of sim.rafts[r].blobs) {
+        const d = Math.sqrt(toroidalDistanceSq(x, y, blob.x, blob.y, width, height)) / blob.radius
+        if (d < nearest) { nearest = d; onRaft = r }
+      }
     }
-    host[v] = best
+    host[v] = onRaft >= 0 && raftHosts[onRaft] >= 0 ? raftHosts[onRaft] : nearestPlateIndex(x, y, sim.seeds, width, height)
   }
   timing.membership = lap()
   // The plates' motions by the index `host` was taken with. The step
@@ -361,11 +385,19 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const c = target ? coarsen(mesh1, state, target) : { removed: 0 }
   const r = !target ? { inserted: 0 } : refine(mesh1, state, target, {
     seed: (sim.warpSeed ^ sim.epoch) >>> 0,
-    sample: (v, x, y) => {
-      // A new node: relief inherited from the neighbours, scaled by the
-      // margin — fresh sea floor at a rift starts with none.
-      const t = marginParameter(raftField(x, y, sim.rafts, width, height))
-      const scale = Math.min(1, Math.max(0, t))
+    sample: (v, x, y, a, b, c) => {
+      // A new node: relief inherited from the neighbours, scaled down where
+      // the crust thins between them and it — fresh sea floor at a rift
+      // starts with none. Relative to the parents, not the margin profile's
+      // absolute value: scaled by the absolute value, every new node in a
+      // range near a raft's margin lost a share of its relief at every
+      // remesh, whatever its parents stood on (2026-10-01: the scale fell
+      // to 0.71 under the ranges as they decayed, −0.6 km of the top 5 %
+      // in 15 epochs, measured on 2048×1024).
+      const margin = (px: number, py: number): number => marginParameter(raftField(px, py, sim.rafts, width, height))
+      const t = margin(x, y)
+      const tParents = Math.max(margin(mesh1.vx[a], mesh1.vy[a]), margin(mesh1.vx[b], mesh1.vy[b]), margin(mesh1.vx[c], mesh1.vy[c]))
+      const scale = tParents > 0 ? Math.min(1, Math.max(0, t / tParents)) : 0
       const hv = state.get('h')
       hv[v] *= scale
       const cv = state.get(MESH_COLUMN)
