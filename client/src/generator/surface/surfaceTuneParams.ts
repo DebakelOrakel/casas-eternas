@@ -241,6 +241,10 @@ export const SURFACE_TUNING = {
   glacialBuzzsawBoost: 1,
   glacialBuzzsawBandM: 300,
   glacialTillCoarse: 0.5,
+  // The thickest a terminus's till lies, metres: it spreads over the ice-free
+  // nodes around the terminus until it is no thicker (surface/glacial.ts).
+  // Terminal moraines stand tens of metres to a hundred-odd. Unmeasured.
+  glacialTillMaxM: 100,
 
   // Peak precipitation bonus (mm/yr) a cell gets right at a full-strength river/lake
   // — enough to lift a hot desert (P<250) into savanna/forest (the Nile effect).

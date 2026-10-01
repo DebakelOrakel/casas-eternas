@@ -295,10 +295,23 @@ export class PeriodicTriangulation {
     const f = this.f
     const maxSteps = this.triSlots * 2 + 16
     let steps = 0
+    const { width, height } = this.domain
+    // The image of the query the walk follows, carried from triangle to
+    // triangle through the corner they share. Each triangle unwraps the
+    // query against its own first corner as before, and keeps that image
+    // only while it is the carried one: half a period away, two
+    // neighbours whose first corners straddle the half-period line each
+    // saw the other image, and handed the walk back and forth until it
+    // gave up (2026-10-01: 2 in 20 000 far-hinted locates on 2048×1024,
+    // 13 in 20 000 on a tile-sized torus).
+    this.frame(t, f)
+    let carriedX = f[0] + this.domain.deltaX(x, f[0])
+    let carriedY = f[1] + this.domain.deltaY(y, f[1])
     for (;;) {
-      this.frame(t, f)
-      const px = f[0] + this.domain.deltaX(x, f[0])
-      const py = f[1] + this.domain.deltaY(y, f[1])
+      let px = f[0] + this.domain.deltaX(x, f[0])
+      let py = f[1] + this.domain.deltaY(y, f[1])
+      if (Math.abs(px - carriedX) > width / 2) px = carriedX
+      if (Math.abs(py - carriedY) > height / 2) py = carriedY
       const o0 = PeriodicTriangulation.orient(f[0], f[1], f[2], f[3], px, py)
       const o1 = PeriodicTriangulation.orient(f[2], f[3], f[4], f[5], px, py)
       const o2 = PeriodicTriangulation.orient(f[4], f[5], f[0], f[1], px, py)
@@ -314,7 +327,17 @@ export class PeriodicTriangulation {
         this.lastTri = t
         return t
       }
-      t = this.triangleOf(this.twin[3 * t + cross])
+      // Across the edge: its end corner is the next triangle's corner `j`
+      // (halfedge e starts at tris[e]; the twin runs the other way).
+      const end = 2 * ((cross + 1) % 3)
+      const oldX = f[end]
+      const oldY = f[end + 1]
+      const e2 = this.twin[3 * t + cross]
+      t = this.triangleOf(e2)
+      const j = 2 * (e2 - 3 * t)
+      this.frame(t, f)
+      carriedX = px + (f[j] - oldX)
+      carriedY = py + (f[j + 1] - oldY)
       if (++steps > maxSteps) throw new Error('PeriodicTriangulation.locate: walk did not terminate')
     }
   }

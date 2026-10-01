@@ -248,6 +248,8 @@ export function glacialErosionOnMesh(mesh: PeriodicTriangulation, z: Float32Arra
   const cutM = new Float32Array(slots)
   const tillM = new Float32Array(slots)
   const carried = new Float64Array(slots)
+  // Each terminus's till, in the order the ice reached it.
+  const termini = new Map<number, number>()
   let cutM3 = 0
   let tillM3 = 0
   const { thickness, slope, receiver, order, elaM } = ice
@@ -270,11 +272,43 @@ export function glacialErosionOnMesh(mesh: PeriodicTriangulation, z: Float32Arra
     if (r >= 0 && thickness[r] >= t.iceMinThicknessM) carried[r] += carried[v]
     else {
       const at = r >= 0 && z[r] > SEA_LEVEL ? r : v
-      const areaAt = mesh.voronoiArea(at) * cellM * cellM
-      tillM[at] += carried[v] / areaAt
+      termini.set(at, (termini.get(at) ?? 0) + carried[v])
       tillM3 += carried[v]
     }
     carried[v] = 0
   }
+  for (const [at, volume] of termini) spreadTill(mesh, at, volume, cellM, tillM)
   return { cutM, tillM, cutM3, tillM3 }
+}
+
+// A terminus's till as an apron, not a pillar. A glacier's whole network
+// drains to one terminus node, and all it carried went onto that node:
+// every epoch with ice one node stood at the 9000 m clamp before the rivers
+// ran (measured 2026-09-30 on 2048×1024, 150 of 150 epochs), the clamp
+// threw the excess away, and the rivers then cut a 9 km tower. Now the
+// terminus and the nodes around it, ring by ring, until the till lies no
+// thicker than glacialTillMaxM; the volume is kept in full (thicker than
+// the cap only when the search stops at TILL_SPREAD_MAX_NODES first).
+// Ice-covered nodes take their share too: most of that till comes from
+// ice sheets whose flow ends in a basin under the ice, with no ice-free
+// node near (15–30 km of till on one node, 2026-10-01) — ground moraine.
+const TILL_SPREAD_MAX_NODES = 4096
+const spreadOut = new Int32Array(256)
+function spreadTill(mesh: PeriodicTriangulation, at: number, volumeM3: number, cellM: number, tillM: Float32Array): void {
+  const t = SURFACE_TUNING
+  const nodes = [at]
+  const seen = new Set<number>(nodes)
+  let area = mesh.voronoiArea(at) * cellM * cellM
+  for (let head = 0; volumeM3 / area > t.glacialTillMaxM && head < nodes.length && nodes.length < TILL_SPREAD_MAX_NODES; head++) {
+    const n = mesh.neighbours(nodes[head], spreadOut)
+    for (let k = 0; k < n; k++) {
+      const u = spreadOut[k]
+      if (seen.has(u)) continue
+      seen.add(u)
+      nodes.push(u)
+      area += mesh.voronoiArea(u) * cellM * cellM
+    }
+  }
+  const h = volumeM3 / area
+  for (const u of nodes) tillM[u] += h
 }
