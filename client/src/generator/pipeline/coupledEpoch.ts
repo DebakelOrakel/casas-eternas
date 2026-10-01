@@ -163,6 +163,16 @@ export interface CoupledEpochOptions {
 // (flexural compensation) and to a U field confined to the orogens;
 // until then the quarter keeps a 50 Ma history in the range of a
 // world (mean land +0.5 km, orogens to 3 km at 16 Ma).
+// Raised to a half 2026-09-30, since both have come: U now forces 10–50 %
+// of the land (mean over land 0.02–0.10), and at a quarter the peak rate
+// (0.25 mm/yr against Earth's 1–10 in active belts) held the ranges low:
+// on 2048×1024 (seed 434430010, 150 epochs) land p99 peaked at 3.4–3.7 km,
+// slopes p99 3.2 %. At a half: p99 peaks 5.2–5.3 km, max 6.9 km, slopes
+// p99 4.3–4.6 %, land p50 stays 0.4–0.9 km, so no continent-wide rise. At
+// 1 the peaks reach the 9000 m clamp. The ranges still fall again within
+// ~25 epochs once their boundary goes quiet — not the uplift's half-life
+// (24 instead of 12 epochs changed nothing), but mostly the step between
+// the epochs (motion, rebuild, remesh), measured the same day.
 // climateEvery and renderEvery (2026-09-26, the second lever of the
 // performance round, profiled on 2048×1024 at budget 4: of ~3 s an epoch
 // the weather chain was 1.0 and the intermediate picture 1.0, the erosion
@@ -170,7 +180,7 @@ export interface CoupledEpochOptions {
 // full-density job (5.8b) runs both every epoch — the time is the job's.
 // remeshEvery 3 the same day (the coarsen and refine were 0.22 s of the
 // remaining 1.6; the rebuild stays per epoch).
-export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 0.25, climateEvery: 3, remeshEvery: 3, renderEvery: 3 } as const
+export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 0.5, climateEvery: 3, remeshEvery: 3, renderEvery: 3 } as const
 
 // The flexure raster's cell in macro cells: 4 (31 km at 2048) — the
 // flexural parameter is tens to a hundred-odd km, and the kernel wants a
@@ -292,6 +302,15 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     host[v] = best
   }
   timing.membership = lap()
+  // The plates' motions by the index `host` was taken with. The step
+  // changes the motions in place (mantle coupling) but can also remove a
+  // plate (a merge splices the arrays, plateChurn.applyMerge) and shift
+  // every later index by one. Read after the step by the old index, a node
+  // then moved with its neighbour plate, or with none when the last plate
+  // went (a throw that lost the epoch, 2026-09-30). The removed plate's
+  // nodes move with it for this last epoch: the merge takes effect at the
+  // epoch's end.
+  const motions = sim.motions.slice()
   const events = stepEpoch(sim)
   timing.tectonics = lap()
   // The nodes move with their plates; their relief goes with them.
@@ -303,7 +322,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   let k = 0
   for (let v = 0; v < mesh0.vertexSlots; v++) {
     if (!mesh0.vAlive[v]) continue
-    const moved = advancePointByMotion(mesh0.vx[v], mesh0.vy[v], sim.motions[host[v]], TECTONICS_TUNING.epochAngleStep, width, height)
+    const moved = advancePointByMotion(mesh0.vx[v], mesh0.vy[v], motions[host[v]], TECTONICS_TUNING.epochAngleStep, width, height)
     xs[k] = moved.x
     ys[k] = moved.y
     hMoved[k] = terrain.z[v] - terrain.baseline[v]

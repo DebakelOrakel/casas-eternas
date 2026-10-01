@@ -3,6 +3,10 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-10-01
+- **fixed** Tectonics: when two plates merge, the history no longer stops, and land no longer moves with the wrong plate. `generator.step.tectonics`
+- **changed** Tectonics: mountains rise twice as fast, so active ranges reach 5–7 km instead of about 3.5 km. `generator.step.tectonics`
+
 ## 2026-09-29
 - **changed** Ecology: the fish layer shows the fishing grounds at sea, and small streams no longer count as fishing water. `generator.step.ecology`
 - **changed** Ecology: the resource map is as detailed as the biome map, so river strips, coasts and oases show as they are. `generator.step.ecology`
