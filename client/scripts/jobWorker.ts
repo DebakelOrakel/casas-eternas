@@ -34,7 +34,10 @@ import { bakeMeshLevel, levelBudget } from '../src/generator/pipeline/meshBakeSt
 import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact } from '../src/world/meshArtifacts'
 import { bakedTileToArtifact, meshTilePipelineVersion, meshTileStage, writeMeshTileArtifact } from '../src/world/meshTileArtifacts'
 import { bakeMeshTile } from '../src/generator/pipeline/meshTileBake'
-import { tileGrid } from '../src/generator/mesh/meshTile'
+import { TILE_CELLS, tileGrid } from '../src/generator/mesh/meshTile'
+import { SHELF_BREAK } from '../src/generator/elevation/elevationScale'
+import { connect } from '@nats-io/transport-node'
+import { AckPolicy, jetstream, jetstreamManager, type JsMsg } from '@nats-io/jetstream'
 import { createMeshSampler } from '../src/generator/mesh/meshSampler'
 import { levelBakeInputs, tileBakeInputs } from '../src/world/bakeInputs'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
@@ -85,6 +88,10 @@ interface Job {
   // This job's id, for reporting progress back. Absent for a local run, whose
   // progress reaches the server over the pipe instead.
   jobId?: string
+  // The coordinator's task this is, when a serving worker pulled it from the
+  // relay (internal/modules/jobs/coordinator.go): what it reports on
+  // jobs.done.<taskId>.
+  taskId?: string
   // False forces the single-threaded engine — ONE state buffer instead of the
   // pool's pipelined pair, which halves the routing memory (measured layout:
   // a 16K bake is ~17 GiB single-buffer against ~26 GiB pipelined, the
@@ -332,7 +339,16 @@ async function main(): Promise<void> {
     process.stdout.write(`${JSON.stringify({ pipelineVersion: meshPipelineVersion(1), tilePipelineVersion: meshTilePipelineVersion() })}\n`)
     return
   }
-  if (!raw) fail('usage: job-worker.mjs \'<job JSON>\'  |  job-worker.mjs --version')
+  if (raw === '--serve') {
+    let config: ServeConfig
+    try {
+      config = JSON.parse(process.argv[3] ?? '') as ServeConfig
+    } catch {
+      return fail('--serve needs its configuration as JSON: {"relay": "nats://…", "pools": ["level", "tile"]}')
+    }
+    return serve(config)
+  }
+  if (!raw) fail('usage: job-worker.mjs \'<job JSON>\'  |  job-worker.mjs --serve \'<config JSON>\'  |  job-worker.mjs --version')
   let job: Job
   try {
     job = JSON.parse(raw) as Job
@@ -340,66 +356,252 @@ async function main(): Promise<void> {
     return fail('job argument is not JSON')
   }
 
-  const archive = await readWorld(job)
-  if (!archive) fail(`cannot read the world (${job.worldZip ?? job.worldUrl ?? 'no source given'})`)
+  try {
+    const outcome = await runJob(job, stderrProgress(job))
+    process.stdout.write(`${JSON.stringify(outcome.result)}\n`)
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error))
+  }
+}
 
-  const inputs = await readWorldInputs(archive)
-  if (!inputs) fail('not a readable world archive')
-
-  const started = Date.now()
-  // Progress on stderr, one line per whole percent: the Go side surfaces it as
-  // job status, and keeping stdout clean means the result stays one parseable
-  // line no matter how chatty the pipeline gets.
+// Progress on stderr, one line per whole percent: the Go side surfaces it as
+// job status, and keeping stdout clean means the result stays one parseable
+// line no matter how chatty the pipeline gets. A cluster Job also posts it
+// to its server (progressReporter).
+function stderrProgress(job: Job): (phase: string, fraction: number) => void {
   let lastPercent = -1
   const report = progressReporter(job)
-  const onProgress = (phase: string, fraction: number): void => {
+  return (phase, fraction) => {
     const percent = Math.floor(fraction * 100)
     if (percent === lastPercent) return
     lastPercent = percent
     process.stderr.write(`${JSON.stringify({ phase, percent })}\n`)
     report(phase, percent)
   }
-  if (job.stage === 2) return bakeTile(job, inputs, onProgress)
-  if (job.stage !== 1) fail(`stage ${job.stage}: only levels 1 and 2 are built`)
+}
+
+// What one job produced: the result line the Go side reads, and for a level
+// the tiles that hold land or shelf (a refine plan grows them, coordinator.go).
+interface JobOutcome {
+  result: { worldId: string; pipelineVersion: string; stage: string; width: number; height: number; nodes: number; durationMs: number }
+  tiles?: [number, number][]
+}
+
+type WorldInputs = NonNullable<Awaited<ReturnType<typeof readWorldInputs>>>
+
+// What a serving worker keeps between tasks: the worlds and the parent
+// levels it has read, so tile after tile on one world reads them once.
+// Least recently used out, a couple of each: a level of a real world is
+// hundreds of megabytes.
+interface JobCache {
+  worlds: Map<string, WorldInputs>
+  levels: Map<string, { artifact: NonNullable<Awaited<ReturnType<typeof readMeshLevelArtifact>>>['artifact'] }>
+}
+const CACHED_WORLDS = 2
+const CACHED_LEVELS = 2
+function remember<V>(cache: Map<string, V>, key: string, value: V, size: number): void {
+  cache.delete(key)
+  cache.set(key, value)
+  while (cache.size > size) cache.delete(cache.keys().next().value as string)
+}
+function recall<V>(cache: Map<string, V>, key: string): V | undefined {
+  const value = cache.get(key)
+  if (value !== undefined) {
+    cache.delete(key)
+    cache.set(key, value)
+  }
+  return value
+}
+
+// One job, start to artifact. Throws with the reason instead of exiting, so
+// a serving worker can report it and go on to the next task.
+async function runJob(job: Job, onProgress: (phase: string, fraction: number) => void, cache?: JobCache): Promise<JobOutcome> {
+  // A world read from a file is cached by its path, which names one
+  // revision; one fetched by URL is read each time (the URL outlives the
+  // revision behind it).
+  const worldKey = job.worldZip
+  let inputs = worldKey && cache ? recall(cache.worlds, worldKey) : undefined
+  if (!inputs) {
+    const archive = await readWorld(job)
+    if (!archive) throw new Error(`cannot read the world (${job.worldZip ?? job.worldUrl ?? 'no source given'})`)
+    const read = await readWorldInputs(archive)
+    if (!read) throw new Error('not a readable world archive')
+    inputs = read
+    if (worldKey && cache) remember(cache.worlds, worldKey, inputs, CACHED_WORLDS)
+  }
+  const store = artifactStoreFor(job)
+  if (!store) throw new Error('neither artifactsDir nor artifactsUrl was given')
+  if (job.stage === 2) return bakeTile(job, inputs, store, onProgress, cache)
+  if (job.stage !== 1) throw new Error(`stage ${job.stage}: only levels 1 and 2 are built`)
+  const started = Date.now()
   const bakeInputs = levelBakeInputs(inputs)
-  if (!bakeInputs) return fail('the world carries no mesh (a save from before formatVersion 3, or never eroded) — nothing to refine')
+  if (!bakeInputs) throw new Error('the world carries no mesh (a save from before formatVersion 3, or never eroded) — nothing to refine')
   const level = await bakeMeshLevel(bakeInputs, { level: 1, budget: levelBudget(1), rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
   const durationMs = Date.now() - started
-  const store = artifactStoreFor(job)
-  if (!store) fail('neither artifactsDir nor artifactsUrl was given')
   const pipelineVersion = meshPipelineVersion(1, job.erosionRounds)
   const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshLevelStage(1))
   const artifact = meshLevelToArtifact(level)
-  if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) fail('could not write the artifact')
-  process.stdout.write(`${JSON.stringify({ worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs })}\n`)
+  if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
+  if (cache) remember(cache.levels, `${key.worldUid}/${key.worldId}/${key.pipelineVersion}`, { artifact }, CACHED_LEVELS)
+  return {
+    result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs },
+    tiles: landTiles(inputs),
+  }
+}
+
+// The tiles that hold land or shelf — every tile with a cell of the save's
+// raster above the shelf break. What a refine plan computes past level 1;
+// the deep ocean has no relief to refine.
+function landTiles(inputs: WorldInputs): [number, number][] {
+  const { cols, rows } = tileGrid(inputs.width, inputs.height)
+  const out: [number, number][] = []
+  for (let ty = 0; ty < rows; ty++) {
+    for (let tx = 0; tx < cols; tx++) {
+      let found = false
+      for (let y = ty * TILE_CELLS; y < (ty + 1) * TILE_CELLS && !found; y++) {
+        for (let x = tx * TILE_CELLS; x < (tx + 1) * TILE_CELLS; x++) {
+          if (inputs.elevations[y * inputs.width + x] > SHELF_BREAK) {
+            found = true
+            break
+          }
+        }
+      }
+      if (found) out.push([tx, ty])
+    }
+  }
+  return out
 }
 
 // Stage 2: one tile of the top level, built on the world's level 1, which
 // is read from the same artifact store the tile is written to.
-async function bakeTile(job: Job, inputs: NonNullable<Awaited<ReturnType<typeof readWorldInputs>>>, onProgress: (phase: string, fraction: number) => void): Promise<void> {
+async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onProgress: (phase: string, fraction: number) => void, cache?: JobCache): Promise<JobOutcome> {
   const tile = job.tile
   const { cols, rows } = tileGrid(inputs.width, inputs.height)
   if (!tile || !Number.isInteger(tile.x) || !Number.isInteger(tile.y) || tile.x < 0 || tile.y < 0 || tile.x >= cols || tile.y >= rows) {
-    return fail(`stage 2 needs a tile inside the ${cols} × ${rows} grid`)
+    throw new Error(`stage 2 needs a tile inside the ${cols} × ${rows} grid`)
   }
-  const store = artifactStoreFor(job)
-  if (!store) return fail('neither artifactsDir nor artifactsUrl was given')
   const started = Date.now()
   onProgress('parent', 0)
   const parentKey = artifactKey(inputs.worldUid, inputs.worldId, meshPipelineVersion(1, job.erosionRounds), meshLevelStage(1))
-  const parentArtifact = await readMeshLevelArtifact(store, parentKey)
-  if (!parentArtifact) return fail('level 1 of this world is not in the artifact store — refine the world first')
-  const parentMesh = meshLevelMesh(parentArtifact.artifact, inputs.width, inputs.height)
-  const parentZ = parentArtifact.artifact.z
+  const levelKey = `${parentKey.worldUid}/${parentKey.worldId}/${parentKey.pipelineVersion}`
+  let parentArtifact = cache ? recall(cache.levels, levelKey)?.artifact : undefined
+  if (!parentArtifact) {
+    const read = await readMeshLevelArtifact(store, parentKey)
+    if (!read) throw new Error('level 1 of this world is not in the artifact store — refine the world first')
+    parentArtifact = read.artifact
+    if (cache) remember(cache.levels, levelKey, { artifact: parentArtifact }, CACHED_LEVELS)
+  }
+  const parentMesh = meshLevelMesh(parentArtifact, inputs.width, inputs.height)
+  const parentZ = parentArtifact.z
   onProgress('parent', 1)
   const parent = { mesh: parentMesh, z: parentZ, discharge: null, sampler: createMeshSampler(parentMesh, parentZ) }
-  const baked = await bakeMeshTile(tileBakeInputs(inputs, parent, parentArtifact.artifact.graph), tile, { rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
+  const baked = await bakeMeshTile(tileBakeInputs(inputs, parent, parentArtifact.graph), tile, { rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
   const durationMs = Date.now() - started
   const pipelineVersion = meshTilePipelineVersion(job.erosionRounds)
   const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(tile))
   const artifact = bakedTileToArtifact(baked)
-  if (!(await writeMeshTileArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) return fail('could not write the artifact')
-  process.stdout.write(`${JSON.stringify({ worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs })}\n`)
+  if (!(await writeMeshTileArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
+  return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs } }
+}
+
+// SERVING (docs/decisions/detail-ladder.md, "Workers"): a long-lived
+// worker pulls the coordinator's tasks from the relay, one at a time, and
+// keeps what it read for the next (runJob's cache). The jobs module starts
+// these and keeps them (internal/modules/jobs/workerpool.go).
+//
+// A task is the job argument the one-shot form takes, plus its task and job
+// ids. Progress goes out on jobs.event.<jobId>, the outcome on
+// jobs.done.<taskId> before the task is acknowledged — a worker that dies in
+// between leaves the task to another, which is harmless, a task being pure.
+interface ServeConfig {
+  relay: string
+  pools: string[]
+}
+
+// The relay's names for the jobs module's streams (internal/modules/jobs/streams.go).
+const TASK_STREAM = 'JOBS_TASKS'
+const TASK_CONSUMER = 'workers'
+// How long a task may go unacknowledged before the relay hands it to
+// another worker; the worker says it is still working well inside it.
+const TASK_ACK_WAIT_MS = 5 * 60_000
+const TASK_HEARTBEAT_MS = 30_000
+const TASK_MAX_DELIVER = 5
+
+async function serve(config: ServeConfig): Promise<void> {
+  const nc = await connect({ servers: config.relay, name: 'casas-job-worker', maxReconnectAttempts: -1 })
+  const consumerConfig = {
+    durable_name: TASK_CONSUMER,
+    ack_policy: AckPolicy.Explicit,
+    ack_wait: TASK_ACK_WAIT_MS * 1_000_000,
+    max_deliver: TASK_MAX_DELIVER,
+    filter_subjects: config.pools.map((pool) => `jobs.task.${pool}`),
+  }
+  const jsm = await jetstreamManager(nc)
+  try {
+    await jsm.consumers.add(TASK_STREAM, consumerConfig)
+  } catch {
+    // It exists, set up by another worker: bring it to this configuration.
+    await jsm.consumers.update(TASK_STREAM, TASK_CONSUMER, consumerConfig)
+  }
+  const js = jetstream(nc)
+  const consumer = await js.consumers.get(TASK_STREAM, TASK_CONSUMER)
+  const cache: JobCache = { worlds: new Map(), levels: new Map() }
+  let current: { msg: JsMsg; jobId: string } | null = null
+
+  // A cancelled job's task in hand is ended, and the worker with it — the
+  // pipeline cannot be stopped from outside; the pool starts a fresh one.
+  nc.subscribe('jobs.cancel.*', {
+    callback: (_error, message) => {
+      const jobId = message.subject.slice('jobs.cancel.'.length)
+      if (current && current.jobId === jobId) {
+        current.msg.term()
+        process.exit(0)
+      }
+    },
+  })
+  // Asked to stop: the task in hand goes back to the queue at once.
+  process.on('SIGTERM', () => {
+    current?.msg.nak()
+    void nc.drain().finally(() => process.exit(0))
+  })
+  process.stderr.write(`serving ${config.pools.join(', ')} on ${config.relay}\n`)
+
+  for (;;) {
+    const msg = await consumer.next({ expires: 30_000 })
+    if (!msg) continue
+    let job: Job
+    try {
+      job = JSON.parse(msg.string()) as Job
+    } catch {
+      msg.term()
+      continue
+    }
+    const taskId = job.taskId ?? ''
+    current = { msg, jobId: job.jobId ?? '' }
+    const heartbeat = setInterval(() => msg.working(), TASK_HEARTBEAT_MS)
+    let lastPercent = -1
+    const onProgress = (phase: string, fraction: number): void => {
+      const percent = Math.floor(fraction * 100)
+      if (percent === lastPercent || !job.jobId) return
+      lastPercent = percent
+      nc.publish(`jobs.event.${job.jobId}`, JSON.stringify({ taskId, phase, percent }))
+    }
+    try {
+      const outcome = await runJob(job, onProgress, cache)
+      await js.publish(`jobs.done.${taskId}`, JSON.stringify({ taskId, ok: true, result: outcome.result, tiles: outcome.tiles }))
+      msg.ack()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      process.stderr.write(`task ${taskId} failed: ${message}\n`)
+      // A computation's error is the task's answer: it would fail the same
+      // way on any worker, so it is reported and not delivered again.
+      await js.publish(`jobs.done.${taskId}`, JSON.stringify({ taskId, ok: false, error: message }))
+      msg.term()
+    } finally {
+      clearInterval(heartbeat)
+      current = null
+    }
+  }
 }
 
 // A worker thread loading this bundle is an ENGINE WORKER, not a baker:

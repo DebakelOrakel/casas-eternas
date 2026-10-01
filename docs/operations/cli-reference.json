@@ -178,8 +178,14 @@
         {
           "name": "jobs.max-concurrent",
           "default": "1",
-          "usage": "How many jobs may run at once. One level-1 job of a real world holds some gigabytes, so raising this raises the memory the host must have.",
+          "usage": "How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.",
           "env": "CASAS_JOBS_MAX_CONCURRENT"
+        },
+        {
+          "name": "jobs.storage.dir.path",
+          "default": "./data/jobs",
+          "usage": "The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.",
+          "env": "CASAS_JOBS_STORAGE_DIR_PATH"
         },
         {
           "name": "jobs.worker",
@@ -355,8 +361,19 @@
       "key": "jobs.max-concurrent",
       "env": "CASAS_JOBS_MAX_CONCURRENT",
       "default": "1",
-      "usage": "How many jobs may run at once. One level-1 job of a real world holds some gigabytes, so raising this raises the memory the host must have.",
+      "usage": "How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.",
       "command": "casas-eternas start"
+    },
+    {
+      "key": "jobs.storage.dir.path",
+      "env": "CASAS_JOBS_STORAGE_DIR_PATH",
+      "default": "./data/jobs",
+      "usage": "The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "jobs.storage.type",
+      "env": "CASAS_JOBS_STORAGE_TYPE"
     },
     {
       "key": "jobs.worker",

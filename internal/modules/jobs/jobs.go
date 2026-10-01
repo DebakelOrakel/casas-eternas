@@ -29,6 +29,7 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
+	"github.com/DebakelOrakel/casas-eternas/internal/relay"
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
@@ -112,6 +113,16 @@ type Config struct {
 	// setting this above what the cluster can hold only produces Pending
 	// jobs, which the runner reports as exactly that.
 	MaxConcurrent int
+	// The module's connection to the relay (internal/relay), made by cmd/
+	// in the process or to global.services.relay. The module owns it from
+	// here and closes it. With it, off a cluster, the jobs run through the
+	// coordinator and its workers; nil only in tests of the runner path.
+	Relay *relay.Conn
+	// Where the local workers reach the relay (a NATS URL): the co-resident
+	// relay's port, or global.services.relay.
+	RelayURL string
+	// The coordinator's state directory (jobs.storage), for jobs.db.
+	StorageDir string
 }
 
 type Module struct {
@@ -133,6 +144,10 @@ type Module struct {
 	// pulls to stop one bake without touching the others.
 	runningMu sync.Mutex
 	running   map[string]context.CancelFunc
+	// The coordinator and its local workers, when the jobs run over the
+	// relay (coordinator.go, workerpool.go); nil on the runner path.
+	coord *coordinator
+	pool  *workerPool
 }
 
 func New(cfg Config) (*Module, error) {
@@ -181,6 +196,15 @@ func New(cfg Config) (*Module, error) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	if cfg.Relay != nil {
+		declareCtx, declareCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := declareStreams(declareCtx, cfg.Relay)
+		declareCancel()
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+	}
 	m := &Module{
 		cfg:         cfg,
 		clusterMode: InCluster(),
@@ -192,6 +216,25 @@ func New(cfg Config) (*Module, error) {
 		queue:    make(chan string, 64),
 		shutdown: ctx,
 		cancel:   cancel,
+	}
+	// Over the relay, off a cluster: the coordinator plans and hands out the
+	// tasks, the local workers compute them. A cluster keeps its runner (one
+	// Job per order) until the worker Deployment exists.
+	if cfg.Relay != nil && !InCluster() {
+		if cfg.StorageDir == "" {
+			cancel()
+			return nil, fmt.Errorf("jobs.storage: the coordinator needs a directory for jobs.db")
+		}
+		m.coord, err = newCoordinator(cfg.StorageDir, cfg.Relay, m.jobs, m.buildSpec)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		if local, ok := runner.(*localRunner); ok && cfg.RelayURL != "" {
+			m.pool = startWorkerPool(local.bakerPath, cfg.RelayURL, workers, nodeHeapMB)
+		}
+		slog.Info("jobs ready", "coordinator", cfg.StorageDir, "workers", workers, "checks identity", cfg.Identity.ChecksIdentity())
+		return m, nil
 	}
 	for range workers {
 		m.workers.Add(1)
@@ -212,6 +255,8 @@ func (m *Module) Describe() map[string]any {
 	runner := "subprocess"
 	if m.clusterMode {
 		runner = "kubernetes"
+	} else if m.coord != nil {
+		runner = "relay"
 	}
 	return map[string]any{"bakeRunner": runner}
 }
@@ -223,6 +268,7 @@ func (m *Module) Describe() map[string]any {
 func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST /v1/jobs", m.handleEnqueue)
 	mux.HandleFunc("GET /v1/jobs", m.handleList)
+	mux.HandleFunc("GET /v1/jobs/events", m.handleEvents)
 	mux.HandleFunc("GET /v1/jobs/{id}", m.handleGet)
 	mux.HandleFunc("DELETE /v1/jobs/{id}", m.handleCancel)
 	mux.HandleFunc("POST /v1/jobs/{id}/progress", m.handleProgress)
@@ -237,6 +283,12 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 // the field comment.
 func (m *Module) Close() error {
 	m.cancel()
+	if m.pool != nil {
+		m.pool.stop()
+	}
+	if m.coord != nil {
+		m.coord.close()
+	}
 	done := make(chan struct{})
 	go func() {
 		m.workers.Wait()
@@ -246,6 +298,9 @@ func (m *Module) Close() error {
 	case <-done:
 	case <-time.After(30 * time.Second):
 		slog.Warn("bake workers did not stop in time")
+	}
+	if m.cfg.Relay != nil {
+		m.cfg.Relay.Close()
 	}
 	return nil
 }
@@ -307,7 +362,21 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if request.Plan != "" && m.coord == nil {
+		httpjson.ClientError(w, http.StatusBadRequest, "a plan needs the coordinator, which runs over the relay")
+		return
+	}
 	job := m.jobs.add(Job{ID: newID(), Request: request, State: StateQueued, QueuedAt: time.Now()})
+	if m.coord != nil {
+		if err := m.coord.submit(job); err != nil {
+			httpjson.ClientError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		slog.Info("job planned", "job", job.ID, "world", request.WorldUID, "stage", request.Stage, "plan", request.Plan)
+		job, _ = m.jobs.get(job.ID)
+		httpjson.Write(w, http.StatusAccepted, job)
+		return
+	}
 	select {
 	case m.queue <- job.ID:
 	default:
@@ -387,6 +456,15 @@ func (m *Module) handleCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	if level < access.Editor {
 		httpjson.ClientError(w, http.StatusForbidden, "cancelling a bake needs editor access to its world")
+		return
+	}
+	if m.coord != nil {
+		if !m.coord.cancelJob(id) {
+			httpjson.ClientError(w, http.StatusConflict, "the job has already ended")
+			return
+		}
+		slog.Info("job cancelled", "job", id, "world", job.Request.WorldUID)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	cancelled := false
@@ -536,74 +614,16 @@ func (m *Module) work(ctx context.Context) {
 			j.StartedAt = &started
 		})
 
-		// Files where the composition put a store beside this process, URLs
-		// where it did not — each half decided on its own, so a local runner
-		// beside the artifacts can still fetch its world from a peer service.
-		// Both shapes produce byte-identical artifacts under the identical
-		// key (measured), so nothing downstream can tell which ran.
-		spec := Spec{
-			Stage:         job.Request.Stage,
-			ErosionRounds: job.Request.ErosionRounds,
-			StageName:     job.Request.StageName(),
-		}
-		if job.Request.Scope.Kind == ScopeTile {
-			spec.Tile = &TileRef{X: job.Request.Scope.X, Y: job.Request.Scope.Y}
-		}
-		if m.cfg.WorldZip != nil {
-			zip, ok := m.cfg.WorldZip(ctx, job.Request.WorldUID)
-			if !ok {
-				// Deleted (or pruned) between enqueue and start. Failing the
-				// job names the actual cause; handing the runner a dead path
-				// would report a baker fault instead.
-				failed := time.Now()
-				m.jobs.update(id, func(j *Job) {
-					j.State = StateFailed
-					j.Error = "the world disappeared before the bake started"
-					j.EndedAt = &failed
-				})
-				slog.Warn("bake not started, world gone", "job", id, "world", job.Request.WorldUID)
-				continue
-			}
-			spec.WorldZip = zip
-		} else {
-			spec.WorldURL = fmt.Sprintf("%s/worlds/%s", m.cfg.WorldsURL, job.Request.WorldUID)
-		}
-		if m.cfg.ArtifactsDir != "" {
-			spec.ArtifactsDir = m.cfg.ArtifactsDir
-		} else {
-			spec.ArtifactsURL = m.cfg.ArtifactsURL
-		}
-		// A baker that reaches ANY store over HTTP talks to a server that may
-		// check identity, and without credentials it gets a 401 reading the
-		// world it was created to bake. Scoped to this one job by audience, so
-		// it is not a login: the gate refuses it everywhere a session is
-		// expected.
-		if m.cfg.Tokens != nil && (spec.WorldURL != "" || spec.ArtifactsURL != "") {
-			token, _, tokenErr := m.cfg.Tokens.IssueJob(id, job.Request.WorldUID, jobTokenTTL)
-			if tokenErr != nil {
-				// Failing here rather than sending the baker out without one:
-				// it would start, read the world, get a 401 and report a
-				// bake failure whose cause is on this side entirely.
-				failed := time.Now()
-				m.jobs.update(id, func(j *Job) {
-					j.State = StateFailed
-					j.Error = fmt.Sprintf("cannot issue a token for the bake job: %v", tokenErr)
-					j.EndedAt = &failed
-				})
-				slog.Error("bake not started", "job", id, "err", tokenErr)
-				continue
-			}
-			spec.AuthToken = token
-		}
-		// Only a Job on another node learns its own id and where to report:
-		// progress goes to THIS server's bake API (JobsURL), which need not
-		// be the artifact store's address. The local baker reports over its
-		// stderr pipe, which this process is already reading — telling it an
-		// id would invite it to post progress to a server it is running
-		// inside.
-		if m.clusterMode {
-			spec.JobID = id
-			spec.JobsURL = m.cfg.SelfURL
+		spec, err := m.buildSpec(ctx, id, job.Request)
+		if err != nil {
+			failed := time.Now()
+			m.jobs.update(id, func(j *Job) {
+				j.State = StateFailed
+				j.Error = err.Error()
+				j.EndedAt = &failed
+			})
+			slog.Warn("bake not started", "job", id, "world", job.Request.WorldUID, "err", err)
+			continue
 		}
 		// Its own context under the module's, so a cancel stops this job
 		// alone (handleCancel).
@@ -670,5 +690,119 @@ func (m *Module) work(ctx context.Context) {
 			done = append(done, "size", fmt.Sprintf("%dx%d", result.Width, result.Height))
 		}
 		slog.Info("bake done", done...)
+	}
+}
+
+// buildSpec resolves a request into what a worker needs — shared by the
+// cluster runner (one Job per order) and the coordinator (a task each).
+//
+// Files where the composition put a store beside this process, URLs where it
+// did not — each half decided on its own, so a local worker beside the
+// artifacts can still fetch its world from a peer service. Both shapes
+// produce byte-identical artifacts under the identical key (measured), so
+// nothing downstream can tell which ran.
+func (m *Module) buildSpec(ctx context.Context, id string, request Request) (Spec, error) {
+	spec := Spec{
+		Stage:         request.Stage,
+		ErosionRounds: request.ErosionRounds,
+		StageName:     request.StageName(),
+	}
+	if request.Scope.Kind == ScopeTile {
+		spec.Tile = &TileRef{X: request.Scope.X, Y: request.Scope.Y}
+	}
+	if m.cfg.WorldZip != nil {
+		zip, ok := m.cfg.WorldZip(ctx, request.WorldUID)
+		if !ok {
+			// Deleted (or pruned) between enqueue and start. Failing names the
+			// actual cause; a dead path would report a worker fault instead.
+			return Spec{}, errors.New("the world disappeared before the bake started")
+		}
+		spec.WorldZip = zip
+	} else {
+		spec.WorldURL = fmt.Sprintf("%s/worlds/%s", m.cfg.WorldsURL, request.WorldUID)
+	}
+	if m.cfg.ArtifactsDir != "" {
+		spec.ArtifactsDir = m.cfg.ArtifactsDir
+	} else {
+		spec.ArtifactsURL = m.cfg.ArtifactsURL
+	}
+	// A worker that reaches ANY store over HTTP talks to a server that may
+	// check identity, and without credentials it gets a 401 reading the world
+	// it was created to bake. Scoped to this one job by audience, so it is not
+	// a login: the gate refuses it everywhere a session is expected.
+	if m.cfg.Tokens != nil && (spec.WorldURL != "" || spec.ArtifactsURL != "") {
+		token, _, err := m.cfg.Tokens.IssueJob(id, request.WorldUID, jobTokenTTL)
+		if err != nil {
+			// Failing here rather than sending the worker out without one: it
+			// would start, read the world, get a 401 and report a failure
+			// whose cause is on this side entirely.
+			return Spec{}, fmt.Errorf("cannot issue a token for the bake job: %w", err)
+		}
+		spec.AuthToken = token
+	}
+	// Only a Job on another node learns its own id and where to report:
+	// progress goes to THIS server's API (JobsURL). A coordinator's task
+	// carries its job id too, set by the coordinator; it reports on the relay.
+	if m.clusterMode {
+		spec.JobID = id
+		spec.JobsURL = m.cfg.SelfURL
+	}
+	return spec, nil
+}
+
+// eventKeepAlive is how often a quiet event stream says it is still there,
+// so proxies and the client do not take it for dead.
+const eventKeepAlive = 20 * time.Second
+
+// handleEvents streams the jobs the caller may see as they change, as
+// server-sent events: one `data:` line with the job (as GET /v1/jobs/{id}
+// answers it) per change. The client reads the list once and follows the
+// stream instead of polling; it falls back to polling when the stream drops.
+// Read with fetch, not EventSource: the caller's token travels in the
+// Authorization header, which EventSource cannot send.
+func (m *Module) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		httpjson.ClientError(w, http.StatusInternalServerError, "streaming is not supported here")
+		return
+	}
+	changes, stop := m.jobs.watch()
+	defer stop()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+	levels := map[string]access.Level{}
+	keepAlive := time.NewTicker(eventKeepAlive)
+	defer keepAlive.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-m.shutdown.Done():
+			return
+		case <-keepAlive.C:
+			if _, err := w.Write([]byte(": keep-alive\n\n")); err != nil {
+				return
+			}
+			flusher.Flush()
+		case job := <-changes:
+			level, ranked := levels[job.Request.WorldUID]
+			if !ranked {
+				level = m.levelFor(r, job)
+				levels[job.Request.WorldUID] = level
+			}
+			if level < access.Viewer {
+				continue
+			}
+			raw, err := json.Marshal(listedJob{job, level.String()})
+			if err != nil {
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", raw); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
 	}
 }

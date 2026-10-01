@@ -154,6 +154,9 @@ type ArtifactsConfig struct {
 type JobsConfig struct {
 	Worker        string `mapstructure:"worker"`
 	MaxConcurrent int    `mapstructure:"max-concurrent"`
+	// The coordinator's state: jobs, their tasks and where each stands
+	// (bbolt, jobs.db; docs/decisions/detail-ladder.md).
+	Storage Storage `mapstructure:"storage"`
 }
 
 type ClientConfig struct {

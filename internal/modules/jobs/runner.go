@@ -69,6 +69,10 @@ type Spec struct {
 	// co-resident shape.
 	JobsURL string `json:"jobsUrl,omitempty"`
 
+	// The task's id, when the coordinator handed it out (coordinator.go):
+	// what the worker reports on jobs.done.<taskId>.
+	TaskID string `json:"taskId,omitempty"`
+
 	// The bake job's id.
 	//
 	// The cluster runner names its Job object after it, which is what makes a

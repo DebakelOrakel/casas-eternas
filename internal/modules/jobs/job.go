@@ -73,6 +73,10 @@ type Request struct {
 	// world with no valleys.
 	ErosionRounds int   `json:"erosionRounds,omitempty"`
 	Scope         Scope `json:"scope"`
+	// The plan: empty for the one task the request names; "refine" for
+	// level 1 and then every land and shelf tile on it — the finishing
+	// step's "refine the world" (coordinator.go). Needs the coordinator.
+	Plan string `json:"plan,omitempty"`
 }
 
 // Result is what a finished job produced — the artifact's coordinates, so a
@@ -112,10 +116,16 @@ func (r Request) Validate() error {
 	// Level 1 runs over the whole world, level 2 one tile at a time.
 	switch r.Scope.Kind {
 	case "", ScopeWorld:
+		if r.Plan != "" && r.Plan != PlanRefine {
+			return fmt.Errorf("unknown plan %q", r.Plan)
+		}
 		if r.Stage != 1 {
 			return fmt.Errorf("stage %d needs a tile scope; the whole world is stage 1", r.Stage)
 		}
 	case ScopeTile:
+		if r.Plan != "" {
+			return fmt.Errorf("a plan runs over the whole world")
+		}
 		if r.Stage != 2 {
 			return fmt.Errorf("a tile scope is stage 2")
 		}
@@ -148,6 +158,36 @@ type registry struct {
 	jobs  map[string]*Job
 	order []string
 	cap   int
+	// Who hears about every change (the event stream, /v1/jobs/events).
+	watchers map[chan Job]struct{}
+}
+
+// watch returns a channel that receives every job as it changes, and the
+// function that ends the watch. A watcher that does not keep up misses
+// changes rather than holding the registry up; it reads the list again.
+func (r *registry) watch() (<-chan Job, func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.watchers == nil {
+		r.watchers = map[chan Job]struct{}{}
+	}
+	ch := make(chan Job, 64)
+	r.watchers[ch] = struct{}{}
+	return ch, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		delete(r.watchers, ch)
+	}
+}
+
+// tell hands a snapshot to every watcher. Called with the lock held.
+func (r *registry) tell(job Job) {
+	for ch := range r.watchers {
+		select {
+		case ch <- job:
+		default:
+		}
+	}
 }
 
 func newRegistry(capacity int) *registry {
@@ -165,6 +205,7 @@ func (r *registry) add(job Job) Job {
 	stored := &job
 	r.jobs[job.ID] = stored
 	r.order = append(r.order, job.ID)
+	r.tell(job)
 	for len(r.order) > r.cap {
 		oldest := r.order[0]
 		// Never evict something still in flight, however old it is.
@@ -211,5 +252,6 @@ func (r *registry) update(id string, mutate func(*Job)) (Job, bool) {
 		return Job{}, false
 	}
 	mutate(job)
+	r.tell(*job)
 	return *job, true
 }

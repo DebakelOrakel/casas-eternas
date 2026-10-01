@@ -47,6 +47,7 @@ const (
 	keyDocsPath   = "docs.storage.dir.path"
 	keyWorker     = "jobs.worker"
 	keyJobsMax    = "jobs.max-concurrent"
+	keyJobsPath   = "jobs.storage.dir.path"
 	keyRelayPath  = "relay.storage.dir.path"
 	keyRelayAddr  = "relay.listen"
 )
@@ -82,7 +83,8 @@ const (
 	textAuthStore  = `The directory the auth subsystem's state lives in — auth.db, holding users and their credentials. A users.json left by an older server is imported once when the database is founded.`
 	textDocsPath   = `The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.`
 	textWorker     = `Path to the job worker bundle (npm run build:worker). Defaults to job-worker.mjs beside the binary.`
-	textJobsMax    = `How many jobs may run at once. One level-1 job of a real world holds some gigabytes, so raising this raises the memory the host must have.`
+	textJobsMax    = `How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.`
+	textJobsPath   = `The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.`
 	textRelayPath  = `The directory of the relay's message store (JetStream).`
 	textRelayAddr  = `Address the relay accepts worker connections on, as host:port. The default keeps it on this machine: there are no worker credentials yet.`
 )
@@ -157,6 +159,7 @@ func init() {
 	StartCmd.Flags().String(keyDocsPath, "", textDocsPath)
 	StartCmd.Flags().String(keyWorker, "", textWorker)
 	StartCmd.Flags().Int(keyJobsMax, 1, textJobsMax)
+	StartCmd.Flags().String(keyJobsPath, "./data/jobs", textJobsPath)
 	StartCmd.Flags().String(keyRelayPath, "./data/relay", textRelayPath)
 	StartCmd.Flags().String(keyRelayAddr, "127.0.0.1:4222", textRelayAddr)
 
@@ -169,7 +172,7 @@ func init() {
 		keySvcWorlds: StartCmd, keySvcArts: StartCmd, keyAuthStore: StartCmd,
 		keyWorldPath: StartCmd, keyKeepRevs: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
 		keyClientPath: StartCmd, keyWorker: StartCmd, keyJobsMax: StartCmd, keyDocsPath: StartCmd,
-		keySvcRelay: StartCmd, keyRelayPath: StartCmd, keyRelayAddr: StartCmd,
+		keySvcRelay: StartCmd, keyRelayPath: StartCmd, keyRelayAddr: StartCmd, keyJobsPath: StartCmd,
 	}
 	for key, cmd := range bindings {
 		flags := cmd.Flags()
@@ -185,7 +188,7 @@ func init() {
 	// Keys that exist in the tree but have no flag (the storage union's type
 	// selectors). SetDefault makes them known to viper, which is what lets a
 	// file or CASAS_* variable reach them through Unmarshal.
-	for _, key := range []string{"world.storage.type", "artifacts.storage.type", "client.storage.type", "auth.storage.type", "docs.storage.type", "relay.storage.type"} {
+	for _, key := range []string{"world.storage.type", "artifacts.storage.type", "client.storage.type", "auth.storage.type", "docs.storage.type", "relay.storage.type", "jobs.storage.type"} {
 		viper.SetDefault(key, "")
 	}
 

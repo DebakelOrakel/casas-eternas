@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -11,9 +12,12 @@ import (
 	"testing"
 	"time"
 
+	natsserver "github.com/nats-io/nats-server/v2/server"
+
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
+	"github.com/DebakelOrakel/casas-eternas/internal/relay"
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
@@ -735,4 +739,79 @@ func TestJobsShowAndCancelByWorldAccess(t *testing.T) {
 	if n := atomic.LoadInt32(&runner.started); n != 1 {
 		t.Errorf("%d bakes started, want 1 (the cancelled queued one must not run)", n)
 	}
+}
+
+// The module declares its three streams on the relay it is given.
+func TestJobsDeclaresItsStreams(t *testing.T) {
+	server, err := natsserver.NewServer(&natsserver.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir(), NoSigs: true, NoLog: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go server.Start()
+	if !server.ReadyForConnections(10 * time.Second) {
+		t.Fatal("server not ready")
+	}
+	defer func() {
+		server.Shutdown()
+		server.WaitForShutdown()
+	}()
+	conn, err := relay.Connect("jobs", server, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := declareStreams(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"JOBS_TASKS", "JOBS_DONE", "JOBS_EVENTS"} {
+		if _, err := conn.JetStream().Stream(ctx, name); err != nil {
+			t.Errorf("stream %s: %v", name, err)
+		}
+	}
+	conn.Close()
+}
+
+// The event stream carries a job's changes to whoever may see its world, and
+// nothing of a world they may not.
+func TestEventsStreamTheJobsTheCallerMaySee(t *testing.T) {
+	m, runner, worlds := newTestModule(t, config.AuthNone, 1)
+	writeWorld(t, worlds, "w1")
+	mux := http.NewServeMux()
+	if err := m.Mount(mux); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/jobs/events", nil)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if got := response.Header.Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("content type %q", got)
+	}
+	if rec := post(m, "w1", `{"worldUid":"w1","stage":1}`, ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("enqueue %d", rec.Code)
+	}
+	runner.awaitSpec(t)
+	scanner := bufio.NewScanner(response.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var job listedJob
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &job); err != nil {
+			t.Fatal(err)
+		}
+		if job.Request.WorldUID != "w1" {
+			t.Fatalf("event for %q", job.Request.WorldUID)
+		}
+		return
+	}
+	t.Fatal("no event arrived")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	natsserver "github.com/nats-io/nats-server/v2/server"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,8 +26,9 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/client"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/docs"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/jobs"
-	"github.com/DebakelOrakel/casas-eternas/internal/modules/relay"
+	relaymodule "github.com/DebakelOrakel/casas-eternas/internal/modules/relay"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/world"
+	"github.com/DebakelOrakel/casas-eternas/internal/relay"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
 	"github.com/DebakelOrakel/casas-eternas/internal/user"
@@ -97,7 +99,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	// The relay, when this process runs it: started before the modules that
 	// connect to it, and stopped again (store and port released) when the
 	// wiring fails after it.
-	var relayModule *relay.Module
+	var relayModule *relaymodule.Module
 	defer func() {
 		if !wired && registry != nil {
 			registry.Close()
@@ -107,7 +109,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		}
 	}()
 	if targets.Has(config.TargetRelay) {
-		relayModule, err = relay.New(relay.Config{All: cfg})
+		relayModule, err = relaymodule.New(relaymodule.Config{All: cfg})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -204,8 +206,28 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		if err != nil {
 			return nil, nil, err
 		}
+		// The bus the coordinator and its workers talk over: the relay in
+		// this process, or the one global.services.relay names. A jobs target
+		// needs one of the two (docs/decisions/detail-ladder.md, fork 8).
+		var server *natsserver.Server
+		bcfg.RelayURL = cfg.Global.Services.Relay
+		if relayModule != nil {
+			server = relayModule.Server()
+			if bcfg.RelayURL == "" {
+				bcfg.RelayURL = relayModule.URL()
+			}
+		}
+		if err := cfg.Jobs.Storage.Validate("jobs"); err != nil {
+			return nil, nil, err
+		}
+		bcfg.StorageDir = cfg.Jobs.Storage.DirPath()
+		bcfg.Relay, err = relay.Connect("jobs", server, cfg.Global.Services.Relay)
+		if err != nil {
+			return nil, nil, fmt.Errorf("jobs: %w (run -t relay in this process or set global.services.relay)", err)
+		}
 		m, err := jobs.New(bcfg)
 		if err != nil {
+			bcfg.Relay.Close()
 			return nil, nil, err
 		}
 		modules = append(modules, m)

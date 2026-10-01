@@ -60,6 +60,15 @@ func New(cfg Config) (*Module, error) {
 	if err != nil {
 		return nil, fmt.Errorf("relay.listen %q: port: %w", section.Listen, err)
 	}
+	// The embedded server reports a port it cannot bind only by never
+	// becoming ready; trying the address first says what is wrong.
+	if port > 0 {
+		probe, err := net.Listen("tcp", section.Listen)
+		if err != nil {
+			return nil, fmt.Errorf("relay.listen %q: %w", section.Listen, err)
+		}
+		probe.Close()
+	}
 	opts := &natsserver.Options{
 		ServerName: "casas-relay",
 		Host:       host,

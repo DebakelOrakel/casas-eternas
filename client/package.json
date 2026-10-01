@@ -13,7 +13,7 @@
     "harness:golden": "node --max-old-space-size=8192 scripts/golden.mjs",
     "harness:golden:record": "node --max-old-space-size=8192 scripts/golden.mjs record",
     "harness:golden:hash": "node --max-old-space-size=8192 scripts/golden.mjs hash-record",
-    "build:worker": "npx esbuild scripts/jobWorker.ts --bundle --platform=node --format=esm --target=node20 --outfile=../job-worker.mjs --log-level=warning",
+    "build:worker": "npx esbuild scripts/jobWorker.ts --bundle --platform=node --format=esm --target=node20 --outfile=../job-worker.mjs --log-level=warning --banner:js=\"import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);\"",
     "build:docs": "npx esbuild scripts/docsite.ts --bundle --packages=external --platform=node --format=esm --target=node20 --outfile=scripts/.docsite.mjs --log-level=warning && node scripts/.docsite.mjs"
   },
   "devDependencies": {
@@ -29,6 +29,8 @@
   },
   "dependencies": {
     "@babylonjs/core": "^9.17.0",
+    "@nats-io/jetstream": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
     "honeycomb-grid": "^4.1.5",
     "jszip": "^3.10.1"
   }

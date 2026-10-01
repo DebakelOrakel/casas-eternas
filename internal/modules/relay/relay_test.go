@@ -2,6 +2,8 @@ package relay
 
 import (
 	"context"
+	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,5 +91,18 @@ func TestRelayRefusesABadConfig(t *testing.T) {
 	}
 	if _, err := New(relayConfig(t.TempDir(), "no-port")); err == nil {
 		t.Error("a listen address without a port, but the relay started")
+	}
+}
+
+// A port that is taken is named as such, not as a server that never came up.
+func TestRelaySaysItsPortIsTaken(t *testing.T) {
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	_, err = New(relayConfig(t.TempDir(), held.Addr().String()))
+	if err == nil || !strings.Contains(err.Error(), "relay.listen") {
+		t.Errorf("err = %v, want a relay.listen error", err)
 	}
 }

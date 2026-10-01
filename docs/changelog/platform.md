@@ -5,6 +5,7 @@ the format.
 
 ## 2026-10-01
 - **new** Server: a message bus, target `-t relay` (part of `all`) — keys `relay.storage.dir.path`, `relay.listen` and `global.services.relay` (`CASAS_RELAY_*`); it carries the jobs and their workers from the next steps on.
+- **changed** Server: jobs run as tasks of a coordinator over the relay, on long-lived workers — key `jobs.storage.dir.path`, a `refine` plan, live progress at `/v1/jobs/events`. `jobs`
 
 ## 2026-09-29
 - **changed** Server: bake jobs are jobs — target `-t jobs`, keys `jobs.worker` and `jobs.max-concurrent` (`CASAS_JOBS_*`), routes `/v1/jobs`, bundle `job-worker.mjs` (`make worker`), image variable `CASAS_JOBS_IMAGE`; a `bake:` section in casas.yaml now refuses to start, so rename it on deploy. `jobs`
