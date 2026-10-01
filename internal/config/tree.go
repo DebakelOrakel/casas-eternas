@@ -36,6 +36,7 @@ type Config struct {
 	Client    ClientConfig    `mapstructure:"client"`
 	Auth      AuthConfig      `mapstructure:"auth"`
 	Docs      DocsConfig      `mapstructure:"docs"`
+	Relay     RelayConfig     `mapstructure:"relay"`
 }
 
 // Global is everything that belongs to the PROCESS, not to a target: the
@@ -85,6 +86,9 @@ type AuthSettings struct {
 type Services struct {
 	Worlds    string `mapstructure:"worlds"`
 	Artifacts string `mapstructure:"artifacts"`
+	// The relay (message bus) when it is not co-resident: a NATS URL, e.g.
+	// nats://relay:4222. Empty expects it in this process.
+	Relay string `mapstructure:"relay"`
 }
 
 // Storage is a TAGGED UNION, Kubernetes-volume-source style: `type` names
@@ -160,6 +164,13 @@ type ClientConfig struct {
 // (npm run build:docs) the docs module serves under /docs/.
 type DocsConfig struct {
 	Storage Storage `mapstructure:"storage"`
+}
+
+// RelayConfig is the message bus's section (docs/decisions/detail-ladder.md,
+// fork 8): JetStream's store and the port the workers connect to.
+type RelayConfig struct {
+	Storage Storage `mapstructure:"storage"`
+	Listen  string  `mapstructure:"listen"`
 }
 
 // AuthConfig is the auth SUBSYSTEM's own section — state only the process

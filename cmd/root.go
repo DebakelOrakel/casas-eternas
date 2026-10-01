@@ -36,6 +36,7 @@ const (
 	keyAdminSock   = "global.admin.socket"
 	keySvcWorlds   = "global.services.worlds"
 	keySvcArts     = "global.services.artifacts"
+	keySvcRelay    = "global.services.relay"
 
 	keyWorldPath  = "world.storage.dir.path"
 	keyKeepRevs   = "world.keep-revisions"
@@ -46,6 +47,8 @@ const (
 	keyDocsPath   = "docs.storage.dir.path"
 	keyWorker     = "jobs.worker"
 	keyJobsMax    = "jobs.max-concurrent"
+	keyRelayPath  = "relay.storage.dir.path"
+	keyRelayAddr  = "relay.listen"
 )
 
 // The two enum texts are composed, not written: the value lists live in
@@ -69,6 +72,7 @@ const (
 	textAdminSock   = `Path of a unix socket serving this process's admin API (user administration, over plain HTTP). Whoever can reach the socket is admin — file permissions gate it, no login. Empty serves none.`
 	textSvcWorlds   = `URL of the service running the world module, when it is not co-resident. Empty expects it in this process.`
 	textSvcArts     = `URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.`
+	textSvcRelay    = `NATS URL of the relay (the message bus), when it is not co-resident, e.g. nats://relay:4222. Empty expects it in this process.`
 
 	textWorldPath  = `The directory the saved worlds live in.`
 	textKeepRevs   = `How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.`
@@ -79,6 +83,8 @@ const (
 	textDocsPath   = `The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.`
 	textWorker     = `Path to the job worker bundle (npm run build:worker). Defaults to job-worker.mjs beside the binary.`
 	textJobsMax    = `How many jobs may run at once. One level-1 job of a real world holds some gigabytes, so raising this raises the memory the host must have.`
+	textRelayPath  = `The directory of the relay's message store (JetStream).`
+	textRelayAddr  = `Address the relay accepts worker connections on, as host:port. The default keeps it on this machine: there are no worker credentials yet.`
 )
 
 // RootCmd represents the base command when called without any subcommands
@@ -141,6 +147,7 @@ func init() {
 	StartCmd.Flags().Duration(keyAuthSessTTL, 720*time.Hour, textAuthSessTTL)
 	StartCmd.Flags().String(keySvcWorlds, "", textSvcWorlds)
 	StartCmd.Flags().String(keySvcArts, "", textSvcArts)
+	StartCmd.Flags().String(keySvcRelay, "", textSvcRelay)
 	StartCmd.Flags().String(keyWorldPath, "./data/worlds", textWorldPath)
 	StartCmd.Flags().Int(keyKeepRevs, 3, textKeepRevs)
 	StartCmd.Flags().String(keyArtsPath, "./data/artifacts", textArtsPath)
@@ -150,6 +157,8 @@ func init() {
 	StartCmd.Flags().String(keyDocsPath, "", textDocsPath)
 	StartCmd.Flags().String(keyWorker, "", textWorker)
 	StartCmd.Flags().Int(keyJobsMax, 1, textJobsMax)
+	StartCmd.Flags().String(keyRelayPath, "./data/relay", textRelayPath)
+	StartCmd.Flags().String(keyRelayAddr, "127.0.0.1:4222", textRelayAddr)
 
 	bindings := map[string]*cobra.Command{
 		flagConfig: RootCmd,
@@ -160,6 +169,7 @@ func init() {
 		keySvcWorlds: StartCmd, keySvcArts: StartCmd, keyAuthStore: StartCmd,
 		keyWorldPath: StartCmd, keyKeepRevs: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
 		keyClientPath: StartCmd, keyWorker: StartCmd, keyJobsMax: StartCmd, keyDocsPath: StartCmd,
+		keySvcRelay: StartCmd, keyRelayPath: StartCmd, keyRelayAddr: StartCmd,
 	}
 	for key, cmd := range bindings {
 		flags := cmd.Flags()
@@ -175,7 +185,7 @@ func init() {
 	// Keys that exist in the tree but have no flag (the storage union's type
 	// selectors). SetDefault makes them known to viper, which is what lets a
 	// file or CASAS_* variable reach them through Unmarshal.
-	for _, key := range []string{"world.storage.type", "artifacts.storage.type", "client.storage.type", "auth.storage.type", "docs.storage.type"} {
+	for _, key := range []string{"world.storage.type", "artifacts.storage.type", "client.storage.type", "auth.storage.type", "docs.storage.type", "relay.storage.type"} {
 		viper.SetDefault(key, "")
 	}
 

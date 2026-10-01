@@ -166,6 +166,11 @@
           "env": "CASAS_GLOBAL_SERVICES_ARTIFACTS"
         },
         {
+          "name": "global.services.relay",
+          "usage": "NATS URL of the relay (the message bus), when it is not co-resident, e.g. nats://relay:4222. Empty expects it in this process.",
+          "env": "CASAS_GLOBAL_SERVICES_RELAY"
+        },
+        {
           "name": "global.services.worlds",
           "usage": "URL of the service running the world module, when it is not co-resident. Empty expects it in this process.",
           "env": "CASAS_GLOBAL_SERVICES_WORLDS"
@@ -182,10 +187,22 @@
           "env": "CASAS_JOBS_WORKER"
         },
         {
+          "name": "relay.listen",
+          "default": "127.0.0.1:4222",
+          "usage": "Address the relay accepts worker connections on, as host:port. The default keeps it on this machine: there are no worker credentials yet.",
+          "env": "CASAS_RELAY_LISTEN"
+        },
+        {
+          "name": "relay.storage.dir.path",
+          "default": "./data/relay",
+          "usage": "The directory of the relay's message store (JetStream).",
+          "env": "CASAS_RELAY_STORAGE_DIR_PATH"
+        },
+        {
           "name": "target",
           "shorthand": "t",
           "default": "[]",
-          "usage": "The target modules to start: all, client, world, artifacts, jobs, docs, auth. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.",
+          "usage": "The target modules to start: all, client, world, artifacts, jobs, docs, auth, relay. Repeatable. Deliberately NOT a config-file key — the same file serves differently-targeted processes.",
           "env": "CASAS_TARGET"
         },
         {
@@ -305,6 +322,12 @@
       "command": "casas-eternas start"
     },
     {
+      "key": "global.services.relay",
+      "env": "CASAS_GLOBAL_SERVICES_RELAY",
+      "usage": "NATS URL of the relay (the message bus), when it is not co-resident, e.g. nats://relay:4222. Empty expects it in this process.",
+      "command": "casas-eternas start"
+    },
+    {
       "key": "global.services.worlds",
       "env": "CASAS_GLOBAL_SERVICES_WORLDS",
       "usage": "URL of the service running the world module, when it is not co-resident. Empty expects it in this process.",
@@ -340,6 +363,24 @@
       "env": "CASAS_JOBS_WORKER",
       "usage": "Path to the job worker bundle (npm run build:worker). Defaults to job-worker.mjs beside the binary.",
       "command": "casas-eternas start"
+    },
+    {
+      "key": "relay.listen",
+      "env": "CASAS_RELAY_LISTEN",
+      "default": "127.0.0.1:4222",
+      "usage": "Address the relay accepts worker connections on, as host:port. The default keeps it on this machine: there are no worker credentials yet.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "relay.storage.dir.path",
+      "env": "CASAS_RELAY_STORAGE_DIR_PATH",
+      "default": "./data/relay",
+      "usage": "The directory of the relay's message store (JetStream).",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "relay.storage.type",
+      "env": "CASAS_RELAY_STORAGE_TYPE"
     },
     {
       "key": "world.keep-revisions",

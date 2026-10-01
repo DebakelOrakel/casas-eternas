@@ -218,6 +218,69 @@ another's namespace.
 | `jobs.event.<jobId>` | `JOBS_EVENTS` (short retention) | progress and the end; `jobs` passes them to the client as server-sent events — the client never speaks NATS |
 | `world.event.<uid>`, `artifacts.event.…` | later, a stream each | e.g. a world saved, an artifact written |
 
+## The relay and the coordinator, as agreed 2026-10-01
+
+**Packages.**
+- `internal/modules/relay/` — the module behind `-t relay`: the embedded
+  NATS server with JetStream, its store and its port; no HTTP routes
+  (its port is said under `/v1/capabilities`).
+- `internal/relay/` — a leaf package like `token` and `identity`: connect
+  in the process or to `global.services.relay`, subjects that always start
+  with the owning module's name, stream setup. With `cmd/`, the only
+  importer of `nats.go`.
+- `internal/modules/jobs/` gains the coordinator: the graph and the tasks'
+  states in bbolt (`jobs.db`). The routes under `/v1/jobs` stay the outside.
+
+**Terms.** A *job* is what is ordered ("refine the world"): a graph of
+*tasks*, its progress the share of tasks done. A *task* is one pure
+computation with its dependencies declared before it starts and one
+artifact as its result.
+
+**Subjects** (the first token is the owning module; the task id is the
+message id, so JetStream drops a task published twice):
+
+| Subject | Stream | What |
+|---|---|---|
+| `jobs.task.<pool>` (+ `.urgent`) | `JOBS_TASKS`, work queue | a task: id, kind, world uid and id, input artifact keys, parameters, output key |
+| `jobs.done.<taskId>` | `JOBS_DONE`, work queue, read by the coordinator | the artifact key, pipeline version, duration — or the error |
+| `jobs.event.<jobId>` | `JOBS_EVENTS`, short retention | progress, for the client |
+
+**Flow.** The coordinator writes a job's tasks and their dependencies to
+bbolt and publishes every task with none open. A worker pulls a task
+(acknowledgement deadline ~5 min, a "still working" every 30 s, at most 5
+deliveries), writes its artifact to the artifact store as today, publishes
+`done`, acknowledges. The coordinator marks the task, releases its
+dependents. On a restart, what bbolt holds as dispatched is still in
+JetStream; what is ready and not dispatched is published again. A
+computation's error ends the task (it is deterministic); a transient one
+(a store out of reach) is delivered again.
+
+**Workers.** `job-worker.mjs --serve --relay <url> --pool <pool>` pulls in
+a loop and keeps parent levels in memory (least recently used out); the
+one-shot form stays for the harnesses. Locally `jobs` starts
+`jobs.max-concurrent` serving workers and restarts one that dies; the
+local subprocess runner goes. Kubernetes keeps its runner (a Job per
+order) until the worker Deployment (scaled by KEDA) is built.
+
+**Access.** Now: the relay listens on loopback only, without credentials —
+reachable by `jobs` (in the process under `-t all`) and the workers it
+starts, as safe as today's subprocesses. In a cluster: workers prove
+themselves with our own tokens, signed with the shared key and checked by
+NATS's auth callout — one identity system, not a second set of passwords.
+
+**Progress to the client.** Server-sent events: `jobs` reads
+`jobs.event.*` and serves them at `/v1/jobs/events`; the jobs window and
+the finishing step subscribe, and fall back to polling when the stream
+drops.
+
+**Build order.** (1) the relay module, its config and wiring, Go tests
+with an embedded server; (2) `internal/relay`, `jobs` connects and
+declares its streams; (3) the coordinator on bbolt with today's two task
+kinds (level 1, tile), a Go test with a fake worker, and the event
+stream; (4) the workers' serving mode and the local pool; (5) the client:
+the tile pick goes, "refine the world" orders the graph, progress by
+events; (6) Kubernetes, later.
+
 ## Measured 2026-10-01 (build steps 1 and 2)
 
 **Step 1 — valleys and rain** (seed 434430010, 120 coupled epochs at the

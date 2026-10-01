@@ -33,12 +33,16 @@ const (
 	// it has nothing to do and contributes no module. Added 2026-08-13,
 	// docs/decisions/server-user-admin.md.
 	TargetAuth Target = "auth"
+	// TargetRelay is the message bus: an embedded NATS server with
+	// JetStream, which the jobs module's coordinator and its workers talk
+	// over. Added 2026-10-01, docs/decisions/detail-ladder.md (fork 8).
+	TargetRelay Target = "relay"
 )
 
 // modules lists the real targets, in the order they are reported to the user.
 // TargetAll is absent on purpose: it expands to this, so having it in the list
 // would let "all" select itself.
-var modules = []Target{TargetClient, TargetWorld, TargetArtifacts, TargetJobs, TargetDocs, TargetAuth}
+var modules = []Target{TargetClient, TargetWorld, TargetArtifacts, TargetJobs, TargetDocs, TargetAuth, TargetRelay}
 
 // Targets is a resolved selection: every module that should run.
 type Targets map[Target]bool

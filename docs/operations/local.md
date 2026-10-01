@@ -32,8 +32,10 @@ only the API plus `/config.json`, which is exactly what a dev run beside
 ## Defaults are cwd-relative
 
 With nothing configured, state lands beside where you started the
-process, under `./data/`: `./data/worlds`, `./data/artifacts`, `./data/auth`
-(the repository ignores `data/`). A `casas.yaml` in the same
+process, under `./data/`: `./data/worlds`, `./data/artifacts`, `./data/auth`,
+`./data/relay` (the repository ignores `data/`). The relay — the message
+bus the jobs and their workers talk over — listens on `127.0.0.1:4222`;
+it stays on this machine because workers have no credentials yet. A `casas.yaml` in the same
 directory is picked up automatically; `--config` points anywhere else.
 
 ## The local mode is `none`

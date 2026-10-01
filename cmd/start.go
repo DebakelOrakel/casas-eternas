@@ -25,6 +25,7 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/client"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/docs"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/jobs"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/relay"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/world"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
@@ -93,11 +94,25 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	// the bbolt lock outlives the failed start for an in-process caller —
 	// one deferred close for all of them, disarmed when the wiring succeeds.
 	wired := false
+	// The relay, when this process runs it: started before the modules that
+	// connect to it, and stopped again (store and port released) when the
+	// wiring fails after it.
+	var relayModule *relay.Module
 	defer func() {
 		if !wired && registry != nil {
 			registry.Close()
 		}
+		if !wired && relayModule != nil {
+			relayModule.Close()
+		}
 	}()
+	if targets.Has(config.TargetRelay) {
+		relayModule, err = relay.New(relay.Config{All: cfg})
+		if err != nil {
+			return nil, nil, err
+		}
+		modules = append(modules, relayModule)
+	}
 
 	caller, tokens, err := buildIdentity(authMode, cfg)
 	if err != nil {
