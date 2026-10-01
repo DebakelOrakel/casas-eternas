@@ -1,5 +1,4 @@
-import { AMPLIFY_CONSTANTS } from '../generator/surface/amplify'
-import { MESH_TUNING } from '../generator/mesh/meshDensity'
+import { MESH_BAKE_CONSTANTS } from './meshArtifacts'
 import { TILE_CONSTANTS, TILE_LEVEL, TILE_ROLE_HALO, type TileId } from '../generator/mesh/meshTile'
 import { levelBudget } from '../generator/pipeline/meshBakeStage'
 import type { BakedTile } from '../generator/pipeline/meshTileBake'
@@ -39,8 +38,7 @@ export function meshTilePipelineVersion(rounds: number = AMPLIFY_EROSION_ROUNDS)
 
 function tilePipelineConstants(rounds: number): Record<string, number> {
   return {
-    ...AMPLIFY_CONSTANTS,
-    ...Object.fromEntries(Object.entries(MESH_TUNING).map(([k, v]) => [`mesh_${k}`, v])),
+    ...MESH_BAKE_CONSTANTS,
     parentBudget: levelBudget(1),
     ...TILE_CONSTANTS,
     rounds,

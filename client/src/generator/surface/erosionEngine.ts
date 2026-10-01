@@ -220,7 +220,7 @@ export interface ErosionForcing {
   diffScale?: Float32Array
 }
 
-const EPSILON_FLOOD_STEP = 1e-7
+export const EPSILON_FLOOD_STEP = 1e-7
 const SQRT2 = Math.SQRT2
 const QUARTER_TURN = Math.PI / 4
 const NO_SLOT = 255
@@ -228,7 +228,7 @@ const NO_SLOT = 255
 // more than this fraction of a height difference to one neighbour in one
 // iteration (explicit diffusion; over ½ it overshoots, the margin is for
 // the six-to-eight neighbours that move at once).
-const DIFFUSION_PAIR_CAP = 0.2
+export const DIFFUSION_PAIR_CAP = 0.2
 // D8-LTD facets as [cardinal slot, diagonal slot, orientation] over the
 // D8_OFFSETS slot order (flowRouting.ts): N, NE, E, SE, S, SW, W, NW. A
 // diagonal slot is odd, which is how the walks tell a √2 reach from a

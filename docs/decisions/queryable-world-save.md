@@ -170,6 +170,8 @@ specs, `bakeLayer` quantiser, `decodeLayer`/`sampleAt` sampler, `downsampleMax`)
 and `bakeQueryLayers()` in WorldGenScreen writes `manifest.json` + `layers/*.{u8,u16}`
 into the save zip from the main thread's cached fields. `elevation.f32` (also the
 restore raster) is referenced as a manifest layer; rivers as `layers/discharge.u16`.
+(Since 2026-10-01 the writer is `world/save/worldArchive.ts`; the screen hands
+it the cached fields.)
 
 ## Rivers: a field, not polylines (revised 2026-08-08)
 

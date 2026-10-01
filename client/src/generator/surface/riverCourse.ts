@@ -79,6 +79,14 @@ export interface RiverCourseOptions {
 // for the banks, the fluvial erodibility and the critical slope.
 const BANK_STRENGTH = COVER_BY_BIOME
 
+// The course model's own version, for the artifact key (world/meshArtifacts):
+// its numbers stand in the code (hydraulic geometry, the braiding threshold,
+// the meander's wavelength and rate, the delta's fan), not in a tuning
+// object that could be hashed whole. Raise it with any change to them, or
+// a level 1 baked before is served as current. Added 2026-10-01, when the
+// structure review found the river courses outside the key.
+export const RIVER_COURSE_MODEL_VERSION = 1
+
 // Hydraulic geometry (Leopold & Maddock): width and depth as powers of the
 // bankfull discharge, metres for m³/s.
 export function channelWidthM(dischargeM3s: number): number {

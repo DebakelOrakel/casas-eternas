@@ -45,8 +45,9 @@ import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../generator/c
 import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
-import { DISCHARGE_LAYER, ELEVATION_ENCODING, FORCING_LAYERS, REFINED_LAYERS, WORLD_LAYERS, bakeLayer, decodeLayer } from '../../world/save/worldLayers'
-import { refinedFromLayers, refinedLayerSources } from '../../world/save/refinedLayers'
+import { ELEVATION_ENCODING, REFINED_LAYERS, decodeLayer } from '../../world/save/worldLayers'
+import { refinedFromLayers } from '../../world/save/refinedLayers'
+import { writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
 import type { RefinedClimate } from '../../generator/climate/refinement'
 import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
@@ -4628,156 +4629,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return new Promise((resolve) => thumb.toBlob((blob) => resolve(blob), 'image/png'))
   }
 
-  // Bakes the "query layers" + manifest into the save (see
-  // docs/decisions/queryable-world-save.md): every computed field, quantised per
-  // its layer spec, plus a manifest describing them — so the game server can look
-  // up any world value by sampling, with no generation code. Bakes whatever the
-  // main thread has cached (climate/hydrology/ecology from the panels visited);
-  // layers absent from the cache are simply omitted from the manifest.
-  function bakeQueryLayers(zip: JSZip, forcing: { uplift: Float32Array; erodibility: Float32Array; resX: number; resY: number } | null, mesh: MeshPayload | undefined): void {
-    type ManifestLayer = { name: string; file: string; kind: 'raster' | 'vector' | 'table'; resX?: number; resY?: number; dtype?: string; encoding?: { scale: number; offset: number }; unit?: string; landOnly?: boolean }
-    const layers: ManifestLayer[] = []
-    // Elevation is always present (post-generation); carried raw as elevation.f32
-    // (it doubles as the restore raster).
-    layers.push({ name: 'elevation', file: 'elevation.f32', kind: 'raster', resX: MAP_WIDTH, resY: MAP_HEIGHT, dtype: 'f32', encoding: { scale: 1, offset: 0 }, unit: 'relative', landOnly: false })
-
-    // The erosion engine's coarse forcing, from the worldData reply rather
-    // than a screen-side stash: it exists whenever the sim does, independent
-    // of the climate gate below — a bake erodes before it needs climate.
-    if (forcing) {
-      for (const spec of FORCING_LAYERS) {
-        const src = spec.name === 'uplift' ? forcing.uplift : forcing.erodibility
-        zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
-        layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: forcing.resX, resY: forcing.resY, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
-      }
-    }
-
-    // Climate/hydrology/ecology are only baked once they've been computed
-    // (compute-on-save ensures that when the world has been eroded).
-    if (climateResX > 0 && lastPrecipitation) {
-      const rx = climateResX
-      const ry = climateResY
-      const landMask = new Float32Array(rx * ry)
-      for (let i = 0; i < landMask.length; i++) landMask[i] = lastPrecipitation[i] !== OCEAN_PRECIP ? 1 : 0
-      const sources: Partial<Record<string, Float32Array | Uint8Array>> = {
-        landMask,
-        temperature: lastTemperature ?? undefined,
-        precipitation: lastPrecipitation ?? undefined,
-        precipitationEffective: lastPrecipitationEffective ?? undefined,
-        biome: lastBiomes ?? undefined,
-        seasonalAmplitude: lastSeasonality ?? undefined,
-        monsoonIndex: lastMonsoonIndex ?? undefined,
-        koppen: displayKoppen() ?? undefined,
-        lakeDepth: lastLakeDepth ?? undefined,
-        waterTable: lastWaterTable ?? undefined,
-      }
-      for (const spec of WORLD_LAYERS) {
-        const src = sources[spec.name]
-        if (!src) continue
-        // Dimensions from the spec, not from this loop's climate rx/ry: biome is
-        // baked on the world raster (see LayerSpec.fullRes). A wrong pair here
-        // would not throw — the buffer's length is whatever the source is, and
-        // only the manifest says how to fold it into rows.
-        const [lx, ly] = spec.grid === 'world' ? [MAP_WIDTH, MAP_HEIGHT] : [rx, ry]
-        zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
-        layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: lx, resY: ly, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
-      }
-      // Rivers are a DISCHARGE RASTER, not polylines — baked at map resolution
-      // like biome, but written here because it needs a unit conversion first.
-      //
-      // The polyline layer that used to sit here was written by one place and
-      // read by none: the client re-derives its rivers (deterministically, from
-      // elevation + precipitation, both of which are in this
-      // save) or fetches a baked artifact, and a game server cannot answer
-      // "how big is this river" from a line whose only attribute is a drawing
-      // width clamped at four pixels. It also went stale the moment an
-      // amplified bake existed, giving the save and the map two different
-      // answers to the same question.
-      //
-      // A field answers by sampling, exactly as biome and lakeDepth do, and it
-      // costs less: 109 KB compressed against 303 KB of JSON.
-      if (lastDischargeField) {
-        const m3s = new Float32Array(lastDischargeField.length)
-        for (let i = 0; i < m3s.length; i++) m3s[i] = lastDischargeField[i] * DISCHARGE_TO_M3S
-        zip.file(`layers/${DISCHARGE_LAYER.name}.${DISCHARGE_LAYER.dtype}`, bakeLayer(m3s, DISCHARGE_LAYER))
-        layers.push({
-          name: DISCHARGE_LAYER.name, file: `layers/${DISCHARGE_LAYER.name}.${DISCHARGE_LAYER.dtype}`, kind: 'raster',
-          resX: MAP_WIDTH, resY: MAP_HEIGHT, dtype: DISCHARGE_LAYER.dtype,
-          encoding: { scale: DISCHARGE_LAYER.scale, offset: DISCHARGE_LAYER.offset },
-          unit: DISCHARGE_LAYER.unit, landOnly: DISCHARGE_LAYER.landOnly,
-        })
-      }
-    }
-    // The climate step's refinement (formatVersion 6), one layer per month
-    // and component (world/save/refinedLayers.ts). Only when the session has
-    // one: a world saved unrefined loads unrefined.
-    if (lastRefined && climateResX > 0) {
-      const sources = refinedLayerSources(lastRefined, climateResX * climateResY)
-      for (const spec of REFINED_LAYERS) {
-        const src = sources.get(spec.name)
-        if (!src) continue
-        zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
-        layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: climateResX, resY: climateResY, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
-      }
-    }
-    // The ENSO see-saw's period and strength, beside its pattern layer: what
-    // a reader needs to roll the phase of a year.
-    if (lastRefined) {
-      const { ensoPeriodYears, ensoStrength } = lastRefined.reliability
-      zip.file('layers/enso.json', JSON.stringify({ periodYears: ensoPeriodYears, strength: ensoStrength }))
-      layers.push({ name: 'enso', file: 'layers/enso.json', kind: 'table' })
-    }
-    // The standing-water list (ADAPTIVE_MESH_PLAN.md phase 1): a JSON table
-    // beside the rasters — the truth `lakeDepth` derives from
-    // (hydrology.lakeDepthFromBodies), in this raster's texel coordinates.
-    // Its arrival is what formatVersion 2 says; a version-1 reader simply
-    // does not see the entry.
-    if (lastWaterBodies) {
-      zip.file('layers/waterBodies.json', JSON.stringify(lastWaterBodies))
-      layers.push({ name: 'waterBodies', file: 'layers/waterBodies.json', kind: 'table' })
-    }
-    // The coast reaches (F5), the same way: a table, cells as indices into
-    // this raster.
-    if (lastCoast) {
-      zip.file('layers/coast.json', JSON.stringify({ reaches: lastCoast.reaches, cells: Array.from(lastCoast.cells) }))
-      layers.push({ name: 'coast', file: 'layers/coast.json', kind: 'table' })
-    }
-    // The sediment basins (F1): what this session's erosion deposited, with
-    // provenance — a loaded save cannot re-derive them, so the table is
-    // written only when the session has them.
-    if (lastSedimentBasins && lastSedimentBasins.length > 0) {
-      zip.file('layers/sedimentBasins.json', JSON.stringify(lastSedimentBasins))
-      layers.push({ name: 'sedimentBasins', file: 'layers/sedimentBasins.json', kind: 'table' })
-    }
-    // The adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4.3): the terrain
-    // proper, from which `elevation.f32` is rasterised. Three files under
-    // `mesh/`, described by one manifest entry; `formatVersion` 3 says a
-    // save may carry one, 4 that it may carry the sediment column as a
-    // fourth (phase 5.2), 5 that the column's layers carry the climate at
-    // deposition (phase 5.4). A world whose history has not run carries none.
-    // 6: the layers may carry the climate step's refinement (above).
-    // 7: no ecology layers (docs/decisions/ecology-as-function.md: computed
-    // on load), and the generator loads the refinement it finds rather than
-    // computing it again.
-    if (mesh) {
-      zip.file('mesh/nodes.f32', mesh.nodes)
-      zip.file('mesh/connectivity.bin', mesh.connectivity)
-      zip.file('mesh/z.f32', mesh.z)
-      if (mesh.column) zip.file('mesh/column.bin', mesh.column)
-    }
-    const manifest = {
-      formatVersion: 7,
-      // The same provenance string status.generator carries — a real build id
-      // since 2026-08-11, where a static 'casas-eternas/v1alpha1' had stood
-      // saying nothing.
-      generatorVersion: BUILD_VERSION,
-      world: { width: MAP_WIDTH, height: MAP_HEIGHT, topology: 'torus' },
-      layers,
-      mesh: mesh ? { nodes: mesh.count, files: { nodes: 'mesh/nodes.f32', connectivity: 'mesh/connectivity.bin', z: 'mesh/z.f32', column: mesh.column ? 'mesh/column.bin' : undefined } } : undefined,
-    }
-    zip.file('manifest.json', JSON.stringify(manifest, null, 2))
-  }
-
   // Save flow: worker replies with the sim snapshot + rasters → zip it up (recipe
   // + snapshot + baked query layers + manifest + preview).
   // Where the next serialized world goes. Set by the save affordance before the
@@ -4865,41 +4716,56 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   async function handleWorldData(message: WorkerWorldDataMessage): Promise<void> {
-    const zip = new JSZip()
     // Stamp the identity BEFORE the yaml is built — it is the one thing in the
     // recipe that is not read off a control. A world minted here keeps its uid
     // for every later save; regenerate() is the only thing that clears it.
     if (worldUid === '') worldUid = newWorldUid()
     worldRevision += 1
-    zip.file('world.yaml', buildWorldYaml())
+    // The archive's layout, its layers and its manifest are world/save's
+    // (worldArchive.ts); this gathers the parts.
+    const common = { width: MAP_WIDTH, height: MAP_HEIGHT, yaml: buildWorldYaml(), generatorVersion: BUILD_VERSION, elevation: message.elevation }
     // A world saved during the Archean has no plate simulation yet — it carries its own
     // snapshot instead. The phase is a pause, so it has to be savable there; before this
     // the save button posted its request and the worker silently declined.
-    if (message.archean) {
-      zip.file('archean.json', JSON.stringify(message.archean.snapshot))
-      zip.file('archean.mantle.f32', message.archean.mantle)
-      zip.file('archean.streak.i16', message.archean.streak)
-      zip.file('elevation.f32', message.elevation)
-      const archeanPreview = await makePreviewBlob()
-      if (archeanPreview) zip.file('preview.png', archeanPreview)
-      const archeanBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
-      await deliverArchive(archeanBlob, `${(worldName || seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)
-      return
-    }
-    zip.file('state.json', JSON.stringify(message.snapshot))
-    zip.file('mantle.f32', message.mantle)
-    zip.file('lattice.acc.f32', message.latticeAccumulated)
-    zip.file('lattice.lock.i16', message.latticeLockedEpochs)
-    zip.file('lattice.class.i8', message.latticeLastClassCode)
-    zip.file('oceanAge.f32', message.oceanAge)
-    zip.file('elevation.f32', message.elevation)
-    bakeQueryLayers(zip, message.forcingResX > 0
-      ? { uplift: new Float32Array(message.uplift), erodibility: new Float32Array(message.erodibility), resX: message.forcingResX, resY: message.forcingResY }
-      : null, message.mesh)
-    const preview = await makePreviewBlob()
-    if (preview) zip.file('preview.png', preview)
-    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
-    void noteSavedWorldId(blob)
+    const parts: WorldArchiveParts = message.archean
+      ? { ...common, kind: 'archean', archean: message.archean, preview: await makePreviewBlob() }
+      : {
+        ...common,
+        kind: 'tectonic',
+        snapshot: message.snapshot,
+        mantle: message.mantle,
+        latticeAccumulated: message.latticeAccumulated,
+        latticeLockedEpochs: message.latticeLockedEpochs,
+        latticeLastClassCode: message.latticeLastClassCode,
+        oceanAge: message.oceanAge,
+        forcing: message.forcingResX > 0
+          ? { uplift: new Float32Array(message.uplift), erodibility: new Float32Array(message.erodibility), resX: message.forcingResX, resY: message.forcingResY }
+          : null,
+        mesh: message.mesh,
+        fields: {
+          climateResX,
+          climateResY,
+          temperature: lastTemperature,
+          precipitation: lastPrecipitation,
+          precipitationEffective: lastPrecipitationEffective,
+          biome: lastBiomes,
+          seasonalAmplitude: lastSeasonality,
+          monsoonIndex: lastMonsoonIndex,
+          koppen: displayKoppen(),
+          lakeDepth: lastLakeDepth,
+          waterTable: lastWaterTable,
+          dischargeM3s: lastDischargeField ? lastDischargeField.map((q) => q * DISCHARGE_TO_M3S) : null,
+          refined: lastRefined,
+          waterBodies: lastWaterBodies,
+          coast: lastCoast,
+          sedimentBasins: lastSedimentBasins,
+        },
+        preview: await makePreviewBlob(),
+      }
+    const blob = new Blob([await writeWorldArchive(parts)], { type: 'application/zip' })
+    // The terrain id of what was just written, for the artifacts; an Archean
+    // world has none (it hashes the world's layers).
+    if (!message.archean) void noteSavedWorldId(blob)
     const safeName = (worldName || seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')
     await deliverArchive(blob, `${safeName}.zip`)
   }

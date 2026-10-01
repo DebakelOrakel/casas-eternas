@@ -35,8 +35,8 @@ export const ROCK_CONTRAST_SIGMA_MAX = 2.8
 // per-raster one: a finer grid samples the same rock bands more finely
 // instead of inventing narrower ones, so the generator's macro erosion and an
 // 8K bake carve the same geology.
-const LITHO_LATTICE_X = 512
-const LITHO_LATTICE_Y = 256
+export const LITHO_LATTICE_X = 512
+export const LITHO_LATTICE_Y = 256
 
 export interface CoarseForcingInputs {
   // U and the crust-history hardness story, both on the forcing grid. Null

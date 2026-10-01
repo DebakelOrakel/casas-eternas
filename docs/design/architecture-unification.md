@@ -396,7 +396,10 @@ while moving files.
 WorldGenScreen and needs a DOM, so the check builds its test zip from
 `WORLD_LAYERS` itself rather than calling the real writer. That closes when C3
 extracts the writer — at which point roundtrip.mjs should call it instead of
-describing it.
+describing it. *Closed 2026-10-01:* the writer is `world/save/worldArchive.ts`
+(`writeWorldArchive`), the screen gathers its parts, and roundtrip.mjs writes
+an archive with it and reads it back. The screen's own restore reader is
+still separate.
 
 ### C1 onwards
 

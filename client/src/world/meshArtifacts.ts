@@ -9,6 +9,11 @@ import { torusDomain } from '../generator/core/domain'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
 import { levelBudget } from '../generator/pipeline/meshBakeStage'
+import { LITHO_LATTICE_X, LITHO_LATTICE_Y } from '../generator/surface/erosionForcingFields'
+import { DIFFUSION_PAIR_CAP, EPSILON_FLOOD_STEP } from '../generator/surface/erosionEngine'
+import { DEFAULT_ROUTING_EVERY } from '../generator/mesh/meshErosion'
+import { RIVER_COURSE_MODEL_VERSION } from '../generator/surface/riverCourse'
+import { COVER_BY_BIOME } from '../generator/surface/cover'
 
 // A MESH LEVEL as an artifact (ADAPTIVE_MESH_PLAN.md phase 4.5; decision 3:
 // "global level state and tiles are artifacts, evictable"). What the mesh
@@ -40,13 +45,35 @@ export function meshLevelStage(level: number): string {
   return `L${level}`
 }
 
+// Every number a mesh bake's output depends on besides the level's own
+// budget and rounds, for level 1 and the tiles alike (meshTileArtifacts).
+// The amplification's and the density rule's objects whole, then what the
+// structure review of 2026-10-01 found outside the key: the lithology
+// lattice, two of the engine's module constants, the routing cadence, the
+// river course model (its version, the course numbers being inline) and
+// the bank-strength table. A change to any of them made different artifacts
+// under an unchanged key, which a client then served as current.
+export const MESH_BAKE_CONSTANTS: Record<string, number> = {
+  ...AMPLIFY_CONSTANTS,
+  ...Object.fromEntries(Object.entries(MESH_TUNING).map(([k, v]) => [`mesh_${k}`, v])),
+  lithoLatticeX: LITHO_LATTICE_X,
+  lithoLatticeY: LITHO_LATTICE_Y,
+  engineDiffusionPairCap: DIFFUSION_PAIR_CAP,
+  engineEpsilonFloodStep: EPSILON_FLOOD_STEP,
+  routingEvery: DEFAULT_ROUTING_EVERY,
+  riverCourseModel: RIVER_COURSE_MODEL_VERSION,
+  ...Object.fromEntries(Object.entries(COVER_BY_BIOME).map(([biome, cover]) => [`cover${biome}`, cover])),
+}
+
+// The constants a level's version is derived from — and what its meta
+// records, so the version can be recomputed from the meta (it recorded a
+// subset until 2026-10-01).
+export function meshLevelPipelineConstants(level: number, rounds: number = AMPLIFY_EROSION_ROUNDS): Record<string, number> {
+  return { ...MESH_BAKE_CONSTANTS, meshBudget: levelBudget(level), rounds }
+}
+
 export function meshPipelineVersion(level: number, rounds: number = AMPLIFY_EROSION_ROUNDS): string {
-  return derivePipelineVersion({
-    ...AMPLIFY_CONSTANTS,
-    ...Object.fromEntries(Object.entries(MESH_TUNING).map(([k, v]) => [`mesh_${k}`, v])),
-    meshBudget: levelBudget(level),
-    rounds,
-  })
+  return derivePipelineVersion(meshLevelPipelineConstants(level, rounds))
 }
 
 export interface MeshLevelArtifact {
@@ -107,7 +134,7 @@ export async function writeMeshLevelArtifact(store: ArtifactStore, key: Artifact
   }
   const meta: MeshLevelMeta = {
     key, level: artifact.level, nodes: artifact.count, bakeMs, createdAt: Date.now(), label,
-    pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, budget: levelBudget(artifact.level), constants: { ...AMPLIFY_CONSTANTS, ...Object.fromEntries(Object.entries(MESH_TUNING).map(([k, v]) => [`mesh_${k}`, v])) } },
+    pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, budget: levelBudget(artifact.level), constants: meshLevelPipelineConstants(artifact.level, rounds) },
     files,
   }
   return (

@@ -9,6 +9,10 @@ import { expandActive, type EngineIndex } from '../surface/erosionEngineState'
 import { PipelinedErosionEngine, type PipelineOptions, type WorkerLike } from '../surface/erosionEnginePool'
 import type { PeriodicTriangulation } from './periodicDelaunay'
 
+// Iterations between two routings of the drainage when the caller names
+// none; part of what a bake produces (world/meshArtifacts hashes it).
+export const DEFAULT_ROUTING_EVERY = 4
+
 // EROSION ON THE MESH (ADAPTIVE_MESH_PLAN.md phase 4.2): the engine of
 // surface/erosionEngine.ts over the triangulation. Nothing here is physics
 // — the kernels are the engine's, in their finite-volume form — this file
@@ -343,7 +347,7 @@ export async function runMeshErosion(mesh: PeriodicTriangulation, initial: Float
     }
   }
   const engine = ErosionEngine.onIndex(index, initial, forcing, params)
-  const routingEvery = options.routingEvery ?? 4
+  const routingEvery = options.routingEvery ?? DEFAULT_ROUTING_EVERY
   await chunks((step, done) => engine.run(step, routingEvery, (iteration) => report(done, iteration)), () => engine.expandZ(initial))
   engine.refreshRouting()
   return collect(engine.views, index, engine.poppedCount, initial, engine.erodedFluxM3, engine.exportedFluxM3)

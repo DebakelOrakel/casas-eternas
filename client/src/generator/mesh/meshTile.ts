@@ -111,8 +111,11 @@ export const TILE_CONSTANTS: Record<string, number> = {
   tileEdgeSteps: TILE_EDGE_STEPS,
   tileBudget: TILE_BUDGET,
   tileLevel: TILE_LEVEL,
-  tilePlacementFinest: PLACEMENT_LEVELS[PLACEMENT_LEVELS.length - 1],
-  tilePlacementCoarsest: PLACEMENT_LEVELS[0],
+  // Every placement level, not its two ends (2026-10-01): a level added
+  // or removed between them changed the tile under the same key.
+  ...Object.fromEntries(PLACEMENT_LEVELS.map((level, i) => [`tilePlacement${i}`, level])),
+  tileEdgeSaltRow: EDGE_SALT_ROW,
+  tileEdgeSaltCol: EDGE_SALT_COL,
   tileAccept: ACCEPT,
   tileJitter: JITTER,
   tileEdgeJitter: EDGE_JITTER,

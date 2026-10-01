@@ -13,11 +13,10 @@
 // synthetic rasters, because a format check you cannot afford to run is a format
 // check nobody runs.
 //
-// What it does NOT cover, stated so it is not mistaken for complete: the zip
-// ASSEMBLY still lives in WorldGenScreen and needs a DOM, so this reads a zip it
-// builds from `WORLD_LAYERS` itself rather than from the real writer. That gap
-// closes when part C extracts the writer — at which point this file should call
-// it instead of describing it.
+// The zip ASSEMBLY is covered since 2026-10-01, when the writer left the
+// generator screen for world/save/worldArchive.ts: section 5b writes an
+// archive with it and reads it back. Section 5 keeps a hand-built archive in
+// an older format, for the reader's sake.
 import { fileURLToPath } from 'node:url'
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
@@ -394,6 +393,58 @@ else {
   check('the refinement survives the save within half a step', within)
   decoded.delete('upwelling')
   check('a refinement with a layer missing is not one', M.refined.refinedFromLayers((name) => decoded.get(name) ?? null, n) === null)
+}
+
+// --- 5b. the zip writer ------------------------------------------------------
+//
+// The real writer (world/save/worldArchive.ts, out of the generator screen
+// since 2026-10-01), read back by the real reader: what the screen saves is
+// what a reader finds. The archive above is hand-built in an older format;
+// this one is the current format, as written.
+console.log('\n— zip writer —')
+{
+  const writer = await L('/src/world/save/worldArchive.ts')
+  const query = await L('/src/world/query.ts')
+  const { OCEAN_PRECIP } = await L('/src/generator/climate/precipitation.ts')
+  const precipitation = new Float32Array(W * H)
+  for (let i = 0; i < W * H; i++) precipitation[i] = isOcean(i) ? OCEAN_PRECIP : 600 + i
+  const meshZ = new Float32Array([0.1, 0.2, 0.3])
+  const yaml = ['spec:', '  seed: "writer-welt"', '  erosion:', '    landscapeAge: 30', '    alluvium: 40', '    rockContrast: 55', 'metadata:', '  uid: 0192abcd-0000-8000-8000-00000000beef', ''].join('\n')
+  const written = await writer.writeWorldArchive({
+    kind: 'tectonic', width: W, height: H, yaml, generatorVersion: 'roundtrip', preview: null, elevation: zipElev.buffer.slice(0),
+    snapshot: { epoch: 3 }, mantle: new ArrayBuffer(8), latticeAccumulated: new ArrayBuffer(4), latticeLockedEpochs: new ArrayBuffer(2),
+    latticeLastClassCode: new ArrayBuffer(1), oceanAge: new ArrayBuffer(4),
+    forcing: { uplift: zipUplift, erodibility: zipHardness, resX: W, resY: H },
+    mesh: { count: 3, nodes: new Float32Array([1, 1, 5, 2, 9, 6]).buffer, connectivity: new Uint8Array([7, 8, 9]).buffer, z: meshZ.buffer.slice(0) },
+    fields: {
+      climateResX: W, climateResY: H, temperature: zipTemp, precipitation, precipitationEffective: zipPrecipEff, biome: null,
+      seasonalAmplitude: zipAmplitude, monsoonIndex: zipMonsoon, koppen: null, lakeDepth: null, waterTable: null, dischargeM3s: null,
+      refined: null, waterBodies: zipBodies, coast: null, sedimentBasins: null,
+    },
+  })
+  const manifest = JSON.parse(await (await JSZip.loadAsync(written)).file('manifest.json').async('string'))
+  check('the writer stamps the current format version', manifest.formatVersion === writer.WORLD_ARCHIVE_FORMAT_VERSION)
+  const back = await M.inputs.readWorldInputs(written)
+  if (!back) check('the written archive reads back at all', false)
+  else {
+    check('the written elevation comes back byte-identical', String(back.elevations) === String(zipElev))
+    check('the written recipe is read', back.seedText === 'writer-welt' && back.erosionControls.alluvium === 40 && back.worldUid === '0192abcd-0000-8000-8000-00000000beef')
+    check('the written forcing comes back byte-identical', String(back.uplift?.data) === String(zipUplift) && String(back.erodibility?.data) === String(zipHardness))
+    check('the written water bodies come back', JSON.stringify(back.waterBodies) === JSON.stringify(zipBodies))
+    // The rain over land within half a step; the land mask the writer
+    // derives from it puts the ocean sentinel back into the land-only
+    // layers (the rain itself carries none — loadWorldInputs).
+    const p = back.climate?.data
+    let landOk = !!p
+    for (let i = 0; p && i < W * H; i++) if (!isOcean(i)) landOk &&= Math.abs(p[i] - precipitation[i]) <= precipSpec.scale / 2 + 1e-6
+    check('the written rain comes back within half a step over land', landOk)
+    const eff = back.biomeInputs?.precipitationEffective.data
+    let oceanOk = !!eff
+    for (let i = 0; eff && i < W * H; i++) oceanOk &&= isOcean(i) ? eff[i] === OCEAN_PRECIP : eff[i] !== OCEAN_PRECIP
+    check('the land mask the writer derives marks the ocean again', oceanOk)
+    const savedMesh = await (await query.openWorld(written)).mesh()
+    check('the written mesh comes back as written', savedMesh !== null && savedMesh.count === 3 && String(savedMesh.z) === String(meshZ) && String(savedMesh.connectivity) === '7,8,9')
+  }
 }
 
 // A zip that is not a world must be refused, not half-read.

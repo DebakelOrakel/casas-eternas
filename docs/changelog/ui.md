@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-01
+- **changed** Generator: levels and tiles refined before today count as outdated and are refined again. `generator.artifacts`
 - **fixed** Generator: saving while step 0 previews the sample world saves the world's own climate. `generator.step.world`
 - **fixed** Generator: a run stopped during its first epoch counts as eroded, and later stops no longer count an epoch short. `generator.step.tectonics`
 - **fixed** Generator: opening a world no longer keeps the previous world's peoples, basins or sediment. `generator.load`
