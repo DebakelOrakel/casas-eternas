@@ -146,6 +146,13 @@ console.log('\n— run history —')
   // A new build opens a run too — the seam between two generators is data.
   H.openRun(history.tectonics, changed, 'build-b')
   check('a new build opens a run of its own', history.tectonics.length === 3 && history.tectonics[2].generator === 'build-b')
+  // The code hash is the replay's key: another code opens a run, and a run
+  // on a loaded world opens one marked `restored` even with nothing changed.
+  H.openRun(history.tectonics, changed, 'build-b', 'code-2')
+  H.tallyRun(history.tectonics, 4, changed, 'build-b', 'code-2')
+  H.openRun(history.tectonics, changed, 'build-b', 'code-2', true)
+  H.tallyRun(history.tectonics, 2, changed, 'build-b', 'code-2')
+  check('another code opens a run, a load opens a marked one', history.tectonics.length === 5 && history.tectonics[3].code === 'code-2' && !history.tectonics[3].restored && history.tectonics[4].restored === true)
   const yaml = ['spec:', ...M.spec.specToYamlLines({ seed: 's', values }), 'status:', '  erosionRun: 1', ...H.historyToYamlLines(history)].join('\n')
   const back = H.historyFromYaml(yaml)
   const same = JSON.stringify(back) === JSON.stringify(history)

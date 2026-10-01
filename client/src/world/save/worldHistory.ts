@@ -17,9 +17,12 @@ import type { SpecField } from './worldSpec'
 // rather than opening a new one; the list says what changed, not how
 // often the button was pressed.
 //
-// Documentation first (2026-09-27): nothing replays it yet. A replay
-// would also need the resets and the loads in order, and the generator
-// string is a build id, not an algorithm version. The lists follow the
+// Documentation first (2026-09-27); since 2026-10-01 the record a replay
+// of level 1 is built on (docs/decisions/detail-ladder.md, fork 2). A
+// replay of it reproduces level 0 bit for bit (measured 2026-10-01); a
+// tectonics run on a loaded world is marked `restored`, the one place a
+// load shows in the bytes. The generator string is a build id, not an
+// algorithm version. The lists follow the
 // world's own resets: a tectonics reset empties the tectonics list (the
 // hand-over is where it starts again), a fresh Archean empties both.
 //
@@ -30,6 +33,17 @@ export interface WorldRun {
   epochs: number
   generator: string
   values: Record<string, number>
+  // The generator's code as a hash (app/generatorCode.ts), the key a replay
+  // compares; `generator` is provenance only. Empty in a save from before
+  // 2026-10-01.
+  code: string
+  // The run continued a world loaded from a save (tectonics only). A
+  // restored world starts its first epoch without the history's cached
+  // weather and computes the climate anew, which shifts the climateEvery
+  // schedule from there on — a replay must restore at the same point to
+  // land on the same bytes (measured 2026-10-01: the only divergence of a
+  // replay across a load). Absent: false.
+  restored?: boolean
 }
 
 export interface WorldHistory {
@@ -51,24 +65,26 @@ export function runValues(fields: readonly SpecField[], values: Record<string, n
   return out
 }
 
-function sameRun(run: WorldRun, values: Record<string, number>, generator: string): boolean {
-  if (run.generator !== generator) return false
+function sameRun(run: WorldRun, values: Record<string, number>, generator: string, code: string): boolean {
+  if (run.generator !== generator || run.code !== code) return false
   for (const key of Object.keys(values)) if (run.values[key] !== values[key]) return false
   return true
 }
 
-// A run begins: extends the last entry when nothing changed, opens one otherwise.
-export function openRun(runs: WorldRun[], values: Record<string, number>, generator: string): void {
+// A run begins: extends the last entry when nothing changed, opens one
+// otherwise. A run on a world just loaded always opens one, marked: the
+// load is a point in the history a replay has to find.
+export function openRun(runs: WorldRun[], values: Record<string, number>, generator: string, code = '', restored = false): void {
   const last = runs[runs.length - 1]
-  if (last && sameRun(last, values, generator)) return
-  runs.push({ epochs: 0, generator, values: { ...values } })
+  if (!restored && last && sameRun(last, values, generator, code)) return
+  runs.push(restored ? { epochs: 0, generator, code, values: { ...values }, restored: true } : { epochs: 0, generator, code, values: { ...values } })
 }
 
 // Epochs ran: counted on the last entry. A list with no entry (a save from
 // before this block, continued) gets one with the values the run reads now.
-export function tallyRun(runs: WorldRun[], epochs: number, values: Record<string, number>, generator: string): void {
+export function tallyRun(runs: WorldRun[], epochs: number, values: Record<string, number>, generator: string, code = ''): void {
   if (epochs <= 0) return
-  if (runs.length === 0) openRun(runs, values, generator)
+  if (runs.length === 0) openRun(runs, values, generator, code)
   runs[runs.length - 1].epochs += epochs
 }
 
@@ -83,6 +99,8 @@ export function historyToYamlLines(history: WorldHistory): string[] {
       lines.push(`    ${index}:`)
       lines.push(`      epochs: ${run.epochs}`)
       lines.push(`      generator: ${run.generator}`)
+      if (run.code) lines.push(`      code: ${run.code}`)
+      if (run.restored) lines.push('      restored: 1')
       lines.push('      values:')
       lines.push(...valuesToYamlLines(fields, run.values, 4))
     })
@@ -104,7 +122,9 @@ export function historyFromYaml(yaml: string): WorldHistory {
       if (epochs === undefined) break
       const values: Record<string, number> = {}
       for (const field of fields) values[field.path] = readRecipeNumber(yaml, `${base}.values.${field.path}`) ?? field.input.default
-      runs.push({ epochs, generator: readRecipeValue(yaml, `${base}.generator`) ?? '', values })
+      const run: WorldRun = { epochs, generator: readRecipeValue(yaml, `${base}.generator`) ?? '', code: readRecipeValue(yaml, `${base}.code`) ?? '', values }
+      if (readRecipeNumber(yaml, `${base}.restored`) === 1) run.restored = true
+      runs.push(run)
     }
     return runs
   }

@@ -1,5 +1,6 @@
 import { Color4, PointerEventTypes, Scene } from '@babylonjs/core'
 import { BUILD_VERSION } from '../../app/buildVersion'
+import { GENERATOR_CODE } from '../../app/generatorCode'
 import { createGeneratorCamera } from '../../camera/generatorCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { createScaleBar, pickMapPlane } from '../../map/ScaleBar'
@@ -28,7 +29,7 @@ import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
 import { drawContinentLabels } from '../../generator/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../generator/render/continentLabelRenderer'
-import { elevationToMeters, metersToElevation, waterSliderToOffsetM } from '../../generator/elevation/elevationScale'
+import { elevationToMeters } from '../../generator/elevation/elevationScale'
 import { formatWorldAge, worldAgeMa } from '../../generator/core/worldTime'
 import type { SimEvent, PlateSimulationSnapshot } from '../../generator/tectonics/plateSimulation'
 import { eventCategory } from '../../generator/tectonics/plateSimulation'
@@ -87,6 +88,7 @@ import { readRecipeValue as readYamlValue } from '../../world/save/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { MIGRATION_INPUTS } from '../../generator/migration/migrationInputParams'
 import { ARCHEAN_INPUTS } from '../../generator/archean/archeanInputParams'
+import { mantleDiffusionFromVigour, seaLevelOffsetFromWater, weatherParamsFrom } from '../../world/runParams'
 import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
 import { wrapValue } from '../../generator/core/field'
 import { TECTONICS_INPUTS } from '../../generator/tectonics/tectonicsInputParams'
@@ -98,7 +100,6 @@ import { displayValue, type InputParam } from '../../generator/core/inputParams'
 import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
 import { traceFlowLines, drawComets, drawArrowRibbons, type FlowLine } from '../../map/flowLines'
 import { traceIsolines, drawIsolines, type Isoline } from '../../map/isolines'
-import { DEFAULT_PLANET_FORCING } from '../../generator/planet/planetForcing'
 import './generator.css'
 import '../../ui/chrome/chrome.css'
 
@@ -163,25 +164,6 @@ const BREAKUP_COLOR = '235, 140, 30'
 // first pass.
 // Scene scale + relief-preview settings are shared with the worldmap screen
 // — see map/mapSceneSettings.ts.
-// Slider value → mantle mixing per epoch. Higher vigour = less stirring = finer
-// field = more, smaller plates.
-//
-// **Quadratic, not linear**, because the response is squeezed against zero. Measured
-// plate count against diffusion, mean of three seeds at 250 epochs:
-//
-//     diffusion   0    0.03  0.08  0.15  0.25  0.40  0.70  1.0  1.7  3.0
-//     plates     24.3  22.3  19.0  18.3  13.3  10.3  11.0   10    6  6.5
-//
-// Half the total swing (24 → 13) happens below diffusion 0.25, and nothing at all
-// happens above ~1.7. A linear slider would therefore spend a third of its travel in
-// the saturated tail and cram the entire upper half of the range into its last step —
-// which is exactly what the first attempt did, and why it read as a switch rather
-// than a control.
-const MANTLE_DIFFUSION_MAX = 2.25
-const MANTLE_DIFFUSION_CURVE = 2
-const vigourToDiffusion = (vigour: number): number =>
-  MANTLE_DIFFUSION_MAX * ((ARCHEAN_INPUTS.mantleVigour.max - vigour) / (ARCHEAN_INPUTS.mantleVigour.max - ARCHEAN_INPUTS.mantleVigour.min)) ** MANTLE_DIFFUSION_CURVE
-
 // How often, while running, the sim advances one epoch and re-renders —
 // paced deliberately (not "as fast as possible") so a run reads as gradual
 // mountain-building over time rather than flashing straight to some final state.
@@ -998,6 +980,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // the count has reached — its own variable, because lastArcheanEpochs also
   // gates the step bar and is not reset on every path that replaces the world.
   let history = emptyWorldHistory()
+  // A tectonic world was loaded and no run has gone on with it yet: the next
+  // tectonics run opens a history entry marked `restored` (worldHistory.ts),
+  // the point a replay has to restore at.
+  let tectonicsRunRestored = false
   let genesisTallied = 0
   // Whether this screen holds a world at all: step 0 was answered with "Create
   // world", or a world was opened from a file. Every later step is gated on it
@@ -3771,26 +3757,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // whose water forcing evaluates the same weather chain with them.
   // `controls`: the controls' values rather than the world's — the planet
   // preview of freed step-0 levers, which shows what they would make.
-  const weatherParams = (controls = false) => {
-    const lever = controls ? controlValue : worldLever
-    return {
-      temperatureOffset: lever('planet.greenhouse'),
-      temperatureContrast: CLIMATE_INPUTS.contrast.toModel(lever('climate.contrast')),
-      humidity: CLIMATE_INPUTS.humidity.toModel(lever('climate.humidity')),
-      // The thermal equator sits at the map's middle since 2026-09-26 (the
-      // shift slider is gone; the map draws the equator instead).
-      equatorOffset: 0,
-      // The Planet stage's forcing, in model units (planet/planetForcing.ts).
-      planet: {
-        obliquityDeg: lever('planet.obliquity'),
-        eccentricity: DEFAULT_PLANET_FORCING.eccentricity,
-        precessionDeg: DEFAULT_PLANET_FORCING.precessionDeg,
-        solarConstant: DEFAULT_PLANET_FORCING.solarConstant,
-        landPlantsFromMa: DEFAULT_PLANET_FORCING.landPlantsFromMa,
-        rotationHours: lever('planet.rotation'),
-      },
-    }
-  }
+  // The world's applied values, or the controls as they stand (world/runParams).
+  const weatherParams = (controls = false): ReturnType<typeof weatherParamsFrom> => weatherParamsFrom(controls ? controlValue : worldLever)
   // A step-0 lever moved (it can only while no world exists or after the
   // step's reset freed it): it shows at once, on the sample world, and
   // "create world" lights up when it differs from the world's.
@@ -4127,7 +4095,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // save — and every later stop one epoch short (2026-10-01).
     if ((tectonicsRunning || tectonicsSettling) && message.epoch > lastEpoch) {
       erosionRunCount += 1
-      tallyRun(history.tectonics, message.epoch - lastEpoch, runValues(TECTONICS_RUN_FIELDS, readSpec().values), BUILD_VERSION)
+      tallyRun(history.tectonics, message.epoch - lastEpoch, runValues(TECTONICS_RUN_FIELDS, readSpec().values), BUILD_VERSION, GENERATOR_CODE)
     }
     lastEpoch = message.epoch
     lastPlateCount = message.plateCount
@@ -4215,6 +4183,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     archeanRunning = false
     // A new world: nothing has run on it yet, and no step has been looked at.
     history = emptyWorldHistory()
+    tectonicsRunRestored = false
     genesisTallied = 0
     forgetOverlays()
     postToWorker({
@@ -4223,8 +4192,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       width: MAP_WIDTH,
       height: MAP_HEIGHT,
       epochIntervalMs: EPOCH_INTERVAL_MS,
-      mantleDiffusion: vigourToDiffusion(vigour),
-      seaLevelOffset: metersToElevation(waterSliderToOffsetM(water)),
+      mantleDiffusion: mantleDiffusionFromVigour(vigour),
+      seaLevelOffset: seaLevelOffsetFromWater(water),
       renderOptions: {},
     })
   }
@@ -4264,11 +4233,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       updateProgress()
       return
     }
-    openRun(history.genesis, runValues(GENESIS_RUN_FIELDS, readSpec().values), BUILD_VERSION)
+    openRun(history.genesis, runValues(GENESIS_RUN_FIELDS, readSpec().values), BUILD_VERSION, GENERATOR_CODE)
     postToWorker({
       type: 'genesisStart',
-      mantleDiffusion: vigourToDiffusion(Number(mantleVigourInput.value)),
-      seaLevelOffset: metersToElevation(waterSliderToOffsetM(Number(waterInput.value))),
+      mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)),
+      seaLevelOffset: seaLevelOffsetFromWater(Number(waterInput.value)),
     })
     archeanRunChanged(true)
     updateOverlays()
@@ -4279,6 +4248,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     archeanRunChanged(false)
     lastArcheanEpochs = 0
     history = emptyWorldHistory()
+    tectonicsRunRestored = false
     genesisTallied = 0
     archeanFinalised = false
     hasHandover = false
@@ -4343,7 +4313,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   function handleGenesisStatus(message: WorkerGenesisStatusMessage): void {
-    tallyRun(history.genesis, message.epoch - genesisTallied, runValues(GENESIS_RUN_FIELDS, readSpec().values), BUILD_VERSION)
+    tallyRun(history.genesis, message.epoch - genesisTallied, runValues(GENESIS_RUN_FIELDS, readSpec().values), BUILD_VERSION, GENERATOR_CODE)
     genesisTallied = message.epoch
     lastArcheanEpochs = message.epoch
     updateSaveIndicator()
@@ -4393,7 +4363,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // stale. The eroded terrain is NOT dropped: the epochs erode it on (phase
     // 5.1), so the count of eroding epochs carries on from where it was.
     invalidateAfter('tectonics')
-    openRun(history.tectonics, runValues(TECTONICS_RUN_FIELDS, readSpec().values), BUILD_VERSION)
+    openRun(history.tectonics, runValues(TECTONICS_RUN_FIELDS, readSpec().values), BUILD_VERSION, GENERATOR_CODE, tectonicsRunRestored)
+    tectonicsRunRestored = false
     postToWorker({ type: 'tectonicsStart', alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value), weather: weatherParams() })
     sayTectonicsButton(true)
     updateControlsDisabled()
@@ -4721,6 +4692,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // for every later save; regenerate() is the only thing that clears it.
     if (worldUid === '') worldUid = newWorldUid()
     worldRevision += 1
+    // The history must add up to the world it describes, or a replay of it
+    // makes another world (docs/decisions/detail-ladder.md, fork 2). Said,
+    // not refused: the save is still the world. A save from before the
+    // history block (no entries) has nothing to add up.
+    if (!message.archean) {
+      const sum = (runs: { epochs: number }[]): number => runs.reduce((total, run) => total + run.epochs, 0)
+      const genesis = sum(history.genesis)
+      const tectonics = sum(history.tectonics)
+      if ((history.genesis.length > 0 && genesis !== message.snapshot.archeanEpochs) || (history.tectonics.length > 0 && tectonics !== message.snapshot.epoch)) {
+        console.warn(`[history] does not add up: Archean ${genesis} recorded, ${message.snapshot.archeanEpochs} run; tectonics ${tectonics} recorded, ${message.snapshot.epoch} run`)
+      }
+    }
     // The archive's layout, its layers and its manifest are world/save's
     // (worldArchive.ts); this gathers the parts.
     const common = { width: MAP_WIDTH, height: MAP_HEIGHT, yaml: buildWorldYaml(), generatorVersion: BUILD_VERSION, elevation: message.elevation }
@@ -5285,7 +5268,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastSave = kept && savedAt && !Number.isNaN(savedAt.getTime()) ? { target: kept.where === 'server' ? 'server' : 'browser', at: savedAt } : undefined
     markCleanOnNextRender = true
     restoredFromSave = true
-    postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: vigourToDiffusion(Number(mantleVigourInput.value)) })
+    tectonicsRunRestored = !archeanPayload
+    postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)) })
   }
 
 

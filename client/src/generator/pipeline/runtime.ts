@@ -503,6 +503,9 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
 // Renders the Archean world and posts its status. Reuses renderSimulationImage
 // through RenderableWorld — the elevation raster, hillshade and colour ramp need no
 // plates, and the plate-shaped overlays are skipped there.
+// The last Archean status sent, for the hand-over's own (handleGenesisFinalize).
+let lastGenesisStatus: WorkerGenesisStatusMessage | null = null
+
 async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   if (!archean) return
   const gen = worldGeneration
@@ -555,7 +558,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   }
   emit(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
 
-  const status: WorkerGenesisStatusMessage = {
+  const status: WorkerGenesisStatusMessage = lastGenesisStatus = {
     type: 'genesisStatus',
     epoch: archean.epoch,
     worldAgeMa: worldAgeMa(archean.epoch, 0),
@@ -1510,6 +1513,16 @@ function handleGenesisStop(): void {
 function handleGenesisFinalize(): void {
   if (!archean) return
   stopTicking()
+  // The Archean's last epochs said once more, at the epoch it ends on. A step
+  // whose render was still in flight when the hand-over came never reports
+  // (the render finds the Archean gone), and the screen counts the history's
+  // Archean epochs from these statuses: one short, and a replay of the
+  // history parts from the hand-over on (measured 2026-10-01). The figures
+  // are the last status's; only the epoch is new.
+  if (lastGenesisStatus && lastGenesisStatus.epoch !== archean.epoch) {
+    emit({ ...lastGenesisStatus, epoch: archean.epoch, worldAgeMa: worldAgeMa(archean.epoch, 0) })
+  }
+  lastGenesisStatus = null
   sim = finalizeArchean(archean)
   sim.epochMa = TECTONIC_MA_PER_EPOCH
   // Deep-copied, because serializePlateSimulation hands back the sim's OWN arrays
