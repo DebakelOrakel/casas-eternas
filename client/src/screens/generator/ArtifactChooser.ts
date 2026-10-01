@@ -5,8 +5,8 @@ import { artifactRows, clearArtifacts, type ArtifactEntry, type ArtifactRow } fr
 import { listServerArtifacts, removeServerArtifact } from '../../server/artifactsClient'
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
-import { meshPipelineVersion } from '../../world/meshArtifacts'
-import { meshTilePipelineVersion } from '../../world/meshTileArtifacts'
+import { meshLevelStage } from '../../world/meshArtifacts'
+import { isCurrentArtifact } from '../../world/levels'
 import { commissionBake, type CommissionOutcome } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { BROWSER_ICON, SERVER_ICON, icon } from '../../ui/chooserIcons'
@@ -55,8 +55,8 @@ const LEVELS = [1, 2, 3]
 // world held here — from another terrain than its last save's (the world
 // moved on since the bake).
 function currentFor(world: { uid: string; worldId: string | null } | null) {
-  return (entry: ArtifactEntry, level: number): boolean =>
-    entry.pipelineVersion === (level === 2 ? meshTilePipelineVersion() : meshPipelineVersion(level))
+  return (entry: ArtifactEntry): boolean =>
+    isCurrentArtifact(entry)
     && !(world?.worldId && entry.worldUid === world.uid && entry.worldId !== world.worldId)
 }
 
@@ -124,7 +124,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
 
   let rows: ArtifactRow[] = []
   // The pipeline-and-terrain check the rows were judged with (currentFor).
-  let isCurrent: (entry: ArtifactEntry, level: number) => boolean = () => true
+  let isCurrent: (entry: ArtifactEntry) => boolean = () => true
   let worldNames = new Map<string, string>()
   let serverBytes: number | null = null
   let browserUsage: { usedBytes: number; quotaBytes: number } | null = null
@@ -307,7 +307,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     // Only for level 1 itself: the button orders level 1, and a row stale
     // only by its tiles got a duplicate of a current level while the tiles
     // stayed stale (2026-10-01). Stale tiles have no rebuild here yet.
-    const levelOneStale = row.entries.some((e) => e.where === 'server' && e.stage === 'L1' && !isCurrent(e, 1))
+    const levelOneStale = row.entries.some((e) => e.where === 'server' && e.stage === meshLevelStage(1) && !isCurrent(e))
     if (row.kind === 'level' && levelOneStale && row.deletable && row.worldUid) {
       const rebuild = document.createElement('button')
       rebuild.type = 'button'

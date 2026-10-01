@@ -36,7 +36,7 @@ import { bakedTileToArtifact, meshTilePipelineVersion, meshTileStage, writeMeshT
 import { bakeMeshTile } from '../src/generator/pipeline/meshTileBake'
 import { tileGrid } from '../src/generator/mesh/meshTile'
 import { createMeshSampler } from '../src/generator/mesh/meshSampler'
-import { meanLandRunoff } from '../src/generator/surface/hydrology'
+import { levelBakeInputs, tileBakeInputs } from '../src/world/bakeInputs'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
 import { artifactKey } from '../src/storage/ArtifactStore'
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../src/storage/ArtifactStore'
@@ -361,17 +361,9 @@ async function main(): Promise<void> {
   }
   if (job.stage === 2) return bakeTile(job, inputs, onProgress)
   if (job.stage !== 1) fail(`stage ${job.stage}: only levels 1 and 2 are built`)
-  if (!inputs.mesh) fail('the world carries no mesh (a save from before formatVersion 3, or never eroded) — nothing to refine')
-  const level = await bakeMeshLevel({
-    mesh: inputs.mesh, width: inputs.width, height: inputs.height,
-    detailSeed: inputs.detailSeed, lithoSeed: inputs.lithoSeed,
-    controls: { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast },
-    uplift: inputs.uplift?.data ?? null, erodibility: inputs.erodibility?.data ?? null,
-    forcingResX: inputs.uplift?.resX ?? 0, forcingResY: inputs.uplift?.resY ?? 0,
-    precipitation: inputs.climate?.data ?? null, temperature: inputs.temperature?.data ?? null,
-    monsoonIndex: inputs.biomeInputs?.monsoonIndex.data ?? null,
-    climateResX: inputs.climate?.resX ?? 0, climateResY: inputs.climate?.resY ?? 0,
-  }, { level: 1, budget: levelBudget(1), rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
+  const bakeInputs = levelBakeInputs(inputs)
+  if (!bakeInputs) return fail('the world carries no mesh (a save from before formatVersion 3, or never eroded) — nothing to refine')
+  const level = await bakeMeshLevel(bakeInputs, { level: 1, budget: levelBudget(1), rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
   const durationMs = Date.now() - started
   const store = artifactStoreFor(job)
   if (!store) fail('neither artifactsDir nor artifactsUrl was given')
@@ -400,20 +392,8 @@ async function bakeTile(job: Job, inputs: NonNullable<Awaited<ReturnType<typeof 
   const parentMesh = meshLevelMesh(parentArtifact.artifact, inputs.width, inputs.height)
   const parentZ = parentArtifact.artifact.z
   onProgress('parent', 1)
-  const precipitation = inputs.climate?.data ?? null
-  const climateResX = inputs.climate?.resX ?? 0
-  const climateResY = inputs.climate?.resY ?? 0
-  const baked = await bakeMeshTile({
-    parent: { mesh: parentMesh, z: parentZ, discharge: null, sampler: createMeshSampler(parentMesh, parentZ) },
-    parentGraph: parentArtifact.artifact.graph,
-    width: inputs.width, height: inputs.height,
-    detailSeed: inputs.detailSeed, lithoSeed: inputs.lithoSeed,
-    controls: { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast },
-    uplift: inputs.uplift?.data ?? null, erodibility: inputs.erodibility?.data ?? null,
-    forcingResX: inputs.uplift?.resX ?? 0, forcingResY: inputs.uplift?.resY ?? 0,
-    precipitation, climateResX, climateResY,
-    meanLandWater: precipitation ? meanLandRunoff(precipitation, inputs.elevations, inputs.width, inputs.height, climateResX, climateResY) : 0,
-  }, tile, { rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
+  const parent = { mesh: parentMesh, z: parentZ, discharge: null, sampler: createMeshSampler(parentMesh, parentZ) }
+  const baked = await bakeMeshTile(tileBakeInputs(inputs, parent, parentArtifact.artifact.graph), tile, { rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
   const durationMs = Date.now() - started
   const pipelineVersion = meshTilePipelineVersion(job.erosionRounds)
   const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(tile))

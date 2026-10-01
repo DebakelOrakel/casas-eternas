@@ -1,4 +1,5 @@
 import JSZip from 'jszip'
+import type { SavedMesh } from '../generator/mesh/meshSerial'
 import { decodeLayer, sampleAt } from './save/worldLayers'
 import { fieldSpec } from './save/fieldSpec'
 import type { FieldSpec } from './save/fieldSpec'
@@ -96,15 +97,9 @@ export interface World {
   mesh(): Promise<SavedMesh | null>
 }
 
-export interface SavedMesh {
-  count: number
-  nodes: Float32Array
-  connectivity: Uint8Array
-  z: Float32Array
-  // The sediment column's bytes (formatVersion 4, mesh/meshColumn.ts);
-  // undefined in a save from before it.
-  column?: Uint8Array
-}
+// The type lives with the codec (generator/mesh/meshSerial), which the
+// generator's bake reads it with; world/ is the layer above.
+export type { SavedMesh }
 
 // Null when the archive is not a readable world — same contract as
 // readWorldInputs, and for the same reason: the caller reports it in its own

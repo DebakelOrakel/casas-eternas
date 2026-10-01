@@ -14,7 +14,7 @@ import { accumulateDischargeOn, accumulateRegimeInputsOn, CANONICAL_RIVER_DENSIT
 import { WORLD_WIDTH_METERS } from '../surface/erosionEngine'
 import { computeRiverCourses } from '../surface/riverCourse'
 import { buildRiverGraph, riverPolylinesFromGraph, type RiverGraph } from '../surface/riverGraph'
-import type { SavedMesh } from '../../world/query'
+import type { SavedMesh } from '../mesh/meshSerial'
 
 // THE GLOBAL BAKE OF ONE LEVEL (decision 3 of docs/decisions/adaptive-mesh.md,
 // ADAPTIVE_MESH_PLAN.md phase 4.5): the save's mesh refined to a finer

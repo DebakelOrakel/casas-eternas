@@ -13,7 +13,8 @@ import { createToroidalMapView } from '../../map/ToroidalMapView'
 import { listServerArtifacts, type ServerArtifact } from '../../server/artifactsClient'
 import { artifactKey } from '../../storage/ArtifactStore'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
-import { meshLevelMesh, meshLevelStage, meshPipelineVersion, readMeshLevelArtifact } from '../../world/meshArtifacts'
+import { meshLevelMesh, meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
+import { isCurrentArtifact } from '../../world/levels'
 import { openWorld } from '../../world/query'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
@@ -94,10 +95,9 @@ const SUN_ELEVATION_DEG = 8
 async function levelArtifacts(): Promise<Map<string, ServerArtifact[]>> {
   const listed = await listServerArtifacts()
   const stage = meshLevelStage(LEVEL)
-  const version = meshPipelineVersion(LEVEL)
   const byWorld = new Map<string, ServerArtifact[]>()
   for (const a of listed?.artifacts ?? []) {
-    if (a.stage !== stage || a.pipelineVersion !== version || a.worldUid === '') continue
+    if (a.stage !== stage || !isCurrentArtifact(a) || a.worldUid === '') continue
     const list = byWorld.get(a.worldUid) ?? []
     list.push(a)
     byWorld.set(a.worldUid, list)

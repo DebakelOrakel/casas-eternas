@@ -71,6 +71,7 @@ const M = {
   tile: await L('/src/generator/mesh/meshTile.ts'),
   tileBake: await L('/src/generator/pipeline/meshTileBake.ts'),
   bake: await L('/src/generator/pipeline/meshBakeStage.ts'),
+  bakeInputs: await L('/src/world/bakeInputs.ts'),
   coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
   column: await L('/src/generator/mesh/meshColumn.ts'),
   flexure: await L('/src/generator/tectonics/flexure.ts'),
@@ -1320,13 +1321,8 @@ if (MODE === 'measure') {
       const rounds = Number(process.env.MESH_LEVEL_ROUNDS ?? 4)
       const serial = M.serial.encodeMesh(mesh, Int32Array.from({ length: mesh.vertexSlots }, (_, i) => i))
       const t2 = performance.now()
-      const level = await M.bake.bakeMeshLevel({
-        mesh: { count: serial.count, nodes: serial.nodes, connectivity: serial.connectivity, z: meshRun.z.slice(0, serial.count) },
-        width: RW, height: RH, detailSeed: inputs.detailSeed, lithoSeed: inputs.lithoSeed, controls,
-        uplift: inputs.uplift.data, erodibility: inputs.erodibility?.data ?? null, forcingResX: inputs.uplift.resX, forcingResY: inputs.uplift.resY,
-        precipitation: inputs.climate.data, temperature: inputs.temperature?.data ?? null, monsoonIndex: inputs.biomeInputs?.monsoonIndex.data ?? null,
-        climateResX: inputs.climate.resX, climateResY: inputs.climate.resY,
-      }, { level: 1, budget: M.bake.levelBudget(1), rounds, onProgress: (phase, f) => { if (f === 0 || f === 1) console.log(`    ${phase} ${f === 0 ? 'start' : 'done'} ${((performance.now() - t2) / 1000).toFixed(0)} s`) } })
+      // The production mapping (world/bakeInputs), on the mesh eroded here.
+      const level = await M.bake.bakeMeshLevel(M.bakeInputs.levelBakeInputs(inputs, { count: serial.count, nodes: serial.nodes, connectivity: serial.connectivity, z: meshRun.z.slice(0, serial.count) }), { level: 1, budget: M.bake.levelBudget(1), rounds, onProgress: (phase, f) => { if (f === 0 || f === 1) console.log(`    ${phase} ${f === 0 ? 'start' : 'done'} ${((performance.now() - t2) / 1000).toFixed(0)} s`) } })
       let land = 0
       for (let v = 0; v < level.mesh.vertexSlots; v++) if (level.mesh.vAlive[v] && level.z[v] > 0) land++
       console.log(`  level 1 (${rounds} rounds): ${level.mesh.aliveVertices} nodes (${land} land) from ${mesh.aliveVertices}, ×${(level.mesh.aliveVertices / mesh.aliveVertices).toFixed(1)}, ${((performance.now() - t2) / 1000).toFixed(0)} s; ${level.graph?.reaches.length ?? 0} reaches, ${level.waterBodies.length} bodies`)

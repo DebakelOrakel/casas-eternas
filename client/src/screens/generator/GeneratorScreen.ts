@@ -70,8 +70,9 @@ import { getServerStatus } from '../../server/serverStatus'
 import { hasSession } from '../../server/session'
 import { bakeFraction, commissionBake, listBakes, type BakeJob, type CommissionOutcome } from '../../world/jobClient'
 import { listServerArtifacts } from '../../server/artifactsClient'
-import { meshPipelineVersion } from '../../world/meshArtifacts'
-import { meshTilePipelineVersion, meshTileStage } from '../../world/meshTileArtifacts'
+import { meshLevelStage } from '../../world/meshArtifacts'
+import { meshTileStage } from '../../world/meshTileArtifacts'
+import { isCurrentArtifact } from '../../world/levels'
 import { TILE_CELLS, tileGrid, type TileId } from '../../generator/mesh/meshTile'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { createWorldChooser } from '../../ui/worldChooser/WorldChooser'
@@ -5017,9 +5018,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       jobs = (listed ?? []).filter((j) => j.request?.worldUid === worldUid)
         .sort((a, b) => (b.queuedAt ?? '').localeCompare(a.queuedAt ?? ''))
       for (const a of artifacts?.artifacts ?? []) {
-        if (a.worldUid !== worldUid || a.worldId !== savedWorldId) continue
-        const current = a.stage === 'L1' ? meshPipelineVersion(1) : a.stage.startsWith('L2:') ? meshTilePipelineVersion() : null
-        if (a.pipelineVersion === current) stored.add(a.stage)
+        if (a.worldUid === worldUid && savedWorldId !== null && isCurrentArtifact(a, savedWorldId)) stored.add(a.stage)
       }
     }
     const job = jobs.find((j) => j.request?.stage === 1) ?? null
@@ -5027,9 +5026,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // A finished job counts only for the terrain and the pipeline it was
     // asked for; one for an earlier save of this world is not this world's
     // level (its tile jobs failed, the level not being there, 2026-10-01).
-    const doneHere = (j: BakeJob | null, version: string): boolean =>
-      j !== null && j.state === 'done' && j.result?.worldId === savedWorldId && j.result.pipelineVersion === version
-    const levelDone = stored.has('L1') || doneHere(job, meshPipelineVersion(1))
+    const doneHere = (j: BakeJob | null): boolean =>
+      j !== null && j.state === 'done' && j.result !== undefined && savedWorldId !== null && isCurrentArtifact(j.result, savedWorldId)
+    const levelDone = stored.has(meshLevelStage(1)) || doneHere(job)
     finishingState.textContent = needs ? t(needs)
       : active ? jobStateText(job)
       : levelDone ? t('generator.finishing.state.done')
@@ -5041,7 +5040,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const tileJob = tile ? jobs.find((j) => j.request?.stage === 2 && j.request.scope?.kind === 'tile' && (j.request.scope.x ?? 0) === tile.x && (j.request.scope.y ?? 0) === tile.y) ?? null : null
     const tileActive = tileJob !== null && (tileJob.state === 'queued' || tileJob.state === 'running')
     const sea = tile !== null && !tileHasLand(tile)
-    const tileDone = tile !== null && (stored.has(meshTileStage(tile)) || doneHere(tileJob, meshTilePipelineVersion()))
+    const tileDone = tile !== null && (stored.has(meshTileStage(tile)) || doneHere(tileJob))
     finishingTileState.textContent = needs ? ''
       : !tile ? t('generator.finishing.tile.pick')
       : sea ? t('generator.finishing.tile.sea')

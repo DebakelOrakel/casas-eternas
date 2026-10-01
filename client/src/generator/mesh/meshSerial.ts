@@ -32,6 +32,17 @@ export interface SerializedMesh {
   connectivity: Uint8Array
 }
 
+// A mesh as a save carries it (`mesh/` in the archive): the codec's bytes,
+// the heights and the sediment column. Here rather than in world/query,
+// which reads it from the archive: the bake (pipeline/meshBakeStage) takes
+// it, and the generator does not import world/.
+export interface SavedMesh extends SerializedMesh {
+  z: Float32Array
+  // The sediment column's bytes (formatVersion 4, mesh/meshColumn.ts);
+  // undefined in a save from before it.
+  column?: Uint8Array
+}
+
 // Vertex ids of the mesh in Hilbert order (alive vertices only).
 export function hilbertVertexOrder(mesh: PeriodicTriangulation): Int32Array {
   const alive: number[] = []
