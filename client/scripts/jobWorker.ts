@@ -23,7 +23,7 @@
 //   node job-worker.mjs '<job JSON>'
 // with the job on argv and a one-line JSON result on stdout, so the Go side
 // needs no framing beyond "read the last line".
-import { readFile, mkdir, writeFile, rename, readdir, rm } from 'node:fs/promises'
+import { readFile, mkdir, writeFile, rename, readdir, rm, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { Worker as NodeWorker, isMainThread } from 'node:worker_threads'
@@ -129,6 +129,9 @@ interface Job {
 // is exactly the point of the interface: `writeMeshLevelArtifact` does the
 // quantisation, the file naming and the meta-last ordering, and it does not
 // care whether the bytes land in OPFS, over HTTP, or here.
+// Each store directory's key index, for the life of the process.
+const storeIndexes = new Map<string, { byKey: Map<string, string>; seen: Set<string> }>()
+
 function createFsArtifactStore(root: string): ArtifactStore {
   // A name is at most a shallow relative path from our own writer — anything
   // else is refused rather than resolved.
@@ -137,10 +140,28 @@ function createFsArtifactStore(root: string): ArtifactStore {
     return segments.length <= 4 && segments.every((s) => s.length > 0 && s !== '.' && s !== '..' && !s.includes('\\'))
   }
 
-  // key → uid by reading each entry's meta.json — the same rule as every
-  // other store: the meta is the truth, the directory name means nothing. A
-  // baker runs once per job, so a full scan per resolve is noise.
+  // key → uid by each entry's meta.json — the same rule as every other
+  // store: the meta is the truth, the directory name means nothing. Read
+  // ONCE per directory and process (storeIndexes), then only the entries
+  // added since: a serving worker resolves a handful of keys per task, and
+  // a full read of every meta per resolve was ~0.3 s at 11 000 artifacts —
+  // two and a half seconds of a level-3 tile (2026-10-02). A hit whose entry
+  // has gone (evicted) is dropped and looked up again.
+  const index = storeIndexes.get(root) ?? { byKey: new Map<string, string>(), seen: new Set<string>() }
+  storeIndexes.set(root, index)
+  const keyOf = (key: ArtifactKey): string => `${key.worldUid}/${key.worldId}/${key.pipelineVersion}/${key.stage}`
   async function findByKey(key: ArtifactKey): Promise<string | null> {
+    const id = keyOf(key)
+    const held = index.byKey.get(id)
+    if (held) {
+      try {
+        await stat(join(root, held, 'meta.json'))
+        return held
+      } catch {
+        index.byKey.delete(id)
+        index.seen.delete(held)
+      }
+    }
     let children: string[]
     try {
       children = await readdir(root)
@@ -148,19 +169,19 @@ function createFsArtifactStore(root: string): ArtifactStore {
       return null
     }
     for (const child of children) {
+      if (index.seen.has(child)) continue
       try {
         const raw = await readFile(join(root, child, 'meta.json'), 'utf8')
         const meta = JSON.parse(raw) as { key?: ArtifactKey }
-        if (
-          meta.key &&
-          meta.key.worldUid === key.worldUid && meta.key.worldId === key.worldId &&
-          meta.key.pipelineVersion === key.pipelineVersion && meta.key.stage === key.stage
-        ) return child
+        // Not seen until its meta is there: an entry still being written
+        // is read again on the next miss.
+        index.seen.add(child)
+        if (meta.key && !index.byKey.has(keyOf(meta.key))) index.byKey.set(keyOf(meta.key), child)
       } catch {
         continue
       }
     }
-    return null
+    return index.byKey.get(id) ?? null
   }
 
   return {
@@ -174,6 +195,8 @@ function createFsArtifactStore(root: string): ArtifactStore {
         } catch {
           return null
         }
+        index.byKey.set(keyOf(key), uid)
+        index.seen.add(uid)
       }
       // One nested level, as the OPFS store lists (the raster bake's family
       // members lived a directory down; the shape tiles may use).

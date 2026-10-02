@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,10 +79,13 @@ func ParseTargets(raw []string) (Targets, error) {
 			for _, m := range modules {
 				selected[m] = true
 			}
-		case TargetClient, TargetWorld, TargetArtifacts, TargetJobs, TargetDocs, TargetAuth:
-			selected[target] = true
 		default:
-			return nil, fmt.Errorf("unknown target %q; valid targets: %s", value, strings.Join(ValidTargets(), ", "))
+			// Every module of the list, so a target added there is accepted
+			// here without a second edit (relay was not, 2026-10-02).
+			if !slices.Contains(modules, target) {
+				return nil, fmt.Errorf("unknown target %q; valid targets: %s", value, strings.Join(ValidTargets(), ", "))
+			}
+			selected[target] = true
 		}
 	}
 	return selected, nil

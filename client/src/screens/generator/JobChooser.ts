@@ -362,7 +362,9 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
       if (end.until !== null) until = until === null ? end.until : Math.min(until, end.until)
     }
     const known = active.length > 0 && !unknown && last > 0
-    tileValue('progress').textContent = known && span > 0 ? `${Math.round((100 * spent) / span)} %` : '–'
+    // Down, and short of 100 while anything runs: rounded, the last half
+    // per cent read as done before it was.
+    tileValue('progress').textContent = known && span > 0 ? `${Math.min(99, Math.floor((100 * spent) / span))} %` : '–'
     tileValue('end').textContent = known ? formatClock(new Date(last)) : '–'
     root.querySelector('[data-hint="end"]')!.textContent = !known ? ''
       : until !== null ? t('generator.jobs.summary.partial', { level: until })
@@ -408,7 +410,7 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
         worldCell(),
         document.createElement('span'),
         stateCell(job.state, t(`generator.jobs.state.${job.state}` as TKey), job.error),
-        progressCell(job.state === 'done' ? 1 : (bakeFraction(job) ?? null), ''),
+        progressCell(job.state === 'done' ? 1 : (bakeFraction(job) ?? null), '', job.state === 'done'),
         timeCell(job.startedAt ?? job.queuedAt ?? null, ended),
         cancelCell(job),
       )
@@ -430,7 +432,7 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
       level.appendChild(chip)
       line.appendChild(level)
       line.appendChild(stateCell(view.state, view.stateText, view.error))
-      line.appendChild(progressCell(view.fraction, view.detail))
+      line.appendChild(progressCell(view.fraction, view.detail, view.state === 'done'))
       line.appendChild(timeCell(view.startedAt, view.end))
       line.appendChild(i === 0 ? cancelCell(job) : document.createElement('span'))
       return line
@@ -438,7 +440,9 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
   }
 
   // A bar with its percent, and a line under it.
-  function progressCell(fraction: number | null, detail: string): HTMLElement {
+  // The percent rounded DOWN and held at 99 until `complete`: rounded to
+  // nearest, the last half per cent of a level read as 100 before it ended.
+  function progressCell(fraction: number | null, detail: string, complete: boolean): HTMLElement {
     const cell = document.createElement('span')
     cell.className = 'jc-cell'
     if (fraction !== null) {
@@ -448,11 +452,12 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
       track.className = 'jc-track'
       const fill = document.createElement('span')
       fill.className = 'jc-fill'
-      fill.style.width = `${Math.round(fraction * 100)}%`
+      const shown = complete ? 100 : Math.min(99, Math.floor(fraction * 100))
+      fill.style.width = `${shown}%`
       track.appendChild(fill)
       const percent = document.createElement('span')
       percent.className = 'mono'
-      percent.textContent = `${Math.round(fraction * 100)} %`
+      percent.textContent = `${shown} %`
       bar.append(track, percent)
       cell.appendChild(bar)
     }
