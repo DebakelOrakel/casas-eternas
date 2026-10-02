@@ -161,6 +161,14 @@ export interface ErosionEngineParams {
   // it a sub-grid closure. Unscaled, a ~1 km² node relaxed ~90 % towards
   // its neighbours every iteration and a 5 km valley decayed in one.
   hillRefKm2: number
+  // The scale's power: (area / hillRefKm2)^hillScaleExponent. Linear (1)
+  // damped level 1's ~6 km² nodes ~20× and left node-scale roughness
+  // standing — 5–8× level 0's per km, in rows of scales (measured
+  // 2026-10-02, a 512 × 256 world replayed at budget 1: roughness p50
+  // 5.8 m/km against 1.1 at level 0). The square root keeps a level-0 node
+  // where it was calibrated and gives level 1 ~0.22 of it: roughness
+  // 1.6 m/km, the mountain valleys still 1.5–1.9× level 0's.
+  hillScaleExponent: number
   criticalSlope: number
   // Marine smoothing of fresh deposits: the fraction of a water-to-water
   // height difference exchanged per pair per iteration.
@@ -199,6 +207,7 @@ export const DEFAULT_ENGINE_PARAMS: ErosionEngineParams = {
   depositCapMarineM: 30,
   hillDiffKm2: 0.5,
   hillRefKm2: 127,
+  hillScaleExponent: 0.5,
   criticalSlope: 0.65,
   // 0.25 × the 0.1 the marine kernel used to fold in — the same exchange
   // fraction, now one hashed number instead of a constant beside it.
@@ -282,6 +291,7 @@ export interface KernelParams {
   upliftDt: number
   hillDiffKm2: number
   hillRefKm2: number
+  hillScaleExponent: number
   criticalSlope: number
   marineDiffDt: number
   cellM: number
@@ -292,6 +302,7 @@ export function kernelParamsFor(refM: number, params: ErosionEngineParams): Kern
     upliftDt: params.upliftDt,
     hillDiffKm2: params.hillDiffKm2,
     hillRefKm2: params.hillRefKm2,
+    hillScaleExponent: params.hillScaleExponent,
     criticalSlope: params.criticalSlope,
     marineDiffDt: params.marineDiffDt,
     cellM: refM,
@@ -476,8 +487,9 @@ export function kernelHillMoves(v: EngineViews, a0: number, a1: number, kp: Kern
       // holds steeper, a cold one creeps faster; one is exactly the old rule.
       const ratio = Math.min(0.95, slope / (kp.criticalSlope * slopeScale[cell]))
       const boost = 1 / (1 - ratio * ratio)
-      // The pair's diffusivity at its own size (ErosionEngineParams.hillRefKm2).
-      const sizeScale = (0.5 * (areaRel[cell] + areaRel[nb]) * refM2) / 1e6 / kp.hillRefKm2
+      // The pair's diffusivity at its own size (ErosionEngineParams.hillRefKm2,
+      // hillScaleExponent).
+      const sizeScale = ((0.5 * (areaRel[cell] + areaRel[nb]) * refM2) / 1e6 / kp.hillRefKm2) ** kp.hillScaleExponent
       const coefficient = Math.min(diffM2 * sizeScale * diffScale[cell] * geom * Math.min(boost, 12), DIFFUSION_PAIR_CAP * Math.min(ownArea, areaRel[nb] * refM2))
       edgeMove[e] = coefficient * dz
     }

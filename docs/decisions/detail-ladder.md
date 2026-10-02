@@ -359,6 +359,26 @@ what makes them. Not yet known: what the depressions are (overdeepened
 glacial troughs, flexure, the engine's own pits) — to be looked at with
 the incubator.
 
+**Correction, 2026-10-02: much of that depth was roughness.** Seen in
+the incubator as rows of scales: level 1's ground is 5–8× rougher per km
+than level 0's (|z − mean of the neighbours| over the spacing, p50
+4.5–7.2 against 1.0–1.2 m/km), twice the single-node peaks and pits, 432
+below-sea nodes inland. It is in the relief, not in the tectonic
+baseline (p90 0.5 m/km), and it grows epoch by epoch at budget 1 while it
+stays flat at budget 4. A node-scale peak raises the valley measure's
+maximum and a pit lowers its channel, so the 3.6× above is inflated.
+Switched off one at a time on a 512 × 256 world at budget 1 (roughness
+p50 / p90 m/km): the folds 10.0 → 5.6 in the mountains only; a channel
+head 10× larger made it worse; the hillslope diffusion's size scaling is
+the lever — `hillRefKm2` 127 → 25 gave 5.8 / 28.0 → 1.6 / 8.5, and the
+mountain valleys 354 / 1 029 → 158 / 555 m against level 0's 107 / 293.
+Built: the scale's power `hillScaleExponent` 0.5 (surface/erosionEngine.ts)
+— a level-0 node stays where it was calibrated, a level-1 node gets ~0.22
+of it. On the same world: level 0 1.2 / 4.8 m/km (was 1.1 / 4.4), its
+land p99 4 187 m (3 997), its valleys 116 / 314 m (107 / 293); level 1
+2.1 / 9.7 m/km, valleys 181 / 615 m — **1.7–2.1× level 0's**, the honest
+figure. Every level and tile made before is outdated.
+
 **The tile levels on the same world** (2026-10-01/02, a refine plan to
 level 3 on the local server, two workers, level 1 reused): the plan took
 ~8 s from the stored level 1 (2 610 level-2 and 8 763 level-3 tiles, its

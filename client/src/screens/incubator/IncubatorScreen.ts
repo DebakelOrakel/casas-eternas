@@ -76,11 +76,19 @@ const NEAR_MIN_ALTITUDE_M = 1000
 // fine relief level's (the world width / 2048).
 const PATCH_VIEW_FRACTION = 0.1
 
+// The near patch: PATCH_COVERAGE altitudes wide, PATCH_SUBDIVISIONS quads a
+// side. Wider than the map view's 16 altitudes: tilted to 80°, the view
+// reached past that patch and the coarse level-1 ground behind its rim
+// showed through (2026-10-02). A side of 384 keeps the quads at an eighth
+// of the altitude (125 m at 1 km), filling 148 k points per rebuild.
+const PATCH_COVERAGE = 48
+const PATCH_SUBDIVISIONS = 384
+
 // The patch's spacing below which it reads the tiles of level 3 (floor
 // 125 m, flat land ~490 m), and of level 2 (floor ~500 m), metres; above,
 // level 1 alone. They bound how many tiles a view asks for: the patch
-// spans 192 spacings, ~77 km at level 3's bound (two tiles across), ~290 km
-// at level 2's (two to three).
+// spans 384 spacings, ~150 km at level 3's bound (three tiles across),
+// ~580 km at level 2's (four to five).
 const TILE_LEVEL3_SPACING_M = 400
 const TILE_LEVEL2_SPACING_M = 1500
 
@@ -145,7 +153,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // shown; set when tiles arrive, so the patch is drawn again.
   let tiled: TiledSurface | null = null
   let tilesArrived = false
-  const patchAltitude = (): number => (camera.getZoom() > 1 ? camera.getAltitude() : camera.getViewWidth() / 16)
+  // In the map regime the patch is sized by the view (it is orthographic
+  // at a fixed height there): as wide as the view.
+  const patchAltitude = (): number => (camera.getZoom() > 1 ? camera.getAltitude() : camera.getViewWidth() / PATCH_COVERAGE)
 
   // The level's surface, once one is shown. The view is built before any
   // level is there, so the patch starts on a flat stand-in and is handed the
@@ -206,6 +216,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       baseSurface: flat,
       getActive: () => levelSurface !== null && (camera.getZoom() > 1 || camera.getViewWidth() < MAP_WORLD_WIDTH * PATCH_VIEW_FRACTION),
       getAltitude: () => patchAltitude(),
+      coverage: PATCH_COVERAGE,
+      subdivisions: PATCH_SUBDIVISIONS,
       // The patch's colour from its own heights (the finest level there),
       // not from the map texture's 3.9 km texels.
       colorAt: (u, v, out) => {
@@ -215,7 +227,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         out[2] = c[2] / 255
       },
     },
-    nearShadows: { sunElevationDeg: SUN_ELEVATION_DEG },
+    // Shadows in the near regime only (perspective, a patch of tens of
+    // kilometres); further out the patch spans the view and lighting alone
+    // shades it.
+    nearShadows: { sunElevationDeg: SUN_ELEVATION_DEG, getActive: () => camera.getZoom() > 1 },
   })
   mapView.setHeightScale(MAP_EXAGGERATION)
   mapView.setEnabled(false)
@@ -246,9 +261,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   scene.onBeforeRenderObservable.add(() => {
     if (!levelSurface) return
     // The finest level the patch can show at its spacing: its quads span
-    // 16 × the altitude over 192 (ToroidalMapView's near patch).
+    // PATCH_COVERAGE × the altitude over PATCH_SUBDIVISIONS.
     if (tiled) {
-      const spacingM = (patchAltitude() * 16) / 192 / UNITS_PER_METER
+      const spacingM = (patchAltitude() * PATCH_COVERAGE) / PATCH_SUBDIVISIONS / UNITS_PER_METER
       tiled.setLevel(spacingM < TILE_LEVEL3_SPACING_M ? 3 : spacingM < TILE_LEVEL2_SPACING_M ? 2 : 1)
       if (tilesArrived) {
         tilesArrived = false

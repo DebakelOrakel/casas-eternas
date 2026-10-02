@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-10-02
+- **fixed** Refinement: refined ground is no longer covered in rows of small bumps and pits; its valleys stay deeper than the world's own. `generator.finishing.refine`
+
 ## 2026-10-01
 - **new** Refinement: the finishing step refines a world down to levels 2 and 3, tile by tile, and small streams now cross from tile to tile. `generator.finishing.depth`
 - **changed** Refinement: level 1 makes the world's whole history again at its own density, so its valleys grow with the mountains; a world saved before today must be made again to be refined. `generator.finishing.refine`

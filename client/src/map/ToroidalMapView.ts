@@ -59,7 +59,12 @@ export interface ToroidalMapViewOptions {
   // out[0..2] at (u, v) — on a material of its own with no texture: for a
   // patch whose ground is finer than the map texture's texels (the
   // incubator's tile levels, ~100 m against 3.9 km a texel).
-  nearDetail?: { detailSurface: ElevationSurface; baseSurface: ElevationSurface; getActive: () => boolean; getAltitude: () => number; colorAt?: (u: number, v: number, out: Float32Array) => void }
+  //
+  // `coverage` (the patch's width as a multiple of the altitude, 16) and
+  // `subdivisions` (its quads a side, 192) size it: a steep view reaches
+  // past a patch of 16 altitudes, and the coarse ground behind its rim
+  // shows; the incubator, tilted to 80°, takes a wider one.
+  nearDetail?: { detailSurface: ElevationSurface; baseSurface: ElevationSurface; getActive: () => boolean; getAltitude: () => number; colorAt?: (u: number, v: number, out: Float32Array) => void; coverage?: number; subdivisions?: number }
   // Cast shadows from the relief sun onto the near-detail patch, the patch
   // being its own caster — real shadows where the terrain is closest to the
   // camera, nowhere else: the relief levels span the whole world, and one
@@ -67,8 +72,11 @@ export interface ToroidalMapViewOptions {
   // valley's. `sunElevationDeg` puts the sun lower than the map's 45°,
   // since only slopes steeper than the sun cast a shadow; the sun's
   // intensity is raised with it, so flat ground keeps its brightness.
-  // Without the option, no shadows and the sun at 45°.
-  nearShadows?: { sunElevationDeg: number }
+  // Without the option, no shadows and the sun at 45°. `getActive`, when
+  // given, says per frame whether the patch casts and takes them: a patch
+  // sized by a wide view spans hundreds of kilometres, and one shadow map
+  // over it self-shadows in rows of dark scales (the incubator, 2026-10-02).
+  nearShadows?: { sunElevationDeg: number; getActive?: () => boolean }
   // Called each frame with the recenter block's center, so a screen can tile
   // extra meshes in lockstep (e.g. the river ribbon overlay).
   onRecenter?: (centerX: number, centerZ: number) => void
@@ -441,11 +449,11 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   }
 
   // --- Near-field detail patch (see options.nearDetail) ---
-  const PATCH_SUBDIVISIONS = 192
+  const PATCH_SUBDIVISIONS = nearDetail?.subdivisions ?? 192
   // Patch width as a multiple of camera altitude — matches the hex grid's
   // near-field disk, so detail exists wherever the grid invites close
   // reading.
-  const PATCH_COVERAGE = 16
+  const PATCH_COVERAGE = nearDetail?.coverage ?? 16
   let patchMesh: Mesh | null = null
   let patchPositions: Float32Array | null = null
   let patchUvs: Float32Array | null = null
@@ -599,6 +607,9 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       if (nearShadows) {
         shadows = new ShadowGenerator(SHADOW_MAP_SIZE, sun)
         shadows.usePercentageCloserFiltering = true
+        // Ten times Babylon's default: at a low sun a lit slope otherwise
+        // shadows itself (acne).
+        shadows.bias = 0.0005
         shadows.addShadowCaster(patchMesh)
         patchMesh.receiveShadows = true
       }
@@ -613,6 +624,12 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     // per-frame cost.
     if (spacingChanged || moved > spacing * 2) rebuildPatch(centerX, centerZ, spacing, altitude)
     patchMesh.position.set(patchLastCenterX, 0, patchLastCenterZ)
+    if (shadows) {
+      const on = nearShadows?.getActive?.() ?? true
+      patchMesh.receiveShadows = on
+      const map = shadows.getShadowMap()
+      if (map) map.refreshRate = on ? 1 : 0
+    }
     // The shadow camera looks along the sun from behind the patch.
     if (shadows) sun.position.set(patchLastCenterX - sun.direction.x * altitude * 20, -sun.direction.y * altitude * 20, patchLastCenterZ - sun.direction.z * altitude * 20)
   }
