@@ -184,6 +184,27 @@
   color: var(--dc-muted);
 }
 
+/* A world's head row, then its level rows under it, indented. */
+.ac-group {
+  border-bottom-color: transparent;
+}
+.ac-group .ac-world {
+  font-weight: 600;
+  color: var(--dc-text);
+}
+.ac-level-row {
+  min-height: 42px;
+  padding-left: 18px;
+}
+.ac-levels {
+  align-items: center;
+}
+.ac-tiles-count {
+  font-size: 12px;
+  color: var(--dc-text2);
+  white-space: nowrap;
+}
+
 .ac-foot {
   display: flex;
   align-items: center;
@@ -236,6 +257,32 @@
   display: block;
   height: 100%;
   background: var(--dc-accent);
+}
+
+.job-chooser .ac-tiles {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+/* A job's group row, then its levels' rows, indented under it. */
+.jc-group {
+  border-bottom-color: transparent;
+}
+.jc-group .ac-world {
+  font-weight: 600;
+}
+.jc-level {
+  min-height: 46px;
+  padding-left: 18px;
+}
+.jc-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.jc-detail {
+  font-size: 11px;
+  color: var(--dc-faint);
+  overflow-wrap: anywhere;
 }
 
 /* The jobs door in the title bar: "Jobs" in both languages. */

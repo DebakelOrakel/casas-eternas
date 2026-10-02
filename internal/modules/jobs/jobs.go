@@ -149,6 +149,9 @@ type Module struct {
 	// relay (coordinator.go, workerpool.go); nil on the runner path.
 	coord *coordinator
 	pool  *workerPool
+	// How many jobs run at once (jobs.max-concurrent): the local workers on
+	// the relay path, the runner's slots otherwise.
+	slots int
 }
 
 func New(cfg Config) (*Module, error) {
@@ -210,6 +213,7 @@ func New(cfg Config) (*Module, error) {
 		cfg:         cfg,
 		clusterMode: InCluster(),
 		runner:      runner,
+		slots:       workers,
 		jobs:        newRegistry(jobHistory),
 		running:     map[string]context.CancelFunc{},
 		// Buffered so a burst of requests is accepted rather than blocking the
@@ -259,7 +263,13 @@ func (m *Module) Describe() map[string]any {
 	} else if m.coord != nil {
 		runner = "relay"
 	}
-	return map[string]any{"bakeRunner": runner}
+	// The jobs window's "n of m workers busy" reads jobWorkers; a cluster
+	// says none, its workers being Kubernetes Jobs.
+	out := map[string]any{"bakeRunner": runner}
+	if !m.clusterMode {
+		out["jobWorkers"] = m.slots
+	}
+	return out
 }
 
 // Mount claims the bake routes — all of them under /v1/bakes, because a bake

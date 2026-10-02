@@ -52,6 +52,28 @@ export interface BakeJob {
   // The caller's level on the job's world ("viewer", "editor", "owner", or
   // "admin" for the operator). Cancelling takes an editor.
   callerLevel?: string
+  // Its tasks per level, when the coordinator runs it
+  // (internal/modules/jobs, LevelProgress): a plan's level 1 and tiles.
+  levels?: JobLevel[]
+  endedAt?: string
+}
+
+// One level of a job, its tasks by state.
+export interface JobLevel {
+  stage: number
+  total: number
+  waiting: number
+  queued: number
+  running: number
+  done: number
+  failed: number
+  cancelled: number
+  error?: string
+  // The running task's phase and percent (level 1's, a whole-level task).
+  phase?: string
+  percent: number
+  startedAt?: string
+  endedAt?: string
 }
 
 // A job's plan (docs/decisions/detail-ladder.md, "Coordinator"): `refine` is

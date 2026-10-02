@@ -20,8 +20,7 @@ import { authFetch } from './session'
 // contract, and server/ and storage/ are peers that must not import each
 // other (the type import was the last edge of that cycle). It is kept
 // field-for-field the shape the local store lists (storage/ArtifactStore
-// StoredArtifact), so one grouping function serves both tiers by structure
-// — the artifact window folds both into its rows (artifactAdmin.artifactRows).
+// StoredArtifact).
 export interface ServerArtifact {
   artifactUid: string
   bytes: number
@@ -78,6 +77,56 @@ export async function removeServerArtifact(artifactUid: string): Promise<boolean
   if (!base) return false
   try {
     const response = await authFetch(`${base}/artifacts/${encodeURIComponent(artifactUid)}`, { method: 'DELETE' })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+// One level of one terrain under one pipeline version, summed on the server
+// (GET /v1/artifacts/levels): a whole level (count 1) or its tiles. What the
+// artifact window shows as a row — a world refined to level 3 is ten
+// thousand entries in the flat listing.
+export interface ServerArtifactLevel {
+  worldUid: string
+  worldId: string
+  pipelineVersion: string
+  level: number
+  tiles: boolean
+  count: number
+  bytes: number
+  label: string
+  bakeMs: number
+  callerLevel?: string
+}
+
+export interface ServerArtifactLevels {
+  levels: ServerArtifactLevel[]
+  bytes: number
+}
+
+// Null when there is no server, as listServerArtifacts.
+export async function listServerArtifactLevels(): Promise<ServerArtifactLevels | null> {
+  const base = await apiBase()
+  if (!base) return null
+  try {
+    const response = await authFetch(`${base}/artifacts/levels`, { cache: 'no-store' })
+    if (!response.ok) return null
+    const body = (await response.json()) as { levels?: ServerArtifactLevel[] | null; bytes?: number }
+    return { levels: body.levels ?? [], bytes: body.bytes ?? 0 }
+  } catch {
+    return null
+  }
+}
+
+// Drops one level of a world — the whole level and every tile of it — of
+// one terrain and pipeline version.
+export async function removeServerLevel(worldUid: string, level: number, worldId: string, pipelineVersion: string): Promise<boolean> {
+  const base = await apiBase()
+  if (!base) return false
+  const query = new URLSearchParams({ world: worldUid, level: String(level), worldId, pipeline: pipelineVersion })
+  try {
+    const response = await authFetch(`${base}/artifacts?${query}`, { method: 'DELETE' })
     return response.ok
   } catch {
     return false

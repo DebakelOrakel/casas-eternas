@@ -105,6 +105,28 @@ type Job struct {
 	QueuedAt  time.Time  `json:"queuedAt"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`
 	EndedAt   *time.Time `json:"endedAt,omitempty"`
+	// Its tasks per level, for a job the coordinator runs (coordinator.go,
+	// levelsOf): a plan's level 1 and its tile levels, each counted.
+	Levels []LevelProgress `json:"levels,omitempty"`
+}
+
+// LevelProgress is one level of a job: its tasks by state, the phase of a
+// task running (level 1's), when its first task started and its last
+// ended (nil while any is left).
+type LevelProgress struct {
+	Stage     int        `json:"stage"`
+	Total     int        `json:"total"`
+	Waiting   int        `json:"waiting"`
+	Queued    int        `json:"queued"`
+	Running   int        `json:"running"`
+	Done      int        `json:"done"`
+	Failed    int        `json:"failed"`
+	Cancelled int        `json:"cancelled"`
+	Error     string     `json:"error,omitempty"`
+	Phase     string     `json:"phase,omitempty"`
+	Percent   int        `json:"percent"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+	EndedAt   *time.Time `json:"endedAt,omitempty"`
 }
 
 // Validate rejects a request that cannot be run, with a message naming the

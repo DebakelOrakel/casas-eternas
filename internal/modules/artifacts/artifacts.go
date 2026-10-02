@@ -24,6 +24,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
@@ -85,6 +86,7 @@ func (m *Module) Name() string { return "artifacts" }
 func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST /v1/artifacts/resolve", m.handleResolve)
 	mux.HandleFunc("GET /v1/artifacts", m.handleList)
+	mux.HandleFunc("GET /v1/artifacts/levels", m.handleLevels)
 	mux.HandleFunc("DELETE /v1/artifacts", m.handleClear)
 	mux.HandleFunc("DELETE /v1/artifacts/{artifactUID}", m.handleRemove)
 	// `{name...}` rather than `{name}` so a future tile layout ("tiles/12_7")
@@ -231,18 +233,28 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
-	artifacts, err := m.store.List(r.Context())
+	visible, bytes, err := m.visible(r)
 	if err != nil {
 		httpjson.ServerError(w, "listing artifacts", err)
 		return
 	}
-	// The listing inherits the worlds' visibility: an artifact shows to
-	// whoever may read its world. Meta-less entries (junk, mid-write) show
-	// only to the operator — they can rank nobody. One WorldAccess per
-	// DISTINCT world, not per artifact. Each entry says what the caller may
-	// do with it (callerLevel: its world's level, "admin" for the operator),
-	// so a client greys out what it may not delete rather than letting the
-	// request fail.
+	httpjson.Write(w, http.StatusOK, map[string]any{"artifacts": visible, "bytes": bytes})
+}
+
+// visible is what the caller may see of the store, and its size.
+//
+// The listing inherits the worlds' visibility: an artifact shows to
+// whoever may read its world. Meta-less entries (junk, mid-write) show
+// only to the operator — they can rank nobody. One WorldAccess per
+// DISTINCT world, not per artifact. Each entry says what the caller may
+// do with it (callerLevel: its world's level, "admin" for the operator),
+// so a client greys out what it may not delete rather than letting the
+// request fail.
+func (m *Module) visible(r *http.Request) ([]callerArtifact, int64, error) {
+	artifacts, err := m.store.List(r.Context())
+	if err != nil {
+		return nil, 0, err
+	}
 	visible := make([]callerArtifact, 0, len(artifacts))
 	var bytes int64
 	if m.operator(r) {
@@ -252,27 +264,96 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 		// The operator sees the whole store, so the gauge is the whole store —
 		// the cache-size figure the eviction reasons about.
 		bytes, _ = m.store.Usage(r.Context())
-	} else {
-		bearer := r.Header.Get("Authorization")
-		levels := map[string]access.Level{}
-		for _, artifact := range artifacts {
-			if artifact.WorldUID == "" {
-				continue
-			}
-			level, ranked := levels[artifact.WorldUID]
-			if !ranked {
-				_, level = m.cfg.WorldAccess(r.Context(), artifact.WorldUID, bearer)
-				levels[artifact.WorldUID] = level
-			}
-			if level >= access.Viewer {
-				visible = append(visible, callerArtifact{artifact, level.String()})
-				bytes += artifact.Bytes
-			}
-		}
+		return visible, bytes, nil
 	}
 	// Anyone else sees what they may see, and its size: the store's whole
 	// usage would tell them about worlds they cannot see.
-	httpjson.Write(w, http.StatusOK, map[string]any{"artifacts": visible, "bytes": bytes})
+	bearer := r.Header.Get("Authorization")
+	levels := map[string]access.Level{}
+	for _, artifact := range artifacts {
+		if artifact.WorldUID == "" {
+			continue
+		}
+		level, ranked := levels[artifact.WorldUID]
+		if !ranked {
+			_, level = m.cfg.WorldAccess(r.Context(), artifact.WorldUID, bearer)
+			levels[artifact.WorldUID] = level
+		}
+		if level >= access.Viewer {
+			visible = append(visible, callerArtifact{artifact, level.String()})
+			bytes += artifact.Bytes
+		}
+	}
+	return visible, bytes, nil
+}
+
+// LevelSummary is one level of one terrain under one pipeline version: a
+// whole level (count 1) or its tiles (count of them), and their bytes —
+// what the artifact window shows as a row, instead of an entry per tile
+// (a world refined to level 3 is ten thousand of them, 2026-10-02).
+type LevelSummary struct {
+	WorldUID        string `json:"worldUid"`
+	WorldID         string `json:"worldId"`
+	PipelineVersion string `json:"pipelineVersion"`
+	Level           int    `json:"level"`
+	Tiles           bool   `json:"tiles"`
+	Count           int    `json:"count"`
+	Bytes           int64  `json:"bytes"`
+	Label           string `json:"label"`
+	BakeMs          int64  `json:"bakeMs"`
+	CallerLevel     string `json:"callerLevel"`
+}
+
+// handleLevels lists what the caller may see, summed per world, terrain,
+// pipeline version and level. Entries whose stage is no level (junk, other
+// kinds) are left out; the flat listing still shows them.
+func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
+	visible, bytes, err := m.visible(r)
+	if err != nil {
+		httpjson.ServerError(w, "listing artifacts", err)
+		return
+	}
+	type groupKey struct {
+		world, terrain, pipeline string
+		level                    int
+		tiles                    bool
+	}
+	groups := map[groupKey]*LevelSummary{}
+	var order []groupKey
+	for _, a := range visible {
+		level, tile, ok := StageLevel(a.Stage)
+		if !ok {
+			continue
+		}
+		k := groupKey{a.WorldUID, a.WorldID, a.PipelineVersion, level, tile}
+		g := groups[k]
+		if g == nil {
+			g = &LevelSummary{WorldUID: a.WorldUID, WorldID: a.WorldID, PipelineVersion: a.PipelineVersion, Level: level, Tiles: tile, Label: a.Label, CallerLevel: a.CallerLevel}
+			groups[k] = g
+			order = append(order, k)
+		}
+		g.Count++
+		g.Bytes += a.Bytes
+		g.BakeMs += int64(a.BakeMs)
+	}
+	sort.Slice(order, func(i, j int) bool {
+		a, b := order[i], order[j]
+		if a.world != b.world {
+			return a.world < b.world
+		}
+		if a.level != b.level {
+			return a.level < b.level
+		}
+		if a.terrain != b.terrain {
+			return a.terrain < b.terrain
+		}
+		return a.pipeline < b.pipeline
+	})
+	out := make([]LevelSummary, 0, len(order))
+	for _, k := range order {
+		out = append(out, *groups[k])
+	}
+	httpjson.Write(w, http.StatusOK, map[string]any{"levels": out, "bytes": bytes})
 }
 
 // A listed artifact with the caller's level on its world.
@@ -297,9 +378,32 @@ func (m *Module) handleRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleClear clears everything, or — with ?world={uid} — every artifact the
-// meta files attribute to one world.
+// meta files attribute to one world, or — with ?world={uid}&level={n} — one
+// level of it, its tiles included, narrowed by &worldId= and &pipeline= to
+// one terrain or version (the artifact window's "delete this level").
 func (m *Module) handleClear(w http.ResponseWriter, r *http.Request) {
-	if world := r.URL.Query().Get("world"); world != "" {
+	query := r.URL.Query()
+	if world, levelText := query.Get("world"), query.Get("level"); world != "" && levelText != "" {
+		level, err := strconv.Atoi(levelText)
+		if err != nil || level < 0 {
+			httpjson.ClientError(w, http.StatusBadRequest, "level must be a level's number")
+			return
+		}
+		// Editor, as for one artifact: a level is recomputable by anyone
+		// who may refine the world.
+		if !m.allowed(w, r, world, access.Editor, "removing a level's artifacts") {
+			return
+		}
+		removed, err := m.store.RemoveLevel(r.Context(), world, level, query.Get("worldId"), query.Get("pipeline"))
+		if err != nil {
+			respondStoreError(w, err)
+			return
+		}
+		slog.Info("artifacts dropped", "uid", world, "level", level, "count", removed)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if world := query.Get("world"); world != "" {
 		// The sweep rides on world.delete's level: it exists so deleting a
 		// world can take its artifacts with it. (Sweep BEFORE the world is
 		// deleted — an orphaned world ranks nobody and falls to the operator.)

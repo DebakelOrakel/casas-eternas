@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -135,6 +136,64 @@ func (e *entry) world() string {
 		return e.key.WorldUID
 	}
 	return ""
+}
+
+// keyOf is the entry's key: its meta's, or the reservation's while it is
+// written; nil for junk.
+func (e *entry) keyOf() *Key {
+	if e.meta != nil {
+		return &e.meta.Key
+	}
+	return e.key
+}
+
+// StageLevel reads a stage's level and whether it names a tile: `L<n>` a
+// whole level, `L<n>:<x>,<y>` one tile of it (the client's world/levels.ts
+// parseStage). ok is false for any other stage.
+func StageLevel(stage string) (level int, tile bool, ok bool) {
+	if !strings.HasPrefix(stage, "L") {
+		return 0, false, false
+	}
+	head, _, tile := strings.Cut(stage[1:], ":")
+	n, err := strconv.Atoi(head)
+	if err != nil || n < 0 {
+		return 0, false, false
+	}
+	return n, tile, true
+}
+
+// RemoveLevel drops one level of a world — the whole level and every tile
+// of it — and, when `worldID` or `pipeline` is set, only that terrain's or
+// that version's. Returns how many artifacts went.
+func (s *Store) RemoveLevel(ctx context.Context, worldUID string, level int, worldID, pipeline string) (int, error) {
+	if !safeSegment(worldUID) {
+		return 0, ErrBadPath
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refresh(); err != nil {
+		return 0, err
+	}
+	removed := 0
+	for uid, e := range s.entries {
+		key := e.keyOf()
+		if key == nil || key.WorldUID != worldUID || (worldID != "" && key.WorldID != worldID) || (pipeline != "" && key.PipelineVersion != pipeline) {
+			continue
+		}
+		if n, _, ok := StageLevel(key.Stage); !ok || n != level {
+			continue
+		}
+		if err := os.RemoveAll(s.artifactDir(uid)); err != nil {
+			return removed, err
+		}
+		delete(s.entries, uid)
+		s.dropKeys(uid)
+		removed++
+	}
+	if removed == 0 {
+		return 0, ErrNotFound
+	}
+	return removed, nil
 }
 
 // ListedArtifact is one entry of the listing — flat, the client groups.

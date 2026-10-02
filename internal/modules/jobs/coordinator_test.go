@@ -147,6 +147,18 @@ func TestCoordinatorRunsTilesInPlanOrder(t *testing.T) {
 	if computed.Load() != 4 || at["L2:0,0"] > at["L2:1,0"] || at["L2:0,0"] > at["L3:0,0"] || at["L1"] != 0 {
 		t.Errorf("computed %d in order %v", computed.Load(), order)
 	}
+	// Its levels, counted: one task at level 1, two at 2, one at 3, all
+	// done, each started and ended.
+	job, _ = reg.get(job.ID)
+	want := map[int]int{1: 1, 2: 2, 3: 1}
+	if len(job.Levels) != 3 {
+		t.Fatalf("levels %+v", job.Levels)
+	}
+	for _, lp := range job.Levels {
+		if lp.Total != want[lp.Stage] || lp.Done != lp.Total || lp.StartedAt == nil || lp.EndedAt == nil {
+			t.Errorf("level %+v", lp)
+		}
+	}
 }
 
 func waitForJob(t *testing.T, reg *registry, id string, want State) Job {

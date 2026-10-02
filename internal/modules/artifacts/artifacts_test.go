@@ -3,6 +3,7 @@ package artifacts
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -368,5 +369,66 @@ func TestRemovalByArtifactAndByWorld(t *testing.T) {
 	}
 	if got := do(mux, http.MethodPost, "/v1/artifacts/resolve", resolveBody).Code; got != http.StatusNotFound {
 		t.Errorf("resolve after world sweep = %d, want 404", got)
+	}
+}
+
+// The levels listing sums a world's tiles per level, terrain and version;
+// a level is removed whole, tiles included, and only of the version asked.
+func TestLevelsAreSummedAndRemovedWhole(t *testing.T) {
+	mux := newTestModule(t)
+	const world = "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001"
+	mint := func(stage, version string) {
+		t.Helper()
+		key := `{"worldUid":"` + world + `","worldId":"ba90bda173d581ef","pipelineVersion":"` + version + `","stage":"` + stage + `"`
+		response := do(mux, http.MethodPost, "/v1/artifacts/resolve", key+`,"create":true}`)
+		var decoded struct {
+			ArtifactUID string `json:"artifactUid"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil || decoded.ArtifactUID == "" {
+			t.Fatalf("resolve %s = %d: %s", stage, response.Code, response.Body)
+		}
+		do(mux, http.MethodPut, "/v1/artifacts/"+decoded.ArtifactUID+"/f", "xx")
+		meta := `{"key":` + key + `},"label":"seed","bakeMs":10,"createdAt":1}`
+		if got := do(mux, http.MethodPut, "/v1/artifacts/"+decoded.ArtifactUID+"/meta.json", meta).Code; got != http.StatusNoContent {
+			t.Fatalf("meta %s = %d", stage, got)
+		}
+	}
+	mint("L1", "v6")
+	mint("L2:0,0", "v6")
+	mint("L3:0,0", "v6")
+	mint("L3:1,0", "v6")
+	mint("L3:0,0", "v7")
+	mint("odd", "v6")
+
+	levels := func() map[string]int {
+		t.Helper()
+		response := do(mux, http.MethodGet, "/v1/artifacts/levels", "")
+		var decoded struct {
+			Levels []LevelSummary `json:"levels"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+			t.Fatalf("levels = %d: %s", response.Code, response.Body)
+		}
+		out := map[string]int{}
+		for _, l := range decoded.Levels {
+			out[fmt.Sprintf("L%d %v %s", l.Level, l.Tiles, l.PipelineVersion)] = l.Count
+		}
+		return out
+	}
+	got := levels()
+	want := map[string]int{"L1 false v6": 1, "L2 true v6": 1, "L3 true v6": 2, "L3 true v7": 1}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("levels %v, want %v", got, want)
+	}
+	if code := do(mux, http.MethodDelete, "/v1/artifacts?world="+world+"&level=3&pipeline=v6", "").Code; code != http.StatusNoContent {
+		t.Fatalf("delete level = %d", code)
+	}
+	got = levels()
+	want = map[string]int{"L1 false v6": 1, "L2 true v6": 1, "L3 true v7": 1}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("after delete %v, want %v", got, want)
+	}
+	if code := do(mux, http.MethodDelete, "/v1/artifacts?world="+world+"&level=x", "").Code; code != http.StatusBadRequest {
+		t.Errorf("a level that is no number = %d, want 400", code)
 	}
 }

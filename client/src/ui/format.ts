@@ -26,6 +26,27 @@ export function formatWhen(at: Date | string): string {
   return date.toLocaleString(getLocale(), { dateStyle: 'medium', timeStyle: 'short' })
 }
 
+// A moment as a clock time, the date only when it is not today — the jobs
+// window's start and end, which are mostly within the hour.
+export function formatClock(at: Date | string): string {
+  const date = typeof at === 'string' ? new Date(at) : at
+  if (Number.isNaN(date.getTime())) return ''
+  const today = new Date()
+  if (date.toDateString() !== today.toDateString()) return formatWhen(date)
+  return date.toLocaleTimeString(getLocale(), { timeStyle: 'short' })
+}
+
+// A length of time, to the two largest units: "2 h 28 min", "45 min",
+// "30 s". The units are the SI symbols, the same in every language.
+export function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s} s`
+  const min = Math.round(s / 60)
+  if (min < 60) return `${min} min`
+  const h = Math.floor(min / 60)
+  return min % 60 === 0 ? `${h} h` : `${h} h ${min % 60} min`
+}
+
 // A file size, counted in thousands.
 //
 // DECIMAL, not binary: a kB is 1000 bytes here, because that is what a disk, a

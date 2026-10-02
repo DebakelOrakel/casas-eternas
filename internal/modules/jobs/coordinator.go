@@ -74,6 +74,13 @@ type Task struct {
 	Upstream []TileRef `json:"upstream,omitempty"`
 	Error    string    `json:"error,omitempty"`
 	Result   *Result   `json:"result,omitempty"`
+	// When a worker first reported on it, and when it ended.
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+	EndedAt   *time.Time `json:"endedAt,omitempty"`
+	// Its last reported phase and percent, while it runs (not saved: the
+	// next report says it again).
+	Phase   string `json:"-"`
+	Percent int    `json:"-"`
 }
 
 // taskDone is what a worker reports on jobs.done.<taskId>.
@@ -289,6 +296,7 @@ func (c *coordinator) dispatchReady(jobID string) {
 		return
 	}
 	c.save(nil, ready...)
+	c.refreshLevels(jobID)
 }
 
 func (c *coordinator) depsDone(task *Task) bool {
@@ -394,13 +402,17 @@ func (c *coordinator) applyDone(report taskDoneReport) {
 		return
 	}
 	if !report.OK {
+		ended := time.Now()
 		task.State = taskFailed
+		task.EndedAt = &ended
 		task.Error = report.Error
 		c.save(nil, task)
 		c.failJob(task.JobID, report.Error)
 		return
 	}
+	ended := time.Now()
 	task.State = taskDone
+	task.EndedAt = &ended
 	task.Result = report.Result
 	c.save(nil, task)
 	// A refine plan grows its tile levels off its level, up to the level
@@ -430,8 +442,11 @@ func (c *coordinator) applyDone(report taskDoneReport) {
 		}
 		c.save(nil, added...)
 	}
-	c.progress(task.JobID)
+	// The levels before the job's state: a reader that sees the job done
+	// must see its levels done too.
 	c.dispatchReady(task.JobID)
+	c.refreshLevels(task.JobID)
+	c.progress(task.JobID)
 }
 
 // filterPlanned is the plan's tasks up to a level, in the plan's order.
@@ -494,9 +509,22 @@ func (c *coordinator) handleEvent(msg *nats.Msg) {
 	if !ok || task.JobID != jobID || (task.State != taskQueued && task.State != taskRunning) {
 		return
 	}
-	if task.State == taskQueued {
+	started := task.State == taskQueued
+	phaseMoved := task.Phase != event.Phase || task.Percent != event.Percent
+	task.Phase = event.Phase
+	task.Percent = min(100, max(0, event.Percent))
+	if started {
+		now := time.Now()
 		task.State = taskRunning
+		task.StartedAt = &now
 		c.save(nil, task)
+	}
+	// The levels say a task started, and a whole-level task (level 1) its
+	// phase; a tile's percent moves no level and is not written — a pass
+	// over ten thousand tasks per tile report would be the cost of the
+	// whole plan again.
+	if started || (phaseMoved && task.Pool == poolLevel) {
+		c.refreshLevels(jobID)
 	}
 	// A job of one task, or the level of a refine plan before its tiles:
 	// the task's own phase. Once the tiles run, the share done says more.
@@ -564,7 +592,73 @@ func (c *coordinator) endJob(jobID string, state State, reason string) {
 		j.State = state
 		j.Error = reason
 		j.EndedAt = &now
+		j.Levels = c.levelsOf(jobID)
 	})
+}
+
+// LEVELS: a job's tasks counted per level (the jobs window's rows,
+// docs/decisions/detail-ladder.md). Counted again from the tasks at every
+// change of a task's state rather than kept as counters: the tasks are the
+// truth, and a count kept beside them is the kind that drifts. A plan's
+// tasks number in the ten thousands; the count is a pass over them, at a
+// state change, never at a tile's percent.
+func (c *coordinator) levelsOf(jobID string) []LevelProgress {
+	byStage := map[int]*LevelProgress{}
+	var stages []int
+	for _, id := range c.byJob[jobID] {
+		t := c.tasks[id]
+		lp := byStage[t.Request.Stage]
+		if lp == nil {
+			lp = &LevelProgress{Stage: t.Request.Stage}
+			byStage[t.Request.Stage] = lp
+			stages = append(stages, t.Request.Stage)
+		}
+		lp.Total++
+		switch t.State {
+		case taskWaiting:
+			lp.Waiting++
+		case taskQueued:
+			lp.Queued++
+		case taskRunning:
+			lp.Running++
+			if t.Phase != "" {
+				lp.Phase = t.Phase
+				lp.Percent = t.Percent
+			}
+		case taskDone:
+			lp.Done++
+		case taskFailed:
+			lp.Failed++
+			if lp.Error == "" {
+				lp.Error = t.Error
+			}
+		case taskCancelled:
+			lp.Cancelled++
+		}
+		if t.StartedAt != nil && (lp.StartedAt == nil || t.StartedAt.Before(*lp.StartedAt)) {
+			lp.StartedAt = t.StartedAt
+		}
+		if t.EndedAt != nil && (lp.EndedAt == nil || t.EndedAt.After(*lp.EndedAt)) {
+			lp.EndedAt = t.EndedAt
+		}
+	}
+	sort.Ints(stages)
+	out := make([]LevelProgress, 0, len(stages))
+	for _, s := range stages {
+		lp := byStage[s]
+		// A level has ended when nothing of it is left to run.
+		if lp.Waiting+lp.Queued+lp.Running > 0 {
+			lp.EndedAt = nil
+		}
+		out = append(out, *lp)
+	}
+	return out
+}
+
+// refreshLevels writes the job's levels anew. Called with the lock held.
+func (c *coordinator) refreshLevels(jobID string) {
+	levels := c.levelsOf(jobID)
+	c.updateJob(jobID, func(j *Job) { j.Levels = levels })
 }
 
 func (c *coordinator) close() {

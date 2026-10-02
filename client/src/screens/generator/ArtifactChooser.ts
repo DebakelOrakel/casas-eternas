@@ -1,12 +1,11 @@
 import { t, type TKey } from '../../i18n/i18n'
 import { formatBytes } from '../../ui/format'
 import { getLocalArtifactStore } from '../../storage/artifactStoreProvider'
-import { artifactRows, clearArtifacts, type ArtifactEntry, type ArtifactRow } from '../../storage/artifactAdmin'
-import { listServerArtifacts, removeServerArtifact } from '../../server/artifactsClient'
+import { clearArtifacts } from '../../storage/artifactAdmin'
+import { listServerArtifactLevels, removeServerLevel } from '../../server/artifactsClient'
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
-import { meshLevelStage } from '../../world/meshArtifacts'
-import { isCurrentArtifact } from '../../world/levels'
+import { currentPipelineVersion, parseStage } from '../../world/levels'
 import { commissionBake, type CommissionOutcome } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { BROWSER_ICON, SERVER_ICON, icon } from '../../ui/chooserIcons'
@@ -21,11 +20,17 @@ import './artifactChooser.css'
 // any time, so deleting one loses nothing — it confirms in place all the
 // same, as a world does.
 //
-// One row per world and kind of artifact, its levels side by side (L1, L2,
-// L3 — the mesh levels of docs/decisions/adaptive-mesh.md). "This world" is
-// the world the generator holds; "all worlds" whatever this browser and the
-// server let the viewer see (the server lists by the worlds' access, and says
-// per entry what the viewer may do).
+// One GROUP per world, named with its seed, and in it one ROW per level,
+// terrain, pipeline version and place (2026-10-02): the server's and this
+// browser's copies are deleted apart, a level's tiles are one row with their
+// count, and an outdated row says why — another terrain than the world's
+// last save, or other code. The server sums its levels itself
+// (GET /v1/artifacts/levels); a world refined to level 3 is ten thousand
+// entries in the flat listing. Entries that are no level (junk of older
+// bakes) are not shown; the store's eviction takes them first. "This world"
+// is the world the generator holds; "all worlds" whatever this browser and
+// the server let the viewer see (the server lists by the worlds' access, and
+// says per row what the viewer may do).
 
 export interface ArtifactChooserOptions {
   // The world the generator holds, or null before there is one; `worldId` its
@@ -48,16 +53,31 @@ export interface ArtifactChooser {
 type Scope = 'world' | 'all'
 type Where = 'all' | 'server' | 'local'
 
-// The levels a row shows, filled or dashed: the three the ladder plans.
-const LEVELS = [1, 2, 3]
-// An artifact is outdated when it was baked by another pipeline version than
-// this client's (other code; this client does not look for it), or — for the
-// world held here — from another terrain than its last save's (the world
-// moved on since the bake).
-function currentFor(world: { uid: string; worldId: string | null } | null) {
-  return (entry: ArtifactEntry): boolean =>
-    isCurrentArtifact(entry)
-    && !(world?.worldId && entry.worldUid === world.uid && entry.worldId !== world.worldId)
+// One row: one level of one terrain under one pipeline version, in one place.
+interface LevelRow {
+  worldUid: string
+  worldId: string
+  pipelineVersion: string
+  level: number
+  // How many tiles, for a level that comes in tiles; 0 for a whole level.
+  tiles: number
+  where: 'server' | 'local'
+  bytes: number
+  label: string
+  deletable: boolean
+  // Why it is outdated, or null: another terrain than the world's last
+  // save (known only for the world held here), or other code.
+  stale: 'otherTerrain' | 'otherCode' | null
+  // The browser's entries, deleted one by one (the server deletes a level
+  // in one request).
+  localUids: string[]
+}
+
+function staleOf(row: Pick<LevelRow, 'worldUid' | 'worldId' | 'pipelineVersion' | 'level' | 'tiles'>, world: { uid: string; worldId: string | null } | null): LevelRow['stale'] {
+  const stage = row.tiles > 0 ? `L${row.level}:0,0` : `L${row.level}`
+  if (row.pipelineVersion !== currentPipelineVersion(stage)) return 'otherCode'
+  if (world?.worldId && row.worldUid === world.uid && row.worldId !== world.worldId) return 'otherTerrain'
+  return null
 }
 
 export function createArtifactChooser(host: HTMLElement, options: ArtifactChooserOptions): ArtifactChooser {
@@ -93,7 +113,6 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
           <button type="button" data-stale="only" aria-pressed="false"></button>
         </div>
         <span class="wc-grow"></span>
-        <span class="ac-hint" data-slot="levels-hint"></span>
       </div>
       <div class="ac-table" data-slot="table"></div>
       <div class="ac-foot">
@@ -122,10 +141,9 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
 
   // --- data -------------------------------------------------------------------
 
-  let rows: ArtifactRow[] = []
-  // The pipeline-and-terrain check the rows were judged with (currentFor).
-  let isCurrent: (entry: ArtifactEntry) => boolean = () => true
-  let worldNames = new Map<string, string>()
+  let rows: LevelRow[] = []
+  // Each world's name and seed, from this browser's list and the server's.
+  let worlds = new Map<string, { name: string; seed: string }>()
   let serverBytes: number | null = null
   let browserUsage: { usedBytes: number; quotaBytes: number } | null = null
   let serverReachable: boolean | null = null
@@ -133,22 +151,39 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
   async function reload(): Promise<void> {
     const store = await getLocalArtifactStore()
     const [local, usage, server, browserWorlds, serverWorlds] = await Promise.all([
-      store.list(), store.usage(), listServerArtifacts(), listBrowserWorlds(), listWorlds(),
+      store.list(), store.usage(), listServerArtifactLevels(), listBrowserWorlds(), listWorlds(),
     ])
     serverReachable = server !== null
     serverBytes = server ? server.bytes : null
     browserUsage = usage
-    worldNames = new Map([...browserWorlds.map((w) => [w.uid, w.name] as const), ...(serverWorlds ?? []).map((w) => [w.uid, w.name] as const)])
-    const entries: ArtifactEntry[] = [
-      ...local.map((a): ArtifactEntry => ({ ...a, where: 'local', deletable: true })),
-      ...(server?.artifacts ?? []).map((a): ArtifactEntry => ({
-        artifactUid: a.artifactUid, bytes: a.bytes, worldUid: a.worldUid, worldId: a.worldId,
-        pipelineVersion: a.pipelineVersion, stage: a.stage, label: a.label, where: 'server',
-        deletable: a.callerLevel === 'editor' || a.callerLevel === 'owner' || a.callerLevel === 'admin',
-      })),
-    ]
-    isCurrent = currentFor(options.currentWorld())
-    rows = artifactRows(entries, isCurrent)
+    worlds = new Map([...(serverWorlds ?? []).map((w) => [w.uid, w] as const), ...browserWorlds.map((w) => [w.uid, w] as const)]
+      .map(([uid, w]) => [uid, { name: w.name, seed: w.seed }] as const))
+    const world = options.currentWorld()
+    const next: LevelRow[] = (server?.levels ?? []).map((l) => ({
+      worldUid: l.worldUid, worldId: l.worldId, pipelineVersion: l.pipelineVersion, level: l.level,
+      tiles: l.tiles ? l.count : 0, where: 'server', bytes: l.bytes, label: l.label,
+      deletable: l.callerLevel === 'editor' || l.callerLevel === 'owner' || l.callerLevel === 'admin',
+      stale: null, localUids: [],
+    }))
+    // The browser's entries, summed as the server sums its own.
+    const localRows = new Map<string, LevelRow>()
+    for (const a of local) {
+      const parsed = parseStage(a.stage)
+      if (!parsed) continue
+      const key = `${a.worldUid}|${a.worldId}|${a.pipelineVersion}|${parsed.level}|${parsed.tile ? 't' : 'w'}`
+      let row = localRows.get(key)
+      if (!row) {
+        row = { worldUid: a.worldUid, worldId: a.worldId, pipelineVersion: a.pipelineVersion, level: parsed.level, tiles: 0, where: 'local', bytes: 0, label: a.label, deletable: true, stale: null, localUids: [] }
+        localRows.set(key, row)
+      }
+      if (parsed.tile) row.tiles++
+      row.bytes += a.bytes
+      row.localUids.push(a.artifactUid)
+    }
+    next.push(...localRows.values())
+    for (const row of next) row.stale = staleOf(row, world)
+    // By level, the current terrain first, then the server's copy first.
+    rows = next.sort((a, b) => a.level - b.level || Number(a.stale !== null) - Number(b.stale !== null) || a.where.localeCompare(b.where) * -1)
     paint()
   }
 
@@ -165,7 +200,6 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     for (const button of scopeButtons) button.textContent = t(`generator.artifacts.scope.${button.dataset.scope}` as TKey)
     for (const button of whereButtons) button.textContent = t(`generator.artifacts.where.${button.dataset.where}` as TKey)
     staleButton.textContent = t('generator.artifacts.onlyStale')
-    root.querySelector('[data-slot="levels-hint"]')!.textContent = t('generator.artifacts.levelsHint')
     root.querySelector('[data-slot="foot"]')!.textContent = t('generator.artifacts.foot')
     clearButton.textContent = t('generator.artifacts.clearBrowser')
   }
@@ -182,24 +216,21 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     staleButton.setAttribute('aria-pressed', String(onlyStale))
 
     const inScope = rows.filter((row) => effectiveScope === 'all' || row.worldUid === world?.uid)
-    const shown = inScope.filter((row) =>
-      (where === 'all' || (where === 'server' ? row.server : row.local)) && (!onlyStale || row.stale))
+    const shown = inScope.filter((row) => (where === 'all' || row.where === where) && (!onlyStale || row.stale !== null))
 
     setValue('server', serverBytes === null ? '–' : formatBytes(serverBytes))
     setValue('browser', browserUsage ? (browserUsage.quotaBytes > 0 ? `${formatBytes(browserUsage.usedBytes)} / ${formatBytes(browserUsage.quotaBytes)}` : formatBytes(browserUsage.usedBytes)) : '–')
-    setValue('count', String(inScope.reduce((n, row) => n + row.entries.length, 0)))
-    setValue('stale', String(inScope.filter((row) => row.stale).length))
+    setValue('count', String(inScope.reduce((n, row) => n + Math.max(1, row.tiles), 0)))
+    setValue('stale', String(inScope.filter((row) => row.stale !== null).length))
 
     const header = document.createElement('div')
     header.className = 'ac-row ac-row--head mono'
-    const columns = ['artifact', ...(effectiveScope === 'all' ? ['world'] : []), 'levels', 'where', 'size', 'state']
-    for (const column of columns) {
+    for (const column of ['world', 'levels', 'where', 'size', 'state']) {
       const cell = document.createElement('span')
       cell.textContent = t(`generator.artifacts.col.${column}` as TKey)
       header.appendChild(cell)
     }
     header.appendChild(document.createElement('span'))
-    table.classList.toggle('ac-table--world', effectiveScope === 'all')
 
     if (shown.length === 0) {
       const note = document.createElement('p')
@@ -209,52 +240,77 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
       table.replaceChildren(header, note)
       return
     }
-    table.replaceChildren(header, ...shown.map((row) => renderRow(row, effectiveScope === 'all')))
+    // The world held here first, then the largest.
+    const groups = new Map<string, LevelRow[]>()
+    for (const row of shown) groups.set(row.worldUid, [...(groups.get(row.worldUid) ?? []), row])
+    const bytesOf = (list: LevelRow[]): number => list.reduce((n, row) => n + row.bytes, 0)
+    const ordered = [...groups.entries()].sort(([ua, a], [ub, b]) => Number(ub === world?.uid) - Number(ua === world?.uid) || bytesOf(b) - bytesOf(a))
+    table.replaceChildren(header, ...ordered.flatMap(([uid, list]) => [renderGroup(uid, list), ...list.map((row) => renderRow(row, world))]))
   }
 
   function setValue(name: string, text: string): void {
     root.querySelector(`[data-value="${name}"]`)!.textContent = text
   }
 
-  function renderRow(row: ArtifactRow, withWorld: boolean): HTMLElement {
+  // A world's head: its name and seed, and what its rows take together.
+  function renderGroup(uid: string, list: LevelRow[]): HTMLElement {
     const line = document.createElement('div')
-    line.className = 'ac-row'
-    const name = t(row.kind === 'level' ? 'generator.artifacts.kind.level' : 'generator.artifacts.kind.unknown')
-
+    line.className = 'ac-row ac-group'
+    const held = options.currentWorld()
+    const known = held?.uid === uid ? { name: held.name, seed: held.seed } : worlds.get(uid)
+    const name = known?.name || list[0].label || uid || '–'
     const title = document.createElement('span')
     title.className = 'ac-name'
     const nameText = document.createElement('span')
-    nameText.textContent = name
+    nameText.className = 'ac-world'
+    nameText.textContent = known?.seed ? t('generator.artifacts.group', { world: name, seed: known.seed }) : name
     const id = document.createElement('span')
     id.className = 'ac-id mono'
-    id.textContent = row.entries[0].artifactUid.slice(0, 8)
+    id.textContent = uid.slice(0, 8)
     title.append(nameText, id)
-    line.appendChild(title)
+    line.append(title, document.createElement('span'), document.createElement('span'))
+    const size = document.createElement('span')
+    size.className = 'ac-size mono'
+    size.textContent = formatBytes(list.reduce((n, row) => n + row.bytes, 0))
+    line.append(size, document.createElement('span'), document.createElement('span'))
+    return line
+  }
 
-    if (withWorld) {
-      const worldCell = document.createElement('span')
-      worldCell.className = 'ac-world'
-      worldCell.textContent = worldNames.get(row.worldUid) || row.label || row.worldUid || '–'
-      line.appendChild(worldCell)
-    }
+  function renderRow(row: LevelRow, world: { uid: string; worldId: string | null } | null): HTMLElement {
+    const line = document.createElement('div')
+    line.className = 'ac-row ac-level-row'
+    const levelName = `L${row.level}`
+
+    // Which terrain: for the world held here, its last save's or an older
+    // one; for any other, the terrain's id (which is current is not known
+    // without opening it).
+    const terrain = document.createElement('span')
+    terrain.className = 'ac-id mono'
+    terrain.textContent = world?.worldId && row.worldUid === world.uid
+      ? t(row.worldId === world.worldId ? 'generator.artifacts.terrain.current' : 'generator.artifacts.terrain.old')
+      : row.worldId.slice(0, 8)
+    terrain.title = row.worldId
+    line.appendChild(terrain)
 
     const levels = document.createElement('span')
     levels.className = 'ac-levels'
-    for (const level of LEVELS) {
-      const chip = document.createElement('span')
-      chip.className = 'ac-level mono'
-      chip.dataset.present = String(row.levels.includes(level))
-      // The top level comes in tiles: how many this world holds.
-      chip.textContent = level === 2 && row.tiles > 0 ? `L${level} ×${row.tiles}` : `L${level}`
-      levels.appendChild(chip)
+    const chip = document.createElement('span')
+    chip.className = 'ac-level mono'
+    chip.dataset.present = 'true'
+    chip.textContent = levelName
+    levels.appendChild(chip)
+    if (row.tiles > 0) {
+      const count = document.createElement('span')
+      count.className = 'ac-tiles-count'
+      count.textContent = t('generator.artifacts.level.tiles', { count: row.tiles.toLocaleString() })
+      levels.appendChild(count)
     }
     line.appendChild(levels)
 
     const place = document.createElement('span')
     place.className = 'ac-where'
-    if (row.server) place.appendChild(icon(SERVER_ICON))
-    if (row.local) place.appendChild(icon(BROWSER_ICON))
-    place.setAttribute('aria-label', [row.server ? t('generator.artifacts.where.server') : '', row.local ? t('generator.artifacts.where.local') : ''].filter(Boolean).join(' + '))
+    place.appendChild(icon(row.where === 'server' ? SERVER_ICON : BROWSER_ICON))
+    place.setAttribute('aria-label', t(row.where === 'server' ? 'generator.artifacts.where.server' : 'generator.artifacts.where.local'))
     line.appendChild(place)
 
     const size = document.createElement('span')
@@ -264,8 +320,10 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
 
     const state = document.createElement('span')
     state.className = 'ac-state'
-    state.dataset.stale = String(row.stale)
-    state.textContent = t(row.stale ? 'generator.artifacts.state.stale' : 'generator.artifacts.state.fresh')
+    state.dataset.stale = String(row.stale !== null)
+    state.textContent = t(row.stale === 'otherTerrain' ? 'generator.artifacts.state.otherTerrain'
+      : row.stale === 'otherCode' ? 'generator.artifacts.state.otherCode'
+      : 'generator.artifacts.state.fresh')
     line.appendChild(state)
 
     // Deleting confirms in place, as a world does: the first click arms the
@@ -275,7 +333,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     remove.type = 'button'
     remove.className = 'wc-remove'
     remove.disabled = !row.deletable
-    remove.textContent = t('generator.artifacts.remove.label', { artifact: name })
+    remove.textContent = t('generator.artifacts.remove.label', { artifact: levelName })
     let armed: ReturnType<typeof setTimeout> | undefined
     remove.addEventListener('click', () => {
       if (armed === undefined) {
@@ -283,7 +341,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
         remove.classList.add('wc-remove--armed')
         armed = setTimeout(() => {
           armed = undefined
-          remove.textContent = t('generator.artifacts.remove.label', { artifact: name })
+          remove.textContent = t('generator.artifacts.remove.label', { artifact: levelName })
           remove.classList.remove('wc-remove--armed')
         }, 4000)
         return
@@ -292,27 +350,24 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
       armed = undefined
       void (async () => {
         remove.disabled = true
-        const store = await getLocalArtifactStore()
-        for (const entry of row.entries) {
-          if (entry.where === 'local') await store.removeArtifact(entry.artifactUid)
-          else await removeServerArtifact(entry.artifactUid)
+        if (row.where === 'server') await removeServerLevel(row.worldUid, row.level, row.worldId, row.pipelineVersion)
+        else {
+          const store = await getLocalArtifactStore()
+          for (const uid of row.localUids) await store.removeArtifact(uid)
         }
         await reload()
       })()
     })
-    // An outdated level of a world on the server is ordered again from here
-    // (a job, see the jobs window), where the viewer may: an editor.
+    // An outdated level 1 on the server is ordered again from here (a job,
+    // see the jobs window), where the viewer may: an editor. Only level 1:
+    // the button orders level 1, and stale tiles have no rebuild here yet.
     const actions = document.createElement('span')
     actions.className = 'ac-actions'
-    // Only for level 1 itself: the button orders level 1, and a row stale
-    // only by its tiles got a duplicate of a current level while the tiles
-    // stayed stale (2026-10-01). Stale tiles have no rebuild here yet.
-    const levelOneStale = row.entries.some((e) => e.where === 'server' && e.stage === meshLevelStage(1) && !isCurrent(e))
-    if (row.kind === 'level' && levelOneStale && row.deletable && row.worldUid) {
+    if (row.where === 'server' && row.level === 1 && row.tiles === 0 && row.stale !== null && row.deletable && row.worldUid) {
       const rebuild = document.createElement('button')
       rebuild.type = 'button'
       rebuild.className = 'wc-remove'
-      rebuild.textContent = t('generator.artifacts.rebuild.label', { artifact: name })
+      rebuild.textContent = t('generator.artifacts.rebuild.label', { artifact: levelName })
       rebuild.addEventListener('click', () => {
         rebuild.disabled = true
         void commissionBake(row.worldUid, 1, AMPLIFY_EROSION_ROUNDS).then((outcome) => {
