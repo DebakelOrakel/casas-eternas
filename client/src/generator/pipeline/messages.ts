@@ -16,6 +16,7 @@ import type { ContinentLabelPlacement } from '../render/continentLabelRenderer'
 import type { ArcheanSnapshot } from '../archean/archeanSnapshot'
 import type { MigrationOrigin } from '../migration/migrationField'
 import type { StageId } from './stages'
+import type { ReplayPlan } from './replayRuns'
 
 export interface WorkerTectonicsStartMessage {
   type: 'tectonicsStart'
@@ -225,7 +226,17 @@ export interface WorkerRestoreWorldMessage {
   // the trajectory it was saved on.
   lattice?: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer }
 }
+// Make the world held again from its runs (pipeline/replayRuns.ts), in
+// place of the one restored: a world loaded from a save made by other code,
+// made again with this code and the same values. The runs are the screen's
+// parameters, as it sends its own; progress arrives as replayProgress, the
+// end as replayDone and then the render.
+export interface WorkerReplayRunsMessage {
+  type: 'replayRuns'
+  plan: ReplayPlan
+}
 export type WorkerInboundMessage =
+  | WorkerReplayRunsMessage
   | WorkerPlanetPreviewMessage
   | WorkerPlanetSampleMessage
   | WorkerTectonicsStartMessage
@@ -667,7 +678,21 @@ export interface WorkerWorldDataMessage {
 // nothing and compiled — the new message simply never reached a handler. The
 // inbound side has had `WorkerInboundMessage` and its exhaustive HANDLERS table
 // all along; this is the same guarantee for results.
+// A replay's progress (WorkerReplayRunsMessage): epochs done of the whole.
+export interface WorkerReplayProgressMessage {
+  type: 'replayProgress'
+  done: number
+  total: number
+}
+// A replay's end, before its render: how far the world it made was taken.
+export interface WorkerReplayDoneMessage {
+  type: 'replayDone'
+  archeanEpochs: number
+  epoch: number
+}
 export type WorkerOutboundMessage =
+  | WorkerReplayProgressMessage
+  | WorkerReplayDoneMessage
   | WorkerPlanetPreviewDataMessage
   | WorkerRenderedMessage
   | WorkerClimateDataMessage

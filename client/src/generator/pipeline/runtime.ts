@@ -21,6 +21,7 @@ import { rasterSubstrate } from '../surface/flowSubstrate'
 import { TECTONICS_INPUTS } from '../tectonics/tectonicsInputParams'
 import { encodeMesh } from '../mesh/meshSerial'
 import { meshRouting, meshSubstrate, waterFieldsFromMesh } from '../mesh/meshHydrology'
+import { replayRuns } from './replayRuns'
 import { rasterCellAt } from '../surface/riverGraph'
 import type { MeshPayload } from './messages'
 import { coarseForcingFields } from './erosionForcing'
@@ -1382,6 +1383,50 @@ function handleSerializeWorld(): void {
   emit(worldMessage, transfers)
 }
 
+// A world made again from its runs (WorkerReplayRunsMessage), in place of
+// the one held: the same reset of what the previous world left as a
+// restore, then the replay, then the world as after a run — rendered, the
+// derived stages stale. A message that replaces the world while the replay
+// runs (a load, another replay) stops it between two epochs.
+async function handleReplayRuns(message: Extract<WorkerInboundMessage, { type: 'replayRuns' }>): Promise<void> {
+  stopTicking()
+  worldGeneration += 1
+  const generation = worldGeneration
+  dropHandover()
+  meshBefore = null
+  lastSedimentFlux = null
+  renderDryBasin = null
+  renderSaltFlat = null
+  archean = null
+  sim = null
+  coupled = null
+  meshTerrain = null
+  meshPayloadCache = null
+  invalidateAfter('tectonics')
+  const result = await replayRuns(message.plan, {
+    budget: HISTORY_DEFAULTS.budget,
+    cancelled: () => generation !== worldGeneration,
+    onEpoch: (done, total) => emit({ type: 'replayProgress', done, total }),
+  })
+  if (!result || generation !== worldGeneration) return
+  sim = result.sim
+  coupled = result.terrain
+  coupled.routing ??= meshRouting(coupled.mesh, coupled.z)
+  meshTerrain = asMeshTerrain(coupled)
+  // A run that follows goes on with the last run's controls until the
+  // screen's next start sends its own.
+  const last = message.plan.tectonics[message.plan.tectonics.length - 1]
+  if (last) {
+    historyControls = {
+      alluvium: last.controls.alluvium ?? TECTONICS_INPUTS.alluvium.default,
+      rockContrast: last.controls.rockContrast ?? TECTONICS_INPUTS.rockContrast.default,
+      weather: last.weather,
+    }
+  }
+  emit({ type: 'replayDone', archeanEpochs: sim.archeanEpochs, epoch: sim.epoch })
+  await renderTerrain()
+}
+
 function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'restoreWorld' }>): void {
   stopTicking()
   worldGeneration += 1
@@ -1640,6 +1685,7 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   migrationRun: (m) => handleMigrationRun(m as Extract<WorkerInboundMessage, { type: 'migrationRun' }>),
   serializeWorld: () => handleSerializeWorld(),
   restoreWorld: (m) => handleRestoreWorld(m as Extract<WorkerInboundMessage, { type: 'restoreWorld' }>),
+  replayRuns: (m) => void handleReplayRuns(m as Extract<WorkerInboundMessage, { type: 'replayRuns' }>),
   genesisInit: (m) => handleGenesisInit(m as Extract<WorkerInboundMessage, { type: 'genesisInit' }>),
   genesisStart: (m) => handleGenesisStart(m as Extract<WorkerInboundMessage, { type: 'genesisStart' }>),
   genesisStop: () => handleGenesisStop(),

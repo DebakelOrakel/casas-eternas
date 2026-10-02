@@ -45,7 +45,12 @@ fast (the user, 2026-10-01).
 2. **The snapshot is a cache, keyed by the code.** The save records the
    code hash it was written with. A load with other code does not continue
    from the snapshot: it shows the world (the layers are still true), and a
-   further run starts from the recipe. Today a load continues regardless.
+   further run starts from the recipe. *In part 2026-10-02:* a load whose
+   runs were made by other code asks whether to make the world again from
+   its history (the generator's `replayRuns`, generator/pipeline/
+   replayRuns.ts); opened as it is, it still continues from the snapshot.
+   The recipe, the status and the comparison are one value now
+   (world/worldRecord.ts).
 3. **A replayed level is keyed by recipe and code.** The artifact key of a
    level made by replay must name the recipe and the code, not only the
    level-0 bytes. *Resolved with step 4 (2026-10-01) without a new key:*

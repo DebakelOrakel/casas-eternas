@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-02
+- **new** Generator: opening a world made by an earlier version offers to make it again from its history with the same values, so it can be refined. `generator.replay`
+
 ## 2026-10-01
 - **changed** Generator: the Finishing step refines up to a chosen level and keeps what is already refined. `generator.finishing.depth`
 - **changed** Generator: Refine the world now refines level 1 and then every tile with land, with live progress; the tile pick on the map is gone. `generator.finishing.refine`

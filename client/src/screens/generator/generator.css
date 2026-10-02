@@ -83,11 +83,11 @@
   fill: none;
   stroke: var(--dc-accent, #d8912e);
   stroke-width: 5;
-  animation: generator-progress-pulse 1.8s ease-out infinite;
 }
-@keyframes generator-progress-pulse {
-  0% { r: 8; opacity: 0.85; }
-  100% { r: 42; opacity: 0; }
+/* The plume's source: the dot the rings rise from (design canvas,
+   Fortschritt.dc.html, variant C). */
+.generator-screen .compute-progress__core {
+  fill: var(--dc-accent, #d8912e);
 }
 /* The fill's colour is the same three-stage judgement the banner text states
    (below 20% of the Archean nothing has settled, 20-70% is the window where
@@ -100,9 +100,6 @@
 .generator-screen .compute-progress[data-stage='early'] .compute-progress__fill { fill: #7a8794; }
 .generator-screen .compute-progress[data-stage='window'] .compute-progress__fill { fill: #4f9d5d; }
 .generator-screen .compute-progress[data-stage='late'] .compute-progress__fill { fill: #c98a3c; }
-@media (prefers-reduced-motion: reduce) {
-  .generator-screen .compute-progress__pulse { animation: none; }
-}
 
 /* The overlay legend, at the left edge of the map: a header button that names it
    and counts what is in it, and a body that opens under it. Closed it is the

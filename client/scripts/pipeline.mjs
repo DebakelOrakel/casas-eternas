@@ -847,6 +847,17 @@ test("level 1's replay makes the saved world again, across a load and a checkpoi
     check('a replay resumed from its checkpoint lands on the same bytes', parts(CE.encodeCoupledTerrain(resumed.terrain)) === savedParts, JSON.stringify(checkpoint.position))
   }
   check('a history without its code is refused', RE.replayRefusal(recipe.history, 'abc') !== null)
+
+  // The same replay through the runtime (the generator's "make again" on
+  // load): progress per epoch, the end, the render, the same bytes.
+  const g = await freshPipeline()
+  g.dispatch({ type: 'replayRuns', plan: RE.planFromRecipe(recipe) })
+  await until(() => g.count('replayDone') >= 1 && g.messages.findIndex((m) => m.type === 'rendered') > g.messages.findIndex((m) => m.type === 'replayDone'), { label: 'the replay in the runtime', timeout: 600000 })
+  await quiet(g)
+  const done = g.last('replayDone')
+  const total = recipe.history.tectonics.reduce((n, r) => n + r.epochs, 0)
+  check('the runtime replays with progress per epoch, then its end, then a render', g.count('replayProgress') === total && done.epoch === after && done.archeanEpochs === archeanEpochs, `${g.count('replayProgress')} progress for ${total} epochs; epoch ${done.epoch}, archean ${done.archeanEpochs}`)
+  check('and lands on the same bytes', parts((await serialize(g)).mesh) === savedParts)
 })
 
 // ------------------------------------------------------------------------- run

@@ -164,6 +164,31 @@ console.log('\n— run history —')
   check('a value the run did not record reads as the default', older.tectonics[0].values['tectonics.alluvium'] === 70 && older.tectonics[0].values['climate.humidity'] === M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'climate.humidity').input.default)
 }
 
+// --- 2c. the world record ----------------------------------------------------
+// world/worldRecord.ts: what world.yaml says of a world, as one value. Written
+// and read back it must be the same record, and compare as unchanged — the
+// title bar's "unsaved" is this comparison.
+{
+  const WR = await L('/src/world/worldRecord.ts')
+  const WH = await L('/src/world/save/worldHistory.ts')
+  const values = Object.fromEntries(M.spec.WORLD_SPEC_FIELDS.map((f, i) => [f.path, f.input.min + ((i * 7) % 5) * ((f.input.max - f.input.min) / 5)]))
+  const run = (fields, epochs, extra = {}) => ({ epochs, generator: 'abc1234', code: 'deadbeefdeadbeef', values: WH.runValues(fields, values), ...extra })
+  const record = {
+    uid: '0f8e5c1a-7b2d-4c3e-9a1f-123456789abc', name: 'Calvessor', revision: 7,
+    spec: { seed: '983721401', values },
+    history: { genesis: [run(WH.GENESIS_RUN_FIELDS, 41)], tectonics: [run(WH.TECTONICS_RUN_FIELDS, 30), run(WH.TECTONICS_RUN_FIELDS, 12, { restored: true })] },
+    archeanEpochs: 41, epoch: 42, erosionRun: 42,
+  }
+  const yaml = WR.recordToYaml(record, 'abc1234')
+  const back = WR.recordFromYaml(yaml, { archeanEpochs: 41, epoch: 42 }, () => 'unused')
+  check('a world record survives world.yaml unchanged', JSON.stringify(back) === JSON.stringify(record), WR.recordDiff(record, back).join('; '))
+  check('and compares as unchanged', WR.recordSignature(back) === WR.recordSignature(record))
+  const renamed = { ...record, name: 'Other' }
+  check('a rename reads as a change, by name', WR.recordDiff(record, renamed).length === 1 && WR.recordDiff(record, renamed)[0].startsWith('name:'))
+  const legacy = WR.recordFromYaml(yaml.replace(/  uid: .*\n/, '').replace(/  name: .*\n/, ''), { archeanEpochs: 0, epoch: 0 }, () => 'derived-uid')
+  check('a save without uid or name takes the derived uid and the seed as its name', legacy.uid === 'derived-uid' && legacy.name === '983721401', `${legacy.uid} ${legacy.name}`)
+}
+
 // --- 3. identity -------------------------------------------------------------
 //
 // These two strings address every stored artifact, locally and on the server.

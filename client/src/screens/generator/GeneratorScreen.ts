@@ -24,7 +24,7 @@ import type { WaterBody } from '../../generator/surface/hydrology'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
-import type { WorkerOutboundMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
+import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
 import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
 import { drawContinentLabels } from '../../generator/render/continentLabelRenderer'
@@ -82,7 +82,6 @@ import { openWorld } from '../../world/query'
 import { createStepBar } from './StepBar'
 import { createSidebar } from '../../ui/sidebar/Sidebar'
 import { createMonthPlayer } from './monthPlayer'
-import { readRecipeValue as readYamlValue } from '../../world/save/recipeYaml'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { MIGRATION_INPUTS } from '../../generator/migration/migrationInputParams'
 import { ARCHEAN_INPUTS } from '../../generator/archean/archeanInputParams'
@@ -91,8 +90,10 @@ import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
 import { wrapValue } from '../../generator/core/field'
 import { TECTONICS_INPUTS } from '../../generator/tectonics/tectonicsInputParams'
 import { ECOLOGY_INPUTS, ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputParams'
-import { WORLD_SPEC_FIELDS, specFromYaml, specToYamlLines } from '../../world/save/worldSpec'
-import { GENESIS_RUN_FIELDS, TECTONICS_RUN_FIELDS, emptyWorldHistory, historyFromYaml, historyToYamlLines, openRun, runValues, tallyRun } from '../../world/save/worldHistory'
+import { WORLD_SPEC_FIELDS } from '../../world/save/worldSpec'
+import { recordDiff, recordFromYaml, recordSignature, recordToYaml, type WorldRecord } from '../../world/worldRecord'
+import { GENESIS_RUN_FIELDS, TECTONICS_RUN_FIELDS, emptyWorldHistory, openRun, runValues, tallyRun, type WorldHistory, type WorldRun } from '../../world/save/worldHistory'
+import { planFromRecipe } from '../../world/replay'
 import type { WorldSpec } from '../../world/save/worldSpec'
 import { displayValue, type InputParam } from '../../generator/core/inputParams'
 import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
@@ -304,7 +305,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   //
   // It is deliberately NOT part of the spec: renaming a world must not make it
   // a different one, so the name reaches neither readSpec() nor deriveWorldId()
-  // nor the world uid. It IS part of worldSignature, because renaming is an
+  // nor the world uid. It IS part of the record's signature (world/worldRecord.ts), because renaming is an
   // unsaved change like any other.
   let worldName = randomWorldName()
   let lastLandFraction = 0
@@ -319,8 +320,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The world as it was last ESTABLISHED — saved, loaded, or freshly regenerated.
   // Growing it from there (stepping the Archean, running tectonics, eroding, moving
   // a slider) is work that would be lost, so it counts as unsaved. See
-  // worldSignature() for what goes into the comparison.
-  let savedSignature = ''
+  // world/worldRecord.ts (recordSignature) for what goes into the comparison.
+  let savedRecord: WorldRecord | null = null
+  // Whether the console was told what made this world unsaved (recordDiff),
+  // once per change from saved.
+  let reportedUnsaved = false
   let markCleanOnNextRender = false
   // Set by the load path only. A world from a save arrives with its whole
   // history in the recipe but with NONE of the derived stages in this screen:
@@ -533,8 +537,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         <circle class="compute-progress__track" cx="60" cy="60" r="44"/>
         <g data-value="compute-progress-plume">
           <circle class="compute-progress__pulse" cx="60" cy="60" r="10"/>
-          <circle class="compute-progress__pulse" cx="60" cy="60" r="10" style="animation-delay: 0.55s"/>
-          <circle class="compute-progress__pulse" cx="60" cy="60" r="10" style="animation-delay: 1.1s"/>
+          <circle class="compute-progress__pulse" cx="60" cy="60" r="10"/>
+          <circle class="compute-progress__pulse" cx="60" cy="60" r="10"/>
+          <circle class="compute-progress__core" cx="60" cy="60" r="7"/>
         </g>
         <path class="compute-progress__fill" data-value="compute-progress-fill" d=""/>
       </svg>
@@ -1091,14 +1096,56 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // tectonics are processes you STOP (the 2026-08-06 objection to a
   // filling bar); the disc says how far along the window you are, the
   // banner says what that means.
+  // A world being made again on load (startReplay): epochs done of all,
+  // and the history it replays. Up here, with the pill that reads it, and
+  // not beside startReplay: the load and the regenerate reset them, and a
+  // `let` read before its line ran is the dead zone that once blanked this
+  // screen.
+  let replaying: { done: number; total: number } | null = null
+  let replayedHistory: WorldHistory | null = null
   const PROGRESS_R = 44
   const PROGRESS_CY = 60
   let progressTicker: ReturnType<typeof setInterval> | undefined
   // Set by dispose: what an await still in flight checks before it arms
   // anything new.
   let screenDisposed = false
-  let progressWavePhase = 0
   let progressPaused = false
+  // The wave's phase runs on the clock, not on the updates: drawn every
+  // frame while the disc shows a fill (progressFrame), so it moves
+  // smoothly whatever the run reports and however often. Its speed is the
+  // 0.6 rad a second it stepped by when it was redrawn once a second.
+  const WAVE_RAD_PER_MS = 0.6 / 1000
+  let progressFraction: number | null = null
+  let progressFrameId: number | null = null
+  // Where the wave stood when it last stopped (the Archean standing), so it
+  // starts again from there rather than jumping.
+  let wavePhaseHeld = 0
+  let waveClockStart = performance.now()
+  const wavePhaseNow = (): number => (progressPaused ? wavePhaseHeld : wavePhaseHeld + (performance.now() - waveClockStart) * WAVE_RAD_PER_MS)
+  // The plume's rings on the same clock, drawn here rather than by a CSS
+  // animation: Safari does not animate an SVG circle's `r` from keyframes,
+  // so the rings stayed round the dot (2026-10-02). The design canvas's
+  // curve (Fortschritt.dc.html, variant C): r 8 → 42 and opacity 0.85 → 0
+  // over 1.8 s, eased out, the three rings 0.55 s apart.
+  const PLUME_CYCLE_MS = 1800
+  const PLUME_OFFSETS_MS = [0, 550, 1100]
+  const plumeRings = [...computeProgressPlume.querySelectorAll<SVGCircleElement>('.compute-progress__pulse')]
+  const drawPlume = (now: number): void => {
+    plumeRings.forEach((ring, i) => {
+      const t = (((now - PLUME_OFFSETS_MS[i]) % PLUME_CYCLE_MS) + PLUME_CYCLE_MS) % PLUME_CYCLE_MS / PLUME_CYCLE_MS
+      const eased = 1 - (1 - t) * (1 - t)
+      ring.setAttribute('r', (8 + 34 * eased).toFixed(2))
+      ring.setAttribute('opacity', (0.85 * (1 - eased)).toFixed(3))
+    })
+  }
+  const progressFrame = (): void => {
+    progressFrameId = null
+    if (computeProgress.hidden || screenDisposed) return
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    if (progressFraction !== null) computeProgressFill.setAttribute('d', progressFillPath(progressFraction, wavePhaseNow()))
+    else if (!still) drawPlume(performance.now())
+    if (!still && !(progressPaused && progressFraction !== null)) progressFrameId = requestAnimationFrame(progressFrame)
+  }
   // The fill: the disc below a wavy water line at `fraction` of its height,
   // as one closed path — the wave across the chord, the circle's lower arc
   // back to the start.
@@ -1126,8 +1173,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     let fraction: number | null = null
     let stage: 'early' | 'window' | 'late' | null = null
     const archeanStanding = archeanNarrated && !archeanFinalised && !hasHandover && panelIndex === GENESIS_PANEL_INDEX
+    const wasPaused = progressPaused
     progressPaused = false
-    if (archeanRunning || archeanStanding) {
+    if (replaying) {
+      // A world made again on load (startReplay): its epochs done of all.
+      label = t('generator.replay.progress.label')
+      sub = t('generator.replay.progress.epoch', { epoch: replaying.done, total: replaying.total })
+      fraction = replaying.total > 0 ? replaying.done / replaying.total : 0
+    } else if (archeanRunning || archeanStanding) {
       const judged = archeanStage(archeanStabilised)
       label = judged.hint
       sub = judged.advice
@@ -1156,34 +1209,35 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       label = t('generator.step.migration.label')
     } else {
       computeProgress.hidden = true
+      progressFraction = null
       if (progressTicker !== undefined) { clearInterval(progressTicker); progressTicker = undefined }
       return
     }
+    // The wave holds its phase through a pause and goes on from it.
+    if (progressPaused && !wasPaused) wavePhaseHeld += (performance.now() - waveClockStart) * WAVE_RAD_PER_MS
+    if (!progressPaused && wasPaused) waveClockStart = performance.now()
     computeProgress.hidden = false
     computeProgressLabel.textContent = label
     computeProgressSub.textContent = sub ?? ''
     computeProgressSub.hidden = sub === null
+    progressFraction = fraction
     if (fraction === null) {
       computeProgressPlume.style.display = ''
+      if (progressFrameId === null) progressFrameId = requestAnimationFrame(progressFrame)
       computeProgressFill.setAttribute('d', '')
       delete computeProgress.dataset.stage
       computeProgress.setAttribute('aria-label', t('generator.progress.ariaRunning', { step: label }))
     } else {
       computeProgressPlume.style.display = 'none'
-      computeProgressFill.setAttribute('d', progressFillPath(fraction, progressWavePhase))
+      computeProgressFill.setAttribute('d', progressFillPath(fraction, wavePhaseNow()))
+      if (progressFrameId === null) progressFrameId = requestAnimationFrame(progressFrame)
       if (stage) computeProgress.dataset.stage = stage
       else delete computeProgress.dataset.stage
       computeProgress.setAttribute('aria-label', t('generator.progress.aria', { step: label, percent: formatValue(Math.round(fraction * 100), 'common.unit.percent') }))
     }
-    // The wave moves while the pill shows — once a second is enough, and
-    // not at all when motion is reduced or the Archean stands.
-    if (progressTicker === undefined && !screenDisposed) {
-      const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-      progressTicker = setInterval(() => {
-        if (!still && !progressPaused) progressWavePhase += 0.6
-        updateProgress()
-      }, 1000)
-    }
+    // The words and the fill's height once a second while the pill shows
+    // (the wave itself moves every frame, progressFrame).
+    if (progressTicker === undefined && !screenDisposed) progressTicker = setInterval(() => updateProgress(), 1000)
   }
 
   let lastPlateCount = 0
@@ -3981,6 +4035,16 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       return
     }
 
+    if (message.type === 'replayProgress') {
+      handleReplayProgress(message)
+      return
+    }
+
+    if (message.type === 'replayDone') {
+      handleReplayDone(message)
+      return
+    }
+
     if (message.type === 'genesisStatus') {
       handleGenesisStatus(message)
       return
@@ -4435,13 +4499,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // at every mutation and cleared at every save, and the one that gets forgotten is
   // the one that makes the icon lie — which is worse than no icon, because it is
   // believed.
-  function worldSignature(): string {
-    const spec = readSpec()
-    return JSON.stringify([worldName, spec.seed, spec.values, lastArcheanEpochs, lastEpoch, erosionRunCount])
+  // The world this screen holds, as one value (world/worldRecord.ts): what
+  // a save writes to world.yaml and what the comparison below reads.
+  function currentRecord(): WorldRecord {
+    return {
+      uid: worldUid, name: worldName, revision: worldRevision, spec: readSpec(), history: structuredClone(history),
+      archeanEpochs: lastArcheanEpochs, epoch: lastEpoch, erosionRun: erosionRunCount,
+    }
   }
 
   function markWorldEstablished(): void {
-    savedSignature = worldSignature()
+    savedRecord = currentRecord()
+    reportedUnsaved = false
     updateSaveIndicator()
   }
 
@@ -4460,9 +4529,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let chooserOpen = false
 
   function saveState(): TitleBarSaveState {
-    const signatureNow = worldSignature()
-    if (signatureNow !== savedSignature) {
-      return lastSave === undefined && savedSignature === '' ? { kind: 'new' } : { kind: 'unsaved' }
+    const now = currentRecord()
+    if (!savedRecord || recordSignature(now) !== recordSignature(savedRecord)) {
+      // What changed, said once to the console: a world that reads as
+      // unsaved right after a load is a bug, and this names its field.
+      if (savedRecord && !reportedUnsaved) {
+        reportedUnsaved = true
+        console.info('[generator] unsaved since the last save or load:', recordDiff(savedRecord, now).join('; '))
+      }
+      return lastSave === undefined && !savedRecord ? { kind: 'new' } : { kind: 'unsaved' }
     }
     if (!lastSave) return { kind: 'new' }
     return { kind: lastSave.target === 'server' ? 'server' : 'local', at: lastSave.at }
@@ -4518,47 +4593,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // thirteen ecology fold-outs, sits under root, and `input` bubbles.
   root.addEventListener('input', () => updateSaveIndicator())
 
+  // world.yaml, from the world as a record (world/worldRecord.ts).
   function buildWorldYaml(): string {
-    const name = worldName || seedInput.value || 'world'
-    return [
-      'apiVersion: casas-eternas/v1alpha1',
-      'kind: FlatWorld',
-      'metadata:',
-      `  name: ${name}`,
-      // The world's own identity, stable across further erosion and across
-      // re-saves — the key the server's world store is addressed by. Distinct
-      // from the TERRAIN's identity (deriveWorldId), which is supposed to move
-      // whenever the terrain does; see the note under status.
-      `  uid: ${worldUid}`,
-      'spec:',
-      ...specToYamlLines(readSpec()),
-      'status:',
-      // Only what state.json does NOT already carry. tectonicsRun and archeanEpochs
-      // used to sit here and in spec, duplicating the snapshot's own `epoch` and
-      // `archeanEpochs` — two sources for one fact, and nothing read the yaml copies.
-      // The erosion count has no home in the snapshot, so this stays load-bearing.
-      `  erosionRun: ${erosionRunCount}`,
-      // How many times this world has been written. The server's optimistic
-      // lock compares it, so two machines editing one world collide loudly
-      // instead of one silently overwriting the other.
-      `  revision: ${worldRevision}`,
-      // PROVENANCE, never a key (see app/buildVersion.ts): which build wrote
-      // this stand. Regenerating the same recipe on another build may well
-      // produce different terrain, and this is what lets a reader say so.
-      `  generator: ${BUILD_VERSION}`,
-      // NOT recorded here: the terrain's content id (world/identity's
-      // deriveWorldId). It would let a listing say "the server holds different
-      // terrain" without downloading 8 MB — but it hashes the DEQUANTISED
-      // precipitation layer, and the generator holds raw floats, so a value
-      // written here would differ from the one every reader computes. A hash
-      // that is subtly wrong is worse than an absent one; readers derive it
-      // from the save, the way the queryable reader does (world/save).
-      // The runs the world was made by, values and epochs per run — what
-      // spec's end values cannot say (world/save/worldHistory.ts). Absent
-      // while no run has happened.
-      ...historyToYamlLines(history),
-      '',
-    ].join('\n')
+    return recordToYaml(currentRecord(), BUILD_VERSION)
   }
 
   // Refresh every slider's readout label from its input value — used after a
@@ -5196,9 +5233,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     forgetSavedWorldId()
     // The previous world's peoples start on the previous world's land.
     migrationOrigins = []
+    // A replay still running for the previous world stops in the worker.
+    replaying = null
+    replayedHistory = null
     void noteSavedWorldId(file)
 
-    const seed = readYamlValue(yaml, 'spec.seed') ?? ''
+    // The world's record from the file (world/worldRecord.ts); the
+    // tectonics' epoch arrives with the restore render (lastEpoch).
+    const record = recordFromYaml(yaml, {
+      archeanEpochs: archeanPayload ? (archeanPayload.snapshot as { epoch: number }).epoch : (snapshot?.archeanEpochs ?? 0),
+      epoch: snapshot?.epoch ?? 0,
+    }, () => deriveWorldUid(new Uint8Array(elevation)))
+    const seed = record.spec.seed
     // One read of the recipe instead of a regex per key, with every gap filled by
     // the control's declared default.
     //
@@ -5208,18 +5254,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // saying why. A missing key means the save predates the knob, and those worlds
     // were generated with its default; keeping the user's last slider position
     // instead makes loading depend on what they were doing beforehand.
-    const spec = specFromYaml(yaml, seed)
+    const spec = record.spec
     seedInput.value = seed
     // A world saved before step 0 existed was named after its seed, so this
     // reads back as it always did rather than needing a migration.
-    worldName = readYamlValue(yaml, 'metadata.name') ?? seed
+    worldName = record.name
     worldNameInput.value = worldName
     // Identity, or a derived one for a save written before the field existed.
     // Deriving rather than rolling a fresh id is what keeps the same legacy
     // file opened on two machines a SINGLE world in the store — see
     // identity.deriveWorldUid.
-    worldUid = readYamlValue(yaml, 'metadata.uid') || deriveWorldUid(new Uint8Array(elevation))
-    worldRevision = Number(readYamlValue(yaml, 'status.revision') ?? 0)
+    worldUid = record.uid
+    worldRevision = record.revision
     mantleVigourInput.value = String(spec.values['genesis.mantleVigour'])
     waterInput.value = String(spec.values['genesis.water'])
     obliquityInput.value = String(spec.values['planet.obliquity'])
@@ -5227,7 +5273,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // How far the Archean got, read from whichever snapshot the file carries — the yaml
     // used to hold a second copy of this under spec. An Archean save reopens IN the
     // Archean, so the tectonics panel must still be able to finalise it.
-    lastArcheanEpochs = archeanPayload ? (archeanPayload.snapshot as { epoch: number }).epoch : (snapshot?.archeanEpochs ?? 0)
+    lastArcheanEpochs = record.archeanEpochs
     // A save WITH an Archean payload reopens inside the Archean, so the Tectonics
     // panel must still be able to commit it. A save without one is already past
     // that point — and saying so is what stops the panel from trying to commit an
@@ -5252,10 +5298,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     provinceInput.value = String(spec.values['ecology.provinceStrength'])
     for (const f of ECOLOGY_WEIGHT_FIELDS) abundance.set(f, Number(spec.values[ecologyWeightPath(f).replace('spec.', '')]))
     syncSliderLabels()
-    erosionRunCount = Number(readYamlValue(yaml, 'status.erosionRun') ?? 0)
+    erosionRunCount = record.erosionRun
     // The runs behind the file, carried on from here; a file from before the
     // block starts with none and the next run opens its first entry.
-    history = historyFromYaml(yaml)
+    history = record.history
     genesisTallied = lastArcheanEpochs
     // lastEpoch is set from the restore render's reported epoch (status
     // .tectonicsRun == the snapshot's epoch), so no need to set it here.
@@ -5264,12 +5310,72 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // bar's "saved in the browser" belongs to the world it names.
     const savedAt = kept ? new Date(kept.savedAt) : null
     lastSave = kept && savedAt && !Number.isNaN(savedAt.getTime()) ? { target: kept.where === 'server' ? 'server' : 'browser', at: savedAt } : undefined
+    // A world made by other code: offered to be made again from its history
+    // with this code, the only way it can be refined (world/replay.ts).
+    if (!archeanPayload && replayable(record) && await confirmDialog.ask({
+      titleKey: 'generator.replay.title', bodyKey: 'generator.replay.body',
+      confirmKey: 'generator.replay.confirm', cancelKey: 'generator.replay.cancel',
+    })) {
+      startReplay(record)
+      return
+    }
     markCleanOnNextRender = true
     restoredFromSave = true
     tectonicsRunRestored = !archeanPayload
     postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)) })
   }
 
+
+  // --- making a world again (world/replay.ts) -----------------------------
+
+  // A loaded world whose runs were made by other code, but whose history
+  // says enough to make it again: the Archean and the tectonics both ran.
+  function replayable(record: WorldRecord): boolean {
+    const runs = [...record.history.genesis, ...record.history.tectonics]
+    return record.history.genesis.length > 0 && record.history.tectonics.length > 0 && runs.some((run) => run.code !== GENERATOR_CODE)
+  }
+
+
+  // The loaded world made again in the worker in place of restoring it: the
+  // controls already show its values (the load set them); the file it came
+  // from is what a save compares against, so the world made again reads as
+  // a change.
+  function startReplay(record: WorldRecord): void {
+    const plan = planFromRecipe({ seed: record.spec.seed, width: MAP_WIDTH, height: MAP_HEIGHT, history: record.history })
+    const total = plan.tectonics.reduce((sum, run) => sum + run.epochs, 0)
+    replayedHistory = record.history
+    savedRecord = structuredClone(record)
+    reportedUnsaved = false
+    restoredFromSave = false
+    restoredRefinement = null
+    tectonicsRunRestored = false
+    forgetSavedWorldId()
+    replaying = { done: 0, total }
+    updateProgress()
+    postToWorker({ type: 'replayRuns', plan })
+  }
+
+  function handleReplayProgress(message: WorkerReplayProgressMessage): void {
+    replaying = { done: message.done, total: message.total }
+    updateProgress()
+  }
+
+  // The world made again: its history the same runs, made by this code; how
+  // far it was taken from the worker. The render that follows settles it as
+  // the end of a run does, so the climate and the rivers follow.
+  function handleReplayDone(message: WorkerReplayDoneMessage): void {
+    replaying = null
+    if (replayedHistory) {
+      const remade = (run: WorldRun): WorldRun => ({ ...run, code: GENERATOR_CODE, generator: BUILD_VERSION })
+      history = { genesis: replayedHistory.genesis.map(remade), tectonics: replayedHistory.tectonics.map(remade) }
+      replayedHistory = null
+    }
+    lastArcheanEpochs = message.archeanEpochs
+    genesisTallied = message.archeanEpochs
+    erosionRunCount = history.tectonics.reduce((sum, run) => sum + run.epochs, 0)
+    lastEpoch = message.epoch
+    tectonicsSettling = true
+  }
 
   // Dragging the band slider live-recomputes the climate (debounced) once a
   // world exists — the worker no-ops if there's no elevation yet. Recomputes
@@ -5607,6 +5713,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // erosion also zero erosionRunCount, but those are the SAME world evolving.
     worldUid = ''
     forgetSavedWorldId()
+    replaying = null
+    replayedHistory = null
     worldRevision = 0
     archeanFinalised = false
     hasHandover = false
@@ -6013,7 +6121,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // yet" rather than an empty strip waiting for the first slider to move.
   //
   // It has to run HERE, not beside createTitleBar and not beside the `input`
-  // listener: worldSignature() reads readSpec(), which reads `abundance` —
+  // listener: currentRecord() reads readSpec(), which reads `abundance` —
   // a `const` declared further down this function. Called any earlier it hits
   // that binding's temporal dead zone, the ReferenceError aborts the whole
   // screen build, and the generator comes up blank.

@@ -22,6 +22,9 @@ export interface ConfirmRequest {
   // "delete" — never "OK": a dialog whose buttons are Yes and No makes the
   // reader reconstruct the question before answering it.
   confirmKey: TKey
+  // What the safe answer is called, when "cancel" would not say it — the
+  // replay's question keeps the world either way (default: cancel).
+  cancelKey?: TKey
 }
 
 export interface ConfirmDialog {
@@ -86,7 +89,7 @@ export function createConfirmDialog(host: HTMLElement): ConfirmDialog {
       close(false)
       title.textContent = t(request.titleKey)
       body.textContent = t(request.bodyKey)
-      cancel.textContent = t('common.confirm.action.cancel')
+      cancel.textContent = t(request.cancelKey ?? 'common.confirm.action.cancel')
       go.textContent = t(request.confirmKey)
       dialog.setAttribute('aria-label', t(request.titleKey))
       root.hidden = false
