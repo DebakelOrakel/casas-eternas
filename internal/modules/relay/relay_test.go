@@ -50,6 +50,11 @@ func TestRelayCarriesAStream(t *testing.T) {
 	if _, err := js.Publish(ctx, "test.one", []byte("hello")); err != nil {
 		t.Fatal(err)
 	}
+	// Past NATS's default of 1 MB: a refine plan's report is ~1.3 MB on a
+	// 2048 × 1024 world (relay.go, maxPayload).
+	if _, err := js.Publish(ctx, "test.big", make([]byte, 2<<20)); err != nil {
+		t.Errorf("a 2 MB message: %v", err)
+	}
 	consumer, err := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{Durable: "reader", AckPolicy: jetstream.AckExplicitPolicy})
 	if err != nil {
 		t.Fatal(err)

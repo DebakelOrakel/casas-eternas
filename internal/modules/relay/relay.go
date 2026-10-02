@@ -69,12 +69,19 @@ func New(cfg Config) (*Module, error) {
 		}
 		probe.Close()
 	}
+	// A message may be up to maxPayload: the refine plan a level task
+	// reports lists every tile of levels 2 and 3 with what it waits for —
+	// ~10 000 tiles and past NATS's default of 1 MB on a 2048 × 1024 world
+	// (2026-10-01). 8 MB is NATS's own recommended ceiling; bulk bytes
+	// (worlds, artifacts) stay HTTP.
+	const maxPayload = 8 << 20
 	opts := &natsserver.Options{
 		ServerName: "casas-relay",
 		Host:       host,
 		Port:       port,
 		JetStream:  true,
 		StoreDir:   section.Storage.DirPath(),
+		MaxPayload: maxPayload,
 		// The process owns signals and logging; the server says what goes
 		// wrong through its errors and its readiness, nothing on its own.
 		NoSigs: true,

@@ -54,7 +54,12 @@ export interface ToroidalMapViewOptions {
   // meshes use) toward the patch rim, so the patch rim meets the base mesh
   // instead of cliffing over it. Patch extent scales with altitude, so its
   // resolution sharpens exactly as the camera descends.
-  nearDetail?: { detailSurface: ElevationSurface; baseSurface: ElevationSurface; getActive: () => boolean; getAltitude: () => number }
+  //
+  // `colorAt`, when given, colours the patch per vertex — rgb in 0..1 into
+  // out[0..2] at (u, v) — on a material of its own with no texture: for a
+  // patch whose ground is finer than the map texture's texels (the
+  // incubator's tile levels, ~100 m against 3.9 km a texel).
+  nearDetail?: { detailSurface: ElevationSurface; baseSurface: ElevationSurface; getActive: () => boolean; getAltitude: () => number; colorAt?: (u: number, v: number, out: Float32Array) => void }
   // Cast shadows from the relief sun onto the near-detail patch, the patch
   // being its own caster — real shadows where the terrain is closest to the
   // camera, nowhere else: the relief levels span the whole world, and one
@@ -447,6 +452,10 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   let patchNormals: Float32Array | null = null
   let patchHeights: Float32Array | null = null
   let patchColors: Float32Array | null = null
+  const rgb = new Float32Array(3)
+  // The patch's own material when it is coloured per vertex: lit like the
+  // relief, no texture.
+  let patchMaterial: StandardMaterial | null = null
   let patchLastCenterX = 0
   let patchLastCenterZ = 0
   let patchLastSpacing = 0
@@ -547,9 +556,11 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
         patchNormals![idx * 3 + 1] = inv
         patchNormals![idx * 3 + 2] = -dhdz * inv
         const brightness = 1 - Math.min(0.4, Math.hypot(dhdx, dhdz) * 0.8)
-        patchColors![idx * 4] = brightness
-        patchColors![idx * 4 + 1] = brightness
-        patchColors![idx * 4 + 2] = brightness
+        if (nearDetail.colorAt) nearDetail.colorAt(patchUvs![idx * 2], patchUvs![idx * 2 + 1], rgb)
+        else rgb.fill(1)
+        patchColors![idx * 4] = rgb[0] * brightness
+        patchColors![idx * 4 + 1] = rgb[1] * brightness
+        patchColors![idx * 4 + 2] = rgb[2] * brightness
         patchColors![idx * 4 + 3] = 1
       }
     }
@@ -575,7 +586,11 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     const altitude = nearDetail.getAltitude()
     if (!patchMesh) {
       patchMesh = MeshBuilder.CreateGround('mapNearDetail', { width: 1, height: 1, subdivisions: PATCH_SUBDIVISIONS, updatable: true }, scene)
-      patchMesh.material = reliefMaterial
+      if (nearDetail.colorAt) {
+        patchMaterial = new StandardMaterial('mapNearDetailMaterial', scene)
+        patchMaterial.specularColor = new Color3(0, 0, 0)
+        patchMesh.material = patchMaterial
+      } else patchMesh.material = reliefMaterial
       patchMesh.renderingGroupId = NEAR_RENDERING_GROUP
       patchMesh.scaling.y = heightScale
       sun.includedOnlyMeshes.push(patchMesh)
@@ -764,6 +779,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       material.dispose()
       texture.dispose()
       reliefMaterial.dispose()
+      patchMaterial?.dispose()
       reliefTexture.dispose()
       shadows?.dispose()
       sun.dispose()

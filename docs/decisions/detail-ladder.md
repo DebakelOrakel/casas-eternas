@@ -359,6 +359,21 @@ what makes them. Not yet known: what the depressions are (overdeepened
 glacial troughs, flexure, the engine's own pits) — to be looked at with
 the incubator.
 
+**The tile levels on the same world** (2026-10-01/02, a refine plan to
+level 3 on the local server, two workers, level 1 reused): the plan took
+~8 s from the stored level 1 (2 610 level-2 and 8 763 level-3 tiles, its
+report 1.31 MB — past NATS's default of 1 MB, so the relay's limit is
+8 MB); the tiles took **3 h 53 min**.
+
+| | tiles | nodes a tile (mean) | nodes in all | bake a tile (mean / max) | on disk |
+|---|---|---|---|---|---|
+| L2 | 2 610 | 12.7 k | 33 M | 0.5 / 2 s | 1.3 GB |
+| L3 | 8 763 | 85 k | 749 M | 2.8 / 8 s | 30.5 GB |
+
+The bakes alone sum to 7.2 worker-hours; the rest is reading parents.
+Level 3 is the size to watch: 30 GB for one world, without a cap on the
+artifact store (`artifacts.cap` empty by default) nothing evicts it.
+
 ## Step 5 — the tile levels: DECIDED 2026-10-01, plan
 
 What step 5 of the build order builds, worked out against the code as it

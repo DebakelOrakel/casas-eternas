@@ -14,7 +14,8 @@ import { listServerArtifacts, type ServerArtifact } from '../../server/artifacts
 import { artifactKey } from '../../storage/ArtifactStore'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { meshLevelMesh, meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
-import { isCurrentArtifact } from '../../world/levels'
+import { isCurrentArtifact, parseStage } from '../../world/levels'
+import { createTiledSurface, type TiledSurface } from './tiledSurface'
 import { openWorld } from '../../world/query'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
@@ -75,6 +76,14 @@ const NEAR_MIN_ALTITUDE_M = 1000
 // fine relief level's (the world width / 2048).
 const PATCH_VIEW_FRACTION = 0.1
 
+// The patch's spacing below which it reads the tiles of level 3 (floor
+// 125 m, flat land ~490 m), and of level 2 (floor ~500 m), metres; above,
+// level 1 alone. They bound how many tiles a view asks for: the patch
+// spans 192 spacings, ~77 km at level 3's bound (two tiles across), ~290 km
+// at level 2's (two to three).
+const TILE_LEVEL3_SPACING_M = 400
+const TILE_LEVEL2_SPACING_M = 1500
+
 // The tilt limit, degrees off vertical (the generator's is 60°).
 const MAX_TILT_DEG = 80
 
@@ -131,6 +140,12 @@ function paintLevel(sampler: ReturnType<typeof createMeshSampler>): Uint8Array {
 export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   const scene = new Scene(ctx.engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
+
+  // The finest ground near the focus (tiledSurface.ts), once a level is
+  // shown; set when tiles arrive, so the patch is drawn again.
+  let tiled: TiledSurface | null = null
+  let tilesArrived = false
+  const patchAltitude = (): number => (camera.getZoom() > 1 ? camera.getAltitude() : camera.getViewWidth() / 16)
 
   // The level's surface, once one is shown. The view is built before any
   // level is there, so the patch starts on a flat stand-in and is handed the
@@ -190,7 +205,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       detailSurface: flat,
       baseSurface: flat,
       getActive: () => levelSurface !== null && (camera.getZoom() > 1 || camera.getViewWidth() < MAP_WORLD_WIDTH * PATCH_VIEW_FRACTION),
-      getAltitude: () => (camera.getZoom() > 1 ? camera.getAltitude() : camera.getViewWidth() / 16),
+      getAltitude: () => patchAltitude(),
+      // The patch's colour from its own heights (the finest level there),
+      // not from the map texture's 3.9 km texels.
+      colorAt: (u, v, out) => {
+        const c = elevationToColor(tiled ? tiled.elevationAtUV(u, v) : 0)
+        out[0] = c[0] / 255
+        out[1] = c[1] / 255
+        out[2] = c[2] / 255
+      },
     },
     nearShadows: { sunElevationDeg: SUN_ELEVATION_DEG },
   })
@@ -222,6 +245,16 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   scaleBar.element.hidden = true
   scene.onBeforeRenderObservable.add(() => {
     if (!levelSurface) return
+    // The finest level the patch can show at its spacing: its quads span
+    // 16 × the altitude over 192 (ToroidalMapView's near patch).
+    if (tiled) {
+      const spacingM = (patchAltitude() * 16) / 192 / UNITS_PER_METER
+      tiled.setLevel(spacingM < TILE_LEVEL3_SPACING_M ? 3 : spacingM < TILE_LEVEL2_SPACING_M ? 2 : 1)
+      if (tilesArrived) {
+        tilesArrived = false
+        mapView.setNearDetailSurfaces(tiled.surface, tiled.surface)
+      }
+    }
     const focus = camera.getFocus()
     scaleBar.update(`${focus.x.toFixed(3)},${focus.z.toFixed(3)},${camera.getZoom().toFixed(4)},${camera.getYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`)
   })
@@ -273,7 +306,18 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const surface = createMeshSurface(sampler, RELIEF_HEIGHT_SCALE)
     levelSurface = surface
     mapView.setReliefSurfaces(surface, surface)
-    mapView.setNearDetailSurfaces(surface, surface)
+    // The tiles of levels 2 and 3 the server holds for this terrain.
+    const versions = new Map<string, string>()
+    for (const a of (await listServerArtifacts())?.artifacts ?? []) {
+      if (a.worldUid === uid && a.worldId === chosen.worldId && parseStage(a.stage)?.tile) versions.set(a.stage, a.pipelineVersion)
+    }
+    step(`${versions.size} tiles listed`)
+    if (disposed) return false
+    tiled = createTiledSurface({
+      store, worldUid: uid, worldId: chosen.worldId, width: world.width, height: world.height, base: sampler, versions,
+      heightScale: RELIEF_HEIGHT_SCALE, onLoaded: () => { tilesArrived = true },
+    })
+    mapView.setNearDetailSurfaces(tiled.surface, tiled.surface)
     mapView.setEnabled(true)
     step('shown')
     return true
