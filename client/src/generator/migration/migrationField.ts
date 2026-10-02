@@ -11,6 +11,7 @@ import { MinHeap } from '../core/minHeap'
 import { wrapValue } from '../core/field'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { MIGRATION_TUNING } from './migrationTuneParams'
+import { detHypot } from '../core/detMath'
 
 export interface MigrationOrigin {
   cell: number // gy * resX + gx (on the climate grid)
@@ -61,7 +62,7 @@ function buildCostField(precipitation: Float32Array, elevation: Float32Array, co
       }
       const eE = sampleElevationAtCell(elevation, wrapValue(gx + 1, CLIMATE_RES_X), gy, worldWidth, worldHeight)
       const eS = sampleElevationAtCell(elevation, gx, wrapValue(gy + 1, CLIMATE_RES_Y), worldWidth, worldHeight)
-      const slope = Math.hypot(eE - e, eS - e)
+      const slope = detHypot(eE - e, eS - e)
       let c = MIGRATION_TUNING.landBase + MIGRATION_TUNING.slopeCost * slope
       // Corridor discount: coastal (an ocean 4-neighbour) or a river cell.
       const coastal =

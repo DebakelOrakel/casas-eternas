@@ -110,6 +110,7 @@ const M = {
   passV2: await L('/src/generator/surface/erosionPassV2.ts'),
   layers: await L('/src/world/save/worldLayers.ts'),
   inputs: await L('/src/world/save/loadWorldInputs.ts'),
+  detMath: await L('/src/generator/core/detMath.ts'),
 }
 
 let failures = 0
@@ -119,6 +120,8 @@ const check = (name, ok, detail = '') => {
 }
 
 const W = 512, H = 256
+// See the deterministic math check in [2].
+const DET_MATH_HASH = 'dadf96b6'
 const T = M.density.MESH_TUNING
 const UNITS_TO_M = M.config.METERS_PER_CELL
 const domain = M.domain.torusDomain(W, H)
@@ -1357,6 +1360,37 @@ console.log('\n[2] determinism')
   M.remesh.remesh(a.mesh, a.state, M.build.densityTarget(a.state), { seed: 7 })
   M.remesh.remesh(b.mesh, b.state, M.build.densityTarget(b.state), { seed: 7 })
   check('the same remesh on the same state gives the same mesh', meshHash(a.mesh) === meshHash(b.mesh), meshHash(a.mesh))
+}
+
+// The generator's math (core/detMath.ts) is the same bits in every engine:
+// the hash of a fixed set of its values, recorded once and confirmed equal
+// in V8 and JavaScriptCore (2026-10-02). It moves only when detMath does —
+// and then every world moves with it.
+{
+  const D = M.detMath
+  let seed = 7
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
+  const u = (lo, hi) => lo + (hi - lo) * rnd()
+  const f = new Float64Array(1)
+  const words = new Uint32Array(f.buffer)
+  let h = 0x811c9dc5
+  const add = (v) => { f[0] = v; h = Math.imul(h ^ words[0], 0x01000193) >>> 0; h = Math.imul(h ^ words[1], 0x01000193) >>> 0 }
+  let worst = 0
+  const ulps = (a, b) => (a === b ? 0 : Math.abs(a - b) / (Math.abs(b) * 2 ** -52))
+  for (let i = 0; i < 20000; i++) {
+    const a = u(-20, 20), b = u(-20, 20), p = u(0, 50), q = u(-1, 1)
+    const pairs = [
+      [D.detExp(a), Math.exp(a)], [D.detLog(p), Math.log(p)], [D.detSin(a), Math.sin(a)], [D.detCos(a), Math.cos(a)],
+      [D.detTan(q), Math.tan(q)], [D.detAtan2(a, b), Math.atan2(a, b)], [D.detAsin(q), Math.asin(q)], [D.detAcos(q), Math.acos(q)],
+      [D.detPow(p, b / 10), Math.pow(p, b / 10)], [D.detHypot(a, b), Math.hypot(a, b)],
+    ]
+    for (const [det, ref] of pairs) {
+      add(det)
+      worst = Math.max(worst, ulps(det, ref))
+    }
+  }
+  check('the deterministic math stays near Math (a few ulp; pow, by exp·log, more)', worst < 64, `${worst.toFixed(1)} ulp at most`)
+  check('and computes the bits recorded in V8 and JavaScriptCore', h.toString(16) === DET_MATH_HASH, h.toString(16))
 }
 
 // ------------------------------------------------------------ byte hashes

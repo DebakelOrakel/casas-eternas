@@ -253,6 +253,7 @@
   "generator.jobs.summary.progress": "Gesamtfortschritt",
   "generator.jobs.summary.end": "Voraussichtliches Ende",
   "generator.jobs.summary.endIn": "in {duration}",
+  "generator.jobs.summary.partial": "nur bis L{level}",
   "generator.jobs.summary.workers": "Worker",
   "generator.jobs.summary.workersBusy": "{busy} von {all} belegt",
   "generator.jobs.plan": "bis L{stage} · bestellt {time}",

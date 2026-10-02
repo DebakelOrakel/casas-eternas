@@ -1,4 +1,5 @@
 import type { Domain } from '../core/domain'
+import { sq } from '../core/detMath'
 
 // PERIODIC DELAUNAY TRIANGULATION on a domain — the mesh's substrate
 // (decision 11 of docs/decisions/adaptive-mesh.md: the topology is the
@@ -345,9 +346,9 @@ export class PeriodicTriangulation {
   private classify(f: Float64Array, px: number, py: number, o0: number, o1: number, o2: number): void {
     this.onEdge = -1
     this.atVertex = -1
-    const l0 = (f[2] - f[0]) ** 2 + (f[3] - f[1]) ** 2
-    const l1 = (f[4] - f[2]) ** 2 + (f[5] - f[3]) ** 2
-    const l2 = (f[0] - f[4]) ** 2 + (f[1] - f[5]) ** 2
+    const l0 = sq(f[2] - f[0]) + sq(f[3] - f[1])
+    const l1 = sq(f[4] - f[2]) + sq(f[5] - f[3])
+    const l2 = sq(f[0] - f[4]) + sq(f[1] - f[5])
     const e0 = o0 <= ON_EDGE_EPS * l0
     const e1 = o1 <= ON_EDGE_EPS * l1
     const e2 = o2 <= ON_EDGE_EPS * l2
@@ -566,7 +567,7 @@ export class PeriodicTriangulation {
       // Both triangles of the flip must be strictly counter-clockwise, by
       // a margin: a sliver flipped into existence is a sliver the next
       // removal trips over.
-      const scale = (dx - ax) ** 2 + (dy - ay) ** 2 + (px - ax) ** 2 + (py - ay) ** 2
+      const scale = sq(dx - ax) + sq(dy - ay) + sq(px - ax) + sq(py - ay)
       if (PeriodicTriangulation.orient(ax, ay, dx, dy, px, py) <= ORIENT_EPS * scale) continue
       if (PeriodicTriangulation.orient(dx, dy, bx, by, px, py) <= ORIENT_EPS * scale) continue
       const t2 = this.triangleOf(this.twin[e])
@@ -594,7 +595,7 @@ export class PeriodicTriangulation {
   // too few vertices to stay a triangulation.
   remove(v: number): boolean {
     if (!this.vAlive[v] || this.aliveVertices <= 4) return false
-    const maxLenSq = (Math.min(this.domain.width, this.domain.height) * MAX_EDGE_FRACTION) ** 2
+    const maxLenSq = sq(Math.min(this.domain.width, this.domain.height) * MAX_EDGE_FRACTION)
     // Refuse when any two link vertices are further apart than the margin:
     // every edge the hole's triangulation can contain joins two of them.
     let n = this.outgoing(v, this.star)
@@ -681,7 +682,7 @@ export class PeriodicTriangulation {
     const lx = rx + this.domain.deltaX(this.vx[l], rx)
     const ly = ry + this.domain.deltaY(this.vy[l], ry)
     const area = PeriodicTriangulation.orient(rx, ry, ux, uy, lx, ly)
-    const scale = (ux - rx) ** 2 + (uy - ry) ** 2 + (lx - rx) ** 2 + (ly - ry) ** 2
+    const scale = sq(ux - rx) + sq(uy - ry) + sq(lx - rx) + sq(ly - ry)
     if (area <= ORIENT_EPS * scale) return false
     for (let j = 0; j < n; j++) {
       const w = this.to(this.star[j])
@@ -729,7 +730,7 @@ export class PeriodicTriangulation {
     const errors: string[] = []
     const f = this.f
     let aliveT = 0
-    const maxLenSq = (Math.min(this.domain.width, this.domain.height) * MAX_EDGE_FRACTION) ** 2
+    const maxLenSq = sq(Math.min(this.domain.width, this.domain.height) * MAX_EDGE_FRACTION)
     let maxEdgeSq = 0
     let nonDelaunay = 0
     for (let t = 0; t < this.triSlots; t++) {

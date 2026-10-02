@@ -1,5 +1,6 @@
 import { fineDetailNoise } from '../elevation/ridgedNoise'
 import { DEFAULT_ENGINE_PARAMS, type ErosionEngineParams, type ErosionForcing } from './erosionEngine'
+import { detExp, detPow } from '../core/detMath'
 
 // The GRID half of the erosion-v2 forcing assembly: coarse fields in, the
 // engine's fine-grid forcing out. Pure — no simulation state, no climate
@@ -84,7 +85,7 @@ export function upsampleAt(coarse: Float32Array, resX: number, resY: number, x: 
 // into `out`.
 export function forcingAt(coarse: CoarseForcingInputs, sigma: number, x: number, y: number, width: number, height: number, out: Float64Array): void {
   out[0] = coarse.uplift ? upsampleAt(coarse.uplift, coarse.forcingResX, coarse.forcingResY, x, y, width, height) : 0
-  out[1] = Math.exp(sigma * fineDetailNoise((x * LITHO_LATTICE_X) / width, (y * LITHO_LATTICE_Y) / height, LITHO_LATTICE_X, LITHO_LATTICE_Y, coarse.lithoSeed))
+  out[1] = detExp(sigma * fineDetailNoise((x * LITHO_LATTICE_X) / width, (y * LITHO_LATTICE_Y) / height, LITHO_LATTICE_X, LITHO_LATTICE_Y, coarse.lithoSeed))
     * (coarse.hardness ? upsampleAt(coarse.hardness, coarse.forcingResX, coarse.forcingResY, x, y, width, height) : 1)
 }
 
@@ -105,7 +106,7 @@ export function rockContrastSigma(controls: ErosionControlsV2): number {
 // is the σ applied in forcingAt.
 export function engineParamsFor(controls: ErosionControlsV2): ErosionEngineParams {
   const alluvium = controls.alluvium ?? 50
-  const settleScale = Math.pow(2, (50 - alluvium) / 50)
+  const settleScale = detPow(2, (50 - alluvium) / 50)
   return {
     ...DEFAULT_ENGINE_PARAMS,
     settleXiKm: DEFAULT_ENGINE_PARAMS.settleXiKm * settleScale,

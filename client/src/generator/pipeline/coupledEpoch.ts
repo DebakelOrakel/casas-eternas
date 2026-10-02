@@ -43,6 +43,7 @@ import { stepEpoch, type PlateSimulation, type SimEvent } from '../tectonics/pla
 import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
 import { METERS_PER_CELL } from '../core/mapConfig'
 import { coarseForcingFields } from './erosionForcing'
+import { detPow } from '../core/detMath'
 
 // THE COUPLED EPOCH (ADAPTIVE_MESH_PLAN.md phase 5.1; decisions 5, 6, 8 of
 // docs/decisions/adaptive-mesh.md): erosion runs inside every tectonic
@@ -557,7 +558,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     // hold; the diffusivity from the cold — solifluction in the
     // periglacial band, where freeze and thaw move regolith that nothing
     // else would.
-    slopeScale[v] = Math.pow(k, -SURFACE_TUNING.massWastingLithoExponent) * (1 + COVER_TUNING.criticalSlopeRise * c)
+    slopeScale[v] = detPow(k, -SURFACE_TUNING.massWastingLithoExponent) * (1 + COVER_TUNING.criticalSlopeRise * c)
     const tempC = upsampleAt(weather.temperature, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
     const cold = Math.min(1, Math.max(0, (SURFACE_TUNING.solifluctionBelowC - tempC) / SURFACE_TUNING.solifluctionSpanC))
     diffScale[v] = 1 + (SURFACE_TUNING.solifluctionBoost - 1) * cold

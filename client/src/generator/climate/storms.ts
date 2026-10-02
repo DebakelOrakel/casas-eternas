@@ -2,6 +2,7 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { downsampleBox, downsampleMax, wrapIndex2 } from '../core/field'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
+import { detHypot } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -64,7 +65,7 @@ export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, mont
         const t = monthsT[at + i]
         const u = wind[(at + i) * 2]
         const v = wind[(at + i) * 2 + 1]
-        const speed = Math.hypot(u, v)
+        const speed = detHypot(u, v)
         const rainMonth = land[i] ? monthsP[at + i] / months : 0
 
         // Thunder: heat and water; the sea builds fewer (it heats slowly).
@@ -117,7 +118,7 @@ export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, mont
           const pole = north[cy] // +1 top: poleward is −y
           const dx = wind[(at + i) * 2] - T.cycloneDriftWest
           const dy = wind[(at + i) * 2 + 1] - pole * T.cycloneDriftPole
-          const d = Math.hypot(dx, dy) || 1
+          const d = detHypot(dx, dy) || 1
           x += dx / d
           y += dy / d
           if (land[i]) weight *= T.cycloneLandKeep
@@ -142,7 +143,7 @@ export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, mont
         dust[i] += load
         const u = meanWind[i * 2]
         const v = meanWind[i * 2 + 1]
-        const s = Math.hypot(u, v)
+        const s = detHypot(u, v)
         if (s < 0.05) break
         x += u / s
         y += v / s

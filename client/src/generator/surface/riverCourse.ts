@@ -2,6 +2,7 @@ import { COVER_BY_BIOME } from './cover'
 import { mulberry32 } from '../core/rng'
 import { dischargeToM3s } from './hydrology'
 import type { RiverGraph, RiverReach } from './riverGraph'
+import { detAtan2, detExp, detHypot, detLog2, detPow, detSin } from '../core/detMath'
 
 // THE RIVER COURSE — what a river does below the channel head, on the graph
 // (ADAPTIVE_MESH_PLAN.md phase 3, decision 14 of adaptive-mesh.md). Three
@@ -93,12 +94,12 @@ export function channelWidthM(dischargeM3s: number): number {
   return 3.5 * Math.sqrt(Math.max(0, dischargeM3s))
 }
 function channelDepthM(dischargeM3s: number): number {
-  return 0.3 * Math.pow(Math.max(0, dischargeM3s), 0.4)
+  return 0.3 * detPow(Math.max(0, dischargeM3s), 0.4)
 }
 
 // The Leopold–Wolman braiding threshold slope for a discharge.
 function braidingSlope(dischargeM3s: number): number {
-  return 0.0125 * Math.pow(Math.max(1e-3, dischargeM3s), -0.44)
+  return 0.0125 * detPow(Math.max(1e-3, dischargeM3s), -0.44)
 }
 
 export function classifyPattern(dischargeM3s: number, slope: number, lengthM: number, widthM: number, bankStrength: number, sedimentM3: number): RiverPattern {
@@ -137,7 +138,7 @@ function unwrappedPath(graph: RiverGraph, reach: RiverReach, cellM: number): Flo
 
 function pathLength(p: Float64Array, count: number): number {
   let length = 0
-  for (let i = 1; i < count; i++) length += Math.hypot(p[i * 2] - p[i * 2 - 2], p[i * 2 + 1] - p[i * 2 - 1])
+  for (let i = 1; i < count; i++) length += detHypot(p[i * 2] - p[i * 2 - 2], p[i * 2 + 1] - p[i * 2 - 1])
   return length
 }
 
@@ -149,13 +150,13 @@ function resample(p: Float64Array, count: number, spacing: number): Float64Array
   const step = total / (n - 1)
   let seg = 0
   let segStart = 0
-  let segLen = Math.hypot(p[2] - p[0], p[3] - p[1])
+  let segLen = detHypot(p[2] - p[0], p[3] - p[1])
   for (let i = 0; i < n; i++) {
     const s = Math.min(total, i * step)
     while (seg < count - 2 && s > segStart + segLen) {
       segStart += segLen
       seg++
-      segLen = Math.hypot(p[seg * 2 + 2] - p[seg * 2], p[seg * 2 + 3] - p[seg * 2 + 1])
+      segLen = detHypot(p[seg * 2 + 2] - p[seg * 2], p[seg * 2 + 3] - p[seg * 2 + 1])
     }
     const t = segLen > 0 ? Math.min(1, Math.max(0, (s - segStart) / segLen)) : 0
     out[i * 2] = p[seg * 2] + (p[seg * 2 + 2] - p[seg * 2]) * t
@@ -180,7 +181,7 @@ function distanceToPath(x: number, y: number, p: Float64Array, count: number): n
     const vy = by - ay
     const len2 = vx * vx + vy * vy
     const t = len2 > 0 ? Math.min(1, Math.max(0, ((x - ax) * vx + (y - ay) * vy) / len2)) : 0
-    const d = Math.hypot(x - (ax + vx * t), y - (ay + vy * t))
+    const d = detHypot(x - (ax + vx * t), y - (ay + vy * t))
     if (d < best) best = d
   }
   return best
@@ -216,10 +217,10 @@ function meander(base: Float64Array, baseCount: number, widthM: number, bankStre
     for (let i = 1; i < n - 1; i++) {
       const tx = p[i * 2 + 2] - p[i * 2 - 2]
       const ty = p[i * 2 + 3] - p[i * 2 - 1]
-      const tl = Math.hypot(tx, ty) || 1
+      const tl = detHypot(tx, ty) || 1
       const s = i * spacing
       const taper = Math.min(1, s / (3 * widthM), (n - 1 - i) * spacing / (3 * widthM))
-      const a = (0.3 * Math.sin((2 * Math.PI * s) / wavelength + phase) + 0.05 * (rng() - 0.5)) * widthM * taper
+      const a = (0.3 * detSin((2 * Math.PI * s) / wavelength + phase) + 0.05 * (rng() - 0.5)) * widthM * taper
       p[i * 2] += (-ty / tl) * a
       p[i * 2 + 1] += (tx / tl) * a
     }
@@ -227,7 +228,7 @@ function meander(base: Float64Array, baseCount: number, widthM: number, bankStre
   const oxbows: Float64Array[] = []
   const kernelLength = Math.ceil((4 * lambda) / spacing)
   const kernel = new Float64Array(kernelLength)
-  for (let k = 0; k < kernelLength; k++) kernel[k] = Math.exp((-k * spacing) / lambda) * (spacing / lambda)
+  for (let k = 0; k < kernelLength; k++) kernel[k] = detExp((-k * spacing) / lambda) * (spacing / lambda)
   const minSeparation = Math.ceil((3 * widthM) / spacing) + 2
   // A neck joins two points at most a loop's perimeter apart along the
   // line — a window of forty widths bounds the search, which is otherwise
@@ -245,7 +246,7 @@ function meander(base: Float64Array, baseCount: number, widthM: number, bankStre
       const by = p[i * 2 + 3] - p[i * 2 + 1]
       const cross = ax * by - ay * bx
       const dot = ax * bx + ay * by
-      kappa[i] = Math.atan2(cross, dot) / spacing
+      kappa[i] = detAtan2(cross, dot) / spacing
     }
     // Near-bank velocity excess: curvature convolved upstream over λ.
     const next = new Float64Array(p.length)
@@ -255,7 +256,7 @@ function meander(base: Float64Array, baseCount: number, widthM: number, bankStre
       for (let k = 0; k < kernelLength && i - k >= 0; k++) u += kappa[i - k] * kernel[k]
       const tx = p[i * 2 + 2] - p[i * 2 - 2]
       const ty = p[i * 2 + 3] - p[i * 2 - 1]
-      const tl = Math.hypot(tx, ty) || 1
+      const tl = detHypot(tx, ty) || 1
       const taper = Math.min(1, (i * spacing) / (2 * lambda), ((n - 1 - i) * spacing) / (2 * lambda))
       // Outward: a left turn (positive curvature) migrates to the right bank.
       let d = -rate * widthM * u * widthM * taper
@@ -270,7 +271,7 @@ function meander(base: Float64Array, baseCount: number, widthM: number, bankStre
     for (let i = 1; i < n - 1 && !cut; i++) {
       const jEnd = Math.min(n - 1, i + maxSeparation)
       for (let j = i + minSeparation; j < jEnd; j++) {
-        if (Math.hypot(p[i * 2] - p[j * 2], p[i * 2 + 1] - p[j * 2 + 1]) < 1.5 * widthM) {
+        if (detHypot(p[i * 2] - p[j * 2], p[i * 2 + 1] - p[j * 2 + 1]) < 1.5 * widthM) {
           if (oxbows.length < 32) oxbows.push(p.slice(i * 2, (j + 1) * 2))
           const kept = new Float64Array((n - (j - i - 1)) * 2)
           kept.set(p.subarray(0, (i + 1) * 2), 0)
@@ -314,10 +315,10 @@ function weave(base: Float64Array, baseCount: number, widthM: number, count: num
       const i1 = Math.min(n - 1, i + 1)
       const tx = p[i1 * 2] - p[i0 * 2]
       const ty = p[i1 * 2 + 1] - p[i0 * 2 + 1]
-      const tl = Math.hypot(tx, ty) || 1
+      const tl = detHypot(tx, ty) || 1
       const s = i * spacing
       const taper = Math.min(1, s / (4 * widthM), ((n - 1 - i) * spacing) / (4 * widthM))
-      const offset = (centre * (0.6 + 0.4 * Math.sin((2 * Math.PI * s) / wavelength + phase)) + 0.4 * widthM * Math.sin((2 * Math.PI * s) / (wavelength / 3) + phase2)) * taper
+      const offset = (centre * (0.6 + 0.4 * detSin((2 * Math.PI * s) / wavelength + phase)) + 0.4 * widthM * detSin((2 * Math.PI * s) / (wavelength / 3) + phase2)) * taper
       line[i * 2] = p[i * 2] + (-ty / tl) * offset
       line[i * 2 + 1] = p[i * 2 + 1] + (tx / tl) * offset
     }
@@ -360,7 +361,7 @@ export function computeRiverCourses(graph: RiverGraph, options: RiverCourseOptio
     } else if (pattern === 'braided' || pattern === 'anastomosing') {
       const braided = pattern === 'braided'
       const sc = braidingSlope(dischargeM3s)
-      const count = braided ? Math.min(5, Math.max(2, 2 + Math.round(Math.log2(Math.max(1, slope / sc))))) : 2 + (rng() < 0.4 ? 1 : 0)
+      const count = braided ? Math.min(5, Math.max(2, 2 + Math.round(detLog2(Math.max(1, slope / sc))))) : 2 + (rng() < 0.4 ? 1 : 0)
       const threads = weave(base, reach.cellCount, widthM, count, braided ? 1.6 * widthM : 2 * widthM, braided ? 8 * widthM : 25 * widthM, spacing, rng)
       for (const t of threads) {
         lines.push(toTexels(t, t.length / 2, cellM, graph.width, graph.height))
@@ -388,7 +389,7 @@ export function computeRiverCourses(graph: RiverGraph, options: RiverCourseOptio
       const my = p[n * 2 - 1]
       const dx = mx - ax
       const dy = my - ay
-      const dl = Math.hypot(dx, dy) || 1
+      const dl = detHypot(dx, dy) || 1
       const count = 2 + (reach.sedimentM3 > 1e9 ? 1 : 0) + (rng() < 0.5 ? 1 : 0)
       const active = Math.floor(rng() * count)
       for (let k = 0; k < count; k++) {

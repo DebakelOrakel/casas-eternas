@@ -5,6 +5,7 @@ import type { PlateSeed } from '../plateSeeds'
 import type { MergeEvent, PlateSimulation, RiftEvent, SimEvent } from '../plateSimulationTypes'
 import type { BoundaryPassResult } from './boundaryPass'
 import type { RaftEventResult } from './raftEvents'
+import { detHypot } from '../../core/detMath'
 
 
 
@@ -76,11 +77,11 @@ export function collectEventsAndApplyPlateChurn(sim: PlateSimulation, pass: Boun
   // above), NOT the plate rift/merge below — a continent is a raft across
   // plates, so plate-count changes and continent events are decoupled.
   for (const m of raftMerges) {
-    const len = Math.hypot(m.tangentX, m.tangentY) || 1
+    const len = detHypot(m.tangentX, m.tangentY) || 1
     events.push({ type: 'continent_collided', nameA: m.nameA ?? undefined, nameB: m.nameB ?? undefined, x: m.x, y: m.y, dirX: m.tangentX / len, dirY: m.tangentY / len })
   }
   if (raftSplit) {
-    const len = Math.hypot(raftSplit.axisX, raftSplit.axisY) || 1
+    const len = detHypot(raftSplit.axisX, raftSplit.axisY) || 1
     events.push({ type: 'continent_broke_up', name: raftSplit.parentName ?? undefined, x: raftSplit.x, y: raftSplit.y, dirX: raftSplit.axisX / len, dirY: raftSplit.axisY / len })
   }
   // Supercontinent milestone, latched by supercontinentActive so it fires

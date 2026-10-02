@@ -4,6 +4,7 @@ import type { Raft, RaftBlob, RaftMergeEvent, RaftSplitEvent } from './raftTypes
 import { toroidalDistanceSq, wrappedDelta } from '../core/toroidal'
 import { sampleNearestWorld, wrapValue } from '../core/field'
 import { deservesContinentName, pickUnusedRaftName } from './raftNames'
+import { detHypot } from '../core/detMath'
 
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
 // plates, decoupled from them — see docs/decisions/continental-crust-rafts.md. A
@@ -181,7 +182,7 @@ export function compactRafts(rafts: Raft[], rate: number, width: number, height:
     for (const blob of raft.blobs) {
       const dx = wrappedDelta(blob.x, cx, width)
       const dy = wrappedDelta(blob.y, cy, height)
-      const dist = Math.hypot(dx, dy)
+      const dist = detHypot(dx, dy)
       const excess = dist - compactRadius
       if (excess <= 0) continue
       const pull = (excess * rate) / dist
@@ -378,7 +379,7 @@ export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, epoc
           const dy = wrappedDelta(overlap.blobB.y, overlap.blobA.y, height)
           const seamX = wrapValue((overlap.blobA.x + dx / 2), width)
           const seamY = wrapValue((overlap.blobA.y + dy / 2), height)
-          const len = Math.hypot(dx, dy) || 1
+          const len = detHypot(dx, dy) || 1
           merges.push({ nameA, nameB, x: seamX, y: seamY, tangentX: -dy / len, tangentY: dx / len })
           if (!rafts[i].name && rafts[j].name) rafts[i].name = rafts[j].name
           for (const blob of rafts[j].blobs) rafts[i].blobs.push(blob)

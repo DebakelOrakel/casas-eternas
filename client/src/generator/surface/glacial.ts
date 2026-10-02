@@ -3,6 +3,7 @@ import { CLIMATE_TUNING } from '../climate/climateTuneParams'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
 import { SURFACE_TUNING } from './surfaceTuneParams'
+import { detExp, detPow } from '../core/detMath'
 
 // ICE AS A PROCESS (ADAPTIVE_MESH_PLAN.md phase 6, docs/design/glacial.md;
 // decided 2026-09-23: steady state per epoch, cirques as an ELA band in
@@ -197,7 +198,7 @@ export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
         // The flux per unit width: over the node's cell width (its area's
         // square root), the mesh's counterpart of the raster's cell.
         const widthM = Math.sqrt(areaOf[v]) * cellM
-        h = Math.pow((q / widthM) / (gamma * s * s * s), 0.2)
+        h = detPow((q / widthM) / (gamma * s * s * s), 0.2)
         if (h > t.iceMaxThicknessM) h = t.iceMaxThicknessM
       }
       thickness[v] = 0.5 * thickness[v] + 0.5 * h
@@ -260,7 +261,7 @@ export function glacialErosionOnMesh(mesh: PeriodicTriangulation, z: Float32Arra
     const zM = elevationToMeters(z[v] - SEA_LEVEL)
     const sliding = h * Math.max(t.iceMinSlope, slope[v])
     const nearLine = (zM - elaM[v]) / t.glacialBuzzsawBandM
-    const buzzsaw = 1 + t.glacialBuzzsawBoost * Math.exp(-nearLine * nearLine)
+    const buzzsaw = 1 + t.glacialBuzzsawBoost * detExp(-nearLine * nearLine)
     let cut = t.glacialErosionPerSliding * sliding * epochYears * buzzsaw
     if (cut > t.glacialErosionMaxM) cut = t.glacialErosionMaxM
     cutM[v] = cut

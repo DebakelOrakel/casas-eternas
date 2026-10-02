@@ -4,6 +4,7 @@ import { capsuleWeight } from './capsule'
 import { wrappedDelta } from '../core/toroidal'
 import { buildFeatureBuckets } from './elevationField'
 import { wrapValue } from '../core/field'
+import { detExp, detLog } from '../core/detMath'
 
 // U(x) — the tectonic uplift-rate field, the erosion-v2 engine's forcing
 // (docs/design/erosion-v2.md, "The tectonics interface"). The v1 pass
@@ -69,7 +70,7 @@ export function computeUpliftField(
   if (features.length === 0) return result
   const buckets = buildFeatureBuckets(features, width, height)
   const { bucketsX, bucketsY, bucketSizeX, bucketSizeY } = buckets
-  const decayPerEpoch = Math.log(2) / params.activityHalfLifeEpochs
+  const decayPerEpoch = detLog(2) / params.activityHalfLifeEpochs
   const scaleX = width / outWidth
   const scaleY = height / outHeight
   for (let py = 0; py < outHeight; py++) {
@@ -90,7 +91,7 @@ export function computeUpliftField(
             const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
             const weight = capsuleWeight(wrappedDelta(wx, feature.x, width), wrappedDelta(wy, feature.y, height), feature.tangentX, feature.tangentY, halfLength, perpRadius)
             if (weight <= 0) continue
-            const activity = Math.exp(-feature.epochsSinceDeposit * decayPerEpoch)
+            const activity = detExp(-feature.epochsSinceDeposit * decayPerEpoch)
             upliftSum += feature.thickness * activity * weight
             weightSum += weight
           }

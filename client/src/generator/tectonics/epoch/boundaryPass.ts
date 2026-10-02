@@ -10,6 +10,7 @@ import { classifyBoundaryMotion } from '../plateVelocityDecomposition'
 import { TECTONICS_TUNING } from '../tectonicsTuneParams'
 import { findOrCreateFeatureIndex } from '../terrainFeatures'
 import type { MergeEvent, PlateSimulation, RiftEvent } from '../plateSimulationTypes'
+import { detPow } from '../../core/detMath'
 
 
 
@@ -124,7 +125,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
     sim.latticeAccumulated[index] += epochConvergence * classification.rate
 
     if (classification.elevationSign !== 0) {
-      const ageMultiplier = TECTONICS_TUNING.ageMultiplierFloor + TECTONICS_TUNING.ageMultiplierRange * Math.pow(2, -sim.latticeLockedEpochs[index] / TECTONICS_TUNING.ageMultiplierHalfLifeEpochs)
+      const ageMultiplier = TECTONICS_TUNING.ageMultiplierFloor + TECTONICS_TUNING.ageMultiplierRange * detPow(2, -sim.latticeLockedEpochs[index] / TECTONICS_TUNING.ageMultiplierHalfLifeEpochs)
       const amount = Math.abs(epochConvergence) * classification.rate * ageMultiplier * classification.elevationSign
       // Boundary tangent (the ridge's own long axis): perpendicular to the
       // seed-to-seed normal, so a feature can be laid down as an oriented

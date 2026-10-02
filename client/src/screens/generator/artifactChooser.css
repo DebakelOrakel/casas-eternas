@@ -262,16 +262,16 @@
 .job-chooser .ac-tiles {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-/* A job's group row, then its levels' rows, indented under it. */
-.jc-group {
-  border-bottom-color: transparent;
-}
-.jc-group .ac-world {
-  font-weight: 600;
-}
+/* A job's rows, one per level: the first names the world, no line
+   between them. */
 .jc-level {
   min-height: 46px;
-  padding-left: 18px;
+}
+.jc-level--inner {
+  border-bottom-color: transparent;
+}
+.jc-level .ac-world {
+  font-weight: 600;
 }
 .jc-cell {
   display: flex;

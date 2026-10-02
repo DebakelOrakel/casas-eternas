@@ -195,7 +195,11 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     } else if (job.state === 'cancelled' || job.state === 'failed') {
       state = job.state
       stateText = t(`generator.jobs.state.${job.state}` as TKey)
-    } else if (level.running > 0) {
+    } else if (level.running > 0 || level.startedAt) {
+      // Once a level has started it runs until it ends, also in the moment
+      // between one tile's end and the next tile's first report — that
+      // moment showed "waiting for a worker" and dropped the projected end
+      // (2026-10-02).
       state = 'running'
       stateText = t('generator.jobs.state.running')
     } else if (level.queued > 0) {
@@ -222,16 +226,45 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     return { stage: level.stage, state, stateText, fraction, detail: parts.join(' · '), startedAt: level.startedAt ?? null, end }
   }
 
-  // A job's end: the last level's, when every level has one; else none
-  // (a level not started has no rate to project from).
-  function jobEnd(views: LevelView[]): number | null {
+  // A job's end, and how far it reaches: every level's own end where it has
+  // one, else the time that level took in the world's last finished job
+  // (each level from the end of the one before it, so tile levels that
+  // overlap count once). Where neither is known the reckoning stops, and
+  // `until` says the level it reached; null `until` is the whole job.
+  function jobEnd(job: BakeJob, views: LevelView[], now: number): { at: number; until: number | null } | null {
     if (views.length === 0) return null
-    let end = 0
+    const reference = referenceOf(job)
+    let at = now
+    let reached: LevelView | null = null
     for (const v of views) {
-      if (!v.end) return null
-      end = Math.max(end, v.end.at)
+      if (v.end) at = Math.max(at, v.end.at)
+      else {
+        const took = reference?.get(v.stage)
+        // Partial only up to a level still running: up to one already done
+        // the reckoning would end now, and the share read 100 %.
+        if (took === undefined) return reached === null || reached.state === 'done' ? null : { at, until: reached.stage }
+        at += took
+      }
+      reached = v
     }
-    return end
+    return { at, until: null }
+  }
+
+  // The last finished job of the same world and plan with level times: how
+  // long each level took after the one before it ended.
+  function referenceOf(job: BakeJob): Map<number, number> | null {
+    const uid = job.request?.worldUid
+    const done = (jobs ?? []).find((j) => j !== job && j.state === 'done' && j.request?.worldUid === uid && j.request?.plan === job.request?.plan
+      && (j.levels ?? []).length > 0 && j.levels!.every((l) => l.startedAt && l.endedAt))
+    if (!done) return null
+    const out = new Map<number, number>()
+    let before: number | null = null
+    for (const l of [...done.levels!].sort((a, b) => a.stage - b.stage)) {
+      const end = Date.parse(l.endedAt!)
+      out.set(l.stage, end - (before ?? Date.parse(l.startedAt!)))
+      before = end
+    }
+    return out
   }
 
   // --- painting --------------------------------------------------------------
@@ -265,67 +298,81 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     let span = 0
     let last = 0
     let unknown = false
+    let until: number | null = null
     let busy = 0
     for (const job of active) {
       busy += (job.levels ?? []).reduce((n, l) => n + l.running, 0)
-      const end = jobEnd(levelsOf(job, now))
+      const end = jobEnd(job, levelsOf(job, now), now)
       const started = job.startedAt ? Date.parse(job.startedAt) : NaN
       if (end === null || Number.isNaN(started)) {
         unknown = true
         continue
       }
       spent += now - started
-      span += end - started
-      last = Math.max(last, end)
+      span += end.at - started
+      last = Math.max(last, end.at)
+      if (end.until !== null) until = until === null ? end.until : Math.min(until, end.until)
     }
     const known = active.length > 0 && !unknown && last > 0
-    tileValue('progress').textContent = active.length > 0 && span > 0 ? `${Math.round((100 * spent) / span)} %` : '–'
+    tileValue('progress').textContent = known && span > 0 ? `${Math.round((100 * spent) / span)} %` : '–'
     tileValue('end').textContent = known ? formatClock(new Date(last)) : '–'
-    root.querySelector('[data-hint="end"]')!.textContent = known ? t('generator.jobs.summary.endIn', { duration: formatDuration(last - now) }) : ''
+    root.querySelector('[data-hint="end"]')!.textContent = !known ? ''
+      : until !== null ? t('generator.jobs.summary.partial', { level: until })
+      : t('generator.jobs.summary.endIn', { duration: formatDuration(last - now) })
     tileValue('workers').textContent = workers > 0 ? t('generator.jobs.summary.workersBusy', { busy, all: workers }) : String(busy)
   }
 
-  // A job: its group row, then a row per level.
+  // A job: a row per level (2026-10-02 — a head row of its own stood mostly
+  // empty). The first row names the world and what was ordered and holds
+  // cancel; the rows below it belong to the same job. A job without level
+  // rows (an older server) is one row with its own bar.
   function renderJob(job: BakeJob, now: number): HTMLElement[] {
     const views = levelsOf(job, now)
     const uid = job.request?.worldUid ?? ''
-    const group = document.createElement('div')
-    group.className = 'ac-row jc-group'
+    const worldCell = (): HTMLElement => {
+      const world = document.createElement('span')
+      world.className = 'ac-name'
+      const name = document.createElement('span')
+      name.className = 'ac-world'
+      name.textContent = worldNames.get(uid) || uid || '–'
+      const ordered = document.createElement('span')
+      ordered.className = 'ac-id'
+      ordered.textContent = job.request?.plan === 'refine'
+        ? t('generator.jobs.plan', { stage: job.request.stage, time: job.queuedAt ? formatClock(job.queuedAt) : '' })
+        : jobStageName(job)
+      world.append(name, ordered)
+      return world
+    }
+    const stateCell = (state: BakeJob['state'], text: string, title?: string): HTMLElement => {
+      const cell = document.createElement('span')
+      cell.className = 'ac-state jc-state'
+      cell.dataset.state = state
+      cell.textContent = text
+      if (title) cell.title = title
+      return cell
+    }
 
-    const world = document.createElement('span')
-    world.className = 'ac-name'
-    const name = document.createElement('span')
-    name.className = 'ac-world'
-    name.textContent = worldNames.get(uid) || uid || '–'
-    const ordered = document.createElement('span')
-    ordered.className = 'ac-id'
-    ordered.textContent = job.request?.plan === 'refine'
-      ? t('generator.jobs.plan', { stage: job.request.stage, time: job.queuedAt ? formatClock(job.queuedAt) : '' })
-      : jobStageName(job)
-    world.append(name, ordered)
-    group.appendChild(world)
-
-    group.appendChild(document.createElement('span'))
-    const state = document.createElement('span')
-    state.className = 'ac-state jc-state'
-    state.dataset.state = job.state
-    state.textContent = t(`generator.jobs.state.${job.state}` as TKey)
-    if (job.error) state.title = job.error
-    group.appendChild(state)
-
-    // The job's share: its time spent of its projected whole, or done.
-    const started = job.startedAt ? Date.parse(job.startedAt) : NaN
-    const end = jobEnd(views)
-    const share = job.state === 'done' ? 1 : views.length === 0 ? (bakeFraction(job) ?? null) : end !== null && !Number.isNaN(started) && end > started ? Math.min(1, (now - started) / (end - started)) : null
-    group.appendChild(progressCell(share, ''))
-    const ended = job.endedAt && job.state !== 'queued' && job.state !== 'running' ? { at: Date.parse(job.endedAt), projected: false } : null
-    group.appendChild(timeCell(job.startedAt ?? job.queuedAt ?? null, ended ?? (end !== null && job.state === 'running' ? { at: end, projected: true } : null)))
-    group.appendChild(cancelCell(job))
-
-    const rows = views.map((view) => {
+    if (views.length === 0) {
       const line = document.createElement('div')
       line.className = 'ac-row jc-level'
-      line.appendChild(document.createElement('span'))
+      const ended = job.endedAt && job.state !== 'queued' && job.state !== 'running' ? { at: Date.parse(job.endedAt), projected: false } : null
+      line.append(
+        worldCell(),
+        document.createElement('span'),
+        stateCell(job.state, t(`generator.jobs.state.${job.state}` as TKey), job.error),
+        progressCell(job.state === 'done' ? 1 : (bakeFraction(job) ?? null), job.error ?? ''),
+        timeCell(job.startedAt ?? job.queuedAt ?? null, ended),
+        cancelCell(job),
+      )
+      return [line]
+    }
+
+    return views.map((view, i) => {
+      const line = document.createElement('div')
+      line.className = 'ac-row jc-level'
+      // The rows of one job read as one: no line between them.
+      if (i < views.length - 1) line.classList.add('jc-level--inner')
+      line.appendChild(i === 0 ? worldCell() : document.createElement('span'))
       const level = document.createElement('span')
       level.className = 'ac-levels'
       const chip = document.createElement('span')
@@ -334,17 +381,12 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
       chip.textContent = `L${view.stage}`
       level.appendChild(chip)
       line.appendChild(level)
-      const s = document.createElement('span')
-      s.className = 'ac-state jc-state'
-      s.dataset.state = view.state
-      s.textContent = view.stateText
-      line.appendChild(s)
+      line.appendChild(stateCell(view.state, view.stateText))
       line.appendChild(progressCell(view.fraction, view.detail))
       line.appendChild(timeCell(view.startedAt, view.end))
-      line.appendChild(document.createElement('span'))
+      line.appendChild(i === 0 ? cancelCell(job) : document.createElement('span'))
       return line
     })
-    return [group, ...rows]
   }
 
   // A bar with its percent, and a line under it.

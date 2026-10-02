@@ -2,6 +2,7 @@ import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
 import { toroidalDistanceSq } from '../core/toroidal'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import { rasterCellAt, type RiverGraph } from './riverGraph'
+import { detHypot } from '../core/detMath'
 
 // THE COAST AS A FEATURE (ADAPTIVE_MESH_PLAN.md F5, docs/design/coast.md
 // "Forerunner"): the shoreline cut into REACHES with attributes like a
@@ -178,7 +179,7 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
     const gi = gy * climateResX + gx
     const u = wind[gi * 2]
     const v = wind[gi * 2 + 1]
-    const speed = Math.hypot(u, v)
+    const speed = detHypot(u, v)
     if (speed > 1e-6) {
       // March upwind over the sea, one cell per step.
       const dx = -u / speed

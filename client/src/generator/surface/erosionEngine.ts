@@ -15,6 +15,7 @@ import {
   type EngineViews,
   type TerrainViews,
 } from './erosionEngineState'
+import { detAtan2, detExp, detHypot, detPow, detSin } from '../core/detMath'
 
 export { FLAG_HAS_ACCUM_WEIGHTS, FLAG_HAS_COAST_MASK, FLAG_HAS_STATUS_MASK } from './erosionEngineState'
 
@@ -379,16 +380,16 @@ export function kernelLtdScan(v: EngineViews, a0: number, a1: number): void {
       let slope: number
       if (s2 <= 0) slope = s1
       else if (s2 >= s1) slope = (own - filled[nd]) / SQRT2
-      else slope = Math.hypot(s1, s2)
+      else slope = detHypot(s1, s2)
       if (slope > bestSlope) { bestSlope = slope; bestFacet = f; bestS1 = s1; bestS2 = s2; bestNc = nc; bestNd = nd }
     }
     ltdFallback[cell] = fallback
     if (bestFacet >= 0) {
       const orient = LTD_FACETS[bestFacet][2]
-      const alpha = bestS2 <= 0 ? 0 : bestS2 >= bestS1 ? QUARTER_TURN : Math.atan2(bestS2, bestS1)
+      const alpha = bestS2 <= 0 ? 0 : bestS2 >= bestS1 ? QUARTER_TURN : detAtan2(bestS2, bestS1)
       ltdFacet[cell] = bestFacet
-      ltdDeltaC[cell] = -orient * Math.sin(alpha)
-      ltdDeltaD[cell] = orient * SQRT2 * Math.sin(QUARTER_TURN - alpha)
+      ltdDeltaC[cell] = -orient * detSin(alpha)
+      ltdDeltaD[cell] = orient * SQRT2 * detSin(QUARTER_TURN - alpha)
       ltdMode[cell] = 4 | (filled[bestNc] < own ? 1 : 0) | (filled[bestNd] < own ? 2 : 0)
     } else {
       ltdFacet[cell] = NO_SLOT
@@ -489,7 +490,7 @@ export function kernelHillMoves(v: EngineViews, a0: number, a1: number, kp: Kern
       const boost = 1 / (1 - ratio * ratio)
       // The pair's diffusivity at its own size (ErosionEngineParams.hillRefKm2,
       // hillScaleExponent).
-      const sizeScale = ((0.5 * (areaRel[cell] + areaRel[nb]) * refM2) / 1e6 / kp.hillRefKm2) ** kp.hillScaleExponent
+      const sizeScale = detPow((0.5 * (areaRel[cell] + areaRel[nb]) * refM2) / 1e6 / kp.hillRefKm2, kp.hillScaleExponent)
       const coefficient = Math.min(diffM2 * sizeScale * diffScale[cell] * geom * Math.min(boost, 12), DIFFUSION_PAIR_CAP * Math.min(ownArea, areaRel[nb] * refM2))
       edgeMove[e] = coefficient * dz
     }
@@ -918,7 +919,7 @@ function fluvialCell(v: EngineViews, cell: number, params: ErosionEngineParams, 
   if (accumulation[cell] * cellKm2 < params.channelHeadKm2) return 0
   const distKm = (cellM / 1000) * lenRel[nbrStart[cell] + flowDir[cell]]
   const dischargeKm2 = accumulation[cell] * cellKm2 + params.baseAreaRel * areaRel[cell] * cellKm2
-  const F = (params.kappaDt * erodibility[cell] * Math.pow(dischargeKm2, params.m)) / distKm
+  const F = (params.kappaDt * erodibility[cell] * detPow(dischargeKm2, params.m)) / distKm
   const znew = (old + F * zr) / (1 + F)
   const cut = old - znew
   z[cell] = znew
@@ -1025,12 +1026,12 @@ function sedimentCell(v: EngineViews, cell: number, params: ErosionEngineParams,
   // Abrasion first: the coarse that becomes fine over this reach travels
   // on as fine from here.
   if (coarse > 0) {
-    const abraded = coarse * (1 - Math.exp(-reachKm / params.abrasionKm))
+    const abraded = coarse * (1 - detExp(-reachKm / params.abrasionKm))
     coarse -= abraded
     fine += abraded
   }
-  let depositFine = fine * (1 - Math.exp(-reachKm / (settle * widthScale)))
-  let depositCoarse = coarse * (1 - Math.exp(-reachKm / (params.settleCoarseKm * widthScale)))
+  let depositFine = fine * (1 - detExp(-reachKm / (settle * widthScale)))
+  let depositCoarse = coarse * (1 - detExp(-reachKm / (params.settleCoarseKm * widthScale)))
   let deposit = depositFine + depositCoarse
   const area = areaRel[cell]
   const column = columnM3 * area

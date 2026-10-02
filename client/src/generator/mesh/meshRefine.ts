@@ -9,6 +9,7 @@ import { compactMesh, decodeMesh, encodeMesh, permute } from './meshSerial'
 import { MeshState } from './meshState'
 import type { PeriodicTriangulation } from './periodicDelaunay'
 import { refine } from './remesh'
+import { detPow } from '../core/detMath'
 
 // ONE RUNG OF THE LADDER (decision 3 of docs/decisions/adaptive-mesh.md; the
 // tile ladder of ADAPTIVE_MESH_PLAN.md phase 4.5): a parent mesh refined to
@@ -106,7 +107,7 @@ export function levelSynthesis(options: { seed: number; level: number; budget: n
   const levelWidth = Math.round(width / budget)
   const levelHeight = Math.round(height / budget)
   const scales = seedCascadeScales(levelWidth)
-  const amplitudes = scales.map((_, i) => Math.pow(CASCADE_FALLOFF, i))
+  const amplitudes = scales.map((_, i) => detPow(CASCADE_FALLOFF, i))
   const norm = amplitudes.reduce((a, b) => a + b, 0)
   const seed = levelSeed(options)
   const ridgeSeed = (seed ^ 0x5f356495) >>> 0

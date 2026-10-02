@@ -2,6 +2,7 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { downsampleBox, downsampleMax, wrapIndex2 } from '../core/field'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
+import { detHypot } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -46,7 +47,7 @@ export function applyPhenomena(monthsT: Float32Array, months: number, wind: Floa
         for (let dx = -T.fogReachCells; dx <= T.fogReachCells; dx++) {
           const j = wrapIndex(gx + dx, gy + dy)
           if (land[j]) continue
-          const d = Math.hypot(dx, dy)
+          const d = detHypot(dx, dy)
           if (d < bestD) { bestD = d; best = j }
         }
       }
@@ -73,7 +74,7 @@ export function applyPhenomena(monthsT: Float32Array, months: number, wind: Floa
         if (!land[i]) continue
         const u = wind[(at + i) * 2]
         const v = wind[(at + i) * 2 + 1]
-        const speed = Math.hypot(u, v)
+        const speed = detHypot(u, v)
 
         // Fog: a cold sea, a wind from it, air warmer than it.
         const sea = seaOf[i]
@@ -87,7 +88,7 @@ export function applyPhenomena(monthsT: Float32Array, months: number, wind: Floa
           if (dx < -RX / 2) dx += RX
           if (dy > RY / 2) dy -= RY
           if (dy < -RY / 2) dy += RY
-          const onshore = (u * dx + v * dy) / (speed * Math.hypot(dx, dy))
+          const onshore = (u * dx + v * dy) / (speed * detHypot(dx, dy))
           const cold = Math.min(1, Math.max(0, -anomaly[sea] / T.fogFullColdC))
           const lift = Math.min(1, Math.max(0, (monthsT[at + i] - monthsT[at + sea]) / T.fogFullContrastC))
           const f = cold * Math.min(1, Math.max(0, onshore) / T.fogFullOnshore) * lift * reach[i]

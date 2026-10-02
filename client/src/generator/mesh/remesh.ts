@@ -3,6 +3,7 @@ import { hilbertOrder } from './hilbert'
 import { MESH_TUNING } from './meshDensity'
 import type { MeshState } from './meshState'
 import type { PeriodicTriangulation } from './periodicDelaunay'
+import { sq } from '../core/detMath'
 
 // REMESHING with hysteresis (decision 8 of docs/decisions/adaptive-mesh.md).
 // Between epochs — and, from a bare lattice, as the way the mesh is built
@@ -89,7 +90,7 @@ export function refine(mesh: PeriodicTriangulation, state: MeshState, target: Ta
         const b = mesh.to(e)
         const h = Math.min(targets[a], targets[b])
         const lsq = mesh.edgeLengthSq(e)
-        if (lsq <= (insertRatio * h) ** 2) continue
+        if (lsq <= sq(insertRatio * h)) continue
         const ax = mesh.vx[a]
         const ay = mesh.vy[a]
         cx.push(ax + d.deltaX(mesh.vx[b], ax) / 2)

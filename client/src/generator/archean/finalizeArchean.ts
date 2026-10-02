@@ -12,6 +12,7 @@ import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { toroidalDistanceSq } from '../core/toroidal'
 import { assignRaftNames } from '../crust/raftNames'
 import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
+import { sq } from '../core/detMath'
 
 // Plate tectonics begins: the Archean world becomes a PlateSimulation.
 //
@@ -70,7 +71,7 @@ export function convectionCellSeeds(mantle: Float32Array, width: number, height:
   // Strongest extrema win the space; weaker ones inside the exclusion radius are
   // the same cell seen twice.
   candidates.sort((a, b) => b.strength - a.strength)
-  const minSepSq = (MIN_SEED_SEPARATION_FRAC * Math.min(width, height)) ** 2
+  const minSepSq = sq(MIN_SEED_SEPARATION_FRAC * Math.min(width, height))
   const seeds: PlateSeed[] = []
   for (const c of candidates) {
     if (seeds.some((s) => toroidalDistanceSq(s.x, s.y, c.x, c.y, width, height) < minSepSq)) continue

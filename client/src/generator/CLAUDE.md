@@ -18,7 +18,8 @@ Where this is going: [docs/design/generator-pipeline.md](../../../docs/design/ge
 ```
 pipeline/   messages (the worker contract), runtime (stage state + handlers)
 core/       mapConfig, toroidal, rng, field (the shared samplers), minHeap, interpolation,
-            domain (the topology: periodicity, distance and latitude on the torus)
+            domain (the topology: periodicity, distance and latitude on the torus),
+            detMath (exp, log, sin, cos … the same bits in every JS engine)
 mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay (the
             triangulation on a domain), lattice (the bootstrap), hilbert (the insertion
             order), meshDensity (the ONE density rule, MESH_TUNING), meshState (per-node
@@ -197,6 +198,15 @@ Tuning constants *are* hashed, via `derivePipelineVersion`, but only one module
 feeds it today.
 
 ## Traps that have bitten before
+
+**Math is not the same in every engine.** `Math.exp`, `log`, `sin`, `cos`,
+`tan`, `atan2`, `pow`, `hypot` and `**` may differ in the last bit between
+V8 (Chrome, the Node job worker) and JavaScriptCore (Safari); a world made in
+Safari was made again by the server identically up to epoch 93 of 151, then
+not (2026-10-02). Use `core/detMath.ts` (`detExp`, `detSin`, `sq` …) — a
+port of fdlibm out of exact operations only. `make lint` refuses the others
+in `generator/`, `render/` excepted; `harness:mesh` holds a hash of
+detMath's values confirmed in both engines.
 
 **Routing differs by step, and conflating them is a recurring mistake.** Erosion
 is hybrid: drainage-area *accumulation* is MFD, stream-power *incision* is

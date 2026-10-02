@@ -1,4 +1,5 @@
 import { PLANET_INPUTS } from './planetInputParams'
+import { detCos, detPow, detSin, sq } from '../core/detMath'
 
 // PLANETARY FORCING (decision 13): the four astronomical controls as the
 // factors the climate chain multiplies in. Every factor is 1 at the
@@ -44,7 +45,7 @@ const RAD = Math.PI / 180
 // every latitude gets the same yearly sun, negative beyond, where the poles
 // get more. Relative to the default tilt.
 export function obliquityContrast(obliquityDeg: number): number {
-  const s = (deg: number): number => 2 - 3 * Math.sin(deg * RAD) ** 2
+  const s = (deg: number): number => 2 - 3 * sq(detSin(deg * RAD))
   return s(obliquityDeg) / s(PLANET_INPUTS.obliquity.default)
 }
 
@@ -52,7 +53,7 @@ export function obliquityContrast(obliquityDeg: number): number {
 // balance T ∝ S^¼ at Earth's effective temperature of 255 K: +0.6 °C per
 // percent, no feedbacks (the greenhouse control is the feedback knob).
 export function solarTemperatureOffsetC(solarConstant: number): number {
-  return 255 * (Math.pow(Math.max(0.01, solarConstant), 0.25) - 1)
+  return 255 * (detPow(Math.max(0.01, solarConstant), 0.25) - 1)
 }
 
 // The seasonal amplitude of one hemisphere: the tilt sets the swing (none
@@ -62,8 +63,8 @@ export function solarTemperatureOffsetC(solarConstant: number): number {
 // half of it per hemisphere). Precession 0 puts perihelion in the top
 // hemisphere's summer, 180 in the bottom's, 90 at an equinox.
 export function seasonalityFactor(forcing: PlanetForcing, north: boolean): number {
-  const tilt = Math.sin(forcing.obliquityDeg * RAD) / Math.sin(PLANET_INPUTS.obliquity.default * RAD)
-  const bias = 2 * forcing.eccentricity * Math.cos(forcing.precessionDeg * RAD)
+  const tilt = detSin(forcing.obliquityDeg * RAD) / detSin(PLANET_INPUTS.obliquity.default * RAD)
+  const bias = 2 * forcing.eccentricity * detCos(forcing.precessionDeg * RAD)
   return Math.max(0, tilt * (1 + (north ? bias : -bias)))
 }
 

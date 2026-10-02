@@ -1,4 +1,5 @@
 import { wrapValue } from './field'
+import { detCos, detSin } from './detMath'
 // Shortest signed offset from b to a on a line of the given period that
 // wraps — e.g. on a period of 100, the offset from 95 to 5 is +10 (via
 // the wrap), not -90 (the direct route). round(), not floor()/ceil(), is
@@ -40,8 +41,8 @@ export function rotateAroundCenter(
 ): { x: number; y: number } {
   const rx = wrappedDelta(x, centerX, width)
   const ry = wrappedDelta(y, centerY, height)
-  const cos = Math.cos(angle)
-  const sin = Math.sin(angle)
+  const cos = detCos(angle)
+  const sin = detSin(angle)
   const rotatedX = rx * cos - ry * sin
   const rotatedY = rx * sin + ry * cos
   return {

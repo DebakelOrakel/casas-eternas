@@ -3,6 +3,7 @@ import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { sampleBilinearGrid } from '../core/field'
 import { wrapValue } from '../core/field'
+import { detCos, detExp, detHypot } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -24,7 +25,7 @@ export function evaporation(tempC: number): number {
 // Exported for the sea's rain (salinity.ts): this model rains out over land
 // only, and the sea's salt needs the zonal profile it rains by.
 export function bandFactor(phi: number): number {
-  const f = CLIMATE_TUNING.precipBandBase + CLIMATE_TUNING.precipBandSwing * Math.cos(3 * Math.PI * phi)
+  const f = CLIMATE_TUNING.precipBandBase + CLIMATE_TUNING.precipBandSwing * detCos(3 * Math.PI * phi)
   return f < CLIMATE_TUNING.precipBandFloor ? CLIMATE_TUNING.precipBandFloor : f
 }
 
@@ -101,7 +102,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
       // Nairobi 6200 mm, Bogotá 5400, both ~1000).
       const u = wind[i * 2]
       const v = wind[i * 2 + 1]
-      const speed = Math.hypot(u, v)
+      const speed = detHypot(u, v)
       let upslope = 0
       if (speed > 0) {
         const wx = ((gx + 0.5) / RX) * worldW
@@ -219,6 +220,6 @@ function flankRelief(band: number, highHpa: number): number {
 // The rain's multiplier from the anomaly of the sea the air rose from, °C:
 // e^(k·anomaly), clamped.
 function sourceStability(anomaly: number): number {
-  const f = Math.exp(CLIMATE_TUNING.rainSourcePerC * anomaly)
+  const f = detExp(CLIMATE_TUNING.rainSourcePerC * anomaly)
   return f < CLIMATE_TUNING.rainSourceMin ? CLIMATE_TUNING.rainSourceMin : f > CLIMATE_TUNING.rainSourceMax ? CLIMATE_TUNING.rainSourceMax : f
 }

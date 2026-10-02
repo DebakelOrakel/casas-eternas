@@ -2,6 +2,7 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y, beltYNorm, shiftedYNorm } from './climate
 import { hadleyEdge } from '../planet/planetForcing'
 import { PLANET_INPUTS } from '../planet/planetInputParams'
 import { CLIMATE_TUNING } from './climateTuneParams'
+import { detSin } from '../core/detMath'
 
 // Prevailing surface wind as the prescribed three-cell pattern per hemisphere
 // (Hadley / Ferrel / Polar): trade EASTERLIES 0–30°, mid-latitude WESTERLIES
@@ -42,7 +43,7 @@ export function computeWind(equatorOffset = 0, rotationHours = PLANET_INPUTS.rot
       poleward = false
       local = (phi - e2) / (1 - e2)
     }
-    const taper = Math.sin(Math.PI * local) // 0 at the cell edges, 1 at its center
+    const taper = detSin(Math.PI * local) // 0 at the cell edges, 1 at its center
     const u = uSign * CLIMATE_TUNING.windZonalStrength * taper
     // equatorward → v = −hemi·|v|; poleward → v = +hemi·|v|
     const v = (poleward ? hemi : -hemi) * CLIMATE_TUNING.windMeridionalStrength * taper

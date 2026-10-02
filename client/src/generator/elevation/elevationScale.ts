@@ -23,6 +23,7 @@
 // translation hack disappears.
 import { METERS_PER_CELL } from '../core/mapConfig'
 import { smoothstep } from '../core/interpolation'
+import { detTan } from '../core/detMath'
 
 export const ELEVATION_METERS = 9000
 
@@ -211,7 +212,7 @@ export const MARGIN_FIELD_HI = 1.0
 // same size as tan(θ) here, but only by coincidence of the two scales — don't
 // assume that.
 export function slopeFromAngle(degrees: number): number {
-  return Math.tan((degrees * Math.PI) / 180) * (METERS_PER_CELL / ELEVATION_METERS)
+  return detTan((degrees * Math.PI) / 180) * (METERS_PER_CELL / ELEVATION_METERS)
 }
 
 // How much gentler land slopes became under the recalibration, measured rather

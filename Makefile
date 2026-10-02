@@ -40,6 +40,13 @@ lint:
 	# The Node side separately: scripts/jobWorker.ts needs @types/node and the browser
 	# code must not have it. Two configs, both checked — see tsconfig.node.json.
 	cd client && npx tsc --noEmit -p tsconfig.node.json
+	# The generator computes the same bits in every JavaScript engine only
+	# through core/detMath.ts: Math's transcendental functions and `**`
+	# differ between engines in the last bit (render/ draws, so it may).
+	@! grep -rnE 'Math\.(exp|log|log2|log10|log1p|expm1|pow|sin|cos|tan|atan|atan2|asin|acos|hypot|cbrt|sinh|cosh|tanh|asinh|acosh|atanh)\(|\*\*[[:space:]]*[A-Za-z0-9(.]' \
+		client/src/generator --include='*.ts' --exclude-dir=render --exclude=detMath.ts \
+		| grep -vE ':[0-9]+:[[:space:]]*(//|\*)' \
+		|| (echo "use core/detMath.ts in client/src/generator, not the Math functions above or **" >&2; exit 1)
 	gofmt -l . | tee /dev/stderr | (! read)
 	go vet ./...
 	# The committed CLI/config reference must match the cobra tree it is

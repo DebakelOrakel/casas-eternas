@@ -2,6 +2,7 @@ import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import type { FlowRouting } from './flowRouting'
 import { rasterCellAt, type RiverGraph } from './riverGraph'
+import { detAtan2, detCos, detSin } from '../core/detMath'
 
 // SEDIMENT BASINS AS FEATURES (ADAPTIVE_MESH_PLAN.md F1, decision 4a of
 // adaptive-mesh.md): where the erosion pass left material — the
@@ -123,12 +124,12 @@ export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinRes
       const y = (c - x) / width
       const ax = (x / width) * Math.PI * 2
       const ay = (y / height) * Math.PI * 2
-      sx += Math.sin(ax); cx += Math.cos(ax); sy += Math.sin(ay); cy += Math.cos(ay)
+      sx += detSin(ax); cx += detCos(ax); sy += detSin(ay); cy += detCos(ay)
       craton += coarse(input.cratonAge, c)
       hard += coarse(input.hardness, c)
     }
-    const mx = ((Math.atan2(sx, cx) / (Math.PI * 2)) + 1) % 1
-    const my = ((Math.atan2(sy, cy) / (Math.PI * 2)) + 1) % 1
+    const mx = ((detAtan2(sx, cx) / (Math.PI * 2)) + 1) % 1
+    const my = ((detAtan2(sy, cy) / (Math.PI * 2)) + 1) % 1
     basins.push({
       id: id - 1,
       kind: marine * 2 > members.length ? 'marine' : 'alluvial',

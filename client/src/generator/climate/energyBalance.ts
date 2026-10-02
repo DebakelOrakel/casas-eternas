@@ -2,6 +2,7 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { wrapIndex2 } from '../core/field'
 import type { PlanetForcing } from '../planet/planetForcing'
+import { detAcos, detAsin, detCos, detSin, detTan, sq } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -98,8 +99,8 @@ export function seasonalCycle(land: Uint8Array, annualTemperature: Float32Array,
     for (let gy = 0; gy < RY; gy++) {
       for (let m = 0; m < months; m++) {
         const phase = (2 * Math.PI * k * (m + 0.5)) / months
-        sunRe[gy] += (2 / months) * monthlySun[gy * months + m] * Math.cos(phase)
-        sunIm[gy] -= (2 / months) * monthlySun[gy * months + m] * Math.sin(phase)
+        sunRe[gy] += (2 / months) * monthlySun[gy * months + m] * detCos(phase)
+        sunIm[gy] -= (2 / months) * monthlySun[gy * months + m] * detSin(phase)
       }
     }
     // Gauss-Seidel on the complex amplitude, in place.
@@ -123,8 +124,8 @@ export function seasonalCycle(land: Uint8Array, annualTemperature: Float32Array,
     }
     for (let m = 0; m < months; m++) {
       const phase = (2 * Math.PI * k * (m + 0.5)) / months
-      const c = Math.cos(phase)
-      const s = Math.sin(phase)
+      const c = detCos(phase)
+      const s = detSin(phase)
       for (let i = 0; i < n; i++) out[m * n + i] += re[i] * c - im[i] * s
     }
   }
@@ -139,13 +140,13 @@ export function seasonalCycle(land: Uint8Array, annualTemperature: Float32Array,
 // puts it in the top hemisphere's summer (planetForcing.seasonalityFactor).
 export function monthInsolation(latNorth: number, yearFraction: number, planet: PlanetForcing): number {
   const lambda = 2 * Math.PI * (yearFraction - CLIMATE_TUNING.ebmVernalEquinoxYear)
-  const decl = Math.asin(Math.sin(planet.obliquityDeg * RAD) * Math.sin(lambda))
+  const decl = detAsin(detSin(planet.obliquityDeg * RAD) * detSin(lambda))
   const perihelion = (planet.precessionDeg + 90) * RAD
   const e = planet.eccentricity
-  const distance = ((1 + e * Math.cos(lambda - perihelion)) / (1 - e * e)) ** 2
-  const x = -Math.tan(latNorth) * Math.tan(decl)
-  const h0 = x >= 1 ? 0 : x <= -1 ? Math.PI : Math.acos(x)
+  const distance = sq((1 + e * detCos(lambda - perihelion)) / (1 - e * e))
+  const x = -detTan(latNorth) * detTan(decl)
+  const h0 = x >= 1 ? 0 : x <= -1 ? Math.PI : detAcos(x)
   const q = (CLIMATE_TUNING.ebmSolarWm2 * planet.solarConstant / Math.PI) * distance
-    * (h0 * Math.sin(latNorth) * Math.sin(decl) + Math.cos(latNorth) * Math.cos(decl) * Math.sin(h0))
+    * (h0 * detSin(latNorth) * detSin(decl) + detCos(latNorth) * detCos(decl) * detSin(h0))
   return Math.max(0, q)
 }

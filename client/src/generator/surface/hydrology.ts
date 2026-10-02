@@ -5,6 +5,7 @@ import type { FlowRouting } from './flowRouting'
 import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
 import { Biome, computeBiomesFine, computeBiomesFineFromMonths } from '../climate/biomes'
 import { OCEAN_PRECIP } from '../climate/precipitation'
+import { detPow } from '../core/detMath'
 
 // Rivers & lakes on the post-erosion topography. Reuses the erosion module's
 // drainage network (FlowRouting: D8 flowTarget for the channel tree,
@@ -559,7 +560,7 @@ export function maxDischargeOverLand(discharge: Float32Array, elevation: Float32
 // own dendritic tree wherever that much area converges.
 export function densityToCriticalArea(density: number): number {
   const d = Math.min(100, Math.max(0, density)) / 100
-  return SURFACE_TUNING.channelAreaMax * Math.pow(SURFACE_TUNING.channelAreaMin / SURFACE_TUNING.channelAreaMax, d)
+  return SURFACE_TUNING.channelAreaMax * detPow(SURFACE_TUNING.channelAreaMin / SURFACE_TUNING.channelAreaMax, d)
 }
 
 // The discharge threshold for a given critical area: that many average-runoff
@@ -656,7 +657,7 @@ export function isChannelCell(routing: FlowRouting, elevation: Float32Array, dis
 
 export function isChannelCellOn(sub: FlowSubstrate, elevation: Float32Array, discharge: Float32Array, cell: number, threshold: number, referenceSlope: number): boolean {
   if (elevation[cell] <= SEA_LEVEL) return false
-  const boost = Math.pow(Math.max(receiverSlopeOn(sub, elevation, cell), 1e-7) / referenceSlope, CHANNEL_SLOPE_EXPONENT)
+  const boost = detPow(Math.max(receiverSlopeOn(sub, elevation, cell), 1e-7) / referenceSlope, CHANNEL_SLOPE_EXPONENT)
   return discharge[cell] * boost >= threshold
 }
 

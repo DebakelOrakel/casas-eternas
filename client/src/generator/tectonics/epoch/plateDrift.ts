@@ -9,6 +9,7 @@ import { advancePlumes } from '../plumes'
 import { TECTONICS_TUNING } from '../tectonicsTuneParams'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from '../terrainFeatures'
 import type { PlateSimulation } from '../plateSimulationTypes'
+import { detHypot } from '../../core/detMath'
 
 
 
@@ -30,7 +31,7 @@ function depositHotspotVolcanoes(sim: PlateSimulation): void {
       }
     }
     const v = getVelocityAt(hs, sim.motions[plate], width, height)
-    const speed = Math.hypot(v.vx, v.vy) || 1
+    const speed = detHypot(v.vx, v.vy) || 1
     // plateB = -1 is a dedicated hotspot marker (no real boundary can have it, and
     // plate-index shifts on merge only ever decrease indices, never to -1) — so
     // these only ever merge with other deposits from the SAME plume, never with

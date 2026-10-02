@@ -1,6 +1,7 @@
 import { ELEVATION_METERS, SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
 import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
 import { SURFACE_TUNING } from './surfaceTuneParams'
+import { detHypot } from '../core/detMath'
 
 // THE COAST AS A PROCESS (ADAPTIVE_MESH_PLAN.md phase 7, docs/design/
 // coast.md; decided 2026-09-24: one-dimensional transport along the
@@ -125,7 +126,7 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
     if (seaCount === 0) continue
     isShore[v] = 1
     shoreList.push(v)
-    const len = Math.hypot(nx, ny) || 1
+    const len = detHypot(nx, ny) || 1
     normalX[v] = nx / len
     normalY[v] = ny / len
   }
@@ -146,7 +147,7 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
     const w = wind[gi * 2 + 1]
     windU[v] = u
     windV[v] = w
-    const speed = Math.hypot(u, w)
+    const speed = detHypot(u, w)
     if (speed <= 1e-6) continue
     const dx = -u / speed
     const dy = -w / speed
@@ -204,14 +205,14 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
     const v = shore[i]
     const u = windU[v]
     const w = windV[v]
-    const speed = Math.hypot(u, w)
+    const speed = detHypot(u, w)
     if (speed <= 1e-6) continue
     // The alongshore direction of the wind: the wind less its component
     // along the landward normal.
     const along = (u * normalX[v] + w * normalY[v])
     const ax = u - along * normalX[v]
     const ay = w - along * normalY[v]
-    const aLen = Math.hypot(ax, ay)
+    const aLen = detHypot(ax, ay)
     if (aLen <= 1e-6) continue
     const n = mesh.outgoing(v, out)
     let best = -1
@@ -225,7 +226,7 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
       if (dx < -width / 2) dx += width
       if (dy > height / 2) dy -= height
       if (dy < -height / 2) dy += height
-      const len = Math.hypot(dx, dy) || 1
+      const len = detHypot(dx, dy) || 1
       const dot = (dx * ax + dy * ay) / (len * aLen)
       if (dot > bestDot) { bestDot = dot; best = c }
     }

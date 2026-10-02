@@ -1,6 +1,7 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { OCEAN_PRECIP } from './precipitation'
+import { detExp, detHypot, sq } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -87,7 +88,7 @@ export function computeReliability(precipitation: Float32Array, monsoonIndex: Fl
   }
   for (let gy = 0; gy < RY; gy++) {
     const lat = latitudeAt(gy, equatorOffset) * 90
-    const byLat = Math.exp(-((lat / T.ensoReachLatDeg) ** 2))
+    const byLat = detExp(-sq(lat / T.ensoReachLatDeg))
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       if (!land[i]) continue
@@ -95,8 +96,8 @@ export function computeReliability(precipitation: Float32Array, monsoonIndex: Fl
       for (const b of basins) {
         // The land past the basin's east end is wetter in the warm phase,
         // the land before its west end drier.
-        const wet = Math.exp(-((zonal(gx, b.east) / T.ensoReachCells) ** 2))
-        const dry = Math.exp(-((zonal(gx, b.west) / T.ensoReachCells) ** 2))
+        const wet = detExp(-sq(zonal(gx, b.east) / T.ensoReachCells))
+        const dry = detExp(-sq(zonal(gx, b.west) / T.ensoReachCells))
         mark += b.strength * byLat * (wet - dry)
       }
       ensoPattern[i] = Math.max(-1, Math.min(1, mark))
@@ -111,7 +112,7 @@ export function computeReliability(precipitation: Float32Array, monsoonIndex: Fl
     const own = Math.min(T.rainVariabilityMax, T.rainVariabilityScale / Math.sqrt(Math.max(precipitation[i], T.rainVariabilityFloorMm)))
       * (1 + T.rainVariabilitySeason * Math.abs(monsoonIndex[i]))
     const enso = T.ensoVariability * Math.abs(ensoPattern[i])
-    rainVariability[i] = Math.min(T.rainVariabilityMax, Math.hypot(own, enso))
+    rainVariability[i] = Math.min(T.rainVariabilityMax, detHypot(own, enso))
   }
 
   let best: Basin | null = null

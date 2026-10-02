@@ -15,6 +15,7 @@ import { WORLD_WIDTH_METERS } from '../surface/erosionEngine'
 import { computeRiverCourses } from '../surface/riverCourse'
 import { buildRiverGraph, riverPolylinesFromGraph, type RiverGraph } from '../surface/riverGraph'
 import type { SavedMesh } from '../mesh/meshSerial'
+import { detPow } from '../core/detMath'
 
 // THE GLOBAL BAKE OF ONE LEVEL (decision 3 of docs/decisions/adaptive-mesh.md,
 // ADAPTIVE_MESH_PLAN.md phase 4.5): the save's mesh refined to a finer
@@ -79,7 +80,7 @@ export interface MeshLevel {
 // detail-ladder.md, fork 1): level 0 at the history's 4, each level a
 // quarter of the one before (4, 1, 1/4, 1/16).
 export function levelBudget(level: number): number {
-  return 4 / Math.pow(4, level)
+  return 4 / detPow(4, level)
 }
 
 export async function bakeMeshLevel(inputs: MeshBakeInputs, options: MeshBakeOptions): Promise<MeshLevel> {

@@ -1,6 +1,7 @@
 import { toroidalDistanceSq } from '../core/toroidal'
 import { sampleNearestWorld } from '../core/field'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { detHypot, sq } from '../core/detMath'
 
 // Mantle plumes, derived from the mantle field rather than scattered at random.
 //
@@ -101,7 +102,7 @@ export function findPlumeSites(mantle: Float32Array, width: number, height: numb
     }
   }
   candidates.sort((a, b) => b.strength - a.strength)
-  const minSepSq = (PLUME_MIN_SEPARATION_FRAC * Math.min(width, height)) ** 2
+  const minSepSq = sq(PLUME_MIN_SEPARATION_FRAC * Math.min(width, height))
   const chosen: { x: number; y: number }[] = exclude.map((p) => ({ x: p.x, y: p.y }))
   const fresh: Plume[] = []
   for (const c of candidates) {
@@ -136,7 +137,7 @@ export function advancePlumes(plumes: Plume[], mantle: Float32Array, width: numb
       if (v > best) { best = v; bestX = dx; bestY = dy }
     }
     if (bestX === 0 && bestY === 0) continue
-    const len = Math.hypot(bestX * cellW, bestY * cellH) || 1
+    const len = detHypot(bestX * cellW, bestY * cellH) || 1
     const step = Math.min(PLUME_MAX_STEP_PX, len)
     plume.x = (((plume.x + (bestX * cellW / len) * step) % width) + width) % width
     plume.y = (((plume.y + (bestY * cellH / len) * step) % height) + height) % height

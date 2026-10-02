@@ -5,6 +5,7 @@ import { wrapValue } from '../core/field'
 import type { FeatureBuckets } from '../elevation/elevationField'
 import { METERS_PER_CELL } from '../core/mapConfig'
 import { TECTONICS_TUNING } from './tectonicsTuneParams'
+import { detCos } from '../core/detMath'
 
 // FOLDS (ADAPTIVE_MESH_PLAN.md phase 5.7): at a convergent margin the
 // uplift is not a smooth dome but a train of anticlines and synclines
@@ -50,5 +51,5 @@ export function foldFactorAt(buckets: FeatureBuckets, x: number, y: number, widt
   }
   if (bestWeight <= 0) return 1
   const wavelengthUnits = (TECTONICS_TUNING.foldWavelengthKm * 1000) / METERS_PER_CELL
-  return 1 + TECTONICS_TUNING.foldAmplitude * Math.cos((2 * Math.PI * across) / wavelengthUnits)
+  return 1 + TECTONICS_TUNING.foldAmplitude * detCos((2 * Math.PI * across) / wavelengthUnits)
 }

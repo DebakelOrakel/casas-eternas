@@ -2,6 +2,7 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, latitudeAt, shiftedYNorm } 
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { sampleBilinearGrid } from '../core/field'
 import { wrapIndex2 } from '../core/field'
+import { detCos, detExp, detHypot, detSin } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -57,7 +58,7 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
   // Half of β per row, for the central difference: β·cos(latitude), the same
   // sign in both hemispheres.
   const halfBeta = new Float32Array(RY)
-  for (let gy = 0; gy < RY; gy++) halfBeta[gy] = CLIMATE_TUNING.currentsBeta * Math.cos(latitudeAt(gy, equatorOffset) * Math.PI / 2) / 2
+  for (let gy = 0; gy < RY; gy++) halfBeta[gy] = CLIMATE_TUNING.currentsBeta * detCos(latitudeAt(gy, equatorOffset) * Math.PI / 2) / 2
 
   // The four wrapped neighbours of every cell are indexed once: at 700 sweeps
   // the wrapping's modulos were 0.6 s of every history epoch (profiled
@@ -110,7 +111,7 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
       const v = psi[wrapIndex(gx + 1, gy)] - psi[wrapIndex(gx - 1, gy)]
       current[i * 2] = u
       current[i * 2 + 1] = v / 2
-      vmax = Math.max(vmax, Math.hypot(u, v / 2))
+      vmax = Math.max(vmax, detHypot(u, v / 2))
     }
   }
   for (let i = 0; i < current.length; i++) current[i] /= vmax
@@ -167,7 +168,7 @@ export function computeSinkInflow(sink: Float32Array, land: Uint8Array): Float32
       const vy = (at(d) - at(u)) / 2
       inflow[i * 2] = vx
       inflow[i * 2 + 1] = vy
-      fastest = Math.max(fastest, Math.hypot(vx, vy))
+      fastest = Math.max(fastest, detHypot(vx, vy))
     }
   }
   if (fastest > 0) for (let k = 0; k < inflow.length; k++) inflow[k] /= fastest
@@ -192,7 +193,7 @@ export function computeUpwelling(wind: Float32Array, land: Uint8Array, equatorOf
     const sLat = (latitudeSign(gy, equatorOffset))
     // f, northern (top) hemisphere positive, held off zero near the
     // equator with its sign kept, so the transport stays finite there.
-    const f = sLat * Math.max(CLIMATE_TUNING.upwellingMinF, Math.abs(Math.sin(latitudeAt(gy, equatorOffset) * Math.PI / 2))) * (24 / rotationHours)
+    const f = sLat * Math.max(CLIMATE_TUNING.upwellingMinF, Math.abs(detSin(latitudeAt(gy, equatorOffset) * Math.PI / 2))) * (24 / rotationHours)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       if (land[i]) continue
@@ -290,12 +291,12 @@ export function carryInland(seaAnomaly: Float32Array, land: Uint8Array, wind: Fl
       let carried = 0
       const u = wind[i * 2]
       const v = wind[i * 2 + 1]
-      const speed = Math.hypot(u, v)
+      const speed = detHypot(u, v)
       if (speed > 0) {
         for (let k = 1; k <= reach; k++) {
           const j = wrapIndex(Math.round(gx - (u / speed) * k), Math.round(gy - (v / speed) * k))
           if (land[j]) continue
-          carried = seaAnomaly[j] * Math.exp(-(k - 1) / CLIMATE_TUNING.currentsInlandDecayCells)
+          carried = seaAnomaly[j] * detExp(-(k - 1) / CLIMATE_TUNING.currentsInlandDecayCells)
           break
         }
       }

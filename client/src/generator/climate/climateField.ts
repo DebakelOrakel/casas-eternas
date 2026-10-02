@@ -5,6 +5,7 @@
 import { isLandAt } from '../elevation/elevationScale'
 import { torusDomain } from '../core/domain'
 import { CLIMATE_TUNING } from './climateTuneParams'
+import { detCos } from '../core/detMath'
 
 export const CLIMATE_RES_X = 256
 export const CLIMATE_RES_Y = 128
@@ -61,7 +62,7 @@ export const TOP_SUMMER_MONTH = 0
 
 // 1 in the top hemisphere's warmest month, −1 six months later.
 export function topSummerCos(month: number): number {
-  return Math.cos(((month - TOP_SUMMER_MONTH) / 12) * 2 * Math.PI)
+  return detCos(((month - TOP_SUMMER_MONTH) / 12) * 2 * Math.PI)
 }
 
 // Whether a month lies in the top hemisphere's summer half (the six months

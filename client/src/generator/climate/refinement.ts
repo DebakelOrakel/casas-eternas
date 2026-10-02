@@ -16,6 +16,7 @@ import type { WeatherParams } from './weather'
 import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
 import { downsampleBox } from '../core/field'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
+import { detCos, detHypot, detSin } from '../core/detMath'
 
 // THE CLIMATE STEP'S REFINEMENT (docs/design/climate-refinement.md): the
 // climate the history left, computed again with more physics on the final
@@ -110,7 +111,7 @@ export function refineClimate(
     // The season's shift of the bands, + in the top hemisphere's summer:
     // the rain belt, the wind cells and the pressure bands all move by it
     // (climateField.beltYNorm), the sun's latitude lagged by the sea.
-    const belt = CLIMATE_TUNING.monsoonItczSeasonalShift * Math.cos(2 * Math.PI * ((month + 0.5) / REFINED_MONTHS - CLIMATE_TUNING.refineItczPeakYear))
+    const belt = CLIMATE_TUNING.monsoonItczSeasonalShift * detCos(2 * Math.PI * ((month + 0.5) / REFINED_MONTHS - CLIMATE_TUNING.refineItczPeakYear))
     belts[month] = belt
     const bandWind = computeWind(params.equatorOffset, planet.rotationHours, belt)
     const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, width, height, bandWind, params.equatorOffset, planet.rotationHours, belt, plateauHeat(month))
@@ -175,7 +176,7 @@ export function refineClimate(
     const lat = latitudeAt(gy, params.equatorOffset) * 90
     const t = (lat - CLIMATE_TUNING.oceanHighFromDeg) / (CLIMATE_TUNING.oceanHighToDeg - CLIMATE_TUNING.oceanHighFromDeg)
     if (t <= 0 || t >= 1) continue
-    const bump = Math.sin(Math.PI * t)
+    const bump = detSin(Math.PI * t)
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
       const i = gy * CLIMATE_RES_X + gx
       if (!land[i]) oceanHigh[i] += CLIMATE_TUNING.oceanHighFlankHpa * flank[i] * bump
@@ -226,7 +227,7 @@ export function refineClimate(
   const currents = new Float32Array(n * 2)
   let fastest = 0
   for (let k = 0; k < n * 2; k++) currents[k] = windCurrents[k] + CLIMATE_TUNING.conveyorFlow * inflow[k]
-  for (let i = 0; i < n; i++) fastest = Math.max(fastest, Math.hypot(currents[i * 2], currents[i * 2 + 1]))
+  for (let i = 0; i < n; i++) fastest = Math.max(fastest, detHypot(currents[i * 2], currents[i * 2 + 1]))
   // Normalised like the wind's (the fastest is 1), which the sea's transport
   // and the currents layer read.
   if (fastest > 1) for (let k = 0; k < n * 2; k++) currents[k] /= fastest

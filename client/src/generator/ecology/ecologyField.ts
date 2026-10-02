@@ -23,6 +23,7 @@ import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { ECOLOGY_TUNING, PASTURE_BY_BIOME, TIMBER_BY_BIOME } from './ecologyTuneParams'
 import type { Volcano } from '../tectonics/volcanoes'
 import type { LandBiomeId } from './ecologyTuneParams'
+import { detExp, detHypot, detPow } from '../core/detMath'
 
 // Ocean sentinel for the output fields (matches the climate fields' convention):
 // a cell the ecology layer doesn't score (open water) reads -1.
@@ -144,8 +145,8 @@ export interface EcologyInputs {
 // whichever of temperature and precipitation is scarcer (Liebig's law of the
 // minimum). The ecological backbone of both arable land and wild game.
 function productivity(tempC: number, precipMm: number): number {
-  const nppTemp = 1 / (1 + Math.exp(1.315 - 0.119 * tempC))
-  const nppPrecip = 1 - Math.exp(-0.000664 * Math.max(0, precipMm))
+  const nppTemp = 1 / (1 + detExp(1.315 - 0.119 * tempC))
+  const nppPrecip = 1 - detExp(-0.000664 * Math.max(0, precipMm))
   return Math.min(nppTemp, nppPrecip)
 }
 
@@ -513,7 +514,7 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
       const e = elevation
       const dx = e[y * w + wrapValue(x + 1, w)] - e[y * w + wrapValue(x - 1, w)]
       const dy = e[wrapValue(y + 1, h) * w + x] - e[wrapValue(y - 1, h) * w + x]
-      const flat = 1 / (1 + T.slopeK * Math.hypot(dx, dy) * 0.5 * pxPerCell)
+      const flat = 1 / (1 + T.slopeK * detHypot(dx, dy) * 0.5 * pxPerCell)
       flatness[i] = flat
 
       // The fields' water.
@@ -546,7 +547,7 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
       // (a straight coast in full), plus the rivers and lakes near.
       const access = Math.min(1, seaShare[i] / T.fishFullSeaShare)
       const freshwater = Math.min(1, T.fishRiverW * riverNear[i] + T.fishLakeW * lakeNear[i])
-      fish[i] = 1 - Math.exp(-(access * richSeaNear[i] + freshwater))
+      fish[i] = 1 - detExp(-(access * richSeaNear[i] + freshwater))
 
       // Game: productivity, more where biomes meet.
       game[i] = npp * edgeFactor
@@ -583,7 +584,7 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
 
   // The fishing grounds: on the sea the fish field is the sea's own
   // richness, what a boat finds there.
-  for (let i = 0; i < n; i++) if (!land[i]) fish[i] = 1 - Math.exp(-seaRich[i])
+  for (let i = 0; i < n; i++) if (!land[i]) fish[i] = 1 - detExp(-seaRich[i])
 
   // Material and prestige before the sliders. Copper = arc volcanoes; tin =
   // orogen belts (its radius a slider); iron = old cratons + bog iron.
@@ -676,11 +677,11 @@ export function ecologyMonth(eco: EcologyBase, field: SeasonalEcologyFieldId, mo
         if (land[i]) continue
         px.setPixel(x, y, w, h)
         rich[i] = S.seaRichStatic[i] + T.fishMixingW * seaMixing(px.read(S.months.temperature, S.coarseSea, m))
-        out[i] = weight * (1 - Math.exp(-rich[i]))
+        out[i] = weight * (1 - detExp(-rich[i]))
       }
     }
     const near = maxWithin(rich, w, h, S.coastR)
-    for (let i = 0; i < n; i++) if (land[i]) out[i] = weight * (1 - Math.exp(-(S.access[i] * near[i] + S.freshwater[i])))
+    for (let i = 0; i < n; i++) if (land[i]) out[i] = weight * (1 - detExp(-(S.access[i] * near[i] + S.freshwater[i])))
     return out
   }
   const aridWarm = (tempC: number, precipMm: number): number => clamp01(1 - precipMm / T.saltAridPrecip) * clamp01(tempC / 25)
@@ -733,7 +734,7 @@ export function applyEcology(eco: EcologyBase, params: EcologyParams): EcologyFi
   const base = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     if (!land[i]) continue
-    base[i] = 1 - Math.exp(-(T.wArable * arable[i] + T.wFish * fish[i] + T.wGame * game[i] + T.wPasture * pasture[i] + T.wSaltCc * salt[i]))
+    base[i] = 1 - detExp(-(T.wArable * arable[i] + T.wFish * fish[i] + T.wGame * game[i] + T.wPasture * pasture[i] + T.wSaltCc * salt[i]))
   }
   const carryingCapacity = concentrationPipeline(base, land, eco.provinceDeviation, params)
 
@@ -858,7 +859,7 @@ function rasterisePointField(points: { x: number; y: number }[], radiusFrac: num
       const ddy = cy + dy + 0.5 - v.y
       for (let dx = -reach; dx <= reach; dx++) {
         const ddx = cx + dx + 0.5 - v.x
-        const bump = Math.exp(-(ddx * ddx + ddy * ddy) * inv2r2)
+        const bump = detExp(-(ddx * ddx + ddy * ddy) * inv2r2)
         const i = y * w + wrapValue(cx + dx, w)
         if (bump > field[i]) field[i] = bump
       }
@@ -878,9 +879,9 @@ function concentrationPipeline(base: Float32Array, land: Uint8Array, dev: Float3
   if (maxBase > 0) for (let i = 0; i < n; i++) if (land[i]) norm[i] = base[i] / maxBase
   const meanNorm = landMean(norm, land)
 
-  const gamma = Math.pow(2, params.concentration / 100)
+  const gamma = detPow(2, params.concentration / 100)
   const shaped = new Float32Array(n)
-  for (let i = 0; i < n; i++) if (land[i]) shaped[i] = Math.pow(norm[i], gamma)
+  for (let i = 0; i < n; i++) if (land[i]) shaped[i] = detPow(norm[i], gamma)
   const meanShaped = landMean(shaped, land)
   const l1Scale = meanShaped > 0 ? meanNorm / meanShaped : 1
   for (let i = 0; i < n; i++) if (land[i]) shaped[i] *= l1Scale

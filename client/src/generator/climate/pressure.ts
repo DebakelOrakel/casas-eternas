@@ -3,6 +3,7 @@ import { CLIMATE_TUNING } from './climateTuneParams'
 import { hadleyEdge } from '../planet/planetForcing'
 import { downsampleBox, wrapIndex2 } from '../core/field'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
+import { detCos, detHypot, detSin } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -43,9 +44,9 @@ export interface PressureWind {
 function bandPressure(phi: number, e1: number, e2: number): number {
   const a = CLIMATE_TUNING.pressureBandHpa
   let t: number
-  if (phi < e1) t = -Math.cos((Math.PI * phi) / e1) // −1 equator → +1 Hadley edge
-  else if (phi < e2) t = Math.cos((Math.PI * (phi - e1)) / (e2 - e1)) // +1 → −1 subpolar low
-  else t = -Math.cos((Math.PI * (phi - e2)) / (1 - e2)) * 0.5 - 0.5 // −1 → 0 polar high
+  if (phi < e1) t = -detCos((Math.PI * phi) / e1) // −1 equator → +1 Hadley edge
+  else if (phi < e2) t = detCos((Math.PI * (phi - e1)) / (e2 - e1)) // +1 → −1 subpolar low
+  else t = -detCos((Math.PI * (phi - e2)) / (1 - e2)) * 0.5 - 0.5 // −1 → 0 polar high
   return 1013 + a * t
 }
 
@@ -116,7 +117,7 @@ export function computePressureWind(
     const band = bandPressure(Math.abs((beltYNorm(shiftedYNorm(gy, RY, equatorOffset), beltShift) - 0.5) * 2), e1, e2)
     for (let gx = 0; gx < RX; gx++) pressure[gy * RX + gx] = band + thermal[gy * RX + gx]
     // Signed so the top hemisphere is the northern one: f > 0 there.
-    f[gy] = Math.sin((-sLat * Math.PI) / 2) * (24 / rotationHours)
+    f[gy] = detSin((-sLat * Math.PI) / 2) * (24 / rotationHours)
   }
 
   // The relief the wind meets: the box mean of the full-res raster per cell,
@@ -146,7 +147,7 @@ export function computePressureWind(
       // slope, more for a higher barrier.
       const hx = (relief[wrapIndex(gx + 1, gy)] - relief[wrapIndex(gx - 1, gy)]) / 2
       const hy = (relief[wrapIndex(gx, gy + 1)] - relief[wrapIndex(gx, gy - 1)]) / 2
-      const slope = Math.hypot(hx, hy)
+      const slope = detHypot(hx, hy)
       if (slope > 0) {
         const up = (wu * hx + wv * hy) / slope
         const top = Math.max(relief[i], relief[wrapIndex(gx + Math.sign(wu), gy)], relief[wrapIndex(gx, gy + Math.sign(wv))])

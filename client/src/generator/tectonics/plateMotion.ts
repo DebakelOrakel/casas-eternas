@@ -2,6 +2,7 @@ import type { PlateSeed } from './plateSeeds'
 import { rotateAroundCenter, toroidalDistanceSq, wrappedDelta } from '../core/toroidal'
 import { wrapValue } from '../core/field'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { detCos, detSin } from '../core/detMath'
 
 // Flat-torus analog of a real tectonic plate's Euler-pole rotation, stored in a
 // RIGID-BODY form: a drift (translation) plus a spin (rotation about the plate's
@@ -48,8 +49,8 @@ export function generatePlateMotions(seeds: PlateSeed[], width: number, height: 
     // motion distribution identical to the pre-refactor generator.
     const radius = (ROTATION_RADIUS_MIN_FACTOR + random() * (ROTATION_RADIUS_MAX_FACTOR - ROTATION_RADIUS_MIN_FACTOR)) * typicalSpacing
     const angle = random() * Math.PI * 2
-    const centerX = seed.x + Math.cos(angle) * radius
-    const centerY = seed.y + Math.sin(angle) * radius
+    const centerX = seed.x + detCos(angle) * radius
+    const centerY = seed.y + detSin(angle) * radius
     const targetSpeed = LINEAR_SPEED_MIN_PX + random() * (LINEAR_SPEED_MAX_PX - LINEAR_SPEED_MIN_PX)
     const direction = random() < 0.5 ? 1 : -1
     const spin = (direction * targetSpeed) / radius

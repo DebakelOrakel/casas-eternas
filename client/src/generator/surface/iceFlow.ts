@@ -3,6 +3,7 @@ import { downsampleBox, sampleBilinearWorld } from '../core/field'
 import { CLIMATE_TUNING } from '../climate/climateTuneParams'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { SURFACE_TUNING } from './surfaceTuneParams'
+import { detPow } from '../core/detMath'
 
 // ICE THICKNESS ON THE FINAL TERRAIN (ADAPTIVE_MESH_PLAN.md F4, docs/design/
 // glacial.md "Forerunner"): the shallow-ice flow once, with the final
@@ -132,7 +133,7 @@ export function computeIceThickness(input: IceFlowInputs): IceFlowResult {
       let h = 0
       if (q > 0) {
         const s = Math.max(t.iceMinSlope, slope[c])
-        h = Math.pow((q / cellM) / (gamma * s * s * s), 0.2)
+        h = detPow((q / cellM) / (gamma * s * s * s), 0.2)
         if (h > t.iceMaxThicknessM) h = t.iceMaxThicknessM
       }
       thickness[c] = 0.5 * thickness[c] + 0.5 * h

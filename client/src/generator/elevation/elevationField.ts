@@ -10,6 +10,7 @@ import { continentalHypsometry } from './hypsometry'
 import { wrapValue } from '../core/field'
 import { raftField, sampleOwnerField } from '../crust/raftField'
 import type { Raft } from '../crust/raftTypes'
+import { detExp, detPow } from '../core/detMath'
 
 // Farthest a feature can influence in any direction — its segment half-length
 // plus the perpendicular cap radius. The spatial bucket index must be at
@@ -83,7 +84,7 @@ export function buildFeatureBuckets(features: TerrainFeature[], width: number, h
 // Fraction 0..1 of an ocean plate's total subsidence completed at `age` epochs.
 function subsidenceFraction(age: number): number {
   if (age < ELEVATION_TUNING.gdh1YoungMaxAge) return ELEVATION_TUNING.gdh1YoungCoeff * Math.sqrt(age)
-  return 1 - ELEVATION_TUNING.gdh1OldCoeff * Math.exp(-ELEVATION_TUNING.gdh1OldDecay * age)
+  return 1 - ELEVATION_TUNING.gdh1OldCoeff * detExp(-ELEVATION_TUNING.gdh1OldDecay * age)
 }
 
 export function oceanFloorAtAge(age: number): number {
@@ -202,7 +203,7 @@ export function computeElevation(
   // sharpen with the true crustal thickness while the deck under them sinks.
   const knee = ELEVATION_TUNING.upliftSoftKnee
   const span = ELEVATION_TUNING.upliftSoftSpan
-  const uplift = upliftRaw > knee ? knee + span * (1 - Math.exp(-(upliftRaw - knee) / span)) : upliftRaw
+  const uplift = upliftRaw > knee ? knee + span * (1 - detExp(-(upliftRaw - knee) / span)) : upliftRaw
   // Ridged-multifractal relief on top of the smooth uplift, modulated by
   // that uplift so only raised terrain gets rugged (ELEVATION_TUNING.ridgeRelativeStrength),
   // centered on RIDGE_MEAN so ridgelines add height and valleys cut down with
@@ -244,6 +245,6 @@ export function applyMountainRedistribution(
     const maxLandElevation = maxByOwner.get(ownerAt[i]) ?? 0
     if (maxLandElevation <= 0) continue
     const normalized = elevation / maxLandElevation
-    elevations[i] = Math.pow(normalized, ELEVATION_TUNING.mountainRedistributionGamma) * maxLandElevation
+    elevations[i] = detPow(normalized, ELEVATION_TUNING.mountainRedistributionGamma) * maxLandElevation
   }
 }

@@ -2,6 +2,7 @@ import { METERS_PER_CELL } from '../core/mapConfig'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import type { PeriodicTriangulation } from './periodicDelaunay'
 import { barycentric } from './remesh'
+import { detHypot } from '../core/detMath'
 
 // SAMPLING THE MESH AT A POINT (decision 7 of docs/decisions/adaptive-mesh.md:
 // "map/ samples the mesh directly — point location over a spatial bucket,
@@ -94,7 +95,7 @@ export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array):
     }
   }
   for (let v = 0; v < mesh.vertexSlots; v++) {
-    const l = Math.hypot(normals[3 * v], normals[3 * v + 1], normals[3 * v + 2])
+    const l = detHypot(normals[3 * v], normals[3 * v + 1], normals[3 * v + 2])
     if (l > 0) {
       normals[3 * v] /= l
       normals[3 * v + 1] /= l
@@ -133,7 +134,7 @@ export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array):
         ny += bary[k] * normals[3 * v + 1]
         nz += bary[k] * normals[3 * v + 2]
       }
-      const l = Math.hypot(nx, ny, nz) || 1
+      const l = detHypot(nx, ny, nz) || 1
       out[0] = nx / l
       out[1] = ny / l
       out[2] = nz / l

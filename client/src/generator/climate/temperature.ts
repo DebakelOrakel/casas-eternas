@@ -3,6 +3,7 @@ import { CLIMATE_TUNING } from './climateTuneParams'
 import { ELEVATION_METERS, SEA_LEVEL } from '../elevation/elevationScale'
 import { blur } from './pressure'
 import { DEFAULT_PLANET_FORCING, obliquityContrast, solarTemperatureOffsetC, type PlanetForcing } from '../planet/planetForcing'
+import { detCos } from '../core/detMath'
 
 // Base air temperature: latitudinal insolation (cosine of latitude angle,
 // equator warm → pole cold) minus an elevation lapse on land, plus a global
@@ -30,7 +31,7 @@ import { DEFAULT_PLANET_FORCING, obliquityContrast, solarTemperatureOffsetC, typ
 export function baseTemperatureAtLatitude(lat: number, contrast: number, planet: PlanetForcing): number {
   const meanC = (CLIMATE_TUNING.tempEquatorC + CLIMATE_TUNING.tempPoleC) / 2
   const gradient = contrast * obliquityContrast(planet.obliquityDeg)
-  const deviation = (CLIMATE_TUNING.tempEquatorC - CLIMATE_TUNING.tempPoleC) * (Math.cos((lat * Math.PI) / 2) - 0.5)
+  const deviation = (CLIMATE_TUNING.tempEquatorC - CLIMATE_TUNING.tempPoleC) * (detCos((lat * Math.PI) / 2) - 0.5)
   return meanC + gradient * deviation
 }
 

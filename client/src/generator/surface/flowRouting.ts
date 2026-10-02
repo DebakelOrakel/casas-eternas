@@ -1,4 +1,5 @@
 import { MinHeap } from '../core/minHeap'
+import { detAtan2, detHypot, detSin } from '../core/detMath'
 
 // Drainage routing on the flat torus: priority-flood depression filling, D8-LTD
 // flow direction, multiple-flow-direction edges. This is the layer that turns
@@ -329,7 +330,7 @@ function computeLtdFlowTargets(filled: Float32Array, width: number, height: numb
       let slope: number
       if (s2 <= 0) slope = s1 // direction clamps onto the cardinal
       else if (s2 >= s1) slope = (ownElevation - filled[nd]) / Math.SQRT2 // onto the diagonal
-      else slope = Math.hypot(s1, s2)
+      else slope = detHypot(s1, s2)
       if (slope > bestSlope) { bestSlope = slope; bestFacet = f; bestS1 = s1; bestS2 = s2 }
     }
 
@@ -342,11 +343,11 @@ function computeLtdFlowTargets(filled: Float32Array, width: number, height: numb
       const dd = D8_OFFSETS[facet[1]]
       const nc = d8Neighbor(x, y, co[0], co[1], width, height)
       const nd = d8Neighbor(x, y, dd[0], dd[1], width, height)
-      const alpha = bestS2 <= 0 ? 0 : bestS2 >= bestS1 ? QUARTER_TURN : Math.atan2(bestS2, bestS1)
+      const alpha = bestS2 <= 0 ? 0 : bestS2 >= bestS1 ? QUARTER_TURN : detAtan2(bestS2, bestS1)
       // Perpendicular offset of each candidate from the true fall line: the
       // cardinal sits sin α off it, the diagonal √2·sin(45° − α) the other way.
-      const deltaCardinal = -orient * Math.sin(alpha)
-      const deltaDiagonal = orient * Math.SQRT2 * Math.sin(QUARTER_TURN - alpha)
+      const deltaCardinal = -orient * detSin(alpha)
+      const deltaDiagonal = orient * Math.SQRT2 * detSin(QUARTER_TURN - alpha)
       const lam = lambda[cell]
       const cardinalDown = filled[nc] < ownElevation
       const diagonalDown = filled[nd] < ownElevation

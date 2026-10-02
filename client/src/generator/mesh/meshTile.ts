@@ -122,7 +122,7 @@ const CLEAR_FRACTION = 0.8
 // first (2^-20, 7 mm, for L3): a multiple of it minus the frame's
 // whole-cell origin is exact in float32 up to 2^24 quanta (16 cells at
 // 2^-20), so the node is the same point in any frame.
-const maxSide = (spec: TileSpec): number => 2 ** 24 * spec.quantum
+const maxSide = (spec: TileSpec): number => 16_777_216 * spec.quantum
 const quantise = (v: number, spec: TileSpec): number => Math.round(v / spec.quantum) * spec.quantum
 // Hash salts of the edge row's offsets, apart from the placement levels'.
 const EDGE_SALT_ROW = 101

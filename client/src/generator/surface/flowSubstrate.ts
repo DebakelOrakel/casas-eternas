@@ -1,5 +1,6 @@
 import { wrapValue } from '../core/field'
 import type { FlowRouting } from './flowRouting'
+import { detHypot } from '../core/detMath'
 
 // THE FLOW SUBSTRATE (ADAPTIVE_MESH_PLAN.md phase 4.3): what the hydrology
 // and the river graph read of the thing water flows over — a set of
@@ -74,7 +75,7 @@ export function rasterSubstrate(routing: FlowRouting): FlowSubstrate {
       if (dx > width / 2) dx = width - dx
       let dy = Math.abs(by - ay)
       if (dy > height / 2) dy = height - dy
-      return Math.hypot(dx, dy) || 1
+      return detHypot(dx, dy) || 1
     },
     facetNeighbours: (c, out) => {
       const cx = c % width

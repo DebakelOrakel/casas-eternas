@@ -1,4 +1,5 @@
 import { TECTONICS_TUNING } from './tectonicsTuneParams'
+import { detExp, detLog, detPow } from '../core/detMath'
 
 // FLEXURAL ISOSTASY (ADAPTIVE_MESH_PLAN.md phase 5.3, decision 5 of
 // docs/decisions/adaptive-mesh.md): the lithosphere answers a change of
@@ -45,16 +46,16 @@ export function flexuralAlphaKm(teKm: number): number {
   const te = teKm * 1000
   const D = (E * te * te * te) / (12 * (1 - T.flexurePoisson * T.flexurePoisson))
   const dRho = T.flexureMantleDensity - T.flexureCrustDensity
-  return Math.pow((4 * D) / (dRho * 9.81), 0.25) / 1000
+  return detPow((4 * D) / (dRho * 9.81), 0.25) / 1000
 }
 
 function bandOf(alphaKm: number): number {
-  const b = Math.round(Math.log(Math.max(alphaKm, BAND_BASE_KM) / BAND_BASE_KM) / Math.log(BAND_STEP))
+  const b = Math.round(detLog(Math.max(alphaKm, BAND_BASE_KM) / BAND_BASE_KM) / detLog(BAND_STEP))
   return Math.min(BAND_COUNT - 1, Math.max(0, b))
 }
 
 function bandAlphaKm(band: number): number {
-  return BAND_BASE_KM * Math.pow(BAND_STEP, band)
+  return BAND_BASE_KM * detPow(BAND_STEP, band)
 }
 
 // A toroidal separable Gaussian blur of `field` in place, σ in cells.
@@ -62,7 +63,7 @@ function blurToroidal(field: Float32Array, resX: number, resY: number, sigmaCell
   const radius = Math.max(1, Math.ceil(3 * sigmaCells))
   const kernel = new Float64Array(2 * radius + 1)
   let sum = 0
-  for (let k = -radius; k <= radius; k++) { const w = Math.exp(-(k * k) / (2 * sigmaCells * sigmaCells)); kernel[k + radius] = w; sum += w }
+  for (let k = -radius; k <= radius; k++) { const w = detExp(-(k * k) / (2 * sigmaCells * sigmaCells)); kernel[k + radius] = w; sum += w }
   for (let k = 0; k < kernel.length; k++) kernel[k] /= sum
   for (let y = 0; y < resY; y++) {
     const row = y * resX
