@@ -29,7 +29,7 @@ import { join, dirname } from 'node:path'
 import { Worker as NodeWorker, isMainThread } from 'node:worker_threads'
 import { availableParallelism } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
-import type { WorkerLike } from '../src/generator/surface/erosionEnginePool'
+import { EngineStalledError, type WorkerLike } from '../src/generator/surface/erosionEnginePool'
 import { levelBudget, levelHydrology, type MeshLevel } from '../src/generator/pipeline/meshBakeStage'
 import { planTiles } from '../src/generator/pipeline/tilePlan'
 import { meshRouting } from '../src/generator/mesh/meshHydrology'
@@ -37,7 +37,7 @@ import { encodeCoupledTerrain, HISTORY_DEFAULTS } from '../src/generator/pipelin
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../src/generator/climate/climateField'
 import { replayHistory, replayRefusal, type ReplayPosition, type ReplaySnapshot } from '../src/world/replay'
 import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact, type MeshLevelArtifact } from '../src/world/meshArtifacts'
-import { bakedTileToArtifact, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact } from '../src/world/meshTileArtifacts'
+import { bakedTileToArtifact, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact, type MeshTileArtifact } from '../src/world/meshTileArtifacts'
 import { bakeMeshTile, type UpstreamTile } from '../src/generator/pipeline/meshTileBake'
 import { parentTilesOf, TILE_SPECS, tileCorner, tileGrid, tileParentFromTiles, tileSpec, type TileParent, type TilePiece, type TileSpec } from '../src/generator/mesh/meshTile'
 import { SHELF_BREAK } from '../src/generator/elevation/elevationScale'
@@ -225,13 +225,20 @@ function createFsArtifactStore(root: string): ArtifactStore {
   }
 }
 
-async function readWorld(job: Job): Promise<Uint8Array | null> {
-  if (job.worldZip) return readFile(job.worldZip).catch(() => null)
+// `held` is the revision (the server's ETag) of a copy this worker keeps:
+// the server answers 304 when it is still the current one, and the
+// archive — tens of MB — is not sent again (`unchanged`).
+async function readWorld(job: Job, held?: string): Promise<{ archive: Uint8Array; etag: string | null } | 'unchanged' | null> {
+  if (job.worldZip) {
+    const archive = await readFile(job.worldZip).catch(() => null)
+    return archive ? { archive, etag: null } : null
+  }
   if (!job.worldUrl) return null
   try {
-    const response = await authorizedFetch(job)(job.worldUrl)
+    const response = await authorizedFetch(job)(job.worldUrl, held ? { headers: { 'If-None-Match': held } } : {})
+    if (response.status === 304 && held) return 'unchanged'
     if (!response.ok) return null
-    return new Uint8Array(await response.arrayBuffer())
+    return { archive: new Uint8Array(await response.arrayBuffer()), etag: response.headers.get('ETag') }
   } catch {
     return null
   }
@@ -414,12 +421,24 @@ type WorldInputs = NonNullable<Awaited<ReturnType<typeof readWorldInputs>>>
 // levels it has read, so tile after tile on one world reads them once.
 // Least recently used out, a couple of each: a level of a real world is
 // hundreds of megabytes.
+//
+// Worlds by path (a path names one revision) or by URL with the revision
+// they were read at (the URL names the world, whose revision moves; asked
+// again with If-None-Match, readWorld). Tiles — a level-3 tile's parents
+// and a tile's upstream neighbours — by artifact key: an artifact under a
+// key is the same bytes whoever wrote it, and one level-2 tile is the
+// parent of about nine level-3 tiles (2026-10-02: every task read them
+// again, and in a cluster read the 26 MB world again too).
 interface JobCache {
-  worlds: Map<string, WorldInputs>
+  worlds: Map<string, { inputs: WorldInputs; etag: string | null }>
   levels: Map<string, { artifact: NonNullable<Awaited<ReturnType<typeof readMeshLevelArtifact>>>['artifact']; mesh?: ReturnType<typeof meshLevelMesh>; sampler?: MeshSampler }>
+  tiles: Map<string, MeshTileArtifact>
 }
 const CACHED_WORLDS = 2
 const CACHED_LEVELS = 2
+// A level-3 tile reads up to four parents and two or three upstream tiles;
+// a few rows of the plan's order fit. A large level-2 tile is ~3 MB.
+const CACHED_TILES = 32
 function remember<V>(cache: Map<string, V>, key: string, value: V, size: number): void {
   cache.delete(key)
   cache.set(key, value)
@@ -438,17 +457,22 @@ function recall<V>(cache: Map<string, V>, key: string): V | undefined {
 // a serving worker can report it and go on to the next task.
 async function runJob(job: Job, onProgress: (phase: string, fraction: number) => void, cache?: JobCache): Promise<JobOutcome> {
   // A world read from a file is cached by its path, which names one
-  // revision; one fetched by URL is read each time (the URL outlives the
-  // revision behind it).
-  const worldKey = job.worldZip
-  let inputs = worldKey && cache ? recall(cache.worlds, worldKey) : undefined
+  // revision; one fetched by URL with its revision, and asked for again
+  // only if the server holds a newer one (readWorld).
+  const worldKey = job.worldZip ?? job.worldUrl
+  const held = worldKey && cache ? recall(cache.worlds, worldKey) : undefined
+  let inputs: WorldInputs | undefined = held && job.worldZip ? held.inputs : undefined
   if (!inputs) {
-    const archive = await readWorld(job)
-    if (!archive) throw new Error(`cannot read the world (${job.worldZip ?? job.worldUrl ?? 'no source given'})`)
-    const read = await readWorldInputs(archive)
-    if (!read) throw new Error('not a readable world archive')
-    inputs = read
-    if (worldKey && cache) remember(cache.worlds, worldKey, inputs, CACHED_WORLDS)
+    const read = await readWorld(job, held?.etag ?? undefined)
+    if (read === 'unchanged') inputs = held!.inputs
+    else {
+      if (!read) throw new Error(`cannot read the world (${job.worldZip ?? job.worldUrl ?? 'no source given'})`)
+      const parsed = await readWorldInputs(read.archive)
+      if (!parsed) throw new Error('not a readable world archive')
+      inputs = parsed
+      // By URL only with a revision to ask with; without one it is read again.
+      if (worldKey && cache && (job.worldZip || read.etag)) remember(cache.worlds, worldKey, { inputs, etag: read.etag }, CACHED_WORLDS)
+    }
   }
   const store = artifactStoreFor(job)
   if (!store) throw new Error('neither artifactsDir nor artifactsUrl was given')
@@ -693,9 +717,9 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
     const above = tileSpec(spec.level - 1)
     const pieces: TilePiece[] = []
     for (const piece of parentTilesOf(tile, above, inputs.width, inputs.height)) {
-      const read = await readMeshTileArtifact(store, artifactKey(inputs.worldUid, inputs.worldId, meshTilePipelineVersion(above.level, job.erosionRounds), meshTileStage(piece)))
+      const read = await readTile(store, artifactKey(inputs.worldUid, inputs.worldId, meshTilePipelineVersion(above.level, job.erosionRounds), meshTileStage(piece)), cache)
       if (!read) throw new Error(`tile ${meshTileStage(piece)} of this world is not in the artifact store — the level above comes first`)
-      pieces.push({ tile: piece, count: read.artifact.count, nodes: read.artifact.nodes, z: read.artifact.z })
+      pieces.push({ tile: piece, count: read.count, nodes: read.nodes, z: read.z })
     }
     const patch = tileParentFromTiles(pieces, inputs.width, inputs.height)
     parent = { mesh: patch.mesh, z: patch.z, discharge: null, sampler: createMeshSampler(patch.mesh, patch.z), macro }
@@ -704,9 +728,9 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
   const upstream: UpstreamTile[] = []
   for (const at of job.upstream ?? []) {
     const up = { level: spec.level, x: at.x, y: at.y }
-    const read = await readMeshTileArtifact(store, artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(up)))
+    const read = await readTile(store, artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(up)), cache)
     if (!read) throw new Error(`tile ${meshTileStage(up)} upstream of this one is not in the artifact store`)
-    upstream.push({ tile: up, count: read.artifact.count, nodes: read.artifact.nodes, outflow: read.artifact.outflow })
+    upstream.push({ tile: up, count: read.count, nodes: read.nodes, outflow: read.outflow })
   }
   onProgress('parent', 1)
   const baked = await bakeMeshTile(tileBakeInputs(inputs, parent, level1.artifact.graph, upstream), tile, { rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
@@ -714,6 +738,17 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
   const artifact = bakedTileToArtifact(baked)
   if (!(await writeMeshTileArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
   return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs } }
+}
+
+// A tile artifact, through the worker's cache when it has one.
+async function readTile(store: ArtifactStore, key: ArtifactKey, cache?: JobCache): Promise<MeshTileArtifact | null> {
+  const id = `${key.worldUid}/${key.worldId}/${key.pipelineVersion}/${key.stage}`
+  const held = cache ? recall(cache.tiles, id) : undefined
+  if (held) return held
+  const read = await readMeshTileArtifact(store, key)
+  if (!read) return null
+  if (cache) remember(cache.tiles, id, read.artifact, CACHED_TILES)
+  return read.artifact
 }
 
 // SERVING (docs/decisions/detail-ladder.md, "Workers"): a long-lived
@@ -757,7 +792,7 @@ async function serve(config: ServeConfig): Promise<void> {
   }
   const js = jetstream(nc)
   const consumer = await js.consumers.get(TASK_STREAM, TASK_CONSUMER)
-  const cache: JobCache = { worlds: new Map(), levels: new Map() }
+  const cache: JobCache = { worlds: new Map(), levels: new Map(), tiles: new Map() }
   let current: { msg: JsMsg; jobId: string } | null = null
 
   // A cancelled job's task in hand is ended, and the worker with it — the
@@ -771,9 +806,12 @@ async function serve(config: ServeConfig): Promise<void> {
       }
     },
   })
-  // Asked to stop: the task in hand goes back to the queue at once.
+  // Asked to stop: the task in hand goes back to the queue at once. A
+  // drain that does not finish does not keep the worker alive (2026-10-02:
+  // a hung worker ignored SIGTERM for as long as it hung).
   process.on('SIGTERM', () => {
     current?.msg.nak()
+    setTimeout(() => process.exit(0), 5_000).unref()
     void nc.drain().finally(() => process.exit(0))
   })
   process.stderr.write(`serving ${config.pools.join(', ')} on ${config.relay}\n`)
@@ -804,6 +842,13 @@ async function serve(config: ServeConfig): Promise<void> {
       msg.ack()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      // A dead engine thread is this worker's fault, not the task's: the
+      // worker ends without an answer, the pool starts a fresh one and the
+      // relay hands the task on once its heartbeat stops.
+      if (error instanceof EngineStalledError) {
+        process.stderr.write(`task ${taskId}: ${message}; ending the worker\n`)
+        process.exit(1)
+      }
       process.stderr.write(`task ${taskId} failed: ${message}\n`)
       // A computation's error is the task's answer: it would fail the same
       // way on any worker, so it is reported and not delivered again.

@@ -3,6 +3,10 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-10-02
+- **fixed** Server: a job worker whose engine thread died ends and is started again instead of hanging, and it stops within seconds when asked. `jobs`
+- **changed** Server: a job worker keeps a world fetched by URL and the tiles it read for the next task; `GET /v1/worlds/{uid}` answers 304 to `If-None-Match` with the current revision. `jobs`
+
 ## 2026-10-01
 - **new** Server: a message bus, target `-t relay` (part of `all`) — keys `relay.storage.dir.path`, `relay.listen` and `global.services.relay` (`CASAS_RELAY_*`); it carries the jobs and their workers from the next steps on.
 - **changed** Server: jobs run as tasks of a coordinator over the relay, on long-lived workers — key `jobs.storage.dir.path`, a `refine` plan, live progress at `/v1/jobs/events`. `jobs`

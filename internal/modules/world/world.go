@@ -189,6 +189,16 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 	if !m.gate(w, r, uid, access.ActionRead) {
 		return
 	}
+	// A reader that holds this revision already (a job worker baking tile
+	// after tile of one world) asks with If-None-Match and gets 304 without
+	// the archive — tens of MB per task otherwise.
+	if match := r.Header.Get("If-None-Match"); match != "" {
+		if meta, err := m.store.Get(r.Context(), uid); err == nil && match == etag(meta.Revision) {
+			w.Header().Set("ETag", etag(meta.Revision))
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 	data, meta, err := m.store.ReadCurrent(r.Context(), uid)
 	if err != nil {
 		respondStoreError(w, err)

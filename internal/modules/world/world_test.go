@@ -153,6 +153,22 @@ func TestGetServesTheZipWithItsRevisionAsETag(t *testing.T) {
 	}
 }
 
+// A reader holding the current revision gets 304 and no archive; one
+// holding an older revision gets the archive again.
+func TestGetAnswersNotModifiedForTheCurrentRevision(t *testing.T) {
+	_, mux := newTestModule(t)
+	upload(t, mux, sampleUID, "")
+
+	same := do(mux, http.MethodGet, "/v1/worlds/"+sampleUID, nil, map[string]string{"If-None-Match": `"1"`})
+	if same.Code != http.StatusNotModified || same.Body.Len() != 0 || same.Header().Get("ETag") != `"1"` {
+		t.Errorf("current revision = %d, %d bytes, ETag %q; want 304, none, \"1\"", same.Code, same.Body.Len(), same.Header().Get("ETag"))
+	}
+	older := do(mux, http.MethodGet, "/v1/worlds/"+sampleUID, nil, map[string]string{"If-None-Match": `"0"`})
+	if older.Code != http.StatusOK || older.Body.Len() == 0 {
+		t.Errorf("older revision = %d, %d bytes; want 200 with the archive", older.Code, older.Body.Len())
+	}
+}
+
 // A bake Job may READ the one world its token names — and nothing else in no
 // other way: every other world stays the stranger's 404, and even its own
 // world refuses writes and deletes. Pins the gap found 2026-08-13, when the

@@ -127,11 +127,34 @@ function createSharedTerrain(width: number, height: number, initial: Float32Arra
   return { index, buffer, terrain }
 }
 
+// A wait that sees no change for this long is a worker that died — a
+// worker thread out of memory ends without a word, and the coordinator
+// would wait for it forever with its event loop blocked: no heartbeat, no
+// signal handler (2026-10-02: both job workers of a server, for twenty
+// minutes, until SIGKILL). Each wait spans one kernel dispatch, so ten
+// minutes without a change is never a slow kernel.
+const STALL_MS = 10 * 60_000
+const WAIT_SLICE_MS = 30_000
+
+export class EngineStalledError extends Error {
+  constructor(what: string) {
+    super(`the erosion engine's ${what} made no progress for ${STALL_MS / 60_000} minutes — a worker thread has died`)
+    this.name = 'EngineStalledError'
+  }
+}
+
+// Atomics.wait until `cell` is no longer `value`, in slices, throwing once
+// no change has come for STALL_MS.
+function waitWhile(cells: Int32Array, cell: number, value: number, what: string): void {
+  const since = Date.now()
+  while (Atomics.load(cells, cell) === value) {
+    if (Atomics.wait(cells, cell, value, WAIT_SLICE_MS) === 'timed-out' && Date.now() - since > STALL_MS) throw new EngineStalledError(what)
+  }
+}
+
 function waitAll(done: Int32Array, count: number): void {
   let finished
-  while ((finished = Atomics.load(done, 0)) < count) {
-    Atomics.wait(done, 0, finished)
-  }
+  while ((finished = Atomics.load(done, 0)) < count) waitWhile(done, 0, finished, 'workers')
 }
 
 export class PooledErosionEngine {
@@ -511,9 +534,7 @@ export class PipelinedErosionEngine {
   }
 
   private waitAndAdopt(): void {
-    while (Atomics.load(this.refreshCtrl, REFRESH_DONE) === 0) {
-      Atomics.wait(this.refreshCtrl, REFRESH_DONE, 0)
-    }
+    waitWhile(this.refreshCtrl, REFRESH_DONE, 0, 'routing refresh')
     this.activeIndex = Atomics.load(this.refreshCtrl, REFRESH_TARGET)
     this.poppedCount = Atomics.load(this.refreshCtrl, REFRESH_POPPED)
     this.inFlight = false
