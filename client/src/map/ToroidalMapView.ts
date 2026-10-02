@@ -3,6 +3,7 @@ import type { AbstractMesh, InstancedMesh } from '@babylonjs/core'
 import type { ElevationSurface } from './elevationSurface'
 import { HexGridMaterialPlugin } from './hexGridMaterialPlugin'
 import { WaterField, WaterMaterialPlugin } from './waterMaterialPlugin'
+import { createNearRings, type NearRings } from './nearRings'
 
 // Which representation the map should wear this frame — decided by the
 // caller (it owns the camera/zoom semantics):
@@ -77,6 +78,20 @@ export interface ToroidalMapViewOptions {
   // sized by a wide view spans hundreds of kilometres, and one shadow map
   // over it self-shadows in rows of dark scales (the incubator, 2026-10-02).
   nearShadows?: { sunElevationDeg: number; getActive?: () => boolean }
+  // The near ground as RINGS around the focus (nearRings.ts,
+  // docs/decisions/near-ground-clipmap.md). While `getActive` says so they
+  // are the only ground: the relief levels, the flat plane and the
+  // near-detail patch are hidden. `getSpacing` is the innermost ring's
+  // spacing, world units; `heightAtUV` and `colorAtUV` read the ground for a
+  // ring of a given spacing (height in world units, before the
+  // exaggeration; colour rgb 0..1 into out). `quads` a side per ring (128).
+  nearRings?: {
+    getActive: () => boolean
+    getSpacing: () => number
+    quads?: number
+    heightAtUV: (u: number, v: number, spacing: number) => number
+    colorAtUV: (u: number, v: number, spacing: number, out: Float32Array) => void
+  }
   // Called each frame with the recenter block's center, so a screen can tile
   // extra meshes in lockstep (e.g. the river ribbon overlay).
   onRecenter?: (centerX: number, centerZ: number) => void
@@ -103,6 +118,9 @@ export interface ToroidalMapView {
   // an immediate rebuild — for a screen whose height data is replaced under
   // it, e.g. when the worldmap's amplification bake finishes.
   setNearDetailSurfaces(detail: ElevationSurface, base: ElevationSurface): void
+  // Rebuild the near rings (options.nearRings) up to a spacing (world
+  // units; all without it): the ground they read changed.
+  refreshNearRings(maxSpacing?: number): void
   // Vertical exaggeration, applied as a scale on the relief meshes rather
   // than baked into their heights — so a screen can change it per frame
   // (the worldmap fades it out during the descent) without recomputing any
@@ -241,7 +259,7 @@ interface ReliefLevel {
 // sun — which is what keeps slopes crisp when the texture itself has run out
 // of resolution.
 export function createToroidalMapView(options: ToroidalMapViewOptions): ToroidalMapView {
-  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, getSunWorldBlend, hexGrid, nearDetail, nearShadows, onRecenter } = options
+  const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getFocus, reliefDetail, getYaw, getSunWorldBlend, hexGrid, nearDetail, nearShadows, nearRings, onRecenter } = options
 
   // Starts as a flat white placeholder (the caller's clear color) until the
   // first composited frame is uploaded, so there's no flash.
@@ -434,6 +452,14 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   }
 
   function applyVisibility(): void {
+    if (ringsActive) {
+      // The rings are the ground: nothing of the world-sized grounds under
+      // them to show through.
+      setLevelShown('flat', tile, wrapInstances, false)
+      setLevelShown('coarse', coarseLevel?.base ?? null, coarseLevel?.instances ?? [], false)
+      setLevelShown('fine', fineLevel?.base ?? null, fineLevel?.instances ?? [], false)
+      return
+    }
     let detail: MapReliefDetail = enabled ? (reliefDetail?.() ?? 'flat') : 'flat'
     if (detail === 'fine' && !fineSurface) detail = 'coarse'
     if (detail !== 'flat' && !coarseSurface) detail = 'flat'
@@ -482,6 +508,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       for (const inst of level.instances) inst.scaling.y = heightScale
     }
     if (patchMesh) patchMesh.scaling.y = heightScale
+    rings?.setHeightScale(heightScale)
   }
 
   // The ground meshes' own uv↔world mapping (derived from vertex data, same
@@ -584,9 +611,100 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
 
   let nearGroundVisible = true
 
+  // --- Near rings (see options.nearRings) ---
+  let rings: NearRings | null = null
+  let ringsActive = false
+  let ringMapping: ReturnType<typeof deriveUvMapping> | null = null
+  const ringsInLights = new Set<Mesh>()
+  // The innermost rings cast and take the shadows (the decision's "real
+  // shadows where the terrain is closest"); further out a shadow map's
+  // texels would be kilometres.
+  // Two: three spanned ~23 km at the innermost spacing, and the shadow
+  // map's texels, stretched by an 8° sun, drew the shadows in steps and
+  // stripes (2026-10-02).
+  const SHADOWED_RINGS = 2
+
+  function updateNearRings(focusX: number, focusZ: number): void {
+    if (!nearRings) return
+    const want = enabled && nearRings.getActive() && coarseLevel !== null && nearGroundVisible
+    if (want !== ringsActive) {
+      ringsActive = want
+      applyVisibility()
+      if (!want) {
+        rings?.setEnabled(false)
+        // The patch's shadows fit their frustum to the patch again.
+        sun.shadowFrustumSize = 0
+        sun.autoUpdateExtends = true
+      }
+    }
+    if (!want || !coarseLevel) return
+    if (!rings) {
+      ringMapping = deriveUvMapping(coarseLevel)
+      const m = ringMapping
+      const uOf = (x: number): number => m.u0 + (x - m.x0) / m.dxdu
+      const vOf = (z: number): number => m.v0 + (z - m.z0) / m.dzdv
+      rings = createNearRings({
+        scene,
+        quads: nearRings.quads ?? 128,
+        worldSpan: Math.max(worldWidth, worldHeight),
+        heightAt: (x, z, spacing) => nearRings.heightAtUV(uOf(x), vOf(z), spacing),
+        colorAt: (x, z, spacing, out) => nearRings.colorAtUV(uOf(x), vOf(z), spacing, out),
+      })
+      rings.setHeightScale(heightScale)
+    }
+    rings.setEnabled(true)
+    rings.update(focusX, focusZ, nearRings.getSpacing())
+    // Lights (and the shadows) for rings made since the last frame.
+    rings.meshes.forEach((mesh, k) => {
+      if (ringsInLights.has(mesh)) return
+      ringsInLights.add(mesh)
+      sun.includedOnlyMeshes.push(mesh)
+      fill.includedOnlyMeshes.push(mesh)
+      if (nearShadows && k < SHADOWED_RINGS) {
+        if (!shadows) {
+          shadows = new ShadowGenerator(SHADOW_MAP_SIZE, sun)
+          shadows.usePercentageCloserFiltering = true
+          shadows.bias = 0.0005
+        }
+        // Softer on the rings: the best filter, a bias along the normal
+        // against the stripes a low sun lays on gentle slopes (acne), and
+        // a shadow that keeps some light — the fill light alone left them
+        // near black.
+        shadows.filteringQuality = ShadowGenerator.QUALITY_HIGH
+        shadows.normalBias = 0.02
+        shadows.setDarkness(0.35)
+        shadows.addShadowCaster(mesh)
+        mesh.receiveShadows = true
+      }
+    })
+    if (shadows && nearShadows) {
+      const on = nearShadows.getActive?.() ?? true
+      const map = shadows.getShadowMap()
+      if (map) map.refreshRate = on ? 1 : 0
+      // A STABLE shadow map: a fixed frustum over the shadowed rings (its
+      // size follows their spacing only), centred on a point snapped to
+      // whole texels along the light's own axes. Fitted to the rings'
+      // bounds each frame, the frustum changed whenever a ring snapped
+      // to its next grid position, and the shadows jumped with it
+      // (2026-10-02).
+      const size = 1.5 * (nearRings.quads ?? 128) * nearRings.getSpacing() * 2 ** (SHADOWED_RINGS - 1)
+      const texel = size / SHADOW_MAP_SIZE
+      const f = sun.direction.normalizeToNew()
+      const right = Vector3.Cross(Vector3.Up(), f).normalize()
+      const up = Vector3.Cross(f, right)
+      const target = new Vector3(focusX, 0, focusZ)
+      const r = Vector3.Dot(target, right)
+      const u = Vector3.Dot(target, up)
+      target.addInPlace(right.scale(Math.round(r / texel) * texel - r)).addInPlace(up.scale(Math.round(u / texel) * texel - u))
+      sun.autoUpdateExtends = false
+      sun.shadowFrustumSize = size
+      sun.position.copyFrom(target.subtract(f.scale(size * 2)))
+    }
+  }
+
   function updateNearDetail(focusX: number, focusZ: number): void {
     if (!nearDetail) return
-    const active = nearDetail.getActive() && coarseLevel !== null && nearGroundVisible
+    const active = nearDetail.getActive() && coarseLevel !== null && nearGroundVisible && !ringsActive
     if (!active) {
       patchMesh?.setEnabled(false)
       return
@@ -680,8 +798,9 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
         i++
       }
     }
+    updateNearRings(focus.x, focus.z)
     applyVisibility()
-    if (shown.coarse || shown.fine) updateSunDirection()
+    if (shown.coarse || shown.fine || ringsActive) updateSunDirection()
     if (hexGrid && hexGridPlugin) {
       hexGridPlugin.setStrength(shown.coarse || shown.fine ? hexGrid.getStrength() : 0)
       const fade = hexGrid.getFadeDistances()
@@ -721,6 +840,9 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
         }
       }
       applyVisibility()
+    },
+    refreshNearRings(maxSpacing?: number): void {
+      rings?.refresh(maxSpacing)
     },
     setNearDetailSurfaces(detail: ElevationSurface, base: ElevationSurface): void {
       patchDetailSurface = detail
@@ -763,6 +885,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
         // Zero on flat ground, which is what made it look knowledge-related.
         if (!mesh.isEnabled() || !mesh.isVisible) return false
         if (mesh === tile || (patchMesh !== null && mesh === patchMesh)) return true
+        if (rings && rings.meshes.includes(mesh as Mesh)) return true
         if (wrapInstances.includes(mesh as InstancedMesh)) return true
         const inLevel = (level: ReliefLevel | null): boolean =>
           level !== null && (mesh === level.base || level.instances.includes(mesh as InstancedMesh))
@@ -774,7 +897,10 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     },
     setNearGroundVisible(visible: boolean): void {
       nearGroundVisible = visible
-      if (!visible) patchMesh?.setEnabled(false)
+      if (!visible) {
+        patchMesh?.setEnabled(false)
+        rings?.setEnabled(false)
+      }
     },
     setEnabled(next: boolean): void {
       enabled = next
@@ -784,6 +910,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     dispose(): void {
       scene.onBeforeRenderObservable.remove(observer)
       patchMesh?.dispose()
+      rings?.dispose()
       disposeLevel(coarseLevel)
       disposeLevel(fineLevel)
       for (const inst of wrapInstances) inst.dispose()

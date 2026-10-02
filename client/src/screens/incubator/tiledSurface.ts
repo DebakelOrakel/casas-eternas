@@ -21,6 +21,10 @@ export interface TiledSurface {
   // from the patch's spacing, so a wide view does not ask for hundreds of
   // tiles.
   setLevel(level: number): void
+  // The height in elevation units at (u, v) from levels up to `maxLevel`
+  // only — for a caller that picks the level per query (a ring of the near
+  // ground, by its own spacing).
+  elevationAtUVUpTo(u: number, v: number, maxLevel: number): number
 }
 
 export interface TiledSurfaceOptions {
@@ -67,8 +71,8 @@ export function createTiledSurface(options: TiledSurfaceOptions): TiledSurface {
 
   // The height in elevation units at a world point: the finest tile there
   // that is loaded, else level 1.
-  function elevationAt(x: number, y: number): number {
-    for (let lv = level; lv >= 2; lv--) {
+  function elevationAt(x: number, y: number, finest = level): number {
+    for (let lv = Math.min(3, finest); lv >= 2; lv--) {
       const tile = tileAt(lv, x, y, width, height)
       const stage = meshTileStage(tile)
       const held = tiles.get(stage)
@@ -97,6 +101,7 @@ export function createTiledSurface(options: TiledSurfaceOptions): TiledSurface {
     setLevel(next) {
       level = Math.max(1, Math.min(3, next))
     },
+    elevationAtUVUpTo: (u, v, maxLevel) => elevationAt(u * width - 0.5, v * height - 0.5, maxLevel),
   }
 }
 

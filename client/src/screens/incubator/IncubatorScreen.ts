@@ -92,17 +92,43 @@ const PATCH_SUBDIVISIONS = 384
 const TILE_LEVEL3_SPACING_M = 400
 const TILE_LEVEL2_SPACING_M = 1500
 
+// THE NEAR GROUND AS RINGS (map/nearRings.ts) in the near regime: the
+// innermost ring's spacing, metres, never coarser than the camera's height
+// over RING_SPACING_PER_ALTITUDE and never finer than RING_MIN_SPACING_M —
+// half the closest node spacing of level 3 (measured on Calvessor
+// 2026-10-02: nearest neighbours 62 m at the 1st percentile in mountains,
+// ~90 m the median of the densest tile, ~330 m of a median tile; level 2
+// 250–560 m), so a ring carries every node a tile has without stepping
+// across it. In powers of two of that, so the rings keep their grids
+// while the camera moves up and down a little.
+const RING_MIN_SPACING_M = 30
+const RING_SPACING_PER_ALTITUDE = 1 / 32
+const RING_QUADS = 192
+// The finest level a ring of a given spacing reads: one whose nodes its
+// quads can carry — level 3 to 60 m (twice its densest spacing in a
+// ring's half), level 2 to 240 m, level 1 beyond.
+const RING_LEVEL3_SPACING_M = 60
+const RING_LEVEL2_SPACING_M = 240
+
+function ringSpacingM(altitudeM: number): number {
+  const wanted = Math.max(RING_MIN_SPACING_M, altitudeM * RING_SPACING_PER_ALTITUDE)
+  return RING_MIN_SPACING_M * 2 ** Math.round(Math.log2(wanted / RING_MIN_SPACING_M))
+}
+
 // The tilt limit, degrees off vertical (the generator's is 60°).
 const MAX_TILT_DEG = 80
 
 // The sun's height for the shadows on the near ground, degrees. A slope
-// facing away casts a shadow only where it is steeper than the sun. The
-// level is flat: its steepest 1 % of slopes is 2.2 %, 13 % with the map's
-// ×6 height (measured 2026-09-30). At 8° (a slope of 14 %) about that 1 %
-// casts a shadow, plus the ground in the lee of it. A higher sun casts
-// none; a lower one blows out the slopes that face it, because the sun's
-// intensity rises as it sinks (see ToroidalMapView's nearShadows).
-const SUN_ELEVATION_DEG = 8
+// facing away casts a shadow only where it is steeper than the sun. It
+// stood at 8° for level 1, which is flat (steepest 1 % of slopes 2.2 %,
+// 13 % with the map's ×6 height). The tiles are not: measured on
+// Calvessor's level 3 (2026-10-02), the densest tile's slopes are 12 % at
+// the median and 36 % at the 99th percentile — 74 % and 213 % at ×6 —
+// against a median tile's 1 % and 3 %. At 8° (14 %) every mountain slope
+// facing away lay in long, hard shadow. At 30° (58 %) the steeper half of
+// a range's lee sides casts one and the plains none, which the light
+// alone shades.
+const SUN_ELEVATION_DEG = 30
 
 // The server's current level-1 artifacts, by world uid. Any revision of a
 // world counts: the world list does not say which terrain a world holds now,
@@ -156,6 +182,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // In the map regime the patch is sized by the view (it is orthographic
   // at a fixed height there): as wide as the view.
   const patchAltitude = (): number => (camera.getZoom() > 1 ? camera.getAltitude() : camera.getViewWidth() / PATCH_COVERAGE)
+
+  // The ground in elevation units for a ring of `spacing` (world units):
+  // the finest level its quads carry, wrapped onto the torus.
+  const ringElevation = (u: number, v: number, spacing: number): number => {
+    if (!tiled) return 0
+    const metres = spacing / UNITS_PER_METER
+    const level = metres <= RING_LEVEL3_SPACING_M ? 3 : metres <= RING_LEVEL2_SPACING_M ? 2 : 1
+    return tiled.elevationAtUVUpTo(((u % 1) + 1) % 1, ((v % 1) + 1) % 1, level)
+  }
 
   // The level's surface, once one is shown. The view is built before any
   // level is there, so the patch starts on a flat stand-in and is handed the
@@ -227,6 +262,20 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         out[2] = c[2] / 255
       },
     },
+    // In the near regime the rings are the ground, each reading the finest
+    // level its spacing carries; the patch stays the map regime's.
+    nearRings: {
+      getActive: () => levelSurface !== null && camera.getZoom() > 1,
+      getSpacing: () => ringSpacingM(camera.getAltitude() / UNITS_PER_METER) * UNITS_PER_METER,
+      quads: RING_QUADS,
+      heightAtUV: (u, v, spacing) => Math.max(0, ringElevation(u, v, spacing)) * RELIEF_HEIGHT_SCALE,
+      colorAtUV: (u, v, spacing, out) => {
+        const c = elevationToColor(ringElevation(u, v, spacing))
+        out[0] = c[0] / 255
+        out[1] = c[1] / 255
+        out[2] = c[2] / 255
+      },
+    },
     // Shadows in the near regime only (perspective, a patch of tens of
     // kilometres); further out the patch spans the view and lighting alone
     // shades it.
@@ -268,6 +317,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (tilesArrived) {
         tilesArrived = false
         mapView.setNearDetailSurfaces(tiled.surface, tiled.surface)
+        // Only the rings that read tiles; the rest read level 1.
+        mapView.refreshNearRings(RING_LEVEL2_SPACING_M * UNITS_PER_METER)
       }
     }
     const focus = camera.getFocus()
