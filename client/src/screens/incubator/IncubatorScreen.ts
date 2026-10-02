@@ -192,6 +192,19 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return tiled.elevationAtUVUpTo(((u % 1) + 1) % 1, ((v % 1) + 1) % 1, level)
   }
 
+  // The ground as the innermost ring draws it (its level, the map's
+  // exaggeration), in world units at a world point: what the camera keeps
+  // its height over. Level 1 under the focus alone it was: level 3 stands
+  // kilometres higher in the mountains at ×6, and the camera stayed at its
+  // height and ended up inside them (2026-10-02).
+  const drawnGroundAt = (x: number, z: number): number => {
+    if (!levelSurface) return 0
+    const u = x / MAP_WORLD_WIDTH + 0.5
+    const v = z / MAP_WORLD_HEIGHT + 0.5
+    const spacing = ringSpacingM(camera.getAltitude() / UNITS_PER_METER) * UNITS_PER_METER
+    return Math.max(0, ringElevation(u, v, spacing)) * RELIEF_HEIGHT_SCALE * MAP_EXAGGERATION
+  }
+
   // The level's surface, once one is shown. The view is built before any
   // level is there, so the patch starts on a flat stand-in and is handed the
   // level with setNearDetailSurfaces.
@@ -215,12 +228,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // over the terrain, not over the sea. The map plane is centred on the
     // origin: u = x / width + ½, v = z / height + ½.
     getGroundHeight: () => {
-      if (!levelSurface) return 0
       const focus = camera.getFocus()
-      const u = (((focus.x / MAP_WORLD_WIDTH + 0.5) % 1) + 1) % 1
-      const v = (((focus.z / MAP_WORLD_HEIGHT + 0.5) % 1) + 1) % 1
-      return levelSurface.heightAtUV(u, v) * MAP_EXAGGERATION
+      return drawnGroundAt(focus.x, focus.z)
     },
+    // And under the camera itself, which it never sinks below.
+    getGroundHeightAt: (x, z) => drawnGroundAt(x, z),
   })
   // A level is always eroded terrain: the deep zoom and the tilt are open.
   camera.setDeepZoomEnabled(true)

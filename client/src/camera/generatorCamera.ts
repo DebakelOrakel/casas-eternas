@@ -96,6 +96,12 @@ export interface GeneratorCameraOptions {
   // into every mountain. Omitted (the generator's preview) means a flat
   // datum, i.e. exactly the old behaviour.
   getGroundHeight?: () => number
+  // The drawn ground's world Y at any point, same terms — for the camera
+  // itself: in the near regime it never stands lower than this under it
+  // plus a clearance. Measured under the focus only, a tilted camera stood
+  // over other ground — a range in front of the focus — and sank into it
+  // (2026-10-02, the incubator's level-3 mountains).
+  getGroundHeightAt?: (x: number, z: number) => number
   // Pitch from vertical at the deepest zoom. 76° puts the horizon around
   // the top fifth of the frame at the default fov.
   horizonPitchDeg?: number
@@ -181,6 +187,7 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
     fovRad = 0.8,
     nearMinAltitude = 0.003,
     getGroundHeight,
+    getGroundHeightAt,
     horizonPitchDeg = 76,
     nearPitchMinDeg = 40,
     nearPitchMaxDeg = 80,
@@ -291,11 +298,17 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
   // this is the original untilted behavior exactly — position set directly,
   // rotation never touched — which keeps a steady-state top-down view free
   // of per-frame look-at re-derivation.
+  // In the near regime, the lowest the camera may stand at (x, z): the
+  // ground there plus a quarter of the lowest altitude.
+  let inNear = false
+  const eyeFloor = (x: number, z: number): number =>
+    inNear && getGroundHeightAt ? getGroundHeightAt(x, z) + nearMinAltitude * 0.25 : -Infinity
+
   const applyView = (): void => {
     if (tiltAngle === 0 && yawAngle === 0) {
       camera.position.x = focusX
       camera.position.z = focusZ
-      camera.position.y = groundHeight + viewHeight
+      camera.position.y = Math.max(groundHeight + viewHeight, eyeFloor(focusX, focusZ))
       return
     }
     // The camera stays viewHeight above the ground but pulls back along the
@@ -306,7 +319,11 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
     camera.upVector.set(up.x, 0, up.z)
     // Both ends rise with the ground: lifting only the camera would tilt the
     // view down into the hillside by exactly the height it was lifted.
-    camera.position.set(focusX - up.x * backOffset, groundHeight + viewHeight, focusZ - up.z * backOffset)
+    const eyeX = focusX - up.x * backOffset
+    const eyeZ = focusZ - up.z * backOffset
+    // Over ground higher than the focus's the camera climbs and looks down
+    // to the focus, which stays on the ground.
+    camera.position.set(eyeX, Math.max(groundHeight + viewHeight, eyeFloor(eyeX, eyeZ)), eyeZ)
     camera.setTarget(new Vector3(focusX, groundHeight, focusZ))
   }
 
@@ -399,6 +416,7 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
     currentZoom = Scalar.Lerp(currentZoom, targetZoom, easeFactor)
 
     const near = nearModeEnabled && currentZoom > 1
+    inNear = near
     const nearU = near ? currentZoom - 1 : 0
     let tiltTarget: number
     if (!near) {
