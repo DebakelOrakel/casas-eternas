@@ -27,8 +27,15 @@ import './artifactChooser.css'
 // 2026-09-29); a job is cancelled, and that confirms in place.
 
 export interface JobChooserOptions {
+  // The world the generator holds, or null before there is one — what
+  // "this world" filters by.
+  currentWorld(): { uid: string } | null
   onClose(): void
 }
+
+type Scope = 'world' | 'all'
+// Which jobs: those still queued or running, the last few ordered, or all.
+type Show = 'running' | '3' | '10' | 'all'
 
 export interface JobChooser {
   element: HTMLElement
@@ -60,6 +67,9 @@ interface LevelView {
   detail: string
   startedAt: string | null
   end: { at: number; projected: boolean } | null
+  // Why it failed, as the worker says it: a tooltip on the state only —
+  // the window says that it failed, the server log says why in full.
+  error?: string
 }
 
 export function createJobChooser(host: HTMLElement, options: JobChooserOptions): JobChooser {
@@ -71,14 +81,25 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
       <div class="ac-head">
         <div class="wc-head">
           <h1 class="wc-title"></h1>
-          <p class="wc-subtitle"></p>
         </div>
         <button type="button" class="ac-close" data-act="close"></button>
       </div>
       <div class="ac-tiles">
-        <div class="ac-tile"><span class="ac-tile__label" data-tile="progress"></span><span class="ac-tile__value mono" data-value="progress"></span></div>
+        <div class="ac-tile"><span class="ac-tile__label" data-tile="progress"></span><span class="ac-tile__value mono" data-value="progress"></span><span class="ac-tile__hint"></span></div>
         <div class="ac-tile"><span class="ac-tile__label" data-tile="end"></span><span class="ac-tile__value mono" data-value="end"></span><span class="ac-tile__hint" data-hint="end"></span></div>
-        <div class="ac-tile"><span class="ac-tile__label" data-tile="workers"></span><span class="ac-tile__value mono" data-value="workers"></span></div>
+        <div class="ac-tile"><span class="ac-tile__label" data-tile="workers"></span><span class="ac-tile__value mono" data-value="workers"></span><span class="ac-tile__hint"></span></div>
+      </div>
+      <div class="wc-listhead ac-filters">
+        <div class="wc-filter">
+          <button type="button" data-scope="world"></button>
+          <button type="button" data-scope="all"></button>
+        </div>
+        <div class="wc-filter">
+          <button type="button" data-show="running"></button>
+          <button type="button" data-show="3">3</button>
+          <button type="button" data-show="10">10</button>
+          <button type="button" data-show="all"></button>
+        </div>
       </div>
       <div class="ac-table jc-table" data-slot="table"></div>
       <div class="ac-foot">
@@ -92,6 +113,15 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
   closeButton.appendChild(icon('<path d="M6 6l12 12M18 6L6 18"/>'))
   closeButton.addEventListener('click', () => options.onClose())
   root.addEventListener('keydown', (event) => { if (event.key === 'Escape') options.onClose() })
+
+  // --- filters ----------------------------------------------------------------
+
+  let scope: Scope = 'world'
+  let show: Show = '10'
+  const scopeButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-scope]')]
+  const showButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-show]')]
+  for (const button of scopeButtons) button.addEventListener('click', () => { scope = button.dataset.scope as Scope; paint() })
+  for (const button of showButtons) button.addEventListener('click', () => { show = button.dataset.show as Show; paint() })
 
   let jobs: BakeJob[] | null = []
   let worldNames = new Map<string, string>()
@@ -133,7 +163,16 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
 
   function paintStatic(): void {
     root.querySelector('.wc-title')!.textContent = t('generator.jobs.title')
-    root.querySelector('.wc-subtitle')!.textContent = t('generator.jobs.subtitle')
+    for (const button of scopeButtons) button.textContent = t(`generator.jobs.scope.${button.dataset.scope}` as TKey)
+    for (const button of showButtons) {
+      const which = button.dataset.show
+      if (which === 'running' || which === 'all') button.textContent = t(`generator.jobs.show.${which}` as TKey)
+      else {
+        const label = t('generator.jobs.show.last', { count: Number(which) })
+        button.title = label
+        button.setAttribute('aria-label', label)
+      }
+    }
     root.querySelector('[data-tile="progress"]')!.textContent = t('generator.jobs.summary.progress')
     root.querySelector('[data-tile="end"]')!.textContent = t('generator.jobs.summary.end')
     root.querySelector('[data-tile="workers"]')!.textContent = t('generator.jobs.summary.workers')
@@ -213,8 +252,6 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     if (tiles) parts.push(t('generator.jobs.level.tiles', { done: level.done, total: level.total, running: level.running }))
     else if (level.running > 0 && level.phase && PHASE_KEYS[level.phase]) parts.push(t(PHASE_KEYS[level.phase]))
     if (level.failed > 0 && tiles) parts.push(t('generator.jobs.level.failed', { failed: level.failed }))
-    // Why it failed, as the worker says it (data, like a world's name).
-    if (level.failed > 0 && level.error) parts.push(level.error)
     // The end: when it ended, or — while it runs — where the rate so far
     // puts it. No projection before the first share is done.
     let end: LevelView['end'] = null
@@ -223,7 +260,7 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
       const started = Date.parse(level.startedAt)
       end = { at: started + (now - started) / fraction, projected: true }
     }
-    return { stage: level.stage, state, stateText, fraction, detail: parts.join(' · '), startedAt: level.startedAt ?? null, end }
+    return { stage: level.stage, state, stateText, fraction, detail: parts.join(' · '), startedAt: level.startedAt ?? null, end, error: level.failed > 0 ? level.error : undefined }
   }
 
   // A job's end, and how far it reaches: every level's own end where it has
@@ -280,14 +317,25 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     }
     header.appendChild(document.createElement('span'))
     paintSummary(now)
-    if (!jobs || jobs.length === 0) {
+    // "This world" needs a world; before there is one, all of them.
+    const world = options.currentWorld()
+    const effectiveScope: Scope = world ? scope : 'all'
+    scopeButtons[0].disabled = !world
+    for (const button of scopeButtons) button.setAttribute('aria-pressed', String(button.dataset.scope === effectiveScope))
+    for (const button of showButtons) button.setAttribute('aria-pressed', String(button.dataset.show === show))
+    // The list is newest first, so "the last n" is its head.
+    const inScope = (jobs ?? []).filter((job) => effectiveScope === 'all' || job.request?.worldUid === world?.uid)
+    const shown = show === 'running' ? inScope.filter((job) => job.state === 'queued' || job.state === 'running')
+      : show === 'all' ? inScope
+      : inScope.slice(0, Number(show))
+    if (!jobs || shown.length === 0) {
       const note = document.createElement('p')
       note.className = 'wc-note'
       note.textContent = jobs === null ? t('generator.jobs.unavailable') : t('generator.jobs.empty')
       table.replaceChildren(header, note)
       return
     }
-    table.replaceChildren(header, ...jobs.flatMap((job) => renderJob(job, now)))
+    table.replaceChildren(header, ...shown.flatMap((job) => renderJob(job, now)))
   }
 
   // The tiles on top: the running jobs' time spent of their projected
@@ -360,7 +408,7 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
         worldCell(),
         document.createElement('span'),
         stateCell(job.state, t(`generator.jobs.state.${job.state}` as TKey), job.error),
-        progressCell(job.state === 'done' ? 1 : (bakeFraction(job) ?? null), job.error ?? ''),
+        progressCell(job.state === 'done' ? 1 : (bakeFraction(job) ?? null), ''),
         timeCell(job.startedAt ?? job.queuedAt ?? null, ended),
         cancelCell(job),
       )
@@ -381,7 +429,7 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
       chip.textContent = `L${view.stage}`
       level.appendChild(chip)
       line.appendChild(level)
-      line.appendChild(stateCell(view.state, view.stateText))
+      line.appendChild(stateCell(view.state, view.stateText, view.error))
       line.appendChild(progressCell(view.fraction, view.detail))
       line.appendChild(timeCell(view.startedAt, view.end))
       line.appendChild(i === 0 ? cancelCell(job) : document.createElement('span'))

@@ -76,6 +76,11 @@
   font-size: 14.5px;
   color: var(--dc-muted);
 }
+/* An empty one takes no gap either: the artifacts window has none until a
+   world is held, and its head must then match the jobs window's. */
+.wc-subtitle:empty {
+  display: none;
+}
 
 /* --- the two big choices -------------------------------------------------- */
 

@@ -402,6 +402,8 @@ func (c *coordinator) applyDone(report taskDoneReport) {
 		return
 	}
 	if !report.OK {
+		// The reason in full here; the jobs window shows only that it failed.
+		slog.Warn("jobs: a task failed", "job", task.JobID, "task", task.ID, "stage", task.Request.StageName(), "err", report.Error)
 		ended := time.Now()
 		task.State = taskFailed
 		task.EndedAt = &ended

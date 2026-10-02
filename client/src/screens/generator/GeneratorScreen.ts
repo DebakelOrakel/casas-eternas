@@ -920,7 +920,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onCommissioned: (outcome) => reportCommission(outcome),
   })
   artifactsButton.addEventListener('click', () => (artifactChooser.isOpen() ? closeArtifacts() : openArtifacts()))
-  const jobChooser = createJobChooser(root, { onClose: () => closeJobs() })
+  const jobChooser = createJobChooser(root, {
+    currentWorld: () => (worldUid ? { uid: worldUid } : null),
+    onClose: () => closeJobs(),
+  })
   jobsButton.addEventListener('click', () => (jobChooser.isOpen() ? closeJobs() : openJobs()))
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!

@@ -60,6 +60,9 @@
 .ac-tile__hint {
   font-size: 11.5px;
   color: var(--dc-faint);
+  /* Its line kept when empty: a hint that comes and goes (the jobs' end)
+     must not move the page under it. */
+  min-height: 1.3em;
 }
 
 /* --- filters --------------------------------------------------------------- */
