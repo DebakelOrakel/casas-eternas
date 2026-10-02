@@ -150,6 +150,22 @@ export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
   const flux = new Float64Array(slots)
   const out = new Int32Array(64)
   const gamma = t.iceFlowGamma
+  // The land nodes' stars, once, in the mesh's own outgoing order (a tie in
+  // the steepest descent keeps the first): the mesh does not change while
+  // the ice finds its steady state, and reading the stars from the mesh in
+  // every round was a third of this function's time (2026-10-02).
+  const starStart = new Int32Array(land.length + 1)
+  const starTo: number[] = []
+  const starLength: number[] = []
+  for (let i = 0; i < land.length; i++) {
+    const n = mesh.outgoing(land[i], out)
+    for (let k = 0; k < n; k++) {
+      starTo.push(mesh.to(out[k]))
+      starLength.push(mesh.edgeLength(out[k]))
+    }
+    starStart[i + 1] = starTo.length
+  }
+  const sortScratch = new Int32Array(order.length)
   let massIn = 0
   let massMelt = 0
   let massOut = 0
@@ -157,20 +173,19 @@ export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
     for (let v = 0; v < slots; v++) surface[v] = mesh.vAlive[v] ? elevationToMeters(z[v] - SEA_LEVEL) + thickness[v] : 0
     // Steepest descent on the surface over the node's star; the sea is a
     // sink (ice that reaches it calves).
-    for (const v of land) {
-      const n = mesh.outgoing(v, out)
+    for (let i = 0; i < land.length; i++) {
+      const v = land[i]
       let best = -1
       let bestDrop = 0
-      for (let k = 0; k < n; k++) {
-        const e = out[k]
-        const u = mesh.to(e)
-        const drop = (surface[v] - surface[u]) / (mesh.edgeLength(e) * cellM)
+      for (let k = starStart[i]; k < starStart[i + 1]; k++) {
+        const u = starTo[k]
+        const drop = (surface[v] - surface[u]) / (starLength[k] * cellM)
         if (drop > bestDrop) { bestDrop = drop; best = u }
       }
       receiver[v] = best
       slope[v] = bestDrop
     }
-    order.sort((a, b) => surface[b] - surface[a])
+    sortBySurfaceDescending(order, surface, sortScratch)
     flux.fill(0)
     massIn = 0
     massMelt = 0
@@ -228,6 +243,43 @@ export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
   }
   for (let v = 0; v < slots; v++) if (thickness[v] < t.iceMinThicknessM) thickness[v] = 0
   return { thickness, balance, receiver, slope, order, elaM, massIn, massMelt, massOut }
+}
+
+// `order.sort((a, b) => surface[b] - surface[a])`, in linear time: a stable
+// LSD radix sort on the float32 surface's bits, two passes of 16 bits. The
+// same permutation as the comparator sort — which the specification makes
+// stable, so ties keep the order of the round before — as long as every
+// surface is positive and finite, where the bits order like the numbers
+// (land nodes stand above the sea, so they are; otherwise the comparator).
+// The comparator sort was over half of this function's time (2026-10-02).
+const RADIX = 1 << 16
+const radixCount = new Int32Array(RADIX)
+function sortBySurfaceDescending(order: Int32Array, surface: Float32Array, scratch: Int32Array): void {
+  const bits = new Uint32Array(surface.buffer, surface.byteOffset, surface.length)
+  for (let i = 0; i < order.length; i++) {
+    const s = surface[order[i]]
+    if (!(s > 0 && s < Infinity)) {
+      order.sort((a, b) => surface[b] - surface[a])
+      return
+    }
+  }
+  let from = order
+  let to = scratch
+  for (let shift = 0; shift < 32; shift += 16) {
+    radixCount.fill(0)
+    // Descending: the complement of the bits, ascending.
+    for (let i = 0; i < from.length; i++) radixCount[((~bits[from[i]]) >>> shift) & 0xffff]++
+    let sum = 0
+    for (let d = 0; d < RADIX; d++) { const c = radixCount[d]; radixCount[d] = sum; sum += c }
+    for (let i = 0; i < from.length; i++) {
+      const v = from[i]
+      to[radixCount[((~bits[v]) >>> shift) & 0xffff]++] = v
+    }
+    const swap = from
+    from = to
+    to = swap
+  }
+  // Two passes: the result is back in `order`.
 }
 
 export interface GlacialErosionResult {

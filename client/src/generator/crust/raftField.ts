@@ -53,6 +53,126 @@ export function raftField(x: number, y: number, rafts: Raft[], width: number, he
   return field
 }
 
+// A BUCKET INDEX over the blobs, for a sweep that asks raftField (or the
+// nearest raft) at every node of the mesh: built once per sweep, it hands
+// a point only the blobs whose reach covers its bucket instead of every
+// blob of every raft (2026-10-02: the brute-force scans were 12–14 % of an
+// epoch). The SAME bits as the scans: a blob left out is one whose kernel
+// is exactly 0 there (adding 0 changes nothing), and the blobs of a bucket
+// keep the scans' order — raft by raft, blob by blob — so the sum adds in
+// the same order and the nearest search breaks ties the same way.
+//
+// Valid only while the rafts do not change: build it right before the
+// sweep, never keep it across a step that moves, grows or merges rafts.
+export interface BlobIndex {
+  rafts: Raft[]
+  width: number
+  height: number
+  nx: number
+  ny: number
+  start: Int32Array
+  items: Int32Array
+  bx: Float64Array
+  by: Float64Array
+  br: Float64Array
+  braft: Int32Array
+}
+
+const INDEX_NX = 32
+const INDEX_NY = 16
+
+// `reach` in radii: a blob is filed wherever a point within reach × its
+// radius can lie (1 for raftField; the nearest search's own reach for it).
+export function buildBlobIndex(rafts: Raft[], width: number, height: number, reach = 1): BlobIndex {
+  let total = 0
+  for (const raft of rafts) total += raft.blobs.length
+  const bx = new Float64Array(total)
+  const by = new Float64Array(total)
+  const br = new Float64Array(total)
+  const braft = new Int32Array(total)
+  let g = 0
+  for (let r = 0; r < rafts.length; r++) {
+    for (const blob of rafts[r].blobs) {
+      bx[g] = blob.x
+      by[g] = blob.y
+      br[g] = blob.radius
+      braft[g] = r
+      g++
+    }
+  }
+  const nx = INDEX_NX
+  const ny = INDEX_NY
+  const cw = width / nx
+  const ch = height / ny
+  const buckets: number[][] = Array.from({ length: nx * ny }, () => [])
+  const span = (centre: number, extent: number, size: number, n: number, period: number): number[] => {
+    // A margin far above the wrapped distance's rounding and the point's
+    // wrap: the filing must cover every point the kernel could reach.
+    const e = extent * (1 + 1e-9) + 1e-6
+    if (!(e < Infinity) || 2 * e >= period) return Array.from({ length: n }, (_, i) => i)
+    const c = wrapValue(centre, period)
+    const i0 = Math.floor((c - e) / size)
+    const i1 = Math.floor((c + e) / size)
+    if (i1 - i0 + 1 >= n) return Array.from({ length: n }, (_, i) => i)
+    const out: number[] = []
+    for (let i = i0; i <= i1; i++) out.push(((i % n) + n) % n)
+    return out
+  }
+  for (let k = 0; k < total; k++) {
+    const extent = br[k] * reach
+    const xs = span(bx[k], extent, cw, nx, width)
+    const ys = span(by[k], extent, ch, ny, height)
+    for (const j of ys) for (const i of xs) buckets[j * nx + i].push(k)
+  }
+  const start = new Int32Array(nx * ny + 1)
+  for (let b = 0; b < nx * ny; b++) start[b + 1] = start[b] + buckets[b].length
+  const items = new Int32Array(start[nx * ny])
+  for (let b = 0; b < nx * ny; b++) items.set(buckets[b], start[b])
+  return { rafts, width, height, nx, ny, start, items, bx, by, br, braft }
+}
+
+function bucketOf(index: BlobIndex, x: number, y: number): number {
+  const i = Math.min(index.nx - 1, Math.floor((wrapValue(x, index.width) / index.width) * index.nx))
+  const j = Math.min(index.ny - 1, Math.floor((wrapValue(y, index.height) / index.height) * index.ny))
+  return j * index.nx + i
+}
+
+// raftField through the index: the same value, bit for bit.
+export function raftFieldIndexed(x: number, y: number, index: BlobIndex): number {
+  if (!(Math.abs(x) < Infinity && Math.abs(y) < Infinity)) return raftField(x, y, index.rafts, index.width, index.height)
+  const b = bucketOf(index, x, y)
+  const { items, bx, by, br, width, height } = index
+  let field = 0
+  for (let k = index.start[b]; k < index.start[b + 1]; k++) {
+    const g = items[k]
+    field += blobKernel(toroidalDistanceSq(x, y, bx[g], by[g], width, height), br[g])
+  }
+  return field
+}
+
+// The raft whose blob is nearest in radii, within `reach` radii, or −1 —
+// the scan `d < nearest` over every blob in order, through the index (built
+// with at least this reach).
+export function nearestRaftIndexed(x: number, y: number, index: BlobIndex, reach: number): number {
+  const { items, bx, by, br, braft, width, height } = index
+  let onRaft = -1
+  let nearest = reach
+  if (!(Math.abs(x) < Infinity && Math.abs(y) < Infinity)) {
+    for (let g = 0; g < bx.length; g++) {
+      const d = Math.sqrt(toroidalDistanceSq(x, y, bx[g], by[g], width, height)) / br[g]
+      if (d < nearest) { nearest = d; onRaft = braft[g] }
+    }
+    return onRaft
+  }
+  const b = bucketOf(index, x, y)
+  for (let k = index.start[b]; k < index.start[b + 1]; k++) {
+    const g = items[k]
+    const d = Math.sqrt(toroidalDistanceSq(x, y, bx[g], by[g], width, height)) / br[g]
+    if (d < nearest) { nearest = d; onRaft = braft[g] }
+  }
+  return onRaft
+}
+
 // Continental membership 0..1 at a world point — 0 open ocean, 1 solid
 // continental interior. This is the "is it continental crust" question (plate
 // typing, accretion, mantle insulation, rift eligibility), NOT "is it above

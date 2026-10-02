@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-02
+- **changed** Tectonics: an epoch of the history runs about a third faster, with the same result. `generator.step.tectonics`
 - **fixed** Refinement: a world made in one browser is made again identically by the server and in every other browser, so its refinement no longer fails its check. `generator.finishing.refine`
 - **fixed** Refinement: refined ground is no longer covered in rows of small bumps and pits; its valleys stay deeper than the world's own. `generator.finishing.refine`
 

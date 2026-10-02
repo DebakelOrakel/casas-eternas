@@ -8,7 +8,7 @@ import { sampleOceanAge } from '../tectonics/oceanAge'
 import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './elevationScale'
 import { continentalHypsometry } from './hypsometry'
 import { wrapValue } from '../core/field'
-import { raftField, sampleOwnerField } from '../crust/raftField'
+import { raftField, sampleOwnerField, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
 import type { Raft } from '../crust/raftTypes'
 import { detExp, detPow } from '../core/detMath'
 
@@ -98,14 +98,16 @@ export function oceanFloorAtAge(age: number): number {
 // tile sampled at sub-cell spacing gets genuinely finer terrain, not an
 // upscaled raster. Takes UNWARPED world coords and applies the domain warp
 // itself, exactly as the grid loop did.
-export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oceanAge: Float32Array, worldWidth: number, worldHeight: number, warpSeed: number, seaLevelOffset = 0): number {
+// `blobs`, when given, is an index of these same rafts (crust/raftField
+// buildBlobIndex) — for a sweep over many points; the value is the same.
+export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oceanAge: Float32Array, worldWidth: number, worldHeight: number, warpSeed: number, seaLevelOffset = 0, blobs?: BlobIndex): number {
   const wx = worldX + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'x')
   const wy = worldY + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'y')
   // Ocean floor deepens with its crustal age; the margin profile then shapes
   // everything from that floor up onto the continent, putting the shoreline
   // on a flat shelf instead of mid-slope (see elevationScale.marginProfile).
   const oceanicBaseline = oceanFloorAtAge(sampleOceanAge(oceanAge, wx, wy, worldWidth, worldHeight))
-  const t = marginParameter(raftField(wx, wy, rafts, worldWidth, worldHeight))
+  const t = marginParameter(blobs ? raftFieldIndexed(wx, wy, blobs) : raftField(wx, wy, rafts, worldWidth, worldHeight))
   // The water knob: the whole solid surface sits lower relative to a sea level
   // that stays at zero. Applied here rather than to the anchors because the two
   // are identical and this is one subtraction — see WATER_OFFSET_MAX_M.

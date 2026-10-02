@@ -103,7 +103,21 @@ export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array):
     } else normals[3 * v + 1] = 1
   }
   const bary = new Float64Array(3)
-  const triangleAt = (x: number, y: number): number => mesh.locate(x, y, hintAt(x, y))
+  // The same point asked twice in a row — a tile bake asks the target
+  // spacing and then the height at each candidate (meshTile.ts) — is
+  // located once. locate from the same hint is a pure function of the
+  // point, so the answer is the one a second walk would give (2026-10-02:
+  // the walks were ~40 % of a level-3 tile).
+  let lastX = NaN
+  let lastY = NaN
+  let lastT = -1
+  const triangleAt = (x: number, y: number): number => {
+    if (x === lastX && y === lastY) return lastT
+    lastT = mesh.locate(x, y, hintAt(x, y))
+    lastX = x
+    lastY = y
+    return lastT
+  }
   const sampleAt = (field: ArrayLike<number>, x: number, y: number): number => {
     const t = triangleAt(x, y)
     barycentric(mesh, t, x, y, bary)

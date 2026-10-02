@@ -30,8 +30,13 @@ export const MANTLE_RES_Y = 64
 const RX = MANTLE_RES_X
 const RY = MANTLE_RES_Y
 
+// The callers step one cell from a cell of the grid, so a compare wraps the
+// integer index; wrapValue only past that. The same index either way —
+// wrapValue on integers is exact — and 8 % of an epoch less (2026-10-02).
 function wrapIdx(x: number, y: number): number {
-  return wrapValue(y, RY) * RX + wrapValue(x, RX)
+  const wy = y < 0 ? (y >= -RY ? y + RY : wrapValue(y, RY)) : y < RY ? y : y < 2 * RY ? y - RY : wrapValue(y, RY)
+  const wx = x < 0 ? (x >= -RX ? x + RX : wrapValue(x, RX)) : x < RX ? x : x < 2 * RX ? x - RX : wrapValue(x, RX)
+  return wy * RX + wx
 }
 
 // Smoothed random initial field — a few upwelling/downwelling blobs so there's

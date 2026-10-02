@@ -33,8 +33,17 @@ export function wrapIndex2(x: number, y: number, resX: number, resY: number): nu
   return wrapValue(y, resY) * resX + wrapValue(x, resX)
 }
 
+// The same bits as `((v % n) + n) % n`, with the two remainders replaced by
+// compares where v is within one period of [0, n) — the common case, and
+// 13.6 % of an epoch's time as two remainders (profiled 2026-10-02). Each
+// step is the exact value of the step it replaces: v % n is v on (−n, n)
+// and v − n on [n, 2n) (exact: Sterbenz); t = m + n rounds as before; and
+// t % n is t below n, t − n on [n, 2n) (exact), 0 at 2n. So a value just
+// below 0 or n still lands where the remainders put it, not on v. n > 0.
 export function wrapValue(v: number, n: number): number {
-  return ((v % n) + n) % n
+  const m = v >= 0 ? (v < n ? v : v < 2 * n ? v - n : v % n) : v > -n ? v : v % n
+  const t = m + n
+  return t < n ? t : t < 2 * n ? t - n : t % n
 }
 
 // Bilinear sample at FRACTIONAL GRID coordinates, wrapping in both axes.

@@ -2,7 +2,7 @@ import { torusDomain, type Domain } from '../core/domain'
 import { toroidalDistanceSq } from '../core/toroidal'
 import { ITERATION_YEARS } from '../surface/erosionEngine'
 import { TECTONIC_MA_PER_EPOCH } from '../core/worldTime'
-import { raftField } from '../crust/raftField'
+import { buildBlobIndex, nearestRaftIndexed, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
 import { nearestPlateIndex } from '../crust/raftLifecycle'
 import { dynamicTopographyAt } from '../elevation/dynamicTopography'
 import { raftBaselineAt } from '../elevation/elevationField'
@@ -269,8 +269,11 @@ export interface CoupledEpochStats {
 // dynamic topography, and the sea the ice lowered (phase 5.4: sim.eustaticM
 // ≤ 0 is the sea level against the ice-free one, so the solid surface
 // stands that much higher against it).
-function baselineAt(sim: PlateSimulation, x: number, y: number): number {
-  return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.width, sim.height, sim.warpSeed, sim.seaLevelOffset)
+//
+// `blobs`: an index of sim.rafts as they are now (buildBlobIndex), built
+// right before a sweep over the nodes — the same value, much faster.
+function baselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobIndex): number {
+  return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.width, sim.height, sim.warpSeed, sim.seaLevelOffset, blobs)
     + dynamicTopographyAt(sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, x, y, sim.width, sim.height)
     - sim.eustaticM / ELEVATION_METERS
 }
@@ -283,7 +286,8 @@ export function createCoupledTerrain(sim: PlateSimulation, budget = 1): CoupledT
   const { mesh, order } = compactMesh(built.mesh)
   const z = permute(built.state.get(MESH_Z), order)
   const baseline = new Float32Array(mesh.vertexSlots)
-  for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
+  const blobs = buildBlobIndex(sim.rafts, sim.width, sim.height)
+  for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs)
   return { mesh, z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: z.slice(), column: createColumn(mesh.vertexSlots), ice: new Float32Array(0), weather: null }
 }
 
@@ -317,18 +321,12 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // fraction unchanged (15.8 against 15.6 %).
   const raftHosts = sim.rafts.map((raft) => raft.blobs.length > 0 ? nearestPlateIndex(raft.blobs[0].x, raft.blobs[0].y, sim.seeds, width, height) : -1)
   const host = new Int32Array(mesh0.vertexSlots).fill(-1)
+  const hostBlobs = buildBlobIndex(sim.rafts, width, height, RAFT_RELIEF_REACH)
   for (let v = 0; v < mesh0.vertexSlots; v++) {
     if (!mesh0.vAlive[v]) continue
     const x = mesh0.vx[v]
     const y = mesh0.vy[v]
-    let onRaft = -1
-    let nearest = RAFT_RELIEF_REACH
-    for (let r = 0; r < sim.rafts.length; r++) {
-      for (const blob of sim.rafts[r].blobs) {
-        const d = Math.sqrt(toroidalDistanceSq(x, y, blob.x, blob.y, width, height)) / blob.radius
-        if (d < nearest) { nearest = d; onRaft = r }
-      }
-    }
+    const onRaft = nearestRaftIndexed(x, y, hostBlobs, RAFT_RELIEF_REACH)
     host[v] = onRaft >= 0 && raftHosts[onRaft] >= 0 ? raftHosts[onRaft] : nearestPlateIndex(x, y, sim.seeds, width, height)
   }
   timing.membership = lap()
@@ -350,13 +348,16 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const hMoved = new Float32Array(count)
   const columnMoved = new Float32Array(count * COLUMN_DEPTH)
   let k = 0
+  const columnData = terrain.column.data
   for (let v = 0; v < mesh0.vertexSlots; v++) {
     if (!mesh0.vAlive[v]) continue
     const moved = advancePointByMotion(mesh0.vx[v], mesh0.vy[v], motions[host[v]], TECTONICS_TUNING.epochAngleStep, width, height)
     xs[k] = moved.x
     ys[k] = moved.y
     hMoved[k] = terrain.z[v] - terrain.baseline[v]
-    for (let j = 0; j < COLUMN_DEPTH; j++) columnMoved[k * COLUMN_DEPTH + j] = terrain.column.data[v * COLUMN_DEPTH + j]
+    const from = v * COLUMN_DEPTH
+    const to = k * COLUMN_DEPTH
+    for (let j = 0; j < COLUMN_DEPTH; j++) columnMoved[to + j] = columnData[from + j]
     k++
   }
   // The mesh from the moved nodes, then the remesh: crowded nodes go
@@ -374,12 +375,16 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const col = addColumnField(state)
   for (let i = 0; i < count; i++) {
     const dst = rebuilt.mapping[i] * COLUMN_DEPTH
-    for (let j = 0; j < COLUMN_DEPTH; j++) col[dst + j] = columnMoved[i * COLUMN_DEPTH + j]
+    const src = i * COLUMN_DEPTH
+    for (let j = 0; j < COLUMN_DEPTH; j++) col[dst + j] = columnMoved[src + j]
   }
   // z on the rebuilt mesh, for the density rule: baseline at the new
   // position plus the relief.
   const z = state.add(MESH_Z, 'intensive')
-  for (let v = 0; v < mesh1.vertexSlots; v++) if (mesh1.vAlive[v]) z[v] = baselineAt(sim, mesh1.vx[v], mesh1.vy[v]) + h[v]
+  // The rafts as the step left them, for every sweep below up to the end
+  // of the epoch — nothing after the step moves them.
+  const blobs = buildBlobIndex(sim.rafts, width, height)
+  for (let v = 0; v < mesh1.vertexSlots; v++) if (mesh1.vAlive[v]) z[v] = baselineAt(sim, mesh1.vx[v], mesh1.vy[v], blobs) + h[v]
   timing.baseline = lap()
   // The coarsen and the refine every remeshEvery-th epoch (the rebuild
   // from the moved nodes is every epoch — the drift needs it): the density
@@ -400,7 +405,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       // remesh, whatever its parents stood on (2026-10-01: the scale fell
       // to 0.71 under the ranges as they decayed, −0.6 km of the top 5 %
       // in 15 epochs, measured on 2048×1024).
-      const margin = (px: number, py: number): number => marginParameter(raftField(px, py, sim.rafts, width, height))
+      const margin = (px: number, py: number): number => marginParameter(raftFieldIndexed(px, py, blobs))
       const t = margin(x, y)
       const tParents = Math.max(margin(mesh1.vx[a], mesh1.vy[a]), margin(mesh1.vx[b], mesh1.vy[b]), margin(mesh1.vx[c], mesh1.vy[c]))
       const scale = tParents > 0 ? Math.min(1, Math.max(0, t / tParents)) : 0
@@ -408,7 +413,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       hv[v] *= scale
       const cv = state.get(MESH_COLUMN)
       for (let j = 0; j < COLUMN_DEPTH; j++) cv[v * COLUMN_DEPTH + j] *= scale
-      state.get(MESH_Z)[v] = baselineAt(sim, x, y) + hv[v]
+      state.get(MESH_Z)[v] = baselineAt(sim, x, y, blobs) + hv[v]
     },
   })
   timing.remesh = lap()
@@ -426,7 +431,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const baseline = new Float32Array(mesh.vertexSlots)
   const zCanon = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) {
-    baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
+    baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs)
     // The elevation scale's range, as the synthesis clamps it
     // (elevationField.computeElevation): a trench node carries a relief of
     // −3000 m under an abyssal baseline, and a baseline that subsides
@@ -679,7 +684,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     for (let cx = 0; cx < flexResX; cx++) {
       const x = ((cx + 0.5) / flexResX) * width
       const y = ((cy + 0.5) / flexResY) * height
-      const continental = raftField(x, y, sim.rafts, width, height) > 0.5
+      const continental = raftFieldIndexed(x, y, blobs) > 0.5
       const oldness = upsampleAt(cratonField, CLIMATE_RES_X, CLIMATE_RES_Y, x, y, width, height)
       const ageMa = sampleOceanAge(sim.oceanAge, x, y, width, height) * (sim.epochMa || TECTONIC_MA_PER_EPOCH)
       teKm[cy * flexResX + cx] = elasticThicknessKm(continental, oldness, ageMa)
@@ -710,7 +715,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     for (let v = 0; v < mesh.vertexSlots; v++) {
       if (!mesh.vAlive[v]) continue
       result.z[v] = Math.max(-1, Math.min(1, result.z[v] + seaShift))
-      baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
+      baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs)
     }
   }
   // THE ROUTING ON THE TERRAIN AS THE EPOCH LEAVES IT. The erosion's
@@ -798,7 +803,8 @@ export function encodeCoupledTerrain(terrain: CoupledTerrain): { nodes: Float32A
 export function decodeCoupledTerrain(sim: PlateSimulation, bytes: { nodes: Float32Array; connectivity: Uint8Array; z: Float32Array; column?: Uint8Array }): CoupledTerrain {
   const mesh = decodeMesh(torusDomain(sim.width, sim.height), { count: bytes.z.length, nodes: bytes.nodes, connectivity: bytes.connectivity })
   const baseline = new Float32Array(mesh.vertexSlots)
-  for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v])
+  const blobs = buildBlobIndex(sim.rafts, sim.width, sim.height)
+  for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs)
   const column = bytes.column ? decodeColumn(bytes.column, bytes.z.length, mesh.vertexSlots) : createColumn(mesh.vertexSlots)
   return { mesh, z: bytes.z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: bytes.z.slice(), column, ice: new Float32Array(0), weather: null }
 }
