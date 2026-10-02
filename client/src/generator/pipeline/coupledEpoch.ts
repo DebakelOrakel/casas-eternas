@@ -30,7 +30,7 @@ import { meshRouting, meshSubstrate } from '../mesh/meshHydrology'
 import { accumulateDischargeOn, computeLakesOn } from '../surface/hydrology'
 import type { LakeAgeRecord } from '../tectonics/plateSimulationTypes'
 import { worldEpoch } from '../core/worldTime'
-import { runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
+import { DEFAULT_ROUTING_EVERY, runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
 import { compactMesh, decodeMesh, encodeMesh, permute } from '../mesh/meshSerial'
 import { MeshState } from '../mesh/meshState'
 import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
@@ -581,7 +581,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const scaled = scaleEngineParamsForDt({ ...params, epsM: 0 }, dtScale)
   scaled.upliftDt *= options.upliftScale ?? 1
   timing.forcing = lap()
-  const result = await runMeshErosion(mesh, zCanon, forcing, { age: options.iterationsPerEpoch, params: scaled, pool: options.pool, routingEvery: Math.max(1, Math.min(4, options.iterationsPerEpoch)) })
+  const result = await runMeshErosion(mesh, zCanon, forcing, { age: options.iterationsPerEpoch, params: scaled, pool: options.pool, routingEvery: Math.max(1, Math.min(DEFAULT_ROUTING_EVERY, options.iterationsPerEpoch)) })
   // The same range after the engine (marine diffusion can take a floor
   // node a few metres under it); the relief the next epoch carries is
   // read from this z, so the clamp is the terrain's, not a display one.

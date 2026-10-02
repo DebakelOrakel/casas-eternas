@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-10-02
+- **fixed** Server: a tile comes out the same on every job worker, also on a machine with fewer than four cores. `jobs`
 - **fixed** Server: a job worker whose engine thread died ends and is started again instead of hanging, and it stops within seconds when asked. `jobs`
 - **changed** Server: a job worker keeps a world fetched by URL and the tiles it read for the next task; `GET /v1/worlds/{uid}` answers 304 to `If-None-Match` with the current revision. `jobs`
 

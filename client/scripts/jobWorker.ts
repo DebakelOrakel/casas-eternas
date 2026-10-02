@@ -29,7 +29,7 @@ import { join, dirname } from 'node:path'
 import { Worker as NodeWorker, isMainThread } from 'node:worker_threads'
 import { availableParallelism } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
-import { EngineStalledError, type WorkerLike } from '../src/generator/surface/erosionEnginePool'
+import { BAKE_PIPELINE_DEPTH, EngineStalledError, type PipelineOptions, type WorkerLike } from '../src/generator/surface/erosionEnginePool'
 import { levelBudget, levelHydrology, type MeshLevel } from '../src/generator/pipeline/meshBakeStage'
 import { planTiles } from '../src/generator/pipeline/tilePlan'
 import { meshRouting } from '../src/generator/mesh/meshHydrology'
@@ -115,6 +115,8 @@ interface Job {
   //   node job-worker.mjs '{"worldZip":"…","stage":1,"erosionRounds":12,
   //                    "artifactsDir":"…","pool":false}'
   // Slower by the pool's factor (~2× at 8 cores), which a one-off accepts.
+  // Level 1 only: its history epochs agree with the pool bit for bit, a
+  // tile's twelve rounds do not, and a tile refuses it (enginePool).
   pool?: boolean
 }
 
@@ -343,13 +345,17 @@ function fail(message: string): never {
 declare const __GENERATOR_CODE__: string
 const GENERATOR_CODE: string = typeof __GENERATOR_CODE__ === 'string' ? __GENERATOR_CODE__ : ''
 
-function enginePool(): ({ createWorker: () => WorkerLike } & { stencilWorkers: number; refreshWorkers: number; pipelineDepth: number }) | undefined {
+// ALWAYS a pool, on a small machine one of one stencil and one refresh
+// thread: the pooled engine is a scheme of its own, and a tile baked
+// without it differs in the last bits under the same artifact key (the
+// pooled result is the same for every worker split — measured 1+1 against
+// 4+2, 2026-10-02). It used to be none below four cores.
+function enginePool(): { createWorker: () => WorkerLike } & PipelineOptions {
   const cores = availableParallelism()
-  if (cores < 4) return undefined
   return {
     createWorker: () => new NodeWorker(new URL(import.meta.url)) as unknown as WorkerLike,
-    ...(cores >= 8 ? { stencilWorkers: 4, refreshWorkers: 2 } : { stencilWorkers: 2, refreshWorkers: 1 }),
-    pipelineDepth: 8,
+    ...(cores >= 8 ? { stencilWorkers: 4, refreshWorkers: 2 } : cores >= 4 ? { stencilWorkers: 2, refreshWorkers: 1 } : { stencilWorkers: 1, refreshWorkers: 1 }),
+    pipelineDepth: BAKE_PIPELINE_DEPTH,
   }
 }
 
@@ -685,6 +691,9 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
   if (!job.tile || !Number.isInteger(job.tile.x) || !Number.isInteger(job.tile.y) || job.tile.x < 0 || job.tile.y < 0 || job.tile.x >= cols || job.tile.y >= rows) {
     throw new Error(`stage ${job.stage} needs a tile inside the ${cols} × ${rows} grid`)
   }
+  // Tiles bake on the pool only: without it the engine is the other scheme,
+  // and the artifact would differ under the same key (enginePool).
+  if (job.pool === false) throw new Error('a tile bakes on the engine pool only — pool: false is for level 1')
   const tile = { level: spec.level, x: job.tile.x, y: job.tile.y }
   const started = Date.now()
   const pipelineVersion = meshTilePipelineVersion(spec.level, job.erosionRounds)
@@ -733,7 +742,7 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
     upstream.push({ tile: up, count: read.count, nodes: read.nodes, outflow: read.outflow })
   }
   onProgress('parent', 1)
-  const baked = await bakeMeshTile(tileBakeInputs(inputs, parent, level1.artifact.graph, upstream), tile, { rounds: job.erosionRounds, pool: job.pool === false ? undefined : enginePool(), onProgress })
+  const baked = await bakeMeshTile(tileBakeInputs(inputs, parent, level1.artifact.graph, upstream), tile, { rounds: job.erosionRounds, pool: enginePool(), onProgress })
   const durationMs = Date.now() - started
   const artifact = bakedTileToArtifact(baked)
   if (!(await writeMeshTileArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')

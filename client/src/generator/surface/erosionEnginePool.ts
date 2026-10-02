@@ -336,6 +336,16 @@ export class PooledErosionEngine {
 // Physics tolerance for that staleness is the measured K-study (K ≤ 8
 // statistically equivalent; D defaults to 8 → staleness 8..16, validated
 // by the engine-check's stats gate).
+//
+// The pipelined engine and the single-threaded one are TWO SCHEMES: the
+// single one routes afresh every routingEvery iterations, this one on its
+// stale cadence. A run of more iterations than either cadence differs in
+// the last bits between them (2026-10-02: a level-3 tile, 12 rounds, baked
+// with and without a pool) — so every job worker bakes on a pool
+// (scripts/jobWorker.ts), and a history epoch stays within both cadences,
+// where the two agree bit for bit (harness:mesh checks it).
+export const BAKE_PIPELINE_DEPTH = 8
+
 export interface PipelineOptions {
   stencilWorkers: number
   refreshWorkers: number

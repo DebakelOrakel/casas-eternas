@@ -111,6 +111,7 @@ const M = {
   layers: await L('/src/world/save/worldLayers.ts'),
   inputs: await L('/src/world/save/loadWorldInputs.ts'),
   detMath: await L('/src/generator/core/detMath.ts'),
+  enginePool: await L('/src/generator/surface/erosionEnginePool.ts'),
 }
 
 let failures = 0
@@ -1361,6 +1362,16 @@ console.log('\n[2] determinism')
   M.remesh.remesh(b.mesh, b.state, M.build.densityTarget(b.state), { seed: 7 })
   check('the same remesh on the same state gives the same mesh', meshHash(a.mesh) === meshHash(b.mesh), meshHash(a.mesh))
 }
+
+// A history epoch is run single-threaded in the browser and on the engine
+// pool by the job worker (level 1's replay and its check against the
+// save). The two schemes agree bit for bit only while an epoch is no
+// longer than both routing cadences — the single engine's routingEvery and
+// the pool's depth (erosionEnginePool.ts, BAKE_PIPELINE_DEPTH). More
+// iterations per epoch and every refinement on the server fails its check.
+check('a history epoch stays within both engines\' routing cadences',
+  M.coupled.HISTORY_DEFAULTS.iterationsPerEpoch <= Math.min(M.erosion.DEFAULT_ROUTING_EVERY, M.enginePool.BAKE_PIPELINE_DEPTH),
+  `${M.coupled.HISTORY_DEFAULTS.iterationsPerEpoch} iterations, cadences ${M.erosion.DEFAULT_ROUTING_EVERY} and ${M.enginePool.BAKE_PIPELINE_DEPTH}`)
 
 // The generator's math (core/detMath.ts) is the same bits in every engine:
 // the hash of a fixed set of its values, recorded once and confirmed equal
