@@ -39,8 +39,8 @@ type Module interface {
 //
 // Optional and structural, like Module itself, so this package still knows about
 // no module in particular. The client needs it because some of its own choices
-// depend on how the server is deployed — a bake that runs as a Kubernetes Job is
-// a different thing to watch than one that runs as a subprocess, and the
+// depend on how the server is deployed — a job its workers run over the relay
+// is a different thing to watch than one that runs as a subprocess, and the
 // notification announcing it has to pick its icon BEFORE the job exists, since a
 // notification's icon may not change once shown.
 type Describer interface {

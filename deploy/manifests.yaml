@@ -13,10 +13,10 @@
 # Set `image:` below to where you pushed the image built from deploy/Dockerfile
 # (e.g. the internal registry: image-registry.openshift-image-registry.svc:5000/<ns>/casas-eternas:latest).
 ---
-# The identity the server creates bake Jobs as. Without it the pod runs as the
-# namespace's `default` account, which has no permissions at all — and the
-# first bake would fail with "jobs.batch is forbidden", minutes after someone
-# asked for it.
+# The identity the server scales its workers as. Without it the pod runs as
+# the namespace's `default` account, which has no permissions at all — and
+# the first refinement would wait forever with "deployments.apps is
+# forbidden" in the server's log.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -24,10 +24,8 @@ metadata:
   labels:
     app: casas-eternas
 ---
-# Namespaced, never cluster-wide: the server creates Jobs and scales its
-# workers beside itself and has no business anywhere else. `delete` is what
-# removes finished Jobs on the spot and prunes retained failed ones; `list`
-# is the retention sweep's view.
+# Namespaced, never cluster-wide: the server scales its workers beside itself
+# and has no business anywhere else.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -35,9 +33,6 @@ metadata:
   labels:
     app: casas-eternas
 rules:
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["create", "get", "list", "watch", "delete"]
   # The worker Deployment the jobs module scales (internal/modules/jobs,
   # scaler.go): found by its label, its replicas read and set through the
   # scale subresource. Nothing else on Deployments.
@@ -134,20 +129,14 @@ spec:
           image: ghcr.io/debakelorakel/casas-eternas:latest
           imagePullPolicy: Always
           env:
-            # A bake Job may land on ANY node — usually not this one — so it
-            # cannot count on mounting this pod's ReadWriteOnce volume and
-            # reaches the server over HTTP instead. The pod's own IP is the
-            # address it comes back to, and it needs no Service to exist first.
+            # A job worker runs in a pod of its own — usually on another node —
+            # so it cannot count on mounting this pod's ReadWriteOnce volume
+            # and reaches the server over HTTP instead. The pod's own IP is the
+            # address its tasks name, and it needs no Service to exist first.
             - name: CASAS_POD_IP
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
-            # The image a bake Job runs. THE SAME as this container's, and that
-            # is not tidiness: the artifact key carries a pipeline version, so
-            # a baker from a different build produces artifacts no client will
-            # ever look for — a failure that looks exactly like success.
-            - name: CASAS_JOBS_IMAGE
-              value: ghcr.io/debakelorakel/casas-eternas:latest
             # At most three job workers: the most replicas the jobs server
             # scales casas-eternas-worker to. Each reserves its honest 7Gi, so
             # the ceiling in practice is the nodes' free memory — beyond it
@@ -203,14 +192,10 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 15
-          # Sized for what this pod actually does. An 8192² bake peaks near
-          # 2.6 GB in the Node subprocess — that is the number the limit has to
-          # clear, or the kernel kills the bake at 90% with no useful message.
-          # The request stays low because that peak lasts minutes, not always.
-          #
-          # If this feels heavy for a pod that mostly serves files: that is the
-          # argument for running `--target bake` in its own pod (or as a
-          # Kubernetes Job), which the module split already allows.
+          # This pod no longer bakes: in a cluster the job workers do, in their
+          # own Deployment. The limit is still the one sized for the baking
+          # it did (a Node subprocess near 2.6 GB) and can come down once the
+          # server's own peak is measured.
           resources:
             requests:
               cpu: 50m
@@ -364,7 +349,7 @@ metadata:
     app: casas-eternas
 spec:
   type: ClusterIP
-  # The server alone: not the workers, nor a bake Job's pods, which share
+  # The server alone, not the workers, which share
   # `app: casas-eternas`.
   selector:
     app: casas-eternas

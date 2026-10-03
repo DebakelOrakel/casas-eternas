@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -44,9 +43,9 @@ const defaultErosionRounds = 12
 
 // nodeHeapMB is what the baker's Node process is allowed. Sized for the 8192²
 // measurement (~2.6 GB) with headroom, since running out mid-bake wastes the
-// minutes already spent. The cluster Job pins the same number by hand in
-// job.yaml's command line (the template has no value for it) — change
-// the two together; mirrors_test.go fails when they differ.
+// minutes already spent. The worker Deployment pins the same number by hand
+// on its command line (deploy/manifests.yaml) — change the two together;
+// mirrors_test.go fails when they differ.
 //
 // IT DOES NOT BOUND THIS WORKLOAD, and that is worth knowing before anyone
 // raises it to fix a memory problem. Measured 2026-08-15 on a 16384² bake, the
@@ -95,10 +94,6 @@ type Config struct {
 	// in another process.
 	ArtifactsDir string
 	ArtifactsURL string
-	// SelfURL is the /v1 base under which a bake Job on ANOTHER node reaches
-	// this very server. Resolved by cmd/ from the pod IP; required in a
-	// cluster, empty for a purely local runner (which reports over its pipe).
-	SelfURL string
 	// The Node bundle, from `make worker` (npm run build:worker).
 	WorkerPath string
 	// Identity answers who a request comes from — the same resolver every other
@@ -128,8 +123,9 @@ type Config struct {
 
 type Module struct {
 	cfg Config
-	// Whether jobs run as Kubernetes Jobs. Captured once at construction —
-	// a process does not move in or out of a cluster while it runs.
+	// Whether this server runs in a cluster, its workers in pods of their own.
+	// Captured once at construction — a process does not move in or out of a
+	// cluster while it runs.
 	clusterMode bool
 	runner      Runner
 	jobs        *registry
@@ -167,25 +163,23 @@ func New(cfg Config) (*Module, error) {
 	if (cfg.ArtifactsDir == "") == (cfg.ArtifactsURL == "") {
 		return nil, fmt.Errorf("bake needs exactly one artifact sink (ArtifactsDir or ArtifactsURL); that is cmd/'s job")
 	}
-	// The runner is chosen by DETECTING the cluster and by nothing else. There
-	// is deliberately no flag: both of its settings would be a behaviour the
-	// design rules out — forcing cluster mode off-cluster contradicts the rule
-	// that this exists only there, and forcing local mode inside one would run
-	// 2.6 GB bakes in the server's own pod, under the server's own memory
-	// limit. See docs/decisions/distributed-bake.md.
+	// Where the work runs is decided by DETECTING the cluster and by nothing
+	// else, deliberately without a flag: in a cluster it runs in the worker
+	// Deployment this module scales, never in the server's own pod under the
+	// server's own memory limit; off one, in workers this module starts.
+	// See docs/decisions/detail-ladder.md, addendum 2026-10-03.
 	var runner Runner
 	var err error
 	if InCluster() {
-		// A Job on another node has only URLs — a file path in this pod means
-		// the composition is wrong, and finding out here beats a Job getting
-		// created with an empty fetch address. SelfURL is where it reports
-		// progress; missing means CASAS_POD_IP was not injected.
-		if cfg.SelfURL == "" || cfg.WorldsURL == "" || cfg.ArtifactsURL == "" {
-			return nil, fmt.Errorf("a cluster bake needs SelfURL, WorldsURL and ArtifactsURL; is CASAS_POD_IP set? (deploy/manifests.yaml wires it)")
+		// A worker in another pod has only URLs — a file path in this pod
+		// means the composition is wrong, and finding out here beats a task
+		// going out with an empty fetch address.
+		if cfg.WorldsURL == "" || cfg.ArtifactsURL == "" {
+			return nil, fmt.Errorf("jobs in a cluster need WorldsURL and ArtifactsURL; is CASAS_POD_IP set? (deploy/manifests.yaml wires it)")
 		}
-		runner, err = NewKubernetesRunner(jobsImage())
-		if err != nil {
-			return nil, fmt.Errorf("cluster bake runner: %w", err)
+		// And the coordinator, which the workers serve over the relay.
+		if cfg.Relay == nil {
+			return nil, fmt.Errorf("jobs in a cluster run over the relay: run -t relay in this process or set global.services.relay")
 		}
 	} else {
 		runner, err = NewLocalRunner(cfg.WorkerPath, nodeHeapMB)
@@ -263,23 +257,17 @@ func (m *Module) Name() string { return "jobs" }
 
 // Describe tells the client HOW bakes run here, which is not something it can
 // infer: the same API answers whether the work happens in a subprocess beside
-// the server or as a Job on another node. The client uses it to say which, while
+// the server or in workers over the relay. The client uses it to say which, while
 // it waits — and it has to choose that wording and its icon before the job
 // exists, because a notification cannot change either once it is on screen.
 func (m *Module) Describe() map[string]any {
 	runner := "subprocess"
-	if m.clusterMode {
-		runner = "kubernetes"
-	} else if m.coord != nil {
+	if m.coord != nil {
 		runner = "relay"
 	}
-	// The jobs window's "n of m workers busy" reads jobWorkers; a cluster
-	// says none, its workers being Kubernetes Jobs.
-	out := map[string]any{"bakeRunner": runner}
-	if !m.clusterMode {
-		out["jobWorkers"] = m.slots
-	}
-	return out
+	// The jobs window's "n of m workers busy" reads jobWorkers: the local
+	// workers, or the most the worker Deployment is scaled to.
+	return map[string]any{"bakeRunner": runner, "jobWorkers": m.slots}
 }
 
 // Mount claims the bake routes — all of them under /v1/bakes, because a bake
@@ -292,7 +280,6 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("GET /v1/jobs/events", m.handleEvents)
 	mux.HandleFunc("GET /v1/jobs/{id}", m.handleGet)
 	mux.HandleFunc("DELETE /v1/jobs/{id}", m.handleCancel)
-	mux.HandleFunc("POST /v1/jobs/{id}/progress", m.handleProgress)
 	return nil
 }
 
@@ -325,13 +312,6 @@ func (m *Module) Close() error {
 	}
 	return nil
 }
-
-// jobsImage is the image a Job runs. Taken from the environment rather than a
-// flag because it is meaningless outside a cluster: the deployment sets it to
-// its OWN image, so the bake pipeline is the same commit as the server that
-// commissioned it — a mismatch there fails silently (the artifact key carries
-// a pipeline version, and a client would simply never look for what was made).
-func jobsImage() string { return os.Getenv("CASAS_JOBS_IMAGE") }
 
 func newID() string {
 	raw := make([]byte, 8)
@@ -514,77 +494,6 @@ func (m *Module) handleCancel(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleProgress takes a running job's own report of where it has got to.
-//
-// A Job on another node has no other way to say: the Kubernetes API tells this
-// server whether a pod is pending, running or gone, and nothing in between. The
-// alternative was reading the pod's log, which is a second connection with its
-// own failure modes; this is the connection the Job already uses for the world
-// and the artifacts. See docs/decisions/server-auth.md.
-//
-// THE TOKEN IS THE AUTHORISATION, and this is where the audience earns itself:
-// a job's token names one job, so verifying it against the id in the path
-// answers "may this caller report for this job" in a single comparison. No
-// ownership lookup, no caller-to-job table.
-func (m *Module) handleProgress(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !m.mayReportFor(r, id) {
-		// Deliberately not 401: the caller may be perfectly well authenticated,
-		// just not as this job. 403 says "not you" rather than "who are you".
-		httpjson.ClientError(w, http.StatusForbidden, "not this job")
-		return
-	}
-	var report Progress
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, progressBodyLimit)).Decode(&report); err != nil {
-		httpjson.ClientError(w, http.StatusBadRequest, "malformed progress")
-		return
-	}
-	if report.Phase == "" {
-		httpjson.ClientError(w, http.StatusBadRequest, "phase is required")
-		return
-	}
-	// Clamped rather than rejected: a percent slightly out of range is a rounding
-	// error in a progress bar, and failing the report would lose the phase too.
-	report.Percent = min(100, max(0, report.Percent))
-
-	updated := false
-	m.jobs.update(id, func(j *Job) {
-		// Only while it is running. A report that arrives after the job ended —
-		// a retry, or a pod that outlived its own result — must not reopen a
-		// finished record or move a failed one back to 50%.
-		if j.State != StateRunning {
-			return
-		}
-		j.Phase = report.Phase
-		j.Percent = report.Percent
-		updated = true
-	})
-	if !updated {
-		// 404 for both "no such job" and "not running any more": the reporter
-		// cannot act on the difference, and saying which would let anyone
-		// holding one job's token probe for the state of others.
-		httpjson.ClientError(w, http.StatusNotFound, "no such running job")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// mayReportFor answers whether this request is THIS job reporting.
-//
-// Asked of the resolver rather than verified here: the module MINTS job tokens
-// (cfg.Tokens) and that is a different capability from checking one. Verifying
-// with its own copy worked and was wrong — two answers to "who is asking" in one
-// process is exactly what the identity package exists to prevent.
-func (m *Module) mayReportFor(r *http.Request, id string) bool {
-	// The local mode checks nobody, and its runner reports over a pipe anyway —
-	// so this endpoint is unused there rather than open.
-	if !m.cfg.Identity.ChecksIdentity() {
-		return true
-	}
-	jobID, _, ok := m.cfg.Identity.JobToken(r)
-	return ok && jobID == id
-}
-
 func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 	// One ranking per DISTINCT world, not per job.
 	levels := map[string]access.Level{}
@@ -601,11 +510,6 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	httpjson.Write(w, http.StatusOK, visible)
 }
-
-// progressBodyLimit bounds what a progress report may be. It is two small
-// fields; anything larger is a mistake or an attempt, and reading it into memory
-// first would be the wrong way to find out.
-const progressBodyLimit = 1 << 10
 
 // jobTokenTTL bounds a Job's credential.
 //
@@ -715,7 +619,7 @@ func (m *Module) work(ctx context.Context) {
 }
 
 // buildSpec resolves a request into what a worker needs — shared by the
-// cluster runner (one Job per order) and the coordinator (a task each).
+// subprocess runner (one per order) and the coordinator (a task each).
 //
 // Files where the composition put a store beside this process, URLs where it
 // did not — each half decided on its own, so a local worker beside the
@@ -770,13 +674,6 @@ func (m *Module) buildSpec(ctx context.Context, id string, request Request) (Spe
 			return Spec{}, err
 		}
 		spec.CheckpointDir = dir
-	}
-	// Only a Job on another node learns its own id and where to report:
-	// progress goes to THIS server's API (JobsURL). A coordinator's task
-	// carries its job id too, set by the coordinator; it reports on the relay.
-	if m.clusterMode && m.coord == nil {
-		spec.JobID = id
-		spec.JobsURL = m.cfg.SelfURL
 	}
 	return spec, nil
 }

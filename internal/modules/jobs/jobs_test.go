@@ -257,108 +257,6 @@ func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
 	}
 }
 
-// The endpoint a Kubernetes Job reports through, and the one place the audience
-// pays for itself: the token names a job, so "may this caller report for this
-// job" is one comparison.
-func TestProgressAcceptsOnlyTheJobItBelongsTo(t *testing.T) {
-	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
-	if err != nil {
-		t.Fatalf("NewTokens: %v", err)
-	}
-	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
-	session, _, err := tokens.Issue("ada", token.AudienceSession, time.Hour)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	writeWorld(t, worlds, testUID, "Bearer "+session)
-	accepted := post(m, testUID, `{"stage":1}`, session)
-	if accepted.Code != http.StatusAccepted {
-		t.Fatalf("bake request = %d, want 202", accepted.Code)
-	}
-	// From the response, the way a real client learns it — the spec no longer
-	// carries an id for a local run.
-	var enqueued Job
-	if err := json.NewDecoder(accepted.Body).Decode(&enqueued); err != nil {
-		t.Fatalf("decoding the accepted job: %v", err)
-	}
-	id := enqueued.ID
-	runner.awaitSpec(t)
-
-	report := func(jobID, token, body string) int {
-		request := httptest.NewRequest(http.MethodPost, "/v1/jobs/"+jobID+"/progress", strings.NewReader(body))
-		request.SetPathValue("id", jobID)
-		if token != "" {
-			request.Header.Set("Authorization", "Bearer "+token)
-		}
-		recorder := httptest.NewRecorder()
-		m.handleProgress(recorder, request)
-		return recorder.Code
-	}
-	own, _, err := tokens.Issue(token.SubjectJob, token.JobAudience(id), time.Hour)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	other, _, err := tokens.Issue(token.SubjectJob, token.JobAudience("some-other-job"), time.Hour)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-
-	// Everything that is not THIS job is refused — including a perfectly good
-	// user session, which is the point: reporting progress is not something a
-	// person does.
-	for _, c := range []struct{ name, token string }{
-		{"no credentials", ""},
-		{"nonsense", "not-a-token"},
-		{"another job's token", other},
-		{"a user's session", session},
-	} {
-		if code := report(id, c.token, `{"phase":"erosion","percent":50}`); code != http.StatusForbidden {
-			t.Errorf("%s = %d, want 403", c.name, code)
-		}
-	}
-
-	if code := report(id, own, `{"phase":"erosion","percent":50}`); code != http.StatusNoContent {
-		t.Fatalf("the job's own report = %d, want 204", code)
-	}
-	if job, _ := m.jobs.get(id); job.Phase != "erosion" || job.Percent != 50 {
-		t.Errorf("progress not recorded: %+v", job)
-	}
-
-	// Out of range is clamped rather than refused: losing the phase over a
-	// rounding error would be the worse trade.
-	if code := report(id, own, `{"phase":"rivers","percent":140}`); code != http.StatusNoContent {
-		t.Errorf("clamped report = %d, want 204", code)
-	}
-	if job, _ := m.jobs.get(id); job.Percent != 100 {
-		t.Errorf("percent = %d, want it clamped to 100", job.Percent)
-	}
-
-	for _, c := range []struct{ name, body string }{
-		{"not json", "{"},
-		{"no phase", `{"percent":50}`},
-	} {
-		if code := report(id, own, c.body); code != http.StatusBadRequest {
-			t.Errorf("%s = %d, want 400", c.name, code)
-		}
-	}
-
-	// A job that has ended must not be reopened by a late report.
-	close(runner.release)
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if done, _ := m.jobs.get(id); done.State != StateRunning {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if code := report(id, own, `{"phase":"erosion","percent":10}`); code != http.StatusNotFound {
-		t.Errorf("a report for a finished job = %d, want 404", code)
-	}
-	if job, _ := m.jobs.get(id); job.State == StateRunning {
-		t.Error("a late report moved a finished job back to running")
-	}
-}
-
 // An absent world and an invisible one answer identically — that equality
 // IS the privacy property, so it is asserted rather than assumed.
 func TestHiddenAndMissingAreIndistinguishable(t *testing.T) {
@@ -468,24 +366,21 @@ func TestProgressAndResultReachTheJobRecord(t *testing.T) {
 	}
 }
 
-// A cluster bake reaches the server over HTTP like any other client, so on a
-// server that checks identity it must carry credentials — without them it gets a
-// 401 reading the world it was created to bake. That was true and unnoticed
-// until 2026-08-09: the field existed and nobody filled it.
-func TestClusterJobCarriesAScopedToken(t *testing.T) {
+// A job that reaches its stores over HTTP — every worker in a cluster —
+// carries a token of its own, and only that: the job is not a login and
+// not its orderer, and the token names the one world it may touch.
+func TestRemoteJobCarriesAScopedToken(t *testing.T) {
 	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
 	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
 	m.cfg.Tokens = tokens
-	m.clusterMode = true
 	// The cluster shape, as cmd/ composes it: URLs everywhere, no file paths.
 	m.cfg.WorldZip = nil
 	m.cfg.WorldsURL = "http://server:8080/v1"
 	m.cfg.ArtifactsDir = ""
 	m.cfg.ArtifactsURL = "http://server:8080/v1"
-	m.cfg.SelfURL = "http://server:8080/v1"
 	writeWorld(t, worlds, testUID)
 
 	if code := post(m, testUID, `{"stage":1}`, "").Code; code != http.StatusAccepted {
@@ -494,33 +389,23 @@ func TestClusterJobCarriesAScopedToken(t *testing.T) {
 	spec := runner.awaitSpec(t)
 
 	if spec.AuthToken == "" {
-		t.Fatal("a cluster job was sent out with no token")
+		t.Fatal("a remote job was sent out with no token")
 	}
-	// The audience names the JOB, not the person who ordered it and not the
-	// artifact key: it is what lets the job report progress against one order,
-	// and what stops the token being usable as a login.
-	subject, err := tokens.Verify(spec.AuthToken, token.JobAudience(spec.JobID))
+	subject, jobID, world, err := tokens.VerifyJob(spec.AuthToken)
 	if err != nil {
-		t.Fatalf("the job's token does not verify for its own job: %v", err)
+		t.Fatalf("the job's token does not verify: %v", err)
 	}
 	if subject != token.SubjectJob {
 		t.Errorf("token subject = %q, want %q — a job must not borrow its orderer's identity", subject, token.SubjectJob)
 	}
+	if jobs := m.jobs.list(); len(jobs) != 1 || jobs[0].ID != jobID {
+		t.Errorf("the token names job %q, not the one ordered", jobID)
+	}
+	if world != testUID {
+		t.Errorf("job token world claim = %q, want %q", world, testUID)
+	}
 	if _, err := tokens.Verify(spec.AuthToken, token.AudienceSession); err == nil {
 		t.Error("a job token was accepted as a session")
-	}
-	if _, err := tokens.Verify(spec.AuthToken, token.JobAudience("some-other-job")); err == nil {
-		t.Error("a job token was accepted for another job")
-	}
-	// Progress goes to THIS server's bake API — which need not be the
-	// artifact store's address, so the spec names it separately.
-	if spec.JobsURL != m.cfg.SelfURL {
-		t.Errorf("jobsUrl = %q, want the commissioning server %q", spec.JobsURL, m.cfg.SelfURL)
-	}
-	// And the token is narrowed to the one world the job bakes — what lets
-	// the artifact store accept it exactly there and nowhere else.
-	if _, _, world, err := tokens.VerifyJob(spec.AuthToken); err != nil || world != testUID {
-		t.Errorf("job token world claim = %q (err %v), want %q", world, err, testUID)
 	}
 }
 
@@ -577,9 +462,6 @@ func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
 	if spec.JobID != "" {
 		t.Errorf("a local runner must not learn a job id, got %q", spec.JobID)
 	}
-	if spec.JobsURL != "" {
-		t.Errorf("a local runner reports over its pipe, not to %q", spec.JobsURL)
-	}
 }
 
 // Spec is marshalled straight into the baker's argv, so its JSON field names
@@ -598,16 +480,14 @@ func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
 	}
 	// The path form must not carry empty URL fields: the baker picks its store
 	// by which one is present, so an empty string would be an ambiguous job.
-	// jobId is in that list too — a local baker that had one would post progress
-	// to a server it is running inside.
-	for _, key := range []string{"worldUrl", "artifactsUrl", "authToken", "jobsUrl", "jobId"} {
+	for _, key := range []string{"worldUrl", "artifactsUrl", "authToken", "jobId"} {
 		if strings.Contains(string(local), key) {
 			t.Errorf("local spec should omit %s: %s", key, local)
 		}
 	}
 
-	remote, _ := json.Marshal(Spec{Stage: 1, ErosionRounds: 2, WorldURL: "http://s/v1/worlds/x", ArtifactsURL: "http://s/v1", AuthToken: "t", JobsURL: "http://b/v1", JobID: "j1"})
-	for _, key := range []string{`"worldUrl":"http://s/v1/worlds/x"`, `"artifactsUrl":"http://s/v1"`, `"authToken":"t"`, `"jobsUrl":"http://b/v1"`, `"jobId":"j1"`} {
+	remote, _ := json.Marshal(Spec{Stage: 1, ErosionRounds: 2, WorldURL: "http://s/v1/worlds/x", ArtifactsURL: "http://s/v1", AuthToken: "t", JobID: "j1"})
+	for _, key := range []string{`"worldUrl":"http://s/v1/worlds/x"`, `"artifactsUrl":"http://s/v1"`, `"authToken":"t"`, `"jobId":"j1"`} {
 		if !strings.Contains(string(remote), key) {
 			t.Errorf("remote spec is missing %s: %s", key, remote)
 		}

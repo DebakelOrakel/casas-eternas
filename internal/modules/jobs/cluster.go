@@ -15,21 +15,16 @@ import (
 	"time"
 )
 
-// Just enough Kubernetes to create a Job, watch it finish, and clean up.
+// Just enough Kubernetes to scale the worker Deployment (scaler.go).
 //
 // Hand-rolled against the REST API rather than through client-go, for the same
 // reason this project reads world.yaml with thirty lines instead of a YAML
-// dependency: the surface actually needed is three verbs on one resource
+// dependency: the surface actually needed is three calls on one resource
 // type, and client-go would multiply a module that has two dependencies into
 // one that has dozens. If that surface ever grows — watching pods, reading
 // logs, custom resources — client-go is the honest upgrade, and this file is
-// what gets deleted.
-//
-// It POLLS rather than watches. A watch is a chunked JSON stream with
-// reconnect and resource-version semantics, and it is by far the fiddliest
-// part of talking to the API. Against a job that runs for minutes, asking
-// every couple of seconds is indistinguishable in behaviour and far harder to
-// get wrong.
+// what gets deleted. (It created, watched and deleted a Job per bake until
+// 2026-10-03, when the workers became a Deployment.)
 
 const (
 	serviceAccountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -166,14 +161,10 @@ func (c *clusterAPI) do(ctx context.Context, method, path string, body []byte) (
 	return raw, response.StatusCode, err
 }
 
-func (c *clusterAPI) jobsPath() string {
-	return "/apis/batch/v1/namespaces/" + c.namespace + "/jobs"
-}
-
 // apiError turns the API's own Status object into something readable. Its
-// `message` says things like "jobs.batch is forbidden: User cannot create
-// resource" — infinitely more useful than the status code, and precisely what
-// someone setting up RBAC needs to see.
+// `message` says things like "deployments.apps is forbidden: User cannot
+// list resource" — infinitely more useful than the status code, and
+// precisely what someone setting up RBAC needs to see.
 func apiError(action string, status int, raw []byte) error {
 	var parsed struct {
 		Message string `json:"message"`
@@ -183,131 +174,6 @@ func apiError(action string, status int, raw []byte) error {
 		return fmt.Errorf("%s: %s (%s)", action, parsed.Message, parsed.Reason)
 	}
 	return fmt.Errorf("%s: HTTP %d", action, status)
-}
-
-func (c *clusterAPI) createJob(ctx context.Context, manifest []byte) error {
-	raw, status, err := c.do(ctx, http.MethodPost, c.jobsPath(), manifest)
-	if err != nil {
-		return err
-	}
-	if status != http.StatusCreated && status != http.StatusOK {
-		return apiError("creating job", status, raw)
-	}
-	return nil
-}
-
-// jobState is the little of a Job's status this needs.
-type jobState struct {
-	Succeeded int
-	Failed    int
-	Active    int
-	// Whether any pod has actually been scheduled. With honest memory
-	// requests a Job beyond the cluster's free capacity sits unschedulable,
-	// and reporting that as "running" would leave someone watching a
-	// progress readout that cannot move (docs/decisions/distributed-bake.md).
-	Started bool
-	Message string
-}
-
-func (c *clusterAPI) jobStatus(ctx context.Context, name string) (jobState, error) {
-	raw, status, err := c.do(ctx, http.MethodGet, c.jobsPath()+"/"+name, nil)
-	if err != nil {
-		return jobState{}, err
-	}
-	if status != http.StatusOK {
-		return jobState{}, apiError("reading job", status, raw)
-	}
-	var parsed struct {
-		Status struct {
-			Succeeded  int    `json:"succeeded"`
-			Failed     int    `json:"failed"`
-			Active     int    `json:"active"`
-			StartTime  string `json:"startTime"`
-			Conditions []struct {
-				Type    string `json:"type"`
-				Status  string `json:"status"`
-				Reason  string `json:"reason"`
-				Message string `json:"message"`
-			} `json:"conditions"`
-		} `json:"status"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return jobState{}, fmt.Errorf("reading job: %w", err)
-	}
-	state := jobState{
-		Succeeded: parsed.Status.Succeeded,
-		Failed:    parsed.Status.Failed,
-		Active:    parsed.Status.Active,
-		Started:   parsed.Status.StartTime != "",
-	}
-	for _, condition := range parsed.Status.Conditions {
-		if condition.Status == "True" && (condition.Type == "Failed" || condition.Type == "Complete") {
-			state.Message = strings.TrimSpace(condition.Reason + " " + condition.Message)
-		}
-	}
-	return state, nil
-}
-
-// jobSummary is the little of a listed Job the retention sweep needs.
-type jobSummary struct {
-	Name    string
-	Created time.Time
-	Failed  bool
-}
-
-// listJobs answers this namespace's bake Jobs, selected by the component
-// label the template stamps on every one (job.yaml) — the same handle
-// its topology spread keys off.
-func (c *clusterAPI) listJobs(ctx context.Context) ([]jobSummary, error) {
-	raw, status, err := c.do(ctx, http.MethodGet, c.jobsPath()+"?labelSelector="+url.QueryEscape("casas-eternas/component=job"), nil)
-	if err != nil {
-		return nil, err
-	}
-	if status != http.StatusOK {
-		return nil, apiError("listing jobs", status, raw)
-	}
-	var parsed struct {
-		Items []struct {
-			Metadata struct {
-				Name              string    `json:"name"`
-				CreationTimestamp time.Time `json:"creationTimestamp"`
-			} `json:"metadata"`
-			Status struct {
-				Failed int `json:"failed"`
-			} `json:"status"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, fmt.Errorf("listing jobs: %w", err)
-	}
-	jobs := make([]jobSummary, 0, len(parsed.Items))
-	for _, item := range parsed.Items {
-		jobs = append(jobs, jobSummary{
-			Name:    item.Metadata.Name,
-			Created: item.Metadata.CreationTimestamp,
-			Failed:  item.Status.Failed > 0,
-		})
-	}
-	return jobs, nil
-}
-
-// deleteJob removes a Job and its pods. Foreground propagation so the pods go
-// too — an orphaned bake pod still running would keep its 3Gi reservation
-// for as long as it lives.
-func (c *clusterAPI) deleteJob(ctx context.Context, name string) error {
-	body, _ := json.Marshal(map[string]any{
-		"apiVersion":        "meta/v1",
-		"kind":              "DeleteOptions",
-		"propagationPolicy": "Foreground",
-	})
-	raw, status, err := c.do(ctx, http.MethodDelete, c.jobsPath()+"/"+name, body)
-	if err != nil {
-		return err
-	}
-	if status != http.StatusOK && status != http.StatusAccepted && status != http.StatusNotFound {
-		return apiError("deleting job", status, raw)
-	}
-	return nil
 }
 
 // The worker Deployment (deploy/manifests.yaml): found by its label, scaled

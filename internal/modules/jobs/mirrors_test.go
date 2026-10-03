@@ -9,7 +9,8 @@ import (
 
 // Two numbers in this package are copies of numbers that live elsewhere and
 // cannot be imported: the erosion rounds mirror a TypeScript constant, the
-// Node heap ceiling is repeated on the Job template's command line. Their
+// Node heap ceiling is repeated on the worker Deployment's command line
+// (deploy/manifests.yaml). Their
 // comments say "change the two together"; this test is what makes that
 // true rather than hoped for.
 
@@ -36,8 +37,12 @@ func TestErosionRoundsMirrorTheClient(t *testing.T) {
 	}
 }
 
-func TestNodeHeapMirrorsTheJobTemplate(t *testing.T) {
-	if got := mirrored(t, defaultJobTemplate, `--max-old-space-size=(\d+)`); got != nodeHeapMB {
-		t.Errorf("job.yaml --max-old-space-size=%d, nodeHeapMB = %d", got, nodeHeapMB)
+func TestNodeHeapMirrorsTheWorkerDeployment(t *testing.T) {
+	manifests, err := os.ReadFile("../../../deploy/manifests.yaml")
+	if err != nil {
+		t.Skipf("the manifests not beside the server: %v", err)
+	}
+	if got := mirrored(t, string(manifests), `--max-old-space-size=(\d+)`); got != nodeHeapMB {
+		t.Errorf("deploy/manifests.yaml --max-old-space-size=%d, nodeHeapMB = %d", got, nodeHeapMB)
 	}
 }

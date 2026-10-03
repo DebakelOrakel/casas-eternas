@@ -621,8 +621,7 @@ seconds — while any job is open, its handed-out tasks up to
 `jobs.max-concurrent` (at least one, never fewer than run), else zero. A
 loop that compares and corrects, so a restarted server or a re-applied
 manifest is put right. Role: `list` on Deployments, `get`/`update` on
-`deployments/scale`. Every job now goes to the workers, so the Job runner
-is idle in a cluster until step 4 removes it. Not yet: checkpoints for a
+`deployments/scale`. Every job now goes to the workers. Not yet: checkpoints for a
 level-1 replay in the cluster (the task directory is local-only), so a
 worker that dies mid-replay starts it again.
 
@@ -638,3 +637,13 @@ browser cannot present a client certificate on a websocket — the client
 joining the bus later would be locked out. Tokens work for the Go server,
 the Node worker and a browser on `nats.ws` alike; a browser would be one
 more grant beside the worker's.
+
+**Step 4, BUILT the same day**: the Kubernetes Job runner is gone — its
+runner, `job.yaml`, the Job calls of the cluster client, the
+`POST /v1/jobs/{id}/progress` route a Job reported through, the spec's
+`jobsUrl`, `CASAS_JOBS_IMAGE` and the `jobs.batch` rights. A server in a
+cluster refuses to start without the relay. What stays: the job tokens
+(every task carries one for its world) and `CASAS_POD_IP` (the address the
+tasks name). The run-once deadline trap of docs/operations went with the
+Jobs: the workers are long-lived pods. docs/decisions/distributed-bake.md
+records the Job design this replaces.

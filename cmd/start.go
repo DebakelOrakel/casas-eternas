@@ -280,13 +280,12 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 	inCluster := jobs.InCluster()
 	selfURL := serverBaseURL(cfg.Global.Listen)
 	if inCluster && selfURL == "" {
-		return jobs.Config{}, fmt.Errorf("CASAS_POD_IP is not set: a cluster bake Job reaches this server by its pod IP (deploy/manifests.yaml wires it)")
+		return jobs.Config{}, fmt.Errorf("CASAS_POD_IP is not set: a job worker reaches this server by its pod IP (deploy/manifests.yaml wires it)")
 	}
 	bcfg := jobs.Config{
 		WorkerPath:    workerPath(cfg.Jobs.Worker),
 		Identity:      caller,
 		Tokens:        tokens,
-		SelfURL:       selfURL,
 		MaxConcurrent: cfg.Jobs.MaxConcurrent,
 	}
 
@@ -296,7 +295,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 	switch {
 	case worldModule != nil:
 		if inCluster {
-			// The Job runs on another node and reaches this same server by IP.
+			// The workers run in pods of their own and reach this server by IP.
 			bcfg.WorldsURL = selfURL
 		} else {
 			store := worldModule.Store()

@@ -34,10 +34,10 @@ type Runner interface {
 // Spec is a Request resolved against the stores: what the runner needs to
 // actually do the work, rather than the ids the caller used.
 //
-// It carries BOTH shapes because the same bake runs in two places. A local
-// subprocess sits next to the files and gets paths. A Kubernetes Job may land
-// on any node — usually not the server's — and cannot count on mounting the
-// server's ReadWriteOnce volume, so it gets URLs and a token instead.
+// It carries BOTH shapes because the same work runs in two places. A local
+// worker sits next to the files and gets paths. A worker in a cluster runs
+// in a pod of its own and cannot count on mounting the server's
+// ReadWriteOnce volume, so it gets URLs and a token instead.
 //
 // This struct IS the wire format: it is marshalled straight into the baker's
 // argv, so these field names are a contract with client/scripts/bake.ts.
@@ -62,13 +62,6 @@ type Spec struct {
 	// Bearer token for the URL form, naming this one job.
 	AuthToken string `json:"authToken,omitempty"`
 
-	// API base of the bake module that commissioned the job — where progress
-	// reports go. Named for the MODULE it addresses, like ArtifactsURL, not
-	// for the one route the baker currently posts to. Only a cluster Job
-	// carries it; without it the baker falls back to ArtifactsURL, the
-	// co-resident shape.
-	JobsURL string `json:"jobsUrl,omitempty"`
-
 	// The task's id, when the coordinator handed it out (coordinator.go):
 	// what the worker reports on jobs.done.<taskId>.
 	TaskID string `json:"taskId,omitempty"`
@@ -87,14 +80,8 @@ type Spec struct {
 	// every worker that may take the task over can read. Empty: none kept.
 	CheckpointDir string `json:"checkpointDir,omitempty"`
 
-	// The bake job's id.
-	//
-	// The cluster runner names its Job object after it, which is what makes a
-	// stray Job traceable back to the request that made it — and since
-	// 2026-08-09 the baker gets it too, because a Job on another node reports
-	// its progress to /v1/jobs/{id}/progress and has to know which id that is.
-	// omitempty, so a local run's spec still carries neither this nor a URL: it
-	// reports over the pipe.
+	// The job's id, set by the coordinator (coordinator.go): the worker
+	// reports its progress on jobs.event.<jobId>, and a cancel names it.
 	JobID string `json:"jobId,omitempty"`
 }
 
@@ -139,9 +126,9 @@ func NewLocalRunner(bakerPath string, maxHeapMB int) (Runner, error) {
 // (`job-worker.mjs --version`, see client/scripts/jobWorker.ts).
 //
 // A package function rather than a Runner method, because it is a property of
-// the BUNDLE and not of how a job gets executed: a cluster runner spawns
-// nothing locally, yet the image it launches carries the same baker as the
-// binary beside it. `casas-eternas version` is the caller, and the reason it
+// the BUNDLE and not of how a job gets executed: in a cluster nothing runs
+// it locally, yet the workers' image carries the same baker as the binary
+// beside it. `casas-eternas version` is the caller, and the reason it
 // exists is the one failure this system has that is otherwise silent — a baker
 // built from a different commit than the client writes a perfectly good
 // artifact under a key nobody looks for, so the bake reports success and the

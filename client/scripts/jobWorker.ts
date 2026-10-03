@@ -52,17 +52,13 @@ import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../src/storage/
 // Where the baker reads and writes. Two shapes, because the same bake runs in
 // two places (docs/decisions/distributed-bake.md):
 //
-//   PATHS  a subprocess on the server's own machine, next to the files.
-//   URLS   a Kubernetes Job on some other node, which cannot mount the
-//          server's ReadWriteOnce volume and therefore must talk HTTP. Not a
-//          preference — anti-affinity keeps it off that node by design.
+//   PATHS  a worker on the server's own machine, next to the files.
+//   URLS   a worker in a pod of its own (the cluster's worker Deployment)
+//          or outside the cluster, which cannot mount the server's
+//          ReadWriteOnce volume and therefore must talk HTTP.
 //
 // Both go through the same bytes-at-a-path interface, so only the store
 // implementation differs; nothing about the bake itself knows which it is.
-// How often progress may be reported while a phase runs. A bake takes minutes,
-// so seconds are plenty — this is a progress bar, not telemetry.
-const progressIntervalMs = 3000
-
 interface Job {
   // Path to the saved world's .zip, when it is reachable as a file…
   worldZip?: string
@@ -88,13 +84,9 @@ interface Job {
   artifactsUrl?: string
   // Bearer token for that API, naming this one job.
   authToken?: string
-  // API base of the BAKE module that commissioned this job — where progress
-  // reports go. Named for the module, like artifactsUrl, not for the one
-  // route currently used. Falls back to artifactsUrl when absent, which is
-  // the co-resident shape where both are the same server.
-  jobsUrl?: string
-  // This job's id, for reporting progress back. Absent for a local run, whose
-  // progress reaches the server over the pipe instead.
+  // This job's id, set by the coordinator: a serving worker reports its
+  // progress on jobs.event.<jobId>, and a cancel names it. Absent for a
+  // one-shot run, whose progress goes over its pipe.
   jobId?: string
   // The coordinator's task this is, when a serving worker pulled it from the
   // relay (internal/modules/jobs/coordinator.go): what it reports on
@@ -283,59 +275,6 @@ function authorizedFetch(job: Job): (input: string, init?: RequestInit) => Promi
   }
 }
 
-// Reports progress to the server, for a bake that runs somewhere the server
-// cannot watch.
-//
-// A LOCAL run needs none of this: its progress reaches the server over the pipe
-// this same callback already writes to. A Kubernetes Job has no pipe — the API
-// says only pending, running or gone — so it says so itself, over the connection
-// it already uses for the world and the artifacts. See
-// docs/decisions/server-auth.md.
-//
-// Throttled by TIME, not by percent. The stderr line above is one per whole
-// percent, which is right for a log and would be a hundred requests per phase
-// here. A phase CHANGE always goes through: that is the part a reader acts on,
-// and it is worth a request of its own.
-//
-// Fire and forget, deliberately: a bake must not fail because a status update
-// did. A lost report is a stale number for a few seconds.
-//
-// But not SILENT. The first version swallowed every failure, and the symptom of
-// that — a progress bar that never moves — is indistinguishable from an old
-// image, a wrong URL and a refused token. It says so on stderr instead, which is
-// the pod's log and the first place anyone looks; only ONCE, because a report
-// that fails usually fails every time and a log full of the same line is a log
-// nobody reads.
-function progressReporter(job: Job): (phase: string, percent: number) => void {
-  const base = job.jobsUrl ?? job.artifactsUrl
-  if (!base || !job.jobId) return () => {}
-  const url = `${base}/jobs/${encodeURIComponent(job.jobId)}/progress`
-  const send = authorizedFetch(job)
-  let lastSentAt = 0
-  let lastPhase = ''
-  let complained = false
-  const complain = (reason: string): void => {
-    if (complained) return
-    complained = true
-    process.stderr.write(`progress reporting failed (${reason}); the bake continues without a bar\n`)
-  }
-  return (phase, percent) => {
-    const now = Date.now()
-    if (phase === lastPhase && now - lastSentAt < progressIntervalMs) return
-    lastPhase = phase
-    lastSentAt = now
-    void send(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phase, percent }),
-    })
-      .then((response) => {
-        if (!response.ok) complain(`${url} answered ${response.status}`)
-      })
-      .catch((error: unknown) => complain(`${url}: ${String(error)}`))
-  }
-}
-
 // The one line that decides where a bake's output lands. Everything above it
 // is identical in both deployments, which is the property worth protecting:
 // the artifacts must be byte-identical wherever the bake ran.
@@ -414,7 +353,7 @@ async function main(): Promise<void> {
   }
 
   try {
-    const outcome = await runJob(job, stderrProgress(job))
+    const outcome = await runJob(job, stderrProgress())
     process.stdout.write(`${JSON.stringify(outcome.result)}\n`)
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error))
@@ -423,17 +362,14 @@ async function main(): Promise<void> {
 
 // Progress on stderr, one line per whole percent: the Go side surfaces it as
 // job status, and keeping stdout clean means the result stays one parseable
-// line no matter how chatty the pipeline gets. A cluster Job also posts it
-// to its server (progressReporter).
-function stderrProgress(job: Job): (phase: string, fraction: number) => void {
+// line no matter how chatty the pipeline gets.
+function stderrProgress(): (phase: string, fraction: number) => void {
   let lastPercent = -1
-  const report = progressReporter(job)
   return (phase, fraction) => {
     const percent = Math.floor(fraction * 100)
     if (percent === lastPercent) return
     lastPercent = percent
     process.stderr.write(`${JSON.stringify({ phase, percent })}\n`)
-    report(phase, percent)
   }
 }
 

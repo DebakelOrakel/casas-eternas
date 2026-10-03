@@ -1,5 +1,5 @@
 ---
-summary: The cluster deployment — what the manifests set up, the one Secret, bootstrapping users over pod exec, how bakes run as Jobs, and the run-once deadline trap.
+summary: The cluster deployment — what the manifests set up, the one Secret, bootstrapping users over pod exec, the job workers the server scales and their service account, and the ingress.
 date: 2026-08-13
 updated: 2026-10-03
 group: installation
@@ -12,9 +12,10 @@ order: 40
 objects, with security contexts that also satisfy OpenShift's
 restricted-v2. It creates:
 
-- a **ServiceAccount + Role/RoleBinding** — the server creates bake Jobs
-  beside itself, so it needs `jobs.batch` create/get/list/watch/delete in
-  its own namespace and nothing anywhere else,
+- a **ServiceAccount + Role/RoleBinding** — the server scales its job
+  workers beside itself, so it needs `list` on Deployments and
+  `get`/`update` on `deployments/scale` in its own namespace and nothing
+  anywhere else,
 - a **PersistentVolumeClaim** (`/data`) — worlds, artifacts and the user
   store share it while everything runs in one pod,
 - a **Secret** (`casas-eternas-auth`) — applied empty; holds the one
@@ -63,40 +64,6 @@ socket path is absolute. `auth user list|passwd|delete` and
 `auth role bind|list` manage everything from there — effective
 immediately, except the admin role, which lands in the token at the
 member's next login.
-
-## Bakes are Jobs
-
-*Being replaced:* with the relay in the process (`-t all`), a server in a
-cluster now hands every job to its workers (below); the Job runner
-described here goes with the next step.
-
-A server in a cluster runs amplification bakes as Kubernetes Jobs — same
-image as the server (enforced with `imagePullPolicy: Always`; the
-artifact key carries a pipeline version, and a stale baker fails
-silently). The Job mounts nothing: it reads the world and writes the
-artifacts over HTTP with a one-shot token scoped to that world.
-
-Scheduling is left to real numbers: each Job requests its honest 3Gi
-peak, so how many fit a node is the node's business; a topology spread
-prefers empty nodes without forbidding co-location. Jobs beyond the
-cluster's free memory sit Pending, and the server reports exactly that.
-`jobs.max-concurrent` (set to 3 in the manifests) caps how many are in
-flight at all.
-
-**Failed Jobs are kept** — the last three, so their pod logs survive for
-diagnosis (`oc logs job/casas-job-<id>`); successful ones are removed
-immediately. A six-hour TTL is the backstop for jobs nobody deleted.
-
-**The run-once deadline trap.** OpenShift's RunOnceDuration plugin (or a
-project override) may inject `activeDeadlineSeconds` into run-once pods —
-and a bake is one. An 8K bake can legitimately need 30–45 minutes on
-modest nodes, which a default ~30-minute cap kills just before the finish
-line, as `DeadlineExceeded`. The cap cannot be raised from the pod; it is
-namespace configuration:
-
-```
-oc annotate namespace <ns> openshift.io/active-deadline-seconds-override=7200 --overwrite
-```
 
 ## Job workers
 
