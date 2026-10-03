@@ -291,14 +291,16 @@ kilometre over it. What changed against the sketch above, and why:
   ring's bounds the last ring's.
 
 - **Water** (same day, last): the sea as one translucent plane at its
-  level following the view, every lake as a quad at its own level, all of
-  one material (map/groundWater.ts: Fresnel-free translucent blue, a sun
-  highlight, drifting ripple normals, no reflection pass). A plane keeps
-  only the fragments whose level the LEVEL FIELD agrees with — the water
-  level per world cell, derived from the save's lake depths in one pass
-  (screens/incubator/waterLevels.ts; the hydrology's own field floods per
-  body and hung the page at 6 600 bodies) — so a lake basin under the
-  sea's plane and a lower basin beside a lake's quad are not flooded.
+  level following the view (map/groundWater.ts: translucent blue, a sun
+  highlight, drifting ripple normals, no reflection pass), kept only over
+  the cells the BODY FIELD calls the sea's. The LAKES are painted into
+  the rings themselves (groundPaint.ts): colour by depth, a flat normal
+  whose alpha flags water, and the shader gives the flagged texels a
+  ripple, a Fresnel sky and a highlight (groundNormalPlugin.ts). A plane
+  per lake, clipped by the raster's 7.8 km cells, drew every lake as a
+  block; painted, the shore is where the ground crosses the level at the
+  texel. A lake's floor is drawn just under its level (at 6× a lake 100 m
+  deep was a pit 600 m deep with the water at the bottom).
   The levels come from the LEVEL'S OWN water bodies on the level's own
   terrain, rasterised by the mesh holder (3.6 s, once): the level is a
   replay at a finer budget and differs from the save's raster by 380 m
@@ -307,7 +309,10 @@ kilometre over it. What changed against the sketch above, and why:
   first and capped at 1.5× the hydrology's cell count (the raster's rim
   leaks at saddles), a lake never under the sea's level, plus a rim of
   two cells whose raster height stands at most 150 m over the level; a
-  rim by distance alone flooded a coastal slope 16 km wide. The level test's tolerance is 4e-5 world
+  rim by distance alone flooded a coastal slope 16 km wide. A terminal
+  sea (its floor under the sea's level) takes its whole basin up to the
+  spill: the slopes between its level and the sea's are land, and left
+  to the sea they were drawn as the sea in the raster's steps. The level test's tolerance is 4e-5 world
   units: the fragment's y is a float32 near 10, and at 1e-6 every lake
   but the sea (at y = 0) was discarded whole.
   The painter colours the ground by its depth below the LOCAL level, so a
@@ -316,7 +321,9 @@ kilometre over it. What changed against the sketch above, and why:
   300 MB raster budget (two holders and 700 MB had Safari reload the page).
 
 Open: the tile seams show as a ridge of ~50 m along every tile edge,
-which is the bake's, not the drawing's (the user's call: fix in the
-generator later); pan lag is still seconds of soft ground on the outer
+and inside a terminal sea's basin a level-2 tile can stand 2 km over the
+level-1 floor (L2:36,46 on Calvessor: −818 m against −2803 m), drawn as
+rectangular islands — both the bake's, not the drawing's (the user's
+call: fix in the generator later); pan lag is still seconds of soft ground on the outer
 rings (1024² paints of 2–3 s each); vegetation exists as a canopy surface,
 not as instances.

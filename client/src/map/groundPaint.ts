@@ -142,8 +142,8 @@ const SEA_ABYSS_M = 3000
 // The sea floor's drawn depth (elevation units): 10 m under its plane.
 const SEA_FLOOR_SINK = -10 / 9000
 // A lake's colour depths (m): a lake is clearer than the sea.
-const LAKE_SHALLOW: Rgb = [112, 176, 184]
-const LAKE_DEEP: Rgb = [38, 86, 128]
+const LAKE_SHALLOW: Rgb = [96, 150, 162]
+const LAKE_DEEP: Rgb = [30, 66, 104]
 const LAKE_DEEP_M = 120
 // The cavity term: curvature (metres per metre, from the texel stencil)
 // times this, clamped.
@@ -349,12 +349,17 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
     }
   }
   // The sea floor is drawn flat, a little under the sea's plane (so the
-  // two never fight); a lake keeps its floor, which its water's
-  // translucency shows (groundWater.ts).
+  // two never fight); a lake's floor the same, under the lake's own
+  // level — at the map's exaggeration a lake 100 m deep was a pit 600 m
+  // deep with the water at its bottom (2026-10-03). The painted depth
+  // colour keeps the true depth.
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
       const k = j * n + i
-      if (heights[k] < SEA_FLOOR_SINK && source.waterSurfaceAt(x0 + i * spacing, y0 + j * spacing) === 0) heights[k] = SEA_FLOOR_SINK
+      const x = x0 + i * spacing
+      const y = y0 + j * spacing
+      const floor = (source.waterSurfaceAt(x, y) === 0 ? 0 : source.waterLevelAt(x, y)) + SEA_FLOOR_SINK
+      if (heights[k] < floor) heights[k] = floor
     }
   }
 
@@ -513,16 +518,28 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
         ny = inv
         nz = -dhdz * inv
       }
-      normals[p] = Math.round((nx * 0.5 + 0.5) * 255)
-      normals[p + 1] = Math.round((ny * 0.5 + 0.5) * 255)
-      normals[p + 2] = Math.round((nz * 0.5 + 0.5) * 255)
-      normals[p + 3] = 255
-
       // Under water: by the depth below the LOCAL level — the sea's, or
       // the basin's this point lies in (a terminal sea's floor can lie
       // kilometres under the sea's level and still be land, 2026-10-03).
+      // The sea is a plane over its painted floor (groundWater.ts); a
+      // LAKE is painted here whole — its colour by depth, its normal
+      // flat, and the normal's alpha 0 as the water flag the shader
+      // gives the surface its look by (groundNormalPlugin.ts). A plane
+      // per lake, clipped by the raster's cells, drew every lake as a
+      // block (2026-10-03); painted, the shore is where the ground
+      // crosses the level at the texel.
       const waterLevel = source.waterLevelAt(x, y) * source.elevationMeters
       const surface = source.waterSurfaceAt(x, y)
+      const lake = surface !== 0 && h <= waterLevel
+      if (lake) {
+        nx = 0
+        ny = 1
+        nz = 0
+      }
+      normals[p] = Math.round((nx * 0.5 + 0.5) * 255)
+      normals[p + 1] = Math.round((ny * 0.5 + 0.5) * 255)
+      normals[p + 2] = Math.round((nz * 0.5 + 0.5) * 255)
+      normals[p + 3] = lake ? 0 : 255
       if (h <= waterLevel) {
         const depth = waterLevel - h
         if (surface === 0) {
@@ -552,7 +569,11 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
         for (let dx = 0; dx <= 1; dx++) {
           const w = (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy)
           if (w === 0) continue
-          const biome = source.biomeAt(cx0 + dx + 0.5, cy0 + dy + 0.5)
+          // Land the save calls ocean (a terminal basin's slopes under the
+          // sea's level, a shore the level moved) is bare ground, not the
+          // ocean's blue.
+          const biomeRaw = source.biomeAt(cx0 + dx + 0.5, cy0 + dy + 0.5)
+          const biome = biomeRaw === 0 ? 17 : biomeRaw
           const cover = BIOME_COVER[biome] ?? BIOME_COVER[4]
           rgb[0] += cover[0] * w
           rgb[1] += cover[1] * w

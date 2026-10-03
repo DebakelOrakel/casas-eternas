@@ -2,12 +2,16 @@ import { Color3, Constants, MaterialPluginBase, Mesh, RawTexture, StandardMateri
 import type { Material, MaterialDefines, Scene, SubMesh, UniformBuffer } from '@babylonjs/core'
 
 // THE WATER over the ground rings (groundRings.ts): the sea as one plane
-// at its level following the view, every lake as a quad at its own
-// level, all of one material. Where a plane lies over ground that is not
+// at its level following the view. The lakes are painted into the rings
+// themselves (groundPaint.ts) — a plane per lake, clipped by the
+// raster's cells, drew every lake as a block (2026-10-03). Where a plane lies over ground that is not
 // that water's — a lake basin under the sea's plane, a lower basin beside
-// a lake's quad — the shader reads the LEVEL FIELD (the water level per
-// world cell, hydrology.waterLevelField) and discards the fragment whose
-// level is not the plane's own. Ground above the level hides the plane
+// a lake's quad — the shader reads the BODY FIELD (which body's water a
+// world cell holds, waterLevels.ts; −1 the sea) and discards the
+// fragment whose body is not the plane's own, carried per vertex. By the
+// LEVEL instead, two lakes within a few metres of each other, or a
+// lagoon within a few metres of the sea, drew each other's quads as
+// slabs (2026-10-03). Ground above the level hides the plane
 // by depth as usual. So the planes may be sloppy rectangles, and the
 // shoreline is where the painted ground crosses the level, at the
 // ground's own resolution.
@@ -21,14 +25,12 @@ export interface GroundWaterOptions {
   scene: Scene
   worldWidth: number
   worldHeight: number
-  // World Y per elevation unit (before the exaggeration).
-  heightScale: number
 }
 
 export interface GroundWater {
-  // The level field (elevation units, a cell per world raster cell) and
-  // the lakes it holds: each a bounding box in cells and a level.
-  setLevels(level: Float32Array, width: number, height: number, lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[]): void
+  // The body field (the body per world raster cell, −1 the sea): the
+  // sea's plane is kept only over the sea's own cells.
+  setLevels(body: Int32Array, width: number, height: number): void
   // Per frame: where the view is, and the seconds for the ripples.
   update(focusX: number, focusZ: number, seconds: number): void
   setHeightScale(scale: number): void
@@ -41,35 +43,25 @@ const SEA_PERIODS = 3
 // The ripple normal map's side in texels and its wavelength, world units
 // (a period must hold a whole number of them: 20 / 0.002 = 10 000).
 const RIPPLE_SIZE = 256
-const RIPPLE_WAVELENGTH = 0.002
-// How far (world units) a plane's level may differ from the field's and
-// still be its own. The fragment's world y is a float32 of a position
-// up to 10 units, so it carries ~1e-6 of noise — at 1e-6 every lake but
-// the sea (at y = 0 exactly) was discarded whole (2026-10-03). 4e-5 is
-// ~5 m of real height at 6×; two bodies closer than that in level and
-// touching would share a plane, which is no harm.
-const LEVEL_TOLERANCE_UNITS = 4e-5
-// The lake quads reach this many cells past the body's cells: its rim.
-const LAKE_MARGIN_CELLS = 1
+const RIPPLE_WAVELENGTH = 0.00025
 
-// Reads the level field at the fragment's world position and keeps the
-// fragment only where the field's level is the plane's own.
+// Reads the body field at the fragment's world position and keeps the
+// fragment only where the field's body is the plane's own (a per-vertex
+// attribute, the sea −1).
 class WaterLevelPlugin extends MaterialPluginBase {
-  private levels: RawTexture | null = null
+  private bodies: RawTexture | null = null
   private worldWidth = 1
   private worldHeight = 1
-  private unitsPerLevel = 1
 
   constructor(material: Material) {
     super(material, 'WaterLevel', 220, { WATERLEVEL: false })
     this._enable(true)
   }
 
-  configure(levels: RawTexture | null, worldWidth: number, worldHeight: number, unitsPerLevel: number): void {
-    this.levels = levels
+  configure(bodies: RawTexture | null, worldWidth: number, worldHeight: number): void {
+    this.bodies = bodies
     this.worldWidth = worldWidth
     this.worldHeight = worldHeight
-    this.unitsPerLevel = unitsPerLevel
     this.markAllDefinesAsDirty()
   }
 
@@ -78,38 +70,49 @@ class WaterLevelPlugin extends MaterialPluginBase {
   }
 
   override prepareDefines(defines: MaterialDefines): void {
-    defines['WATERLEVEL'] = this.levels !== null
+    defines['WATERLEVEL'] = this.bodies !== null
   }
 
   override getSamplers(samplers: string[]): void {
-    samplers.push('waterLevelSampler')
+    samplers.push('waterBodySampler')
+  }
+
+  override getAttributes(attributes: string[]): void {
+    attributes.push('waterBody')
   }
 
   override getUniforms(): { ubo: { name: string; size: number; type: string }[]; fragment: string } {
     return {
-      ubo: [{ name: 'waterLevelWorld', size: 4, type: 'vec4' }],
+      ubo: [{ name: 'waterLevelWorld', size: 2, type: 'vec2' }],
       fragment: `#ifdef WATERLEVEL
-        uniform vec4 waterLevelWorld;
+        uniform vec2 waterLevelWorld;
         #endif`,
     }
   }
 
   override bindForSubMesh(uniformBuffer: UniformBuffer, _scene: Scene, _engine: unknown, _subMesh: SubMesh): void {
-    if (this.levels) uniformBuffer.setTexture('waterLevelSampler', this.levels)
-    uniformBuffer.updateFloat4('waterLevelWorld', this.worldWidth, this.worldHeight, this.unitsPerLevel, LEVEL_TOLERANCE_UNITS)
+    if (this.bodies) uniformBuffer.setTexture('waterBodySampler', this.bodies)
+    uniformBuffer.updateFloat2('waterLevelWorld', this.worldWidth, this.worldHeight)
   }
 
   override getCustomCode(shaderType: string): { [pointName: string]: string } | null {
-    if (shaderType !== 'fragment') return null
+    if (shaderType === 'vertex') {
+      return {
+        CUSTOM_VERTEX_DEFINITIONS: `attribute float waterBody;
+          varying float vWaterBody;`,
+        CUSTOM_VERTEX_MAIN_END: 'vWaterBody = waterBody;',
+      }
+    }
     return {
-      CUSTOM_FRAGMENT_DEFINITIONS: `#ifdef WATERLEVEL
-        uniform highp sampler2D waterLevelSampler;
+      CUSTOM_FRAGMENT_DEFINITIONS: `varying float vWaterBody;
+        #ifdef WATERLEVEL
+        uniform highp sampler2D waterBodySampler;
         #endif`,
       CUSTOM_FRAGMENT_MAIN_BEGIN: `#ifdef WATERLEVEL
         {
           vec2 uv = vec2(vPositionW.x / waterLevelWorld.x + 0.5, vPositionW.z / waterLevelWorld.y + 0.5);
-          float fieldLevel = texture2D(waterLevelSampler, uv).r * waterLevelWorld.z;
-          if (abs(fieldLevel - vPositionW.y) > waterLevelWorld.w) discard;
+          float fieldBody = texture2D(waterBodySampler, uv).r;
+          if (abs(fieldBody - vWaterBody) > 0.5) discard;
         }
         #endif`,
     }
@@ -163,7 +166,7 @@ function makeRipples(size: number): Uint8Array {
 }
 
 export function createGroundWater(options: GroundWaterOptions): GroundWater {
-  const { scene, worldWidth, worldHeight, heightScale } = options
+  const { scene, worldWidth, worldHeight } = options
   let exaggeration = 1
 
   const material = new StandardMaterial('groundWaterMaterial', scene)
@@ -185,16 +188,12 @@ export function createGroundWater(options: GroundWaterOptions): GroundWater {
   // of every mountain.
   material.zOffsetUnits = -4
   const plugin = new WaterLevelPlugin(material)
-  let levelTexture: RawTexture | null = null
+  let bodyTexture: RawTexture | null = null
 
   const sea = new Mesh('groundSea', scene)
   sea.material = material
   sea.isPickable = false
   sea.alphaIndex = 1
-  const lakes = new Mesh('groundLakes', scene)
-  lakes.material = material
-  lakes.isPickable = false
-  lakes.alphaIndex = 2
 
   // The sea plane: SEA_PERIODS world periods a side, UVs in ripple
   // wavelengths of world units so the pattern stays put when the plane
@@ -210,47 +209,22 @@ export function createGroundWater(options: GroundWaterOptions): GroundWater {
     data.uvs = [x0 / RIPPLE_WAVELENGTH, z0 / RIPPLE_WAVELENGTH, (x0 + w) / RIPPLE_WAVELENGTH, z0 / RIPPLE_WAVELENGTH, x0 / RIPPLE_WAVELENGTH, (z0 + h) / RIPPLE_WAVELENGTH, (x0 + w) / RIPPLE_WAVELENGTH, (z0 + h) / RIPPLE_WAVELENGTH]
     data.indices = [0, 1, 2, 1, 3, 2]
     data.applyToMesh(sea, true)
+    sea.setVerticesData('waterBody', new Float32Array([-1, -1, -1, -1]), false, 1)
   }
   let seaCenterX = NaN
   let seaCenterZ = NaN
 
   const applyScale = (): void => {
     sea.scaling.y = exaggeration
-    lakes.scaling.y = exaggeration
-    plugin.configure(levelTexture, worldWidth, worldHeight, heightScale * exaggeration)
+    plugin.configure(bodyTexture, worldWidth, worldHeight)
   }
 
   return {
-    setLevels(level, width, height, lakeBoxes) {
-      levelTexture?.dispose()
-      levelTexture = RawTexture.CreateRTexture(level, width, height, scene, false, false, Texture.NEAREST_SAMPLINGMODE, Constants.TEXTURETYPE_FLOAT)
-      levelTexture.wrapU = Texture.WRAP_ADDRESSMODE
-      levelTexture.wrapV = Texture.WRAP_ADDRESSMODE
-      // The lake quads, one mesh: a cell (cx, cy) spans world x from
-      // (cx / width − ½) · worldWidth, as the map plane maps its texels.
-      const positions: number[] = []
-      const normals: number[] = []
-      const uvs: number[] = []
-      const indices: number[] = []
-      for (const box of lakeBoxes) {
-        const x0 = ((box.x0 - LAKE_MARGIN_CELLS) / width - 0.5) * worldWidth
-        const x1 = ((box.x1 + 1 + LAKE_MARGIN_CELLS) / width - 0.5) * worldWidth
-        const z0 = ((box.y0 - LAKE_MARGIN_CELLS) / height - 0.5) * worldHeight
-        const z1 = ((box.y1 + 1 + LAKE_MARGIN_CELLS) / height - 0.5) * worldHeight
-        const y = box.level * heightScale
-        const base = positions.length / 3
-        positions.push(x0, y, z0, x1, y, z0, x0, y, z1, x1, y, z1)
-        for (let k = 0; k < 4; k++) normals.push(0, 1, 0)
-        uvs.push(x0 / RIPPLE_WAVELENGTH, z0 / RIPPLE_WAVELENGTH, x1 / RIPPLE_WAVELENGTH, z0 / RIPPLE_WAVELENGTH, x0 / RIPPLE_WAVELENGTH, z1 / RIPPLE_WAVELENGTH, x1 / RIPPLE_WAVELENGTH, z1 / RIPPLE_WAVELENGTH)
-        indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2)
-      }
-      const data = new VertexData()
-      data.positions = positions
-      data.normals = normals
-      data.uvs = uvs
-      data.indices = indices
-      data.applyToMesh(lakes, true)
-      lakes.setEnabled(indices.length > 0)
+    setLevels(body, width, height) {
+      bodyTexture?.dispose()
+      bodyTexture = RawTexture.CreateRTexture(Float32Array.from(body), width, height, scene, false, false, Texture.NEAREST_SAMPLINGMODE, Constants.TEXTURETYPE_FLOAT)
+      bodyTexture.wrapU = Texture.WRAP_ADDRESSMODE
+      bodyTexture.wrapV = Texture.WRAP_ADDRESSMODE
       applyScale()
     },
     update(focusX, focusZ, seconds) {
@@ -263,7 +237,6 @@ export function createGroundWater(options: GroundWaterOptions): GroundWater {
         seaCenterZ = cz
         buildSea(cx, cz)
       }
-      lakes.position.set(cx, 0, cz)
       ripples.uOffset = seconds * 0.02
       ripples.vOffset = seconds * 0.013
     },
@@ -273,14 +246,12 @@ export function createGroundWater(options: GroundWaterOptions): GroundWater {
     },
     setEnabled(on) {
       sea.setEnabled(on)
-      lakes.setEnabled(on && lakes.getTotalIndices() > 0)
     },
     dispose() {
       sea.dispose()
-      lakes.dispose()
       material.dispose()
       ripples.dispose()
-      levelTexture?.dispose()
+      bodyTexture?.dispose()
     },
   }
 }

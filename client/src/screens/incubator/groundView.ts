@@ -105,7 +105,7 @@ export interface GroundView {
   update(focusX: number, focusZ: number, unitsPerPixel: number, shadows: boolean, air: { altitude: number; eye: Vector3; farPlane: number }): void
   // Called once the level's own terrain and water are known (the mesh
   // holder makes them; waterLevels.ts): for the screen's debugging.
-  onLevels(listener: (levels: { elevation: Float32Array; level: Float32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[] }) => void): void
+  onLevels(listener: (levels: { elevation: Float32Array; level: Float32Array; body: Int32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[] }) => void): void
   // The DRAWN ground's world Y at a point, exaggeration included.
   drawnHeightAt(x: number, z: number): number
   // For the console and the screenshot ladder: what is being built.
@@ -326,7 +326,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       }),
   })
   rings.setHeightScale(MAP_EXAGGERATION)
-  const water = createGroundWater({ scene, worldWidth: MAP_WORLD_WIDTH, worldHeight: MAP_WORLD_HEIGHT, heightScale: RELIEF_HEIGHT_SCALE })
+  const water = createGroundWater({ scene, worldWidth: MAP_WORLD_WIDTH, worldHeight: MAP_WORLD_HEIGHT })
   water.setHeightScale(MAP_EXAGGERATION)
   water.setEnabled(false)
   const started = performance.now()
@@ -336,7 +336,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
   let readyCount = 0
   let worldSent = 0
   let levelsMs = 0
-  let onLevels: ((levels: { elevation: Float32Array; level: Float32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[] }) => void) | null = null
+  let onLevels: ((levels: { elevation: Float32Array; level: Float32Array; body: Int32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[] }) => void) | null = null
   let detailTextures: { albedo: RawTexture2DArray; normals: RawTexture2DArray } | null = null
   workers.forEach((worker, index) => {
     worker.onerror = (event: ErrorEvent): void => {
@@ -410,10 +410,10 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       workers.forEach((worker, i) => {
         if (i !== index) worker.postMessage({ type: 'fields', fields } satisfies GroundWorkerInbound)
       })
-      water.setLevels(message.level, worldWidthCells, worldHeightCells, message.lakes)
+      water.setLevels(message.body, worldWidthCells, worldHeightCells)
       water.setEnabled(true)
       levelsMs = message.ms
-      onLevels?.({ elevation: message.elevation, level: message.level, surface: message.surface, lakes: message.lakes })
+      onLevels?.({ elevation: message.elevation, level: message.level, body: message.body, surface: message.surface, lakes: message.lakes })
     } else if (message.type === 'rastered') {
       rastersMade++
       rastersMadeMs += message.ms

@@ -134,7 +134,10 @@ export class GroundNormalPlugin extends MaterialPluginBase {
         // what the painted four leave.
         void groundWeights(vec2 uv, out float w[${layers}]) {
           vec4 m = texture2D(groundMaterialSampler, uv);
-          w[0] = clamp(1.0 - (m.r + m.g + m.b + m.a), 0.0, 1.0);
+          // No detail on painted water (the normal's alpha 0).
+          float land = texture2D(groundNormalSampler, uv).a;
+          m *= land;
+          w[0] = clamp(1.0 - (m.r + m.g + m.b + m.a), 0.0, 1.0) * land;
           w[1] = m.r;
           w[2] = m.g;
           w[3] = m.b;
@@ -226,8 +229,17 @@ export class GroundNormalPlugin extends MaterialPluginBase {
         }
         #endif`,
       CUSTOM_FRAGMENT_BEFORE_LIGHTS: `#if defined(GROUNDNORMAL) && defined(DIFFUSE)
-        normalW = texture2D(groundNormalSampler, vDiffuseUV).xyz * 2.0 - 1.0;
+        vec4 groundNormalTexel = texture2D(groundNormalSampler, vDiffuseUV);
+        normalW = groundNormalTexel.xyz * 2.0 - 1.0;
         normalW = normalize(vec3(normalW.x * groundRelief, normalW.y, normalW.z * groundRelief));
+        // Painted WATER (the normal's alpha 0, groundPaint.ts): a flat
+        // surface with a fine ripple, lit as a mirror would be a little.
+        float groundWater = 1.0 - groundNormalTexel.a;
+        if (groundWater > 0.5) {
+          vec2 rp = vPositionW.xz * 4000.0;
+          float r = sin(rp.x * 1.7 + rp.y * 0.9) * 0.5 + sin(rp.x * 0.4 - rp.y * 1.3) * 0.5;
+          normalW = normalize(vec3(r * 0.02, 1.0, -r * 0.02));
+        }
         #endif
         #if defined(GROUNDDETAIL) && defined(DIFFUSE)
         {
@@ -245,6 +257,20 @@ export class GroundNormalPlugin extends MaterialPluginBase {
           // world's own axes (the tiles lie flat on it).
           vec3 lean = (vec3(nA.x, 0.0, nA.z) * near * near + vec3(nB.x, 0.0, nB.z) * 0.5) * groundDetail.z;
           normalW = normalize(normalW + lean * 0.8);
+        }
+        #endif`,
+      CUSTOM_FRAGMENT_BEFORE_FOG: `#if defined(GROUNDNORMAL) && defined(DIFFUSE)
+        {
+          // The water's sky: brighter toward a grazing view (Fresnel),
+          // and a highlight along the sun's reflection.
+          float groundWater2 = 1.0 - texture2D(groundNormalSampler, vDiffuseUV).a;
+          if (groundWater2 > 0.5) {
+            float fresnel = pow(1.0 - max(dot(normalW, viewDirectionW), 0.0), 3.0);
+            color.rgb = mix(color.rgb, vec3(0.78, 0.85, 0.92), fresnel * 0.55);
+            vec3 sunDir = normalize(vec3(-0.5, 0.67, 0.5));
+            vec3 h = normalize(sunDir + viewDirectionW);
+            color.rgb += vec3(0.35) * pow(max(dot(normalW, h), 0.0), 120.0);
+          }
         }
         #endif`,
       CUSTOM_FRAGMENT_UPDATE_DIFFUSE: `#if defined(GROUNDDETAIL) && defined(DIFFUSE)

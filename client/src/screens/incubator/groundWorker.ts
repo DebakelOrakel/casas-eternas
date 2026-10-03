@@ -57,7 +57,7 @@ export type GroundWorkerOutbound =
   | { type: 'rastered'; stage: string; tile: TileId; n: number; data: Float32Array; ms: number }
   // From the mesh holder: the level's terrain on the world raster and
   // the water levels its bodies stand at (waterLevels.ts).
-  | { type: 'levels'; elevation: Float32Array; level: Float32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[]; ms: number }
+  | { type: 'levels'; elevation: Float32Array; level: Float32Array; body: Int32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[]; ms: number }
   // The detail textures (groundDetail.ts), once, from the worker asked.
   | { type: 'detail'; size: number; albedo: Uint8Array; normals: Uint8Array }
 
@@ -91,7 +91,7 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
       fields.elevation = { data: elevation, resX: message.width, resY: message.height }
       fields.waterLevel = { data: water.level, resX: message.width, resY: message.height }
       fields.waterSurface = { data: Float32Array.from(water.surface), resX: message.width, resY: message.height }
-      levels = { type: 'levels', elevation, level: water.level, surface: water.surface, lakes: water.lakes, ms: Math.round(performance.now() - started) }
+      levels = { type: 'levels', elevation, level: water.level, body: water.body, surface: water.surface, lakes: water.lakes, ms: Math.round(performance.now() - started) }
     }
     source = createGroundSource({
       width: message.width,

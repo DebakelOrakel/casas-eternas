@@ -25,10 +25,17 @@ import type { WaterBody } from '../../generator/surface/hydrology'
 const REACH_CAP = 1.5
 const RIM_CELLS = 2
 const RIM_MARGIN = 150 / 9000
+// The body of sunken land (see below): no body's, and not the sea's.
+export const SUNKEN = -2
+// A terminal sea's rim has no margin: its rim is its basin's upper
+// slope, kilometres high, and a raster cell whose mean stands far over
+// the spill still has fine terrain under the sea's level, which the sea
+// then claimed in blocks (2026-10-03).
 
 export interface WaterLevels {
-  // Per cell: the level (elevation units), the body (−1 the sea) and the
-  // surface kind as hydrology.waterLevelField gives it (0 sea, 1 lake).
+  // Per cell: the level (elevation units), the body (−1 the sea, SUNKEN
+  // dry land under the sea's level) and the surface kind as
+  // hydrology.waterLevelField gives it (0 sea, 1 lake).
   level: Float32Array
   body: Int32Array
   surface: Uint8Array
@@ -44,6 +51,7 @@ export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: F
   const lakes: WaterLevels['lakes'] = []
   const wetCount: number[] = []
   const subSea: boolean[] = []
+  const reachTo: number[] = []
   const seeds: number[] = []
   for (const b of bodies) {
     if (b.kind === 'dry' || b.frozen) continue
@@ -51,11 +59,16 @@ export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: F
     if (!(elevation[seed] < b.level)) continue
     const id = lakes.length
     lakes.push({ x0: width, y0: height, x1: -1, y1: -1, level: b.level })
-    wetCount.push(Math.max(4, b.cells))
     // A terminal sea's floor lies under the sea's level: its flood may
-    // take such cells. A lake's stops at the sea's level, or a lake on a
-    // cliff coast flooded the ocean under it, in slabs.
-    subSea.push(b.floor < 0)
+    // take such cells, and takes its whole basin up to the SPILL — the
+    // slopes between its level and the sea's are land, and left to the
+    // sea they were drawn as the sea, a plane over the basin's rim in
+    // the raster's steps (2026-10-03). A lake's flood stops at the sea's
+    // level, or a lake on a cliff coast flooded the ocean under it.
+    const terminal = b.floor < 0
+    subSea.push(terminal)
+    reachTo.push(terminal ? b.spill : b.level)
+    wetCount.push(terminal ? Infinity : Math.max(4, b.cells))
     seeds.push(seed)
     body[seed] = id
     level[seed] = b.level
@@ -109,7 +122,7 @@ export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: F
     const cy = (c - cx) / width
     for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
       const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
-      if (body[nb] !== -1 || !(elevation[nb] < lakes[id].level)) continue
+      if (body[nb] !== -1 || !(elevation[nb] < reachTo[id])) continue
       if (elevation[nb] <= 0 && !subSea[id]) continue
       push(elevation[nb], nb, id)
     }
@@ -143,15 +156,53 @@ export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: F
         const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
         const id = body[nb]
         if (id < 0) continue
-        const lvl = lakes[id].level
-        if (elevation[c] < lvl || elevation[c] > lvl + RIM_MARGIN) continue
-        level[c] = lvl
+        // The rim stands at the flood's own edge: a lake's level, a
+        // terminal sea's spill (its rim cells are its basin's upper
+        // slopes, whose fine terrain dips under the sea's level and was
+        // painted as the sea in the raster's steps, 2026-10-03).
+        const edge = reachTo[id]
+        const margin = subSea[id] ? Infinity : RIM_MARGIN
+        if (elevation[c] < edge || elevation[c] > edge + margin) continue
+        level[c] = lakes[id].level
         surface[c] = 1
         rim.push(c, id)
         break
       }
     }
     for (let i = 0; i < rim.length; i += 2) body[rim[i]] = rim[i + 1]
+  }
+  // SUNKEN LAND: a cell under the sea's level that no body holds and the
+  // sea cannot reach (a dry basin's floor, a depression behind a ridge
+  // in a terminal sea's basin — the hydrology's dryBasin) is land, not
+  // the sea: left to the sea it was drawn as the sea, in the raster's
+  // blocks, inside a basin (2026-10-03). The sea is the flood over the
+  // cells under its level from the world's deepest cell; the rest take
+  // body SUNKEN with a level under everything, so the painter draws them
+  // dry and the sea's plane keeps off them.
+  {
+    let deepest = 0
+    for (let c = 1; c < n; c++) if (elevation[c] < elevation[deepest]) deepest = c
+    const seaSeen = new Uint8Array(n)
+    const stack: number[] = [deepest]
+    seaSeen[deepest] = 1
+    while (stack.length > 0) {
+      const c = stack.pop()!
+      const cx = c % width
+      const cy = (c - cx) / width
+      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+        const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
+        if (seaSeen[nb] || body[nb] !== -1 || !(elevation[nb] <= 0)) continue
+        seaSeen[nb] = 1
+        stack.push(nb)
+      }
+    }
+    for (let c = 0; c < n; c++) {
+      if (body[c] === -1 && elevation[c] <= 0 && !seaSeen[c]) {
+        body[c] = SUNKEN
+        level[c] = -1
+        surface[c] = 1
+      }
+    }
   }
   // The boxes over the reach.
   for (const box of lakes) {
