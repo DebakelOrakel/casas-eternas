@@ -155,9 +155,42 @@ export class GroundNormalPlugin extends MaterialPluginBase {
         // The luminance (0.5 = unchanged) and the lean of the materials
         // mixed by their weights, at a wavelength.
         const float groundScale[${layers}] = float[${layers}](${GROUND_MATERIALS.map((m) => GROUND_MATERIAL_SCALE[m].toFixed(2)).join(', ')});
-        // Two reads of a tile, the second turned and scaled, averaged: the
-        // grid a tiling texture repeats on stops lining up with itself.
-        const mat2 groundTurn = mat2(0.6, 0.8, -0.8, 0.6) * 1.61;
+        // HEX TILING (Mikkelsen 2022, "Practical real-time hex-tiling"):
+        // a tiling texture read regularly repeats, and the eye finds the
+        // grid within seconds. So the plane is cut into a triangle grid;
+        // each vertex owns a random offset and turn of the texture, and a
+        // pixel mixes the three vertices around it by their barycentric
+        // weights (sharpened, so the mix is mostly one of them). Three
+        // reads instead of one; no repetition the eye can find.
+        float groundHash1(vec2 p) {
+          vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+          p3 += dot(p3, p3.yzx + 33.33);
+          return fract((p3.x + p3.y) * p3.z);
+        }
+        void groundHexVertices(vec2 uv, out vec2 v0, out vec2 v1, out vec2 v2, out vec3 w) {
+          const mat2 toSkewed = mat2(1.0, 0.0, -0.57735027, 1.15470054);
+          vec2 skewed = toSkewed * uv;
+          vec2 base = floor(skewed);
+          vec2 f = fract(skewed);
+          if (f.x + f.y < 1.0) {
+            w = vec3(1.0 - f.x - f.y, f.x, f.y);
+            v0 = base; v1 = base + vec2(1.0, 0.0); v2 = base + vec2(0.0, 1.0);
+          } else {
+            w = vec3(f.x + f.y - 1.0, 1.0 - f.y, 1.0 - f.x);
+            v0 = base + vec2(1.0, 1.0); v1 = base + vec2(0.0, 1.0); v2 = base + vec2(1.0, 0.0);
+          }
+          w = w * w * w;
+          w /= (w.x + w.y + w.z);
+        }
+        // The texture's uv at a vertex's turn and offset, and the turn's
+        // matrix to bring a lean back into the world's axes.
+        vec2 groundHexUv(vec2 uv, vec2 v, out mat2 back) {
+          float a = groundHash1(v) * 6.2831853;
+          float c = cos(a);
+          float sn = sin(a);
+          back = mat2(c, -sn, sn, c);
+          return mat2(c, sn, -sn, c) * uv + vec2(groundHash1(v + 7.1), groundHash1(v + 13.7));
+        }
         void groundDetailAt(vec2 p, float wavelength, float w[${layers}], out float lum, out vec3 n) {
           lum = 0.0;
           n = vec3(0.0);
@@ -165,16 +198,30 @@ export class GroundNormalPlugin extends MaterialPluginBase {
             if (w[i] < 0.01) continue;
             float wl = wavelength * groundScale[i];
             vec2 uv = p / wl;
-            vec2 uv2 = groundTurn * uv + 0.37;
             // A material's tile fades at the pixel on its own scale.
             float f = groundTileFade(p, wl) * w[i];
-            float l = texture(groundDetailAlbedo, vec3(uv, float(i))).r + texture(groundDetailAlbedo, vec3(uv2, float(i))).r;
-            vec3 a = texture(groundDetailNormals, vec3(uv, float(i))).xyz * 2.0 - 1.0;
-            vec3 b = texture(groundDetailNormals, vec3(uv2, float(i))).xyz * 2.0 - 1.0;
-            // The second read's lean turned back into the world's axes.
-            b.xz = b.xz * mat2(0.6, -0.8, 0.8, 0.6);
-            lum += (0.5 + (l - 1.0) * 0.7) * f + 0.5 * (w[i] - f);
-            n += (a + b) * 0.7 * f;
+            // The hex grid at a little under a tile, so neighbouring
+            // vertices read different parts of it.
+            vec2 v0; vec2 v1; vec2 v2; vec3 hw;
+            groundHexVertices(uv * 0.7, v0, v1, v2, hw);
+            mat2 b0; mat2 b1; mat2 b2;
+            vec2 uv0 = groundHexUv(uv, v0, b0);
+            vec2 uv1 = groundHexUv(uv, v1, b1);
+            vec2 uv2 = groundHexUv(uv, v2, b2);
+            // The mip level from the UNTURNED uv's derivatives: a vertex's
+            // uv jumps at every cell edge, and the implicit derivative
+            // there picks a mip that is only the average (2026-10-03).
+            vec2 ddx = dFdx(uv);
+            vec2 ddy = dFdy(uv);
+            float l = textureGrad(groundDetailAlbedo, vec3(uv0, float(i)), ddx, ddy).r * hw.x + textureGrad(groundDetailAlbedo, vec3(uv1, float(i)), ddx, ddy).r * hw.y + textureGrad(groundDetailAlbedo, vec3(uv2, float(i)), ddx, ddy).r * hw.z;
+            vec3 n0 = textureGrad(groundDetailNormals, vec3(uv0, float(i)), ddx, ddy).xyz * 2.0 - 1.0;
+            vec3 n1 = textureGrad(groundDetailNormals, vec3(uv1, float(i)), ddx, ddy).xyz * 2.0 - 1.0;
+            vec3 n2 = textureGrad(groundDetailNormals, vec3(uv2, float(i)), ddx, ddy).xyz * 2.0 - 1.0;
+            n0.xz = b0 * n0.xz;
+            n1.xz = b1 * n1.xz;
+            n2.xz = b2 * n2.xz;
+            lum += l * f + 0.5 * (w[i] - f);
+            n += (n0 * hw.x + n1 * hw.y + n2 * hw.z) * f;
           }
         }
         #endif`,

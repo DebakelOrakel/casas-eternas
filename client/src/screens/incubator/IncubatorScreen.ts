@@ -262,7 +262,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // server world and puts the camera at a view, so a screenshot ladder
   // shows the same places every time. `data-ready` on the root says the
   // level is shown. Not a user surface: no text, no keys.
-  const debug = { errors: [] as string[], ground: () => ground?.stats() ?? null, scene }
+  const debug: { errors: string[]; ground: () => unknown; scene: Scene; shaders?: () => string[] } = { errors: [], ground: () => ground?.stats() ?? null, scene }
   ;(window as unknown as { __incubator?: unknown }).__incubator = debug
   window.addEventListener('error', (e) => debug.errors.push(String(e.message)))
   window.addEventListener('unhandledrejection', (e) => debug.errors.push(String(e.reason)))
@@ -271,6 +271,19 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   console.error = (...args: unknown[]): void => {
     debug.errors.push(args.map(String).join(' ').slice(0, 300))
     consoleError(...args)
+  }
+  // Safari reports a shader that fails to compile as a stack trace with no
+  // message, and Babylon keeps drawing with the previous effect; the
+  // ladder then shows the old look with no error (2026-10-03). So the
+  // effects are checked: a material not ready for seconds is listed.
+  debug.shaders = () => {
+    const out: string[] = []
+    for (const mesh of scene.meshes) {
+      if (!mesh.material || !mesh.isEnabled()) continue
+      const effect = mesh.subMeshes?.[0]?._drawWrapper?.effect
+      if (effect && !effect.isReady()) out.push(`${mesh.name}: effect not ready (${String(effect.getCompilationError?.() ?? '').slice(0, 80)})`)
+    }
+    return out
   }
   const worldParam = query.get('world')
   const viewParam = query.get('view')

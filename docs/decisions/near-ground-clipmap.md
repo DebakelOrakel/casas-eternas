@@ -248,9 +248,10 @@ kilometre over it. What changed against the sketch above, and why:
   MATERIAL weights per texel (rock, bare, snow, canopy; grass the rest),
   and the shader lays tiling detail textures under the albedo by them —
   made in code (map/groundDetail.ts: grass, strata rock, scree, snow,
-  canopy, a macro mottle), a 2D array texture read at two wavelengths with
-  a turned second read against repetition, the micro tile within a few
-  altitudes of the eye. Photo textures (CC0) remain the option to compare
+  canopy, a macro mottle), a 2D array texture read at two wavelengths,
+  HEX-TILED (Mikkelsen 2022: a triangle grid, a random turn and offset
+  of the texture per vertex, the three around a pixel mixed) so no
+  repetition shows, the micro tile within a few altitudes of the eye. Photo textures (CC0) remain the option to compare
   against.
 - **Levels by the texel, not by the ring.** Each level's share of the
   ground fades with the texel size (level 3 under ~450 m, level 2 under
