@@ -180,12 +180,12 @@ button.title-bar__mark:hover {
 
 /* --- the tool buttons ----------------------------------------------------- */
 
-/* One shape for the bar's buttons (sign-in, the save menu, the artifacts):
+/* One shape for the bar's buttons (the save menu, the menu):
    36 px high, the icon at the left edge and the label centred in the room
    after it. Each sets only its WIDTH, and fixes it: labels differ between
    languages, and a button sized to its text would move the right-hand group
    on every language switch — right next to the buttons doing the switching.
-   The outline look is the default; the sign-in fills it (`--primary`). */
+   The outline look is the only one. */
 .title-bar__tool {
   height: 36px;
   display: flex;
@@ -207,39 +207,110 @@ button.title-bar__mark:hover {
   flex-grow: 1;
   text-align: center;
 }
-.title-bar__tool--primary {
-  border-color: var(--dc-accent);
-  background: var(--dc-accent);
-  color: var(--dc-on-accent);
-  font-weight: 600;
-}
-.title-bar__tool--primary:hover {
-  background: var(--dc-accent);
-}
 
-/* --- account ------------------------------------------------------------- */
+/* --- the menu ------------------------------------------------------------ */
 
-/* Fits the longer of "Sign in" and "Anmelden" at 13.5px/600 plus the icon,
-   with room for a third language later (see .title-bar__tool). */
-.title-bar__sign-in {
-  width: 124px;
+/* The button at the right end (see TitleBar's menu). Fixed width while it
+   says "Menu", for the reason .title-bar__tool gives; signed in, it carries
+   the user's name and sizes to it — a name is not translated, so it does not
+   move on a language switch. */
+.title-menu {
+  position: relative;
+  display: flex;
 }
 
-.title-bar__account {
-  height: 36px;
+.title-menu__button {
+  width: 112px;
+}
+
+.title-menu__button--account {
+  width: auto;
+  max-width: 220px;
+  padding-left: 4px;
+  border-radius: 18px;
+}
+
+.title-menu__button--account .title-bar__tool-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The list hangs under the button, right-aligned to it — the save menu's
+   shape (saveMenu.css), with one-line rows. */
+.title-menu__list {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 260px;
+  box-sizing: border-box;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 5;
+  border: 1px solid var(--dc-menu-line);
+  border-radius: 8px;
+  background: var(--dc-menu-bg);
+  box-shadow: 0 14px 36px var(--dc-menu-shadow);
+}
+
+.title-menu__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* A group with no rows takes no room, and the line above a group set apart
+   (the account, the way home) is only drawn when there are rows under it. */
+.title-menu__group:empty {
+  display: none;
+}
+
+.title-menu__group--apart {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--dc-line);
+}
+
+.title-menu__row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px 0 4px;
-  border: 1px solid var(--dc-line2);
-  border-radius: 18px;
+  gap: 12px;
+  min-height: 40px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
   background: transparent;
   color: var(--dc-text);
-  font-size: 13px;
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
 }
 
-.title-bar__account:hover {
+.title-menu__item:hover {
   background: var(--dc-hover);
+}
+
+.title-menu__mark {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--dc-line);
+  color: var(--dc-text2);
+}
+
+.title-menu__label {
+  flex-grow: 1;
+}
+
+/* The language switch keeps its own shape inside its row, a little lower. */
+.title-menu__row .title-bar__lang {
+  height: 30px;
 }
 
 .title-bar__initials {
@@ -273,7 +344,7 @@ button.title-bar__mark:hover {
    that reading was wrong twice over: it named the world and led away from it,
    and a masthead's own name is where "up" lives. The mark carries that now. */
 
-/* A screen's tools (the artifacts door, the save menu) side by side. */
+/* A screen's tools (the save menu) side by side. */
 .title-bar [data-slot='tools'] {
   display: flex;
   align-items: center;

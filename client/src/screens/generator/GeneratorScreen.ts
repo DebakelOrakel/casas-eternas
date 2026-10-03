@@ -857,6 +857,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     nameKey: 'generator.title',
     onSignIn: () => serverIndicator.openSignIn(),
     onHomeClick: () => { void leaveWorld(() => ctx.goTo('title')) },
+    // The doors to the jobs (the fine simulation on the server) and to the
+    // artifacts, each a window over the generator. Not while the world list
+    // is up: it covers the screen the window would open over.
+    menuItems: [
+      { key: 'titlebar.jobs', icon: 'M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01', onSelect: () => openJobs(), visible: () => !chooserOpen },
+      { key: 'common.action.storage', icon: 'M4 6a8 3 0 1 0 16 0a8 3 0 1 0-16 0M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3', onSelect: () => openArtifacts(), visible: () => !chooserOpen },
+    ],
     onLocaleChange: () => {
       // One call for the whole column: every step block in it carries its keys
       // rather than its strings (see i18n/relabel).
@@ -869,8 +876,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       worldChooser.relabel()
       artifactChooser.relabel()
       jobChooser.relabel()
-      sayJobsButton()
-      sayArtifactsButton()
       saveMenu.relabel()
       tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
       // The step statuses are words the screen chooses, not the bar's; this is
@@ -890,26 +895,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onOpenWorld: () => { void leaveWorld(() => openWorldChooser()) },
     onSignIn: () => serverIndicator.openSignIn(),
   })
-  // The door to the artifacts, in the title bar beside the save menu as the
-  // design draws it; pressed while the window is open.
-  const artifactsButton = document.createElement('button')
-  artifactsButton.type = 'button'
-  artifactsButton.className = 'title-bar__tool artifacts-button'
-  artifactsButton.dataset.help = 'common.action.storage'
-  artifactsButton.setAttribute('aria-pressed', 'false')
-  artifactsButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span class="title-bar__tool-label"></span>'
-  const sayArtifactsButton = (): void => { artifactsButton.querySelector('span')!.textContent = t('generator.artifacts.title') }
-  sayArtifactsButton()
-  // The door to the jobs (the fine simulation on the server), the same shape.
-  const jobsButton = document.createElement('button')
-  jobsButton.type = 'button'
-  jobsButton.className = 'title-bar__tool jobs-button'
-  jobsButton.dataset.help = 'titlebar.jobs'
-  jobsButton.setAttribute('aria-pressed', 'false')
-  jobsButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg><span class="title-bar__tool-label"></span>'
-  const sayJobsButton = (): void => { jobsButton.querySelector('span')!.textContent = t('titlebar.jobs.label') }
-  sayJobsButton()
-  titleBar.tools.append(jobsButton, artifactsButton, saveMenu.element)
+  titleBar.tools.append(saveMenu.element)
 
   // The artifacts: full screen over the generator like the world list
   // (ArtifactChooser). Its world is the one held here, once it has a uid (a
@@ -919,12 +905,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onClose: () => closeArtifacts(),
     onCommissioned: (outcome) => reportCommission(outcome),
   })
-  artifactsButton.addEventListener('click', () => (artifactChooser.isOpen() ? closeArtifacts() : openArtifacts()))
   const jobChooser = createJobChooser(root, {
     currentWorld: () => (worldUid ? { uid: worldUid } : null),
     onClose: () => closeJobs(),
   })
-  jobsButton.addEventListener('click', () => (jobChooser.isOpen() ? closeJobs() : openJobs()))
   const tempBandInput = root.querySelector<HTMLInputElement>('.temp-band-input')!
   const tempBandLabel = root.querySelector<HTMLElement>('[data-value="temp-band-label"]')!
   const humidityInput = root.querySelector<HTMLInputElement>('.humidity-input')!
@@ -4586,10 +4570,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // list is about to replace, and offering to write it would be offering to
     // keep a world nobody has chosen yet.
     saveMenu.setVisible(!chooserOpen)
-    // The artifacts door steps aside with it: the world list covers the
-    // screen the window would open over.
-    artifactsButton.hidden = chooserOpen
-    jobsButton.hidden = chooserOpen
   }
 
   // One delegated listener instead of one per control: every slider, including the
@@ -4854,7 +4834,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     stepBar.setVisible(false)
     sidebar.setVisible(false)
     artifactChooser.open()
-    artifactsButton.setAttribute('aria-pressed', 'true')
   }
   // The jobs window, the same way; one of the two at a time.
   function openJobs(): void {
@@ -4863,12 +4842,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     stepBar.setVisible(false)
     sidebar.setVisible(false)
     jobChooser.open()
-    jobsButton.setAttribute('aria-pressed', 'true')
   }
   function closeJobs(): void {
     if (!jobChooser.isOpen()) return
     jobChooser.close()
-    jobsButton.setAttribute('aria-pressed', 'false')
     stepBar.setVisible(true)
     sidebar.setVisible(true)
   }
@@ -5026,7 +5003,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function closeArtifacts(): void {
     if (!artifactChooser.isOpen()) return
     artifactChooser.close()
-    artifactsButton.setAttribute('aria-pressed', 'false')
     stepBar.setVisible(true)
     sidebar.setVisible(true)
   }

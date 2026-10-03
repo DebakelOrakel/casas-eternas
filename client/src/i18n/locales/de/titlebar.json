@@ -1,6 +1,6 @@
 {
-  "titlebar.home.label": "Zum Titelbildschirm",
-  "titlebar.home.help": "Verlässt den Generator und kehrt zum Titelbildschirm zurück.",
+  "titlebar.home.label": "Hauptmenü",
+  "titlebar.home.help": "Verlässt den Generator und kehrt zum Hauptmenü zurück.",
   "titlebar.seed": "Seed",
   "titlebar.world.label": "Welt",
   "titlebar.world.help": "Die Welt, die dieser Bildschirm erzeugt, mit dem Seed, aus dem sie wuchs. Der Seed allein stellt sie wieder her.",
@@ -12,14 +12,16 @@
   "titlebar.status.local.help": "Nur in diesem Browser. Beim Löschen der Browserdaten ist sie fort.",
   "titlebar.status.server.label": "Auf dem Server gespeichert · {when}",
   "titlebar.status.server.help": "Liegt auf dem Server und lässt sich aus einem anderen Browser öffnen.",
+  "titlebar.language.label": "Sprache",
   "titlebar.language.de.label": "Deutsch",
   "titlebar.language.de.help": "Die Oberfläche auf Deutsch zeigen.",
   "titlebar.language.en.label": "English",
   "titlebar.language.en.help": "Die Oberfläche auf Englisch zeigen.",
   "titlebar.signIn.label": "Anmelden",
   "titlebar.signIn.help": "Am Server anmelden, um Welten über diesen Browser hinaus zu behalten.",
+  "titlebar.signOut.label": "Abmelden",
   "titlebar.account.label": "Konto: {user}",
-  "titlebar.account.help": "Als {user} angemeldet. Zum Abmelden klicken.",
+  "titlebar.account.help": "Als {user} angemeldet.",
   "titlebar.save.label": "Speichern",
   "titlebar.save.help": "Wähle, wo diese Welt bleiben soll.",
   "titlebar.save.browser.label": "Im Browser behalten",
@@ -37,5 +39,7 @@
   "titlebar.save.open.sub": "Aus Browser, Datei oder Server",
   "titlebar.save.open.help": "Eine andere Welt öffnen. Die Welt, an der du gerade arbeitest, wird dabei ersetzt.",
   "titlebar.jobs.label": "Jobs",
-  "titlebar.jobs.help": "Die Feinsimulation deiner Welten auf dem Server: was wartet, läuft, fertig ist."
+  "titlebar.jobs.help": "Die Feinsimulation deiner Welten auf dem Server: was wartet, läuft, fertig ist.",
+  "titlebar.menu.label": "Menü",
+  "titlebar.menu.help": "Jobs, Artefakte, Sprache und Konto."
 }

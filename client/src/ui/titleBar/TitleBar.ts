@@ -6,8 +6,17 @@ import '../theme/design.css'
 import './titleBar.css'
 
 // The strip across the top of every map-bearing screen: what this thing is,
-// which world is open and where it stands, the language, and who is signed in.
-// From the "Weltgenerator" design canvas (artboard Main.dc.html), light theme.
+// which world is open and where it stands, and a menu. From the "Weltgenerator"
+// design canvas (artboard Main.dc.html), light theme.
+//
+// THE MENU (2026-10-03, not in the canvas). The canvas puts the language
+// switch and the sign-in into the bar as their own controls. With no server,
+// or one in `authMode: none`, the sign-in is not there, and the screens' own
+// doors (jobs, artifacts) stood in a row beside the save menu. Now one button
+// at the right end opens a list: the screen's own entries, the language, and
+// the account where the deployment has one. The button says "Menu", or the
+// user's name once signed in — the same list in both cases, so a sign-in does
+// not move anything but the account rows.
 //
 // A connected panel rather than a plain widget (see the ui/ taxonomy in
 // CLAUDE.md): it reads `server/session` directly, the same way ServerIndicator
@@ -41,6 +50,22 @@ export type TitleBarSaveState =
 // part of the product rather than the product itself says so with `nameKey`.
 const APP_NAME = 'Casas Eternas'
 
+// A catalog base that has a `.label` key under it.
+type LabelBase<K> = K extends `${infer B}.label` ? B : never
+
+// One entry the screen puts into the menu. Read when the menu opens, so the
+// screen does not have to tell the bar when an entry comes and goes.
+export interface TitleBarMenuItem {
+  // The catalog base: `.label` is the row's text, and the base itself is the
+  // help card's key.
+  key: LabelBase<TKey>
+  // The path of a 24-grid stroke icon.
+  icon: string
+  onSelect(): void
+  // Left out: always shown.
+  visible?(): boolean
+}
+
 export interface TitleBarOptions {
   // Opens the screen's sign-in panel. The bar does not own one: both screens
   // already build a SignInPanel for the server indicator, and a second one
@@ -62,19 +87,29 @@ export interface TitleBarOptions {
   // generator) leaves it out and stays in the old language until re-entered,
   // which is what the title screen's switch already does.
   onLocaleChange?(): void
+  // The screen's own menu entries, above the language and the account.
+  menuItems?: readonly TitleBarMenuItem[]
 }
 
 export interface TitleBar {
   element: HTMLElement
-  // Where a screen hangs its own tools — the save menu today, the job list and
-  // the theme switch the design draws beside it later. The bar does not own
-  // them: saving is the generator's business and the bar is chrome, so it
-  // offers the place rather than the buttons.
+  // Where a screen hangs its own tools — the save menu today. The bar does not
+  // own them: saving is the generator's business and the bar is chrome, so it
+  // offers the place rather than the buttons. Doors used less often go into
+  // the menu instead (`menuItems`).
   tools: HTMLElement
   setWorld(world: TitleBarWorld | null): void
   setSaveState(state: TitleBarSaveState): void
   dispose(): void
 }
+
+// The menu's icons, 24-grid stroke paths: three bars; a globe; a door with an
+// arrow into it, and out of it; an arrow back.
+const MENU_ICON = 'M4 6h16M4 12h16M4 18h16'
+const LANGUAGE_ICON = 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9M12 3c-2.5 2.5-3.5 5.5-3.5 9s1 6.5 3.5 9'
+const SIGN_IN_ICON = 'M14 4h5v16h-5M3 12h11M10 8l4 4-4 4'
+const SIGN_OUT_ICON = 'M10 4H5v16h5M9 12h12M17 8l4 4-4 4'
+const HOME_ICON = 'M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3'
 
 // Up to two letters from the user name, for the account chip. Falls back to
 // the first character of whatever came back, so a single-word or non-Latin
@@ -121,12 +156,26 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
     <div class="title-bar__spacer"></div>
     <div class="title-bar__actions">
       <span data-slot="tools"></span>
-      <div class="title-bar__lang">
-        <button type="button" data-lang="de" data-help="titlebar.language.de">DE</button>
-        <button type="button" data-lang="en" data-help="titlebar.language.en">EN</button>
+      <div class="title-menu" data-slot="menu">
+        <button type="button" class="title-bar__tool title-menu__button" aria-haspopup="menu" aria-expanded="false" data-slot="menu-button"></button>
+        <div class="title-menu__list" role="menu" data-slot="menu-list" hidden>
+          <div class="title-menu__group" data-slot="menu-items"></div>
+          <div class="title-menu__row">
+            <span class="title-menu__mark">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="${LANGUAGE_ICON}" />
+              </svg>
+            </span>
+            <span class="title-menu__label" data-slot="language-label"></span>
+            <div class="title-bar__lang">
+              <button type="button" data-lang="de" data-help="titlebar.language.de">DE</button>
+              <button type="button" data-lang="en" data-help="titlebar.language.en">EN</button>
+            </div>
+          </div>
+          <div class="title-menu__group title-menu__group--apart" data-slot="account"></div>
+          <div class="title-menu__group title-menu__group--apart" data-slot="home"></div>
+        </div>
       </div>
-      <div class="title-bar__divider" data-slot="account-divider"></div>
-      <span data-slot="account"></span>
     </div>
   `
 
@@ -135,14 +184,45 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   const worldName = bar.querySelector<HTMLElement>('[data-slot="world-name"]')!
   const seedText = bar.querySelector<HTMLElement>('[data-slot="seed"]')!
   const statusText = bar.querySelector<HTMLElement>('[data-slot="status"]')!
-  const accountSlot = bar.querySelector<HTMLElement>('[data-slot="account"]')!
   const toolsSlot = bar.querySelector<HTMLElement>('[data-slot="tools"]')!
-  const accountDivider = bar.querySelector<HTMLElement>('[data-slot="account-divider"]')!
+  const menuHost = bar.querySelector<HTMLElement>('[data-slot="menu"]')!
+  const menuButton = bar.querySelector<HTMLButtonElement>('[data-slot="menu-button"]')!
+  const menuList = bar.querySelector<HTMLElement>('[data-slot="menu-list"]')!
+  const itemsSlot = bar.querySelector<HTMLElement>('[data-slot="menu-items"]')!
+  const languageLabel = bar.querySelector<HTMLElement>('[data-slot="language-label"]')!
+  const accountSlot = bar.querySelector<HTMLElement>('[data-slot="account"]')!
+  const homeSlot = bar.querySelector<HTMLElement>('[data-slot="home"]')!
+
+  // A row of the list: an icon, a label, and what a click does. The menu
+  // closes first, so a row that opens a window does not leave the list over it.
+  // `help` is a help card's key base; left out where the label says it all.
+  function menuRow(icon: string, label: string, help: string | null, onSelect: () => void): HTMLButtonElement {
+    const row = document.createElement('button')
+    row.type = 'button'
+    row.className = 'title-menu__row title-menu__item'
+    row.setAttribute('role', 'menuitem')
+    if (help) row.dataset.help = help
+    row.innerHTML = `
+      <span class="title-menu__mark">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="${icon}" />
+        </svg>
+      </span>
+      <span class="title-menu__label"></span>
+    `
+    row.querySelector<HTMLElement>('.title-menu__label')!.textContent = label
+    row.addEventListener('click', () => {
+      closeMenu()
+      onSelect()
+    })
+    return row
+  }
 
   // --- language -------------------------------------------------------------
 
   function paintLanguage(): void {
     const active = getLocale()
+    languageLabel.textContent = t('titlebar.language.label')
     bar.querySelectorAll<HTMLButtonElement>('[data-lang]').forEach((button) => {
       const lang = button.dataset.lang as Locale
       button.setAttribute('aria-pressed', String(lang === active))
@@ -153,6 +233,9 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
     })
   }
 
+  // The menu stays open across a switch: the list re-says itself in place,
+  // which shows that the switch took. A screen that rebuilds itself on the
+  // change (onLocaleChange) takes the menu with it anyway.
   bar.querySelectorAll<HTMLButtonElement>('[data-lang]').forEach((button) => {
     button.addEventListener('click', () => {
       const lang = button.dataset.lang as Locale
@@ -163,67 +246,136 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
     })
   })
 
-  // --- account --------------------------------------------------------------
+  // --- the menu -------------------------------------------------------------
 
   // Whether this deployment has anywhere to sign IN to (`session/needsSignIn`
   // minus the session half). Undefined until the first probe answers, which is
-  // why the button is painted twice: once on the answer we already have, once
+  // why the menu is painted twice: once on the answer we already have, once
   // when it lands.
   let canSignIn: boolean | undefined
   void getServerStatus().then((status) => {
     canSignIn = status.loginPath !== ''
-    paintAccount()
+    paintMenu()
   })
 
-  function paintAccount(): void {
-    accountSlot.textContent = ''
-    // Nothing to sign in to — no server at all, or one in `authMode: none`,
-    // where a synthetic local identity owns everything. Hidden rather than
-    // greyed out, for the reason the server indicator states beside it: a
-    // disabled control invites a hunt for the condition that would enable it,
-    // and there is none. It is a property of the deployment, not a moment.
-    // Undefined (the probe is still out) counts as "not yet", so the button
-    // cannot flash up and vanish on a local server.
-    accountDivider.hidden = !hasSession() && canSignIn !== true
-    // A divider with nothing after it is a line at the end of the bar.
-    if (accountDivider.hidden) return
+  // The button: "Menu", or who is signed in. The name is on the button rather
+  // than inside the list because it is the one thing in the menu worth seeing
+  // without opening it.
+  function paintButton(): void {
+    menuButton.replaceChildren()
+    menuButton.dataset.help = hasSession() ? 'titlebar.account' : 'titlebar.menu'
+    menuButton.classList.toggle('title-menu__button--account', hasSession())
     if (hasSession()) {
       const user = signedInUser()
-      const chip = document.createElement('button')
-      chip.type = 'button'
-      chip.className = 'title-bar__account'
-      chip.dataset.help = 'titlebar.account'
-      chip.setAttribute('aria-label', t('titlebar.account.label', { user }))
+      menuButton.setAttribute('aria-label', t('titlebar.account.label', { user }))
       const initials = document.createElement('span')
       initials.className = 'title-bar__initials'
       initials.setAttribute('aria-hidden', 'true')
       initials.textContent = initialsOf(user)
-      chip.append(initials, document.createTextNode(user))
-      chip.addEventListener('click', () => signOut())
-      accountSlot.appendChild(chip)
-      return
+      const name = document.createElement('span')
+      name.className = 'title-bar__tool-label'
+      name.textContent = user
+      menuButton.append(initials, name)
+    } else {
+      menuButton.removeAttribute('aria-label')
+      menuButton.insertAdjacentHTML('beforeend', `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <path d="${MENU_ICON}" />
+        </svg>
+      `)
+      const label = document.createElement('span')
+      label.className = 'title-bar__tool-label'
+      label.textContent = t('titlebar.menu.label')
+      menuButton.append(label)
     }
-    const signIn = document.createElement('button')
-    signIn.type = 'button'
-    signIn.className = 'title-bar__tool title-bar__tool--primary title-bar__sign-in'
-    signIn.dataset.help = 'titlebar.signIn'
-    signIn.innerHTML = `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-        <circle cx="12" cy="8" r="4" />
-        <path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" />
+    menuButton.insertAdjacentHTML('beforeend', `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <path d="m6 9 6 6 6-6" />
       </svg>
-    `
-    const signInLabel = document.createElement('span')
-    signInLabel.className = 'title-bar__tool-label'
-    signInLabel.textContent = t('titlebar.signIn.label')
-    signIn.append(signInLabel)
-    signIn.addEventListener('click', () => options.onSignIn())
-    accountSlot.appendChild(signIn)
+    `)
   }
 
-  // `signOut()` and a session lost to the server both land here, so the chip
-  // never outlives the session it names.
-  const stopWatchingSession = onSessionChange(() => paintAccount())
+  // The screen's entries, asked whether they show on every open, so an entry
+  // that comes and goes with the screen's state needs no call into the bar.
+  function paintItems(): void {
+    itemsSlot.replaceChildren()
+    for (const item of options.menuItems ?? []) {
+      if (item.visible && !item.visible()) continue
+      itemsSlot.appendChild(menuRow(item.icon, t(`${item.key}.label` as TKey), item.key, () => item.onSelect()))
+    }
+  }
+
+  // The account rows. None where there is nothing to sign in to — no server
+  // at all, or one in `authMode: none`, where a synthetic local identity owns
+  // everything. Absent rather than greyed out: a disabled row invites a hunt
+  // for the condition that would enable it, and there is none. Undefined (the
+  // probe is still out) counts as "not yet", so the row cannot flash up and
+  // vanish on a local server.
+  function paintAccount(): void {
+    accountSlot.replaceChildren()
+    if (hasSession()) {
+      accountSlot.appendChild(menuRow(SIGN_OUT_ICON, t('titlebar.signOut.label'), null, () => signOut()))
+    } else if (canSignIn === true) {
+      accountSlot.appendChild(menuRow(SIGN_IN_ICON, t('titlebar.signIn.label'), 'titlebar.signIn', () => options.onSignIn()))
+    }
+  }
+
+  // The list's rows only while it is open: the screen's entries are asked
+  // then, and not while the bar is being built — the screen that passes them
+  // is itself still being built at that point, and its state with it.
+  // The way up, last and on its own: the same move as the wordmark (see
+  // onHomeClick), which is easy to miss as a control. Only where the screen
+  // has somewhere to go up to.
+  function paintHome(): void {
+    homeSlot.replaceChildren()
+    if (!options.onHomeClick) return
+    const home = options.onHomeClick.bind(options)
+    homeSlot.appendChild(menuRow(HOME_ICON, t('titlebar.home.label'), 'titlebar.home', () => home()))
+  }
+
+  function paintMenu(): void {
+    paintButton()
+    if (menuList.hidden) return
+    paintItems()
+    paintAccount()
+    paintHome()
+  }
+
+  function closeMenu(): void {
+    if (menuList.hidden) return
+    menuList.hidden = true
+    menuButton.setAttribute('aria-expanded', 'false')
+    document.removeEventListener('pointerdown', onPointerDown, true)
+    document.removeEventListener('keydown', onKeyDown, true)
+  }
+
+  function openMenu(): void {
+    if (!menuList.hidden) return
+    menuList.hidden = false
+    paintMenu()
+    menuButton.setAttribute('aria-expanded', 'true')
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('keydown', onKeyDown, true)
+  }
+
+  // Capture phase, so the menu closes before whatever was clicked underneath
+  // it acts — the same reason as the save menu's.
+  function onPointerDown(event: PointerEvent): void {
+    if (!menuHost.contains(event.target as Node)) closeMenu()
+  }
+
+  function onKeyDown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return
+    event.stopPropagation()
+    closeMenu()
+    menuButton.focus()
+  }
+
+  menuButton.addEventListener('click', () => (menuList.hidden ? openMenu() : closeMenu()))
+
+  // `signOut()` and a session lost to the server both land here, so the name
+  // on the button never outlives the session it names.
+  const stopWatchingSession = onSessionChange(() => paintMenu())
 
   // --- leaving the screen ---------------------------------------------------
 
@@ -272,7 +424,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
       bar.querySelector('.title-bar__mark')!.setAttribute('aria-label', t('titlebar.home.label'))
     }
     paintLanguage()
-    paintAccount()
+    paintMenu()
     paintWorld()
     paintStatus()
   }
@@ -292,6 +444,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
       paintStatus()
     },
     dispose() {
+      closeMenu()
       stopWatchingSession()
       bar.remove()
       host.classList.remove('has-title-bar')

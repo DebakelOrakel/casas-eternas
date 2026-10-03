@@ -219,12 +219,6 @@
   align-self: center;
 }
 
-/* The door in the title bar: .title-bar__tool's shape (titleBar.css), at a
-   width that holds "Artefakte" and "Artifacts" with the icon. */
-.artifacts-button {
-  width: 124px;
-}
-
 /* --- the jobs window (JobChooser) ----------------------------------------- */
 
 .ac-table.jc-table {
@@ -286,9 +280,4 @@
   font-size: 11px;
   color: var(--dc-faint);
   overflow-wrap: anywhere;
-}
-
-/* The jobs door in the title bar: "Jobs" in both languages. */
-.jobs-button {
-  width: 96px;
 }

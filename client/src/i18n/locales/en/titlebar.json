@@ -1,6 +1,6 @@
 {
-  "titlebar.home.label": "Back to the title screen",
-  "titlebar.home.help": "Leaves the generator and returns to the title screen.",
+  "titlebar.home.label": "Main menu",
+  "titlebar.home.help": "Leaves the generator and returns to the main menu.",
   "titlebar.seed": "Seed",
   "titlebar.world.label": "World",
   "titlebar.world.help": "The world this screen is generating, with the seed it grew from. The seed alone reproduces it.",
@@ -12,14 +12,16 @@
   "titlebar.status.local.help": "Kept in this browser only. Clearing site data removes it.",
   "titlebar.status.server.label": "Saved to server · {when}",
   "titlebar.status.server.help": "Kept on the server and can be opened from another browser.",
+  "titlebar.language.label": "Language",
   "titlebar.language.de.label": "Deutsch",
   "titlebar.language.de.help": "Show the interface in German.",
   "titlebar.language.en.label": "English",
   "titlebar.language.en.help": "Show the interface in English.",
   "titlebar.signIn.label": "Sign in",
   "titlebar.signIn.help": "Sign in to the server to keep worlds beyond this browser.",
+  "titlebar.signOut.label": "Sign out",
   "titlebar.account.label": "Account: {user}",
-  "titlebar.account.help": "Signed in as {user}. Click to sign out.",
+  "titlebar.account.help": "Signed in as {user}.",
   "titlebar.save.label": "Save",
   "titlebar.save.help": "Choose where this world stays.",
   "titlebar.save.browser.label": "Keep in this browser",
@@ -37,5 +39,7 @@
   "titlebar.save.open.sub": "From browser, file or server",
   "titlebar.save.open.help": "Open a different world. The world you are working on is replaced.",
   "titlebar.jobs.label": "Jobs",
-  "titlebar.jobs.help": "The fine simulation of your worlds on the server: what waits, runs, is done."
+  "titlebar.jobs.help": "The fine simulation of your worlds on the server: what waits, runs, is done.",
+  "titlebar.menu.label": "Menu",
+  "titlebar.menu.help": "Jobs, artifacts, language and account."
 }
