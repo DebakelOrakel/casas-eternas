@@ -237,6 +237,104 @@ spec:
             optional: true
             defaultMode: 0400
 ---
+# The JOB WORKERS: long-lived Node processes serving the jobs coordinator's
+# tasks over the relay (docs/decisions/detail-ladder.md, addendum
+# 2026-10-03). The jobs server SCALES THIS DEPLOYMENT ITSELF: up when tasks
+# wait, back to zero when every job is through. It finds it by the
+# `casas-eternas/component: worker` label, so keep that label, and do not
+# manage `replicas` from anywhere else — applying this file sets it to 0,
+# which ends a running refinement's workers (the tasks are handed out again
+# when they come back, so nothing is lost but time).
+#
+# The workers prove themselves with a SERVICE ACCOUNT of this server's auth
+# system — the same kind an outside worker uses. Once, after the first start:
+#
+#   oc exec deploy/casas-eternas -- casas-eternas auth service add cluster-workers > credentials
+#   oc create secret generic casas-eternas-worker --from-file=credentials
+#   rm credentials
+#
+# Rotating: `auth service rotate cluster-workers`, then replace the Secret;
+# workers read the file again at every token trade, so no restart is needed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: casas-eternas-worker
+  labels:
+    app: casas-eternas
+    casas-eternas/component: worker
+spec:
+  replicas: 0
+  # The PODS are `app: casas-eternas-worker`, not `app: casas-eternas`: the
+  # server's Deployment and the Service select on that, and a worker pod
+  # among them would be adopted, or sent the server's HTTP and relay
+  # traffic.
+  selector:
+    matchLabels:
+      app: casas-eternas-worker
+  template:
+    metadata:
+      labels:
+        app: casas-eternas-worker
+        casas-eternas/component: worker
+    spec:
+      # No API access: a worker talks to the relay and the server, nothing
+      # in the cluster.
+      automountServiceAccountToken: false
+      containers:
+        - name: worker
+          # THE SAME image as the server: the artifacts a worker writes carry
+          # a pipeline version, and a worker from another build writes ones
+          # no client looks for.
+          image: ghcr.io/debakelorakel/casas-eternas:latest
+          imagePullPolicy: Always
+          # The heap ceiling is the jobs module's nodeHeapMB; the bus at the
+          # Service's relay port, the token trade at its HTTP port.
+          command:
+            - node
+            - --max-old-space-size=6144
+            - /app/job-worker.mjs
+            - --serve
+            - '{"relay":"nats://casas-eternas:4222","pools":["level","tile"],"auth":"http://casas-eternas:8080"}'
+          env:
+            - name: RELAY_CREDENTIALS
+              value: /etc/casas-eternas/worker/credentials
+          # A level-1 replay held 6.2 GB on one worker (detail-ladder.md);
+          # the request reserves that, the limit leaves room for a large
+          # world. Not yet measured in the cluster.
+          resources:
+            requests:
+              cpu: "1"
+              memory: 7Gi
+            limits:
+              memory: 10Gi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: credentials
+              mountPath: /etc/casas-eternas/worker
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: credentials
+          secret:
+            secretName: casas-eternas-worker
+            # Optional for the reason the auth Secret is: a worker without it
+            # starts and says the file is missing, instead of hanging in
+            # ContainerCreating.
+            optional: true
+            defaultMode: 0400
+---
 apiVersion: v1
 kind: Service
 metadata:

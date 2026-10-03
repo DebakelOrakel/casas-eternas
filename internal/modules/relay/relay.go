@@ -50,9 +50,10 @@ type Config struct {
 	// checked, which leaves the bus open (loopback, as `relay.listen`
 	// defaults to).
 	Tokens *token.Tokens
-	// What each non-module subject may do on the bus, by token subject
-	// (token.SubjectWorker → the jobs module's worker grant). Composed in
-	// cmd/, so the bus names no module's subjects.
+	// What each non-module subject may do on the bus, by the subject's kind
+	// (token.SubjectWorker → the jobs module's worker grant, for `worker` and
+	// every `worker:<id>`). Composed in cmd/, so the bus names no module's
+	// subjects.
 	Grants map[string]busrelay.Grant
 }
 
@@ -146,7 +147,7 @@ func (a tokenAuth) Check(c natsserver.ClientAuthentication) bool {
 	}
 	user := &natsserver.User{Username: subject}
 	if !strings.HasPrefix(subject, token.ModuleSubject("")) {
-		grant, ok := a.grants[subject]
+		grant, ok := a.grants[token.SubjectKind(subject)]
 		if !ok {
 			return false
 		}

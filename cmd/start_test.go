@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/auth"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
 	"github.com/DebakelOrakel/casas-eternas/internal/user"
 )
@@ -123,5 +127,57 @@ func TestServerBaseURLUsesTheListenPort(t *testing.T) {
 	_ = os.Unsetenv("CASAS_POD_IP")
 	if got := serverBaseURL(":8080"); got != "" {
 		t.Errorf("serverBaseURL without POD_IP = %q, want empty", got)
+	}
+}
+
+// A worker trades its service account for a bus token before it holds any
+// token at all, so the token route must be on the public surface — behind
+// the gate, the trade was refused for want of the very token it buys.
+func TestServiceTokenRouteIsPublic(t *testing.T) {
+	cfg := passwordConfig(t)
+	seed, err := user.NewRegistry(cfg.Auth.Storage.DirPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.Create("ada", "pw12345"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := seed.CreateService("workers"); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	modules, gate, err := buildModules(config.Targets{config.TargetAuth: true}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeAll(t, modules)
+	mux := http.NewServeMux()
+	admin := http.NewServeMux()
+	for _, m := range modules {
+		if err := m.Mount(mux); err != nil {
+			t.Fatal(err)
+		}
+		if a, ok := m.(server.AdminModule); ok {
+			if err := a.MountAdmin(admin); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// The secret is shown once at creation; rotate for one this test knows.
+	rotated := httptest.NewRecorder()
+	admin.ServeHTTP(rotated, httptest.NewRequest(http.MethodPost, auth.ServicesPath+"/workers/rotate", nil))
+	var account auth.CreatedService
+	if err := json.Unmarshal(rotated.Body.Bytes(), &account); err != nil || account.Secret == "" {
+		t.Fatalf("rotate: %d %s", rotated.Code, rotated.Body)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, auth.TokenPath, nil)
+	request.SetBasicAuth("workers", account.Secret)
+	recorder := httptest.NewRecorder()
+	gate(mux).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Errorf("the token route behind the gate = %d, want 200: %s", recorder.Code, recorder.Body)
 	}
 }

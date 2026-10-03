@@ -1,4 +1,5 @@
-// The admin CLI: `casas-eternas auth user add|list|delete|passwd` — thin
+// The admin CLI: `casas-eternas auth user add|list|delete|passwd`,
+// `auth role bind|list` and `auth service add|list|delete|rotate` — thin
 // clients over the RUNNING server's unix admin socket, decided 2026-08-13
 // (docs/decisions/server-user-admin.md). The grammar is <module> <resource>
 // <verb>, the fourth surface of the one-vocabulary rule: `auth` is already
@@ -115,6 +116,111 @@ var authUserPasswdCmd = &cobra.Command{
 	RunE:              runAuthUserPasswd,
 }
 
+// The service RESOURCE: machines — job workers in the cluster and outside
+// it — that trade a name and a secret for a short-lived bus token
+// (internal/modules/auth/service.go). `add` and `rotate` print the
+// credential ONCE, as `<name>:<secret>` on stdout and nothing else there,
+// so it pipes straight into a Secret; what to do with it goes to stderr.
+var authServiceCmd = &cobra.Command{
+	Use:   "service",
+	Short: "Manages service accounts — the credentials job workers prove themselves with.",
+}
+
+var authServiceAddCmd = &cobra.Command{
+	Use:   "add <name>",
+	Short: "Creates a service account and prints its credential, once.",
+	Example: `  casas-eternas auth service add cluster-workers > credentials
+  oc create secret generic casas-eternas-worker --from-file=credentials`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: cobra.NoFileCompletions,
+	RunE:              runAuthServiceAdd,
+}
+
+var authServiceListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "Lists every service account.",
+	Args:  cobra.NoArgs,
+	RunE:  runAuthServiceList,
+}
+
+var authServiceDeleteCmd = &cobra.Command{
+	Use:               "delete <name>",
+	Short:             "Removes a service account; the bus tokens it bought run out within the hour.",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeServiceNames,
+	RunE:              runAuthServiceDelete,
+}
+
+var authServiceRotateCmd = &cobra.Command{
+	Use:               "rotate <name>",
+	Short:             "Replaces a service account's secret and prints the new credential, once; the old one stops working.",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeServiceNames,
+	RunE:              runAuthServiceRotate,
+}
+
+func runAuthServiceAdd(cmd *cobra.Command, args []string) error {
+	var created auth.CreatedService
+	if err := adminRequest(http.MethodPost, auth.ServicesPath, map[string]string{"name": args[0]}, &created); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s:%s\n", created.Name, created.Secret)
+	fmt.Fprintf(cmd.ErrOrStderr(), "created service account %s (%s); the credential above is shown once\n", created.Name, created.ID)
+	return nil
+}
+
+func runAuthServiceList(cmd *cobra.Command, args []string) error {
+	var listing struct {
+		Services []user.Service `json:"services"`
+	}
+	if err := adminRequest(http.MethodGet, auth.ServicesPath, nil, &listing); err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tID\tCREATED")
+	for _, s := range listing.Services {
+		fmt.Fprintf(w, "%s\t%s\t%s\n", s.Name, s.ID, s.CreatedAt.UTC().Format("2006-01-02 15:04"))
+	}
+	return w.Flush()
+}
+
+func runAuthServiceDelete(cmd *cobra.Command, args []string) error {
+	if err := adminRequest(http.MethodDelete, auth.ServicesPath+"/"+args[0], nil, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "deleted service account %s\n", args[0])
+	return nil
+}
+
+func runAuthServiceRotate(cmd *cobra.Command, args []string) error {
+	var rotated auth.CreatedService
+	if err := adminRequest(http.MethodPost, auth.ServicesPath+"/"+args[0]+"/rotate", nil, &rotated); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s:%s\n", rotated.Name, rotated.Secret)
+	fmt.Fprintf(cmd.ErrOrStderr(), "rotated %s; the old secret no longer works, the credential above is shown once\n", rotated.Name)
+	return nil
+}
+
+// completeServiceNames offers the service accounts that exist, best effort
+// like completeUserNames.
+func completeServiceNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) != 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var listing struct {
+		Services []user.Service `json:"services"`
+	}
+	if err := adminRequest(http.MethodGet, auth.ServicesPath, nil, &listing); err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	names := make([]string, 0, len(listing.Services))
+	for _, s := range listing.Services {
+		names = append(names, s.Name)
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
 func runAuthRoleBind(cmd *cobra.Command, args []string) error {
 	if err := adminRequest(http.MethodPut, auth.UsersPath+"/"+args[0]+"/role",
 		map[string]string{"role": args[1]}, nil); err != nil {
@@ -190,7 +296,8 @@ func init() {
 	authUserPasswdCmd.Flags().Bool(flagPasswordStdin, false, textPasswordStdin)
 	authUserCmd.AddCommand(authUserAddCmd, authUserListCmd, authUserDeleteCmd, authUserPasswdCmd)
 	authRoleCmd.AddCommand(authRoleBindCmd, authRoleListCmd)
-	authCmd.AddCommand(authUserCmd, authRoleCmd)
+	authServiceCmd.AddCommand(authServiceAddCmd, authServiceListCmd, authServiceDeleteCmd, authServiceRotateCmd)
+	authCmd.AddCommand(authUserCmd, authRoleCmd, authServiceCmd)
 	RootCmd.AddCommand(authCmd)
 }
 

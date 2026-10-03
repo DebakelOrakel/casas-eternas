@@ -149,6 +149,13 @@ func TestRelayChecksTokens(t *testing.T) {
 		}
 	}
 
+	// A worker that proved itself with a service account is the same kind.
+	if conn, err := nats.Connect(m.URL(), nats.Token(relayToken(token.WorkerSubject("a1")))); err != nil {
+		t.Errorf("a service account's worker: %v", err)
+	} else {
+		conn.Close()
+	}
+
 	// A refused publish is reported asynchronously, as a permissions error.
 	denied := make(chan error, 1)
 	worker, err := nats.Connect(m.URL(), nats.Token(relayToken(token.SubjectWorker)), nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {

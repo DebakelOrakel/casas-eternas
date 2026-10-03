@@ -63,8 +63,22 @@ const (
 
 // SubjectWorker is who a job worker is on the bus. A worker serves every
 // job, so its token names no job and no world; what it may touch over HTTP
-// comes with each task, as that job's own token.
+// comes with each task, as that job's own token. A worker of the jobs
+// module's own pool is plain `worker`; one that proved itself with a service
+// account is `worker:<account id>` (WorkerSubject), so the log can tell them
+// apart. Both are the same kind on the bus.
 const SubjectWorker = "worker"
+
+// WorkerSubject is the subject of a worker that proved itself with the
+// service account `id`.
+func WorkerSubject(id string) string { return SubjectWorker + ":" + id }
+
+// SubjectKind is a subject's kind: what comes before its first colon
+// (`worker:…` → `worker`, `module:jobs` → `module`), or the whole subject.
+func SubjectKind(subject string) string {
+	kind, _, _ := strings.Cut(subject, ":")
+	return kind
+}
 
 // ModuleSubject is who a module is on the bus: `module:<name>`.
 func ModuleSubject(module string) string { return "module:" + module }

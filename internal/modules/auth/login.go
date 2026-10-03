@@ -66,9 +66,10 @@ func New(cfg Config) (*Module, error) {
 // Name identifies the module in logs and errors.
 func (m *Module) Name() string { return "auth" }
 
-// Mount claims the login route.
+// Mount claims the login route and the service accounts' token route.
 func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST "+Path, m.serveLogin)
+	mux.HandleFunc("POST "+TokenPath, m.serveServiceToken)
 	return nil
 }
 

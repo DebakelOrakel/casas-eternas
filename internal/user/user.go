@@ -77,7 +77,8 @@ var (
 
 // Registry is the id-keyed user store, backed by one bbolt database
 // (auth.db) holding a `users` bucket (id → JSON entry) and a `credentials`
-// bucket (id → bcrypt hash).
+// bucket (id → bcrypt hash) — and, apart from them, the service accounts
+// (service.go).
 //
 // Name lookups SCAN the users bucket rather than maintaining a name index:
 // at any population this server will see, a scan inside a read transaction
@@ -116,7 +117,7 @@ func NewRegistry(dir string) (*Registry, error) {
 	}
 	r := &Registry{db: db, now: time.Now}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		for _, name := range [][]byte{bucketUsers, bucketCredentials} {
+		for _, name := range [][]byte{bucketUsers, bucketCredentials, bucketServices, bucketServiceSecrets} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}

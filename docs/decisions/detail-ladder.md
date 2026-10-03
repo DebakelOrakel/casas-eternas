@@ -587,6 +587,42 @@ and the jobs module's storage under `/data`, which `-t all` needed since
 the relay arrived and the read-only root file system refused.
 
 **Order from here**: (2) the worker Deployment, `replicas: 0`, labelled,
-reading its token from a Secret; (3) the scaling loop in the jobs module,
-which also keeps that Secret's token fresh; (4) the Kubernetes Job runner
-and `job.yaml` go, and a cluster runs the coordinator as a machine does.
+with its credential from a Secret; (3) the scaling loop in the jobs module;
+(4) the Kubernetes Job runner and `job.yaml` go, and a cluster runs the
+coordinator as a machine does.
+
+**Service accounts, decided and BUILT the same day** (with step 2): workers
+in the cluster and outside it prove themselves the same way — with a
+service account of the auth system, not with a token the jobs server would
+write into a Secret, and not with Kubernetes service accounts (TokenReview
+needs a cluster-scoped role a namespace owner cannot bind). A service
+account is a name and a secret in auth.db, in buckets of its own: never a
+user, no login, no world. `casas-eternas auth service add|list|delete|rotate`
+over the admin socket; `add` and `rotate` print `<name>:<secret>` once, on
+stdout alone, so it pipes into a Secret. A worker reads that file
+(`RELAY_CREDENTIALS`) and trades it at `POST /v1/auth/token` (basic auth,
+public like the login) for a bus token of subject `worker:<account id>`,
+valid an hour, and again at half its life — reading the file anew each
+time, so a rotated Secret needs no restart. Deleting the account ends its
+access within that hour; no process ever looks the account up. The jobs
+server's own local workers keep their plain `worker` token (`RELAY_TOKEN`).
+
+The worker Deployment is in deploy/manifests.yaml: `replicas: 0`, the
+label `casas-eternas/component: worker` the coordinator will find it by,
+its pods labelled `app: casas-eternas-worker` so neither the server's
+Deployment nor the Service selects them, no API token mounted, 7 Gi
+requested (a level-1 replay held 6.2 GB), the credential from the Secret
+`casas-eternas-worker`. It stays at 0 until step 3.
+
+**Open: a worker outside the cluster.** Not built, and four things short,
+the token the smallest of them: the relay reached from outside (NATS's
+websocket listener behind a Route, so the router's TLS covers it), the
+task specs naming the server's public URL instead of its pod IP, and a
+worker token handed over by an operator — an admin command over the
+socket, its name to be agreed before it is written. The worker token
+itself needs no change. **mTLS was considered and declined**: it is a
+second identity system (a CA, issuing and revoking certificates), and a
+browser cannot present a client certificate on a websocket — the client
+joining the bus later would be locked out. Tokens work for the Go server,
+the Node worker and a browser on `nats.ws` alike; a browser would be one
+more grant beside the worker's.

@@ -27,13 +27,15 @@ const UsersPath = "/v1/auth/users"
 const maxAdminBody = 4 << 10
 
 // MountAdmin claims the user CRUD — the `auth user add|list|delete|passwd`
-// surface (docs/decisions/server-user-admin.md).
+// surface (docs/decisions/server-user-admin.md) — and the service accounts'
+// (service.go).
 func (m *Module) MountAdmin(mux *http.ServeMux) error {
 	mux.HandleFunc("GET "+UsersPath, m.serveListUsers)
 	mux.HandleFunc("POST "+UsersPath, m.serveCreateUser)
 	mux.HandleFunc("DELETE "+UsersPath+"/{name}", m.serveDeleteUser)
 	mux.HandleFunc("PUT "+UsersPath+"/{name}/password", m.serveSetPassword)
 	mux.HandleFunc("PUT "+UsersPath+"/{name}/role", m.serveSetRole)
+	m.MountServiceAdmin(mux)
 	return nil
 }
 

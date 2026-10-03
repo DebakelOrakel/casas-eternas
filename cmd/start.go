@@ -248,6 +248,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		client.ConfigPath,       // where the API is and how to log in
 		server.CapabilitiesPath, // "is this server answering", asked while logged out
 		auth.Path,               // the login endpoint itself
+		auth.TokenPath,          // a service account trading its secret for a bus token
 	}), nil
 }
 

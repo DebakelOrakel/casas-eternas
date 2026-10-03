@@ -86,6 +86,34 @@ namespace configuration:
 oc annotate namespace <ns> openshift.io/active-deadline-seconds-override=7200 --overwrite
 ```
 
+## Job workers
+
+The refinement's workers are their own Deployment, `casas-eternas-worker`,
+shipped at `replicas: 0`: the jobs server scales it up when tasks wait and
+back to zero when every job is through, finding it by the label
+`casas-eternas/component: worker`. Do not set its replicas by hand; an
+`oc apply` of the manifests puts it back to 0, which stops a running
+refinement's workers until the server scales them up again (the tasks are
+handed out again, so only time is lost). *The scaling is not built yet —
+until it is, the Deployment stays at 0 and the bakes run as Jobs.*
+
+The workers reach the server inside the namespace only: the relay (NATS) on
+the Service's `relay` port 4222, not on the Route, and the server's HTTP
+API for their tasks. They prove themselves with a **service account** of
+the server's auth system, which they trade for a bus token valid for an
+hour. Create it once, after the first start:
+
+```
+oc exec deploy/casas-eternas -- casas-eternas auth service add cluster-workers > credentials
+oc create secret generic casas-eternas-worker --from-file=credentials
+rm credentials
+```
+
+The credential is shown once. To replace it: `auth service rotate
+cluster-workers`, then the Secret; the workers read the file again at
+every trade and need no restart. `auth service delete` ends an account; the
+tokens it bought run out within the hour.
+
 ## Updating
 
 Push the image, then `oc apply -f deploy/manifests.yaml` and a rollout —

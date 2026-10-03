@@ -41,7 +41,7 @@ import { bakedTileToArtifact, meshTilePipelineVersion, meshTileStage, readMeshTi
 import { bakeMeshTile, type UpstreamTile } from '../src/generator/pipeline/meshTileBake'
 import { parentTilesOf, TILE_SPECS, tileCorner, tileGrid, tileParentFromTiles, tileSpec, type TileParent, type TilePiece, type TileSpec } from '../src/generator/mesh/meshTile'
 import { SHELF_BREAK } from '../src/generator/elevation/elevationScale'
-import { connect } from '@nats-io/transport-node'
+import { connect, tokenAuthenticator } from '@nats-io/transport-node'
 import { AckPolicy, jetstream, jetstreamManager, type JsMsg } from '@nats-io/jetstream'
 import { createMeshSampler, type MeshSampler } from '../src/generator/mesh/meshSampler'
 import { tileBakeInputs } from '../src/world/bakeInputs'
@@ -795,6 +795,60 @@ async function readTile(store: ArtifactStore, key: ArtifactKey, cache?: JobCache
 interface ServeConfig {
   relay: string
   pools: string[]
+  // The server's base URL, where a worker with a service account trades it
+  // for a bus token (`/v1/auth/token`). Needed only with RELAY_CREDENTIALS.
+  auth?: string
+}
+
+// The bus credential (internal/modules/relay checks it where the server
+// checks identity), from the environment — never the argv, where `ps` would
+// show it:
+// - RELAY_CREDENTIALS: the path of a file holding `<name>:<secret>`, a
+//   service account's credential (`casas-eternas auth service add`). Traded
+//   for a bus token at `<auth>/v1/auth/token`, and again when half of its
+//   life is gone. The file is read at every trade, so a rotated Secret is
+//   picked up without a restart. For workers in a cluster and outside one.
+// - RELAY_TOKEN: a bus token as it is; the jobs module gives one to each
+//   worker it starts itself (workerpool.go).
+// - neither: the bus checks nobody.
+// Answers the token to present at every (re)connect.
+async function busToken(config: ServeConfig): Promise<(() => string) | undefined> {
+  const file = process.env.RELAY_CREDENTIALS
+  if (!file) {
+    const token = process.env.RELAY_TOKEN
+    return token ? () => token : undefined
+  }
+  if (!config.auth) fail('RELAY_CREDENTIALS needs "auth" in the serving configuration: the server to trade it at')
+  let current = ''
+  const trade = async (): Promise<number> => {
+    const credential = (await readFile(file, 'utf8')).trim()
+    const response = await fetch(`${config.auth!.replace(/\/$/, '')}/v1/auth/token`, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${Buffer.from(credential).toString('base64')}` },
+    })
+    if (!response.ok) throw new Error(`the token route answered ${response.status}`)
+    const body = (await response.json()) as { token: string; expiresAt: string }
+    current = body.token
+    return Date.parse(body.expiresAt) - Date.now()
+  }
+  // Again at half the token's life; a failed trade is tried again in a
+  // minute, while the token in hand still holds.
+  const again = (ms: number): void => {
+    setTimeout(() => {
+      trade()
+        .then((left) => again(left / 2))
+        .catch((error: unknown) => {
+          process.stderr.write(`bus token: ${error instanceof Error ? error.message : String(error)}\n`)
+          again(60_000)
+        })
+    }, ms).unref()
+  }
+  try {
+    again((await trade()) / 2)
+  } catch (error) {
+    fail(`bus token: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  return () => current
 }
 
 // The relay's names for the jobs module's streams (internal/modules/jobs/streams.go).
@@ -807,11 +861,8 @@ const TASK_HEARTBEAT_MS = 30_000
 const TASK_MAX_DELIVER = 5
 
 async function serve(config: ServeConfig): Promise<void> {
-  // The bus token, where the bus checks identity (internal/modules/relay):
-  // from the environment, never the argv, where `ps` would show it. The jobs
-  // module sets it for its local workers (workerpool.go).
-  const token = process.env.RELAY_TOKEN || undefined
-  const nc = await connect({ servers: config.relay, name: 'casas-job-worker', maxReconnectAttempts: -1, token })
+  const token = await busToken(config)
+  const nc = await connect({ servers: config.relay, name: 'casas-job-worker', maxReconnectAttempts: -1, authenticator: token ? tokenAuthenticator(token) : undefined })
   const consumerConfig = {
     durable_name: TASK_CONSUMER,
     ack_policy: AckPolicy.Explicit,
