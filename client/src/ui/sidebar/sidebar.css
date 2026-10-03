@@ -45,6 +45,38 @@
   display: none;
 }
 
+.gen-sidebar__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The way into the step's handbook page, beside its name. */
+.gen-sidebar__book {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  margin-left: auto;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-muted);
+  cursor: pointer;
+}
+
+.gen-sidebar__book:hover {
+  background: var(--dc-hover);
+  color: var(--dc-text);
+}
+
+.gen-sidebar__book[hidden] {
+  display: none;
+}
+
 .gen-sidebar__title {
   margin: 0;
   font-family: 'Bricolage Grotesque', Georgia, serif;

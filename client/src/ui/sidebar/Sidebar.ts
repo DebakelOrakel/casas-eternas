@@ -1,4 +1,5 @@
 import { t, type TKey } from '../../i18n/i18n'
+import { BOOK_ICON } from '../handbook/HandbookPanel'
 import '../../ui/theme/design.css'
 import './sidebar.css'
 
@@ -36,6 +37,13 @@ export interface Sidebar {
   dispose(): void
 }
 
+// The way from a step into its handbook page: a book beside the step's name,
+// shown only for a step that has a page.
+export interface SidebarHandbook {
+  has(id: string): boolean
+  open(id: string): void
+}
+
 // Published on the document element, not on the screen root: the canvas that
 // has to give up the width is a SIBLING of the overlay the screen lives in, so
 // a variable scoped to the screen would never reach it.
@@ -45,12 +53,22 @@ const WIDTH = '300px'
 // `stepKeys` is the catalog branch that holds the steps' names and
 // descriptions, `generator.step` for the generator: step `<id>` reads
 // `<stepKeys>.<id>.label` and `<stepKeys>.<id>.help`.
-export function createSidebar(host: HTMLElement, stepKeys: string): Sidebar {
+export function createSidebar(host: HTMLElement, stepKeys: string, handbook?: SidebarHandbook): Sidebar {
   const aside = document.createElement('aside')
   aside.className = 'gen-sidebar design-light'
 
   const heading = document.createElement('h1')
   heading.className = 'gen-sidebar__title'
+  const book = document.createElement('button')
+  book.type = 'button'
+  book.className = 'gen-sidebar__book'
+  book.dataset.help = 'titlebar.handbook'
+  book.hidden = true
+  book.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${BOOK_ICON}" /></svg>`
+  book.addEventListener('click', () => handbook?.open(current))
+  const titleRow = document.createElement('div')
+  titleRow.className = 'gen-sidebar__title-row'
+  titleRow.append(heading, book)
   const description = document.createElement('p')
   description.className = 'gen-sidebar__desc'
   const body = document.createElement('div')
@@ -61,7 +79,7 @@ export function createSidebar(host: HTMLElement, stepKeys: string): Sidebar {
   // scroll box's padding, not at its border, and leaves a strip under it.
   const scroll = document.createElement('div')
   scroll.className = 'gen-sidebar__scroll'
-  scroll.append(heading, description, body)
+  scroll.append(titleRow, description, body)
   const foot = document.createElement('div')
   foot.className = 'gen-sidebar__foot'
 
@@ -86,6 +104,8 @@ export function createSidebar(host: HTMLElement, stepKeys: string): Sidebar {
     // the card stays for the steps you are not on, where it is the answer to
     // "what would this one be".
     description.textContent = t(`${stepKeys}.${current}.help` as TKey)
+    book.hidden = !handbook?.has(current)
+    book.setAttribute('aria-label', t('titlebar.handbook.label'))
   }
 
   return {

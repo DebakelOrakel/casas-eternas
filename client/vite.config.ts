@@ -1,7 +1,8 @@
 import { defineConfig, type Plugin } from 'vite'
 import { execSync } from 'node:child_process'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { GENERATOR_CODE_ROOTS, generatorCodeHash } from './scripts/generatorCode.mjs'
+import { buildHandbook } from './scripts/handbook'
 
 // Where the Go server lives during development. Overridable so a dev client can
 // point at a real deployment without touching this file; the default matches
@@ -77,6 +78,40 @@ const generatorCode = (): Plugin => {
   }
 }
 
+// THE HANDBOOK (`virtual:handbook`, read by src/ui/handbook): docs/handbook/
+// rendered when the module is asked for (scripts/handbook.ts), and again
+// after a change under it, so an edit to a page shows on the next reload.
+// Bundled rather than fetched: the handbook is part of the client and works
+// with no server, as the generator does.
+const handbook = (): Plugin => {
+  const id = 'virtual:handbook'
+  const resolved = `\0${id}`
+  let dir = ''
+  return {
+    name: 'casas-handbook',
+    configResolved(config) {
+      dir = resolve(config.root, '..', 'docs', 'handbook')
+    },
+    resolveId(source) {
+      return source === id ? resolved : null
+    },
+    load(source) {
+      return source === resolved ? `export default ${JSON.stringify(buildHandbook(dir))}` : null
+    },
+    configureServer(server) {
+      server.watcher.add(dir)
+      const changed = (file: string): void => {
+        if (!file.startsWith(dir)) return
+        const module = server.moduleGraph.getModuleById(resolved)
+        if (module) server.moduleGraph.invalidateModule(module)
+      }
+      server.watcher.on('change', changed)
+      server.watcher.on('add', changed)
+      server.watcher.on('unlink', changed)
+    },
+  }
+}
+
 // The dev server's port is PINNED, and that is not cosmetic: browser storage
 // (OPFS, IndexedDB, caches) is scoped to the ORIGIN, port included. Vite's
 // default behaviour is to take 5173 and silently increment when it is busy —
@@ -86,7 +121,7 @@ const generatorCode = (): Plugin => {
 // silent drift into a loud "port already in use", which is the failure mode
 // one can actually debug.
 export default defineConfig({
-  plugins: [alwaysFullResponses(), generatorCode()],
+  plugins: [alwaysFullResponses(), generatorCode(), handbook()],
   define: {
     __CASAS_BUILD__: JSON.stringify(BUILD),
   },

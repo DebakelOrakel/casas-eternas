@@ -378,3 +378,17 @@ How this maps onto the handbook:
 
 Open, to agree before building: the panel's catalog keys, and how the
 client gets the pages (bundled at build time, or fetched from `/docs/`).
+
+**Revised the same day, when the first page was written**: a concept's
+heading anchor is its FULL catalog key (`### Seed {#generator.world.seed}`),
+not page prefix + segment. A step's controls do not share one prefix (step 0
+explains `generator.world.*` and `generator.panel.planet.*`), so a prefix
+rule would have needed a mapping table — exactly what the anchors exist to
+avoid. The rules and the page format are in `docs/handbook/README.md`. The
+client gets the pages BUNDLED (the `virtual:handbook` vite plugin over
+`client/scripts/handbook.ts`), so the handbook works with no server.
+BUILT the same day with the World step's page: the panel (`ui/handbook/`)
+opens from the title bar's menu and from a book beside the step's name in
+the sidebar. No jump from a single control yet (decided: only the step's
+page for now); the help cards could carry one later, since the anchors are
+already the controls' keys. No "Basics" group until it has pages.

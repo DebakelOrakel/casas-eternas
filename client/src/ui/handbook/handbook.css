@@ -1,0 +1,298 @@
+/* The handbook panel — design canvas (Main.dc.html), artboards Wiki and
+   Hell-Wiki, light column. A column on the right between the title bar and
+   the step bar, over the map; both publish their heights. */
+.handbook {
+  position: fixed;
+  top: var(--title-bar-height, 0px);
+  bottom: var(--step-bar-height, 0px);
+  right: 0;
+  width: 380px;
+  /* The map chrome's layer, below the title bar (4) and its menus. */
+  z-index: 3;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--dc-line);
+  background: var(--dc-panel);
+  color: var(--dc-text);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  box-shadow: -20px 0 40px -24px var(--dc-menu-shadow);
+}
+
+/* `display: flex` outranks the user-agent rule for [hidden]. */
+.handbook[hidden] {
+  display: none;
+}
+
+.handbook__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 52px;
+  flex-shrink: 0;
+  padding: 0 10px 0 18px;
+  border-bottom: 1px solid var(--dc-line);
+  color: var(--dc-text2);
+}
+
+.handbook__name {
+  flex-grow: 1;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.handbook__close {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text2);
+  cursor: pointer;
+}
+
+.handbook__close:hover {
+  background: var(--dc-hover);
+}
+
+.handbook__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  flex-shrink: 0;
+  margin: 12px 18px;
+  padding: 0 10px 0 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--dc-input-line);
+  border-radius: 6px;
+  background: var(--dc-bg);
+  color: var(--dc-faint);
+}
+
+.handbook__search input {
+  flex-grow: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--dc-text);
+}
+
+.handbook__search:focus-within {
+  border-color: var(--dc-accent);
+}
+
+.handbook__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 0 12px 10px;
+  border-bottom: 1px solid var(--dc-line);
+}
+
+.handbook__group,
+.handbook__body h2,
+.handbook__overlays h2 {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dc-faint);
+}
+
+.handbook__group {
+  padding: 4px 6px;
+}
+
+.handbook__entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.handbook__entry:hover {
+  background: var(--dc-hover);
+}
+
+.handbook__entry[aria-current='page'] {
+  background: var(--dc-hover);
+  color: var(--dc-strong);
+  font-weight: 600;
+}
+
+.handbook__entry-label {
+  flex-grow: 1;
+}
+
+.handbook__here {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--dc-teal);
+  color: var(--dc-on-teal);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px;
+}
+
+.handbook__none {
+  margin: 0;
+  padding: 10px 6px;
+  font-size: 12.5px;
+  color: var(--dc-muted);
+}
+
+.handbook__page {
+  flex-grow: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 18px 24px;
+}
+
+.handbook__title {
+  margin: 0;
+  font-family: 'Bricolage Grotesque', Georgia, serif;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--dc-strong);
+}
+
+.handbook__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--dc-text2);
+}
+
+.handbook__body p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+.handbook__body h2 {
+  margin: 12px 0 0;
+}
+
+.handbook__body ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The canvas's bullet: a small accent dot. */
+.handbook__body li {
+  position: relative;
+  padding-left: 16px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.handbook__body li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--dc-accent);
+}
+
+/* A concept or a parameter: the term over its definition, in a box. */
+.handbook__card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--dc-line);
+  border-radius: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dc-muted);
+  scroll-margin-top: 12px;
+  transition: border-color 0.4s, background-color 0.4s;
+}
+
+.handbook__card h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dc-strong);
+}
+
+/* Where a jump into the page landed. */
+.handbook__card--marked {
+  border-color: var(--dc-accent);
+  background: var(--dc-hover);
+}
+
+.handbook__overlays {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.handbook__overlays h2 {
+  margin: 12px 0 0;
+}
+
+.handbook__overlay {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.handbook__overlay img {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  margin-top: 1px;
+}
+
+.handbook__overlay-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.handbook__overlay-label {
+  font-size: 13px;
+  color: var(--dc-text);
+}
+
+.handbook__overlay-help {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dc-muted);
+  text-wrap: pretty;
+}

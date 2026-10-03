@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-03
+- **new** Generator: a handbook, opened from the menu or from the book beside a step's name, explains the step, its concepts and its controls; the first page is the World step. `titlebar.handbook`
 - **changed** Incubator: the ground is drawn as painted rings at every zoom — ground cover by biome with grass, canopy, scree, rock and snow surfaces up close, with shadows, haze and a sky — the sea and every lake as water at its own level, and the view leans in by itself as it zooms from the world down to a kilometre. `incubator`
 
 ## 2026-10-02

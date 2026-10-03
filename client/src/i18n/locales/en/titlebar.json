@@ -41,5 +41,7 @@
   "titlebar.jobs.label": "Jobs",
   "titlebar.jobs.help": "The fine simulation of your worlds on the server: what waits, runs, is done.",
   "titlebar.menu.label": "Menu",
-  "titlebar.menu.help": "Jobs, artifacts, language and account."
+  "titlebar.menu.help": "Jobs, artifacts, language and account.",
+  "titlebar.handbook.label": "Handbook",
+  "titlebar.handbook.help": "Explains each step, its concepts and its controls. Opens on the current step."
 }

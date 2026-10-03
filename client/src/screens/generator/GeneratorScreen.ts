@@ -81,6 +81,7 @@ import { createJobChooser } from './JobChooser'
 import { openWorld } from '../../world/query'
 import { createStepBar } from './StepBar'
 import { createSidebar } from '../../ui/sidebar/Sidebar'
+import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
 import { createMonthPlayer } from './monthPlayer'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { MIGRATION_INPUTS } from '../../generator/migration/migrationInputParams'
@@ -861,6 +862,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // artifacts, each a window over the generator. Not while the world list
     // is up: it covers the screen the window would open over.
     menuItems: [
+      { key: 'titlebar.handbook', icon: BOOK_ICON, onSelect: () => handbookPanel.open(), visible: () => !chooserOpen },
       { key: 'titlebar.jobs', icon: 'M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01', onSelect: () => openJobs(), visible: () => !chooserOpen },
       { key: 'common.action.storage', icon: 'M4 6a8 3 0 1 0 16 0a8 3 0 1 0-16 0M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3', onSelect: () => openArtifacts(), visible: () => !chooserOpen },
     ],
@@ -876,6 +878,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       worldChooser.relabel()
       artifactChooser.relabel()
       jobChooser.relabel()
+      handbookPanel.relabel()
       saveMenu.relabel()
       tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
       // The step statuses are words the screen chooses, not the bar's; this is
@@ -4815,6 +4818,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function openWorldChooser(): void {
     if (chooserOpen) return
     chooserOpen = true
+    handbookPanel.close()
     // The generator's own furniture steps aside as one: the list is about
     // WHICH world, and a step bar underneath it would be answering a question
     // nobody has asked yet. One place does this, and startup goes through it
@@ -4830,6 +4834,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // list does.
   function openArtifacts(): void {
     if (artifactChooser.isOpen() || chooserOpen) return
+    handbookPanel.close()
     closeJobs()
     stepBar.setVisible(false)
     sidebar.setVisible(false)
@@ -4838,6 +4843,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The jobs window, the same way; one of the two at a time.
   function openJobs(): void {
     if (jobChooser.isOpen() || chooserOpen) return
+    handbookPanel.close()
     closeArtifacts()
     stepBar.setVisible(false)
     sidebar.setVisible(false)
@@ -5869,7 +5875,27 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The column, and step 0 moving into it. The other steps keep their controls
   // in the panel row along the foot for now; each moves in its own step, so a
   // broken one is always traceable to the step that broke it.
-  const sidebar = createSidebar(root, 'generator.step')
+  // The handbook (ui/handbook): a step's page is `generator.step.<id>`
+  // (docs/handbook/), opened from the title bar's menu or from the book
+  // beside the step's name. The layers under a page are the step's own, from
+  // the step table — the handbook does not repeat them.
+  const stepPage = (id: StepId): string => `generator.step.${id}`
+  const handbookPanel = createHandbookPanel(root, {
+    current: () => (panelEverShown ? stepPage(STEP_IDS[panelIndex]) : null),
+    overlays: (anchor) => {
+      const shown = STEPS.find((s) => stepPage(s.id) === anchor)
+      if (!shown) return []
+      return [...shown.overlays, ...shown.groups.flatMap((group) => group.members)].map((id) => ({
+        icon: OVERLAY_META[id].icon,
+        label: t(`${overlayKey(id)}.label` as TKey),
+        help: t(`${overlayKey(id)}.help` as TKey),
+      }))
+    },
+  })
+  const sidebar = createSidebar(root, 'generator.step', {
+    has: (id) => handbookPanel.has(stepPage(id as StepId)),
+    open: (id) => handbookPanel.open(stepPage(id as StepId)),
+  })
   // Step 0's markup carries its keys rather than its strings, so a language
   // switch can find them again (see i18n/relabel). Nothing stands in it until
   // this runs.
@@ -6019,6 +6045,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     panelEverShown = true
     panelIndex = index
     sidebar.setStep(STEP_IDS[index])
+    // An open handbook follows to the new step's page, where it has one.
+    if (handbookPanel.isOpen() && handbookPanel.has(stepPage(STEP_IDS[index]))) handbookPanel.open(stepPage(STEP_IDS[index]))
     // Which layers this step offers, and which of them are showing. Both come
     // from the step table (steps.ts): this used to be a grouping over there plus
     // ten lines of `overlaysOn.x = index === Y` here, which is how the column
@@ -6154,6 +6182,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       ecologyPlayer.stop()
       stopSim()
       sidebar.dispose()
+      handbookPanel.dispose()
       stepBar.dispose()
       worldChooser.dispose()
       titleBar.dispose()

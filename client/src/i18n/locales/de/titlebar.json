@@ -41,5 +41,7 @@
   "titlebar.jobs.label": "Jobs",
   "titlebar.jobs.help": "Die Feinsimulation deiner Welten auf dem Server: was wartet, läuft, fertig ist.",
   "titlebar.menu.label": "Menü",
-  "titlebar.menu.help": "Jobs, Artefakte, Sprache und Konto."
+  "titlebar.menu.help": "Jobs, Artefakte, Sprache und Konto.",
+  "titlebar.handbook.label": "Handbuch",
+  "titlebar.handbook.help": "Erklärt jeden Schritt, seine Konzepte und Regler. Öffnet beim aktuellen Schritt."
 }
