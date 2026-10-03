@@ -1,6 +1,6 @@
 import handbook from 'virtual:handbook'
-import { getLocale, t } from '../../i18n/i18n'
-import type { HandbookPage } from './handbookTypes'
+import { getLocale, t, type TKey } from '../../i18n/i18n'
+import type { HandbookKind, HandbookPage } from './handbookTypes'
 import '../theme/design.css'
 import './handbook.css'
 
@@ -8,15 +8,25 @@ import './handbook.css'
 // Wiki and Hell-Wiki): a column on the right, between the title bar and the
 // step bar, over the map. A search field, the pages, and the page itself.
 //
-// The pages are docs/handbook/, bundled at build time (`virtual:handbook`,
-// client/scripts/handbook.ts). What the Markdown does not hold, the screen
-// adds: the layers a step offers (`overlays`), which the step table already
-// knows and a second copy in the handbook would let drift.
+// Three kinds of page, one bookmark each on the column's left edge: the
+// steps, the concepts the steps share, the map's layers. The pages are
+// docs/handbook/, bundled at build time (`virtual:handbook`,
+// client/scripts/handbook.ts). A step page holds its concepts as included
+// cards, each leading to the concept's own page.
+//
+// What the Markdown does not hold, the screen adds: the layers. Their names
+// and their one sentence are the overlay catalog's (`overlay.<id>.label` and
+// `.help`, the same words as the layer's hover card), so a layer's page is
+// built here from them, with whatever docs/handbook/<locale>/overlays/ adds
+// below; and which layers a step offers is the step table's. A second copy
+// of either in the handbook would drift.
 //
 // A widget: it knows no world and no step table. The screen says which page
-// is the current one and what a page's layers are.
+// is the current one and what the layers are.
 
 export interface HandbookOverlay {
+  // The layer's catalog base, `overlay.<id>`: its page's anchor.
+  anchor: string
   icon: string
   label: string
   help: string
@@ -26,11 +36,11 @@ export interface HandbookPanelOptions {
   // The anchor of the page for what is on screen now — the panel opens on it
   // and marks it "here". Null where nothing on screen has a page.
   current(): string | null
-  // The layers to list under a page, already in the active language. Empty
-  // for a page that is not a step's.
-  overlays?(anchor: string): HandbookOverlay[]
-  // Called after the panel opened or closed, so the screen can make room or
-  // press a button.
+  // Every layer, already in the active language.
+  overlays?(): HandbookOverlay[]
+  // The anchors of the layers a step page lists, in the step's order.
+  stepOverlays?(anchor: string): string[]
+  // Called after the panel opened or closed.
   onToggle?(open: boolean): void
 }
 
@@ -48,26 +58,60 @@ export interface HandbookPanel {
   dispose(): void
 }
 
-// The pages of the active language. A page missing there is read from
-// English, as a missing catalog key is.
-function pagesNow(): HandbookPage[] {
-  const own = handbook[getLocale()] ?? []
-  const fallback = (handbook.en ?? []).filter((page) => !own.some((mine) => mine.anchor === page.anchor))
-  return [...own, ...fallback].sort((a, b) => a.order - b.order)
-}
+// A page as the panel shows it: a layer's page also carries its icon.
+type Page = HandbookPage & { icon?: string }
 
-function pageOf(anchor: string): HandbookPage | null {
-  return pagesNow().find((page) => page.anchor === anchor || page.sections.some((section) => section.anchor === anchor)) ?? null
-}
+const KINDS: readonly HandbookKind[] = ['step', 'concept', 'overlay']
+const GROUP_KEY: Record<HandbookKind, string> = { step: 'handbook.group.steps', concept: 'handbook.group.concepts', overlay: 'handbook.group.overlays' }
 
 // The canvas's book.
 export const BOOK_ICON = 'M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5zM8 7.5h7M8 11h5'
 
+const escapeHtml = (text: string): string => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
 export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOptions): HandbookPanel {
+  // --- the pages -------------------------------------------------------------
+
+  // The pages of the active language. A page missing there is read from
+  // English, as a missing catalog key is. The layers' pages are made from
+  // the catalog, each with the Markdown page of the same anchor below it
+  // where there is one.
+  function pagesNow(): Page[] {
+    const own = handbook[getLocale()] ?? []
+    const written = [...own, ...(handbook.en ?? []).filter((page) => !own.some((mine) => mine.anchor === page.anchor))]
+    const layers: Page[] = (options.overlays?.() ?? []).map((layer) => {
+      const more = written.find((page) => page.anchor === layer.anchor)
+      return {
+        kind: 'overlay',
+        anchor: layer.anchor,
+        title: layer.label,
+        order: 99,
+        html: `<p>${escapeHtml(layer.help)}</p>${more?.html ?? ''}`,
+        sections: more?.sections ?? [],
+        icon: layer.icon,
+      }
+    })
+    return [...written.filter((page) => page.kind !== 'overlay'), ...layers]
+  }
+
+  // Steps in their order; concepts and layers by name, which is how one
+  // looks for them.
+  function pagesOf(kind: HandbookKind, pages: Page[]): Page[] {
+    const own = pages.filter((page) => page.kind === kind)
+    return kind === 'step' ? own.sort((a, b) => a.order - b.order) : own.sort((a, b) => a.title.localeCompare(b.title, getLocale()))
+  }
+
+  function pageOf(anchor: string): Page | null {
+    return pagesNow().find((page) => page.anchor === anchor || page.sections.some((section) => section.anchor === anchor)) ?? null
+  }
+
+  // --- the frame -------------------------------------------------------------
+
   const aside = document.createElement('aside')
   aside.className = 'handbook design-light'
   aside.hidden = true
   aside.innerHTML = `
+    <div class="handbook__tabs" role="tablist" data-slot="tabs"></div>
     <div class="handbook__head">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${BOOK_ICON}" /></svg>
       <span class="handbook__name" data-slot="name"></span>
@@ -84,75 +128,129 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
   `
   host.appendChild(aside)
 
+  const tabs = aside.querySelector<HTMLElement>('[data-slot="tabs"]')!
   const name = aside.querySelector<HTMLElement>('[data-slot="name"]')!
   const closeButton = aside.querySelector<HTMLButtonElement>('[data-slot="close"]')!
   const search = aside.querySelector<HTMLInputElement>('[data-slot="search"]')!
   const nav = aside.querySelector<HTMLElement>('[data-slot="nav"]')!
   const pageBox = aside.querySelector<HTMLElement>('[data-slot="page"]')!
 
-  // The page shown; null until the panel first opens.
+  // The page shown; null until the panel first opens. The bookmark chosen,
+  // which follows the page shown.
   let shown: string | null = null
+  let tab: HandbookKind = 'step'
+
+  // --- the bookmarks ---------------------------------------------------------
+
+  const tabButtons = new Map<HandbookKind, HTMLButtonElement>()
+  for (const kind of KINDS) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'handbook__tab'
+    button.setAttribute('role', 'tab')
+    button.addEventListener('click', () => {
+      tab = kind
+      search.value = ''
+      paintNav()
+    })
+    tabButtons.set(kind, button)
+    tabs.appendChild(button)
+  }
+
+  function paintTabs(): void {
+    for (const [kind, button] of tabButtons) {
+      button.textContent = t(`${GROUP_KEY[kind]}.short` as TKey)
+      button.setAttribute('aria-label', t(GROUP_KEY[kind] as TKey))
+      button.title = t(GROUP_KEY[kind] as TKey)
+      button.setAttribute('aria-selected', String(kind === tab))
+    }
+  }
 
   // --- the list of pages -----------------------------------------------------
 
   // A page matches the query by its title, a heading in it, or its text.
-  // Plain substring, no ranking: the handbook is a few pages a step.
-  function matches(page: HandbookPage, query: string): boolean {
-    if (!query) return true
+  // Plain substring, no ranking: the handbook is a few dozen pages.
+  function matches(page: Page, query: string): boolean {
     const text = (page.title + ' ' + page.sections.map((section) => section.title).join(' ') + ' ' + page.html.replace(/<[^>]+>/g, ' ')).toLowerCase()
     return text.includes(query)
   }
 
+  function entry(page: Page, current: string | null): HTMLButtonElement {
+    const row = document.createElement('button')
+    row.type = 'button'
+    row.className = 'handbook__entry'
+    if (page.anchor === shown) row.setAttribute('aria-current', 'page')
+    if (page.icon) {
+      const icon = document.createElement('img')
+      icon.src = page.icon
+      icon.alt = ''
+      row.appendChild(icon)
+    }
+    const label = document.createElement('span')
+    label.className = 'handbook__entry-label'
+    label.textContent = page.title
+    row.appendChild(label)
+    if (page.anchor === current) {
+      const here = document.createElement('span')
+      here.className = 'handbook__here'
+      here.textContent = t('handbook.here')
+      row.appendChild(here)
+    }
+    row.addEventListener('click', () => show(page.anchor))
+    return row
+  }
+
+  // Without a query, the chosen bookmark's pages. With one, the hits of
+  // every kind, under their kind's name: a search is for a word, not for a
+  // bookmark.
   function paintNav(): void {
+    paintTabs()
     nav.replaceChildren()
     const query = search.value.trim().toLowerCase()
-    const hits = pagesNow().filter((page) => matches(page, query))
-    if (hits.length === 0) {
+    const pages = pagesNow()
+    const current = options.current()
+    const kinds = query ? KINDS : [tab]
+    let hits = 0
+    for (const kind of kinds) {
+      const list = pagesOf(kind, pages).filter((page) => !query || matches(page, query))
+      if (list.length === 0) continue
+      hits += list.length
+      const group = document.createElement('span')
+      group.className = 'handbook__group'
+      group.textContent = t(GROUP_KEY[kind] as TKey)
+      nav.appendChild(group)
+      for (const page of list) nav.appendChild(entry(page, current))
+    }
+    if (hits === 0) {
       const none = document.createElement('p')
       none.className = 'handbook__none'
       none.textContent = t('handbook.search.empty')
       nav.appendChild(none)
-      return
-    }
-    const group = document.createElement('span')
-    group.className = 'handbook__group'
-    group.textContent = t('handbook.group.steps')
-    nav.appendChild(group)
-    const current = options.current()
-    for (const page of hits) {
-      const row = document.createElement('button')
-      row.type = 'button'
-      row.className = 'handbook__entry'
-      if (page.anchor === shown) row.setAttribute('aria-current', 'page')
-      const label = document.createElement('span')
-      label.className = 'handbook__entry-label'
-      label.textContent = page.title
-      row.appendChild(label)
-      if (page.anchor === current) {
-        const here = document.createElement('span')
-        here.className = 'handbook__here'
-        here.textContent = t('handbook.here')
-        row.appendChild(here)
-      }
-      row.addEventListener('click', () => show(page.anchor))
-      nav.appendChild(row)
     }
   }
 
   // --- the page --------------------------------------------------------------
 
-  // The rendered Markdown, with each h3 and what follows it up to the next
-  // heading gathered into a card — the canvas draws a concept as a box with
-  // its term over its definition, and the Markdown should not have to say so.
-  function paintPage(page: HandbookPage): void {
+  // The rendered Markdown, with each h3 of the page's own and what follows
+  // it up to the next heading gathered into a card — the canvas draws a
+  // concept as a box with its term over its definition, and the Markdown
+  // should not have to say so. Included concepts come as cards already.
+  function paintPage(page: Page): void {
     pageBox.replaceChildren()
     const title = document.createElement('h2')
     title.className = 'handbook__title'
-    title.textContent = page.title
+    if (page.icon) {
+      const icon = document.createElement('img')
+      icon.src = page.icon
+      icon.alt = ''
+      title.appendChild(icon)
+    }
+    title.append(page.title)
     const body = document.createElement('div')
     body.className = 'handbook__body'
     body.innerHTML = page.html
     for (const heading of [...body.querySelectorAll('h3')]) {
+      if (heading.parentElement !== body) continue
       const card = document.createElement('section')
       card.className = 'handbook__card'
       if (heading.id) {
@@ -162,7 +260,7 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
       heading.before(card)
       let next = heading.nextElementSibling
       card.appendChild(heading)
-      while (next && !/^H[1-3]$/.test(next.tagName)) {
+      while (next && !/^H[1-3]$/.test(next.tagName) && !next.classList.contains('handbook__card')) {
         const after = next.nextElementSibling
         card.appendChild(next)
         next = after
@@ -170,7 +268,9 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
     }
     pageBox.append(title, body)
 
-    const layers = options.overlays?.(page.anchor) ?? []
+    // A step's layers, each the way to its own page.
+    const anchors = page.kind === 'step' ? options.stepOverlays?.(page.anchor) ?? [] : []
+    const layers = anchors.map((anchor) => (options.overlays?.() ?? []).find((layer) => layer.anchor === anchor)).filter((layer): layer is HandbookOverlay => !!layer)
     if (layers.length > 0) {
       const section = document.createElement('section')
       section.className = 'handbook__overlays'
@@ -178,8 +278,10 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
       heading.textContent = t('handbook.overlays')
       section.appendChild(heading)
       for (const layer of layers) {
-        const row = document.createElement('div')
+        const row = document.createElement('button')
+        row.type = 'button'
         row.className = 'handbook__overlay'
+        row.dataset.page = layer.anchor
         const icon = document.createElement('img')
         icon.src = layer.icon
         icon.alt = ''
@@ -200,11 +302,12 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
   }
 
   // Shows the page holding `anchor` and, for a section, scrolls to it and
-  // marks it for a moment.
+  // marks it for a moment. The bookmark follows the page.
   function show(anchor: string): void {
     const page = pageOf(anchor)
     if (!page) return
     shown = page.anchor
+    tab = page.kind
     paintPage(page)
     paintNav()
     // The list scrolls in its own box; keep the page shown in view there.
@@ -218,12 +321,19 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
     setTimeout(() => target.classList.remove('handbook__card--marked'), 1600)
   }
 
+  // A concept's heading and a layer's row lead to their pages.
+  pageBox.addEventListener('click', (event) => {
+    const link = (event.target as HTMLElement).closest<HTMLElement>('button[data-page]')
+    if (link?.dataset.page) show(link.dataset.page)
+  })
+
   function paintChrome(): void {
     name.textContent = t('titlebar.handbook.label')
     closeButton.setAttribute('aria-label', t('common.action.close.label'))
     aside.setAttribute('aria-label', t('titlebar.handbook.label'))
     search.placeholder = t('handbook.search.label')
     search.setAttribute('aria-label', t('handbook.search.label'))
+    paintTabs()
   }
 
   // --- opening and closing ---------------------------------------------------
@@ -239,7 +349,7 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
     // The current page where it has one; else the page last read; else the
     // first — never an empty page beside the list.
     const current = options.current()
-    const target = anchor ?? (current && pageOf(current) ? current : null) ?? shown ?? pagesNow()[0]?.anchor
+    const target = anchor ?? (current && pageOf(current) ? current : null) ?? shown ?? pagesOf('step', pagesNow())[0]?.anchor
     if (aside.hidden) {
       aside.hidden = false
       document.addEventListener('keydown', onKeyDown, true)

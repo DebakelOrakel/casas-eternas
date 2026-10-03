@@ -18,33 +18,11 @@ to about 125 m. That takes long and runs as a job in the background.
 
 ## Concepts {#concepts}
 
-### Levels {#levels}
+{{concept detail-levels}}
 
-Each level is four times denser than the one before:
+{{concept same-world}}
 
-- Level 1, about 2 km: the whole world computes its history again, at
-  this density. So the valleys grow with the mountains instead of being
-  scratched in afterwards.
-- Level 2, about 500 m: the land is cut into tiles of about 125 km, and
-  each tile is refined from level 1 and eroded again.
-- Level 3, about 125 m: the same from level 2, in tiles of about 62 km.
-
-The sea is refined only in level 1; the tiles cover the land. Streams
-flow on from tile to tile.
-
-### The same world everywhere {#same-world}
-
-Before the server refines, it checks that the saved recipe gives it
-exactly the same world as your browser. So a world from an older version
-of the generator can be refined only after it was made again with
-today's.
-
-### Jobs {#jobs}
-
-A refinement is an order to the server that goes on running when you
-close the window. In the menu under Jobs you see what waits, runs and is
-done, how far each level is and when it should be done. You can also
-cancel a job there.
+{{concept jobs}}
 
 ## Requirements {#needs}
 

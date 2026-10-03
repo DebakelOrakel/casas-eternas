@@ -2,6 +2,11 @@
   "handbook.search.label": "Im Handbuch suchen",
   "handbook.search.empty": "Keine Seite gefunden.",
   "handbook.group.steps": "Schritte",
+  "handbook.group.steps.short": "SCH",
+  "handbook.group.concepts": "Konzepte",
+  "handbook.group.concepts.short": "KON",
+  "handbook.group.overlays": "Overlays",
+  "handbook.group.overlays.short": "OVL",
   "handbook.here": "hier",
   "handbook.overlays": "Overlays in diesem Schritt"
 }

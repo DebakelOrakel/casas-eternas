@@ -23,24 +23,11 @@ the world has and how many continents.
 
 ## Concepts {#concepts}
 
-### Mantle convection {#convection}
+{{concept mantle-convection}}
 
-The mantle turns over slowly: hot rock rises, cooler rock sinks. The crust
-rides on this flow. Continents hold the heat in below them; so over time
-an upwelling grows under them that later tears them apart again.
+{{concept young-crust}}
 
-### Young crust {#young-crust}
-
-New crust forms only above the ocean, where the mantle is hot and stays
-hot for a while. While it is young it can sink back into the mantle: if
-it lies above a downwelling, it disappears. That gives a balance instead
-of more and more land.
-
-### Craton {#craton}
-
-Crust that has survived for about 125 million years is stable: it no
-longer sinks and stays for good. Cratons are rigid. They move as a whole,
-collide and grow into large landmasses.
+{{concept craton}}
 
 ### Stopping and moving on {#stop}
 

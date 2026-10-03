@@ -20,33 +20,11 @@ Hintergrund.
 
 ## Konzepte {#concepts}
 
-### Stufen {#levels}
+{{concept detail-levels}}
 
-Jede Stufe ist viermal dichter als die vorige:
+{{concept same-world}}
 
-- Stufe 1, etwa 2 km: Die ganze Welt rechnet ihre Geschichte noch einmal,
-  in dieser Dichte. So wachsen die Täler mit den Bergen, statt nachträglich
-  eingeritzt zu werden.
-- Stufe 2, etwa 500 m: Das Land wird in Kacheln von etwa 125 km geteilt,
-  und jede Kachel wird aus Stufe 1 verfeinert und nacherodiert.
-- Stufe 3, etwa 125 m: dasselbe aus Stufe 2, in Kacheln von etwa 62 km.
-
-Meer wird nur in Stufe 1 verfeinert; die Kacheln decken das Land. Bäche
-fliessen von Kachel zu Kachel weiter.
-
-### Gleiche Welt überall {#same-world}
-
-Bevor der Server verfeinert, prüft er, dass er aus dem gespeicherten Weg
-genau dieselbe Welt erhält wie dein Browser. Darum lässt sich eine Welt
-aus einer älteren Version des Generators erst verfeinern, wenn sie mit der
-heutigen neu erstellt wurde.
-
-### Jobs {#jobs}
-
-Eine Verfeinerung ist ein Auftrag an den Server, der auch weiterläuft,
-wenn du das Fenster schliesst. Im Menü unter Jobs siehst du, was wartet,
-läuft und fertig ist, wie weit jede Stufe ist und wann sie voraussichtlich
-fertig wird. Dort lässt sich ein Job auch abbrechen.
+{{concept jobs}}
 
 ## Voraussetzungen {#needs}
 

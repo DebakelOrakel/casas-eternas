@@ -2,6 +2,11 @@
   "handbook.search.label": "Search the handbook",
   "handbook.search.empty": "No page found.",
   "handbook.group.steps": "Steps",
+  "handbook.group.steps.short": "STP",
+  "handbook.group.concepts": "Concepts",
+  "handbook.group.concepts.short": "CON",
+  "handbook.group.overlays": "Overlays",
+  "handbook.group.overlays.short": "OVL",
   "handbook.here": "here",
   "handbook.overlays": "Overlays in this step"
 }

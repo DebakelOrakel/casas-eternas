@@ -9,7 +9,17 @@ addendum (4). Built by `client/scripts/handbook.ts` into the client bundle.
 
 One directory per locale, identical paths = translations of each other. A
 page missing in `de/` falls back to `en/`. Below the locale, one directory
-per i18n area (`generator/` today).
+per KIND of page — the panel's three bookmarks:
+
+- `steps/` — one page per generator step, anchor `generator.step.<id>`.
+- `concepts/` — what the steps share, one page each, anchor
+  `generator.concept.<file>` (or the catalog key, where the concept has
+  one: `resource.carryingCapacity`). A concept stands on its own page and
+  is INCLUDED in the steps that need it, never copied into them.
+- `overlays/` — optional. A layer's page is made from the overlay catalog
+  (`overlay.<id>.label` and `.help`, the words of the layer's hover card);
+  a file `overlays/<id>.md` with anchor `overlay.<id>` adds text below
+  that sentence where one sentence is not enough.
 
 ## A page
 
@@ -31,8 +41,11 @@ Intro: two or three sentences.
 
 - `anchor` is the page's address: the catalog base of what it explains
   (for a step, `generator.step.<id>`).
-- `order` sorts the pages within an area.
+- `order` sorts the steps; concepts and layers sort by title.
 - A heading may end in `{#id}`, which becomes its id.
+- A paragraph that is only `{{concept <file>}}` includes `concepts/<file>.md`
+  as a card whose title leads to the concept's page. A concept's text must
+  therefore read on its own: no "this step".
 
 ## Anchors
 
@@ -48,4 +61,4 @@ second table.
   it; a rename goes through a redirect, not search-and-replace.
 - The overlays of a step are not written here. The panel lists them from
   the step table (`client/src/screens/generator/steps.ts`) and the overlay
-  catalog.
+  catalog, each leading to the layer's page.

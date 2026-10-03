@@ -20,19 +20,9 @@ The map always shows one resource; you pick it in the left column.
 
 ## Concepts {#concepts}
 
-### Carrying capacity {#resource.carryingCapacity}
+{{concept carrying-capacity}}
 
-How many people a place can feed. It comes from arable land, fish, game
-and pasture; salt helps a little, because it keeps food. The sources
-complement each other, but each one more adds less: a place with
-everything is rich, but not four times as rich as one with one good
-source. Gold and ores feed nobody.
-
-### Three roles {#roles}
-
-Subsistence decides how many people can live. Material decides what they
-can build and make: timber, salt, tool stone and metals. Prestige feeds
-nobody, but it makes power and trade: gold, silver and gems.
+{{concept resource-roles}}
 
 ## Resources {#resources}
 

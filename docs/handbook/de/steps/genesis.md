@@ -24,25 +24,11 @@ wie viel Land und wie viele Kontinente die Welt hat.
 
 ## Konzepte {#concepts}
 
-### Mantelkonvektion {#convection}
+{{concept mantle-convection}}
 
-Der Mantel wälzt sich langsam um: Heisses Gestein steigt auf, kühleres
-sinkt ab. Die Kruste reitet auf dieser Strömung. Kontinente halten die
-Wärme unter sich zurück; darum wächst unter ihnen mit der Zeit ein
-Aufstrom, der sie später wieder auseinanderreisst.
+{{concept young-crust}}
 
-### Junge Kruste {#young-crust}
-
-Neue Kruste entsteht nur über dem Ozean, wo der Mantel heiss ist und es
-eine Weile bleibt. Solange sie jung ist, kann sie wieder in den Mantel
-sinken: Liegt sie über einem Abstrom, verschwindet sie. So entsteht ein
-Gleichgewicht statt immer mehr Land.
-
-### Kraton {#craton}
-
-Kruste, die etwa 125 Millionen Jahre überlebt hat, ist stabil: Sie sinkt
-nicht mehr ab und bleibt für immer. Kratone sind starr. Sie bewegen sich
-als Ganzes, stossen zusammen und wachsen zu grossen Landmassen.
+{{concept craton}}
 
 ### Stoppen und weitergehen {#stop}
 

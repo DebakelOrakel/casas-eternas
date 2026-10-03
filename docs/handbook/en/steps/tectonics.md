@@ -24,32 +24,13 @@ million years on.
 
 ## Concepts {#concepts}
 
-### Plate boundaries {#boundaries}
+{{concept plate-boundaries}}
 
-Where two plates meet, their motion decides what happens. If they
-converge, the heavier one sinks or both fold up into a mountain range. If
-they diverge, the crust tears and new sea floor forms between them. If
-they slide past each other, little happens.
+{{concept hotspot}}
 
-### Hotspot {#hotspot}
+{{concept erosion}}
 
-A plume that stands fixed in the deep mantle. The plate moves over it, and
-it burns a chain of volcanic islands into it that grow older in the
-direction the plate moves.
-
-### Erosion {#erosion}
-
-Rain gathers into rivers, and rivers cut into the land, deeper the
-steeper and the fuller they are. What they wear away they carry off and
-leave where they slow down. Where it is cold enough, glaciers take over;
-at the coasts the surf works. A range that is no longer lifted slowly
-gets lower.
-
-### Climate in the history {#history-climate}
-
-Erosion needs rain, and rain depends on the relief. So every three epochs
-the step computes a climate on the world as it is then, with the values
-from the World step. If much ice grows, the sea level falls.
+{{concept history-climate}}
 
 ### Stopping and moving on {#stop}
 

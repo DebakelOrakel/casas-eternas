@@ -11,13 +11,22 @@ export interface HandbookSection {
   title: string
 }
 
+// What a page is about, from the directory it lives in
+// (docs/handbook/<locale>/<kind>s/): a step of the generator, a concept that
+// steps share and include, or a map layer. The panel's bookmarks are these.
+export type HandbookKind = 'step' | 'concept' | 'overlay'
+
 export interface HandbookPage {
-  // The page's anchor (front matter), e.g. `generator.step.world`.
+  kind: HandbookKind
+  // The page's anchor (front matter), e.g. `generator.step.world`. A
+  // layer's page is `overlay.<id>`, its catalog base.
   anchor: string
   title: string
   // Sort order within its area.
   order: number
-  // The rendered body, headings with their anchors as ids.
+  // The rendered body, headings with their anchors as ids. A concept a
+  // step includes is in it as a card carrying `data-page` with the
+  // concept's anchor.
   html: string
   sections: HandbookSection[]
 }

@@ -25,34 +25,13 @@ eine Million Jahre weiter.
 
 ## Konzepte {#concepts}
 
-### Plattengrenzen {#boundaries}
+{{concept plate-boundaries}}
 
-Wo zwei Platten aneinanderstossen, entscheidet ihre Bewegung, was
-geschieht. Laufen sie zusammen, taucht die schwerere ab oder beide
-falten sich zu einem Gebirge auf. Laufen sie auseinander, reisst die
-Kruste, und dazwischen entsteht neuer Meeresboden. Gleiten sie
-aneinander vorbei, geschieht wenig.
+{{concept hotspot}}
 
-### Hotspot {#hotspot}
+{{concept erosion}}
 
-Ein Plume, der fest im tiefen Mantel steht. Die Platte zieht über ihn
-hinweg, und er brennt eine Kette von Vulkaninseln hinein, die in
-Zugrichtung immer älter werden.
-
-### Erosion {#erosion}
-
-Regen sammelt sich zu Flüssen, und Flüsse schneiden sich in das Land, je
-steiler und je wasserreicher, desto tiefer. Was sie abtragen, tragen sie
-fort und lassen es liegen, wo sie langsamer werden. Wo es kalt genug ist,
-übernehmen Gletscher; an den Küsten arbeitet die Brandung. Ein Gebirge,
-das nicht mehr gehoben wird, wird so allmählich niedriger.
-
-### Klima in der Geschichte {#history-climate}
-
-Die Erosion braucht Regen, und Regen hängt vom Relief ab. Darum rechnet
-der Schritt alle drei Epochen ein Klima auf der Welt, wie sie gerade ist,
-mit den Werten aus dem Schritt Welt. Wächst dabei viel Eis, sinkt der
-Meeresspiegel.
+{{concept history-climate}}
 
 ### Stoppen und weitergehen {#stop}
 

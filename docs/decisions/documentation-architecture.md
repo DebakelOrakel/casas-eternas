@@ -392,3 +392,11 @@ opens from the title bar's menu and from a book beside the step's name in
 the sidebar. No jump from a single control yet (decided: only the step's
 page for now); the help cards could carry one later, since the anchors are
 already the controls' keys. No "Basics" group until it has pages.
+
+**Bookmarks, later the same day**: the panel has three kinds of page, a
+small bookmark each on its left edge (steps, concepts, layers). Concepts
+moved out of the step pages into their own (`docs/handbook/<locale>/concepts/`)
+and are included back by reference (`{{concept <file>}}`), so one text
+serves the step and the concept's page. A layer's page needs no file: its
+name and its sentence are the overlay catalog's, the hover card's words —
+a handbook copy would drift; an optional `overlays/<id>.md` adds more.

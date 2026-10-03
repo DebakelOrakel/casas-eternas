@@ -21,20 +21,9 @@ Die Karte zeigt immer eine Ressource; du wählst sie in der linken Spalte.
 
 ## Konzepte {#concepts}
 
-### Tragfähigkeit {#resource.carryingCapacity}
+{{concept carrying-capacity}}
 
-Wie viele Menschen ein Ort ernähren kann. Sie entsteht aus Ackerland,
-Fisch, Wild und Weide; Salz hilft ein wenig, weil es Nahrung haltbar
-macht. Die Quellen ergänzen sich, aber jede weitere bringt weniger: Ein
-Ort mit allem ist reich, aber nicht viermal so reich wie einer mit einer
-guten Quelle. Gold und Erze ernähren niemanden.
-
-### Drei Rollen {#roles}
-
-Subsistenz bestimmt, wie viele Menschen leben können. Material bestimmt,
-was sie bauen und herstellen können: Holz, Salz, Werkstein und Metalle.
-Prestige nährt niemanden, aber es macht Macht und Handel: Gold, Silber und
-Edelsteine.
+{{concept resource-roles}}
 
 ## Ressourcen {#resources}
 

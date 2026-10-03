@@ -5877,19 +5877,21 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // broken one is always traceable to the step that broke it.
   // The handbook (ui/handbook): a step's page is `generator.step.<id>`
   // (docs/handbook/), opened from the title bar's menu or from the book
-  // beside the step's name. The layers under a page are the step's own, from
-  // the step table — the handbook does not repeat them.
+  // beside the step's name. The layers' pages are made from the overlay
+  // catalog, and which of them a step offers is the step table's — the
+  // handbook does not repeat either.
   const stepPage = (id: StepId): string => `generator.step.${id}`
   const handbookPanel = createHandbookPanel(root, {
     current: () => (panelEverShown ? stepPage(STEP_IDS[panelIndex]) : null),
-    overlays: (anchor) => {
+    overlays: () => OVERLAY_IDS.map((id) => ({
+      anchor: overlayKey(id),
+      icon: OVERLAY_META[id].icon,
+      label: t(`${overlayKey(id)}.label` as TKey),
+      help: t(`${overlayKey(id)}.help` as TKey),
+    })),
+    stepOverlays: (anchor) => {
       const shown = STEPS.find((s) => stepPage(s.id) === anchor)
-      if (!shown) return []
-      return [...shown.overlays, ...shown.groups.flatMap((group) => group.members)].map((id) => ({
-        icon: OVERLAY_META[id].icon,
-        label: t(`${overlayKey(id)}.label` as TKey),
-        help: t(`${overlayKey(id)}.help` as TKey),
-      }))
+      return shown ? [...shown.overlays, ...shown.groups.flatMap((group) => group.members)].map(overlayKey) : []
     },
   })
   const sidebar = createSidebar(root, 'generator.step', {
