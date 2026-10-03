@@ -1,4 +1,4 @@
-import { Color3, Mesh, RawTexture, StandardMaterial, Texture, VertexData, type Scene } from '@babylonjs/core'
+import { Color3, Mesh, RawTexture, StandardMaterial, Texture, VertexData, type BaseTexture, type Scene } from '@babylonjs/core'
 import { GroundNormalPlugin } from './groundNormalPlugin'
 
 // THE GROUND AS RINGS, at every zoom (docs/decisions/near-ground-clipmap.md,
@@ -37,14 +37,26 @@ export interface RingBuildRequest {
   quads: number
   texels: number
   outermost: boolean
+  // A PREVIEW: the textures at a quarter of the side (a sixteenth of the
+  // work), shown until the full build follows — the inner rings arrive
+  // in a moment after a pan instead of seconds.
+  preview: boolean
 }
 
 export interface RingBuildResult {
   // (quads + 1)² heights in world Y units, before the exaggeration.
   heights: Float32Array
-  // texels² RGBA each: the albedo and the world-space normals.
+  // texels² RGBA each: the albedo, the world-space normals and the
+  // material weights (groundPaint.ts), at the request's texels.
   albedo: Uint8Array
   normals: Uint8Array
+  materials: Uint8Array
+  texels: number
+  // Whether the build read all the ground it wanted: a build that found
+  // a tile still loading is drawn, and the builder calls `rebuild` once
+  // the tile is in — a preview then waits for that call rather than
+  // following up with a full build of the same incomplete ground.
+  complete: boolean
 }
 
 export interface GroundRingsOptions {
@@ -78,8 +90,10 @@ export interface GroundRings {
   rebuild(k: number): void
   setEnabled(enabled: boolean): void
   setHeightScale(scale: number): void
-  // The shader's detail under the texels (groundNormalPlugin.setDetail).
-  setDetail(reach: number, wavelength: number, strength: number): void
+  // The shader's detail under the texels (groundNormalPlugin): the set of
+  // tiling textures, and the wavelengths and strength to draw them at.
+  setDetailTextures(albedo: BaseTexture | null, normals: BaseTexture | null): void
+  setDetail(micro: number, macro: number, strength: number, reach: number): void
   // The lighting's relief gain (groundNormalPlugin.setRelief).
   setRelief(gain: number): void
   // DEBUG: a tint per ring over the albedo, so the rings can be told apart.
@@ -101,7 +115,10 @@ interface Ring {
   material: StandardMaterial
   albedo: RawTexture
   normals: RawTexture
+  materials: RawTexture
   normalPlugin: GroundNormalPlugin
+  // Whether the ring's textures are a preview's (the full build is due).
+  previewed: boolean
   // Where the ring stands (its last applied build), its heights there.
   built: Place | null
   heights: Float32Array | null
@@ -119,6 +136,39 @@ interface Ring {
 // The texel size, in screen pixels at the focus, below which a ring is
 // left out: finer than this it only costs.
 const MIN_TEXEL_PX = 0.8
+// The rings built as a preview first, and the preview's side divisor.
+const PREVIEW_RINGS = 24
+const PREVIEW_DIVISOR = 4
+
+// RGBA texels enlarged `scale` times a side, bilinear (a block per texel
+// read as steps while the full build was still to come, 2026-10-03).
+function enlarge(src: Uint8Array, side: number, scale: number): Uint8Array {
+  const big = side * scale
+  const out = new Uint8Array(big * big * 4)
+  for (let j = 0; j < big; j++) {
+    const sy = Math.min(side - 1, Math.max(0, (j + 0.5) / scale - 0.5))
+    const y0 = Math.floor(sy)
+    const y1 = Math.min(side - 1, y0 + 1)
+    const fy = sy - y0
+    for (let i = 0; i < big; i++) {
+      const sx = Math.min(side - 1, Math.max(0, (i + 0.5) / scale - 0.5))
+      const x0 = Math.floor(sx)
+      const x1 = Math.min(side - 1, x0 + 1)
+      const fx = sx - x0
+      const a = (y0 * side + x0) * 4
+      const b = (y0 * side + x1) * 4
+      const c = (y1 * side + x0) * 4
+      const d = (y1 * side + x1) * 4
+      const dp = (j * big + i) * 4
+      for (let ch = 0; ch < 4; ch++) {
+        const top = src[a + ch] + (src[b + ch] - src[a + ch]) * fx
+        const bottom = src[c + ch] + (src[d + ch] - src[c + ch]) * fx
+        out[dp + ch] = top + (bottom - top) * fy
+      }
+    }
+  }
+  return out
+}
 
 export function createGroundRings(options: GroundRingsOptions): GroundRings {
   const { scene, quads, spacing0, worldSpan } = options
@@ -171,15 +221,20 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     const blank = new Uint8Array(texels * texels * 4)
     const albedo = RawTexture.CreateRGBATexture(blank, texels, texels, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE)
     const normalMap = RawTexture.CreateRGBATexture(blank.slice(), texels, texels, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE)
-    for (const t of [albedo, normalMap]) {
+    const materialMap = RawTexture.CreateRGBATexture(blank.slice(), texels, texels, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE)
+    for (const t of [albedo, normalMap, materialMap]) {
       t.wrapU = Texture.CLAMP_ADDRESSMODE
       t.wrapV = Texture.CLAMP_ADDRESSMODE
+      // Seen at a grazing angle, a texture without it is smeared along
+      // the view (the flat slopes, 2026-10-03).
+      t.anisotropicFilteringLevel = 16
     }
     material.diffuseTexture = albedo
     const normalPlugin = new GroundNormalPlugin(material)
     normalPlugin.setTexture(normalMap)
+    normalPlugin.setMaterials(materialMap)
     mesh.material = material
-    rings.push({ k, spacing, half: (quads / 2) * spacing, texels, mesh, material, albedo, normals: normalMap, normalPlugin, built: null, heights: null, pending: null, wanted: null, stale: false, holeX: NaN, holeZ: NaN })
+    rings.push({ k, spacing, half: (quads / 2) * spacing, texels, mesh, material, albedo, normals: normalMap, materials: materialMap, normalPlugin, previewed: false, built: null, heights: null, pending: null, wanted: null, stale: false, holeX: NaN, holeZ: NaN })
   }
 
   // The ring's triangles: every quad but those inside the inner ring's
@@ -301,8 +356,13 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
       ring.holeZ = NaN
     }
     cutHole(ring)
-    ring.albedo.update(result.albedo)
-    ring.normals.update(result.normals)
+    // A preview's textures are a quarter the side: enlarged here (a texel
+    // to a block), so the ring's textures keep their size.
+    const scale = ring.texels / result.texels
+    ring.albedo.update(scale === 1 ? result.albedo : enlarge(result.albedo, result.texels, scale))
+    ring.normals.update(scale === 1 ? result.normals : enlarge(result.normals, result.texels, scale))
+    ring.materials.update(scale === 1 ? result.materials : enlarge(result.materials, result.texels, scale))
+    ring.previewed = scale !== 1
     ring.mesh.position.set(place.x, 0, place.z)
     ring.mesh.refreshBoundingInfo()
     // The ring outside takes its hole from the new place.
@@ -311,11 +371,14 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
 
   let disposed = false
 
-  function request(ring: Ring, place: Place): void {
+  // A ring is built in two steps where it pays: a preview first (the
+  // textures at a quarter side), then the full build — unless the full
+  // one was asked for by a rebuild where the ring already stands.
+  function request(ring: Ring, place: Place, preview = ring.k < PREVIEW_RINGS && !(ring.built && ring.built.x === place.x && ring.built.z === place.z && !ring.previewed)): void {
     ring.pending = place
     ring.stale = false
     void options
-      .build({ k: ring.k, centerX: place.x, centerZ: place.z, spacing: ring.spacing, quads, texels: ring.texels, outermost: ring.k === count - 1 })
+      .build({ k: ring.k, centerX: place.x, centerZ: place.z, spacing: ring.spacing, quads, texels: preview ? ring.texels / PREVIEW_DIVISOR : ring.texels, outermost: ring.k === count - 1, preview })
       .then((result) => {
         if (disposed) return
         ring.pending = null
@@ -323,7 +386,8 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
         const next = ring.wanted
         ring.wanted = null
         if (next && (!ring.built || next.x !== ring.built.x || next.z !== ring.built.z)) request(ring, next)
-        else if (ring.stale && ring.built) request(ring, ring.built)
+        else if (preview && result && result.complete) request(ring, place, false)
+        else if (ring.stale && ring.built) request(ring, ring.built, false)
       })
   }
 
@@ -392,10 +456,10 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
       const ring = rings[k]
       // A build still in flight (or just resolved, its apply a microtask
       // away) takes the stale mark up when it completes; a ring never
-      // asked for has nothing to build again.
+      // asked for has nothing to build again. Always the full build.
       if (!ring.built && !ring.pending) return
       ring.stale = true
-      if (!ring.pending && ring.built) request(ring, ring.built)
+      if (!ring.pending && ring.built) request(ring, ring.built, false)
     },
     setEnabled(next) {
       enabled = next
@@ -406,8 +470,11 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
       heightScale = scale
       for (const ring of rings) ring.mesh.scaling.y = scale
     },
-    setDetail(reach, wavelength, strength) {
-      for (const ring of rings) ring.normalPlugin.setDetail(reach, wavelength, strength)
+    setDetailTextures(albedo, normals) {
+      for (const ring of rings) ring.normalPlugin.setDetailTextures(albedo, normals)
+    },
+    setDetail(micro, macro, strength, reach) {
+      for (const ring of rings) ring.normalPlugin.setDetail(micro, macro, strength, reach)
     },
     setRelief(gain) {
       for (const ring of rings) ring.normalPlugin.setRelief(gain)
@@ -425,6 +492,7 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
         ring.material.dispose()
         ring.albedo.dispose()
         ring.normals.dispose()
+        ring.materials.dispose()
       }
     },
   }

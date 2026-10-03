@@ -1,4 +1,5 @@
-import { Color3, Color4, DirectionalLight, DynamicTexture, HemisphericLight, Mesh, MeshBuilder, Scene, ShadowGenerator, StandardMaterial, Vector3 } from '@babylonjs/core'
+import { Color3, Color4, DirectionalLight, DynamicTexture, HemisphericLight, Mesh, MeshBuilder, RawTexture2DArray, Scene, ShadowGenerator, StandardMaterial, Texture, Vector3 } from '@babylonjs/core'
+import { GROUND_MATERIALS } from '../../map/groundDetail'
 import { METERS_PER_CELL } from '../../generator/core/mapConfig'
 import { createGroundRings, type GroundRings, type RingBuildRequest, type RingBuildResult } from '../../map/groundRings'
 import { MAP_EXAGGERATION, MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, RELIEF_HEIGHT_SCALE, UNITS_PER_METER } from '../../map/mapSceneSettings'
@@ -23,24 +24,9 @@ const RING_QUADS = 192
 // panning) and stay cheap; the outer ones rarely and span the view far
 // out, where their texels must still hold a pixel.
 const texelsFor = (k: number): number => (k < 6 ? 512 : 1024)
-// The finest level a ring reads, by the size of its TEXELS (not its
-// quads: the textures carry the detail, the quads only the silhouette).
-// Further out than the texels can show the tiles' nodes (~150 m on
-// level 3, ~500 m on level 2) on purpose: each level stands its peaks a
-// few hundred metres higher than the level below (a tile sharpens what
-// the coarser mesh rounded off), and where two rings read two levels
-// the snow line and the relief step at the ring's edge. So a level
-// reaches out to where its ring's texels are about a pixel at the zoom
-// the ring is innermost at, and the step moves to where it is subpixel.
-// Level 3 to ring 5 (184 km, ≤ 16 tiles of ~1 MB), level 2 to ring 7
-// (737 km, ≤ 36 tiles of ~0.2 MB; to ring 8 it was 200 tiles and a
-// ring painted again and again as they came, 2026-10-03).
-const LEVEL3_MAX_TEXEL_M = 400
-const LEVEL2_MAX_TEXEL_M = 800
-const levelFor = (k: number): number => {
-  const texel = (RING_MIN_SPACING_M * 2 ** k * RING_QUADS) / texelsFor(k)
-  return texel <= LEVEL3_MAX_TEXEL_M ? 3 : texel <= LEVEL2_MAX_TEXEL_M ? 2 : 1
-}
+// Which levels a ring reads follows from its texel size, in the painter
+// (groundPaint.ts LEVEL_FADE_M): level 3 under ~450 m texels (to ring 6,
+// 368 km, ≤ 36 tiles of ~1 MB), level 2 under 1 500 m (to ring 8).
 
 // The sun: from the screen's upper left with the map north-up, as the
 // hillshade of every map reads, at a height that shades the plains and
@@ -73,11 +59,15 @@ const SKY_BELOW = new Color3(0.62, 0.66, 0.7)
 const RELIEF_GAIN_FROM_KM_PER_PX = 0.05
 const RELIEF_GAIN_TO_KM_PER_PX = 2
 const RELIEF_GAIN_MAX = 3
-// The shader's grain under the texels (groundNormalPlugin): its longest
-// wavelength and how far from the eye it reaches, in altitudes.
-const DETAIL_WAVELENGTH = 60 * UNITS_PER_METER
-const DETAIL_REACH_PER_ALTITUDE = 2.5
-const DETAIL_REACH_MIN = 2000 * UNITS_PER_METER
+// The shader's detail tiles under the texels (groundNormalPlugin,
+// groundDetail.ts): the micro tile's and the macro tile's wavelength,
+// metres, and the tiles' side in texels.
+const DETAIL_MICRO_M = 50
+const DETAIL_MACRO_M = 350
+const DETAIL_TEXTURE_SIZE = 512
+// How far the micro tile reaches from the eye, in altitudes, at least.
+const DETAIL_REACH_PER_ALTITUDE = 6
+const DETAIL_REACH_MIN = 4000 * UNITS_PER_METER
 // How long after the last tile a ring waits before it is painted again.
 const REBUILD_SETTLE_MS = 300
 // Tile reads in flight at once, and the painting workers.
@@ -135,17 +125,18 @@ export function createGroundView(options: GroundViewOptions): GroundView {
   const paints: { k: number; ms: number; counts: unknown; wanted: number }[] = []
 
   const texelOf = (k: number): number => (RING_MIN_SPACING_M * UNITS_PER_METER * 2 ** k * RING_QUADS) / texelsFor(k)
-  const priority = (k: number): number => {
-    const ratio = Math.log2(texelOf(k) / unitsPerPixelNow)
-    // Finer than the pixel costs more than coarser: outward first on a tie.
-    return ratio >= 0 ? ratio : -ratio + 0.5
+  const priority = (build: Build): number => {
+    const ratio = Math.log2(texelOf(build.k) / unitsPerPixelNow)
+    // Finer than the pixel costs more than coarser: outward first on a
+    // tie; a preview before any full build.
+    return (ratio >= 0 ? ratio : -ratio + 0.5) - (build.message.preview ? 100 : 0)
   }
   function pump(): void {
     while (!disposed && queued.length > 0) {
       const idle = workers.findIndex((_, i) => !inflight.has(i))
       if (idle < 0) return
       let best = 0
-      for (let i = 1; i < queued.length; i++) if (priority(queued[i].k) < priority(queued[best].k)) best = i
+      for (let i = 1; i < queued.length; i++) if (priority(queued[i]) < priority(queued[best])) best = i
       const build = queued.splice(best, 1)[0]
       build.message.started = performance.now()
       inflight.set(idle, build)
@@ -216,13 +207,13 @@ export function createGroundView(options: GroundViewOptions): GroundView {
         const message: GroundWorkerInbound = {
           type: 'paint',
           id,
+          preview: request.preview,
           centerX,
           centerY,
           spacing,
           quads: request.quads,
           texels: request.texels,
-          level: levelFor(request.k),
-          outerLevel: request.outermost ? null : levelFor(request.k + 1),
+          outerTexelM: request.outermost ? null : texelOf(request.k + 1) / UNITS_PER_METER,
           verticalScale: MAP_EXAGGERATION,
           started: 0,
         }
@@ -239,6 +230,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
 
   let readyCount = 0
   let worldSent = 0
+  let detailTextures: { albedo: RawTexture2DArray; normals: RawTexture2DArray } | null = null
   workers.forEach((worker, index) => {
     worker.onerror = (event: ErrorEvent): void => {
       console.error('[incubator] ground worker', event.message)
@@ -280,8 +272,21 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       // Elevation units → world Y (before the exaggeration).
       const heights = message.heights
       for (let i = 0; i < heights.length; i++) heights[i] *= RELIEF_HEIGHT_SCALE
-      build.resolve({ heights, albedo: message.albedo, normals: message.normals })
+      build.resolve({ heights, albedo: message.albedo, normals: message.normals, materials: message.materials, texels: build.message.texels, complete: waits.size === 0 && !again })
       if (again) rebuildSoon(build.k)
+    } else if (message.type === 'detail') {
+      const layers = GROUND_MATERIALS.length
+      const albedo = RawTexture2DArray.CreateRGBATexture(message.albedo, message.size, message.size, layers, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE)
+      const normals = RawTexture2DArray.CreateRGBATexture(message.normals, message.size, message.size, layers, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE)
+      for (const t of [albedo, normals]) {
+        t.wrapU = Texture.WRAP_ADDRESSMODE
+        t.wrapV = Texture.WRAP_ADDRESSMODE
+        t.anisotropicFilteringLevel = 8
+      }
+      detailTextures?.albedo.dispose()
+      detailTextures?.normals.dispose()
+      detailTextures = { albedo, normals }
+      rings.setDetailTextures(albedo, normals)
     } else if (message.type === 'wantTile') {
       if (!key) return
       const version = key.versions.get(message.stage)
@@ -398,9 +403,12 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       })
       const level = input.level
       readyCount = 0
-      const message: GroundWorkerInbound = { type: 'world', width: input.width, height: input.height, level, stages: [...input.versions.keys()], fields: input.fields }
       // Copied to each worker; the level's arrays are tens of MB, once.
-      for (const worker of workers) worker.postMessage(message)
+      // The first worker also makes the detail textures.
+      workers.forEach((worker, i) => {
+        const message: GroundWorkerInbound = { type: 'world', width: input.width, height: input.height, level, stages: [...input.versions.keys()], fields: input.fields, detail: i === 0 ? DETAIL_TEXTURE_SIZE : 0 }
+        worker.postMessage(message)
+      })
       worldSent = performance.now()
       await done
     },
@@ -420,9 +428,10 @@ export function createGroundView(options: GroundViewOptions): GroundView {
         const t = Math.min(1, Math.max(0, Math.log2(kmPerPixel / RELIEF_GAIN_FROM_KM_PER_PX) / Math.log2(RELIEF_GAIN_TO_KM_PER_PX / RELIEF_GAIN_FROM_KM_PER_PX)))
         rings.setRelief(1 + (RELIEF_GAIN_MAX - 1) * t)
       }
-      // The shader's grain: within a few altitudes of the eye, near only.
-      if (air.altitude > 0) rings.setDetail(Math.max(DETAIL_REACH_MIN, air.altitude * DETAIL_REACH_PER_ALTITUDE), DETAIL_WAVELENGTH, detailStrength)
-      else rings.setDetail(0, DETAIL_WAVELENGTH, 0)
+      // The shader's detail tiles: the micro tile within a few altitudes
+      // of the eye, the macro tile fading by its own size on screen.
+      const reach = air.altitude > 0 ? Math.max(DETAIL_REACH_MIN, air.altitude * DETAIL_REACH_PER_ALTITUDE) : DETAIL_REACH_MIN
+      rings.setDetail(DETAIL_MICRO_M * UNITS_PER_METER, DETAIL_MACRO_M * UNITS_PER_METER, detailStrength, reach)
       rings.update(focusX, focusZ, unitsPerPixel)
       // The shadows on the innermost drawn rings: the casters follow the
       // zoom, the map's frustum is a fixed square over them whose centre is
@@ -483,6 +492,8 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       fill.dispose()
       sky.dispose()
       skyMaterial.dispose()
+      detailTextures?.albedo.dispose()
+      detailTextures?.normals.dispose()
       skyGradient.dispose()
       rings.dispose()
     },

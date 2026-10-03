@@ -2,6 +2,7 @@ import { METERS_PER_CELL } from '../../generator/core/mapConfig'
 import { ELEVATION_METERS } from '../../generator/elevation/elevationScale'
 import { createMeshSampler } from '../../generator/mesh/meshSampler'
 import type { TileId } from '../../generator/mesh/meshTile'
+import { makeGroundDetail } from '../../map/groundDetail'
 import { paintRing, type RingPaintRequest } from '../../map/groundPaint'
 import { meshLevelMesh, type MeshLevelArtifact } from '../../world/meshArtifacts'
 import type { MeshTileArtifact } from '../../world/meshTileArtifacts'
@@ -17,14 +18,16 @@ import { createGroundSource, type GridField, type TiledGroundSource } from './gr
 // tile was missing says so (`wanted`), so the screen can paint it again.
 
 export type GroundWorkerInbound =
-  | { type: 'world'; width: number; height: number; level: MeshLevelArtifact; stages: string[]; fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth', GridField | null> }
-  | { type: 'paint'; id: number; started: number } & RingPaintRequest
+  | { type: 'world'; width: number; height: number; level: MeshLevelArtifact; stages: string[]; fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth', GridField | null>; detail: number }
+  | { type: 'paint'; id: number; started: number; preview: boolean } & RingPaintRequest
   | { type: 'tile'; stage: string; artifact: MeshTileArtifact | null }
 
 export type GroundWorkerOutbound =
   | { type: 'ready' }
   | { type: 'wantTile'; stage: string; tile: TileId }
-  | { type: 'painted'; id: number; heights: Float32Array; albedo: Uint8Array; normals: Uint8Array; wanted: string[]; counts: { held: number; loading: number; missing: number; answered: number[] } }
+  | { type: 'painted'; id: number; heights: Float32Array; albedo: Uint8Array; normals: Uint8Array; materials: Uint8Array; wanted: string[]; counts: { held: number; loading: number; missing: number; answered: number[] } }
+  // The detail textures (groundDetail.ts), once, from the worker asked.
+  | { type: 'detail'; size: number; albedo: Uint8Array; normals: Uint8Array }
 
 // `self` is the DOM's here (the lib the client compiles against), whose
 // postMessage wants a target origin; the worker's takes the transfer
@@ -50,6 +53,10 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
       fields: message.fields,
     })
     post({ type: 'ready' })
+    if (message.detail > 0) {
+      const set = makeGroundDetail(message.detail)
+      post({ type: 'detail', size: set.size, albedo: set.albedo, normals: set.normals }, [set.albedo.buffer, set.normals.buffer])
+    }
     return
   }
   if (message.type === 'tile') {
@@ -62,6 +69,6 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
     if (!source) return
     source.takeWanted()
     const out = paintRing(source, message)
-    post({ type: 'painted', id: message.id, heights: out.heights, albedo: out.albedo, normals: out.normals, wanted: source.takeWanted(), counts: source.counts() }, [out.heights.buffer, out.albedo.buffer, out.normals.buffer])
+    post({ type: 'painted', id: message.id, heights: out.heights, albedo: out.albedo, normals: out.normals, materials: out.materials, wanted: source.takeWanted(), counts: source.counts() }, [out.heights.buffer, out.albedo.buffer, out.normals.buffer, out.materials.buffer])
   }
 }

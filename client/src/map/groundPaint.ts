@@ -51,11 +51,12 @@ export interface RingPaintRequest {
   quads: number
   // Texels a side of each texture.
   texels: number
-  // The finest level this ring reads, and the level the ring outside it
-  // reads (null for the outermost ring): the outer edge takes the outer
-  // ring's ground, so the two meet without a step.
-  level: number
-  outerLevel: number | null
+  // The texel size of the ring outside this one, metres (null for the
+  // outermost ring): the outer edge takes the outer ring's ground, so the
+  // two meet without a step. Which levels a ring reads follows from its
+  // own texel size (LEVEL_FADE_M), not from a level per ring: two rings
+  // with the same texel then draw the same ground, whatever their index.
+  outerTexelM: number | null
   // Drawn metres per true metre: the vertical exaggeration, which the
   // normals and the slope material see as the eye does.
   verticalScale: number
@@ -64,9 +65,13 @@ export interface RingPaintRequest {
 export interface RingPaint {
   // (quads + 1)² heights, elevation units, clamped at the sea's level.
   heights: Float32Array
-  // texels² RGBA each.
+  // texels² RGBA each: the colour, the world-space normals, and the
+  // MATERIAL weights the shader lays its detail textures by
+  // (groundDetail.ts): R rock, G bare ground, B snow, A canopy; what is
+  // left is grass. The sea is all zero.
   albedo: Uint8Array
   normals: Uint8Array
+  materials: Uint8Array
   texels: number
 }
 
@@ -94,6 +99,15 @@ const BIOME_COVER: Rgb[] = [
   [128, 146, 76], // 16 TropicalDryForest
   [182, 164, 134], // 17 ColdDesert
 ]
+// The canopy's share of the ground per biome: what the forest detail
+// (groundDetail.ts) covers, before the tree line, the rock and the snow
+// take theirs.
+const BIOME_CANOPY: number[] = [0, 0, 0.05, 0.75, 0.08, 0.5, 0.85, 0.95, 0, 0.25, 0.95, 0, 0, 0, 0.35, 0.03, 0.7, 0]
+// Biomes whose cover is bare ground rather than grass.
+const BIOME_BARE: number[] = [0, 0.3, 0.5, 0, 0, 0, 0, 0, 1, 0.2, 0, 0.6, 1, 0.2, 0.3, 0.5, 0, 0.9]
+// The canopy's patchiness: a noise of this wavelength (cells) opens
+// clearings and closes stands, between these shares of the biome's.
+const CANOPY_PATCH_CELLS = 0.25
 const ROCK_DARK: Rgb = [118, 106, 94]
 const ROCK_LIGHT: Rgb = [178, 166, 148]
 const SNOW: Rgb = [238, 241, 247]
@@ -149,9 +163,14 @@ const FOOTPRINT_FROM = 0.3
 // The outer band of a ring, as a fraction of its half-width, over which
 // its level blends into the outer ring's.
 const RIM_BLEND = 0.5
+// Per level, the texel size (m) between which its share of the ground
+// falls to the level below's: level 3 is read whole under 150 m texels
+// and not at all over 450 m, level 2 from 500 m to 1 500 m. Level 1 is
+// what remains.
+const LEVEL_FADE_M: Record<number, readonly [number, number]> = { 3: [150, 450], 2: [500, 1500] }
 const DETAIL_ROUGHNESS = 0.02
 const DETAIL_FULL_SLOPE = 0.25
-const DETAIL_FLAT_SHARE = 0.15
+const DETAIL_FLAT_SHARE = 0.08
 
 const smooth = (lo: number, hi: number, v: number): number => {
   const t = Math.min(1, Math.max(0, (v - lo) / (hi - lo)))
@@ -211,24 +230,52 @@ function boxBlur(field: Float32Array, m: number, r: number): Float32Array {
 }
 
 export function paintRing(source: GroundSource, request: RingPaintRequest): RingPaint {
-  const { centerX, centerY, spacing, quads, texels, level, outerLevel, verticalScale } = request
+  const { centerX, centerY, spacing, quads, texels, outerTexelM, verticalScale } = request
   const n = quads + 1
   const half = (quads / 2) * spacing
   const x0 = centerX - half
   const y0 = centerY - half
 
-  // THE LEVELS BLEND AT THE RIM: a ring reads a finer level than the ring
-  // outside it, and the two can differ by hundreds of metres on a peak
-  // (a tile sharpens what level 1 rounded off). Over the ring's outer
-  // band the ground slides from this ring's level to the outer ring's,
-  // so the step between them is a slope the eye does not find.
-  const blended = (x: number, y: number): number => {
-    const h = source.elevationAt(x, y, level)
-    if (outerLevel === null || outerLevel === level) return h
+  // THE LEVELS BY THE TEXEL: each level's share of the ground falls as
+  // the texel grows past its node spacing (LEVEL_FADE_M), so a ring whose
+  // texels cannot show level 3's relief draws level 2's, and two rings
+  // with one texel size draw one ground — by a level per ring, ring 5
+  // drew level 3 whole beside ring 6's level 2 and the range sat in a
+  // square (2026-10-03). The levels differ by hundreds of metres on a
+  // peak (a tile sharpens what level 1 rounded off), so the fade is what
+  // makes the ladder continuous.
+  //
+  // AND AT THE RIM: over the ring's outer band the ground slides from
+  // this ring's mix to the outer ring's, so the two meet without a step.
+  const texelM = ((2 * half) / texels) * source.metersPerCell
+  const shares = (texel: number): [number, number] => [1 - smooth(LEVEL_FADE_M[3][0], LEVEL_FADE_M[3][1], texel), 1 - smooth(LEVEL_FADE_M[2][0], LEVEL_FADE_M[2][1], texel)]
+  const [s3, s2] = shares(texelM)
+  const [o3, o2] = outerTexelM !== null ? shares(outerTexelM) : [s3, s2]
+  // The height mixed over the levels by their shares (a level with no
+  // share is not read, so no tile is asked for in vain).
+  const mixedAt = (x: number, y: number, a3: number, a2: number): number => {
+    let h = 0
+    let rest = 1
+    if (a3 > 0) {
+      h += source.elevationAt(x, y, 3) * a3
+      rest -= a3
+    }
+    if (rest > 0 && a2 > 0) {
+      const w = rest * a2
+      h += source.elevationAt(x, y, 2) * w
+      rest -= w
+    }
+    if (rest > 0) h += source.elevationAt(x, y, 1) * rest
+    return h
+  }
+  const rimAt = (x: number, y: number): number => {
+    if (outerTexelM === null) return 0
     const rim = Math.max(Math.abs(x - centerX), Math.abs(y - centerY)) / half
-    if (rim <= 1 - RIM_BLEND) return h
-    const t = smooth(0, 1, (rim - (1 - RIM_BLEND)) / RIM_BLEND)
-    return h + (source.elevationAt(x, y, outerLevel) - h) * t
+    return rim <= 1 - RIM_BLEND ? 0 : smooth(0, 1, (rim - (1 - RIM_BLEND)) / RIM_BLEND)
+  }
+  const blended = (x: number, y: number): number => {
+    const t = rimAt(x, y)
+    return mixedAt(x, y, s3 + (o3 - s3) * t, s2 + (o2 - s2) * t)
   }
 
   // --- the vertices -------------------------------------------------------
@@ -239,7 +286,8 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
   // finest rings, whose quads are well inside a node's spacing, sample
   // the point.
   const heights = new Float32Array(n * n)
-  const footprint = spacing * source.metersPerCell > NODE_SPACING_M[level] * FOOTPRINT_FROM ? spacing * 0.25 : 0
+  const nodeSpacingM = s3 > 0.5 ? NODE_SPACING_M[3] : s2 > 0.5 ? NODE_SPACING_M[2] : NODE_SPACING_M[1]
+  const footprint = spacing * source.metersPerCell > nodeSpacingM * FOOTPRINT_FROM ? spacing * 0.25 : 0
   for (let j = 0; j < n; j++) {
     const y = y0 + j * spacing
     for (let i = 0; i < n; i++) {
@@ -254,12 +302,12 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
   // the straight line between them at the others: exactly the edge the outer
   // ring's hole has. Without it the two grounds met in a step and the view
   // looked through the higher one (2026-10-02).
-  if (outerLevel !== null) {
+  if (outerTexelM !== null) {
     const onEdge = (i: number, j: number): boolean => i === 0 || j === 0 || i === quads || j === quads
     for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
         if (!onEdge(i, j) || (i + j) % 2 !== 0) continue
-        heights[j * n + i] = source.elevationAt(x0 + i * spacing, y0 + j * spacing, outerLevel)
+        heights[j * n + i] = mixedAt(x0 + i * spacing, y0 + j * spacing, o3, o2)
       }
     }
     for (let j = 0; j < n; j++) {
@@ -287,31 +335,41 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
   // it below.
   const nodeSpacing = new Float32Array(m * m)
   const inner = new Float64Array(5)
-  const outer = new Float64Array(5)
   for (let tj = 0; tj < m; tj++) {
     const y = y0 + (tj - 0.5) * pitch
     for (let ti = 0; ti < m; ti++) {
       const x = x0 + (ti - 0.5) * pitch
       const c = tj * m + ti
-      let h = source.surfaceAt(x, y, level, inner)
-      let sx = inner[2] > 1e-6 ? -inner[1] / inner[2] : 0
-      let sz = inner[2] > 1e-6 ? -inner[3] / inner[2] : 0
-      if (outerLevel !== null && outerLevel !== level) {
-        const rim = Math.max(Math.abs(x - centerX), Math.abs(y - centerY)) / half
-        if (rim > 1 - RIM_BLEND) {
-          const t = smooth(0, 1, (rim - (1 - RIM_BLEND)) / RIM_BLEND)
-          const ho = source.surfaceAt(x, y, outerLevel, outer)
-          const ox = outer[2] > 1e-6 ? -outer[1] / outer[2] : 0
-          const oz = outer[2] > 1e-6 ? -outer[3] / outer[2] : 0
-          h += (ho - h) * t
-          sx += (ox - sx) * t
-          sz += (oz - sz) * t
+      const t = rimAt(x, y)
+      const a3 = s3 + (o3 - s3) * t
+      const a2 = s2 + (o2 - s2) * t
+      let h = 0
+      let sx = 0
+      let sz = 0
+      let spacingCells = 0
+      let rest = 1
+      const take = (level: number, w: number): void => {
+        const hl = source.surfaceAt(x, y, level, inner)
+        h += hl * w
+        if (inner[2] > 1e-6) {
+          sx += (-inner[1] / inner[2]) * w
+          sz += (-inner[3] / inner[2]) * w
         }
+        spacingCells += inner[4] * w
       }
+      if (a3 > 0) {
+        take(3, a3)
+        rest -= a3
+      }
+      if (rest > 0 && a2 > 0) {
+        take(2, rest * a2)
+        rest -= rest * a2
+      }
+      if (rest > 0) take(1, rest)
       metres[c] = h * source.elevationMeters
       slopeX[c] = sx * verticalScale
       slopeZ[c] = sz * verticalScale
-      nodeSpacing[c] = inner[4] * source.metersPerCell
+      nodeSpacing[c] = spacingCells * source.metersPerCell
     }
   }
   // The slope under the widest blur, for the cavity, and the cavity's
@@ -351,7 +409,10 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
     const octaves: { cells: number; amplitude: number }[] = []
     // Down to two texels, each octave's lattice turned against the last
     // (an offset): one octave of value noise is a lattice of dots.
-    for (let wave = DETAIL_MAX_WAVELENGTH_M; wave >= pitchM * 4; wave /= 2) octaves.push({ cells: wave / source.metersPerCell, amplitude: wave * DETAIL_ROUGHNESS })
+    // Down to eight texels: the last octave of a value noise is a lattice
+    // of blobs, and at four texels it drew a honeycomb over every near
+    // view (2026-10-03); below it the shader's detail tiles take over.
+    for (let wave = DETAIL_MAX_WAVELENGTH_M; wave >= pitchM * 8; wave /= 2) octaves.push({ cells: wave / source.metersPerCell, amplitude: wave * DETAIL_ROUGHNESS })
     for (let tj = 0; tj < m; tj++) {
       const y = y0 + (tj - 0.5) * pitch
       for (let ti = 0; ti < m; ti++) {
@@ -387,6 +448,7 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
   // --- the textures ---------------------------------------------------------
   const albedo = new Uint8Array(texels * texels * 4)
   const normals = new Uint8Array(texels * texels * 4)
+  const materials = new Uint8Array(texels * texels * 4)
   const rgb = new Float32Array(3)
   const tone = new Float32Array(3)
   for (let tj = 0; tj < texels; tj++) {
@@ -435,22 +497,37 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       const fx = bx - cx0
       const fy = by - cy0
       rgb.fill(0)
+      let canopy = 0
+      let bare = 0
       for (let dy = 0; dy <= 1; dy++) {
         for (let dx = 0; dx <= 1; dx++) {
           const w = (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy)
           if (w === 0) continue
-          const cover = BIOME_COVER[source.biomeAt(cx0 + dx + 0.5, cy0 + dy + 0.5)] ?? BIOME_COVER[4]
+          const biome = source.biomeAt(cx0 + dx + 0.5, cy0 + dy + 0.5)
+          const cover = BIOME_COVER[biome] ?? BIOME_COVER[4]
           rgb[0] += cover[0] * w
           rgb[1] += cover[1] * w
           rgb[2] += cover[2] * w
+          canopy += (BIOME_CANOPY[biome] ?? 0) * w
+          bare += (BIOME_BARE[biome] ?? 0) * w
         }
       }
+      // The stands and the clearings.
+      if (canopy > 0) canopy *= smooth(0.3, 0.7, valueNoise(x / CANOPY_PATCH_CELLS + 3.1, y / CANOPY_PATCH_CELLS + 7.7) * 0.7 + valueNoise(x / (CANOPY_PATCH_CELLS * 0.3), y / (CANOPY_PATCH_CELLS * 0.3)) * 0.3)
       // Above the tree line the cover is alpine, whatever the biome.
       const alpine = smooth(ALPINE_HEIGHT_LO, ALPINE_HEIGHT_HI, h)
-      if (alpine > 0) mix([rgb[0], rgb[1], rgb[2]], BIOME_COVER[11], alpine, rgb)
+      if (alpine > 0) {
+        mix([rgb[0], rgb[1], rgb[2]], BIOME_COVER[11], alpine, rgb)
+        canopy *= 1 - alpine
+        bare = bare + (0.6 - bare) * alpine
+      }
       // The shore's sand, under everything else.
       const sand = 1 - smooth(0, SAND_HEIGHT_M, h)
-      if (sand > 0) mix([rgb[0], rgb[1], rgb[2]], SAND, sand, rgb)
+      if (sand > 0) {
+        mix([rgb[0], rgb[1], rgb[2]], SAND, sand, rgb)
+        canopy *= 1 - sand
+        bare = bare + (1 - bare) * sand
+      }
       // A lake: its water over the cover.
       const lake = source.lakeDepthAt(x, y)
       if (lake > 0) mix([rgb[0], rgb[1], rgb[2]], LAKE, smooth(0, 20, lake), rgb)
@@ -471,6 +548,15 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       const t = source.seaTemperatureAt(x, y) - LAPSE_C_PER_M * h
       const snow = smooth(0, 1, (SNOW_T_HI - t) / (SNOW_T_HI - SNOW_T_LO)) * (1 - 0.4 * steep)
       if (snow > 0) mix([rgb[0], rgb[1], rgb[2]], SNOW, snow, rgb)
+      // The material weights, the later layers over the earlier.
+      const wSnow = snow
+      const wRock = rock * (1 - wSnow)
+      const wCanopy = canopy * (1 - rock) * (1 - wSnow)
+      const wBare = Math.max(0, bare * (1 - rock) * (1 - wSnow) - wCanopy)
+      materials[p] = Math.round(Math.min(1, wRock) * 255)
+      materials[p + 1] = Math.round(Math.min(1, wBare) * 255)
+      materials[p + 2] = Math.round(Math.min(1, wSnow) * 255)
+      materials[p + 3] = Math.round(Math.min(1, wCanopy) * 255)
 
       // Cavity: hollows dark, crests light.
       const curvature = ti >= cs && tj >= cs && ti < texels - cs && tj < texels - cs ? cavityAt(c) * CAVITY_GAIN : 0
@@ -485,5 +571,5 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       albedo[p + 3] = 255
     }
   }
-  return { heights, albedo, normals, texels }
+  return { heights, albedo, normals, materials, texels }
 }

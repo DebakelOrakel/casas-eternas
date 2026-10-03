@@ -244,7 +244,25 @@ kilometre over it. What changed against the sketch above, and why:
   50° at 20 km, 68° at 2 km), one curve across the orthographic-to-
   perspective handover, and keeps its height over the drawn ground.
 
-Open: the near view (under ~3 km) is only grain over the data and reads
-soft; the tile seams show as a ridge of ~50 m along every tile edge, which
-is the bake's, not the drawing's; pan lag is a few seconds of soft ground
-until the inner rings arrive.
+- **Detail under the texels** (same day, later): the painter writes
+  MATERIAL weights per texel (rock, bare, snow, canopy; grass the rest),
+  and the shader lays tiling detail textures under the albedo by them —
+  made in code (map/groundDetail.ts: grass, strata rock, scree, snow,
+  canopy, a macro mottle), a 2D array texture read at two wavelengths with
+  a turned second read against repetition, the micro tile within a few
+  altitudes of the eye. Photo textures (CC0) remain the option to compare
+  against.
+- **Levels by the texel, not by the ring.** Each level's share of the
+  ground fades with the texel size (level 3 under ~450 m, level 2 under
+  1 500 m), so two rings with one texel size draw one ground. A level per
+  ring put the range in a square where ring 5 (level 3) met ring 6
+  (level 2).
+- **Previews.** Every ring is built first at a quarter side (a sixteenth
+  of the work), enlarged bilinearly, and built in full once the tiles it
+  wanted are in.
+
+Open: the tile seams show as a ridge of ~50 m along every tile edge,
+which is the bake's, not the drawing's (the user's call: fix in the
+generator later); pan lag is still seconds of soft ground on the outer
+rings (1024² paints of 2–3 s each); vegetation exists as a canopy surface,
+not as instances.
