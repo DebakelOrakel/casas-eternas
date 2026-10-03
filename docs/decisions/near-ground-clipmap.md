@@ -1,10 +1,10 @@
 ---
 summary: How the ground's geometry is structured. Today a camera-following high-resolution patch lies over a world-sized low-resolution mesh, and the two meet on a seam that cannot be made to disappear. Decided — build only what is looked at: concentric rings around the camera from the descent down, tiles built on demand in the map register, and one sampling pyramid under both. The world-sized mesh goes.
 date: 2026-08-15
-updated: 2026-10-02
+updated: 2026-10-03
 area: ui
 stage: building
-status: decided 2026-08-15. BUILDING 2026-10-02 — the rings exist (map/nearRings.ts) and are the incubator's near-regime ground, each reading the level its spacing carries; the generator and the worldmap keep the patch. Stitched with skirts, snapped to their own grids. A hex-lattice ring 0 was built and removed the same day — see "What ring 0 is". Supersedes the near-field detail patch and the world-sized relief levels in both registers. A prerequisite for showing a 16K bake, not a sequel to baking one.
+status: decided 2026-08-15. BUILT for the incubator 2026-10-03 — the rings (map/groundRings.ts) are its only ground at every zoom, on a fixed ladder of spacings, each ring painted off the main thread with textures finer than its quads (map/groundPaint.ts); the generator keeps the patch and the relief levels. See "Built 2026-10-03" at the end. A prerequisite for showing a 16K bake, not a sequel to baking one.
 ---
 
 # One Ground Per Register
@@ -207,3 +207,44 @@ until this decision is built.
   the same pyramid; they do not want the same geometry.
 - Whether the map register ever folds into the ring stack. No — see option D;
   the shared thing is the principle and the sampler, not the structure.
+
+## Built 2026-10-03
+
+The incubator's ground is the rings alone, from the whole world down to a
+kilometre over it. What changed against the sketch above, and why:
+
+- **A fixed ladder of spacings** (30 m · 2^k, 13 rings to span the world),
+  not an innermost spacing that follows the altitude. The zoom decides which
+  rings are drawn — a ring whose texels fall under a pixel is left out and
+  the ring outside it has no hole — so a zoom never rebuilds a ring's grid.
+  With the spacing following the altitude every power of two rebuilt all
+  of them at once, and the stairs wandered with the camera (2026-10-02).
+- **The look is in the textures, not the quads.** Each ring carries an
+  albedo and a world-space normal map of 512 or 1024 texels a side over
+  its 192 quads (map/groundPaint.ts, the normals read through
+  map/groundNormalPlugin.ts). The quads carry the silhouette and the
+  shadows; everything finer than a quad is painted. This is what the
+  legacy world map did with its 4K hillshade over a coarse mesh, and what
+  every game whose mountains read from above does.
+- **Painted off the main thread**, two workers each holding the level and
+  the tiles, one build in flight per worker, the most urgent ring first
+  (the one whose texels are nearest the pixel, then outward). A ring stays
+  where it stood until its new build arrives, geometry and textures
+  swapped in together; the ring outside covers the gap meanwhile.
+- **Levels blend at the rim.** A ring reads the finest level its texels
+  can show (level 3 to ring 5, level 2 to ring 7, level 1 beyond), and
+  over its outer half slides to the outer ring's level: each level stands
+  its peaks a few hundred metres higher than the level below, and at a hard
+  edge the relief and the snow line stepped.
+- **Interpolated normals, not blurred heights.** The tiles are
+  triangulations; at the map's exaggeration every facet showed. The tile
+  sampler now interpolates vertex normals (as the level's sampler already
+  did), softened by half a node spacing against the nodes' jitter.
+- The camera leans in by itself as the view narrows (flat above 200 km,
+  50° at 20 km, 68° at 2 km), one curve across the orthographic-to-
+  perspective handover, and keeps its height over the drawn ground.
+
+Open: the near view (under ~3 km) is only grain over the data and reads
+soft; the tile seams show as a ridge of ~50 m along every tile edge, which
+is the bake's, not the drawing's; pan lag is a few seconds of soft ground
+until the inner rings arrive.

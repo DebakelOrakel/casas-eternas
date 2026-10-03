@@ -113,6 +113,13 @@ export interface GeneratorCameraOptions {
   nearPitchMaxDeg?: number
   // R/F tilt/pitch adjust speed in radians per second (both regimes).
   pitchRatePerSecond?: number
+  // THE TILT FROM THE VIEW WIDTH (world units at the focus), radians off
+  // vertical, for both regimes: given, the tilt follows the zoom by itself
+  // — flat far out, leaning in as the view narrows, through the handover
+  // without a step — and R/F move an offset from that curve. Without it
+  // the map regime's envelope and the near regime's pitch curve stand
+  // (the generator: zoom never tilts by itself, decided 2026-09-30).
+  autoTilt?: (viewWidth: number) => number
 }
 
 export interface GeneratorCamera {
@@ -155,6 +162,10 @@ export interface GeneratorCamera {
   // drag pan converts with. Exact at the focus; a tilted view's ratio
   // genuinely varies with on-screen depth.
   getViewWidth: () => number
+  // Put the view somewhere AT ONCE, no easing: the focus, the zoom (0..2),
+  // the yaw and the tilt (radians; the regime clamps it). A debug
+  // instrument — a screenshot ladder needs the same views every time.
+  setView: (view: { x: number; z: number; zoom: number; yaw?: number; tilt?: number }) => void
 }
 
 // Wrap an angle into (-π, π] so the automatic return-to-north always takes
@@ -192,6 +203,7 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
     nearPitchMinDeg = 40,
     nearPitchMaxDeg = 80,
     pitchRatePerSecond = (35 * Math.PI) / 180,
+    autoTilt,
   } = options
 
   const maxTilt = (maxTiltDeg * Math.PI) / 180
@@ -268,6 +280,9 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
   // User pitch adjustment (R/F) relative to the near regime's zoom-default
   // pitch curve; cleared whenever the view is back in the map regime.
   let nearPitchOffset = 0
+  // A tilt setView asked for, taken up by the next frame's regime branch
+  // (the map's desired tilt, or the near regime's offset from its curve).
+  let requestedTilt: number | null = null
   // Camera height above the GROUND: the fixed rig height in the map regime
   // (orthographic — height doesn't affect apparent size), the LIVE altitude
   // in the near regime.
@@ -434,11 +449,30 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
       // it, so a zoom out that closes the envelope brings the view back to
       // top-down and a zoom in afterwards stays there.
       const envelope = envelopeTilt(currentZoom)
-      if (pressedKeys.has('r')) desiredTilt += pitchRatePerSecond * dt
-      if (pressedKeys.has('f')) desiredTilt -= pitchRatePerSecond * dt
-      desiredTilt = Scalar.Clamp(desiredTilt, 0, envelope)
-      tiltTarget = desiredTilt
-      nearPitchOffset = 0 // back on the map: the next descent starts on the curve
+      if (autoTilt) {
+        // The curve's tilt plus the user's offset, which is the one the
+        // near regime moves too: one tilt across the handover.
+        if (requestedTilt !== null) {
+          nearPitchOffset = requestedTilt - autoTilt(viewWidthAtFocus)
+          requestedTilt = null
+        }
+        if (pressedKeys.has('r')) nearPitchOffset += pitchRatePerSecond * dt
+        if (pressedKeys.has('f')) nearPitchOffset -= pitchRatePerSecond * dt
+        const curve = autoTilt(viewWidthAtFocus)
+        tiltTarget = Scalar.Clamp(curve + nearPitchOffset, 0, maxTilt)
+        nearPitchOffset = tiltTarget - curve
+        desiredTilt = tiltTarget
+      } else {
+        if (requestedTilt !== null) {
+          desiredTilt = requestedTilt
+          requestedTilt = null
+        }
+        if (pressedKeys.has('r')) desiredTilt += pitchRatePerSecond * dt
+        if (pressedKeys.has('f')) desiredTilt -= pitchRatePerSecond * dt
+        desiredTilt = Scalar.Clamp(desiredTilt, 0, envelope)
+        tiltTarget = desiredTilt
+        nearPitchOffset = 0 // back on the map: the next descent starts on the curve
+      }
     } else {
       // NEAR regime: perspective, altitude-driven. The handover altitude is
       // re-derived from the map's z = 1 framing every frame (it depends on
@@ -451,7 +485,10 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
       const aspect = engine.getRenderWidth() / engine.getRenderHeight()
       const tanHalfHorizontalFov = Math.tan(fovRad / 2) * aspect
       const handoverDistance = halfWidth / tanHalfHorizontalFov
-      const handoverAltitude = handoverDistance * Math.cos(maxTilt)
+      // The altitude that shows the ortho view's width at the focus under
+      // the tilt in force: the curve's at the handover when the tilt
+      // follows the zoom, else the envelope's ceiling it hands over at.
+      const handoverAltitude = handoverDistance * Math.cos(autoTilt ? tiltAngle : maxTilt)
       const altitude = handoverAltitude * Math.pow(nearMinAltitude / handoverAltitude, nearU)
       viewHeight = altitude
       // Ramped in over the descent. At the handover the ground is drawn at
@@ -459,20 +496,29 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
       // up by tens of kilometres in one frame; by the bottom, where the
       // altitude is small and the ground is the thing you can hit, it counts
       // fully.
-      groundHeight = Math.max(0, getGroundHeight?.() ?? 0) * nearU
+      // Whole, not ramped in over the descent as it once was: a ramp put
+      // the camera inside any range taller than the altitude at the
+      // handover (26 km drawn at ×6, 2026-10-03). Adopting the ground at
+      // the crossing moves the camera and its target up together, which
+      // the view at the focus does not show.
+      groundHeight = Math.max(0, getGroundHeight?.() ?? 0)
       // The zoom curve provides the DEFAULT pitch; the user's R/F offset
       // moves within [nearPitchMin, nearPitchMax]. Re-deriving the offset
       // from the clamped result keeps it from accumulating past the band.
-      const defaultPitch = Scalar.Lerp(maxTilt, horizonPitch, nearU)
+      const defaultPitch = autoTilt ? autoTilt(viewWidthAtFocus) : Scalar.Lerp(maxTilt, horizonPitch, nearU)
+      if (requestedTilt !== null) {
+        nearPitchOffset = requestedTilt - defaultPitch
+        requestedTilt = null
+      }
       if (pressedKeys.has('r')) nearPitchOffset += pitchRatePerSecond * dt
       if (pressedKeys.has('f')) nearPitchOffset -= pitchRatePerSecond * dt
-      tiltTarget = Scalar.Clamp(defaultPitch + nearPitchOffset, nearPitchMin, nearPitchMax)
+      tiltTarget = Scalar.Clamp(defaultPitch + nearPitchOffset, autoTilt ? 0 : nearPitchMin, nearPitchMax)
       nearPitchOffset = tiltTarget - defaultPitch
       // Clip planes follow the altitude; the far plane doubles as the
       // visibility budget the screen's fog should sit just inside (it also
       // hard-culls the wrap copies beyond the haze).
       camera.minZ = Math.max(altitude * 0.02, 1e-5)
-      camera.maxZ = Math.min(altitude * 60, worldWidth * 1.2)
+      camera.maxZ = Math.min(altitude * 200, worldWidth * 1.2)
       viewWidthAtFocus = 2 * (altitude / Math.max(0.05, Math.cos(tiltAngle))) * tanHalfHorizontalFov
     }
 
@@ -575,6 +621,21 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
     },
     getViewWidth() {
       return viewWidthAtFocus
+    },
+    setView(view) {
+      focusX = view.x
+      focusZ = view.z
+      targetZoom = Scalar.Clamp(view.zoom, 0, maxZoomBound())
+      currentZoom = targetZoom
+      if (view.yaw !== undefined) {
+        desiredYaw = wrapAngle(view.yaw)
+        yawAngle = desiredYaw
+      }
+      if (view.tilt !== undefined) {
+        requestedTilt = Math.max(0, view.tilt)
+        tiltAngle = requestedTilt
+      }
+      applyView()
     },
     dispose() {
       scene.onPointerObservable.remove(pointerObserver)

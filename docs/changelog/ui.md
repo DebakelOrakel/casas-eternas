@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-03
+- **changed** Incubator: the ground is drawn as painted rings at every zoom — ground cover by biome, rock on the slopes, snow where it is cold, the sea by its depth, with shadows, haze and a sky — and the view leans in by itself as it zooms from the world down to a kilometre. `incubator`
+
 ## 2026-10-02
 - **new** Generator: opening a world made by an earlier version offers to make it again from its history with the same values, so it can be refined. `generator.replay`
 - **changed** Generator: the jobs window shows each level of a job with its tiles and a projected end. `generator.jobs`

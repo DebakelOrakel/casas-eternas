@@ -18,7 +18,9 @@ const app = new AppStateManager(engine, canvas, overlay, {
   incubator: createIncubatorScreen,
 })
 
-app.goTo('title')
+// `?screen=incubator` opens that screen directly — the incubator reads the
+// rest of the query (a world, a view) for its screenshot ladder.
+app.goTo(new URLSearchParams(window.location.search).get('screen') === 'incubator' ? 'incubator' : 'title')
 
 engine.runRenderLoop(() => app.render())
 

@@ -1,27 +1,24 @@
-import { Color4, Scene } from '@babylonjs/core'
+import { Scene } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { createGeneratorCamera } from '../../camera/generatorCamera'
 import { MAP_WIDTH, METERS_PER_CELL } from '../../generator/core/mapConfig'
-import { elevationToColor } from '../../generator/elevation/elevationColor'
-import { createMeshSampler } from '../../generator/mesh/meshSampler'
 import { relabel } from '../../i18n/relabel'
-import type { ElevationSurface } from '../../map/elevationSurface'
-import { createMeshSurface } from '../../map/meshSurface'
 import { createScaleBar } from '../../map/ScaleBar'
-import { MAP_EXAGGERATION, MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, UNITS_PER_METER } from '../../map/mapSceneSettings'
-import { createToroidalMapView } from '../../map/ToroidalMapView'
+import { MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, UNITS_PER_METER } from '../../map/mapSceneSettings'
 import { listServerArtifacts, type ServerArtifact } from '../../server/artifactsClient'
+import { fetchWorld } from '../../server/worldClient'
 import { artifactKey } from '../../storage/ArtifactStore'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
-import { meshLevelMesh, meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
+import { meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
 import { isCurrentArtifact, parseStage } from '../../world/levels'
-import { createTiledSurface, type TiledSurface } from './tiledSurface'
-import { openWorld } from '../../world/query'
+import { openWorld, type World } from '../../world/query'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createSidebar } from '../../ui/sidebar/Sidebar'
 import { createTitleBar } from '../../ui/titleBar/TitleBar'
 import { createWorldChooser } from '../../ui/worldChooser/WorldChooser'
+import { createGroundView } from './groundView'
+import type { GridField } from './groundSource'
 import '../../ui/theme/design.css'
 
 // THE INCUBATOR: the step between the generator and the game. The generator
@@ -35,100 +32,49 @@ import '../../ui/theme/design.css'
 // worlds that hold level 1.
 //
 // For now it is a DEBUG screen, to look at a world: after a choice it shows
-// level 1 in 3D, the relief read from the level's mesh, the texture the
-// height colours of the generator's terrain (elevationToColor). No water,
-// no rivers, no shading of the flat plane yet. Progress and failures go to
-// the console, not to the screen.
-//
-// Two grounds, as a level of detail. Far out, the map view's relief levels:
-// fixed grids over the whole world, one vertex per world cell at most
-// (7.8 km), too coarse for the level's ~2 km nodes. Close in, the map
-// view's NEAR-DETAIL PATCH: a grid of 192 × 192 quads that follows the
-// focus and spans the view, so its spacing shrinks with the zoom. Past the
-// map view's deepest zoom the camera goes over into perspective (its near
-// regime), down to 1 km over the ground, where the patch's quads (~80 m)
-// are finer than the level's nodes.
+// the terrain in 3D as the ground rings (groundView.ts): level 1 far out,
+// the tiles of levels 2 and 3 near, painted by surface — the biome's
+// cover, rock on the slopes, snow where it is cold, the sea by its depth.
+// Progress and failures go to the console, not to the screen.
 
 // The level the incubator runs on.
 const LEVEL = 1
 
-// The colour texture's size: twice the world raster in each axis, so the
-// texture holds more of the level than the save's grid does. Measured on a
-// level of 4.3 M nodes (2026-09-30, node): decode 1.7 s, sampler 0.2 s,
-// this texture 1.7 s; the world raster's size would take 0.4 s.
-const TEXTURE_WIDTH = 4096
-const TEXTURE_HEIGHT = 2048
-
 // The map view's deepest zoom, as the fraction of the world's width in
 // view: 1 % is ~160 km across. Beyond it the camera's NEAR regime takes
-// over: perspective, down to NEAR_MIN_ALTITUDE_M over the ground. The map
-// view alone cannot show a relief: it is orthographic, so a tilted view
-// has no horizon and no silhouettes — the terrain reads as a squashed
-// band however high it stands (seen 2026-09-30, measured heights correct).
+// over: perspective, down to NEAR_MIN_ALTITUDE_M over the ground.
 const DEEPEST_VIEW_FRACTION = 0.01
 
 // The near regime's lowest camera height over the ground under the focus,
 // metres.
 const NEAR_MIN_ALTITUDE_M = 1000
 
-// The patch is shown while the view is narrower than a tenth of the
-// world: from there on its quads (the view width / 192) are finer than the
-// fine relief level's (the world width / 2048).
-const PATCH_VIEW_FRACTION = 0.1
-
-// The near patch: PATCH_COVERAGE altitudes wide, PATCH_SUBDIVISIONS quads a
-// side. Wider than the map view's 16 altitudes: tilted to 80°, the view
-// reached past that patch and the coarse level-1 ground behind its rim
-// showed through (2026-10-02). A side of 384 keeps the quads at an eighth
-// of the altitude (125 m at 1 km), filling 148 k points per rebuild.
-const PATCH_COVERAGE = 48
-const PATCH_SUBDIVISIONS = 384
-
-// The patch's spacing below which it reads the tiles of level 3 (floor
-// 125 m, flat land ~490 m), and of level 2 (floor ~500 m), metres; above,
-// level 1 alone. They bound how many tiles a view asks for: the patch
-// spans 384 spacings, ~150 km at level 3's bound (three tiles across),
-// ~580 km at level 2's (four to five).
-const TILE_LEVEL3_SPACING_M = 400
-const TILE_LEVEL2_SPACING_M = 1500
-
-// THE NEAR GROUND AS RINGS (map/nearRings.ts) in the near regime: the
-// innermost ring's spacing, metres, never coarser than the camera's height
-// over RING_SPACING_PER_ALTITUDE and never finer than RING_MIN_SPACING_M —
-// half the closest node spacing of level 3 (measured on Calvessor
-// 2026-10-02: nearest neighbours 62 m at the 1st percentile in mountains,
-// ~90 m the median of the densest tile, ~330 m of a median tile; level 2
-// 250–560 m), so a ring carries every node a tile has without stepping
-// across it. In powers of two of that, so the rings keep their grids
-// while the camera moves up and down a little.
-const RING_MIN_SPACING_M = 30
-const RING_SPACING_PER_ALTITUDE = 1 / 32
-const RING_QUADS = 192
-// The finest level a ring of a given spacing reads: one whose nodes its
-// quads can carry — level 3 to 60 m (twice its densest spacing in a
-// ring's half), level 2 to 240 m, level 1 beyond.
-const RING_LEVEL3_SPACING_M = 60
-const RING_LEVEL2_SPACING_M = 240
-
-function ringSpacingM(altitudeM: number): number {
-  const wanted = Math.max(RING_MIN_SPACING_M, altitudeM * RING_SPACING_PER_ALTITUDE)
-  return RING_MIN_SPACING_M * 2 ** Math.round(Math.log2(wanted / RING_MIN_SPACING_M))
-}
-
 // The tilt limit, degrees off vertical (the generator's is 60°).
 const MAX_TILT_DEG = 80
 
-// The sun's height for the shadows on the near ground, degrees. A slope
-// facing away casts a shadow only where it is steeper than the sun. It
-// stood at 8° for level 1, which is flat (steepest 1 % of slopes 2.2 %,
-// 13 % with the map's ×6 height). The tiles are not: measured on
-// Calvessor's level 3 (2026-10-02), the densest tile's slopes are 12 % at
-// the median and 36 % at the 99th percentile — 74 % and 213 % at ×6 —
-// against a median tile's 1 % and 3 %. At 8° (14 %) every mountain slope
-// facing away lay in long, hard shadow. At 30° (58 %) the steeper half of
-// a range's lee sides casts one and the plains none, which the light
-// alone shades.
-const SUN_ELEVATION_DEG = 30
+// THE TILT BY THE VIEW: flat as a map while the view is wider than
+// TILT_FLAT_KM, leaning in as it narrows (a game's oblique view from
+// about 50 km on), to TILT_GROUND_DEG at TILT_GROUND_KM and below.
+// Linear in the logarithm of the width, so every halving of the view
+// leans the same amount.
+const TILT_FLAT_KM = 200
+const TILT_MID_KM = 20
+const TILT_MID_DEG = 50
+const TILT_GROUND_KM = 2
+const TILT_GROUND_DEG = 68
+function tiltForViewWidth(viewWidth: number): number {
+  const km = viewWidth / UNITS_PER_METER / 1000
+  const l = Math.log10(Math.max(TILT_GROUND_KM, Math.min(TILT_FLAT_KM, km)))
+  const flat = Math.log10(TILT_FLAT_KM)
+  const mid = Math.log10(TILT_MID_KM)
+  const ground = Math.log10(TILT_GROUND_KM)
+  const deg = l >= mid ? ((flat - l) / (flat - mid)) * TILT_MID_DEG : TILT_MID_DEG + ((mid - l) / (mid - ground)) * (TILT_GROUND_DEG - TILT_MID_DEG)
+  return (deg * Math.PI) / 180
+}
+
+// The view width (world units) under which the nearest rings cast
+// shadows: ~190 km, where a mountain's shadow is pixels wide.
+const SHADOWS_BELOW_VIEW_WIDTH = 190_000 * UNITS_PER_METER
 
 // The server's current level-1 artifacts, by world uid. Any revision of a
 // world counts: the world list does not say which terrain a world holds now,
@@ -148,68 +94,18 @@ async function levelArtifacts(): Promise<Map<string, ServerArtifact[]>> {
   return byWorld
 }
 
-// The texture of the level: per texel the height at the texel's centre, as
-// colour. Texel px shows world x = (px + ½)·width/TEXTURE_WIDTH − ½, the
-// convention meshSurface samples the relief with, so the colour sits on its
-// relief.
-function paintLevel(sampler: ReturnType<typeof createMeshSampler>): Uint8Array {
-  const { width, height } = sampler.mesh.domain
-  const rgba = new Uint8Array(TEXTURE_WIDTH * TEXTURE_HEIGHT * 4)
-  const sx = width / TEXTURE_WIDTH
-  const sy = height / TEXTURE_HEIGHT
-  for (let y = 0; y < TEXTURE_HEIGHT; y++) {
-    const wy = (y + 0.5) * sy - 0.5
-    for (let x = 0; x < TEXTURE_WIDTH; x++) {
-      const c = elevationToColor(sampler.heightAt((x + 0.5) * sx - 0.5, wy))
-      const p = (y * TEXTURE_WIDTH + x) * 4
-      rgba[p] = c[0]
-      rgba[p + 1] = c[1]
-      rgba[p + 2] = c[2]
-      rgba[p + 3] = 255
-    }
-  }
-  return rgba
+// A save's field as the painter's grid, or null when the save lacks it.
+async function gridField(world: World, name: string): Promise<GridField | null> {
+  const view = await world.acquire(name)
+  return view ? { data: view.data, resX: view.resX, resY: view.resY } : null
 }
 
 export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   const scene = new Scene(ctx.engine)
-  scene.clearColor = new Color4(1, 1, 1, 1)
+  const query = new URLSearchParams(window.location.search)
 
-  // The finest ground near the focus (tiledSurface.ts), once a level is
-  // shown; set when tiles arrive, so the patch is drawn again.
-  let tiled: TiledSurface | null = null
-  let tilesArrived = false
-  // In the map regime the patch is sized by the view (it is orthographic
-  // at a fixed height there): as wide as the view.
-  const patchAltitude = (): number => (camera.getZoom() > 1 ? camera.getAltitude() : camera.getViewWidth() / PATCH_COVERAGE)
-
-  // The ground in elevation units for a ring of `spacing` (world units):
-  // the finest level its quads carry, wrapped onto the torus.
-  const ringElevation = (u: number, v: number, spacing: number): number => {
-    if (!tiled) return 0
-    const metres = spacing / UNITS_PER_METER
-    const level = metres <= RING_LEVEL3_SPACING_M ? 3 : metres <= RING_LEVEL2_SPACING_M ? 2 : 1
-    return tiled.elevationAtUVUpTo(((u % 1) + 1) % 1, ((v % 1) + 1) % 1, level)
-  }
-
-  // The ground as the innermost ring draws it (its level, the map's
-  // exaggeration), in world units at a world point: what the camera keeps
-  // its height over. Level 1 under the focus alone it was: level 3 stands
-  // kilometres higher in the mountains at ×6, and the camera stayed at its
-  // height and ended up inside them (2026-10-02).
-  const drawnGroundAt = (x: number, z: number): number => {
-    if (!levelSurface) return 0
-    const u = x / MAP_WORLD_WIDTH + 0.5
-    const v = z / MAP_WORLD_HEIGHT + 0.5
-    const spacing = ringSpacingM(camera.getAltitude() / UNITS_PER_METER) * UNITS_PER_METER
-    return Math.max(0, ringElevation(u, v, spacing)) * RELIEF_HEIGHT_SCALE * MAP_EXAGGERATION
-  }
-
-  // The level's surface, once one is shown. The view is built before any
-  // level is there, so the patch starts on a flat stand-in and is handed the
-  // level with setNearDetailSurfaces.
-  let levelSurface: ElevationSurface | null = null
-  const flat: ElevationSurface = { heightAtUV: () => 0 }
+  let ground: ReturnType<typeof createGroundView> | null = null
+  let shown = false
 
   const camera = createGeneratorCamera({
     scene,
@@ -224,77 +120,18 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     tiltStartZoom: 0.1,
     nearModeEnabled: true,
     nearMinAltitude: NEAR_MIN_ALTITUDE_M * UNITS_PER_METER,
+    autoTilt: tiltForViewWidth,
     // The drawn ground under the focus, so that the camera keeps its height
-    // over the terrain, not over the sea. The map plane is centred on the
-    // origin: u = x / width + ½, v = z / height + ½.
+    // over the terrain, not over the sea; and under the camera itself,
+    // which it never sinks below.
     getGroundHeight: () => {
       const focus = camera.getFocus()
-      return drawnGroundAt(focus.x, focus.z)
+      return ground?.drawnHeightAt(focus.x, focus.z) ?? 0
     },
-    // And under the camera itself, which it never sinks below.
-    getGroundHeightAt: (x, z) => drawnGroundAt(x, z),
+    getGroundHeightAt: (x, z) => ground?.drawnHeightAt(x, z) ?? 0,
   })
   // A level is always eroded terrain: the deep zoom and the tilt are open.
   camera.setDeepZoomEnabled(true)
-
-  // Relief at every zoom, unlike the generator, which shows the flat plane
-  // far out to save triangles: this screen is for looking at the terrain,
-  // and the flat plane has no shading yet.
-  //
-  // The map view makes the patch 16 × `getAltitude` across. In the map
-  // regime it is sized by the view, not by the altitude: the camera is
-  // orthographic at a fixed height there, so its altitude does not change
-  // with the zoom. In the near regime (zoom above 1) by the altitude, as
-  // the patch was made for.
-  const mapView = createToroidalMapView({
-    scene,
-    worldWidth: MAP_WORLD_WIDTH,
-    worldHeight: MAP_WORLD_HEIGHT,
-    textureWidth: TEXTURE_WIDTH,
-    textureHeight: TEXTURE_HEIGHT,
-    getFocus: camera.getFocus,
-    getYaw: camera.getYaw,
-    getSunWorldBlend: camera.getNearBlend,
-    reliefDetail: () => (camera.getZoom() > RELIEF_FINE_ZOOM ? 'fine' : 'coarse'),
-    nearDetail: {
-      // The same surface as detail and as base: the patch has nothing
-      // coarser to blend back into at its rim.
-      detailSurface: flat,
-      baseSurface: flat,
-      getActive: () => levelSurface !== null && (camera.getZoom() > 1 || camera.getViewWidth() < MAP_WORLD_WIDTH * PATCH_VIEW_FRACTION),
-      getAltitude: () => patchAltitude(),
-      coverage: PATCH_COVERAGE,
-      subdivisions: PATCH_SUBDIVISIONS,
-      // The patch's colour from its own heights (the finest level there),
-      // not from the map texture's 3.9 km texels.
-      colorAt: (u, v, out) => {
-        const c = elevationToColor(tiled ? tiled.elevationAtUV(u, v) : 0)
-        out[0] = c[0] / 255
-        out[1] = c[1] / 255
-        out[2] = c[2] / 255
-      },
-    },
-    // In the near regime the rings are the ground, each reading the finest
-    // level its spacing carries; the patch stays the map regime's.
-    nearRings: {
-      getActive: () => levelSurface !== null && camera.getZoom() > 1,
-      getSpacing: () => ringSpacingM(camera.getAltitude() / UNITS_PER_METER) * UNITS_PER_METER,
-      quads: RING_QUADS,
-      heightAtUV: (u, v, spacing) => Math.max(0, ringElevation(u, v, spacing)) * RELIEF_HEIGHT_SCALE,
-      colorAtUV: (u, v, spacing, out) => {
-        const c = elevationToColor(ringElevation(u, v, spacing))
-        out[0] = c[0] / 255
-        out[1] = c[1] / 255
-        out[2] = c[2] / 255
-      },
-    },
-    // Shadows in the near regime only (perspective, a patch of tens of
-    // kilometres); further out the patch spans the view and lighting alone
-    // shades it.
-    nearShadows: { sunElevationDeg: SUN_ELEVATION_DEG, getActive: () => camera.getZoom() > 1 },
-  })
-  mapView.setHeightScale(MAP_EXAGGERATION)
-  mapView.setEnabled(false)
 
   const root = document.createElement('div')
   root.className = 'incubator-screen'
@@ -320,20 +157,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const scaleBar = createScaleBar(root, { scene, worldWidth: MAP_WORLD_WIDTH, worldHeight: MAP_WORLD_HEIGHT, metresPerWorldUnit: (METERS_PER_CELL * MAP_WIDTH) / MAP_WORLD_WIDTH })
   scaleBar.element.hidden = true
   scene.onBeforeRenderObservable.add(() => {
-    if (!levelSurface) return
-    // The finest level the patch can show at its spacing: its quads span
-    // PATCH_COVERAGE × the altitude over PATCH_SUBDIVISIONS.
-    if (tiled) {
-      const spacingM = (patchAltitude() * PATCH_COVERAGE) / PATCH_SUBDIVISIONS / UNITS_PER_METER
-      tiled.setLevel(spacingM < TILE_LEVEL3_SPACING_M ? 3 : spacingM < TILE_LEVEL2_SPACING_M ? 2 : 1)
-      if (tilesArrived) {
-        tilesArrived = false
-        mapView.setNearDetailSurfaces(tiled.surface, tiled.surface)
-        // Only the rings that read tiles; the rest read level 1.
-        mapView.refreshNearRings(RING_LEVEL2_SPACING_M * UNITS_PER_METER)
-      }
-    }
+    if (!shown || !ground) return
     const focus = camera.getFocus()
+    const viewWidth = camera.getViewWidth()
+    ground.update(focus.x, focus.z, viewWidth / ctx.engine.getRenderWidth(), viewWidth < SHADOWS_BELOW_VIEW_WIDTH && query.get('shadows') !== '0', {
+      altitude: camera.getZoom() > 1 ? camera.getAltitude() : 0,
+      eye: camera.camera.position,
+      farPlane: camera.camera.maxZ,
+    })
     scaleBar.update(`${focus.x.toFixed(3)},${focus.z.toFixed(3)},${camera.getZoom().toFixed(4)},${camera.getYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`)
   })
 
@@ -371,33 +202,28 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       return false
     }
     step(`level read, ${read.artifact.count} nodes`)
-    if (disposed) return false
-    const mesh = meshLevelMesh(read.artifact, world.width, world.height)
-    step('mesh decoded')
-    const sampler = createMeshSampler(mesh, read.artifact.z)
-    step('sampler built')
-    const rgba = paintLevel(sampler)
-    step('texture painted')
-    if (disposed) return false
-    mapView.texture.update(rgba)
-    mapView.reliefTexture.update(rgba)
-    const surface = createMeshSurface(sampler, RELIEF_HEIGHT_SCALE)
-    levelSurface = surface
-    mapView.setReliefSurfaces(surface, surface)
     // The tiles of levels 2 and 3 the server holds for this terrain.
     const versions = new Map<string, string>()
     for (const a of (await listServerArtifacts())?.artifacts ?? []) {
       if (a.worldUid === uid && a.worldId === chosen.worldId && parseStage(a.stage)?.tile) versions.set(a.stage, a.pipelineVersion)
     }
     step(`${versions.size} tiles listed`)
+    const fields = {
+      biome: await gridField(world, 'biome'),
+      elevation: await gridField(world, 'elevation'),
+      temperature: await gridField(world, 'temperature'),
+      precipitation: await gridField(world, 'precipitationEffective'),
+      lakeDepth: await gridField(world, 'lakeDepth'),
+    }
     if (disposed) return false
-    tiled = createTiledSurface({
-      store, worldUid: uid, worldId: chosen.worldId, width: world.width, height: world.height, base: sampler, versions,
-      heightScale: RELIEF_HEIGHT_SCALE, onLoaded: () => { tilesArrived = true },
-    })
-    mapView.setNearDetailSurfaces(tiled.surface, tiled.surface)
-    mapView.setEnabled(true)
-    step('shown')
+    if (!ground) ground = createGroundView({ scene, store })
+    if (query.get('rings') === '1') ground.setTinted(true)
+    if (query.get('detail')) ground.setDetailStrength(Number(query.get('detail')))
+    await ground.setWorld({ worldUid: uid, worldId: chosen.worldId, width: world.width, height: world.height, level: read.artifact, versions, fields })
+    step('ground ready')
+    if (disposed) return false
+    shown = true
+    scaleBar.element.hidden = false
     return true
   }
 
@@ -432,6 +258,40 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   sidebar.setVisible(false)
   worldChooser.open()
 
+  // DEBUG: `?screen=incubator&world=<uid>&view=x,z,zoom[,yaw,tilt]` opens a
+  // server world and puts the camera at a view, so a screenshot ladder
+  // shows the same places every time. `data-ready` on the root says the
+  // level is shown. Not a user surface: no text, no keys.
+  const debug = { errors: [] as string[], ground: () => ground?.stats() ?? null, scene }
+  ;(window as unknown as { __incubator?: unknown }).__incubator = debug
+  window.addEventListener('error', (e) => debug.errors.push(String(e.message)))
+  window.addEventListener('unhandledrejection', (e) => debug.errors.push(String(e.reason)))
+  // Babylon reports a shader that fails to compile on the console only.
+  const consoleError = console.error.bind(console)
+  console.error = (...args: unknown[]): void => {
+    debug.errors.push(args.map(String).join(' ').slice(0, 300))
+    consoleError(...args)
+  }
+  const worldParam = query.get('world')
+  const viewParam = query.get('view')
+  if (worldParam) {
+    void (async () => {
+      levels = await levelArtifacts()
+      const archive = await fetchWorld(worldParam)
+      if (!archive || disposed) return
+      if (!(await showLevel(archive, worldParam))) return
+      worldChooser.close()
+      sidebar.setVisible(true)
+      root.dataset.ready = '1'
+    })()
+  }
+  if (viewParam) {
+    const [x, z, zoom, yaw, tilt] = viewParam.split(',').map(Number)
+    if ([x, z, zoom].every(Number.isFinite)) {
+      camera.setView({ x, z, zoom, yaw: Number.isFinite(yaw) ? yaw : undefined, tilt: Number.isFinite(tilt) ? (tilt * Math.PI) / 180 : undefined })
+    }
+  }
+
   ctx.overlay.appendChild(root)
 
   const helpTooltip = createHelpTooltip(root)
@@ -445,7 +305,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       titleBar.dispose()
       helpTooltip.dispose()
       serverIndicator.dispose()
-      mapView.dispose()
+      ground?.dispose()
       // scene.dispose() does not remove the camera's own listeners on the
       // shared canvas (see the generator's dispose).
       camera.dispose()
