@@ -236,7 +236,7 @@ func New(cfg Config) (*Module, error) {
 			return nil, err
 		}
 		if local, ok := runner.(*localRunner); ok && cfg.RelayURL != "" {
-			m.pool = startWorkerPool(local.bakerPath, cfg.RelayURL, workers, nodeHeapMB)
+			m.pool = startWorkerPool(local.bakerPath, cfg.RelayURL, workers, nodeHeapMB, cfg.Tokens)
 		}
 		slog.Info("jobs ready", "coordinator", cfg.StorageDir, "workers", workers, "checks identity", cfg.Identity.ChecksIdentity())
 		return m, nil

@@ -11,6 +11,8 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
+	busrelay "github.com/DebakelOrakel/casas-eternas/internal/relay"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 func relayConfig(dir, listen string) Config {
@@ -109,5 +111,94 @@ func TestRelaySaysItsPortIsTaken(t *testing.T) {
 	_, err = New(relayConfig(t.TempDir(), held.Addr().String()))
 	if err == nil || !strings.Contains(err.Error(), "relay.listen") {
 		t.Errorf("err = %v, want a relay.listen error", err)
+	}
+}
+
+// With tokens the bus admits only this server's bus tokens: a module may do
+// anything, a worker only what its grant allows, and no token, a session's
+// token or a bus token for an ungranted subject gets in at all.
+func TestRelayChecksTokens(t *testing.T) {
+	tokens, err := token.NewTokens([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := relayConfig(t.TempDir(), "127.0.0.1:-1")
+	cfg.Tokens = tokens
+	cfg.Grants = map[string]busrelay.Grant{token.SubjectWorker: {Publish: []string{"jobs.done.>"}, Subscribe: []string{"_INBOX.>"}}}
+	m, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	relayToken := func(subject string) string {
+		raw, _, err := tokens.IssueRelay(subject, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	session, _, err := tokens.IssueSession("u1", false, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, raw := range map[string]string{"no token": "", "a session token": session, "an ungranted subject": relayToken("stranger")} {
+		if conn, err := nats.Connect(m.URL(), nats.Token(raw)); err == nil {
+			conn.Close()
+			t.Errorf("%s: connected", name)
+		}
+	}
+
+	// A refused publish is reported asynchronously, as a permissions error.
+	denied := make(chan error, 1)
+	worker, err := nats.Connect(m.URL(), nats.Token(relayToken(token.SubjectWorker)), nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+		denied <- err
+	}))
+	if err != nil {
+		t.Fatalf("a worker: %v", err)
+	}
+	defer worker.Close()
+	module, err := nats.Connect(m.URL(), nats.Token(relayToken(token.ModuleSubject("jobs"))))
+	if err != nil {
+		t.Fatalf("a module: %v", err)
+	}
+	defer module.Close()
+
+	got := make(chan string, 4)
+	if _, err := module.Subscribe(">", func(msg *nats.Msg) { got <- msg.Subject }); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.Publish("jobs.done.t1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.Publish("world.secret", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case subject := <-got:
+		if subject != "jobs.done.t1" {
+			t.Errorf("the module heard %q first, want jobs.done.t1", subject)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the worker's granted publish never arrived")
+	}
+	select {
+	case err := <-denied:
+		if !strings.Contains(strings.ToLower(err.Error()), "permission") {
+			t.Errorf("the refused publish: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("the worker's ungranted publish was not refused")
+	}
+	select {
+	case subject := <-got:
+		t.Errorf("the module heard %q, which the worker may not publish", subject)
+	case <-time.After(200 * time.Millisecond):
 	}
 }

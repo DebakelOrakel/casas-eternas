@@ -195,7 +195,7 @@
         {
           "name": "relay.listen",
           "default": "127.0.0.1:4222",
-          "usage": "Address the relay accepts worker connections on, as host:port. The default keeps it on this machine: there are no worker credentials yet.",
+          "usage": "Address the relay accepts worker connections on, as host:port. The default keeps it on this machine. Where global.auth.mode checks identity, the relay admits only this server's own tokens, so it may listen beyond the machine; in mode none it checks nobody.",
           "env": "CASAS_RELAY_LISTEN"
         },
         {
@@ -385,7 +385,7 @@
       "key": "relay.listen",
       "env": "CASAS_RELAY_LISTEN",
       "default": "127.0.0.1:4222",
-      "usage": "Address the relay accepts worker connections on, as host:port. The default keeps it on this machine: there are no worker credentials yet.",
+      "usage": "Address the relay accepts worker connections on, as host:port. The default keeps it on this machine. Where global.auth.mode checks identity, the relay admits only this server's own tokens, so it may listen beyond the machine; in mode none it checks nobody.",
       "command": "casas-eternas start"
     },
     {

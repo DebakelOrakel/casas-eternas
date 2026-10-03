@@ -54,7 +54,31 @@ const (
 	// is in its spec anyway. Keying the audience by artifact would have meant
 	// the token could not identify which job was talking.
 	AudienceJobPrefix = "job:"
+	// AudienceRelay is a connection to the message bus (internal/modules/
+	// relay): a module's or a worker's. Its own audience so neither a
+	// session nor a job's token opens the bus, and a bus token opens no
+	// HTTP route.
+	AudienceRelay = "relay"
 )
+
+// SubjectWorker is who a job worker is on the bus. A worker serves every
+// job, so its token names no job and no world; what it may touch over HTTP
+// comes with each task, as that job's own token.
+const SubjectWorker = "worker"
+
+// ModuleSubject is who a module is on the bus: `module:<name>`.
+func ModuleSubject(module string) string { return "module:" + module }
+
+// IssueRelay mints a bus credential for `subject` (SubjectWorker or a
+// ModuleSubject).
+func (t *Tokens) IssueRelay(subject string, ttl time.Duration) (string, time.Time, error) {
+	return t.Issue(subject, AudienceRelay, ttl)
+}
+
+// VerifyRelay is Verify for the bus's audience.
+func (t *Tokens) VerifyRelay(raw string) (string, error) {
+	return t.Verify(raw, AudienceRelay)
+}
 
 // SubjectJob is who a bake Job is, as a caller.
 //

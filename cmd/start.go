@@ -108,17 +108,23 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 			relayModule.Close()
 		}
 	}()
+	caller, tokens, err := buildIdentity(authMode, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// After the identity: in a mode that checks it, the bus admits only this
+	// server's tokens, and a worker only to what the jobs module grants it.
 	if targets.Has(config.TargetRelay) {
-		relayModule, err = relaymodule.New(relaymodule.Config{All: cfg})
+		relayModule, err = relaymodule.New(relaymodule.Config{
+			All:    cfg,
+			Tokens: tokens,
+			Grants: map[string]relay.Grant{token.SubjectWorker: jobs.WorkerGrant()},
+		})
 		if err != nil {
 			return nil, nil, err
 		}
 		modules = append(modules, relayModule)
-	}
-
-	caller, tokens, err := buildIdentity(authMode, cfg)
-	if err != nil {
-		return nil, nil, err
 	}
 
 	// The client is told where to log in only when something is listening
@@ -221,7 +227,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 			return nil, nil, err
 		}
 		bcfg.StorageDir = cfg.Jobs.Storage.DirPath()
-		bcfg.Relay, err = relay.Connect("jobs", server, cfg.Global.Services.Relay)
+		bcfg.Relay, err = relay.Connect("jobs", server, cfg.Global.Services.Relay, relayToken(tokens, "jobs"))
 		if err != nil {
 			return nil, nil, fmt.Errorf("jobs: %w (run -t relay in this process or set global.services.relay)", err)
 		}
@@ -250,6 +256,25 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 // own: co-resident store when the target is selected here, HTTP against the
 // configured peer service when it is not. This is the composition that makes
 // "a target must be able to run alone" true for bake.
+// relayToken is a module's bus credential, minted afresh at every
+// (re)connect; nil where nothing checks identity, so the bus does not
+// either.
+func relayToken(tokens *token.Tokens, module string) func() string {
+	if tokens == nil {
+		return nil
+	}
+	return func() string {
+		// An hour is plenty: the bus checks a token only when a connection
+		// is made, and each reconnect asks for a new one.
+		raw, _, err := tokens.IssueRelay(token.ModuleSubject(module), time.Hour)
+		if err != nil {
+			slog.Error("relay: no token for the module", "module", module, "err", err)
+			return ""
+		}
+		return raw
+	}
+}
+
 func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Module, rankWorld func(context.Context, string, string) (bool, access.Level), caller *identity.Resolver, tokens *token.Tokens) (jobs.Config, error) {
 	inCluster := jobs.InCluster()
 	selfURL := serverBaseURL(cfg.Global.Listen)

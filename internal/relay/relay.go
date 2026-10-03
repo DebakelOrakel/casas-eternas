@@ -21,6 +21,14 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
+// Grant is what one kind of bus client may do: the subjects it may publish
+// to and subscribe to (NATS wildcards). A module grants it for the clients
+// it serves — jobs for its workers — so the bus itself names no subject.
+type Grant struct {
+	Publish   []string
+	Subscribe []string
+}
+
 // Conn is one module's connection to the bus.
 type Conn struct {
 	module string
@@ -32,7 +40,11 @@ type Conn struct {
 // process, or an external NATS cluster), else in the process through
 // `server` (the co-resident relay). Neither is a composition error worth
 // naming at startup.
-func Connect(module string, server *natsserver.Server, url string) (*Conn, error) {
+//
+// `token` gives the connection's credential, asked again at every
+// (re)connect so a reconnect after hours never presents an expired one;
+// nil where the bus checks nobody.
+func Connect(module string, server *natsserver.Server, url string, token func() string) (*Conn, error) {
 	if module == "" || strings.ContainsAny(module, ".*> ") {
 		return nil, fmt.Errorf("relay: %q is not a module name", module)
 	}
@@ -40,14 +52,17 @@ func Connect(module string, server *natsserver.Server, url string) (*Conn, error
 		nc  *nats.Conn
 		err error
 	)
-	name := nats.Name("casas-" + module)
+	options := []nats.Option{nats.Name("casas-" + module)}
+	if token != nil {
+		options = append(options, nats.TokenHandler(token))
+	}
 	switch {
 	case url != "":
 		// A relay restarting under a running module is a pause, not an end:
 		// reconnect without limit.
-		nc, err = nats.Connect(url, name, nats.MaxReconnects(-1), nats.ReconnectWait(time.Second))
+		nc, err = nats.Connect(url, append(options, nats.MaxReconnects(-1), nats.ReconnectWait(time.Second))...)
 	case server != nil:
-		nc, err = nats.Connect("", name, nats.InProcessServer(server))
+		nc, err = nats.Connect("", append(options, nats.InProcessServer(server))...)
 	default:
 		return nil, errors.New("relay: none in this process and global.services.relay is not set")
 	}

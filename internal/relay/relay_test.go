@@ -29,20 +29,20 @@ func testServer(t *testing.T) *natsserver.Server {
 
 func TestConnectInProcessAndByURL(t *testing.T) {
 	server := testServer(t)
-	inProcess, err := Connect("jobs", server, "")
+	inProcess, err := Connect("jobs", server, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer inProcess.Close()
-	byURL, err := Connect("jobs", nil, server.ClientURL())
+	byURL, err := Connect("jobs", nil, server.ClientURL(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer byURL.Close()
-	if _, err := Connect("jobs", nil, ""); err == nil {
+	if _, err := Connect("jobs", nil, "", nil); err == nil {
 		t.Error("connected without a relay")
 	}
-	if _, err := Connect("jobs.task", server, ""); err == nil {
+	if _, err := Connect("jobs.task", server, "", nil); err == nil {
 		t.Error("a module name with a dot was taken")
 	}
 }
@@ -50,7 +50,7 @@ func TestConnectInProcessAndByURL(t *testing.T) {
 // A module's subjects and streams carry its name, and the connection refuses
 // to declare anything in another module's namespace.
 func TestTheNamespaceIsTheModules(t *testing.T) {
-	conn, err := Connect("jobs", testServer(t), "")
+	conn, err := Connect("jobs", testServer(t), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

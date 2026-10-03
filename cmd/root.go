@@ -86,7 +86,7 @@ const (
 	textJobsMax    = `How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.`
 	textJobsPath   = `The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.`
 	textRelayPath  = `The directory of the relay's message store (JetStream).`
-	textRelayAddr  = `Address the relay accepts worker connections on, as host:port. The default keeps it on this machine: there are no worker credentials yet.`
+	textRelayAddr  = `Address the relay accepts worker connections on, as host:port. The default keeps it on this machine. Where global.auth.mode checks identity, the relay admits only this server's own tokens, so it may listen beyond the machine; in mode none it checks nobody.`
 )
 
 // RootCmd represents the base command when called without any subcommands

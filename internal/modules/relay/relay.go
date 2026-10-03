@@ -12,6 +12,16 @@
 // that owns it (`jobs.task.…`); the module declares its streams through
 // internal/relay. Named for the role, not the technology: it will carry more
 // than jobs.
+//
+// WHO MAY CONNECT (docs/decisions/detail-ladder.md, fork 9, "Access"): in a
+// mode that checks identity, a client presents a token of this server's
+// own, minted with the shared key for the bus's audience — the same tokens
+// as everywhere, no second set of passwords. A module (`module:<name>`) may
+// do anything; a worker may do what the module serving it grants
+// (`Grants`), nothing else. The check runs in this process through the
+// embedded server's custom authentication, which is what NATS's auth
+// callout is for a server that is not embedded. Where nothing checks
+// identity, the bus checks nobody either, as before.
 package relay
 
 import (
@@ -21,11 +31,14 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
+	busrelay "github.com/DebakelOrakel/casas-eternas/internal/relay"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 // Config carries the full configuration tree (every module holds it whole —
@@ -33,6 +46,14 @@ import (
 // (`relay.*`), nothing else.
 type Config struct {
 	All config.Config
+	// The issuer/verifier over the shared key; nil where identity is not
+	// checked, which leaves the bus open (loopback, as `relay.listen`
+	// defaults to).
+	Tokens *token.Tokens
+	// What each non-module subject may do on the bus, by token subject
+	// (token.SubjectWorker → the jobs module's worker grant). Composed in
+	// cmd/, so the bus names no module's subjects.
+	Grants map[string]busrelay.Grant
 }
 
 // Module is the running bus.
@@ -87,6 +108,9 @@ func New(cfg Config) (*Module, error) {
 		NoSigs: true,
 		NoLog:  true,
 	}
+	if cfg.Tokens != nil {
+		opts.CustomClientAuthentication = tokenAuth{tokens: cfg.Tokens, grants: cfg.Grants}
+	}
 	server, err := natsserver.NewServer(opts)
 	if err != nil {
 		return nil, fmt.Errorf("relay: %w", err)
@@ -96,8 +120,43 @@ func New(cfg Config) (*Module, error) {
 		server.Shutdown()
 		return nil, errors.New("relay: the server did not accept connections in time")
 	}
-	slog.Info("relay ready", "listen", server.ClientURL(), "store", section.Storage.DirPath())
+	slog.Info("relay ready", "listen", server.ClientURL(), "store", section.Storage.DirPath(), "checks tokens", cfg.Tokens != nil)
 	return &Module{server: server, listen: server.ClientURL()}, nil
+}
+
+// tokenAuth admits a client by the token it presents (see the package
+// comment).
+type tokenAuth struct {
+	tokens *token.Tokens
+	grants map[string]busrelay.Grant
+}
+
+// Check verifies the connection's token and gives the client its rights: a
+// module all of them, a granted subject its grant, anyone else none — a
+// valid bus token for a subject nobody granted is refused, not let in
+// with nothing to do.
+func (a tokenAuth) Check(c natsserver.ClientAuthentication) bool {
+	opts := c.GetOpts()
+	if opts == nil {
+		return false
+	}
+	subject, err := a.tokens.VerifyRelay(opts.Token)
+	if err != nil {
+		return false
+	}
+	user := &natsserver.User{Username: subject}
+	if !strings.HasPrefix(subject, token.ModuleSubject("")) {
+		grant, ok := a.grants[subject]
+		if !ok {
+			return false
+		}
+		user.Permissions = &natsserver.Permissions{
+			Publish:   &natsserver.SubjectPermission{Allow: grant.Publish},
+			Subscribe: &natsserver.SubjectPermission{Allow: grant.Subscribe},
+		}
+	}
+	c.RegisterUser(user)
+	return true
 }
 
 // Name identifies the module in logs and errors.

@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 // The LOCAL WORKERS (docs/decisions/detail-ladder.md, "Workers"): long-lived
@@ -32,7 +35,16 @@ const (
 	workerRestartPause = 3 * time.Second
 	// How long a worker may take to finish after it was asked to stop.
 	workerStopGrace = 10 * time.Second
+	// How long a local worker's bus token holds. Minted at every start of
+	// the worker, so this bounds only how long one worker may run without a
+	// restart before a reconnect is refused — far beyond any job.
+	workerTokenTTL = 30 * 24 * time.Hour
 )
+
+// workerTokenEnv carries a worker's bus token into the process: in its
+// environment, not its argv, where any `ps` would show it. Not a CASAS_*
+// name, which is the server's configuration namespace.
+const workerTokenEnv = "RELAY_TOKEN"
 
 type workerPool struct {
 	cancel context.CancelFunc
@@ -40,7 +52,9 @@ type workerPool struct {
 }
 
 // startWorkerPool starts `count` serving workers on the relay at `relayURL`.
-func startWorkerPool(workerPath, relayURL string, count, maxHeapMB int) *workerPool {
+// With `tokens` (a mode that checks identity, so the relay does) each
+// worker is started with a bus token of its own.
+func startWorkerPool(workerPath, relayURL string, count, maxHeapMB int, tokens *token.Tokens) *workerPool {
 	ctx, cancel := context.WithCancel(context.Background())
 	pool := &workerPool{cancel: cancel}
 	config, _ := json.Marshal(serveConfig{Relay: relayURL, Pools: []string{poolLevel, poolTile}})
@@ -49,7 +63,7 @@ func startWorkerPool(workerPath, relayURL string, count, maxHeapMB int) *workerP
 		go func() {
 			defer pool.done.Done()
 			for ctx.Err() == nil {
-				runWorker(ctx, i, workerPath, string(config), maxHeapMB)
+				runWorker(ctx, i, workerPath, string(config), maxHeapMB, tokens)
 				select {
 				case <-ctx.Done():
 				case <-time.After(workerRestartPause):
@@ -62,8 +76,16 @@ func startWorkerPool(workerPath, relayURL string, count, maxHeapMB int) *workerP
 }
 
 // runWorker runs one worker until it exits or the pool stops.
-func runWorker(ctx context.Context, index int, workerPath, config string, maxHeapMB int) {
+func runWorker(ctx context.Context, index int, workerPath, config string, maxHeapMB int, tokens *token.Tokens) {
 	cmd := exec.Command("node", "--max-old-space-size="+strconv.Itoa(maxHeapMB), workerPath, "--serve", config)
+	if tokens != nil {
+		busToken, _, err := tokens.IssueRelay(token.SubjectWorker, workerTokenTTL)
+		if err != nil {
+			slog.Error("job worker: no bus token", "worker", index, "err", err)
+			return
+		}
+		cmd.Env = append(os.Environ(), workerTokenEnv+"="+busToken)
+	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		slog.Error("job worker", "worker", index, "err", err)

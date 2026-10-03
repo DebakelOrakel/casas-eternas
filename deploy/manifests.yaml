@@ -153,9 +153,20 @@ spec:
             # credential. /tmp is the pod's emptyDir below.
             - name: CASAS_GLOBAL_ADMIN_SOCKET
               value: /tmp/admin.sock
+            # The relay (NATS) on every interface, for the job workers in
+            # their own pods. Safe to open because this is an authenticated
+            # server: the relay then admits only this server's own tokens — a
+            # worker's limited to the jobs it serves (internal/modules/relay).
+            # Never set this on a server in mode `none`: its relay checks
+            # nobody.
+            - name: CASAS_RELAY_LISTEN
+              value: 0.0.0.0:4222
           ports:
             - name: http
               containerPort: 8080
+              protocol: TCP
+            - name: relay
+              containerPort: 4222
               protocol: TCP
           # /v1/capabilities rather than "/": it answers only once the modules
           # are mounted, so readiness means "can actually serve", not "has a
@@ -240,6 +251,13 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+      protocol: TCP
+    # The relay, for the job workers: nats://casas-eternas:4222 inside the
+    # namespace. Not on the Route — workers are in the cluster, nobody else
+    # speaks NATS to this server.
+    - name: relay
+      port: 4222
+      targetPort: relay
       protocol: TCP
 ---
 apiVersion: route.openshift.io/v1

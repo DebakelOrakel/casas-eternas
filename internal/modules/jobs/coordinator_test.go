@@ -31,7 +31,7 @@ func coordinatorRelay(t *testing.T) (*natsserver.Server, *relay.Conn) {
 		server.Shutdown()
 		server.WaitForShutdown()
 	})
-	conn, err := relay.Connect("jobs", server, "")
+	conn, err := relay.Connect("jobs", server, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func plainSpec(_ context.Context, _ string, request Request) (Spec, error) {
 // to reuse; `order` (when not nil) gets each task's stage name as computed.
 func fakeWorker(t *testing.T, server *natsserver.Server, failTile bool) (stop func(), computed, reused *atomic.Int32) {
 	t.Helper()
-	conn, err := relay.Connect("jobs", server, "")
+	conn, err := relay.Connect("jobs", server, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

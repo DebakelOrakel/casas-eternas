@@ -1,9 +1,10 @@
 ---
 summary: The detail ladder after the first tile jobs — five levels a factor of 4 apart in spacing (budget 4, 1, 1/4, 1/16, 1/64); level 1 replays the whole history at its own density instead of refining the end state; levels 2 and 3 are tile jobs ahead of time, level 4 near the camera only; a coordinator plans the tiles as a graph and hands them out over NATS from the start; the tile pick goes.
 date: 2026-10-01
+updated: 2026-10-03
 area: generator
 stage: decided
-status: decided 2026-10-01 — the ladder's five budgets (fork 1), level 1 as a replay of the whole history (fork 2), the coordinator with its graph and NATS from the start and the tile pick removed (fork 4). Also decided 2026-10-01: the tile sizes (fork 3), the seams (fork 5), the inflow through the coordinator (fork 6), the rain to be measured then built (fork 7), and the bus as its own target `relay` (fork 8). and the workers and the relay's subjects (fork 9). Built 2026-10-01: the relay, the coordinator and its workers, and the client's refine plan (build order step 3); level 1 by replay (step 4); the tile jobs it starts from are built too (decisions/tile-jobs.md). The exploration behind it is design/tile-coordinator.md.
+status: decided 2026-10-01 — the ladder's five budgets (fork 1), level 1 as a replay of the whole history (fork 2), the coordinator with its graph and NATS from the start and the tile pick removed (fork 4). Also decided 2026-10-01: the tile sizes (fork 3), the seams (fork 5), the inflow through the coordinator (fork 6), the rain to be measured then built (fork 7), and the bus as its own target `relay` (fork 8). and the workers and the relay's subjects (fork 9). Built 2026-10-01: the relay, the coordinator and its workers, and the client's refine plan (build order step 3); level 1 by replay (step 4); the tile jobs it starts from are built too (decisions/tile-jobs.md). The exploration behind it is design/tile-coordinator.md. ADDENDUM 2026-10-03: in a cluster the jobs module scales the worker Deployment itself (replacing KEDA); the relay checks this server's own tokens (BUILT).
 ---
 
 # The detail ladder
@@ -544,3 +545,48 @@ Each step ends with its measurement; the next starts on its result.
    in flow order through the graph.
 6. **The rain downscaling** in the L1–L3 jobs, if step 1 says it pays.
 7. **L4 on demand** near the camera (the incubator first).
+
+
+## Addendum 2026-10-03: workers in a cluster
+
+**Scaling: the jobs module, not KEDA.** The worker Deployment ships with
+`replicas: 0` and a label the coordinator finds it by. The coordinator
+scales it up when tasks wait and back to zero when every job is through —
+no scaling down while any job runs, so no pod is ever stopped in the
+middle of a task, and no busy/idle bookkeeping per pod is needed. Upper
+bound: `jobs.max-concurrent`, the same key that counts the local workers.
+Why not KEDA: the coordinator knows the plan, not only a queue length; it
+needs no operator installed by a cluster admin; and the jobs target stays
+able to run alone. Needed: `get`/`patch` on `deployments/scale` in the
+namespace's Role. NOT BUILT yet — steps 2 and 3 below.
+
+**Access: BUILT the same day.** In a mode that checks identity the relay
+admits only tokens of this server, minted with the shared key for the
+bus's own audience (`token.AudienceRelay`), checked in the process through
+the embedded NATS server's custom authentication — what the auth callout
+is for a server that is not embedded; no NKeys, no accounts, no second
+set of credentials.
+
+- A module connects as `module:<name>` and may do anything. Its token is
+  minted afresh at every (re)connect.
+- A worker connects as `worker` and may do what the jobs module grants
+  (`jobs.WorkerGrant`): pull from the task stream through the shared
+  consumer, acknowledge, report on `jobs.done.*` and `jobs.event.*`, hear
+  `jobs.cancel.*`. It may not manage a stream or read other subjects. The
+  grant is composed in `cmd/`, so the relay names no module's subjects.
+- A worker's HTTP access is unchanged: each task carries its job's own
+  token, narrowed to its world.
+- Locally, the jobs module gives each worker it starts a token in its
+  environment (`RELAY_TOKEN`), never on its command line.
+- In mode `none` the relay checks nobody, as before; it must then stay on
+  loopback.
+
+The deployment listens on `0.0.0.0:4222`, exposed as port `relay` of the
+`casas-eternas` Service (not on the Route); the image now passes the relay's
+and the jobs module's storage under `/data`, which `-t all` needed since
+the relay arrived and the read-only root file system refused.
+
+**Order from here**: (2) the worker Deployment, `replicas: 0`, labelled,
+reading its token from a Secret; (3) the scaling loop in the jobs module,
+which also keeps that Secret's token fresh; (4) the Kubernetes Job runner
+and `job.yaml` go, and a cluster runs the coordinator as a machine does.

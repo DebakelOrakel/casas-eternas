@@ -807,7 +807,11 @@ const TASK_HEARTBEAT_MS = 30_000
 const TASK_MAX_DELIVER = 5
 
 async function serve(config: ServeConfig): Promise<void> {
-  const nc = await connect({ servers: config.relay, name: 'casas-job-worker', maxReconnectAttempts: -1 })
+  // The bus token, where the bus checks identity (internal/modules/relay):
+  // from the environment, never the argv, where `ps` would show it. The jobs
+  // module sets it for its local workers (workerpool.go).
+  const token = process.env.RELAY_TOKEN || undefined
+  const nc = await connect({ servers: config.relay, name: 'casas-job-worker', maxReconnectAttempts: -1, token })
   const consumerConfig = {
     durable_name: TASK_CONSUMER,
     ack_policy: AckPolicy.Explicit,

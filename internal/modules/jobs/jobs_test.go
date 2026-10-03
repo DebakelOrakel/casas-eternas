@@ -755,7 +755,7 @@ func TestJobsDeclaresItsStreams(t *testing.T) {
 		server.Shutdown()
 		server.WaitForShutdown()
 	}()
-	conn, err := relay.Connect("jobs", server, "")
+	conn, err := relay.Connect("jobs", server, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

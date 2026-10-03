@@ -59,3 +59,35 @@ func declareStreams(ctx context.Context, conn *relay.Conn) error {
 	}
 	return nil
 }
+
+// WorkerGrant is what a job worker may do on the bus (internal/modules/relay
+// gives it to a token with subject token.SubjectWorker): take tasks from
+// TASKS through its consumer and acknowledge them, report on its task's
+// `done` and its job's `event`, and hear `cancel`. Nothing that reads
+// another module's subjects or manages a stream. Mirrors what
+// client/scripts/jobWorker.ts's `serve` does; a worker asking for more is
+// refused by the bus, which is the point.
+func WorkerGrant() relay.Grant {
+	const tasks = "JOBS_TASKS"
+	return relay.Grant{
+		Publish: []string{
+			"jobs.done.>",
+			"jobs.event.>",
+			// The JetStream API calls of a pull consumer on TASKS: the
+			// account check, creating or updating the shared consumer,
+			// reading it, pulling the next task.
+			"$JS.API.INFO",
+			"$JS.API.CONSUMER.CREATE." + tasks + ".>",
+			"$JS.API.CONSUMER.DURABLE.CREATE." + tasks + ".>",
+			"$JS.API.CONSUMER.INFO." + tasks + ".>",
+			"$JS.API.CONSUMER.MSG.NEXT." + tasks + ".>",
+			// Acknowledgements and "still working" go to the task's reply.
+			"$JS.ACK." + tasks + ".>",
+		},
+		Subscribe: []string{
+			"jobs.cancel.>",
+			// Replies: the JetStream API's answers and the pulled tasks.
+			"_INBOX.>",
+		},
+	}
+}
