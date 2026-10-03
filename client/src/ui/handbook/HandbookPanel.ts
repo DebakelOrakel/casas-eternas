@@ -207,6 +207,8 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
     shown = page.anchor
     paintPage(page)
     paintNav()
+    // The list scrolls in its own box; keep the page shown in view there.
+    nav.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView({ block: 'nearest' })
     pageBox.scrollTop = 0
     if (anchor === page.anchor) return
     const target = [...pageBox.querySelectorAll<HTMLElement>('[id]')].find((element) => element.id === anchor)

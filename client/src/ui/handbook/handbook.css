@@ -96,7 +96,8 @@
   flex-direction: column;
   gap: 2px;
   flex-shrink: 0;
-  max-height: 190px;
+  /* Room for every step's page; a search with more hits scrolls. */
+  max-height: 280px;
   overflow-y: auto;
   padding: 0 12px 10px;
   border-bottom: 1px solid var(--dc-line);
