@@ -41,6 +41,11 @@ export interface GroundSource {
   seaTemperatureAt(x: number, y: number): number
   precipitationAt(x: number, y: number): number
   lakeDepthAt(x: number, y: number): number
+  // The water level (elevation units) a point's water stands at — the
+  // sea's 0, a basin's own — and the surface kind there (0 the sea, 1 a
+  // lake, 2 ice), nearest world cell, the basin's rim included.
+  waterLevelAt(x: number, y: number): number
+  waterSurfaceAt(x: number, y: number): number
 }
 
 export interface RingPaintRequest {
@@ -115,7 +120,6 @@ const SAND: Rgb = [214, 198, 154]
 const SEA_SHALLOW: Rgb = [96, 172, 190]
 const SEA_DEEP: Rgb = [22, 62, 124]
 const SEA_ABYSS: Rgb = [12, 38, 92]
-const LAKE: Rgb = [66, 128, 156]
 
 // Drawn slope (rise over run) where the cover gives way to rock, and where
 // the rock is bare.
@@ -135,6 +139,12 @@ const LAPSE_C_PER_M = 6.5 / 1000
 const SAND_HEIGHT_M = 10
 const SEA_DEEP_M = 500
 const SEA_ABYSS_M = 3000
+// The sea floor's drawn depth (elevation units): 10 m under its plane.
+const SEA_FLOOR_SINK = -10 / 9000
+// A lake's colour depths (m): a lake is clearer than the sea.
+const LAKE_SHALLOW: Rgb = [112, 176, 184]
+const LAKE_DEEP: Rgb = [38, 86, 128]
+const LAKE_DEEP_M = 120
 // The cavity term: curvature (metres per metre, from the texel stencil)
 // times this, clamped.
 const CAVITY_GAIN = 1.2
@@ -338,7 +348,15 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       }
     }
   }
-  for (let k = 0; k < heights.length; k++) if (heights[k] < 0) heights[k] = 0
+  // The sea floor is drawn flat, a little under the sea's plane (so the
+  // two never fight); a lake keeps its floor, which its water's
+  // translucency shows (groundWater.ts).
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const k = j * n + i
+      if (heights[k] < SEA_FLOOR_SINK && source.waterSurfaceAt(x0 + i * spacing, y0 + j * spacing) === 0) heights[k] = SEA_FLOOR_SINK
+    }
+  }
 
   // --- the texel grid: heights and the data's normals -------------------
   const m = texels + 2
@@ -483,11 +501,11 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       const p = (tj * texels + ti) * 4
 
       // The normal of the DRAWN surface: the data's interpolated slope
-      // plus the detail's; the sea is flat.
+      // plus the detail's; the sea floor is flat.
       let nx = 0
       let ny = 1
       let nz = 0
-      if (h > 0) {
+      if (h > SEA_FLOOR_SINK * source.elevationMeters || source.waterSurfaceAt(x, y) !== 0) {
         const dhdx = slopeX[c] + ((detail[c + 1] - detail[c - 1]) * verticalScale) / (2 * pitchM)
         const dhdz = slopeZ[c] + ((detail[c + m] - detail[c - m]) * verticalScale) / (2 * pitchM)
         const inv = 1 / Math.sqrt(dhdx * dhdx + 1 + dhdz * dhdz)
@@ -500,16 +518,24 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       normals[p + 2] = Math.round((nz * 0.5 + 0.5) * 255)
       normals[p + 3] = 255
 
-      if (h <= 0) {
-        const depth = -h
-        if (depth < SEA_DEEP_M) mix(SEA_SHALLOW, SEA_DEEP, smooth(0, SEA_DEEP_M, depth), rgb)
-        else mix(SEA_DEEP, SEA_ABYSS, smooth(SEA_DEEP_M, SEA_ABYSS_M, depth), rgb)
+      // Under water: by the depth below the LOCAL level — the sea's, or
+      // the basin's this point lies in (a terminal sea's floor can lie
+      // kilometres under the sea's level and still be land, 2026-10-03).
+      const waterLevel = source.waterLevelAt(x, y) * source.elevationMeters
+      const surface = source.waterSurfaceAt(x, y)
+      if (h <= waterLevel) {
+        const depth = waterLevel - h
+        if (surface === 0) {
+          if (depth < SEA_DEEP_M) mix(SEA_SHALLOW, SEA_DEEP, smooth(0, SEA_DEEP_M, depth), rgb)
+          else mix(SEA_DEEP, SEA_ABYSS, smooth(SEA_DEEP_M, SEA_ABYSS_M, depth), rgb)
+        } else mix(LAKE_SHALLOW, LAKE_DEEP, smooth(0, LAKE_DEEP_M, depth), rgb)
         albedo[p] = rgb[0]
         albedo[p + 1] = rgb[1]
         albedo[p + 2] = rgb[2]
         albedo[p + 3] = 255
         continue
       }
+      const overWater = h - waterLevel
 
       // The cover: the four nearest cells' colours blended, so a biome's
       // edge is a band and not a 7.8 km step.
@@ -545,15 +571,12 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
         bare = bare + (0.6 - bare) * alpine
       }
       // The shore's sand, under everything else.
-      const sand = 1 - smooth(0, SAND_HEIGHT_M, h)
+      const sand = 1 - smooth(0, SAND_HEIGHT_M, overWater)
       if (sand > 0) {
         mix([rgb[0], rgb[1], rgb[2]], SAND, sand, rgb)
         canopy *= 1 - sand
         bare = bare + (1 - bare) * sand
       }
-      // A lake: its water over the cover.
-      const lake = source.lakeDepthAt(x, y)
-      if (lake > 0) mix([rgb[0], rgb[1], rgb[2]], LAKE, smooth(0, 20, lake), rgb)
 
       // Rock by the drawn slope (the data's, not the detail's) and by the
       // height.

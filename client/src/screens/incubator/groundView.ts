@@ -2,6 +2,7 @@ import { Color3, Color4, DirectionalLight, DynamicTexture, HemisphericLight, Mes
 import { GROUND_MATERIALS } from '../../map/groundDetail'
 import { METERS_PER_CELL } from '../../generator/core/mapConfig'
 import { createGroundRings, type GroundRings, type RingBuildRequest, type RingBuildResult } from '../../map/groundRings'
+import { createGroundWater } from '../../map/groundWater'
 import { MAP_EXAGGERATION, MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, RELIEF_HEIGHT_SCALE, UNITS_PER_METER } from '../../map/mapSceneSettings'
 import { artifactKey, type ArtifactStore } from '../../storage/ArtifactStore'
 import type { MeshLevelArtifact } from '../../world/meshArtifacts'
@@ -78,11 +79,14 @@ const REBUILD_SETTLE_MS = 300
 // hold level 1's mesh (~150 MB each) and answer it before its rasters
 // exist. The rasters themselves are one shared buffer for all.
 const TILE_READS_AT_ONCE = 4
-const WORKERS = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 3))
-const MESH_HOLDERS = 2
-// The rasters kept, bytes: ~48 level-3 tiles or ~85 of level 2 (level
+// Three workers, one of them the mesh holder: the level's triangulation
+// is ~800 MB decoded, and two holders with a 700 MB raster budget had
+// Safari reload the page for memory (6 GB, 2026-10-03).
+const WORKERS = 3
+const MESH_HOLDERS = 1
+// The rasters kept, bytes: ~36 level-3 tiles or ~100 of level 2 (level
 // 1's are small), least recently painted from out.
-const RASTER_BUDGET_BYTES = 700 * 1024 * 1024
+const RASTER_BUDGET_BYTES = 300 * 1024 * 1024
 
 export interface GroundViewOptions {
   scene: Scene
@@ -93,12 +97,15 @@ export interface GroundView {
   // Hand the ground its world: level 1, the tiles the store holds (stage
   // → pipeline version) and the save's fields. Resolves when the worker
   // holds it.
-  setWorld(input: { worldUid: string; worldId: string; width: number; height: number; level: MeshLevelArtifact; versions: Map<string, string>; fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth', GridField | null> }): Promise<void>
+  setWorld(input: { worldUid: string; worldId: string; width: number; height: number; level: MeshLevelArtifact; versions: Map<string, string>; fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterSurface', GridField | null> }): Promise<void>
   // Per frame: the focus, the world units a pixel spans there, whether
   // the shadows are wanted, and the air: the camera's height over the
   // ground (world units; 0 for the map's orthographic view, which has no
   // distance to fog by) and where it stands.
   update(focusX: number, focusZ: number, unitsPerPixel: number, shadows: boolean, air: { altitude: number; eye: Vector3; farPlane: number }): void
+  // The water's levels (elevation units per world cell) and the lakes'
+  // boxes (cells), for the water planes (map/groundWater.ts).
+  setWater(level: Float32Array, width: number, height: number, lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[]): void
   // The DRAWN ground's world Y at a point, exaggeration included.
   drawnHeightAt(x: number, z: number): number
   // For the console and the screenshot ladder: what is being built.
@@ -319,6 +326,10 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       }),
   })
   rings.setHeightScale(MAP_EXAGGERATION)
+  const water = createGroundWater({ scene, worldWidth: MAP_WORLD_WIDTH, worldHeight: MAP_WORLD_HEIGHT, heightScale: RELIEF_HEIGHT_SCALE })
+  water.setHeightScale(MAP_EXAGGERATION)
+  water.setEnabled(false)
+  const started = performance.now()
   let worldWidthCells = 1
   let worldHeightCells = 1
 
@@ -537,6 +548,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
     },
     update(focusX, focusZ, unitsPerPixel, wantShadows, air) {
       unitsPerPixelNow = unitsPerPixel
+      water.update(focusX, focusZ, (performance.now() - started) / 1000)
       // The air: no fog on the map (no distance there), else by the height.
       if (air.altitude > 0) {
         const reach = Math.min(FOG_REACH_MAX, Math.max(FOG_REACH_MIN, air.altitude * FOG_REACH_PER_ALTITUDE))
@@ -596,6 +608,10 @@ export function createGroundView(options: GroundViewOptions): GroundView {
         shadows.normalBias = spacing * NORMAL_BIAS_SPACINGS
       }
     },
+    setWater(level, width, height, lakes) {
+      water.setLevels(level, width, height, lakes)
+      water.setEnabled(true)
+    },
     drawnHeightAt: (x, z) => rings.heightAt(x, z) * MAP_EXAGGERATION,
     stats: () => ({ queued: queued.length, inflight: inflight.size > 0 ? [...inflight.values()][0].k : -1, innermost: rings.innermost(), paints: paints.slice(-20), ready: readyCount, worldSent, rasters: { count: rasters.size, mb: Math.round(rasterBytesHeld / 1048576), made: rastersMade, madeMs: rastersMadeMs }, arrivals: rings.pendingArrivals(), waiting: ringWaits.size + tileQueue.length + tileReads + level1Queue.length + stale.size }),
     setTinted: (on) => rings.setTinted(on),
@@ -618,6 +634,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       detailTextures?.albedo.dispose()
       detailTextures?.normals.dispose()
       skyGradient.dispose()
+      water.dispose()
       rings.dispose()
     },
   }

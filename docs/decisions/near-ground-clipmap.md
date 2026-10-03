@@ -290,6 +290,20 @@ kilometre over it. What changed against the sketch above, and why:
   an update as the buffer's data, and one array for all rings made every
   ring's bounds the last ring's.
 
+- **Water** (same day, last): the sea as one translucent plane at its
+  level following the view, every lake as a quad at its own level, all of
+  one material (map/groundWater.ts: Fresnel-free translucent blue, a sun
+  highlight, drifting ripple normals, no reflection pass). A plane keeps
+  only the fragments whose level the LEVEL FIELD agrees with — the water
+  level per world cell, derived from the save's lake depths in one pass
+  (screens/incubator/waterLevels.ts; the hydrology's own field floods per
+  body and hung the page at 6 600 bodies) — so a lake basin under the
+  sea's plane and a lower basin beside a lake's quad are not flooded.
+  The painter colours the ground by its depth below the LOCAL level, so a
+  terminal sea's floor two kilometres under the sea's level is a lake,
+  not the sea. Memory: three workers, one holding the level's mesh, a
+  300 MB raster budget (two holders and 700 MB had Safari reload the page).
+
 Open: the tile seams show as a ridge of ~50 m along every tile edge,
 which is the bake's, not the drawing's (the user's call: fix in the
 generator later); pan lag is still seconds of soft ground on the outer

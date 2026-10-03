@@ -32,7 +32,7 @@ export type GroundWorkerInbound =
       // and raster it for the others; null for the rest.
       level: MeshLevelArtifact | null
       stages: string[]
-      fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth', GridField | null>
+      fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterSurface', GridField | null>
       // The detail textures' side, from the one worker asked; 0 for none.
       detail: number
     }
