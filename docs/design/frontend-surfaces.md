@@ -47,7 +47,7 @@ design material lives outside the repository — the game never states its
 ideas outright). A doc site would therefore render
 decisions/design/changelog/vision — the front matter is data, overviews
 are generated — plus the *planned* player-facing manual
-(`docs/content/`, see decisions/documentation-architecture.md, whose
+(`docs/handbook/`, see decisions/documentation-architecture.md, whose
 "defer the public website" call still stands). Public means no gate
 concern — static serving is already outside the `/v1` guard. Served
 either by a `docs` module/target (version lockstep for self-hosting) or

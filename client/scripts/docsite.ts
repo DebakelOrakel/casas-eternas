@@ -4,7 +4,7 @@
 // Renders docs/ (vision, decisions, design, changelog) into a static site:
 // navigation by AREA (the changelog's vocabulary), genre and stage as badges
 // derived from folder and front matter, per-area index pages with a changelog
-// teaser and summary lists. `ideas/` is hard-excluded; `content/` is the
+// teaser and summary lists. `ideas/` is hard-excluded; `handbook/` is the
 // manual's tree and not this script's business. Zero client-side JS — the
 // sidebar's disclosure is native <details>/<summary>.
 //

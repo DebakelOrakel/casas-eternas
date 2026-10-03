@@ -1,10 +1,10 @@
 ---
 summary: The docs pipeline sketched in notes.md bundles two separable deliverables — an in-game manual (the valuable one) and a public website (deferrable marketing chrome). Starlight only ever serves the website, and it is NOT embeddable in the Vanilla-TS/Babylon Vite client anyway (it's an Astro integration owning its own build). Decision: DEFER the public site entirely; build the in-game manual in-project on unified/remark (which you need regardless); do NOT adopt a second framework for a not-yet-needed artifact. Starlight-vs-homegrown is re-decided only if/when a public site becomes real. What IS decided now: the source layout and the anchor IDs (which reuse the i18n key namespace).
 date: 2026-07-28
-updated: 2026-09-20
+updated: 2026-10-03
 area: platform
 stage: decided
-status: decided (source layout + anchors; the manual stays deferred) — ADDENDUM 2026-08-13: the public site is BUILT the same day (homegrown, the re-decision the doc reserved): npm run build:docs renders docs/ to a static site the `docs` module serves under /docs/. ADDENDUM (2), same day, decided and BUILT: top levels of the site are AUDIENCES — Development (the existing tree) beside a new Operations top level (docs/operations/: per-environment guides plus CLI/config reference pages rendered from a clidump-generated, lint-guarded JSON — never hand-written); the player top level stays the reserved content/ manual. ADDENDUM (3) 2026-09-20, decided and BUILT: the site wears the generator's design canvas (its type, its palette, a header bar, a right-hand "on this page" column), and it gained SEARCH — not Pagefind, which this doc reserved: a build-time JSON of titles, summaries, section headings and changelog lines (~127 KB, no full text) plus ~120 lines of plain browser JS. Pagefind would index the rendered HTML, which for forty documents means shipping a WASM runtime and its full-text shards to answer questions the headings already answer. The same script drives the area pages' status filter; with JS off the site is the site with everything shown
+status: decided (source layout + anchors; the manual stays deferred) — ADDENDUM 2026-08-13: the public site is BUILT the same day (homegrown, the re-decision the doc reserved): npm run build:docs renders docs/ to a static site the `docs` module serves under /docs/. ADDENDUM (2), same day, decided and BUILT: top levels of the site are AUDIENCES — Development (the existing tree) beside a new Operations top level (docs/operations/: per-environment guides plus CLI/config reference pages rendered from a clidump-generated, lint-guarded JSON — never hand-written); the player top level stays the reserved handbook/ manual. ADDENDUM (3) 2026-09-20, decided and BUILT: the site wears the generator's design canvas (its type, its palette, a header bar, a right-hand "on this page" column), and it gained SEARCH — not Pagefind, which this doc reserved: a build-time JSON of titles, summaries, section headings and changelog lines (~127 KB, no full text) plus ~120 lines of plain browser JS. Pagefind would index the rendered HTML, which for forty documents means shipping a WASM runtime and its full-text shards to answer questions the headings already answer. The same script drives the area pages' status filter; with JS off the site is the site with everything shown. ADDENDUM (4) 2026-10-03: the manual's tree is docs/handbook/ (was content/), and its first reader is a Wiki panel in the generator screen, as the design canvas sketches it
 ---
 
 # Documentation architecture (source layout & anchors)
@@ -48,7 +48,7 @@ HTML strings (site). Same transform, same directives, same anchor logic → manu
 consistent **by construction**. That is more unified than Starlight, not less.
 
 ```
-docs/content/**/*.md ──▶ unified/remark ──▶ hast ──┬──▶ DOM-component emitter ──▶ in-game manual
+docs/handbook/**/*.md ──▶ unified/remark ──▶ hast ──┬──▶ DOM-component emitter ──▶ in-game manual
                                                    └──▶ HTML emitter (+ Pagefind) ──▶ static site
 ```
 
@@ -71,7 +71,7 @@ without adopting the framework:
   *without* Starlight.
 - **Shiki** — standalone syntax highlighting.
 
-A homegrown static site is then a ~150-line build script (walk `docs/content/`, remark→HTML,
+A homegrown static site is then a ~150-line build script (walk `docs/handbook/`, remark→HTML,
 one template, emit files; Vite serves them as static assets). What you give up vs. Starlight:
 the auto-sidebar, the polished theme, i18n routing, and the SEO tags — rebuilt piecemeal only
 if a public site ever justifies it. For a solo dev, building those now is pure yak-shaving.
@@ -105,18 +105,18 @@ change later. No Astro, no remark pipeline, no website.
 ```
 docs/
   decisions/  design/  vision.md  changelog/     ← internal, English, stays put
-  content/                                        ← NEW: player-facing, multilingual
+  handbook/                                       ← NEW: player-facing, multilingual
     en/ …
     de/ …
 ```
 
 The existing internal docs are **not moved** — they are developer documents, never shipped,
 need no German, and several notes/memories link them by path. Starlight's `glob()` loader will
-later point only at `docs/content/`; everything else is simply not part of the collection.
+later point only at `docs/handbook/`; everything else is simply not part of the collection.
 (The changelog in `docs/changelog/` likewise stays internal; if it is ever made public it
 becomes one more collection entry — one line of loader config.)
 
-### Layout inside `docs/content/`
+### Layout inside `docs/handbook/`
 
 Starlight convention, adopted now without Starlight: **one directory per language, identical
 filenames = translations of each other.** A missing `de/` file falls back to `en/` — the same
@@ -125,7 +125,7 @@ mirror the four i18n areas (`common`, `world`, `worldgen`, `game`); `game/` arri
 mechanics.
 
 ```
-docs/content/en/
+docs/handbook/en/
   index.md                     anchor: common
   world/biomes.md              anchor: world.biome
   world/resources.md           anchor: world.resource
@@ -133,7 +133,7 @@ docs/content/en/
   worldgen/tectonics.md        anchor: worldgen.panel.tectonics
   worldgen/erosion.md          anchor: worldgen.panel.erosion
   …
-docs/content/de/
+docs/handbook/de/
   index.md                     (rest follows later → falls back to EN)
 ```
 
@@ -181,7 +181,7 @@ anchor:   world.resource           →  manual page for the same concept
 
 A tooltip can later gain a "learn more" that lands in the docs with no second mapping table,
 and a player note attaches to the *entity*, not the page — so it surfaces everywhere the term
-appears. Rules, recorded in `docs/content/ANCHORS.md`:
+appears. Rules, recorded in `docs/handbook/ANCHORS.md`:
 
 - First segment is always one of the four areas.
 - One concept, one anchor — even where it appears in several places in the UI.
@@ -212,7 +212,7 @@ we would fight; Pagefind (Starlight's own search) works standalone over any
 static HTML if search is ever wanted.
 
 **Scope**: render `vision.md`, `decisions/`, `design/`, `changelog/`.
-`content/` stays reserved for the manual (its
+`handbook/` stays reserved for the manual (its
 own pipeline, unchanged by this addendum). Site language: English — the
 docs' language; deliberately not localized.
 
@@ -274,7 +274,7 @@ tree: vision, decisions, design, changelog — area navigation unchanged;
 the "navigate by area, never by folder" rule is hereby SCOPED to this top
 level), `Operations` (whoever runs a server: today the operator of one,
 later any self-hoster), and — when the game earns it — the reserved
-player top level, which is exactly what `docs/content/` and the anchor
+player top level, which is exactly what `docs/handbook/` and the anchor
 IDs above have been waiting for. Nothing is moved; Operations is a new
 sibling:
 
@@ -299,7 +299,7 @@ indexes. The group is a front-matter field, never a filename prefix or a
 subdirectory — the same "front matter is data" rule that keeps
 Development's navigation off the folders. Front matter: `summary` +
 `date` + `group` + a flat `order:` (the generator's convention is flat;
-the nested `sidebar: order:` reserved above stays a content/-only,
+the nested `sidebar: order:` reserved above stays a handbook/-only,
 Starlight-compatible shape); NO stage/status badges — an operations
 manual is always "current", a lifecycle badge there is noise.
 deploy/README.md thins to a pointer once the guides carry its content.
@@ -334,3 +334,47 @@ the section headings, the operations collection (Markdown pages plus the
 two JSON-fed reference pages), generated overview page → ④ docs/README.md
 taxonomy row + changelog entry. ALL FOUR BUILT the same day; the drift
 gate was proven by mutating a help text and watching the lint fail.
+
+## Addendum 2026-10-03 (4): `handbook/`, and the generator reads it first
+
+**The tree is `docs/handbook/`**, not `docs/content/`. "Content" says
+nothing: every folder in `docs/` holds content. "Handbook" says what the
+tree is and for whom. The tree did not exist yet, so the rename moves no
+file. The layout, the front matter and the anchor rules above are
+unchanged.
+
+**The first reader is the generator screen**, not the game. The
+"Weltgenerator" design canvas (artboards `Wiki` and `Hell-Wiki`) sketches
+a Wiki panel: a button in the bottom bar opens a column on the right,
+which shows the page of the current step. The panel has a search field, a
+page list in two groups ("Steps" and "Basics") and a link to the full page
+on the doc site. A step page has four parts:
+
+- an intro of two or three sentences,
+- "What this step does": three bullets,
+- "Concepts": a term and a short definition each (in the canvas, for
+  example Mantle plume, Craton, Subduction, Base level),
+- "Overlays in this step": the step's layers with their legend swatch and
+  help sentence.
+
+The "Basics" pages (in the canvas: the pipeline, and the world save with
+its artifacts) have the same shape, but no overlays.
+
+How this maps onto the handbook:
+
+- One Markdown page per step and per basics page, under
+  `docs/handbook/{en,de}/generator/`. The page anchor is the step's
+  catalog key. The area segment is `generator`, the i18n area that
+  replaced the `worldgen` this doc first named.
+- A concept is a heading in its page, so it gets its own heading anchor.
+  A tooltip can then link to the concept, not only to the page.
+- The overlays part is NOT written in the handbook. It is a view over the
+  step table (`screens/generator/steps.ts`) and the overlay catalog, which
+  already hold the layers, their order and their help sentences. A second
+  copy would drift.
+- The same Markdown renders as a section of the doc site, so the panel's
+  "full page" link has a target. That makes the manual pipeline sketched
+  above real: one unified/remark transform, two emitters.
+
+Open, to agree before building: the panel's catalog keys, and how the
+client gets the pages (bundled at build time, or fetched from `/docs/`).
