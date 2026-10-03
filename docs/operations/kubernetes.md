@@ -9,8 +9,9 @@ order: 40
 # Kubernetes
 
 `deploy/manifests.yaml` is the reference deployment: plain Kubernetes
-objects, with security contexts that also satisfy OpenShift's
-restricted-v2. It creates:
+objects. The pods run as UID 1001 with `fsGroup: 1001`, which gives them
+their volumes, which a fresh volume otherwise keeps for root (`mkdir
+/data/auth: permission denied`). It creates:
 
 - a **ServiceAccount + Role/RoleBinding** — the server scales its job
   workers beside itself, so it needs `list` on Deployments and
@@ -35,13 +36,13 @@ with a body limit must allow them (ingress-nginx:
 ## First run
 
 ```
-oc apply -f deploy/manifests.yaml
+kubectl apply -f deploy/manifests.yaml
 
 # the key session tokens are signed with — generated once and KEPT:
 # without it every restart ends every session
-oc create secret generic casas-eternas-auth \
+kubectl create secret generic casas-eternas-auth \
   --from-literal=session.key="$(openssl rand -base64 48)" \
-  --dry-run=client -o yaml | oc apply -f -
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
 
 The Deployment sets `CASAS_GLOBAL_AUTH_MODE=password` explicitly. The
@@ -54,9 +55,9 @@ data volume and are administered over the pod's admin socket
 the socket requires `pods/exec` — that RBAC is the whole authorization:
 
 ```
-echo -n 'the-password' | oc exec -i deploy/casas-eternas -- \
+echo -n 'the-password' | kubectl exec -i deploy/casas-eternas -- \
   /app/casas-eternas auth user add ada --password-stdin
-oc exec deploy/casas-eternas -- /app/casas-eternas auth role bind ada admin
+kubectl exec deploy/casas-eternas -- /app/casas-eternas auth role bind ada admin
 ```
 
 No flags needed: the exec session inherits the pod's environment, and the
@@ -71,7 +72,7 @@ The refinement's workers are their own Deployment, `casas-eternas-worker`,
 shipped at `replicas: 0`: the jobs server scales it up when tasks wait and
 back to zero when every job is through, finding it by the label
 `casas-eternas/component: worker`. Do not set its replicas by hand; an
-`oc apply` of the manifests puts it back to 0, which stops a running
+`kubectl apply` of the manifests puts it back to 0, which stops a running
 refinement's workers until the server scales them up again (the tasks are
 handed out again, so only time is lost). While any job is open the server
 keeps as many workers as there are tasks, up to `jobs.max-concurrent`, and
@@ -86,8 +87,8 @@ the server's auth system, which they trade for a bus token valid for an
 hour. Create it once, after the first start:
 
 ```
-oc exec deploy/casas-eternas -- casas-eternas auth service add cluster-workers > credentials
-oc create secret generic casas-eternas-worker --from-file=credentials
+kubectl exec deploy/casas-eternas -- casas-eternas auth service add cluster-workers > credentials
+kubectl create secret generic casas-eternas-worker --from-file=credentials
 rm credentials
 ```
 
@@ -100,10 +101,10 @@ tokens it bought run out within the hour.
 
 **Once, for a server deployed before the worker Deployment (2026-10-03):**
 the server's pods are labelled `casas-eternas/component: server` now, and
-a Deployment's selector cannot change in place. `oc delete deploy/casas-eternas`
+a Deployment's selector cannot change in place. `kubectl delete deploy/casas-eternas`
 before the apply; the data volume and the Secrets stay.
 
-Push the image, then `oc apply -f deploy/manifests.yaml` and a rollout —
+Push the image, then `kubectl apply -f deploy/manifests.yaml` and a rollout —
 manifests and image travel together, because the env vocabulary and the
 binary must agree (an old binary silently ignores env names it does not
 know).
