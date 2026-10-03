@@ -1,16 +1,15 @@
-# Kubernetes manifests for casas-eternas: ONE binary serving the client, the
+# OpenShift manifests for casas-eternas: ONE binary serving the client, the
 # docs site, the world store, the artifact store, the job coordinator and
 # the login (auth target; users administered over the admin socket, see
 # deploy/README.md), plus the job workers it scales.
-# PVC + Deployments + Service + Ingress — plain Kubernetes objects, the
-# certificate from cert-manager (ClusterIssuer letsencrypt-production). The
-# pods run as UID 1001 with their volumes given to group 1001 (fsGroup).
+# PVC + Deployments + Service + Ingress. OpenShift turns the Ingress into a
+# Route by itself; the certificate comes from cert-manager (ClusterIssuer
+# letsencrypt-production), for https://casas-eternas.ahoi.sh.
 #
-# SET THE HOST in the Ingress at the end before the first apply.
+#   oc apply -f deploy/manifests.yaml
 #
-#   kubectl apply -f deploy/manifests.yaml
-#
-# Set `image:` below to where you pushed the image built from deploy/Dockerfile.
+# Set `image:` below to where you pushed the image built from deploy/Dockerfile
+# (e.g. the internal registry: image-registry.openshift-image-registry.svc:5000/<ns>/casas-eternas:latest).
 ---
 # The identity the server scales its workers as. Without it the pod runs as
 # the namespace's `default` account, which has no permissions at all — and
@@ -74,20 +73,20 @@ spec:
       # A world save is tens of megabytes; a baked 8k artifact is ~64 MB and
       # every pipeline version keeps its own. This fills up faster than it
       # looks — artifacts are droppable, so a size cap is the eventual answer.
-      storage: 200Gi
+      storage: 20Gi
 ---
 # What authentication needs that must not be in git: the key session tokens
 # are signed with. Applied EMPTY on purpose — the resource exists so the
 # Deployment can mount it and nobody has to remember its name, and the value
 # is put in afterwards (see deploy/README.md).
 #
-#   kubectl create secret generic casas-eternas-auth \
+#   oc create secret generic casas-eternas-auth \
 #     --from-literal=session.key="$(openssl rand -base64 48)" \
-#     --dry-run=client -o yaml | kubectl apply -f -
+#     --dry-run=client -o yaml | oc apply -f -
 #
 # Without session.key a restart ends every session, and two replicas reject each
 # other's tokens. The USERS are not in here: they are state in auth.db on the
-# data volume, administered over the pod's admin socket — `kubectl exec` +
+# data volume, administered over the pod's admin socket — `oc exec` +
 # `casas-eternas auth user …` (docs/decisions/server-user-admin.md).
 apiVersion: v1
 kind: Secret
@@ -110,7 +109,7 @@ spec:
   # `component: server` keeps this Deployment's pods apart from the
   # workers' (same `app`, `component: worker`) — and the Service selects on
   # it too. A selector cannot change on a live Deployment: a cluster from
-  # before this label needs `kubectl delete deploy/casas-eternas` once before the
+  # before this label needs `oc delete deploy/casas-eternas` once before the
   # apply (the data volume stays).
   selector:
     matchLabels:
@@ -123,15 +122,6 @@ spec:
         casas-eternas/component: server
     spec:
       serviceAccountName: casas-eternas
-      # The volumes' group: the image runs as UID 1001, and a fresh volume
-      # belongs to root, so without this the server cannot create
-      # /data/auth ("permission denied") and a worker cannot read its 0400
-      # credential. Kubernetes gives the volumes to group 1001 on mount;
-      # OnRootMismatch skips the walk over the files when they are already
-      # right.
-      securityContext:
-        fsGroup: 1001
-        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: casas-eternas
           image: ghcr.io/debakelorakel/casas-eternas:latest
@@ -164,7 +154,7 @@ spec:
               value: password
             - name: CASAS_GLOBAL_AUTH_SESSION_KEY
               value: /etc/casas-eternas/auth/session.key
-            # The local admin channel: user administration over `kubectl exec` +
+            # The local admin channel: user administration over `oc exec` +
             # `casas-eternas auth user …`. A unix socket, so reaching it IS
             # the authorization — gated by pods/exec RBAC, not by a
             # credential. /tmp is the pod's emptyDir below.
@@ -210,9 +200,9 @@ spec:
               memory: 256Mi
             limits:
               memory: 4Gi
-          # Hardened, the Pod Security "restricted" profile. No runAsUser: the
-          # image's own USER 1001 holds; it also runs under any other UID in
-          # group 0, which it is built for. Verified with a read-only rootfs.
+          # Hardened, OpenShift restricted-v2 friendly. No runAsUser — OpenShift
+          # injects an arbitrary UID from the namespace range (member of GID 0);
+          # the image is built for exactly that. Verified with a read-only rootfs.
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -263,8 +253,8 @@ spec:
 # The workers prove themselves with a SERVICE ACCOUNT of this server's auth
 # system — the same kind an outside worker uses. Once, after the first start:
 #
-#   kubectl exec deploy/casas-eternas -- casas-eternas auth service add cluster-workers > credentials
-#   kubectl create secret generic casas-eternas-worker --from-file=credentials
+#   oc exec deploy/casas-eternas -- casas-eternas auth service add cluster-workers > credentials
+#   oc create secret generic casas-eternas-worker --from-file=credentials
 #   rm credentials
 #
 # Rotating: `auth service rotate cluster-workers`, then replace the Secret;
@@ -293,15 +283,6 @@ spec:
       # No API access: a worker talks to the relay and the server, nothing
       # in the cluster.
       automountServiceAccountToken: false
-      # The volumes' group: the image runs as UID 1001, and a fresh volume
-      # belongs to root, so without this the server cannot create
-      # /data/auth ("permission denied") and a worker cannot read its 0400
-      # credential. Kubernetes gives the volumes to group 1001 on mount;
-      # OnRootMismatch skips the walk over the files when they are already
-      # right.
-      securityContext:
-        fsGroup: 1001
-        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: worker
           # THE SAME image as the server: the artifacts a worker writes carry
@@ -385,13 +366,10 @@ spec:
       protocol: TCP
 ---
 # The way in from outside: the HTTP API, the client and the docs site.
-# Native networking.k8s.io/v1, so any controller serves it. The certificate
-# comes from cert-manager through the `letsencrypt-production` ClusterIssuer,
-# into the Secret `casas-eternas-tls` it creates and renews.
-#
-# - Uploads: a saved world is tens of megabytes. A controller with a body
-#   limit must allow them; ingress-nginx's default (1 MiB) refuses them:
-#   `nginx.ingress.kubernetes.io/proxy-body-size: "0"`.
+# A plain networking.k8s.io/v1 Ingress; OpenShift's router serves it as a
+# Route it makes by itself. The certificate comes from cert-manager through
+# the `letsencrypt-production` ClusterIssuer, into the Secret
+# `casas-eternas-tls` it creates and renews.
 #
 # The relay (NATS) is not here: workers reach it inside the cluster, on the
 # Service's `relay` port.
@@ -403,16 +381,16 @@ metadata:
     app: casas-eternas
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-production
-    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    # The Route OpenShift makes from this: TLS ends at the router, plain
+    # HTTP is redirected to HTTPS.
+    route.openshift.io/termination: edge
+    route.openshift.io/insecure-edge-termination-policy: Redirect
 spec:
-  # The cluster's default class unless named here.
-  # ingressClassName: nginx
   tls:
     - hosts:
         - casas-eternas.ahoi.sh
       secretName: casas-eternas-tls
   rules:
-    # SET THIS (and the host above): the name the server is reached by.
     - host: casas-eternas.ahoi.sh
       http:
         paths:
