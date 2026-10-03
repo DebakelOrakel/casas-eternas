@@ -116,17 +116,47 @@ export async function deleteWorld(uid: string): Promise<boolean> {
   }
 }
 
+// The worlds fetched, kept in the browser's cache storage by URL so that
+// the next open of the same world asks the server with If-None-Match and
+// takes its 304 — a world is tens of MB, and the incubator opens it on
+// every visit (2026-10-03). The server's own ETag is the revision, so a
+// saved-over world misses the cache by itself. Cache storage is absent in
+// an insecure context; then every fetch is a full one, as before.
+const WORLD_CACHE = 'casas-worlds'
+
 export async function fetchWorld(uid: string): Promise<Blob | null> {
   const base = await apiBase()
   if (!base) return null
+  const url = `${base}/worlds/${encodeURIComponent(uid)}`
+  let cache: Cache | null = null
+  let cached: Response | undefined
   try {
-    const response = await authFetch(`${base}/worlds/${encodeURIComponent(uid)}`, { cache: 'no-store' })
+    cache = typeof caches !== 'undefined' ? await caches.open(WORLD_CACHE) : null
+    cached = await cache?.match(url)
+  } catch {
+    cache = null
+  }
+  try {
+    const cachedEtag = cached?.headers.get('ETag')
+    const response = await authFetch(url, { cache: 'no-store', headers: cachedEtag ? { 'If-None-Match': cachedEtag } : {} })
+    if (response.status === 304 && cached) {
+      const revision = Number((cachedEtag ?? '').replace(/"/g, ''))
+      if (Number.isInteger(revision) && revision > 0) rememberRevision(uid, revision)
+      return await cached.blob()
+    }
     if (!response.ok) return null
     // The ETag is the server's revision: learning it here means a world opened
     // from the server can be saved straight back without a 409 detour.
     const etag = response.headers.get('ETag')
     const revision = etag ? Number(etag.replace(/"/g, '')) : 0
     if (Number.isInteger(revision) && revision > 0) rememberRevision(uid, revision)
+    if (cache && etag) {
+      try {
+        await cache.put(url, response.clone())
+      } catch {
+        // Full storage, or a private window: the world still opens.
+      }
+    }
     return await response.blob()
   } catch {
     return null

@@ -6,6 +6,9 @@ import { MAP_EXAGGERATION, MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, RELIEF_HEIGHT_SCAL
 import { artifactKey, type ArtifactStore } from '../../storage/ArtifactStore'
 import type { MeshLevelArtifact } from '../../world/meshArtifacts'
 import { readMeshTileArtifact } from '../../world/meshTileArtifacts'
+import { tileAt } from '../../generator/pipeline/tilePlan'
+import type { TileId } from '../../generator/mesh/meshTile'
+import { LEVEL1_GRID_LEVEL, level1Stage, rasterBytes } from './groundRaster'
 import type { GridField } from './groundSource'
 import type { GroundWorkerInbound, GroundWorkerOutbound } from './groundWorker'
 
@@ -70,9 +73,16 @@ const DETAIL_REACH_PER_ALTITUDE = 6
 const DETAIL_REACH_MIN = 4000 * UNITS_PER_METER
 // How long after the last tile a ring waits before it is painted again.
 const REBUILD_SETTLE_MS = 300
-// Tile reads in flight at once, and the painting workers.
+// Tile reads in flight at once; the painting workers (one per core
+// beyond a few for the page and the GPU), of which the first MESH_HOLDERS
+// hold level 1's mesh (~150 MB each) and answer it before its rasters
+// exist. The rasters themselves are one shared buffer for all.
 const TILE_READS_AT_ONCE = 4
-const WORKERS = 2
+const WORKERS = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 3))
+const MESH_HOLDERS = 2
+// The rasters kept, bytes: ~48 level-3 tiles or ~85 of level 2 (level
+// 1's are small), least recently painted from out.
+const RASTER_BUDGET_BYTES = 700 * 1024 * 1024
 
 export interface GroundViewOptions {
   scene: Scene
@@ -92,7 +102,7 @@ export interface GroundView {
   // The DRAWN ground's world Y at a point, exaggeration included.
   drawnHeightAt(x: number, z: number): number
   // For the console and the screenshot ladder: what is being built.
-  stats(): { queued: number; inflight: number; innermost: number; paints: { k: number; ms: number; counts: unknown; wanted: number }[]; ready: number; worldSent: number }
+  stats(): { queued: number; inflight: number; innermost: number; paints: { k: number; ms: number; counts: unknown; wanted: number }[]; ready: number; worldSent: number; rasters: { count: number; mb: number; made: number; madeMs: number }; arrivals: number }
   // DEBUG: tint each ring by its index, to see where the rings meet; the
   // shader grain's strength (1 the design's).
   setTinted(on: boolean): void
@@ -107,6 +117,24 @@ export function createGroundView(options: GroundViewOptions): GroundView {
   // view soft for fifteen seconds after a pan (2026-10-03). Each worker
   // takes one build at a time; a tile that arrives goes to all of them.
   const workers = Array.from({ length: WORKERS }, () => new Worker(new URL('./groundWorker.ts', import.meta.url), { type: 'module' }))
+  // The rasters (groundRaster.ts) by stage, as the workers hold them:
+  // the registry the eviction works on. `tile` is what a worker needs to
+  // place it again; `data` the shared buffer.
+  interface Held {
+    tile: TileId
+    n: number
+    data: Float32Array
+    bytes: number
+    lastUsed: number
+  }
+  const rasters = new Map<string, Held>()
+  let rasterBytesHeld = 0
+  let rastersMade = 0
+  let rastersMadeMs = 0
+  // Rasters being made, by stage, and level-1 rasters wanted but not yet
+  // given to a mesh holder.
+  const level1Queue: TileId[] = []
+  const level1Busy = new Set<number>()
   // The builds: queued here and sent to the worker one at a time, the
   // one that matters most first — the ring whose texels are nearest the
   // pixel, then outward (the coarse ground under everything), then
@@ -131,16 +159,82 @@ export function createGroundView(options: GroundViewOptions): GroundView {
     // tie; a preview before any full build.
     return (ratio >= 0 ? ratio : -ratio + 0.5) - (build.message.preview ? 100 : 0)
   }
+  // The level-1 raster stages a ring's square covers (level 2's tile
+  // grid): a ring whose rasters are not all held goes to a mesh holder.
+  function level1StagesOf(message: GroundWorkerInbound & { type: 'paint' }): string[] {
+    const half = (message.quads / 2) * message.spacing
+    const out = new Set<string>()
+    const step = 16 // level 2's tile side, cells
+    for (let y = message.centerY - half; y <= message.centerY + half + step; y += step) {
+      for (let x = message.centerX - half; x <= message.centerX + half + step; x += step) {
+        const t = tileAt(LEVEL1_GRID_LEVEL, x, y, worldWidthCells, worldHeightCells)
+        out.add(level1Stage(t.x, t.y))
+      }
+    }
+    return [...out]
+  }
+  const needsMesh = (build: Build): boolean => level1StagesOf(build.message).some((stage) => !rasters.has(stage))
   function pump(): void {
     while (!disposed && queued.length > 0) {
-      const idle = workers.findIndex((_, i) => !inflight.has(i))
-      if (idle < 0) return
-      let best = 0
-      for (let i = 1; i < queued.length; i++) if (priority(queued[i]) < priority(queued[best])) best = i
+      // The most urgent build that some idle worker can take.
+      let best = -1
+      let bestWorker = -1
+      for (let i = 0; i < queued.length; i++) {
+        if (best >= 0 && priority(queued[i]) >= priority(queued[best])) continue
+        const holdersOnly = needsMesh(queued[i])
+        const w = workers.findIndex((_, j) => !inflight.has(j) && !level1Busy.has(j) && (!holdersOnly || j < MESH_HOLDERS))
+        if (w < 0) continue
+        best = i
+        bestWorker = w
+      }
+      if (best < 0) return
       const build = queued.splice(best, 1)[0]
       build.message.started = performance.now()
-      inflight.set(idle, build)
-      workers[idle].postMessage(build.message)
+      inflight.set(bestWorker, build)
+      workers[bestWorker].postMessage(build.message)
+    }
+    pumpLevel1()
+  }
+  // Level-1 rasters are made by an idle mesh holder, one at a time, so
+  // the paints keep the holders; a worker making one is busy for it.
+  function pumpLevel1(): void {
+    while (level1Queue.length > 0) {
+      const w = [...Array(MESH_HOLDERS).keys()].find((j) => !inflight.has(j) && !level1Busy.has(j))
+      if (w === undefined) return
+      const tile = level1Queue.shift()!
+      level1Busy.add(w)
+      workers[w].postMessage({ type: 'rasterise', stage: level1Stage(tile.x, tile.y), tile, artifact: null } satisfies GroundWorkerInbound)
+    }
+  }
+  // A raster arrived: into the registry, to every worker, the waiting
+  // rings told; and the ones least recently painted from out when over
+  // the budget.
+  function adopt(stage: string, tile: TileId, n: number, data: Float32Array, from: number): void {
+    const bytes = rasterBytes(n)
+    rasters.set(stage, { tile, n, data, bytes, lastUsed: performance.now() })
+    rasterBytesHeld += bytes
+    workers.forEach((worker, i) => {
+      if (i === from) return
+      worker.postMessage({ type: 'raster', stage, tile, n, data } satisfies GroundWorkerInbound)
+    })
+    tileArrived(stage)
+    while (rasterBytesHeld > RASTER_BUDGET_BYTES) {
+      let oldest: string | null = null
+      let oldestAt = Infinity
+      for (const [s, h] of rasters) {
+        if (s === stage) continue
+        if (h.lastUsed < oldestAt) {
+          oldestAt = h.lastUsed
+          oldest = s
+        }
+      }
+      if (!oldest) break
+      const h = rasters.get(oldest)!
+      rasters.delete(oldest)
+      rasterBytesHeld -= h.bytes
+      tileAsked.delete(oldest)
+      held.delete(oldest)
+      for (const worker of workers) worker.postMessage({ type: 'dropRaster', stage: oldest } satisfies GroundWorkerInbound)
     }
   }
 
@@ -253,6 +347,11 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       if (!build) return
       paints.push({ k: build.k, ms: Math.round(performance.now() - build.message.started), counts: message.counts, wanted: message.wanted.length })
       if (paints.length > 200) paints.shift()
+      const now = performance.now()
+      for (const stage of message.used) {
+        const h = rasters.get(stage)
+        if (h) h.lastUsed = now
+      }
       let again = false
       const waits = new Set<string>()
       for (const stage of message.wanted) {
@@ -272,7 +371,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       // Elevation units → world Y (before the exaggeration).
       const heights = message.heights
       for (let i = 0; i < heights.length; i++) heights[i] *= RELIEF_HEIGHT_SCALE
-      build.resolve({ heights, albedo: message.albedo, normals: message.normals, materials: message.materials, texels: build.message.texels, complete: waits.size === 0 && !again })
+      build.resolve({ heights, albedo: message.albedo, normals: message.normals, materials: message.materials, preview: build.message.preview, complete: waits.size === 0 && !again })
       if (again) rebuildSoon(build.k)
     } else if (message.type === 'detail') {
       const layers = GROUND_MATERIALS.length
@@ -287,18 +386,34 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       detailTextures?.normals.dispose()
       detailTextures = { albedo, normals }
       rings.setDetailTextures(albedo, normals)
-    } else if (message.type === 'wantTile') {
+    } else if (message.type === 'rastered') {
+      rastersMade++
+      rastersMadeMs += message.ms
+      if (message.tile.level === 1) {
+        level1Busy.delete(index)
+        // Made by a holder inside a paint, perhaps twice over: the first
+        // one stands.
+        if (!rasters.has(message.stage)) adopt(message.stage, message.tile, message.n, message.data, index)
+        tileAsked.add(message.stage)
+        pump()
+      } else adopt(message.stage, message.tile, message.n, message.data, index)
+    } else if (message.type === 'want') {
       if (!key) return
+      // Asked once, whichever worker asks: the answer goes to all.
+      if (tileAsked.has(message.stage) || rasters.has(message.stage)) return
+      tileAsked.add(message.stage)
+      if (message.tile.level === 1) {
+        level1Queue.push(message.tile)
+        pumpLevel1()
+        return
+      }
       const version = key.versions.get(message.stage)
       if (!version) {
-        workers[index].postMessage({ type: 'tile', stage: message.stage, artifact: null } satisfies GroundWorkerInbound)
+        for (const worker of workers) worker.postMessage({ type: 'missing', stage: message.stage } satisfies GroundWorkerInbound)
         tileArrived(message.stage)
         return
       }
-      // Asked once, whichever worker asks: the answer goes to all.
-      if (tileAsked.has(message.stage)) return
-      tileAsked.add(message.stage)
-      tileQueue.push({ stage: message.stage, version, tries: 0 })
+      tileQueue.push({ stage: message.stage, tile: message.tile, version, tries: 0 })
       pumpTiles()
     }
   }
@@ -308,8 +423,9 @@ export function createGroundView(options: GroundViewOptions): GroundView {
   // at once, and two hundred reads in one burst came back null and were
   // marked missing for the session (2026-10-03). A read that fails is
   // tried again once before the tile is given up.
-  const tileQueue: { stage: string; version: string; tries: number }[] = []
+  const tileQueue: { stage: string; tile: TileId; version: string; tries: number }[] = []
   let tileReads = 0
+  let nextRasteriser = 0
   function pumpTiles(): void {
     while (tileReads < TILE_READS_AT_ONCE && tileQueue.length > 0 && !disposed && key) {
       const job = tileQueue.shift()!
@@ -323,14 +439,17 @@ export function createGroundView(options: GroundViewOptions): GroundView {
           pumpTiles()
           return
         }
-        // A copy to each worker (the last gets the arrays themselves).
-        workers.forEach((worker, i) => {
-          const last = i === workers.length - 1
-          const reply: GroundWorkerInbound = { type: 'tile', stage: job.stage, artifact: a }
-          worker.postMessage(reply, a && last ? [a.nodes.buffer, a.triangles.buffer, a.z.buffer, a.role.buffer, a.outflow.buffer] : [])
-        })
-        if (a) held.add(job.stage)
-        tileArrived(job.stage)
+        if (!a) {
+          for (const worker of workers) worker.postMessage({ type: 'missing', stage: job.stage } satisfies GroundWorkerInbound)
+          tileArrived(job.stage)
+        } else {
+          // Rastered by the workers in turn (the holders last: they have
+          // the level-1 rasters to make); the raster comes back shared.
+          const i = MESH_HOLDERS + (nextRasteriser++ % Math.max(1, workers.length - MESH_HOLDERS))
+          const w = Math.min(i, workers.length - 1)
+          held.add(job.stage)
+          workers[w].postMessage({ type: 'rasterise', stage: job.stage, tile: job.tile, artifact: a } satisfies GroundWorkerInbound, [a.nodes.buffer, a.triangles.buffer, a.z.buffer, a.role.buffer, a.outflow.buffer])
+        }
         pumpTiles()
       })
     }
@@ -403,10 +522,14 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       })
       const level = input.level
       readyCount = 0
-      // Copied to each worker; the level's arrays are tens of MB, once.
-      // The first worker also makes the detail textures.
+      // The level's arrays go to the mesh holders (a copy each); the
+      // first worker also makes the detail textures.
+      rasters.clear()
+      rasterBytesHeld = 0
+      tileAsked.clear()
+      held.clear()
       workers.forEach((worker, i) => {
-        const message: GroundWorkerInbound = { type: 'world', width: input.width, height: input.height, level, stages: [...input.versions.keys()], fields: input.fields, detail: i === 0 ? DETAIL_TEXTURE_SIZE : 0 }
+        const message: GroundWorkerInbound = { type: 'world', width: input.width, height: input.height, level: i < MESH_HOLDERS ? level : null, stages: [...input.versions.keys()], fields: input.fields, detail: i === 0 ? DETAIL_TEXTURE_SIZE : 0 }
         worker.postMessage(message)
       })
       worldSent = performance.now()
@@ -474,7 +597,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       }
     },
     drawnHeightAt: (x, z) => rings.heightAt(x, z) * MAP_EXAGGERATION,
-    stats: () => ({ queued: queued.length, inflight: inflight.size > 0 ? [...inflight.values()][0].k : -1, innermost: rings.innermost(), paints: paints.slice(-20), ready: readyCount, worldSent }),
+    stats: () => ({ queued: queued.length, inflight: inflight.size > 0 ? [...inflight.values()][0].k : -1, innermost: rings.innermost(), paints: paints.slice(-20), ready: readyCount, worldSent, rasters: { count: rasters.size, mb: Math.round(rasterBytesHeld / 1048576), made: rastersMade, madeMs: rastersMadeMs }, arrivals: rings.pendingArrivals() }),
     setTinted: (on) => rings.setTinted(on),
     setDetailStrength: (v) => {
       detailStrength = v

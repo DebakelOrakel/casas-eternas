@@ -46,12 +46,13 @@ export interface RingBuildRequest {
 export interface RingBuildResult {
   // (quads + 1)² heights in world Y units, before the exaggeration.
   heights: Float32Array
-  // texels² RGBA each: the albedo, the world-space normals and the
-  // material weights (groundPaint.ts), at the request's texels.
+  // The ring's texels² RGBA each: the albedo, the world-space normals
+  // and the material weights (groundPaint.ts).
   albedo: Uint8Array
   normals: Uint8Array
   materials: Uint8Array
-  texels: number
+  // Whether this is a preview's result (painted coarser, enlarged).
+  preview: boolean
   // Whether the build read all the ground it wanted: a build that found
   // a tile still loading is drawn, and the builder calls `rebuild` once
   // the tile is in — a preview then waits for that call rather than
@@ -83,6 +84,8 @@ export interface GroundRings {
   update(focusX: number, focusZ: number, unitsPerPixel: number): void
   // The innermost ring drawn now.
   innermost(): number
+  // Builds arrived and not yet applied (one is, per update).
+  pendingArrivals(): number
   // The drawn ground's height (world Y units, before the exaggeration) at
   // a point: the finest ring drawn there; 0 where none is built yet.
   heightAt(x: number, z: number): number
@@ -139,36 +142,6 @@ const MIN_TEXEL_PX = 0.8
 // The rings built as a preview first, and the preview's side divisor.
 const PREVIEW_RINGS = 24
 const PREVIEW_DIVISOR = 4
-
-// RGBA texels enlarged `scale` times a side, bilinear (a block per texel
-// read as steps while the full build was still to come, 2026-10-03).
-function enlarge(src: Uint8Array, side: number, scale: number): Uint8Array {
-  const big = side * scale
-  const out = new Uint8Array(big * big * 4)
-  for (let j = 0; j < big; j++) {
-    const sy = Math.min(side - 1, Math.max(0, (j + 0.5) / scale - 0.5))
-    const y0 = Math.floor(sy)
-    const y1 = Math.min(side - 1, y0 + 1)
-    const fy = sy - y0
-    for (let i = 0; i < big; i++) {
-      const sx = Math.min(side - 1, Math.max(0, (i + 0.5) / scale - 0.5))
-      const x0 = Math.floor(sx)
-      const x1 = Math.min(side - 1, x0 + 1)
-      const fx = sx - x0
-      const a = (y0 * side + x0) * 4
-      const b = (y0 * side + x1) * 4
-      const c = (y1 * side + x0) * 4
-      const d = (y1 * side + x1) * 4
-      const dp = (j * big + i) * 4
-      for (let ch = 0; ch < 4; ch++) {
-        const top = src[a + ch] + (src[b + ch] - src[a + ch]) * fx
-        const bottom = src[c + ch] + (src[d + ch] - src[c + ch]) * fx
-        out[dp + ch] = top + (bottom - top) * fy
-      }
-    }
-  }
-  return out
-}
 
 export function createGroundRings(options: GroundRingsOptions): GroundRings {
   const { scene, quads, spacing0, worldSpan } = options
@@ -356,13 +329,11 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
       ring.holeZ = NaN
     }
     cutHole(ring)
-    // A preview's textures are a quarter the side: enlarged here (a texel
-    // to a block), so the ring's textures keep their size.
-    const scale = ring.texels / result.texels
-    ring.albedo.update(scale === 1 ? result.albedo : enlarge(result.albedo, result.texels, scale))
-    ring.normals.update(scale === 1 ? result.normals : enlarge(result.normals, result.texels, scale))
-    ring.materials.update(scale === 1 ? result.materials : enlarge(result.materials, result.texels, scale))
-    ring.previewed = scale !== 1
+    // A preview's textures arrive enlarged to the ring's size already.
+    ring.albedo.update(result.albedo)
+    ring.normals.update(result.normals)
+    ring.materials.update(result.materials)
+    ring.previewed = result.preview
     ring.mesh.position.set(place.x, 0, place.z)
     ring.mesh.refreshBoundingInfo()
     // The ring outside takes its hole from the new place.
@@ -381,14 +352,24 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
       .build({ k: ring.k, centerX: place.x, centerZ: place.z, spacing: ring.spacing, quads, texels: preview ? ring.texels / PREVIEW_DIVISOR : ring.texels, outermost: ring.k === count - 1, preview })
       .then((result) => {
         if (disposed) return
-        ring.pending = null
-        if (result) apply(ring, place, result)
-        const next = ring.wanted
-        ring.wanted = null
-        if (next && (!ring.built || next.x !== ring.built.x || next.z !== ring.built.z)) request(ring, next)
-        else if (preview && result && result.complete) request(ring, place, false)
-        else if (ring.stale && ring.built) request(ring, ring.built, false)
+        // Applied on a frame of its own (see `update`): four workers
+        // delivering at once put four uploads in one frame (300 ms,
+        // 2026-10-03).
+        arrivals.push({ ring, place, result, preview })
       })
+  }
+  const arrivals: { ring: Ring; place: Place; result: RingBuildResult | null; preview: boolean }[] = []
+  function applyOne(): void {
+    const next = arrivals.shift()
+    if (!next) return
+    const { ring, place, result, preview } = next
+    ring.pending = null
+    if (result) apply(ring, place, result)
+    const wanted = ring.wanted
+    ring.wanted = null
+    if (wanted && (!ring.built || wanted.x !== ring.built.x || wanted.z !== ring.built.z)) request(ring, wanted)
+    else if (preview && result && result.complete) request(ring, place, false)
+    else if (ring.stale && ring.built) request(ring, ring.built, false)
   }
 
   function wantAt(ring: Ring, place: Place): void {
@@ -409,6 +390,7 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     },
     count,
     update(focusX, focusZ, unitsPerPixel) {
+      applyOne()
       // The innermost ring whose texels are still a pixel's worth.
       let a = count - 1
       for (let k = 0; k < count; k++) {
@@ -434,6 +416,7 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
       for (let k = a; k < count; k++) if (rings[k].built) cutHole(rings[k])
     },
     innermost: () => innermostActive,
+    pendingArrivals: () => arrivals.length,
     heightAt(x, z) {
       for (let k = innermostActive; k < count; k++) {
         const ring = rings[k]
@@ -487,6 +470,7 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     },
     dispose() {
       disposed = true
+      arrivals.length = 0
       for (const ring of rings) {
         ring.mesh.dispose()
         ring.material.dispose()

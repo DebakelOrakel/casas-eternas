@@ -262,6 +262,23 @@ kilometre over it. What changed against the sketch above, and why:
   of the work), enlarged bilinearly, and built in full once the tiles it
   wanted are in.
 
+- **Rasters, not meshes, under the painter** (same day, later). A ring's
+  paint was nearly all triangle location in the tiles' meshes. Each tile
+  is now sampled once onto a regular grid of height and slope
+  (screens/incubator/groundRaster.ts: 75 m cells on level 3, 250 m on
+  level 2, level 1 at 2 km on level 2's tile grid), into a
+  SharedArrayBuffer every painting worker reads; the main thread keeps
+  the registry and evicts by bytes (700 MB, least recently painted
+  first). Four workers, two of which hold level 1's mesh and raster it on
+  demand. Coarser texels than any level's nodes read the save's own
+  raster (level 0). A build arrived is applied one per frame, and a
+  preview is enlarged in the worker: the 300 ms frames during a pan are
+  gone (now ≤ 31 ms), a pan settles in ~3 s (was 11). Not server
+  artifacts on purpose: a raster is five times its mesh and takes as
+  long to fetch as to make, and the painted look changes too often to
+  store. The fetched world is kept in cache storage and revalidated
+  with If-None-Match.
+
 Open: the tile seams show as a ridge of ~50 m along every tile edge,
 which is the bake's, not the drawing's (the user's call: fix in the
 generator later); pan lag is still seconds of soft ground on the outer

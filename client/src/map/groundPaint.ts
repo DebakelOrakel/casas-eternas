@@ -151,7 +151,7 @@ const VARIATION = 0.07
 const DETAIL_MAX_WAVELENGTH_M = 320
 // A level's typical node spacing, metres (level 1 ~2 km; the tiles'
 // floors are 500 m and 125 m, flat land coarser).
-const NODE_SPACING_M: Record<number, number> = { 1: 2200, 2: 600, 3: 220 }
+const NODE_SPACING_M: Record<number, number> = { 0: 7800, 1: 2200, 2: 600, 3: 220 }
 // The softening of the facets: the slope blurred to this fraction of the
 // local node spacing, between two fixed radii (the node spacings, metres,
 // a dense range and a sparse plain have).
@@ -165,9 +165,14 @@ const FOOTPRINT_FROM = 0.3
 const RIM_BLEND = 0.5
 // Per level, the texel size (m) between which its share of the ground
 // falls to the level below's: level 3 is read whole under 150 m texels
-// and not at all over 450 m, level 2 from 500 m to 1 500 m. Level 1 is
-// what remains.
-const LEVEL_FADE_M: Record<number, readonly [number, number]> = { 3: [150, 450], 2: [500, 1500] }
+// and not at all over 340 m (the rings of 360 m texels read none of it:
+// at a sixth of a share it was invisible and cost 36 tiles' rasters,
+// 300 MB, 2026-10-03), level 2 from 500 m to 1 400 m. Level 1 is what
+// remains.
+// Level 1 (nodes ~2 km) from 2 km to 5 km; past that the save's own
+// raster (7.8 km cells) is all a texel can show.
+const LEVEL_FADE_M: Record<number, readonly [number, number]> = { 3: [150, 340], 2: [500, 1400], 1: [2000, 5000] }
+const SHARE_FLOOR = 0.05
 const DETAIL_ROUGHNESS = 0.02
 const DETAIL_FULL_SLOPE = 0.25
 const DETAIL_FLAT_SHARE = 0.08
@@ -248,12 +253,20 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
   // AND AT THE RIM: over the ring's outer band the ground slides from
   // this ring's mix to the outer ring's, so the two meet without a step.
   const texelM = ((2 * half) / texels) * source.metersPerCell
-  const shares = (texel: number): [number, number] => [1 - smooth(LEVEL_FADE_M[3][0], LEVEL_FADE_M[3][1], texel), 1 - smooth(LEVEL_FADE_M[2][0], LEVEL_FADE_M[2][1], texel)]
-  const [s3, s2] = shares(texelM)
-  const [o3, o2] = outerTexelM !== null ? shares(outerTexelM) : [s3, s2]
+  // A share under SHARE_FLOOR is none: at a few percent a level is
+  // invisible but every one of its tiles across the ring is still read
+  // (ring 8 rastered 140 level-2 tiles for a 2 % share, 2026-10-03).
+  const share = (lo: number, hi: number, texel: number): number => {
+    const v = 1 - smooth(lo, hi, texel)
+    return v < SHARE_FLOOR ? 0 : v
+  }
+  const shares = (texel: number): [number, number, number] => [share(LEVEL_FADE_M[3][0], LEVEL_FADE_M[3][1], texel), share(LEVEL_FADE_M[2][0], LEVEL_FADE_M[2][1], texel), share(LEVEL_FADE_M[1][0], LEVEL_FADE_M[1][1], texel)]
+  const [s3, s2, s1] = shares(texelM)
+  const [o3, o2, o1] = outerTexelM !== null ? shares(outerTexelM) : [s3, s2, s1]
   // The height mixed over the levels by their shares (a level with no
-  // share is not read, so no tile is asked for in vain).
-  const mixedAt = (x: number, y: number, a3: number, a2: number): number => {
+  // share is not read, so no tile is asked for in vain); what no level
+  // takes is level 0's, the save's raster.
+  const mixedAt = (x: number, y: number, a3: number, a2: number, a1: number): number => {
     let h = 0
     let rest = 1
     if (a3 > 0) {
@@ -265,7 +278,12 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       h += source.elevationAt(x, y, 2) * w
       rest -= w
     }
-    if (rest > 0) h += source.elevationAt(x, y, 1) * rest
+    if (rest > 0 && a1 > 0) {
+      const w = rest * a1
+      h += source.elevationAt(x, y, 1) * w
+      rest -= w
+    }
+    if (rest > 0) h += source.elevationAt(x, y, 0) * rest
     return h
   }
   const rimAt = (x: number, y: number): number => {
@@ -275,7 +293,7 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
   }
   const blended = (x: number, y: number): number => {
     const t = rimAt(x, y)
-    return mixedAt(x, y, s3 + (o3 - s3) * t, s2 + (o2 - s2) * t)
+    return mixedAt(x, y, s3 + (o3 - s3) * t, s2 + (o2 - s2) * t, s1 + (o1 - s1) * t)
   }
 
   // --- the vertices -------------------------------------------------------
@@ -286,7 +304,7 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
   // finest rings, whose quads are well inside a node's spacing, sample
   // the point.
   const heights = new Float32Array(n * n)
-  const nodeSpacingM = s3 > 0.5 ? NODE_SPACING_M[3] : s2 > 0.5 ? NODE_SPACING_M[2] : NODE_SPACING_M[1]
+  const nodeSpacingM = s3 > 0.5 ? NODE_SPACING_M[3] : s2 > 0.5 ? NODE_SPACING_M[2] : s1 > 0.5 ? NODE_SPACING_M[1] : NODE_SPACING_M[0]
   const footprint = spacing * source.metersPerCell > nodeSpacingM * FOOTPRINT_FROM ? spacing * 0.25 : 0
   for (let j = 0; j < n; j++) {
     const y = y0 + j * spacing
@@ -307,7 +325,7 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
     for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
         if (!onEdge(i, j) || (i + j) % 2 !== 0) continue
-        heights[j * n + i] = mixedAt(x0 + i * spacing, y0 + j * spacing, o3, o2)
+        heights[j * n + i] = mixedAt(x0 + i * spacing, y0 + j * spacing, o3, o2, o1)
       }
     }
     for (let j = 0; j < n; j++) {
@@ -343,6 +361,7 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       const t = rimAt(x, y)
       const a3 = s3 + (o3 - s3) * t
       const a2 = s2 + (o2 - s2) * t
+      const a1 = s1 + (o1 - s1) * t
       let h = 0
       let sx = 0
       let sz = 0
@@ -365,7 +384,11 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
         take(2, rest * a2)
         rest -= rest * a2
       }
-      if (rest > 0) take(1, rest)
+      if (rest > 0 && a1 > 0) {
+        take(1, rest * a1)
+        rest -= rest * a1
+      }
+      if (rest > 0) take(0, rest)
       metres[c] = h * source.elevationMeters
       slopeX[c] = sx * verticalScale
       slopeZ[c] = sz * verticalScale
@@ -573,3 +596,34 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
   }
   return { heights, albedo, normals, materials, texels }
 }
+
+// RGBA texels enlarged `scale` times a side, bilinear (a block per texel
+// read as steps while the full build was still to come, 2026-10-03).
+export function enlargeRgba(src: Uint8Array, side: number, scale: number): Uint8Array {
+  const big = side * scale
+  const out = new Uint8Array(big * big * 4)
+  for (let j = 0; j < big; j++) {
+    const sy = Math.min(side - 1, Math.max(0, (j + 0.5) / scale - 0.5))
+    const y0 = Math.floor(sy)
+    const y1 = Math.min(side - 1, y0 + 1)
+    const fy = sy - y0
+    for (let i = 0; i < big; i++) {
+      const sx = Math.min(side - 1, Math.max(0, (i + 0.5) / scale - 0.5))
+      const x0 = Math.floor(sx)
+      const x1 = Math.min(side - 1, x0 + 1)
+      const fx = sx - x0
+      const a = (y0 * side + x0) * 4
+      const b = (y0 * side + x1) * 4
+      const c = (y1 * side + x0) * 4
+      const d = (y1 * side + x1) * 4
+      const dp = (j * big + i) * 4
+      for (let ch = 0; ch < 4; ch++) {
+        const top = src[a + ch] + (src[b + ch] - src[a + ch]) * fx
+        const bottom = src[c + ch] + (src[d + ch] - src[c + ch]) * fx
+        out[dp + ch] = top + (bottom - top) * fy
+      }
+    }
+  }
+  return out
+}
+
