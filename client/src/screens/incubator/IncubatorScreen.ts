@@ -252,6 +252,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       precipitation: await gridField(world, 'precipitationEffective'),
       lakeDepth: await gridField(world, 'lakeDepth'),
       waterLevel: null,
+      waterFloor: null,
+      waterDam: null,
       waterSurface: null,
     }
     if (disposed) return false

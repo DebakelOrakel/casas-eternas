@@ -49,10 +49,12 @@ export interface GroundSourceOptions {
     temperature: GridField | null
     precipitation: GridField | null
     lakeDepth: GridField | null
-    // The water level per world cell and the surface kind there
-    // (hydrology.waterLevelField: 0 the sea, 1 a lake, 2 ice), on the
-    // world raster.
+    // The water level and the body's floor per world cell and the
+    // surface kind there (hydrology.waterLevelField: 0 the sea, 1 a
+    // lake, 2 ice), on the world raster.
     waterLevel: GridField | null
+    waterFloor: GridField | null
+    waterDam: GridField | null
     waterSurface: GridField | null
   }
 }
@@ -261,6 +263,8 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
     precipitationAt: (x, y) => bilinear(fields.precipitation, x, y, 600),
     lakeDepthAt: (x, y) => Math.max(0, bilinear(fields.lakeDepth, x, y, 0)),
     waterLevelAt: (x, y) => nearest(fields.waterLevel, x, y, 0),
+    waterFloorAt: (x, y) => nearest(fields.waterFloor, x, y, -Infinity),
+    waterDamAt: (x, y) => nearest(fields.waterDam, x, y, 0),
     waterSurfaceAt: (x, y) => nearest(fields.waterSurface, x, y, 0),
     setRaster(stage, raster) {
       rasters.set(stage, raster)

@@ -42,9 +42,15 @@ export interface GroundSource {
   precipitationAt(x: number, y: number): number
   lakeDepthAt(x: number, y: number): number
   // The water level (elevation units) a point's water stands at — the
-  // sea's 0, a basin's own — and the surface kind there (0 the sea, 1 a
-  // lake, 2 ice), nearest world cell, the basin's rim included.
+  // sea's 0, a basin's own — the body's floor (its deepest point; no
+  // part of it lies under that) and the surface kind there (0 the sea,
+  // 1 a lake, 2 ice), nearest world cell, the basin's rim included.
   waterLevelAt(x: number, y: number): number
+  waterFloorAt(x: number, y: number): number
+  // The dam (elevation units) at the cells around a body's pour point
+  // (waterLevels.ts DAM_MARGIN): how far under the level the water must
+  // lie there; 0 elsewhere.
+  waterDamAt(x: number, y: number): number
   waterSurfaceAt(x: number, y: number): number
 }
 
@@ -113,6 +119,13 @@ const BIOME_BARE: number[] = [0, 0.3, 0.5, 0, 0, 0, 0, 0, 1, 0.2, 0, 0.6, 1, 0.2
 // The canopy's patchiness: a noise of this wavelength (cells) opens
 // clearings and closes stands, between these shares of the biome's.
 const CANOPY_PATCH_CELLS = 0.25
+// The ICE SHEET (biomes Ice and Glacier) is not blended like the other
+// covers: white against green, the four-cell blend is a ramp that reads
+// as the cells' staircase (2026-10-03). Its share is thresholded with a
+// noise of two octaves (ICE_EDGE_CELLS and a quarter of it), so the edge
+// wanders by a cell or so and is ragged within.
+const ICE_EDGE_CELLS = 2
+const ICE_EDGE_NOISE = 0.7
 const ROCK_DARK: Rgb = [118, 106, 94]
 const ROCK_LIGHT: Rgb = [178, 166, 148]
 const SNOW: Rgb = [238, 241, 247]
@@ -141,6 +154,15 @@ const SEA_DEEP_M = 500
 const SEA_ABYSS_M = 3000
 // The sea floor's drawn depth (elevation units): 10 m under its plane.
 const SEA_FLOOR_SINK = -10 / 9000
+// How far (world cells) a lake's water may spread past the water field's
+// own cells over texels under its level, and how far (m) under the
+// body's floor a texel may lie and still be wet (waterLevels.ts
+// FLOOR_MARGIN, the same thought at the texel: the valley below a
+// lake's outlet drops under the lake's floor within a kilometre, and
+// the part of a shore cell that lies under the level but downhill of
+// the lake is under its floor too).
+const LAKE_REACH_CELLS = 1.5
+const LAKE_FLOOR_MARGIN_M = 50
 // A lake's colour depths (m): a lake is clearer than the sea.
 const LAKE_SHALLOW: Rgb = [96, 150, 162]
 const LAKE_DEEP: Rgb = [30, 66, 104]
@@ -348,21 +370,6 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       }
     }
   }
-  // The sea floor is drawn flat, a little under the sea's plane (so the
-  // two never fight); a lake's floor the same, under the lake's own
-  // level — at the map's exaggeration a lake 100 m deep was a pit 600 m
-  // deep with the water at its bottom (2026-10-03). The painted depth
-  // colour keeps the true depth.
-  for (let j = 0; j < n; j++) {
-    for (let i = 0; i < n; i++) {
-      const k = j * n + i
-      const x = x0 + i * spacing
-      const y = y0 + j * spacing
-      const floor = (source.waterSurfaceAt(x, y) === 0 ? 0 : source.waterLevelAt(x, y)) + SEA_FLOOR_SINK
-      if (heights[k] < floor) heights[k] = floor
-    }
-  }
-
   // --- the texel grid: heights and the data's normals -------------------
   const m = texels + 2
   const pitch = (2 * half) / texels
@@ -491,6 +498,109 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
 
   const varyCells = Math.max(VARIATION_CELLS, pitch * 6)
 
+  // THE LAKES' REACH, at the texel: the water field says per 7.8 km
+  // cell which body's water stands there, and a texel of such a cell
+  // under the level is wet; from there the water spreads to any
+  // neighbouring texel under the same level, across cells the field
+  // left dry — the raster's mean stood over the level while the fine
+  // terrain under it dips below (the lakes' edges were the raster's
+  // staircase, 2026-10-03). It never crosses a texel over the level, so
+  // a lower valley beyond a ridge stays dry. `wetLevel` holds the level
+  // (m) of the wet texels, NaN elsewhere; the sea (level 0, its plane)
+  // is not spread: its shore is the plane's, and the field's sea cells
+  // in a basin would flood the basin's floor.
+  // Outside the field's body cells the water spreads over LAND only
+  // (texels over the sea's level): the sea floor lies under every
+  // lake's level and is reachable downhill from any coastal lake, and
+  // the first spread took the whole ocean as a lake (2026-10-03). And
+  // at most LAKE_REACH_CELLS past the field's cells: a lake's level IS
+  // its spill, so the valley below its outlet lies under the level all
+  // the way down, and the spread ran down it over every lowland of the
+  // continent (2026-10-03). The field's own rim (waterLevels.ts) is two
+  // cells wide already; this covers the cell whose mean stands over the
+  // level while its fine terrain dips under.
+  const wetLevel = new Float32Array(m * m).fill(NaN)
+  {
+    const wetFloor = new Float32Array(m * m)
+    const damM = new Float32Array(m * m)
+    const inBody = new Uint8Array(m * m)
+    // The reach is measured from the field's texel the water came from,
+    // as the crow flies: counted in steps it was a diamond, and its
+    // corners showed as sawtooth shores where a tile's terrain lies
+    // under a level the coarser raster stood over (2026-10-03).
+    const origin = new Int32Array(m * m)
+    const reach = LAKE_REACH_CELLS / pitch
+    const queue: number[] = []
+    for (let tj = 0; tj < m; tj++) {
+      const y = y0 + (tj - 0.5) * pitch
+      for (let ti = 0; ti < m; ti++) {
+        const x = x0 + (ti - 0.5) * pitch
+        if (source.waterSurfaceAt(x, y) === 0) continue
+        const c = tj * m + ti
+        inBody[c] = 1
+        const lvl = source.waterLevelAt(x, y) * source.elevationMeters
+        const low = source.waterFloorAt(x, y) * source.elevationMeters - LAKE_FLOOR_MARGIN_M
+        damM[c] = source.waterDamAt(x, y) * source.elevationMeters
+        if (metres[c] <= lvl - damM[c] && metres[c] >= low) {
+          wetLevel[c] = lvl
+          wetFloor[c] = low
+          queue.push(c)
+        }
+      }
+    }
+    // The dam at the texels outside the field's cells too (nearest cell).
+    for (let tj = 0; tj < m; tj++) {
+      const y = y0 + (tj - 0.5) * pitch
+      for (let ti = 0; ti < m; ti++) {
+        const c = tj * m + ti
+        if (!inBody[c]) damM[c] = source.waterDamAt(x0 + (ti - 0.5) * pitch, y) * source.elevationMeters
+      }
+    }
+    const spread = (nb: number, lvl: number, low: number, from: number): void => {
+      if (!Number.isNaN(wetLevel[nb]) || metres[nb] > lvl - damM[nb] || metres[nb] < low) return
+      let o = nb
+      if (!inBody[nb]) {
+        if (metres[nb] <= 0) return
+        o = inBody[from] ? from : origin[from]
+        const dx = (nb % m) - (o % m)
+        const dy = Math.floor(nb / m) - Math.floor(o / m)
+        if (dx * dx + dy * dy > reach * reach) return
+      }
+      wetLevel[nb] = lvl
+      wetFloor[nb] = low
+      origin[nb] = o
+      queue.push(nb)
+    }
+    for (let head = 0; head < queue.length; head++) {
+      const c = queue[head]
+      const lvl = wetLevel[c]
+      const low = wetFloor[c]
+      const ti = c % m
+      const tj = (c - ti) / m
+      if (ti > 0) spread(c - 1, lvl, low, c)
+      if (ti < m - 1) spread(c + 1, lvl, low, c)
+      if (tj > 0) spread(c - m, lvl, low, c)
+      if (tj < m - 1) spread(c + m, lvl, low, c)
+    }
+  }
+  // The sea floor is drawn flat, a little under the sea's plane (so the
+  // two never fight); a lake's floor the same, under the lake's own
+  // level — at the map's exaggeration a lake 100 m deep was a pit 600 m
+  // deep with the water at its bottom (2026-10-03). The painted depth
+  // colour keeps the true depth. A vertex reads the wet texel under it.
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const k = j * n + i
+      const x = x0 + i * spacing
+      const y = y0 + j * spacing
+      const ti = Math.min(m - 1, Math.max(0, Math.round(((x - x0) / pitch) + 0.5)))
+      const tj = Math.min(m - 1, Math.max(0, Math.round(((y - y0) / pitch) + 0.5)))
+      const wet = wetLevel[tj * m + ti]
+      const floor = (Number.isNaN(wet) ? (source.waterSurfaceAt(x, y) === 0 ? 0 : -Infinity) : wet / source.elevationMeters) + SEA_FLOOR_SINK
+      if (heights[k] < floor) heights[k] = floor
+    }
+  }
+
   // --- the textures ---------------------------------------------------------
   const albedo = new Uint8Array(texels * texels * 4)
   const normals = new Uint8Array(texels * texels * 4)
@@ -510,7 +620,7 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       let nx = 0
       let ny = 1
       let nz = 0
-      if (h > SEA_FLOOR_SINK * source.elevationMeters || source.waterSurfaceAt(x, y) !== 0) {
+      if (h > SEA_FLOOR_SINK * source.elevationMeters || !Number.isNaN(wetLevel[c])) {
         const dhdx = slopeX[c] + ((detail[c + 1] - detail[c - 1]) * verticalScale) / (2 * pitchM)
         const dhdz = slopeZ[c] + ((detail[c + m] - detail[c - m]) * verticalScale) / (2 * pitchM)
         const inv = 1 / Math.sqrt(dhdx * dhdx + 1 + dhdz * dhdz)
@@ -528,9 +638,12 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       // per lake, clipped by the raster's cells, drew every lake as a
       // block (2026-10-03); painted, the shore is where the ground
       // crosses the level at the texel.
-      const waterLevel = source.waterLevelAt(x, y) * source.elevationMeters
-      const surface = source.waterSurfaceAt(x, y)
-      const lake = surface !== 0 && h <= waterLevel
+      const lake = !Number.isNaN(wetLevel[c])
+      const surface = lake ? 1 : 0
+      // The sea's level where no lake stands: a texel under it is the
+      // sea's floor (the field's own level there would be a dry basin's,
+      // and its floor under the sea's level is land).
+      const waterLevel = lake ? wetLevel[c] : source.waterSurfaceAt(x, y) === 0 ? 0 : -Infinity
       if (lake) {
         nx = 0
         ny = 1
@@ -552,7 +665,7 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
         albedo[p + 3] = 255
         continue
       }
-      const overWater = h - waterLevel
+      const overWater = h - (Number.isFinite(waterLevel) ? waterLevel : 0)
 
       // The cover: the four nearest cells' colours blended, so a biome's
       // edge is a band and not a 7.8 km step.
@@ -565,6 +678,7 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       rgb.fill(0)
       let canopy = 0
       let bare = 0
+      let ice = 0
       for (let dy = 0; dy <= 1; dy++) {
         for (let dx = 0; dx <= 1; dx++) {
           const w = (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy)
@@ -574,6 +688,10 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
           // ocean's blue.
           const biomeRaw = source.biomeAt(cx0 + dx + 0.5, cy0 + dy + 0.5)
           const biome = biomeRaw === 0 ? 17 : biomeRaw
+          if (biome === 1 || biome === 13) {
+            ice += w
+            continue
+          }
           const cover = BIOME_COVER[biome] ?? BIOME_COVER[4]
           rgb[0] += cover[0] * w
           rgb[1] += cover[1] * w
@@ -581,6 +699,22 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
           canopy += (BIOME_CANOPY[biome] ?? 0) * w
           bare += (BIOME_BARE[biome] ?? 0) * w
         }
+      }
+      // The ice sheet's edge (ICE_EDGE_CELLS); the rest of the cover is
+      // the other cells' share, normalised.
+      if (ice > 0) {
+        if (ice < 1) {
+          rgb[0] /= 1 - ice
+          rgb[1] /= 1 - ice
+          rgb[2] /= 1 - ice
+          canopy /= 1 - ice
+          bare /= 1 - ice
+        }
+        const wander = valueNoise(x / ICE_EDGE_CELLS + 5.3, y / ICE_EDGE_CELLS + 2.9) * 0.65 + valueNoise(x / (ICE_EDGE_CELLS / 4) + 1.7, y / (ICE_EDGE_CELLS / 4) + 8.1) * 0.35
+        ice = smooth(0.5 - ICE_EDGE_NOISE / 2, 0.5 + ICE_EDGE_NOISE / 2, ice + (wander - 0.5) * ICE_EDGE_NOISE)
+        mix([rgb[0], rgb[1], rgb[2]], BIOME_COVER[13], ice, rgb)
+        canopy *= 1 - ice
+        bare = bare + (BIOME_BARE[13] - bare) * ice
       }
       // The stands and the clearings.
       if (canopy > 0) canopy *= smooth(0.3, 0.7, valueNoise(x / CANOPY_PATCH_CELLS + 3.1, y / CANOPY_PATCH_CELLS + 7.7) * 0.7 + valueNoise(x / (CANOPY_PATCH_CELLS * 0.3), y / (CANOPY_PATCH_CELLS * 0.3)) * 0.3)
@@ -613,7 +747,7 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       }
       // Snow by the local temperature; it slides off the steep rock.
       const t = source.seaTemperatureAt(x, y) - LAPSE_C_PER_M * h
-      const snow = smooth(0, 1, (SNOW_T_HI - t) / (SNOW_T_HI - SNOW_T_LO)) * (1 - 0.4 * steep)
+      const snow = Math.max(ice, smooth(0, 1, (SNOW_T_HI - t) / (SNOW_T_HI - SNOW_T_LO)) * (1 - 0.4 * steep))
       if (snow > 0) mix([rgb[0], rgb[1], rgb[2]], SNOW, snow, rgb)
       // The material weights, the later layers over the earlier.
       const wSnow = snow

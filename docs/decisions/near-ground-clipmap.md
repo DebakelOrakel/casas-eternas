@@ -299,7 +299,22 @@ kilometre over it. What changed against the sketch above, and why:
   ripple, a Fresnel sky and a highlight (groundNormalPlugin.ts). A plane
   per lake, clipped by the raster's 7.8 km cells, drew every lake as a
   block; painted, the shore is where the ground crosses the level at the
-  texel. A lake's floor is drawn just under its level (at 6× a lake 100 m
+  texel. The lake's reach is found per ring at the texel: from the
+  field's wet cells the water spreads over every neighbouring texel
+  under the same level and never over one above it, so the raster's
+  cells no longer cut the shore into a staircase and a lower valley
+  beyond a ridge stays dry. Past the field's own cells it goes a cell
+  and a half at most (as the crow flies), over land only, never under
+  the body's floor, and not through the dam of 30 m freeboard around
+  the pour point: a lake's level is its spill, so the valley below its
+  outlet lies under the level all the way to the sea, and the unbounded
+  spread took every lowland of a continent, and the ocean, as a lake.
+  The same rules bound the flood over the cells (waterLevels.ts): the
+  ocean is masked first and no body enters it (a twentieth of a cell at
+  level 0 took the whole ocean); a body is a terminal sea, flooded to
+  its spill without a cap, only when it stands UNDER its spill (one
+  brimming at the spill is a lake that overflows, and took a continent).
+  The ice sheet's edge is a thresholded noise, not the cells' blend. A lake's floor is drawn just under its level (at 6× a lake 100 m
   deep was a pit 600 m deep with the water at the bottom).
   The levels come from the LEVEL'S OWN water bodies on the level's own
   terrain, rasterised by the mesh holder (3.6 s, once): the level is a

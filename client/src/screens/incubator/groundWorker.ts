@@ -34,7 +34,7 @@ export type GroundWorkerInbound =
       // and raster it for the others; null for the rest.
       level: MeshLevelArtifact | null
       stages: string[]
-      fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterSurface', GridField | null>
+      fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterFloor' | 'waterDam' | 'waterSurface', GridField | null>
       // The detail textures' side, from the one worker asked; 0 for none.
       detail: number
     }
@@ -48,7 +48,7 @@ export type GroundWorkerInbound =
   | { type: 'missing'; stage: string }
   // The fields replaced (the level's own raster and water, once the mesh
   // holder has made them).
-  | { type: 'fields'; fields: Partial<Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterSurface', GridField | null>> }
+  | { type: 'fields'; fields: Partial<Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterFloor' | 'waterDam' | 'waterSurface', GridField | null>> }
 
 export type GroundWorkerOutbound =
   | { type: 'ready' }
@@ -57,7 +57,7 @@ export type GroundWorkerOutbound =
   | { type: 'rastered'; stage: string; tile: TileId; n: number; data: Float32Array; ms: number }
   // From the mesh holder: the level's terrain on the world raster and
   // the water levels its bodies stand at (waterLevels.ts).
-  | { type: 'levels'; elevation: Float32Array; level: Float32Array; body: Int32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[]; ms: number }
+  | { type: 'levels'; elevation: Float32Array; level: Float32Array; floor: Float32Array; dam: Float32Array; body: Int32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[]; ms: number }
   // The detail textures (groundDetail.ts), once, from the worker asked.
   | { type: 'detail'; size: number; albedo: Uint8Array; normals: Uint8Array }
 
@@ -90,8 +90,10 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
       const water = waterLevelsFromBodies(message.level.waterBodies, elevation, message.width, message.height)
       fields.elevation = { data: elevation, resX: message.width, resY: message.height }
       fields.waterLevel = { data: water.level, resX: message.width, resY: message.height }
+      fields.waterFloor = { data: water.floor, resX: message.width, resY: message.height }
+      fields.waterDam = { data: water.dam, resX: message.width, resY: message.height }
       fields.waterSurface = { data: Float32Array.from(water.surface), resX: message.width, resY: message.height }
-      levels = { type: 'levels', elevation, level: water.level, body: water.body, surface: water.surface, lakes: water.lakes, ms: Math.round(performance.now() - started) }
+      levels = { type: 'levels', elevation, level: water.level, floor: water.floor, dam: water.dam, body: water.body, surface: water.surface, lakes: water.lakes, ms: Math.round(performance.now() - started) }
     }
     source = createGroundSource({
       width: message.width,

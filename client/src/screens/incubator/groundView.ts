@@ -97,7 +97,7 @@ export interface GroundView {
   // Hand the ground its world: level 1, the tiles the store holds (stage
   // → pipeline version) and the save's fields. Resolves when the worker
   // holds it.
-  setWorld(input: { worldUid: string; worldId: string; width: number; height: number; level: MeshLevelArtifact; versions: Map<string, string>; fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterSurface', GridField | null> }): Promise<void>
+  setWorld(input: { worldUid: string; worldId: string; width: number; height: number; level: MeshLevelArtifact; versions: Map<string, string>; fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterFloor' | 'waterDam' | 'waterSurface', GridField | null> }): Promise<void>
   // Per frame: the focus, the world units a pixel spans there, whether
   // the shadows are wanted, and the air: the camera's height over the
   // ground (world units; 0 for the map's orthographic view, which has no
@@ -405,6 +405,8 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       const fields = {
         elevation: { data: message.elevation, resX: worldWidthCells, resY: worldHeightCells },
         waterLevel: { data: message.level, resX: worldWidthCells, resY: worldHeightCells },
+        waterFloor: { data: message.floor, resX: worldWidthCells, resY: worldHeightCells },
+        waterDam: { data: message.dam, resX: worldWidthCells, resY: worldHeightCells },
         waterSurface: { data: Float32Array.from(message.surface), resX: worldWidthCells, resY: worldHeightCells },
       }
       workers.forEach((worker, i) => {
