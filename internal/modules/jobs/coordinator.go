@@ -675,3 +675,24 @@ func (c *coordinator) close() {
 		_ = c.db.Close()
 	}
 }
+
+// workload answers how many jobs are open (queued or running) and how many
+// of their tasks are handed out — queued for a worker or being computed —
+// for the worker scaler (scaler.go).
+func (c *coordinator) workload() (open, tasks int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for jobID, ids := range c.byJob {
+		job, ok := c.registry.get(jobID)
+		if !ok || (job.State != StateQueued && job.State != StateRunning) {
+			continue
+		}
+		open++
+		for _, id := range ids {
+			if task := c.tasks[id]; task != nil && (task.State == taskQueued || task.State == taskRunning) {
+				tasks++
+			}
+		}
+	}
+	return open, tasks
+}

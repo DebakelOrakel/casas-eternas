@@ -1,15 +1,16 @@
 ---
 summary: The cluster deployment — what the manifests set up, the one Secret, bootstrapping users over pod exec, how bakes run as Jobs, and the run-once deadline trap.
 date: 2026-08-13
-updated: 2026-08-13
+updated: 2026-10-03
 group: installation
 order: 40
 ---
 
 # Kubernetes
 
-`deploy/manifests.yaml` is the reference deployment (written against
-OpenShift; the Route is the only OpenShift-specific object). It creates:
+`deploy/manifests.yaml` is the reference deployment: plain Kubernetes
+objects, with security contexts that also satisfy OpenShift's
+restricted-v2. It creates:
 
 - a **ServiceAccount + Role/RoleBinding** — the server creates bake Jobs
   beside itself, so it needs `jobs.batch` create/get/list/watch/delete in
@@ -19,9 +20,16 @@ OpenShift; the Route is the only OpenShift-specific object). It creates:
 - a **Secret** (`casas-eternas-auth`) — applied empty; holds the one
   value that must not be in git (below),
 - the **Deployment** (replicas 1 — the stores' concurrency model is one
-  process per directory), **Service** and **Route**.
+  process per directory), the job workers' Deployment, the **Service** and
+  an **Ingress**.
 
-TLS terminates at the Route; pods speak HTTP.
+TLS terminates at the Ingress, with a Let's Encrypt certificate that
+cert-manager issues and renews through the ClusterIssuer
+`letsencrypt-production` (Secret `casas-eternas-tls`); pods speak HTTP.
+**Set the host** in the Ingress (twice: the rule and the TLS entry) before
+the first apply. Uploads are worlds of tens of megabytes — a controller
+with a body limit must allow them (ingress-nginx:
+`nginx.ingress.kubernetes.io/proxy-body-size: "0"`).
 
 ## First run
 
@@ -57,6 +65,10 @@ immediately, except the admin role, which lands in the token at the
 member's next login.
 
 ## Bakes are Jobs
+
+*Being replaced:* with the relay in the process (`-t all`), a server in a
+cluster now hands every job to its workers (below); the Job runner
+described here goes with the next step.
 
 A server in a cluster runs amplification bakes as Kubernetes Jobs — same
 image as the server (enforced with `imagePullPolicy: Always`; the
@@ -94,11 +106,14 @@ back to zero when every job is through, finding it by the label
 `casas-eternas/component: worker`. Do not set its replicas by hand; an
 `oc apply` of the manifests puts it back to 0, which stops a running
 refinement's workers until the server scales them up again (the tasks are
-handed out again, so only time is lost). *The scaling is not built yet —
-until it is, the Deployment stays at 0 and the bakes run as Jobs.*
+handed out again, so only time is lost). While any job is open the server
+keeps as many workers as there are tasks, up to `jobs.max-concurrent`, and
+never fewer than are running; when every job is through, zero. It needs
+`list` on Deployments and `get`/`update` on `deployments/scale` in the
+namespace (the Role in the manifests).
 
 The workers reach the server inside the namespace only: the relay (NATS) on
-the Service's `relay` port 4222, not on the Route, and the server's HTTP
+the Service's `relay` port 4222, not on the Ingress, and the server's HTTP
 API for their tasks. They prove themselves with a **service account** of
 the server's auth system, which they trade for a bus token valid for an
 hour. Create it once, after the first start:
@@ -115,6 +130,11 @@ every trade and need no restart. `auth service delete` ends an account; the
 tokens it bought run out within the hour.
 
 ## Updating
+
+**Once, for a server deployed before the worker Deployment (2026-10-03):**
+the server's pods are labelled `casas-eternas/component: server` now, and
+a Deployment's selector cannot change in place. `oc delete deploy/casas-eternas`
+before the apply; the data volume and the Secrets stay.
 
 Push the image, then `oc apply -f deploy/manifests.yaml` and a rollout —
 manifests and image travel together, because the env vocabulary and the

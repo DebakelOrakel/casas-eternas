@@ -1,13 +1,14 @@
-# OpenShift manifests for casas-eternas: ONE binary serving the client, the
-# docs site, the world store, the artifact store, the bake worker and the
-# login (auth target; users administered over the admin socket, see
-# deploy/README.md).
-# PVC + Deployment + Service + Route. Route has NO host, so OpenShift generates
-# one on the cluster's default apps domain:
-# casas-eternas-<namespace>.apps.<cluster>.
+# Kubernetes manifests for casas-eternas: ONE binary serving the client, the
+# docs site, the world store, the artifact store, the job coordinator and
+# the login (auth target; users administered over the admin socket, see
+# deploy/README.md), plus the job workers it scales.
+# PVC + Deployments + Service + Ingress — plain Kubernetes objects, the
+# certificate from cert-manager (ClusterIssuer letsencrypt-production). The
+# security contexts satisfy OpenShift's restricted-v2 as well.
 #
-#   oc apply -f deploy/manifests.yaml
-#   oc get route casas-eternas -o jsonpath='{.spec.host}{"\n"}'
+# SET THE HOST in the Ingress at the end before the first apply.
+#
+#   kubectl apply -f deploy/manifests.yaml
 #
 # Set `image:` below to where you pushed the image built from deploy/Dockerfile
 # (e.g. the internal registry: image-registry.openshift-image-registry.svc:5000/<ns>/casas-eternas:latest).
@@ -23,9 +24,10 @@ metadata:
   labels:
     app: casas-eternas
 ---
-# Namespaced, never cluster-wide: the server creates Jobs beside itself and has
-# no business anywhere else. `delete` is what removes finished Jobs on the
-# spot and prunes retained failed ones; `list` is the retention sweep's view.
+# Namespaced, never cluster-wide: the server creates Jobs and scales its
+# workers beside itself and has no business anywhere else. `delete` is what
+# removes finished Jobs on the spot and prunes retained failed ones; `list`
+# is the retention sweep's view.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -36,6 +38,15 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]
+  # The worker Deployment the jobs module scales (internal/modules/jobs,
+  # scaler.go): found by its label, its replicas read and set through the
+  # scale subresource. Nothing else on Deployments.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -99,15 +110,23 @@ metadata:
   name: casas-eternas
   labels:
     app: casas-eternas
+    casas-eternas/component: server
 spec:
   replicas: 1
+  # `component: server` keeps this Deployment's pods apart from the
+  # workers' (same `app`, `component: worker`) — and the Service selects on
+  # it too. A selector cannot change on a live Deployment: a cluster from
+  # before this label needs `oc delete deploy/casas-eternas` once before the
+  # apply (the data volume stays).
   selector:
     matchLabels:
       app: casas-eternas
+      casas-eternas/component: server
   template:
     metadata:
       labels:
         app: casas-eternas
+        casas-eternas/component: server
     spec:
       serviceAccountName: casas-eternas
       containers:
@@ -129,9 +148,10 @@ spec:
             # ever look for — a failure that looks exactly like success.
             - name: CASAS_JOBS_IMAGE
               value: ghcr.io/debakelorakel/casas-eternas:latest
-            # Three bakes in flight; each Job reserves its honest 3Gi, so the
-            # ceiling in practice is the nodes' free memory — beyond it the
-            # extra Jobs sit Pending, which the server reports as exactly that.
+            # At most three job workers: the most replicas the jobs server
+            # scales casas-eternas-worker to. Each reserves its honest 7Gi, so
+            # the ceiling in practice is the nodes' free memory — beyond it
+            # the extra workers sit Pending and the work waits for them.
             - name: CASAS_JOBS_MAX_CONCURRENT
               value: "3"
             # Authentication. Environment rather than args because CMD already
@@ -240,7 +260,8 @@ spec:
 # The JOB WORKERS: long-lived Node processes serving the jobs coordinator's
 # tasks over the relay (docs/decisions/detail-ladder.md, addendum
 # 2026-10-03). The jobs server SCALES THIS DEPLOYMENT ITSELF: up when tasks
-# wait, back to zero when every job is through. It finds it by the
+# wait (to at most jobs.max-concurrent), never down while a job is open, and
+# back to zero when every job is through. It finds it by the
 # `casas-eternas/component: worker` label, so keep that label, and do not
 # manage `replicas` from anywhere else — applying this file sets it to 0,
 # which ends a running refinement's workers (the tasks are handed out again
@@ -264,17 +285,16 @@ metadata:
     casas-eternas/component: worker
 spec:
   replicas: 0
-  # The PODS are `app: casas-eternas-worker`, not `app: casas-eternas`: the
-  # server's Deployment and the Service select on that, and a worker pod
-  # among them would be adopted, or sent the server's HTTP and relay
-  # traffic.
+  # `component: worker` keeps these pods apart from the server's
+  # (`component: server`), whose Deployment and Service select on that.
   selector:
     matchLabels:
-      app: casas-eternas-worker
+      app: casas-eternas
+      casas-eternas/component: worker
   template:
     metadata:
       labels:
-        app: casas-eternas-worker
+        app: casas-eternas
         casas-eternas/component: worker
     spec:
       # No API access: a worker talks to the relay and the server, nothing
@@ -301,10 +321,11 @@ spec:
           # A level-1 replay held 6.2 GB on one worker (detail-ladder.md);
           # the request reserves that, the limit leaves room for a large
           # world. Not yet measured in the cluster.
+          # In this deployment the requests are intentionally low for the lab.
           resources:
             requests:
-              cpu: "1"
-              memory: 7Gi
+              cpu: 50m
+              memory: 1Gi
             limits:
               memory: 10Gi
           securityContext:
@@ -343,36 +364,61 @@ metadata:
     app: casas-eternas
 spec:
   type: ClusterIP
+  # The server alone: not the workers, nor a bake Job's pods, which share
+  # `app: casas-eternas`.
   selector:
     app: casas-eternas
+    casas-eternas/component: server
   ports:
     - name: http
       port: 8080
       targetPort: http
       protocol: TCP
     # The relay, for the job workers: nats://casas-eternas:4222 inside the
-    # namespace. Not on the Route — workers are in the cluster, nobody else
+    # namespace. Not on the Ingress — workers are in the cluster, nobody else
     # speaks NATS to this server.
     - name: relay
       port: 4222
       targetPort: relay
       protocol: TCP
 ---
-apiVersion: route.openshift.io/v1
-kind: Route
+# The way in from outside: the HTTP API, the client and the docs site.
+# Native networking.k8s.io/v1, so any controller serves it. The certificate
+# comes from cert-manager through the `letsencrypt-production` ClusterIssuer,
+# into the Secret `casas-eternas-tls` it creates and renews.
+#
+# - Uploads: a saved world is tens of megabytes. A controller with a body
+#   limit must allow them; ingress-nginx's default (1 MiB) refuses them:
+#   `nginx.ingress.kubernetes.io/proxy-body-size: "0"`.
+# - On OpenShift, the router turns this into a Route by itself.
+#
+# The relay (NATS) is not here: workers reach it inside the cluster, on the
+# Service's `relay` port.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
   name: casas-eternas
   labels:
     app: casas-eternas
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-production
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
 spec:
-  # No host → OpenShift assigns one on the default apps domain.
-  to:
-    kind: Service
-    name: casas-eternas
-    weight: 100
-  port:
-    targetPort: http
-  # Serve over HTTPS with the router's default cert; redirect plain HTTP to it.
+  # The cluster's default class unless named here.
+  # ingressClassName: nginx
   tls:
-    termination: edge
-    insecureEdgeTerminationPolicy: Redirect
+    - hosts:
+        - casas-eternas.ahoi.sh
+      secretName: casas-eternas-tls
+  rules:
+    # SET THIS (and the host above): the name the server is reached by.
+    - host: casas-eternas.ahoi.sh
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: casas-eternas
+                port:
+                  name: http

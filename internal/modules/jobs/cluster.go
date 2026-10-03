@@ -309,3 +309,79 @@ func (c *clusterAPI) deleteJob(ctx context.Context, name string) error {
 	}
 	return nil
 }
+
+// The worker Deployment (deploy/manifests.yaml): found by its label, scaled
+// through its scale subresource. Three more verbs on one more resource —
+// still well inside what a hand-rolled client is for (see the top of this
+// file).
+const workerSelector = "casas-eternas/component=worker"
+
+func (c *clusterAPI) deploymentsPath() string {
+	return "/apis/apps/v1/namespaces/" + c.namespace + "/deployments"
+}
+
+// workerDeployments names the Deployments carrying the worker label.
+func (c *clusterAPI) workerDeployments(ctx context.Context) ([]string, error) {
+	raw, status, err := c.do(ctx, http.MethodGet, c.deploymentsPath()+"?labelSelector="+url.QueryEscape(workerSelector), nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, apiError("listing worker deployments", status, raw)
+	}
+	var parsed struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("listing worker deployments: %w", err)
+	}
+	names := make([]string, 0, len(parsed.Items))
+	for _, item := range parsed.Items {
+		names = append(names, item.Metadata.Name)
+	}
+	return names, nil
+}
+
+// replicas answers how many replicas a Deployment is asked for.
+func (c *clusterAPI) replicas(ctx context.Context, name string) (int, error) {
+	raw, status, err := c.do(ctx, http.MethodGet, c.deploymentsPath()+"/"+name+"/scale", nil)
+	if err != nil {
+		return 0, err
+	}
+	if status != http.StatusOK {
+		return 0, apiError("reading the worker scale", status, raw)
+	}
+	var parsed struct {
+		Spec struct {
+			Replicas int `json:"replicas"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return 0, fmt.Errorf("reading the worker scale: %w", err)
+	}
+	return parsed.Spec.Replicas, nil
+}
+
+// scale sets a Deployment's replicas. A PUT of the whole Scale, without a
+// resource version: the scaler is the one writer of this number, so there is
+// no other change to lose.
+func (c *clusterAPI) scale(ctx context.Context, name string, replicas int) error {
+	body, _ := json.Marshal(map[string]any{
+		"apiVersion": "autoscaling/v1",
+		"kind":       "Scale",
+		"metadata":   map[string]string{"name": name, "namespace": c.namespace},
+		"spec":       map[string]int{"replicas": replicas},
+	})
+	raw, status, err := c.do(ctx, http.MethodPut, c.deploymentsPath()+"/"+name+"/scale", body)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return apiError("scaling the workers", status, raw)
+	}
+	return nil
+}

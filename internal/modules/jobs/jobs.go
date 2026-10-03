@@ -222,10 +222,10 @@ func New(cfg Config) (*Module, error) {
 		shutdown: ctx,
 		cancel:   cancel,
 	}
-	// Over the relay, off a cluster: the coordinator plans and hands out the
-	// tasks, the local workers compute them. A cluster keeps its runner (one
-	// Job per order) until the worker Deployment exists.
-	if cfg.Relay != nil && !InCluster() {
+	// Over the relay: the coordinator plans and hands out the tasks, and
+	// workers compute them — off a cluster the local ones this module starts,
+	// in a cluster the worker Deployment it scales (scaler.go).
+	if cfg.Relay != nil {
 		if cfg.StorageDir == "" {
 			cancel()
 			return nil, fmt.Errorf("jobs.storage: the coordinator needs a directory for jobs.db")
@@ -237,6 +237,16 @@ func New(cfg Config) (*Module, error) {
 		}
 		if local, ok := runner.(*localRunner); ok && cfg.RelayURL != "" {
 			m.pool = startWorkerPool(local.bakerPath, cfg.RelayURL, workers, nodeHeapMB, cfg.Tokens)
+		}
+		if InCluster() {
+			api, err := newClusterAPI()
+			if err != nil {
+				m.coord.close()
+				cancel()
+				return nil, fmt.Errorf("worker scaler: %w", err)
+			}
+			scaler := &workerScaler{api: api, workload: m.coord.workload, max: workers}
+			go scaler.run(ctx)
 		}
 		slog.Info("jobs ready", "coordinator", cfg.StorageDir, "workers", workers, "checks identity", cfg.Identity.ChecksIdentity())
 		return m, nil
@@ -764,7 +774,7 @@ func (m *Module) buildSpec(ctx context.Context, id string, request Request) (Spe
 	// Only a Job on another node learns its own id and where to report:
 	// progress goes to THIS server's API (JobsURL). A coordinator's task
 	// carries its job id too, set by the coordinator; it reports on the relay.
-	if m.clusterMode {
+	if m.clusterMode && m.coord == nil {
 		spec.JobID = id
 		spec.JobsURL = m.cfg.SelfURL
 	}

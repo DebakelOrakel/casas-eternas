@@ -609,10 +609,22 @@ server's own local workers keep their plain `worker` token (`RELAY_TOKEN`).
 
 The worker Deployment is in deploy/manifests.yaml: `replicas: 0`, the
 label `casas-eternas/component: worker` the coordinator will find it by,
-its pods labelled `app: casas-eternas-worker` so neither the server's
-Deployment nor the Service selects them, no API token mounted, 7 Gi
+its pods `component: worker` beside the server's `component: server`
+(same `app`), so neither the server's Deployment nor the Service selects
+them, no API token mounted, 7 Gi
 requested (a level-1 replay held 6.2 GB), the credential from the Secret
-`casas-eternas-worker`. It stays at 0 until step 3.
+`casas-eternas-worker`.
+
+**Step 3, BUILT the same day**: in a cluster the coordinator runs too, and
+`internal/modules/jobs/scaler.go` sets the Deployment's replicas every ten
+seconds — while any job is open, its handed-out tasks up to
+`jobs.max-concurrent` (at least one, never fewer than run), else zero. A
+loop that compares and corrects, so a restarted server or a re-applied
+manifest is put right. Role: `list` on Deployments, `get`/`update` on
+`deployments/scale`. Every job now goes to the workers, so the Job runner
+is idle in a cluster until step 4 removes it. Not yet: checkpoints for a
+level-1 replay in the cluster (the task directory is local-only), so a
+worker that dies mid-replay starts it again.
 
 **Open: a worker outside the cluster.** Not built, and four things short,
 the token the smallest of them: the relay reached from outside (NATS's
