@@ -18,7 +18,6 @@ import { createSidebar } from '../../ui/sidebar/Sidebar'
 import { createTitleBar } from '../../ui/titleBar/TitleBar'
 import { createWorldChooser } from '../../ui/worldChooser/WorldChooser'
 import { createGroundView } from './groundView'
-import { waterLevelsFromDepth } from './waterLevels'
 import type { GridField } from './groundSource'
 import '../../ui/theme/design.css'
 
@@ -243,26 +242,26 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (a.worldUid === uid && a.worldId === chosen.worldId && parseStage(a.stage)?.tile) versions.set(a.stage, a.pipelineVersion)
     }
     step(`${versions.size} tiles listed`)
-    const elevation = await gridField(world, 'elevation')
-    const lakeDepth = await gridField(world, 'lakeDepth')
-    // The water levels from the save's lake depths (waterLevels.ts), as
-    // the painter and the water planes read them.
-    const water = elevation && lakeDepth ? waterLevelsFromDepth(elevation.data, lakeDepth.data, elevation.resX, elevation.resY) : null
+    // The save's climate fields; the terrain and the water the ground
+    // makes from the level itself (groundWorker.ts, waterLevels.ts), the
+    // save's elevation standing in until then.
     const fields = {
       biome: await gridField(world, 'biome'),
-      elevation,
+      elevation: await gridField(world, 'elevation'),
       temperature: await gridField(world, 'temperature'),
       precipitation: await gridField(world, 'precipitationEffective'),
-      lakeDepth,
-      waterLevel: water && elevation ? { data: water.level, resX: elevation.resX, resY: elevation.resY } : null,
-      waterSurface: water && elevation ? { data: Float32Array.from(water.surface), resX: elevation.resX, resY: elevation.resY } : null,
+      lakeDepth: await gridField(world, 'lakeDepth'),
+      waterLevel: null,
+      waterSurface: null,
     }
-    step('water levels')
     if (disposed) return false
     if (!ground) ground = createGroundView({ scene, store })
     if (query.get('rings') === '1') ground.setTinted(true)
     if (query.get('detail')) ground.setDetailStrength(Number(query.get('detail')))
-    if (water && elevation) ground.setWater(water.level, elevation.resX, elevation.resY, water.lakes)
+    ground.onLevels((levels) => {
+      debug.water = levels
+      debug.elevation = levels.elevation
+    })
     await ground.setWorld({ worldUid: uid, worldId: chosen.worldId, width: world.width, height: world.height, level: read.artifact, versions, fields })
     step('ground ready')
     if (disposed) return false
@@ -306,7 +305,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // server world and puts the camera at a view, so a screenshot ladder
   // shows the same places every time. `data-ready` on the root says the
   // level is shown. Not a user surface: no text, no keys.
-  const debug: { errors: string[]; ground: () => unknown; scene: Scene; shaders?: () => string[]; view?: unknown } = { errors: [], ground: () => ground?.stats() ?? null, scene }
+  const debug: { errors: string[]; ground: () => unknown; scene: Scene; shaders?: () => string[]; view?: unknown; water?: unknown; elevation?: Float32Array | null } = { errors: [], ground: () => ground?.stats() ?? null, scene }
   ;(window as unknown as { __incubator?: unknown }).__incubator = debug
   window.addEventListener('error', (e) => debug.errors.push(String(e.message)))
   window.addEventListener('unhandledrejection', (e) => debug.errors.push(String(e.reason)))

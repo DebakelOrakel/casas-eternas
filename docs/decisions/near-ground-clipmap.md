@@ -299,6 +299,17 @@ kilometre over it. What changed against the sketch above, and why:
   (screens/incubator/waterLevels.ts; the hydrology's own field floods per
   body and hung the page at 6 600 bodies) — so a lake basin under the
   sea's plane and a lower basin beside a lake's quad are not flooded.
+  The levels come from the LEVEL'S OWN water bodies on the level's own
+  terrain, rasterised by the mesh holder (3.6 s, once): the level is a
+  replay at a finer budget and differs from the save's raster by 380 m
+  RMS, so the save's lakes lay on the level's hillsides, in blocks. A
+  body's extent is the flood under its level from its seed, lowest cell
+  first and capped at 1.5× the hydrology's cell count (the raster's rim
+  leaks at saddles), a lake never under the sea's level, plus a rim of
+  two cells whose raster height stands at most 150 m over the level; a
+  rim by distance alone flooded a coastal slope 16 km wide. The level test's tolerance is 4e-5 world
+  units: the fragment's y is a float32 near 10, and at 1e-6 every lake
+  but the sea (at y = 0) was discarded whole.
   The painter colours the ground by its depth below the LOCAL level, so a
   terminal sea's floor two kilometres under the sea's level is a lake,
   not the sea. Memory: three workers, one holding the level's mesh, a

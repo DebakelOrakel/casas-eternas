@@ -58,6 +58,9 @@ export interface GroundSourceOptions {
 }
 
 export interface RasterGroundSource extends GroundSource {
+  // Replace some of the material fields (the level's own raster and
+  // water, once the mesh holder has made them).
+  setFields(next: Partial<GroundSourceOptions['fields']>): void
   setRaster(stage: string, raster: Raster): void
   dropRaster(stage: string): void
   markMissing(stage: string): void
@@ -78,7 +81,8 @@ const LAPSE_C_PER_M = 6.5 / 1000
 const wrap = (v: number, n: number): number => ((v % n) + n) % n
 
 export function createGroundSource(options: GroundSourceOptions): RasterGroundSource {
-  const { width, height, base, stages, fields } = options
+  const { width, height, base, stages } = options
+  const fields = { ...options.fields }
   const rasters = new Map<string, Raster | 'loading' | 'missing'>()
   const wanted = new Set<string>()
   const used = new Set<string>()
@@ -167,12 +171,13 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
     }
     return sample[0]
   }
-  // LEVEL 0: the save's own elevation raster (7.8 km cells), for the
-  // texels coarser than any level's nodes — the outermost rings, whose
-  // level-1 rasters would be the whole world's 8 192 (2026-10-03). The
-  // slope by central differences.
-  const level0 = fields.elevation
+  // LEVEL 0: the level's terrain on the world raster (7.8 km cells; the
+  // save's until the mesh holder has made it), for the texels coarser
+  // than any level's nodes — the outermost rings, whose level-1 rasters
+  // would be the whole world's 8 192 (2026-10-03). The slope by central
+  // differences.
   const fromLevel0 = (x: number, y: number, out: Float64Array | null): number => {
+    const level0 = fields.elevation
     const h = bilinear(level0, x, y, 0)
     if (out) {
       out[0] = h
@@ -246,6 +251,9 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
     height,
     metersPerCell: options.metersPerCell,
     elevationMeters: options.elevationMeters,
+    setFields(next) {
+      Object.assign(fields, next)
+    },
     elevationAt: (x, y, maxLevel) => lookup(x, y, maxLevel, null),
     surfaceAt: (x, y, maxLevel, out) => lookup(x, y, maxLevel, out),
     biomeAt: (x, y) => nearest(fields.biome, x, y, 4),

@@ -43,8 +43,12 @@ const SEA_PERIODS = 3
 const RIPPLE_SIZE = 256
 const RIPPLE_WAVELENGTH = 0.002
 // How far (world units) a plane's level may differ from the field's and
-// still be its own: half the exaggerated metre at 6× is plenty.
-const LEVEL_TOLERANCE_UNITS = 1e-6
+// still be its own. The fragment's world y is a float32 of a position
+// up to 10 units, so it carries ~1e-6 of noise — at 1e-6 every lake but
+// the sea (at y = 0 exactly) was discarded whole (2026-10-03). 4e-5 is
+// ~5 m of real height at 6×; two bodies closer than that in level and
+// touching would share a plane, which is no harm.
+const LEVEL_TOLERANCE_UNITS = 4e-5
 // The lake quads reach this many cells past the body's cells: its rim.
 const LAKE_MARGIN_CELLS = 1
 
@@ -163,17 +167,23 @@ export function createGroundWater(options: GroundWaterOptions): GroundWater {
   let exaggeration = 1
 
   const material = new StandardMaterial('groundWaterMaterial', scene)
-  material.diffuseColor = new Color3(0.12, 0.3, 0.46)
+  material.diffuseColor = new Color3(0.22, 0.44, 0.6)
   material.specularColor = new Color3(0.5, 0.5, 0.5)
-  material.specularPower = 96
-  material.alpha = 0.62
+  material.specularPower = 160
+  material.alpha = 0.55
   material.backFaceCulling = false
   material.useSpecularOverAlpha = true
   const ripples = RawTexture.CreateRGBATexture(makeRipples(RIPPLE_SIZE), RIPPLE_SIZE, RIPPLE_SIZE, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE)
   ripples.wrapU = Texture.WRAP_ADDRESSMODE
   ripples.wrapV = Texture.WRAP_ADDRESSMODE
   material.bumpTexture = ripples
-  material.bumpTexture.level = 0.35
+  material.bumpTexture.level = 0.2
+  // The plane wins the depth test by a few depth units where the ground
+  // lies at its level (a flat shore flickered between the two,
+  // 2026-10-03). Units, not the slope factor: a factor scales with the
+  // plane's depth slope, which at a grazing view put the plane in front
+  // of every mountain.
+  material.zOffsetUnits = -4
   const plugin = new WaterLevelPlugin(material)
   let levelTexture: RawTexture | null = null
 

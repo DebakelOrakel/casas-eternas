@@ -1,20 +1,30 @@
-// THE WATER LEVELS FOR DRAWING, from the save's own layers: where the
-// `lakeDepth` raster is wet, the level is the terrain plus the depth —
-// the one number the hydrology wrote there — and the cells join into
-// bodies by adjacency, in one pass over the raster. The hydrology's own
+// THE WATER LEVELS FOR DRAWING, from the LEVEL'S own water bodies
+// (world/meshArtifacts: the hydrology run on the level-1 mesh) over the
+// level's own terrain rasterised (groundWorker.ts). Not from the save's
+// lake layer: the level is a replay at a finer budget and its terrain
+// differs from the save's raster by 380 m RMS — lakes of the save lay on
+// hillsides of the level, in blocks (2026-10-03). The hydrology's own
 // `waterLevelField` recovers every body's extent by flooding from its
 // seed and allocates a mask per body: at 6 600 bodies on 2048 × 1024
-// that hung the page for minutes (2026-10-03). This is what the incubator
-// draws by; the hydrology's field stays the truth for the generator.
+// that hung the page for minutes; this floods with one mask for all.
 //
-// A body's one-cell rim takes its level too (the dry side of every shore
-// must agree with the wet side, or the shore is found on the wrong cell),
-// where the rim cell is above the level; elsewhere the sea's level, 0.
+// A body's extent is the flood from its seed over cells under its level,
+// lowest first and at most REACH_CAP times its own cell count (the
+// raster's rim leaks at places — a saddle a hair under the level — and
+// by height the basin fills before the leak does). A rim of RIM_CELLS
+// cells follows, taking the level where the cell's raster height stands
+// at or above it but under it by RIM_MARGIN: the raster is a mean, and a
+// shore cell that averages a little over the level has ground under it.
 
 import { wrapValue } from '../../generator/core/field'
+import type { WaterBody } from '../../generator/surface/hydrology'
 
-// How far (cells) a body's level reaches past its wet cells.
+// The most a body's flood may grow past the hydrology's cell count, as a
+// multiple; the rim's width (cells) and how far (elevation units) over
+// the level a rim cell's raster height may stand.
+const REACH_CAP = 1.5
 const RIM_CELLS = 2
+const RIM_MARGIN = 150 / 9000
 
 export interface WaterLevels {
   // Per cell: the level (elevation units), the body (−1 the sea) and the
@@ -26,73 +36,140 @@ export interface WaterLevels {
   lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[]
 }
 
-export function waterLevelsFromDepth(elevation: Float32Array, lakeDepth: Float32Array, width: number, height: number): WaterLevels {
+export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: Float32Array, width: number, height: number): WaterLevels {
   const n = width * height
   const level = new Float32Array(n)
   const body = new Int32Array(n).fill(-1)
   const surface = new Uint8Array(n)
   const lakes: WaterLevels['lakes'] = []
-  const queue: number[] = []
-  for (let seed = 0; seed < n; seed++) {
-    if (body[seed] !== -1 || !(lakeDepth[seed] > 0)) continue
+  const wetCount: number[] = []
+  const subSea: boolean[] = []
+  const seeds: number[] = []
+  for (const b of bodies) {
+    if (b.kind === 'dry' || b.frozen) continue
+    const seed = wrapValue(Math.floor(b.seedY), height) * width + wrapValue(Math.floor(b.seedX), width)
+    if (!(elevation[seed] < b.level)) continue
     const id = lakes.length
-    // The body's level: the mean of what its cells say (they agree to the
-    // layer's quantisation), so one number stands for the plane.
-    let sum = 0
-    let count = 0
-    const box = { x0: width, y0: height, x1: -1, y1: -1, level: 0 }
-    queue.length = 0
-    queue.push(seed)
+    lakes.push({ x0: width, y0: height, x1: -1, y1: -1, level: b.level })
+    wetCount.push(Math.max(4, b.cells))
+    // A terminal sea's floor lies under the sea's level: its flood may
+    // take such cells. A lake's stops at the sea's level, or a lake on a
+    // cliff coast flooded the ocean under it, in slabs.
+    subSea.push(b.floor < 0)
+    seeds.push(seed)
     body[seed] = id
-    for (let head = 0; head < queue.length; head++) {
-      const c = queue[head]
-      const cx = c % width
-      const cy = (c - cx) / width
-      sum += elevation[c] + lakeDepth[c]
-      count++
-      if (cx < box.x0) box.x0 = cx
-      if (cx > box.x1) box.x1 = cx
-      if (cy < box.y0) box.y0 = cy
-      if (cy > box.y1) box.y1 = cy
-      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-        const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
-        if (body[nb] !== -1 || !(lakeDepth[nb] > 0)) continue
-        body[nb] = id
-        queue.push(nb)
-      }
-    }
-    box.level = sum / count
-    lakes.push(box)
-    for (const c of queue) {
-      level[c] = box.level
-      surface[c] = 1
+    level[seed] = b.level
+    surface[seed] = 1
+  }
+  // The flood: a binary heap of (elevation, cell, body) on parallel
+  // arrays, lowest first.
+  const reached = lakes.map(() => 0)
+  // A binary heap of (elevation, cell, body) on parallel arrays.
+  const heapE: number[] = []
+  const heapC: number[] = []
+  const heapB: number[] = []
+  const push = (e: number, c: number, b: number): void => {
+    heapE.push(e)
+    heapC.push(c)
+    heapB.push(b)
+    let i = heapE.length - 1
+    while (i > 0) {
+      const parent = (i - 1) >> 1
+      if (heapE[parent] <= heapE[i]) break
+      ;[heapE[parent], heapE[i]] = [heapE[i], heapE[parent]]
+      ;[heapC[parent], heapC[i]] = [heapC[i], heapC[parent]]
+      ;[heapB[parent], heapB[i]] = [heapB[i], heapB[parent]]
+      i = parent
     }
   }
-  // The rims, after every body: RIM_CELLS cells out from the wet cells,
-  // each taking the level of the wet cell it grew from, where the rim
-  // cell is land or stands above the level — a cell of the open sea
-  // keeps the sea's. Two cells, because the wet cells are the
-  // generator's raster and a refined terrain lies below the level well
-  // past them (a basin's floor painted as patches of sea, 2026-10-03).
-  let front: number[] = []
-  for (let c = 0; c < n; c++) if (body[c] !== -1) front.push(c)
+  const pop = (): void => {
+    const last = heapE.length - 1
+    heapE[0] = heapE[last]
+    heapC[0] = heapC[last]
+    heapB[0] = heapB[last]
+    heapE.pop()
+    heapC.pop()
+    heapB.pop()
+    let i = 0
+    for (;;) {
+      const l = 2 * i + 1
+      const r = l + 1
+      let m = i
+      if (l < heapE.length && heapE[l] < heapE[m]) m = l
+      if (r < heapE.length && heapE[r] < heapE[m]) m = r
+      if (m === i) break
+      ;[heapE[m], heapE[i]] = [heapE[i], heapE[m]]
+      ;[heapC[m], heapC[i]] = [heapC[i], heapC[m]]
+      ;[heapB[m], heapB[i]] = [heapB[i], heapB[m]]
+      i = m
+    }
+  }
+  const offer = (c: number, id: number): void => {
+    const cx = c % width
+    const cy = (c - cx) / width
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+      const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
+      if (body[nb] !== -1 || !(elevation[nb] < lakes[id].level)) continue
+      if (elevation[nb] <= 0 && !subSea[id]) continue
+      push(elevation[nb], nb, id)
+    }
+  }
+  for (const seed of seeds) offer(seed, body[seed])
+  while (heapE.length > 0) {
+    const c = heapC[0]
+    const id = heapB[0]
+    pop()
+    if (body[c] !== -1 || reached[id] >= wetCount[id] * REACH_CAP) continue
+    body[c] = id
+    level[c] = lakes[id].level
+    surface[c] = 1
+    reached[id]++
+    offer(c, id)
+  }
+  // THE RIM: RIM_CELLS cells out from the flood, each taking the level
+  // where its raster height stands at or above the level but under it
+  // by RIM_MARGIN — the raster is a mean over 7.8 km, and a shore cell
+  // that averages a little above the level has refined ground under it;
+  // without the rim the shore was the raster's blocks (2026-10-03). The
+  // margin keeps a slope that falls past the lake to the sea out of it
+  // (a rim by distance alone put a lake's level on a coastal slope).
   for (let step = 0; step < RIM_CELLS; step++) {
-    const next: number[] = []
-    for (const c of front) {
-      const id = body[c]
+    const rim: number[] = []
+    for (let c = 0; c < n; c++) {
+      if (body[c] !== -1) continue
       const cx = c % width
       const cy = (c - cx) / width
       for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
         const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
-        if (body[nb] !== -1) continue
-        if (!(elevation[nb] > 0 || elevation[nb] >= lakes[id].level)) continue
-        body[nb] = id
-        level[nb] = lakes[id].level
-        surface[nb] = 1
-        next.push(nb)
+        const id = body[nb]
+        if (id < 0) continue
+        const lvl = lakes[id].level
+        if (elevation[c] < lvl || elevation[c] > lvl + RIM_MARGIN) continue
+        level[c] = lvl
+        surface[c] = 1
+        rim.push(c, id)
+        break
       }
     }
-    front = next
+    for (let i = 0; i < rim.length; i += 2) body[rim[i]] = rim[i + 1]
+  }
+  // The boxes over the reach.
+  for (const box of lakes) {
+    box.x0 = width
+    box.y0 = height
+    box.x1 = -1
+    box.y1 = -1
+  }
+  for (let c = 0; c < n; c++) {
+    const id = body[c]
+    if (id < 0) continue
+    const cx = c % width
+    const cy = (c - cx) / width
+    const box = lakes[id]
+    if (cx < box.x0) box.x0 = cx
+    if (cx > box.x1) box.x1 = cx
+    if (cy < box.y0) box.y0 = cy
+    if (cy > box.y1) box.y1 = cy
   }
   return { level, body, surface, lakes }
 }

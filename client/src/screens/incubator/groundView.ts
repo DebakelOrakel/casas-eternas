@@ -103,13 +103,13 @@ export interface GroundView {
   // ground (world units; 0 for the map's orthographic view, which has no
   // distance to fog by) and where it stands.
   update(focusX: number, focusZ: number, unitsPerPixel: number, shadows: boolean, air: { altitude: number; eye: Vector3; farPlane: number }): void
-  // The water's levels (elevation units per world cell) and the lakes'
-  // boxes (cells), for the water planes (map/groundWater.ts).
-  setWater(level: Float32Array, width: number, height: number, lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[]): void
+  // Called once the level's own terrain and water are known (the mesh
+  // holder makes them; waterLevels.ts): for the screen's debugging.
+  onLevels(listener: (levels: { elevation: Float32Array; level: Float32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[] }) => void): void
   // The DRAWN ground's world Y at a point, exaggeration included.
   drawnHeightAt(x: number, z: number): number
   // For the console and the screenshot ladder: what is being built.
-  stats(): { queued: number; inflight: number; innermost: number; paints: { k: number; ms: number; counts: unknown; wanted: number }[]; ready: number; worldSent: number; rasters: { count: number; mb: number; made: number; madeMs: number }; arrivals: number; waiting: number }
+  stats(): { queued: number; inflight: number; innermost: number; paints: { k: number; ms: number; counts: unknown; wanted: number }[]; ready: number; worldSent: number; levelsMs: number; rasters: { count: number; mb: number; made: number; madeMs: number }; arrivals: number; waiting: number }
   // DEBUG: tint each ring by its index, to see where the rings meet; the
   // shader grain's strength (1 the design's).
   setTinted(on: boolean): void
@@ -335,6 +335,8 @@ export function createGroundView(options: GroundViewOptions): GroundView {
 
   let readyCount = 0
   let worldSent = 0
+  let levelsMs = 0
+  let onLevels: ((levels: { elevation: Float32Array; level: Float32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[] }) => void) | null = null
   let detailTextures: { albedo: RawTexture2DArray; normals: RawTexture2DArray } | null = null
   workers.forEach((worker, index) => {
     worker.onerror = (event: ErrorEvent): void => {
@@ -397,6 +399,21 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       detailTextures?.normals.dispose()
       detailTextures = { albedo, normals }
       rings.setDetailTextures(albedo, normals)
+    } else if (message.type === 'levels') {
+      // The level's own terrain and water from the holder: to the other
+      // workers, to the water planes.
+      const fields = {
+        elevation: { data: message.elevation, resX: worldWidthCells, resY: worldHeightCells },
+        waterLevel: { data: message.level, resX: worldWidthCells, resY: worldHeightCells },
+        waterSurface: { data: Float32Array.from(message.surface), resX: worldWidthCells, resY: worldHeightCells },
+      }
+      workers.forEach((worker, i) => {
+        if (i !== index) worker.postMessage({ type: 'fields', fields } satisfies GroundWorkerInbound)
+      })
+      water.setLevels(message.level, worldWidthCells, worldHeightCells, message.lakes)
+      water.setEnabled(true)
+      levelsMs = message.ms
+      onLevels?.({ elevation: message.elevation, level: message.level, surface: message.surface, lakes: message.lakes })
     } else if (message.type === 'rastered') {
       rastersMade++
       rastersMadeMs += message.ms
@@ -608,12 +625,11 @@ export function createGroundView(options: GroundViewOptions): GroundView {
         shadows.normalBias = spacing * NORMAL_BIAS_SPACINGS
       }
     },
-    setWater(level, width, height, lakes) {
-      water.setLevels(level, width, height, lakes)
-      water.setEnabled(true)
+    onLevels(listener) {
+      onLevels = listener
     },
     drawnHeightAt: (x, z) => rings.heightAt(x, z) * MAP_EXAGGERATION,
-    stats: () => ({ queued: queued.length, inflight: inflight.size > 0 ? [...inflight.values()][0].k : -1, innermost: rings.innermost(), paints: paints.slice(-20), ready: readyCount, worldSent, rasters: { count: rasters.size, mb: Math.round(rasterBytesHeld / 1048576), made: rastersMade, madeMs: rastersMadeMs }, arrivals: rings.pendingArrivals(), waiting: ringWaits.size + tileQueue.length + tileReads + level1Queue.length + stale.size }),
+    stats: () => ({ queued: queued.length, inflight: inflight.size > 0 ? [...inflight.values()][0].k : -1, innermost: rings.innermost(), paints: paints.slice(-20), ready: readyCount, worldSent, levelsMs, rasters: { count: rasters.size, mb: Math.round(rasterBytesHeld / 1048576), made: rastersMade, madeMs: rastersMadeMs }, arrivals: rings.pendingArrivals(), waiting: ringWaits.size + tileQueue.length + tileReads + level1Queue.length + stale.size }),
     setTinted: (on) => rings.setTinted(on),
     setDetailStrength: (v) => {
       detailStrength = v

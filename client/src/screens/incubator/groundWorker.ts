@@ -10,6 +10,8 @@ import { meshLevelMesh, type MeshLevelArtifact } from '../../world/meshArtifacts
 import type { MeshTileArtifact } from '../../world/meshTileArtifacts'
 import { rasterBuffer, rasterSamples, rasteriseLevel, rasteriseTile, type Raster } from './groundRaster'
 import { createGroundSource, tileFrame, type GridField, type RasterGroundSource } from './groundSource'
+import { rasteriseNodeField } from '../../generator/mesh/meshRaster'
+import { waterLevelsFromBodies } from './waterLevels'
 
 // THE INCUBATOR'S GROUND WORKER: paints rings on request (map/
 // groundPaint.ts) from the rasters it is handed (groundRaster.ts), and
@@ -44,12 +46,18 @@ export type GroundWorkerInbound =
   | { type: 'raster'; stage: string; tile: TileId; n: number; data: Float32Array }
   | { type: 'dropRaster'; stage: string }
   | { type: 'missing'; stage: string }
+  // The fields replaced (the level's own raster and water, once the mesh
+  // holder has made them).
+  | { type: 'fields'; fields: Partial<Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterSurface', GridField | null>> }
 
 export type GroundWorkerOutbound =
   | { type: 'ready' }
   | { type: 'want'; stage: string; tile: TileId }
   | { type: 'painted'; id: number; heights: Float32Array; albedo: Uint8Array; normals: Uint8Array; materials: Uint8Array; wanted: string[]; used: string[]; counts: { held: number; loading: number; missing: number; answered: number[] } }
   | { type: 'rastered'; stage: string; tile: TileId; n: number; data: Float32Array; ms: number }
+  // From the mesh holder: the level's terrain on the world raster and
+  // the water levels its bodies stand at (waterLevels.ts).
+  | { type: 'levels'; elevation: Float32Array; level: Float32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[]; ms: number }
   // The detail textures (groundDetail.ts), once, from the worker asked.
   | { type: 'detail'; size: number; albedo: Uint8Array; normals: Uint8Array }
 
@@ -70,7 +78,21 @@ const rasterFrom = (tile: TileId, n: number, data: Float32Array): Raster => {
 worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
   const message = event.data
   if (message.type === 'world') {
-    base = message.level ? createMeshSampler(meshLevelMesh(message.level, message.width, message.height), message.level.z) : null
+    const mesh = message.level ? meshLevelMesh(message.level, message.width, message.height) : null
+    base = mesh && message.level ? createMeshSampler(mesh, message.level.z) : null
+    const fields = { ...message.fields }
+    let levels: (GroundWorkerOutbound & { type: 'levels' }) | null = null
+    if (mesh && message.level) {
+      // The level's own terrain and water (see waterLevels.ts): what the
+      // painter reads as level 0 and colours the water by.
+      const started = performance.now()
+      const elevation = rasteriseNodeField(mesh, message.level.z, message.width, message.height)
+      const water = waterLevelsFromBodies(message.level.waterBodies, elevation, message.width, message.height)
+      fields.elevation = { data: elevation, resX: message.width, resY: message.height }
+      fields.waterLevel = { data: water.level, resX: message.width, resY: message.height }
+      fields.waterSurface = { data: Float32Array.from(water.surface), resX: message.width, resY: message.height }
+      levels = { type: 'levels', elevation, level: water.level, surface: water.surface, lakes: water.lakes, ms: Math.round(performance.now() - started) }
+    }
     source = createGroundSource({
       width: message.width,
       height: message.height,
@@ -90,9 +112,10 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
             return rasterFrom(tile, n, data)
           }
         : undefined,
-      fields: message.fields,
+      fields,
     })
     post({ type: 'ready' })
+    if (levels) post(levels)
     if (message.detail > 0) {
       const set = makeGroundDetail(message.detail)
       post({ type: 'detail', size: set.size, albedo: set.albedo, normals: set.normals }, [set.albedo.buffer, set.normals.buffer])
@@ -126,6 +149,10 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
   }
   if (message.type === 'missing') {
     source.markMissing(message.stage)
+    return
+  }
+  if (message.type === 'fields') {
+    source.setFields(message.fields)
     return
   }
   if (message.type === 'paint') {
