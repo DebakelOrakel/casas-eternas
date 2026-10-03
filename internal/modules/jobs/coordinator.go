@@ -120,7 +120,7 @@ var (
 
 // specFor resolves a task's request into what the worker needs (where the
 // world and the artifact store are, a token) — the jobs module's own spec
-// builder, shared with the subprocess runner.
+// builder.
 type specFor func(ctx context.Context, jobID string, request Request) (Spec, error)
 
 type coordinator struct {

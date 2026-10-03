@@ -8,9 +8,9 @@ import (
 
 // A bake job, and the shape that keeps distribution open.
 //
-// The bake is one subprocess on one machine today. The design constraint is
+// A job was one subprocess on one machine at first. The design constraint was
 // that it must not have to be rewritten when it becomes many — so three things
-// are already true that would otherwise have to be retrofitted:
+// were true from the start that would otherwise have to be retrofitted:
 //
 //   - a job is a VALUE with an id and a lifecycle, not a function call. A
 //     synchronous POST that computes and returns would be the dead end: there
@@ -18,8 +18,9 @@ import (
 //   - a job names its SCOPE. Today that is always the whole world; when
 //     erosion is split along drainage divides it becomes one basin, and the
 //     protocol does not change.
-//   - the thing that RUNS a job is an interface, so a pool or a remote worker
-//     replaces the local subprocess without touching the queue or the routes.
+//   - the thing that RUNS a job was an interface, so the coordinator and its
+//     workers (coordinator.go) replaced the local subprocess without touching
+//     the routes. The interface went with the subprocess on 2026-10-03.
 //
 // See docs/decisions/server-storage.md and the 8k discussion: the point of
 // baking here at all is that 2.6 GB is unremarkable for a process and fatal

@@ -1,5 +1,5 @@
 ---
-summary: The cluster deployment — what the manifests set up, the one Secret, bootstrapping users over pod exec, the job workers the server scales and their service account, and the ingress.
+summary: The cluster deployment (OpenShift) — what the manifests set up, the one Secret, bootstrapping users over pod exec, the job workers the server scales and their service account, and the ingress.
 date: 2026-08-13
 updated: 2026-10-03
 group: installation
@@ -8,10 +8,13 @@ order: 40
 
 # Kubernetes
 
-`deploy/manifests.yaml` is the reference deployment: plain Kubernetes
-objects. The pods run as UID 1001 with `fsGroup: 1001`, which gives them
-their volumes, which a fresh volume otherwise keeps for root (`mkdir
-/data/auth: permission denied`). It creates:
+`deploy/manifests.yaml` is the reference deployment, written for
+OpenShift and applied with `kubectl`. The pods set no `runAsUser` and no
+`fsGroup`: OpenShift's `restricted-v2` policy gives each pod a UID from the
+namespace's range and makes the volumes writable for it, and the image is
+built for an arbitrary UID. On plain Kubernetes that is not done for you —
+a fresh volume stays root's (`mkdir /data/auth: permission denied`) until
+the pods get a `securityContext` with `runAsUser` and `fsGroup`. It creates:
 
 - a **ServiceAccount + Role/RoleBinding** — the server scales its job
   workers beside itself, so it needs `list` on Deployments and
@@ -25,12 +28,14 @@ their volumes, which a fresh volume otherwise keeps for root (`mkdir
   process per directory), the job workers' Deployment, the **Service** and
   an **Ingress**.
 
-TLS terminates at the Ingress, with a Let's Encrypt certificate that
-cert-manager issues and renews through the ClusterIssuer
-`letsencrypt-production` (Secret `casas-eternas-tls`); pods speak HTTP.
-**Set the host** in the Ingress (twice: the rule and the TLS entry) before
-the first apply. Uploads are worlds of tens of megabytes — a controller
-with a body limit must allow them (ingress-nginx:
+OpenShift turns the Ingress into a Route by itself; its
+`route.openshift.io/*` annotations make that Route end TLS at the router
+and redirect HTTP to HTTPS. The certificate is Let's Encrypt, issued and
+renewed by cert-manager through the ClusterIssuer `letsencrypt-production`
+(Secret `casas-eternas-tls`); pods speak HTTP. **Set the host** in the
+Ingress (twice: the rule and the TLS entry) before the first apply.
+Uploads are worlds of tens of megabytes — on another controller, one with a
+body limit must allow them (ingress-nginx:
 `nginx.ingress.kubernetes.io/proxy-body-size: "0"`).
 
 ## First run
@@ -87,7 +92,7 @@ the server's auth system, which they trade for a bus token valid for an
 hour. Create it once, after the first start:
 
 ```
-kubectl exec deploy/casas-eternas -- casas-eternas auth service add cluster-workers > credentials
+kubectl exec deploy/casas-eternas -- /app/casas-eternas auth service add cluster-workers > credentials
 kubectl create secret generic casas-eternas-worker --from-file=credentials
 rm credentials
 ```

@@ -71,7 +71,7 @@
       "path": "casas-eternas auth service add",
       "use": "add \u003cname\u003e",
       "short": "Creates a service account and prints its credential, once.",
-      "example": "  casas-eternas auth service add cluster-workers \u003e credentials\n  oc create secret generic casas-eternas-worker --from-file=credentials"
+      "example": "  casas-eternas auth service add cluster-workers \u003e credentials\n  kubectl create secret generic casas-eternas-worker --from-file=credentials"
     },
     {
       "path": "casas-eternas auth service delete",

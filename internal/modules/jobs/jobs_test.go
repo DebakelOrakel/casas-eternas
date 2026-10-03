@@ -13,6 +13,7 @@ import (
 	"time"
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
@@ -21,29 +22,30 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
-// A runner that records what it was asked to do and finishes when told. Lets
-// the queue and the authorisation be tested without a Node process or a
-// seven-minute wait.
-type fakeRunner struct {
+// A worker on the test relay that records the task it was handed, reports
+// progress, and finishes when told. It takes one task at a time (the
+// consumer's MaxAckPending), so a second job stays queued while the first
+// is held. Lets the routes and the authorisation be tested without a Node
+// process or a seven-minute wait.
+type heldWorker struct {
 	mu      sync.Mutex
-	running int32
-	peak    int32
 	started int32
-	release chan struct{}
+	once    sync.Once
+	hold    chan struct{}
 	// The last spec handed over, so a test can inspect what the module decided
 	// to send rather than only what came back. `gotSpec` is separate because no
-	// FIELD of a spec is reliably non-empty — JobID was, until a local spec
-	// stopped carrying one, and awaitSpec then waited for ever.
+	// FIELD of a spec is reliably non-empty.
 	lastSpec Spec
 	gotSpec  bool
 }
 
-func newFakeRunner() *fakeRunner { return &fakeRunner{release: make(chan struct{})} }
+// release lets every held task, and every later one, finish.
+func (f *heldWorker) release() { f.once.Do(func() { close(f.hold) }) }
 
-// awaitSpec waits for the queue to hand the runner a job, and returns it.
-func (f *fakeRunner) awaitSpec(t *testing.T) Spec {
+// awaitSpec waits for the coordinator to hand the worker a task, and returns it.
+func (f *heldWorker) awaitSpec(t *testing.T) Spec {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		f.mu.Lock()
 		spec, got := f.lastSpec, f.gotSpec
@@ -53,30 +55,53 @@ func (f *fakeRunner) awaitSpec(t *testing.T) Spec {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("the runner was never given a job")
+	t.Fatal("the worker was never given a task")
 	return Spec{}
 }
 
-func (f *fakeRunner) Run(ctx context.Context, spec Spec, onProgress func(Progress)) (Result, error) {
-	f.mu.Lock()
-	f.lastSpec, f.gotSpec = spec, true
-	f.mu.Unlock()
-	atomic.AddInt32(&f.started, 1)
-	now := atomic.AddInt32(&f.running, 1)
-	f.mu.Lock()
-	if now > f.peak {
-		f.peak = now
+// startHeldWorker serves the tasks on the relay until the test ends.
+func startHeldWorker(t *testing.T, server *natsserver.Server) *heldWorker {
+	t.Helper()
+	conn, err := relay.Connect("jobs", server, "", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	f.mu.Unlock()
-	defer atomic.AddInt32(&f.running, -1)
-
-	onProgress(Progress{Phase: "erosion", Percent: 50})
-	select {
-	case <-f.release:
-	case <-ctx.Done():
-	case <-time.After(5 * time.Second):
+	ctx, cancel := context.WithCancel(context.Background())
+	consumer, err := conn.JetStream().CreateOrUpdateConsumer(ctx, conn.StreamName(streamTasks), jetstream.ConsumerConfig{Durable: "held", AckPolicy: jetstream.AckExplicitPolicy, MaxAckPending: 1})
+	if err != nil {
+		t.Fatal(err)
 	}
-	return Result{WorldID: "w", PipelineVersion: "v", Stage: "L1"}, nil
+	f := &heldWorker{hold: make(chan struct{})}
+	consume, err := consumer.Consume(func(msg jetstream.Msg) {
+		var spec Spec
+		_ = json.Unmarshal(msg.Data(), &spec)
+		f.mu.Lock()
+		f.lastSpec, f.gotSpec = spec, true
+		f.mu.Unlock()
+		atomic.AddInt32(&f.started, 1)
+		event, _ := json.Marshal(taskEvent{TaskID: spec.TaskID, Phase: "erosion", Percent: 50})
+		_ = conn.NATS().Publish(conn.Subject("event", spec.JobID), event)
+		go func() {
+			select {
+			case <-f.hold:
+			case <-ctx.Done():
+				return
+			}
+			report, _ := json.Marshal(taskDoneReport{TaskID: spec.TaskID, OK: true, Result: &Result{WorldID: "w", PipelineVersion: "v", Stage: "L1"}})
+			if _, err := conn.JetStream().Publish(ctx, conn.Subject("done", spec.TaskID), report); err == nil {
+				_ = msg.Ack()
+			}
+		}()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		consume.Stop()
+		cancel()
+		conn.Close()
+	})
+	return f
 }
 
 // fakeWorlds stands in for the ranking closure cmd/ builds over the world
@@ -115,19 +140,19 @@ func (f *fakeWorlds) zip(ctx context.Context, uid string) (string, bool) {
 	return "/fake/" + uid + "/world.zip", true
 }
 
-// newTestModule builds a module around the fake runner, skipping New (which
-// insists on a real baker bundle).
-func newTestModule(t *testing.T, mode config.AuthMode, workers int) (*Module, *fakeRunner, *fakeWorlds) {
+// newTestModule builds a module around a coordinator on a test relay and a
+// held worker, skipping New (which insists on a real worker bundle).
+func newTestModule(t *testing.T, mode config.AuthMode) (*Module, *heldWorker, *fakeWorlds) {
 	t.Helper()
-	return newTestModuleWith(t, identity.NewResolver(mode, nil), workers)
+	return newTestModuleWith(t, identity.NewResolver(mode, nil))
 }
 
 // newTestModuleWith takes the resolver directly, for the tests that need one
 // which can actually verify a token.
-func newTestModuleWith(t *testing.T, caller *identity.Resolver, workers int) (*Module, *fakeRunner, *fakeWorlds) {
+func newTestModuleWith(t *testing.T, caller *identity.Resolver) (*Module, *heldWorker, *fakeWorlds) {
 	t.Helper()
+	server, conn := coordinatorRelay(t)
 	worlds := &fakeWorlds{levels: map[string]map[string]access.Level{}}
-	runner := newFakeRunner()
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Module{
 		cfg: Config{
@@ -135,20 +160,24 @@ func newTestModuleWith(t *testing.T, caller *identity.Resolver, workers int) (*M
 			WorldZip:      worlds.zip,
 			ArtifactsDir:  t.TempDir(),
 			Identity:      caller,
-			MaxConcurrent: workers,
+			MaxConcurrent: 1,
+			Relay:         conn,
+			StorageDir:    t.TempDir(),
 		},
-		runner:   runner,
 		jobs:     newRegistry(jobHistory),
-		queue:    make(chan string, 64),
 		shutdown: ctx,
 		cancel:   cancel,
+		slots:    1,
 	}
-	for range workers {
-		m.workers.Add(1)
-		go m.work(ctx)
+	var err error
+	m.coord, err = newCoordinator(m.cfg.StorageDir, conn, m.jobs, m.buildSpec)
+	if err != nil {
+		t.Fatal(err)
 	}
+	worker := startHeldWorker(t, server)
 	t.Cleanup(func() { _ = m.Close() })
-	return m, runner, worlds
+	t.Cleanup(worker.release)
+	return m, worker, worlds
 }
 
 // writeWorld registers a world whose EDITOR is the given bearer — the level
@@ -187,7 +216,7 @@ const testUID = "9f2c1b4e-7a30-4d55-8c11-2b6e5d0a1f83"
 // circuit (everything ranks admin there) lives in cmd/'s closure, which is
 // what the fake stands in for.
 func TestLocalModeLetsEveryoneBake(t *testing.T) {
-	m, _, worlds := newTestModule(t, config.AuthNone, 1)
+	m, _, worlds := newTestModule(t, config.AuthNone)
 	writeWorld(t, worlds, testUID)
 
 	if got := post(m, testUID, `{"stage":1}`, "").Code; got != http.StatusAccepted {
@@ -195,10 +224,10 @@ func TestLocalModeLetsEveryoneBake(t *testing.T) {
 	}
 }
 
-// The shutdown race the old close(queue) turned into a panic: an enqueue
-// arriving once Close has begun must be REFUSED, not crash the process.
+// An enqueue arriving once Close has begun must be REFUSED, not crash the
+// process.
 func TestEnqueueAfterCloseAnswers503(t *testing.T) {
-	m, _, worlds := newTestModule(t, config.AuthNone, 1)
+	m, _, worlds := newTestModule(t, config.AuthNone)
 	writeWorld(t, worlds, testUID)
 	if err := m.Close(); err != nil {
 		t.Fatal(err)
@@ -216,7 +245,7 @@ func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	m, _, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
+	m, _, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens))
 
 	issue := func(subject, audience string) string {
 		t.Helper()
@@ -260,7 +289,7 @@ func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
 // An absent world and an invisible one answer identically — that equality
 // IS the privacy property, so it is asserted rather than assumed.
 func TestHiddenAndMissingAreIndistinguishable(t *testing.T) {
-	m, _, worlds := newTestModule(t, config.AuthPassword, 1)
+	m, _, worlds := newTestModule(t, config.AuthPassword)
 	worlds.set(testUID, "Bearer someone-elses", access.Editor)
 
 	hidden := post(m, testUID, `{"stage":1}`, "").Code
@@ -271,7 +300,7 @@ func TestHiddenAndMissingAreIndistinguishable(t *testing.T) {
 }
 
 func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
-	m, runner, worlds := newTestModule(t, config.AuthNone, 1)
+	m, runner, worlds := newTestModule(t, config.AuthNone)
 	writeWorld(t, worlds, testUID)
 
 	for _, body := range []string{`{"stage":2}`, `{"stage":0}`, `{"stage":4,"plan":"refine"}`, `{"stage":0,"plan":"refine"}`, `{"scope":{"kind":"basin"},"stage":1}`, `not json`} {
@@ -279,8 +308,9 @@ func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 			t.Errorf("body %q = %d, want 400", body, got)
 		}
 	}
+	time.Sleep(50 * time.Millisecond) // give a wrongly queued task the time to arrive
 	if started := atomic.LoadInt32(&runner.started); started != 0 {
-		t.Errorf("%d jobs reached the runner despite being invalid", started)
+		t.Errorf("%d jobs reached a worker despite being invalid", started)
 	}
 
 	// Omitting the rounds must mean the default, never zero — a bake with no
@@ -298,39 +328,8 @@ func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 	}
 }
 
-// The cap is a memory argument — two level bakes want gigabytes — so it has to hold
-// under a burst, not merely be configured.
-func TestConcurrencyIsCapped(t *testing.T) {
-	const cap = 2
-	m, runner, worlds := newTestModule(t, config.AuthNone, cap)
-	writeWorld(t, worlds, testUID)
-
-	for i := 0; i < 6; i++ {
-		if got := post(m, testUID, `{"stage":1}`, "").Code; got != http.StatusAccepted {
-			t.Fatalf("request %d = %d, want 202", i, got)
-		}
-	}
-	// Let the workers pick up and block in the fake runner.
-	deadline := time.Now().Add(2 * time.Second)
-	for atomic.LoadInt32(&runner.running) < cap && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	time.Sleep(50 * time.Millisecond) // give any extra worker a chance to misbehave
-
-	runner.mu.Lock()
-	peak := runner.peak
-	runner.mu.Unlock()
-	if peak > cap {
-		t.Errorf("%d bakes ran at once, cap is %d", peak, cap)
-	}
-	if peak < cap {
-		t.Errorf("only %d ran at once; the pool is not using its %d workers", peak, cap)
-	}
-	close(runner.release)
-}
-
 func TestProgressAndResultReachTheJobRecord(t *testing.T) {
-	m, runner, worlds := newTestModule(t, config.AuthNone, 1)
+	m, runner, worlds := newTestModule(t, config.AuthNone)
 	writeWorld(t, worlds, testUID)
 
 	recorder := post(m, testUID, `{"stage":1}`, "")
@@ -352,7 +351,7 @@ func TestProgressAndResultReachTheJobRecord(t *testing.T) {
 		t.Errorf("state = %q, want running", current.State)
 	}
 
-	close(runner.release)
+	runner.release()
 	deadline = time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if done, _ := m.jobs.get(job.ID); done.State == StateDone {
@@ -374,7 +373,7 @@ func TestRemoteJobCarriesAScopedToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
+	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil))
 	m.cfg.Tokens = tokens
 	// The cluster shape, as cmd/ composes it: URLs everywhere, no file paths.
 	m.cfg.WorldZip = nil
@@ -409,14 +408,14 @@ func TestRemoteJobCarriesAScopedToken(t *testing.T) {
 	}
 }
 
-// The local runner reads files directly, so a token would be a credential handed
+// A local worker reads files directly, so a token would be a credential handed
 // out for nothing.
 func TestLocalJobCarriesNoToken(t *testing.T) {
 	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
+	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil))
 	m.cfg.Tokens = tokens
 	writeWorld(t, worlds, testUID)
 
@@ -428,16 +427,16 @@ func TestLocalJobCarriesNoToken(t *testing.T) {
 	}
 }
 
-// The half-and-half composition A3 exists for: a local runner beside the
+// The half-and-half composition A3 exists for: a local worker beside the
 // artifact store whose worlds live in another process. The spec must mix a
-// world URL with an artifacts directory, carry a token for the remote read,
-// and still not learn a job id — its progress comes over the pipe.
+// world URL with an artifacts directory and carry a token for the remote
+// read.
 func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
 	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil), 1)
+	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil))
 	m.cfg.Tokens = tokens
 	m.cfg.WorldZip = nil
 	m.cfg.WorldsURL = "http://worlds:8080/v1"
@@ -459,15 +458,12 @@ func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
 	if spec.AuthToken == "" {
 		t.Error("reading a remote world needs a credential, none was issued")
 	}
-	if spec.JobID != "" {
-		t.Errorf("a local runner must not learn a job id, got %q", spec.JobID)
-	}
 }
 
-// Spec is marshalled straight into the baker's argv, so its JSON field names
-// are a contract with client/scripts/bake.ts. A rename on either side would
-// otherwise surface as a bake that reads nothing and writes nowhere — with no
-// error, because the baker's own fields would simply be undefined.
+// Spec is marshalled straight into the task message, so its JSON field names
+// are a contract with client/scripts/jobWorker.ts. A rename on either side
+// would otherwise surface as a task that reads nothing and writes nowhere —
+// with no error, because the worker's own fields would simply be undefined.
 func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
 	local, err := json.Marshal(Spec{Stage: 1, ErosionRounds: 2, WorldZip: "/w.zip", ArtifactsDir: "/art"})
 	if err != nil {
@@ -478,7 +474,7 @@ func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
 			t.Errorf("local spec is missing %s: %s", key, local)
 		}
 	}
-	// The path form must not carry empty URL fields: the baker picks its store
+	// The path form must not carry empty URL fields: the worker picks its store
 	// by which one is present, so an empty string would be an ambiguous job.
 	for _, key := range []string{"worldUrl", "artifactsUrl", "authToken", "jobId"} {
 		if strings.Contains(string(local), key) {
@@ -530,19 +526,19 @@ func TestTileJobsNameTheirTile(t *testing.T) {
 		t.Errorf("spec does not carry the tile as the worker reads it: %s", wire)
 	}
 	if strings.Contains(string(wire), "L2:3,0") {
-		t.Errorf("the stage name is the runner's, not the worker's: %s", wire)
+		t.Errorf("the stage name is the coordinator's, not the worker's: %s", wire)
 	}
 }
 
 // Jobs show to whoever may read their world, say what the caller may do, and
 // an editor cancels them — a queued one before it starts, a running one
-// through its context (2026-09-29; before, every caller saw every job).
+// while a worker holds it (2026-09-29; before, every caller saw every job).
 func TestJobsShowAndCancelByWorldAccess(t *testing.T) {
 	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
-	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens), 1)
+	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthPassword, tokens))
 	mux := http.NewServeMux()
 	if err := m.Mount(mux); err != nil {
 		t.Fatal(err)
@@ -655,7 +651,7 @@ func TestJobsDeclaresItsStreams(t *testing.T) {
 // The event stream carries a job's changes to whoever may see its world, and
 // nothing of a world they may not.
 func TestEventsStreamTheJobsTheCallerMaySee(t *testing.T) {
-	m, runner, worlds := newTestModule(t, config.AuthNone, 1)
+	m, runner, worlds := newTestModule(t, config.AuthNone)
 	writeWorld(t, worlds, "w1")
 	mux := http.NewServeMux()
 	if err := m.Mount(mux); err != nil {

@@ -130,7 +130,7 @@ var authServiceAddCmd = &cobra.Command{
 	Use:   "add <name>",
 	Short: "Creates a service account and prints its credential, once.",
 	Example: `  casas-eternas auth service add cluster-workers > credentials
-  oc create secret generic casas-eternas-worker --from-file=credentials`,
+  kubectl create secret generic casas-eternas-worker --from-file=credentials`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: cobra.NoFileCompletions,
 	RunE:              runAuthServiceAdd,

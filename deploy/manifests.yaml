@@ -6,7 +6,7 @@
 # Route by itself; the certificate comes from cert-manager (ClusterIssuer
 # letsencrypt-production), for https://casas-eternas.ahoi.sh.
 #
-#   oc apply -f deploy/manifests.yaml
+#   kubectl apply -f deploy/manifests.yaml
 #
 # Set `image:` below to where you pushed the image built from deploy/Dockerfile
 # (e.g. the internal registry: image-registry.openshift-image-registry.svc:5000/<ns>/casas-eternas:latest).
@@ -80,13 +80,13 @@ spec:
 # Deployment can mount it and nobody has to remember its name, and the value
 # is put in afterwards (see deploy/README.md).
 #
-#   oc create secret generic casas-eternas-auth \
+#   kubectl create secret generic casas-eternas-auth \
 #     --from-literal=session.key="$(openssl rand -base64 48)" \
-#     --dry-run=client -o yaml | oc apply -f -
+#     --dry-run=client -o yaml | kubectl apply -f -
 #
 # Without session.key a restart ends every session, and two replicas reject each
 # other's tokens. The USERS are not in here: they are state in auth.db on the
-# data volume, administered over the pod's admin socket — `oc exec` +
+# data volume, administered over the pod's admin socket — `kubectl exec` +
 # `casas-eternas auth user …` (docs/decisions/server-user-admin.md).
 apiVersion: v1
 kind: Secret
@@ -106,10 +106,16 @@ metadata:
     casas-eternas/component: server
 spec:
   replicas: 1
+  # The old pod goes before the new one starts. One process per store
+  # directory is the stores' concurrency model, and a rolling update would
+  # run two on /data for a while — or hang, when the new pod lands on
+  # another node than the ReadWriteOnce volume.
+  strategy:
+    type: Recreate
   # `component: server` keeps this Deployment's pods apart from the
   # workers' (same `app`, `component: worker`) — and the Service selects on
   # it too. A selector cannot change on a live Deployment: a cluster from
-  # before this label needs `oc delete deploy/casas-eternas` once before the
+  # before this label needs `kubectl delete deploy/casas-eternas` once before the
   # apply (the data volume stays).
   selector:
     matchLabels:
@@ -140,7 +146,7 @@ spec:
             # the ceiling in practice is the nodes' free memory — beyond it
             # the extra workers sit Pending and the work waits for them.
             - name: CASAS_JOBS_MAX_CONCURRENT
-              value: "3"
+              value: "6"
             # Authentication. Environment rather than args because CMD already
             # carries the flag list and repeating it here to append a few would
             # be two places to keep in step; every config key is reachable as
@@ -154,7 +160,7 @@ spec:
               value: password
             - name: CASAS_GLOBAL_AUTH_SESSION_KEY
               value: /etc/casas-eternas/auth/session.key
-            # The local admin channel: user administration over `oc exec` +
+            # The local admin channel: user administration over `kubectl exec` +
             # `casas-eternas auth user …`. A unix socket, so reaching it IS
             # the authorization — gated by pods/exec RBAC, not by a
             # credential. /tmp is the pod's emptyDir below.
@@ -215,9 +221,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            # The bake subprocess is the only thing that wants scratch space,
-            # and it wants real disk rather than memory: a tmpfs would come out
-            # of the same budget the bake is already straining.
+            # The admin socket, on a writable path under the read-only rootfs.
             - name: tmp
               mountPath: /tmp
             - name: auth
@@ -253,8 +257,8 @@ spec:
 # The workers prove themselves with a SERVICE ACCOUNT of this server's auth
 # system — the same kind an outside worker uses. Once, after the first start:
 #
-#   oc exec deploy/casas-eternas -- casas-eternas auth service add cluster-workers > credentials
-#   oc create secret generic casas-eternas-worker --from-file=credentials
+#   kubectl exec deploy/casas-eternas -- /app/casas-eternas auth service add cluster-workers > credentials
+#   kubectl create secret generic casas-eternas-worker --from-file=credentials
 #   rm credentials
 #
 # Rotating: `auth service rotate cluster-workers`, then replace the Secret;
@@ -283,6 +287,21 @@ spec:
       # No API access: a worker talks to the relay and the server, nothing
       # in the cluster.
       automountServiceAccountToken: false
+      # One worker per node where the nodes allow it: each holds gigabytes,
+      # and two on one node compete for its memory and its cores. Soft
+      # (ScheduleAnyway), so a scale-up beyond the free nodes still places
+      # the extra workers rather than leaving them Pending.
+      # matchLabelKeys keeps a rollout's old pods out of the count.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: casas-eternas
+              casas-eternas/component: worker
+          matchLabelKeys:
+            - pod-template-hash
       containers:
         - name: worker
           # THE SAME image as the server: the artifacts a worker writes carry
@@ -307,9 +326,16 @@ spec:
           # In this deployment the requests are intentionally low for the lab.
           resources:
             requests:
-              cpu: 50m
-              memory: 1Gi
+              cpu: "1"
+              memory: 6Gi
+            # An explicit CPU limit, because a namespace LimitRange fills in
+            # its own default where none is set — 600m on APPUiO, which
+            # throttles a worker running its engine pool (4 stencil + 2
+            # refresh threads beside the main one) to a crawl. Six cores is
+            # what that pool uses; six workers at six stay inside a quota of
+            # 40.
             limits:
+              cpu: "6"
               memory: 10Gi
           securityContext:
             runAsNonRoot: true

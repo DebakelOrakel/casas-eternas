@@ -18,7 +18,7 @@ it. [server-auth.md](./server-auth.md) recorded the consequence honestly at
 decision time: the screen "would write the Secret through the Kubernetes API
 instead". Paying that consequence now would mean giving the pod RBAC write
 access to the very Secret that holds its credentials, fighting GitOps (the
-next `oc apply` silently reverts whatever the screen wrote), teaching the
+next `kubectl apply` silently reverts whatever the screen wrote), teaching the
 server which platform it runs on, and maintaining a *different* write path on
 a plain server (edit the file) than on the cluster (write the Secret).
 

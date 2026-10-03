@@ -647,3 +647,10 @@ cluster refuses to start without the relay. What stays: the job tokens
 tasks name). The run-once deadline trap of docs/operations went with the
 Jobs: the workers are long-lived pods. docs/decisions/distributed-bake.md
 records the Job design this replaces.
+
+**The local subprocess runner went the same day**: off a cluster too the
+jobs module now runs only over the relay — its own serving workers, never a
+subprocess per job. The `Runner` interface, the in-memory queue and their
+cancel path are gone; the jobs module refuses to start without a relay, as
+cmd/ already did. `bakeRunner` in `/v1/capabilities` always answers
+`relay`.

@@ -19,9 +19,9 @@ import (
 // The LOCAL WORKERS (docs/decisions/detail-ladder.md, "Workers"): long-lived
 // Node processes serving the coordinator's tasks over the relay
 // (`job-worker.mjs --serve`). The module starts `jobs.max-concurrent` of them
-// and keeps them: one that dies is started again after a pause. They replace
-// the subprocess per job — a worker keeps the parent level it has read, tile
-// after tile.
+// and keeps them: one that dies is started again after a pause. They replaced
+// the subprocess per job (removed 2026-10-03) — a worker keeps the parent
+// level it has read, tile after tile.
 
 // serveConfig is the worker's serving argument, its one JSON argv entry.
 type serveConfig struct {
