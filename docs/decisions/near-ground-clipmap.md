@@ -279,6 +279,17 @@ kilometre over it. What changed against the sketch above, and why:
   store. The fetched world is kept in cache storage and revalidated
   with If-None-Match.
 
+- **Centred on the near edge, not the focus.** Tilted, the nearest
+  ground is at the frame's bottom and its pixels the smallest; the rings
+  now centre on the frustum's lower edge on the ground as the tilt opens
+  past half the field of view, so the finest ring covers the foreground
+  and the coarser ones run toward the horizon (the user's point,
+  2026-10-03). A ring that stands keeps what it shows until its full
+  build arrives; previews are only for an outer ring's first build.
+- Every ring owns its vertex arrays: Babylon keeps the array handed to
+  an update as the buffer's data, and one array for all rings made every
+  ring's bounds the last ring's.
+
 Open: the tile seams show as a ridge of ~50 m along every tile edge,
 which is the bake's, not the drawing's (the user's call: fix in the
 generator later); pan lag is still seconds of soft ground on the outer

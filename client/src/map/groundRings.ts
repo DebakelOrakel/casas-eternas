@@ -139,8 +139,9 @@ interface Ring {
 // The texel size, in screen pixels at the focus, below which a ring is
 // left out: finer than this it only costs.
 const MIN_TEXEL_PX = 0.8
-// The rings built as a preview first, and the preview's side divisor.
-const PREVIEW_RINGS = 24
+// The rings from which a first build is previewed, and the preview's
+// side divisor.
+const PREVIEW_FROM = 6
 const PREVIEW_DIVISOR = 4
 
 export function createGroundRings(options: GroundRingsOptions): GroundRings {
@@ -159,8 +160,11 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
   // under each of the 4·quads edge vertices).
   const edgeCount = 4 * quads
   const vertexCount = n * n + edgeCount
-  const positions = new Float32Array(vertexCount * 3)
-  const normals = new Float32Array(vertexCount * 3)
+  // Each ring's own: Babylon keeps the array it is handed in an update as
+  // the buffer's data, so one array for every ring left every ring's
+  // bounds and any later read the last ring's (2026-10-03).
+  const positionsOf = new Map<Ring, Float32Array>()
+  const normalsOf = new Map<Ring, Float32Array>()
   // The edge vertices in order around the ring, as grid indices.
   const edge: number[] = []
   for (let i = 0; i < quads; i++) edge.push(i)
@@ -265,6 +269,14 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
 
   // The build arrived: the geometry and the textures in one step.
   function apply(ring: Ring, place: Place, result: RingBuildResult): void {
+    let positions = positionsOf.get(ring)
+    let normals = normalsOf.get(ring)
+    if (!positions || !normals) {
+      positions = new Float32Array(vertexCount * 3)
+      normals = new Float32Array(vertexCount * 3)
+      positionsOf.set(ring, positions)
+      normalsOf.set(ring, normals)
+    }
     const s = ring.spacing
     const half = ring.half
     const heights = result.heights
@@ -311,11 +323,9 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     ring.built = place
     ring.heights = heights
     if (!wasBuilt) {
-      // Copies: Babylon keeps the arrays it is given, and these buffers
-      // serve every ring.
       const data = new VertexData()
-      data.positions = positions.slice()
-      data.normals = normals.slice()
+      data.positions = positions
+      data.normals = normals
       data.uvs = uvs.slice()
       data.indices = indicesFor(ring, null)
       data.applyToMesh(ring.mesh, true)
@@ -342,10 +352,12 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
 
   let disposed = false
 
-  // A ring is built in two steps where it pays: a preview first (the
-  // textures at a quarter side), then the full build — unless the full
-  // one was asked for by a rebuild where the ring already stands.
-  function request(ring: Ring, place: Place, preview = ring.k < PREVIEW_RINGS && !(ring.built && ring.built.x === place.x && ring.built.z === place.z && !ring.previewed)): void {
+  // A ring is built in two steps only where it pays: an OUTER ring's
+  // first build (1024 texels, seconds) gets a preview (the textures at a
+  // quarter side) first. A ring that stands already keeps what it shows
+  // until its full build arrives — a preview in between threw a sharp
+  // ring away for a blur at every step of a pan (2026-10-03).
+  function request(ring: Ring, place: Place, preview = ring.k >= PREVIEW_FROM && !ring.built): void {
     ring.pending = place
     ring.stale = false
     void options

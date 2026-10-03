@@ -102,7 +102,7 @@ export interface GroundView {
   // The DRAWN ground's world Y at a point, exaggeration included.
   drawnHeightAt(x: number, z: number): number
   // For the console and the screenshot ladder: what is being built.
-  stats(): { queued: number; inflight: number; innermost: number; paints: { k: number; ms: number; counts: unknown; wanted: number }[]; ready: number; worldSent: number; rasters: { count: number; mb: number; made: number; madeMs: number }; arrivals: number }
+  stats(): { queued: number; inflight: number; innermost: number; paints: { k: number; ms: number; counts: unknown; wanted: number }[]; ready: number; worldSent: number; rasters: { count: number; mb: number; made: number; madeMs: number }; arrivals: number; waiting: number }
   // DEBUG: tint each ring by its index, to see where the rings meet; the
   // shader grain's strength (1 the design's).
   setTinted(on: boolean): void
@@ -597,7 +597,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       }
     },
     drawnHeightAt: (x, z) => rings.heightAt(x, z) * MAP_EXAGGERATION,
-    stats: () => ({ queued: queued.length, inflight: inflight.size > 0 ? [...inflight.values()][0].k : -1, innermost: rings.innermost(), paints: paints.slice(-20), ready: readyCount, worldSent, rasters: { count: rasters.size, mb: Math.round(rasterBytesHeld / 1048576), made: rastersMade, madeMs: rastersMadeMs }, arrivals: rings.pendingArrivals() }),
+    stats: () => ({ queued: queued.length, inflight: inflight.size > 0 ? [...inflight.values()][0].k : -1, innermost: rings.innermost(), paints: paints.slice(-20), ready: readyCount, worldSent, rasters: { count: rasters.size, mb: Math.round(rasterBytesHeld / 1048576), made: rastersMade, madeMs: rastersMadeMs }, arrivals: rings.pendingArrivals(), waiting: ringWaits.size + tileQueue.length + tileReads + level1Queue.length + stale.size }),
     setTinted: (on) => rings.setTinted(on),
     setDetailStrength: (v) => {
       detailStrength = v

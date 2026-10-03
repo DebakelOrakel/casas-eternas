@@ -160,7 +160,41 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!shown || !ground) return
     const focus = camera.getFocus()
     const viewWidth = camera.getViewWidth()
-    ground.update(focus.x, focus.z, viewWidth / ctx.engine.getRenderWidth(), viewWidth < SHADOWS_BELOW_VIEW_WIDTH && query.get('shadows') !== '0', {
+    // WHERE THE RINGS CENTRE. On the map the focus: the pixel is the same
+    // size everywhere. Tilted, the nearest ground is at the frame's
+    // bottom and its pixels the smallest, so the finest ring belongs
+    // there and the coarser ones toward the horizon, not around the
+    // frame's centre (2026-10-03). The centre slides from the focus to
+    // the nearest ground in view (the frustum's lower edge on the ground)
+    // as the tilt opens past half the field of view — below that the
+    // frame's near edge is under the camera anyway. Pixels per world
+    // unit there, for the innermost ring's choice, scale with the
+    // distance to the eye.
+    let centreX = focus.x
+    let centreZ = focus.z
+    let unitsPerPixel = viewWidth / ctx.engine.getRenderWidth()
+    if (camera.getZoom() > 1) {
+      const tilt = camera.getTilt()
+      const halfFov = camera.camera.fov / 2
+      const w = Math.min(1, Math.max(0, (tilt - halfFov) / halfFov))
+      if (w > 0) {
+        const altitude = camera.getAltitude()
+        const yaw = camera.getYaw()
+        const upX = Math.sin(yaw)
+        const upZ = Math.cos(yaw)
+        // Ground distances from the eye's foot: the focus, the near edge.
+        const toFocus = altitude * Math.tan(tilt)
+        const toNear = altitude * Math.tan(Math.max(0, tilt - halfFov))
+        const back = (toFocus - toNear) * w
+        centreX = focus.x - upX * back
+        centreZ = focus.z - upZ * back
+        const eyeDistanceFocus = Math.hypot(altitude, toFocus)
+        const eyeDistanceCentre = Math.hypot(altitude, toFocus - back)
+        unitsPerPixel *= eyeDistanceCentre / eyeDistanceFocus
+      }
+    }
+    debug.view = { centreX, centreZ, unitsPerPixel, viewWidth, tilt: camera.getTilt(), altitude: camera.getAltitude(), zoom: camera.getZoom(), focus }
+    ground.update(centreX, centreZ, unitsPerPixel, viewWidth < SHADOWS_BELOW_VIEW_WIDTH && query.get('shadows') !== '0', {
       altitude: camera.getZoom() > 1 ? camera.getAltitude() : 0,
       eye: camera.camera.position,
       farPlane: camera.camera.maxZ,
@@ -262,7 +296,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // server world and puts the camera at a view, so a screenshot ladder
   // shows the same places every time. `data-ready` on the root says the
   // level is shown. Not a user surface: no text, no keys.
-  const debug: { errors: string[]; ground: () => unknown; scene: Scene; shaders?: () => string[] } = { errors: [], ground: () => ground?.stats() ?? null, scene }
+  const debug: { errors: string[]; ground: () => unknown; scene: Scene; shaders?: () => string[]; view?: unknown } = { errors: [], ground: () => ground?.stats() ?? null, scene }
   ;(window as unknown as { __incubator?: unknown }).__incubator = debug
   window.addEventListener('error', (e) => debug.errors.push(String(e.message)))
   window.addEventListener('unhandledrejection', (e) => debug.errors.push(String(e.reason)))

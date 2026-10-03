@@ -162,6 +162,8 @@ export interface GeneratorCamera {
   // drag pan converts with. Exact at the focus; a tilted view's ratio
   // genuinely varies with on-screen depth.
   getViewWidth: () => number
+  // The applied tilt off vertical, radians, this frame.
+  getTilt: () => number
   // Put the view somewhere AT ONCE, no easing: the focus, the zoom (0..2),
   // the yaw and the tilt (radians; the regime clamps it). A debug
   // instrument — a screenshot ladder needs the same views every time.
@@ -621,6 +623,9 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
     },
     getViewWidth() {
       return viewWidthAtFocus
+    },
+    getTilt() {
+      return tiltAngle
     },
     setView(view) {
       focusX = view.x
