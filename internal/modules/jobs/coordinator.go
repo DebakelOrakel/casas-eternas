@@ -500,7 +500,10 @@ func (c *coordinator) applyDone(report taskDoneReport, stored map[[3]int]bool) {
 			if stored[[3]int{p.Level, p.X, p.Y}] {
 				// Already in the store: done as wired, never handed out. A tile
 				// that waits on it is ready as soon as its other inputs are.
+				// Started when it ended, so a level of stored tiles only has a
+				// start as well as an end, and a duration of nothing.
 				t.State = taskDone
+				t.StartedAt = &ended
 				t.EndedAt = &ended
 				t.Result = &Result{WorldID: report.Result.WorldID, PipelineVersion: report.TileVersions[strconv.Itoa(p.Level)], Stage: request.StageName()}
 			}

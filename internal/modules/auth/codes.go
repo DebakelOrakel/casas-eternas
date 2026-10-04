@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -190,9 +189,7 @@ func (m *Module) serveRedeem(w http.ResponseWriter, r *http.Request) {
 		Name     string `json:"name"`
 		Password string `json:"password"`
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAdminBody))
-	if err := decoder.Decode(&body); err != nil {
-		httpjson.ClientError(w, http.StatusBadRequest, "body: "+err.Error())
+	if !decodeAdminBody(w, r, &body) {
 		return
 	}
 	entry, err := m.cfg.Registry.Redeem(body.Code, strings.TrimSpace(body.Name), body.Password)

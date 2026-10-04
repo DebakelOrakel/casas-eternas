@@ -43,8 +43,8 @@ func byID(tx *bolt.Tx, id string) (User, bool) {
 }
 
 // SetDisplayName sets what the panels show for a user. Trimmed; empty goes
-// back to the login name; control characters and more than 64 characters
-// are refused.
+// back to the login name; control characters, invisible format characters
+// and more than 64 characters are refused.
 func (r *Registry) SetDisplayName(id, name string) error {
 	name = strings.TrimSpace(name)
 	if utf8.RuneCountInString(name) > maxDisplayName {
@@ -52,6 +52,12 @@ func (r *Registry) SetDisplayName(id, name string) error {
 	}
 	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return fmt.Errorf("%w: a display name holds no control characters", ErrInvalid)
+	}
+	// Format characters draw nothing and can turn text around (U+202E), so
+	// one name could pass for another in the admin table. The zero-width
+	// joiner stays: emoji sequences are made with it.
+	if strings.IndexFunc(name, func(c rune) bool { return unicode.Is(unicode.Cf, c) && c != '\u200d' }) >= 0 {
+		return fmt.Errorf("%w: a display name holds no invisible format characters", ErrInvalid)
 	}
 	return r.update(id, func(u *User) error {
 		u.DisplayName = name

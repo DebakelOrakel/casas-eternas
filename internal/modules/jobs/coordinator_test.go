@@ -424,3 +424,44 @@ func TestCoordinatorSkipsStoredTiles(t *testing.T) {
 		}
 	}
 }
+
+// A plan whose tiles are ALL stored: only level 1 is computed, the job ends
+// done with level 1's result, and every level has a start and an end.
+func TestCoordinatorAllTilesStored(t *testing.T) {
+	server, conn := coordinatorRelay(t)
+	reg := newRegistry(jobHistory)
+	present := func(_ context.Context, keys []ArtifactKey) []bool {
+		whole := make([]bool, len(keys))
+		for i := range whole {
+			whole[i] = true
+		}
+		return whole
+	}
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil, present)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.close()
+	stop, computed, _ := fakeWorker(t, server, false)
+	defer stop()
+	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 3, ErosionRounds: 12, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	waitForJob(t, reg, job.ID, StateDone)
+	if computed.Load() != 1 {
+		t.Errorf("computed %d tasks, want only level 1", computed.Load())
+	}
+	done, _ := reg.get(job.ID)
+	if done.Result == nil || done.Percent != 100 {
+		t.Errorf("the job ended as %+v", done)
+	}
+	c.mu.Lock()
+	levels := c.levelsOf(job.ID)
+	c.mu.Unlock()
+	if len(levels) != 3 {
+		t.Fatalf("levels = %+v", levels)
+	}
+	for _, level := range levels {
+		if level.Done != level.Total || level.StartedAt == nil || level.EndedAt == nil {
+			t.Errorf("level %d = %+v", level.Stage, level)
+		}
+	}
+}

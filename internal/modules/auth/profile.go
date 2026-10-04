@@ -160,8 +160,13 @@ func (m *Module) servePutAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxAvatarBytes))
-	if err != nil {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
 		httpjson.ClientError(w, http.StatusRequestEntityTooLarge, "an avatar is at most 200 kB")
+		return
+	}
+	if err != nil {
+		httpjson.ClientError(w, http.StatusBadRequest, "reading the avatar: "+err.Error())
 		return
 	}
 	config, decoded, err := image.DecodeConfig(bytes.NewReader(data))
@@ -231,6 +236,7 @@ func (m *Module) serveAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", entry.AvatarType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(data)
 }
 

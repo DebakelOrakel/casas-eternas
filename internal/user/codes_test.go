@@ -76,3 +76,21 @@ func TestChangePassword(t *testing.T) {
 		t.Error("the new password does not verify")
 	}
 }
+
+// A display name that turns text around, or hides characters, is refused;
+// an emoji sequence joined with U+200D is a name like any other.
+func TestDisplayNameRefusesFormatCharacters(t *testing.T) {
+	r := open(t, t.TempDir())
+	ada, err := r.Create("ada", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"ad‮a", "a​da"} {
+		if err := r.SetDisplayName(ada.ID, bad); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%q = %v, want ErrInvalid", bad, err)
+		}
+	}
+	if err := r.SetDisplayName(ada.ID, "Ada 👩‍💻"); err != nil {
+		t.Errorf("an emoji sequence = %v", err)
+	}
+}

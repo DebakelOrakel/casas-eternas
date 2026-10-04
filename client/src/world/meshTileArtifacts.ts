@@ -137,7 +137,9 @@ export async function writeMeshTileArtifact(store: ArtifactStore, key: ArtifactK
 // the arrays. A plan's worker asks this of every tile before computing it,
 // and reading the whole tile to answer was about as slow as computing it
 // (2026-10-04). Whole means every file listed: meta.json is written last
-// (writeMeshTileArtifact), and each file is one complete write.
+// (writeMeshTileArtifact), and each file is one complete write: both stores
+// a worker writes to write a temp file and rename it (the Go store's Write,
+// jobWorker's fs store), so a listed file is never a cut one.
 export async function meshTileArtifactInfo(store: ArtifactStore, key: ArtifactKey): Promise<{ nodes: number; bakeMs: number } | null> {
   const handle = await store.resolve(key, false)
   if (!handle || !Object.values(MESH_TILE_FILES).every((name) => handle.files.includes(name))) return null
