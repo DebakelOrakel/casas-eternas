@@ -1,13 +1,20 @@
 ---
-summary: Reference for the .zip world save — what is inside (world.yaml recipe/status, state.json sim snapshot, .f32 rasters, the adaptive mesh, preview.png) and how saving/loading flows through the worldgen screen.
-date: 2026-07-26
-updated: 2026-09-23
+id: DES-0003
+title.en: World save format (`.zip`)
+title.de: Format des Welt-Saves (`.zip`)
+summary.en: Reference for the .zip world save — what is inside (world.yaml
+  recipe/status, state.json sim snapshot, .f32 rasters, the adaptive mesh,
+  preview.png) and how saving/loading flows through the worldgen screen.
+summary.de: Referenz für das .zip-Welt-Save — was darin liegt (world.yaml mit Rezept und
+  Status, state.json als Schnappschuss der Simulation, .f32-Raster, das
+  adaptive Netz, preview.png) und wie Speichern und Laden durch den
+  Worldgen-Screen laufen.
 area: platform
 stage: built
-status: describes the shipped format and is kept current as it evolves; the fork behind it is decided in ../decisions/world-save-format.md
+createdAt: 2026-07-26
+updatedAt: 2026-09-23
+related: [DEC-0005]
 ---
-
-# World save format (`.zip`)
 
 How a generated world is persisted and reloaded. Produced and consumed entirely
 by the Hacedor del Mundo screen (`client/src/screens/worldgen/WorldGenScreen.ts`):
@@ -149,3 +156,8 @@ elsewhere):
   knob existed still load (they just get the default for the new knob).
 - `state.json` is the source of truth for the terrain; a mismatch between `spec` and the
   snapshot (e.g. hand-edited yaml) affects only the displayed slider values, not the world.
+
+## Status
+
+describes the shipped format and is kept current as it evolves; the fork
+behind it is decided in ../decisions/world-save-format.md

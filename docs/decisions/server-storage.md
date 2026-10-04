@@ -1,13 +1,34 @@
 ---
-summary: The server keeps two stores with two different keys — a WORLD store keyed on a stable `metadata.uid` in world.yaml, and an ARTIFACT store keyed on the content hash of the terrain, so re-eroding a world correctly invalidates its derived data without making it a different world. The client learns where the storage is from a `/config.json` served by whoever serves the page (relative `apiBase` by default, so CORS never arises) and what it can do from the API itself. One binary with a single `start` subcommand runs whichever modules `--target` names — client, world, artifacts, where singular means a subsystem with behaviour and plural a collection without any — so local play and a split deployment are the same program. Storage on disk is files, not a database. One window with two tabs, deliberately unequal delete affordances. World store first, artifact store after.
-date: 2026-08-07
-updated: 2026-08-12
+id: DEC-0017
+title.en: Server storage: two identities, two stores, one config file
+title.de: Server-Speicher: zwei Identitäten, zwei Stores, eine Konfigurationsdatei
+summary.en: The server keeps two stores with two different keys — a WORLD store keyed on
+  a stable `metadata.uid` in world.yaml, and an ARTIFACT store keyed on the
+  content hash of the terrain, so re-eroding a world correctly invalidates
+  its derived data without making it a different world. The client learns
+  where the storage is from a `/config.json` served by whoever serves the
+  page (relative `apiBase` by default, so CORS never arises) and what it can
+  do from the API itself. One binary with a single `start` subcommand runs
+  whichever modules `--target` names — client, world, artifacts, where
+  singular means a subsystem with behaviour and plural a collection without
+  any — so local play and a split deployment are the same program. Storage
+  on disk is files, not a database. One window with two tabs, deliberately
+  unequal delete affordances. World store first, artifact store after.
+summary.de: Der Server führt zwei Stores mit zwei verschiedenen Schlüsseln — einen
+  WELT-Store, geschlüsselt über eine stabile `metadata.uid` in world.yaml,
+  und einen ARTEFAKT-Store, geschlüsselt über den Inhalts-Hash des Geländes,
+  damit eine neu erodierte Welt ihre abgeleiteten Daten ungültig macht, ohne
+  eine andere Welt zu werden. Der Client erfährt den Speicherort aus einer
+  `/config.json` und die Fähigkeiten aus der API selbst. Ein Binary mit
+  einem `start`-Befehl startet die Module, die `--target` nennt, sodass
+  lokales Spielen und ein verteiltes Deployment dasselbe Programm sind.
+  Gespeichert wird in Dateien, nicht in einer Datenbank.
 area: platform
 stage: built
-status: decided — architecture and the forks below. BUILT 2026-08-08: the CLI surface and module skeleton, world.yaml's metadata.uid, the WORLD STORE (revisions, optimistic locking, preview extraction), the client's load/save/storage panels, and the ARTIFACT STORE (get/put/present/list/delete). REVISED 2026-08-11 and again 2026-08-12 — see the two addenda: world revisions are last-N with content-hash dedupe, the artifact store is flat under minted uids with meta.json as the only truth and a resolve endpoint, and EVICTION is built (2026-08-12): `--artifacts-cap` on the server, a 4 GB constant in the OPFS cache — LRU after writes, meta-less junk first. Nothing of the original plan remains unbuilt.
+createdAt: 2026-08-08
+updatedAt: 2026-08-12
+related: [DES-0006, DES-0014]
 ---
-
-# Server storage: two identities, two stores, one config file
 
 The [design discussion](../design/server-storage.md) proposed the shape:
 an artifact store next to a world store, plain REST, identity from day
@@ -560,3 +581,17 @@ the levels side by side; an artifact is outdated when another pipeline
 version baked it, or, for the world held, when its terrain id is not the
 one of the world's last save or load (read back from that archive). Still open: deleting a world on the server does not
 sweep its artifacts.
+
+## Status
+
+decided — architecture and the forks below. BUILT 2026-08-08: the CLI
+surface and module skeleton, world.yaml's metadata.uid, the WORLD STORE
+(revisions, optimistic locking, preview extraction), the client's
+load/save/storage panels, and the ARTIFACT STORE
+(get/put/present/list/delete). REVISED 2026-08-11 and again 2026-08-12 — see
+the two addenda: world revisions are last-N with content-hash dedupe, the
+artifact store is flat under minted uids with meta.json as the only truth
+and a resolve endpoint, and EVICTION is built (2026-08-12):
+`--artifacts-cap` on the server, a 4 GB constant in the OPFS cache — LRU
+after writes, meta-less junk first. Nothing of the original plan remains
+unbuilt.

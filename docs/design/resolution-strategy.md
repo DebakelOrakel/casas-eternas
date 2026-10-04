@@ -1,13 +1,19 @@
 ---
-summary: Why the tectonics/erosion sim resolution and the final world's detail resolution are separate layers, not one grid to enlarge.
-date: 2026-07-23
-updated: 2026-08-12
+id: DES-0002
+title.en: Resolution Strategy — Sim Grid vs. World Detail
+title.de: Auflösungsstrategie — Simulationsgitter und Weltdetail
+summary.en: Why the tectonics/erosion sim resolution and the final world's detail
+  resolution are separate layers, not one grid to enlarge.
+summary.de: Warum die Auflösung der Tektonik- und Erosionssimulation und die
+  Detailauflösung der fertigen Welt getrennte Ebenen sind, nicht ein Gitter,
+  das man vergrössert.
 area: generator
 stage: building
-status: direction agreed; the middle tier became real 2026-08-07 as the worldmap amplification bake (see the update at the end) — the procedural micro tier below the bake's ~2 km reach remains unbuilt
+createdAt: 2026-07-23
+updatedAt: 2026-08-12
+concepts: [generator.concept.detail-levels]
+related: [DEC-0016]
 ---
-
-# Resolution Strategy — Sim Grid vs. World Detail
 
 Records the conclusion of a design discussion about a question that keeps
 recurring as "is the 2048×1024 grid too big / too small for the big
@@ -112,6 +118,8 @@ upscaling the coarse erosion raster.
 
 ## Status
 
+
+direction agreed; the middle tier became real 2026-08-07 as the worldmap amplification bake (see the update at the end) — the procedural micro tier below the bake's ~2 km reach remains unbuilt
 Direction agreed, not yet implemented. Today's code still runs erosion at
 the full render resolution as a single end-of-run pass; the macro/micro
 split and the local procedural-amplification layer are future work. The

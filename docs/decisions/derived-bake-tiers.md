@@ -1,14 +1,30 @@
 ---
-summary: Whether the amplification tiers (4K/8K/16K) stay independent bakes of the macro raster or become downsamples of ONE finest bake. Decided — derive them. Independent bakes of the same world disagree by 100–140 m RMS about the same ground, the disagreement is intrinsic (no erosion model makes independent solves of two grids agree pointwise — measured on the current model AND on the v2 prototype), and downsampling one solution makes every tier byte-consistent by construction. A fast provisional 4K stays as the immediate preview, replaced by the derived family in one visible, documented swap.
-date: 2026-08-16
-updated: 2026-09-29
+id: DEC-0026
+title.en: Derived Bake Tiers
+title.de: Abgeleitete Bake-Stufen
+summary.en: Whether the amplification tiers (4K/8K/16K) stay independent bakes of the
+  macro raster or become downsamples of ONE finest bake. Decided — derive
+  them. Independent bakes of the same world disagree by 100–140 m RMS about
+  the same ground, the disagreement is intrinsic (no erosion model makes
+  independent solves of two grids agree pointwise — measured on the current
+  model AND on the v2 prototype), and downsampling one solution makes every
+  tier byte-consistent by construction. A fast provisional 4K stays as the
+  immediate preview, replaced by the derived family in one visible,
+  documented swap.
+summary.de: Ob die Amplifikationsstufen (4K/8K/16K) unabhängige Bakes des Makrorasters
+  bleiben oder Verkleinerungen EINES feinsten Bakes werden. Entschieden —
+  ableiten. Unabhängige Bakes derselben Welt weichen um 100–140 m RMS
+  voneinander ab, und das ist grundsätzlich so (gemessen am aktuellen Modell
+  UND am v2-Prototyp); aus einer Lösung verkleinert, sind alle Stufen per
+  Konstruktion bytegleich. Ein schnelles vorläufiges 4K bleibt als sofortige
+  Vorschau.
 area: platform
 stage: superseded
-status: SUPERSEDED — the raster amplification bake was removed on 2026-09-29; detail comes from the mesh levels and their tile jobs (decisions/adaptive-mesh.md, fork 3). Before that: BUILT 2026-08-16 (erosion-v2 P3 ④) — the finest (8K) artifact carries its coarser tiers as `family-<factor>/` files in the same entry (box-downsampled pre-quantisation, rivers shared with texel scaling on read), and the worldmap's ladder is provisional-sketch → ONE swap to the family, resolution-only within it. Still open — the in-game documentation of the provisional state (i18n keys to approve) and the provisional-4K UX; 16K as designated finest waits on the engine's MFD memory work.
-superseded-by: adaptive-mesh.md
+createdAt: 2026-08-16
+updatedAt: 2026-09-29
+supersededBy: DEC-0029
+related: [DEC-0016, DES-0016]
 ---
-
-# Derived Bake Tiers
 
 ## The fork
 
@@ -112,3 +128,15 @@ the source and the rest are views — authority without persistence.
   the artifact store's eviction already handles either).
 - The provisional-4K UX: how the sketch state is shown, where the one swap
   is announced (the in-game documentation step above).
+
+## Status
+
+SUPERSEDED — the raster amplification bake was removed on 2026-09-29; detail
+comes from the mesh levels and their tile jobs (decisions/adaptive-mesh.md,
+fork 3). Before that: BUILT 2026-08-16 (erosion-v2 P3 ④) — the finest (8K)
+artifact carries its coarser tiers as `family-<factor>/` files in the same
+entry (box-downsampled pre-quantisation, rivers shared with texel scaling on
+read), and the worldmap's ladder is provisional-sketch → ONE swap to the
+family, resolution-only within it. Still open — the in-game documentation of
+the provisional state (i18n keys to approve) and the provisional-4K UX; 16K
+as designated finest waits on the engine's MFD memory work.

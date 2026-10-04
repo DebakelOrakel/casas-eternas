@@ -1,13 +1,20 @@
 ---
-summary: Static, latitude-based climate (temperature + precipitation + wind + ocean currents) computed at world-gen time, feeding a Whittaker biome classification. No dynamic weather.
-date: 2026-07-24
-updated: 2026-09-20
+id: DEC-0004
+title.en: Climate & Biomes
+title.de: Klima und Biome
+summary.en: Static, latitude-based climate (temperature + precipitation + wind + ocean
+  currents) computed at world-gen time, feeding a Whittaker biome
+  classification. No dynamic weather.
+summary.de: Statisches, breitenabhängiges Klima (Temperatur, Niederschlag, Wind,
+  Meeresströmungen), berechnet bei der Weltgenerierung, als Grundlage einer
+  Biom-Klassifikation nach Whittaker. Kein dynamisches Wetter.
 area: generator
 stage: built
-status: implemented (all 6 phases built); the "revisit if too coarse" note under Integration was revisited 2026-08-08 — the CLASSIFICATION moved to the world raster, the climate fields did not, and its coarse inputs were switched from nearest to interpolated 2026-08-09
+createdAt: 2026-07-24
+updatedAt: 2026-09-20
+concepts: [generator.concept.climate-classes, generator.concept.pressure-and-wind, generator.concept.ocean-currents, generator.concept.seasons]
+related: [DES-0021]
 ---
-
-# Climate & Biomes
 
 Follows tectonics + erosion in the world-gen pipeline. Produces the static
 climate fields a biome classification needs; **no dynamic weather** is
@@ -318,3 +325,10 @@ there is a second caller rather than to invent the family now.
   first believable biome map.
 - Axial-tilt-driven true seasons (the torus makes hemispheres symmetric; the
   amplitude model covers what biomes need).
+
+## Status
+
+implemented (all 6 phases built); the "revisit if too coarse" note under
+Integration was revisited 2026-08-08 — the CLASSIFICATION moved to the world
+raster, the climate fields did not, and its coarse inputs were switched from
+nearest to interpolated 2026-08-09

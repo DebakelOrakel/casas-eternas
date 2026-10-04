@@ -1,13 +1,22 @@
 ---
-summary: The three foundational forks for hex tiling, decided together — rivers run THROUGH the tile anchored at edge ports (not along edges), the hex is 300 m flat-to-flat and defined as identical to the shader lattice, and zoom stays one continuous axis where "stages" are thresholds, never detents.
-date: 2026-08-13
-updated: 2026-08-13
+id: DEC-0024
+title.en: Hex Tiling: The Foundational Forks
+title.de: Hex-Kacheln: die grundlegenden Gabelungen
+summary.en: The three foundational forks for hex tiling, decided together — rivers run
+  THROUGH the tile anchored at edge ports (not along edges), the hex is 300
+  m flat-to-flat and defined as identical to the shader lattice, and zoom
+  stays one continuous axis where "stages" are thresholds, never detents.
+summary.de: Die drei grundlegenden Gabelungen für Hex-Kacheln, gemeinsam entschieden —
+  Flüsse laufen DURCH die Kachel, verankert an Kantenports (nicht entlang
+  der Kanten), das Hex ist 300 m von Kante zu Kante und identisch mit dem
+  Shader-Gitter definiert, und der Zoom bleibt eine stufenlose Achse, auf
+  der „Stufen“ Schwellen sind, nie Rasten.
 area: ui
 stage: decided
-status: decided 2026-08-13; nothing built yet — the staged build plan lives in docs/design/hex-world-view.md
+createdAt: 2026-08-13
+updatedAt: 2026-08-13
+related: [DES-0004, DEC-0025]
 ---
-
-# Hex Tiling: The Foundational Forks
 
 [design/hex-world-view.md](../design/hex-world-view.md) sketched the hex
 world view and named its open forks. The three that everything else hangs
@@ -67,3 +76,8 @@ distance fade against moiré. Hex *interaction* (hover, pick, later
 develop) follows the same pattern — it arms below full grid visibility
 as a threshold on the continuous axis, not as a mode switch. This also
 resolves the open "zoom levels" question raised 2026-08-08.
+
+## Status
+
+decided 2026-08-13; nothing built yet — the staged build plan lives in
+docs/design/hex-world-view.md

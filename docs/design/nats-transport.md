@@ -1,13 +1,20 @@
 ---
-summary: Findings from a hypothetical discussion of NATS as a message bus — where it would slot into the architecture, what it would buy, and why it does not make split bakes attractive.
-date: 2026-08-16
-updated: 2026-09-30
+id: DES-0015
+title.en: NATS as a transport variant
+title.de: NATS als Transportvariante
+summary.en: Findings from a hypothetical discussion of NATS as a message bus — where it
+  would slot into the architecture, what it would buy, and why it does not
+  make split bakes attractive.
+summary.de: Ergebnisse einer hypothetischen Diskussion über NATS als Message-Bus — wo es
+  in die Architektur passen würde, was es brächte, und warum es verteilte
+  Bakes nicht attraktiv macht.
 area: platform
 stage: idea
-status: unfinished discussion notes — nothing decided, nothing built; triggers named at the end
+createdAt: 2026-08-16
+updatedAt: 2026-09-30
+concepts: [generator.concept.jobs]
+related: [DEC-0032, DES-0022]
 ---
-
-# NATS as a transport variant
 
 Notes from a deliberately hypothetical discussion (2026-08-16). The question
 was: is NATS a fit for hex-tile streaming, service discovery, or service
@@ -108,3 +115,7 @@ None of the triggers has fired.
 2026-09-30: [tile-coordinator.md](tile-coordinator.md) names a case for
 trigger 1 — a coordinator that gives tile computations to a pool of
 workers.
+
+## Status
+
+unfinished discussion notes — nothing decided, nothing built; triggers named at the end

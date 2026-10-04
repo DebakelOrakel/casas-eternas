@@ -1,13 +1,23 @@
 ---
-summary: Plan for two connected rebuilds — a `world` module as the single, provenance-carrying place world data is queried, and a shared module architecture in the generator (separated tuning and input parameters, declared slider ranges, a real WorldSpec type). Includes the order of work, the safety net it needs first, and what is deliberately excluded.
-date: 2026-08-09
-updated: 2026-08-12
+id: DES-0007
+title.en: Architecture unification: world-data access and module contracts
+title.de: Architektur vereinheitlichen: Zugriff auf Weltdaten und Modulverträge
+summary.en: Plan for two connected rebuilds — a `world` module as the single,
+  provenance-carrying place world data is queried, and a shared module
+  architecture in the generator (separated tuning and input parameters,
+  declared slider ranges, a real WorldSpec type). Includes the order of
+  work, the safety net it needs first, and what is deliberately excluded.
+summary.de: Plan für zwei verbundene Umbauten — ein Modul `world` als der eine Ort mit
+  Herkunftsangabe, an dem Weltdaten abgefragt werden, und eine gemeinsame
+  Modularchitektur im Generator (getrennte Tuning- und Eingabeparameter,
+  deklarierte Reglerbereiche, ein echter WorldSpec-Typ). Mit Reihenfolge,
+  dem nötigen Sicherheitsnetz vorab und dem, was bewusst ausgeschlossen ist.
 area: platform
 stage: built
-status: COMPLETE 2026-08-09 — parts 0, A, B, C and D all built and verified. Follow-ups and the questions the work opened are listed at the end
+createdAt: 2026-08-09
+updatedAt: 2026-08-12
+related: [DES-0008]
 ---
-
-# Architecture unification: world-data access and module contracts
 
 Two efforts that depend on each other. The parameter contract (part B) is the
 prerequisite for the provenance and the cache key of the world-data access
@@ -613,3 +623,8 @@ Split by audience, not by topic:
   identities
 - [amplification-artifacts.md](./amplification-artifacts.md) — the cost axis
   (local, server, compute)
+
+## Status
+
+COMPLETE 2026-08-09 — parts 0, A, B, C and D all built and verified.
+Follow-ups and the questions the work opened are listed at the end

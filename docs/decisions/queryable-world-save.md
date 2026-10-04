@@ -1,13 +1,25 @@
 ---
-summary: Extend the world save into a self-describing, QUERYABLE dataset — every world aspect we generate is baked into field-layer rasters (+ vector layers) described by a manifest, so a game server can look up any value by sampling, with ZERO knowledge of the generation algorithms. The recipe (regenerate) and sim snapshot (continue) stay alongside, serving different consumers.
-date: 2026-07-26
-updated: 2026-09-20
+id: DEC-0009
+title.en: Queryable world save (baked layers)
+title.de: Abfragbares Welt-Save (gebackene Ebenen)
+summary.en: Extend the world save into a self-describing, QUERYABLE dataset — every
+  world aspect we generate is baked into field-layer rasters (+ vector
+  layers) described by a manifest, so a game server can look up any value by
+  sampling, with ZERO knowledge of the generation algorithms. The recipe
+  (regenerate) and sim snapshot (continue) stay alongside, serving different
+  consumers.
+summary.de: Das Welt-Save wird zu einem selbstbeschreibenden, ABFRAGBAREN Datensatz:
+  Jeder Aspekt der Welt wird in Rasterebenen (und Vektorebenen) gebacken,
+  die ein Manifest beschreibt, sodass ein Spielserver jeden Wert durch
+  Abtasten nachschlagen kann, OHNE die Generierungsalgorithmen zu kennen.
+  Rezept (neu erzeugen) und Schnappschuss (fortsetzen) bleiben daneben, für
+  andere Abnehmer.
 area: platform
 stage: building
-status: Phase 1 BUILT (2026-07-26) — main-thread bake from caches; see status note at end
+createdAt: 2026-07-26
+updatedAt: 2026-09-20
+related: [DEC-0005, DEC-0033, DES-0014]
 ---
-
-# Queryable world save (baked layers)
 
 Extends the existing `.zip` save (see `world-save-format.md`). Motivated by the
 game **server**: when a generated world is handed to the server that runs the
@@ -280,3 +292,7 @@ restoration.
 
 An older save that predates the `landMask` layer is left as it is rather than
 guessed at.
+
+## Status
+
+Phase 1 BUILT (2026-07-26) — main-thread bake from caches; see status note at end

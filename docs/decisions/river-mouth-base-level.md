@@ -1,13 +1,27 @@
 ---
-summary: Fluvial incision draining into the WORLD OCEAN is floored at estuary depth (SEA_LEVEL − estuaryMaxDepthM, 20 m) instead of grading to its receiver's bed — which sat at shelf/slope depth and let erosion carve "ocean arms" hundreds of km into continents. Enclosed sub-sea basins stay exempt. The bake inherits the same floor (ALGO v5); a deliberate ria mechanism ("carve first, drown after") is deferred.
-date: 2026-08-11
-updated: 2026-08-16
+id: DEC-0020
+title.en: River-mouth base level
+title.de: Erosionsbasis an Flussmündungen
+summary.en: Fluvial incision draining into the WORLD OCEAN is floored at estuary depth
+  (SEA_LEVEL − estuaryMaxDepthM, 20 m) instead of grading to its receiver's
+  bed — which sat at shelf/slope depth and let erosion carve "ocean arms"
+  hundreds of km into continents. Enclosed sub-sea basins stay exempt. The
+  bake inherits the same floor (ALGO v5); a deliberate ria mechanism ("carve
+  first, drown after") is deferred.
+summary.de: Flusseinschnitt, der in den WELTOZEAN mündet, wird auf Ästuartiefe begrenzt
+  (SEA_LEVEL − estuaryMaxDepthM, 20 m), statt sich auf das Bett seines
+  Empfängers einzustellen — das lag auf Schelf- oder Hangtiefe und liess die
+  Erosion „Meeresarme“ Hunderte Kilometer in die Kontinente schneiden.
+  Abgeschlossene Becken unter dem Meeresspiegel bleiben ausgenommen. Ein
+  gezielter Ria-Mechanismus ist vertagt.
 area: generator
-stage: built
-status: SUPERSEDED 2026-08-16 by the erosion-v2 engine (docs/design/erosion-v2.md) — the implicit solve handles base level properly, so the estuary clamp and its constant were deleted in the P5 teardown; the problem analysis here remains the record of why v1 needed one
+stage: superseded
+supersededBy: DES-0016
+createdAt: 2026-08-11
+updatedAt: 2026-08-16
+concepts: [generator.concept.erosion, generator.concept.rivers-and-lakes]
+related: [DES-0016]
 ---
-
-# River-mouth base level
 
 ## The problem
 
@@ -104,3 +118,10 @@ exactly what made the exemption visible:
   A world dominated by landlocked seas will still show deep shore incision;
   if that ever bothers, the knob is applying the floor to any water receiver,
   at the cost of terminal-basin realism.
+
+## Status
+
+SUPERSEDED 2026-08-16 by the erosion-v2 engine (docs/design/erosion-v2.md) —
+the implicit solve handles base level properly, so the estuary clamp and its
+constant were deleted in the P5 teardown; the problem analysis here remains
+the record of why v1 needed one

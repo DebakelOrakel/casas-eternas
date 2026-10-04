@@ -1,13 +1,22 @@
 ---
-summary: The screen is the frame of reference for direction, not the raster. The map raster reaches the screen mirrored vertically; anything drawn outside it is put into the screen's frame at the point of drawing, and the readout names no compass directions at all, because a flat torus has none.
-date: 2026-09-20
-updated: 2026-09-20
+id: DEC-0028
+title.en: Map Orientation: The Screen Is the Frame
+title.de: Kartenausrichtung: der Bildschirm ist der Bezugsrahmen
+summary.en: The screen is the frame of reference for direction, not the raster. The map
+  raster reaches the screen mirrored vertically; anything drawn outside it
+  is put into the screen's frame at the point of drawing, and the readout
+  names no compass directions at all, because a flat torus has none.
+summary.de: Der Bildschirm ist der Bezugsrahmen für Richtungen, nicht das Raster. Das
+  Kartenraster erscheint vertikal gespiegelt; alles, was ausserhalb davon
+  gezeichnet wird, wird beim Zeichnen in den Rahmen des Bildschirms gesetzt,
+  und die Anzeige nennt gar keine Himmelsrichtungen, weil ein flacher Torus
+  keine hat.
 area: ui
 stage: built
-status: decided; implemented for the generator's readout
+createdAt: 2026-09-20
+updatedAt: 2026-09-20
+related: [DEC-0015]
 ---
-
-# Map Orientation: The Screen Is the Frame
 
 ## The fork
 
@@ -83,3 +92,7 @@ relation to a frame, and the frame is the screen.
 The three existing compensations still sit in their own renderers. They are
 correct and they carry their reasons, so they are left alone; this document is
 what a fifth one should read first.
+
+## Status
+
+decided; implemented for the generator's readout

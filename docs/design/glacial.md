@@ -1,12 +1,26 @@
 ---
-summary: An ice model for the coupled terrain history — mass balance from the per-epoch climate, shallow-ice flow on the macro mesh, erosion with sliding speed, till as a sediment layer, moraine-dammed lakes from the water-level model. Same history/detail split as the fluvial erosion; ice flux counts as discharge in the density rule. A forerunner without erosion (ice thickness on the bake's final terrain) replaces today's fake glaciers first.
-date: 2026-09-22
+id: DES-0020
+title.en: Ice as a process
+title.de: Eis als Prozess
+summary.en: An ice model for the coupled terrain history — mass balance from the
+  per-epoch climate, shallow-ice flow on the macro mesh, erosion with
+  sliding speed, till as a sediment layer, moraine-dammed lakes from the
+  water-level model. Same history/detail split as the fluvial erosion; ice
+  flux counts as discharge in the density rule. A forerunner without erosion
+  (ice thickness on the bake's final terrain) replaces today's fake glaciers
+  first.
+summary.de: Ein Eismodell für die gekoppelte Geländegeschichte — Massenbilanz aus dem
+  Klima je Epoche, Flachwasser-Eisfluss auf dem Makronetz, Erosion mit
+  Gleitgeschwindigkeit, Till als Sedimentschicht, moränengestaute Seen aus
+  dem Wasserstandsmodell. Dieselbe Trennung von Geschichte und Detail wie
+  bei der Flusserosion; der Eisfluss zählt als Abfluss in der Dichteregel.
+  Ein Vorläufer ohne Erosion ersetzt zuerst die heutigen falschen Gletscher.
 area: generator
 stage: idea
-status: sketched 2026-09-22 after the adaptive-mesh decision; wanted, not decided. Its forks are listed at the end for a session of its own after step 5 of decisions/adaptive-mesh.md. The forerunner is BUILT 2026-09-22 (surface/iceFlow.ts — ice thickness on the final terrain by balance-flux inversion, in the bake and at 2048; ADAPTIVE_MESH_PLAN.md F4); the process is not. Ice as a climate class (Ice below −10 °C) and Glacier as a frozen lake stay until the process replaces them.
+createdAt: 2026-09-22
+concepts: [generator.concept.erosion, generator.concept.history-climate]
+related: [DES-0018, DEC-0029]
 ---
-
-# Ice as a process
 
 Today's glaciers are fake: `Biome.Ice` is a temperature threshold and
 `Biome.Glacier` a frozen basin. Real mountains are shaped by ice as much
@@ -122,3 +136,13 @@ appear from the 4K/8K bake at one to two kilometres.
   mesh, the coupling (5), the climate history (13), the water levels (9).
 - [adaptive-mesh.md](./adaptive-mesh.md) — the processes noted for later;
   the coast process shares the eustasy with this one.
+
+## Status
+
+sketched 2026-09-22 after the adaptive-mesh decision; wanted, not decided.
+Its forks are listed at the end for a session of its own after step 5 of
+decisions/adaptive-mesh.md. The forerunner is BUILT 2026-09-22
+(surface/iceFlow.ts — ice thickness on the final terrain by balance-flux
+inversion, in the bake and at 2048; ADAPTIVE_MESH_PLAN.md F4); the process
+is not. Ice as a climate class (Ice below −10 °C) and Glacier as a frozen
+lake stay until the process replaces them.

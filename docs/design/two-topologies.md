@@ -1,12 +1,22 @@
 ---
-summary: Could the flat-torus generator also run a sphere, with one code base and a topology parameter? A first analysis of what the generator already shares, where the torus is actually baked in, which sphere substrate keeps the most, and where the real cost sits (outside the generator). Draft — to be refined.
-date: 2026-09-20
+id: DES-0017
+title.en: Two topologies, one generator
+title.de: Zwei Topologien, ein Generator
+summary.en: Could the flat-torus generator also run a sphere, with one code base and a
+  topology parameter? A first analysis of what the generator already shares,
+  where the torus is actually baked in, which sphere substrate keeps the
+  most, and where the real cost sits (outside the generator). Draft — to be
+  refined.
+summary.de: Könnte der Torus-Generator auch eine Kugel rechnen, mit einer Codebasis und
+  einem Topologie-Parameter? Eine erste Analyse, was der Generator schon
+  teilt, wo der Torus wirklich eingebaut ist, welches Kugel-Substrat am
+  meisten erhält und wo die echten Kosten liegen (ausserhalb des
+  Generators). Entwurf — wird verfeinert.
 area: generator
 stage: idea
-status: draft — first analysis from a design conversation, numbers are estimates from grep and line counts; nothing decided, nothing built. Not a reconstruction of the removed sphere generator (see world-topology-torus.md); the question is whether the flat generator can be parameterised.
+createdAt: 2026-09-20
+related: [DEC-0015]
 ---
-
-# Two topologies, one generator
 
 The torus was chosen over the sphere before any rationale was written
 ([world-topology-torus.md](../decisions/world-topology-torus.md)), and
@@ -163,3 +173,11 @@ Order of magnitude: 1.5–2.5k new lines plus the mechanical threading.
   motion model the 3D vector layer would simplify
 - [amplification-artifacts.md](./amplification-artifacts.md) — the
   adaptive mesh, candidate C's sibling
+
+## Status
+
+draft — first analysis from a design conversation, numbers are estimates
+from grep and line counts; nothing decided, nothing built. Not a
+reconstruction of the removed sphere generator (see
+world-topology-torus.md); the question is whether the flat generator can be
+parameterised.

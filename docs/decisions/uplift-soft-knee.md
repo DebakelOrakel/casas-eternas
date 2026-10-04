@@ -1,13 +1,25 @@
 ---
-summary: The uplift deck saturates through an isostatic soft knee (linear to 3000 m, exponential toward 6000 m) instead of climbing to the 9000 m clamp — ultra-high plateaus (2.5% of land above 6000 m; Earth ~0.001%) and their brim-full ice-cold basin lakes disappear, while ridged crests keep riding the raw crustal thickness. Rare true 7-8 km summits are out of this knob's reach and wait on a thickness-side treatment in the tectonics sim.
-date: 2026-08-16
-updated: 2026-08-16
+id: DEC-0027
+title.en: The uplift soft knee
+title.de: Das weiche Knie der Hebung
+summary.en: The uplift deck saturates through an isostatic soft knee (linear to 3000 m,
+  exponential toward 6000 m) instead of climbing to the 9000 m clamp —
+  ultra-high plateaus (2.5% of land above 6000 m; Earth ~0.001%) and their
+  brim-full ice-cold basin lakes disappear, while ridged crests keep riding
+  the raw crustal thickness. Rare true 7-8 km summits are out of this knob's
+  reach and wait on a thickness-side treatment in the tectonics sim.
+summary.de: Die Hebung sättigt über ein isostatisches weiches Knie (linear bis 3000 m,
+  exponentiell gegen 6000 m), statt bis zur Grenze von 9000 m zu steigen —
+  extreme Hochplateaus (2,5 % des Landes über 6000 m; Erde ~0,001 %) und
+  ihre randvollen, eiskalten Beckenseen verschwinden, während Grate weiter
+  der rohen Krustendicke folgen.
 area: generator
 stage: built
-status: decided and built 2026-08-16; calibrated on seed alpha with scripts/measureHydrology.mjs and a hypsometry decomposition
+createdAt: 2026-08-16
+updatedAt: 2026-08-16
+concepts: [generator.concept.plate-boundaries]
+related: [DES-0016]
 ---
-
-# The uplift soft knee
 
 ## The problem
 
@@ -75,3 +87,8 @@ altitude (their hollows survive lower, where PET is honest); frozen lakes at
 treatment (lakes below freezing render as ice) handles the remainder.
 `applyMountainRedistribution` (display-only gamma) is untouched — it never
 was part of the simulation truth.
+
+## Status
+
+decided and built 2026-08-16; calibrated on seed alpha with
+scripts/measureHydrology.mjs and a hypsometry decomposition

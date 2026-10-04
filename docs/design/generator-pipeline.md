@@ -1,15 +1,22 @@
 ---
-summary: The generator's runtime pipeline — its state is already stage-shaped but never
-  declared, which is why invalidation is a set of hand-written rules. The target is the
-  chain as data; this records the design, the reset taxonomy and the staged path there.
-date: 2026-08-09
-updated: 2026-08-12
+id: DES-0008
+title.en: The generator pipeline: the chain as data
+title.de: Die Generator-Pipeline: die Kette als Daten
+summary.en: The generator's runtime pipeline — its state is already stage-shaped but
+  never declared, which is why invalidation is a set of hand-written rules.
+  The target is the chain as data; this records the design, the reset
+  taxonomy and the staged path there.
+summary.de: Die Laufzeit-Pipeline des Generators — ihr Zustand ist schon nach Stufen
+  geformt, aber nie deklariert, weshalb die Invalidierung aus
+  handgeschriebenen Regeln besteht. Das Ziel ist die Kette als Daten; hier
+  stehen der Entwurf, die Einteilung der Resets und der Weg in Stufen
+  dorthin.
 area: generator
 stage: built
-status: implemented — all five steps built 2026-08-09
+createdAt: 2026-08-09
+updatedAt: 2026-08-12
+related: [DES-0007]
 ---
-
-# The generator pipeline: the chain as data
 
 One module runs the whole generator — archean, tectonics, erosion, climate,
 hydrology, ecology, migration, the micro-tile inspector, save and restore.
@@ -494,3 +501,7 @@ split `ui/serverIndicator` already makes.
   sequences
 - [world-save-format.md](../decisions/world-save-format.md) — where a stage's
   recorded inputs end up
+
+## Status
+
+implemented — all five steps built 2026-08-09

@@ -1,13 +1,31 @@
 ---
-summary: The docs pipeline sketched in notes.md bundles two separable deliverables — an in-game manual (the valuable one) and a public website (deferrable marketing chrome). Starlight only ever serves the website, and it is NOT embeddable in the Vanilla-TS/Babylon Vite client anyway (it's an Astro integration owning its own build). Decision: DEFER the public site entirely; build the in-game manual in-project on unified/remark (which you need regardless); do NOT adopt a second framework for a not-yet-needed artifact. Starlight-vs-homegrown is re-decided only if/when a public site becomes real. What IS decided now: the source layout and the anchor IDs (which reuse the i18n key namespace).
-date: 2026-07-28
-updated: 2026-10-03
+id: DEC-0012
+title.en: Documentation architecture (source layout & anchors)
+title.de: Dokumentationsarchitektur (Quellstruktur und Anker)
+summary.en: The docs pipeline sketched in notes.md bundles two separable deliverables —
+  an in-game manual (the valuable one) and a public website (deferrable
+  marketing chrome). Starlight only ever serves the website, and it is NOT
+  embeddable in the Vanilla-TS/Babylon Vite client anyway (it's an Astro
+  integration owning its own build). Decision: DEFER the public site
+  entirely; build the in-game manual in-project on unified/remark (which you
+  need regardless); do NOT adopt a second framework for a not-yet-needed
+  artifact. Starlight-vs-homegrown is re-decided only if/when a public site
+  becomes real. What IS decided now: the source layout and the anchor IDs
+  (which reuse the i18n key namespace).
+summary.de: Die in notes.md skizzierte Doku-Pipeline bündelt zwei trennbare Ergebnisse —
+  ein Handbuch im Spiel (das wertvolle) und eine öffentliche Website
+  (aufschiebbare Werbung). Starlight dient nur der Website und lässt sich
+  ohnehin nicht in den Vanilla-TS/Babylon-Client mit Vite einbetten.
+  Entscheid: die öffentliche Seite ganz AUFSCHIEBEN, das Handbuch im Projekt
+  auf unified/remark bauen, kein zweites Framework für ein noch nicht
+  gebrauchtes Ergebnis. Jetzt entschieden sind die Quellstruktur und die
+  Anker-IDs (die den Namensraum der i18n-Schlüssel wiederverwenden).
 area: platform
 stage: decided
-status: decided (source layout + anchors; the manual stays deferred) — ADDENDUM 2026-08-13: the public site is BUILT the same day (homegrown, the re-decision the doc reserved): npm run build:docs renders docs/ to a static site the `docs` module serves under /docs/. ADDENDUM (2), same day, decided and BUILT: top levels of the site are AUDIENCES — Development (the existing tree) beside a new Operations top level (docs/operations/: per-environment guides plus CLI/config reference pages rendered from a clidump-generated, lint-guarded JSON — never hand-written); the player top level stays the reserved handbook/ manual. ADDENDUM (3) 2026-09-20, decided and BUILT: the site wears the generator's design canvas (its type, its palette, a header bar, a right-hand "on this page" column), and it gained SEARCH — not Pagefind, which this doc reserved: a build-time JSON of titles, summaries, section headings and changelog lines (~127 KB, no full text) plus ~120 lines of plain browser JS. Pagefind would index the rendered HTML, which for forty documents means shipping a WASM runtime and its full-text shards to answer questions the headings already answer. The same script drives the area pages' status filter; with JS off the site is the site with everything shown. ADDENDUM (4) 2026-10-03: the manual's tree is docs/handbook/ (was content/), and its first reader is a Wiki panel in the generator screen, as the design canvas sketches it
+createdAt: 2026-07-28
+updatedAt: 2026-10-03
+related: [DEC-0013, DEC-0014]
 ---
-
-# Documentation architecture (source layout & anchors)
 
 `notes.md` sketches a documentation pipeline: one Markdown tree feeding both an **in-game
 manual** (via a remark→JSON build step) and a **public website** (Astro Starlight), plus
@@ -400,3 +418,26 @@ and are included back by reference (`{{concept <file>}}`), so one text
 serves the step and the concept's page. A layer's page needs no file: its
 name and its sentence are the overlay catalog's, the hover card's words —
 a handbook copy would drift; an optional `overlays/<id>.md` adds more.
+
+## Status
+
+decided (source layout + anchors; the manual stays deferred) — ADDENDUM
+2026-08-13: the public site is BUILT the same day (homegrown, the
+re-decision the doc reserved): npm run build:docs renders docs/ to a static
+site the `docs` module serves under /docs/. ADDENDUM (2), same day, decided
+and BUILT: top levels of the site are AUDIENCES — Development (the existing
+tree) beside a new Operations top level (docs/operations/: per-environment
+guides plus CLI/config reference pages rendered from a clidump-generated,
+lint-guarded JSON — never hand-written); the player top level stays the
+reserved handbook/ manual. ADDENDUM (3) 2026-09-20, decided and BUILT: the
+site wears the generator's design canvas (its type, its palette, a header
+bar, a right-hand "on this page" column), and it gained SEARCH — not
+Pagefind, which this doc reserved: a build-time JSON of titles, summaries,
+section headings and changelog lines (~127 KB, no full text) plus ~120 lines
+of plain browser JS. Pagefind would index the rendered HTML, which for forty
+documents means shipping a WASM runtime and its full-text shards to answer
+questions the headings already answer. The same script drives the area
+pages' status filter; with JS off the site is the site with everything
+shown. ADDENDUM (4) 2026-10-03: the manual's tree is docs/handbook/ (was
+content/), and its first reader is a Wiki panel in the generator screen, as
+the design canvas sketches it

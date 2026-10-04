@@ -1,13 +1,25 @@
 ---
-summary: How the ground's geometry is structured. Today a camera-following high-resolution patch lies over a world-sized low-resolution mesh, and the two meet on a seam that cannot be made to disappear. Decided — build only what is looked at: concentric rings around the camera from the descent down, tiles built on demand in the map register, and one sampling pyramid under both. The world-sized mesh goes.
-date: 2026-08-15
-updated: 2026-10-03
+id: DEC-0025
+title.en: One Ground Per Register
+title.de: Ein Boden je Darstellungsebene
+summary.en: How the ground's geometry is structured. Today a camera-following
+  high-resolution patch lies over a world-sized low-resolution mesh, and the
+  two meet on a seam that cannot be made to disappear. Decided — build only
+  what is looked at: concentric rings around the camera from the descent
+  down, tiles built on demand in the map register, and one sampling pyramid
+  under both. The world-sized mesh goes.
+summary.de: Wie die Geometrie des Bodens aufgebaut ist. Bisher lag ein hochaufgelöster
+  Fleck, der der Kamera folgt, über einem weltgrossen grob aufgelösten Netz,
+  und beide treffen sich an einer Naht, die nicht verschwinden kann.
+  Entschieden — nur bauen, was man ansieht: konzentrische Ringe um die
+  Kamera ab dem Abstieg, Kacheln bei Bedarf in der Kartenansicht, und eine
+  Abtastpyramide unter beidem. Das weltgrosse Netz entfällt.
 area: ui
 stage: building
-status: decided 2026-08-15. BUILT for the incubator 2026-10-03 — the rings (map/groundRings.ts) are its only ground at every zoom, on a fixed ladder of spacings, each ring painted off the main thread with textures finer than its quads (map/groundPaint.ts); the generator keeps the patch and the relief levels. See "Built 2026-10-03" at the end. A prerequisite for showing a 16K bake, not a sequel to baking one.
+createdAt: 2026-08-15
+updatedAt: 2026-10-03
+related: [DES-0004, DEC-0024]
 ---
-
-# One Ground Per Register
 
 ## The fork
 
@@ -342,3 +354,12 @@ rectangular islands — both the bake's, not the drawing's (the user's
 call: fix in the generator later); pan lag is still seconds of soft ground on the outer
 rings (1024² paints of 2–3 s each); vegetation exists as a canopy surface,
 not as instances.
+
+## Status
+
+decided 2026-08-15. BUILT for the incubator 2026-10-03 — the rings
+(map/groundRings.ts) are its only ground at every zoom, on a fixed ladder of
+spacings, each ring painted off the main thread with textures finer than its
+quads (map/groundPaint.ts); the generator keeps the patch and the relief
+levels. See "Built 2026-10-03" at the end. A prerequisite for showing a 16K
+bake, not a sequel to baking one.

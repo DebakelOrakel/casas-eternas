@@ -1,13 +1,28 @@
 ---
-summary: A categorized, human changelog under docs/changelog/ — NOT the git commit log. One file per area (worldgen, ui, mechanics, concepts, platform), each listing roughly when a feature was added / changed / dropped / fixed, with dates. Seeded retroactively from the commits of 2026-07-20..28. No decisions category — decisions are self-dating via their own front matter, so a date-ordered decisions overview is generated, not hand-maintained. Distinct from the title screen's mission list, which is a "what it can do now" snapshot.
-date: 2026-07-28
-updated: 2026-08-13
+id: DEC-0013
+title.en: Changelog (categorized)
+title.de: Changelog (gegliedert)
+summary.en: A categorized, human changelog under docs/changelog/ — NOT the git commit
+  log. One file per area (worldgen, ui, mechanics, concepts, platform), each
+  listing roughly when a feature was added / changed / dropped / fixed, with
+  dates. Seeded retroactively from the commits of 2026-07-20..28. No
+  decisions category — decisions are self-dating via their own front matter,
+  so a date-ordered decisions overview is generated, not hand-maintained.
+  Distinct from the title screen's mission list, which is a "what it can do
+  now" snapshot.
+summary.de: Ein gegliedertes Changelog für Menschen unter docs/changelog/ — NICHT das
+  Git-Log. Eine Datei je Bereich (worldgen, ui, mechanics, concepts,
+  platform), jede mit ungefähren Daten, wann etwas dazukam, sich änderte,
+  wegfiel oder behoben wurde. Rückwirkend befüllt aus den Commits vom
+  20.–28.07.2026. Keine Kategorie für Entscheide — die datieren sich über
+  ihr Front-Matter selbst, eine Übersicht nach Datum wird erzeugt, nicht
+  gepflegt.
 area: platform
 stage: built
-status: decided and BUILT 2026-07-28 (seeded retroactively from the first 84 commits); the title screen renders the changelog files inline since 2026-08-01
+createdAt: 2026-07-28
+updatedAt: 2026-08-13
+related: [DEC-0012]
 ---
-
-# Changelog (categorized)
 
 A changelog that answers "**when** did this arrive", organized by area — not the commit log,
 and not a snapshot of current capability. Decided alongside the localization work (see
@@ -75,3 +90,9 @@ list is kept current as before (and is localized EN-only via `common.title.missi
 The later documentation pipeline reads these files as one more Markdown source — same area
 IDs, same anchors. No dependency on that pipeline is created here; the changelog is useful
 standalone from day one.
+
+## Status
+
+decided and BUILT 2026-07-28 (seeded retroactively from the first 84
+commits); the title screen renders the changelog files inline since
+2026-08-01

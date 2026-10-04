@@ -1,13 +1,19 @@
 ---
-summary: The shipped generator's substrate is a flat torus (wraps in x and y), not the unit-sphere substrate plate-tectonics-initial-state.md decided — this document records that pivot, retroactively.
-date: 2026-07-23
-updated: 2026-08-12
+id: DEC-0015
+title.en: World Topology: Flat Torus, Not a Sphere
+title.de: Welttopologie: flacher Torus statt Kugel
+summary.en: The shipped generator's substrate is a flat torus (wraps in x and y), not
+  the unit-sphere substrate plate-tectonics-initial-state.md decided — this
+  document records that pivot, retroactively.
+summary.de: Das Substrat des Generators ist ein flacher Torus (umlaufend in x und y),
+  nicht die Einheitskugel, die DEC-0001 entschieden hatte — dieses Dokument
+  hält den Wechsel nachträglich fest.
 area: generator
 stage: built
-status: decided; implemented
+createdAt: 2026-08-06
+updatedAt: 2026-08-12
+related: [DEC-0001, DES-0017, DEC-0028]
 ---
-
-# World Topology: Flat Torus, Not a Sphere
 
 **Status:** Decided and implemented well before this document existed —
 written up on 2026-08-06 because the pivot away from
@@ -104,3 +110,9 @@ now carry a pointer to this document near their own substrate discussion.
 had a stale entry ("Drift-update rules — not resolved") that is no longer
 true as of `evolving-euler-poles.md` M1–M3; marked resolved there, not
 here, to keep the correction next to the claim it corrects.
+
+## Status
+
+The pivot dates from 2026-07-23; this document recorded it on 2026-08-06.
+
+decided; implemented

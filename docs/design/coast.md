@@ -1,12 +1,27 @@
 ---
-summary: A coastal process for the coupled terrain history — sea level per epoch from the climate history, wave erosion at the shore iso-line with cliffs and platforms, one-dimensional sediment transport along the coast graph for spits, barriers and beaches, a shore generator below the resolution. Rias, drowned valleys, fjords and terraces come free from decisions already taken; the process adds what the sea itself shapes. A classification forerunner (coast type per reach, no physics) comes first.
-date: 2026-09-22
+id: DES-0019
+title.en: The coast as a process
+title.de: Die Küste als Prozess
+summary.en: A coastal process for the coupled terrain history — sea level per epoch from
+  the climate history, wave erosion at the shore iso-line with cliffs and
+  platforms, one-dimensional sediment transport along the coast graph for
+  spits, barriers and beaches, a shore generator below the resolution. Rias,
+  drowned valleys, fjords and terraces come free from decisions already
+  taken; the process adds what the sea itself shapes. A classification
+  forerunner (coast type per reach, no physics) comes first.
+summary.de: Ein Küstenprozess für die gekoppelte Geländegeschichte — Meeresspiegel je
+  Epoche aus der Klimageschichte, Wellenerosion an der Uferlinie mit Kliffs
+  und Plattformen, eindimensionaler Sedimenttransport entlang des
+  Küstengraphen für Nehrungen, Barrieren und Strände, ein Ufer-Generator
+  unterhalb der Auflösung. Rias, ertrunkene Täler, Fjorde und Terrassen
+  ergeben sich aus schon getroffenen Entscheiden. Eine Klassifikation als
+  Vorläufer (Küstentyp je Abschnitt, ohne Physik) kommt zuerst.
 area: generator
 stage: idea
-status: sketched 2026-09-22 after the adaptive-mesh decision; wanted, not decided, after the glacial process. Tides deferred — they need a moon, a Planet-stage parameter to look at later. The classification forerunner is BUILT 2026-09-22 (surface/coastGraph.ts — coast reaches with exposure, relief, hardness, supply and a type, drawn at the shore; ADAPTIVE_MESH_PLAN.md F5); the process is not.
+createdAt: 2026-09-22
+concepts: [generator.concept.erosion]
+related: [DES-0018, DEC-0029]
 ---
-
-# The coast as a process
 
 Today a coast is where the terrain crosses sea level. No cliffs, no wave
 erosion, no spits or barrier islands, no sea-level change — so no rias,
@@ -84,3 +99,12 @@ time, and the coast takes its eustasy from the same climate history.
   history (13).
 - [glacial.md](./glacial.md) — fjords, and the ice volume behind the
   sea level.
+
+## Status
+
+sketched 2026-09-22 after the adaptive-mesh decision; wanted, not decided,
+after the glacial process. Tides deferred — they need a moon, a Planet-stage
+parameter to look at later. The classification forerunner is BUILT
+2026-09-22 (surface/coastGraph.ts — coast reaches with exposure, relief,
+hardness, supply and a type, drawn at the shore; ADAPTIVE_MESH_PLAN.md F5);
+the process is not.

@@ -1,12 +1,26 @@
 ---
-summary: The world save holds three things with three different lifetimes — the recipe, a snapshot to continue from, and the queryable layers of level 0. The recipe is the authority; the snapshot is a cache tied to the code that wrote it; the queryable layers become one artifact per level of the detail ladder, in one format, and the save keeps level 0's. Identity of a replayed level is the recipe and the code, not the level-0 rasters.
-date: 2026-10-01
+id: DEC-0033
+title.en: The roles in the world save
+title.de: Die Rollen im Welt-Save
+summary.en: The world save holds three things with three different lifetimes — the
+  recipe, a snapshot to continue from, and the queryable layers of level 0.
+  The recipe is the authority; the snapshot is a cache tied to the code that
+  wrote it; the queryable layers become one artifact per level of the detail
+  ladder, in one format, and the save keeps level 0's. Identity of a
+  replayed level is the recipe and the code, not the level-0 rasters.
+summary.de: Das Welt-Save hält drei Dinge mit drei verschiedenen Lebensdauern — das
+  Rezept, einen Schnappschuss zum Fortsetzen und die abfragbaren Ebenen von
+  Level 0. Das Rezept ist die Autorität; der Schnappschuss ist ein Cache,
+  gebunden an den Code, der ihn schrieb; die abfragbaren Ebenen werden ein
+  Artefakt je Ebene der Detail-Leiter, in einem Format, und das Save behält
+  die von Level 0. Die Identität einer nachgespielten Ebene sind Rezept und
+  Code, nicht die Raster von Level 0.
 area: platform
 stage: decided
-status: decided 2026-10-01 — the four changes, in the order listed; the monthly and weather layers stay in the save. 1 and 3 built 2026-10-01 with level 1's replay; 2 and 4 open. Extends decisions/world-save-format.md and decisions/queryable-world-save.md; follows from decisions/detail-ladder.md (fork 2).
+createdAt: 2026-10-01
+concepts: [generator.concept.same-world]
+related: [DEC-0005, DEC-0009, DEC-0032]
 ---
-
-# The roles in the world save
 
 ## Where this starts
 
@@ -86,3 +100,11 @@ screen's side is asked first; 4 when levels 2 and 3 carry layers.
   smaller. Not needed yet.
 - What a level's layers hold beyond elevation (discharge, biomes, water
   bodies) is for the levels to decide when they are built.
+
+## Status
+
+decided 2026-10-01 — the four changes, in the order listed; the monthly and
+weather layers stay in the save. 1 and 3 built 2026-10-01 with level 1's
+replay; 2 and 4 open. Extends decisions/world-save-format.md and
+decisions/queryable-world-save.md; follows from decisions/detail-ladder.md
+(fork 2).

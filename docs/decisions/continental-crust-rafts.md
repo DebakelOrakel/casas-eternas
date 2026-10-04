@@ -1,13 +1,19 @@
 ---
-summary: Continental crust modeled as persistent "rafts" decoupled from the kinematic plates, so land/ocean ratio is emergent and conserved.
-date: 2026-07-24
-updated: 2026-08-12
+id: DEC-0003
+title.en: Continental Crust: Rafts Decoupled from Plates
+title.de: Kontinentale Kruste: von den Platten entkoppelte Flösse
+summary.en: Continental crust modeled as persistent "rafts" decoupled from the kinematic
+  plates, so land/ocean ratio is emergent and conserved.
+summary.de: Kontinentale Kruste als dauerhafte „Flösse“, entkoppelt von den
+  kinematischen Platten, damit das Verhältnis von Land zu Meer entsteht
+  statt vorgegeben wird und erhalten bleibt.
 area: generator
 stage: built
-status: decided; Phases 1–5 implemented
+createdAt: 2026-07-24
+updatedAt: 2026-08-12
+concepts: [generator.concept.craton, generator.concept.young-crust]
+related: [DEC-0011]
 ---
-
-# Continental Crust: Rafts Decoupled from Plates
 
 **Status:** Decided, and **Phases 1–5 are implemented** — see
 [Implementation status](#implementation-status-phases-14) and the
@@ -296,3 +302,7 @@ Built 2026-07-24, after Phase 5:
   direct raft geometry — retires the derived `plate.type` bridge, the last
   vestige of the plate=crust-type model.
 - Revisit later whether further design decisions warrant their own docs.
+
+## Status
+
+decided; Phases 1–5 implemented

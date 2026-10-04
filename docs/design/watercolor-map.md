@@ -1,13 +1,21 @@
 ---
-summary: Design direction for the world map's look — watercolour rendering, and the discovery that the game's three knowledge states (unexplored / explored / active) map onto the stages of an actual watercolour painting, so the medium carries the state readout without a legend.
-date: 2026-08-11
-updated: 2026-08-12
+id: DES-0010
+title.en: The Watercolour Map
+title.de: Die Aquarellkarte
+summary.en: Design direction for the world map's look — watercolour rendering, and the
+  discovery that the game's three knowledge states (unexplored / explored /
+  active) map onto the stages of an actual watercolour painting, so the
+  medium carries the state readout without a legend.
+summary.de: Gestaltungsrichtung für die Weltkarte — Aquarell-Darstellung, und die
+  Entdeckung, dass die drei Wissensstände des Spiels (unerforscht /
+  erforscht / aktiv) den Stufen eines echten Aquarells entsprechen, sodass
+  das Medium den Zustand ohne Legende zeigt.
 area: ui
 stage: building
-status: all three prototype stages BUILT 2026-08-11 (knowledge registers on the CPU, the paper post-process, edge darkening) — with two of the plan's calls reversed on contact, see the "Revised on contact" boxes. The knowledge field itself is still a debug stand-in: exploration does not exist
+createdAt: 2026-08-11
+updatedAt: 2026-08-12
+related: [DES-0004]
 ---
-
-# The Watercolour Map
 
 Captures a design discussion (2026-08-11) that started as a look question —
 "can the map be painted rather than rendered?" — and turned out to answer a
@@ -399,3 +407,10 @@ them wait on mechanics that do not exist yet.
   whether that is one distinction too many.
 - Exactly where on the descent ramp the painterly register hands over to the
   lit world — the same seam the exaggeration fade already crosses.
+
+## Status
+
+all three prototype stages BUILT 2026-08-11 (knowledge registers on the CPU,
+the paper post-process, edge darkening) — with two of the plan's calls
+reversed on contact, see the "Revised on contact" boxes. The knowledge field
+itself is still a debug stand-in: exploration does not exist

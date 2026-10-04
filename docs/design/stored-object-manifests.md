@@ -1,13 +1,19 @@
 ---
-summary: One manifest convention (apiVersion/kind/metadata/spec/status) for stored objects, the exact shape of each kind, and which generated files move out of the world save into the artifact store.
-date: 2026-08-15
-updated: 2026-08-15
+id: DES-0014
+title.en: Stored object manifests, and the save/artifact split
+title.de: Manifeste gespeicherter Objekte und die Trennung von Save und Artefakt
+summary.en: One manifest convention (apiVersion/kind/metadata/spec/status) for stored
+  objects, the exact shape of each kind, and which generated files move out
+  of the world save into the artifact store.
+summary.de: Eine Manifest-Konvention (apiVersion/kind/metadata/spec/status) für
+  gespeicherte Objekte, die genaue Form jeder Art, und welche erzeugten
+  Dateien aus dem Welt-Save in den Artefakt-Store wandern.
 area: platform
 stage: idea
-status: proposal — nothing built; the WorldLayers kind needs a pipeline version that does not exist yet (see Open)
+createdAt: 2026-08-15
+updatedAt: 2026-08-15
+related: [DEC-0009, DEC-0017]
 ---
-
-# Stored object manifests, and the save/artifact split
 
 Two proposals in one doc because the second produces the kinds the first
 specifies.
@@ -268,3 +274,8 @@ resolve call rather than to nothing:
   ([runtime.ts:553](../../client/src/worldgen/pipeline/runtime.ts#L553) re-renders
   from the simulation and discards the eroded field). Making erosion cumulative
   would make `status.erosionRun` part of what identifies the terrain.
+
+## Status
+
+proposal — nothing built; the WorldLayers kind needs a pipeline version that
+does not exist yet (see Open)

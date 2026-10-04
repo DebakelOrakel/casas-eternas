@@ -1,12 +1,27 @@
 ---
-summary: How the top level of the detail ladder runs — level 1 stays the one global level, level 2 is computed per tile; square tiles of 8 × 8 macro cells (~62 km) at ~120 m spacing; new nodes placed by a world-wide deterministic rule so neighbours agree; each tile computes with a halo and keeps its interior; only the tile's edge line is pinned to the parent surface, so tiles stay independent and seams close; the river network stays frozen; one artifact per tile; ordered one tile at a time from the Finishing step.
-date: 2026-09-29
+id: DEC-0031
+title.en: Tile jobs
+title.de: Kachel-Jobs
+summary.en: How the top level of the detail ladder runs — level 1 stays the one global
+  level, level 2 is computed per tile; square tiles of 8 × 8 macro cells
+  (~62 km) at ~120 m spacing; new nodes placed by a world-wide deterministic
+  rule so neighbours agree; each tile computes with a halo and keeps its
+  interior; only the tile's edge line is pinned to the parent surface, so
+  tiles stay independent and seams close; the river network stays frozen;
+  one artifact per tile; ordered one tile at a time from the Finishing step.
+summary.de: Wie die oberste Ebene der Detail-Leiter läuft — Level 1 bleibt die eine
+  globale Ebene, Level 2 wird je Kachel berechnet; quadratische Kacheln von
+  8 × 8 Makrozellen (~62 km) bei ~120 m Abstand; neue Knoten nach einer
+  weltweit deterministischen Regel, damit Nachbarn übereinstimmen; jede
+  Kachel rechnet mit einem Rand und behält ihr Inneres; nur die Kantenlinie
+  ist an die Elternfläche gepinnt, damit Kacheln unabhängig bleiben und
+  Nähte schliessen; ein Artefakt je Kachel.
 area: generator
 stage: decided
-status: decided 2026-09-29; the tile's mesh, its bake, its artifact and its job built 2026-09-29/30 (mesh/meshTile.ts, pipeline/meshTileBake.ts, world/meshTileArtifacts.ts); the pick in the Finishing step 2026-09-30. Refines fork 3 of adaptive-mesh.md (the ladder, the tile) with the numbers and the seam rule it left open. decisions/detail-ladder.md (2026-10-01) puts five levels a factor of 4 apart: this tile becomes level 3, level 1 is to be replayed rather than refined.
+createdAt: 2026-09-29
+concepts: [generator.concept.detail-levels, generator.concept.jobs]
+related: [DEC-0032, DES-0022]
 ---
-
-# Tile jobs
 
 ## The fork
 
@@ -133,3 +148,13 @@ The tile as a job and an artifact (2026-09-30):
 
 Where the ladder may go next — level 1 as a replayed history, more tile
 levels, a coordinator for the tiles: [design/tile-coordinator.md](../design/tile-coordinator.md).
+
+## Status
+
+decided 2026-09-29; the tile's mesh, its bake, its artifact and its job
+built 2026-09-29/30 (mesh/meshTile.ts, pipeline/meshTileBake.ts,
+world/meshTileArtifacts.ts); the pick in the Finishing step 2026-09-30.
+Refines fork 3 of adaptive-mesh.md (the ladder, the tile) with the numbers
+and the seam rule it left open. decisions/detail-ladder.md (2026-10-01) puts
+five levels a factor of 4 apart: this tile becomes level 3, level 1 is to be
+replayed rather than refined.

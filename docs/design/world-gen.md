@@ -1,12 +1,17 @@
 ---
-summary: How world generation fits into the client/server architecture — what runs where and why.
-date: 2026-07-20
-updated: 2026-08-12
+id: DES-0001
+title.en: World Generation — Design
+title.de: Weltgenerierung — Design
+summary.en: How world generation fits into the client/server architecture — what runs
+  where and why.
+summary.de: Wie die Weltgenerierung in die Client-Server-Architektur passt — was wo
+  läuft und warum.
 area: generator
 stage: built
+createdAt: 2026-07-20
+updatedAt: 2026-08-12
+related: [DEC-0001]
 ---
-
-# World Generation — Design
 
 This doc is about how the pieces fit together architecturally, as opposed
 to the docs in [`docs/decisions/`](../decisions/), which record specific

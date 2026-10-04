@@ -1,13 +1,20 @@
 ---
-summary: An evolving coarse mantle field drives the plates (kinematic coupling) so the supercontinent (Wilson) cycle and volcanism both emerge from one substrate, instead of fixed Euler poles + scripted band-aids.
-date: 2026-07-25
-updated: 2026-08-12
+id: DEC-0006
+title.en: Evolving Plate Motion via a Mantle Field (+ Volcanism)
+title.de: Plattenbewegung aus einem Mantelfeld (und Vulkanismus)
+summary.en: An evolving coarse mantle field drives the plates (kinematic coupling) so
+  the supercontinent (Wilson) cycle and volcanism both emerge from one
+  substrate, instead of fixed Euler poles + scripted band-aids.
+summary.de: Ein sich entwickelndes grobes Mantelfeld treibt die Platten (kinematische
+  Kopplung), sodass Superkontinent-Zyklus und Vulkanismus aus einem Substrat
+  entstehen, statt aus festen Euler-Polen und geskripteten Notlösungen.
 area: generator
 stage: building
-status: M1 + M2 + M3 implemented (mantle field drives plates, Wilson cycle emerges, all three volcanism kinds ship); M4 not built
+createdAt: 2026-07-25
+updatedAt: 2026-08-12
+concepts: [generator.concept.mantle-convection, generator.concept.hotspot, generator.concept.plate-boundaries]
+related: [DEC-0002, DEC-0011]
 ---
-
-# Evolving Plate Motion via a Mantle Field (+ Volcanism)
 
 **Status:** Planned, not built (2026-07-25). Chosen direction: model the **cause**
 (a coarse evolving mantle field the plates ride on), from which the assemble/break
@@ -262,3 +269,8 @@ stays healthy over ~260 epochs.
 - `docs/decisions/plate-tectonics-initial-state.md` (original unresolved drift-update gap).
 - `climate/oceanCurrents.ts` (streamfunction Poisson solve to reuse), `oceanAge.ts`
   (coarse-field-advected-per-epoch pattern to reuse), `plateMotion.ts`.
+
+## Status
+
+M1 + M2 + M3 implemented (mantle field drives plates, Wilson cycle emerges,
+all three volcanism kinds ship); M4 not built

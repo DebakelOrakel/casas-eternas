@@ -1,13 +1,26 @@
 ---
-summary: The open points of the adaptive-mesh direction (design/adaptive-mesh.md), decided one by one on 2026-09-22 — density rule, versioning, where tiles are refined, the harness, flexural isostasy, no erosion sliders, map/ samples the mesh directly, remeshing with hysteresis, water levels in the save, the feature graph as artifact then save member, a domain object for the topology, and the build order with ocean masking first.
-date: 2026-09-22
+id: DEC-0029
+title.en: The adaptive mesh, decided
+title.de: Das adaptive Netz, entschieden
+summary.en: The open points of the adaptive-mesh direction (design/adaptive-mesh.md),
+  decided one by one on 2026-09-22 — density rule, versioning, where tiles
+  are refined, the harness, flexural isostasy, no erosion sliders, map/
+  samples the mesh directly, remeshing with hysteresis, water levels in the
+  save, the feature graph as artifact then save member, a domain object for
+  the topology, and the build order with ocean masking first.
+summary.de: Die offenen Punkte der Richtung zum adaptiven Netz (DES-0018), am 22.09.2026
+  einzeln entschieden — Dichteregel, Versionierung, wo Kacheln verfeinert
+  werden, das Harness, flexurelle Isostasie, keine Erosionsregler, map/
+  tastet das Netz direkt ab, Remeshing mit Hysterese, Wasserstände im Save,
+  der Feature-Graph als Artefakt und später Teil des Saves, ein
+  Domain-Objekt für die Topologie und die Bauordnung mit der Ozeanmaske
+  zuerst.
 area: generator
 stage: decided
-status: decided 2026-09-22; step 0 BUILT the same day (ocean masking — the engine computes on an active set of land, basins and a shelf band, the deep ocean frozen; the strip flood retired for one serial flood over the active set; the fluvial and sediment walks basin-parallel over the receiver forest cut at the coast; a per-basin flood dropped on measurement, see ADAPTIVE_MESH_PLAN.md); step 1 BUILT the same day (the water-body list in the save, shores as the level's iso-line at draw time); step 2 BUILT the same day (the river feature graph, ribbons derived from it, graph in the bake artifact, invariants as a harness layer); step 3 BUILT the same day (pattern from physics, meanders by the bend model, braids and deltas drawn; courses stored with the graph); forerunners F6 (flow regime per reach, wadis), F3 (dynamic topography, 400 m per unit of mantle anomaly) F5 (coast type per reach, drawn), F1 (sediment basins with provenance) F4 (ice thickness by balance-flux inversion, in the bake and at 2048) F7 (an iteration is 20 000 years, the age slider in Myr) and F2 (the Planet stage with the forcing on the final climate, the domain object) BUILT the same day. Twelve forks settled in one session, (1) and (8) amended the same day for the sediment record, (5) for a Te field and dynamic topography, (13) climate, (14) river course and (15) sediment added the same day, folds, cover and hydrogeology added to the build order the same day; the constants (spacings, tile budget, elastic thickness, hysteresis thresholds) are to be measured when the step is built, not decided here. Build order below; step 0 (ocean masking) is the first thing to start.
-supersedes: [worldmap-amplification.md, derived-bake-tiers.md, ../design/splitting-the-bake.md]
+createdAt: 2026-09-22
+concepts: [generator.concept.detail-levels, generator.concept.erosion]
+related: [DES-0018, DES-0019, DES-0020]
 ---
-
-# The adaptive mesh, decided
 
 ## The fork
 
@@ -419,3 +432,29 @@ replaces the patch" in
   step 4 feeds.
 - [design/two-topologies.md](../design/two-topologies.md) — the sphere as
   a second domain.
+
+## Status
+
+decided 2026-09-22; step 0 BUILT the same day (ocean masking — the engine
+computes on an active set of land, basins and a shelf band, the deep ocean
+frozen; the strip flood retired for one serial flood over the active set;
+the fluvial and sediment walks basin-parallel over the receiver forest cut
+at the coast; a per-basin flood dropped on measurement, see
+ADAPTIVE_MESH_PLAN.md); step 1 BUILT the same day (the water-body list in
+the save, shores as the level's iso-line at draw time); step 2 BUILT the
+same day (the river feature graph, ribbons derived from it, graph in the
+bake artifact, invariants as a harness layer); step 3 BUILT the same day
+(pattern from physics, meanders by the bend model, braids and deltas drawn;
+courses stored with the graph); forerunners F6 (flow regime per reach,
+wadis), F3 (dynamic topography, 400 m per unit of mantle anomaly) F5 (coast
+type per reach, drawn), F1 (sediment basins with provenance) F4 (ice
+thickness by balance-flux inversion, in the bake and at 2048) F7 (an
+iteration is 20 000 years, the age slider in Myr) and F2 (the Planet stage
+with the forcing on the final climate, the domain object) BUILT the same
+day. Twelve forks settled in one session, (1) and (8) amended the same day
+for the sediment record, (5) for a Te field and dynamic topography, (13)
+climate, (14) river course and (15) sediment added the same day, folds,
+cover and hydrogeology added to the build order the same day; the constants
+(spacings, tile budget, elastic thickness, hysteresis thresholds) are to be
+measured when the step is built, not decided here. Build order below; step 0
+(ocean masking) is the first thing to start.

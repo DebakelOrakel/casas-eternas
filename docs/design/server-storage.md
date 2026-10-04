@@ -1,13 +1,24 @@
 ---
-summary: How the Go server could store things for the client — a WORLD store (named, mutable, owned) next to an ARTIFACT store (content-addressed, immutable, shared) for derived data like the amplification tiles, over plain REST, with an identity concept from day one so SSO is later a config change rather than a rewrite.
-date: 2026-08-07
-updated: 2026-08-13
+id: DES-0006
+title.en: Server storage: worlds, artifacts, and who may write them
+title.de: Server-Speicher: Welten, Artefakte und wer sie schreiben darf
+summary.en: How the Go server could store things for the client — a WORLD store (named,
+  mutable, owned) next to an ARTIFACT store (content-addressed, immutable,
+  shared) for derived data like the amplification tiles, over plain REST,
+  with an identity concept from day one so SSO is later a config change
+  rather than a rewrite.
+summary.de: Wie der Go-Server Dinge für den Client speichern könnte — ein WELT-Store
+  (benannt, veränderlich, mit Besitzer) neben einem ARTEFAKT-Store
+  (inhaltsadressiert, unveränderlich, geteilt) für abgeleitete Daten wie die
+  Amplifikationskacheln, über einfaches REST, mit einem Identitätskonzept
+  von Anfang an, damit SSO später eine Konfigurationsänderung ist statt
+  eines Umbaus.
 area: platform
 stage: built
-status: design discussion — superseded in part by decisions/server-storage.md (2026-08-07), which decides the identity, configuration, storage-backend and UI forks this doc left open. The rest stands as the longer argument.
+createdAt: 2026-08-07
+updatedAt: 2026-08-13
+related: [DEC-0017, DES-0014]
 ---
-
-# Server storage: worlds, artifacts, and who may write them
 
 Two threads met and produced this: the amplification bake costs minutes
 per load and wants a cache
@@ -295,3 +306,9 @@ than competing.
   server's "store and answer, don't generate" role, which this extends.
 - [world-save-format.md](./world-save-format.md) — the `.zip` the world
   store would hold.
+
+## Status
+
+design discussion — superseded in part by decisions/server-storage.md
+(2026-08-07), which decides the identity, configuration, storage-backend and
+UI forks this doc left open. The rest stands as the longer argument.

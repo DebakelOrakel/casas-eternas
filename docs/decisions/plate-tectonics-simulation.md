@@ -1,13 +1,18 @@
 ---
-summary: How the tectonics simulation actually produces terrain, mountain formation above all.
-date: 2026-07-20
-updated: 2026-08-12
+id: DEC-0002
+title.en: Plate Tectonics: Simulation
+title.de: Plattentektonik: Simulation
+summary.en: How the tectonics simulation actually produces terrain, mountain formation
+  above all.
+summary.de: Wie die Tektonik-Simulation das Gelände tatsächlich erzeugt, vor allem die
+  Gebirgsbildung.
 area: generator
 stage: built
-status: built — the doc grew with the sim, and several original choices were reworked in place (peak-weathering removed, subsidence replaced; crust type moved to the raft model, see continental-crust-rafts.md)
+createdAt: 2026-07-20
+updatedAt: 2026-08-12
+concepts: [generator.concept.plate-boundaries]
+related: [DEC-0001, DEC-0006]
 ---
-
-# Plate Tectonics: Simulation
 
 **Status:** Partially decided — elevation model settled (A3), rift/merge
 mechanics follow from it but exact thresholds are still open. Computational
@@ -187,3 +192,9 @@ from the code.
 
 Crust type feeding all of the above is no longer a plate property — see
 [continental-crust-rafts.md](./continental-crust-rafts.md).
+
+## Status
+
+built — the doc grew with the sim, and several original choices were
+reworked in place (peak-weathering removed, subsidence replaced; crust type
+moved to the raft model, see continental-crust-rafts.md)

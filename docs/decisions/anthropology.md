@@ -1,13 +1,23 @@
 ---
-summary: PROTO — the human layer of world-gen, after the Ecology layer. Seeds pre-state proto-settlements (Neolithic→Iron Age) via a bounded dispersal model over the Ecology suitability field, producing settlements + a contact/trade graph as the game's starting condition. Direction (dispersal) decided; the rest to design later.
-date: 2026-07-26
-updated: 2026-08-12
+id: DEC-0007
+title.en: Anthropology panel (proto)
+title.de: Anthropologie-Panel (Prototyp)
+summary.en: PROTO — the human layer of world-gen, after the Ecology layer. Seeds
+  pre-state proto-settlements (Neolithic→Iron Age) via a bounded dispersal
+  model over the Ecology suitability field, producing settlements + a
+  contact/trade graph as the game's starting condition. Direction
+  (dispersal) decided; the rest to design later.
+summary.de: PROTOTYP — die menschliche Ebene der Weltgenerierung nach der Ökologie.
+  Setzt vorstaatliche Siedlungen (Neolithikum bis Eisenzeit) über ein
+  begrenztes Ausbreitungsmodell auf dem Eignungsfeld der Ökologie und
+  erzeugt Siedlungen samt Kontakt- und Handelsgraph als Startzustand des
+  Spiels. Die Richtung (Ausbreitung) ist entschieden, der Rest folgt später.
 area: generator
 stage: idea
-status: proto / brainstorming — comes AFTER the Ecology panel is built
+createdAt: 2026-07-26
+updatedAt: 2026-08-12
+related: [DEC-0008, DEC-0010]
 ---
-
-# Anthropology panel (proto)
 
 The human layer of world-gen. Follows tectonics → erosion → climate → hydrology →
 **ecology** (see `ecology.md`, which produces the resource/suitability fields
@@ -114,3 +124,7 @@ genuine link between the two panels; see the same note in `ecology.md`.
 - What exactly does the game receive at t=0 — points + gradients, or points +
   contact/trade graph?
 - Panel naming: "Anthropology" vs "Peoples" vs "Settlement" (UI is English).
+
+## Status
+
+proto / brainstorming — comes AFTER the Ecology panel is built

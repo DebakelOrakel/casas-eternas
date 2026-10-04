@@ -1,13 +1,29 @@
 ---
-summary: Who a user IS, as opposed to how they log in. A registry (users.json under auth.storage) holds stable uuid identities, MINTED AT FIRST LOGIN — htpasswd stays the one place users are administered, and the registry follows it. A session token's subject is the registry id from then on, never the login name; the name remains display data in the login response. Admins are login names on global.auth.admins whose sessions carry an `adm` claim — the decision travels in the token, so every process keeps verifying locally and none ever needs the registry. Step 1 of the access-control build order.
-date: 2026-08-12
-updated: 2026-08-13
+id: DEC-0022
+title.en: Server users: identity vs credential
+title.de: Server-Nutzer: Identität und Zugangsdaten
+summary.en: Who a user IS, as opposed to how they log in. A registry (users.json under
+  auth.storage) holds stable uuid identities, MINTED AT FIRST LOGIN —
+  htpasswd stays the one place users are administered, and the registry
+  follows it. A session token's subject is the registry id from then on,
+  never the login name; the name remains display data in the login response.
+  Admins are login names on global.auth.admins whose sessions carry an `adm`
+  claim — the decision travels in the token, so every process keeps
+  verifying locally and none ever needs the registry. Step 1 of the
+  access-control build order.
+summary.de: Wer ein Nutzer IST, im Unterschied dazu, wie er sich anmeldet. Ein Register
+  (users.json unter auth.storage) hält stabile UUID-Identitäten, ERZEUGT
+  BEIM ERSTEN LOGIN — htpasswd bleibt der eine Ort, an dem Nutzer verwaltet
+  werden. Das Subjekt eines Session-Tokens ist ab dann die Register-ID, nie
+  der Login-Name. Admins sind Login-Namen in global.auth.admins, deren
+  Sessions einen Claim `adm` tragen — die Entscheidung reist im Token, jeder
+  Prozess prüft lokal. Schritt 1 der Bauordnung zur Zugriffskontrolle.
 area: platform
 stage: built
-status: decided and BUILT 2026-08-12 — registry, session hook, admin claim, identity.Admin, deploy wiring. Steps 2–5 of docs/design/access-control.md build on it. 2026-08-13 — revised by server-user-admin.md: users.json merges into auth.db (bbolt) and LOCAL users become admin-provisioned there, knowingly reversing this doc's pre-provisioning rejection (its two reasons dissolve when identity and credential share one database). Minting-at-first-login stays the model for OIDC. Ids and the id-in-token rule stand unchanged; the admin claim's mechanics too — but its SOURCE moved the same day: global.auth.admins is gone, the role is a field on the user record, bound via `auth role bind` (the "policy an operator writes" reasoning below inverted once the admin socket became the operator's write channel — see server-user-admin.md's addendum).
+createdAt: 2026-08-12
+updatedAt: 2026-08-13
+related: [DES-0011, DEC-0019, DEC-0023]
 ---
-
-# Server users: identity vs credential
 
 ## The problem
 
@@ -72,3 +88,18 @@ checks that will consult this all answer yes there anyway.
 - The ephemeral-signing-key warning should probably become a refusal once
   `global.services.*` are set (split = shared key IS the trust domain) —
   to be decided when the auth target is cut.
+
+## Status
+
+decided and BUILT 2026-08-12 — registry, session hook, admin claim,
+identity.Admin, deploy wiring. Steps 2–5 of docs/design/access-control.md
+build on it. 2026-08-13 — revised by server-user-admin.md: users.json merges
+into auth.db (bbolt) and LOCAL users become admin-provisioned there,
+knowingly reversing this doc's pre-provisioning rejection (its two reasons
+dissolve when identity and credential share one database).
+Minting-at-first-login stays the model for OIDC. Ids and the id-in-token
+rule stand unchanged; the admin claim's mechanics too — but its SOURCE moved
+the same day: global.auth.admins is gone, the role is a field on the user
+record, bound via `auth role bind` (the "policy an operator writes"
+reasoning below inverted once the admin socket became the operator's write
+channel — see server-user-admin.md's addendum).

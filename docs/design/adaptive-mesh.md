@@ -1,12 +1,28 @@
 ---
-summary: One adaptive mesh for the terrain, from tectonics to the near ground — an irregular node network whose density follows relief and discharge, carrying history in the macro and detail in the tiles; a feature graph (rivers, divides, shores) as the erosion's real product; a river-course generator below the channel head; and tectonics coupled to erosion as the final step. The direction agreed in conversation on 2026-09-22 and decided the same day in decisions/adaptive-mesh.md.
-date: 2026-09-22
+id: DES-0018
+title.en: One adaptive mesh, history and detail
+title.de: Ein adaptives Netz für Geschichte und Detail
+summary.en: One adaptive mesh for the terrain, from tectonics to the near ground — an
+  irregular node network whose density follows relief and discharge,
+  carrying history in the macro and detail in the tiles; a feature graph
+  (rivers, divides, shores) as the erosion's real product; a river-course
+  generator below the channel head; and tectonics coupled to erosion as the
+  final step. The direction agreed in conversation on 2026-09-22 and decided
+  the same day in decisions/adaptive-mesh.md.
+summary.de: Ein adaptives Netz für das Gelände, von der Tektonik bis zum Nahbereich —
+  ein unregelmässiges Knotennetz, dessen Dichte Relief und Abfluss folgt,
+  mit der Geschichte im Makro und dem Detail in den Kacheln; ein
+  Feature-Graph (Flüsse, Wasserscheiden, Ufer) als eigentliches Produkt der
+  Erosion; ein Flusslauf-Generator unterhalb des Gerinneanfangs; und die
+  Kopplung von Tektonik und Erosion als letzter Schritt. Die Richtung, am
+  22.09.2026 im Gespräch vereinbart und am selben Tag in DEC-0029
+  entschieden.
 area: generator
 stage: decided
-status: direction agreed and the open questions decided the same day, 2026-09-22, in decisions/adaptive-mesh.md; nothing built. Grew out of the adaptive-mesh note in amplification-artifacts.md. The list at the end is kept as it stood before the decision session; the processes noted for later were extended the same day by folds, cover and groundwater.
+createdAt: 2026-09-22
+concepts: [generator.concept.detail-levels, generator.concept.erosion]
+related: [DEC-0029, DES-0019, DES-0020]
 ---
-
-# One adaptive mesh, history and detail
 
 This doc records a design conversation. The starting question was the
 adaptive-mesh note in
@@ -423,3 +439,11 @@ the same form:
 - Génevaux et al. 2013, "Terrain generation using procedural models
   based on hydrology".
 - Peytavie et al. 2019, "Procedural Riverscapes".
+
+## Status
+
+direction agreed and the open questions decided the same day, 2026-09-22, in
+decisions/adaptive-mesh.md; nothing built. Grew out of the adaptive-mesh
+note in amplification-artifacts.md. The list at the end is kept as it stood
+before the decision session; the processes noted for later were extended the
+same day by folds, cover and groundwater.

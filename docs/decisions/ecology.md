@@ -1,13 +1,24 @@
 ---
-summary: The Ecology panel — a derived resource/suitability layer after Hydrology, before the (later) Anthropology layer. Computes named resource fields (subsistence, material, prestige) from the existing physical world, aggregated into a carrying-capacity suitability field. Design decided across four themes; not built.
-date: 2026-07-26
-updated: 2026-08-12
+id: DEC-0008
+title.en: Ecology panel
+title.de: Ökologie-Panel
+summary.en: The Ecology panel — a derived resource/suitability layer after Hydrology,
+  before the (later) Anthropology layer. Computes named resource fields
+  (subsistence, material, prestige) from the existing physical world,
+  aggregated into a carrying-capacity suitability field. Design decided
+  across four themes; not built.
+summary.de: Das Ökologie-Panel — eine abgeleitete Ebene für Ressourcen und Eignung nach
+  der Hydrologie und vor der (späteren) Anthropologie. Berechnet benannte
+  Ressourcenfelder (Lebensunterhalt, Material, Prestige) aus der physischen
+  Welt und fasst sie zu einem Feld der Tragfähigkeit zusammen. Entworfen in
+  vier Themen; nicht gebaut.
 area: generator
 stage: built
-status: decided 2026-07-26 and BUILT within days (subsistence, material, metal and prestige fields + carrying capacity; the body's closing note declares ecology complete). The Anthropology half remains the open work
+createdAt: 2026-07-26
+updatedAt: 2026-08-12
+concepts: [resource.carryingCapacity, generator.concept.resource-roles]
+related: [DEC-0030, DEC-0007]
 ---
-
-# Ecology panel
 
 Follows tectonics → erosion → climate → hydrology in the world-gen pipeline, and
 feeds the (later) **Anthropology** layer that seeds human settlements (see
@@ -385,3 +396,9 @@ anthropology.md; dispersal model, not yet started).
 # Open
 
 - Panel name: "Ecology" vs "Resources" vs "Biosphere" (UI is English).
+
+## Status
+
+decided 2026-07-26 and BUILT within days (subsistence, material, metal and
+prestige fields + carrying capacity; the body's closing note declares
+ecology complete). The Anthropology half remains the open work

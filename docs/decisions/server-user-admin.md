@@ -1,13 +1,29 @@
 ---
-summary: How local users are administered once an admin surface exists. htpasswd retires — credentials and the user registry merge into one bbolt database (auth.db) owned by the auth module, administered through the module's own admin endpoints. Locally those endpoints are served over a unix socket (HTTP over UDS) where possession of the socket IS the authorization, and `casas-eternas auth user add|list|delete|passwd` is a thin CLI client over it. Bootstrap and emergency access are the same mechanism — the socket against an empty or locked-out database. No config bootstrap, no writing Secrets through the Kubernetes API.
-date: 2026-08-13
-updated: 2026-08-13
+id: DEC-0023
+title.en: Local user administration: auth.db behind an admin socket
+title.de: Lokale Nutzerverwaltung: auth.db hinter einem Admin-Socket
+summary.en: How local users are administered once an admin surface exists. htpasswd
+  retires — credentials and the user registry merge into one bbolt database
+  (auth.db) owned by the auth module, administered through the module's own
+  admin endpoints. Locally those endpoints are served over a unix socket
+  (HTTP over UDS) where possession of the socket IS the authorization, and
+  `casas-eternas auth user add|list|delete|passwd` is a thin CLI client over
+  it. Bootstrap and emergency access are the same mechanism — the socket
+  against an empty or locked-out database. No config bootstrap, no writing
+  Secrets through the Kubernetes API.
+summary.de: Wie lokale Nutzer verwaltet werden, sobald es eine Admin-Oberfläche gibt.
+  htpasswd entfällt — Zugangsdaten und Nutzerregister verschmelzen zu einer
+  bbolt-Datenbank (auth.db) im Auth-Modul, verwaltet über dessen eigene
+  Admin-Endpunkte. Lokal laufen diese über einen Unix-Socket, dessen Besitz
+  die Autorisierung IST, und `casas-eternas auth user
+  add|list|delete|passwd` ist ein dünner CLI-Client dafür. Erster Start und
+  Notzugang sind derselbe Mechanismus.
 area: platform
 stage: built
-status: decided, sequenced and ALL SIX steps built 2026-08-13 (end-to-end smoke against the real binary passed). Step 6 landed as a HARD BREAK, decided the same day in a second discussion — the sequenced htpasswd transition was built and then removed before ever running in production; see the step for why. Same-day addendum BUILT: the admin role moved into auth.db as well (`auth role bind|list`, global.auth.admins removed) — see the addendum section. Supersedes the credential half of server-auth.md (htpasswd in the Secret, and the recorded "admin screen writes the Secret through the k8s API" consequence) and revises server-users.md (registry merges into auth.db; local users become admin-provisioned, minting-at-first-login stays for OIDC). All surface names (`-t auth`, /v1/auth/session, global.admin.socket, the CLI verbs) approved.
+createdAt: 2026-08-13
+updatedAt: 2026-08-13
+related: [DEC-0022, DES-0013]
 ---
-
-# Local user administration: auth.db behind an admin socket
 
 ## The problem
 
@@ -285,3 +301,18 @@ ever set it.
   bucket entry. Still unscheduled.
 - The grants API (access-control.md step 5) is untouched — grants live with
   worlds, deliberately, and nothing here moves them.
+
+## Status
+
+decided, sequenced and ALL SIX steps built 2026-08-13 (end-to-end smoke
+against the real binary passed). Step 6 landed as a HARD BREAK, decided the
+same day in a second discussion — the sequenced htpasswd transition was
+built and then removed before ever running in production; see the step for
+why. Same-day addendum BUILT: the admin role moved into auth.db as well
+(`auth role bind|list`, global.auth.admins removed) — see the addendum
+section. Supersedes the credential half of server-auth.md (htpasswd in the
+Secret, and the recorded "admin screen writes the Secret through the k8s
+API" consequence) and revises server-users.md (registry merges into auth.db;
+local users become admin-provisioned, minting-at-first-login stays for
+OIDC). All surface names (`-t auth`, /v1/auth/session, global.admin.socket,
+the CLI verbs) approved.

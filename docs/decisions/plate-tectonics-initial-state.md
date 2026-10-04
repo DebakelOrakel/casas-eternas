@@ -1,13 +1,18 @@
 ---
-summary: Spatial substrate and initial per-plate parameters for the tectonics simulation.
-date: 2026-07-20
-updated: 2026-08-12
+id: DEC-0001
+title.en: Plate Tectonics: Initial State
+title.de: Plattentektonik: Anfangszustand
+summary.en: Spatial substrate and initial per-plate parameters for the tectonics
+  simulation.
+summary.de: Räumliches Substrat und Anfangsparameter je Platte für die
+  Tektonik-Simulation.
 area: generator
 stage: built
-status: decided and implemented; the unit-sphere substrate was later reversed — see world-topology-torus.md
+createdAt: 2026-07-20
+updatedAt: 2026-08-12
+concepts: [generator.concept.plate-boundaries]
+related: [DEC-0002, DES-0001, DEC-0015]
 ---
-
-# Plate Tectonics: Initial State
 
 **Status:** Decided — substrate, simulation depth, and initial per-plate
 parameters all settled.
@@ -195,3 +200,7 @@ implementation (`client/src/worldgen/plates.ts`, `crust.ts`):
 Boundary convergence/elevation modeling built on this kinematic model is
 decided separately in
 [plate-tectonics-simulation.md](./plate-tectonics-simulation.md).
+
+## Status
+
+decided and implemented; the unit-sphere substrate was later reversed — see world-topology-torus.md

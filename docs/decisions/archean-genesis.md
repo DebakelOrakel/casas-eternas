@@ -1,13 +1,22 @@
 ---
-summary: Replace the Genesis sliders with a short, watchable Archean simulation — crust nucleates over oceanic mantle upwellings, drifts on the mantle flow with no plates, and stabilises into cratons; plate count and land fraction become emergent.
-date: 2026-07-28
-updated: 2026-08-12
+id: DEC-0011
+title.en: Archean Genesis: deriving the tectonic starting state
+title.de: Archaikum: den tektonischen Startzustand herleiten
+summary.en: Replace the Genesis sliders with a short, watchable Archean simulation —
+  crust nucleates over oceanic mantle upwellings, drifts on the mantle flow
+  with no plates, and stabilises into cratons; plate count and land fraction
+  become emergent.
+summary.de: Die Genesis-Regler werden durch eine kurze, beobachtbare Simulation des
+  Archaikums ersetzt — Kruste entsteht über ozeanischen Mantelaufströmen,
+  driftet ohne Platten auf der Mantelströmung und stabilisiert sich zu
+  Kratonen; Plattenzahl und Landanteil ergeben sich daraus.
 area: generator
 stage: built
-status: decided and BUILT 2026-07-28 (Archean core landed the same day); tuned repeatedly since — supercontinent timing, water offsets ±600 m, compaction and blob consolidation 2026-08-06
+createdAt: 2026-07-28
+updatedAt: 2026-08-12
+concepts: [generator.concept.craton, generator.concept.young-crust, generator.concept.mantle-convection]
+related: [DEC-0003, DEC-0006]
 ---
-
-# Archean Genesis: deriving the tectonic starting state
 
 **Status:** Designed, nothing built. Extends
 [continental-crust-rafts.md](./continental-crust-rafts.md) — the raft model is
@@ -341,3 +350,9 @@ the mantle-vigour one, which is exactly the confusion `mantleRms` produced.
   collisions would be the oldest orogens, and sutures already feed tin/lode-gold/
   gem provenance. Almost certainly yes, but the age stamping needs to be
   consistent with the tectonic epochs that follow.
+
+## Status
+
+decided and BUILT 2026-07-28 (Archean core landed the same day); tuned
+repeatedly since — supercontinent timing, water offsets ±600 m, compaction
+and blob consolidation 2026-08-06

@@ -1,13 +1,29 @@
 ---
-summary: A plan for rebuilding the erosion step — macro pass, refined bakes and hydrology together — as one mass-conserving, equilibrium-seeking surface-process engine with tectonic forcing and a multithreaded solver. Written after a week of measurements located four structural roots under ~20 accumulated crutches; the crutch inventory, the literature grounding, the tectonics interface, the thread model, the phased build with go/no-go gates, and an honest outcome estimate are all here.
-date: 2026-08-16
-updated: 2026-08-16
+id: DES-0016
+title.en: Erosion v2 — One Surface-Process Engine
+title.de: Erosion v2 — eine Engine für Oberflächenprozesse
+summary.en: A plan for rebuilding the erosion step — macro pass, refined bakes and
+  hydrology together — as one mass-conserving, equilibrium-seeking
+  surface-process engine with tectonic forcing and a multithreaded solver.
+  Written after a week of measurements located four structural roots under
+  ~20 accumulated crutches; the crutch inventory, the literature grounding,
+  the tectonics interface, the thread model, the phased build with go/no-go
+  gates, and an honest outcome estimate are all here.
+summary.de: Ein Plan, den Erosionsschritt — Makrodurchgang, verfeinerte Bakes und
+  Hydrologie zusammen — als eine massenerhaltende, gleichgewichtssuchende
+  Engine für Oberflächenprozesse mit tektonischem Antrieb und mehrfädigem
+  Löser neu zu bauen. Geschrieben nach einer Woche Messungen, die vier
+  strukturelle Ursachen unter ~20 angesammelten Krücken fanden; mit Inventar
+  der Krücken, Literatur, Schnittstelle zur Tektonik, Thread-Modell, Bau in
+  Phasen mit Entscheidungspunkten und einer ehrlichen Schätzung des
+  Ergebnisses.
 area: generator
 stage: idea
-status: plan agreed 2026-08-16; P0 prototype RUN the same day and its original gate FAILED — by design, cheaply, and informatively. The failure revised the plan (see "Refined bakes under v2, REVISED"): tier consistency cannot come from independent per-tier solves under ANY erosion model, it comes from one solve plus derived tiers — recorded as its own decision in decisions/derived-bake-tiers.md, valid for the current pipeline too. P0 is COMPLETE: cost measured, and the look question closed structurally — a full equilibrium erases its initial condition, so texture comes from finite landscape age + K contrast + U detail, not from scalar tuning (see the P0 section). The U-source fork below is narrowed but not closed.
+createdAt: 2026-08-16
+updatedAt: 2026-08-16
+concepts: [generator.concept.erosion, generator.concept.rivers-and-lakes]
+related: [DEC-0020, DEC-0027]
 ---
-
-# Erosion v2 — One Surface-Process Engine
 
 ## Why a rebuild, and why now
 
@@ -812,3 +828,16 @@ the version break v2 already carries.
 
 Deliberately out of scope: GPU compute (second stage), erosion inside the
 tectonic epoch loop (rejected for gameplay), glacial/aeolian processes.
+
+## Status
+
+plan agreed 2026-08-16; P0 prototype RUN the same day and its original gate
+FAILED — by design, cheaply, and informatively. The failure revised the plan
+(see "Refined bakes under v2, REVISED"): tier consistency cannot come from
+independent per-tier solves under ANY erosion model, it comes from one solve
+plus derived tiers — recorded as its own decision in
+decisions/derived-bake-tiers.md, valid for the current pipeline too. P0 is
+COMPLETE: cost measured, and the look question closed structurally — a full
+equilibrium erases its initial condition, so texture comes from finite
+landscape age + K contrast + U detail, not from scalar tuning (see the P0
+section). The U-source fork below is narrowed but not closed.

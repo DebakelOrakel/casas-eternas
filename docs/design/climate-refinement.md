@@ -1,13 +1,25 @@
 ---
-summary: The climate step refines today's climate on the final geography. A pressure field and a terrain-aware wind, a 12-month energy balance with moisture transport, better ocean currents, Köppen classes that feed the biomes, and fields for phenomena and for the reliability of rain. Budget 20–40 s; the epochs keep the cheap model, except two current-solver terms.
-date: 2026-09-28
+id: DES-0021
+title.en: Climate refinement
+title.de: Klima-Verfeinerung
+summary.en: The climate step refines today's climate on the final geography. A pressure
+  field and a terrain-aware wind, a 12-month energy balance with moisture
+  transport, better ocean currents, Köppen classes that feed the biomes, and
+  fields for phenomena and for the reliability of rain. Budget 20–40 s; the
+  epochs keep the cheap model, except two current-solver terms.
+summary.de: Der Klimaschritt verfeinert das heutige Klima auf der fertigen Geographie.
+  Ein Druckfeld und ein geländeabhängiger Wind, eine Energiebilanz über 12
+  Monate mit Feuchtetransport, bessere Meeresströmungen, Köppen-Klassen als
+  Grundlage der Biome, und Felder für Phänomene und die Verlässlichkeit des
+  Regens. Budget 20–40 s; die Epochen behalten das billige Modell, bis auf
+  zwei Terme des Strömungslösers.
 area: generator
-updated: 2026-09-28
 stage: building
-status: discussed and agreed 2026-09-28. Build steps 1 (β term, island rule), 2 (pressure and wind, the step's button, month slider and pressure layer) and 3 (currents from that wind, upwelling) BUILT 2026-09-28; the rest is not built. The order at the end is the build order. Constants are not measured. The decided forks are at the end; none is open.
+createdAt: 2026-09-28
+updatedAt: 2026-09-28
+concepts: [generator.concept.climate-classes, generator.concept.pressure-and-wind, generator.concept.ocean-currents, generator.concept.seasons, generator.concept.weather-phenomena, generator.concept.history-climate]
+related: [DEC-0004]
 ---
-
-# Climate refinement
 
 ## The split
 
@@ -640,3 +652,11 @@ Tehran), which is the annual mean of step 0, not the cycle.
    refinement from its save instead of computing it (formatVersion 7); a
    save without one is refined on load. The month slider gave way to a
    play button that runs through the months; stopping shows the year.
+
+## Status
+
+discussed and agreed 2026-09-28. Build steps 1 (β term, island rule), 2
+(pressure and wind, the step's button, month slider and pressure layer) and
+3 (currents from that wind, upwelling) BUILT 2026-09-28; the rest is not
+built. The order at the end is the build order. Constants are not measured.
+The decided forks are at the end; none is open.

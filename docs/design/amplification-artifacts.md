@@ -1,13 +1,25 @@
 ---
-summary: How the worldmap's amplification bake could stop costing seven minutes every load — tiling as the shared enabler, then caching (local first, server later), plus what could make the bake itself cheaper (basin decomposition, parallel workers, GPU, an adaptive mesh as the last resort). Analysis and options; the choices are not made.
-date: 2026-08-07
-updated: 2026-09-29
+id: DES-0005
+title.en: Amplification artifacts: tiling, caching, and making the bake cheaper
+title.de: Amplifikations-Artefakte: Kacheln, Caching und ein billigerer Bake
+summary.en: How the worldmap's amplification bake could stop costing seven minutes every
+  load — tiling as the shared enabler, then caching (local first, server
+  later), plus what could make the bake itself cheaper (basin decomposition,
+  parallel workers, GPU, an adaptive mesh as the last resort). Analysis and
+  options; the choices are not made.
+summary.de: Wie der Amplifikations-Bake der Weltkarte aufhören könnte, bei jedem Laden
+  sieben Minuten zu kosten — Kacheln als gemeinsame Voraussetzung, dann
+  Caching (zuerst lokal, später auf dem Server), dazu, was den Bake selbst
+  billiger machen könnte (Zerlegung in Becken, parallele Worker, GPU, ein
+  adaptives Netz als letztes Mittel). Analyse und Optionen; nichts
+  entschieden.
 area: platform
-stage: idea
-status: The raster bake it discusses is gone — the raster amplification bake was removed on 2026-09-29; detail comes from the mesh levels and their tile jobs (decisions/adaptive-mesh.md, fork 3). Before that: design discussion — options and analysis, nothing decided
+stage: superseded
+supersededBy: DEC-0029
+createdAt: 2026-08-07
+updatedAt: 2026-09-29
+related: [DEC-0016, DES-0009]
 ---
-
-# Amplification artifacts: tiling, caching, and making the bake cheaper
 
 The amplification bake ([worldmap-amplification.md](../decisions/worldmap-amplification.md))
 works and is measured: **~102 s and ~0.2 GB at 4096×2048, ~444 s and
@@ -274,3 +286,10 @@ artifact cache later slots into.
   server's "store and answer, don't generate" role.
 - [hex-world-view.md](./hex-world-view.md) — what the amplified terrain
   is ultimately for.
+
+## Status
+
+The raster bake it discusses is gone — the raster amplification bake was
+removed on 2026-09-29; detail comes from the mesh levels and their tile jobs
+(decisions/adaptive-mesh.md, fork 3). Before that: design discussion —
+options and analysis, nothing decided

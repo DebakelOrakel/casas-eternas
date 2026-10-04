@@ -1,13 +1,31 @@
 ---
-summary: How the server establishes who is asking. Three modes stay — but `token` becomes `password`, because the axis that matters is WHERE the users live, not what the header looks like. Credentials are an htpasswd file mounted from a Secret; logging in exchanges them for a JWT the server issues itself; OIDC later is a second login method feeding the same token, not a second token. Four paths stay public so a logged-out client can find out where to log in. Revocation is decided (short TTL plus refresh, revoked by a per-user stamp) but not yet built. Both files live in the Secret; the cost — an admin screen cannot write users through a read-only mount, and would go through the Kubernetes API — is recorded rather than discovered later.
-date: 2026-08-09
-updated: 2026-08-13
+id: DEC-0019
+title.en: Server authentication
+title.de: Server-Authentifizierung
+summary.en: How the server establishes who is asking. Three modes stay — but `token`
+  becomes `password`, because the axis that matters is WHERE the users live,
+  not what the header looks like. Credentials are an htpasswd file mounted
+  from a Secret; logging in exchanges them for a JWT the server issues
+  itself; OIDC later is a second login method feeding the same token, not a
+  second token. Four paths stay public so a logged-out client can find out
+  where to log in. Revocation is decided (short TTL plus refresh, revoked by
+  a per-user stamp) but not yet built. Both files live in the Secret; the
+  cost — an admin screen cannot write users through a read-only mount, and
+  would go through the Kubernetes API — is recorded rather than discovered
+  later.
+summary.de: Wie der Server feststellt, wer fragt. Drei Modi bleiben — aber `token` wird
+  zu `password`, weil es darauf ankommt, WO die Nutzer liegen, nicht wie der
+  Header aussieht. Zugangsdaten sind eine htpasswd-Datei aus einem Secret;
+  das Login tauscht sie gegen ein JWT, das der Server selbst ausstellt; OIDC
+  kommt später als zweite Login-Methode für dasselbe Token. Vier Pfade
+  bleiben öffentlich, damit ein abgemeldeter Client findet, wo er sich
+  anmeldet. Widerruf ist entschieden, aber noch nicht gebaut.
 area: platform
 stage: built
-status: decided, sequenced in seven steps. ALL SEVEN BUILT 2026-08-09 — the server authenticates and enforces, the client signs in and behaves like a serverless one when it has not. Refresh (step 8) remains unscheduled. 2026-08-13 — the CREDENTIAL half is superseded by server-user-admin.md: htpasswd and the recorded "admin screen writes the Secret through the k8s API" consequence retire in favour of auth.db (bbolt) under auth.storage; the bcrypt rules and the absent-user timing defence carry over. The token/JWT/mode half of this doc stands unchanged
+createdAt: 2026-08-09
+updatedAt: 2026-08-13
+related: [DEC-0022, DEC-0023, DES-0011]
 ---
-
-# Server authentication
 
 The staging was decided long ago and is already in the code: build with a notion
 of identity from day one, check it later
@@ -653,3 +671,14 @@ something else and needs restating.
   fills in, and the ownership model it feeds
 - [distributed-bake.md](./distributed-bake.md) — the job token that becomes an
   audience, and the reason secrets must not live in the environment
+
+## Status
+
+decided, sequenced in seven steps. ALL SEVEN BUILT 2026-08-09 — the server
+authenticates and enforces, the client signs in and behaves like a
+serverless one when it has not. Refresh (step 8) remains unscheduled.
+2026-08-13 — the CREDENTIAL half is superseded by server-user-admin.md:
+htpasswd and the recorded "admin screen writes the Secret through the k8s
+API" consequence retire in favour of auth.db (bbolt) under auth.storage; the
+bcrypt rules and the absent-user timing defence carry over. The
+token/JWT/mode half of this doc stands unchanged

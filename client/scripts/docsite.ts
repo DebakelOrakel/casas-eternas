@@ -48,6 +48,9 @@ type Genre = 'decisions' | 'design'
 type Stage = 'idea' | 'decided' | 'building' | 'built' | 'superseded'
 
 interface Doc {
+  // DEC-0001 for a decision, DES-0001 for a design: a number per folder,
+  // given in the order the documents came into the repository.
+  id: string
   genre: Genre
   slug: string
   sourcePath: string // absolute, for link resolution
@@ -56,12 +59,15 @@ interface Doc {
   area: string
   stage: Stage
   summary: string
-  status: string
-  supersededBy?: string
+  supersededBy?: string // an id
+  related: string[] // ids
   date: string
   updated: string
   body: string // markdown without front matter
 }
+
+// The title as the site shows it: the number, then the name.
+const shownTitle = (doc: Doc): string => `${doc.id} · ${doc.title}`
 
 // The groups under Operations — genre, not topic: orientation, setup per
 // environment, topical explanations, generated reference. A group without
@@ -123,17 +129,18 @@ interface CliReference {
 // ---------------------------------------------------------------- collection
 
 // The front matter convention is FLAT — `key: rest of the line`, wrapped
-// continuations indented — and the summaries freely contain colons and
-// dashes, which strict YAML refuses in unquoted scalars. So: a tolerant
-// line parser for exactly the convention, not a YAML dependency that would
-// force quoting onto every doc.
+// continuations indented, a language as a dotted key (`title.de`), a list
+// as `[a, b]` — and the summaries freely contain colons and dashes, which
+// strict YAML refuses in unquoted scalars. So: a tolerant line parser for
+// exactly the convention, not a YAML dependency that would force quoting
+// onto every doc.
 function frontMatter(raw: string): { meta: Record<string, string>; body: string } {
   const match = /^---\n([\s\S]*?)\n---\n?/.exec(raw)
   if (!match) return { meta: {}, body: raw }
   const meta: Record<string, string> = {}
   let lastKey: string | null = null
   for (const line of match[1].split('\n')) {
-    const kv = /^([A-Za-z][A-Za-z0-9-]*):\s?(.*)$/.exec(line)
+    const kv = /^([A-Za-z][A-Za-z0-9.-]*):\s?(.*)$/.exec(line)
     if (kv) {
       meta[kv[1]] = kv[2].trim()
       lastKey = kv[1]
@@ -149,26 +156,47 @@ function firstHeading(body: string, fallback: string): string {
   return match ? match[1].trim() : fallback
 }
 
+// `[a, b]` → ['a', 'b']; absent → [].
+function list(value: string | undefined): string[] {
+  if (!value) return []
+  return value.replace(/^\[|\]$/g, '').split(',').map((v) => v.trim()).filter(Boolean)
+}
+
+const ID_PREFIX: Record<Genre, string> = { decisions: 'DEC', design: 'DES' }
+const STAGES: Stage[] = ['idea', 'decided', 'building', 'built', 'superseded']
+
 function collectDocs(): Doc[] {
   const docs: Doc[] = []
+  const problems: string[] = []
   for (const genre of ['decisions', 'design'] as Genre[]) {
     for (const file of readdirSync(join(DOCS, genre)).sort()) {
       if (!file.endsWith('.md') || file === 'README.md') continue
       const sourcePath = join(DOCS, genre, file)
       const { meta, body } = frontMatter(readFileSync(sourcePath, 'utf8'))
       const slug = file.replace(/\.md$/, '')
-      const date = String(meta.date ?? '')
+      const where = `docs/${genre}/${file}`
+      const id = String(meta.id ?? '')
+      if (!new RegExp(`^${ID_PREFIX[genre]}-\\d{4}$`).test(id)) problems.push(`${where}: id "${id}" is not ${ID_PREFIX[genre]}-NNNN`)
+      for (const key of ['title.en', 'title.de', 'summary.en', 'summary.de', 'area', 'stage', 'createdAt']) {
+        if (!meta[key]) problems.push(`${where}: ${key} is missing`)
+      }
+      if (!AREAS.some((a) => a.id === meta.area)) problems.push(`${where}: area "${meta.area}" is not one of ${AREAS.map((a) => a.id).join(', ')}`)
+      if (!STAGES.includes(meta.stage as Stage)) problems.push(`${where}: stage "${meta.stage}" is not one of ${STAGES.join(', ')}`)
+      if ((meta.stage === 'superseded') !== Boolean(meta.supersededBy)) problems.push(`${where}: stage superseded and supersededBy go together`)
+      if (/^#\s/m.test(body.split('\n').find((l) => l.trim()) ?? '')) problems.push(`${where}: the title is title.en, not a heading in the text`)
+      const date = String(meta.createdAt ?? '')
       docs.push({
+        id,
         genre,
         slug,
         sourcePath,
         route: `${genre}/${slug}.html`,
-        title: firstHeading(body, slug),
+        title: String(meta['title.en'] ?? slug),
         area: String(meta.area ?? 'platform'),
         stage: (meta.stage as Stage) ?? 'idea',
-        summary: String(meta.summary ?? ''),
-        status: String(meta.status ?? ''),
-        supersededBy: meta['superseded-by'] ? String(meta['superseded-by']) : undefined,
+        summary: String(meta['summary.en'] ?? ''),
+        supersededBy: meta.supersededBy ? String(meta.supersededBy) : undefined,
+        related: list(meta.related),
         date,
         // Stated in the front matter, not read out of git. git says when the
         // FILE moved, which is a different fact: a rename, a typo, or a change
@@ -176,11 +204,25 @@ function collectDocs(): Doc[] {
         // such pass redated seventeen at once. A writer who revises a doc says
         // so; a doc that never says it keeps its creation date, which is true
         // of a doc nobody has revised.
-        updated: String(meta.updated ?? date),
+        updated: String(meta.updatedAt ?? date),
         body,
       })
     }
   }
+  // The references between documents, by id: each must name one.
+  const ids = new Set<string>()
+  for (const doc of docs) {
+    if (ids.has(doc.id)) problems.push(`${doc.id} is given to two documents`)
+    ids.add(doc.id)
+  }
+  for (const doc of docs) {
+    for (const ref of [...doc.related, ...(doc.supersededBy ? [doc.supersededBy] : [])]) {
+      if (!ids.has(ref)) problems.push(`${doc.id}: ${ref} names no document`)
+    }
+  }
+  // Loud, not lenient: a broken reference is a dead link wearing a working build.
+  if (problems.length) throw new Error(`the design and decision documents:\n  ${problems.join('\n  ')}`)
+  docs.sort((a, b) => a.id.localeCompare(b.id))
   return docs
 }
 
@@ -335,7 +377,7 @@ function sidebar(docs: Doc[], ops: OpsDoc[], activeArea: string | null, activeRo
     const areaDocs = docs.filter((d) => d.area === area.id && d.stage !== 'superseded')
     const items = [
       link(`${area.id}/changelog.html`, 'Changelog'),
-      ...areaDocs.map((d) => link(d.route, d.title)),
+      ...areaDocs.map((d) => link(d.route, shownTitle(d))),
     ]
     return sidebarGroup(area.label, `${area.id}/index.html`, items, area.id === activeArea, activeRoute)
   }).join('\n')
@@ -474,7 +516,7 @@ function filterChips(): string {
 
 function docCard(doc: Doc): string {
   return `<a class="card" data-stage="${doc.stage}" href="/docs/${doc.route}">
-    <span class="card-title">${esc(doc.title)}</span>
+    <span class="card-title">${esc(shownTitle(doc))}</span>
     <div class="card-badges">${badges(doc)}</div>
     <p class="card-summary">${esc(doc.summary)}</p>
   </a>`
@@ -653,20 +695,32 @@ async function build(): Promise<void> {
     )
   }
 
+  const byId = new Map(docs.map((d) => [d.id, d]))
+  const docLink = (d: Doc): string => `<a href="/docs/${esc(d.route)}">${esc(shownTitle(d))}</a>`
   for (const doc of docs) {
+    const successor = doc.supersededBy ? byId.get(doc.supersededBy) : undefined
     const banner =
       doc.stage === 'superseded'
-        ? `<div class="superseded-banner">This document is superseded${doc.supersededBy ? ` by <a href="/docs/${esc(findRoute(docs, doc.supersededBy) ?? '')}">${esc(doc.supersededBy)}</a>` : ''}.</div>`
+        ? `<div class="superseded-banner">This document is superseded${successor ? ` by ${docLink(successor)}` : ''}.</div>`
         : ''
+    // The other directions, derived: what this one replaces, and what names
+    // it as related — a relation is written once, on either side.
+    const supersedes = docs.filter((d) => d.supersededBy === doc.id)
+    const related = docs.filter((d) => d !== doc && (doc.related.includes(d.id) || d.related.includes(doc.id)))
+    const links = [
+      supersedes.length ? `<p class="doc-links"><strong>Supersedes:</strong> ${supersedes.map(docLink).join(', ')}</p>` : '',
+      related.length ? `<p class="doc-links"><strong>Related:</strong> ${related.map(docLink).join(', ')}</p>` : '',
+    ].join('')
     const head = `<header class="doc-head">
+      <h1>${esc(shownTitle(doc))}</h1>
       ${badges(doc)}
       <p class="doc-summary">${esc(doc.summary)}</p>
-      ${doc.status ? `<p class="doc-status"><strong>Status:</strong> ${esc(doc.status)}</p>` : ''}
+      ${links}
     </header>`
     const headings: { id: string; text: string }[] = []
     const content = banner + head + (await renderMarkdown(doc.body, routes, dirname(doc.sourcePath), headings))
     allHeadings.set(doc.route, headings)
-    emit(doc.route, page(doc.title, sidebar(docs, ops, doc.area, doc.route), content, onThisPage(headings)))
+    emit(doc.route, page(shownTitle(doc), sidebar(docs, ops, doc.area, doc.route), content, onThisPage(headings)))
   }
 
   // Operations pages: manuals, so the header carries no lifecycle — only the
@@ -723,11 +777,6 @@ async function build(): Promise<void> {
   console.log(`docs site: ${docs.length} documents, ${AREAS.length} areas, ${ops.length + 2} operations pages, ${index.length} search entries (${indexKb} KB) → ${OUT}`)
 }
 
-function findRoute(docs: Doc[], slugOrFile: string): string | undefined {
-  const slug = slugOrFile.replace(/\.md$/, '')
-  return docs.find((d) => d.slug === slug)?.route
-}
-
 // Every internal link must resolve inside the emitted tree — the build is the
 // click-through.
 function checkLinks(): void {
@@ -778,9 +827,9 @@ function searchIndex(docs: Doc[], ops: OpsDoc[], headings: Map<string, { id: str
                      logs: Map<string, ChangelogSection[]>): SearchEntry[] {
   const entries: SearchEntry[] = []
   for (const doc of docs) {
-    entries.push([`/docs/${doc.route}`, doc.genre === 'decisions' ? 'decision' : 'design', doc.title, doc.summary])
+    entries.push([`/docs/${doc.route}`, doc.genre === 'decisions' ? 'decision' : 'design', shownTitle(doc), doc.summary])
     for (const h of headings.get(doc.route) ?? []) {
-      entries.push([`/docs/${doc.route}#${h.id}`, 'section', h.text, doc.title])
+      entries.push([`/docs/${doc.route}#${h.id}`, 'section', h.text, shownTitle(doc)])
     }
   }
   for (const doc of ops) {
@@ -1157,7 +1206,7 @@ main { flex: 1; min-width: 0; max-width: 780px; margin: 0 auto; padding: 2rem 2.
 /* --- a document's own head ----------------------------------------------- */
 .doc-head { margin-bottom: 1.8rem; padding-bottom: 1.1rem; border-bottom: 1px solid var(--line); }
 .doc-summary { margin: 0.7rem 0 0.3rem; color: var(--text2); font-size: 0.95rem; }
-.doc-status { margin: 0.4rem 0 0; font-size: 0.85rem; color: var(--muted); }
+.doc-links { margin: 0.4rem 0 0; font-size: 0.85rem; color: var(--muted); }
 .superseded-banner { border: 1px solid #d9a39b; background: #f7e1dd; border-radius: 8px; padding: 0.7rem 1rem; margin-bottom: 1.2rem; font-size: 0.9rem; color: #b0392c; }
 .superseded-list summary { cursor: pointer; margin-top: 1.8rem; color: var(--faint); }
 

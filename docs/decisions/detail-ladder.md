@@ -1,13 +1,26 @@
 ---
-summary: The detail ladder after the first tile jobs — five levels a factor of 4 apart in spacing (budget 4, 1, 1/4, 1/16, 1/64); level 1 replays the whole history at its own density instead of refining the end state; levels 2 and 3 are tile jobs ahead of time, level 4 near the camera only; a coordinator plans the tiles as a graph and hands them out over NATS from the start; the tile pick goes.
-date: 2026-10-01
-updated: 2026-10-03
+id: DEC-0032
+title.en: The detail ladder
+title.de: Die Detail-Leiter
+summary.en: The detail ladder after the first tile jobs — five levels a factor of 4
+  apart in spacing (budget 4, 1, 1/4, 1/16, 1/64); level 1 replays the whole
+  history at its own density instead of refining the end state; levels 2 and
+  3 are tile jobs ahead of time, level 4 near the camera only; a coordinator
+  plans the tiles as a graph and hands them out over NATS from the start;
+  the tile pick goes.
+summary.de: Die Detail-Leiter nach den ersten Kachel-Jobs — fünf Ebenen, im Abstand je
+  um den Faktor 4 auseinander (Budget 4, 1, 1/4, 1/16, 1/64); Level 1 spielt
+  die ganze Geschichte in seiner eigenen Dichte nach, statt den Endzustand
+  zu verfeinern; Level 2 und 3 sind vorab berechnete Kachel-Jobs, Level 4
+  nur nahe der Kamera; ein Koordinator plant die Kacheln als Graph und
+  verteilt sie von Anfang an über NATS; die Kachelwahl entfällt.
 area: generator
 stage: decided
-status: decided 2026-10-01 — the ladder's five budgets (fork 1), level 1 as a replay of the whole history (fork 2), the coordinator with its graph and NATS from the start and the tile pick removed (fork 4). Also decided 2026-10-01: the tile sizes (fork 3), the seams (fork 5), the inflow through the coordinator (fork 6), the rain to be measured then built (fork 7), and the bus as its own target `relay` (fork 8). and the workers and the relay's subjects (fork 9). Built 2026-10-01: the relay, the coordinator and its workers, and the client's refine plan (build order step 3); level 1 by replay (step 4); the tile jobs it starts from are built too (decisions/tile-jobs.md). The exploration behind it is design/tile-coordinator.md. ADDENDUM 2026-10-03: in a cluster the jobs module scales the worker Deployment itself (replacing KEDA); the relay checks this server's own tokens (BUILT).
+createdAt: 2026-10-01
+updatedAt: 2026-10-03
+concepts: [generator.concept.detail-levels, generator.concept.jobs, generator.concept.same-world]
+related: [DEC-0031, DES-0022, DEC-0033]
 ---
-
-# The detail ladder
 
 ## Where this starts
 
@@ -654,3 +667,18 @@ subprocess per job. The `Runner` interface, the in-memory queue and their
 cancel path are gone; the jobs module refuses to start without a relay, as
 cmd/ already did. `bakeRunner` in `/v1/capabilities` always answers
 `relay`.
+
+## Status
+
+decided 2026-10-01 — the ladder's five budgets (fork 1), level 1 as a replay
+of the whole history (fork 2), the coordinator with its graph and NATS from
+the start and the tile pick removed (fork 4). Also decided 2026-10-01: the
+tile sizes (fork 3), the seams (fork 5), the inflow through the coordinator
+(fork 6), the rain to be measured then built (fork 7), and the bus as its
+own target `relay` (fork 8). and the workers and the relay's subjects (fork
+9). Built 2026-10-01: the relay, the coordinator and its workers, and the
+client's refine plan (build order step 3); level 1 by replay (step 4); the
+tile jobs it starts from are built too (decisions/tile-jobs.md). The
+exploration behind it is design/tile-coordinator.md. ADDENDUM 2026-10-03: in
+a cluster the jobs module scales the worker Deployment itself (replacing
+KEDA); the relay checks this server's own tokens (BUILT).

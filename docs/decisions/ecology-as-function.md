@@ -1,12 +1,26 @@
 ---
-summary: The ecology fields become a local rule over the coarse climate, the fine terrain and water, and the tectonic features, evaluated at whatever resolution one looks at (2048 in the generator, the tile's own in a detail job), instead of a raster stored at one resolution. The climate stays at 62 km and is downscaled by the terrain where a tile needs it. The save carries the inputs, not the fields.
-date: 2026-09-29
+id: DEC-0030
+title.en: Ecology as a function, not a raster
+title.de: Ökologie als Funktion, nicht als Raster
+summary.en: The ecology fields become a local rule over the coarse climate, the fine
+  terrain and water, and the tectonic features, evaluated at whatever
+  resolution one looks at (2048 in the generator, the tile's own in a detail
+  job), instead of a raster stored at one resolution. The climate stays at
+  62 km and is downscaled by the terrain where a tile needs it. The save
+  carries the inputs, not the fields.
+summary.de: Die Ökologiefelder werden zu einer lokalen Regel über das grobe Klima, das
+  feine Gelände mit Wasser und die tektonischen Merkmale, ausgewertet in der
+  Auflösung, die man gerade ansieht (2048 im Generator, die eigene einer
+  Kachel in einem Detail-Job), statt als Raster in einer Auflösung
+  gespeichert. Das Klima bleibt bei 62 km und wird dort, wo eine Kachel es
+  braucht, über das Gelände verfeinert. Das Save trägt die Eingaben, nicht
+  die Felder.
 area: generator
 stage: building
-status: decided 2026-09-29; steps 1 and 2 BUILT the same day — the rule runs per pixel at 2048×1024 (prepareEcology, some 2 s, kept by the worker while only the sliders move; applyEcology, some 0.3 s), the map and its readout show it, the migration reads its means per climate cell, the save carries its inputs only (formatVersion 7). Steps 3–4 open.
+createdAt: 2026-09-29
+concepts: [resource.carryingCapacity, generator.concept.resource-roles]
+related: [DEC-0008]
 ---
-
-# Ecology as a function, not a raster
 
 ## The fork
 
@@ -156,3 +170,11 @@ the mean difference per pixel is nil; 0.01 % of the pixels differ by more
 than 0.05, in pasture and timber only, where the rounding tips a pixel's
 biome over a class border. A reader without the generator finds no ecology
 in the save; none asks for one yet.
+
+## Status
+
+decided 2026-09-29; steps 1 and 2 BUILT the same day — the rule runs per
+pixel at 2048×1024 (prepareEcology, some 2 s, kept by the worker while only
+the sliders move; applyEcology, some 0.3 s), the map and its readout show
+it, the migration reads its means per climate cell, the save carries its
+inputs only (formatVersion 7). Steps 3–4 open.

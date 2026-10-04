@@ -1,13 +1,23 @@
 ---
-summary: Design for the 3D world view — a zoomable camera over the map, hex tiles only where land is developed, and edge "ports" as the contract between hexes and everything linear (rivers, roads, shorelines). The camera ladder down to the hex-scale descent view is BUILT (see the status section); tiles/ports/settlements remain design.
-date: 2026-08-06
-updated: 2026-08-15
+id: DES-0004
+title.en: Hex World View — Idea Sketch
+title.de: Hex-Weltansicht — Ideenskizze
+summary.en: Design for the 3D world view — a zoomable camera over the map, hex tiles
+  only where land is developed, and edge "ports" as the contract between
+  hexes and everything linear (rivers, roads, shorelines). The camera ladder
+  down to the hex-scale descent view is BUILT (see the status section);
+  tiles/ports/settlements remain design.
+summary.de: Entwurf für die 3D-Weltansicht — eine zoombare Kamera über der Karte,
+  Hex-Kacheln nur dort, wo Land erschlossen ist, und Kanten-„Ports“ als
+  Vertrag zwischen Hexen und allem Linearen (Flüsse, Strassen, Ufer). Die
+  Kamera-Leiter bis zur Abstiegsansicht im Hex-Massstab ist GEBAUT (siehe
+  Status); Kacheln, Ports und Siedlungen sind Entwurf.
 area: ui
 stage: building
-status: partially built (worldmap screen through the descent view, 2026-08-07) — hex/port/settlement layers still design-only; unifying the two screens' map decided 2026-08-09, not built; the three foundational forks (river-through-tile, 300 m final, continuous zoom with thresholds) decided 2026-08-13 → decisions/hex-tiling.md, staged build plan below
+createdAt: 2026-08-06
+updatedAt: 2026-08-15
+related: [DEC-0024, DEC-0025]
 ---
-
-# Hex World View — Idea Sketch
 
 Captures a design discussion about turning the game screen (to be renamed
 "World") into a 3D view of a small cut-out of the world: a camera that
@@ -913,3 +923,10 @@ its exaggeration trades against them. Coupling exaggeration to overlay visibilit
 was considered and rejected as a hidden dependency. The overlays are being
 rethought separately, so this waits for that rather than being designed around.
 
+## Status
+
+partially built (worldmap screen through the descent view, 2026-08-07) —
+hex/port/settlement layers still design-only; unifying the two screens' map
+decided 2026-08-09, not built; the three foundational forks
+(river-through-tile, 300 m final, continuous zoom with thresholds) decided
+2026-08-13 → decisions/hex-tiling.md, staged build plan below

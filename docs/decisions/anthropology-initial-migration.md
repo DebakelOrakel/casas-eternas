@@ -1,13 +1,27 @@
 ---
-summary: PROTO — the first Anthropology output. Seeds the world's peoples via USER-PLACED origins (one per race, ~3 races, toggleable) and a least-cost dispersal over the Ecology suitability, producing a "migration arrow-tree" (Dijkstra predecessor tree, arrow width = accumulated population flow, colour = race) over a coarse population-density background. Steerable-deterministic: the user places origins, the spread is deterministic.
-date: 2026-07-26
-updated: 2026-08-12
+id: DEC-0010
+title.en: Anthropology — initial migration (proto)
+title.de: Anthropologie — erste Migration (Prototyp)
+summary.en: PROTO — the first Anthropology output. Seeds the world's peoples via
+  USER-PLACED origins (one per race, ~3 races, toggleable) and a least-cost
+  dispersal over the Ecology suitability, producing a "migration arrow-tree"
+  (Dijkstra predecessor tree, arrow width = accumulated population flow,
+  colour = race) over a coarse population-density background.
+  Steerable-deterministic: the user places origins, the spread is
+  deterministic.
+summary.de: PROTOTYP — die erste Ausgabe der Anthropologie. Setzt die Völker der Welt
+  über VOM NUTZER PLATZIERTE Ursprünge (einer je Volk, etwa drei,
+  abschaltbar) und eine Ausbreitung nach geringsten Kosten über die Eignung
+  der Ökologie. Ergebnis ist ein „Migrationspfeil-Baum“ (Vorgängerbaum nach
+  Dijkstra; Pfeilbreite = aufsummierter Bevölkerungsfluss, Farbe = Volk)
+  über einer groben Bevölkerungsdichte. Steuerbar und deterministisch: Der
+  Nutzer setzt die Ursprünge, die Ausbreitung ist deterministisch.
 area: generator
 stage: built
-status: proto BUILT — all 5 themes decided, Phases 1–3 built (worker core, panel + drag origins, ribbon arrow-tree)
+createdAt: 2026-07-26
+updatedAt: 2026-08-12
+related: [DEC-0007]
 ---
-
-# Anthropology — initial migration (proto)
 
 The **first concrete Anthropology step** (see `anthropology.md` for the whole
 human layer). Goal: a *very rough* first look at how peoples spread and where they
@@ -163,3 +177,8 @@ like Ecology.
 - Origins: exactly one per race, or allow several later?
 - What does the game receive — the density field + arrow-tree, or already
   settlement points? (Later step.)
+
+## Status
+
+proto BUILT — all 5 themes decided, Phases 1–3 built (worker core, panel +
+drag origins, ribbon arrow-tree)

@@ -1,20 +1,31 @@
 ---
-summary: How an amplification bake could be split across machines, and what it would
-  cost. The unit is the CATCHMENT, not a rectangle, because nothing flows across a
-  divide — which is also why the compute decomposition and the tile decomposition are
-  two different things that must not be conflated. Measuring the split on a real world
-  found the opposite of what this doc first concluded: a bake is not mostly land work,
-  it is ~85% depositSediment walking every cell of the raster to throw 90% of them
-  away. So splitting cannot pay until that is fixed, and fixing it helps every bake.
-date: 2026-08-09
-updated: 2026-09-29
+id: DES-0009
+title.en: Splitting the bake
+title.de: Den Bake aufteilen
+summary.en: How an amplification bake could be split across machines, and what it would
+  cost. The unit is the CATCHMENT, not a rectangle, because nothing flows
+  across a divide — which is also why the compute decomposition and the tile
+  decomposition are two different things that must not be conflated.
+  Measuring the split on a real world found the opposite of what this doc
+  first concluded: a bake is not mostly land work, it is ~85%
+  depositSediment walking every cell of the raster to throw 90% of them
+  away. So splitting cannot pay until that is fixed, and fixing it helps
+  every bake.
+summary.de: Wie ein Amplifikations-Bake auf mehrere Maschinen verteilt werden könnte und
+  was das kostet. Die Einheit ist das EINZUGSGEBIET, kein Rechteck, weil
+  nichts über eine Wasserscheide fliesst — darum sind die Zerlegung der
+  Rechnung und die der Kacheln zwei verschiedene Dinge. Die Messung an einer
+  echten Welt fand das Gegenteil dessen, was das Doc zuerst schloss: Ein
+  Bake ist nicht vor allem Arbeit an Land, sondern zu ~85 % depositSediment,
+  das jede Zelle durchläuft, um 90 % davon zu verwerfen. Aufteilen lohnt
+  sich erst, wenn das behoben ist.
 area: platform
 stage: superseded
-status: SUPERSEDED — the raster amplification bake was removed on 2026-09-29; detail comes from the mesh levels and their tile jobs (decisions/adaptive-mesh.md, fork 3). Before that: STEPS 1-2 BUILT 2026-08-09. Step 3a is BUILT AND DOES NOT PAY YET: on a real world it is 0.7x the speed of a whole bake and differs from it on 3.5% of cells. The speed half is explained and belongs elsewhere - ~85% of a bake is depositSediment, whose cost is per-cell over the whole raster; walking only the shelf and above is 7x faster with zero cells changed. Fix that before returning here
-superseded-by: ../decisions/adaptive-mesh.md
+createdAt: 2026-08-09
+updatedAt: 2026-09-29
+supersededBy: DEC-0029
+related: [DEC-0018, DES-0005]
 ---
-
-# Splitting the bake
 
 A bake at 8192² peaks near 2.6 GB and takes minutes; a 16384² tiled render is
 wanted eventually. Both point at the same question: can the work be cut into
@@ -614,3 +625,14 @@ Steps 1–2 are small. Step 3 is the project. Steps 4–6 are bookkeeping.
   would fan out, and the progress reporting it would aggregate
 - [resolution-strategy.md](./resolution-strategy.md) — why the simulation grid
   and the detail resolution are separate layers
+
+## Status
+
+SUPERSEDED — the raster amplification bake was removed on 2026-09-29; detail
+comes from the mesh levels and their tile jobs (decisions/adaptive-mesh.md,
+fork 3). Before that: STEPS 1-2 BUILT 2026-08-09. Step 3a is BUILT AND DOES
+NOT PAY YET: on a real world it is 0.7x the speed of a whole bake and
+differs from it on 3.5% of cells. The speed half is explained and belongs
+elsewhere - ~85% of a bake is depositSediment, whose cost is per-cell over
+the whole raster; walking only the shelf and above is 7x faster with zero
+cells changed. Fix that before returning here

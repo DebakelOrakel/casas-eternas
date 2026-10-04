@@ -1,12 +1,19 @@
 ---
-summary: Idea sketch for the game's data that players can query — truth stays on the server, each player has a log of observations, an embedded SQL database per player gives the query language, and isolation is physical, not a filter. Nothing decided.
-date: 2026-10-02
+id: DES-0023
+title.en: Game knowledge and player queries
+title.de: Spielwissen und Abfragen der Spieler
+summary.en: Idea sketch for the game's data that players can query — truth stays on the
+  server, each player has a log of observations, an embedded SQL database
+  per player gives the query language, and isolation is physical, not a
+  filter. Nothing decided.
+summary.de: Ideenskizze für die Spieldaten, die Spieler abfragen können — die Wahrheit
+  bleibt auf dem Server, jeder Spieler hat ein Log seiner Beobachtungen,
+  eine eingebettete SQL-Datenbank je Spieler liefert die Abfragesprache, und
+  die Trennung ist physisch, kein Filter. Nichts entschieden.
 area: mechanics
 stage: idea
-status: IDEA ONLY — not decided, not built, needs more thought. Recorded from a discussion on 2026-10-02; every section below is a direction, not a plan. The open questions at the end are real
+createdAt: 2026-10-02
 ---
-
-# Game knowledge and player queries
 
 Records a discussion (2026-10-02). It started with metrics for the later
 game (trade, dynasties) and Prometheus, and moved to a different question:
@@ -126,3 +133,9 @@ That cost model could be a query on the same kind of embedded database.
   Parquet export for their own tools?
 - Where does the event log live at scale — in the save, or in a store the
   save points to?
+
+## Status
+
+IDEA ONLY — not decided, not built, needs more thought. Recorded from a
+discussion on 2026-10-02; every section below is a direction, not a plan.
+The open questions at the end are real

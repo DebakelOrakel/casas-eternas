@@ -1,13 +1,28 @@
 ---
-summary: Client UI text moves out of the code into JSON catalogs, EN + DE first. Keys are split into AREAS by what the text NAMES, not which screen shows it (the 2026-09-20 addendum restates the areas, which the reshuffle changed) so the durable "world vocabulary" the game will inherit is separated from the generator's throwaway operating chrome. Type-checked keys (a typo or a missing DE string breaks tsc). Adds a custom hover HELP tooltip (label + one-sentence explanation) on every icon/slider. Language switch lives on the title screen only.
-date: 2026-07-28
-updated: 2026-09-20
+id: DEC-0014
+title.en: Localization (i18n) & icon help
+title.de: Lokalisierung (i18n) und Icon-Hilfe
+summary.en: Client UI text moves out of the code into JSON catalogs, EN + DE first. Keys
+  are split into AREAS by what the text NAMES, not which screen shows it
+  (the 2026-09-20 addendum restates the areas, which the reshuffle changed)
+  so the durable "world vocabulary" the game will inherit is separated from
+  the generator's throwaway operating chrome. Type-checked keys (a typo or a
+  missing DE string breaks tsc). Adds a custom hover HELP tooltip (label +
+  one-sentence explanation) on every icon/slider. Language switch lives on
+  the title screen only.
+summary.de: Texte der Client-Oberfläche kommen aus dem Code in JSON-Kataloge, zuerst EN
+  und DE. Schlüssel sind in BEREICHE geteilt nach dem, was der Text BENENNT,
+  nicht nach dem Screen, der ihn zeigt — so bleibt das dauerhafte
+  „Weltvokabular“, das das Spiel erbt, getrennt von der kurzlebigen
+  Bedienoberfläche des Generators. Typgeprüfte Schlüssel (ein Tippfehler
+  oder ein fehlender DE-Text bricht tsc). Dazu ein eigener Hilfe-Tooltip
+  (Bezeichnung und ein Satz Erklärung) an jedem Icon und Regler.
 area: ui
 stage: built
-status: decided 2026-07-28, BUILT 2026-07-29 (i18n runtime, tsc-gated EN/DE catalogs, title-screen switch); every worldgen panel wired incl. data-help tooltips 2026-08-06
+createdAt: 2026-07-28
+updatedAt: 2026-09-20
+related: [DEC-0012]
 ---
-
-# Localization (i18n) & icon help
 
 Today the client's visible text is hard-wired: `innerHTML` templates in
 [WorldGenScreen.ts](../../client/src/screens/worldgen/WorldGenScreen.ts) and
@@ -223,3 +238,9 @@ Older changelog entries still carry `worldgen.*` and `common.notify.*` tags.
 Those are left alone deliberately: they name what the thing was called when the
 entry was written, the changelog parser does not resolve them, and rewriting
 them would smooth over the history rather than record it.
+
+## Status
+
+decided 2026-07-28, BUILT 2026-07-29 (i18n runtime, tsc-gated EN/DE
+catalogs, title-screen switch); every worldgen panel wired incl. data-help
+tooltips 2026-08-06

@@ -1,13 +1,19 @@
 ---
-summary: A saved world is a .zip — a human-readable YAML recipe/status + a JSON sim snapshot + the two heavy float rasters + a preview, restorable instantly and offline.
-date: 2026-07-24
-updated: 2026-09-29
+id: DEC-0005
+title.en: World Save / Load Format
+title.de: Format zum Speichern und Laden einer Welt
+summary.en: A saved world is a .zip — a human-readable YAML recipe/status + a JSON sim
+  snapshot + the two heavy float rasters + a preview, restorable instantly
+  and offline.
+summary.de: Eine gespeicherte Welt ist ein .zip — ein lesbares YAML-Rezept mit Status,
+  ein JSON-Schnappschuss der Simulation, die zwei schweren Float-Raster und
+  eine Vorschau; sofort und offline wiederherstellbar.
 area: platform
 stage: built
-status: implemented (v1alpha1)
+createdAt: 2026-07-24
+updatedAt: 2026-09-29
+related: [DES-0003, DEC-0009, DEC-0033]
 ---
-
-# World Save / Load Format
 
 The format's contents are documented in the living reference
 [design/world-save-format.md](../design/world-save-format.md); this doc records
@@ -158,3 +164,7 @@ computed on load. The generator now loads the climate refinement from the
 save (the layers of formatVersion 6) instead of computing it again; a save
 without it is refined on load. The hydrology is still computed on load;
 whether to load it from the save too is open.
+
+## Status
+
+implemented (v1alpha1)

@@ -1,12 +1,26 @@
 ---
-summary: A direction for the detail ladder after the first tile jobs — level 1 replays the history at a finer budget, the finer levels come as tiles, and a coordinator plans them as a graph of small deterministic computations that long-lived workers take one by one. Covers the ladder, the coordinator and its one rule, the seams, the transport and the coordinator's state. Ideas and measurements; nothing decided.
-date: 2026-09-30
+id: DES-0022
+title.en: Tile coordinator
+title.de: Kachel-Koordinator
+summary.en: A direction for the detail ladder after the first tile jobs — level 1
+  replays the history at a finer budget, the finer levels come as tiles, and
+  a coordinator plans them as a graph of small deterministic computations
+  that long-lived workers take one by one. Covers the ladder, the
+  coordinator and its one rule, the seams, the transport and the
+  coordinator's state. Ideas and measurements; nothing decided.
+summary.de: Eine Richtung für die Detail-Leiter nach den ersten Kachel-Jobs — Level 1
+  spielt die Geschichte in einem feineren Budget nach, die feineren Ebenen
+  kommen als Kacheln, und ein Koordinator plant sie als Graph kleiner
+  deterministischer Rechnungen, die langlebige Worker einzeln übernehmen.
+  Behandelt die Leiter, den Koordinator und seine eine Regel, die Nähte, den
+  Transport und den Zustand des Koordinators. Ideen und Messungen; nichts
+  entschieden.
 area: platform
 stage: idea
-status: design discussion of 2026-09-30 — measured where marked; decided only that the coordinator's state is bbolt; nothing of the coordinator built. The tile jobs it builds on are built (decisions/tile-jobs.md). Carried into decisions/detail-ladder.md on 2026-10-01 (the ladder's budgets decided, the rest proposed there).
+createdAt: 2026-09-30
+concepts: [generator.concept.detail-levels, generator.concept.jobs]
+related: [DEC-0032, DEC-0031]
 ---
-
-# Tile coordinator
 
 ## Where this starts
 
@@ -170,3 +184,11 @@ the state, whatever carries the messages.
 3. The ladder as proposed on one world: level 1 at budget 2 with K epochs
    of history, level-2 tiles at 1/4 with a longer transient, against
    today's path (level 1 at 0.5, level-2 tiles at 1/16).
+
+## Status
+
+design discussion of 2026-09-30 — measured where marked; decided only that
+the coordinator's state is bbolt; nothing of the coordinator built. The tile
+jobs it builds on are built (decisions/tile-jobs.md). Carried into
+decisions/detail-ladder.md on 2026-10-01 (the ladder's budgets decided, the
+rest proposed there).
