@@ -10,6 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	bolt "go.etcd.io/bbolt"
 	"golang.org/x/crypto/bcrypt"
@@ -90,7 +93,7 @@ func (r *Registry) Create(name, password string) (User, error) {
 	if name == "" {
 		return User{}, fmt.Errorf("%w: refusing to create a user with no name", ErrInvalid)
 	}
-	hash, err := hashPassword(password)
+	hash, err := personPassword(password)
 	if err != nil {
 		return User{}, err
 	}
@@ -114,8 +117,11 @@ func (r *Registry) Create(name, password string) (User, error) {
 
 // SetPassword replaces (or first sets) the named user's credential. The user
 // must exist — a typo'd name must not silently mint a new account.
+//
+// It ends the user's sessions: a password set by an admin is most often set
+// because the old one is no longer trusted.
 func (r *Registry) SetPassword(name, password string) error {
-	hash, err := hashPassword(password)
+	hash, err := personPassword(password)
 	if err != nil {
 		return err
 	}
@@ -123,6 +129,9 @@ func (r *Registry) SetPassword(name, password string) error {
 		u, ok := findByName(tx, name)
 		if !ok {
 			return fmt.Errorf("user %q: %w", name, ErrUnknown)
+		}
+		if err := endSessions(tx, u); err != nil {
+			return err
 		}
 		return tx.Bucket(bucketCredentials).Put([]byte(u.ID), hash)
 	})
@@ -189,6 +198,23 @@ func (r *Registry) HasCredentials() bool {
 		return nil
 	})
 	return any
+}
+
+// MinPasswordLength is the shortest password a person may set, in
+// characters (2026-10-04).
+const MinPasswordLength = 10
+
+// personPassword is hashPassword for a person's password, with the rule a
+// person's password must meet: at least MinPasswordLength characters, an
+// upper-case and a lower-case letter among them (decided 2026-10-04). A
+// service account's secret is generated, not chosen, and is not held to it.
+// Passwords set before the rule keep working; the rule applies when one is
+// set.
+func personPassword(password string) ([]byte, error) {
+	if utf8.RuneCountInString(password) < MinPasswordLength || !strings.ContainsFunc(password, unicode.IsUpper) || !strings.ContainsFunc(password, unicode.IsLower) {
+		return nil, fmt.Errorf("%w: a password has at least %d characters, upper- and lower-case letters among them", ErrInvalid, MinPasswordLength)
+	}
+	return hashPassword(password)
 }
 
 // hashPassword is the one place a plaintext password becomes a hash. An empty

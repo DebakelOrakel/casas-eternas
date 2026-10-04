@@ -3,6 +3,10 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-10-04
+- **changed** Server: a sign-in lasts as long as `global.auth.session-ttl` and renews its access token (`global.auth.token-ttl`, now 15 minutes) at `/v1/auth/refresh`; changing or resetting a password signs the user out everywhere. `auth`
+- **changed** Server: a password has at least 10 characters, upper- and lower-case letters among them. `auth`
+
 ## 2026-10-02
 - **fixed** Server: a tile comes out the same on every job worker, also on a machine with fewer than four cores. `jobs`
 - **fixed** Server: a job worker whose engine thread died ends and is started again instead of hanging, and it stops within seconds when asked. `jobs`

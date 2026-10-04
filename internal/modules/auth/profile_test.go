@@ -31,9 +31,10 @@ func TestProfileRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var session struct {
-		Token string `json:"token"`
+		Token        string `json:"token"`
+		RefreshToken string `json:"refreshToken"`
 	}
-	if err := json.Unmarshal(login(t, m, "ada", "geheim").Body.Bytes(), &session); err != nil || session.Token == "" {
+	if err := json.Unmarshal(login(t, m, "ada", "Geheim-2026").Body.Bytes(), &session); err != nil || session.Token == "" {
 		t.Fatalf("login: %v", err)
 	}
 	do := func(method, path, bearer, contentType string, body []byte) *httptest.ResponseRecorder {
@@ -62,13 +63,28 @@ func TestProfileRoutes(t *testing.T) {
 		t.Errorf("a long name = %d, want 400", got.Code)
 	}
 
-	if got := do(http.MethodPut, MePath+"/password", session.Token, "application/json", []byte(`{"current":"wrong","new":"neu"}`)); got.Code != http.StatusForbidden {
+	if got := do(http.MethodPut, MePath+"/password", session.Token, "application/json", []byte(`{"current":"wrong","new":"Neu-passwort"}`)); got.Code != http.StatusForbidden {
 		t.Errorf("a wrong current password = %d, want 403", got.Code)
 	}
-	if got := do(http.MethodPut, MePath+"/password", session.Token, "application/json", []byte(`{"current":"geheim","new":"neu"}`)); got.Code != http.StatusNoContent {
-		t.Errorf("a password change = %d, want 204", got.Code)
+	if got := do(http.MethodPut, MePath+"/password", session.Token, "application/json", []byte(`{"current":"Geheim-2026","new":"neu"}`)); got.Code != http.StatusBadRequest {
+		t.Errorf("a password below the rule = %d, want 400", got.Code)
 	}
-	if got := login(t, m, "ada", "neu"); got.Code != http.StatusOK {
+	// A change ends every session — the old refresh token renews nothing —
+	// and answers the caller a fresh one that does.
+	changed := do(http.MethodPut, MePath+"/password", session.Token, "application/json", []byte(`{"current":"Geheim-2026","new":"Neu-passwort"}`))
+	var fresh struct {
+		RefreshToken string `json:"refreshToken"`
+	}
+	if changed.Code != http.StatusOK || json.Unmarshal(changed.Body.Bytes(), &fresh) != nil || fresh.RefreshToken == "" {
+		t.Fatalf("a password change = %d %s", changed.Code, changed.Body.String())
+	}
+	if got := do(http.MethodPost, RefreshPath, session.RefreshToken, "", nil); got.Code != http.StatusUnauthorized {
+		t.Errorf("the refresh token from before the change = %d, want 401", got.Code)
+	}
+	if got := do(http.MethodPost, RefreshPath, fresh.RefreshToken, "", nil); got.Code != http.StatusOK {
+		t.Errorf("the refresh token from the change = %d, want 200", got.Code)
+	}
+	if got := login(t, m, "ada", "Neu-passwort"); got.Code != http.StatusOK {
 		t.Errorf("login with the new password = %d", got.Code)
 	}
 

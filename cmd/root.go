@@ -68,8 +68,8 @@ const (
 	textTLSKey      = `Path to the server private key. Enables HTTPS together with global.tls.cert.`
 	textTLSCA       = `Path to the CA that CLIENT certificates are verified against. Setting it turns on mutual TLS.`
 	textAuthKey     = `Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.`
-	textAuthTknTTL  = `How long an issued token is valid.`
-	textAuthSessTTL = `How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then global.auth.token-ttl is the one that matters.`
+	textAuthTknTTL  = `How long an access token is valid. Short, because nothing is consulted when one is used: a session that is ended (a password changed or reset) stops working when its access token runs out.`
+	textAuthSessTTL = `How long a login lasts before a password is needed again: the life of the refresh token that renews the access token.`
 	textAdminSock   = `Path of a unix socket serving this process's admin API (user administration, over plain HTTP). Whoever can reach the socket is admin — file permissions gate it, no login. Empty serves none.`
 	textSvcWorlds   = `URL of the service running the world module, when it is not co-resident. Empty expects it in this process.`
 	textSvcArts     = `URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.`
@@ -145,7 +145,7 @@ func init() {
 	StartCmd.Flags().StringSliceP(flagTarget, "t", []string{}, textTarget)
 	StartCmd.Flags().String(keyAuthMode, string(config.DefaultAuthMode), textAuthMode)
 	StartCmd.Flags().String(keyAuthKey, "", textAuthKey)
-	StartCmd.Flags().Duration(keyAuthTknTTL, 720*time.Hour, textAuthTknTTL)
+	StartCmd.Flags().Duration(keyAuthTknTTL, 15*time.Minute, textAuthTknTTL)
 	StartCmd.Flags().Duration(keyAuthSessTTL, 720*time.Hour, textAuthSessTTL)
 	StartCmd.Flags().String(keySvcWorlds, "", textSvcWorlds)
 	StartCmd.Flags().String(keySvcArts, "", textSvcArts)

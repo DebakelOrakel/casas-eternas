@@ -8,8 +8,8 @@ summary.en: How the server establishes who is asking. Three modes stay — but `
   from a Secret; logging in exchanges them for a JWT the server issues
   itself; OIDC later is a second login method feeding the same token, not a
   second token. Four paths stay public so a logged-out client can find out
-  where to log in. Revocation is decided (short TTL plus refresh, revoked by
-  a per-user stamp) but not yet built. Both files live in the Secret; the
+  where to log in. Revocation is short TTL plus refresh, revoked by a
+  per-user stamp — built 2026-10-04. Both files live in the Secret; the
   cost — an admin screen cannot write users through a read-only mount, and
   would go through the Kubernetes API — is recorded rather than discovered
   later.
@@ -19,7 +19,8 @@ summary.de: Wie der Server feststellt, wer fragt. Drei Modi bleiben — aber `to
   das Login tauscht sie gegen ein JWT, das der Server selbst ausstellt; OIDC
   kommt später als zweite Login-Methode für dasselbe Token. Vier Pfade
   bleiben öffentlich, damit ein abgemeldeter Client findet, wo er sich
-  anmeldet. Widerruf ist entschieden, aber noch nicht gebaut.
+  anmeldet. Widerruf (kurze Laufzeit plus Erneuerung, Stempel pro Nutzer)
+  ist seit 2026-10-04 gebaut.
 area: platform
 stage: built
 createdAt: 2026-08-09
@@ -673,6 +674,18 @@ something else and needs restating.
   audience, and the reason secrets must not live in the environment
 
 ## Status
+
+2026-10-04, later: step 8 BUILT. A sign-in answers an access token
+(global.auth.token-ttl, default now 15m) and a refresh token
+(global.auth.session-ttl, 720h); `POST /v1/auth/refresh`, public, takes the
+refresh token as the bearer and answers a fresh access token with the role
+as it is now. The per-user stamp is a counter, the user's session
+generation, rather than a notBefore timestamp: the same effect without the
+second-wide overlap of iat. Setting a password — the user's own change, a
+reset code, `auth user passwd` — counts it up, and ends every session of
+the user within one access token's life; the user's own change answers a
+fresh session. The client renews on a 401 once before it signs out.
+Blocking (DEC-0034, fork 7) can now be built on the same counter.
 
 2026-10-04: blocking an account (DEC-0034, fork 7) waits on step 8, the
 revocation: a flag that leaves a 720-hour token working blocks nothing.

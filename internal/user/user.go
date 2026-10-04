@@ -70,6 +70,11 @@ type User struct {
 	// an admin.
 	InvitedBy string `json:"invitedBy,omitempty"`
 	Inviter   string `json:"inviter,omitempty"`
+	// SessionGeneration is what a refresh token must carry to renew a
+	// session (docs/decisions/server-auth.md, "Revocation"): counting it up
+	// ends every session of the user, everywhere, within an access token's
+	// life. Up with every password set.
+	SessionGeneration uint64 `json:"sessionGeneration,omitempty"`
 }
 
 // The role vocabulary. RoleUser is the accepted SPELLING of the default —
@@ -317,6 +322,13 @@ func findByName(tx *bolt.Tx, name string) (User, bool) {
 }
 
 // putUser writes one entry inside the caller's transaction.
+// endSessions counts a user's session generation up: their refresh tokens
+// renew nothing from now on.
+func endSessions(tx *bolt.Tx, u User) error {
+	u.SessionGeneration++
+	return putUser(tx, u)
+}
+
 func putUser(tx *bolt.Tx, u User) error {
 	raw, err := json.Marshal(u)
 	if err != nil {

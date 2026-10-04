@@ -135,6 +135,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		login, err := auth.New(auth.Config{
 			Tokens:     tokens,
 			TTL:        cfg.Global.Auth.TokenTTL,
+			SessionTTL: cfg.Global.Auth.SessionTTL,
 			Registry:   registry,
 			StorageDir: cfg.Auth.Storage.DirPath(),
 		})
@@ -253,6 +254,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		auth.Path,               // the login endpoint itself
 		auth.TokenPath,          // a service account trading its secret for a bus token
 		auth.RedeemPath,         // spending an invite or reset code, which signs in
+		auth.RefreshPath,        // renewing a session whose access token has run out
 	}), nil
 }
 

@@ -206,7 +206,7 @@ func (r *Registry) CreateReset(name string) (string, time.Time, error) {
 // Either answers the user, to be signed in. ErrCode for a code that is not
 // valid; ErrExists and ErrInvalid for a name that is taken or not allowed.
 func (r *Registry) Redeem(code, name, password string) (User, error) {
-	hash, err := hashPassword(password)
+	hash, err := personPassword(password)
 	if err != nil {
 		return User{}, err
 	}
@@ -234,7 +234,10 @@ func (r *Registry) Redeem(code, name, password string) (User, error) {
 				spent = true
 				return nil
 			}
-			out = u
+			if err := endSessions(tx, u); err != nil {
+				return err
+			}
+			out, _ = byID(tx, u.ID)
 			return tx.Bucket(bucketCredentials).Put([]byte(u.ID), hash)
 		}
 		invites := tx.Bucket(bucketInvites)

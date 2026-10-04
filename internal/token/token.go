@@ -59,6 +59,11 @@ const (
 	// session nor a job's token opens the bus, and a bus token opens no
 	// HTTP route.
 	AudienceRelay = "relay"
+	// AudienceRefresh is a session's refresh token (docs/decisions/
+	// server-auth.md, "Revocation"): sent only to the auth module's refresh
+	// route, never accepted as a session, and checked there against the
+	// user's session generation — the one point a session can be ended.
+	AudienceRefresh = "refresh"
 )
 
 // SubjectWorker is who a job worker is on the bus. A worker serves every
@@ -265,6 +270,59 @@ func (t *Tokens) VerifySession(raw string) (subject string, admin bool, err erro
 		return "", false, fmt.Errorf("token rejected: no subject")
 	}
 	return claims.Subject, claims.Admin, nil
+}
+
+// refreshClaims is a refresh token's payload: the registered set plus the
+// user's session generation at issue. The decision named a per-user
+// notBefore TIMESTAMP; a counter says the same without the second-wide
+// overlap of iat, where a sign-in in the second of a revocation would be
+// refused or a revoked token kept.
+type refreshClaims struct {
+	jwt.RegisteredClaims
+	Generation uint64 `json:"gen"`
+}
+
+// IssueRefresh mints a session's refresh token for a user at their current
+// session generation.
+func (t *Tokens) IssueRefresh(userID string, generation uint64, ttl time.Duration) (string, time.Time, error) {
+	if userID == "" {
+		return "", time.Time{}, fmt.Errorf("refusing to issue a refresh token with no subject")
+	}
+	now := time.Now()
+	expires := now.Add(ttl)
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
+			Audience:  jwt.ClaimStrings{AudienceRefresh},
+			Issuer:    Issuer,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(expires),
+		},
+		Generation: generation,
+	}).SignedString(t.key)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("signing a token: %w", err)
+	}
+	return signed, expires, nil
+}
+
+// VerifyRefresh checks a refresh token and answers its user and the session
+// generation it was issued at. Whether that generation is still the user's
+// is the caller's question: the registry is not here.
+func (t *Tokens) VerifyRefresh(raw string) (subject string, generation uint64, err error) {
+	claims := &refreshClaims{}
+	if _, parseErr := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) { return t.key, nil },
+		jwt.WithValidMethods([]string{signingMethod}),
+		jwt.WithIssuer(Issuer),
+		jwt.WithAudience(AudienceRefresh),
+		jwt.WithExpirationRequired(),
+	); parseErr != nil {
+		return "", 0, fmt.Errorf("token rejected: %w", parseErr)
+	}
+	if claims.Subject == "" {
+		return "", 0, fmt.Errorf("token rejected: no subject")
+	}
+	return claims.Subject, claims.Generation, nil
 }
 
 // JobAudience is the audience of the token belonging to one bake job.

@@ -69,7 +69,7 @@ func TestServiceAccountBuysABusToken(t *testing.T) {
 
 	for name, credentials := range map[string][2]string{
 		"a wrong secret":    {"cluster-workers", account.Secret + "x"},
-		"a user's password": {"ada", "geheim"},
+		"a user's password": {"ada", "Geheim-2026"},
 		"no credentials":    {"", ""},
 	} {
 		if got := call(public, http.MethodPost, TokenPath, nil, credentials[0], credentials[1]); got.Code != http.StatusUnauthorized {

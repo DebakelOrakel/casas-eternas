@@ -40,7 +40,7 @@ func TestAdminUserLifecycle(t *testing.T) {
 	m, _ := newTestModule(t, time.Hour)
 	admin := adminMux(t, m)
 
-	created := adminDo(t, admin, http.MethodPost, UsersPath, `{"name":"grace","password":"hopper"}`)
+	created := adminDo(t, admin, http.MethodPost, UsersPath, `{"name":"grace","password":"Hopper-1906"}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create = %d: %s", created.Code, created.Body)
 	}
@@ -51,7 +51,7 @@ func TestAdminUserLifecycle(t *testing.T) {
 	if entry.ID == "" || entry.Name != "grace" {
 		t.Errorf("created entry = %+v", entry)
 	}
-	if login(t, m, "grace", "hopper").Code != http.StatusOK {
+	if login(t, m, "grace", "Hopper-1906").Code != http.StatusOK {
 		t.Error("the created user cannot log in")
 	}
 
@@ -75,20 +75,20 @@ func TestAdminUserLifecycle(t *testing.T) {
 		}
 	}
 
-	if got := adminDo(t, admin, http.MethodPut, UsersPath+"/grace/password", `{"password":"lovelace"}`); got.Code != http.StatusNoContent {
+	if got := adminDo(t, admin, http.MethodPut, UsersPath+"/grace/password", `{"password":"Lovelace-1843"}`); got.Code != http.StatusNoContent {
 		t.Fatalf("set password = %d: %s", got.Code, got.Body)
 	}
-	if login(t, m, "grace", "hopper").Code != http.StatusUnauthorized {
+	if login(t, m, "grace", "Hopper-1906").Code != http.StatusUnauthorized {
 		t.Error("the old password still logs in")
 	}
-	if login(t, m, "grace", "lovelace").Code != http.StatusOK {
+	if login(t, m, "grace", "Lovelace-1843").Code != http.StatusOK {
 		t.Error("the new password does not log in")
 	}
 
 	if got := adminDo(t, admin, http.MethodDelete, UsersPath+"/grace", ""); got.Code != http.StatusNoContent {
 		t.Fatalf("delete = %d: %s", got.Code, got.Body)
 	}
-	if login(t, m, "grace", "lovelace").Code != http.StatusUnauthorized {
+	if login(t, m, "grace", "Lovelace-1843").Code != http.StatusUnauthorized {
 		t.Error("a deleted user still logs in")
 	}
 }
@@ -104,13 +104,13 @@ func TestAdminRefusals(t *testing.T) {
 		name, method, path, body string
 		want                     int
 	}{
-		{"duplicate create", http.MethodPost, UsersPath, `{"name":"ada","password":"x"}`, http.StatusConflict},
+		{"duplicate create", http.MethodPost, UsersPath, `{"name":"ada","password":"Xx-passwort1"}`, http.StatusConflict},
 		{"empty password", http.MethodPost, UsersPath, `{"name":"eve","password":""}`, http.StatusBadRequest},
-		{"empty name", http.MethodPost, UsersPath, `{"name":"","password":"x"}`, http.StatusBadRequest},
+		{"empty name", http.MethodPost, UsersPath, `{"name":"","password":"Xx-passwort1"}`, http.StatusBadRequest},
 		{"unknown field", http.MethodPost, UsersPath, `{"name":"eve","pasword":"x"}`, http.StatusBadRequest},
 		{"not json", http.MethodPost, UsersPath, `garbage`, http.StatusBadRequest},
 		{"delete unknown", http.MethodDelete, UsersPath + "/nobody", "", http.StatusNotFound},
-		{"passwd unknown", http.MethodPut, UsersPath + "/nobody/password", `{"password":"x"}`, http.StatusNotFound},
+		{"passwd unknown", http.MethodPut, UsersPath + "/nobody/password", `{"password":"Xx-passwort1"}`, http.StatusNotFound},
 		{"role for unknown user", http.MethodPut, UsersPath + "/nobody/role", `{"role":"admin"}`, http.StatusNotFound},
 		{"unknown role", http.MethodPut, UsersPath + "/ada/role", `{"role":"emperor"}`, http.StatusBadRequest},
 	}
@@ -130,7 +130,7 @@ func TestAdminRoutesStayOffTheNetworkListener(t *testing.T) {
 	if err := m.Mount(network); err != nil {
 		t.Fatal(err)
 	}
-	got := adminDo(t, network, http.MethodPost, UsersPath, `{"name":"eve","password":"x"}`)
+	got := adminDo(t, network, http.MethodPost, UsersPath, `{"name":"eve","password":"Xx-passwort1"}`)
 	if got.Code != http.StatusNotFound {
 		t.Errorf("POST %s on the network mux = %d, want 404", UsersPath, got.Code)
 	}

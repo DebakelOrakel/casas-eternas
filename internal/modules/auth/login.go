@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
@@ -33,8 +34,12 @@ const Path = "/v1/auth/session"
 type Config struct {
 	// Tokens mints what a successful login returns.
 	Tokens *token.Tokens
-	// TTL is how long an issued token is good for.
+	// TTL is how long an access token is good for: minutes, since nothing
+	// consults state when one is used.
 	TTL time.Duration
+	// SessionTTL is how long a refresh token is good for — how long a
+	// sign-in lasts while the user's session generation stands.
+	SessionTTL time.Duration
 	// Registry verifies credentials AND answers who they belong to — one
 	// lookup since identity and credential moved into one store
 	// (docs/decisions/server-user-admin.md). The registry also carries each
@@ -62,6 +67,9 @@ func New(cfg Config) (*Module, error) {
 	if cfg.TTL <= 0 {
 		return nil, fmt.Errorf("auth: token lifetime is %v", cfg.TTL)
 	}
+	if cfg.SessionTTL < cfg.TTL {
+		return nil, fmt.Errorf("auth: session lifetime %v is shorter than the token's %v", cfg.SessionTTL, cfg.TTL)
+	}
 	if cfg.Registry == nil {
 		return nil, fmt.Errorf("auth: no user registry")
 	}
@@ -78,6 +86,7 @@ func (m *Module) Name() string { return "auth" }
 // signed-in user's profile (profile.go).
 func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST "+Path, m.serveLogin)
+	mux.HandleFunc("POST "+RefreshPath, m.serveRefresh)
 	mux.HandleFunc("POST "+TokenPath, m.serveServiceToken)
 	mux.HandleFunc("POST "+RedeemPath, m.serveRedeem)
 	m.MountProfile(mux)
@@ -93,10 +102,16 @@ func (m *Module) Close() error { return m.cfg.Registry.Close() }
 // renew before being surprised, `user` so it can show who is logged in without
 // decoding the token — a client that parses a token starts depending on its
 // format, and the format is ours to change.
+//
+// `refreshToken` renews the session at RefreshPath until `refreshExpiresAt`
+// (docs/decisions/server-auth.md, "Revocation"); a refresh answers the same
+// shape without it, as the refresh token in hand stands.
 type response struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expiresAt"`
-	User      string    `json:"user"`
+	Token            string     `json:"token"`
+	ExpiresAt        time.Time  `json:"expiresAt"`
+	User             string     `json:"user"`
+	RefreshToken     string     `json:"refreshToken,omitempty"`
+	RefreshExpiresAt *time.Time `json:"refreshExpiresAt,omitempty"`
 }
 
 func (m *Module) serveLogin(w http.ResponseWriter, r *http.Request) {
@@ -138,17 +153,57 @@ func (m *Module) signIn(w http.ResponseWriter, entry user.User) {
 		http.Error(w, "cannot issue a token", http.StatusInternalServerError)
 		return
 	}
+	refresh, refreshExpires, err := m.cfg.Tokens.IssueRefresh(entry.ID, entry.SessionGeneration, m.cfg.SessionTTL)
+	if err != nil {
+		slog.Error("cannot issue a token", "error", err, "user", entry.Name)
+		http.Error(w, "cannot issue a token", http.StatusInternalServerError)
+		return
+	}
 	slog.Info("logged in", "user", entry.Name, "id", entry.ID, "admin", entry.Admin(), "expires", expires)
 	// For the admin table; a login that cannot be noted is still a login.
 	if err := m.cfg.Registry.RecordLogin(entry.ID); err != nil {
 		slog.Warn("cannot note a login", "user", entry.Name, "error", err)
 	}
 
+	writeSession(w, response{Token: issued, ExpiresAt: expires, User: entry.Name, RefreshToken: refresh, RefreshExpiresAt: &refreshExpires})
+}
+
+func writeSession(w http.ResponseWriter, body response) {
 	w.Header().Set("Content-Type", "application/json")
 	// A credential must never sit in a shared cache, and "no-store" is the only
 	// directive that says so without exception.
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(response{Token: issued, ExpiresAt: expires, User: entry.Name})
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// RefreshPath renews a session: the refresh token as the bearer, a fresh
+// access token back — with the role as it is now, so a promotion or a
+// demotion takes effect within one access token's life. The one route that
+// consults state for a session, and so the one point a session ends: a
+// refresh token issued before the user's session generation moved on, or
+// for a user who is gone, renews nothing. Public, like the login: an
+// access token that has run out is exactly when it is asked.
+const RefreshPath = "/v1/auth/refresh"
+
+func (m *Module) serveRefresh(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	id, generation, err := m.cfg.Tokens.VerifyRefresh(raw)
+	if err != nil || raw == "" {
+		unauthorized(w)
+		return
+	}
+	entry, ok := m.cfg.Registry.ByID(id)
+	if !ok || entry.SessionGeneration != generation {
+		unauthorized(w)
+		return
+	}
+	issued, expires, err := m.cfg.Tokens.IssueSession(entry.ID, entry.Admin(), m.cfg.TTL)
+	if err != nil {
+		slog.Error("cannot issue a token", "error", err, "user", entry.Name)
+		http.Error(w, "cannot issue a token", http.StatusInternalServerError)
+		return
+	}
+	writeSession(w, response{Token: issued, ExpiresAt: expires, User: entry.Name})
 }
 
 // unauthorized refuses without saying which half was wrong, and — deliberately —

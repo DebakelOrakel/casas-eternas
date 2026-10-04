@@ -485,6 +485,12 @@ func (c *coordinator) applyDone(report taskDoneReport, stored map[[3]int]bool) {
 	}
 	ended := time.Now()
 	task.State = taskDone
+	// A report can overtake the task's first event, which is what starts it
+	// here; then it started when it ended, and its level is not one that
+	// ended without starting.
+	if task.StartedAt == nil {
+		task.StartedAt = &ended
+	}
 	task.EndedAt = &ended
 	task.Result = report.Result
 	c.save(nil, task)

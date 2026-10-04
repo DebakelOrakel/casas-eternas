@@ -7,11 +7,11 @@ import (
 
 func TestVerify(t *testing.T) {
 	r := open(t, t.TempDir())
-	ada, err := r.Create("ada", "correct horse")
+	ada, err := r.Create("ada", "Correct horse")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Create("grace", "other"); err != nil {
+	if _, err := r.Create("grace", "Other-pass1"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -19,15 +19,15 @@ func TestVerify(t *testing.T) {
 		name, password string
 		want           bool
 	}{
-		{"ada", "correct horse", true},
+		{"ada", "Correct horse", true},
 		{"ada", "wrong", false},
 		{"ada", "", false},
-		{"grace", "other", true},
+		{"grace", "Other-pass1", true},
 		// One user's password must not open another's account, which is what
 		// a lookup that fell back to "any known hash" would do.
-		{"grace", "correct horse", false},
-		{"nobody", "correct horse", false},
-		{"", "correct horse", false},
+		{"grace", "Correct horse", false},
+		{"nobody", "Correct horse", false},
+		{"", "Correct horse", false},
 	}
 	for _, c := range cases {
 		entry, got, err := r.Verify(c.name, c.password)
@@ -56,10 +56,10 @@ func TestVerify(t *testing.T) {
 // otherwise be a silent overwrite or a silent second account.
 func TestCreateRefusals(t *testing.T) {
 	r := open(t, t.TempDir())
-	if _, err := r.Create("ada", "pw12345"); err != nil {
+	if _, err := r.Create("ada", "Pw12345-geheim"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Create("ada", "pw12345"); err == nil {
+	if _, err := r.Create("ada", "Pw12345-geheim"); err == nil {
 		t.Error("a duplicate name was created")
 	}
 	// A name minted WITHOUT a credential is still taken: attaching a password
@@ -67,10 +67,10 @@ func TestCreateRefusals(t *testing.T) {
 	if _, err := r.Ensure("grace"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Create("grace", "pw12345"); err == nil {
+	if _, err := r.Create("grace", "Pw12345-geheim"); err == nil {
 		t.Error("Create clobbered an existing identity")
 	}
-	if _, err := r.Create("", "pw12345"); err == nil {
+	if _, err := r.Create("", "Pw12345-geheim"); err == nil {
 		t.Error("an empty name was created")
 	}
 	if _, err := r.Create("eve", ""); err == nil {
@@ -80,20 +80,20 @@ func TestCreateRefusals(t *testing.T) {
 
 func TestSetPassword(t *testing.T) {
 	r := open(t, t.TempDir())
-	if _, err := r.Create("ada", "first"); err != nil {
+	if _, err := r.Create("ada", "First-pass1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.SetPassword("ada", "second"); err != nil {
+	if err := r.SetPassword("ada", "Second-pass1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, _ := r.Verify("ada", "first"); ok {
+	if _, ok, _ := r.Verify("ada", "First-pass1"); ok {
 		t.Error("the old password still works")
 	}
-	if _, ok, _ := r.Verify("ada", "second"); !ok {
+	if _, ok, _ := r.Verify("ada", "Second-pass1"); !ok {
 		t.Error("the new password does not work")
 	}
 	// A typo'd name must not silently mint a new account.
-	if err := r.SetPassword("adda", "pw"); err == nil {
+	if err := r.SetPassword("adda", "Pw-passwort1"); err == nil {
 		t.Error("SetPassword invented a user")
 	}
 	if err := r.SetPassword("ada", ""); err == nil {
@@ -106,20 +106,20 @@ func TestSetPassword(t *testing.T) {
 // exactly what ids exist to prevent.
 func TestDeleteAndReAdd(t *testing.T) {
 	r := open(t, t.TempDir())
-	ada, err := r.Create("ada", "pw12345")
+	ada, err := r.Create("ada", "Pw12345-geheim")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Delete("ada"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, _ := r.Verify("ada", "pw12345"); ok {
+	if _, ok, _ := r.Verify("ada", "Pw12345-geheim"); ok {
 		t.Error("a deleted user still verifies")
 	}
 	if _, ok := r.ByID(ada.ID); ok {
 		t.Error("a deleted user still resolves by id")
 	}
-	again, err := r.Create("ada", "pw12345")
+	again, err := r.Create("ada", "Pw12345-geheim")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestListIsSortedByName(t *testing.T) {
 // are only comparable because their work factors match.
 func TestUnknownUserCostsTheSameAsAWrongPassword(t *testing.T) {
 	r := open(t, t.TempDir())
-	if _, err := r.Create("ada", "pw12345"); err != nil {
+	if _, err := r.Create("ada", "Pw12345-geheim"); err != nil {
 		t.Fatal(err)
 	}
 	measure := func(name string) time.Duration {

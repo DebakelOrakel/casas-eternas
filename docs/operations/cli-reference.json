@@ -177,13 +177,13 @@
         {
           "name": "global.auth.session-ttl",
           "default": "720h0m0s",
-          "usage": "How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then global.auth.token-ttl is the one that matters.",
+          "usage": "How long a login lasts before a password is needed again: the life of the refresh token that renews the access token.",
           "env": "CASAS_GLOBAL_AUTH_SESSION_TTL"
         },
         {
           "name": "global.auth.token-ttl",
-          "default": "720h0m0s",
-          "usage": "How long an issued token is valid.",
+          "default": "15m0s",
+          "usage": "How long an access token is valid. Short, because nothing is consulted when one is used: a session that is ended (a password changed or reset) stops working when its access token runs out.",
           "env": "CASAS_GLOBAL_AUTH_TOKEN_TTL"
         },
         {
@@ -330,14 +330,14 @@
       "key": "global.auth.session-ttl",
       "env": "CASAS_GLOBAL_AUTH_SESSION_TTL",
       "default": "720h0m0s",
-      "usage": "How long a login lasts before a password is needed again. Has no effect until token renewal exists; until then global.auth.token-ttl is the one that matters.",
+      "usage": "How long a login lasts before a password is needed again: the life of the refresh token that renews the access token.",
       "command": "casas-eternas start"
     },
     {
       "key": "global.auth.token-ttl",
       "env": "CASAS_GLOBAL_AUTH_TOKEN_TTL",
-      "default": "720h0m0s",
-      "usage": "How long an issued token is valid.",
+      "default": "15m0s",
+      "usage": "How long an access token is valid. Short, because nothing is consulted when one is used: a session that is ended (a password changed or reset) stops working when its access token runs out.",
       "command": "casas-eternas start"
     },
     {

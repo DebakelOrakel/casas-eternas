@@ -10,9 +10,14 @@ import { getServerStatus, refreshServerStatus } from './serverStatus'
 
 const STORAGE_KEY = 'casas-eternas.session'
 
+// `refreshToken` renews `token` when it runs out (docs/decisions/
+// server-auth.md, "Revocation"): the access token lives minutes, the
+// refresh token as long as the sign-in. A session kept from before the
+// server issued one has none, and ends when its token does.
 interface Session {
   token: string
   user: string
+  refreshToken?: string
 }
 
 // localStorage rather than sessionStorage or memory, and it is a trade rather
@@ -28,7 +33,7 @@ function read(): Session | null {
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<Session>
     if (!parsed.token || !parsed.user) return null
-    return { token: parsed.token, user: parsed.user }
+    return { token: parsed.token, user: parsed.user, refreshToken: parsed.refreshToken }
   } catch {
     // A storage that throws (private mode, disabled, or a value someone else
     // wrote) means no session, never a crash on the way to the first frame.
@@ -142,9 +147,9 @@ export async function signIn(user: string, password: string): Promise<SignInOutc
 // Takes the session a sign-in or a redeemed code answered with; false where
 // the answer holds no token.
 async function begin(response: Response, user: string): Promise<boolean> {
-  const body = (await response.json()) as { token?: string; user?: string }
+  const body = (await response.json()) as { token?: string; user?: string; refreshToken?: string }
   if (!body.token) return false
-  current = { token: body.token, user: body.user ?? user }
+  current = { token: body.token, user: body.user ?? user, refreshToken: body.refreshToken }
   write(current)
   announce()
   // The status carries authMode and loginPath, neither of which changed — but
@@ -205,12 +210,65 @@ export function signOut(): void {
  * wrapper turns that into a state change every listener sees, instead of twelve
  * call sites each inventing a way to report a failure.
  */
+//
+// A 401 is first taken as an access token that ran out: the session is
+// renewed once and the request sent again. Only when that fails is the
+// session lost.
 export async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
-  const headers = { ...(init.headers as Record<string, string> | undefined), ...authHeaders() }
-  const response = await fetch(input, { ...init, headers })
+  const send = (): Promise<Response> => fetch(input, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), ...authHeaders() } })
+  const sentWith = current
+  let response = await send()
+  if (response.status !== 401 || !current) return response
+  // Renewed meanwhile by another request: send again with that token.
+  if (current !== sentWith || (await renewSession())) response = await send()
   if (response.status === 401 && current) {
     signOut()
     for (const listener of lostListeners) listener()
   }
   return response
+}
+
+/**
+ * Takes the session a password change answered with: the change ended every
+ * session of the user, this one's renewal included. The same user, so no
+ * one is told of a change.
+ */
+export async function replaceSession(response: Response): Promise<void> {
+  const body = (await response.json().catch(() => ({}))) as { token?: string; refreshToken?: string }
+  if (!current || !body.token) return
+  current = { ...current, token: body.token, refreshToken: body.refreshToken ?? current.refreshToken }
+  write(current)
+}
+
+// The renewal in flight, shared: requests that all hit a run-out token at
+// once renew it once.
+let renewing: Promise<boolean> | null = null
+
+// Renews the access token with the refresh token; false where there is
+// none, the server refuses it (the session was ended, or has run its
+// course) or cannot be reached.
+function renewSession(): Promise<boolean> {
+  renewing ??= (async () => {
+    const held = current
+    if (!held?.refreshToken) return false
+    try {
+      const status = await getServerStatus()
+      if (!status.apiBase) return false
+      const response = await fetch(`${status.apiBase}/auth/refresh`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { Authorization: `Bearer ${held.refreshToken}` },
+      })
+      if (!response.ok) return false
+      const body = (await response.json()) as { token?: string }
+      // Signed out, or signed in as someone else, meanwhile: not ours to set.
+      if (!body.token || current !== held) return false
+      current = { ...held, token: body.token }
+      write(current)
+      return true
+    } catch {
+      return false
+    }
+  })().finally(() => { renewing = null })
+  return renewing
 }

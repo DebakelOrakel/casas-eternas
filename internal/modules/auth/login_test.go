@@ -24,10 +24,10 @@ func newTestModule(t *testing.T, ttl time.Duration) (*Module, *token.Tokens) {
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	if _, err := registry.Create("ada", "geheim"); err != nil {
+	if _, err := registry.Create("ada", "Geheim-2026"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	m, err := New(Config{Tokens: tokens, TTL: ttl, Registry: registry, StorageDir: t.TempDir()})
+	m, err := New(Config{Tokens: tokens, TTL: ttl, SessionTTL: 24 * time.Hour, Registry: registry, StorageDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -52,7 +52,7 @@ func login(t *testing.T, m *Module, name, password string) *httptest.ResponseRec
 
 func TestLoginIssuesAUsableSession(t *testing.T) {
 	m, tokens := newTestModule(t, time.Hour)
-	recorder := login(t, m, "ada", "geheim")
+	recorder := login(t, m, "ada", "Geheim-2026")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("login = %d, want 200: %s", recorder.Code, recorder.Body)
 	}
@@ -86,7 +86,7 @@ func TestLoginIssuesAUsableSession(t *testing.T) {
 	}
 	// The same person again is the same id — logging in twice must not fork
 	// the identity.
-	second := login(t, m, "ada", "geheim")
+	second := login(t, m, "ada", "Geheim-2026")
 	var again response
 	_ = json.NewDecoder(second.Body).Decode(&again)
 	if s, _ := tokens.Verify(again.Token, token.AudienceSession); s != entry.ID {
@@ -108,7 +108,7 @@ func TestLoginRefusals(t *testing.T) {
 	m, _ := newTestModule(t, time.Hour)
 	for _, c := range []struct{ name, user, password string }{
 		{"wrong password", "ada", "falsch"},
-		{"unknown user", "grace", "geheim"},
+		{"unknown user", "grace", "Geheim-2026"},
 		{"empty password", "ada", ""},
 		{"no credentials at all", "", ""},
 	} {
@@ -136,7 +136,7 @@ func TestUnreadableStoreIsNotAWrongPassword(t *testing.T) {
 	if err := m.Close(); err != nil {
 		t.Fatalf("closing: %v", err)
 	}
-	recorder := login(t, m, "ada", "geheim")
+	recorder := login(t, m, "ada", "Geheim-2026")
 	if recorder.Code != http.StatusInternalServerError {
 		t.Errorf("login against a broken store = %d, want 500", recorder.Code)
 	}
@@ -176,13 +176,13 @@ func TestNewRequiresEverything(t *testing.T) {
 // config list into auth.db (docs/decisions/server-user-admin.md).
 func TestTheRoleMintsTheAdminClaim(t *testing.T) {
 	m, tokens := newTestModule(t, time.Hour)
-	if _, err := m.cfg.Registry.Create("root", "geheim"); err != nil {
+	if _, err := m.cfg.Registry.Create("root", "Geheim-2026"); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.cfg.Registry.SetRole("root", user.RoleAdmin); err != nil {
 		t.Fatal(err)
 	}
-	recorder := login(t, m, "root", "geheim")
+	recorder := login(t, m, "root", "Geheim-2026")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("admin login = %d: %s", recorder.Code, recorder.Body)
 	}
@@ -199,7 +199,7 @@ func TestTheRoleMintsTheAdminClaim(t *testing.T) {
 	if err := m.cfg.Registry.SetRole("root", user.RoleUser); err != nil {
 		t.Fatal(err)
 	}
-	again := login(t, m, "root", "geheim")
+	again := login(t, m, "root", "Geheim-2026")
 	var demoted response
 	if err := json.NewDecoder(again.Body).Decode(&demoted); err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestOnlyPostLogsIn(t *testing.T) {
 		t.Fatalf("Mount: %v", err)
 	}
 	request := httptest.NewRequest(http.MethodGet, Path, nil)
-	request.SetBasicAuth("ada", "geheim")
+	request.SetBasicAuth("ada", "Geheim-2026")
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, request)
 	if recorder.Code == http.StatusOK {

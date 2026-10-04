@@ -44,7 +44,7 @@ func TestCodesAndNetworkAdmin(t *testing.T) {
 		mux.ServeHTTP(recorder, request)
 		return recorder
 	}
-	admin := tokenOf(login(t, m, "ada", "geheim"))
+	admin := tokenOf(login(t, m, "ada", "Geheim-2026"))
 
 	created := do(http.MethodPost, AdminPrefix+"/invites", admin, `{"uses":2,"validHours":24}`)
 	var invite struct {
@@ -66,15 +66,15 @@ func TestCodesAndNetworkAdmin(t *testing.T) {
 
 	// Registering: lower case and without dashes is the same code.
 	sloppy := strings.ToLower(strings.ReplaceAll(invite.Code, "-", ""))
-	grace := tokenOf(do(http.MethodPost, RedeemPath, "", `{"code":"`+sloppy+`","name":"grace","password":"pw"}`))
-	if got := do(http.MethodPost, RedeemPath, "", `{"code":"`+invite.Code+`","name":"grace","password":"pw"}`); got.Code != http.StatusConflict {
+	grace := tokenOf(do(http.MethodPost, RedeemPath, "", `{"code":"`+sloppy+`","name":"grace","password":"Pw-passwort1"}`))
+	if got := do(http.MethodPost, RedeemPath, "", `{"code":"`+invite.Code+`","name":"grace","password":"Pw-passwort1"}`); got.Code != http.StatusConflict {
 		t.Errorf("a taken name = %d, want 409", got.Code)
 	}
-	if got := do(http.MethodPost, RedeemPath, "", `{"code":"`+invite.Code+`","name":"x","password":"pw"}`); got.Code != http.StatusBadRequest {
+	if got := do(http.MethodPost, RedeemPath, "", `{"code":"`+invite.Code+`","name":"x","password":"Pw-passwort1"}`); got.Code != http.StatusBadRequest {
 		t.Errorf("a bad name = %d, want 400", got.Code)
 	}
-	tokenOf(do(http.MethodPost, RedeemPath, "", `{"code":"`+invite.Code+`","name":"linus","password":"pw"}`))
-	if got := do(http.MethodPost, RedeemPath, "", `{"code":"`+invite.Code+`","name":"eve","password":"pw"}`); got.Code != http.StatusForbidden {
+	tokenOf(do(http.MethodPost, RedeemPath, "", `{"code":"`+invite.Code+`","name":"linus","password":"Pw-passwort1"}`))
+	if got := do(http.MethodPost, RedeemPath, "", `{"code":"`+invite.Code+`","name":"eve","password":"Pw-passwort1"}`); got.Code != http.StatusForbidden {
 		t.Errorf("a spent code = %d, want 403", got.Code)
 	}
 	if list := do(http.MethodGet, AdminPrefix+"/invites", admin, ""); !strings.Contains(list.Body.String(), `"invites":[]`) {
@@ -100,11 +100,11 @@ func TestCodesAndNetworkAdmin(t *testing.T) {
 	if reset.Code != http.StatusCreated || json.Unmarshal(reset.Body.Bytes(), &resetCode) != nil {
 		t.Fatalf("reset = %d %s", reset.Code, reset.Body.String())
 	}
-	tokenOf(do(http.MethodPost, RedeemPath, "", `{"code":"`+resetCode.Code+`","password":"neu"}`))
-	if got := login(t, m, "grace", "neu"); got.Code != http.StatusOK {
+	tokenOf(do(http.MethodPost, RedeemPath, "", `{"code":"`+resetCode.Code+`","password":"Neu-passwort"}`))
+	if got := login(t, m, "grace", "Neu-passwort"); got.Code != http.StatusOK {
 		t.Errorf("login after the reset = %d", got.Code)
 	}
-	if got := do(http.MethodPost, RedeemPath, "", `{"code":"`+resetCode.Code+`","password":"again"}`); got.Code != http.StatusForbidden {
+	if got := do(http.MethodPost, RedeemPath, "", `{"code":"`+resetCode.Code+`","password":"Again-passwort"}`); got.Code != http.StatusForbidden {
 		t.Errorf("a reset code used twice = %d, want 403", got.Code)
 	}
 
@@ -119,8 +119,23 @@ func TestCodesAndNetworkAdmin(t *testing.T) {
 		t.Errorf("another's role = %d, want 204", got.Code)
 	}
 
+	// A refresh answers the role as it is now: grace, promoted after her
+	// sign-in, gets an access token with the claim.
+	var graceSession struct {
+		RefreshToken string `json:"refreshToken"`
+	}
+	_ = json.Unmarshal(login(t, m, "grace", "Neu-passwort").Body.Bytes(), &graceSession)
+	if got := do(http.MethodPost, RefreshPath, graceSession.RefreshToken, ""); got.Code != http.StatusOK {
+		t.Errorf("a refresh = %d, want 200", got.Code)
+	} else if _, admin, err := m.cfg.Tokens.VerifySession(tokenOf(got)); err != nil || !admin {
+		t.Errorf("the refreshed token has admin %v (%v)", admin, err)
+	}
+	if got := do(http.MethodPost, RefreshPath, grace, ""); got.Code != http.StatusUnauthorized {
+		t.Errorf("an access token as a refresh token = %d, want 401", got.Code)
+	}
+
 	// Demoted: the token still carries the claim, the registry decides.
-	graceAdmin := tokenOf(login(t, m, "grace", "neu"))
+	graceAdmin := tokenOf(login(t, m, "grace", "Neu-passwort"))
 	if got := do(http.MethodGet, AdminPrefix+"/users", graceAdmin, ""); got.Code != http.StatusOK {
 		t.Fatalf("a promoted admin = %d, want 200", got.Code)
 	}
@@ -147,7 +162,7 @@ func TestRedeemIsRateLimited(t *testing.T) {
 	}
 	last := 0
 	for i := 0; i < redeemFailures+1; i++ {
-		request := httptest.NewRequest(http.MethodPost, RedeemPath, strings.NewReader(`{"code":"AAAA-BBBB-CCCC-DDDD","name":"eve","password":"pw"}`))
+		request := httptest.NewRequest(http.MethodPost, RedeemPath, strings.NewReader(`{"code":"AAAA-BBBB-CCCC-DDDD","name":"eve","password":"Pw-passwort1"}`))
 		request.RemoteAddr = "198.51.100.7:999"
 		recorder := httptest.NewRecorder()
 		mux.ServeHTTP(recorder, request)
@@ -159,7 +174,7 @@ func TestRedeemIsRateLimited(t *testing.T) {
 
 	// From a public address, X-Forwarded-For is the client's own word: a
 	// new one per request changes nothing.
-	request := httptest.NewRequest(http.MethodPost, RedeemPath, strings.NewReader(`{"code":"AAAA-BBBB-CCCC-DDDD","name":"eve","password":"pw"}`))
+	request := httptest.NewRequest(http.MethodPost, RedeemPath, strings.NewReader(`{"code":"AAAA-BBBB-CCCC-DDDD","name":"eve","password":"Pw-passwort1"}`))
 	request.RemoteAddr = "198.51.100.7:999"
 	request.Header.Set("X-Forwarded-For", "203.0.113.99")
 	recorder := httptest.NewRecorder()

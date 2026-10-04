@@ -52,7 +52,7 @@ func authModuleFixture(t *testing.T) *auth.Module {
 	if err != nil {
 		t.Fatal(err)
 	}
-	module, err := auth.New(auth.Config{Tokens: tokens, TTL: time.Hour, Registry: registry, StorageDir: t.TempDir()})
+	module, err := auth.New(auth.Config{Tokens: tokens, TTL: time.Hour, SessionTTL: 24 * time.Hour, Registry: registry, StorageDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestAdminRequestRoundTrip(t *testing.T) {
 
 	var created user.User
 	err := adminRequestOver(socket, http.MethodPost, auth.UsersPath,
-		map[string]string{"name": "ada", "password": "geheim"}, &created)
+		map[string]string{"name": "ada", "password": "Geheim-2026"}, &created)
 	if err != nil {
 		t.Fatalf("create over the socket: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestAdminRequestRoundTrip(t *testing.T) {
 
 	// The server's refusal arrives as its message, not as a bare status.
 	err = adminRequestOver(socket, http.MethodPost, auth.UsersPath,
-		map[string]string{"name": "ada", "password": "x"}, nil)
+		map[string]string{"name": "ada", "password": "Xx-passwort1"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("duplicate create: %v", err)
 	}

@@ -185,9 +185,10 @@ proposed before it is added.
 as well as the token's adm claim, so a demoted admin is out at once; the
 redeem limiter reads X-Forwarded-For only behind a private-network router,
 and counts a refused name too, since it is checked after the code. A
-known limit: a password change or a reset does not end sessions already
-signed in — the tokens are stateless and hold until their TTL, the same
-as for blocking (fork 7).
+person's password has at least 10 characters, upper- and lower-case
+letters among them. Setting a password ends the user's other sessions
+within an access token's life (DEC-0019 step 8, built the same day);
+blocking (fork 7) is now unblocked, not built.
 
 2026-10-04, later: the administration BUILT (forks 1, 3, 4 and 8) — the
 admin API on the network under /v1/auth/admin behind the adm claim, with no

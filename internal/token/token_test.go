@@ -281,3 +281,27 @@ func base64url(t *testing.T, value map[string]any) string {
 	}
 	return base64.RawURLEncoding.EncodeToString(encoded)
 }
+
+// A refresh token carries its generation, and opens neither a session nor
+// anything else; a session does not pass as a refresh token.
+func TestRefreshIsItsOwnAudience(t *testing.T) {
+	tokens := newTokens(t)
+	refresh, _, err := tokens.IssueRefresh("u1", 7, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, generation, err := tokens.VerifyRefresh(refresh)
+	if err != nil || subject != "u1" || generation != 7 {
+		t.Fatalf("VerifyRefresh = %q, %d, %v", subject, generation, err)
+	}
+	if _, _, err := tokens.VerifySession(refresh); err == nil {
+		t.Error("a refresh token passed as a session")
+	}
+	session, _, err := tokens.IssueSession("u1", false, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := tokens.VerifyRefresh(session); err == nil {
+		t.Error("a session passed as a refresh token")
+	}
+}

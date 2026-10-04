@@ -1,4 +1,4 @@
-import { authFetch, hasSession, onSessionChange } from './session'
+import { authFetch, hasSession, onSessionChange, replaceSession } from './session'
 import { refusalText } from './refusal'
 import { apiBase } from './worldClient'
 
@@ -113,7 +113,10 @@ export async function changePassword(currentPassword: string, newPassword: strin
   const url = await meUrl('/password')
   const response = url ? await authFetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: currentPassword, new: newPassword }) }).catch(() => null) : null
   if (response?.status === 403) return { ok: false, reason: 'wrongPassword' }
-  return response?.ok ? { ok: true } : failed(response)
+  if (!response?.ok) return failed(response)
+  // The change ended every session, this one too; the answer is its successor.
+  await replaceSession(response)
+  return { ok: true }
 }
 
 export async function uploadAvatar(image: Blob): Promise<ProfileOutcome> {

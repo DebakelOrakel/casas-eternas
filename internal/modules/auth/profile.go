@@ -116,7 +116,8 @@ func (m *Module) serveSetMe(w http.ResponseWriter, r *http.Request) {
 
 // serveChangePassword sets the caller's password, given the current one: a
 // wrong current password answers 403, so a client tells it from a session
-// that has run out (401).
+// that has run out (401). A changed password ends every session of the
+// user, so the caller is answered a fresh one, as a login is.
 func (m *Module) serveChangePassword(w http.ResponseWriter, r *http.Request) {
 	entry, ok := m.me(w, r)
 	if !ok {
@@ -139,7 +140,8 @@ func (m *Module) serveChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("password changed by its user", "user", entry.Name, "id", entry.ID)
-	w.WriteHeader(http.StatusNoContent)
+	entry, _ = m.cfg.Registry.ByID(entry.ID)
+	m.signIn(w, entry)
 }
 
 // --- avatars ----------------------------------------------------------------

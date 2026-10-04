@@ -23,6 +23,7 @@ func passwordConfig(t *testing.T) config.Config {
 	cfg.Global.Listen = ":0"
 	cfg.Global.Auth.Mode = string(config.AuthPassword)
 	cfg.Global.Auth.TokenTTL = time.Hour
+	cfg.Global.Auth.SessionTTL = 24 * time.Hour
 	cfg.Auth.Storage = config.Storage{Dir: &config.DirStorage{Path: t.TempDir()}}
 	return cfg
 }
@@ -57,7 +58,7 @@ func TestLoginFollowsTheAuthTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := seed.Create("ada", "pw12345"); err != nil {
+	if _, err := seed.Create("ada", "Pw12345-geheim"); err != nil {
 		t.Fatal(err)
 	}
 	if err := seed.Close(); err != nil {
@@ -139,7 +140,7 @@ func TestServiceTokenRouteIsPublic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := seed.Create("ada", "pw12345"); err != nil {
+	if _, err := seed.Create("ada", "Pw12345-geheim"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := seed.CreateService("workers"); err != nil {
