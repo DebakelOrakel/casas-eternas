@@ -78,7 +78,8 @@ export interface MeshErosionOptions {
   age: number
   routingEvery?: number
   params?: ErosionEngineParams
-  pool?: { createWorker: () => WorkerLike } & PipelineOptions
+  // `releaseWorker`: the workers kept for the next run (reusableWorkers).
+  pool?: { createWorker: () => WorkerLike; releaseWorker?: (worker: WorkerLike) => void } & PipelineOptions
   onProgress?: (fraction: number) => void
   // The node heights every ~eighth of the run (a copy), for a redraw —
   // the pass adapter's cadence (erosionPassV2.ts).
@@ -336,8 +337,8 @@ export async function runMeshErosion(mesh: PeriodicTriangulation, initial: Float
   }
   const report = (done: number, iteration: number): void => options.onProgress?.((done + iteration + 1) / options.age)
   if (options.pool) {
-    const { createWorker, ...pipeline } = options.pool
-    const engine = await PipelinedErosionEngine.create(0, 0, initial, forcing, createWorker, pipeline, params, index)
+    const { createWorker, releaseWorker, ...pipeline } = options.pool
+    const engine = await PipelinedErosionEngine.create(0, 0, initial, forcing, createWorker, pipeline, params, index, releaseWorker)
     try {
       await chunks((step, done) => engine.run(step, (iteration) => report(done, iteration)), () => engine.expandZ(initial))
       const popped = engine.finalizeRouting()

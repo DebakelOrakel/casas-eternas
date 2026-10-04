@@ -29,7 +29,7 @@ import { join, dirname } from 'node:path'
 import { Worker as NodeWorker, isMainThread } from 'node:worker_threads'
 import { availableParallelism } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
-import { BAKE_PIPELINE_DEPTH, EngineStalledError, type PipelineOptions, type WorkerLike } from '../src/generator/surface/erosionEnginePool'
+import { BAKE_PIPELINE_DEPTH, EngineStalledError, reusableWorkers, type PipelineOptions, type ReusableWorkers, type WorkerLike } from '../src/generator/surface/erosionEnginePool'
 import { levelBudget, levelHydrology, type MeshLevel } from '../src/generator/pipeline/meshBakeStage'
 import { planTiles } from '../src/generator/pipeline/tilePlan'
 import { meshRouting } from '../src/generator/mesh/meshHydrology'
@@ -312,10 +312,43 @@ const GENERATOR_CODE: string = typeof __GENERATOR_CODE__ === 'string' ? __GENERA
 // without it differs in the last bits under the same artifact key (the
 // pooled result is the same for every worker split — measured 1+1 against
 // 4+2, 2026-10-02). It used to be none below four cores.
-function enginePool(): { createWorker: () => WorkerLike } & PipelineOptions {
+//
+// The threads are KEPT across engines, for the whole process: a history
+// builds an engine every epoch, and starting seven threads that load this
+// bundle again was part of every epoch of a level-1 replay (profiled
+// 2026-10-04). A kept thread is unreferenced while idle, so it keeps no
+// one-shot run alive, and one that has died is dropped, not handed out.
+let keptWorkers: ReusableWorkers | null = null
+function engineWorkers(): ReusableWorkers {
+  if (keptWorkers) return keptWorkers
+  const dead = new WeakSet<NodeWorker>()
+  const node = (worker: WorkerLike): NodeWorker => worker as unknown as NodeWorker
+  const supply = reusableWorkers(() => {
+    const worker = new NodeWorker(new URL(import.meta.url))
+    worker.on('exit', () => dead.add(worker))
+    return worker as unknown as WorkerLike
+  }, (worker) => !dead.has(node(worker)))
+  keptWorkers = {
+    createWorker: () => {
+      const worker = supply.createWorker()
+      node(worker).ref()
+      return worker
+    },
+    releaseWorker: (worker) => {
+      node(worker).unref()
+      supply.releaseWorker(worker)
+    },
+    close: supply.close,
+  }
+  return keptWorkers
+}
+
+function enginePool(): { createWorker: () => WorkerLike; releaseWorker: (worker: WorkerLike) => void } & PipelineOptions {
   const cores = availableParallelism()
+  const workers = engineWorkers()
   return {
-    createWorker: () => new NodeWorker(new URL(import.meta.url)) as unknown as WorkerLike,
+    createWorker: workers.createWorker,
+    releaseWorker: workers.releaseWorker,
     ...(cores >= 8 ? { stencilWorkers: 4, refreshWorkers: 2 } : cores >= 4 ? { stencilWorkers: 2, refreshWorkers: 1 } : { stencilWorkers: 1, refreshWorkers: 1 }),
     pipelineDepth: BAKE_PIPELINE_DEPTH,
   }

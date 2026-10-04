@@ -44,7 +44,9 @@ import type { WorkerInit } from './erosionEnginePool'
 // after that, ALL control flows through Atomics on the ctrl/done arrays —
 // the worker parks in a blocking Atomics.wait (legal here: this is a
 // dedicated worker, not a main thread) and never touches the message loop
-// again until JOB_EXIT. The kernels it runs are the same functions the
+// again until JOB_EXIT. Then it takes the next init, if one comes: a pool
+// that keeps its workers (reusableWorkers) hands the same thread a new
+// engine instead of starting one per run. The kernels it runs are the same functions the
 // single-threaded ErosionEngine calls; determinism across worker counts is
 // the state layout's job, not this file's.
 //
@@ -178,16 +180,14 @@ async function boot(): Promise<void> {
   if (typeof self !== 'undefined' && typeof self.postMessage === 'function') {
     const scope = self
     scope.onmessage = (event) => {
-      scope.onmessage = null
       runLoop(event.data, () => scope.postMessage('ready'))
     }
     return
   }
   const { parentPort } = await import('node:worker_threads')
   if (!parentPort) throw new Error('erosionEngineWorker: no worker substrate')
-  parentPort.once('message', (init: WorkerInit) => {
+  parentPort.on('message', (init: WorkerInit) => {
     runLoop(init, () => parentPort.postMessage('ready'))
-    parentPort.close()
   })
 }
 

@@ -71,20 +71,62 @@ export interface WorkerLike {
   terminate(): unknown
   // worker_threads style …
   on?(event: 'message', listener: (value: unknown) => void): unknown
+  off?(event: 'message', listener: (value: unknown) => void): unknown
   // … or browser style.
   addEventListener?(event: 'message', listener: (event: { data: unknown }) => void): void
+  removeEventListener?(event: 'message', listener: (event: { data: unknown }) => void): void
 }
 
+// Workers kept for the next engine instead of terminated: a coupled
+// history builds a pipelined engine every epoch (the mesh changes), and a
+// thread started for each — loading its modules again — was part of
+// every epoch (profiled 2026-10-04, level 1 on 2048×1024: 7 threads per
+// epoch). The engine worker takes one init after another
+// (erosionEngineWorker.ts), so a kept thread is a fresh engine; nothing of
+// the last run survives in it but the loaded code.
+export interface ReusableWorkers {
+  createWorker: () => WorkerLike
+  releaseWorker: (worker: WorkerLike) => void
+  // Terminates the kept workers.
+  close: () => Promise<void>
+}
+
+// `alive` tells a kept worker that has died since (it is dropped): one
+// handed to an engine would never answer its init.
+export function reusableWorkers(createWorker: () => WorkerLike, alive: (worker: WorkerLike) => boolean = () => true): ReusableWorkers {
+  const idle: WorkerLike[] = []
+  return {
+    createWorker: () => {
+      for (let worker = idle.pop(); worker; worker = idle.pop()) if (alive(worker)) return worker
+      return createWorker()
+    },
+    releaseWorker: (worker) => {
+      idle.push(worker)
+    },
+    close: async () => {
+      await Promise.all(idle.splice(0).map((worker) => worker.terminate()))
+    },
+  }
+}
+
+// The listener goes once it has heard: a kept worker hears one 'ready'
+// per engine, and every engine adds its own.
 function onceReady(worker: WorkerLike): Promise<void> {
   return new Promise((resolve) => {
     if (worker.on) {
-      worker.on('message', (value) => {
-        if (value === 'ready') resolve()
-      })
+      const listener = (value: unknown): void => {
+        if (value !== 'ready') return
+        worker.off?.('message', listener)
+        resolve()
+      }
+      worker.on('message', listener)
     } else if (worker.addEventListener) {
-      worker.addEventListener('message', (event) => {
-        if (event.data === 'ready') resolve()
-      })
+      const listener = (event: { data: unknown }): void => {
+        if (event.data !== 'ready') return
+        worker.removeEventListener?.('message', listener)
+        resolve()
+      }
+      worker.addEventListener('message', listener)
     } else {
       throw new Error('worker exposes neither on() nor addEventListener()')
     }
@@ -372,6 +414,8 @@ export class PipelinedErosionEngine {
   private readonly ctrlB: Int32Array
   private readonly refreshCtrl: Int32Array
   private readonly kernelParams: KernelParams
+  // Where the workers go at close (reusableWorkers); null: terminated.
+  private releaseWorker: ((worker: WorkerLike) => void) | null = null
   private activeIndex = -1
   private inFlight = false
   // Global iteration cursor — chunked run() calls must not reset the
@@ -411,7 +455,8 @@ export class PipelinedErosionEngine {
   }
 
   // `prepared` runs the pipeline over a ready index (a mesh) instead of
-  // building the raster's.
+  // building the raster's. `releaseWorker` takes the workers back at close
+  // instead of terminating them (reusableWorkers).
   static async create(
     width: number,
     height: number,
@@ -421,6 +466,7 @@ export class PipelinedErosionEngine {
     options: PipelineOptions,
     params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS,
     prepared?: EngineIndex,
+    releaseWorker?: (worker: WorkerLike) => void,
   ): Promise<PipelinedErosionEngine> {
     if (options.stencilWorkers < 1 || options.refreshWorkers < 1 || options.pipelineDepth < 1) {
       throw new Error('pipeline options must all be >= 1')
@@ -466,9 +512,11 @@ export class PipelinedErosionEngine {
     }
     spawn({ role: 'refreshCoordinator', ctrl: ctrlBBuffer, done: doneBBuffer, refreshCtrl: refreshCtrlBuffer, workerId: 0, workerCount: options.refreshWorkers })
     await Promise.all(readies)
-    return new PipelinedErosionEngine(
+    const engine = new PipelinedErosionEngine(
       width, height, params, options, index, terrain, routing, workers,
       new Int32Array(ctrlABuffer), new Int32Array(doneABuffer), new Int32Array(ctrlBBuffer), new Int32Array(refreshCtrlBuffer))
+    engine.releaseWorker = releaseWorker ?? null
+    return engine
   }
 
   get z(): Float32Array {
@@ -609,6 +657,10 @@ export class PipelinedErosionEngine {
     Atomics.store(this.ctrlB, 1, JOB_EXIT)
     Atomics.add(this.ctrlB, 0, 1)
     Atomics.notify(this.ctrlB, 0)
-    await Promise.all(this.workers.map((worker) => worker.terminate()))
+    // A kept worker leaves its loop on the exit above and takes the next
+    // engine's init after it, in order.
+    const release = this.releaseWorker
+    if (release) this.workers.forEach((worker) => release(worker))
+    else await Promise.all(this.workers.map((worker) => worker.terminate()))
   }
 }

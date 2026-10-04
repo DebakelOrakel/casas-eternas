@@ -273,9 +273,18 @@ export interface CoupledEpochStats {
 // `blobs`: an index of sim.rafts as they are now (buildBlobIndex), built
 // right before a sweep over the nodes — the same value, much faster.
 function baselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobIndex): number {
+  return solidBaselineAt(sim, x, y, blobs) - sim.eustaticM / ELEVATION_METERS
+}
+
+// The baseline before the sea level: what an epoch evaluates once per node
+// and keeps (a float64, so the sum below is the same bits as baselineAt's).
+// Inside an epoch only sim.eustaticM moves after the step, so a node that
+// stays where it is keeps this value through the remesh and the sea's
+// change — re-evaluated, it was a twentieth of a level-1 epoch (profiled
+// 2026-10-04 on 2048×1024).
+function solidBaselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobIndex): number {
   return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.width, sim.height, sim.warpSeed, sim.seaLevelOffset, blobs)
     + dynamicTopographyAt(sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, x, y, sim.width, sim.height)
-    - sim.eustaticM / ELEVATION_METERS
 }
 
 // The terrain at the start of the history: the mesh from the synthesis,
@@ -384,7 +393,15 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // The rafts as the step left them, for every sweep below up to the end
   // of the epoch — nothing after the step moves them.
   const blobs = buildBlobIndex(sim.rafts, width, height)
-  for (let v = 0; v < mesh1.vertexSlots; v++) if (mesh1.vAlive[v]) z[v] = baselineAt(sim, mesh1.vx[v], mesh1.vy[v], blobs) + h[v]
+  const sea = sim.eustaticM / ELEVATION_METERS
+  // The solid baseline per slot of the rebuilt mesh, kept for the sweeps
+  // below (solidBaselineAt); the refine adds its new nodes' and may grow it.
+  let solid1 = new Float64Array(mesh1.vertexSlots)
+  for (let v = 0; v < mesh1.vertexSlots; v++) {
+    if (!mesh1.vAlive[v]) continue
+    solid1[v] = solidBaselineAt(sim, mesh1.vx[v], mesh1.vy[v], blobs)
+    z[v] = solid1[v] - sea + h[v]
+  }
   timing.baseline = lap()
   // The coarsen and the refine every remeshEvery-th epoch (the rebuild
   // from the moved nodes is every epoch — the drift needs it): the density
@@ -413,7 +430,13 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       hv[v] *= scale
       const cv = state.get(MESH_COLUMN)
       for (let j = 0; j < COLUMN_DEPTH; j++) cv[v * COLUMN_DEPTH + j] *= scale
-      state.get(MESH_Z)[v] = baselineAt(sim, x, y, blobs) + hv[v]
+      if (v >= solid1.length) {
+        const grown = new Float64Array(Math.max(v + 1, solid1.length * 2))
+        grown.set(solid1)
+        solid1 = grown
+      }
+      solid1[v] = solidBaselineAt(sim, x, y, blobs)
+      state.get(MESH_Z)[v] = solid1[v] - sea + hv[v]
     },
   })
   timing.remesh = lap()
@@ -430,8 +453,12 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   openLayer(column, sim.epoch, mesh.vertexSlots)
   const baseline = new Float32Array(mesh.vertexSlots)
   const zCanon = new Float32Array(mesh.vertexSlots)
+  // The kept solid baseline in the compacted order: the same nodes at the
+  // same positions as when it was evaluated.
+  const solid = new Float64Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) {
-    baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs)
+    solid[v] = solid1[order[v]]
+    baseline[v] = solid[v] - sea
     // The elevation scale's range, as the synthesis clamps it
     // (elevationField.computeElevation): a trench node carries a relief of
     // −3000 m under an abyssal baseline, and a baseline that subsides
@@ -715,7 +742,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     for (let v = 0; v < mesh.vertexSlots; v++) {
       if (!mesh.vAlive[v]) continue
       result.z[v] = Math.max(-1, Math.min(1, result.z[v] + seaShift))
-      baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs)
+      baseline[v] = solid[v] - sim.eustaticM / ELEVATION_METERS
     }
   }
   // THE ROUTING ON THE TERRAIN AS THE EPOCH LEAVES IT. The erosion's
