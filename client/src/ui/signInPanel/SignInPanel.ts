@@ -138,15 +138,16 @@ export function createSignInPanel(host: HTMLElement, onChange: () => void): Sign
         close()
         return
       }
-      // A name the server will not take is caught by the field's own pattern
-      // first; the rare one that gets past it reads as a code that failed.
+      // A name the server will not take: mostly none at all, since a reset
+      // code needs none and the field is therefore not required.
       const key = outcome === 'taken' ? 'common.panel.signIn.redeem.taken'
+        : outcome === 'badName' ? 'common.panel.signIn.redeem.badName'
         : outcome === 'limited' ? 'common.panel.signIn.redeem.limited'
         : outcome === 'unreachable' ? 'common.panel.signIn.unreachable'
         : 'common.panel.signIn.redeem.failed'
       redeemError.textContent = t(key)
       redeemError.hidden = false
-      ;(outcome === 'taken' ? redeemUser : codeInput).focus()
+      ;(outcome === 'taken' || outcome === 'badName' ? redeemUser : codeInput).focus()
     })
   })
 

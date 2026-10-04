@@ -63,9 +63,13 @@ type User struct {
 	// module keeps beside auth.db (fork 6). Empty: no picture.
 	Avatar     string `json:"avatar,omitempty"`
 	AvatarType string `json:"avatarType,omitempty"`
-	// InvitedBy is the invite code this user registered with (its id), so an
-	// admin sees who came with which code. Empty: made by an admin.
+	// InvitedBy is the invite code this user registered with (its id), and
+	// Inviter who made that code (its creator as the invite records it: an
+	// admin's login name, or "admin socket"). The code's record is gone once
+	// spent, so the name is kept here, for the admin table. Empty: made by
+	// an admin.
 	InvitedBy string `json:"invitedBy,omitempty"`
+	Inviter   string `json:"inviter,omitempty"`
 }
 
 // The role vocabulary. RoleUser is the accepted SPELLING of the default —

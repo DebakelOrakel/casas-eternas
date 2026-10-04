@@ -90,7 +90,7 @@ admin handlers, today served only on the unix admin socket
 handlers on the network listener behind the `adm` claim; they gain a gate,
 they do not move. Decided so on 2026-10-04 in
 [client-accounts.md](../decisions/client-accounts.md) (DEC-0034), with a
-profile panel beside it; not built.
+profile panel beside it; built the same day (internal/modules/auth/adminnet.go).
 
 **Login** — server-side, YES: that is the planned auth target
 (docs/design/access-control.md). Frontend-side, NO standalone login page: a
@@ -120,7 +120,7 @@ that, too, waits for the game-side write-up.
 
 ## Status
 
-2026-10-04: the admin and profile panels are decided in DEC-0034; not built.
+2026-10-04: the admin and profile panels are decided in DEC-0034 and built.
 
 direction agreed in discussion 2026-08-12 — nothing here is built or
 scheduled; the notes fork and the game screen deliberately wait for the

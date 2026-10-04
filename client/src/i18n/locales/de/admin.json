@@ -9,7 +9,7 @@
   "admin.users.col.user": "Benutzer",
   "admin.users.col.role": "Rolle",
   "admin.users.col.lastLogin": "Letzter Login",
-  "admin.users.col.invitedBy": "Eingeladen mit",
+  "admin.users.col.invitedBy": "Eingeladen von",
   "admin.users.never": "nie",
   "admin.users.you": "du",
   "admin.users.reset": "Reset-Code",

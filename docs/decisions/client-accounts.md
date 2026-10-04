@@ -93,8 +93,9 @@ is no registration without a code.
   apart by when and by whom they were made, and the user record keeps the
   code's id; an optional label is a flag added later, never a name taken
   away.
-- **Registering** is a public route, `POST /v1/auth/register` with code,
-  login name and password, exempt from the gate like the login. It checks
+- **Registering** is a public route, `POST /v1/auth/redeem` with code,
+  login name and password, exempt from the gate like the login (built as
+  `redeem`, not `register`: the same route spends a reset code). It checks
   the code, creates the user through the same `Create` the CLI uses (same
   name rules), counts the use, and answers like a login — the new user is
   signed in. The user record keeps the id of the code it came from, so the
@@ -124,13 +125,15 @@ The login records **when** a user last signed in, for the admin table.
 auth.db as a value. (c) In the artifact store. (d) In the browser only.
 (e) An external service such as Gravatar.
 
-**Answer: (a)** — `avatars/<user id>.webp` (or `.png`) under `auth.storage`,
+**Answer: (a)** — `avatars/<user id>` under `auth.storage`, PNG or JPEG
+with its media type in the user record,
 owned by the one process that owns that directory (the auth target when
 targets are split, DES-0013).
 
-- The client crops and scales to 256 × 256 in the browser and uploads at
-  most about 100 kB. The server checks the type, the size and the image's
-  dimensions only, so it needs no image library.
+- The client crops and scales to 256 × 256 in the browser and uploads a
+  JPEG. The server takes at most 200 kB, square, 64 to 1024 pixels a side,
+  and checks the type, the size and the image's dimensions only, so it
+  needs no image library.
 - `PUT` and `DELETE /v1/auth/me/avatar` for one's own;
   `GET /v1/auth/users/{id}/avatar` for any signed-in user, with an ETag.
   No image: the panels draw the initials, as the design does.
@@ -178,6 +181,14 @@ proposed before it is added.
 
 ## Status
 
+2026-10-04, after a review: the network admin gate checks the stored role
+as well as the token's adm claim, so a demoted admin is out at once; the
+redeem limiter reads X-Forwarded-For only behind a private-network router,
+and counts a refused name too, since it is checked after the code. A
+known limit: a password change or a reset does not end sessions already
+signed in — the tokens are stateless and hold until their TTL, the same
+as for blocking (fork 7).
+
 2026-10-04, later: the administration BUILT (forks 1, 3, 4 and 8) — the
 admin API on the network under /v1/auth/admin behind the adm claim, with no
 self-demotion or self-deletion there (internal/modules/auth/adminnet.go);
@@ -191,6 +202,5 @@ decided 2026-10-04 in conversation. The profile BUILT the same day (forks 5
 and 6): display name, last sign-in, the own password and the avatar, as
 routes under /v1/auth/me (internal/modules/auth/profile.go) and as the
 profile window on every screen (ui/profilePanel); the title bar shows the
-display name and the picture. Open: the invite codes and registration (fork
-4), the admin routes on the network and the admin panel (forks 1 and 8),
-reset codes. The CLI names in the build order are proposals, not decided.
+display name and the picture. The CLI names in the build order are
+proposals, not decided.

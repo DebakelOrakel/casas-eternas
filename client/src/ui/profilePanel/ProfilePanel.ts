@@ -1,4 +1,5 @@
-import { getLocale, t } from '../../i18n/i18n'
+import { t } from '../../i18n/i18n'
+import { formatMonth, initialsOf } from '../format'
 import { relabel } from '../../i18n/relabel'
 import { signOut } from '../../server/session'
 import { avatarFromFile, changePassword, currentAvatarUrl, currentProfile, loadProfile, removeAvatar, saveDisplayName, uploadAvatar, type ProfileOutcome } from '../../server/profileClient'
@@ -18,21 +19,13 @@ import './profilePanel.css'
 
 export interface ProfilePanel {
   open(): void
+  close(): void
   isOpen(): boolean
   dispose(): void
 }
 
 // The menu row's icon: a person.
 export const USER_ICON = 'M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10'
-
-// A name's initials, where there is no picture: one word gives its first two
-// letters, more give the first and the last word's first.
-export function initialsOf(name: string): string {
-  const parts = name.trim().split(/[\s._-]+/).filter(Boolean)
-  if (parts.length === 0) return '?'
-  if (parts.length === 1) return [...parts[0]].slice(0, 2).join('').toUpperCase()
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-}
 
 // A password's strength as the design draws it: four steps, from its length
 // and whether it holds anything but lower-case letters. A nudge, not a rule —
@@ -142,14 +135,19 @@ export function createProfilePanel(host: HTMLElement, notifications: Notificatio
     strengthLabel.textContent = t(STRENGTH_KEY[score])
   }
 
+  // The display name as last painted: a field that still holds it is the
+  // user's to overwrite, one that does not they have typed into.
+  let paintedName = ''
+
   function paint(): void {
     relabel(root)
     form.setAttribute('aria-label', t('profile.title'))
     const profile = currentProfile()
     if (!profile) return
-    const date = new Date(profile.createdAt).toLocaleDateString(getLocale() === 'de' ? 'de-CH' : 'en-GB', { month: 'long', year: 'numeric' })
+    const date = formatMonth(profile.createdAt)
     sub.textContent = t('profile.sub', { role: t(profile.admin ? 'profile.role.admin' : 'profile.role.user'), date })
-    displayName.value = profile.displayName
+    if (displayName.value === paintedName) displayName.value = profile.displayName
+    paintedName = profile.displayName
     loginName.value = profile.name
     adminButton.hidden = !profile.admin || !onOpenAdmin
     paintPicture()
@@ -216,7 +214,7 @@ export function createProfilePanel(host: HTMLElement, notifications: Notificatio
         const outcome = await step()
         if (outcome.ok) continue
         save.disabled = false
-        const message = outcome.reason === 'wrongPassword' ? t('notify.profile.passwordWrong') : t('notify.profile.failed', { reason: outcome.message ?? '' })
+        const message = outcome.reason === 'wrongPassword' ? t('notify.profile.passwordWrong') : t('notify.profile.failed', { reason: outcome.message ?? t('common.server.unreachable.label') })
         notifications?.show({ message, icon: '/icons/warning.png', durationMs: 8000 })
         if (outcome.reason === 'wrongPassword') currentPassword.focus()
         return
@@ -230,6 +228,7 @@ export function createProfilePanel(host: HTMLElement, notifications: Notificatio
   return {
     open(): void {
       dropPending()
+      displayName.value = paintedName = ''
       currentPassword.value = ''
       newPassword.value = ''
       save.disabled = false
@@ -241,6 +240,7 @@ export function createProfilePanel(host: HTMLElement, notifications: Notificatio
       })
       queueMicrotask(() => displayName.focus())
     },
+    close,
     isOpen: () => !root.hidden,
     dispose(): void {
       document.removeEventListener('keydown', onKeyDown)

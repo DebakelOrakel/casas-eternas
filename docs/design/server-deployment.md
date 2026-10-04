@@ -67,10 +67,11 @@ not mint identities. Rotation is a rollout, identically on both platforms.
 one process per store directory (with bbolt, kernel-enforced). Never a
 ConfigMap, never a Secret — those are operator→process channels, and this
 file goes the other way. On the cluster: a PVC on the auth Deployment,
-replicas 1. On a plain machine: a directory. Decided 2026-10-04, not built
+replicas 1. On a plain machine: a directory. Decided 2026-10-04
 ([client-accounts.md](../decisions/client-accounts.md), DEC-0034): the
 invite codes are records in auth.db, and the avatars are files beside it
-under `auth.storage` — the same volume, the same one process. Identical code path on both,
+under `auth.storage` — the same volume, the same one process (built the
+same day). Identical code path on both,
 which is the property the whole user-admin decision buys. (Its predecessor —
 an htpasswd file in the Secret — was the one row whose write path differed
 between platforms, and that asymmetry is why it is gone;
@@ -144,7 +145,7 @@ were ever tempted to be "just config".
 ## Status
 
 2026-10-04: DEC-0034 adds invite codes to auth.db and avatar files beside it
-under auth.storage; not built.
+under auth.storage; built.
 
 agreed, built and made true in one day (2026-08-13,
 decisions/server-user-admin.md): auth target, admin socket and `auth user`

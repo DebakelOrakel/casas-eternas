@@ -1,6 +1,6 @@
 import { t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
-import { formatWhen } from '../format'
+import { formatWhen, initialsOf } from '../format'
 import { icon } from '../chooserIcons'
 import { currentProfile } from '../../server/profileClient'
 import {
@@ -8,7 +8,6 @@ import {
   revokeInvite, rotateService, setRole, type AdminFailure, type AdminUser, type Invite, type ServiceAccount,
 } from '../../server/adminClient'
 import type { NotificationManager } from '../notifications/NotificationManager'
-import { initialsOf } from '../profilePanel/ProfilePanel'
 import '../theme/design.css'
 import '../worldChooser/worldChooser.css'
 import './adminPanel.css'
@@ -31,6 +30,7 @@ import './adminPanel.css'
 
 export interface AdminPanel {
   open(): void
+  close(): void
   isOpen(): boolean
   dispose(): void
 }
@@ -55,6 +55,8 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
   const root = document.createElement('div')
   root.className = 'world-chooser admin-window design-light'
   root.hidden = true
+  root.setAttribute('role', 'dialog')
+  root.setAttribute('aria-modal', 'true')
   root.innerHTML = `
     <div class="wc-sheet adm-sheet">
       <div class="adm-head">
@@ -116,7 +118,14 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
   const secretValue = q<HTMLElement>('[data-slot="secret-value"]')
   const copyButton = q<HTMLButtonElement>('[data-act="copy"]')
   const validSelect = q<HTMLSelectElement>('select[name="valid"]')
-  q<HTMLButtonElement>('[data-act="close"]').appendChild(icon('<path d="M6 6l12 12M18 6L6 18"/>'))
+  const closeButton = q<HTMLButtonElement>('[data-act="close"]')
+  closeButton.appendChild(icon('<path d="M6 6l12 12M18 6L6 18"/>'))
+  validSelect.append(...VALIDITY.map((v, i) => {
+    const option = el('option')
+    option.value = String(v.hours)
+    option.selected = i === 2
+    return option
+  }))
 
   let section: Section = 'users'
   let users: AdminUser[] = []
@@ -126,7 +135,7 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
   let confirming: string | null = null
 
   const refused = (failure: AdminFailure): void => {
-    notifications?.show({ message: t('notify.admin.failed', { reason: failure.failed }), icon: '/icons/warning.png', durationMs: 8000 })
+    notifications?.show({ message: t('notify.admin.failed', { reason: failure.failed ?? t('common.server.unreachable.label') }), icon: '/icons/warning.png', durationMs: 8000 })
   }
 
   // --- the one-time secret ----------------------------------------------------
@@ -136,8 +145,22 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
     copyButton.textContent = t('admin.secret.copy')
     secret.hidden = false
   }
+  // Without a clipboard (a page not served over HTTPS has none) or where
+  // it refuses, the value is selected for the keyboard's copy: shown once,
+  // it must not be lost to a button that did nothing.
+  const selectSecret = (): void => {
+    const range = document.createRange()
+    range.selectNodeContents(secretValue)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  }
   copyButton.addEventListener('click', () => {
-    void navigator.clipboard?.writeText(secretValue.textContent ?? '').then(() => { copyButton.textContent = t('admin.secret.copied') })
+    if (!navigator.clipboard) return selectSecret()
+    navigator.clipboard.writeText(secretValue.textContent ?? '').then(
+      () => { copyButton.textContent = t('admin.secret.copied') },
+      selectSecret,
+    )
   })
 
   // --- painting ---------------------------------------------------------------
@@ -153,12 +176,9 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
     q<HTMLElement>('[data-count="invites"]').textContent = String(invites.length)
     q<HTMLElement>('[data-count="nodes"]').textContent = String(nodes.length)
     for (const panel of root.querySelectorAll<HTMLElement>('[data-panel]')) panel.hidden = panel.dataset.panel !== section
-    validSelect.replaceChildren(...VALIDITY.map((v, i) => {
-      const option = el('option', '', t(v.key))
-      option.value = String(v.hours)
-      if (i === 2) option.selected = true
-      return option
-    }))
+    // Relabelled, not rebuilt: a rebuild put the choice back to two weeks at
+    // every paint, and a code was made with a validity nobody chose.
+    VALIDITY.forEach((v, i) => { validSelect.options[i].textContent = t(v.key) })
   }
 
   const head = (keys: TKey[]): HTMLElement => {
@@ -209,7 +229,8 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
         })
       })
       const last = el('span', 'adm-muted', u.lastLoginAt ? formatWhen(u.lastLoginAt) : t('admin.users.never'))
-      const invited = el('span', 'adm-muted mono', u.invitedBy ? u.invitedBy.slice(0, 8) : '–')
+      // Who invited, not the code's id: the code's record is gone once spent.
+      const invited = el('span', 'adm-muted', u.inviter || '–')
       const actions = el('div', 'adm-actions')
       if (confirming === u.name) {
         actions.append(el('span', 'adm-confirm', t('admin.users.deleteConfirm', { user: u.displayName || u.name })))
@@ -359,8 +380,13 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
     secretValue.textContent = ''
     confirming = null
   }
-  q<HTMLButtonElement>('[data-act="close"]').addEventListener('click', close)
-  root.addEventListener('keydown', (event) => { if (event.key === 'Escape') close() })
+  closeButton.addEventListener('click', close)
+  // On the document, as the profile window does: opened from a menu, the
+  // focus is not inside yet.
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape' && !root.hidden) close()
+  }
+  document.addEventListener('keydown', onKeyDown)
 
   return {
     open(): void {
@@ -368,10 +394,14 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
       confirming = null
       root.hidden = false
       paint()
+      root.setAttribute('aria-label', t('admin.title'))
+      closeButton.focus()
       void reload()
     },
+    close,
     isOpen: () => !root.hidden,
     dispose(): void {
+      document.removeEventListener('keydown', onKeyDown)
       root.remove()
     },
   }

@@ -309,8 +309,8 @@ ever set it.
 
 2026-10-04: extended by DEC-0034 — the admin handlers also on the network
 for an adm session, invite codes as the only way to a new account; the
-socket stays the way in for the first user and a locked-out deployment. Not
-built.
+socket stays the way in for the first user and a locked-out deployment.
+Built the same day.
 
 decided, sequenced and ALL SIX steps built 2026-08-13 (end-to-end smoke
 against the real binary passed). Step 6 landed as a HARD BREAK, decided the

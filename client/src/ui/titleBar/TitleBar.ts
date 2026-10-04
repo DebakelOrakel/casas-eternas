@@ -1,9 +1,9 @@
 import { getLocale, setLocale, t, type Locale, type TKey } from '../../i18n/i18n'
-import { formatWhen } from '../format'
+import { formatWhen, initialsOf } from '../format'
 import { hasSession, onSessionChange, signedInUser, signOut } from '../../server/session'
 import { getServerStatus } from '../../server/serverStatus'
 import { currentAvatarUrl, currentProfile, onProfileChange } from '../../server/profileClient'
-import { createProfilePanel, initialsOf, USER_ICON, type ProfilePanel } from '../profilePanel/ProfilePanel'
+import { createProfilePanel, USER_ICON, type ProfilePanel } from '../profilePanel/ProfilePanel'
 import { createAdminPanel, type AdminPanel } from '../adminPanel/AdminPanel'
 import type { NotificationManager } from '../notifications/NotificationManager'
 import '../theme/design.css'
@@ -119,10 +119,6 @@ const SIGN_OUT_ICON = 'M10 4H5v16h5M9 12h12M17 8l4 4-4 4'
 // A shield: the administration.
 const ADMIN_ICON = 'M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z'
 const HOME_ICON = 'M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3'
-
-// Up to two letters from the user name, for the account chip. Falls back to
-// the first character of whatever came back, so a single-word or non-Latin
-// name still gets a mark rather than an empty circle.
 
 export function createTitleBar(host: HTMLElement, options: TitleBarOptions): TitleBar {
   host.classList.add('has-title-bar')
@@ -387,9 +383,19 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
 
   // `signOut()` and a session lost to the server both land here, so the name
   // on the button never outlives the session it names.
-  const stopWatchingSession = onSessionChange(() => paintMenu())
-  // The display name and the picture, once the profile is read or changed.
-  const stopWatchingProfile = onProfileChange(() => paintButton())
+  // The account's windows close with it: what they show — the user list, a
+  // code shown once — belongs to the session that opened them.
+  const stopWatchingSession = onSessionChange(() => {
+    paintMenu()
+    profileWindow?.close()
+    adminWindow?.close()
+  })
+  // The display name and the picture, once the profile is read or changed;
+  // the admin row with the role, and the admin window with it.
+  const stopWatchingProfile = onProfileChange(() => {
+    paintMenu()
+    if (!currentProfile()?.admin) adminWindow?.close()
+  })
 
   // The profile window, made the first time it is asked for, on the screen
   // the bar sits on.

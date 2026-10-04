@@ -1,4 +1,5 @@
 import { authFetch, hasSession, onSessionChange } from './session'
+import { refusalText } from './refusal'
 import { apiBase } from './worldClient'
 
 // The signed-in user's profile (docs/decisions/client-accounts.md, forks 5
@@ -53,14 +54,21 @@ function dropPicture(): void {
   picture = null
 }
 
+// Each read and write of the profile takes a number; an answer is taken
+// only while its number is the latest, so a read that was out when the
+// session ended, or overtaken by a save, cannot bring back what it read.
+let generation = 0
+
 // Takes a profile as the server answered it, and its picture when that is
-// new.
-async function adopt(next: Profile | null): Promise<void> {
+// new — unless a later request has been made meanwhile.
+async function adopt(next: Profile | null, mine: number): Promise<void> {
+  if (mine !== generation) return
   current = next
   if (!next || !next.avatar) dropPicture()
   else if (!picture || picture.version !== next.avatar) {
     const base = await apiBase()
     const response = base ? await authFetch(`${base}/auth/users/${encodeURIComponent(next.id)}/avatar`).catch(() => null) : null
+    if (mine !== generation) return
     if (response?.ok) {
       dropPicture()
       picture = { version: next.avatar, url: URL.createObjectURL(await response.blob()) }
@@ -72,29 +80,32 @@ async function adopt(next: Profile | null): Promise<void> {
 // Reads the profile; null where there is no session, no server or no
 // profile route (a server in mode none has no users).
 export async function loadProfile(): Promise<Profile | null> {
+  const mine = ++generation
   const url = hasSession() ? await meUrl() : null
   if (!url) {
-    await adopt(null)
-    return null
+    await adopt(null, mine)
+    return current
   }
   const response = await authFetch(url, { cache: 'no-store' }).catch(() => null)
-  await adopt(response?.ok ? ((await response.json()) as Profile) : null)
+  await adopt(response?.ok ? ((await response.json()) as Profile) : null, mine)
   return current
 }
 
+// `message`: the server's refusal; none where no server answered.
 export type ProfileOutcome = { ok: true } | { ok: false; reason: 'wrongPassword' | 'failed'; message?: string }
 
 const failed = async (response: Response | null): Promise<ProfileOutcome> => ({
   ok: false,
   reason: 'failed',
-  message: response ? (await response.text().catch(() => '')).trim() || String(response.status) : 'unreachable',
+  message: response ? await refusalText(response) : undefined,
 })
 
 export async function saveDisplayName(displayName: string): Promise<ProfileOutcome> {
+  const mine = ++generation
   const url = await meUrl()
   const response = url ? await authFetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ displayName }) }).catch(() => null) : null
   if (!response?.ok) return failed(response)
-  await adopt((await response.json()) as Profile)
+  await adopt((await response.json()) as Profile, mine)
   return { ok: true }
 }
 

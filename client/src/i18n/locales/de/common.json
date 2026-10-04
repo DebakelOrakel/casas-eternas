@@ -58,6 +58,7 @@
   "common.panel.signIn.redeem.submit": "Einlösen",
   "common.panel.signIn.redeem.failed": "Der Code ist nicht gültig.",
   "common.panel.signIn.redeem.taken": "Der Anmeldename ist vergeben.",
+  "common.panel.signIn.redeem.badName": "Bitte einen Anmeldenamen wählen: 2–32 Buchstaben, Ziffern, Punkt oder Strich.",
   "common.panel.signIn.redeem.limited": "Zu viele Versuche; später nochmal.",
   "common.panel.signIn.back": "Zurück zur Anmeldung"
 }

@@ -93,7 +93,7 @@ checks that will consult this all answer yes there anyway.
 
 2026-10-04: DEC-0034 adds a display name, the last sign-in and the invite
 code a user came with to the user record; the login name stays the
-credential's key. Not built.
+credential's key. Built the same day.
 
 decided and BUILT 2026-08-12 — registry, session hook, admin claim,
 identity.Admin, deploy wiring. Steps 2–5 of docs/design/access-control.md

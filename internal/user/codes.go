@@ -265,6 +265,7 @@ func (r *Registry) Redeem(code, name, password string) (User, error) {
 			return err
 		}
 		u.InvitedBy = invite.ID
+		u.Inviter = invite.CreatedBy
 		if err := putUser(tx, u); err != nil {
 			return err
 		}

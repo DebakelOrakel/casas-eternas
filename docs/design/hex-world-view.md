@@ -5,13 +5,14 @@ title.de: Hex-Weltansicht — Ideenskizze
 summary.en: Design for the 3D world view — a zoomable camera over the map, hex tiles
   only where land is developed, and edge "ports" as the contract between
   hexes and everything linear (rivers, roads, shorelines). The camera ladder
-  down to the hex-scale descent view is BUILT (see the status section);
-  tiles/ports/settlements remain design.
+  down to the hex-scale descent view was built and removed with the world map
+  screen (see the status section); all of it is design again.
 summary.de: Entwurf für die 3D-Weltansicht — eine zoombare Kamera über der Karte,
   Hex-Kacheln nur dort, wo Land erschlossen ist, und Kanten-„Ports“ als
   Vertrag zwischen Hexen und allem Linearen (Flüsse, Strassen, Ufer). Die
-  Kamera-Leiter bis zur Abstiegsansicht im Hex-Massstab ist GEBAUT (siehe
-  Status); Kacheln, Ports und Siedlungen sind Entwurf.
+  Kamera-Leiter bis zur Abstiegsansicht im Hex-Massstab war gebaut und ist
+  mit dem Weltkarten-Screen entfernt worden (siehe Status); alles ist wieder
+  Entwurf.
 area: ui
 stage: idea
 createdAt: 2026-08-06

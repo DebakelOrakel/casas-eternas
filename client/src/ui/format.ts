@@ -62,3 +62,19 @@ export function formatBytes(bytes: number): string {
   if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`
   return `${Math.max(1, Math.round(bytes / 1e3))} kB`
 }
+
+// A month and its year — since when an account exists.
+export function formatMonth(at: Date | string): string {
+  const date = typeof at === 'string' ? new Date(at) : at
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString(getLocale(), { month: 'long', year: 'numeric' })
+}
+
+// A name's initials, where there is no picture: one word gives its first two
+// letters, more give the first and the last word's first.
+export function initialsOf(name: string): string {
+  const parts = name.trim().split(/[\s._-]+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return [...parts[0]].slice(0, 2).join('').toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}

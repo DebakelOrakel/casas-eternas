@@ -80,7 +80,7 @@ func TestCodesAndNetworkAdmin(t *testing.T) {
 	if list := do(http.MethodGet, AdminPrefix+"/invites", admin, ""); !strings.Contains(list.Body.String(), `"invites":[]`) {
 		t.Errorf("a spent invite is still listed: %s", list.Body.String())
 	}
-	if users := do(http.MethodGet, AdminPrefix+"/users", admin, ""); !strings.Contains(users.Body.String(), `"invitedBy":"`+invite.ID+`"`) {
+	if users := do(http.MethodGet, AdminPrefix+"/users", admin, ""); !strings.Contains(users.Body.String(), `"invitedBy":"`+invite.ID+`","inviter":"ada"`) {
 		t.Errorf("the user list does not say who came with the code: %s", users.Body.String())
 	}
 

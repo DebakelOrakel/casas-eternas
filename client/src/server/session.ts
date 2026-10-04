@@ -133,19 +133,25 @@ export async function signIn(user: string, password: string): Promise<SignInOutc
     })
     if (response.status === 401) return 'rejected'
     if (!response.ok) return 'unreachable'
-    const body = (await response.json()) as { token?: string; user?: string }
-    if (!body.token) return 'unreachable'
-    current = { token: body.token, user: body.user ?? user }
-    write(current)
-    announce()
-    // The status carries authMode and loginPath, neither of which changed — but
-    // a client that could not reach /v1/capabilities while signed out may reach
-    // it now, so the cached verdict is worth re-taking.
-    void refreshServerStatus()
-    return 'ok'
+    return (await begin(response, user)) ? 'ok' : 'unreachable'
   } catch {
     return 'unreachable'
   }
+}
+
+// Takes the session a sign-in or a redeemed code answered with; false where
+// the answer holds no token.
+async function begin(response: Response, user: string): Promise<boolean> {
+  const body = (await response.json()) as { token?: string; user?: string }
+  if (!body.token) return false
+  current = { token: body.token, user: body.user ?? user }
+  write(current)
+  announce()
+  // The status carries authMode and loginPath, neither of which changed — but
+  // a client that could not reach /v1/capabilities while signed out may reach
+  // it now, so the cached verdict is worth re-taking.
+  void refreshServerStatus()
+  return true
 }
 
 export type RedeemOutcome = 'ok' | 'invalid' | 'taken' | 'badName' | 'limited' | 'unreachable'
@@ -171,13 +177,7 @@ export async function redeemCode(code: string, user: string, password: string): 
     if (response.status === 400) return 'badName'
     if (response.status === 429) return 'limited'
     if (!response.ok) return 'unreachable'
-    const body = (await response.json()) as { token?: string; user?: string }
-    if (!body.token) return 'unreachable'
-    current = { token: body.token, user: body.user ?? user }
-    write(current)
-    announce()
-    void refreshServerStatus()
-    return 'ok'
+    return (await begin(response, user)) ? 'ok' : 'unreachable'
   } catch {
     return 'unreachable'
   }

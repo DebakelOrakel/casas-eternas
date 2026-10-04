@@ -1,4 +1,5 @@
-import { authFetch } from './session'
+import { authFetch, onSessionChange } from './session'
+import { refusalText } from './refusal'
 import { apiBase } from './worldClient'
 
 // The admin API on the network (internal/modules/auth/adminnet.go,
@@ -15,6 +16,9 @@ export interface AdminUser {
   lastLoginAt?: string
   avatar?: string
   invitedBy?: string
+  // Who made the invite code the user came with (a login name, or "admin
+  // socket").
+  inviter?: string
 }
 
 export interface Invite {
@@ -34,23 +38,24 @@ export interface ServiceAccount {
   createdAt: string
 }
 
+// What went wrong: the server's refusal, or null where no server answered.
 export interface AdminFailure {
-  failed: string
+  failed: string | null
 }
 
 export const isFailure = (value: unknown): value is AdminFailure => typeof value === 'object' && value !== null && 'failed' in value
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T | AdminFailure> {
   const base = await apiBase()
-  if (!base) return { failed: 'no server' }
+  if (!base) return { failed: null }
   const response = await authFetch(`${base}/auth/admin${path}`, {
     method,
     cache: 'no-store',
     headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   }).catch(() => null)
-  if (!response) return { failed: 'unreachable' }
-  if (!response.ok) return { failed: (await response.text().catch(() => '')).trim() || String(response.status) }
+  if (!response) return { failed: null }
+  if (!response.ok) return { failed: await refusalText(response) }
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T)
 }
 
@@ -89,7 +94,12 @@ export const deleteService = (account: string) => call<void>('DELETE', `/service
 
 // A user's picture as an object URL, fetched once per version (the route
 // wants a session, which an <img src> cannot send).
+// Let go with the session that fetched them.
 const pictures = new Map<string, string>()
+onSessionChange(() => {
+  for (const url of pictures.values()) URL.revokeObjectURL(url)
+  pictures.clear()
+})
 export async function avatarOf(user: AdminUser): Promise<string | null> {
   if (!user.avatar) return null
   const key = `${user.id}@${user.avatar}`
